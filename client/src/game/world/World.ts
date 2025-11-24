@@ -1,7 +1,7 @@
 import { Scene, Vector3, TransformNode } from '@babylonjs/core';
 import { Socket } from 'socket.io-client';
 import { Chunk } from './Chunk';
-import { TerrainGenerator } from './TerrainGenerator';
+import worldData from './worldData.json';
 import { TileType } from './TileType';
 
 export class World {
@@ -12,7 +12,7 @@ export class World {
   private chunkSize: number;
   private renderDistance: number;
   private parent?: TransformNode;
-  private terrainGenerator: TerrainGenerator;
+  private worldSize: number;
 
   constructor(
     scene: Scene,
@@ -29,8 +29,7 @@ export class World {
     this.chunkSize = chunkSize;
     this.renderDistance = renderDistance;
     this.parent = parent;
-    // Initialize terrain generator with a fixed seed for consistency
-    this.terrainGenerator = new TerrainGenerator(12345);
+    this.worldSize = (worldData as any).worldSize || 128;
   }
 
   public initialize(): void {
@@ -65,24 +64,57 @@ export class World {
       }
     }
 
-    // Load new chunks
+    // Load new chunks from persistent world data
     for (const chunkKey of chunksToLoad) {
       if (!this.chunks.has(chunkKey)) {
         const [x, z] = chunkKey.split(',').map(Number);
+        const chunkData = (worldData.chunks as any)[chunkKey];
         
-        // Generate terrain procedurally using TerrainGenerator
-        const tiles = this.terrainGenerator.generateChunk(x, z, this.chunkSize);
-        
-        const chunk = new Chunk(
-          this.scene,
-          new Vector3(x * this.chunkSize, 0, z * this.chunkSize),
-          this.chunkSize,
-          tiles,
-          this.parent
-        );
-        this.chunks.set(chunkKey, chunk);
+        if (chunkData && chunkData.tiles) {
+          // Convert string tile types to TileType enum
+          const tiles: TileType[][] = chunkData.tiles.map((row: string[]) =>
+            row.map((tile: string) => tile as TileType)
+          );
+          
+          const chunk = new Chunk(
+            this.scene,
+            new Vector3(x * this.chunkSize, 0, z * this.chunkSize),
+            this.chunkSize,
+            tiles,
+            this.parent
+          );
+          this.chunks.set(chunkKey, chunk);
+        } else {
+          // Chunk doesn't exist in world data - fill with water (out of bounds)
+          const tiles: TileType[][] = Array.from({ length: this.chunkSize }, () =>
+            Array(this.chunkSize).fill(TileType.WATER)
+          );
+          
+          const chunk = new Chunk(
+            this.scene,
+            new Vector3(x * this.chunkSize, 0, z * this.chunkSize),
+            this.chunkSize,
+            tiles,
+            this.parent
+          );
+          this.chunks.set(chunkKey, chunk);
+        }
       }
     }
+  }
+
+  public getWorldSize(): number {
+    return this.worldSize;
+  }
+
+  public getWorldBounds(): { minX: number; maxX: number; minZ: number; maxZ: number } {
+    const halfSize = this.worldSize / 2;
+    return {
+      minX: -halfSize,
+      maxX: halfSize,
+      minZ: -halfSize,
+      maxZ: halfSize
+    };
   }
 
   public dispose(): void {
