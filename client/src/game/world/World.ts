@@ -1,6 +1,9 @@
 import { Scene, Vector3, TransformNode } from '@babylonjs/core';
 import { Socket } from 'socket.io-client';
 import { Chunk } from './Chunk';
+// IMPORTANT: This is a STATIC import of persistent world data
+// The worldData.json file is NOT regenerated at runtime - it's loaded once
+// To regenerate the world, manually run: python3 scripts/build_world.py
 import worldData from './worldData.json';
 import { TileType } from './TileType';
 
@@ -64,7 +67,8 @@ export class World {
       }
     }
 
-    // Load new chunks from persistent world data
+    // Load new chunks from PERSISTENT world data (worldData.json)
+    // This data is static and does NOT change between game sessions
     for (const chunkKey of chunksToLoad) {
       if (!this.chunks.has(chunkKey)) {
         const [x, z] = chunkKey.split(',').map(Number);
@@ -86,6 +90,7 @@ export class World {
           this.chunks.set(chunkKey, chunk);
         } else {
           // Chunk doesn't exist in world data - fill with water (out of bounds)
+          // This happens when player goes beyond the 128x128 world boundaries
           const tiles: TileType[][] = Array.from({ length: this.chunkSize }, () =>
             Array(this.chunkSize).fill(TileType.WATER)
           );
