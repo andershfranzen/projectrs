@@ -1,7 +1,8 @@
 import { Scene, Vector3, TransformNode } from '@babylonjs/core';
 import { Socket } from 'socket.io-client';
 import { Chunk } from './Chunk';
-import worldData from './worldData.json';
+import { TerrainGenerator } from './TerrainGenerator';
+import { TileType } from './TileType';
 
 export class World {
   private chunks: Map<string, Chunk>;
@@ -11,6 +12,7 @@ export class World {
   private chunkSize: number;
   private renderDistance: number;
   private parent?: TransformNode;
+  private terrainGenerator: TerrainGenerator;
 
   constructor(
     scene: Scene,
@@ -27,6 +29,8 @@ export class World {
     this.chunkSize = chunkSize;
     this.renderDistance = renderDistance;
     this.parent = parent;
+    // Initialize terrain generator with a fixed seed for consistency
+    this.terrainGenerator = new TerrainGenerator(12345);
   }
 
   public initialize(): void {
@@ -65,20 +69,18 @@ export class World {
     for (const chunkKey of chunksToLoad) {
       if (!this.chunks.has(chunkKey)) {
         const [x, z] = chunkKey.split(',').map(Number);
-        const chunkData = (worldData.chunks as any)[chunkKey];
         
-        // If chunkData is missing, generate a 16x16 WATER chunk
-        const tiles = chunkData ? chunkData.tiles : Array.from({ length: this.chunkSize }, () => Array(this.chunkSize).fill('WATER'));
-        if (tiles) {
-          const chunk = new Chunk(
-            this.scene,
-            new Vector3(x * this.chunkSize, 0, z * this.chunkSize),
-            this.chunkSize,
-            tiles,
-            this.parent
-          );
-          this.chunks.set(chunkKey, chunk);
-        }
+        // Generate terrain procedurally using TerrainGenerator
+        const tiles = this.terrainGenerator.generateChunk(x, z, this.chunkSize);
+        
+        const chunk = new Chunk(
+          this.scene,
+          new Vector3(x * this.chunkSize, 0, z * this.chunkSize),
+          this.chunkSize,
+          tiles,
+          this.parent
+        );
+        this.chunks.set(chunkKey, chunk);
       }
     }
   }

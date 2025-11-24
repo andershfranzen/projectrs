@@ -32,38 +32,64 @@ export class TerrainGenerator {
   }
 
   private getTileType(x: number, z: number): TileType {
-    // Scale factors for different noise layers
-    const baseScale = 0.02;
-    const detailScale = 0.1;
-    const mountainScale = 0.05;
+    // Multiple noise scales for different terrain features
+    const baseScale = 0.015;
+    const detailScale = 0.08;
+    const mountainScale = 0.04;
+    const lakeScale = 0.008;
+    const riverScale = 0.03;
+    const rockScale = 0.2;
 
     // Generate different noise layers
     const baseNoise = this.noise2D(x * baseScale, z * baseScale);
-    const detailNoise = this.noise2D(x * detailScale, z * detailScale) * 0.3;
+    const detailNoise = this.noise2D(x * detailScale, z * detailScale) * 0.4;
     const mountainNoise = this.noise2D(x * mountainScale, z * mountainScale);
+    const lakeNoise = this.noise2D(x * lakeScale, z * lakeScale);
+    const riverNoise = this.noise2D(x * riverScale, z * riverScale);
+    const rockNoise = this.noise2D(x * rockScale, z * rockScale);
 
-    // Combine noise layers
+    // Combine noise layers for terrain height/elevation
     const combinedNoise = baseNoise + detailNoise;
 
-    // Calculate distance from center for water bodies
+    // Calculate distance from center for ocean
     const centerX = 0;
     const centerZ = 0;
     const distanceFromCenter = Math.sqrt(
       Math.pow(x - centerX, 2) + Math.pow(z - centerZ, 2)
     );
-    const waterThreshold = 10 + Math.sin(distanceFromCenter * 0.1) * 3;
+    const oceanThreshold = 12 + Math.sin(distanceFromCenter * 0.08) * 4;
+
+    // Generate lakes (circular depressions)
+    const lakeValue = lakeNoise;
+    const lakeThreshold = -0.3; // Lower values create lakes
+    const isLake = lakeValue < lakeThreshold && distanceFromCenter > oceanThreshold + 3;
+
+    // Generate rivers (flowing patterns)
+    // Create sinuous river patterns using noise
+    const riverPattern = Math.abs(riverNoise);
+    const riverThreshold = 0.15; // Narrow threshold for rivers
+    const isRiver = riverPattern < riverThreshold && 
+                    distanceFromCenter > oceanThreshold + 2 &&
+                    !isLake &&
+                    mountainNoise < 0.3; // Rivers don't flow through mountains
 
     // Determine tile type based on noise values
-    if (distanceFromCenter < waterThreshold) {
-      return TileType.WATER;
-    } else if (distanceFromCenter < waterThreshold + 2) {
-      return TileType.SAND;
-    } else if (mountainNoise > 0.5) {
+    if (distanceFromCenter < oceanThreshold) {
+      return TileType.WATER; // Ocean
+    } else if (isLake) {
+      return TileType.LAKE;
+    } else if (isRiver) {
+      return TileType.RIVER;
+    } else if (distanceFromCenter < oceanThreshold + 2) {
+      return TileType.SAND; // Beach
+    } else if (mountainNoise > 0.6) {
       return TileType.MOUNTAIN;
-    } else if (combinedNoise > 0.1) {
-      return TileType.FOREST;
+    } else if (mountainNoise > 0.4 && rockNoise > 0.3) {
+      return TileType.ROCK; // Rocky areas
+    } else if (combinedNoise > 0.15 && mountainNoise < 0.4) {
+      return TileType.FOREST; // Forests in moderate elevation
     } else {
-      return TileType.GRASS;
+      return TileType.GRASS; // Plains
     }
   }
 } 
