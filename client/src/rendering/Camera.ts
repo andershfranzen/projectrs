@@ -27,16 +27,16 @@ export class GameCamera {
     // Constrain camera
     this.camera.lowerBetaLimit = 0.4;
     this.camera.upperBetaLimit = Math.PI / 2.2;
-    this.camera.lowerRadiusLimit = 12;
-    this.camera.upperRadiusLimit = 12;
+    this.camera.lowerRadiusLimit = 5;
+    this.camera.upperRadiusLimit = 30;
 
     // Smooth camera
     this.camera.inertia = 0.9;
     this.camera.panningInertia = 0.9;
 
-    // Disable zoom scroll and panning — fixed camera distance
+    // Scroll-wheel zoom; panning still disabled
     this.camera.panningSensibility = 0;
-    this.camera.wheelPrecision = 99999; // effectively disables scroll zoom
+    this.camera.wheelPrecision = 30;
 
     this.camera.attachControl(canvas, true);
 
@@ -78,8 +78,6 @@ export class GameCamera {
 
   setTargetRadius(radius: number): void {
     this.targetRadius = radius;
-    this.camera.lowerRadiusLimit = Math.min(radius, 12);
-    this.camera.upperRadiusLimit = Math.max(radius, 12);
   }
 
   setTargetBeta(beta: number): void {
@@ -95,9 +93,9 @@ export class GameCamera {
   }
 
   exitDebugZoom(): void {
-    this.camera.lowerRadiusLimit = 12;
-    this.camera.upperRadiusLimit = 12;
-    this.camera.wheelPrecision = 99999;
+    this.camera.lowerRadiusLimit = 5;
+    this.camera.upperRadiusLimit = 30;
+    this.camera.wheelPrecision = 30;
     this.camera.lowerBetaLimit = 0.4;
     this.camera.upperBetaLimit = Math.PI / 2.2;
     this.setTargetRadius(12);
