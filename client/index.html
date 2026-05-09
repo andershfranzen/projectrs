@@ -6,12 +6,17 @@
   <title>evilMUD</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+    /* Below 800×600 the page becomes scrollable rather than letting the UI
+       crush itself. Matches RS2's behavior of having a fixed minimum playable
+       size below which the browser scrollbars take over. */
+    html, body { width: 100%; height: 100%; background: #000; }
+    body { overflow: auto; }
 
     /* RS-style fixed frame layout */
     #game-frame {
       display: none; /* shown when game starts */
       width: 100vw; height: 100vh;
+      min-width: 800px; min-height: 600px;
       /* minmax(0, 1fr) prevents the flex track from refusing to shrink below
          its content when the window goes smaller than the fixed 340px/220px
          side panels. Without this, the grid can get stuck in a broken state

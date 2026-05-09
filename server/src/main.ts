@@ -397,6 +397,36 @@ function jsonResponse(data: any, status: number = 200): Response {
   });
 }
 
+// --- Auth rate limiting ---
+// Bun.serve runs in one process, so an in-memory map is sufficient. If we ever
+// shard, this needs to move behind a shared store (Redis). Mirrors 2004scape
+// LoginServer.ts:231-249 — login limit per (account, IP), signup limit per IP.
+
+interface RateBucket { count: number; resetAt: number; }
+const loginAttempts = new Map<string, RateBucket>();
+const signupAttempts = new Map<string, RateBucket>();
+const LOGIN_LIMIT = 5;
+const LOGIN_WINDOW_MS = 60_000;
+const SIGNUP_LIMIT = 3;
+const SIGNUP_WINDOW_MS = 60 * 60_000;
+
+function checkRate(map: Map<string, RateBucket>, key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  let bucket = map.get(key);
+  if (!bucket || now > bucket.resetAt) {
+    bucket = { count: 0, resetAt: now + windowMs };
+    map.set(key, bucket);
+  }
+  bucket.count++;
+  return bucket.count <= limit;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of loginAttempts) if (now > v.resetAt) loginAttempts.delete(k);
+  for (const [k, v] of signupAttempts) if (now > v.resetAt) signupAttempts.delete(k);
+}, 5 * 60_000);
+
 // Create database and game world
 const db = new GameDatabase();
 const world = new World(db);
@@ -416,6 +446,10 @@ const server = Bun.serve<SocketData>({
     // --- REST Auth Endpoints ---
 
     if (url.pathname === '/api/signup' && req.method === 'POST') {
+      const ip = server.requestIP(req)?.address ?? 'unknown';
+      if (!checkRate(signupAttempts, ip, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
+        return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
+      }
       try {
         const body = await req.json() as { username?: string; password?: string };
         const result = await db.createAccount(body.username || '', body.password || '');
@@ -429,10 +463,22 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/login' && req.method === 'POST') {
+      const ip = server.requestIP(req)?.address ?? 'unknown';
       try {
         const body = await req.json() as { username?: string; password?: string };
+        const username = (body.username || '').toLowerCase();
+        // Rate-limit by (username, IP) so a single attacker can't lock out a
+        // legitimate user from another IP, and a NAT'd legitimate user isn't
+        // locked out by an attacker on the same IP targeting a different account.
+        const key = `${username}:${ip}`;
+        if (!checkRate(loginAttempts, key, LOGIN_LIMIT, LOGIN_WINDOW_MS)) {
+          return jsonResponse({ ok: false, error: 'Too many login attempts. Try again in a minute.' }, 429);
+        }
         const result = await db.login(body.username || '', body.password || '');
         if (result.ok) {
+          // Successful login resets the bucket so subsequent legitimate logins
+          // from the same client don't hit the limit.
+          loginAttempts.delete(key);
           return jsonResponse({ ok: true, token: result.token, username: result.username });
         }
         return jsonResponse({ ok: false, error: result.error }, 400);

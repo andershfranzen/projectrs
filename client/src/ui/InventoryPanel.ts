@@ -152,7 +152,7 @@ export class InventoryPanel {
       {
         label: `Drop ${name}`,
         action: () => {
-          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index));
+          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId));
         },
       },
     ];
@@ -161,7 +161,7 @@ export class InventoryPanel {
       options.unshift({
         label: `Equip ${name}`,
         action: () => {
-          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EQUIP_ITEM, index));
+          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EQUIP_ITEM, index, slot.itemId));
         },
       });
     }
@@ -170,7 +170,7 @@ export class InventoryPanel {
       options.unshift({
         label: `Eat ${name}`,
         action: () => {
-          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index));
+          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index, slot.itemId));
         },
       });
     }

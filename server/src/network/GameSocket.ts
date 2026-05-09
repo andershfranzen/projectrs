@@ -106,13 +106,15 @@ export function handleGameSocketMessage(
 
     case ClientOpcode.PLAYER_DROP_ITEM: {
       const slot = values[0];
-      world.handlePlayerDrop(playerId, slot);
+      const expectedItemId = values[1];
+      world.handlePlayerDrop(playerId, slot, expectedItemId);
       break;
     }
 
     case ClientOpcode.PLAYER_EQUIP_ITEM: {
       const slot = values[0];
-      world.handlePlayerEquip(playerId, slot);
+      const expectedItemId = values[1];
+      world.handlePlayerEquip(playerId, slot, expectedItemId);
       break;
     }
 
@@ -124,7 +126,8 @@ export function handleGameSocketMessage(
 
     case ClientOpcode.PLAYER_EAT_ITEM: {
       const slot = values[0];
-      world.handlePlayerEat(playerId, slot);
+      const expectedItemId = values[1];
+      world.handlePlayerEat(playerId, slot, expectedItemId);
       break;
     }
 
@@ -158,7 +161,8 @@ export function handleGameSocketMessage(
     case ClientOpcode.PLAYER_SELL_ITEM: {
       const slot = values[0];
       const quantity = values[1] ?? 1;
-      world.handlePlayerSellItem(playerId, slot, quantity);
+      const expectedItemId = values[2];
+      world.handlePlayerSellItem(playerId, slot, quantity, expectedItemId);
       break;
     }
 
@@ -193,11 +197,8 @@ export function handleGameSocketClose(
 ): void {
   const playerId = ws.data.playerId;
   if (playerId) {
-    // Save player state before removing
-    const player = world.getPlayer(playerId);
-    if (player) {
-      world.db.savePlayerState(player.accountId, player);
-    }
-    world.removePlayer(playerId);
+    // Saves + removes, OR defers removal if the player is in a post-combat
+    // logout block. See World.handlePlayerDisconnect.
+    world.handlePlayerDisconnect(playerId);
   }
 }

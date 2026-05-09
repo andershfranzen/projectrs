@@ -180,7 +180,7 @@ function handleCommand(
       }
       const player = findPlayerByUsername(from, world);
       if (player) {
-        if (player.addItem(itemId, quantity, world.data.itemDefs)) {
+        if (player.addItem(itemId, quantity, world.data.itemDefs).completed > 0) {
           world.sendInventory(player);
           ws.send(JSON.stringify({ type: 'system', message: `Gave ${quantity}x item ${itemId}` }));
         } else {

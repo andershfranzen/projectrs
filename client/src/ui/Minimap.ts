@@ -21,6 +21,8 @@ const ROOF_COLOR: [number, number, number] = [0x60, 0x40, 0x22];
 const FLOOR_COLOR: [number, number, number] = [0x8a, 0x74, 0x52];
 
 const VIEW_RADIUS = 22;
+// Render buffer matches displaySize 1:1 for crisp pixels. Keep this in sync
+// with the displaySize passed to `new Minimap(...)` in GameManager.
 const RENDER_SIZE = 340;
 
 export class Minimap {
@@ -56,9 +58,11 @@ export class Minimap {
     this.canvas = document.createElement('canvas');
     this.canvas.width = RENDER_SIZE;
     this.canvas.height = RENDER_SIZE;
+    // Fixed pixel size (matches RENDER_SIZE 1:1 — crisp, no scaling artifacts).
+    // Smaller than the right column so it centers with horizontal margin.
     this.canvas.style.cssText = `
       width: ${displaySize}px; height: ${displaySize}px;
-      display: block; cursor: pointer;
+      display: block; margin: 0 auto; cursor: pointer;
       border: 2px solid #1a1510;
       box-shadow: inset 0 0 6px rgba(0,0,0,0.6);
       background: #0c0a06;

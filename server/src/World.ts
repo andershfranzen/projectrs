@@ -431,6 +431,45 @@ export class World {
     this.broadcastNearby(player.currentMapLevel, player.position.x, player.position.y, ServerOpcode.ENTITY_DEATH, playerId);
   }
 
+  /** Called from the WS close handler. If the player is in a post-combat
+   *  logout block, the Player entity is left in the world (still attackable)
+   *  until the block expires or a hard 30s deadline passes. Otherwise the
+   *  player is saved + removed immediately. */
+  handlePlayerDisconnect(playerId: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    this.db.savePlayerState(player.accountId, player);
+
+    if (player.isLogoutBlocked(this.currentTick)) {
+      player.requestIdleLogout = true;
+      player.logoutDeadlineTick = this.currentTick + 50; // ~30s safety cap
+      console.log(`Player "${player.name}" logged out under attack — deferring removal`);
+      return;
+    }
+
+    this.removePlayer(playerId);
+  }
+
+  /** Process players whose ws closed during a combat lockout. Once the lockout
+   *  expires (or the deadline hits), save and remove. */
+  private tickDeferredLogouts(): void {
+    let toRemove: number[] | null = null;
+    for (const [, player] of this.players) {
+      if (!player.requestIdleLogout) continue;
+      const expired = !player.isLogoutBlocked(this.currentTick) || this.currentTick >= player.logoutDeadlineTick;
+      if (expired) {
+        if (!toRemove) toRemove = [];
+        toRemove.push(player.id);
+      }
+    }
+    if (!toRemove) return;
+    for (const id of toRemove) {
+      const player = this.players.get(id);
+      if (player) this.db.savePlayerState(player.accountId, player);
+      this.removePlayer(id);
+    }
+  }
+
   /** Check if a world position is within chunk load radius of a player */
   /** Find the best tool of a given type that the player can use (checks equipped weapon + inventory) */
   private computeDoorEdge(rotationY: number): number {
@@ -663,6 +702,13 @@ export class World {
     let prevX = player.position.x;
     let prevZ = player.position.y;
     const mapId = player.currentMapLevel;
+    // TODO(security/H3): per-step distance cap — the client compresses paths
+    // to corner waypoints (only direction-change points are kept), so a naive
+    // |dx|>1 cap rejects legitimate movement. A correct fix expands each
+    // compressed segment into unit steps and validates collision/walls at every
+    // intermediate tile. Until that lands, the server only checks endpoints —
+    // a crafted path with two walkable but non-collinear endpoints could let
+    // the client jump through walls. See gap report 2026-05-09 task #11.
     for (const step of path) {
       const pFloor = player.currentFloor;
       const tileBlocked = pFloor === 0
@@ -752,6 +798,7 @@ export class World {
   handlePlayerBuyItem(playerId: number, itemId: number, quantity: number): void {
     const player = this.players.get(playerId);
     if (!player || quantity < 1) return;
+    if (player.isBusy(this.currentTick)) return;
 
     // Find the item price from pre-indexed shop data
     const price = this.data.getShopPrice(itemId);
@@ -813,13 +860,15 @@ export class World {
     this.sendInventory(player);
   }
 
-  handlePlayerSellItem(playerId: number, slot: number, quantity: number): void {
+  handlePlayerSellItem(playerId: number, slot: number, quantity: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player || quantity < 1) return;
+    if (player.isBusy(this.currentTick)) return;
     if (slot < 0 || slot >= player.inventory.length) return;
 
     const invItem = player.inventory[slot];
     if (!invItem) return;
+    if (invItem.itemId !== expectedItemId) return;
 
     const itemDef = this.data.getItem(invItem.itemId);
     if (!itemDef) return;
@@ -853,6 +902,7 @@ export class World {
     const player = this.players.get(playerId);
     const item = this.groundItems.get(groundItemId);
     if (!player || !item) return;
+    if (player.isBusy(this.currentTick)) return;
     if (item.mapLevel !== player.currentMapLevel) return;
 
     // Walk to item if not in range
@@ -868,7 +918,7 @@ export class World {
       return;
     }
 
-    if (player.addItem(item.itemId, item.quantity, this.data.itemDefs)) {
+    if (player.addItem(item.itemId, item.quantity, this.data.itemDefs).completed > 0) {
       this.groundItems.delete(groundItemId);
       this.despawningItemIds.delete(groundItemId);
       const itemCm = this.chunkManagers.get(item.mapLevel);
@@ -878,17 +928,21 @@ export class World {
     }
   }
 
-  handlePlayerDrop(playerId: number, slotIndex: number): void {
+  handlePlayerDrop(playerId: number, slotIndex: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
+    // Stale-click guard: reject if the slot doesn't currently hold the item the
+    // client thought it was clicking. Mirrors 2004scape OpHeldHandler.ts:36.
+    if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const removed = player.removeItem(slotIndex);
-    if (!removed) return;
+    if (removed.completed === 0) return;
 
     const groundItem: GroundItem = {
       id: nextGroundItemId++,
       itemId: removed.itemId,
-      quantity: removed.quantity,
+      quantity: removed.completed,
       x: player.position.x,
       z: player.position.y,
       mapLevel: player.currentMapLevel,
@@ -907,6 +961,7 @@ export class World {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
+    if (player.isBusy(this.currentTick)) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') return;
@@ -1085,17 +1140,37 @@ export class World {
         if (secondInputSlot < 0) continue;
       }
 
-      player.removeItem(inputSlot, recipe.inputQuantity);
+      // Transaction: remove inputs, then add output. If add fails (inventory
+      // full), revert the input removals so materials aren't silently destroyed.
+      const inputRemoval = player.removeItem(inputSlot, recipe.inputQuantity);
+      if (inputRemoval.completed < recipe.inputQuantity) {
+        player.revertRemove(inputRemoval);
+        continue;
+      }
+
+      let secondRemoval: ReturnType<typeof player.removeItem> | null = null;
       if (secondInputSlot >= 0 && recipe.secondInputQuantity) {
-        player.removeItem(secondInputSlot, recipe.secondInputQuantity);
+        secondRemoval = player.removeItem(secondInputSlot, recipe.secondInputQuantity);
+        if (secondRemoval.completed < recipe.secondInputQuantity) {
+          player.revertRemove(secondRemoval);
+          player.revertRemove(inputRemoval);
+          continue;
+        }
       }
 
       if (recipe.successChance !== undefined && Math.random() > recipe.successChance) {
+        // Recipe rolled fail — inputs are consumed, no output. Matches RS2 behavior.
         this.sendInventory(player);
         return;
       }
 
-      player.addItem(recipe.outputItemId, recipe.outputQuantity, this.data.itemDefs);
+      const addResult = player.addItem(recipe.outputItemId, recipe.outputQuantity, this.data.itemDefs);
+      if (addResult.completed === 0) {
+        if (secondRemoval) player.revertRemove(secondRemoval);
+        player.revertRemove(inputRemoval);
+        this.sendInventory(player);
+        return;
+      }
 
       const result = addXp(player.skills, skillId, recipe.xpReward);
       const skillIdx = ALL_SKILLS.indexOf(skillId);
@@ -1112,9 +1187,11 @@ export class World {
     }
   }
 
-  handlePlayerEquip(playerId: number, slotIndex: number): void {
+  handlePlayerEquip(playerId: number, slotIndex: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
+    if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const slot = player.inventory[slotIndex];
     if (!slot) return;
@@ -1123,8 +1200,39 @@ export class World {
     if (!itemDef || !itemDef.equippable || !itemDef.equipSlot) return;
 
     const equipSlot = itemDef.equipSlot as EquipSlot;
-
     const currentEquipped = player.equipment.get(equipSlot);
+
+    // Pre-flight: figure out if any side-unequips (2H↔shield) will displace
+    // an item into the inventory, and reject the swap if there's no room.
+    // Without this check, the displaced item silently vanishes — leaving both
+    // pieces equipped (e.g. 2H weapon + shield).
+    let sideUnequipId: number | undefined;
+    if (equipSlot === 'weapon' && itemDef.twoHanded) {
+      sideUnequipId = player.equipment.get('shield');
+    } else if (equipSlot === 'shield') {
+      const weaponId = player.equipment.get('weapon');
+      if (weaponId !== undefined) {
+        const weaponDef = this.data.getItem(weaponId);
+        if (weaponDef?.twoHanded) sideUnequipId = weaponId;
+      }
+    }
+
+    if (sideUnequipId !== undefined) {
+      // After the source-slot swap, the source slot is filled iff there's a
+      // current equipped item to displace into it. So free slots available for
+      // the side-unequip are: current free slots, plus 1 if source becomes empty.
+      let freeSlots = 0;
+      for (const s of player.inventory) if (s === null) freeSlots++;
+      const freeAfterSwap = freeSlots + (currentEquipped === undefined ? 1 : 0);
+      if (freeAfterSwap < 1) {
+        // Not enough room — refuse the equip entirely. Better than leaving
+        // the player in an invalid two-mainhand state.
+        this.sendChatSystem(player, 'You need a free inventory slot to do that.');
+        return;
+      }
+    }
+
+    // Source slot: receives displaced equipment if any, else cleared.
     if (currentEquipped !== undefined) {
       player.inventory[slotIndex] = { itemId: currentEquipped, quantity: 1 };
     } else {
@@ -1133,23 +1241,12 @@ export class World {
 
     player.equipment.set(equipSlot, slot.itemId);
 
-    // Two-handed weapons: unequip shield when equipping a 2h weapon (and vice versa)
-    if (equipSlot === 'weapon' && itemDef.twoHanded) {
-      const shieldId = player.equipment.get('shield');
-      if (shieldId !== undefined) {
-        if (player.addItem(shieldId, 1, this.data.itemDefs)) {
-          player.equipment.delete('shield');
-        }
-      }
-    } else if (equipSlot === 'shield') {
-      const weaponId = player.equipment.get('weapon');
-      if (weaponId !== undefined) {
-        const weaponDef = this.data.getItem(weaponId);
-        if (weaponDef?.twoHanded) {
-          if (player.addItem(weaponId, 1, this.data.itemDefs)) {
-            player.equipment.delete('weapon');
-          }
-        }
+    if (sideUnequipId !== undefined) {
+      // Pre-flight guarantees this fits, but use the transaction return to
+      // catch any future drift in canFit logic.
+      const addResult = player.addItem(sideUnequipId, 1, this.data.itemDefs);
+      if (addResult.completed > 0) {
+        player.equipment.delete(equipSlot === 'weapon' ? 'shield' : 'weapon');
       }
     }
 
@@ -1160,6 +1257,7 @@ export class World {
   handlePlayerUnequip(playerId: number, equipSlotIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
 
     const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     const slotName = slotNames[equipSlotIndex];
@@ -1168,16 +1266,18 @@ export class World {
     const itemId = player.equipment.get(slotName);
     if (itemId === undefined) return;
 
-    if (player.addItem(itemId, 1, this.data.itemDefs)) {
+    if (player.addItem(itemId, 1, this.data.itemDefs).completed > 0) {
       player.equipment.delete(slotName);
       this.sendInventory(player);
       this.sendEquipment(player);
     }
   }
 
-  handlePlayerEat(playerId: number, slotIndex: number): void {
+  handlePlayerEat(playerId: number, slotIndex: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
+    if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const slot = player.inventory[slotIndex];
     if (!slot) return;
@@ -1190,6 +1290,8 @@ export class World {
     player.heal(itemDef.healAmount);
     player.skills.hitpoints.currentLevel = player.health;
     player.removeItem(slotIndex, 1);
+    // RS2: 3-tick eat delay prevents stacking multiple foods per tick
+    player.setDelay(this.currentTick, 3);
 
     this.sendInventory(player);
     this.sendToPlayer(player, ServerOpcode.PLAYER_STATS,
@@ -1230,6 +1332,7 @@ export class World {
 
     this.tickPlayerMovement();
     this.tickNpcAI();
+    this.tickPlayerCooldowns();
     this.tickPlayerCombat();
     this.tickNpcCombat();
     if (this.currentTick % 10 === 0) this.tickHealthRegen();
@@ -1237,6 +1340,7 @@ export class World {
     this.tickObjectRespawns();
     this.tickItemDespawns();
     this.tickTransitions();
+    this.tickDeferredLogouts();
     this.broadcastSync();
 
     const tickDuration = performance.now() - tickStart;
@@ -1343,6 +1447,17 @@ export class World {
     }
   }
 
+  /** Decrement attack cooldowns once per tick globally. RS2 semantics: the
+   *  attack timer ticks regardless of whether the player is currently in
+   *  combat or adjacent to a target — so walking to a mob doesn't reset
+   *  your timer. The reset (back to full attack speed) still happens inside
+   *  processPlayerCombat / processPlayerRangedCombat after a successful swing. */
+  private tickPlayerCooldowns(): void {
+    for (const [, player] of this.players) {
+      if (player.attackCooldown > 0) player.attackCooldown--;
+    }
+  }
+
   private tickPlayerCombat(): void {
     const itemDefs = this.data.itemDefs;
 
@@ -1356,32 +1471,40 @@ export class World {
 
       const map = this.getPlayerMap(player);
 
-      player.position.x = Math.floor(player.position.x) + 0.5;
-      player.position.y = Math.floor(player.position.y) + 0.5;
       const isRanged = player.isRangedWeapon(itemDefs);
       const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
       const cdx = npc.position.x - player.position.x;
       const cdz = npc.position.y - player.position.y;
       const combatDist = Math.sqrt(cdx * cdx + cdz * cdz);
       if (combatDist > attackDist) {
-        player.moveQueue = [];
-        const sx = cdx !== 0 ? Math.sign(cdx) : 0;
-        const sz = cdz !== 0 ? Math.sign(cdz) : 0;
-        const nx = player.position.x + sx;
-        const nz = player.position.y + sz;
-        const npcTileX = Math.floor(npc.position.x);
-        const npcTileZ = Math.floor(npc.position.y);
-        const wouldOverlap = (px: number, pz: number) =>
-          Math.floor(px) === npcTileX && Math.floor(pz) === npcTileZ;
-        const px = player.position.x, py = player.position.y;
-        if (sx !== 0 && sz !== 0 && !map.isBlocked(nx, nz) && !wouldOverlap(nx, nz) && !map.isWallBlocked(px, py, nx, nz)) {
-          player.position.x = nx;
-          player.position.y = nz;
-        } else if (sx !== 0 && !map.isBlocked(px + sx, py) && !wouldOverlap(px + sx, py) && !map.isWallBlocked(px, py, px + sx, py)) {
-          player.position.x += sx;
-        } else if (sz !== 0 && !map.isBlocked(px, py + sz) && !wouldOverlap(px, py + sz) && !map.isWallBlocked(px, py, px, py + sz)) {
-          player.position.y += sz;
+        // Out of range — recompute path to the NPC and let tickPlayerMovement
+        // walk us there smoothly. This replaces an older snap-to-tile-center
+        // + manual 1-tile step that bypassed the move queue and looked like
+        // teleporting, especially against moving mobs. We re-pathfind every
+        // tick so the chase tracks NPC movement (cheap on a 256x256 map).
+        const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
+        if (path.length > 0) {
+          if (!isRanged && path.length > 1) {
+            player.moveQueue = path.slice(0, -1); // melee: stop one tile short
+          } else if (isRanged) {
+            // Ranged: walk only as far as needed to be in attack distance
+            let cutIdx = path.length;
+            for (let i = 0; i < path.length; i++) {
+              const pdx = Math.abs(path[i].x - npc.position.x);
+              const pdz = Math.abs(path[i].z - npc.position.y);
+              if (pdx <= attackDist && pdz <= attackDist) {
+                cutIdx = i + 1;
+                break;
+              }
+            }
+            player.moveQueue = path.slice(0, cutIdx);
+          } else {
+            player.moveQueue = path;
+          }
         }
+        // Out of range this tick — defer the swing. Cooldown still ticks
+        // globally so the next adjacency-tick can fire immediately if ready.
+        continue;
       }
 
       let result: any = null;
@@ -1404,6 +1527,8 @@ export class World {
         result = processPlayerCombat(player, npc, itemDefs);
       }
       if (result) {
+        // Arm post-combat logout block — player can't safely log off mid-fight.
+        player.markInCombat(this.currentTick);
         this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, player.currentMapLevel, npc.position.x, npc.position.y);
 
         for (const xp of result.xpDrops) {
@@ -1466,6 +1591,8 @@ export class World {
 
       const hit = processNpcCombat(npc, target, itemDefs);
       if (hit) {
+        // Player took (or dodged) a hit — arm post-combat logout block.
+        target.markInCombat(this.currentTick);
         this.broadcastCombatHit(hit.attackerId, hit.targetId, hit.damage, hit.targetHealth, hit.targetMaxHealth, npc.currentMapLevel, target.position.x, target.position.y);
 
         this.sendToPlayer(target, ServerOpcode.PLAYER_STATS,
@@ -1563,7 +1690,7 @@ export class World {
         const qty = obj.def.harvestQuantity ?? 1;
         const xpReward = obj.def.xpReward ?? 0;
 
-        const addedToInv = player.addItem(itemId, qty, this.data.itemDefs);
+        const addedToInv = player.addItem(itemId, qty, this.data.itemDefs).completed > 0;
         if (!addedToInv && obj.def.category === 'rock') {
           const groundItem: GroundItem = {
             id: nextGroundItemId++,

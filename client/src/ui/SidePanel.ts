@@ -42,7 +42,7 @@ export class SidePanel {
   private itemDefs: Map<number, ItemDef> = new Map();
 
   // Optional sell callback (active when shop is open)
-  private sellCallback: ((slot: number) => void) | null = null;
+  private sellCallback: ((slot: number, itemId: number) => void) | null = null;
 
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
@@ -131,18 +131,18 @@ export class SidePanel {
     const hpRow = document.createElement('div');
     hpRow.style.cssText = `
       display: flex; align-items: center; gap: 6px;
-      padding: 7px 10px;
+      padding: 3px 10px;
       border-bottom: 1px solid rgba(0,0,0,0.25);
       border-top: 1px solid rgba(255,200,100,0.06);
     `;
     const hpIcon = document.createElement('div');
     hpIcon.textContent = 'Health';
-    hpIcon.style.cssText = `font-size: 10px; font-weight: bold; color: #d44; text-shadow: 1px 1px 0 #000; width: 38px; flex-shrink: 0;`;
+    hpIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #d44; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
     hpRow.appendChild(hpIcon);
 
     const hpBarBg = document.createElement('div');
     hpBarBg.style.cssText = `
-      flex: 1; height: 16px; background: #1a0808;
+      flex: 1; height: 18px; background: #1a0808;
       border: 1px solid #4a2020; border-radius: 3px;
       position: relative; overflow: hidden;
       box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), 0 1px 0 rgba(255,200,100,0.06);
@@ -159,7 +159,7 @@ export class SidePanel {
     hpText.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 10px; font-weight: bold; color: #fff;
+      font-size: 11px; font-weight: bold; color: #fff;
       text-shadow: 1px 1px 0 #000; pointer-events: none;
     `;
     hpText.textContent = '10/10';
@@ -175,12 +175,12 @@ export class SidePanel {
     `;
     const goodMagicIcon = document.createElement('div');
     goodMagicIcon.textContent = 'Good';
-    goodMagicIcon.style.cssText = `font-size: 10px; font-weight: bold; color: #4ac; text-shadow: 1px 1px 0 #000; width: 38px; flex-shrink: 0;`;
+    goodMagicIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #4ac; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
     goodMagicRow.appendChild(goodMagicIcon);
 
     const goodMagicBarBg = document.createElement('div');
     goodMagicBarBg.style.cssText = `
-      flex: 1; height: 16px; background: #080818;
+      flex: 1; height: 18px; background: #080818;
       border: 1px solid #1a2a4a; border-radius: 3px;
       position: relative; overflow: hidden;
       box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), 0 1px 0 rgba(255,200,100,0.06);
@@ -197,7 +197,7 @@ export class SidePanel {
     goodMagicText.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 10px; font-weight: bold; color: #fff;
+      font-size: 11px; font-weight: bold; color: #fff;
       text-shadow: 1px 1px 0 #000; pointer-events: none;
     `;
     goodMagicText.textContent = '1';
@@ -214,12 +214,12 @@ export class SidePanel {
     `;
     const evilMagicIcon = document.createElement('div');
     evilMagicIcon.textContent = 'Evil';
-    evilMagicIcon.style.cssText = `font-size: 10px; font-weight: bold; color: #c4a; text-shadow: 1px 1px 0 #000; width: 38px; flex-shrink: 0;`;
+    evilMagicIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #c4a; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
     evilMagicRow.appendChild(evilMagicIcon);
 
     const evilMagicBarBg = document.createElement('div');
     evilMagicBarBg.style.cssText = `
-      flex: 1; height: 16px; background: #180818;
+      flex: 1; height: 18px; background: #180818;
       border: 1px solid #4a1a3a; border-radius: 3px;
       position: relative; overflow: hidden;
       box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), 0 1px 0 rgba(255,200,100,0.06);
@@ -236,7 +236,7 @@ export class SidePanel {
     evilMagicText.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 10px; font-weight: bold; color: #fff;
+      font-size: 11px; font-weight: bold; color: #fff;
       text-shadow: 1px 1px 0 #000; pointer-events: none;
     `;
     evilMagicText.textContent = '1';
@@ -322,8 +322,14 @@ export class SidePanel {
 
     // Tab contents
     const contentArea = document.createElement('div');
+    // flex:1 lets the area shrink at small viewports; max-height caps it at
+    // the inventory grid's natural max (6 rows × 56px + chrome) so at
+    // fullscreen the bottom tabs sit right under the grid instead of being
+    // pushed to the bottom of an empty stretched panel. Other tabs
+    // (skills/equipment/etc.) inherit the same envelope.
     contentArea.style.cssText = `
-      padding: 8px 6px; overflow: hidden; flex: 1; min-height: 0;
+      padding: 4px 6px; overflow: hidden;
+      flex: 1; min-height: 0; max-height: 360px;
       background: #1e1a14;
       border: 2px inset #3a3228;
       display: flex; flex-direction: column;
@@ -332,7 +338,11 @@ export class SidePanel {
     // Inventory tab
     this.invGrid = this.buildInventoryContent();
     const invWrap = document.createElement('div');
-    invWrap.style.cssText = 'flex: 1; min-height: 0; display: flex; flex-direction: column;';
+    // overflow-y allows the grid to scroll inside the panel if the viewport
+    // is smaller than the cumulative fixed UI demands. At 600px viewport
+    // (the locked min) all 6 inventory rows should fit; this is just a
+    // safety net for awkward intermediate heights.
+    invWrap.style.cssText = 'flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto;';
     invWrap.appendChild(this.invGrid);
     contentArea.appendChild(invWrap);
     this.tabContents.set('inventory', invWrap);
@@ -405,16 +415,13 @@ export class SidePanel {
     panel.appendChild(contentArea);
     panel.appendChild(bottomTabs);
 
-    // Spacer pushes logout to the very bottom
-    const spacer = document.createElement('div');
-    spacer.style.cssText = 'flex: 1;';
-    panel.appendChild(spacer);
-
-    // Logout button at the bottom
+    // Logout button at the bottom — `margin-top: auto` pushes it to the bottom
+    // of the flex column without claiming flex space (the previous flex:1
+    // spacer was halving the inventory's available height, clipping rows).
     const logoutBtn = document.createElement('div');
     logoutBtn.textContent = 'Logout';
     logoutBtn.style.cssText = `
-      text-align: center; padding: 6px 0; margin: 4px 8px 6px;
+      text-align: center; padding: 6px 0; margin: auto 8px 6px;
       background: rgba(120,40,30,0.5);
       border: 1px solid rgba(180,80,60,0.4);
       border-radius: 3px; color: #fc0; font-size: 12px;
@@ -454,8 +461,8 @@ export class SidePanel {
     const grid = document.createElement('div');
     grid.style.cssText = `
       display: grid; grid-template-columns: repeat(5, 1fr);
-      grid-template-rows: repeat(6, 1fr);
-      gap: 0; flex: 1; min-height: 0;
+      grid-template-rows: repeat(6, minmax(34px, 56px));
+      gap: 0; min-height: 0;
       position: relative;
       background: url('/assets/textures/61.png') center / cover;
       border-radius: 2px;
@@ -709,10 +716,13 @@ export class SidePanel {
     const sprite = def?.sprite;
     const icon = def?.icon;
 
+    // max-width/height cap the icon at native sprite size; min-cell at 34px so
+    // it never has to scale below that. Object-fit keeps aspect.
+    const imgStyle = `max-width:34px;max-height:34px;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));`;
     const iconHtml = sprite
-      ? `<img src="/sprites/items/${sprite}" style="width:34px;height:34px;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));" />`
+      ? `<img src="/sprites/items/${sprite}" style="${imgStyle}" />`
       : icon
-      ? `<img src="/items/${icon}" style="width:34px;height:34px;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));" />`
+      ? `<img src="/items/${icon}" style="${imgStyle}" />`
       : `<div style="width:28px;height:28px;background:rgba(170,170,170,0.6);border-radius:3px;"></div>`;
 
     el.innerHTML = `
@@ -726,7 +736,7 @@ export class SidePanel {
     if (!slot) return;
     const def = this.itemDefs.get(slot.itemId);
     if (def?.healAmount) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index));
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index, slot.itemId));
     }
   }
 
@@ -749,14 +759,14 @@ export class SidePanel {
     if (def?.equippable) {
       options.push({
         label: `Equip ${name}`,
-        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EQUIP_ITEM, index)),
+        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EQUIP_ITEM, index, slot.itemId)),
       });
     }
 
     if (def?.healAmount) {
       options.push({
         label: `Eat ${name}`,
-        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index)),
+        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index, slot.itemId)),
       });
     }
 
@@ -764,13 +774,13 @@ export class SidePanel {
       const sellPrice = Math.max(1, Math.floor((def?.value || 1) / 2));
       options.push({
         label: `Sell ${name} (${sellPrice} gp)`,
-        action: () => this.sellCallback!(index),
+        action: () => this.sellCallback!(index, slot.itemId),
       });
     }
 
     options.push({
       label: `Drop ${name}`,
-      action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index)),
+      action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId)),
     });
 
     for (const opt of options) {
@@ -861,7 +871,7 @@ export class SidePanel {
   }
 
   /** Set a sell callback (when shop is open) or null to clear */
-  setSellCallback(cb: ((slot: number) => void) | null): void {
+  setSellCallback(cb: ((slot: number, itemId: number) => void) | null): void {
     this.sellCallback = cb;
   }
 

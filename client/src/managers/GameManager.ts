@@ -1254,8 +1254,8 @@ export class GameManager {
         const shopTitle = NPC_NAMES[npcDefId || 0] || 'Shop';
         this.shopPanel.show(npcEntityId, items, shopTitle);
         // Enable sell option in inventory context menu
-        this.sidePanel?.setSellCallback((slot) => {
-          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SELL_ITEM, slot, 1));
+        this.sidePanel?.setSellCallback((slot, itemId) => {
+          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SELL_ITEM, slot, 1, itemId));
         });
       }
     });
@@ -2778,10 +2778,12 @@ export class GameManager {
       if (npcTarget) {
         const toDist = Math.hypot(npcTarget.x - this.playerX, npcTarget.z - this.playerZ);
         if (toDist <= 1.5) {
+          // In melee range — halt the path. Don't snap to tile center: a
+          // mid-tile fractional position is fine, and snapping is the visible
+          // "teleport" players see when entering combat. Next path will use
+          // (playerX, playerZ) as tileFrom so movement resumes seamlessly.
           this.pathIndex = this.path.length;
           this.localPlayer.stopWalking();
-          this.playerX = Math.floor(this.playerX) + 0.5;
-          this.playerZ = Math.floor(this.playerZ) + 0.5;
           this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
           return;
         }

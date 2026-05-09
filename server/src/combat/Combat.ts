@@ -39,8 +39,9 @@ export function processPlayerCombat(
   const dz = Math.abs(player.position.y - npc.position.y);
   if (dx > 1.5 || dz > 1.5) return null;
 
-  // Check cooldown
-  player.attackCooldown--;
+  // Cooldown gate. The decrement is global (World.tickPlayerCooldowns) so the
+  // timer keeps ticking even while you walk to the target — re-engaging a
+  // mob doesn't make you re-wait the full attack speed.
   if (player.attackCooldown > 0) return null;
   player.attackCooldown = player.getAttackSpeed(itemDefs);
 
@@ -159,8 +160,7 @@ export function processPlayerRangedCombat(
   const dz = Math.abs(player.position.y - npc.position.y);
   if (dx > RANGED_ATTACK_DISTANCE || dz > RANGED_ATTACK_DISTANCE) return null;
 
-  // Check cooldown
-  player.attackCooldown--;
+  // Cooldown gate. Decrement is global; see processPlayerCombat for rationale.
   if (player.attackCooldown > 0) return null;
   player.attackCooldown = player.getAttackSpeed(itemDefs);
 
