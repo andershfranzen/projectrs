@@ -2252,12 +2252,21 @@ export class ChunkManager {
       if (tx0 > tx1 || tz0 > tz1) continue; // plane doesn't overlap this region
       for (let tz = tz0; tz <= tz1; tz++) {
         for (let tx = tx0; tx <= tx1; tx++) {
+          // Require tile CENTER to be inside the rotated plane footprint —
+          // matches deriveElevatedFloorTiles. Without this, a plane that
+          // barely clips a tile's edge would still register it as
+          // elevated/bridge and snap the player up by 2.7 units.
+          const tcx = tx + 0.5, tcz = tz + 0.5;
+          const lx = (tcx - px) * cosR + (tcz - pz) * sinR;
+          const lz = -(tcx - px) * sinR + (tcz - pz) * cosR;
+          if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue;
+
           const idx = tz * this.mapWidth + tx;
           const wasBlocking = this.tileTypes && BLOCKING_TILES.has(this.tileTypes[idx] as TileType);
           if (wasBlocking) {
             this.tileTypes![idx] = TileType.STONE;
           }
-          const terrainH = this.getInterpolatedHeight(tx + 0.5, tz + 0.5);
+          const terrainH = this.getInterpolatedHeight(tcx, tcz);
           if (py > terrainH) {
             const existing = this.elevatedFloorHeights.get(idx);
             if (existing === undefined || py < existing) {

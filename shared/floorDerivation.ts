@@ -226,8 +226,20 @@ export function deriveElevatedFloorTiles(
 
     for (let tz = tz0; tz <= tz1; tz++) {
       for (let tx = tx0; tx <= tx1; tx++) {
+        // Require the tile's CENTER to be inside the plane's rotated
+        // footprint. Without this, a plane whose AABB barely clips into
+        // a tile would still register the whole tile as elevated +
+        // bridge — leading to "ghost step" tiles that snap the player
+        // up by 2.7 units when they walk through. We use the inverse
+        // rotation to map the tile center into the plane's local frame
+        // and check |x| ≤ hw, |z| ≤ hd.
+        const tcx = tx + 0.5, tcz = tz + 0.5;
+        const lx = (tcx - px) * cosR + (tcz - pz) * sinR;
+        const lz = -(tcx - px) * sinR + (tcz - pz) * cosR;
+        if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue;
+
         const idx = tz * mapWidth + tx;
-        const terrainH = getTerrainHeight(tx + 0.5, tz + 0.5);
+        const terrainH = getTerrainHeight(tcx, tcz);
         if (py <= terrainH) continue;
 
         const wasBlocking = isTileBlocking ? isTileBlocking(idx) : false;

@@ -1877,7 +1877,10 @@ export class World {
     }
   }
 
-  /** Same-map teleport — moves player and sends MAP_CHANGE to force client reposition */
+  /** Same-map teleport — moves the player and sends a lightweight
+   *  PLAYER_TELEPORT packet so the client snaps position without reloading
+   *  the map / chunks / entities. Only used for in-map jumps; cross-map
+   *  transitions still go through MAP_CHANGE (handleMapTransition). */
   teleportPlayer(player: Player, x: number, z: number): void {
     const mapId = player.currentMapLevel;
     console.log(`[TP] teleportPlayer: ${player.name} on map="${mapId}" to (${x.toFixed(1)}, ${z.toFixed(1)})`);
@@ -1891,8 +1894,23 @@ export class World {
     player.currentChunkX = Math.floor(x / CHUNK_SIZE);
     player.currentChunkZ = Math.floor(z / CHUNK_SIZE);
     if (cm) cm.addEntity(player.id, x, z);
-    // Send MAP_CHANGE with the SAME map — client reloads position
-    const packet = encodeStringPacket(ServerOpcode.MAP_CHANGE, mapId, Math.round(x * 10), Math.round(z * 10));
+    // Compute server-authoritative Y at the destination + apply the same
+    // login auto-correct (snap up to elevated floor when the gate would
+    // otherwise return terrain). Reset reportedY so the next save persists
+    // the new height.
+    const map = this.getPlayerMap(player);
+    let teleportY = map.getEffectiveHeightOnFloor(x, z, player.currentFloor, player.reportedY);
+    const elevAtTile = map.getElevatedFloorHeight(x, z);
+    if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && teleportY < elevAtTile - 1.0) {
+      teleportY = elevAtTile;
+    }
+    player.reportedY = teleportY;
+    const packet = encodePacket(
+      ServerOpcode.PLAYER_TELEPORT,
+      Math.round(x * 10),
+      Math.round(z * 10),
+      Math.round(teleportY * 10),
+    );
     try { player.ws.sendBinary(packet); } catch {}
   }
 

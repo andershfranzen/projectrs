@@ -1613,6 +1613,34 @@ export class GameManager {
   }
 
   private setupMapHandlers(): void {
+    this.network.on(ServerOpcode.PLAYER_TELEPORT, (_op, values) => {
+      // Lightweight same-map teleport: snap position + reset path, no
+      // chunk/entity reload.
+      const newX = (values[0] ?? 0) / 10;
+      const newZ = (values[1] ?? 0) / 10;
+      const newY = (values[2] ?? 0) / 10;
+      this.playerX = newX;
+      this.playerZ = newZ;
+      this.path = [];
+      this.pathIndex = 0;
+      this.tileProgress = 0;
+      this.pendingPath = null;
+      this.tileFrom = { x: newX, z: newZ };
+      this.combatTargetId = -1;
+      this.isSkilling = false;
+      this.skillingObjectId = -1;
+      this.pendingSkill = null;
+      if (this.localPlayer) {
+        this.localPlayer.stopWalking();
+        this.localPlayer.setPositionXYZ(newX, newY, newZ);
+      }
+      this.inputManager.setPlayerY(newY);
+      if (this.destMarker) this.destMarker.isVisible = false;
+      if (this.interactMarker) this.interactMarker.isVisible = false;
+      this.minimap?.clearDestination();
+      // Camera will follow naturally via its target on the next tick.
+    });
+
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
       const newFloor = values[0];
       this.currentFloor = newFloor;

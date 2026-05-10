@@ -57,4 +57,8 @@ export enum ServerOpcode {
   MAP_CHANGE = 60,
   FLOOR_CHANGE = 61,
   SHOW_CHARACTER_CREATOR = 70,
+  /** Same-map teleport: snap the local player to (x, y, z) without reloading
+   *  chunks/entities/map data. Used by admin shift-click and any future
+   *  in-map TP (spell, debug). For cross-map jumps use MAP_CHANGE. */
+  PLAYER_TELEPORT = 71,
 }
