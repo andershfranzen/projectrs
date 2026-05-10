@@ -247,6 +247,10 @@ export class CharacterEntity {
   private skinMesh: AbstractMesh | null = null;
   private skinIndicesFull: Uint32Array | null = null;
   private skinIndicesNoArms: Uint32Array | null = null;
+  private skinIndicesNoLegs: Uint32Array | null = null;
+  private skinIndicesNoArmsNoLegs: Uint32Array | null = null;
+  private bodyHidden: boolean = false;
+  private legsHidden: boolean = false;
 
 
   // Modular mesh parts — keyed by mesh name for show/hide
@@ -1115,6 +1119,7 @@ export class CharacterEntity {
     this.skinnedArmorItemIds.set(slot, itemId);
     if (slot === 'head') this.setHeadVisible(false);
     if (slot === 'body') this.setBodyVisible(false);
+    if (slot === 'legs') this.setLegsVisible(false);
     console.log(`[SkinnedArmor] Attached ${kept.length} meshes in slot '${slot}' itemId=${itemId} (remapped ${armorBoneCount} bones, ${unmapped} unmatched)`);
   }
 
@@ -1127,6 +1132,7 @@ export class CharacterEntity {
     this.skinnedArmorItemIds.delete(slot);
     if (slot === 'head') this.setHeadVisible(true);
     if (slot === 'body') this.setBodyVisible(true);
+    if (slot === 'legs') this.setLegsVisible(true);
   }
 
   /**
@@ -1252,6 +1258,7 @@ export class CharacterEntity {
       this.skinnedArmorItemIds.set(slot, itemId);
       if (slot === 'head') this.setHeadVisible(false);
       if (slot === 'body') this.setBodyVisible(false);
+      if (slot === 'legs') this.setLegsVisible(false);
       console.log(`[ManualSkin] slot='${slot}' item=${itemId} primitives=${kept.length} jointsRemapped=${armorJointNames.length} unmatched=${unmapped}`);
       return true;
     } catch (e) {
@@ -1292,17 +1299,32 @@ export class CharacterEntity {
    *  remain visible. */
   setBodyVisible(visible: boolean): void {
     for (const m of this.bodyMeshes) m.setEnabled(visible);
-    if (this.skinMesh && this.skinIndicesFull && this.skinIndicesNoArms) {
-      const indices = visible ? this.skinIndicesFull : this.skinIndicesNoArms;
-      this.skinMesh.setIndices(indices, null);
-    }
+    this.bodyHidden = !visible;
+    this.applySkinIndexMask();
   }
 
-  /** Pre-compute a filtered index buffer for the Skin mesh that omits any
-   *  triangle where the average vertex weight to shoulder/upper-arm/forearm
-   *  bones exceeds 50%. Triangles spanning the wrist (one arm vert + two hand
-   *  verts) stay in the buffer; triangles entirely on arms are dropped.
-   *  Run once at character load. */
+  /** Hide leg-region triangles on the character's skin mesh while plate
+   *  legs are equipped. Pairs with setBodyVisible (arm-hide) so wearing
+   *  both pieces stacks the filters into a single index buffer. */
+  setLegsVisible(visible: boolean): void {
+    this.legsHidden = !visible;
+    this.applySkinIndexMask();
+  }
+
+  private applySkinIndexMask(): void {
+    if (!this.skinMesh || !this.skinIndicesFull) return;
+    let target: Uint32Array | null = this.skinIndicesFull;
+    if (this.bodyHidden && this.legsHidden && this.skinIndicesNoArmsNoLegs) target = this.skinIndicesNoArmsNoLegs;
+    else if (this.bodyHidden && this.skinIndicesNoArms) target = this.skinIndicesNoArms;
+    else if (this.legsHidden && this.skinIndicesNoLegs) target = this.skinIndicesNoLegs;
+    if (target) this.skinMesh.setIndices(target, null);
+  }
+
+  /** Pre-compute filtered index buffers for the Skin mesh that drop arm
+   *  triangles, leg triangles, or both. A triangle is dropped only when
+   *  ALL three vertices have a dominant bone in the target region —
+   *  triangles spanning a region boundary (e.g. wrist, ankle) stay so the
+   *  edge under the armor sleeve/cuff stays clean. Built once at load. */
   private buildSkinArmFilter(): void {
     if (!this.skinMesh || !this.skeleton) return;
     const positions = this.skinMesh.getVerticesData(VertexBuffer.PositionKind);
@@ -1315,47 +1337,53 @@ export class CharacterEntity {
       'mixamorig:LeftShoulder', 'mixamorig:LeftArm', 'mixamorig:LeftForeArm',
       'mixamorig:RightShoulder', 'mixamorig:RightArm', 'mixamorig:RightForeArm',
     ]);
+    const LEG_BONE_NAMES = new Set([
+      'mixamorig:LeftUpLeg', 'mixamorig:LeftLeg', 'mixamorig:LeftFoot', 'mixamorig:LeftToeBase',
+      'mixamorig:RightUpLeg', 'mixamorig:RightLeg', 'mixamorig:RightFoot', 'mixamorig:RightToeBase',
+    ]);
     const armIdx = new Set<number>();
+    const legIdx = new Set<number>();
     for (let i = 0; i < this.skeleton.bones.length; i++) {
-      if (ARM_BONE_NAMES.has(this.skeleton.bones[i].name)) armIdx.add(i);
+      const name = this.skeleton.bones[i].name;
+      if (ARM_BONE_NAMES.has(name)) armIdx.add(i);
+      if (LEG_BONE_NAMES.has(name)) legIdx.add(i);
     }
-    if (armIdx.size === 0) return;
 
-    // Per-vertex classification: a vertex is "arm" if its *dominant* bone
-    // (highest weight) is in the arm bone set. This uses the actual rig
-    // binding rather than weight thresholds, which gives symmetric results
-    // even when the asset's weight painting isn't perfectly mirrored across
-    // left/right.
+    // Per-vertex region classification using each vert's DOMINANT bone.
+    // Uses the actual rig binding rather than weight thresholds — symmetric
+    // even when weight painting isn't perfectly mirrored.
     const numVerts = positions.length / 3;
     const isArmVert = new Uint8Array(numVerts);
+    const isLegVert = new Uint8Array(numVerts);
     for (let v = 0; v < numVerts; v++) {
       let bestW = -1, bestJ = -1;
       for (let k = 0; k < 4; k++) {
         const w = weights[v * 4 + k];
         if (w > bestW) { bestW = w; bestJ = joints[v * 4 + k] | 0; }
       }
-      if (bestJ >= 0 && armIdx.has(bestJ)) isArmVert[v] = 1;
-    }
-
-    // Drop a triangle only if all three vertices are arm-dominant. Triangles
-    // that span the wrist (one arm vert + two hand verts, or vice versa)
-    // stay in the buffer — the hand keeps a clean edge, and the small ring
-    // of remaining arm triangles at the wrist tucks under the platebody
-    // sleeve.
-    const numTris = indices.length / 3;
-    const noArm: number[] = [];
-    let dropped = 0;
-    for (let t = 0; t < numTris; t++) {
-      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
-      if (isArmVert[a] && isArmVert[b] && isArmVert[c]) {
-        dropped++;
-      } else {
-        noArm.push(a, b, c);
+      if (bestJ >= 0) {
+        if (armIdx.has(bestJ)) isArmVert[v] = 1;
+        else if (legIdx.has(bestJ)) isLegVert[v] = 1;
       }
     }
 
+    const numTris = indices.length / 3;
+    const noArm: number[] = [];
+    const noLeg: number[] = [];
+    const noArmNoLeg: number[] = [];
+    for (let t = 0; t < numTris; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      const allArm = isArmVert[a] && isArmVert[b] && isArmVert[c];
+      const allLeg = isLegVert[a] && isLegVert[b] && isLegVert[c];
+      if (!allArm) noArm.push(a, b, c);
+      if (!allLeg) noLeg.push(a, b, c);
+      if (!allArm && !allLeg) noArmNoLeg.push(a, b, c);
+    }
+
     this.skinIndicesFull = new Uint32Array(indices as ArrayLike<number>);
-    this.skinIndicesNoArms = new Uint32Array(noArm);
+    this.skinIndicesNoArms = armIdx.size > 0 ? new Uint32Array(noArm) : null;
+    this.skinIndicesNoLegs = legIdx.size > 0 ? new Uint32Array(noLeg) : null;
+    this.skinIndicesNoArmsNoLegs = (armIdx.size > 0 && legIdx.size > 0) ? new Uint32Array(noArmNoLeg) : null;
   }
 
   setHeadVisible(visible: boolean): void {
