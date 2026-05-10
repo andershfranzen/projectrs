@@ -439,6 +439,11 @@ export class World {
         broadcastPlayerInfo(other.id, other.name);
       }
     }
+
+    // Tell nearby players about the joiner's equipment. Position-driven
+    // PLAYER_SYNC will follow on the next tick; clients cache equipment until
+    // the entity is created.
+    this.broadcastRemoteEquipment(player);
   }
 
   private cancelSkilling(playerId: number): void {
@@ -711,34 +716,68 @@ export class World {
     const map = this.getPlayerMap(player);
     // Cap path length to prevent DoS from malicious clients
     if (path.length > 200) path.length = 200;
+    // The client compresses paths to corner waypoints — only the tiles where
+    // the step direction changes are kept. We expand each segment into unit
+    // tiles and validate every intermediate tile, otherwise a crafted packet
+    // with two walkable endpoints separated by a wall would walk through it
+    // (isWallBlocked only handles dx,dz ∈ {-1,0,1}). The unit-tile expansion
+    // also becomes the moveQueue so processMovement consumes one tile/tick,
+    // which matches the client's 1.67 t/s visual interpolation exactly.
     const validPath: { x: number; z: number }[] = [];
     let prevX = player.position.x;
     let prevZ = player.position.y;
     const mapId = player.currentMapLevel;
-    // TODO(security/H3): per-step distance cap — the client compresses paths
-    // to corner waypoints (only direction-change points are kept), so a naive
-    // |dx|>1 cap rejects legitimate movement. A correct fix expands each
-    // compressed segment into unit steps and validates collision/walls at every
-    // intermediate tile. Until that lands, the server only checks endpoints —
-    // a crafted path with two walkable but non-collinear endpoints could let
-    // the client jump through walls. See gap report 2026-05-09 task #11.
-    for (const step of path) {
-      const pFloor = player.currentFloor;
-      const tileBlocked = pFloor === 0
-        ? (map.isBlocked(step.x, step.z) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, step.x, step.z)))
-        : map.isTileBlockedOnFloor(Math.floor(step.x), Math.floor(step.z), pFloor);
-      // Pass player's effective height so walls below the player don't block
-      const playerEffY = map.getEffectiveHeightOnFloor(prevX, prevZ, pFloor);
-      const wallBlocked = pFloor === 0
-        ? map.isWallBlocked(prevX, prevZ, step.x, step.z, playerEffY)
-        : map.isWallBlockedOnFloor(prevX, prevZ, step.x, step.z, pFloor);
-      if (!tileBlocked && !wallBlocked) {
-        validPath.push(step);
-        prevX = step.x;
-        prevZ = step.z;
-      } else {
-        break;
+    const pFloor = player.currentFloor;
+    // Per-segment cap: legitimate compressed corners can be far apart on a
+    // long straight, but never longer than the map's diagonal. 256 covers
+    // any practical map while bounding worst-case work per packet.
+    const MAX_SEGMENT_TILES = 256;
+    // Work in tile-index space (integers) for blocking/wall checks but emit
+    // tile-CENTER coordinates (.5 offsets) into validPath so the server's
+    // authoritative positions match what the client predicts. Without the
+    // .5 reconciliation, the server stores integer positions while the
+    // client interpolates between .5-centered waypoints — every walk leaves
+    // the two views half a tile apart, and on the next walk the server's
+    // delta calc (floor(step.x) - floor(prevX)) starts from the wrong tile,
+    // which can compound into multi-tile drift.
+    outer: for (const step of path) {
+      const targetTileX = Math.floor(step.x);
+      const targetTileZ = Math.floor(step.z);
+      const startTileX = Math.floor(prevX);
+      const startTileZ = Math.floor(prevZ);
+      const dxTotal = targetTileX - startTileX;
+      const dzTotal = targetTileZ - startTileZ;
+      const stepDX = Math.sign(dxTotal);
+      const stepDZ = Math.sign(dzTotal);
+      const distance = Math.max(Math.abs(dxTotal), Math.abs(dzTotal));
+      if (distance === 0) continue;
+      if (distance > MAX_SEGMENT_TILES) break;
+      // Diagonal compressed steps must move equally on both axes — reject
+      // anything that isn't pure cardinal or pure 45° diagonal.
+      const isDiagonal = stepDX !== 0 && stepDZ !== 0;
+      if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) break;
+      let curTileX = startTileX;
+      let curTileZ = startTileZ;
+      for (let i = 0; i < distance; i++) {
+        const nextTileX = curTileX + stepDX;
+        const nextTileZ = curTileZ + stepDZ;
+        const tileBlocked = pFloor === 0
+          ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ)))
+          : map.isTileBlockedOnFloor(nextTileX, nextTileZ, pFloor);
+        const playerEffY = map.getEffectiveHeightOnFloor(curTileX + 0.5, curTileZ + 0.5, pFloor);
+        const wallBlocked = pFloor === 0
+          ? map.isWallBlocked(curTileX, curTileZ, nextTileX, nextTileZ, playerEffY)
+          : map.isWallBlockedOnFloor(curTileX, curTileZ, nextTileX, nextTileZ, pFloor);
+        if (tileBlocked || wallBlocked) break outer;
+        // Push tile-CENTER coords to match client convention.
+        validPath.push({ x: nextTileX + 0.5, z: nextTileZ + 0.5 });
+        curTileX = nextTileX;
+        curTileZ = nextTileZ;
       }
+      // Advance prevX/Z to the *position* (tile center) we ended at, so the
+      // next compressed segment's delta is computed from a consistent base.
+      prevX = curTileX + 0.5;
+      prevZ = curTileZ + 0.5;
     }
     player.moveQueue = validPath;
   }
@@ -870,6 +909,7 @@ export class World {
       }
     }
 
+    player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
 
@@ -908,6 +948,7 @@ export class World {
       }
     }
 
+    player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
 
@@ -936,7 +977,13 @@ export class World {
       this.despawningItemIds.delete(groundItemId);
       const itemCm = this.chunkManagers.get(item.mapLevel);
       if (itemCm) itemCm.removeEntity(groundItemId);
-      this.broadcastNearby(item.mapLevel, item.x, item.z, ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0);
+      // Map-wide broadcast: a viewer who saw the drop, walked OOR, and stays
+      // away when someone else grabs it would otherwise keep the stale sprite.
+      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0);
+      for (const [, p] of this.players) {
+        if (p.currentMapLevel !== item.mapLevel) continue;
+        try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
+      }
       this.sendInventory(player);
     }
   }
@@ -967,6 +1014,7 @@ export class World {
     if (dropCm) dropCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
 
     this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
+    player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
 
@@ -1276,8 +1324,10 @@ export class World {
       }
     }
 
+    player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
     this.sendEquipment(player);
+    this.broadcastRemoteEquipment(player);
   }
 
   handlePlayerUnequip(playerId: number, equipSlotIndex: number): void {
@@ -1294,8 +1344,10 @@ export class World {
 
     if (player.addItem(itemId, 1, this.data.itemDefs).completed > 0) {
       player.equipment.delete(slotName);
+      player.setDelay(this.currentTick, 1);
       this.sendInventory(player);
       this.sendEquipment(player);
+      this.broadcastRemoteEquipment(player);
     }
   }
 
@@ -1328,10 +1380,14 @@ export class World {
   handlePlayerSetStance(playerId: number, stanceIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    // Gate through busy + a 1-tick lockout so a scripted client can't flip
+    // stance to maximize XP/damage on the same tick a swing lands.
+    if (player.isBusy(this.currentTick)) return;
 
     const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
     if (stanceIndex >= 0 && stanceIndex < stances.length) {
       player.stance = stances[stanceIndex];
+      player.setDelay(this.currentTick, 1);
     }
   }
 
@@ -1388,8 +1444,12 @@ export class World {
         const next = player.moveQueue[0];
         const map = this.getPlayerMap(player);
         const pFloor = player.currentFloor;
+        // Pass effective height so a wall edge below an elevated walkable
+        // tile doesn't spuriously truncate the queue. Mirrors the elevation
+        // gating used during path validation in handlePlayerMove.
+        const playerEffY = map.getEffectiveHeightOnFloor(player.position.x, player.position.y, pFloor);
         const wallBlocked = pFloor === 0
-          ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z)
+          ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, playerEffY)
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
         if (wallBlocked) {
           player.moveQueue = [];
@@ -1857,7 +1917,15 @@ export class World {
         this.groundItems.delete(id);
         const despawnCm = this.chunkManagers.get(item.mapLevel);
         if (despawnCm) despawnCm.removeEntity(id);
-        this.broadcastNearby(item.mapLevel, item.x, item.z, ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0);
+        // Despawns must reach EVERY player on the map, not just nearby ones.
+        // A player who saw the drop and then walked OOR keeps a stale local
+        // sprite if the despawn is filtered by chunk proximity. Cost is
+        // negligible — items despawn at ~200-tick intervals.
+        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0);
+        for (const [, p] of this.players) {
+          if (p.currentMapLevel !== item.mapLevel) continue;
+          try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
+        }
       }
     }
   }
@@ -2096,7 +2164,14 @@ export class World {
           if (npkt) { viewer.ws.sendBinary(npkt); return; }
           if (!chunkChanged || eid === viewer.id) return;
           const subject = this.players.get(eid);
-          if (subject) { this.sendPlayerUpdate(viewer, subject); return; }
+          if (subject) {
+            this.sendPlayerUpdate(viewer, subject);
+            // Equipment isn't part of PLAYER_SYNC (it'd bloat every position
+            // tick), so push it as a separate packet on chunk entry. Matches
+            // what we do for world-object state — full sync on chunk change.
+            this.sendRemoteEquipment(viewer, subject);
+            return;
+          }
           const npc = this.npcs.get(eid);
           if (npc && !npc.dead) { this.sendNpcUpdate(viewer, npc); return; }
           // Re-sync world objects on chunk transitions. Without this, a player
@@ -2105,7 +2180,14 @@ export class World {
           // WORLD_OBJECT_DEPLETED broadcast keeps a stale local state and
           // can't interact correctly until they re-login.
           const obj = this.worldObjects.get(eid);
-          if (obj) this.sendWorldObjectUpdate(viewer, obj);
+          if (obj) { this.sendWorldObjectUpdate(viewer, obj); return; }
+          // Re-sync ground items too — a player who saw a drop, walked OOR,
+          // and walked back would otherwise keep the stale local sprite for
+          // an item the server has already despawned (or vice versa).
+          const item = this.groundItems.get(eid);
+          if (item && item.mapLevel === viewer.currentMapLevel) {
+            this.sendGroundItemUpdate(viewer, item);
+          }
         });
       } catch { /* connection closed */ }
     }
@@ -2233,6 +2315,36 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.PLAYER_EQUIPMENT_BATCH, ...values);
   }
 
+  /** Build PLAYER_REMOTE_EQUIPMENT packet for a subject player. Layout:
+   *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape] */
+  private encodeRemoteEquipment(subject: Player): Uint8Array {
+    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+    const values: number[] = [subject.id];
+    for (let i = 0; i < slotNames.length; i++) {
+      values.push(subject.equipment.get(slotNames[i]) ?? 0);
+    }
+    return encodePacket(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, ...values);
+  }
+
+  /** Send a subject player's equipment to one viewer (for chunk-entry resync). */
+  private sendRemoteEquipment(viewer: Player, subject: Player): void {
+    try { viewer.ws.sendBinary(this.encodeRemoteEquipment(subject)); } catch { /* connection closed */ }
+  }
+
+  /** Broadcast a subject player's equipment to every viewer near them on the
+   *  same map. Called on equip/unequip so other clients see gear changes. */
+  private broadcastRemoteEquipment(subject: Player): void {
+    const cm = this.chunkManagers.get(subject.currentMapLevel);
+    if (!cm) return;
+    const packet = this.encodeRemoteEquipment(subject);
+    cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
+      if (pid === subject.id) return;
+      const viewer = this.players.get(pid);
+      if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+    });
+  }
+
   private sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void {
     try {
       player.ws.sendBinary(encodePacket(opcode, ...values));
@@ -2243,7 +2355,8 @@ export class World {
     return this.players.get(id);
   }
 
-  /** Convenience: get the 'overworld' map (used by legacy callers) */
+  /** Convenience: get the default ('kcmap') map. Used by legacy callers
+   *  that pre-date the multi-map system. */
   get map(): GameMap {
     return this.getMap('kcmap');
   }

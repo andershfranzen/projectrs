@@ -17,7 +17,7 @@ A multiplayer browser MMORPG inspired by RuneScape Classic. Built with Bun, Type
 - **Editor:** Vite + TypeScript (2D canvas-based map editor)
 - **3D Style:** Low-poly terrain with 2D billboard sprites + 3D models (GLB)
 - **Protocol:** Binary WebSocket (opcode + int16 values)
-- **Maps:** Two formats coexist — PNG-based (legacy `overworld`, `underground`) and chunked JSON (KC editor — `kcmap`, `the_sultans_mine`)
+- **Maps:** Two formats coexist — PNG-based (legacy `underground`) and chunked JSON (KC editor — `kcmap`, `the_sultans_mine`)
 
 ## Windows Setup
 

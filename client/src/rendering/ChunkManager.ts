@@ -159,6 +159,14 @@ export class ChunkManager {
   private templateBaseMatrices: Map<string, { sourceMesh: Mesh; baseMatrix: Matrix }[]> = new Map();
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
 
+  /** Increments on every loadMap call. After each await inside loadMap, the
+   *  function checks `this.loadMapToken === myToken` and returns early if a
+   *  newer load has started. Without this, the initial loadMap('kcmap') in
+   *  GameManager constructor races with handleMapChange's loadMap(actualMap),
+   *  and the older async resumption stomps on the newer state — placed
+   *  objects get wiped, chunks render terrain only. */
+  private loadMapToken: number = 0;
+
   constructor(scene: Scene) {
     this.scene = scene;
   }
@@ -170,6 +178,8 @@ export class ChunkManager {
 
   /** Load map data from server via HTTP */
   async loadMap(mapId: string): Promise<void> {
+    const myToken = ++this.loadMapToken;
+    const isStale = () => this.loadMapToken !== myToken;
     this.disposeAll();
     this.loaded = false;
     this.mapId = mapId;
@@ -178,13 +188,17 @@ export class ChunkManager {
 
     // Fetch meta
     const metaRes = await fetch(`/maps/${mapId}/meta.json${cacheBust}`);
+    if (isStale()) return;
     this.meta = await metaRes.json() as MapMeta;
+    if (isStale()) return;
     this.mapWidth = this.meta.width;
     this.mapHeight = this.meta.height;
 
     // Fetch KC map data — request chunked mode (metadata only, no tiles/heights)
     const mapRes = await fetch(`/maps/${mapId}/map.json${cacheBust}&chunked=1`);
+    if (isStale()) return;
     const mapFile: KCMapFile = await mapRes.json();
+    if (isStale()) return;
     this.mapData = mapFile.map;
     this.activeChunks = Array.isArray(this.mapData.activeChunks)
       ? new Set(this.mapData.activeChunks)
@@ -243,8 +257,10 @@ export class ChunkManager {
     this.currentFloor = 0;
     try {
       const wallsRes = await fetch(`/maps/${mapId}/walls.json${cacheBust}`);
+      if (isStale()) return;
       if (wallsRes.ok) {
         const wallsData: WallsFile = await wallsRes.json();
+        if (isStale()) return;
         const parseKey = (key: string): number | null => {
           const [xStr, zStr] = key.split(',');
           const x = parseInt(xStr);
@@ -341,6 +357,7 @@ export class ChunkManager {
 
     // Load asset/texture registry before marking loaded so chunk texture overlays work immediately
     await this.loadAssetRegistry();
+    if (isStale()) return;
 
     // Register horizontal texture planes as walkable floors (bridges, platforms)
     // Only run if we have tile data loaded (legacy mode) — in chunked mode this runs after chunks load

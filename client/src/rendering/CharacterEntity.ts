@@ -238,6 +238,9 @@ export class CharacterEntity {
   // The character GLB exports torso/belt as separate primitives keyed by
   // material name; we identify them here and toggle their visibility together.
   private bodyMeshes: AbstractMesh[] = [];
+  /** Pants + socks mesh primitives — hidden when plate legs are equipped
+   *  so the character's bare legs don't poke through the armor. */
+  private legMeshes: AbstractMesh[] = [];
 
   // The "Skin" primitive — single mesh covering face, arms, hands, legs.
   // We pre-compute two index buffers: the original (full skin) and a
@@ -275,6 +278,12 @@ export class CharacterEntity {
   private chatBubbleEl: HTMLDivElement | null = null;
   private chatBubbleTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // Persistent label (e.g. player name) — HTML overlay, projected like the
+  // health bar and chat bubble. Optional; only created when options.label set.
+  private labelEl: HTMLDivElement | null = null;
+  private labelText: string = '';
+  private labelColor: string = '#ffffff';
+
   // Ready state
   private _ready: boolean = false;
   private _readyPromise: Promise<void>;
@@ -286,6 +295,10 @@ export class CharacterEntity {
     this._readyPromise = new Promise((resolve) => {
       this._resolveReady = resolve;
     });
+    if (options.label) {
+      this.labelColor = options.labelColor ?? '#ffffff';
+      this.setLabel(options.label);
+    }
     this.load(options);
   }
 
@@ -434,6 +447,9 @@ export class CharacterEntity {
       // splits "main character" into many primitives, one per material — so
       // we filter by material name (Shirt + variants + belt).
       const BODY_MATERIAL_NAMES = new Set(['shirt', 'shirt openings', 'mat_4550', 'belt']);
+      // Only `pants` is the leg cover — `socks` are the feet/ankle visual
+      // and stay visible. Plate legs cover thighs + shins, not feet.
+      const LEG_MATERIAL_NAMES = new Set(['pants']);
       for (const mesh of this.meshes) {
         const n = mesh.name;
         if (n.startsWith('M_hair_')) {
@@ -443,6 +459,10 @@ export class CharacterEntity {
         const matBase = mesh.material?.name.replace(/_flat$/, '').replace(/\.\d+$/, '').toLowerCase() ?? '';
         if (BODY_MATERIAL_NAMES.has(matBase)) {
           this.bodyMeshes.push(mesh);
+          continue;
+        }
+        if (LEG_MATERIAL_NAMES.has(matBase)) {
+          this.legMeshes.push(mesh);
           continue;
         }
         if (matBase === 'skin') {
@@ -1125,10 +1145,9 @@ export class CharacterEntity {
 
   detachSkinnedArmor(slot: string): void {
     const meshes = this.skinnedArmorMeshes.get(slot);
-    if (meshes) {
-      for (const mesh of meshes) mesh.dispose();
-      this.skinnedArmorMeshes.delete(slot);
-    }
+    if (!meshes) return; // Nothing was attached — skip the visibility toggles.
+    for (const mesh of meshes) mesh.dispose();
+    this.skinnedArmorMeshes.delete(slot);
     this.skinnedArmorItemIds.delete(slot);
     if (slot === 'head') this.setHeadVisible(true);
     if (slot === 'body') this.setBodyVisible(true);
@@ -1303,10 +1322,12 @@ export class CharacterEntity {
     this.applySkinIndexMask();
   }
 
-  /** Hide leg-region triangles on the character's skin mesh while plate
-   *  legs are equipped. Pairs with setBodyVisible (arm-hide) so wearing
-   *  both pieces stacks the filters into a single index buffer. */
+  /** Hide leg-region triangles on the character's skin mesh AND the pants/
+   *  socks mesh primitives while plate legs are equipped. Pairs with
+   *  setBodyVisible (arm-hide); wearing both stacks the skin-mesh filters
+   *  into a single index buffer. */
   setLegsVisible(visible: boolean): void {
+    for (const m of this.legMeshes) m.setEnabled(visible);
     this.legsHidden = !visible;
     this.applySkinIndexMask();
   }
@@ -1337,9 +1358,13 @@ export class CharacterEntity {
       'mixamorig:LeftShoulder', 'mixamorig:LeftArm', 'mixamorig:LeftForeArm',
       'mixamorig:RightShoulder', 'mixamorig:RightArm', 'mixamorig:RightForeArm',
     ]);
+    // Plate legs cover thighs + shins, not feet. Leaving Foot / ToeBase
+    // out of the leg-bone set keeps the skin-mesh foot triangles visible
+    // so the feet aren't accidentally hidden. Feet are the `feet` slot's
+    // responsibility (boots).
     const LEG_BONE_NAMES = new Set([
-      'mixamorig:LeftUpLeg', 'mixamorig:LeftLeg', 'mixamorig:LeftFoot', 'mixamorig:LeftToeBase',
-      'mixamorig:RightUpLeg', 'mixamorig:RightLeg', 'mixamorig:RightFoot', 'mixamorig:RightToeBase',
+      'mixamorig:LeftUpLeg', 'mixamorig:LeftLeg',
+      'mixamorig:RightUpLeg', 'mixamorig:RightLeg',
     ]);
     const armIdx = new Set<number>();
     const legIdx = new Set<number>();
@@ -1396,14 +1421,17 @@ export class CharacterEntity {
       for (const mesh of this.headMeshes) {
         mesh.setEnabled(false);
       }
-    } else if (this.lastAppearance) {
-      // Re-apply correct hair style instead of enabling all variants
-      for (let i = 1; i <= HAIR_STYLE_COUNT; i++) {
-        this.modularMeshes.get(`M_hair_${i}`)?.setEnabled(this.lastAppearance.hairStyle === i);
-      }
     } else {
+      // Re-enable face / non-hair head meshes...
       for (const mesh of this.headMeshes) {
-        mesh.setEnabled(true);
+        if (!mesh.name.startsWith('M_hair_')) mesh.setEnabled(true);
+      }
+      // ...and exactly one hair style. Default to 1 if no appearance set yet
+      // — without this fallback, a no-appearance character was getting every
+      // M_hair_N enabled at once because headMeshes contains all of them.
+      const hairStyle = this.lastAppearance?.hairStyle ?? 1;
+      for (let i = 1; i <= HAIR_STYLE_COUNT; i++) {
+        this.modularMeshes.get(`M_hair_${i}`)?.setEnabled(i === hairStyle);
       }
     }
     this.setHelmetHairMorph(false);
@@ -1616,6 +1644,52 @@ export class CharacterEntity {
     return this.chatBubbleEl !== null;
   }
 
+  /** Set or update the persistent name label rendered above the head. Pass
+   *  empty string to clear. */
+  setLabel(text: string): void {
+    this.labelText = text;
+    if (!text) {
+      if (this.labelEl) {
+        this.labelEl.remove();
+        this.labelEl = null;
+      }
+      return;
+    }
+    if (!this.labelEl) {
+      const el = document.createElement('div');
+      el.className = 'character-name-overlay';
+      el.style.cssText = `
+        position: fixed; pointer-events: none; z-index: 150;
+        font-family: monospace; font-size: 12px;
+        color: ${this.labelColor};
+        white-space: nowrap;
+        transform: translate(-50%, -100%);
+        text-shadow: 1px 1px 2px rgba(0,0,0,0.85);
+      `;
+      document.body.appendChild(el);
+      this.labelEl = el;
+    } else {
+      this.labelEl.style.color = this.labelColor;
+    }
+    this.labelEl.textContent = text;
+  }
+
+  /** World-space anchor for the name label — sits above the chat bubble's slot
+   *  so they don't overlap when both are visible. */
+  getLabelWorldPos(out?: Vector3): Vector3 | null {
+    if (!this.labelEl) return null;
+    const v = out ?? new Vector3();
+    v.set(this._position.x, this._position.y + this.yOffset * 2 + 0.95, this._position.z);
+    return v;
+  }
+
+  updateLabelScreenPos(screenX: number, screenY: number): void {
+    if (this.labelEl) {
+      this.labelEl.style.left = `${screenX}px`;
+      this.labelEl.style.top = `${screenY}px`;
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Picking / mesh access
   // ---------------------------------------------------------------------------
@@ -1776,6 +1850,7 @@ export class CharacterEntity {
   dispose(): void {
     this.hideChatBubble();
     this.hideHealthBar();
+    this.setLabel('');
     this.detachAllGear();
 
     // Stop all animations
@@ -1792,6 +1867,7 @@ export class CharacterEntity {
     this.meshes = [];
     this.headMeshes = [];
     this.bodyMeshes = [];
+    this.legMeshes = [];
     this.skinMesh = null;
     this.skinIndicesFull = null;
     this.skinIndicesNoArms = null;

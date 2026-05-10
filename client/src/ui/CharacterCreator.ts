@@ -16,6 +16,11 @@ import { Vector3, Color3 } from '@babylonjs/core/Maths/math';
 import type { Observer } from '@babylonjs/core/Misc/observable';
 import type { Camera } from '@babylonjs/core/Cameras/camera';
 import { CharacterEntity } from '../rendering/CharacterEntity';
+// Side-effect import: extends AbstractEngine.prototype with registerView /
+// unRegisterView. Without this, the multi-canvas preview throws
+// "engine.registerView is not a function" because individual Babylon imports
+// don't pull in this prototype patch.
+import '@babylonjs/core/Engines/AbstractEngine/abstractEngine.views';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
 

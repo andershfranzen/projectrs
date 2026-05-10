@@ -361,11 +361,10 @@ export class Player extends Entity {
   }
 
   processMovement(currentTick: number): void {
-    // Process 2 waypoints per tick (~3.33 tiles/sec) so the server stays ahead
-    // of the client's 3.0-tile/sec interpolation. Doors and other adjacency-
-    // gated interactions fire as soon as the visual character arrives instead
-    // of lagging by ~600 ms.
-    for (let i = 0; i < 2 && this.moveQueue.length > 0; i++) {
+    // One unit tile per tick = 1.67 t/s, matching the client's visual interp.
+    // moveQueue is unit-tile expanded by handlePlayerMove (server-side path
+    // validation), so each shift here is a 1-tile step.
+    if (this.moveQueue.length > 0) {
       const target = this.moveQueue.shift()!;
       this.position.x = target.x;
       this.position.y = target.z;

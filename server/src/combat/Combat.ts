@@ -94,6 +94,11 @@ export function processPlayerCombat(
   const levelUps: { skill: string; level: number }[] = [];
 
   if (actual > 0) {
+    // Snapshot HP level BEFORE addXp calls — addXp auto-awards 1/3 HP XP for
+    // combat skills, so the level may bump during these calls. Capturing
+    // after would always read the post-mutation level and never detect
+    // level-up.
+    const oldHpLevel = player.skills.hitpoints.level;
     const stanceXp = STANCE_XP[player.stance];
     if (stanceXp.accuracy > 0) {
       const amt = actual * stanceXp.accuracy;
@@ -113,8 +118,6 @@ export function processPlayerCombat(
       xpDrops.push({ skill: 'defence', amount: Math.floor(amt) });
       if (r.leveled) levelUps.push({ skill: 'defence', level: r.newLevel });
     }
-    // HP XP is auto-awarded by addXp for combat skills — check if HP leveled
-    const oldHpLevel = player.skills.hitpoints.level;
     if (player.skills.hitpoints.level > oldHpLevel) {
       levelUps.push({ skill: 'hitpoints', level: player.skills.hitpoints.level });
     }
@@ -202,10 +205,16 @@ export function processPlayerRangedCombat(
   const levelUps: { skill: string; level: number }[] = [];
 
   if (actual > 0) {
+    // Snapshot HP level BEFORE addXp — addXp auto-awards 1/3 HP XP for combat
+    // skills, so capturing after would never detect a level-up.
+    const oldHpLevel = player.skills.hitpoints.level;
     const amt = actual * 4;
     const r = addXp(player.skills, 'archery', amt);
     xpDrops.push({ skill: 'archery', amount: Math.floor(amt) });
     if (r.leveled) levelUps.push({ skill: 'archery', level: r.newLevel });
+    if (player.skills.hitpoints.level > oldHpLevel) {
+      levelUps.push({ skill: 'hitpoints', level: player.skills.hitpoints.level });
+    }
 
     npc.addHeroPoints(player.id, actual);
     player.syncHealthFromSkills();

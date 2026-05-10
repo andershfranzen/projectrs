@@ -19,9 +19,9 @@
     {
       "tileX": 128,
       "tileZ": 128,
-      "targetMap": "overworld",
-      "targetX": 750.5,
-      "targetZ": 722.5
+      "targetMap": "kcmap",
+      "targetX": 96.5,
+      "targetZ": 96.5
     }
   ]
 }

@@ -61,4 +61,9 @@ export enum ServerOpcode {
    *  chunks/entities/map data. Used by admin shift-click and any future
    *  in-map TP (spell, debug). For cross-map jumps use MAP_CHANGE. */
   PLAYER_TELEPORT = 71,
+  /** Equipment of a remote player (not the receiver). Layout:
+   *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape].
+   *  Sent on equip/unequip changes and on chunk-entry resync so remote
+   *  CharacterEntities can render gear. itemId=0 for empty slots. */
+  PLAYER_REMOTE_EQUIPMENT = 72,
 }

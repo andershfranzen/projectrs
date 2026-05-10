@@ -4778,8 +4778,8 @@ function applyToolAtTile(tile, eventLike = null) {
       if (data.ok && data.maps) {
         // Sort: kcmap first, then other surface maps, then underground/dungeons last
         const primary = data.maps.filter(m => m.id === 'kcmap')
-        const surface = data.maps.filter(m => m.id !== 'kcmap' && m.id !== 'underground' && m.id !== 'overworld')
-        const legacy = data.maps.filter(m => m.id === 'underground' || m.id === 'overworld')
+        const surface = data.maps.filter(m => m.id !== 'kcmap' && m.id !== 'underground')
+        const legacy = data.maps.filter(m => m.id === 'underground')
         let html = ''
         if (primary.length) {
           html += primary.map(m => `<option value="${m.id}">${m.name || m.id} (${m.width}x${m.height})</option>`).join('')

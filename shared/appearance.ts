@@ -131,6 +131,20 @@ export function isValidAppearance(a: PlayerAppearance): boolean {
   );
 }
 
+/** Shallow equality on every PlayerAppearance field. */
+export function appearanceEquals(a: PlayerAppearance | null, b: PlayerAppearance | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.shirtColor === b.shirtColor
+    && a.pantsColor === b.pantsColor
+    && a.shoesColor === b.shoesColor
+    && a.hairColor === b.hairColor
+    && a.beltColor === b.beltColor
+    && a.skinColor === b.skinColor
+    && a.hairStyle === b.hairStyle
+    && a.gearColor === b.gearColor;
+}
+
 /** Fill in missing fields from older saved appearances (backwards compat) */
 export function normalizeAppearance(a: Partial<PlayerAppearance>): PlayerAppearance {
   return {

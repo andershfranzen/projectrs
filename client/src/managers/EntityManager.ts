@@ -2,6 +2,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { Vector3, Color3 } from '@babylonjs/core/Maths/math';
 import { SpriteEntity, loadDirectionalSprites, loadAnimationSprites, load8DirAnimationSprites, type DirectionalSpriteSet, type AnimationSpriteSet } from '../rendering/SpriteEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
+import { CharacterEntity } from '../rendering/CharacterEntity';
 import { loadRecoloredDirectionalSprites, loadRecolored8DirAnimationSprites, type RecolorConfig } from '../rendering/SpriteRecolor';
 import { NPC_COLORS, NPC_NAMES, NPC_SIZES, NPC_3D_MODELS } from '../data/NpcConfig';
 import type { ItemDef, PlayerAppearance } from '@projectrs/shared';
@@ -90,12 +91,22 @@ export class EntityManager {
   readonly npcAttackAnims: Map<number, AnimationSpriteSet> = new Map();
   readonly npcWalkAnims: Map<number, AnimationSpriteSet> = new Map();
 
-  // Remote players
-  readonly remotePlayers: Map<number, SpriteEntity> = new Map();
+  // Remote players — 3D CharacterEntities. Equipment is loaded by GameManager
+  // on PLAYER_REMOTE_EQUIPMENT (cached in remoteEquipment until the entity is
+  // ready). Appearance is similarly cached in remoteAppearances and applied
+  // via whenReady().
+  readonly remotePlayers: Map<number, CharacterEntity> = new Map();
   readonly remoteTargets: Map<number, { x: number; z: number }> = new Map();
+  /** Wall-clock timestamp until which the entity is treated as still
+   *  walking, even if its current visual position has caught up to the
+   *  latest server target. Bridges the ~600 ms gap between server ticks
+   *  so the walk animation doesn't briefly drop to idle between steps. */
+  readonly remoteWalkUntil: Map<number, number> = new Map();
   readonly playerNames: Map<number, string> = new Map();
   readonly nameToEntityId: Map<string, number> = new Map();
   readonly remoteAppearances: Map<number, PlayerAppearance> = new Map();
+  /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape]. */
+  readonly remoteEquipment: Map<number, number[]> = new Map();
   readonly remoteCombatTargets: Map<number, number> = new Map();
 
   // NPCs
@@ -117,61 +128,40 @@ export class EntityManager {
   // --- Sprite loading ---
 
   async loadPlayerSprites(): Promise<void> {
+    // Remote players are now 3D CharacterEntities with their own animations
+    // (loaded from /Character models/). These sprite/animation assets are
+    // still loaded here because some humanoid NPCs (goblin, guard,
+    // shopkeeper, …) reuse the player sprite via NPC_SPRITE_CONFIG.
     try {
       this.playerSprites = await loadDirectionalSprites(this.scene, '/sprites/player', 'player');
-      console.log('Player directional sprites loaded');
-      for (const [, sprite] of this.remotePlayers) {
-        this.upgradeToDirectionalSprite(sprite);
-      }
+      console.log('Player directional sprites loaded (NPC use)');
     } catch (e) {
-      console.warn('Failed to load player sprites, using fallback:', e);
+      console.warn('Failed to load player sprites:', e);
     }
 
     try {
       this.playerWalkAnim = await load8DirAnimationSprites(this.scene, '/sprites/player/walk', 'player_walk', 4);
-      console.log('Player walk animation loaded');
-      for (const [, sprite] of this.remotePlayers) sprite.setWalkAnimation(this.playerWalkAnim);
     } catch (e) {
       console.warn('Failed to load player walk animation:', e);
     }
 
     try {
       this.playerPunchAnim = await load8DirAnimationSprites(this.scene, '/sprites/player/punch', 'player_punch', 4);
-      console.log('Player punch animation loaded');
-      for (const [, sprite] of this.remotePlayers) this.attachPlayerAttackAnims(sprite);
     } catch (e) {
       console.warn('Failed to load player punch animation:', e);
     }
 
     try {
       this.playerKickAnim = await loadAnimationSprites(this.scene, '/sprites/player/kick', 'player_kick', 4);
-      console.log('Player kick animation loaded');
-      for (const [, sprite] of this.remotePlayers) this.attachPlayerAttackAnims(sprite);
     } catch (e) {
       console.warn('Failed to load player kick animation:', e);
     }
 
     try {
       this.playerSwordAnim = await loadAnimationSprites(this.scene, '/sprites/player/sword', 'player_sword', 4);
-      console.log('Player sword animation loaded');
-      for (const [, sprite] of this.remotePlayers) this.attachPlayerAttackAnims(sprite);
     } catch (e) {
       console.warn('Failed to load player sword animation:', e);
     }
-  }
-
-  attachPlayerAttackAnims(sprite: SpriteEntity | null): void {
-    if (!sprite) return;
-    if (this.playerPunchAnim) sprite.addAttackAnimation('punch', this.playerPunchAnim);
-    if (this.playerKickAnim) sprite.addAttackAnimation('kick', this.playerKickAnim);
-    if (this.playerSwordAnim) sprite.addAttackAnimation('sword', this.playerSwordAnim);
-  }
-
-  upgradeToDirectionalSprite(sprite: SpriteEntity): void {
-    if (!this.playerSprites) return;
-    sprite.setDirectionalSprites(this.playerSprites);
-    if (this.playerWalkAnim) sprite.setWalkAnimation(this.playerWalkAnim);
-    this.attachPlayerAttackAnims(sprite);
   }
 
   async loadNpcSprites(): Promise<void> {
@@ -259,23 +249,29 @@ export class EntityManager {
 
   // --- Entity creation ---
 
-  createRemotePlayer(entityId: number, x: number, z: number, name: string): SpriteEntity {
-    const sprite = new SpriteEntity(this.scene, {
+  createRemotePlayer(entityId: number, x: number, z: number, name: string): CharacterEntity {
+    const character = new CharacterEntity(this.scene, {
       name: `player_${entityId}`,
-      color: new Color3(0.8, 0.2, 0.2),
-      width: 1.6,
-      height: 2.8,
+      modelPath: '/Character models/main character.glb',
+      targetHeight: 1.53,
       label: name,
       labelColor: '#ffffff',
-      directionalSprites: this.playerSprites ?? undefined,
+      additionalAnimations: [
+        { name: 'idle',                    path: '/Character models/new animations/idle.glb' },
+        { name: 'walk',                    path: '/Character models/new animations/walk.glb' },
+        { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
+        { name: 'attack_slash_aggressive', path: '/Character models/new animations/attack_slash.glb' },
+        { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
+        { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
+        { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
+        { name: 'mine',                    path: '/Character models/new animations/great_sword_slash.glb' },
+      ],
     });
     // Spawn at terrain height — pass currentY=0 so the elevation gate
     // doesn't snap a remote player up to a roof above their actual tile.
-    sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);
-    this.remotePlayers.set(entityId, sprite);
-    if (this.playerWalkAnim) sprite.setWalkAnimation(this.playerWalkAnim);
-    this.attachPlayerAttackAnims(sprite);
-    return sprite;
+    character.setPositionXYZ(x, this.getHeight(x, z, 0), z);
+    this.remotePlayers.set(entityId, character);
+    return character;
   }
 
   createNpc(entityId: number, defId: number, x: number, z: number): SpriteEntity | Npc3DEntity {
@@ -343,12 +339,14 @@ export class EntityManager {
   // --- Entity removal ---
 
   removeRemotePlayer(entityId: number): void {
-    const sprite = this.remotePlayers.get(entityId);
-    if (sprite) {
-      sprite.dispose();
+    const character = this.remotePlayers.get(entityId);
+    if (character) {
+      character.dispose();
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
+      this.remoteWalkUntil.delete(entityId);
       this.remoteAppearances.delete(entityId);
+      this.remoteEquipment.delete(entityId);
       const name = this.playerNames.get(entityId);
       if (name) this.nameToEntityId.delete(name.toLowerCase());
       this.playerNames.delete(entityId);
@@ -393,6 +391,7 @@ export class EntityManager {
   }
 
   interpolateRemotePlayers(dt: number, camPos: Vector3 | null): void {
+    const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
       const target = this.remoteTargets.get(entityId);
       if (!target) continue;
@@ -400,13 +399,27 @@ export class EntityManager {
       const dx = target.x - c.x;
       const dz = target.z - c.z;
       const dist = Math.hypot(dx, dz);
+      // "Server still says they're walking" if a recent PLAYER_SYNC bumped
+      // remoteWalkUntil. Without this grace window, the walk anim drops to
+      // idle for the frame between reaching tile N and receiving the sync
+      // for tile N+1 — visible as a hitch every 600 ms.
+      const serverWalking = (this.remoteWalkUntil.get(entityId) ?? 0) > now;
       if (dist > 0.05) {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
-        const step = Math.min(1.67 * dt, dist);
-        const nx = c.x + (dx / dist) * step;
-        const nz = c.z + (dz / dist) * step;
+        // Server advances 1 tile per tick (Chebyshev), so diagonals cover
+        // sqrt(2) euclidean per 0.6 s. Match that pacing — using a flat
+        // 1.67 u/s euclidean cap would lag diagonal-walking remote players
+        // behind their actual server position.
+        const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
+        const stepRatio = Math.min(1.67 * dt / Math.max(tileSteps, 0.001), 1);
+        const nx = c.x + dx * stepRatio;
+        const nz = c.z + dz * stepRatio;
         sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
+      } else if (serverWalking) {
+        // Visual caught up but the server is still sending move updates —
+        // keep the walk loop running so we don't flicker to idle.
+        if (!sprite.isWalking()) sprite.startWalking();
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
         const combatTarget = this.remoteCombatTargets.get(entityId);
@@ -443,11 +456,14 @@ export class EntityManager {
       if (dist > 0.05) {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
-        // Move at ~1 tile per tick so the NPC arrives right as the next update comes
+        // Server advances 1 tile per tick regardless of direction. Use
+        // Chebyshev distance so diagonals finish in 1 tick same as cardinals
+        // — Euclidean would underrun diagonals and cause visible drift.
         const speed = serverMoving ? EntityManager.NPC_TILES_PER_SEC : 3.0;
-        const step = Math.min(speed * dt, dist);
-        const nx = c.x + (dx / dist) * step;
-        const nz = c.z + (dz / dist) * step;
+        const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
+        const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
+        const nx = c.x + dx * stepRatio;
+        const nz = c.z + dz * stepRatio;
         // Use the NPC's own current Y as gate input so a rat in the basement
         // doesn't get snapped up to the floor above just because the local
         // player is up there. Each entity carries its own elevation context.
@@ -501,10 +517,12 @@ export class EntityManager {
   // --- Lifecycle ---
 
   disposeAllEntities(): void {
-    for (const [, sprite] of this.remotePlayers) sprite.dispose();
+    for (const [, character] of this.remotePlayers) character.dispose();
     this.remotePlayers.clear();
     this.remoteTargets.clear();
+    this.remoteWalkUntil.clear();
     this.remoteAppearances.clear();
+    this.remoteEquipment.clear();
 
     for (const [, sprite] of this.npcSprites) sprite.dispose();
     this.npcSprites.clear();

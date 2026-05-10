@@ -36,7 +36,7 @@ import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -99,6 +99,13 @@ export class GameManager {
   private gearTemplateCache: Map<string, GearTemplate> = new Map();
   private gearLoadingPromises: Map<string, Promise<GearTemplate | null>> = new Map();
   private gearOverrides: Map<number, GearOverride> = new Map();
+  /** Resolves when /data/gear-overrides.json has finished loading (or
+   *  failed). All gear-attach paths await this before reading gearOverrides
+   *  — without that, a PLAYER_EQUIPMENT_BATCH that arrives before the JSON
+   *  fetch completes would build GearDef from EQUIP_SLOT_BONES defaults and
+   *  cache that template, so saved geardebug rigging never gets applied. */
+  private gearOverridesReady: Promise<void> = Promise.resolve();
+  private resolveGearOverridesReady: () => void = () => {};
 
   // Combat follow (local player follows melee target)
   private combatTargetId: number = -1;
@@ -175,6 +182,7 @@ export class GameManager {
 
   constructor(canvas: HTMLCanvasElement, token: string, username: string, onDisconnect?: () => void) {
     (window as any).gm = this;
+    this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
     this.username = username;
 
@@ -292,21 +300,12 @@ export class GameManager {
           const name = data.name!;
           this.entities.playerNames.set(entityId, name);
           this.entities.nameToEntityId.set(name.toLowerCase(), entityId);
+          // If the remote 3D character was created with a fallback name
+          // (chat 'player_info' arrived after PLAYER_SYNC), update its
+          // label in place — re-creating the CharacterEntity to swap the
+          // label is far too expensive.
           const existing = this.entities.remotePlayers.get(entityId);
-          if (existing) {
-            const target = this.entities.remoteTargets.get(entityId);
-            existing.dispose();
-            const sprite = new SpriteEntity(this.scene, {
-              name: `player_${entityId}`,
-              color: new Color3(0.8, 0.2, 0.2),
-              label: name,
-              labelColor: '#ffffff',
-            });
-            if (target) {
-              sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z), target.z);
-            }
-            this.entities.remotePlayers.set(entityId, sprite);
-          }
+          if (existing) existing.setLabel(name);
           break;
         }
         case 'local': {
@@ -548,6 +547,11 @@ export class GameManager {
     } catch (e) {
       console.warn('Failed to load gear overrides:', e);
     }
+    // Unblock any equip calls that came in before this fetch finished.
+    // Without this gate, applyGearToCharacter would build a GearDef from
+    // EQUIP_SLOT_BONES defaults (gearOverrides empty) and cache that template
+    // — saved geardebug rigging would never make it into the visual.
+    this.resolveGearOverridesReady();
   }
 
   /** Rebuild blockedObjectTiles from all known world objects. */
@@ -723,6 +727,20 @@ export class GameManager {
     });
   }
 
+  /** Apply an equipment-slot array (matches PLAYER_REMOTE_EQUIPMENT layout)
+   *  to a CharacterEntity. Each slot is loaded asynchronously; ordering
+   *  doesn't matter since slots don't depend on each other. */
+  private applyRemoteEquipmentArray(target: CharacterEntity, slots: number[]): void {
+    // Order matches EQUIP_SLOT_NAMES on the server-side encoder.
+    const SLOT_ORDER: string[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+    for (let i = 0; i < SLOT_ORDER.length; i++) {
+      const slotName = SLOT_ORDER[i];
+      const itemId = slots[i] ?? 0;
+      // Fire-and-forget — failures are logged inside loadGearSmart.
+      void this.applyGearToCharacter(target, slotName, itemId, /* isLocal */ false);
+    }
+  }
+
   /**
    * Equip or unequip a 3D gear piece on the local player.
    * Loads /assets/equipment/{slotName}/{itemId}.glb on demand, caches the template.
@@ -732,59 +750,96 @@ export class GameManager {
     if (!this.localPlayer) return;
     const slotName = EQUIP_SLOT_NAMES[slotIndex];
     if (!slotName) return;
+    await this.applyGearToCharacter(this.localPlayer, slotName, itemId, /* isLocal */ true);
+  }
 
+  /**
+   * Shared gear apply path used by both the local player and remote
+   * CharacterEntities. `isLocal` controls editor-only behaviors (preview node
+   * disposal, gear-color material registration) that don't apply to remotes.
+   *
+   * Skinned and head slots can't share cached templates across characters
+   * (they bind to specific skeletons / depend on per-character bone bind
+   * poses), so they always re-enter loadGearSmart with the target. Other
+   * slots use the shared template cache and `attachGear` clones the template
+   * per character.
+   */
+  private async applyGearToCharacter(
+    target: CharacterEntity,
+    slotName: string,
+    itemId: number,
+    isLocal: boolean,
+  ): Promise<void> {
     // Unequip
     if (itemId <= 0) {
-      this.localPlayer.detachGear(slotName);
-      this.localPlayer.detachSkinnedArmor(slotName);
-      this.disposeArmorSlot(slotName);
+      target.detachGear(slotName);
+      target.detachSkinnedArmor(slotName);
+      if (isLocal) this.disposeArmorSlot(slotName);
       return;
     }
 
     // Already wearing this item?
-    if (this.localPlayer.getGearItemId(slotName) === itemId) return;
+    if (target.getGearItemId(slotName) === itemId) return;
 
-    const cacheKey = `${slotName}/${itemId}`;
     const boneConfig = EQUIP_SLOT_BONES[slotName];
     if (!boneConfig) return;
 
-    // Clear cache for this item so rotation changes take effect immediately
-    this.gearTemplateCache.delete(cacheKey);
+    // Wait for gear-overrides.json to finish loading before reading from it.
+    // PLAYER_EQUIPMENT_BATCH from the server can land before that fetch
+    // completes; without this gate we'd silently use EQUIP_SLOT_BONES
+    // defaults and cache the resulting (wrong) template.
+    await this.gearOverridesReady;
 
-    // Check cache first (only non-skinned gear is cached as templates)
+    const buildDef = (): GearDef => {
+      // gearOverrides is a global rigging file (server/data/gear-overrides.json)
+      // — every client fetches the same data, so the override applies to BOTH
+      // local and remote characters. Without this, remote viewers see your
+      // rigged gear at the EQUIP_SLOT_BONES defaults (random bones).
+      const override = this.gearOverrides.get(itemId);
+      const itemDef = this.itemDefsCache.get(itemId);
+      let gearFile: string;
+      if (override?.file) {
+        gearFile = override.file;
+      } else if (itemDef?.model) {
+        gearFile = itemDef.model.startsWith('/')
+          ? itemDef.model
+          : `/assets/equipment/${slotName}/${itemDef.model}`;
+      } else {
+        gearFile = `/assets/equipment/${slotName}/${itemId}.glb`;
+      }
+      return {
+        itemId,
+        file: gearFile,
+        boneName: override?.boneName ?? boneConfig.boneName,
+        localPosition: override?.localPosition ?? boneConfig.localPosition,
+        localRotation: override?.localRotation ?? boneConfig.localRotation,
+        scale: override?.scale ?? boneConfig.scale,
+        centerOrigin: override?.centerOrigin ?? false,
+        metalColor: TOOL_TIER_METAL_COLOR[itemId],
+      };
+    };
+
+    // Slot names whose loaded GLB binds to a specific skeleton — these CAN'T
+    // share cached templates, so we always reload per target. Note: 'head'
+    // is NOT in this set even though its loadGearSmart path is special;
+    // the head path returns a sharable template (mesh offsets are computed
+    // against the armor GLB's own bones, not the character's), so it routes
+    // through the cache below like any other bone-attached slot.
+    const PER_TARGET_SLOTS = new Set(['body', 'legs', 'hands', 'feet', 'cape']);
+    if (PER_TARGET_SLOTS.has(slotName)) {
+      await this.loadGearSmart(slotName, itemId, buildDef(), target);
+      return;
+    }
+
+    // Cache-shareable bone-attached gear (weapon, shield, neck, ring).
+    const cacheKey = `${slotName}/${itemId}`;
+    if (isLocal) this.gearTemplateCache.delete(cacheKey);
     let template = this.gearTemplateCache.get(cacheKey);
     if (!template) {
       let promise = this.gearLoadingPromises.get(cacheKey);
       if (!promise) {
         promise = (async () => {
-          const override = this.gearOverrides.get(itemId);
-          const itemDef = this.itemDefsCache.get(itemId);
-          // Resolution order:
-          //  1. gear-overrides.json `file` (legacy/per-instance override)
-          //  2. items.json `model` field — absolute path if it starts with '/',
-          //     else resolved relative to /assets/equipment/{slot}/
-          //  3. Fallback: /assets/equipment/{slot}/{itemId}.glb
-          let gearFile: string;
-          if (override?.file) {
-            gearFile = override.file;
-          } else if (itemDef?.model) {
-            gearFile = itemDef.model.startsWith('/')
-              ? itemDef.model
-              : `/assets/equipment/${slotName}/${itemDef.model}`;
-          } else {
-            gearFile = `/assets/equipment/${slotName}/${itemId}.glb`;
-          }
-          const gearDef: GearDef = {
-            itemId,
-            file: gearFile,
-            boneName: override?.boneName ?? boneConfig.boneName,
-            localPosition: override?.localPosition ?? boneConfig.localPosition,
-            localRotation: override?.localRotation ?? boneConfig.localRotation,
-            scale: override?.scale ?? boneConfig.scale,
-            centerOrigin: override?.centerOrigin ?? false,
-            metalColor: TOOL_TIER_METAL_COLOR[itemId],
-          };
-          const tmpl = await this.loadGearSmart(slotName, itemId, gearDef);
+          const tmpl = await this.loadGearSmart(slotName, itemId, buildDef(), target);
           if (tmpl) {
             this.gearTemplateCache.set(cacheKey, tmpl);
             console.log(`[Gear] Loaded ${slotName} item ${itemId}`);
@@ -796,19 +851,20 @@ export class GameManager {
       }
       template = (await promise) ?? undefined;
     }
-
-    // null template means the skinned path was used (or load failed)
-    if (template && this.localPlayer) {
-      this.localPlayer.attachGear(slotName, itemId, template);
+    if (template) {
+      target.attachGear(slotName, itemId, template);
     }
   }
 
   /**
    * Load a gear GLB. If it has a skeleton, set it up as skinned armor
-   * (bone-sync per frame) and return null. Otherwise return a GearTemplate
-   * for bone-parenting.
+   * (bone-sync per frame) on `target` and return null. Otherwise return a
+   * GearTemplate for bone-parenting (which the caller is free to share
+   * across multiple characters via attachGear).
    */
-  private async loadGearSmart(slotName: string, itemId: number, def: GearDef): Promise<GearTemplate | null> {
+  private async loadGearSmart(slotName: string, itemId: number, def: GearDef, target?: CharacterEntity | null): Promise<GearTemplate | null> {
+    const character = target ?? this.localPlayer;
+    const isLocal = character === this.localPlayer;
     try {
       const lastSlash = def.file.lastIndexOf('/');
       const dir = def.file.substring(0, lastSlash + 1);
@@ -824,9 +880,9 @@ export class GameManager {
       if (
         result.skeletons.length === 0 &&
         SKINNED_SLOTS.has(slotName) &&
-        this.localPlayer
+        character
       ) {
-        const ok = await this.localPlayer.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId);
+        const ok = await character.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId);
         if (ok) {
           const loaderRoot = result.meshes.find(m => m.name === '__root__');
           if (loaderRoot) loaderRoot.dispose();
@@ -834,7 +890,7 @@ export class GameManager {
         }
       }
 
-      if (result.skeletons.length > 0 && this.localPlayer) {
+      if (result.skeletons.length > 0 && character) {
         // Convert PBR → flat for all skinned armor meshes
         for (const mesh of result.meshes) {
           const pbrMat = mesh.material as any;
@@ -876,24 +932,27 @@ export class GameManager {
           def.boneName = 'mixamorig:Head';
           def.centerOrigin = true;
           // Shift mesh children so the head-height vertices sit at bone origin
-          const tmpl = this.buildGearTemplateFromResult(result, def);
+          const tmpl = this.buildGearTemplateFromResult(result, def, character);
           for (const child of tmpl.template.getChildren()) {
             (child as TransformNode).position.y -= headBindY;
           }
           return tmpl;
         }
 
-        this.localPlayer.detachGear(slotName);
-        this.disposeArmorSlot(slotName);
+        character.detachGear(slotName);
+        if (isLocal) this.disposeArmorSlot(slotName);
 
-        this.localPlayer.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId);
+        character.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId);
         const loaderRoot = result.meshes.find(m => m.name === '__root__');
         if (loaderRoot) loaderRoot.dispose();
 
-        // Apply saved override transforms for fine-tuning fit
+        // Apply saved override transforms for fine-tuning fit. gearOverrides
+        // is a global rigging file shared across all clients, so it applies
+        // to both local and remote characters — without this, remote viewers
+        // see your rigged armor offset to wrong positions.
         const override = this.gearOverrides.get(itemId);
         if (override) {
-          this.localPlayer.applySkinnedArmorTransform(slotName, override);
+          character.applySkinnedArmorTransform(slotName, override);
         }
 
         console.log(`[Gear] Loaded skinned ${slotName} item ${itemId}`);
@@ -901,7 +960,7 @@ export class GameManager {
       }
 
       // Non-skinned — build GearTemplate from the loaded result
-      return this.buildGearTemplateFromResult(result, def);
+      return this.buildGearTemplateFromResult(result, def, character);
     } catch (e) {
       console.warn(`[Gear] Failed to load '${def.file}':`, e);
       return null;
@@ -911,6 +970,7 @@ export class GameManager {
   private buildGearTemplateFromResult(
     result: { meshes: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh[] },
     def: GearDef,
+    target?: CharacterEntity | null,
   ): GearTemplate {
     const root = new TransformNode(`gearTemplate_${def.itemId}`, this.scene);
     for (const mesh of result.meshes) {
@@ -951,7 +1011,7 @@ export class GameManager {
       flat.backFaceCulling = pbr.backFaceCulling ?? true;
       mesh.material = flat;
       if (isPolysplitGear) {
-        this.localPlayer?.registerObjectMaterial(flat);
+        (target ?? this.localPlayer)?.registerObjectMaterial(flat);
       }
     }
 
@@ -1016,8 +1076,9 @@ export class GameManager {
       name: 'localPlayer',
       modelPath: '/Character models/main character.glb',
       targetHeight: 1.53,
-      label: this.username,
-      labelColor: '#00ff00',
+      // No label on the local player — matches pre-3D-remote-players behavior.
+      // Other players see the local player's name through PLAYER_SYNC + the
+      // chat 'player_info' broadcast.
       // Each GLB should hold a single action; the runtime picks it automatically
       // so re-exports don't require renaming the action in Blender first.
       additionalAnimations: [
@@ -1108,30 +1169,111 @@ export class GameManager {
             }
           }
         }
-        if (syncAppearance && !this.localAppearance) {
+        // Server-position reconciliation. The local visual is normally
+        // trusted (no rubber-banding), but when the tab has been hidden
+        // Chrome throttles RAF + setInterval to ~1Hz while the server keeps
+        // running at full tick rate. The local prediction freezes; mogn's
+        // view of testchar2 (server-authoritative) advances. On returning
+        // to foreground, the local visual would be many tiles behind unless
+        // we snap. Threshold: if server says we're more than 1.5 tiles away
+        // from our local visual, accept the server value as truth — that's
+        // far enough that something went wrong (throttle, packet loss,
+        // server truncation), not normal lag.
+        const serverX = v[1] / 10;
+        const serverZ = v[2] / 10;
+        const dx = serverX - this.playerX;
+        const dz = serverZ - this.playerZ;
+        if (dx * dx + dz * dz > 1.5 * 1.5) {
+          this.playerX = serverX;
+          this.playerZ = serverZ;
+          // Cancel any in-flight local path; the server may have truncated
+          // it or we're catching up after a freeze. Re-clicking will repath.
+          this.path = [];
+          this.pathIndex = 0;
+          this.tileProgress = 0;
+          this.tileFrom = { x: serverX, z: serverZ };
+          if (this.localPlayer) {
+            this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
+            this.localPlayer.stopWalking();
+          }
+          // Tell the server to halt too. Without this, the server keeps
+          // walking its moveQueue (the original path the client sent before
+          // it lost sync), so each subsequent server tick produces another
+          // 1-tile delta and forces another snap — visible as a 1+ second
+          // string of jumps instead of one clean catch-up.
+          this.network.sendMove([]);
+        }
+        if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
           this.localAppearance = syncAppearance;
           if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
         }
         return;
       }
 
-      if (!this.entities.remotePlayers.has(entityId)) {
+      const isNew = !this.entities.remotePlayers.has(entityId);
+      if (isNew) {
         const playerName = this.entities.playerNames.get(entityId) || 'Player';
-        this.entities.createRemotePlayer(entityId, x, z, playerName);
+        const remote = this.entities.createRemotePlayer(entityId, x, z, playerName);
+        // Apply cached appearance + equipment once the GLB + animations finish
+        // loading. Both arrive over the network independently of the entity's
+        // local-load timing, so we cache them in the EntityManager and flush
+        // here when the model is actually ready to receive them.
+        remote.whenReady().then(() => {
+          // The entity may have been removed before the load completed.
+          if (this.entities.remotePlayers.get(entityId) !== remote) return;
+          const appearance = this.entities.remoteAppearances.get(entityId);
+          if (appearance) remote.applyAppearance(appearance);
+          const eq = this.entities.remoteEquipment.get(entityId);
+          if (eq) this.applyRemoteEquipmentArray(remote, eq);
+        });
       }
       if (syncAppearance) {
-        this.entities.remoteAppearances.set(entityId, syncAppearance);
+        const prev = this.entities.remoteAppearances.get(entityId);
+        if (!appearanceEquals(prev ?? null, syncAppearance)) {
+          this.entities.remoteAppearances.set(entityId, syncAppearance);
+          const remote = this.entities.remotePlayers.get(entityId);
+          if (remote && !isNew) {
+            // Only apply post-load — the new-entity path schedules it via
+            // whenReady. Calling applyAppearance before load is a no-op.
+            remote.applyAppearance(syncAppearance);
+          }
+        }
+      }
+      // Detect server-driven movement: if the new target differs from the
+      // last one, the entity is in motion and we should keep its walk
+      // animation looping until the next sync would have arrived (~600 ms).
+      // Without this, the visual-position interp finishes a tile-step,
+      // momentarily satisfies dist≤0.05, and the renderer flips to idle for
+      // a frame before the next PLAYER_SYNC bumps the target again.
+      const prev = this.entities.remoteTargets.get(entityId);
+      if (!prev || Math.abs(prev.x - x) > 0.001 || Math.abs(prev.z - z) > 0.001) {
+        // Grace = 1.5 server ticks. Long enough to bridge a normal 600 ms
+        // tick gap plus jitter, short enough to drop to idle quickly when
+        // the player actually stops walking.
+        this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
       }
       this.entities.remoteTargets.set(entityId, { x, z });
-      const sprite = this.entities.remotePlayers.get(entityId)!;
+      const character = this.entities.remotePlayers.get(entityId)!;
       // Skip bar update if a COMBAT_HIT splat is pending — splat closure
       // applies the bar at impact time so they stay in sync.
       if (!this.pendingHealthApply.has(entityId)) {
         if (health < maxHealth) {
-          sprite.showHealthBar(health, maxHealth);
+          character.showHealthBar(health, maxHealth);
         } else {
-          sprite.hideHealthBar();
+          character.hideHealthBar();
         }
+      }
+    });
+
+    this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
+      // Layout: [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape]
+      const entityId = v[0];
+      const slots = v.slice(1, 11);
+      // Cache so the apply re-runs if/when the entity is (re)created.
+      this.entities.remoteEquipment.set(entityId, slots);
+      const remote = this.entities.remotePlayers.get(entityId);
+      if (remote && remote.isReady) {
+        this.applyRemoteEquipmentArray(remote, slots);
       }
     });
 
@@ -2757,7 +2899,11 @@ export class GameManager {
     const projectSprite = (sprite: SpriteEntity | CharacterEntity | Npc3DEntity, skipDistCheck?: boolean) => {
       const hasBubble = sprite.hasChatBubble();
       const hasBar = sprite.hasHealthBar();
-      if (!hasBubble && !hasBar) return;
+      // CharacterEntity is the only type with HTML name labels — SpriteEntity
+      // and Npc3DEntity lack the methods, so we duck-type via instanceof.
+      const labelHost = sprite instanceof CharacterEntity ? sprite : null;
+      const hasLabel = labelHost ? labelHost.getLabelWorldPos(this._overlayWorldPos) !== null : false;
+      if (!hasBubble && !hasBar && !hasLabel) return;
 
       if (!skipDistCheck) {
         const pos = sprite.position;
@@ -2767,6 +2913,7 @@ export class GameManager {
         if (dx * dx + dy * dy + dz * dz > maxDistSq) {
           if (hasBar) sprite.updateHealthBarScreenPos(-9999, -9999);
           if (hasBubble) sprite.updateChatBubbleScreenPos(-9999, -9999);
+          if (hasLabel) labelHost!.updateLabelScreenPos(-9999, -9999);
           return;
         }
       }
@@ -2778,6 +2925,10 @@ export class GameManager {
       if (hasBar) {
         const wp = sprite.getHealthBarWorldPos(this._overlayWorldPos);
         if (wp) projectOverlay(wp, (x, y) => sprite.updateHealthBarScreenPos(x, y));
+      }
+      if (hasLabel && labelHost) {
+        const wp = labelHost.getLabelWorldPos(this._overlayWorldPos);
+        if (wp) projectOverlay(wp, (x, y) => labelHost.updateLabelScreenPos(x, y));
       }
     };
 
@@ -2899,7 +3050,12 @@ export class GameManager {
     const target = this.path[this.pathIndex];
     const dx = target.x - this.tileFrom.x;
     const dz = target.z - this.tileFrom.z;
-    const tileDist = Math.hypot(dx, dz);
+    // Chebyshev (max-of-axes), not Euclidean: server processes one unit-tile
+    // per tick regardless of direction, so a diagonal step takes the same
+    // 600 ms as a cardinal step. Using Euclidean distance here would slow
+    // diagonals to ~0.85 sec/tile, drifting the local visual behind server
+    // position — which is what mogn would see for testchar2 over time.
+    const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
 
     // RS2-style catch-up scaffolding: when the path queue exceeds the
     // default cadence, accelerate to drain it. Authentic ratios (1.5×, 2×)
@@ -2909,7 +3065,7 @@ export class GameManager {
     const speedMult = remaining > 3 ? 1.0 : remaining > 2 ? 1.0 : 1.0;
     const effectiveSpeed = this.moveSpeed * speedMult;
 
-    const stepRate = tileDist > 0 ? (effectiveSpeed * dt) / tileDist : 1;
+    const stepRate = tileSteps > 0 ? (effectiveSpeed * dt) / tileSteps : 1;
     this.tileProgress += stepRate;
 
     if (this.tileProgress >= 1.0) {
