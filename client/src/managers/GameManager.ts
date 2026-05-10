@@ -219,6 +219,10 @@ export class GameManager {
     // Input — left click for movement (picks against chunk ground meshes)
     this.inputManager = new InputManager(this.scene, this.chunkManager);
     this.inputManager.setGroundClickHandler((worldX, worldZ) => {
+      // Cursor click effect only for world clicks — minimap clicks share
+      // handleGroundClick but shouldn't spawn an effect at lastClickX/Y
+      // (which is the previous world click, not the minimap point).
+      this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
       this.handleGroundClick(worldX, worldZ);
     });
     this.inputManager.setTeleportClickHandler((worldX, worldZ) => {
@@ -2622,7 +2626,6 @@ export class GameManager {
   }
 
   private handleGroundClick(worldX: number, worldZ: number): void {
-    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
     this.combatTargetId = -1;
     this.pendingSkill = null;
     if (this.isSkilling) {

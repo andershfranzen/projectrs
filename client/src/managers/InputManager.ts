@@ -101,13 +101,29 @@ export class InputManager {
     if (!this.scene.activeCamera) return null;
 
     // Accept any pickable visible mesh — the Y-match check below handles
-    // floor/plane filtering. Listing names here would miss placed-object
-    // stair GLBs (which have arbitrary mesh names) and any future walkable
-    // asset. Walls and other vertical geometry are already non-pickable.
+    // floor/plane filtering. Walls, door frames, and roof slabs are
+    // skipped via assetId so the ray traces through them to the floor /
+    // ground behind, letting players click directly into a building.
+    const isClickThroughAsset = (m: any): boolean => {
+      let n = m;
+      while (n) {
+        const aid = n.metadata?.assetId;
+        if (typeof aid === 'string') {
+          const lower = aid.toLowerCase();
+          if (lower.includes('wall')) return true;
+          if (lower.includes('doorframe') || lower.includes('doorway')) return true;
+          if (lower.includes('roof')) return true;
+          // Slabs ARE walkable surfaces — keep pickable.
+          if (lower.includes('truedoor')) return false;
+        }
+        n = n.parent;
+      }
+      return false;
+    };
     const pick = this.scene.pick(
       this.scene.pointerX,
       this.scene.pointerY,
-      (mesh) => mesh.isEnabled() && mesh.isVisible && mesh.isPickable,
+      (mesh) => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && !isClickThroughAsset(mesh),
       false,
       this.scene.activeCamera
     );
