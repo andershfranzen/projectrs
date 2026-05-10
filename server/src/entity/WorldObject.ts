@@ -2,11 +2,13 @@ import type { WorldObjectDef } from '@projectrs/shared';
 
 let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
 
+const DOOR_ACTIONS_CLOSED: readonly string[] = ['Open', 'Examine'];
+const DOOR_ACTIONS_OPEN: readonly string[] = ['Close', 'Examine'];
+
 export class WorldObject {
   readonly id: number;
   readonly defId: number;
-  /** Mutable: doors swap action labels by replacing this with a copy. */
-  def: WorldObjectDef;
+  readonly def: WorldObjectDef;
   readonly x: number;
   readonly z: number;
   readonly mapLevel: string;
@@ -26,6 +28,17 @@ export class WorldObject {
     this.x = x;
     this.z = z;
     this.mapLevel = mapLevel;
+  }
+
+  /** Action labels that apply right now — doors flip Open/Close based on
+   *  doorOpen, everything else returns the def's static actions. The label
+   *  drives the dispatcher in handlePlayerInteractObject; replacing it via
+   *  this getter avoids the per-toggle def allocation that previous code did. */
+  get currentActions(): readonly string[] {
+    if (this.def.category === 'door') {
+      return this.doorOpen ? DOOR_ACTIONS_OPEN : DOOR_ACTIONS_CLOSED;
+    }
+    return this.def.actions;
   }
 
   /** Tick respawn. Returns true when object respawns. */

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, ServerOpcode, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, ServerOpcode, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
 import { addXp, levelFromXp, statRandom } from '@projectrs/shared';
 import { GameMap } from './GameMap';
@@ -509,50 +509,26 @@ export class World {
 
   /** Check if a world position is within chunk load radius of a player */
   /** Find the best tool of a given type that the player can use (checks equipped weapon + inventory) */
-  private computeDoorEdge(rotationY: number): number {
-    const deg = Math.round((rotationY * 180 / Math.PI) % 360 + 360) % 360;
-    if (deg === 0) return WallEdge.N;
-    if (deg === 90) return WallEdge.E;
-    if (deg === 180) return WallEdge.S;
-    if (deg === 270) return WallEdge.W;
-    return (deg < 45 || deg > 315) ? WallEdge.N
-         : (deg < 135) ? WallEdge.E
-         : (deg < 225) ? WallEdge.S
-         : WallEdge.W;
-  }
-
-  private static readonly EDGE_NEIGHBOR: Record<number, { dx: number; dz: number; opposite: number }> = {
-    [WallEdge.N]: { dx: 0, dz: -1, opposite: WallEdge.S },
-    [WallEdge.S]: { dx: 0, dz: 1, opposite: WallEdge.N },
-    [WallEdge.E]: { dx: 1, dz: 0, opposite: WallEdge.W },
-    [WallEdge.W]: { dx: -1, dz: 0, opposite: WallEdge.E },
-  };
 
   private initDoorEdge(obj: WorldObject): void {
-    obj.closedEdge = this.computeDoorEdge(obj.rotationY);
+    obj.closedEdge = doorClosedEdgeFromRotY(obj.rotationY);
   }
 
   private doorTile(obj: WorldObject): [number, number] {
     return [Math.floor(obj.x), Math.floor(obj.z)];
   }
 
-  /** Compute the actual wall edge based on which tile boundary the door is closest to.
-   *  closedEdge (from rotation) tells us N/S vs E/W axis; fractional position picks the side. */
+  /** Compute the actual wall edge from the door's authored placement.
+   *  Delegates to shared/doorEdge so server + client agree on every door. */
   private doorWallEdge(obj: WorldObject): number {
-    const rotEdge = obj.closedEdge;
-    const fracX = obj.x - Math.floor(obj.x);
-    const fracZ = obj.z - Math.floor(obj.z);
-    if (rotEdge === WallEdge.N || rotEdge === WallEdge.S) {
-      return fracZ > 0.5 ? WallEdge.S : WallEdge.N;
-    }
-    return fracX > 0.5 ? WallEdge.E : WallEdge.W;
+    return doorEdgeFromPlacement(obj.x, obj.z, obj.rotationY).edge;
   }
 
   private setDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
     map.setWall(tx, tz, map.getWall(tx, tz) | edge);
-    const nb = World.EDGE_NEIGHBOR[edge];
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
@@ -570,7 +546,7 @@ export class World {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
     map.setOpenDoorEdges(tx, tz, edge, true);
-    const nb = World.EDGE_NEIGHBOR[edge];
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
@@ -584,7 +560,7 @@ export class World {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
     map.setOpenDoorEdges(tx, tz, edge, false);
-    const nb = World.EDGE_NEIGHBOR[edge];
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
@@ -613,7 +589,6 @@ export class World {
       obj.doorOpen = false;
       obj.depleted = false;
       this.depletedObjectIds.delete(obj.id);
-      obj.def = { ...obj.def, actions: ['Open', 'Examine'] };
       swingSign = 0;
     } else {
       this.clearDoorWallEdges(obj, map);
@@ -621,7 +596,6 @@ export class World {
       obj.depleted = true;
       obj.respawnTimer = obj.def.respawnTime ?? 200;
       this.depletedObjectIds.add(obj.id);
-      obj.def = { ...obj.def, actions: ['Close', 'Examine'] };
     }
 
     this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
@@ -1000,10 +974,19 @@ export class World {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
-    if (player.isBusy(this.currentTick)) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') return;
+
+    // Doors: defer one tick instead of silently dropping when busy. Other
+    // interactions (skilling, crafting) keep the early-return because they
+    // rely on the action firing immediately.
+    if (player.isBusy(this.currentTick)) {
+      if (obj.def.category === 'door') {
+        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0 };
+      }
+      return;
+    }
 
     // Doors: cancel current movement so adjacency check uses where the player actually stopped
     if (obj.def.category === 'door') {
@@ -1037,7 +1020,7 @@ export class World {
           }
         } else {
           const edge = this.doorWallEdge(obj);
-          const nb = World.EDGE_NEIGHBOR[edge];
+          const nb = DOOR_EDGE_NEIGHBOR[edge];
           let tx = dtx, tz = dtz;
           const px = player.position.x, pz = player.position.y;
           if (edge === WallEdge.N && pz < dtz + 0.5 && nb) { tx = dtx + nb.dx; tz = dtz + nb.dz; }
@@ -1051,10 +1034,14 @@ export class World {
           player.moveQueue = path;
           player.pendingInteraction = { objectEntityId, actionIndex, swingSign };
         }
+        // Empty path = unreachable (closed door is the only gap in the wall
+        // and player is on the wrong side, OR maxSteps exhausted). Drop the
+        // click — there is no useful action we can queue for them.
+        return;
       } else {
         player.pendingInteraction = { objectEntityId, actionIndex };
+        return;
       }
-      return;
     }
 
     // Stop movement
@@ -1062,7 +1049,7 @@ export class World {
     player.attackTarget = null;
     this.clearCombatTarget(playerId);
 
-    const action = obj.def.actions[actionIndex];
+    const action = obj.currentActions[actionIndex];
     if (!action) return;
 
     if (action === 'Examine') {
@@ -1426,16 +1413,23 @@ export class World {
         player.pendingPickup = -1;
         this.handlePlayerPickup(playerId, pickupId);
       }
-      if (player.pendingInteraction && player.moveQueue.length === 0 && !justArrived) {
+      if (player.pendingInteraction && player.moveQueue.length === 0) {
         const { objectEntityId, actionIndex, swingSign } = player.pendingInteraction;
-        player.pendingInteraction = null;
         const obj = this.worldObjects.get(objectEntityId);
+        // Doors fire instantly on arrival — toggling is visually
+        // self-evident (the door swings) and the client already
+        // interpolates the character's arrival visually. Other
+        // interactions (skilling, crafting) keep the !justArrived guard so
+        // animations don't register while the character is mid-step.
+        const isDoorInteraction = obj?.def.category === 'door';
+        if (!isDoorInteraction && justArrived) continue;
+        player.pendingInteraction = null;
         if (obj && obj.mapLevel === player.currentMapLevel) {
           if (this.isAdjacentToObject(player, obj)) {
             player.moveQueue = [];
             player.attackTarget = null;
             this.clearCombatTarget(playerId);
-            const action = obj.def.actions[actionIndex];
+            const action = obj.currentActions[actionIndex];
             if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
               this.toggleDoor(obj, swingSign ?? 0);
             } else if (action) {
@@ -1789,13 +1783,49 @@ export class World {
     }
   }
 
+  /** True if any player is on the door's tile or one of the four orthogonal
+   *  neighbors. Used to defer auto-close while the doorway is in use. */
+  private isAnyPlayerNearDoor(obj: WorldObject): boolean {
+    const dtx = Math.floor(obj.x);
+    const dtz = Math.floor(obj.z);
+    const cm = this.chunkManagers.get(obj.mapLevel);
+    if (!cm) return false;
+    let near = false;
+    cm.forEachPlayerNear(obj.x, obj.z, (pid) => {
+      if (near) return;
+      const p = this.players.get(pid);
+      if (!p || p.currentMapLevel !== obj.mapLevel) return;
+      const ptx = Math.floor(p.position.x);
+      const ptz = Math.floor(p.position.y);
+      if ((ptx === dtx && ptz === dtz) ||
+          (Math.abs(ptx - dtx) + Math.abs(ptz - dtz) === 1)) {
+        near = true;
+      }
+    });
+    return near;
+  }
+
   private tickObjectRespawns(): void {
     for (const objId of this.depletedObjectIds) {
       const obj = this.worldObjects.get(objId);
       if (!obj) { this.depletedObjectIds.delete(objId); continue; }
+      // Doors: keep the respawn timer pinned at full while any player is
+      // in the doorway. The countdown only runs once everyone has left, so
+      // the auto-close never slams shut on top of someone walking through.
+      // The base timer is generous (200 ticks ≈ 2 min) — doors are meant
+      // to stay open for a while after use.
+      if (obj.def.category === 'door' && obj.doorOpen && this.isAnyPlayerNearDoor(obj)) {
+        obj.respawnTimer = obj.def.respawnTime ?? 200;
+        continue;
+      }
       if (obj.tickRespawn()) {
         this.depletedObjectIds.delete(objId);
-        if (obj.def.blocking) {
+        // Doors: never re-block the tile on respawn — only the wall edge
+        // matters. Mirrors the spawn paths above which exclude doors from
+        // blockedObjectTiles. Without this, the door tile becomes pathing-
+        // blocked after the first auto-close and silently breaks every
+        // subsequent click.
+        if (obj.def.blocking && obj.def.category !== 'door') {
           if (obj.def.category === 'tree') {
             const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
             for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
@@ -1809,9 +1839,10 @@ export class World {
           const map = this.maps.get(obj.mapLevel);
           if (map) this.restoreDoorWallEdges(obj, map);
           obj.doorOpen = false;
-          obj.def = { ...obj.def, actions: ['Open', 'Examine'] };
         }
-        this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 0);
+        // Pass swingSign=0 to match the toggle path's packet shape — auto-
+        // close doesn't need a direction (the close animation ignores it).
+        this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 0, 0);
       }
     }
   }
@@ -2067,7 +2098,14 @@ export class World {
           const subject = this.players.get(eid);
           if (subject) { this.sendPlayerUpdate(viewer, subject); return; }
           const npc = this.npcs.get(eid);
-          if (npc && !npc.dead) this.sendNpcUpdate(viewer, npc);
+          if (npc && !npc.dead) { this.sendNpcUpdate(viewer, npc); return; }
+          // Re-sync world objects on chunk transitions. Without this, a player
+          // who walks into range of a door that was opened (or a tree that was
+          // chopped, etc.) while they were too far away to receive the
+          // WORLD_OBJECT_DEPLETED broadcast keeps a stale local state and
+          // can't interact correctly until they re-login.
+          const obj = this.worldObjects.get(eid);
+          if (obj) this.sendWorldObjectUpdate(viewer, obj);
         });
       } catch { /* connection closed */ }
     }

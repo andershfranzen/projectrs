@@ -2022,15 +2022,41 @@ export class ChunkManager {
     if (!layer) return false;
     const fx = Math.floor(fromX), fz = Math.floor(fromZ), tx = Math.floor(toX), tz = Math.floor(toZ);
     const dx = tx - fx, dz = tz - fz;
-    const getW = (x: number, z: number) => layer.walls.get(z * this.mapWidth + x) ?? 0;
-    if (dx === 0 && dz === -1) return (getW(fx, fz) & WallEdge.N) !== 0 || (getW(tx, tz) & WallEdge.S) !== 0;
-    if (dx === 1 && dz === 0) return (getW(fx, fz) & WallEdge.E) !== 0 || (getW(tx, tz) & WallEdge.W) !== 0;
-    if (dx === 0 && dz === 1) return (getW(fx, fz) & WallEdge.S) !== 0 || (getW(tx, tz) & WallEdge.N) !== 0;
-    if (dx === -1 && dz === 0) return (getW(fx, fz) & WallEdge.W) !== 0 || (getW(tx, tz) & WallEdge.E) !== 0;
-    if (dx === 1 && dz === -1) return (getW(fx, fz) & WallEdge.N) !== 0 || (getW(fx, fz) & WallEdge.E) !== 0 || (getW(tx, tz) & WallEdge.S) !== 0 || (getW(tx, tz) & WallEdge.W) !== 0;
-    if (dx === -1 && dz === -1) return (getW(fx, fz) & WallEdge.N) !== 0 || (getW(fx, fz) & WallEdge.W) !== 0 || (getW(tx, tz) & WallEdge.S) !== 0 || (getW(tx, tz) & WallEdge.E) !== 0;
-    if (dx === 1 && dz === 1) return (getW(fx, fz) & WallEdge.S) !== 0 || (getW(fx, fz) & WallEdge.E) !== 0 || (getW(tx, tz) & WallEdge.N) !== 0 || (getW(tx, tz) & WallEdge.W) !== 0;
-    if (dx === -1 && dz === 1) return (getW(fx, fz) & WallEdge.S) !== 0 || (getW(fx, fz) & WallEdge.W) !== 0 || (getW(tx, tz) & WallEdge.N) !== 0 || (getW(tx, tz) & WallEdge.E) !== 0;
+    const w = (x: number, z: number, edge: number) => {
+      if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return false;
+      const idx = z * this.mapWidth + x;
+      // Open-door bypass on every floor — mirrors GameMap.wallBlocksOnFloorAt
+      if (((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0) return false;
+      return ((layer.walls.get(idx) ?? 0) & edge) !== 0;
+    };
+    if (dx === 0 && dz === -1) return w(fx, fz, WallEdge.N) || w(tx, tz, WallEdge.S);
+    if (dx === 1 && dz === 0) return w(fx, fz, WallEdge.E) || w(tx, tz, WallEdge.W);
+    if (dx === 0 && dz === 1) return w(fx, fz, WallEdge.S) || w(tx, tz, WallEdge.N);
+    if (dx === -1 && dz === 0) return w(fx, fz, WallEdge.W) || w(tx, tz, WallEdge.E);
+    if (dx === 1 && dz === -1) {
+      if (w(fx, fz, WallEdge.N) || w(fx, fz, WallEdge.E)) return true;
+      if (w(tx, tz, WallEdge.S) || w(tx, tz, WallEdge.W)) return true;
+      if (w(fx + 1, fz, WallEdge.N) || w(fx, fz - 1, WallEdge.E)) return true;
+      return false;
+    }
+    if (dx === -1 && dz === -1) {
+      if (w(fx, fz, WallEdge.N) || w(fx, fz, WallEdge.W)) return true;
+      if (w(tx, tz, WallEdge.S) || w(tx, tz, WallEdge.E)) return true;
+      if (w(fx - 1, fz, WallEdge.N) || w(fx, fz - 1, WallEdge.W)) return true;
+      return false;
+    }
+    if (dx === 1 && dz === 1) {
+      if (w(fx, fz, WallEdge.S) || w(fx, fz, WallEdge.E)) return true;
+      if (w(tx, tz, WallEdge.N) || w(tx, tz, WallEdge.W)) return true;
+      if (w(fx + 1, fz, WallEdge.S) || w(fx, fz + 1, WallEdge.E)) return true;
+      return false;
+    }
+    if (dx === -1 && dz === 1) {
+      if (w(fx, fz, WallEdge.S) || w(fx, fz, WallEdge.W)) return true;
+      if (w(tx, tz, WallEdge.N) || w(tx, tz, WallEdge.E)) return true;
+      if (w(fx - 1, fz, WallEdge.S) || w(fx, fz + 1, WallEdge.W)) return true;
+      return false;
+    }
     return false;
   }
 

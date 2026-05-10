@@ -361,8 +361,11 @@ export class Player extends Entity {
   }
 
   processMovement(currentTick: number): void {
-    // Process 1 waypoint per tick to match RS2 walk speed (~1.67 tiles/sec)
-    for (let i = 0; i < 1 && this.moveQueue.length > 0; i++) {
+    // Process 2 waypoints per tick (~3.33 tiles/sec) so the server stays ahead
+    // of the client's 3.0-tile/sec interpolation. Doors and other adjacency-
+    // gated interactions fire as soon as the visual character arrives instead
+    // of lagging by ~600 ms.
+    for (let i = 0; i < 2 && this.moveQueue.length > 0; i++) {
       const target = this.moveQueue.shift()!;
       this.position.x = target.x;
       this.position.y = target.z;

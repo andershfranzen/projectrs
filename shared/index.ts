@@ -7,3 +7,4 @@ export * from './assetObjectMap.js';
 export * from './appearance.js';
 export * from './terrain-shading.js';
 export * from './floorDerivation.js';
+export * from './doorEdge.js';

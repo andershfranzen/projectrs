@@ -374,6 +374,15 @@ export class GameMap {
     return !(hasTile || hasFloor || hasStair);
   }
 
+  /** Wall blocking on an upper floor for a single tile+edge — same open-door
+   *  bypass rule as floor 0, just without the floor-0 elevation gate. */
+  private wallBlocksOnFloorAt(x: number, z: number, edge: number, floor: number): boolean {
+    if (x < 0 || x >= this.width || z < 0 || z >= this.height) return false;
+    const idx = z * this.width + x;
+    if (((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0) return false;
+    return (this.getWallOnFloor(x, z, floor) & edge) !== 0;
+  }
+
   /** Check wall blocking for a specific floor */
   isWallBlockedOnFloor(fromX: number, fromZ: number, toX: number, toZ: number, floor: number): boolean {
     if (floor === 0) return this.isWallBlocked(fromX, fromZ, toX, toZ);
@@ -384,28 +393,36 @@ export class GameMap {
     const dx = tx - fx;
     const dz = tz - fz;
 
-    const getW = (x: number, z: number) => this.getWallOnFloor(x, z, floor);
+    const w = (x: number, z: number, edge: number) => this.wallBlocksOnFloorAt(x, z, edge, floor);
 
-    if (dx === 0 && dz === -1) return (getW(fx, fz) & WallEdge.N) !== 0 || (getW(tx, tz) & WallEdge.S) !== 0;
-    if (dx === 1 && dz === 0) return (getW(fx, fz) & WallEdge.E) !== 0 || (getW(tx, tz) & WallEdge.W) !== 0;
-    if (dx === 0 && dz === 1) return (getW(fx, fz) & WallEdge.S) !== 0 || (getW(tx, tz) & WallEdge.N) !== 0;
-    if (dx === -1 && dz === 0) return (getW(fx, fz) & WallEdge.W) !== 0 || (getW(tx, tz) & WallEdge.E) !== 0;
+    if (dx === 0 && dz === -1) return w(fx, fz, WallEdge.N) || w(tx, tz, WallEdge.S);
+    if (dx === 1 && dz === 0) return w(fx, fz, WallEdge.E) || w(tx, tz, WallEdge.W);
+    if (dx === 0 && dz === 1) return w(fx, fz, WallEdge.S) || w(tx, tz, WallEdge.N);
+    if (dx === -1 && dz === 0) return w(fx, fz, WallEdge.W) || w(tx, tz, WallEdge.E);
 
     if (dx === 1 && dz === -1) {
-      return (getW(fx, fz) & WallEdge.N) !== 0 || (getW(fx, fz) & WallEdge.E) !== 0
-          || (getW(tx, tz) & WallEdge.S) !== 0 || (getW(tx, tz) & WallEdge.W) !== 0;
+      if (w(fx, fz, WallEdge.N) || w(fx, fz, WallEdge.E)) return true;
+      if (w(tx, tz, WallEdge.S) || w(tx, tz, WallEdge.W)) return true;
+      if (w(fx + 1, fz, WallEdge.N) || w(fx, fz - 1, WallEdge.E)) return true;
+      return false;
     }
     if (dx === -1 && dz === -1) {
-      return (getW(fx, fz) & WallEdge.N) !== 0 || (getW(fx, fz) & WallEdge.W) !== 0
-          || (getW(tx, tz) & WallEdge.S) !== 0 || (getW(tx, tz) & WallEdge.E) !== 0;
+      if (w(fx, fz, WallEdge.N) || w(fx, fz, WallEdge.W)) return true;
+      if (w(tx, tz, WallEdge.S) || w(tx, tz, WallEdge.E)) return true;
+      if (w(fx - 1, fz, WallEdge.N) || w(fx, fz - 1, WallEdge.W)) return true;
+      return false;
     }
     if (dx === 1 && dz === 1) {
-      return (getW(fx, fz) & WallEdge.S) !== 0 || (getW(fx, fz) & WallEdge.E) !== 0
-          || (getW(tx, tz) & WallEdge.N) !== 0 || (getW(tx, tz) & WallEdge.W) !== 0;
+      if (w(fx, fz, WallEdge.S) || w(fx, fz, WallEdge.E)) return true;
+      if (w(tx, tz, WallEdge.N) || w(tx, tz, WallEdge.W)) return true;
+      if (w(fx + 1, fz, WallEdge.S) || w(fx, fz + 1, WallEdge.E)) return true;
+      return false;
     }
     if (dx === -1 && dz === 1) {
-      return (getW(fx, fz) & WallEdge.S) !== 0 || (getW(fx, fz) & WallEdge.W) !== 0
-          || (getW(tx, tz) & WallEdge.N) !== 0 || (getW(tx, tz) & WallEdge.E) !== 0;
+      if (w(fx, fz, WallEdge.S) || w(fx, fz, WallEdge.W)) return true;
+      if (w(tx, tz, WallEdge.N) || w(tx, tz, WallEdge.E)) return true;
+      if (w(fx - 1, fz, WallEdge.S) || w(fx, fz + 1, WallEdge.W)) return true;
+      return false;
     }
     return false;
   }

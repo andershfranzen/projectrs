@@ -36,7 +36,13 @@ import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, decodeStringPacket, BIOME_CELL_SIZE, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+
+// Door action labels — mirror server WorldObject.currentActions so right-click
+// menu labels reflect the door's current state. Both ends pass actionIndex 0
+// for the toggle, so the mismatch was previously a UX bug only.
+const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
+const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 
 export class GameManager {
   private engine: Engine;
@@ -607,7 +613,10 @@ export class GameManager {
       const h = this.getHeight(data.x, data.z);
       const doorEntry = this.doorPivots.get(objectEntityId);
       if (doorEntry) {
-        doorEntry.pivot.position.y = h;
+        // Doors keep the Y they were authored with — upper-floor doors live
+        // above floor-0 terrain and would be invisible if snapped down.
+        // setupDoorPivot already set the pivot Y from the model's absolute
+        // position, which respects the placement file's y value.
       } else {
         const model = this.worldObjectModels.get(objectEntityId);
         if (model) {
@@ -670,21 +679,10 @@ export class GameManager {
 
     const def = this.objectDefsCache.get(data.defId);
     if (def?.category === 'door') {
-      // Set up wall edges now that we have the model rotation
-      const rotEdge = this.computeDoorEdgeFromModel(placedNode);
-      const tx = Math.floor(data.x), tz = Math.floor(data.z);
-      const fracX = data.x - tx, fracZ = data.z - tz;
-      const wallEdge = (rotEdge === WallEdge.N || rotEdge === WallEdge.S)
-        ? (fracZ > 0.5 ? WallEdge.S : WallEdge.N)
-        : (fracX > 0.5 ? WallEdge.E : WallEdge.W);
+      const modelRotY = this.modelRotY(placedNode);
+      const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
       this.doorTiles.set(objectEntityId, [tx, tz]);
-      const nbLookup: Record<number, { dx: number; dz: number; opposite: number }> = {
-        [WallEdge.N]: { dx: 0, dz: -1, opposite: WallEdge.S },
-        [WallEdge.S]: { dx: 0, dz: 1, opposite: WallEdge.N },
-        [WallEdge.E]: { dx: 1, dz: 0, opposite: WallEdge.W },
-        [WallEdge.W]: { dx: -1, dz: 0, opposite: WallEdge.E },
-      };
-      const nb = nbLookup[wallEdge];
+      const nb = DOOR_EDGE_NEIGHBOR[wallEdge];
       // Wall mask for the door tile is set up by the chunk's wall data —
       // we just need to flip openDoorEdges to match the current state.
       // Keeping the wall mask permanent ensures the elevation gate in
@@ -1324,9 +1322,37 @@ export class GameManager {
       const z = z10 / 10;
       const isDepleted = depleted === 1;
 
+      // Detect a state transition on a door we already know about. This fires
+      // on chunk re-entry: we left range, the door state changed (someone
+      // else opened it, or it persisted open across our session), now we
+      // walk back into broadcast range and the server re-syncs. Without
+      // bridging this transition explicitly the door's pivot keeps its old
+      // pose and openDoorEdges keeps its old bypass — so the wall reads
+      // closed locally even though the server thinks it's open.
+      const prev = this.worldObjectDefs.get(objectEntityId);
+      const stateChangedForDoor =
+        prev != null &&
+        prev.depleted !== isDepleted &&
+        this.objectDefsCache.get(objectDefId)?.category === 'door';
+
       this.worldObjectDefs.set(objectEntityId, { defId: objectDefId, x, z, depleted: isDepleted });
 
       const def = this.objectDefsCache.get(objectDefId);
+
+      if (stateChangedForDoor) {
+        const doorEntry = this.doorPivots.get(objectEntityId);
+        const rotY = doorEntry ? doorEntry.closedRotY : 0;
+        const { tile: [tx, tz], edge } = doorEdgeFromPlacement(x, z, rotY);
+        this.chunkManager.setOpenDoorEdges(tx, tz, edge, isDepleted);
+        const nb = DOOR_EDGE_NEIGHBOR[edge];
+        if (nb) {
+          this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, isDepleted);
+        }
+        // animateDoor only runs if the pivot exists; if it doesn't yet (chunk
+        // still loading), linkPlacedNodeToEntity will pick the correct pose
+        // when it sets the pivot up.
+        this.animateDoor(objectEntityId, isDepleted, 0);
+      }
 
       // Track blocking tiles for pathfinding
       const tileKey = `${Math.floor(x)},${Math.floor(z)}`;
@@ -1409,14 +1435,9 @@ export class GameManager {
         const def2 = this.objectDefsCache.get(data.defId);
         const tileKey = `${Math.floor(data.x)},${Math.floor(data.z)}`;
         if (def2?.category === 'door') {
-          const dt = this.doorTiles.get(objectEntityId);
-          const tx = dt ? dt[0] : Math.floor(data.x), tz = dt ? dt[1] : Math.floor(data.z);
           const doorEntry = this.doorPivots.get(objectEntityId);
-          const rotEdge = doorEntry ? this.computeDoorEdgeFromRotY(doorEntry.closedRotY) : WallEdge.N;
-          const fracX = data.x - tx, fracZ = data.z - tz;
-          const edge = (rotEdge === WallEdge.N || rotEdge === WallEdge.S)
-            ? (fracZ > 0.5 ? WallEdge.S : WallEdge.N)
-            : (fracX > 0.5 ? WallEdge.E : WallEdge.W);
+          const rotY = doorEntry ? doorEntry.closedRotY : 0;
+          const { tile: [tx, tz], edge } = doorEdgeFromPlacement(data.x, data.z, rotY);
 
           const opened = isDepleted === 1;
           // Leave the wall mask alone — only toggle openDoorEdges. The
@@ -1425,13 +1446,7 @@ export class GameManager {
           // clearing the mask would let players at the wrong elevation
           // skip through.
           this.chunkManager.setOpenDoorEdges(tx, tz, edge, opened);
-          const nbLookup: Record<number, { dx: number; dz: number; opposite: number }> = {
-            [WallEdge.N]: { dx: 0, dz: -1, opposite: WallEdge.S },
-            [WallEdge.S]: { dx: 0, dz: 1, opposite: WallEdge.N },
-            [WallEdge.E]: { dx: 1, dz: 0, opposite: WallEdge.W },
-            [WallEdge.W]: { dx: -1, dz: 0, opposite: WallEdge.E },
-          };
-          const nb = nbLookup[edge];
+          const nb = DOOR_EDGE_NEIGHBOR[edge];
           if (nb) {
             const nx = tx + nb.dx, nz = tz + nb.dz;
             this.chunkManager.setOpenDoorEdges(nx, nz, nb.opposite, opened);
@@ -1848,8 +1863,9 @@ export class GameManager {
         if (data) {
           const def = this.objectDefsCache.get(data.defId);
           if (def && (!data.depleted || def.category === 'door')) {
-            for (let i = 0; i < def.actions.length; i++) {
-              const actionName = def.actions[i];
+            const actions = this.actionsForInstance(def, data.depleted);
+            for (let i = 0; i < actions.length; i++) {
+              const actionName = actions[i];
               const eid = pickedObjectEntityId;
               const actionIdx = i;
               options.push({
@@ -1889,8 +1905,9 @@ export class GameManager {
         if (data) {
           const def = this.objectDefsCache.get(data.defId);
           if (def && (!data.depleted || def.category === 'door')) {
-            for (let i = 0; i < def.actions.length; i++) {
-              const actionName = def.actions[i];
+            const actions = this.actionsForInstance(def, data.depleted);
+            for (let i = 0; i < actions.length; i++) {
+              const actionName = actions[i];
               const actionIdx = i;
               options.push({
                 label: `${actionName} ${def.name}`,
@@ -2015,14 +2032,25 @@ export class GameManager {
     if (data.depleted && def.category !== 'door') return;
     // Auto-interact with harvestable objects (trees, rocks), doors, and crafting stations (furnace, anvil, range)
     if ((def.skill && def.harvestItemId) || def.category === 'door' || (def.recipes && def.recipes.length > 0)) {
-      // Skip the disc marker for doors — the door's world position sits on
-      // a wall edge, so a flat disc there visually clips through the wall
-      // mesh. The door's open/close animation is sufficient feedback.
-      if (this.interactMarker && def.category !== 'door') {
-        this.interactMarker.position.x = data.x;
-        this.interactMarker.position.y = this.getHeight(data.x, data.z) + 0.02;
-        this.interactMarker.position.z = data.z;
-        this.alignMarkerToTerrain(data.x, data.z, this.interactMarker);
+      if (this.interactMarker) {
+        let mx = data.x;
+        let mz = data.z;
+        // Doors sit on a wall edge — pull the marker 0.4 tiles toward the
+        // player's side of the wall so the disc doesn't z-fight the wall mesh.
+        if (def.category === 'door') {
+          const doorEntry = this.doorPivots.get(objectEntityId);
+          const rotY = doorEntry ? doorEntry.closedRotY : 0;
+          const { axis } = doorEdgeFromPlacement(data.x, data.z, rotY);
+          if (axis === 'NS') {
+            mz += this.playerZ < data.z ? -0.4 : 0.4;
+          } else {
+            mx += this.playerX < data.x ? -0.4 : 0.4;
+          }
+        }
+        this.interactMarker.position.x = mx;
+        this.interactMarker.position.y = this.getHeight(mx, mz) + 0.02;
+        this.interactMarker.position.z = mz;
+        this.alignMarkerToTerrain(mx, mz, this.interactMarker);
         this.interactMarker.isVisible = true;
         if (this.destMarker) this.destMarker.isVisible = false;
       }
@@ -2078,20 +2106,14 @@ export class GameManager {
     const def = this.objectDefsCache.get(data.defId);
 
     if (def?.category === 'door') {
-      const dt = this.doorTiles.get(objectEntityId);
-      const dotx = dt ? dt[0] : Math.floor(data.x);
-      const dotz = dt ? dt[1] : Math.floor(data.z);
+      const doorEntry = this.doorPivots.get(objectEntityId);
+      const rotY = doorEntry ? doorEntry.closedRotY : 0;
+      const { tile: [dotx, dotz], edge } = doorEdgeFromPlacement(data.x, data.z, rotY);
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
       const alreadyAdj = (ptx === dotx && ptz === dotz) || (Math.abs(ptx - dotx) + Math.abs(ptz - dotz) === 1);
 
       if (!alreadyAdj) {
-        const doorEntry = this.doorPivots.get(objectEntityId);
-        const rotEdge = doorEntry ? this.computeDoorEdgeFromRotY(doorEntry.closedRotY) : WallEdge.N;
-        const fracX2 = data.x - dotx, fracZ2 = data.z - dotz;
-        const edge = (rotEdge === WallEdge.N || rotEdge === WallEdge.S)
-          ? (fracZ2 > 0.5 ? WallEdge.S : WallEdge.N)
-          : (fracX2 > 0.5 ? WallEdge.E : WallEdge.W);
         let tx = dotx, tz = dotz;
         if (!data.depleted) {
           if (edge === WallEdge.N && this.playerZ < dotz + 0.5) tz = dotz - 1;
@@ -3049,27 +3071,24 @@ export class GameManager {
     this.hiddenRoofNodes = next;
   }
 
-  private computeDoorEdgeFromRotY(rotY: number): number {
-    const deg = Math.round((rotY * 180 / Math.PI) % 360 + 360) % 360;
-    if (deg === 0) return WallEdge.N;
-    if (deg === 90) return WallEdge.E;
-    if (deg === 180) return WallEdge.S;
-    if (deg === 270) return WallEdge.W;
-    return (deg < 45 || deg > 315) ? WallEdge.N
-         : (deg < 135) ? WallEdge.E
-         : (deg < 225) ? WallEdge.S
-         : WallEdge.W;
-  }
-
-  private computeDoorEdgeFromModel(model: TransformNode): number {
-    let rotY = 0;
+  /** Y rotation of a placed model in radians, accounting for quaternion form. */
+  private modelRotY(model: TransformNode): number {
     if (model.rotationQuaternion) {
       const q = model.rotationQuaternion;
-      rotY = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z));
-    } else {
-      rotY = model.rotation.y;
+      return Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z));
     }
-    return this.computeDoorEdgeFromRotY(rotY);
+    return model.rotation.y;
+  }
+
+  /** Per-instance action labels — doors flip Open ⇄ Close based on depleted
+   *  state, everything else uses the def's static actions. Mirrors
+   *  WorldObject.currentActions on the server so right-click labels stay
+   *  truthful as the door toggles. */
+  private actionsForInstance(def: WorldObjectDef, depleted: boolean): readonly string[] {
+    if (def.category === 'door') {
+      return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
+    }
+    return def.actions;
   }
 
   private setupDoorPivot(objectEntityId: number): void {
@@ -3078,13 +3097,7 @@ export class GameManager {
 
     model.computeWorldMatrix(true);
 
-    let closedRotY = 0;
-    if (model.rotationQuaternion) {
-      const q = model.rotationQuaternion;
-      closedRotY = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.z * q.z));
-    } else {
-      closedRotY = model.rotation.y;
-    }
+    const closedRotY = this.modelRotY(model);
 
     // Find the door panel mesh (tallest child = the door, not the handle)
     // Its absolute position is the hinge point in world space because
@@ -3105,6 +3118,12 @@ export class GameManager {
 
     const modelWorldPos = model.getAbsolutePosition().clone();
 
+    // Use the model's authored Y as-is — upper-floor doors live at y≈3, and
+    // any blanket "snap to terrain" call would bury them at ground level.
+    // Chunk objects only spawn after the chunk's heights are loaded, so
+    // ground-floor doors are also at the right Y here.
+    const data = this.worldObjectDefs.get(objectEntityId);
+
     const pivot = new TransformNode("doorPivot_" + objectEntityId, this.scene);
     pivot.position = hingeWorldPos;
     pivot.rotationQuaternion = null;
@@ -3120,7 +3139,6 @@ export class GameManager {
       pivot.parent = savedParent;
     }
 
-    const data = this.worldObjectDefs.get(objectEntityId);
     const startAngle = (data && data.depleted) ? -Math.PI / 2 : 0;
 
     this.doorPivots.set(objectEntityId, {
