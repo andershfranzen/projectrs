@@ -13,7 +13,7 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, STAIR_ASSET_CONFIG, rotateStairDirection } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
@@ -46,6 +46,11 @@ interface FloorLayerClientData {
   floors: Map<number, number>;
   stairs: Map<number, StairData>;
   roofs: Map<number, RoofData>;
+  /** Implicit walkable tiles for upper floors — derived from elevated texture
+   *  planes when walls.json doesn't have explicit floor entries. Value is the
+   *  Y height (used by walls for base height). Texture planes provide the
+   *  visual surface so we don't render brown floor planes for these tiles. */
+  tiles: Map<number, number>;
 }
 
 /**
@@ -259,7 +264,7 @@ export class ChunkManager {
         if (wallsData.floorLayers) {
           for (const [floorStr, ld] of Object.entries(wallsData.floorLayers)) {
             const floorIdx = parseInt(floorStr as string);
-            const layer: FloorLayerClientData = { walls: new Map(), wallHeights: new Map(), floors: new Map(), stairs: new Map(), roofs: new Map() };
+            const layer: FloorLayerClientData = { walls: new Map(), wallHeights: new Map(), floors: new Map(), stairs: new Map(), roofs: new Map(), tiles: new Map() };
             const ldd = ld as FloorLayerData;
             if (ldd.walls) for (const [k, v] of Object.entries(ldd.walls)) { const i = parseKey(k); if (i !== null) layer.walls.set(i, v); }
             if (ldd.wallHeights) for (const [k, v] of Object.entries(ldd.wallHeights)) { const i = parseKey(k); if (i !== null) layer.wallHeights.set(i, v); }
@@ -356,6 +361,34 @@ export class ChunkManager {
       this.shadowInf.fill(1.0);
     }
     this.loadTexturePlanes(this.mapData!.texturePlanes || []);
+
+    // Auto-derive upper-floor walkable tiles from elevated texture planes for
+    // any floor that doesn't already have explicit tile/floor entries. Mirrors
+    // server-side GameMap.registerTexturePlaneFloors so client/server agree on
+    // which upper-floor tiles exist (needed for wall base heights and the
+    // floor system to recognize the surfaces during visibility logic).
+    const derivedFloors = deriveUpperFloorTilesFromPlanes(
+      this.mapData!.texturePlanes || [],
+      this.mapWidth,
+      this.mapHeight,
+    );
+    let derivedTotal = 0;
+    for (const [floorIdx, tileMap] of derivedFloors) {
+      let layer = this.floorLayerData.get(floorIdx);
+      if (!layer) {
+        layer = { walls: new Map(), wallHeights: new Map(), floors: new Map(), stairs: new Map(), roofs: new Map(), tiles: new Map() };
+        this.floorLayerData.set(floorIdx, layer);
+      }
+      for (const [idx, y] of tileMap) {
+        if (!layer.tiles.has(idx) && !layer.floors.has(idx)) {
+          layer.tiles.set(idx, y);
+          derivedTotal++;
+        }
+      }
+    }
+    if (derivedTotal > 0) {
+      console.log(`[ChunkManager] Derived ${derivedTotal} upper-floor walkable tiles across ${derivedFloors.size} floor(s) from texture planes`);
+    }
 
     this.loaded = true;
     this.lastChunkX = -999;
@@ -461,7 +494,6 @@ export class ChunkManager {
     const cx = Math.floor(playerX / CHUNK_SIZE);
     const cz = Math.floor(playerZ / CHUNK_SIZE);
     if (cx === this.lastChunkX && cz === this.lastChunkZ) return;
-    console.log(`[ChunkManager] updatePlayerPosition(${playerX}, ${playerZ}) => chunk (${cx}, ${cz}), mapSize: ${this.mapWidth}x${this.mapHeight}`);
     this.lastChunkX = cx;
     this.lastChunkZ = cz;
 
@@ -1579,7 +1611,9 @@ export class ChunkManager {
         if (mask === 0) continue;
         hasWalls = true;
         const wallH = layer.wallHeights.get(tileIdx) ?? DEFAULT_WALL_HEIGHT;
-        const floorH = layer.floors.get(tileIdx) ?? 0;
+        // Fall back to derived tile heights so walls on auto-derived upper
+        // floors get the right base instead of defaulting to ground (y=0).
+        const floorH = layer.floors.get(tileIdx) ?? layer.tiles.get(tileIdx) ?? 0;
         const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE, z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
         const baseY = floorH;
         if (mask & WallEdge.N) {
@@ -1847,7 +1881,7 @@ export class ChunkManager {
         switch (stair.direction) { case 'N': t = 1 - fz; break; case 'S': t = fz; break; case 'E': t = fx; break; case 'W': t = 1 - fx; break; }
         return stair.baseHeight + t * (stair.topHeight - stair.baseHeight);
       }
-      const floorH = layer.floors.get(tileIdx);
+      const floorH = layer.floors.get(tileIdx) ?? layer.tiles.get(tileIdx);
       if (floorH !== undefined) return floorH;
     }
     return this.getInterpolatedHeight(x, z);
@@ -2005,11 +2039,19 @@ export class ChunkManager {
    *  block regardless of player Y (editor-authored walls always count as solid). */
   private wallEdgeBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.mapWidth + x;
-    if (((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0) return false;
+    const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
+    const floorH = this.floorHeights.get(idx)
+      ?? this.elevatedFloorHeights.get(idx)
+      ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+    // Open-door bypass: only applies if the player is actually AT the door's
+    // elevation. Without this, a basement player (Y=0) could walk through an
+    // open door whose floor is at Y=2.7 and snap up onto the upper floor.
+    const isOpenDoor = ((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0;
+    const atDoorLevel = playerY == null || (playerY >= floorH - 0.5 && playerY < floorH + wallH);
+    if (isOpenDoor && atDoorLevel) return false;
+
     if ((this.getWallRaw(x, z) & edge) !== 0) {
       if (playerY == null) return true;
-      const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
-      const floorH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
       if (playerY < floorH + wallH) return true;
     }
     for (const layer of this.floorLayerData.values()) {
@@ -2154,64 +2196,22 @@ export class ChunkManager {
   private registerTexturePlaneFloors(): void {
     if (!this.mapData) return;
     const planes = this.mapData.texturePlanes || [];
+    const derived = deriveElevatedFloorTiles(
+      planes,
+      this.mapWidth,
+      this.mapHeight,
+      (wx, wz) => this.getInterpolatedHeight(wx, wz),
+      (idx) => !!(this.tileTypes && BLOCKING_TILES.has(this.tileTypes[idx] as TileType)),
+    );
     let count = 0;
-    for (const plane of planes) {
-      const rx = plane.rotation?.x ?? 0;
-      const isFlat = Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1;
-      if (!isFlat) continue;
-
-      const px = plane.position?.x ?? 0;
-      const py = plane.position?.y ?? 0;
-      const pz = plane.position?.z ?? 0;
-      const sx = plane.scale?.x ?? 1;
-      const sy = plane.scale?.y ?? 1;
-      const ry = plane.rotation?.y ?? 0;
-
-      const hw = (plane.width ?? 1) * sx / 2;
-      const hd = (plane.height ?? 1) * sy / 2;
-      const cosR = Math.cos(ry), sinR = Math.sin(ry);
-      const corners = [
-        { x: px + (-hw) * cosR - (-hd) * sinR, z: pz + (-hw) * sinR + (-hd) * cosR },
-        { x: px + (hw) * cosR - (-hd) * sinR, z: pz + (hw) * sinR + (-hd) * cosR },
-        { x: px + (hw) * cosR - (hd) * sinR, z: pz + (hw) * sinR + (hd) * cosR },
-        { x: px + (-hw) * cosR - (hd) * sinR, z: pz + (-hw) * sinR + (hd) * cosR },
-      ];
-
-      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-      for (const c of corners) {
-        if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x;
-        if (c.z < minZ) minZ = c.z; if (c.z > maxZ) maxZ = c.z;
+    for (const [idx, entry] of derived) {
+      if (entry.wasBlocking && this.tileTypes) {
+        this.tileTypes[idx] = TileType.STONE;
       }
-
-      const tx0 = Math.max(0, Math.floor(minX));
-      const tx1 = Math.min(this.mapWidth - 1, Math.floor(maxX));
-      const tz0 = Math.max(0, Math.floor(minZ));
-      const tz1 = Math.min(this.mapHeight - 1, Math.floor(maxZ));
-
-      for (let tz = tz0; tz <= tz1; tz++) {
-        for (let tx = tx0; tx <= tx1; tx++) {
-          const idx = tz * this.mapWidth + tx;
-          const terrainH = this.getInterpolatedHeight(tx + 0.5, tz + 0.5);
-          if (py <= terrainH) continue;
-
-          // Blocked tiles: make walkable (bridges over water/walls)
-          const wasBlocking = this.tileTypes && BLOCKING_TILES.has(this.tileTypes[idx] as TileType);
-          if (wasBlocking) {
-            this.tileTypes![idx] = TileType.STONE;
-          }
-
-          const existing = this.elevatedFloorHeights.get(idx);
-          if (existing === undefined || py < existing) {
-            this.elevatedFloorHeights.set(idx, py);
-          }
-          // Bridge tiles: over blocking terrain OR within 2 units of terrain (walkways/ramps)
-          if (wasBlocking || py < terrainH + 2.0) {
-            this.bridgeFloorTiles.add(idx);
-          }
-          this.texturePlaneFloorTiles.add(idx);
-          count++;
-        }
-      }
+      this.elevatedFloorHeights.set(idx, entry.y);
+      if (entry.isBridge) this.bridgeFloorTiles.add(idx);
+      this.texturePlaneFloorTiles.add(idx);
+      count++;
     }
     if (count > 0) {
       console.log(`[ChunkManager] Registered ${count} tiles as walkable from texture plane bridges`);
@@ -2411,6 +2411,14 @@ export class ChunkManager {
     if (this.isRoofLikeAsset(obj.assetId)) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
     if (obj.position.y > groundY + 2.0) return false;
+    // Doors must be unique pickable nodes — clicking one looks up its
+    // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
+    // source meshes share one mesh per asset across all instances, so per-
+    // instance metadata can't be set and clicks fall through to ground move.
+    // Names like 'castleTruedoor' / 'basicTruedoor' have animations so they
+    // already opt out via modelAnimationGroups, but static doors like
+    // 'stone wall door2' or 'stone_wall_door' don't — catch them by name.
+    if (obj.assetId.toLowerCase().includes('door')) return false;
     return true;
   }
 
@@ -2654,17 +2662,17 @@ export class ChunkManager {
       }
 
       if (this.isRoofLikeAsset(obj.assetId)) {
+        // Stamp ONLY the slab's own tile. The previous 5×5 stamp triggered
+        // indoor mode 2 tiles outside any slab, which with the 1×1 query
+        // bled across walls. Buildings are tiled with one slab per tile in
+        // kcmap, so per-tile registration covers the interior exactly.
         const tx = Math.floor(obj.position.x);
         const tz = Math.floor(obj.position.z);
         const roofFloor = this.assignRoofFloor(obj.position.x, obj.position.z, obj.position.y);
-        for (let dz = -2; dz <= 2; dz++) {
-          for (let dx = -2; dx <= 2; dx++) {
-            const rk = `${tx + dx},${tz + dz}`;
-            let arr = this.roofObjectGrid.get(rk);
-            if (!arr) { arr = []; this.roofObjectGrid.set(rk, arr); }
-            arr.push({ node: root, floor: roofFloor, y: obj.position.y });
-          }
-        }
+        const rk = `${tx},${tz}`;
+        let arr = this.roofObjectGrid.get(rk);
+        if (!arr) { arr = []; this.roofObjectGrid.set(rk, arr); }
+        arr.push({ node: root, floor: roofFloor, y: obj.position.y });
       }
 
       if (STAIR_ASSET_CONFIG[obj.assetId]) {
@@ -2787,7 +2795,7 @@ export class ChunkManager {
     const floorIndices = Array.from(this.floorLayerData.keys()).sort((a, b) => b - a);
     for (const floorIdx of floorIndices) {
       const layer = this.floorLayerData.get(floorIdx)!;
-      const floorH = layer.floors.get(tileIdx);
+      const floorH = layer.floors.get(tileIdx) ?? layer.tiles.get(tileIdx);
       if (floorH !== undefined && roofY > floorH + 0.5) return floorIdx;
     }
     return 0;
@@ -2818,37 +2826,51 @@ export class ChunkManager {
     return lower.includes('roof') || lower.includes('slab');
   }
 
-  isUnderRoof(x: number, z: number, playerY: number, floor: number): boolean {
-    const tx = Math.floor(x);
-    const tz = Math.floor(z);
-    for (let dz = -1; dz <= 1; dz++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const arr = this.roofObjectGrid.get(`${tx + dx},${tz + dz}`);
-        if (!arr || arr.length === 0) return false;
-        let hasRoof = false;
-        for (const entry of arr) {
-          if (entry.floor === floor && entry.y > playerY + 0.5) { hasRoof = true; break; }
-        }
-        if (!hasRoof) return false;
-      }
+  isUnderRoof(x: number, z: number, playerY: number, _floor: number): boolean {
+    // Indoor signal A: player is literally STANDING on an elevated walkable
+    // surface (a building's upper floor). The tile has an entry in
+    // elevatedFloorHeights (texture-plane upper floors) AND the player's Y
+    // matches that elevation — i.e. they're on it, not under it.
+    const tx = Math.floor(x), tz = Math.floor(z);
+    if (tx >= 0 && tx < this.mapWidth && tz >= 0 && tz < this.mapHeight) {
+      const elev = this.elevatedFloorHeights.get(tz * this.mapWidth + tx);
+      if (elev !== undefined && Math.abs(playerY - elev) < 1.0) return true;
     }
+
+    // Indoor signal B: 1×1 roof slab cover. Player's tile has a roof entry
+    // above them (single-storey building case — a roof, no upper floor).
+    // Multi-layer suppression handles "under the building" (floor + roof
+    // above the player ⇒ basement, not indoor).
+    const here = this.roofObjectGrid.get(`${tx},${tz}`);
+    if (!here) return false;
+    let minAbove = Infinity, maxAbove = -Infinity;
+    for (const e of here) {
+      if (e.y <= playerY + 0.5) continue;
+      if (e.y < minAbove) minAbove = e.y;
+      if (e.y > maxAbove) maxAbove = e.y;
+    }
+    if (minAbove === Infinity) return false;
+    if (maxAbove > minAbove + 2.0) return false;
     return true;
   }
 
+
   /** Get all roof nodes near a position on the given floor or above (for hiding). */
-  getRoofNodesNear(x: number, z: number, radius: number, minY: number, floor: number): TransformNode[] {
+  getRoofNodesNear(x: number, z: number, radius: number, minY: number, _floor: number): TransformNode[] {
     const result: TransformNode[] = [];
     const seen = new Set<TransformNode>();
     const tx = Math.floor(x);
     const tz = Math.floor(z);
     const r = Math.ceil(radius);
+    // Match isUnderRoof: any roof above playerY+0.5 (= minY here) counts as
+    // an immediate ceiling. The floor-index heuristic is intentionally
+    // ignored — see isUnderRoof for the rationale.
     for (let dz = -r; dz <= r; dz++) {
       for (let dx = -r; dx <= r; dx++) {
         const arr = this.roofObjectGrid.get(`${tx + dx},${tz + dz}`);
         if (arr) {
           for (const entry of arr) {
-            if (entry.floor < floor) continue;
-            if (!seen.has(entry.node) && entry.y > minY) {
+            if (entry.y > minY && !seen.has(entry.node)) {
               seen.add(entry.node);
               result.push(entry.node);
             }
@@ -2860,7 +2882,10 @@ export class ChunkManager {
   }
 
   /** Get all placed object nodes near a position that are above a given Y height.
-   *  Excludes door objects so they remain clickable when indoors. */
+   *  Excludes door objects so they remain clickable when indoors.
+   *  Also includes merged flat texture-plane meshes (the upper-floor surfaces)
+   *  that sit above the threshold — they're not in `chunkPlacedNodes` because
+   *  they're built by the merger, not the placed-object loader. */
   getNodesAboveHeight(x: number, z: number, radius: number, minY: number): TransformNode[] {
     const result: TransformNode[] = [];
     const tx = Math.floor(x);
@@ -2870,16 +2895,35 @@ export class ChunkManager {
     for (const [, nodes] of this.chunkPlacedNodes) {
       for (const node of nodes) {
         if (seen.has(node)) continue;
-        if (node.position.y <= minY) continue;
-        const assetId = (node.metadata as any)?.assetId;
-        if (assetId && (assetId.toLowerCase().includes('door') || assetId.toLowerCase().includes('truedoor'))) continue;
-        const dx = Math.floor(node.position.x) - tx;
-        const dz = Math.floor(node.position.z) - tz;
+        // Doors get reparented under a pivot in setupDoorPivot, so their
+        // local `position` is relative to the pivot (≈0) — not the world Y.
+        // Use absolute position so we cull doors above the player too.
+        const ap = node.getAbsolutePosition();
+        if (ap.y <= minY) continue;
+        const dx = Math.floor(ap.x) - tx;
+        const dz = Math.floor(ap.z) - tz;
         if (Math.abs(dx) <= r && Math.abs(dz) <= r) {
           seen.add(node);
           result.push(node);
         }
       }
+    }
+    // Also fold in flat texture-plane meshes whose lowest plane sits above
+    // the threshold. We use chunk-center distance as the spatial filter
+    // (each merged mesh is bound to one chunk).
+    const playerChunkX = Math.floor(x / CHUNK_SIZE);
+    const playerChunkZ = Math.floor(z / CHUNK_SIZE);
+    const chunkRadius = Math.ceil(radius / CHUNK_SIZE) + 1;
+    for (const m of this.texturePlaneMeshes) {
+      const md = m.metadata as { isFlat?: boolean; isNoRoof?: boolean; minY?: number; chunkX?: number; chunkZ?: number } | undefined;
+      if (!md || !md.isFlat || md.minY === undefined || md.chunkX === undefined) continue;
+      if (md.isNoRoof) continue; // explicitly authored as "never hide"
+      if (md.minY <= minY) continue;
+      if (Math.abs(md.chunkX - playerChunkX) > chunkRadius) continue;
+      if (Math.abs((md.chunkZ ?? 0) - playerChunkZ) > chunkRadius) continue;
+      if (seen.has(m)) continue;
+      seen.add(m);
+      result.push(m);
     }
     return result;
   }
@@ -3105,6 +3149,7 @@ export class ChunkManager {
       isFlat: boolean;
       isRoof: boolean;
       roofFloor: number;
+      isNoRoof: boolean;
     }
     const mergeGroups = new Map<string, MergeGroup>();
 
@@ -3117,6 +3162,7 @@ export class ChunkManager {
 
       let isRoof = false;
       let roofFloor = 0;
+      const isNoRoof = !!plane.noRoof;
       if (isFlat) {
         const terrainH = this.getEffectiveHeight(plane.position.x, plane.position.z);
         if (plane.position.y > terrainH + 1.0 && !plane.noRoof) {
@@ -3126,13 +3172,16 @@ export class ChunkManager {
       }
 
       const tintKey = plane.tintColor ? `${plane.tintColor.r.toFixed(2)}_${plane.tintColor.g.toFixed(2)}_${plane.tintColor.b.toFixed(2)}` : '';
-      const matKey = `${plane.textureId}_${plane.uvRepeat || 0}_${plane.texRotation || 0}_${tintKey}_${plane.doubleSided ? 1 : 0}_${isFlat ? 1 : 0}`;
+      // Include noRoof in the merge key so noRoof planes don't share a
+      // merged mesh with regular planes — the indoor-roof culler can then
+      // skip the entire merged mesh by checking its metadata flag.
+      const matKey = `${plane.textureId}_${plane.uvRepeat || 0}_${plane.texRotation || 0}_${tintKey}_${plane.doubleSided ? 1 : 0}_${isFlat ? 1 : 0}_${isNoRoof ? 1 : 0}`;
       const groupKey = isRoof
         ? `${matKey}_chunk${pcx}_${pcz}_roof${roofFloor}`
         : `${matKey}_chunk${pcx}_${pcz}`;
 
       let group = mergeGroups.get(groupKey);
-      if (!group) { group = { planes: [], isFlat, isRoof, roofFloor }; mergeGroups.set(groupKey, group); }
+      if (!group) { group = { planes: [], isFlat, isRoof, roofFloor, isNoRoof }; mergeGroups.set(groupKey, group); }
       group.planes.push(plane);
     }
 
@@ -3167,6 +3216,20 @@ export class ChunkManager {
       mesh.isPickable = group.isFlat;
       mesh.freezeWorldMatrix();
       mesh.doNotSyncBoundingInfo = true;
+
+      // Compute Y range across all planes in this group so the indoor-roof
+      // culler can hide upper-floor surfaces (these merged meshes aren't
+      // tracked by `roofObjectGrid` — that only sees placed objects).
+      let minPY = Infinity, maxPY = -Infinity;
+      for (const plane of group.planes) {
+        const py = plane.position.y;
+        if (py < minPY) minPY = py;
+        if (py > maxPY) maxPY = py;
+      }
+      const refChunkX = Math.floor(refPlane.position.x / CHUNK_SIZE);
+      const refChunkZ = Math.floor(refPlane.position.z / CHUNK_SIZE);
+      mesh.metadata = { isTexPlane: true, isFlat: group.isFlat, isNoRoof: group.isNoRoof, minY: minPY, maxY: maxPY, chunkX: refChunkX, chunkZ: refChunkZ };
+
       this.texturePlaneMeshes.push(mesh);
 
       const pcx = Math.floor(refPlane.position.x / CHUNK_SIZE);
@@ -3176,16 +3239,26 @@ export class ChunkManager {
       if (!arr) { arr = []; this.texturePlanesByChunk.set(pkey, arr); }
       arr.push(mesh);
 
-      // Register roof entries for all planes in the group
+      // Register roof entries for all planes in the group. Only register
+      // tiles whose CENTER falls inside the plane's footprint. The previous
+      // version used Math.ceil on half-width, which rounded a 1.2-tile plane
+      // up to a 3-tile footprint — and an "every cell of 3×3 is covered"
+      // indoor test would then fire near any wall with a slightly-oversized
+      // decorative plane on it.
       if (group.isRoof) {
         for (const plane of group.planes) {
-          const tx = Math.floor(plane.position.x);
-          const tz = Math.floor(plane.position.z);
-          const hw = Math.min(8, Math.ceil((plane.width * Math.abs(plane.scale.x || 1)) / 2));
-          const hh = Math.min(8, Math.ceil((plane.height * Math.abs(plane.scale.z || plane.scale.y || 1)) / 2));
-          for (let dz = -hh; dz <= hh; dz++) {
-            for (let dx = -hw; dx <= hw; dx++) {
-              const rk = `${tx + dx},${tz + dz}`;
+          const px = plane.position.x, pz = plane.position.z;
+          const halfW = ((plane.width ?? 1) * Math.abs(plane.scale.x || 1)) / 2;
+          const halfD = ((plane.height ?? 1) * Math.abs(plane.scale.z || plane.scale.y || 1)) / 2;
+          const tx0 = Math.floor(px - halfW);
+          const tx1 = Math.floor(px + halfW);
+          const tz0 = Math.floor(pz - halfD);
+          const tz1 = Math.floor(pz + halfD);
+          for (let tz = tz0; tz <= tz1; tz++) {
+            for (let tx = tx0; tx <= tx1; tx++) {
+              if (Math.abs(tx + 0.5 - px) > halfW) continue;
+              if (Math.abs(tz + 0.5 - pz) > halfD) continue;
+              const rk = `${tx},${tz}`;
               let roofArr = this.roofObjectGrid.get(rk);
               if (!roofArr) { roofArr = []; this.roofObjectGrid.set(rk, roofArr); }
               roofArr.push({ node: mesh, floor: group.roofFloor, y: plane.position.y });

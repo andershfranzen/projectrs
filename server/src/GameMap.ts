@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, defaultKCTile } from '@projectrs/shared';
+import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
@@ -33,8 +33,20 @@ export class GameMap {
   private walls: Uint8Array;
   /** Per-tile wall height overrides (sparse — only stores non-default) */
   private wallHeights: Map<number, number> = new Map();
-  /** Elevated floor heights (sparse) */
+  /** Elevated floor heights (sparse) — covers heights from explicit walls.json
+   *  data + texture-plane bridges over BLOCKING terrain (water/walls). */
   private floorHeights: Map<number, number> = new Map();
+  /** Elevated walking surfaces from flat texture planes — superset of
+   *  floorHeights. Includes ALL elevated planes (over walkable terrain too,
+   *  e.g. building roofs and balcony platforms). Read by getEffectiveHeight
+   *  with a player-Y gate to disambiguate "on the roof" vs "under the roof". */
+  private elevatedFloorHeights: Map<number, number> = new Map();
+  /** Tiles where the elevated surface should ALWAYS be the walking height,
+   *  no Y gate. True bridges (over blocking terrain) and low ramps within
+   *  2 units of the underlying terrain. Roofs over walkable terrain are
+   *  NOT in this set — they need the Y gate to avoid teleporting players
+   *  up when they walk under a building. */
+  private bridgeFloorTiles: Set<number> = new Set();
   /** Stair data (sparse) */
   private stairs: Map<number, StairData> = new Map();
   /** Roof data (sparse) */
@@ -221,7 +233,15 @@ export class GameMap {
     // Register horizontal texture planes as walkable floors (bridges, platforms)
     this.registerTexturePlaneFloors(mapFile);
 
-    // Register placed stair GLBs as ramp zones for height interpolation + pathfinding
+    // Register placed stair GLBs as ramp zones for height interpolation +
+    // pathfinding. We DON'T mirror the top tile onto an upper floor here —
+    // kcmap (and similar) authors "upper floors" as elevated floor-0
+    // texture-plane bridges, not real floorLayers[N] data. Mirroring would
+    // make the server fire a spurious floor 0→1 transition the moment the
+    // player steps on the top stair tile, and `isTileBlockedOnFloor(1)`
+    // would then reject every adjacent move because floor 1 has no
+    // walkable tiles around. Stair-based floor changes are only valid when
+    // the map has authored floor-1+ stair data in walls.json (rare).
     for (const placed of this.placedObjects) {
       const stairCfg = STAIR_ASSET_CONFIG[placed.assetId];
       if (!stairCfg) continue;
@@ -257,65 +277,73 @@ export class GameMap {
     console.log(`Loaded map '${mapId}': ${this.width}x${this.height} tiles, waterLevel=${this.mapData.waterLevel}, ${this.floorLayers.size} upper floors`);
   }
 
-  /** Detect horizontal texture planes and register them as walkable bridges/floors.
-   *  A flat plane acts as a walkable floor when it sits significantly above the terrain
-   *  beneath it (bridges over water, valleys, or any gap). */
-  private registerTexturePlaneFloors(mapFile: KCMapFile): void {
+  /** Detect horizontal texture planes and register them as walkable bridges
+   *  + roof surfaces. Symmetric with the client (see ChunkManager) — both
+   *  sides build their elevation maps from the same shared derivation so
+   *  server and client agree on every tile's walking Y. */
+  private registerTexturePlaneFloors(_mapFile: KCMapFile): void {
     const planes = this.mapData.texturePlanes || [];
-    let count = 0;
-    for (const plane of planes) {
-      // Detect physically flat planes: rotation.x ≈ -PI/2
-      const rx = plane.rotation?.x ?? 0;
-      const isFlat = Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1;
-      if (!isFlat) continue;
+    const derived = deriveElevatedFloorTiles(
+      planes,
+      this.width,
+      this.height,
+      (wx, wz) => this.getInterpolatedHeight(wx, wz),
+      (idx) => BLOCKING_TILES.has(this.tileTypes[idx] as TileType),
+    );
 
-      const px = plane.position?.x ?? 0;
-      const py = plane.position?.y ?? 0;
-      const pz = plane.position?.z ?? 0;
-      const sx = plane.scale?.x ?? 1;
-      const sy = plane.scale?.y ?? 1;
-      const ry = plane.rotation?.y ?? 0;
-
-      const hw = (plane.width ?? 1) * sx / 2;
-      const hd = (plane.height ?? 1) * sy / 2;
-      const cosR = Math.cos(ry), sinR = Math.sin(ry);
-      const corners = [
-        { x: px + (-hw) * cosR - (-hd) * sinR, z: pz + (-hw) * sinR + (-hd) * cosR },
-        { x: px + (hw) * cosR - (-hd) * sinR, z: pz + (hw) * sinR + (-hd) * cosR },
-        { x: px + (hw) * cosR - (hd) * sinR, z: pz + (hw) * sinR + (hd) * cosR },
-        { x: px + (-hw) * cosR - (hd) * sinR, z: pz + (-hw) * sinR + (hd) * cosR },
-      ];
-
-      let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-      for (const c of corners) {
-        if (c.x < minX) minX = c.x; if (c.x > maxX) maxX = c.x;
-        if (c.z < minZ) minZ = c.z; if (c.z > maxZ) maxZ = c.z;
-      }
-
-      const tx0 = Math.max(0, Math.floor(minX));
-      const tx1 = Math.min(this.width - 1, Math.floor(maxX));
-      const tz0 = Math.max(0, Math.floor(minZ));
-      const tz1 = Math.min(this.height - 1, Math.floor(maxZ));
-
-      for (let tz = tz0; tz <= tz1; tz++) {
-        for (let tx = tx0; tx <= tx1; tx++) {
-          const idx = tz * this.width + tx;
-          // Only affect tiles that are currently blocked (water, wall)
-          // Non-blocked tiles keep their terrain height — no floating
-          if (!BLOCKING_TILES.has(this.tileTypes[idx] as TileType)) continue;
-
-          this.tileTypes[idx] = TileType.STONE; // make walkable
-          // Use the lowest flat plane as walking surface
+    let bridgeCount = 0;
+    let roofCount = 0;
+    for (const [idx, entry] of derived) {
+      this.elevatedFloorHeights.set(idx, entry.y);
+      if (entry.isBridge) {
+        this.bridgeFloorTiles.add(idx);
+        // Bridge over blocking terrain → upgrade to walkable + record as
+        // floorHeights so collision/pathing treats it as ground at this Y.
+        if (entry.wasBlocking) {
+          this.tileTypes[idx] = TileType.STONE;
           const existing = this.floorHeights.get(idx);
-          if (existing === undefined || py < existing) {
-            this.floorHeights.set(idx, py);
+          if (existing === undefined || entry.y < existing) {
+            this.floorHeights.set(idx, entry.y);
           }
-          count++;
+        }
+        bridgeCount++;
+      } else {
+        roofCount++;
+      }
+    }
+    if (bridgeCount + roofCount > 0) {
+      console.log(`  Registered ${bridgeCount} bridge tiles + ${roofCount} elevated roof tiles from texture planes`);
+    }
+
+    // Derive upper-floor walkability from elevated texture planes. Maps were
+    // authored with floor surfaces represented as decorative planes, but
+    // walls.json's floorLayers[N].tiles is often empty — without entries
+    // here, isTileBlockedOnFloor returns true for every upper-floor tile
+    // (player can't walk there, NPCs can't path there).
+    const upperFloors = deriveUpperFloorTilesFromPlanes(planes, this.width, this.height);
+    let derivedTotal = 0;
+    for (const [floorIdx, tileMap] of upperFloors) {
+      let layer = this.floorLayers.get(floorIdx);
+      if (!layer) {
+        layer = {
+          tiles: new Map<number, number>(),
+          walls: new Map<number, number>(),
+          wallHeights: new Map<number, number>(),
+          floors: new Map<number, number>(),
+          stairs: new Map<number, StairData>(),
+          roofs: new Map<number, RoofData>(),
+        };
+        this.floorLayers.set(floorIdx, layer);
+      }
+      for (const [idx] of tileMap) {
+        if (!layer.tiles.has(idx)) {
+          layer.tiles.set(idx, 1);
+          derivedTotal++;
         }
       }
     }
-    if (count > 0) {
-      console.log(`  Registered ${count} tiles as walkable from texture plane bridges`);
+    if (derivedTotal > 0) {
+      console.log(`  Derived ${derivedTotal} upper-floor walkable tiles across ${upperFloors.size} floors from texture planes`);
     }
   }
 
@@ -484,15 +512,27 @@ export class GameMap {
     return this.roofs.get(tz * this.width + tx) ?? null;
   }
 
+  /** Elevated walking surface Y at this tile, or null if none (terrain only). */
+  getElevatedFloorHeight(x: number, z: number): number | null {
+    const tx = Math.floor(x), tz = Math.floor(z);
+    if (tx < 0 || tx >= this.width || tz < 0 || tz >= this.height) return null;
+    return this.elevatedFloorHeights.get(tz * this.width + tx) ?? null;
+  }
+
   /** Get effective walking height at a position, accounting for floors and stairs */
   getEffectiveHeight(x: number, z: number): number {
     return this.getEffectiveHeightOnFloor(x, z, 0);
   }
 
-  /** Get effective walking height at a position on a specific floor */
-  getEffectiveHeightOnFloor(x: number, z: number, floor: number): number {
+  /** Get effective walking height at a position on a specific floor.
+   *  `currentY` is the player's last-known Y — used to gate roof-tile
+   *  reveal. Without it, walking under a building roof would teleport the
+   *  player up onto the roof. With it, the roof only "sticks" once the
+   *  player is already near that height (e.g. after climbing a stair). */
+  getEffectiveHeightOnFloor(x: number, z: number, floor: number, currentY?: number): number {
     const tx = Math.floor(x);
     const tz = Math.floor(z);
+    const idx = tz * this.width + tx;
 
     const stair = this.getStairOnFloor(tx, tz, floor);
     if (stair) {
@@ -511,6 +551,14 @@ export class GameMap {
     if (floor === 0) {
       const floorH = this.getFloorHeight(x, z);
       if (floorH !== null) return floorH;
+      // Elevated walking surfaces from texture planes (mirrors the client's
+      // ChunkManager.getEffectiveHeight). Bridges always snap; roofs gate
+      // on currentY so walking under a building doesn't teleport you up.
+      const elevH = this.elevatedFloorHeights.get(idx);
+      if (elevH !== undefined) {
+        if (this.bridgeFloorTiles.has(idx)) return elevH;
+        if (currentY !== undefined && currentY > elevH - 1.5) return elevH;
+      }
       return this.getInterpolatedHeight(x, z);
     }
 
@@ -529,11 +577,19 @@ export class GameMap {
    *  block regardless of player Y (editor-authored walls always count as solid). */
   private wallBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.width + x;
-    if (((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0) return false;
+    const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
+    const floorH = this.floorHeights.get(idx)
+      ?? this.elevatedFloorHeights.get(idx)
+      ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+    // Open-door bypass: only applies if the player is at the door's
+    // elevation. Otherwise a basement player (Y=0) could walk through an
+    // open door at Y=2.7 and skip up onto the upper floor.
+    const isOpenDoor = ((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0;
+    const atDoorLevel = playerY == null || (playerY >= floorH - 0.5 && playerY < floorH + wallH);
+    if (isOpenDoor && atDoorLevel) return false;
+
     if ((this.getWall(x, z) & edge) !== 0) {
       if (playerY == null) return true;
-      const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
-      const floorH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
       if (playerY < floorH + wallH) return true;
     }
     for (const layer of this.floorLayers.values()) {

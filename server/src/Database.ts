@@ -15,6 +15,13 @@ export interface SessionInfo {
 export interface SavedPlayerState {
   x: number;
   z: number;
+  /** Effective walking Y at save time, captured server-side via
+   *  GameMap.getEffectiveHeightOnFloor. Persisted so a player who logged out
+   *  on an elevated tile (texture-plane bridge, e.g. building interiors at
+   *  y≈2.73) respawns at the right elevation — without this, the client's
+   *  getEffectiveHeight gates elevation reveal on the player's current Y,
+   *  which is 0 at spawn time, dropping them through the floor. */
+  y: number;
   floor: number;
   mapLevel: string;
   skills: SkillBlock;
@@ -71,6 +78,10 @@ export class GameDatabase {
     // Migration: add floor column so multi-floor positions persist across logout
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN floor INTEGER DEFAULT 0`);
+    } catch { /* column already exists */ }
+    // Migration: add y column so elevated-tile spawns restore at correct height
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN y REAL DEFAULT 0`);
     } catch { /* column already exists */ }
   }
 
@@ -149,7 +160,7 @@ export class GameDatabase {
     this.db.query('DELETE FROM sessions WHERE token = ?').run(token);
   }
 
-  savePlayerState(accountId: number, player: Player): void {
+  savePlayerState(accountId: number, player: Player, effectiveY: number): void {
     const skills: Record<string, { xp: number; level: number; currentLevel: number }> = {};
     for (const id of ALL_SKILLS) {
       skills[id] = {
@@ -166,13 +177,13 @@ export class GameDatabase {
 
     this.db.query(`
       UPDATE player_state SET
-        x = ?, z = ?, floor = ?,
+        x = ?, z = ?, y = ?, floor = ?,
         map_level = ?,
         skills = ?, inventory = ?, equipment = ?,
         stance = ?, appearance = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
-      player.position.x, player.position.y, player.currentFloor,
+      player.position.x, player.position.y, effectiveY, player.currentFloor,
       player.currentMapLevel,
       JSON.stringify(skills),
       JSON.stringify(player.inventory),
@@ -184,8 +195,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, floor, map_level, skills, inventory, equipment, stance, appearance FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null } | null;
 
     if (!row) return null;
 
@@ -238,6 +249,7 @@ export class GameDatabase {
     return {
       x: row.x,
       z: row.z,
+      y: row.y ?? 0,
       floor: row.floor ?? 0,
       mapLevel: row.map_level || 'kcmap',
       skills,

@@ -15,6 +15,19 @@ export enum ClientOpcode {
   PLAYER_INTERACT_OBJECT = 40,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
+  /** Client tells server which floor the player is visually on. Sent when
+   *  the player's visual Y crosses a floor boundary — covers cases where
+   *  there's no real stair object (e.g. the player walks up auto-derived
+   *  texture-plane steps) so the server's stair-mechanic FLOOR_CHANGE
+   *  isn't fired. Without this, server.currentFloor stays 0 and saves
+   *  spawn the player on floor 0 next session. */
+  CLIENT_FLOOR_HINT = 70,
+  /** Client tells the server its current visual Y (×10). Pure metadata —
+   *  the server uses x/z + currentFloor for all collision/movement logic.
+   *  Persisted on disconnect so an elevated-tile spawn (texture-plane
+   *  bridges under buildings, where the server's floorHeights doesn't
+   *  capture the elevation) restores at the right height on next login. */
+  CLIENT_POSITION_Y = 71,
 }
 
 // Server → Client opcodes

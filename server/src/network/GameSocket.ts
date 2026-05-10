@@ -41,7 +41,41 @@ export function handleGameSocketOpen(
     player.appearance = saved.appearance;
     player.currentMapLevel = mapLevel; // use validated mapLevel, not raw saved value
     player.currentFloor = saved.floor;
+    player.reportedY = saved.y; // restore visual height for spawn
     player.syncHealthFromSkills();
+
+    // Unstick recovery. Two cases:
+    //   1) Saved floor is BLOCKED at the saved tile — try other floors,
+    //      fall back to default spawn if none work. Triggered by old bugs
+    //      that corrupted player.currentFloor.
+    //   2) Saved floor > 0 but floor 0 is also walkable at the saved tile.
+    //      Downgrade to floor 0 — this catches players whose floor was
+    //      corrupted to 1+ by the (now-removed) stair-mirror bug while
+    //      they were on an elevated-floor-0 building tile. Genuine
+    //      upper-floor maps have walls/blocks on floor 0 below, so the
+    //      downgrade only triggers in the corrupt-state case.
+    const tx = Math.floor(player.position.x);
+    const tz = Math.floor(player.position.y);
+    if (map.isTileBlockedOnFloor(tx, tz, player.currentFloor)) {
+      let recovered = false;
+      for (const f of [0, 1, 2, 3]) {
+        if (f !== player.currentFloor && !map.isTileBlockedOnFloor(tx, tz, f)) {
+          console.log(`[GameSocket] Recovering "${username}": saved floor ${player.currentFloor} blocked at (${tx},${tz}), switching to floor ${f}`);
+          player.currentFloor = f;
+          recovered = true;
+          break;
+        }
+      }
+      if (!recovered) {
+        console.log(`[GameSocket] Recovering "${username}": saved tile (${tx},${tz}) blocked on all floors, respawning at default`);
+        player.position.x = defaultSpawn.x;
+        player.position.y = defaultSpawn.z;
+        player.currentFloor = 0;
+      }
+    } else if (player.currentFloor > 0 && !map.isTileBlockedOnFloor(tx, tz, 0)) {
+      console.log(`[GameSocket] Downgrading "${username}" from floor ${player.currentFloor} → 0 (floor 0 walkable at saved tile, corrupted upper-floor state)`);
+      player.currentFloor = 0;
+    }
   }
 
   ws.data.playerId = player.id;
@@ -163,6 +197,21 @@ export function handleGameSocketMessage(
       const quantity = values[1] ?? 1;
       const expectedItemId = values[2];
       world.handlePlayerSellItem(playerId, slot, quantity, expectedItemId);
+      break;
+    }
+
+    // CLIENT_FLOOR_HINT removed — was a security hole. A malicious client
+    // could spoof any floor at any tile that happened to be walkable on
+    // multiple floors, bypassing legitimate stair gating. Floor changes are
+    // now server-authoritative (see World.tickTransitions) — they fire only
+    // when the player walks onto a placed stair GLB whose registration
+    // (GameMap.ts) mirrors the top tile across both connecting floors.
+
+    case ClientOpcode.CLIENT_POSITION_Y: {
+      // Pure metadata. Stored for persistence so an elevated-tile spawn
+      // restores at the right height. Y has no game-logic effect.
+      const player = world.getPlayer(playerId);
+      if (player) player.reportedY = (values[0] ?? 0) / 10;
       break;
     }
 

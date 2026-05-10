@@ -56,6 +56,19 @@ export class Player extends Entity {
   // Chunk tracking
   currentChunkX: number = -1;
   currentChunkZ: number = -1;
+
+  /** Latest visual Y reported by the client (CLIENT_POSITION_Y). Pure
+   *  metadata — never used for collision, pathfinding, or any other logic.
+   *  Persisted at logout so the client can spawn at the correct visual
+   *  height on next login (e.g. on top of a texture-plane bridge that
+   *  the server's floorHeights doesn't capture). */
+  reportedY: number = 0;
+
+  /** Tile (z*width+x) where the player most recently transitioned floors.
+   *  Cleared when the player moves to any other tile. Prevents the top tile
+   *  of a stair (which has stair entries on both floors due to GameMap's
+   *  mirror) from oscillating the player up/down on every tick. */
+  lastFloorChangeTile: number = -1;
   /** Previous chunk position for broadcastSync — when this changes, viewer needs full resync */
   lastBroadcastChunkX: number = -9999;
   lastBroadcastChunkZ: number = -9999;

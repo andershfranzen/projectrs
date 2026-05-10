@@ -341,8 +341,9 @@ export class World {
   start(): void {
     console.log(`World starting — tick rate: ${TICK_RATE}ms`);
     this.tickTimer = setInterval(() => this.tick(), TICK_RATE);
-    // Auto-save all players every 60 seconds
-    this.saveTimer = setInterval(() => this.saveAllPlayers(), 60_000);
+    // Auto-save all players every 15 seconds — short enough that an
+    // ungraceful kill loses at most a few seconds of progress.
+    this.saveTimer = setInterval(() => this.saveAllPlayers(), 15_000);
   }
 
   stop(): void {
@@ -359,13 +360,33 @@ export class World {
 
   private saveAllPlayers(): void {
     for (const [, player] of this.players) {
-      this.db.savePlayerState(player.accountId, player);
+      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
     }
+  }
+
+  /** Effective walking Y at the player's current (x, z, floor). Server is
+   *  now authoritative — both server and client run the same shared
+   *  derivation (deriveElevatedFloorTiles), so getEffectiveHeightOnFloor
+   *  here returns the same Y the client renders. We pass the player's last
+   *  known Y (reportedY for now, will become player.y in Step 2) as the
+   *  gate input so roof tiles reveal correctly. */
+  private computeEffectiveY(player: Player): number {
+    const map = this.getPlayerMap(player);
+    return map.getEffectiveHeightOnFloor(
+      player.position.x, player.position.y, player.currentFloor,
+      player.reportedY,
+    );
   }
 
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
+        // Save BEFORE removing — otherwise a refresh races the WS-close
+        // handler, the new session's kick runs first, removePlayer drops
+        // the entity, and the close handler's save no-ops because the
+        // player is already gone. Result: any state since the last
+        // auto-save (60s) is lost — including the latest reportedY.
+        this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
         try {
           player.ws.close(1000, 'Logged in from another session');
         } catch { /* ignore */ }
@@ -387,9 +408,25 @@ export class World {
     player.currentChunkZ = Math.floor(player.position.y / CHUNK_SIZE);
 
     // Send login confirmation — entity data will be sent when client responds with MAP_READY
+    // The 4th value is the effective walking Y so the client can spawn at
+    // the right elevation (e.g. on top of a texture-plane bridge interior).
+    let spawnY = this.computeEffectiveY(player);
+    // Auto-correct: if the saved Y is suspiciously low AND the saved tile
+    // has elevation data, snap up to the elevation. Players occasionally
+    // walk off the upper floor edge between auto-saves and get persisted
+    // at terrain; without this, they'd respawn stuck at the wrong height
+    // forever (the height-gate in getEffectiveHeight needs currentY to be
+    // high to reveal elevation, creating a feedback loop).
+    const map = this.getPlayerMap(player);
+    const elevAtTile = map.getElevatedFloorHeight?.(player.position.x, player.position.y);
+    if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && spawnY < elevAtTile - 1.0) {
+      spawnY = elevAtTile;
+      player.reportedY = elevAtTile; // re-anchor so the next save persists the correct value
+    }
     this.sendToPlayer(player, ServerOpcode.LOGIN_OK, player.id,
       Math.round(player.position.x * 10),
-      Math.round(player.position.y * 10)
+      Math.round(player.position.y * 10),
+      Math.round(spawnY * 10),
     );
 
     // Send MAP_CHANGE so client loads the correct map (handles underground, dungeons, etc.)
@@ -438,7 +475,7 @@ export class World {
   handlePlayerDisconnect(playerId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
-    this.db.savePlayerState(player.accountId, player);
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
 
     if (player.isLogoutBlocked(this.currentTick)) {
       player.requestIdleLogout = true;
@@ -465,7 +502,7 @@ export class World {
     if (!toRemove) return;
     for (const id of toRemove) {
       const player = this.players.get(id);
-      if (player) this.db.savePlayerState(player.accountId, player);
+      if (player) this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
       this.removePlayer(id);
     }
   }
@@ -524,31 +561,33 @@ export class World {
     }
   }
 
+  /** Open the door: leave the wall mask SET, only flag openDoorEdges. The
+   *  block-check honors the bypass if the player is at the door's elevation
+   *  (see GameMap.wallBlocksAtHeight) — clearing the mask would let players
+   *  at the WRONG elevation (e.g. basement under an upper-floor door) skip
+   *  through, because the wall would have nothing left to block on. */
   private clearDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
-    map.setWall(tx, tz, map.getWall(tx, tz) & ~edge);
     map.setOpenDoorEdges(tx, tz, edge, true);
     const nb = World.EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
-        map.setWall(nx, nz, map.getWall(nx, nz) & ~nb.opposite);
         map.setOpenDoorEdges(nx, nz, nb.opposite, true);
       }
     }
   }
 
+  /** Close the door: clear openDoorEdges. Wall mask was never disturbed. */
   private restoreDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
-    map.setWall(tx, tz, map.getWall(tx, tz) | edge);
     map.setOpenDoorEdges(tx, tz, edge, false);
     const nb = World.EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
-        map.setWall(nx, nz, map.getWall(nx, nz) | nb.opposite);
         map.setOpenDoorEdges(nx, nz, nb.opposite, false);
       }
     }
@@ -1804,18 +1843,34 @@ export class World {
       const tx = Math.floor(player.position.x);
       const tz = Math.floor(player.position.y);
       const oldFloor = player.currentFloor;
-      const stair = map.getStairOnFloor(tx, tz, player.currentFloor);
-      if (stair) {
-        const upperStair = map.getStairOnFloor(tx, tz, player.currentFloor + 1);
-        if (upperStair) {
+      const tileIdx = tz * map.width + tx;
+
+      // Clear the per-tile lock once the player moves off the tile where they
+      // last transitioned. Re-entering the same tile later (e.g. wandering
+      // back to the top of a stair) is allowed.
+      if (player.lastFloorChangeTile !== -1 && player.lastFloorChangeTile !== tileIdx) {
+        player.lastFloorChangeTile = -1;
+      }
+
+      // Floor change fires on the tile where stair entries exist on BOTH the
+      // current floor AND an adjacent floor (the top tile of a stair, after
+      // GameMap's mirror). Bottom/middle tiles only have a stair on floor 0
+      // so they're a no-op. The per-tile lock prevents oscillation: once we
+      // transition AT a tile, we won't re-transition there until the player
+      // walks elsewhere.
+      const stairCurrent = map.getStairOnFloor(tx, tz, player.currentFloor);
+      if (stairCurrent && player.lastFloorChangeTile !== tileIdx) {
+        const stairAbove = map.getStairOnFloor(tx, tz, player.currentFloor + 1);
+        const stairBelow = player.currentFloor > 0 ? map.getStairOnFloor(tx, tz, player.currentFloor - 1) : null;
+        if (stairAbove) {
           player.currentFloor += 1;
-        }
-      } else if (player.currentFloor > 0) {
-        const lowerStair = map.getStairOnFloor(tx, tz, player.currentFloor - 1);
-        if (lowerStair) {
+          player.lastFloorChangeTile = tileIdx;
+        } else if (stairBelow) {
           player.currentFloor -= 1;
+          player.lastFloorChangeTile = tileIdx;
         }
       }
+
       if (player.currentFloor !== oldFloor) {
         this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
       }
@@ -1848,7 +1903,7 @@ export class World {
     if (!this.maps.has(newMap)) return;
 
     // Save player state
-    this.db.savePlayerState(player.accountId, player);
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
 
     // Get nearby entities before removing from chunk manager (for cleanup)
     const oldCm = this.chunkManagers.get(oldMap);

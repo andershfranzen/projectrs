@@ -90,27 +90,40 @@ export class InputManager {
   }
 
   /**
-   * Pick the ground tile the cursor is over by raycasting against terrain chunks.
-   * Falls back to horizontal plane projection if no terrain mesh is hit.
-   * Result is snapped to tile center for predictable RS2-style movement.
+   * Pick the ground tile the cursor is over by raycasting against any walkable
+   * surface — floor 0 terrain, upper-floor mesh sets, and texture planes —
+   * then verify the picked point's Y matches the player's current floor at
+   * that (x, z). Without the floor verification, clicks on a 2nd-floor
+   * surface would resolve to the floor 0 X/Z behind/below it (RS2's "your
+   * click only counts on your own plane" rule). Snapped to tile centre.
    */
   private pickGround(): { x: number; z: number } | null {
     if (!this.scene.activeCamera) return null;
 
-    // Raycast against terrain chunk meshes (named "chunk_X_Z")
+    // Accept any pickable visible mesh — the Y-match check below handles
+    // floor/plane filtering. Listing names here would miss placed-object
+    // stair GLBs (which have arbitrary mesh names) and any future walkable
+    // asset. Walls and other vertical geometry are already non-pickable.
     const pick = this.scene.pick(
       this.scene.pointerX,
       this.scene.pointerY,
-      (mesh) => mesh.name.startsWith('chunk_') && mesh.isEnabled() && mesh.isVisible,
+      (mesh) => mesh.isEnabled() && mesh.isVisible && mesh.isPickable,
       false,
       this.scene.activeCamera
     );
 
     if (pick?.hit && pick.pickedPoint) {
-      // Snap to tile center
+      const p = pick.pickedPoint;
+      const floor = this.chunkManager.getCurrentFloor();
+      const expectedY = this.chunkManager.getEffectiveHeight(p.x, p.z, floor, this.playerY);
+      // Reject the click if the picked point is not on the player's current
+      // plane. ±0.6 tolerance covers stair ramps + small height variation
+      // within a floor; anything bigger is a different floor (or the click
+      // landed on a roof/wall mistakenly registered as pickable).
+      if (Math.abs(p.y - expectedY) > 0.6) return null;
       return {
-        x: Math.floor(pick.pickedPoint.x) + 0.5,
-        z: Math.floor(pick.pickedPoint.z) + 0.5,
+        x: Math.floor(p.x) + 0.5,
+        z: Math.floor(p.z) + 0.5,
       };
     }
 

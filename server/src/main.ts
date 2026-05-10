@@ -435,6 +435,21 @@ world.start();
 // Clean expired sessions every 10 minutes
 setInterval(() => db.cleanExpiredSessions(), 10 * 60 * 1000);
 
+// Save all players on graceful shutdown so a server restart (SIGTERM from
+// `bun --watch`, deploy, or operator Ctrl-C) doesn't lose the last 15 s of
+// progress between auto-save ticks. World.stop() flushes one final save
+// before clearing the tick/save timers.
+let shuttingDown = false;
+const shutdown = (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[shutdown] received ${signal} — saving state and exiting`);
+  try { world.stop(); } catch (e) { console.error('[shutdown] world.stop() failed:', e); }
+  process.exit(0);
+};
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
 type SocketData = GameSocketData | ChatSocketData;
 
 const server = Bun.serve<SocketData>({

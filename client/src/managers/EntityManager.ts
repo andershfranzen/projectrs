@@ -77,7 +77,7 @@ export { type GroundItemData };
 
 export class EntityManager {
   private scene: Scene;
-  private getHeight: (x: number, z: number) => number;
+  private getHeight: (x: number, z: number, currentY?: number) => number;
   private itemDefsCache: Map<number, ItemDef>;
 
   // Sprite assets
@@ -108,7 +108,7 @@ export class EntityManager {
   readonly groundItems: Map<number, GroundItemData> = new Map();
   readonly groundItemSprites: Map<number, SpriteEntity> = new Map();
 
-  constructor(scene: Scene, getHeight: (x: number, z: number) => number, itemDefsCache: Map<number, ItemDef>) {
+  constructor(scene: Scene, getHeight: (x: number, z: number, currentY?: number) => number, itemDefsCache: Map<number, ItemDef>) {
     this.scene = scene;
     this.getHeight = getHeight;
     this.itemDefsCache = itemDefsCache;
@@ -269,7 +269,9 @@ export class EntityManager {
       labelColor: '#ffffff',
       directionalSprites: this.playerSprites ?? undefined,
     });
-    sprite.position = new Vector3(x, this.getHeight(x, z), z);
+    // Spawn at terrain height — pass currentY=0 so the elevation gate
+    // doesn't snap a remote player up to a roof above their actual tile.
+    sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);
     this.remotePlayers.set(entityId, sprite);
     if (this.playerWalkAnim) sprite.setWalkAnimation(this.playerWalkAnim);
     this.attachPlayerAttackAnims(sprite);
@@ -282,7 +284,8 @@ export class EntityManager {
 
     if (modelCfg) {
       const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, name);
-      npc3d.position = new Vector3(x, this.getHeight(x, z), z);
+      // Spawn at terrain height — see remote-player comment above.
+      npc3d.position = new Vector3(x, this.getHeight(x, z, 0), z);
       // Stamp entityId on every mesh's metadata so picking can disambiguate
       // multiple instances of the same GLB (every cow shares mesh names).
       npc3d.setEntityIdMetadata(entityId);
@@ -302,7 +305,7 @@ export class EntityManager {
       height: size.h,
       directionalSprites: npcSpriteSet ?? undefined,
     });
-    sprite.position = new Vector3(x, this.getHeight(x, z), z);
+    sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);
     // Stamp identity metadata so picking can resolve the entity without
     // relying on mesh names. Mirrors the Npc3DEntity stamp — keeps the
     // picking flow uniform whether the NPC is a sprite or a 3D model.
@@ -330,7 +333,7 @@ export class EntityManager {
       height: 0.48,
       iconUrl: iconPath ?? undefined,
     });
-    sprite.position = new Vector3(x, this.getHeight(x, z), z);
+    sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);
     sprite.getMesh().metadata = { kind: 'groundItem', groundItemId };
     this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z });
     this.groundItemSprites.set(groundItemId, sprite);
@@ -403,7 +406,7 @@ export class EntityManager {
         const step = Math.min(1.67 * dt, dist);
         const nx = c.x + (dx / dist) * step;
         const nz = c.z + (dz / dist) * step;
-        sprite.setPositionXYZ(nx, this.getHeight(nx, nz), nz);
+        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
         const combatTarget = this.remoteCombatTargets.get(entityId);
@@ -445,7 +448,10 @@ export class EntityManager {
         const step = Math.min(speed * dt, dist);
         const nx = c.x + (dx / dist) * step;
         const nz = c.z + (dz / dist) * step;
-        sprite.setPositionXYZ(nx, this.getHeight(nx, nz), nz);
+        // Use the NPC's own current Y as gate input so a rat in the basement
+        // doesn't get snapped up to the floor above just because the local
+        // player is up there. Each entity carries its own elevation context.
+        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
       } else if (serverMoving) {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
@@ -465,28 +471,31 @@ export class EntityManager {
 
   // --- Repositioning (after heightmap loads) ---
 
-  repositionEntities(localPlayerX: number, localPlayerZ: number, localPlayer: { setPositionXYZ: (x: number, y: number, z: number) => void } | null): void {
+  repositionEntities(_localPlayerX: number, _localPlayerZ: number, _localPlayer: { setPositionXYZ: (x: number, y: number, z: number) => void } | null): void {
+    // Pass each entity's own current Y as the elevation gate so e.g. a rat
+    // in the basement stays at its terrain Y instead of being snapped to
+    // whatever floor surface happens to overlap its tile.
     for (const [entityId, sprite] of this.npcSprites) {
       const target = this.npcTargets.get(entityId);
       if (target) {
-        sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z), target.z);
+        sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z, sprite.position.y), target.z);
       }
     }
     for (const [entityId, sprite] of this.remotePlayers) {
       const target = this.remoteTargets.get(entityId);
       if (target) {
-        sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z), target.z);
+        sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z, sprite.position.y), target.z);
       }
     }
     for (const [groundItemId, item] of this.groundItems) {
       const sprite = this.groundItemSprites.get(groundItemId);
       if (sprite) {
-        sprite.position = new Vector3(item.x, this.getHeight(item.x, item.z), item.z);
+        sprite.position = new Vector3(item.x, this.getHeight(item.x, item.z, sprite.position.y), item.z);
       }
     }
-    if (localPlayer) {
-      localPlayer.setPositionXYZ(localPlayerX, this.getHeight(localPlayerX, localPlayerZ), localPlayerZ);
-    }
+    // Local player intentionally NOT repositioned here. Its Y came from
+    // LOGIN_OK (server-authoritative) and getHeight() without currentY
+    // gates roof reveal off and drops elevated-tile spawns to terrain (0).
   }
 
   // --- Lifecycle ---

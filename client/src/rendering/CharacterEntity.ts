@@ -234,6 +234,20 @@ export class CharacterEntity {
   // Head meshes — collected during load for hide/show under full helmets
   private headMeshes: AbstractMesh[] = [];
 
+  // Body torso meshes — hidden when body armor is equipped to avoid clipping.
+  // The character GLB exports torso/belt as separate primitives keyed by
+  // material name; we identify them here and toggle their visibility together.
+  private bodyMeshes: AbstractMesh[] = [];
+
+  // The "Skin" primitive — single mesh covering face, arms, hands, legs.
+  // We pre-compute two index buffers: the original (full skin) and a
+  // filtered one that omits arm-region triangles. setBodyVisible toggles
+  // between them so body armor hides just the arms while hands/face/legs
+  // stay visible.
+  private skinMesh: AbstractMesh | null = null;
+  private skinIndicesFull: Uint32Array | null = null;
+  private skinIndicesNoArms: Uint32Array | null = null;
+
 
   // Modular mesh parts — keyed by mesh name for show/hide
   private modularMeshes: Map<string, AbstractMesh> = new Map();
@@ -411,7 +425,11 @@ export class CharacterEntity {
         }
       }
 
-      // Identify hair meshes for hide/show under full helmets
+      // Identify hair meshes for hide/show under full helmets, and the
+      // torso/belt meshes for hide/show under body armor. The character GLB
+      // splits "main character" into many primitives, one per material — so
+      // we filter by material name (Shirt + variants + belt).
+      const BODY_MATERIAL_NAMES = new Set(['shirt', 'shirt openings', 'mat_4550', 'belt']);
       for (const mesh of this.meshes) {
         const n = mesh.name;
         if (n.startsWith('M_hair_')) {
@@ -419,10 +437,19 @@ export class CharacterEntity {
           continue;
         }
         const matBase = mesh.material?.name.replace(/_flat$/, '').replace(/\.\d+$/, '').toLowerCase() ?? '';
+        if (BODY_MATERIAL_NAMES.has(matBase)) {
+          this.bodyMeshes.push(mesh);
+          continue;
+        }
+        if (matBase === 'skin') {
+          this.skinMesh = mesh;
+          continue;
+        }
         if (HAIR_MATERIAL_NAMES.has(matBase)) {
           this.headMeshes.push(mesh);
         }
       }
+      this.buildSkinArmFilter();
 
       // Collect animation groups from the main GLB
       for (const group of result.animationGroups) {
@@ -1025,9 +1052,54 @@ export class CharacterEntity {
       return;
     }
 
+    // Bone-index remap. Armor is often authored against a smaller skeleton
+    // than the character (e.g. our character has 57 bones — Mixamo base + 25
+    // finger bones — while a body armor might only need the 32 base bones).
+    // The vertex data's JOINTS_0 attribute stores indices into the *armor's*
+    // skeleton, so when we swap to the character's skeleton those indices
+    // would point at the wrong bones (or at static bones like HeadTop_End,
+    // producing a T-pose). Build a name-based translation table and rewrite
+    // the indices before the swap.
+    const remap = new Int32Array(armorSkeleton.bones.length);
+    let unmapped = 0;
+    for (let i = 0; i < armorSkeleton.bones.length; i++) {
+      const name = armorSkeleton.bones[i].name;
+      const charIdx = this.skeleton.bones.findIndex(b => b.name === name);
+      if (charIdx < 0) {
+        remap[i] = 0; // unmatched: pin to root so it doesn't crash, just won't deform
+        unmapped++;
+      } else {
+        remap[i] = charIdx;
+      }
+    }
+    if (unmapped > 0) {
+      console.warn(`[SkinnedArmor] ${unmapped}/${armorSkeleton.bones.length} armor bone(s) had no match in character skeleton`);
+    }
+
+    const remapIndexBuffer = (data: Float32Array | number[]): Float32Array => {
+      const out = new Float32Array(data.length);
+      for (let i = 0; i < data.length; i++) {
+        const src = data[i] | 0;
+        out[i] = src >= 0 && src < remap.length ? remap[src] : 0;
+      }
+      return out;
+    };
+
+    const armorBoneCount = armorSkeleton.bones.length;
     const kept: AbstractMesh[] = [];
     for (const mesh of meshes) {
       if (mesh.getTotalVertices() === 0) continue;
+
+      const indices = mesh.getVerticesData(VertexBuffer.MatricesIndicesKind);
+      if (indices) {
+        mesh.setVerticesData(VertexBuffer.MatricesIndicesKind, remapIndexBuffer(indices), true);
+      }
+      // Optional second slot of 4 indices for >4 weights per vertex
+      const indicesExtra = mesh.getVerticesData(VertexBuffer.MatricesIndicesExtraKind);
+      if (indicesExtra) {
+        mesh.setVerticesData(VertexBuffer.MatricesIndicesExtraKind, remapIndexBuffer(indicesExtra), true);
+      }
+
       if (mesh.skeleton === armorSkeleton) {
         mesh.skeleton = this.skeleton;
       }
@@ -1042,7 +1114,8 @@ export class CharacterEntity {
     this.skinnedArmorMeshes.set(slot, kept);
     this.skinnedArmorItemIds.set(slot, itemId);
     if (slot === 'head') this.setHeadVisible(false);
-    console.log(`[SkinnedArmor] Attached ${kept.length} meshes in slot '${slot}' itemId=${itemId}`);
+    if (slot === 'body') this.setBodyVisible(false);
+    console.log(`[SkinnedArmor] Attached ${kept.length} meshes in slot '${slot}' itemId=${itemId} (remapped ${armorBoneCount} bones, ${unmapped} unmatched)`);
   }
 
   detachSkinnedArmor(slot: string): void {
@@ -1053,6 +1126,138 @@ export class CharacterEntity {
     }
     this.skinnedArmorItemIds.delete(slot);
     if (slot === 'head') this.setHeadVisible(true);
+    if (slot === 'body') this.setBodyVisible(true);
+  }
+
+  /**
+   * Manual skinning binding for armor GLBs that Babylon's loader fails to
+   * recognize as skinned (it imports the geometry/material correctly but drops
+   * JOINTS_0/WEIGHTS_0 attributes). We fetch the GLB raw, pull the skin's
+   * joint indices and per-vertex weights/joints out of the binary buffer, and
+   * graft them onto the imported meshes — then bind to the character skeleton
+   * with name-based bone remap.
+   */
+  async attachManualSkinnedArmor(
+    slot: string,
+    fileUrl: string,
+    importedMeshes: AbstractMesh[],
+    itemId: number = -1,
+  ): Promise<boolean> {
+    if (!this.skeleton || !this.armatureNode) {
+      console.warn('[ManualSkin] No character skeleton/armature; skipping');
+      return false;
+    }
+    try {
+      const buf = await (await fetch(fileUrl)).arrayBuffer();
+      const view = new DataView(buf);
+      // GLB: magic(4) "glTF", version(4) = 2, length(4)
+      if (view.getUint32(0, true) !== 0x46546c67) throw new Error('Not a GLB');
+      // Chunk 0 (JSON): length(4) type(4)='JSON' data
+      const jsonLen = view.getUint32(12, true);
+      const jsonStr = new TextDecoder().decode(new Uint8Array(buf, 20, jsonLen));
+      const json = JSON.parse(jsonStr) as any;
+      // Chunk 1 (BIN): length(4) type(4)='BIN ' data — start at 12+8+jsonLen+8
+      const binStart = 12 + 8 + jsonLen + 8;
+
+      const skin = json.skins?.[0];
+      if (!skin) throw new Error('GLB has no skin');
+      const meshNode = json.nodes.find((n: any) => n.skin !== undefined && n.mesh !== undefined);
+      if (!meshNode) throw new Error('GLB has no node with both mesh and skin');
+      const meshDef = json.meshes[meshNode.mesh];
+
+      // Build name-based remap: armor joint index → character bone index
+      const armorJointNames: string[] = skin.joints.map((nodeIdx: number) => json.nodes[nodeIdx].name);
+      const remap = new Int32Array(armorJointNames.length);
+      let unmapped = 0;
+      for (let i = 0; i < armorJointNames.length; i++) {
+        const name = armorJointNames[i];
+        const charIdx = this.skeleton.bones.findIndex(b => b.name === name);
+        if (charIdx < 0) { remap[i] = 0; unmapped++; }
+        else remap[i] = charIdx;
+      }
+
+      // glTF accessor → typed array slice from the BIN chunk
+      const componentSize = (ct: number): number =>
+        ({ 5121: 1, 5123: 2, 5125: 4, 5126: 4, 5120: 1, 5122: 2 } as Record<number, number>)[ct] ?? 4;
+      const numComponents = (t: string): number =>
+        ({ SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 } as Record<string, number>)[t] ?? 1;
+      const readAccessor = (accIdx: number): { kind: number; data: Uint8Array | Uint16Array | Float32Array; ncomp: number } => {
+        const acc = json.accessors[accIdx];
+        const bv = json.bufferViews[acc.bufferView];
+        const offset = (bv.byteOffset || 0) + (acc.byteOffset || 0);
+        const nc = numComponents(acc.type);
+        const total = acc.count * nc;
+        const start = binStart + offset;
+        let data: Uint8Array | Uint16Array | Float32Array;
+        switch (acc.componentType) {
+          case 5121: data = new Uint8Array(buf.slice(start, start + total * 1)); break;
+          case 5123: data = new Uint16Array(buf.slice(start, start + total * 2)); break;
+          case 5126: data = new Float32Array(buf.slice(start, start + total * 4)); break;
+          default: throw new Error(`Unsupported component type ${acc.componentType}`);
+        }
+        return { kind: acc.componentType, data, ncomp: nc };
+      };
+
+      // Find the imported meshes that correspond to each glTF primitive.
+      // Babylon names them like "{meshName}_primitive{i}" (or just "{meshName}"
+      // for single-primitive meshes).
+      const baseName = meshNode.name;
+      const importedByPrim = new Map<number, AbstractMesh>();
+      for (let i = 0; i < meshDef.primitives.length; i++) {
+        const wantedNames = meshDef.primitives.length === 1
+          ? [baseName, `${baseName}_primitive0`]
+          : [`${baseName}_primitive${i}`];
+        const m = importedMeshes.find(im => wantedNames.includes(im.name) && im.getTotalVertices() > 0);
+        if (m) importedByPrim.set(i, m);
+      }
+      if (importedByPrim.size === 0) {
+        throw new Error(`Could not match any imported mesh to glTF primitives for "${baseName}"`);
+      }
+
+      const kept: AbstractMesh[] = [];
+      for (let i = 0; i < meshDef.primitives.length; i++) {
+        const prim = meshDef.primitives[i];
+        const mesh = importedByPrim.get(i);
+        if (!mesh) continue;
+
+        const jointsAcc = prim.attributes.JOINTS_0;
+        const weightsAcc = prim.attributes.WEIGHTS_0;
+        if (jointsAcc === undefined || weightsAcc === undefined) continue;
+
+        const joints = readAccessor(jointsAcc).data; // typically Uint8Array, 4 per vertex
+        const weights = readAccessor(weightsAcc).data; // typically Float32Array, 4 per vertex
+
+        // Remap joint indices and convert to Float32Array (Babylon's MatricesIndicesKind).
+        const remappedJoints = new Float32Array(joints.length);
+        for (let k = 0; k < joints.length; k++) {
+          const src = joints[k];
+          remappedJoints[k] = src < remap.length ? remap[src] : 0;
+        }
+        const weightsF32 = weights instanceof Float32Array ? weights : Float32Array.from(weights);
+
+        mesh.setVerticesData(VertexBuffer.MatricesIndicesKind, remappedJoints, false);
+        mesh.setVerticesData(VertexBuffer.MatricesWeightsKind, weightsF32, false);
+        mesh.numBoneInfluencers = 4;
+        mesh.skeleton = this.skeleton;
+        mesh.parent = this.armatureNode;
+        mesh.rotationQuaternion = null;
+        mesh.position.set(0, 0, 0);
+        mesh.rotation.set(0, 0, 0);
+        mesh.scaling.set(1, 1, 1);
+        kept.push(mesh);
+      }
+
+      this.detachSkinnedArmor(slot);
+      this.skinnedArmorMeshes.set(slot, kept);
+      this.skinnedArmorItemIds.set(slot, itemId);
+      if (slot === 'head') this.setHeadVisible(false);
+      if (slot === 'body') this.setBodyVisible(false);
+      console.log(`[ManualSkin] slot='${slot}' item=${itemId} primitives=${kept.length} jointsRemapped=${armorJointNames.length} unmatched=${unmapped}`);
+      return true;
+    } catch (e) {
+      console.warn(`[ManualSkin] Failed for ${fileUrl}:`, e);
+      return false;
+    }
   }
 
   applySkinnedArmorTransform(slot: string, override: { localPosition?: { x: number; y: number; z: number }; localRotation?: { x: number; y: number; z: number }; scale?: number }): void {
@@ -1078,6 +1283,79 @@ export class CharacterEntity {
 
   getSkinnedArmorMeshes(slot: string): AbstractMesh[] | undefined {
     return this.skinnedArmorMeshes.get(slot);
+  }
+
+  /** Hide/show the underlying torso/belt meshes. Called when a body-slot
+   *  armor is equipped/unequipped to avoid the armor mesh z-fighting with
+   *  the character's torso geometry beneath it. Also swaps the Skin
+   *  primitive's index buffer to drop arm triangles only — hands/face/legs
+   *  remain visible. */
+  setBodyVisible(visible: boolean): void {
+    for (const m of this.bodyMeshes) m.setEnabled(visible);
+    if (this.skinMesh && this.skinIndicesFull && this.skinIndicesNoArms) {
+      const indices = visible ? this.skinIndicesFull : this.skinIndicesNoArms;
+      this.skinMesh.setIndices(indices, null);
+    }
+  }
+
+  /** Pre-compute a filtered index buffer for the Skin mesh that omits any
+   *  triangle where the average vertex weight to shoulder/upper-arm/forearm
+   *  bones exceeds 50%. Triangles spanning the wrist (one arm vert + two hand
+   *  verts) stay in the buffer; triangles entirely on arms are dropped.
+   *  Run once at character load. */
+  private buildSkinArmFilter(): void {
+    if (!this.skinMesh || !this.skeleton) return;
+    const positions = this.skinMesh.getVerticesData(VertexBuffer.PositionKind);
+    const joints = this.skinMesh.getVerticesData(VertexBuffer.MatricesIndicesKind);
+    const weights = this.skinMesh.getVerticesData(VertexBuffer.MatricesWeightsKind);
+    const indices = this.skinMesh.getIndices();
+    if (!positions || !joints || !weights || !indices) return;
+
+    const ARM_BONE_NAMES = new Set([
+      'mixamorig:LeftShoulder', 'mixamorig:LeftArm', 'mixamorig:LeftForeArm',
+      'mixamorig:RightShoulder', 'mixamorig:RightArm', 'mixamorig:RightForeArm',
+    ]);
+    const armIdx = new Set<number>();
+    for (let i = 0; i < this.skeleton.bones.length; i++) {
+      if (ARM_BONE_NAMES.has(this.skeleton.bones[i].name)) armIdx.add(i);
+    }
+    if (armIdx.size === 0) return;
+
+    // Per-vertex classification: a vertex is "arm" if its *dominant* bone
+    // (highest weight) is in the arm bone set. This uses the actual rig
+    // binding rather than weight thresholds, which gives symmetric results
+    // even when the asset's weight painting isn't perfectly mirrored across
+    // left/right.
+    const numVerts = positions.length / 3;
+    const isArmVert = new Uint8Array(numVerts);
+    for (let v = 0; v < numVerts; v++) {
+      let bestW = -1, bestJ = -1;
+      for (let k = 0; k < 4; k++) {
+        const w = weights[v * 4 + k];
+        if (w > bestW) { bestW = w; bestJ = joints[v * 4 + k] | 0; }
+      }
+      if (bestJ >= 0 && armIdx.has(bestJ)) isArmVert[v] = 1;
+    }
+
+    // Drop a triangle only if all three vertices are arm-dominant. Triangles
+    // that span the wrist (one arm vert + two hand verts, or vice versa)
+    // stay in the buffer — the hand keeps a clean edge, and the small ring
+    // of remaining arm triangles at the wrist tucks under the platebody
+    // sleeve.
+    const numTris = indices.length / 3;
+    const noArm: number[] = [];
+    let dropped = 0;
+    for (let t = 0; t < numTris; t++) {
+      const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+      if (isArmVert[a] && isArmVert[b] && isArmVert[c]) {
+        dropped++;
+      } else {
+        noArm.push(a, b, c);
+      }
+    }
+
+    this.skinIndicesFull = new Uint32Array(indices as ArrayLike<number>);
+    this.skinIndicesNoArms = new Uint32Array(noArm);
   }
 
   setHeadVisible(visible: boolean): void {
@@ -1485,6 +1763,10 @@ export class CharacterEntity {
     }
     this.meshes = [];
     this.headMeshes = [];
+    this.bodyMeshes = [];
+    this.skinMesh = null;
+    this.skinIndicesFull = null;
+    this.skinIndicesNoArms = null;
     this.modularMeshes.clear();
 
     if (this.root) {

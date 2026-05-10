@@ -6,3 +6,4 @@ export * from './skills.js';
 export * from './assetObjectMap.js';
 export * from './appearance.js';
 export * from './terrain-shading.js';
+export * from './floorDerivation.js';

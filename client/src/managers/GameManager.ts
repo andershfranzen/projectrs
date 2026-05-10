@@ -11,6 +11,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
@@ -317,10 +318,29 @@ export class GameManager {
       }
     });
 
-    // When a chunk's placed objects finish loading, link them to world entities
+    // When a chunk's placed objects finish loading, link them to world entities.
+    // Also force a re-eval of indoor state: if a roof / upper-floor chunk
+    // streamed in *after* the player arrived at their current tile, the new
+    // mesh wasn't in hiddenRoofNodes and renders un-hidden until the player
+    // walks to a new tile. Resetting the indoor tile cursor makes the next
+    // frame recompute the hidden set.
     this.chunkManager.setOnChunkObjectsLoaded(() => {
       this.linkPlacedObjectsToWorldObjects();
       this.cleanupDisposedWorldObjects();
+      // Force the next frame to recompute hiddenRoofNodes — covers a roof's
+      // chunk loading after the player has already settled on a tile.
+      this._lastIndoorTileX = -9999;
+      this._lastIndoorTileZ = -9999;
+      // …and apply the hide synchronously RIGHT NOW so the streamed mesh
+      // never renders even for a frame. Otherwise we'd see a brief flash of
+      // the upper-floor surface before updateIndoorDetection runs next tick.
+      if (this.isIndoors) this.recomputeHiddenRoofs();
+      // Spawn-Y comes from LOGIN_OK now — no client-side re-snap needed.
+      // The previous re-snap loop dropped players: getHeight() returns the
+      // elevated value only when `currentY > elevH - 1.5`, but during
+      // handleMapChange's re-load cycle elevatedFloorHeights is briefly
+      // empty, so getHeight returns terrain (0) and snapped the player
+      // down — and once at Y=0 the gate stays failed permanently.
     });
 
     // Load map, then tell server we're ready for entity data
@@ -333,7 +353,7 @@ export class GameManager {
     this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this.objectModels.loadAll();
-    this.entities = new EntityManager(this.scene, (x, z) => this.getHeight(x, z), this.itemDefsCache);
+    this.entities = new EntityManager(this.scene, (x, z, cy) => this.getHeightAt(x, z, cy), this.itemDefsCache);
     this.entities.loadPlayerSprites();
     this.entities.loadNpcSprites();
 
@@ -382,8 +402,16 @@ export class GameManager {
     }
   }
 
+  /** Height query for the local player. Uses local player Y as gate input. */
   private getHeight(x: number, z: number): number {
-    const currentY = this.localPlayer?.position.y;
+    return this.chunkManager.getEffectiveHeight(x, z, undefined, this.localPlayer?.position.y);
+  }
+
+  /** Height query for arbitrary entities (NPCs, remote players, ground items).
+   *  Each caller passes its OWN current Y as the gate input — without this,
+   *  the local-player Y leaks into other entities and a rat in the basement
+   *  gets snapped up to the floor above when the player walks up there. */
+  private getHeightAt(x: number, z: number, currentY?: number): number {
     return this.chunkManager.getEffectiveHeight(x, z, undefined, currentY);
   }
 
@@ -610,12 +638,11 @@ export class GameManager {
     let linked = 0;
     for (const [objectEntityId, data] of this.worldObjectDefs) {
       if (this.worldObjectModels.has(objectEntityId)) continue;
-
       const placedNode = this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId);
-      if (!placedNode) continue;
-
-      this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
-      linked++;
+      if (placedNode) {
+        this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
+        linked++;
+      }
     }
   }
 
@@ -654,13 +681,16 @@ export class GameManager {
         [WallEdge.W]: { dx: -1, dz: 0, opposite: WallEdge.E },
       };
       const nb = nbLookup[wallEdge];
-      if (!data.depleted) {
-        this.chunkManager.setWall(tx, tz, this.chunkManager.getWallRawPublic(tx, tz) | wallEdge);
-        if (nb) {
-          const nx = tx + nb.dx, nz = tz + nb.dz;
-          this.chunkManager.setWall(nx, nz, this.chunkManager.getWallRawPublic(nx, nz) | nb.opposite);
-        }
-      } else {
+      // Wall mask for the door tile is set up by the chunk's wall data —
+      // we just need to flip openDoorEdges to match the current state.
+      // Keeping the wall mask permanent ensures the elevation gate in
+      // wallEdgeBlocksAtHeight can block wrong-elevation passage.
+      this.chunkManager.setWall(tx, tz, this.chunkManager.getWallRawPublic(tx, tz) | wallEdge);
+      if (nb) {
+        const nx = tx + nb.dx, nz = tz + nb.dz;
+        this.chunkManager.setWall(nx, nz, this.chunkManager.getWallRawPublic(nx, nz) | nb.opposite);
+      }
+      if (data.depleted) {
         this.chunkManager.setOpenDoorEdges(tx, tz, wallEdge, true);
         if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, true);
       }
@@ -782,6 +812,25 @@ export class GameManager {
       const dir = def.file.substring(0, lastSlash + 1);
       const file = def.file.substring(lastSlash + 1);
       const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+
+      // Fallback: if Babylon's glTF loader didn't attach a skeleton (rare —
+      // some Blender-exported GLBs trip the skin auto-detection), re-parse the
+      // GLB ourselves and graft the JOINTS_0/WEIGHTS_0 attributes onto the
+      // imported meshes for slots that need skinning. attachSkinnedArmor's
+      // name-based bone remap then handles the bind to our character skeleton.
+      const SKINNED_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet', 'cape']);
+      if (
+        result.skeletons.length === 0 &&
+        SKINNED_SLOTS.has(slotName) &&
+        this.localPlayer
+      ) {
+        const ok = await this.localPlayer.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId);
+        if (ok) {
+          const loaderRoot = result.meshes.find(m => m.name === '__root__');
+          if (loaderRoot) loaderRoot.dispose();
+          return null;
+        }
+      }
 
       if (result.skeletons.length > 0 && this.localPlayer) {
         // Convert PBR → flat for all skinned armor meshes
@@ -999,6 +1048,12 @@ export class GameManager {
       this.localPlayerId = v[0];
       this.playerX = v[1] / 10;
       this.playerZ = v[2] / 10;
+      // Server-authored spawn Y (effective walking height at our tile/floor).
+      // Trust this over locally-computed getHeight: on initial spawn the
+      // client's elevatedFloorHeights gates elevation reveal on currentY,
+      // which is 0 — so a saved player on an elevated tile would otherwise
+      // drop to the lower terrain.
+      const spawnY = (v[3] ?? 0) / 10;
       this.network.setLocalPlayerId(this.localPlayerId);
 
       this.loadingScreen = new LoadingScreen();
@@ -1006,10 +1061,9 @@ export class GameManager {
       this.loadingScreen.setStatus('Loading character…');
 
       this.localPlayer = this.createLocalCharacterEntity();
-      const spawnH = this.getHeight(this.playerX, this.playerZ);
-      this.localPlayer.setPositionXYZ(this.playerX, spawnH, this.playerZ);
-      this.inputManager.setPlayerY(spawnH);
-      console.log(`Logged in as player ${this.localPlayerId}`);
+      this.localPlayer.setPositionXYZ(this.playerX, spawnY, this.playerZ);
+      this.inputManager.setPlayerY(spawnY);
+      console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
 
       this.localPlayer.whenReady().then(() => {
         if (this.localAppearance && this.localPlayer) {
@@ -1361,11 +1415,11 @@ export class GameManager {
             : (fracX > 0.5 ? WallEdge.E : WallEdge.W);
 
           const opened = isDepleted === 1;
-          if (opened) {
-            this.chunkManager.setWall(tx, tz, this.chunkManager.getWallRawPublic(tx, tz) & ~edge);
-          } else {
-            this.chunkManager.setWall(tx, tz, this.chunkManager.getWallRawPublic(tx, tz) | edge);
-          }
+          // Leave the wall mask alone — only toggle openDoorEdges. The
+          // wall-block check uses elevation-gated openDoorEdges as the
+          // bypass mechanism (see ChunkManager.wallEdgeBlocksAtHeight), so
+          // clearing the mask would let players at the wrong elevation
+          // skip through.
           this.chunkManager.setOpenDoorEdges(tx, tz, edge, opened);
           const nbLookup: Record<number, { dx: number; dz: number; opposite: number }> = {
             [WallEdge.N]: { dx: 0, dz: -1, opposite: WallEdge.S },
@@ -1376,11 +1430,6 @@ export class GameManager {
           const nb = nbLookup[edge];
           if (nb) {
             const nx = tx + nb.dx, nz = tz + nb.dz;
-            if (opened) {
-              this.chunkManager.setWall(nx, nz, this.chunkManager.getWallRawPublic(nx, nz) & ~nb.opposite);
-            } else {
-              this.chunkManager.setWall(nx, nz, this.chunkManager.getWallRawPublic(nx, nz) | nb.opposite);
-            }
             this.chunkManager.setOpenDoorEdges(nx, nz, nb.opposite, opened);
           }
 
@@ -1568,14 +1617,13 @@ export class GameManager {
       const newFloor = values[0];
       this.currentFloor = newFloor;
       console.log(`Floor changed to ${newFloor}`);
-      // Update chunk visibility for multi-floor
       this.chunkManager.setCurrentFloor(newFloor);
-      // Snap the local player's Y to the floor we just switched to. Without
-      // this, on login the player can hover above the ground until their next
-      // step because Y was computed at floor 0.
-      if (this.localPlayer) {
-        this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
-      }
+      // No Y snap here either — LOGIN_OK provided the spawn Y, and
+      // legitimate floor changes (placed stairs) walk the player through
+      // the ramp tile-by-tile so getHeight is already correct via the
+      // per-frame movement update. TODO: server should send new Y in
+      // FLOOR_CHANGE for the rare case where the floor change isn't
+      // accompanied by a stair walkthrough.
     });
 
     this.network.onRawMessage((data: ArrayBuffer) => {
@@ -1626,9 +1674,11 @@ export class GameManager {
     if (this.localPlayer) this.localPlayer.stopWalking();
     this.combatTargetId = -1;
 
-    if (this.localPlayer) {
-      this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
-    }
+    // No Y snap here. LOGIN_OK already set Y from the server. Re-snapping
+    // via getHeight() can drop the player below an elevated tile because
+    // getHeight gates roof reveal on currentY, and the gate fails the
+    // moment chunk data is mid-rebuild. For inter-map transitions (portals)
+    // the server should send the new Y alongside MAP_CHANGE — TODO Step 3.
 
     // Reposition any entities that arrived before map finished loading
     this.repositionWorldObjects();
@@ -1933,8 +1983,10 @@ export class GameManager {
     if (data.depleted && def.category !== 'door') return;
     // Auto-interact with harvestable objects (trees, rocks), doors, and crafting stations (furnace, anvil, range)
     if ((def.skill && def.harvestItemId) || def.category === 'door' || (def.recipes && def.recipes.length > 0)) {
-      // Show red interaction marker at the object
-      if (this.interactMarker) {
+      // Skip the disc marker for doors — the door's world position sits on
+      // a wall edge, so a flat disc there visually clips through the wall
+      // mesh. The door's open/close animation is sufficient feedback.
+      if (this.interactMarker && def.category !== 'door') {
         this.interactMarker.position.x = data.x;
         this.interactMarker.position.y = this.getHeight(data.x, data.z) + 0.02;
         this.interactMarker.position.z = data.z;
@@ -2872,9 +2924,28 @@ export class GameManager {
     this.hitSplats.length = writeIdx;
   }
 
+  private _lastSentY: number = -9999;
+  private _ySendCooldown: number = 0;
+  private reportYToServer(): void {
+    if (!this.localPlayer) return;
+    this._ySendCooldown -= 1;
+    if (this._ySendCooldown > 0) return;
+    const y = this.localPlayer.position.y;
+    if (Math.abs(y - this._lastSentY) < 0.05) return;
+    this._lastSentY = y;
+    this._ySendCooldown = 30; // ~30 frames between reports — coarse, server uses for save only
+    this.network.sendRaw(encodePacket(ClientOpcode.CLIENT_POSITION_Y, Math.round(y * 10)));
+  }
+
   private updateIndoorDetection(): void {
+    this.reportYToServer();
     const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
     const floor = this.currentFloor;
+
+    // Floor changes are server-authoritative — see server/src/World.ts
+    // tickTransitions. The client no longer sends floor hints (was an
+    // exploit surface and caused refresh-on-floor-1 corruption).
+
     const underRoof = this.chunkManager.isUnderRoof(this.playerX, this.playerZ, playerY, floor);
     if (underRoof) {
       this._outdoorFrameCount = 0;
@@ -2899,23 +2970,52 @@ export class GameManager {
       if (ptx !== this._lastIndoorTileX || ptz !== this._lastIndoorTileZ) {
         this._lastIndoorTileX = ptx;
         this._lastIndoorTileZ = ptz;
-        for (const node of this.hiddenRoofNodes) node.setEnabled(true);
-        const py = this.localPlayer?.position.y ?? 0;
-        const ceilingY = this.chunkManager.getCeilingHeight(this.playerX, this.playerZ, py);
-        const hideAboveY = ceilingY < Infinity ? ceilingY - 0.1 : py + 1.5;
-        this.hiddenRoofNodes = [
-          ...this.chunkManager.getRoofNodesNear(this.playerX, this.playerZ, 8, py + 0.5, floor),
-          ...this.chunkManager.getNodesAboveHeight(this.playerX, this.playerZ, 8, hideAboveY),
-        ];
-        this._roofDedup.clear();
-        this.hiddenRoofNodes = this.hiddenRoofNodes.filter(n => {
-          if (this._roofDedup.has(n)) return false;
-          this._roofDedup.add(n);
-          return true;
-        });
-        for (const node of this.hiddenRoofNodes) node.setEnabled(false);
+        this.recomputeHiddenRoofs();
+      } else {
+        // Even when the tile didn't change, something else may have re-enabled
+        // a hidden roof: chunk-radius transitions in updatePlayerPosition
+        // unconditionally call setEnabled(true) on every placed node in active
+        // chunks (line 543 of ChunkManager) and async chunk loading lands new
+        // meshes at default-enabled. Re-asserting setEnabled(false) on the
+        // cached hidden set is a no-op when already disabled — Babylon just
+        // sets a property — so this is cheap insurance against flicker.
+        for (let i = 0; i < this.hiddenRoofNodes.length; i++) {
+          const n = this.hiddenRoofNodes[i];
+          if (n.isEnabled(false)) n.setEnabled(false);
+        }
       }
     }
+  }
+
+  /** Compute the new hidden set and apply it as a diff against the current
+   *  one — only flip nodes whose desired state actually changed. The previous
+   *  "re-enable all old, then disable all new" pattern caused a 1-frame
+   *  all-visible flash every time the player crossed a tile because nodes
+   *  staying hidden got setEnabled(true) → setEnabled(false) within the same
+   *  frame, and Babylon's active-mesh evaluation can pick up the intermediate
+   *  state under some scheduling conditions. Diffing avoids that entirely. */
+  private recomputeHiddenRoofs(): void {
+    const floor = this.currentFloor;
+    const py = this.localPlayer?.position.y ?? 0;
+    const ceilingY = this.chunkManager.getCeilingHeight(this.playerX, this.playerZ, py);
+    const hideAboveY = ceilingY < Infinity ? ceilingY - 0.1 : py + 1.5;
+
+    const newSet = new Set<TransformNode>();
+    for (const n of this.chunkManager.getRoofNodesNear(this.playerX, this.playerZ, 8, py + 0.5, floor)) newSet.add(n);
+    for (const n of this.chunkManager.getNodesAboveHeight(this.playerX, this.playerZ, 8, hideAboveY)) newSet.add(n);
+
+    // Re-enable nodes that LEFT the hidden set
+    for (const node of this.hiddenRoofNodes) {
+      if (!newSet.has(node)) node.setEnabled(true);
+    }
+    // Disable nodes that ENTERED the hidden set (don't touch ones already in)
+    const oldSet = new Set(this.hiddenRoofNodes);
+    const next: TransformNode[] = [];
+    for (const node of newSet) {
+      if (!oldSet.has(node)) node.setEnabled(false);
+      next.push(node);
+    }
+    this.hiddenRoofNodes = next;
   }
 
   private computeDoorEdgeFromRotY(rotY: number): number {
