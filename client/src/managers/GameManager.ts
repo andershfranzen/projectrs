@@ -84,7 +84,6 @@ export class GameManager {
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
   private _minimapObjects: { x: number; z: number; category: string }[] = [];
-  private _minimapWallFence: { x: number; z: number }[] = [];
   // NOTE: do NOT reuse a single Vector3 for entity positions — the setter stores the reference
   private _overlayVp = new Viewport(0, 0, 1, 1);
   private _overlayTransform = Matrix.Identity();
@@ -3342,7 +3341,6 @@ export class GameManager {
       if (!def) continue;
       this._minimapObjects.push({ x: data.x, z: data.z, category: def.category });
     }
-    this._minimapWallFence = this.chunkManager.getWallFenceObjectsForMinimap(this.playerX, this.playerZ, 22);
     const camAlpha = this.camera.getCamera().alpha;
     this.minimap.update(
       this.playerX, this.playerZ,
@@ -3350,7 +3348,6 @@ export class GameManager {
       this.chunkManager,
       camAlpha,
       this._minimapObjects,
-      this._minimapWallFence,
     );
   }
 }

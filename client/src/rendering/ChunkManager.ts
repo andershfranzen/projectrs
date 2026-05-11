@@ -297,14 +297,16 @@ export class ChunkManager {
     if (!this.groundMat) {
       this.groundMat = new StandardMaterial('chunkGroundMat', this.scene);
       this.groundMat.specularColor = new Color3(0, 0, 0);
+      this.groundMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
     }
     if (!this.waterMat) {
       this.waterMat = new StandardMaterial('chunkWaterMat', this.scene);
-      this.waterMat.specularColor = new Color3(0.3, 0.3, 0.4);
+      this.waterMat.specularColor = new Color3(0, 0, 0);
       this.waterMat.alpha = 0.88;
       this.waterMat.diffuseColor = new Color3(0.83, 0.91, 1.0); // 0xd4e8ff tint
       // Load water texture
-      this.waterTexture = new Texture('/assets/textures/1.png', this.scene, true, true, Texture.NEAREST_SAMPLINGMODE);
+      this.waterTexture = new Texture('/assets/textures/1.png', this.scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR);
+      this.waterTexture.anisotropicFilteringLevel = 1;
       this.waterTexture.uScale = 1;
       this.waterTexture.vScale = 1;
       this.waterTexture.wrapU = Texture.WRAP_ADDRESSMODE;
@@ -315,29 +317,34 @@ export class ChunkManager {
     if (!this.cliffMat) {
       this.cliffMat = new StandardMaterial('chunkCliffMat', this.scene);
       this.cliffMat.specularColor = new Color3(0, 0, 0);
+      this.cliffMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
       this.cliffMat.backFaceCulling = false;
     }
     if (!this.wallMat) {
       this.wallMat = new StandardMaterial('chunkWallMat', this.scene);
-      this.wallMat.specularColor = new Color3(0.05, 0.05, 0.05);
+      this.wallMat.specularColor = new Color3(0, 0, 0);
+      this.wallMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
       this.wallMat.backFaceCulling = false;
     }
     if (!this.roofMat) {
       this.roofMat = new StandardMaterial('chunkRoofMat', this.scene);
-      this.roofMat.specularColor = new Color3(0.05, 0.05, 0.05);
+      this.roofMat.specularColor = new Color3(0, 0, 0);
+      this.roofMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
       this.roofMat.backFaceCulling = false;
     }
     if (!this.floorMat) {
       this.floorMat = new StandardMaterial('chunkFloorMat', this.scene);
       this.floorMat.specularColor = new Color3(0, 0, 0);
+      this.floorMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
     }
     if (!this.stairMat) {
       this.stairMat = new StandardMaterial('chunkStairMat', this.scene);
-      this.stairMat.specularColor = new Color3(0.05, 0.05, 0.05);
+      this.stairMat.specularColor = new Color3(0, 0, 0);
+      this.stairMat.emissiveColor = new Color3(0.2, 0.2, 0.2);
     }
     if (!this.paddyWaterMat) {
       this.paddyWaterMat = new StandardMaterial('chunkPaddyWaterMat', this.scene);
-      this.paddyWaterMat.specularColor = new Color3(0.1, 0.1, 0.1);
+      this.paddyWaterMat.specularColor = new Color3(0, 0, 0);
       this.paddyWaterMat.diffuseColor = new Color3(0.88, 0.96, 0.97);
       this.paddyWaterMat.alpha = 0.25;
       this.paddyWaterMat.backFaceCulling = false;
@@ -1369,8 +1376,11 @@ export class ChunkManager {
         mat = new StandardMaterial(`texoverlay_mat_${textureId}`, this.scene);
         mat.diffuseTexture = tex;
         mat.diffuseColor = new Color3(0.82, 0.82, 0.82);
+        mat.emissiveTexture = tex;
+        mat.emissiveColor = new Color3(0.45, 0.45, 0.45);
         mat.specularColor = new Color3(0, 0, 0);
         mat.useAlphaFromDiffuseTexture = true;
+        mat.transparencyMode = 1;
         mat.backFaceCulling = false;
         this.overlayMatCache.set(textureId, mat);
       }
@@ -2169,35 +2179,6 @@ export class ChunkManager {
       }
     }
     return { tiles, walls, roofs, textured, voidTiles, size, startX, startZ };
-  }
-
-  private static readonly WALL_FENCE_RE = /wall|fence|halfwall/i;
-
-  getWallFenceObjectsForMinimap(centerX: number, centerZ: number, radius: number): { x: number; z: number }[] {
-    const result: { x: number; z: number }[] = [];
-    const minX = centerX - radius;
-    const maxX = centerX + radius;
-    const minZ = centerZ - radius;
-    const maxZ = centerZ + radius;
-    const minCX = Math.floor(minX / CHUNK_SIZE);
-    const maxCX = Math.floor(maxX / CHUNK_SIZE);
-    const minCZ = Math.floor(minZ / CHUNK_SIZE);
-    const maxCZ = Math.floor(maxZ / CHUNK_SIZE);
-    for (let cz = minCZ; cz <= maxCZ; cz++) {
-      for (let cx = minCX; cx <= maxCX; cx++) {
-        const bucket = this.placedObjectsByChunk.get(`${cx},${cz}`);
-        if (!bucket) continue;
-        for (const obj of bucket) {
-          const ox = obj.position.x;
-          const oz = obj.position.z;
-          if (ox >= minX && ox <= maxX && oz >= minZ && oz <= maxZ
-            && ChunkManager.WALL_FENCE_RE.test(obj.assetId)) {
-            result.push({ x: ox, z: oz });
-          }
-        }
-      }
-    }
-    return result;
   }
 
   isGroundMesh(meshName: string): boolean {
@@ -3118,7 +3099,8 @@ export class ChunkManager {
       console.warn(`[ChunkManager] Unknown texture: ${textureId}`);
       return null;
     }
-    const tex = new Texture(texDef.path, this.scene, true, true, Texture.NEAREST_SAMPLINGMODE);
+    const tex = new Texture(texDef.path, this.scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR);
+    tex.anisotropicFilteringLevel = 1;
     tex.hasAlpha = true;
     this.textureCache.set(textureId, tex);
     return tex;
@@ -3134,7 +3116,8 @@ export class ChunkManager {
 
     const tex = this.getOrLoadTexture(plane.textureId);
     if (!tex) return this.texPlaneMaterialCache.values().next().value!;
-    const planeTex = new Texture(tex.url, this.scene, false, true, Texture.NEAREST_SAMPLINGMODE);
+    const planeTex = new Texture(tex.url, this.scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR);
+    planeTex.anisotropicFilteringLevel = 1;
     planeTex.hasAlpha = true;
     const uvScale = plane.uvRepeat ? 1 / plane.uvRepeat : 1;
     planeTex.uScale = uvScale;
@@ -3144,13 +3127,16 @@ export class ChunkManager {
     planeTex.wrapV = Texture.WRAP_ADDRESSMODE;
     mat = new StandardMaterial(`texplane_mat_${matKey}`, this.scene);
     mat.diffuseTexture = planeTex;
-    if (plane.tintColor) {
-      mat.diffuseColor = new Color3(plane.tintColor.r, plane.tintColor.g, plane.tintColor.b);
-    }
+    mat.emissiveTexture = planeTex;
+    mat.diffuseColor = new Color3(0, 0, 0);
+    mat.emissiveColor = plane.tintColor
+      ? new Color3(plane.tintColor.r, plane.tintColor.g, plane.tintColor.b)
+      : new Color3(1, 1, 1);
     mat.specularColor = new Color3(0, 0, 0);
     mat.useAlphaFromDiffuseTexture = true;
     mat.backFaceCulling = isFlat ? false : !plane.doubleSided;
     mat.transparencyMode = isFlat ? 2 : 1;
+    if (!isFlat) mat.alphaCutOff = 0.05;
     if (isFlat) mat.needDepthPrePass = true;
     if (!isFlat) mat.freeze();
     this.texPlaneMaterialCache.set(matKey, mat);

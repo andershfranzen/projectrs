@@ -181,6 +181,19 @@
     },
     "scale": 0.8
   },
+  "65": {
+    "localPosition": {
+      "x": -0.013,
+      "y": 0.023,
+      "z": 0.03
+    },
+    "localRotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": 1.042
+  },
   "66": {
     "localPosition": {
       "x": 0.011,

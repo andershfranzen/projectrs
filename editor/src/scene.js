@@ -103,7 +103,8 @@ function tuneModelLighting(model) {
   camera.detachControl() // Don't let Babylon.js attach any pointer handlers
 
   // Water texture
-  const waterTexture = new Texture('/assets/textures/1.png', scene)
+  const waterTexture = new Texture('/assets/textures/1.png', scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR)
+  waterTexture.anisotropicFilteringLevel = 1
   waterTexture.wrapU = Texture.WRAP_ADDRESSMODE
   waterTexture.wrapV = Texture.WRAP_ADDRESSMODE
 
@@ -6834,7 +6835,8 @@ if (key === 'e') {
       filteredTextures = [...textureRegistry].sort((a, b) => a.name.localeCompare(b.name))
 
       for (const tex of textureRegistry) {
-        const loadedTexture = new Texture(tex.path, scene)
+        const loadedTexture = new Texture(tex.path, scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR)
+        loadedTexture.anisotropicFilteringLevel = 1
         loadedTexture.wrapU = Texture.CLAMP_ADDRESSMODE
         loadedTexture.wrapV = Texture.CLAMP_ADDRESSMODE
         textureCache.set(tex.id, loadedTexture)

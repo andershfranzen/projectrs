@@ -420,7 +420,9 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
   if (landVertices.length > 0) {
     const landMesh = createMeshFromArrays('terrain-land', landVertices, landColors, landUVs, landIndices, scene, true)
     const landMat = createLambertMaterial('terrain-land-mat', scene, { backFaceCulling: false })
+    landMat.emissiveColor = new Color3(0.2, 0.2, 0.2)
     landMesh.material = landMat
+    landMesh.convertToFlatShadedMesh()
     landMesh.parent = group
     _landMesh = landMesh
   }
@@ -772,7 +774,7 @@ export function buildTextureOverlays(map: MapData, textureRegistry: TextureEntry
         mat.diffuseTexture = texture
         mat.diffuseColor = new Color3(0.82, 0.82, 0.82)
         mat.emissiveTexture = texture
-        mat.emissiveColor = new Color3(0.18, 0.18, 0.18)
+        mat.emissiveColor = new Color3(0.45, 0.45, 0.45)
         mat.specularColor = new Color3(0, 0, 0)
         mat.useAlphaFromDiffuseTexture = true
         mat.transparencyMode = 1

@@ -1037,7 +1037,10 @@ const server = Bun.serve<SocketData>({
           return new Response(content, {
             headers: {
               'Content-Type': getMimeType(filePath),
-              'Cache-Control': 'public, max-age=3600',
+              // TODO(alpha-test): restore 'public, max-age=3600' before the
+              // weekend build — currently no-cache so swapped GLBs/textures
+              // show up without forcing every contributor to clear browser data.
+              'Cache-Control': 'no-cache, must-revalidate',
             },
           });
         } catch { /* try next */ }

@@ -135,7 +135,6 @@ export class Minimap {
     chunkManager: ChunkManager,
     cameraAlpha: number = 0,
     worldObjects: MinimapObject[] = [],
-    wallFenceObjects: { x: number; z: number }[] = [],
   ): void {
     const tileSize = this.tileSize;
     const pxPerTile = RENDER_SIZE / tileSize;
@@ -383,14 +382,6 @@ export class Minimap {
     ctx.translate(-playerPxX, -playerPxZ);
 
     ctx.drawImage(this.offCanvas, 0, 0);
-
-    // Wall/fence objects — cream colored like wall lines
-    ctx.fillStyle = '#dcd8c8';
-    for (const wf of wallFenceObjects) {
-      const relX = (wf.x - startX) * scale;
-      const relZ = (wf.z - startZ) * scale;
-      ctx.fillRect(relX - 1.5, relZ - 1.5, 3, 3);
-    }
 
     // World objects — cyan dots (RS Classic style)
     ctx.fillStyle = '#00ffff';

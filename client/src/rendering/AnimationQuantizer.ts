@@ -87,6 +87,25 @@ function sampleAnimationAt(keys: any[], frame: number): any {
 const STEP_INTERPOLATE = false;
 const STEP_EPSILON = 0.05;
 
+/**
+ * Animations that loop continuously (walk, idle, run, npc_*). The convention
+ * for loop-friendly source GLBs is to author a duplicate final frame equal to
+ * the first frame, so the cycle's last quantized pose lands on pose 0 and the
+ * loop wrap is invisible. To let authors skip that manual duplicate, we
+ * REPLACE the last sampled value with the first sampled value for these
+ * animations — produces identical playback to a source with the duplicate,
+ * giving N-1 distinct motion segments per cycle + invisible wrap.
+ *
+ * (Earlier attempt: appending an extra wrap key at frame N. That EXTENDED the
+ * cycle by one segment, creating an interpolated transition between the last
+ * canonical pose and pose 0. That synthetic segment doesn't represent natural
+ * stride motion → foot-slide at the loop point.)
+ */
+const LOOPING_ANIMS = new Set([
+  'idle', 'walk', 'run',
+  'npc_idle', 'npc_walk',
+]);
+
 export function quantizeAnimationGroup(
   group: AnimationGroup,
   animName: string,
@@ -114,6 +133,14 @@ export function quantizeAnimationGroup(
         : i / (frames - 1);
       const srcFrame = srcFrom + t * srcRange;
       sampledValues.push(sampleAnimationAt(keys, srcFrame));
+    }
+    // For looping animations, force the last sample to equal the first so the
+    // playback range's end pose matches its start pose — the wrap is then
+    // visually invisible. Replicates the source-side "duplicate final frame"
+    // technique automatically so authors don't have to add one in Blender.
+    if (LOOPING_ANIMS.has(animName)) {
+      const v0 = sampledValues[0];
+      sampledValues[frames - 1] = v0?.clone ? v0.clone() : v0;
     }
 
     const newKeys: any[] = [];
