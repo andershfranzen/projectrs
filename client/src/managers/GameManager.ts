@@ -1091,7 +1091,7 @@ export class GameManager {
         // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no weapon
         { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
         { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
-        { name: 'mine',                    path: '/Character models/new animations/great_sword_slash.glb' },
+        { name: 'mine',                    path: '/Character models/new animations/mining.glb' },
       ],
     });
   }

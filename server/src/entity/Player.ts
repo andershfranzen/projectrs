@@ -84,6 +84,14 @@ export class Player extends Entity {
    *  it's the cancel mechanism (and already clears skilling state). */
   delayedUntilTick: number = 0;
 
+  /** Absolute tick of the next allowed skilling roll. 0 = stale, will
+   *  bootstrap a fresh cycle on next eligible tick. Mirrors RS2's
+   *  `%action_delay` varp — player-scoped and *never* cleared by switching
+   *  rocks/trees, which is what enables tick-perfect 3-tick mining: clicking
+   *  a new rock preserves the pending roll tick, so a well-timed click can
+   *  roll on the first tick of arrival. */
+  actionDelay: number = 0;
+
   /** Tick before which logout is blocked (e.g. recent combat). Mirrors RS2's
    *  `p_preventlogout` (16 ticks ≈ 9.6s after a combat hit). When the socket
    *  closes during this window, the Player stays in the world and remains

@@ -849,7 +849,9 @@ export class CharacterEntity {
     if (this.currentState >= AnimState.Attack) return; // don't interrupt attack
     this.queuedState = AnimState.Walk;
     this.queuedAnimName = '';
-    if (this.currentState < AnimState.Walk) {
+    // Walk preempts Skill (matches RS2 seq `postanim_move=abortanim`) so
+    // clicking another rock while mining instantly aborts the swing.
+    if (this.currentState <= AnimState.Skill) {
       this.playAnimByState(AnimState.Walk);
     }
   }

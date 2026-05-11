@@ -264,7 +264,7 @@ export class EntityManager {
         { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
         { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
         { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
-        { name: 'mine',                    path: '/Character models/new animations/great_sword_slash.glb' },
+        { name: 'mine',                    path: '/Character models/new animations/mining.glb' },
       ],
     });
     // Spawn at terrain height — pass currentY=0 so the elevation gate

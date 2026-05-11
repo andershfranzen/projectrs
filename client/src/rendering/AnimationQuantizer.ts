@@ -106,11 +106,23 @@ const LOOPING_ANIMS = new Set([
   'npc_idle', 'npc_walk',
 ]);
 
+/**
+ * Animations to leave untouched — keep their authored keyframes, FPS, and
+ * duration as exported from Blender. Use for hand-authored anims whose pose
+ * count exceeds DEFAULT_QUANTIZE_FRAMES or whose timing carries meaning the
+ * fixed-percentage sample curves can't preserve (e.g. RS2-style multi-loop
+ * skilling anims with intro + N swing repeats).
+ */
+const SKIP_QUANTIZE: Set<string> = new Set([
+  'mine',
+]);
+
 export function quantizeAnimationGroup(
   group: AnimationGroup,
   animName: string,
   frameCount?: number,
 ): void {
+  if (SKIP_QUANTIZE.has(animName)) return;
   const frames = frameCount ?? ANIM_QUANTIZE_FRAMES[animName] ?? DEFAULT_QUANTIZE_FRAMES;
   const targetDuration = ANIM_DURATIONS[animName] ?? 1.2;
   const targetFps = frames / targetDuration;

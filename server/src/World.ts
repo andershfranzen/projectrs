@@ -68,8 +68,22 @@ export class World {
   /** Reusable set for health regen — avoids allocation every 10 ticks */
   private _playersUnderNpcAttack: Set<number> = new Set();
 
-  // Skilling: player -> { objectId, action, ticksLeft }
-  private skillingActions: Map<number, { objectId: number; action: string; ticksLeft: number; toolItemId?: number }> = new Map();
+  // Skilling: player -> { objectId, action, cycleTime, toolItemId }
+  // cycleTime = inter-roll period in ticks (computed once at interaction start).
+  // Per-player roll tick lives on Player.actionDelay (RS2 %action_delay varp).
+  private skillingActions: Map<number, { objectId: number; action: string; cycleTime: number; toolItemId?: number }> = new Map();
+
+  /** RS2 mining rates by pickaxe item id (inter-roll period in game ticks).
+   *  Lower = faster. Per LostCityRS `pickaxes.obj`. */
+  private static readonly MINING_RATES: Record<number, number> = {
+    33: 7,  // Bronze
+    53: 6,  // Iron
+    54: 5,  // Steel
+    55: 4,  // Mithril
+    57: 3,  // Runite (RS2 adamant slot)
+    56: 2,  // Black Bronze (highest tier in this game, RS2 rune slot)
+  };
+  private static readonly DEFAULT_MINING_RATE = 7;
 
   constructor(db: GameDatabase) {
     this.db = db;
@@ -1160,13 +1174,20 @@ export class World {
       toolBonus = bestTool.toolBonus ?? 0;
     }
 
-    const baseTime = obj.def.harvestTime ?? 4;
-    const harvestTime = Math.max(2, baseTime - toolBonus);
+    // Cycle time: per-pickaxe rate for rocks (RS2 model), per-rock harvestTime
+    // minus tool bonus for everything else.
+    let cycleTime: number;
+    if (obj.def.category === 'rock') {
+      cycleTime = (toolItemId != null ? World.MINING_RATES[toolItemId] : undefined) ?? World.DEFAULT_MINING_RATE;
+    } else {
+      const baseTime = obj.def.harvestTime ?? 4;
+      cycleTime = Math.max(2, baseTime - toolBonus);
+    }
 
     this.skillingActions.set(playerId, {
       objectId: obj.id,
       action,
-      ticksLeft: harvestTime,
+      cycleTime,
       toolItemId,
     });
     this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id);
@@ -1760,10 +1781,22 @@ export class World {
         continue;
       }
 
-      action.ticksLeft--;
-      if (action.ticksLeft <= 0) {
+      // RS2 three-way branch on player.actionDelay (the %action_delay varp).
+      // - actionDelay > currentTick: waiting; swing already playing, no roll.
+      // - actionDelay < currentTick (or 0): stale; bootstrap a fresh cycle.
+      // - actionDelay == currentTick: ROLL NOW. This branch is what enables
+      //   tick-perfect 3-tick mining — if the player clicks a new rock and
+      //   arrives on the same tick their pending roll was due, the roll fires
+      //   on the first tick of arrival.
+      if (this.currentTick < player.actionDelay) continue;
+      if (this.currentTick > player.actionDelay || player.actionDelay === 0) {
+        player.actionDelay = this.currentTick + action.cycleTime;
+        continue;
+      }
+
+      // actionDelay === currentTick — roll this tick.
+      {
         const skillId = obj.def.skill as SkillId;
-        const cycleTime = obj.def.harvestTime ?? 4;
 
         if (obj.def.successChances) {
           const chances = action.toolItemId != null ? obj.def.successChances[String(action.toolItemId)] : null;
@@ -1774,7 +1807,8 @@ export class World {
           }
           const playerLevel = player.skills[skillId]?.level ?? 1;
           if (!statRandom(playerLevel, chances[0], chances[1])) {
-            action.ticksLeft = cycleTime;
+            // Miss — schedule next roll one cycle out.
+            player.actionDelay = this.currentTick + action.cycleTime;
             continue;
           }
         }
@@ -1837,7 +1871,8 @@ export class World {
           this.skillingActions.delete(playerId);
           this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
         } else {
-          action.ticksLeft = cycleTime;
+          // Successful non-depleting roll — schedule next swing.
+          player.actionDelay = this.currentTick + action.cycleTime;
         }
       }
     }
