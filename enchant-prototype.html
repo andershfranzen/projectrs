@@ -3,8 +3,8 @@
 <head>
     <meta charset="utf-8">
     <title>Enchant Editor</title>
-    <script src="https://cdn.babylonjs.com/babylon.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
     <style>
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
         #renderCanvas { width: 100%; height: 100%; touch-action: none; }
@@ -245,22 +245,7 @@
     <div id="info">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
 
     <script>
-    const _log = [];
-    function dbg(msg) {
-        _log.push(msg);
-        const el = document.getElementById('info');
-        if (el) el.textContent = _log.join(' → ');
-    }
-    window.onerror = function(msg, src, line, col, err) {
-        dbg('ERR@' + line + ': ' + msg);
-        const d = document.createElement('div');
-        d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;font:14px monospace;z-index:9999;white-space:pre-wrap';
-        d.textContent = 'ERROR line ' + line + ': ' + msg + '\n' + (err && err.stack || '');
-        document.body.appendChild(d);
-    };
     (async function() {
-        try {
-        dbg('1:engine');
         const canvas = document.getElementById('renderCanvas');
         const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
         const scene = new BABYLON.Scene(engine);
@@ -286,7 +271,6 @@
         fireLight.intensity = 0;
         fireLight.range = 4;
 
-        dbg('2:lights');
         // Glow layer
         const glowLayer = new BABYLON.GlowLayer('glow', scene, {
             mainTextureFixedSize: 512,
@@ -334,7 +318,6 @@
             return val;
         }
 
-        dbg('3:noise');
         // -- Particle sprite textures (procedural) --
         function makeTexCanvas(size) {
             const dt = new BABYLON.DynamicTexture('ptex_' + Math.random(), size, scene, false);
@@ -521,7 +504,6 @@
             return particleTextures[shape];
         }
 
-        dbg('4:textures');
         // -- Load sword model --
         const swordPath = 'client/public/assets/equipment/weapon/';
         const result = await BABYLON.SceneLoader.ImportMeshAsync('', swordPath, '5.glb', scene);
@@ -558,7 +540,6 @@
             originalMaterials.set(mesh, mesh.material ? mesh.material.clone(mesh.material.name + '_orig') : null);
         }
 
-        dbg('5:sword');
         // -- Enchant state --
         let enchantEnabled = true;
         let time = 0;
@@ -728,7 +709,6 @@
         applyMotion('rise');
         particleSystem.start();
 
-        dbg('6:particles');
         // -- Controls wiring --
         function ctrl(id) {
             const el = document.getElementById(id);
@@ -787,7 +767,6 @@
         const cArcCoverage = ctrl('arcCoverage');
         const cArcGlow = ctrl('arcGlow');
 
-        dbg('7:controls');
         // -- Lightning arc system --
         const MAX_ARCS = 8;
         const arcMeshes = [];
@@ -892,11 +871,8 @@
             }
         });
 
-        dbg('8:arcs');
         // -- Render loop --
-        let _loopErrShown = false;
         engine.runRenderLoop(() => {
-            try {
             const dt = engine.getDeltaTime() / 1000;
             time += dt;
 
@@ -1045,25 +1021,9 @@
             }
 
             scene.render();
-            } catch(e) {
-                if (!_loopErrShown) {
-                    _loopErrShown = true;
-                    dbg('LOOP: ' + e.message);
-                    const d = document.createElement('div');
-                    d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;font:14px monospace;z-index:9999;white-space:pre-wrap';
-                    d.textContent = 'RENDER LOOP ERROR: ' + e.message + '\n' + e.stack;
-                    document.body.appendChild(d);
-                }
-            }
         });
 
         window.addEventListener('resize', () => engine.resize());
-        } catch(e) {
-            const d = document.createElement('div');
-            d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;font:14px monospace;z-index:9999;white-space:pre-wrap';
-            d.textContent = 'INIT ERROR: ' + e.message + '\n' + e.stack;
-            document.body.appendChild(d);
-        }
     })();
     </script>
 </body>
