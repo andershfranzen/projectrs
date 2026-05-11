@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Fiery Weapon Enchant Prototype</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+        #renderCanvas { width: 100%; height: 100%; touch-action: none; }
+        #controls {
+            position: absolute; top: 10px; right: 10px; color: #ddd;
+            font-family: 'Segoe UI', monospace; font-size: 13px;
+            background: rgba(0,0,0,0.75); padding: 16px 20px; border-radius: 8px;
+            min-width: 280px; user-select: none;
+        }
+        #controls h3 { margin: 0 0 12px 0; color: #ff9944; font-size: 15px; }
+        .ctrl-group { margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .ctrl-group:last-child { border-bottom: none; margin-bottom: 0; }
+        .ctrl-group h4 { margin: 0 0 6px 0; color: #aaa; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+        .ctrl-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0; }
+        .ctrl-row label { flex: 0 0 130px; }
+        .ctrl-row input[type=range] { flex: 1; margin: 0 8px; }
+        .ctrl-row .val { flex: 0 0 35px; text-align: right; color: #ff9944; font-size: 12px; }
+        #toggleEnchant {
+            width: 100%; padding: 8px; margin-top: 8px; cursor: pointer;
+            background: #ff6600; color: white; border: none; border-radius: 4px;
+            font-size: 13px; font-weight: bold;
+        }
+        #toggleEnchant:hover { background: #ff8833; }
+        #info { position: absolute; bottom: 10px; left: 10px; color: #666; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <canvas id="renderCanvas"></canvas>
+    <div id="controls">
+        <h3>Fiery Weapon Enchant</h3>
+
+        <div class="ctrl-group">
+            <h4>Glow / Bloom</h4>
+            <div class="ctrl-row">
+                <label>Bloom Intensity</label>
+                <input type="range" id="glowIntensity" min="0" max="3" step="0.05" value="0.8">
+                <span class="val" id="glowIntensityVal">0.8</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Bloom Threshold</label>
+                <input type="range" id="glowThreshold" min="0" max="1" step="0.01" value="0.1">
+                <span class="val" id="glowThresholdVal">0.1</span>
+            </div>
+        </div>
+
+        <div class="ctrl-group">
+            <h4>Emissive Fire</h4>
+            <div class="ctrl-row">
+                <label>Emissive Power</label>
+                <input type="range" id="emissivePower" min="0" max="5" step="0.1" value="2.0">
+                <span class="val" id="emissivePowerVal">2.0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Scroll Speed</label>
+                <input type="range" id="scrollSpeed" min="0" max="5" step="0.1" value="1.5">
+                <span class="val" id="scrollSpeedVal">1.5</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Noise Scale</label>
+                <input type="range" id="noiseScale" min="1" max="20" step="0.5" value="6">
+                <span class="val" id="noiseScaleVal">6</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Pulse Speed</label>
+                <input type="range" id="pulseSpeed" min="0" max="5" step="0.1" value="1.2">
+                <span class="val" id="pulseSpeedVal">1.2</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Pulse Strength</label>
+                <input type="range" id="pulseStrength" min="0" max="1" step="0.05" value="0.3">
+                <span class="val" id="pulseStrengthVal">0.3</span>
+            </div>
+        </div>
+
+        <div class="ctrl-group">
+            <h4>Inner Glow (Core)</h4>
+            <div class="ctrl-row">
+                <label>Red</label>
+                <input type="range" id="innerR" min="0" max="1" step="0.01" value="1.0">
+                <span class="val" id="innerRVal">1.0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Green</label>
+                <input type="range" id="innerG" min="0" max="1" step="0.01" value="0.85">
+                <span class="val" id="innerGVal">0.85</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Blue</label>
+                <input type="range" id="innerB" min="0" max="1" step="0.01" value="0.3">
+                <span class="val" id="innerBVal">0.3</span>
+            </div>
+        </div>
+
+        <div class="ctrl-group">
+            <h4>Outer Glow (Edge)</h4>
+            <div class="ctrl-row">
+                <label>Red</label>
+                <input type="range" id="outerR" min="0" max="1" step="0.01" value="1.0">
+                <span class="val" id="outerRVal">1.0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Green</label>
+                <input type="range" id="outerG" min="0" max="1" step="0.01" value="0.25">
+                <span class="val" id="outerGVal">0.25</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Blue</label>
+                <input type="range" id="outerB" min="0" max="1" step="0.01" value="0.02">
+                <span class="val" id="outerBVal">0.02</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Blend Sharpness</label>
+                <input type="range" id="blendSharpness" min="0.5" max="4" step="0.1" value="1.5">
+                <span class="val" id="blendSharpnessVal">1.5</span>
+            </div>
+        </div>
+
+        <div class="ctrl-group">
+            <h4>Particles</h4>
+            <div class="ctrl-row">
+                <label>Emit Rate</label>
+                <input type="range" id="particleRate" min="0" max="400" step="5" value="80">
+                <span class="val" id="particleRateVal">80</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Particle Size</label>
+                <input type="range" id="particleSize" min="0.01" max="0.3" step="0.005" value="0.08">
+                <span class="val" id="particleSizeVal">0.08</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Lifetime</label>
+                <input type="range" id="particleLife" min="0.1" max="3" step="0.1" value="0.8">
+                <span class="val" id="particleLifeVal">0.8</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Rise Speed</label>
+                <input type="range" id="particleRise" min="0" max="3" step="0.1" value="0.8">
+                <span class="val" id="particleRiseVal">0.8</span>
+            </div>
+        </div>
+
+        <button id="toggleEnchant">Toggle Enchant On/Off</button>
+    </div>
+    <div id="info">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
+
+    <script>
+    (async function() {
+        const canvas = document.getElementById('renderCanvas');
+        const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+        const scene = new BABYLON.Scene(engine);
+        scene.clearColor = new BABYLON.Color4(0.06, 0.06, 0.1, 1);
+        scene.ambientColor = new BABYLON.Color3(0.15, 0.12, 0.1);
+
+        // Camera
+        const camera = new BABYLON.ArcRotateCamera('cam', Math.PI / 4, Math.PI / 3, 3, BABYLON.Vector3.Zero(), scene);
+        camera.attachControl(canvas, true);
+        camera.lowerRadiusLimit = 1;
+        camera.upperRadiusLimit = 10;
+        camera.wheelPrecision = 40;
+
+        // Lights
+        const dirLight = new BABYLON.DirectionalLight('dir', new BABYLON.Vector3(-1, -2, 1).normalize(), scene);
+        dirLight.intensity = 0.6;
+        const hemiLight = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene);
+        hemiLight.intensity = 0.3;
+
+        // Dynamic point light to simulate fire illumination
+        const fireLight = new BABYLON.PointLight('fireLight', new BABYLON.Vector3(0, 0.5, 0), scene);
+        fireLight.diffuse = new BABYLON.Color3(1, 0.5, 0.1);
+        fireLight.intensity = 0;
+        fireLight.range = 4;
+
+        // Glow layer
+        const glowLayer = new BABYLON.GlowLayer('glow', scene, {
+            mainTextureFixedSize: 512,
+            blurKernelSize: 64
+        });
+        glowLayer.intensity = 0.8;
+
+        // -- Procedural fire texture via DynamicTexture --
+        const FIRE_TEX_SIZE = 256;
+        const fireDynTex = new BABYLON.DynamicTexture('fireTex', FIRE_TEX_SIZE, scene, false);
+        const fireCtx = fireDynTex.getContext();
+
+        // Simple value noise for fire effect
+        const perm = new Uint8Array(512);
+        for (let i = 0; i < 256; i++) perm[i] = i;
+        for (let i = 255; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [perm[i], perm[j]] = [perm[j], perm[i]];
+        }
+        for (let i = 0; i < 256; i++) perm[256 + i] = perm[i];
+
+        function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+        function lerp(a, b, t) { return a + t * (b - a); }
+
+        function noise2D(x, y) {
+            const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+            const xf = x - Math.floor(x), yf = y - Math.floor(y);
+            const u = fade(xf), v = fade(yf);
+            const aa = perm[perm[X] + Y], ab = perm[perm[X] + Y + 1];
+            const ba = perm[perm[X + 1] + Y], bb = perm[perm[X + 1] + Y + 1];
+            return lerp(
+                lerp(aa / 255, ba / 255, u),
+                lerp(ab / 255, bb / 255, u),
+                v
+            );
+        }
+
+        function fbm(x, y, octaves) {
+            let val = 0, amp = 0.5, freq = 1;
+            for (let i = 0; i < octaves; i++) {
+                val += amp * noise2D(x * freq, y * freq);
+                amp *= 0.5;
+                freq *= 2;
+            }
+            return val;
+        }
+
+        // -- Particle sprite texture (procedural) --
+        function createParticleTexture() {
+            const size = 64;
+            const dt = new BABYLON.DynamicTexture('particleTex', size, scene, false);
+            const ctx = dt.getContext();
+            const gradient = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+            gradient.addColorStop(0.2, 'rgba(255, 255, 200, 0.9)');
+            gradient.addColorStop(0.5, 'rgba(255, 200, 100, 0.5)');
+            gradient.addColorStop(0.8, 'rgba(255, 100, 50, 0.15)');
+            gradient.addColorStop(1, 'rgba(200, 50, 0, 0)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, size, size);
+            dt.update();
+            return dt;
+        }
+
+        const particleTex = createParticleTexture();
+
+        // -- Load sword model --
+        const swordPath = 'client/public/assets/equipment/weapon/';
+        const result = await BABYLON.SceneLoader.ImportMeshAsync('', swordPath, '5.glb', scene);
+        const swordRoot = result.meshes[0];
+
+        // Center and orient the sword vertically
+        swordRoot.position = BABYLON.Vector3.Zero();
+
+        // Compute bounding info to center it
+        let min = new BABYLON.Vector3(Infinity, Infinity, Infinity);
+        let max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
+        for (const mesh of result.meshes) {
+            if (mesh.getTotalVertices() === 0) continue;
+            mesh.computeWorldMatrix(true);
+            const bi = mesh.getBoundingInfo();
+            const wMin = BABYLON.Vector3.TransformCoordinates(bi.boundingBox.minimumWorld, BABYLON.Matrix.Identity());
+            const wMax = BABYLON.Vector3.TransformCoordinates(bi.boundingBox.maximumWorld, BABYLON.Matrix.Identity());
+            min = BABYLON.Vector3.Minimize(min, wMin);
+            max = BABYLON.Vector3.Maximize(max, wMax);
+        }
+        const center = BABYLON.Vector3.Center(min, max);
+        const extent = max.subtract(min);
+        const maxDim = Math.max(extent.x, extent.y, extent.z);
+        const scale = 2.0 / maxDim;
+        swordRoot.scaling = new BABYLON.Vector3(scale, scale, scale);
+        swordRoot.position = center.negate().scale(scale);
+
+        // Collect blade meshes (all meshes with vertices)
+        const bladeMeshes = result.meshes.filter(m => m.getTotalVertices() > 0);
+        const originalMaterials = new Map();
+
+        // Store originals and create enchanted materials
+        for (const mesh of bladeMeshes) {
+            originalMaterials.set(mesh, mesh.material ? mesh.material.clone(mesh.material.name + '_orig') : null);
+        }
+
+        // -- Enchant state --
+        let enchantEnabled = true;
+        let time = 0;
+
+        // -- Particle system --
+        const particleSystem = new BABYLON.ParticleSystem('embers', 500, scene);
+        particleSystem.particleTexture = particleTex;
+
+        // Emit from the sword area
+        particleSystem.createBoxEmitter(
+            new BABYLON.Vector3(-0.05, 0.3, -0.05),
+            new BABYLON.Vector3(0.05, 0.8, 0.05),
+            new BABYLON.Vector3(-0.15, 0.5, -0.15),
+            new BABYLON.Vector3(0.15, 1.5, 0.15)
+        );
+        particleSystem.emitter = swordRoot;
+
+        particleSystem.minSize = 0.03;
+        particleSystem.maxSize = 0.08;
+        particleSystem.minLifeTime = 0.3;
+        particleSystem.maxLifeTime = 0.8;
+        particleSystem.emitRate = 80;
+        particleSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+
+        particleSystem.color1 = new BABYLON.Color4(1, 0.6, 0.1, 1);
+        particleSystem.color2 = new BABYLON.Color4(1, 0.2, 0, 0.8);
+        particleSystem.colorDead = new BABYLON.Color4(0.3, 0.05, 0, 0);
+
+        particleSystem.gravity = new BABYLON.Vector3(0, 0.5, 0);
+        particleSystem.minEmitPower = 0.1;
+        particleSystem.maxEmitPower = 0.4;
+
+        particleSystem.addSizeGradient(0, 0.06, 0.1);
+        particleSystem.addSizeGradient(0.5, 0.04, 0.06);
+        particleSystem.addSizeGradient(1.0, 0, 0.01);
+
+        particleSystem.start();
+
+        // -- Controls wiring --
+        function ctrl(id) {
+            const el = document.getElementById(id);
+            const valEl = document.getElementById(id + 'Val');
+            el.addEventListener('input', () => { valEl.textContent = el.value; });
+            return el;
+        }
+
+        const cGlowIntensity = ctrl('glowIntensity');
+        const cGlowThreshold = ctrl('glowThreshold');
+        const cEmissivePower = ctrl('emissivePower');
+        const cScrollSpeed = ctrl('scrollSpeed');
+        const cNoiseScale = ctrl('noiseScale');
+        const cPulseSpeed = ctrl('pulseSpeed');
+        const cPulseStrength = ctrl('pulseStrength');
+        const cInnerR = ctrl('innerR');
+        const cInnerG = ctrl('innerG');
+        const cInnerB = ctrl('innerB');
+        const cOuterR = ctrl('outerR');
+        const cOuterG = ctrl('outerG');
+        const cOuterB = ctrl('outerB');
+        const cBlendSharpness = ctrl('blendSharpness');
+        const cParticleRate = ctrl('particleRate');
+        const cParticleSize = ctrl('particleSize');
+        const cParticleLife = ctrl('particleLife');
+        const cParticleRise = ctrl('particleRise');
+
+        document.getElementById('toggleEnchant').addEventListener('click', () => {
+            enchantEnabled = !enchantEnabled;
+            if (!enchantEnabled) {
+                particleSystem.stop();
+                fireLight.intensity = 0;
+                for (const mesh of bladeMeshes) {
+                    const orig = originalMaterials.get(mesh);
+                    if (orig) {
+                        mesh.material.emissiveColor = BABYLON.Color3.Black();
+                        mesh.material.emissiveTexture = null;
+                    }
+                }
+            } else {
+                particleSystem.start();
+            }
+        });
+
+        // -- Render loop --
+        engine.runRenderLoop(() => {
+            const dt = engine.getDeltaTime() / 1000;
+            time += dt;
+
+            if (enchantEnabled) {
+                // Update controls
+                glowLayer.intensity = parseFloat(cGlowIntensity.value);
+
+                const emissivePower = parseFloat(cEmissivePower.value);
+                const scrollSpeed = parseFloat(cScrollSpeed.value);
+                const noiseScale = parseFloat(cNoiseScale.value);
+                const pulseSpeed = parseFloat(cPulseSpeed.value);
+                const pulseStrength = parseFloat(cPulseStrength.value);
+                const blendSharpness = parseFloat(cBlendSharpness.value);
+
+                // Inner color (hot core — bright yellow/white)
+                const ir = parseFloat(cInnerR.value);
+                const ig = parseFloat(cInnerG.value);
+                const ib = parseFloat(cInnerB.value);
+                // Outer color (cooler edge — warm orange/red)
+                const or_ = parseFloat(cOuterR.value);
+                const og = parseFloat(cOuterG.value);
+                const ob = parseFloat(cOuterB.value);
+
+                // Animate fire texture
+                const imgData = fireCtx.createImageData(FIRE_TEX_SIZE, FIRE_TEX_SIZE);
+                const data = imgData.data;
+                const scroll = time * scrollSpeed;
+                const pulse = 1.0 + Math.sin(time * pulseSpeed * Math.PI * 2) * pulseStrength;
+
+                for (let y = 0; y < FIRE_TEX_SIZE; y++) {
+                    for (let x = 0; x < FIRE_TEX_SIZE; x++) {
+                        const nx = x / FIRE_TEX_SIZE * noiseScale;
+                        const ny = y / FIRE_TEX_SIZE * noiseScale + scroll;
+
+                        let n = fbm(nx, ny, 4);
+
+                        // edgeDist: 1.0 at center, 0.0 at edges — drives inner/outer color
+                        const edgeDist = 1.0 - Math.abs(x / FIRE_TEX_SIZE - 0.5) * 2;
+                        const smoothEdge = Math.pow(Math.max(0, edgeDist), 1.0 / blendSharpness);
+
+                        // Noise modulates brightness, edgeDist drives the color blend
+                        n = n * pulse;
+                        n = Math.pow(Math.max(0, n), 0.7);
+                        const brightness = n * emissivePower;
+
+                        // Spatial blend: center = inner, edges = outer
+                        const cr = lerp(or_, ir, smoothEdge);
+                        const cg = lerp(og, ig, smoothEdge);
+                        const cb = lerp(ob, ib, smoothEdge);
+
+                        // Fade out at the very edge so it doesn't cut off hard
+                        const edgeFade = Math.min(1, edgeDist * 3);
+
+                        const idx = (y * FIRE_TEX_SIZE + x) * 4;
+                        data[idx]     = Math.min(255, cr * brightness * 255);
+                        data[idx + 1] = Math.min(255, cg * brightness * 255);
+                        data[idx + 2] = Math.min(255, cb * brightness * 255);
+                        data[idx + 3] = Math.min(255, brightness * edgeFade * 220);
+                    }
+                }
+                fireCtx.putImageData(imgData, 0, 0);
+                fireDynTex.update();
+
+                // Apply to blade meshes — emissive color uses inner for a strong visible glow
+                for (const mesh of bladeMeshes) {
+                    if (mesh.material) {
+                        mesh.material.emissiveColor = new BABYLON.Color3(
+                            ir * emissivePower * 0.5 * pulse,
+                            ig * emissivePower * 0.5 * pulse,
+                            ib * emissivePower * 0.5 * pulse
+                        );
+                        mesh.material.emissiveTexture = fireDynTex;
+                    }
+                }
+
+                // Glow: inner bloom close to mesh, outer bloom in the wider halo
+                const glowR = lerp(or_, ir, 0.4);
+                const glowG = lerp(og, ig, 0.4);
+                const glowB = lerp(ob, ib, 0.4);
+                glowLayer.customEmissiveColorSelector = function(mesh, subMesh, material, result) {
+                    if (bladeMeshes.includes(mesh)) {
+                        result.set(
+                            glowR * emissivePower * pulse,
+                            glowG * emissivePower * pulse * 0.8,
+                            glowB * emissivePower * pulse * 0.5,
+                            1
+                        );
+                    } else {
+                        result.set(0, 0, 0, 0);
+                    }
+                };
+
+                // Fire light blends both colors
+                fireLight.intensity = emissivePower * pulse * 0.4;
+                fireLight.diffuse.set(
+                    lerp(or_, ir, 0.6),
+                    lerp(og, ig, 0.6) * 0.7,
+                    lerp(ob, ib, 0.6)
+                );
+
+                // Particles: spawn as inner (bright hot sparks), cool to outer, die dark
+                particleSystem.emitRate = parseFloat(cParticleRate.value);
+                const pSize = parseFloat(cParticleSize.value);
+                particleSystem.minSize = pSize * 0.5;
+                particleSystem.maxSize = pSize;
+                const pLife = parseFloat(cParticleLife.value);
+                particleSystem.minLifeTime = pLife * 0.4;
+                particleSystem.maxLifeTime = pLife;
+                const pRise = parseFloat(cParticleRise.value);
+                particleSystem.gravity.y = pRise;
+
+                particleSystem.color1.set(ir, ig, ib, 1);
+                particleSystem.color2.set(or_, og * 0.8, ob, 0.9);
+                particleSystem.colorDead.set(or_ * 0.3, og * 0.1, 0, 0);
+            }
+
+            scene.render();
+        });
+
+        window.addEventListener('resize', () => engine.resize());
+    })();
+    </script>
+</body>
+</html>

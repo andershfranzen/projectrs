@@ -6,6 +6,7 @@
     "dev:client": "cd client && bunx vite --port 5173",
     "dev:server": "bun --watch server/src/main.ts",
     "dev:editor": "cd editor && bunx vite --port 5174",
+    "dev:enchant": "bun -e \"Bun.serve({ port: 8080, fetch(req) { const url = new URL(req.url); let path = '.' + decodeURIComponent(url.pathname); if (path === './') path = './enchant-prototype.html'; return new Response(Bun.file(path)); } }); console.log('Enchant editor: http://localhost:8080')\"",
     "build:client": "cd client && bunx vite build",
     "start": "bun server/src/main.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
