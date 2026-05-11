@@ -352,7 +352,7 @@
     "toolLevel": 1,
     "toolBonus": 0,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Axe.glb"
+    "model": "/assets/equipment/Tools/Bronze axe.glb"
   },
   {
     "id": 32,
@@ -370,7 +370,7 @@
     "toolLevel": 6,
     "toolBonus": 1,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Axe.glb"
+    "model": "/assets/equipment/Tools/Bronze axe.glb"
   },
   {
     "id": 33,
@@ -425,7 +425,7 @@
     "toolLevel": 21,
     "toolBonus": 2,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Axe.glb"
+    "model": "/assets/equipment/Tools/Bronze axe.glb"
   },
   {
     "id": 37,
@@ -443,7 +443,7 @@
     "toolLevel": 31,
     "toolBonus": 3,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Axe.glb"
+    "model": "/assets/equipment/Tools/Bronze axe.glb"
   },
   {
     "id": 38,
@@ -461,7 +461,7 @@
     "toolLevel": 41,
     "toolBonus": 4,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Axe.glb"
+    "model": "/assets/equipment/Tools/Bronze axe.glb"
   },
   {
     "id": 39,
