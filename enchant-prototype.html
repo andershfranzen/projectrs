@@ -2,17 +2,17 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Fiery Weapon Enchant Prototype</title>
-    <script src="https://cdn.babylonjs.com/babylon.js"></script>
-    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <title>Enchant Editor</title>
+    <script src="https://cdn.babylonjs.com/babylon.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js" crossorigin="anonymous"></script>
     <style>
         html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
         #renderCanvas { width: 100%; height: 100%; touch-action: none; }
         #controls {
-            position: absolute; top: 10px; right: 10px; color: #ddd;
+            position: absolute; top: 10px; right: 10px; bottom: 10px; color: #ddd;
             font-family: 'Segoe UI', monospace; font-size: 13px;
             background: rgba(0,0,0,0.75); padding: 16px 20px; border-radius: 8px;
-            min-width: 280px; user-select: none;
+            min-width: 280px; user-select: none; overflow-y: auto;
         }
         #controls h3 { margin: 0 0 12px 0; color: #ff9944; font-size: 15px; }
         .ctrl-group { margin-bottom: 14px; border-bottom: 1px solid #333; padding-bottom: 10px; }
@@ -22,6 +22,10 @@
         .ctrl-row label { flex: 0 0 130px; }
         .ctrl-row input[type=range] { flex: 1; margin: 0 8px; }
         .ctrl-row .val { flex: 0 0 35px; text-align: right; color: #ff9944; font-size: 12px; }
+        .ctrl-row select {
+            flex: 1; margin: 0 8px; background: #222; color: #ddd; border: 1px solid #555;
+            border-radius: 3px; padding: 3px 6px; font-size: 12px; font-family: inherit;
+        }
         #toggleEnchant {
             width: 100%; padding: 8px; margin-top: 8px; cursor: pointer;
             background: #ff6600; color: white; border: none; border-radius: 4px;
@@ -34,7 +38,7 @@
 <body>
     <canvas id="renderCanvas"></canvas>
     <div id="controls">
-        <h3>Fiery Weapon Enchant</h3>
+        <h3>Enchant Editor</h3>
 
         <div class="ctrl-group">
             <h4>Glow / Bloom</h4>
@@ -125,6 +129,27 @@
         <div class="ctrl-group">
             <h4>Particles</h4>
             <div class="ctrl-row">
+                <label>Shape</label>
+                <select id="particleShape">
+                    <option value="ember">Ember</option>
+                    <option value="spark">Spark</option>
+                    <option value="skull">Skull</option>
+                    <option value="star">Star</option>
+                    <option value="rune">Rune</option>
+                    <option value="smoke">Smoke</option>
+                </select>
+            </div>
+            <div class="ctrl-row">
+                <label>Motion</label>
+                <select id="particleMotion">
+                    <option value="rise">Rise</option>
+                    <option value="swirl">Swirl Up</option>
+                    <option value="spiral">Spiral</option>
+                    <option value="orbit">Orbit</option>
+                    <option value="burst">Burst</option>
+                </select>
+            </div>
+            <div class="ctrl-row">
                 <label>Emit Rate</label>
                 <input type="range" id="particleRate" min="0" max="400" step="5" value="80">
                 <span class="val" id="particleRateVal">80</span>
@@ -144,6 +169,75 @@
                 <input type="range" id="particleRise" min="0" max="3" step="0.1" value="0.8">
                 <span class="val" id="particleRiseVal">0.8</span>
             </div>
+            <div class="ctrl-row">
+                <label>Color R</label>
+                <input type="range" id="partR" min="0" max="1" step="0.01" value="1.0">
+                <span class="val" id="partRVal">1.0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Color G</label>
+                <input type="range" id="partG" min="0" max="1" step="0.01" value="0.6">
+                <span class="val" id="partGVal">0.6</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Color B</label>
+                <input type="range" id="partB" min="0" max="1" step="0.01" value="0.1">
+                <span class="val" id="partBVal">0.1</span>
+            </div>
+        </div>
+
+        <div class="ctrl-group">
+            <h4>Lightning / Electric</h4>
+            <div class="ctrl-row">
+                <label>Arc Count</label>
+                <input type="range" id="arcCount" min="0" max="8" step="1" value="0">
+                <span class="val" id="arcCountVal">0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Flicker Speed</label>
+                <input type="range" id="arcFlicker" min="1" max="30" step="1" value="12">
+                <span class="val" id="arcFlickerVal">12</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Jaggedness</label>
+                <input type="range" id="arcJagged" min="2" max="16" step="1" value="6">
+                <span class="val" id="arcJaggedVal">6</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Spread</label>
+                <input type="range" id="arcSpread" min="0" max="1.0" step="0.01" value="0.2">
+                <span class="val" id="arcSpreadVal">0.2</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Thickness</label>
+                <input type="range" id="arcThick" min="1" max="8" step="0.5" value="2">
+                <span class="val" id="arcThickVal">2</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Color R</label>
+                <input type="range" id="arcR" min="0" max="1" step="0.01" value="0.4">
+                <span class="val" id="arcRVal">0.4</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Color G</label>
+                <input type="range" id="arcG" min="0" max="1" step="0.01" value="0.6">
+                <span class="val" id="arcGVal">0.6</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Color B</label>
+                <input type="range" id="arcB" min="0" max="1" step="0.01" value="1.0">
+                <span class="val" id="arcBVal">1.0</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Blade Coverage</label>
+                <input type="range" id="arcCoverage" min="0.1" max="1.0" step="0.05" value="0.8">
+                <span class="val" id="arcCoverageVal">0.8</span>
+            </div>
+            <div class="ctrl-row">
+                <label>Arc Glow</label>
+                <input type="range" id="arcGlow" min="0" max="3" step="0.1" value="1.0">
+                <span class="val" id="arcGlowVal">1.0</span>
+            </div>
         </div>
 
         <button id="toggleEnchant">Toggle Enchant On/Off</button>
@@ -151,7 +245,22 @@
     <div id="info">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
 
     <script>
+    const _log = [];
+    function dbg(msg) {
+        _log.push(msg);
+        const el = document.getElementById('info');
+        if (el) el.textContent = _log.join(' → ');
+    }
+    window.onerror = function(msg, src, line, col, err) {
+        dbg('ERR@' + line + ': ' + msg);
+        const d = document.createElement('div');
+        d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;font:14px monospace;z-index:9999;white-space:pre-wrap';
+        d.textContent = 'ERROR line ' + line + ': ' + msg + '\n' + (err && err.stack || '');
+        document.body.appendChild(d);
+    };
     (async function() {
+        try {
+        dbg('1:engine');
         const canvas = document.getElementById('renderCanvas');
         const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
         const scene = new BABYLON.Scene(engine);
@@ -177,6 +286,7 @@
         fireLight.intensity = 0;
         fireLight.range = 4;
 
+        dbg('2:lights');
         // Glow layer
         const glowLayer = new BABYLON.GlowLayer('glow', scene, {
             mainTextureFixedSize: 512,
@@ -224,25 +334,194 @@
             return val;
         }
 
-        // -- Particle sprite texture (procedural) --
-        function createParticleTexture() {
-            const size = 64;
-            const dt = new BABYLON.DynamicTexture('particleTex', size, scene, false);
-            const ctx = dt.getContext();
-            const gradient = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
-            gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-            gradient.addColorStop(0.2, 'rgba(255, 255, 200, 0.9)');
-            gradient.addColorStop(0.5, 'rgba(255, 200, 100, 0.5)');
-            gradient.addColorStop(0.8, 'rgba(255, 100, 50, 0.15)');
-            gradient.addColorStop(1, 'rgba(200, 50, 0, 0)');
-            ctx.fillStyle = gradient;
+        dbg('3:noise');
+        // -- Particle sprite textures (procedural) --
+        function makeTexCanvas(size) {
+            const dt = new BABYLON.DynamicTexture('ptex_' + Math.random(), size, scene, false);
+            return { dt, ctx: dt.getContext(), size };
+        }
+
+        function createEmberTex() {
+            const { dt, ctx, size } = makeTexCanvas(64);
+            const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            g.addColorStop(0, 'rgba(255,255,255,1)');
+            g.addColorStop(0.2, 'rgba(255,255,200,0.9)');
+            g.addColorStop(0.5, 'rgba(255,200,100,0.5)');
+            g.addColorStop(0.8, 'rgba(255,100,50,0.15)');
+            g.addColorStop(1, 'rgba(200,50,0,0)');
+            ctx.fillStyle = g;
             ctx.fillRect(0, 0, size, size);
             dt.update();
             return dt;
         }
 
-        const particleTex = createParticleTexture();
+        function createSparkTex() {
+            const { dt, ctx, size } = makeTexCanvas(64);
+            const c = size / 2;
+            ctx.clearRect(0, 0, size, size);
+            for (let a = 0; a < Math.PI * 2; a += Math.PI / 2) {
+                const g = ctx.createLinearGradient(
+                    c + Math.cos(a) * size * 0.45, c + Math.sin(a) * size * 0.45, c, c
+                );
+                g.addColorStop(0, 'rgba(255,255,255,0)');
+                g.addColorStop(0.5, 'rgba(255,255,220,0.6)');
+                g.addColorStop(1, 'rgba(255,255,255,1)');
+                ctx.fillStyle = g;
+                ctx.beginPath();
+                ctx.moveTo(c, c);
+                ctx.lineTo(c + Math.cos(a - 0.15) * size * 0.48, c + Math.sin(a - 0.15) * size * 0.48);
+                ctx.lineTo(c + Math.cos(a + 0.15) * size * 0.48, c + Math.sin(a + 0.15) * size * 0.48);
+                ctx.fill();
+            }
+            const rg = ctx.createRadialGradient(c, c, 0, c, c, size * 0.15);
+            rg.addColorStop(0, 'rgba(255,255,255,1)');
+            rg.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = rg;
+            ctx.fillRect(0, 0, size, size);
+            dt.update();
+            return dt;
+        }
 
+        function drawEllipse(ctx, cx, cy, rx, ry) {
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.scale(1, ry / rx);
+            ctx.arc(0, 0, rx, 0, Math.PI * 2);
+            ctx.restore();
+        }
+
+        function createSkullTex() {
+            const { dt, ctx, size } = makeTexCanvas(64);
+            const c = size / 2;
+            ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = 'rgba(255,255,255,0.85)';
+            ctx.beginPath();
+            drawEllipse(ctx, c, c * 0.9, size * 0.32, size * 0.38);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(c - size * 0.12, size * 0.78);
+            ctx.lineTo(c + size * 0.12, size * 0.78);
+            ctx.lineTo(c + size * 0.08, size * 0.68);
+            ctx.lineTo(c - size * 0.08, size * 0.68);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(0,0,0,0.9)';
+            ctx.beginPath();
+            drawEllipse(ctx, c - size * 0.12, c * 0.82, size * 0.09, size * 0.11);
+            ctx.fill();
+            ctx.beginPath();
+            drawEllipse(ctx, c + size * 0.12, c * 0.82, size * 0.09, size * 0.11);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(c, c * 1.05);
+            ctx.lineTo(c - size * 0.04, c * 1.15);
+            ctx.lineTo(c + size * 0.04, c * 1.15);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            for (let i = -1.5; i <= 1.5; i++) {
+                ctx.fillRect(c + i * size * 0.055 - 1, size * 0.68, 2, size * 0.1);
+            }
+            const fadeG = ctx.createRadialGradient(c, c, size * 0.2, c, c, size * 0.5);
+            fadeG.addColorStop(0, 'rgba(0,0,0,0)');
+            fadeG.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.fillStyle = fadeG;
+            ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over';
+            dt.update();
+            return dt;
+        }
+
+        function createStarTex() {
+            const { dt, ctx, size } = makeTexCanvas(64);
+            const c = size / 2;
+            ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = 'rgba(255,255,255,0.95)';
+            ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const outerA = -Math.PI / 2 + i * Math.PI * 2 / 5;
+                const innerA = outerA + Math.PI / 5;
+                ctx.lineTo(c + Math.cos(outerA) * size * 0.44, c + Math.sin(outerA) * size * 0.44);
+                ctx.lineTo(c + Math.cos(innerA) * size * 0.18, c + Math.sin(innerA) * size * 0.18);
+            }
+            ctx.closePath();
+            ctx.fill();
+            const fadeG = ctx.createRadialGradient(c, c, size * 0.1, c, c, size * 0.5);
+            fadeG.addColorStop(0, 'rgba(0,0,0,0)');
+            fadeG.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.fillStyle = fadeG;
+            ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over';
+            dt.update();
+            return dt;
+        }
+
+        function createRuneTex() {
+            const { dt, ctx, size } = makeTexCanvas(64);
+            const c = size / 2;
+            ctx.clearRect(0, 0, size, size);
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+            ctx.lineWidth = 3;
+            ctx.lineCap = 'round';
+            const runes = [
+                [[0.3,0.2],[0.3,0.8],[0.3,0.5],[0.6,0.3],[0.3,0.5],[0.6,0.7]],
+                [[0.3,0.2],[0.5,0.5],[0.3,0.8],[0.7,0.2],[0.5,0.5],[0.7,0.8]],
+                [[0.5,0.2],[0.5,0.8],[0.3,0.35],[0.7,0.35],[0.3,0.65],[0.7,0.65]],
+            ];
+            const r = runes[Math.floor(Math.random() * runes.length)];
+            ctx.beginPath();
+            for (let i = 0; i < r.length; i++) {
+                const px = r[i][0] * size, py = r[i][1] * size;
+                if (i % 2 === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+            const fadeG = ctx.createRadialGradient(c, c, size * 0.15, c, c, size * 0.5);
+            fadeG.addColorStop(0, 'rgba(0,0,0,0)');
+            fadeG.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.fillStyle = fadeG;
+            ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over';
+            dt.update();
+            return dt;
+        }
+
+        function createSmokeTex() {
+            const { dt, ctx, size } = makeTexCanvas(64);
+            const c = size / 2;
+            ctx.clearRect(0, 0, size, size);
+            for (let i = 0; i < 6; i++) {
+                const ox = c + (Math.random() - 0.5) * size * 0.3;
+                const oy = c + (Math.random() - 0.5) * size * 0.3;
+                const r = size * (0.15 + Math.random() * 0.2);
+                const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, r);
+                g.addColorStop(0, 'rgba(200,200,200,0.3)');
+                g.addColorStop(1, 'rgba(100,100,100,0)');
+                ctx.fillStyle = g;
+                ctx.fillRect(0, 0, size, size);
+            }
+            dt.update();
+            return dt;
+        }
+
+        const particleTextures = { ember: createEmberTex() };
+        let currentParticleShape = 'ember';
+
+        function getParticleTexture(shape) {
+            if (!particleTextures[shape]) {
+                try {
+                    const creators = { spark: createSparkTex, skull: createSkullTex, star: createStarTex, rune: createRuneTex, smoke: createSmokeTex };
+                    particleTextures[shape] = creators[shape]();
+                } catch (e) {
+                    console.warn('Failed to create texture for ' + shape + ', falling back to ember', e);
+                    particleTextures[shape] = particleTextures.ember;
+                }
+            }
+            if (shape === 'rune') particleTextures.rune = createRuneTex();
+            return particleTextures[shape];
+        }
+
+        dbg('4:textures');
         // -- Load sword model --
         const swordPath = 'client/public/assets/equipment/weapon/';
         const result = await BABYLON.SceneLoader.ImportMeshAsync('', swordPath, '5.glb', scene);
@@ -279,15 +558,15 @@
             originalMaterials.set(mesh, mesh.material ? mesh.material.clone(mesh.material.name + '_orig') : null);
         }
 
+        dbg('5:sword');
         // -- Enchant state --
         let enchantEnabled = true;
         let time = 0;
 
         // -- Particle system --
-        const particleSystem = new BABYLON.ParticleSystem('embers', 500, scene);
-        particleSystem.particleTexture = particleTex;
+        const particleSystem = new BABYLON.ParticleSystem('embers', 800, scene);
+        particleSystem.particleTexture = particleTextures.ember;
 
-        // Emit from the sword area
         particleSystem.createBoxEmitter(
             new BABYLON.Vector3(-0.05, 0.3, -0.05),
             new BABYLON.Vector3(0.05, 0.8, 0.05),
@@ -315,8 +594,141 @@
         particleSystem.addSizeGradient(0.5, 0.04, 0.06);
         particleSystem.addSizeGradient(1.0, 0, 0.01);
 
+        let currentMotion = 'rise';
+        const defaultUpdateFunction = particleSystem.updateFunction;
+
+        function applyMotion(motion) {
+            currentMotion = motion;
+            particleSystem.updateFunction = defaultUpdateFunction;
+
+            if (motion === 'rise') {
+                particleSystem.createBoxEmitter(
+                    new BABYLON.Vector3(-0.05, 0.3, -0.05),
+                    new BABYLON.Vector3(0.05, 0.8, 0.05),
+                    new BABYLON.Vector3(-0.15, 0.5, -0.15),
+                    new BABYLON.Vector3(0.15, 1.5, 0.15)
+                );
+                particleSystem.minEmitPower = 0.1;
+                particleSystem.maxEmitPower = 0.4;
+                particleSystem.minAngularSpeed = 0;
+                particleSystem.maxAngularSpeed = 0;
+            } else if (motion === 'swirl') {
+                particleSystem.createBoxEmitter(
+                    new BABYLON.Vector3(-0.08, 0.2, -0.08),
+                    new BABYLON.Vector3(0.08, 0.6, 0.08),
+                    new BABYLON.Vector3(-0.1, 0.3, -0.1),
+                    new BABYLON.Vector3(0.1, 1.0, 0.1)
+                );
+                particleSystem.minEmitPower = 0.15;
+                particleSystem.maxEmitPower = 0.5;
+                particleSystem.minAngularSpeed = -4;
+                particleSystem.maxAngularSpeed = 4;
+                particleSystem.updateFunction = function(particles) {
+                    for (let i = 0; i < particles.length; i++) {
+                        const p = particles[i];
+                        p.age += this._scaledUpdateSpeed;
+                        if (p.age >= p.lifeTime) { this.recycleParticle(p); i--; continue; }
+                        const ratio = p.age / p.lifeTime;
+                        if (p.age < this._scaledUpdateSpeed * 1.5) { p._initSz = p.size; p._phase = Math.random() * Math.PI * 200; }
+                        const swirl = time * 4 + (p._phase || 0);
+                        const r = 0.08 + ratio * 0.12;
+                        p.position.x += Math.cos(swirl) * r * this._scaledUpdateSpeed;
+                        p.position.z += Math.sin(swirl) * r * this._scaledUpdateSpeed;
+                        p.position.y += p.direction.y * this._scaledUpdateSpeed;
+                        p.size = lerp(p._initSz || p.size, 0, ratio);
+                        p.color.r = lerp(this.color1.r, this.colorDead.r, ratio);
+                        p.color.g = lerp(this.color1.g, this.colorDead.g, ratio);
+                        p.color.b = lerp(this.color1.b, this.colorDead.b, ratio);
+                        p.color.a = 1 - ratio;
+                        p.angle += p.angularSpeed * this._scaledUpdateSpeed;
+                    }
+                };
+            } else if (motion === 'spiral') {
+                particleSystem.createPointEmitter(
+                    new BABYLON.Vector3(0, 0.5, 0),
+                    new BABYLON.Vector3(0, 1, 0)
+                );
+                particleSystem.minEmitPower = 0.05;
+                particleSystem.maxEmitPower = 0.15;
+                particleSystem.minAngularSpeed = -6;
+                particleSystem.maxAngularSpeed = 6;
+                const spBladeMinY = min.y * scale + swordRoot.position.y;
+                const spBladeMaxY = max.y * scale + swordRoot.position.y;
+                const spBladeLen = spBladeMaxY - spBladeMinY;
+                const spCx = (min.x + max.x) * 0.5 * scale + swordRoot.position.x;
+                const spCz = (min.z + max.z) * 0.5 * scale + swordRoot.position.z;
+                particleSystem.updateFunction = function(particles) {
+                    for (let i = 0; i < particles.length; i++) {
+                        const p = particles[i];
+                        p.age += this._scaledUpdateSpeed;
+                        if (p.age >= p.lifeTime) { this.recycleParticle(p); i--; continue; }
+                        const ratio = p.age / p.lifeTime;
+                        if (p.age < this._scaledUpdateSpeed * 1.5) { p._initSz = p.size; p._phase = Math.random() * Math.PI * 200; p._startY = Math.random(); }
+                        const startT = p._startY || 0;
+                        const riseSpd = parseFloat(cParticleRise.value);
+                        const yT = Math.min(1, startT + ratio * (1 - startT) * (0.3 + riseSpd));
+                        const riseSpiral = 0.5 + riseSpd * 2;
+                        const ang = time * riseSpiral + (p._phase || 0) + ratio * 12;
+                        const r = 0.05 + Math.sin(ratio * Math.PI) * 0.15;
+                        p.position.x = spCx + Math.cos(ang) * r;
+                        p.position.z = spCz + Math.sin(ang) * r;
+                        p.position.y = spBladeMinY + spBladeLen * yT;
+                        p.size = lerp(p._initSz || p.size, 0, ratio);
+                        p.color.r = lerp(this.color1.r, this.colorDead.r, ratio);
+                        p.color.g = lerp(this.color1.g, this.colorDead.g, ratio);
+                        p.color.b = lerp(this.color1.b, this.colorDead.b, ratio);
+                        p.color.a = 1 - ratio;
+                        p.angle += p.angularSpeed * this._scaledUpdateSpeed;
+                    }
+                };
+            } else if (motion === 'orbit') {
+                particleSystem.createBoxEmitter(
+                    new BABYLON.Vector3(-0.1, -0.3, -0.1),
+                    new BABYLON.Vector3(0.1, 0.3, 0.1),
+                    new BABYLON.Vector3(-0.05, -0.1, -0.05),
+                    new BABYLON.Vector3(0.05, 0.1, 0.05)
+                );
+                particleSystem.minEmitPower = 0.02;
+                particleSystem.maxEmitPower = 0.08;
+                particleSystem.minAngularSpeed = -3;
+                particleSystem.maxAngularSpeed = 3;
+                const bladeMinY = min.y * scale + swordRoot.position.y;
+                const bladeMaxY = max.y * scale + swordRoot.position.y;
+                const bladeCx = (min.x + max.x) * 0.5 * scale + swordRoot.position.x;
+                const bladeCz = (min.z + max.z) * 0.5 * scale + swordRoot.position.z;
+                particleSystem.updateFunction = function(particles) {
+                    for (let i = 0; i < particles.length; i++) {
+                        const p = particles[i];
+                        p.age += this._scaledUpdateSpeed;
+                        if (p.age >= p.lifeTime) { this.recycleParticle(p); i--; continue; }
+                        const ratio = p.age / p.lifeTime;
+                        if (p.age < this._scaledUpdateSpeed * 1.5) { p._initSz = p.size; p._orbitY = bladeMinY + Math.random() * (bladeMaxY - bladeMinY); p._phase = Math.random() * Math.PI * 200; }
+                        const ang = time * 3 + (p._phase || 0);
+                        const r = 0.12 + Math.sin(ratio * Math.PI) * 0.08;
+                        p.position.x = bladeCx + Math.cos(ang) * r;
+                        p.position.z = bladeCz + Math.sin(ang) * r;
+                        p.position.y = p._orbitY || bladeMinY;
+                        p.size = lerp(p._initSz || p.size, 0, Math.max(0, ratio * 2 - 1));
+                        p.color.r = lerp(this.color1.r, this.colorDead.r, ratio);
+                        p.color.g = lerp(this.color1.g, this.colorDead.g, ratio);
+                        p.color.b = lerp(this.color1.b, this.colorDead.b, ratio);
+                        p.color.a = Math.sin(ratio * Math.PI);
+                        p.angle += p.angularSpeed * this._scaledUpdateSpeed;
+                    }
+                };
+            } else if (motion === 'burst') {
+                particleSystem.createSphereEmitter(0.05);
+                particleSystem.minEmitPower = 0.3;
+                particleSystem.maxEmitPower = 0.8;
+                particleSystem.minAngularSpeed = -5;
+                particleSystem.maxAngularSpeed = 5;
+            }
+        }
+
+        applyMotion('rise');
         particleSystem.start();
 
+        dbg('6:particles');
         // -- Controls wiring --
         function ctrl(id) {
             const el = document.getElementById(id);
@@ -343,6 +755,124 @@
         const cParticleSize = ctrl('particleSize');
         const cParticleLife = ctrl('particleLife');
         const cParticleRise = ctrl('particleRise');
+        const cPartR = ctrl('partR');
+        const cPartG = ctrl('partG');
+        const cPartB = ctrl('partB');
+
+        const cParticleShape = document.getElementById('particleShape');
+        cParticleShape.addEventListener('change', () => {
+            const shape = cParticleShape.value;
+            particleSystem.particleTexture = getParticleTexture(shape);
+            currentParticleShape = shape;
+            if (shape === 'smoke') {
+                particleSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+            } else {
+                particleSystem.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+            }
+        });
+
+        const cParticleMotion = document.getElementById('particleMotion');
+        cParticleMotion.addEventListener('change', () => {
+            applyMotion(cParticleMotion.value);
+        });
+
+        const cArcCount = ctrl('arcCount');
+        const cArcFlicker = ctrl('arcFlicker');
+        const cArcJagged = ctrl('arcJagged');
+        const cArcSpread = ctrl('arcSpread');
+        const cArcThick = ctrl('arcThick');
+        const cArcR = ctrl('arcR');
+        const cArcG = ctrl('arcG');
+        const cArcB = ctrl('arcB');
+        const cArcCoverage = ctrl('arcCoverage');
+        const cArcGlow = ctrl('arcGlow');
+
+        dbg('7:controls');
+        // -- Lightning arc system --
+        const MAX_ARCS = 8;
+        const arcMeshes = [];
+        const arcMaterials = [];
+        let arcRegenCounter = 0;
+
+        function genArcPts(start, end, segments, jitter) {
+            const pts = [start.clone()];
+            for (let i = 1; i < segments; i++) {
+                const t = i / segments;
+                const base = BABYLON.Vector3.Lerp(start, end, t);
+                base.x += (Math.random() - 0.5) * 2 * jitter;
+                base.y += (Math.random() - 0.5) * jitter * 0.4;
+                base.z += (Math.random() - 0.5) * 2 * jitter;
+                pts.push(base);
+            }
+            pts.push(end.clone());
+            return pts;
+        }
+
+        for (let i = 0; i < MAX_ARCS; i++) {
+            const mat = new BABYLON.StandardMaterial('arcMat' + i, scene);
+            mat.emissiveColor = new BABYLON.Color3(0.4, 0.6, 1.0);
+            mat.diffuseColor = BABYLON.Color3.Black();
+            mat.specularColor = BABYLON.Color3.Black();
+            mat.disableLighting = true;
+            arcMaterials.push(mat);
+
+            const dummyPts = [new BABYLON.Vector3(0, 0, 0), new BABYLON.Vector3(0, 0.01, 0)];
+            const line = BABYLON.MeshBuilder.CreateLines('arc' + i, {
+                points: dummyPts,
+                updatable: true
+            }, scene);
+            line.material = mat;
+            line.isVisible = false;
+            line.isPickable = false;
+            arcMeshes.push(line);
+        }
+
+        function updateArcs(arcCount, segments, spread, coverage, color, thickness, glow) {
+            const bladeMin = min.y * scale + swordRoot.position.y;
+            const bladeMax = max.y * scale + swordRoot.position.y;
+            const bladeLen = bladeMax - bladeMin;
+            const cx = (min.x + max.x) * 0.5 * scale + swordRoot.position.x;
+            const cz = (min.z + max.z) * 0.5 * scale + swordRoot.position.z;
+            const bladeHalfW = Math.max(0.02, (max.x - min.x) * 0.5 * scale);
+            const bladeHalfD = Math.max(0.02, (max.z - min.z) * 0.5 * scale);
+            const anchorW = bladeHalfW;
+            const anchorD = bladeHalfD;
+            const jitter = bladeHalfW * (0.5 + spread * 4);
+
+            for (let i = 0; i < MAX_ARCS; i++) {
+                if (i < arcCount) {
+                    const arcLen = coverage * (0.15 + Math.random() * 0.85);
+                    const t1 = Math.random() * (1 - arcLen);
+                    const t2 = t1 + arcLen;
+
+                    const startPt = new BABYLON.Vector3(
+                        cx + (Math.random() - 0.5) * 2 * anchorW,
+                        bladeMin + bladeLen * t1,
+                        cz + (Math.random() - 0.5) * 2 * anchorD
+                    );
+                    const endPt = new BABYLON.Vector3(
+                        cx + (Math.random() - 0.5) * 2 * anchorW,
+                        bladeMin + bladeLen * t2,
+                        cz + (Math.random() - 0.5) * 2 * anchorD
+                    );
+
+                    const pts = genArcPts(startPt, endPt, segments, jitter);
+
+                    arcMeshes[i].dispose();
+                    const line = BABYLON.MeshBuilder.CreateLines('arc' + i, { points: pts }, scene);
+                    line.color = new BABYLON.Color3(color.r, color.g, color.b);
+                    line.material = arcMaterials[i];
+                    line.isPickable = false;
+                    line.isVisible = true;
+                    line.alpha = 0.7 + Math.random() * 0.3;
+                    const g = Math.max(1, glow);
+                    arcMaterials[i].emissiveColor.set(color.r * g, color.g * g, color.b * g);
+                    arcMeshes[i] = line;
+                } else {
+                    arcMeshes[i].isVisible = false;
+                }
+            }
+        }
 
         document.getElementById('toggleEnchant').addEventListener('click', () => {
             enchantEnabled = !enchantEnabled;
@@ -356,13 +886,17 @@
                         mesh.material.emissiveTexture = null;
                     }
                 }
+                for (let i = 0; i < MAX_ARCS; i++) arcMeshes[i].isVisible = false;
             } else {
                 particleSystem.start();
             }
         });
 
+        dbg('8:arcs');
         // -- Render loop --
+        let _loopErrShown = false;
         engine.runRenderLoop(() => {
+            try {
             const dt = engine.getDeltaTime() / 1000;
             time += dt;
 
@@ -442,12 +976,21 @@
                 const glowR = lerp(or_, ir, 0.4);
                 const glowG = lerp(og, ig, 0.4);
                 const glowB = lerp(ob, ib, 0.4);
+                const _arcColor = { r: parseFloat(cArcR.value), g: parseFloat(cArcG.value), b: parseFloat(cArcB.value) };
+                const _arcGlow = parseFloat(cArcGlow.value);
                 glowLayer.customEmissiveColorSelector = function(mesh, subMesh, material, result) {
                     if (bladeMeshes.includes(mesh)) {
                         result.set(
                             glowR * emissivePower * pulse,
                             glowG * emissivePower * pulse * 0.8,
                             glowB * emissivePower * pulse * 0.5,
+                            1
+                        );
+                    } else if (arcMeshes.includes(mesh) && mesh.isVisible) {
+                        result.set(
+                            _arcColor.r * _arcGlow,
+                            _arcColor.g * _arcGlow,
+                            _arcColor.b * _arcGlow,
                             1
                         );
                     } else {
@@ -474,15 +1017,53 @@
                 const pRise = parseFloat(cParticleRise.value);
                 particleSystem.gravity.y = pRise;
 
-                particleSystem.color1.set(ir, ig, ib, 1);
-                particleSystem.color2.set(or_, og * 0.8, ob, 0.9);
-                particleSystem.colorDead.set(or_ * 0.3, og * 0.1, 0, 0);
+                const pr = parseFloat(cPartR.value);
+                const pg = parseFloat(cPartG.value);
+                const pb = parseFloat(cPartB.value);
+                particleSystem.color1.set(pr, pg, pb, 1);
+                particleSystem.color2.set(pr * 0.7, pg * 0.5, pb * 0.3, 0.9);
+                particleSystem.colorDead.set(pr * 0.2, pg * 0.1, pb * 0.05, 0);
+
+                // Lightning arcs
+                const arcCount = parseInt(cArcCount.value);
+                const arcFlicker = parseInt(cArcFlicker.value);
+                const arcSegments = parseInt(cArcJagged.value);
+                const arcSpread = parseFloat(cArcSpread.value);
+                const arcThickness = parseFloat(cArcThick.value);
+                const arcColor = { r: parseFloat(cArcR.value), g: parseFloat(cArcG.value), b: parseFloat(cArcB.value) };
+                const arcCoverage = parseFloat(cArcCoverage.value);
+                const arcGlow = parseFloat(cArcGlow.value);
+
+                arcRegenCounter++;
+                const regenInterval = Math.max(1, Math.round(60 / arcFlicker));
+                if (arcCount > 0 && arcRegenCounter % regenInterval === 0) {
+                    updateArcs(arcCount, arcSegments, arcSpread, arcCoverage, arcColor, arcThickness, arcGlow);
+                }
+                if (arcCount === 0) {
+                    for (let i = 0; i < MAX_ARCS; i++) arcMeshes[i].isVisible = false;
+                }
             }
 
             scene.render();
+            } catch(e) {
+                if (!_loopErrShown) {
+                    _loopErrShown = true;
+                    dbg('LOOP: ' + e.message);
+                    const d = document.createElement('div');
+                    d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;font:14px monospace;z-index:9999;white-space:pre-wrap';
+                    d.textContent = 'RENDER LOOP ERROR: ' + e.message + '\n' + e.stack;
+                    document.body.appendChild(d);
+                }
+            }
         });
 
         window.addEventListener('resize', () => engine.resize());
+        } catch(e) {
+            const d = document.createElement('div');
+            d.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:12px;font:14px monospace;z-index:9999;white-space:pre-wrap';
+            d.textContent = 'INIT ERROR: ' + e.message + '\n' + e.stack;
+            document.body.appendChild(d);
+        }
     })();
     </script>
 </body>
