@@ -82,6 +82,25 @@ export class GameManager {
   private skillingFacingAngle: number = 0; // locked facing angle while skilling
   private tileProgress: number = 0; // 0→1 progress through current tile step
   private tileFrom: { x: number; z: number } = { x: 0, z: 0 }; // where we started this tile step
+
+  // --- Smooth catch-up slide ---
+  // When the divergence-snap fires for a server position that's on the
+  // client's current path, we update the logical playerX/Z to the server's
+  // tile but render the local player at the OLD visual position briefly,
+  // gliding toward the new logical position over slideDurationMs. The result
+  // is a fast slide-forward instead of an instant teleport — game logic stays
+  // server-authoritative, the visual just catches up smoothly.
+  //
+  // Independent of `speedMult` in updateLocalPlayerMovement: the catch-up
+  // speed-multiplier infrastructure stays in place for a future run anim
+  // (set speedMult > 1 when the queue is long, swap walk → run at that
+  // speed). Smooth-slide handles intermittent micro-drifts; run anim will
+  // handle sustained queue backlog. They compose cleanly.
+  private slideOffsetX: number = 0;
+  private slideOffsetZ: number = 0;
+  private slideStartMs: number = 0;
+  private slideDurationMs: number = 200;
+  private static readonly SLIDE_DURATION_MS = 200;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
@@ -1306,16 +1325,21 @@ export class GameManager {
               break;
             }
           }
+          const prevLogicalX = this.playerX;
+          const prevLogicalZ = this.playerZ;
           this.playerX = serverX;
           this.playerZ = serverZ;
           if (foundIndex >= 0) {
             // Server is on our path: skip ahead, finish walking the rest.
+            // Trigger a smooth slide instead of an instant teleport — the
+            // rendered position stays at the previous visual location and
+            // glides to the new logical position over slideDurationMs.
+            // setPositionXYZ is deliberately not called here; the next
+            // render frame's renderLocalPlayerWithSlide picks up the offset.
             this.pathIndex = foundIndex + 1;
             this.tileProgress = 0;
             this.tileFrom = { x: serverX, z: serverZ };
-            if (this.localPlayer) {
-              this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
-            }
+            this.beginVisualSlide(prevLogicalX, prevLogicalZ);
             // Don't sendMove([]) — server is correctly walking the same
             // path we are. No halt needed.
           } else {
@@ -1323,11 +1347,16 @@ export class GameManager {
             // server-side chase reroute, dropped packet, etc.). Full reset:
             // halt, clear path, force a fresh click to re-engage. Without
             // sendMove([]), the server would keep walking its old queue
-            // and produce a new >1.5 delta every tick.
+            // and produce a new >1.5 delta every tick. Hard teleport here —
+            // sliding many tiles would look like skating across the world,
+            // and the user wasn't watching anyway (tab was hidden).
             this.path = [];
             this.pathIndex = 0;
             this.tileProgress = 0;
             this.tileFrom = { x: serverX, z: serverZ };
+            this.slideOffsetX = 0;
+            this.slideOffsetZ = 0;
+            this.slideStartMs = 0;
             if (this.localPlayer) {
               this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
               this.localPlayer.stopWalking();
@@ -3361,6 +3390,12 @@ export class GameManager {
 
     this.updateCombatFollow(dt);
     this.updateLocalPlayerMovement(dt, camPos);
+    // If a slide is in flight but there's no active path, updateLocalPlayerMovement
+    // early-returns without touching the render position — drive the decay
+    // ourselves so the visual catches up to the snapped logical position.
+    if (this.slideStartMs !== 0 && this.pathIndex >= this.path.length) {
+      this.renderLocalPlayerWithSlide();
+    }
 
     if (this.localPlayer && this.pathIndex >= this.path.length && this.combatTargetId >= 0) {
       if (camPos) {
@@ -3445,6 +3480,52 @@ export class GameManager {
     }
   }
 
+  /** Current slide-offset effect on the rendered local-player position.
+   *  Linearly decays from the initial offset to (0, 0) over slideDurationMs.
+   *  Side effect: zeroes the cached offset once expired so subsequent calls
+   *  are a fast early-out. */
+  private getSlideOffset(): { x: number; z: number } {
+    if (this.slideStartMs === 0) return { x: 0, z: 0 };
+    const age = performance.now() - this.slideStartMs;
+    if (age >= this.slideDurationMs) {
+      this.slideOffsetX = 0;
+      this.slideOffsetZ = 0;
+      this.slideStartMs = 0;
+      return { x: 0, z: 0 };
+    }
+    const factor = 1 - age / this.slideDurationMs;
+    return { x: this.slideOffsetX * factor, z: this.slideOffsetZ * factor };
+  }
+
+  /** Begin a smooth-slide visual catch-up. The logical playerX/Z should
+   *  already be updated to the new (server) position by the caller. The
+   *  rendered position will start at the OLD visual location and glide to
+   *  the new logical position over durationMs. Stacking is safe: if another
+   *  slide is in flight, the rendered position is held still and a fresh
+   *  decay starts from there — never a visual hiccup, even on rapid snaps. */
+  private beginVisualSlide(prevLogicalX: number, prevLogicalZ: number, durationMs: number = GameManager.SLIDE_DURATION_MS): void {
+    const cur = this.getSlideOffset();
+    const oldRenderedX = prevLogicalX + cur.x;
+    const oldRenderedZ = prevLogicalZ + cur.z;
+    this.slideOffsetX = oldRenderedX - this.playerX;
+    this.slideOffsetZ = oldRenderedZ - this.playerZ;
+    this.slideStartMs = performance.now();
+    this.slideDurationMs = durationMs;
+  }
+
+  /** Apply the current slide offset to the local player's rendered position.
+   *  Called every frame so the offset visibly decays even when the path is
+   *  empty (e.g., snapped while standing still). When no slide is active
+   *  this is a cheap pass-through — same coords the path code would set. */
+  private renderLocalPlayerWithSlide(): void {
+    if (!this.localPlayer) return;
+    const off = this.getSlideOffset();
+    const vx = this.playerX + off.x;
+    const vz = this.playerZ + off.z;
+    const vy = this.getHeight(vx, vz);
+    this.localPlayer.setPositionXYZ(vx, vy, vz);
+  }
+
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
     if (this.pathIndex >= this.path.length || !this.localPlayer) return;
     if (!this.localPlayer.isWalking()) this.localPlayer.startWalking();
@@ -3525,9 +3606,12 @@ export class GameManager {
       }
     }
 
-    const playerH = this.getHeight(this.playerX, this.playerZ);
-    this.localPlayer.setPositionXYZ(this.playerX, playerH, this.playerZ);
-    this.inputManager.setPlayerY(playerH);
+    // Apply the visual slide offset (zero when no slide is active, so this
+    // is a no-op on normal walking frames). InputManager.playerY uses the
+    // logical height — interaction picks should resolve at the gameplay
+    // position, not the briefly-offset visual one.
+    this.renderLocalPlayerWithSlide();
+    this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
   }
 
   private updateHitSplats(dt: number): void {
