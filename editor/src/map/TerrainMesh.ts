@@ -422,7 +422,20 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     const landMat = createLambertMaterial('terrain-land-mat', scene, { backFaceCulling: false })
     landMat.emissiveColor = new Color3(0.2, 0.2, 0.2)
     landMesh.material = landMat
-    landMesh.convertToFlatShadedMesh()
+    // convertToFlatShadedMesh used to run here for the per-face normals look,
+    // but it un-indexes the mesh (multiplies vertex count ~3×) and the cached
+    // _landPosBuf / _landColBuf / _landTileOff in this module still describe
+    // the original indexed layout. The fast-path updateTerrainLandHeights then
+    // wrote the small buffer through updateVerticesData, GPU vertex count >
+    // buffer length, and most tiles ended up with stale or zeroed data — the
+    // "every other tile missing" checkerboard the user reported on paint.
+    // Picking the mesh after that also threw RangeError in Babylon's
+    // _generatePointsArray when it tried to read back the inconsistent vertex
+    // buffer. With smooth-shaded normals the terrain still reads the per-tile
+    // vertex colors as distinct "facets" because adjacent tiles use different
+    // base shades. If the flat-shaded silhouette is wanted later, bake the
+    // un-indexed layout into landVertices/landIndices at build time so the
+    // cached buffers match the GPU layout.
     landMesh.parent = group
     _landMesh = landMesh
   }
@@ -683,6 +696,19 @@ function scaledRotatedUVs(rotation: number, scale: number): [number, number][] {
 }
 
 export function updateTerrainLandHeights(map: MapData, shadowInf: number[][] | null, x1: number, z1: number, x2: number, z2: number): boolean {
+  // Fast-path is incompatible with convertToFlatShadedMesh: that call un-
+  // indexes the mesh (~3× the vertex count) so each face can carry its own
+  // normal, but our cached _landPosBuf / _landColBuf / _landTileOff still
+  // describe the original indexed layout. Writing the small buffers through
+  // updateVerticesData only refreshes the first ~1/3 of the GPU vertices —
+  // the rest stay stale, which renders as a checkerboard "every other tile
+  // missing" pattern after a paint. Detect the size mismatch and bail to the
+  // full rebuild path, which builds a fresh mesh with consistent state.
+  if (_landMesh) {
+    const meshVerts = _landMesh.getTotalVertices();
+    const bufVerts = _landPosBuf ? _landPosBuf.length / 3 : 0;
+    if (meshVerts !== bufVerts) return false;
+  }
   if (!_landMesh || !_landTileOff || _landMapW !== map.width || _landMapH !== map.height) return false
 
   _initVertexCache(map)
