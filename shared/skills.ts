@@ -98,7 +98,10 @@ export function initSkills(): SkillBlock {
 export function addXp(skills: SkillBlock, id: SkillId, amount: number): { leveled: boolean; newLevel: number } {
   const cur = skills[id];
   const oldLevel = cur.level;
-  cur.xp = Math.max(0, cur.xp + Math.floor(amount));
+  // Clamp to int31 — wire encoding for XP is (xpHigh << 16) | (xpLow & 0xFFFF),
+  // so values past 2^31 truncate on broadcast. Caps any single skill at 2.1B
+  // which is well past the OSRS-style 200M target most players aim for.
+  cur.xp = Math.max(0, Math.min(0x7FFFFFFF, cur.xp + Math.floor(amount)));
   const newLevel = levelFromXp(cur.xp);
   const leveled = newLevel > oldLevel;
   cur.level = newLevel;

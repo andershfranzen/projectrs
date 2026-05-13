@@ -4,8 +4,8 @@ import { SpriteEntity, loadDirectionalSprites, loadAnimationSprites, load8DirAni
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { loadRecoloredDirectionalSprites, loadRecolored8DirAnimationSprites, type RecolorConfig } from '../rendering/SpriteRecolor';
-import { NPC_COLORS, NPC_NAMES, NPC_SIZES, NPC_3D_MODELS } from '../data/NpcConfig';
-import type { ItemDef, PlayerAppearance } from '@projectrs/shared';
+import { NPC_COLORS, NPC_NAMES, NPC_SIZES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
+import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -110,10 +110,19 @@ export class EntityManager {
   readonly remoteCombatTargets: Map<number, number> = new Map();
 
   // NPCs
-  readonly npcSprites: Map<number, SpriteEntity | Npc3DEntity> = new Map();
+  readonly npcSprites: Map<number, SpriteEntity | Npc3DEntity | CharacterEntity> = new Map();
   readonly npcTargets: Map<number, { x: number; z: number; prevX: number; prevZ: number; t: number }> = new Map();
   readonly npcDefs: Map<number, number> = new Map();
   readonly npcCombatTargets: Map<number, number> = new Map();
+  /** Per-spawn appearance for customizable NPCs (e.g. bankers, shopkeepers).
+   *  Cached on receipt of NPC_APPEARANCE; consumed by createNpc to decide
+   *  whether to render as CharacterEntity vs sprite. Mirrors the player path. */
+  readonly npcAppearances: Map<number, PlayerAppearance> = new Map();
+  /** Per-spawn equipment, same layout as PLAYER_REMOTE_EQUIPMENT. */
+  readonly npcEquipment: Map<number, number[]> = new Map();
+  /** Count of NPCs currently rendered as CharacterEntity. Compared against
+   *  MAX_3D_NPCS_VISIBLE (shared/constants) for mobile budget enforcement. */
+  npc3dCount: number = 0;
 
   // Ground items
   readonly groundItems: Map<number, GroundItemData> = new Map();
@@ -177,7 +186,7 @@ export class EntityManager {
         }
         this.npcSpriteSets.set(cfg.defId, sprites);
         for (const [entityId, sprite] of this.npcSprites) {
-          if (this.npcDefs.get(entityId) === cfg.defId) {
+          if (this.npcDefs.get(entityId) === cfg.defId && sprite instanceof SpriteEntity) {
             sprite.setDirectionalSprites(sprites);
           }
         }
@@ -204,7 +213,7 @@ export class EntityManager {
           this.npcAttackAnims.set(cfg.defId, attackAnim);
           console.log(`Attack animation loaded for ${cfg.name} (${cfg.attackFrames} frames, scale ${attackAnim.meshScaleX.toFixed(2)}x${attackAnim.meshScaleY.toFixed(2)})`);
           for (const [entityId, sprite] of this.npcSprites) {
-            if (this.npcDefs.get(entityId) === cfg.defId) {
+            if (this.npcDefs.get(entityId) === cfg.defId && sprite instanceof SpriteEntity) {
               sprite.setAttackAnimation(attackAnim);
             }
           }
@@ -219,7 +228,7 @@ export class EntityManager {
             this.scene, '/sprites/player/walk', `${cfg.name}_walk`, 4, cfg.recolor
           );
           for (const [entityId, sprite] of this.npcSprites) {
-            if (this.npcDefs.get(entityId) === cfg.defId) {
+            if (this.npcDefs.get(entityId) === cfg.defId && sprite instanceof SpriteEntity) {
               sprite.setWalkAnimation(walkAnim);
             }
           }
@@ -235,7 +244,7 @@ export class EntityManager {
           );
           this.npcAttackAnims.set(cfg.defId, punchAnim);
           for (const [entityId, sprite] of this.npcSprites) {
-            if (this.npcDefs.get(entityId) === cfg.defId) {
+            if (this.npcDefs.get(entityId) === cfg.defId && sprite instanceof SpriteEntity) {
               sprite.setAttackAnimation(punchAnim);
             }
           }
@@ -274,8 +283,55 @@ export class EntityManager {
     return character;
   }
 
-  createNpc(entityId: number, defId: number, x: number, z: number): SpriteEntity | Npc3DEntity {
+  /** Mobile budget check: should this NPC render as a 3D CharacterEntity?
+   *  Requires (a) appearance cached for the entity, (b) within LOD distance
+   *  of the local player, (c) the concurrent CharacterEntity-NPC count is
+   *  below MAX_3D_NPCS_VISIBLE. Returns false on any miss — caller falls
+   *  back to the sprite/3D-model path. */
+  shouldRender3DNpc(entityId: number, npcX: number, npcZ: number, playerX: number, playerZ: number): boolean {
+    if (!this.npcAppearances.has(entityId)) return false;
+    if (this.npc3dCount >= MAX_3D_NPCS_VISIBLE) return false;
+    const dx = npcX - playerX;
+    const dz = npcZ - playerZ;
+    if (Math.max(Math.abs(dx), Math.abs(dz)) > NPC_3D_LOD_DISTANCE) return false;
+    return true;
+  }
+
+  createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false): SpriteEntity | Npc3DEntity | CharacterEntity {
     const name = NPC_NAMES[defId] || `NPC${defId}`;
+
+    // Customizable-NPC path: 3D CharacterEntity with player rig + per-spawn
+    // appearance/equipment. Caller (GameManager) decides whether to use this
+    // path based on shouldRender3DNpc — keeps the mobile budget enforcement
+    // centralized in one helper.
+    if (render3D) {
+      const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
+      const stationary = profile?.stationary ?? false;
+      // Minimal anim set: idle only for stationary NPCs (bankers, smiths,
+      // shopkeepers). Mobile NPCs add walk. Combat anims intentionally
+      // omitted — Phase 3 covers friendly NPCs only.
+      const anims: { name: string; path: string }[] = [
+        { name: 'idle', path: '/Character models/new animations/idle.glb' },
+      ];
+      if (!stationary) {
+        anims.push({ name: 'walk', path: '/Character models/new animations/walk.glb' });
+      }
+      const character = new CharacterEntity(this.scene, {
+        name: `npc_${entityId}`,
+        modelPath: '/Character models/main character.glb',
+        targetHeight: 1.53,
+        label: name,
+        labelColor: '#ffff00',
+        additionalAnimations: anims,
+      });
+      character.setPositionXYZ(x, this.getHeight(x, z, 0), z);
+      character.setEntityIdMetadata(entityId);
+      if (stationary) character.freezeAtIdle();
+      this.npcSprites.set(entityId, character);
+      this.npc3dCount++;
+      return character;
+    }
+
     const modelCfg = NPC_3D_MODELS[defId];
 
     if (modelCfg) {
@@ -356,10 +412,13 @@ export class EntityManager {
   removeNpc(entityId: number): void {
     const sprite = this.npcSprites.get(entityId);
     if (sprite) {
+      if (sprite instanceof CharacterEntity) this.npc3dCount = Math.max(0, this.npc3dCount - 1);
       sprite.dispose();
       this.npcSprites.delete(entityId);
       this.npcTargets.delete(entityId);
       this.npcDefs.delete(entityId);
+      this.npcAppearances.delete(entityId);
+      this.npcEquipment.delete(entityId);
     }
   }
 

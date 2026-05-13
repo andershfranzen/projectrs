@@ -754,6 +754,45 @@ export class CharacterEntity {
     return this._ready;
   }
 
+  /** Stamp picking metadata on every mesh so right-click resolves to the
+   *  intended NPC entity (mirrors Npc3DEntity.setEntityIdMetadata). Multiple
+   *  customizable NPCs share the `main character.glb` source, so without
+   *  this stamp every banker would be indistinguishable from every smith
+   *  when the scene picker walks the mesh tree.
+   *  Defers to whenReady so callers can stamp before load finishes. */
+  setEntityIdMetadata(entityId: number): void {
+    const stamp = () => {
+      if (this.root) {
+        this.root.metadata = { ...(this.root.metadata ?? {}), entityId, kind: 'npc' };
+      }
+      for (const mesh of this.meshes) {
+        mesh.metadata = { ...(mesh.metadata ?? {}), entityId, kind: 'npc' };
+      }
+    };
+    if (this._ready) stamp();
+    else void this._readyPromise.then(stamp);
+  }
+
+  /** Freeze the character at the first frame of the idle animation. No
+   *  per-frame animation evaluation runs — the skeleton matrix is computed
+   *  once and stays. Used for stationary NPCs (bankers, shopkeepers) where
+   *  saving the per-frame skin update is the largest mobile-budget win. */
+  freezeAtIdle(): void {
+    const apply = () => {
+      const idle = this.animGroups.get('idle');
+      if (idle) {
+        // Sample frame 0 once, then stop the group so onBeforeAnimations
+        // evaluations are skipped entirely. Babylon stops dispatching the
+        // animation if the group is not started.
+        idle.start(false, 1.0, idle.from, idle.from, false);
+        idle.goToFrame(idle.from);
+        idle.stop();
+      }
+    };
+    if (this._ready) apply();
+    else void this._readyPromise.then(apply);
+  }
+
   // ---------------------------------------------------------------------------
   // Animation state machine
   // ---------------------------------------------------------------------------

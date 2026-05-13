@@ -43,8 +43,11 @@ export class NetworkManager {
       ? `${wsProtocol}//localhost:${SERVER_PORT}`
       : `${wsProtocol}//${location.host}`;
 
-    // Game socket (binary) — pass auth token as query param
-    this.gameSocket = new WebSocket(`${wsOrigin}${GAME_WS_PATH}?token=${encodeURIComponent(token)}`);
+    // Game socket (binary) — pass auth token via Sec-WebSocket-Protocol so it
+    // doesn't appear in reverse-proxy access logs the way `?token=` would. The
+    // server matches `auth.<token>` from the offered protocols and echoes it
+    // back to complete the handshake.
+    this.gameSocket = new WebSocket(`${wsOrigin}${GAME_WS_PATH}`, [`auth.${token}`]);
     this.gameSocket.binaryType = 'arraybuffer';
 
     this.gameSocket.onopen = () => {
@@ -69,8 +72,8 @@ export class NetworkManager {
       this.disconnectHandler?.();
     };
 
-    // Chat socket (JSON) — pass auth token
-    this.chatSocket = new WebSocket(`${wsOrigin}${CHAT_WS_PATH}?token=${encodeURIComponent(token)}`);
+    // Chat socket (JSON) — same subprotocol auth scheme as the game socket.
+    this.chatSocket = new WebSocket(`${wsOrigin}${CHAT_WS_PATH}`, [`auth.${token}`]);
 
     this.chatSocket.onopen = () => {
       console.log('[net] Chat socket connected');
@@ -139,6 +142,17 @@ export class NetworkManager {
 
   isConnected(): boolean {
     return this.connected;
+  }
+
+  /** Close both sockets cleanly. Used for protocol-version mismatch and
+   *  other unrecoverable session-level errors that should drop the player
+   *  back to the login screen. */
+  close(): void {
+    try { this.gameSocket?.close(); } catch {}
+    try { this.chatSocket?.close(); } catch {}
+    this.gameSocket = null;
+    this.chatSocket = null;
+    this.connected = false;
   }
 
   getLocalPlayerId(): number {

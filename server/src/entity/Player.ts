@@ -1,6 +1,6 @@
 import { Entity } from './Entity';
 import {
-  InventorySlot, INVENTORY_SIZE,
+  InventorySlot, INVENTORY_SIZE, BANK_SIZE, MAX_STACK,
   SkillBlock, SkillId, MeleeStance, CombatBonuses,
   initSkills, addXp, combatLevel, zeroBonuses, STANCE_XP,
   ACC_BASE, osrsMeleeMaxHit, calculateHitChance, STANCE_BONUSES,
@@ -42,10 +42,32 @@ export class Player extends Entity {
   skills: SkillBlock;
   stance: MeleeStance = 'accurate';
   appearance: PlayerAppearance | null = null;
+  /** Bot-detection telemetry. Populated on login (load from DB or fresh),
+   *  flushed periodically + on logout. See BotStats.ts. */
+  botStats: import('../BotStats').BotStats | null = null;
+  /** SQLite rowid of this session's login_history row. Set in addPlayer
+   *  (or wherever the join handler lands), read in handlePlayerDisconnect
+   *  to finalize session_minutes + logout_ts. -1 = no active row. */
+  loginRowId: number = -1;
+  /** IP captured at WS upgrade. Used for login_history + cross-account
+   *  correlation in the bot-review CLI. */
+  ip: string = '';
+  /** Browser device ID supplied at /api/login, stored on the session row,
+   *  plumbed to the Player via the WS upgrade. Drives the one-account-per-
+   *  browser enforcement and the bot-review device-correlation axis. */
+  deviceId: string = '';
   moveQueue: { x: number; z: number }[] = [];
   moveSpeed: number = 1;
   pendingPickup: number = -1;
   pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number } | null = null;
+  /** NPC def-id of the shopkeeper this player is currently talking to, or
+   *  null. Set on talk-shopkeeper, cleared on movement / transition / death
+   *  / disconnect. Buy + sell handlers require it to match a valid shop so
+   *  a malicious client can't sell items by sending PLAYER_SELL_ITEM without
+   *  ever opening a shop, or buy across shops. Not a modal interface (the
+   *  player can still attack/skill/etc. — matches RS where shops auto-close
+   *  on distance). */
+  openShopNpcId: number | null = null;
   /** World tick on which this player last consumed a movement waypoint. Used
    *  to defer adjacency-triggered actions (interact/pickup) by one tick when
    *  the player just arrived — gives the client's smooth visual interpolation
@@ -107,8 +129,33 @@ export class Player extends Entity {
    *  lockout, force-remove this many ticks after disconnect (~30s default). */
   logoutDeadlineTick: number = 0;
 
+  /** Account-scoped persistent bank. All slots are stackable (a single slot
+   *  can hold any quantity of one itemId). Loaded from `player_state.bank`
+   *  on login, persisted on every save tick. */
+  bank: (InventorySlot | null)[] = new Array(BANK_SIZE).fill(null);
+
+  /** Which modal "interface" the player currently has open. While set:
+   *   - bank/trade: drop/equip/unequip/eat/buy/sell/attack/interact handlers
+   *     refuse so a click leaking from another panel can't dupe items;
+   *   - any movement aborts the interface (auto-close bank, auto-decline trade);
+   *   - logout is blocked (mirrors logoutBlockedUntilTick semantics) so the
+   *     classic "disconnect mid-trade" dupe is impossible.
+   *  Mirrors 2004scape's `interaction` / `weakQueue` modal state. */
+  openInterface: 'bank' | 'trade' | null = null;
+
+  /** True while a trade session is in flight. Convenience accessor; the
+   *  authoritative session state lives on World.tradeSessions. */
+  get inTrade(): boolean { return this.openInterface === 'trade'; }
+
   isBusy(currentTick: number): boolean {
     return currentTick < this.delayedUntilTick;
+  }
+
+  /** True if a modal interface is open. State-mutating handlers refuse while
+   *  this is true (separate from busy() — busy is a tick-based delay, this is
+   *  a stateful UI lock). */
+  isInterfaceOpen(): boolean {
+    return this.openInterface !== null;
   }
 
   /** Set or extend a delay. Always takes the max so a longer pending delay
@@ -284,6 +331,18 @@ export class Player extends Entity {
       for (let i = 0; i < this.inventory.length; i++) {
         const slot = this.inventory[i];
         if (slot && slot.itemId === itemId) {
+          // Stack-overflow guard. Refuse merges that would push past MAX_STACK
+          // when assureFullInsertion is on (default). Otherwise partial-merge
+          // up to the cap and report completed = however much actually fit.
+          const headroom = MAX_STACK - slot.quantity;
+          if (headroom <= 0) return result;
+          if (quantity > headroom) {
+            if (assure) return result;
+            slot.quantity = MAX_STACK;
+            result.placed.push({ slot: i, itemId, quantity: headroom, merged: true });
+            result.completed = headroom;
+            return result;
+          }
           slot.quantity += quantity;
           result.placed.push({ slot: i, itemId, quantity, merged: true });
           result.completed = quantity;

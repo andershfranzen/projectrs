@@ -1,3 +1,5 @@
+import type { PlayerAppearance } from './appearance.js';
+
 export interface Position {
   x: number;
   y: number;
@@ -83,6 +85,12 @@ export interface NpcDef {
   aggressive: boolean;
   wanderRange: number; // tiles from spawn
   lootTable: LootDrop[];
+  /** This NPC offers banking when talked to (right-click → Bank). */
+  bankAccess?: boolean;
+  /** NPC never moves. Client opts into a static-idle render (no per-frame
+   *  animation evaluation) and skips loading walk anims — major mobile win
+   *  for shopkeepers/smiths/bankers. */
+  stationary?: boolean;
 }
 
 export interface LootDrop {
@@ -238,6 +246,15 @@ export interface SpawnEntry {
   x: number;
   z: number;
   wanderRange?: number;
+  /** Per-spawn appearance override. When set, this NPC renders as a 3D
+   *  CharacterEntity (subject to LOD + concurrent caps) using these colors,
+   *  hair, and skin. Two NPCs of the same npcId can look different. */
+  appearance?: PlayerAppearance;
+  /** Per-spawn equipment. 10-slot array matching PLAYER_REMOTE_EQUIPMENT
+   *  layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape].
+   *  0 = empty slot. Only meaningful when `appearance` is also set (the GLB
+   *  gear pipeline only runs on CharacterEntity-rendered NPCs). */
+  equipment?: number[];
 }
 
 export interface ObjectSpawnEntry {

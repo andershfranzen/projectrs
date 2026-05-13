@@ -3,7 +3,7 @@ import { World } from '../World';
 import { Player } from '../entity/Player';
 import type { ServerWebSocket } from 'bun';
 
-export type GameSocketData = { type: 'game'; playerId?: number; accountId: number; username: string };
+export type GameSocketData = { type: 'game'; playerId?: number; accountId: number; username: string; isAdmin: boolean; ip: string; deviceId: string };
 
 export function handleGameSocketOpen(
   ws: ServerWebSocket<GameSocketData>,
@@ -39,6 +39,10 @@ export function handleGameSocketOpen(
     player.equipment = saved.equipment;
     player.stance = saved.stance;
     player.appearance = saved.appearance;
+    // Pad bank to BANK_SIZE — older saves may have a shorter or empty array
+    const bank = saved.bank;
+    while (bank.length < player.bank.length) bank.push(null);
+    player.bank = bank.slice(0, player.bank.length);
     player.currentMapLevel = mapLevel; // use validated mapLevel, not raw saved value
     player.currentFloor = saved.floor;
     player.reportedY = saved.y; // restore visual height for spawn
@@ -79,6 +83,8 @@ export function handleGameSocketOpen(
   }
 
   ws.data.playerId = player.id;
+  player.ip = ws.data.ip;
+  player.deviceId = ws.data.deviceId;
   world.addPlayer(player);
 
   // If the saved floor isn't ground level, tell the client so it positions
@@ -104,7 +110,19 @@ export function handleGameSocketMessage(
 ): void {
   if (typeof message === 'string') return;
 
-  const { opcode, values } = decodePacket(message);
+  // Empty / malformed frames blow up decodePacket (view.getUint8(0) RangeError
+  // on a 0-byte buffer). Bun's WS layer usually rejects empty frames but a
+  // hostile client can still ship junk. Catch + close instead of crashing the
+  // entire message handler. Logs at warn so we notice if it's a regular thing.
+  let opcode: number;
+  let values: number[];
+  try {
+    ({ opcode, values } = decodePacket(message));
+  } catch (e) {
+    console.warn(`[ws] malformed packet from playerId=${ws.data.playerId ?? '?'}: ${e instanceof Error ? e.message : e}`);
+    try { ws.close(1003, 'malformed packet'); } catch {}
+    return;
+  }
   const playerId = ws.data.playerId;
   if (!playerId) return;
 
@@ -209,9 +227,15 @@ export function handleGameSocketMessage(
 
     case ClientOpcode.CLIENT_POSITION_Y: {
       // Pure metadata. Stored for persistence so an elevated-tile spawn
-      // restores at the right height. Y has no game-logic effect.
+      // restores at the right height. Y has no game-logic effect, but clamp
+      // to a plausible range so a malicious client can't stash absurd values
+      // that propagate to logs/saves and bite some future feature that
+      // assumes a sane Y range.
       const player = world.getPlayer(playerId);
-      if (player) player.reportedY = (values[0] ?? 0) / 10;
+      if (player) {
+        const raw = (values[0] ?? 0) / 10;
+        player.reportedY = Math.max(-2, Math.min(20, raw));
+      }
       break;
     }
 
@@ -232,6 +256,62 @@ export function handleGameSocketMessage(
         gearColor:  values[7] ?? 0,
       };
       world.handleSetAppearance(playerId, appearance);
+      break;
+    }
+
+    case ClientOpcode.BANK_REQUEST_OPEN: {
+      world.handleBankOpenRequest(playerId);
+      break;
+    }
+    case ClientOpcode.BANK_DEPOSIT: {
+      const slot = values[0];
+      const expectedItemId = values[1];
+      const quantity = values[2] ?? 1;
+      world.handleBankDeposit(playerId, slot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.BANK_WITHDRAW: {
+      const bankSlot = values[0];
+      const expectedItemId = values[1];
+      const quantity = values[2] ?? 1;
+      world.handleBankWithdraw(playerId, bankSlot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.BANK_CLOSE: {
+      world.handleBankClose(playerId);
+      break;
+    }
+
+    case ClientOpcode.TRADE_REQUEST: {
+      const targetEntityId = values[0];
+      world.handleTradeRequest(playerId, targetEntityId);
+      break;
+    }
+    case ClientOpcode.TRADE_ACCEPT_REQUEST: {
+      const requesterEntityId = values[0];
+      world.handleTradeAcceptRequest(playerId, requesterEntityId);
+      break;
+    }
+    case ClientOpcode.TRADE_DECLINE: {
+      world.handleTradeDecline(playerId);
+      break;
+    }
+    case ClientOpcode.TRADE_OFFER_ITEM: {
+      const slot = values[0];
+      const expectedItemId = values[1];
+      const quantity = values[2] ?? 1;
+      world.handleTradeOfferItem(playerId, slot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.TRADE_REMOVE_OFFERED: {
+      const offerSlot = values[0];
+      const expectedItemId = values[1];
+      const quantity = values[2] ?? 1;
+      world.handleTradeRemoveOffered(playerId, offerSlot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.TRADE_ACCEPT: {
+      world.handleTradeAccept(playerId);
       break;
     }
 

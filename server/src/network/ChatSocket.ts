@@ -2,17 +2,39 @@ import { World } from '../World';
 import { ServerOpcode, encodePacket } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
-export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string };
+export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
 
-// Admin usernames (case-insensitive)
-const ADMIN_USERS = new Set(['mogn']);
-
-function isAdmin(username: string): boolean {
-  return ADMIN_USERS.has(username.toLowerCase());
+/** Reject a command from a non-admin and notify them. Returns true if blocked.
+ *  Admin status is bound at WS upgrade time from the DB (accounts.is_admin),
+ *  so this is just a flag check — no per-message DB hit. */
+function denyIfNotAdmin(ws: ServerWebSocket<ChatSocketData>, _from: string): boolean {
+  if (ws.data.isAdmin) return false;
+  ws.send(JSON.stringify({ type: 'system', message: 'You do not have permission to use this command.' }));
+  return true;
 }
 
 // Keep track of all chat sockets for broadcasting
 const chatSockets: Set<ServerWebSocket<ChatSocketData>> = new Set();
+
+// --- Per-socket rate limit ---
+// Game socket has its own rate limit (Player.checkRateLimit, 30/sec). Chat
+// gets a tighter cap because every message fans out to every connected client.
+// Token-bucket style: 5 messages per 3-second window. Slow drip is fine,
+// bursts are clamped.
+const CHAT_RL_MAX = 5;
+const CHAT_RL_WINDOW_MS = 3000;
+const chatRateState = new WeakMap<ServerWebSocket<ChatSocketData>, { count: number; windowStart: number }>();
+
+function checkChatRate(ws: ServerWebSocket<ChatSocketData>): boolean {
+  const now = Date.now();
+  let state = chatRateState.get(ws);
+  if (!state || now - state.windowStart > CHAT_RL_WINDOW_MS) {
+    state = { count: 0, windowStart: now };
+    chatRateState.set(ws, state);
+  }
+  state.count++;
+  return state.count <= CHAT_RL_MAX;
+}
 
 export function handleChatSocketOpen(
   ws: ServerWebSocket<ChatSocketData>,
@@ -27,43 +49,63 @@ export function handleChatSocketMessage(
   world: World
 ): void {
   if (typeof message !== 'string') return;
+  // Hard length cap — reject garbage early before parsing.
+  if (message.length > 4096) return;
+  // Per-socket rate limit (5 msgs / 3s). Applies to ALL chat traffic
+  // including identify/commands so a flooder can't burn CPU on JSON.parse.
+  if (!checkChatRate(ws)) return;
 
+  let data: unknown;
   try {
-    const data = JSON.parse(message);
+    data = JSON.parse(message);
+  } catch { return; }
+  if (typeof data !== 'object' || data === null) return;
+  const d = data as { type?: unknown; message?: unknown };
 
-    switch (data.type) {
-      case 'identify': {
-        ws.data.playerId = data.playerId;
-        break;
-      }
-
-      case 'local': {
-        const from = ws.data.username || 'Unknown';
-        const msg = (data.message as string).substring(0, 200); // Cap length
-
-        // Handle commands
-        if (msg.startsWith('/')) {
-          handleCommand(ws, from, msg, world);
-          return;
-        }
-
-        // Broadcast to all connected chat sockets
-        const payload = JSON.stringify({
-          type: 'local',
-          from,
-          message: msg,
-        });
-
-        for (const sock of chatSockets) {
-          try {
-            sock.send(payload);
-          } catch { /* ignore closed */ }
-        }
-        break;
-      }
+  switch (d.type) {
+    case 'identify': {
+      // The username is bound to the auth token at WS upgrade time
+      // (ws.data.username). The client-supplied playerId field used to be
+      // trusted here — that was a footgun. We now resolve playerId
+      // server-side from the username so a client can't claim someone
+      // else's entity.
+      const player = findPlayerByUsername(ws.data.username, world);
+      if (player) ws.data.playerId = player.id;
+      break;
     }
-  } catch {
-    // Invalid JSON
+
+    case 'local': {
+      if (typeof d.message !== 'string') return;
+      const from = ws.data.username || 'Unknown';
+      const msg = d.message.substring(0, 200); // Cap length
+      if (msg.length === 0) return;
+
+      // Handle commands
+      if (msg.startsWith('/')) {
+        handleCommand(ws, from, msg, world);
+        return;
+      }
+
+      // Bot-detection signal: actual chat message (not commands). Bots almost
+      // never chat; a session with zero messages over 2+ active hours is a
+      // strong flag.
+      const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
+      speaker?.botStats?.recordChat();
+
+      // Broadcast to all connected chat sockets
+      const payload = JSON.stringify({
+        type: 'local',
+        from,
+        message: msg,
+      });
+
+      for (const sock of chatSockets) {
+        try {
+          sock.send(payload);
+        } catch { /* ignore closed */ }
+      }
+      break;
+    }
   }
 }
 
@@ -123,6 +165,7 @@ function handleCommand(
     }
 
     case '/tp': {
+      if (denyIfNotAdmin(ws, from)) return;
       const x = parseFloat(parts[1]);
       const z = parseFloat(parts[2]);
       if (!isFinite(x) || !isFinite(z)) {
@@ -137,6 +180,7 @@ function handleCommand(
     }
 
     case '/tpmap': {
+      if (denyIfNotAdmin(ws, from)) return;
       const mapId = parts[1];
       if (!mapId) {
         ws.send(JSON.stringify({ type: 'system', message: 'Usage: /tpmap <mapId>' }));
@@ -160,6 +204,7 @@ function handleCommand(
     }
 
     case '/spawn': {
+      if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);
       if (player) {
         const map = world.getMap(player.currentMapLevel);
@@ -172,6 +217,7 @@ function handleCommand(
     }
 
     case '/give': {
+      if (denyIfNotAdmin(ws, from)) return;
       const itemId = parseInt(parts[1]);
       const quantity = parseInt(parts[2]) || 1;
       if (!isFinite(itemId)) {
@@ -191,6 +237,7 @@ function handleCommand(
     }
 
     case '/clearinv': {
+      if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);
       if (player) {
         for (let i = 0; i < player.inventory.length; i++) {
@@ -203,10 +250,7 @@ function handleCommand(
     }
 
     case '/appearance': {
-      if (!isAdmin(from)) {
-        ws.send(JSON.stringify({ type: 'system', message: 'You do not have permission to use this command.' }));
-        return;
-      }
+      if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);
       if (player) {
         try {
@@ -214,6 +258,38 @@ function handleCommand(
           ws.send(JSON.stringify({ type: 'system', message: 'Opening character editor...' }));
         } catch { /* closed */ }
       }
+      break;
+    }
+
+    case '/bank': {
+      // Test hook for the bank UI until the banker NPC ships. Admin-only so
+      // regular players can't bypass having to walk to a bank.
+      if (denyIfNotAdmin(ws, from)) return;
+      const player = findPlayerByUsername(from, world);
+      if (player) {
+        world.openBankFor(player);
+        ws.send(JSON.stringify({ type: 'system', message: 'Bank opened.' }));
+      }
+      break;
+    }
+
+    case '/trade': {
+      // Available to all players: send a trade request by username while we
+      // don't yet have a right-click-on-player UI. Server still enforces
+      // adjacency, interface-locks, and all the trade FSM rules.
+      const targetName = parts[1];
+      if (!targetName) {
+        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /trade <player>' }));
+        return;
+      }
+      const requester = findPlayerByUsername(from, world);
+      const target = findPlayerByUsername(targetName, world);
+      if (!requester) return;
+      if (!target) {
+        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
+        return;
+      }
+      world.handleTradeRequest(requester.id, target.id);
       break;
     }
 
@@ -244,5 +320,20 @@ export function broadcastPlayerInfo(entityId: number, name: string): void {
     try {
       sock.send(payload);
     } catch { /* ignore */ }
+  }
+}
+
+/** Send a system message to a specific player by username, via their chat socket.
+ *  Used by World.sendChatSystem so server-side errors (inventory full, trade
+ *  range, etc.) actually reach the player's chat panel. Silently no-ops if the
+ *  player isn't currently connected to the chat socket. */
+export function sendSystemMessageToUser(username: string, message: string): void {
+  const lc = username.toLowerCase();
+  const payload = JSON.stringify({ type: 'system', message });
+  for (const sock of chatSockets) {
+    if (sock.data.username.toLowerCase() === lc) {
+      try { sock.send(payload); } catch { /* ignore */ }
+      return;
+    }
   }
 }

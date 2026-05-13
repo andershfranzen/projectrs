@@ -217,10 +217,14 @@ export class LoginScreen {
 
     try {
       const endpoint = this.activeMode === 'login' ? '/api/login' : '/api/signup';
+      // Device ID accompanies every login/signup so the server can enforce
+      // the one-account-per-browser rule. Persisted in localStorage —
+      // clearing it bypasses the rule but breaks the ToS.
+      const deviceId = (await import('../deviceId')).getDeviceId();
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, deviceId }),
       });
       const data = await res.json();
 

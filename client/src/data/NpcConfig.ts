@@ -38,3 +38,16 @@ export const NPC_3D_MODELS: Record<number, { file: string; scale: number; anims:
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', death: 'Armature|Armature|Death' } },
   15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'ready', walk: 'walk', attack: 'attack', death: 'death' } },
 };
+
+/** Per-defId profile for customizable (CharacterEntity-rendered) NPCs. Used
+ *  by EntityManager to keep their anim set minimal — mobile budget driver.
+ *  Stationary NPCs load idle only; mobile ones add walk. Combat anims are
+ *  intentionally omitted (friendly NPCs only for now). */
+export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean }> = {
+  8:  { stationary: true },  // Shopkeeper
+  11: { stationary: true },  // Weapon Smith
+  12: { stationary: true },  // Armorer
+  13: { stationary: true },  // Leg Armorer
+  14: { stationary: true },  // Shield Smith
+  16: { stationary: true },  // Banker
+};

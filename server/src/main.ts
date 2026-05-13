@@ -332,6 +332,7 @@ function reassembleChunkedMapData(mapDir: string, mapFile: KCMapFile): void {
   if (chunkedHeights) mapFile.map.heights = chunkedHeights;
 }
 import { GameDatabase } from './Database';
+import { flushAuditSync } from './Audit';
 import {
   handleGameSocketOpen,
   handleGameSocketMessage,
@@ -409,12 +410,20 @@ const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MS = 60_000;
 const SIGNUP_LIMIT = 3;
 const SIGNUP_WINDOW_MS = 60 * 60_000;
+// Hard cap on entries so an attacker rotating usernames (or IPs, behind a
+// proxy) can't fill the map between sweeps. When the cap is hit, the oldest
+// entry is evicted — Map preserves insertion order, so `keys().next()` is O(1).
+const RATE_MAP_MAX = 10_000;
 
 function checkRate(map: Map<string, RateBucket>, key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
   let bucket = map.get(key);
   if (!bucket || now > bucket.resetAt) {
     bucket = { count: 0, resetAt: now + windowMs };
+    if (map.size >= RATE_MAP_MAX) {
+      const oldest = map.keys().next().value;
+      if (oldest !== undefined) map.delete(oldest);
+    }
     map.set(key, bucket);
   }
   bucket.count++;
@@ -432,6 +441,143 @@ const db = new GameDatabase();
 const world = new World(db);
 world.start();
 
+// --- Admin authorization for editor / dev APIs ---
+// A request is admin-authorized if:
+//   1. It originates from loopback (local dev / SSH-tunneled use), OR
+//   2. It carries a valid `Authorization: Bearer <token>` whose session belongs
+//      to an account flagged is_admin=1 in the DB.
+// NOTE: behind a reverse proxy, requestIP() will report the proxy's address.
+// When a reverse proxy lands, switch to a trusted X-Forwarded-For check
+// (or terminate TLS in Bun directly). Until then, loopback ≡ same machine.
+const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+
+function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): boolean {
+  const ip = srv.requestIP(req)?.address ?? '';
+  if (LOOPBACK_IPS.has(ip)) return true;
+  const auth = req.headers.get('Authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  if (!m) return false;
+  const session = db.getSession(m[1]);
+  return !!session && session.isAdmin;
+}
+
+function adminForbidden(): Response {
+  return new Response('Forbidden — admin authorization required', { status: 403 });
+}
+
+// --- Body size limits ---
+// `req.json()` is unbounded by default — without a cap, a single 1 GB POST to
+// any endpoint can OOM the process. We pre-check Content-Length and reject
+// oversize requests before reading the body. Streaming requests without a
+// Content-Length header are rejected outright (we don't accept chunked uploads).
+function tooLarge(): Response {
+  return new Response('Payload too large', { status: 413 });
+}
+
+/** Returns true if the request body fits within `maxBytes`. */
+/** Validate a client-supplied device ID. Accepts UUID-shaped strings up to
+ *  64 chars; anything else is treated as missing. Server-side: missing means
+ *  "no enforcement applies" — better than refusing connection for users with
+ *  weird browser environments (private mode, sandboxed iframes). */
+function sanitizeDeviceId(raw: unknown): string {
+  if (typeof raw !== 'string') return '';
+  if (raw.length < 8 || raw.length > 64) return '';
+  // Permissive: alphanumeric + dash + colon (UUIDs, hashed IDs, etc.)
+  if (!/^[a-zA-Z0-9:_-]+$/.test(raw)) return '';
+  return raw;
+}
+
+function bodyWithinLimit(req: Request, maxBytes: number): boolean {
+  const lenHdr = req.headers.get('content-length');
+  if (!lenHdr) return false; // require declared length
+  const len = Number(lenHdr);
+  if (!Number.isFinite(len) || len < 0) return false;
+  return len <= maxBytes;
+}
+
+const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
+const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
+const BODY_LIMIT_EDITOR = 50 * 1024 * 1024; // 50 MB — full map import / save
+
+// --- Origin allow-list for WebSocket upgrades ---
+// Browsers always send the Origin header on WS handshakes. A CSRF-style attack
+// (logged-in user lured to evil.com → that page opens a WS to our server)
+// would carry Origin: https://evil.com — this list rejects it.
+//
+// Missing Origin is allowed because non-browser clients (bots, native launchers
+// if we ever ship one) don't send it and still must clear the auth-token gate.
+//
+// Add production hostnames here when deploying. CLIENT_ORIGINS env can override.
+const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost:4000', 'http://127.0.0.1:4000',  // server-served client
+  'http://localhost:5173', 'http://127.0.0.1:5173',  // vite dev (client)
+  'http://localhost:5174', 'http://127.0.0.1:5174',  // vite dev (editor)
+];
+const ALLOWED_WS_ORIGINS = new Set(
+  (process.env.CLIENT_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean) ?? DEFAULT_ALLOWED_ORIGINS)
+);
+
+function isAllowedOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  if (!origin) return true; // non-browser client; auth still applies
+  return ALLOWED_WS_ORIGINS.has(origin);
+}
+
+// --- Per-account WS connection cap ---
+// Without this, a single authenticated account can open thousands of WebSockets
+// (kickAccountIfOnline only handles game sockets — chat sockets accumulate).
+// Cap: game socket (1) + chat socket (1) + 2 slack for refresh races = 4.
+// Counted at `open` time, decremented at `close`. Refusing here is graceful;
+// the client sees a normal close and can reconnect.
+const MAX_WS_PER_ACCOUNT = 4;
+const wsCountByAccount: Map<number, number> = new Map();
+
+/** Returns false if the cap is exceeded. Caller must close the socket. */
+function tryReserveWsSlot(accountId: number): boolean {
+  const cur = wsCountByAccount.get(accountId) ?? 0;
+  if (cur >= MAX_WS_PER_ACCOUNT) return false;
+  wsCountByAccount.set(accountId, cur + 1);
+  return true;
+}
+function releaseWsSlot(accountId: number): void {
+  const cur = wsCountByAccount.get(accountId) ?? 0;
+  if (cur <= 1) wsCountByAccount.delete(accountId);
+  else wsCountByAccount.set(accountId, cur - 1);
+}
+
+// --- WS auth-token extraction ---
+// Preferred: Sec-WebSocket-Protocol header (subprotocol). The browser sets this
+// from the WebSocket constructor's 2nd arg. Tokens in this header don't appear
+// in reverse-proxy access logs the way `?token=` URL params do.
+//
+// Convention: token is sent as a single subprotocol value of the form
+// `auth.<token>`. Multiple subprotocols are allowed (comma-separated); we pick
+// the first one that starts with `auth.`.
+function extractWsToken(req: Request, url: URL): string | null {
+  const proto = req.headers.get('sec-websocket-protocol');
+  if (proto) {
+    for (const raw of proto.split(',')) {
+      const v = raw.trim();
+      if (v.startsWith('auth.')) return v.slice(5);
+    }
+  }
+  // Legacy fallback: query param. Will eventually be removed.
+  return url.searchParams.get('token');
+}
+
+/** Echo the chosen subprotocol back so the client's handshake completes. The
+ *  browser closes the socket if the server upgrades without echoing one of
+ *  the offered subprotocols. */
+function wsAcceptHeaders(req: Request): Record<string, string> | undefined {
+  const proto = req.headers.get('sec-websocket-protocol');
+  if (!proto) return undefined;
+  for (const raw of proto.split(',')) {
+    const v = raw.trim();
+    if (v.startsWith('auth.')) return { 'Sec-WebSocket-Protocol': v };
+  }
+  return undefined;
+}
+
 // Clean expired sessions every 10 minutes
 setInterval(() => db.cleanExpiredSessions(), 10 * 60 * 1000);
 
@@ -445,6 +591,9 @@ const shutdown = (signal: string) => {
   shuttingDown = true;
   console.log(`[shutdown] received ${signal} — saving state and exiting`);
   try { world.stop(); } catch (e) { console.error('[shutdown] world.stop() failed:', e); }
+  // Drain any in-memory audit events synchronously so we don't lose the last
+  // ~1s of forensic log on restart.
+  try { flushAuditSync(); } catch (e) { console.error('[shutdown] flushAuditSync() failed:', e); }
   process.exit(0);
 };
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -461,13 +610,16 @@ const server = Bun.serve<SocketData>({
     // --- REST Auth Endpoints ---
 
     if (url.pathname === '/api/signup' && req.method === 'POST') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const ip = server.requestIP(req)?.address ?? 'unknown';
       if (!checkRate(signupAttempts, ip, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
         return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
       }
       try {
-        const body = await req.json() as { username?: string; password?: string };
-        const result = await db.createAccount(body.username || '', body.password || '');
+        const body = await req.json() as { username?: string; password?: string; deviceId?: string };
+        const deviceId = sanitizeDeviceId(body.deviceId);
+        const result = await db.createAccount(body.username || '', body.password || '', deviceId);
         if (result.ok) {
           return jsonResponse({ ok: true, token: result.token, username: body.username });
         }
@@ -478,10 +630,13 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/login' && req.method === 'POST') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const ip = server.requestIP(req)?.address ?? 'unknown';
       try {
-        const body = await req.json() as { username?: string; password?: string };
+        const body = await req.json() as { username?: string; password?: string; deviceId?: string };
         const username = (body.username || '').toLowerCase();
+        const deviceId = sanitizeDeviceId(body.deviceId);
         // Rate-limit by (username, IP) so a single attacker can't lock out a
         // legitimate user from another IP, and a NAT'd legitimate user isn't
         // locked out by an attacker on the same IP targeting a different account.
@@ -489,8 +644,25 @@ const server = Bun.serve<SocketData>({
         if (!checkRate(loginAttempts, key, LOGIN_LIMIT, LOGIN_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many login attempts. Try again in a minute.' }, 429);
         }
-        const result = await db.login(body.username || '', body.password || '');
+        const result = await db.login(body.username || '', body.password || '', deviceId);
         if (result.ok) {
+          // One-account-per-browser rule. A different account already in the
+          // world with the same device_id is refused entry. Per-browser, not
+          // per-IP — housemates / cafes / dorms are unaffected. Deterrent,
+          // not a security boundary (clearing localStorage gives a new ID),
+          // but pairs with the ToS rule the user enforces manually. Admin
+          // accounts skip the check so dev/test multi-account work still
+          // functions; missing deviceId (no enforcement) is also allowed
+          // since legit users with disabled localStorage shouldn't be locked
+          // out. Same-account re-login is fine — kickAccountIfOnline handles
+          // the old session.
+          const accountId = result.accountId;
+          if (accountId != null && !result.isAdmin && deviceId && world.hasOtherActiveAccountFromDevice(deviceId, accountId)) {
+            return jsonResponse({
+              ok: false,
+              error: 'Another account is already logged in on this browser. Only one active session per browser is allowed per the rules.',
+            }, 403);
+          }
           // Successful login resets the bucket so subsequent legitimate logins
           // from the same client don't hit the limit.
           loginAttempts.delete(key);
@@ -503,6 +675,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/validate' && req.method === 'POST') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { token?: string };
         const session = body.token ? db.getSession(body.token) : null;
@@ -513,6 +687,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/logout' && req.method === 'POST') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { token?: string };
         if (body.token) {
@@ -532,26 +708,40 @@ const server = Bun.serve<SocketData>({
     // --- WebSocket Upgrades (with token auth) ---
 
     if (url.pathname === GAME_WS_PATH) {
-      const token = url.searchParams.get('token');
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      // Accept token via Sec-WebSocket-Protocol (preferred — doesn't leak to
+      // proxy access logs) OR via ?token= query param (legacy). The query-
+      // param path can be removed once all clients are on the new build.
+      const token = extractWsToken(req, url);
       const session = token ? db.getSession(token) : null;
       if (!session) {
         return new Response('Unauthorized', { status: 401 });
       }
+      // Capture IP at upgrade time. Behind a reverse proxy this is the
+      // proxy's address — production deploys should be sure their proxy
+      // forwards X-Forwarded-For and Bun is configured to honor it. For
+      // anti-cheat purposes a stable per-NAT IP is what matters; the
+      // gold-farmer correlation tolerates shared-IP noise (residential
+      // CGNAT, university dorms) because flag-level review is manual.
+      const wsIp = server.requestIP(req)?.address ?? 'unknown';
       const upgraded = server.upgrade(req, {
-        data: { type: 'game', accountId: session.accountId, username: session.username } as GameSocketData,
+        data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, ip: wsIp, deviceId: session.deviceId } as GameSocketData,
+        headers: wsAcceptHeaders(req),
       });
       if (upgraded) return undefined as unknown as Response;
       return new Response('WebSocket upgrade failed', { status: 400 });
     }
 
     if (url.pathname === CHAT_WS_PATH) {
-      const token = url.searchParams.get('token');
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      const token = extractWsToken(req, url);
       const session = token ? db.getSession(token) : null;
       if (!session) {
         return new Response('Unauthorized', { status: 401 });
       }
       const upgraded = server.upgrade(req, {
-        data: { type: 'chat', accountId: session.accountId, username: session.username } as ChatSocketData,
+        data: { type: 'chat', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin } as ChatSocketData,
+        headers: wsAcceptHeaders(req),
       });
       if (upgraded) return undefined as unknown as Response;
       return new Response('WebSocket upgrade failed', { status: 400 });
@@ -584,6 +774,8 @@ const server = Bun.serve<SocketData>({
     // --- Dev API ---
 
     if (url.pathname === '/api/dev/gear-overrides' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
         const body = await req.json() as Record<string, any>;
         const filePath = resolve(import.meta.dir, '../data/gear-overrides.json');
@@ -597,6 +789,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/dev/gear-files' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
       const slot = url.searchParams.get('slot') || '';
       if (!slot || slot.includes('/') || slot.includes('..')) {
         return jsonResponse({ ok: false, error: 'Invalid slot' }, 400);
@@ -662,6 +855,7 @@ const server = Bun.serve<SocketData>({
     // --- Editor API ---
 
     if (url.pathname === '/api/editor/maps' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
       try {
         const entries = readdirSync(MAPS_DIR, { withFileTypes: true });
         const maps = entries
@@ -681,6 +875,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/editor/save-map' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_EDITOR)) return tooLarge();
       try {
         const body = await req.json() as {
           mapId: string;
@@ -802,6 +998,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/editor/new-map' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { mapId: string; name: string; width: number; height: number; dungeon?: boolean };
         const { mapId, name, width, height } = body;
@@ -863,6 +1061,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/editor/reload-map' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { mapId: string };
         const { mapId } = body;
@@ -883,6 +1083,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/editor/export-map' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
       const mapId = url.searchParams.get('mapId');
       if (!mapId) return jsonResponse({ ok: false, error: 'Missing mapId' }, 400);
       const mapDir = resolve(MAPS_DIR, mapId);
@@ -922,6 +1123,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/editor/import-map' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_EDITOR)) return tooLarge();
       try {
         const formData = await req.formData();
         const file = formData.get('file') as File;
@@ -973,6 +1176,8 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/editor/delete-map' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { mapId: string };
         const mapId = body.mapId;
@@ -1059,6 +1264,14 @@ const server = Bun.serve<SocketData>({
   websocket: {
     perMessageDeflate: true,
     open(ws: import('bun').ServerWebSocket<SocketData>) {
+      // Per-account cap: refuse + close if this account already has too many
+      // sockets in flight. Mark the slot as "reserved" via a flag on ws.data
+      // so close() knows whether to release.
+      if (!tryReserveWsSlot(ws.data.accountId)) {
+        try { ws.close(1008, 'Too many connections for this account'); } catch {}
+        return;
+      }
+      (ws.data as SocketData & { _slotHeld?: boolean })._slotHeld = true;
       if (ws.data.type === 'game') {
         handleGameSocketOpen(ws as import('bun').ServerWebSocket<GameSocketData>, world);
       } else {
@@ -1074,6 +1287,11 @@ const server = Bun.serve<SocketData>({
       }
     },
     close(ws: import('bun').ServerWebSocket<SocketData>) {
+      // Only release a slot we actually reserved (close fires even when the
+      // cap-refusal path closed the socket, but _slotHeld won't be set there).
+      if ((ws.data as SocketData & { _slotHeld?: boolean })._slotHeld) {
+        releaseWsSlot(ws.data.accountId);
+      }
       if (ws.data.type === 'game') {
         handleGameSocketClose(ws as import('bun').ServerWebSocket<GameSocketData>, world);
       } else {

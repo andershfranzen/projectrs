@@ -31,12 +31,14 @@ import { ArmorBrowserPanel } from '../ui/ArmorBrowserPanel';
 import { Minimap } from '../ui/Minimap';
 // StatsPanel removed — HP now shown in side panel
 import { ShopPanel, type ShopItem } from '../ui/ShopPanel';
+import { BankPanel } from '../ui/BankPanel';
+import { TradePanel } from '../ui/TradePanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -172,6 +174,8 @@ export class GameManager {
   private armorPreviewNodes: Map<string, TransformNode> = new Map();
   private shopPanel: ShopPanel | null = null;
   private smithingPanel: SmithingPanel | null = null;
+  private bankPanel: BankPanel | null = null;
+  private tradePanel: TradePanel | null = null;
 
   // Combat hit splats (HTML overlay)
   private hitSplats: { worldPos: Vector3; el: HTMLDivElement; timer: number; startY: number }[] = [];
@@ -288,6 +292,8 @@ export class GameManager {
       this.sidePanel?.setSellCallback(null);
     });
     this.smithingPanel = new SmithingPanel();
+    this.bankPanel = new BankPanel(this.network);
+    this.tradePanel = new TradePanel(this.network);
     this.chatPanel.addSystemMessage(`Welcome to evilMUD!`);
     this.chatPanel.addSystemMessage(`You last logged in from: ${window.location.hostname}`);
 
@@ -532,6 +538,8 @@ export class GameManager {
         this.itemDefsCache.set(def.id, def);
       }
       if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
+      if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
+      if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
     } catch (e) {
       console.warn('Failed to load item definitions:', e);
     }
@@ -1107,6 +1115,19 @@ export class GameManager {
 
   private setupAuthHandlers(): void {
     this.network.on(ServerOpcode.LOGIN_OK, (_op, v) => {
+      // Protocol version handshake. Older server builds won't send v[4] —
+      // treat undefined as "same version" so a fresh client doesn't refuse
+      // to connect to an older server during a rolling deploy. New servers
+      // always send it; a stale CACHED client tab from yesterday's build
+      // would receive a version it doesn't know about and refuse.
+      const serverProtoVersion = v[4];
+      if (typeof serverProtoVersion === 'number' && serverProtoVersion !== PROTOCOL_VERSION) {
+        console.error(`[proto] version mismatch: client=${PROTOCOL_VERSION} server=${serverProtoVersion}`);
+        alert(`This client is out of date (protocol v${PROTOCOL_VERSION} vs server v${serverProtoVersion}). Please refresh the page to load the latest build.`);
+        try { this.network.close(); } catch {}
+        return;
+      }
+
       this.localPlayerId = v[0];
       this.playerX = v[1] / 10;
       this.playerZ = v[2] / 10;
@@ -1284,7 +1305,24 @@ export class GameManager {
       this.entities.npcDefs.set(entityId, npcDefId);
 
       if (!this.entities.npcSprites.has(entityId)) {
-        this.entities.createNpc(entityId, npcDefId, x, z);
+        // Static data (NPC_APPEARANCE / NPC_EQUIPMENT) is sent ahead of NPC_SYNC
+        // by the server, so by the time we reach createNpc the cache is already
+        // populated — shouldRender3DNpc consults it. Mobile budget + LOD live
+        // in EntityManager.shouldRender3DNpc, kept off the hot per-tick path.
+        const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
+        const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D);
+        if (render3D && created instanceof CharacterEntity) {
+          const character = created;
+          // Apply cached appearance + equipment once the GLB + animations
+          // finish loading. Mirrors the remote-player whenReady flush above.
+          void character.whenReady().then(() => {
+            if (this.entities.npcSprites.get(entityId) !== character) return;
+            const appearance = this.entities.npcAppearances.get(entityId);
+            if (appearance) character.applyAppearance(appearance);
+            const eq = this.entities.npcEquipment.get(entityId);
+            if (eq) this.applyRemoteEquipmentArray(character, eq);
+          });
+        }
       }
 
       const prev = this.entities.npcTargets.get(entityId);
@@ -1302,6 +1340,32 @@ export class GameManager {
         } else {
           sprite.hideHealthBar();
         }
+      }
+    });
+
+    this.network.on(ServerOpcode.NPC_APPEARANCE, (_op, v) => {
+      const entityId = v[0];
+      const appearance: PlayerAppearance = {
+        shirtColor: v[1], pantsColor: v[2], shoesColor: v[3],
+        hairColor:  v[4], beltColor:  v[5], skinColor:  v[6],
+        hairStyle:  v[7], gearColor:  v[8],
+      };
+      this.entities.npcAppearances.set(entityId, appearance);
+      // Live-apply for an already-rendered customizable NPC (admin /npcedit).
+      const sprite = this.entities.npcSprites.get(entityId);
+      if (sprite instanceof CharacterEntity && sprite.isReady) {
+        sprite.applyAppearance(appearance);
+      }
+    });
+
+    this.network.on(ServerOpcode.NPC_EQUIPMENT, (_op, v) => {
+      // Layout: [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape]
+      const entityId = v[0];
+      const slots = v.slice(1, 11);
+      this.entities.npcEquipment.set(entityId, slots);
+      const sprite = this.entities.npcSprites.get(entityId);
+      if (sprite instanceof CharacterEntity && sprite.isReady) {
+        this.applyRemoteEquipmentArray(sprite, slots);
       }
     });
 
@@ -1683,18 +1747,64 @@ export class GameManager {
 
     this.network.on(ServerOpcode.PLAYER_INVENTORY, (_op, v) => {
       const [slotIndex, itemId, quantity] = v;
-      if (this.sidePanel) {
-        this.sidePanel.updateInvSlot(slotIndex, itemId, quantity);
-      }
+      if (this.sidePanel) this.sidePanel.updateInvSlot(slotIndex, itemId, quantity);
+      if (this.bankPanel) this.bankPanel.updateInventorySlot(slotIndex, itemId, quantity);
+      if (this.tradePanel) this.tradePanel.updateInventorySlot(slotIndex, itemId, quantity);
     });
 
     // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
     this.network.on(ServerOpcode.PLAYER_INVENTORY_BATCH, (_op, v) => {
-      if (this.sidePanel) {
-        for (let i = 0; i < v.length; i += 2) {
-          this.sidePanel.updateInvSlot(i / 2, v[i], v[i + 1]);
-        }
+      for (let i = 0; i < v.length; i += 2) {
+        const slot = i / 2;
+        if (this.sidePanel) this.sidePanel.updateInvSlot(slot, v[i], v[i + 1]);
+        if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, v[i], v[i + 1]);
+        if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, v[i], v[i + 1]);
       }
+    });
+
+    // --- Bank ---
+    this.network.on(ServerOpcode.BANK_OPEN, (_op, v) => {
+      // Layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...]
+      const count = v[0] ?? 0;
+      const filled: { slot: number; itemId: number; quantity: number }[] = [];
+      for (let i = 0; i < count; i++) {
+        const base = 1 + i * 4;
+        if (base + 3 >= v.length) break;
+        const qty = (v[base + 2] << 16) | (v[base + 3] & 0xFFFF);
+        filled.push({ slot: v[base], itemId: v[base + 1], quantity: qty });
+      }
+      this.bankPanel?.openWithContents(filled);
+    });
+    this.network.on(ServerOpcode.BANK_UPDATE_SLOT, (_op, v) => {
+      const [slot, itemId, qtyHi, qtyLo] = v;
+      const qty = (qtyHi << 16) | (qtyLo & 0xFFFF);
+      this.bankPanel?.updateBankSlot(slot, itemId, qty);
+    });
+    this.network.on(ServerOpcode.BANK_CLOSE, () => {
+      this.bankPanel?.hide(/*notifyServer*/ false);
+    });
+
+    // --- Trade ---
+    this.network.on(ServerOpcode.TRADE_REQUEST_RECEIVED, (_op, v) => {
+      const requesterEntityId = v[0];
+      const name = this.entities.playerNames.get(requesterEntityId) ?? `Player ${requesterEntityId}`;
+      this.tradePanel?.showIncomingRequest(requesterEntityId, name);
+    });
+    this.network.on(ServerOpcode.TRADE_OPEN, (_op, v) => {
+      const otherEntityId = v[0];
+      const name = this.entities.playerNames.get(otherEntityId) ?? `Player ${otherEntityId}`;
+      this.tradePanel?.openSession(otherEntityId, name);
+    });
+    this.network.on(ServerOpcode.TRADE_OFFER_UPDATE, (_op, v) => {
+      const [side, slot, itemId, qtyHi, qtyLo] = v;
+      const qty = (qtyHi << 16) | (qtyLo & 0xFFFF);
+      this.tradePanel?.updateOffer(side, slot, itemId, qty);
+    });
+    this.network.on(ServerOpcode.TRADE_ACCEPT_STATE, (_op, v) => {
+      this.tradePanel?.updateAcceptState(v[0] ?? 0, v[1] ?? 0);
+    });
+    this.network.on(ServerOpcode.TRADE_CLOSE, (_op, v) => {
+      this.tradePanel?.close(v[0] ?? 2);
     });
 
     this.network.on(ServerOpcode.PLAYER_SKILLS, (_op, v) => {
@@ -1907,6 +2017,10 @@ export class GameManager {
       }
       if (pickedNpcEntityId == null) {
         for (const [entityId, sprite] of this.entities.npcSprites) {
+          // CharacterEntity NPCs are resolved via the metadata-walk above
+          // (setEntityIdMetadata stamps every mesh). The mesh-name fallback
+          // only applies to SpriteEntity / Npc3DEntity which expose getMesh.
+          if (sprite instanceof CharacterEntity) continue;
           if (sprite.getMesh()?.name === meshName) {
             pickedNpcEntityId = entityId;
             break;

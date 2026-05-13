@@ -1,4 +1,6 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, ServerOpcode, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, ServerOpcode, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
+import { audit } from './Audit';
+import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
 import { addXp, levelFromXp, statRandom } from '@projectrs/shared';
 import { GameMap } from './GameMap';
@@ -8,7 +10,7 @@ import { WorldObject } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { GameDatabase } from './Database';
 import { processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, RANGED_ATTACK_DISTANCE } from './combat/Combat';
-import { broadcastPlayerInfo } from './network/ChatSocket';
+import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
 import { ServerChunkManager } from './ChunkManager';
 import { readdirSync } from 'fs';
 
@@ -36,6 +38,18 @@ export interface GroundItem {
   despawnTimer: number;
 }
 
+/** One side of a trade session — owner's id, current offer (28 slots), and
+ *  current accept stage. Stages: 0 = editing, 1 = locked, 2 = final-accept. */
+interface TradeSide {
+  id: number;
+  offer: ({ itemId: number; quantity: number } | null)[];
+  stage: 0 | 1 | 2;
+}
+interface TradeSession {
+  a: TradeSide;
+  b: TradeSide;
+}
+
 let nextGroundItemId = 1;
 
 export class World {
@@ -44,6 +58,31 @@ export class World {
   readonly data: DataLoader;
   readonly db: GameDatabase;
   readonly players: Map<number, Player> = new Map();
+
+  /** True if there's an active session from `deviceId` belonging to a
+   *  DIFFERENT account than `excludeAccountId`. Used by /api/login to enforce
+   *  the one-account-per-browser rule. Per-browser, not per-IP — friends
+   *  sharing a household / dorm / cafe each have their own localStorage. */
+  hasOtherActiveAccountFromDevice(deviceId: string, excludeAccountId: number): boolean {
+    if (!deviceId) return false;
+    for (const [, p] of this.players) {
+      if (p.deviceId === deviceId && p.accountId !== excludeAccountId) return true;
+    }
+    return false;
+  }
+
+  /** Fire-and-forget PTR lookup. Writes back to login_history.reverse_dns
+   *  when the lookup resolves; silently ignores failures. Bounded by Node's
+   *  DNS resolver — won't block the tick loop. */
+  private lookupReverseDns(ip: string, loginRowId: number): void {
+    void import('dns').then((dns) => {
+      dns.reverse(ip, (err, hostnames) => {
+        if (err || !hostnames || hostnames.length === 0) return;
+        try { this.db.setLoginReverseDns(loginRowId, hostnames[0]); } catch { /* swallow */ }
+      });
+    }).catch(() => { /* dns module unavailable; skip */ });
+  }
+
   readonly npcs: Map<number, Npc> = new Map();
   readonly groundItems: Map<number, GroundItem> = new Map();
   readonly worldObjects: Map<number, WorldObject> = new Map();
@@ -235,7 +274,13 @@ export class World {
       const other = this.players.get(eid);
       if (other) { this.sendPlayerUpdate(player, other); continue; }
       const npc = this.npcs.get(eid);
-      if (npc && !npc.dead) { this.sendNpcUpdate(player, npc); continue; }
+      if (npc && !npc.dead) {
+        // Static data first — the client uses cached appearance to decide
+        // whether to render as sprite or CharacterEntity on NPC_SYNC.
+        this.sendNpcStaticData(player, npc);
+        this.sendNpcUpdate(player, npc);
+        continue;
+      }
       const obj = this.worldObjects.get(eid);
       if (obj) { this.sendWorldObjectUpdate(player, obj); continue; }
       const item = this.groundItems.get(eid);
@@ -266,7 +311,14 @@ export class World {
           console.warn(`Unknown NPC id ${spawn.npcId} in ${mapId}/spawns.json`);
           continue;
         }
-        const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange);
+        const npc = new Npc(
+          npcDef,
+          spawn.x,
+          spawn.z,
+          spawn.wanderRange,
+          spawn.appearance ?? null,
+          spawn.equipment ?? null,
+        );
         npc.currentMapLevel = mapId;
         this.npcs.set(npc.id, npc);
 
@@ -414,6 +466,33 @@ export class World {
     this.players.set(player.id, player);
     console.log(`Player "${player.name}" (id=${player.id}) joined on ${player.currentMapLevel}`);
 
+    // Bot-detection telemetry: load lifetime row from DB (or start fresh)
+    // and capture XP baseline for this session's rate calc.
+    const row = this.db.loadBotStats(player.accountId);
+    player.botStats = row ? BotStats.fromRow(row) : BotStats.empty();
+    const xpBaseline: Record<string, number> = {};
+    for (const skill of ALL_SKILLS) xpBaseline[skill] = player.skills[skill].xp;
+    player.botStats.onLogin(xpBaseline);
+
+    // Record this session in login_history (used by bot-review for IP
+    // correlation). The IP was captured at WS upgrade and stamped onto
+    // Player just before addPlayer was called. Also emit an audit event
+    // so account.login lines sit alongside other actions in audit.log.
+    if (player.ip) {
+      player.loginRowId = this.db.recordLogin(player.accountId, player.ip, player.deviceId);
+      audit({
+        type: 'account.login',
+        tick: this.currentTick,
+        accountId: player.accountId,
+        details: { name: player.name, ip: player.ip, deviceId: player.deviceId, loginRowId: player.loginRowId },
+      });
+      // Best-effort PTR lookup, async, fire-and-forget. Failures are normal
+      // for residential CGNAT and most consumer IPs — null is the expected
+      // common outcome. When the PTR DOES resolve (datacenter, VPN, mobile
+      // carrier), the bot-review CLI uses substring matching to flag it.
+      this.lookupReverseDns(player.ip, player.loginRowId);
+    }
+
     // Register with chunk manager
     const cm = this.chunkManagers.get(player.currentMapLevel)!;
     cm.addEntity(player.id, player.position.x, player.position.y);
@@ -437,10 +516,15 @@ export class World {
       spawnY = elevAtTile;
       player.reportedY = elevAtTile; // re-anchor so the next save persists the correct value
     }
+    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
+    // Version added at the end so older client builds (which read only the
+    // first 4 values) still parse without error — they just don't see the
+    // mismatch warning. New clients read v[4] and disconnect on mismatch.
     this.sendToPlayer(player, ServerOpcode.LOGIN_OK, player.id,
       Math.round(player.position.x * 10),
       Math.round(player.position.y * 10),
       Math.round(spawnY * 10),
+      PROTOCOL_VERSION,
     );
 
     // Send MAP_CHANGE so client loads the correct map (handles underground, dungeons, etc.)
@@ -494,6 +578,40 @@ export class World {
   handlePlayerDisconnect(playerId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    // Trade-during-disconnect dupe guard: if we leave the session live, the
+    // partner could still accept and trigger commits against an offline player
+    // whose inventory might mutate (e.g. on save round-trip). Abort cleanly.
+    if (player.openInterface === 'trade') this.abortTrade(playerId, /*reason*/ 2);
+    // Bank just gets closed — its contents are already in player.bank and
+    // will be saved by the call below.
+    if (player.openInterface === 'bank') player.openInterface = null;
+    player.openShopNpcId = null;
+
+    // Bot-detection: finalize the session — compute flags, write summary to
+    // audit.log, update lifetime aggregates in bot_stats table. Done BEFORE
+    // savePlayerState so a crash between the two doesn't lose the session
+    // summary (the player state save is the more recoverable side).
+    let sessionMinutes = 0;
+    if (player.botStats) {
+      const xpNow: Record<string, number> = {};
+      for (const skill of ALL_SKILLS) xpNow[skill] = player.skills[skill].xp;
+      const summary = player.botStats.finalize(this.db, player.accountId, xpNow, this.currentTick);
+      sessionMinutes = summary.sessionMinutes;
+    }
+    // Finalize login_history row regardless of botStats (the IP-correlation
+    // index is what matters for gold-farmer detection, even if botStats was
+    // missing for some reason).
+    if (player.loginRowId > 0) {
+      this.db.recordLogout(player.loginRowId, sessionMinutes);
+      audit({
+        type: 'account.logout',
+        tick: this.currentTick,
+        accountId: player.accountId,
+        details: { name: player.name, ip: player.ip, deviceId: player.deviceId, sessionMinutes, loginRowId: player.loginRowId },
+      });
+      player.loginRowId = -1;
+    }
+
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
 
     if (player.isLogoutBlocked(this.currentTick)) {
@@ -726,10 +844,18 @@ export class World {
     player.attackTarget = null;
     player.pendingInteraction = null;
     this.cancelSkilling(playerId);
+    // Walking auto-closes any open modal interface (bank/trade) — mirrors
+    // RS2 behavior where moving aborts the current dialog.
+    if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
+    // Shops aren't a modal interface but they're context-tied to standing at
+    // the shopkeeper. Walking away invalidates the scope.
+    player.openShopNpcId = null;
 
     const map = this.getPlayerMap(player);
-    // Cap path length to prevent DoS from malicious clients
-    if (path.length > 200) path.length = 200;
+    // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
+    // larger is a malicious client. The previous 200-cap × 256 unit-tiles per
+    // segment let a single packet queue ~50K tiles into moveQueue.
+    if (path.length > 50) path.length = 50;
     // The client compresses paths to corner waypoints — only the tiles where
     // the step direction changes are kept. We expand each segment into unit
     // tiles and validate every intermediate tile, otherwise a crafted packet
@@ -800,6 +926,7 @@ export class World {
     const player = this.players.get(playerId);
     const npc = this.npcs.get(npcId);
     if (!player || !npc || npc.dead) return;
+    if (player.isInterfaceOpen()) return;
     // Prevent attacking shopkeepers
     if (this.data.getShop(npc.npcId)) return;
     this.cancelSkilling(playerId);
@@ -843,15 +970,31 @@ export class World {
     const player = this.players.get(playerId);
     const npc = this.npcs.get(npcEntityId);
     if (!player || !npc || npc.dead) return;
+    if (player.isInterfaceOpen()) return;
     if (npc.currentMapLevel !== player.currentMapLevel) return;
 
-    // Check distance
+    // Chebyshev (max-of-axes) matches the rest of the interaction surface —
+    // pickup, combat, harvest are all Chebyshev. Euclidean here would let a
+    // diagonal NPC at (2,2) be talkable (dist 2.83) while the same NPC at
+    // (3,0) cardinal would be rejected (dist 3.001) — subtle inconsistency.
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
-    if (Math.sqrt(dx * dx + dz * dz) > 3) return;
+    if (Math.max(Math.abs(dx), Math.abs(dz)) > 3) return;
+
+    // Bankers take precedence — a single NpcDef with bankAccess shouldn't also
+    // have a shop, but if one ever does, banking is the safer default action.
+    if (npc.def.bankAccess) {
+      this.openBankFor(player);
+      return;
+    }
 
     const shop = this.data.getShop(npc.npcId);
     if (!shop) return;
+
+    // Track which shop is open so buy/sell can scope item validation. Cleared
+    // on movement, map transition, death, disconnect — keeps the player from
+    // trading across shops without walking between them.
+    player.openShopNpcId = npc.npcId;
 
     // Send SHOP_OPEN: [npcEntityId, itemCount, itemId1, price1, stock1, itemId2, price2, stock2, ...]
     const values: number[] = [npcEntityId, shop.items.length];
@@ -865,62 +1008,48 @@ export class World {
     const player = this.players.get(playerId);
     if (!player || quantity < 1) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
 
-    // Find the item price from pre-indexed shop data
-    const price = this.data.getShopPrice(itemId);
-    if (price === undefined) return;
+    // Must be talking to a specific shop. Closes the "send PLAYER_BUY_ITEM
+    // without ever clicking a shopkeeper" exploit and the "buy items from
+    // shop B while only shop A's panel is open" exploit.
+    if (player.openShopNpcId === null) return;
+    const shop = this.data.getShop(player.openShopNpcId);
+    if (!shop) return;
+    const shopItem = shop.items.find(s => s.itemId === itemId);
+    if (!shopItem) return; // this shop doesn't sell this item
 
-    const totalCost = price * quantity;
-
-    // Check player has enough coins (itemId 10)
-    let coinSlot = -1;
-    let coinCount = 0;
-    for (let i = 0; i < player.inventory.length; i++) {
-      if (player.inventory[i]?.itemId === 10) {
-        coinSlot = i;
-        coinCount = player.inventory[i]!.quantity;
-        break;
-      }
-    }
-    if (coinCount < totalCost) return;
-
-    // Check inventory space
     const itemDef = this.data.getItem(itemId);
     if (!itemDef) return;
+    const price = shopItem.price;
+    const totalCost = price * quantity;
 
-    let freeSlots = 0;
-    let existingSlot = -1;
-    for (let i = 0; i < player.inventory.length; i++) {
-      if (!player.inventory[i]) freeSlots++;
-      if (itemDef.stackable && player.inventory[i]?.itemId === itemId) existingSlot = i;
+    // Check coin balance against current inventory.
+    const coinSlot = player.inventory.findIndex(s => s?.itemId === 10);
+    const coinCount = coinSlot >= 0 ? player.inventory[coinSlot]!.quantity : 0;
+    if (coinCount < totalCost) return;
+
+    // Pre-flight: can the player fit the purchased items? Without this check
+    // we'd take coins, fail addItem, and leave the player short. canFit treats
+    // stackables (need a slot OR an existing stack) and non-stackables (need
+    // N empty slots) correctly.
+    if (!player.canFit(itemId, quantity, this.data.itemDefs)) return;
+
+    // Atomic: remove coins, add items. addItem clamps to MAX_STACK and
+    // returns completed < quantity if it can't fully fit — defense in depth
+    // beyond canFit, since canFit doesn't know about MAX_STACK overflow on
+    // an existing 2.1B-coin stack. On any partial failure, revert coins.
+    const coinRemoved = player.removeItem(coinSlot, totalCost);
+    if (coinRemoved.completed !== totalCost) {
+      player.revertRemove(coinRemoved);
+      return;
     }
-    if (!itemDef.stackable && freeSlots < quantity) return;
-    if (itemDef.stackable && existingSlot < 0 && freeSlots < 1) return;
-
-    // Deduct coins
-    player.inventory[coinSlot]!.quantity -= totalCost;
-    if (player.inventory[coinSlot]!.quantity <= 0) {
-      player.inventory[coinSlot] = null;
-    }
-
-    // Add items (batch — avoid per-item findIndex)
-    if (itemDef.stackable) {
-      if (existingSlot >= 0) {
-        player.inventory[existingSlot]!.quantity += quantity;
-      } else {
-        const slot = player.inventory.findIndex(s => s === null);
-        if (slot >= 0) {
-          player.inventory[slot] = { itemId, quantity };
-        }
-      }
-    } else {
-      let added = 0;
-      for (let i = 0; i < player.inventory.length && added < quantity; i++) {
-        if (!player.inventory[i]) {
-          player.inventory[i] = { itemId, quantity: 1 };
-          added++;
-        }
-      }
+    const added = player.addItem(itemId, quantity, this.data.itemDefs);
+    if (added.completed !== quantity) {
+      player.revertAdd(added);
+      player.revertRemove(coinRemoved);
+      this.sendChatSystem(player, 'You can\'t carry any more of those.');
+      return;
     }
 
     player.setDelay(this.currentTick, 1);
@@ -931,7 +1060,14 @@ export class World {
     const player = this.players.get(playerId);
     if (!player || quantity < 1) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
     if (slot < 0 || slot >= player.inventory.length) return;
+
+    // Must be at an open shop. Without this anyone could send PLAYER_SELL_ITEM
+    // anywhere and get coins for items at half-value. Open-shop scoping also
+    // makes the "you must travel to find a vendor" loop matter for authenticity.
+    if (player.openShopNpcId === null) return;
+    if (!this.data.getShop(player.openShopNpcId)) return;
 
     const invItem = player.inventory[slot];
     if (!invItem) return;
@@ -945,21 +1081,20 @@ export class World {
     const actualQty = Math.min(quantity, invItem.quantity);
     const totalGold = sellPrice * actualQty;
 
-    // Remove sold items
-    invItem.quantity -= actualQty;
-    if (invItem.quantity <= 0) {
-      player.inventory[slot] = null;
+    // Atomic: remove sold items first, then add coins. If the coin add can't
+    // fully fit (no slot OR existing 2.1B stack overflow), revert the remove
+    // so the player isn't left with items destroyed and no coins.
+    const removed = player.removeItem(slot, actualQty);
+    if (removed.completed !== actualQty) {
+      player.revertRemove(removed);
+      return;
     }
-
-    // Add coins
-    let coinSlot = player.inventory.findIndex(s => s?.itemId === 10);
-    if (coinSlot >= 0) {
-      player.inventory[coinSlot]!.quantity += totalGold;
-    } else {
-      coinSlot = player.inventory.findIndex(s => s === null);
-      if (coinSlot >= 0) {
-        player.inventory[coinSlot] = { itemId: 10, quantity: totalGold };
-      }
+    const added = player.addItem(10, totalGold, this.data.itemDefs);
+    if (added.completed !== totalGold) {
+      player.revertAdd(added);
+      player.revertRemove(removed);
+      this.sendChatSystem(player, 'You can\'t carry any more coins.');
+      return;
     }
 
     player.setDelay(this.currentTick, 1);
@@ -971,6 +1106,7 @@ export class World {
     const item = this.groundItems.get(groundItemId);
     if (!player || !item) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
     if (item.mapLevel !== player.currentMapLevel) return;
 
     // Walk to item if not in range
@@ -1006,6 +1142,7 @@ export class World {
     const player = this.players.get(playerId);
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
     // Stale-click guard: reject if the slot doesn't currently hold the item the
     // client thought it was clicking. Mirrors 2004scape OpHeldHandler.ts:36.
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
@@ -1049,6 +1186,10 @@ export class World {
       }
       return;
     }
+    // While a modal interface (bank/trade) is open, refuse object interactions
+    // outright — no door deferral. Closing the interface is a deliberate user
+    // action; we won't queue clicks behind it.
+    if (player.isInterfaceOpen()) return;
 
     // Doors: cancel current movement so adjacency check uses where the player actually stopped
     if (obj.def.category === 'door') {
@@ -1286,6 +1427,7 @@ export class World {
     const player = this.players.get(playerId);
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const slot = player.inventory[slotIndex];
@@ -1355,6 +1497,7 @@ export class World {
     const player = this.players.get(playerId);
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
 
     const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     const slotName = slotNames[equipSlotIndex];
@@ -1376,6 +1519,7 @@ export class World {
     const player = this.players.get(playerId);
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const slot = player.inventory[slotIndex];
@@ -1404,6 +1548,7 @@ export class World {
     // Gate through busy + a 1-tick lockout so a scripted client can't flip
     // stance to maximize XP/damage on the same tick a swing lands.
     if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
 
     const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
     if (stanceIndex >= 0 && stanceIndex < stances.length) {
@@ -1425,12 +1570,684 @@ export class World {
     player.syncDirty = true;
   }
 
+  // ==========================================================================
+  // BANK
+  // ==========================================================================
+  // The bank is a 200-slot per-account container. Every slot stacks (a slot
+  // can hold any quantity of one itemId). Two operations are atomic:
+  //   - Deposit: remove from inventory → add to bank, rolls back on failure.
+  //   - Withdraw: remove from bank → add to inventory, rolls back on failure.
+  // Quantity = -1 → "all" (whole inventory stack on deposit, whole bank stack
+  // on withdraw). For non-stackable items in inventory, deposit collapses
+  // every matching slot into the same bank stack.
+  //
+  // The interface lock (player.openInterface = 'bank') gates every
+  // state-mutating handler, so a click leaking from the inventory panel can't
+  // dupe via deposit-while-trading or similar.
+
+  /** Server-side entry point: open the bank for a player. Called from the
+   *  banker NPC interaction path AND from the /bank admin chat command. */
+  openBankFor(player: Player): void {
+    if (player.isInterfaceOpen()) return;
+    player.openInterface = 'bank';
+    this.sendBankFull(player);
+  }
+
+  handleBankOpenRequest(playerId: number): void {
+    // Currently unused — the client doesn't open the bank unilaterally; either
+    // the banker NPC or /bank admin command opens it server-side. Kept for
+    // future "use bank chest" object interactions which would call openBankFor.
+    const player = this.players.get(playerId);
+    if (!player) return;
+    // No-op for now; no action without an explicit server-side trigger.
+  }
+
+  handleBankClose(playerId: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.openInterface !== 'bank') return;
+    player.openInterface = null;
+    this.sendToPlayer(player, ServerOpcode.BANK_CLOSE, 0);
+  }
+
+  /** Send the full bank state to the client. Sparse — only filled slots. */
+  private sendBankFull(player: Player): void {
+    const filled: Array<{ slot: number; itemId: number; quantity: number }> = [];
+    for (let i = 0; i < player.bank.length; i++) {
+      const s = player.bank[i];
+      if (s) filled.push({ slot: i, itemId: s.itemId, quantity: s.quantity });
+    }
+    // Layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...]
+    const values: number[] = [filled.length];
+    for (const f of filled) {
+      values.push(f.slot, f.itemId, (f.quantity >>> 16) & 0xFFFF, f.quantity & 0xFFFF);
+    }
+    this.sendToPlayer(player, ServerOpcode.BANK_OPEN, ...values);
+  }
+
+  /** Push a single slot update to the client (after deposit/withdraw). */
+  private sendBankSlot(player: Player, slot: number): void {
+    const s = player.bank[slot];
+    const itemId = s?.itemId ?? 0;
+    const qty = s?.quantity ?? 0;
+    this.sendToPlayer(
+      player,
+      ServerOpcode.BANK_UPDATE_SLOT,
+      slot, itemId, (qty >>> 16) & 0xFFFF, qty & 0xFFFF,
+    );
+  }
+
+  /** Find the bank slot holding `itemId`, or the first empty slot. Returns -1 if
+   *  full and no existing stack. Bank is fully stackable so identical items
+   *  always merge. */
+  private findBankSlot(player: Player, itemId: number): number {
+    let firstEmpty = -1;
+    for (let i = 0; i < player.bank.length; i++) {
+      const s = player.bank[i];
+      if (s && s.itemId === itemId) return i;
+      if (firstEmpty < 0 && s === null) firstEmpty = i;
+    }
+    return firstEmpty;
+  }
+
+  handleBankDeposit(playerId: number, slotIndex: number, expectedItemId: number, quantity: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.openInterface !== 'bank') return;
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
+    const invSlot = player.inventory[slotIndex];
+    if (!invSlot || invSlot.itemId !== expectedItemId) return;
+
+    // Resolve "all": for stackables, the whole slot. For non-stackables,
+    // deposit every matching slot into one bank stack.
+    const itemId = invSlot.itemId;
+    const itemDef = this.data.getItem(itemId);
+    if (!itemDef) return;
+    const isStackable = itemDef.stackable === true;
+
+    const wantAll = quantity === -1;
+    let toDeposit: number;
+    if (isStackable) {
+      toDeposit = wantAll ? invSlot.quantity : Math.min(quantity, invSlot.quantity);
+    } else {
+      // For non-stackable items, "all" sweeps every matching slot. Otherwise
+      // we cap at the requested count or however many of the item exist.
+      let total = 0;
+      for (const s of player.inventory) if (s?.itemId === itemId) total += 1;
+      toDeposit = wantAll ? total : Math.min(quantity, total);
+    }
+    if (toDeposit <= 0) return;
+
+    const bankSlot = this.findBankSlot(player, itemId);
+    if (bankSlot < 0) {
+      this.sendChatSystem(player, 'Your bank is full.');
+      return;
+    }
+
+    // Capacity check on the bank slot — int32 cap (matches our int32-encoded
+    // BANK_OPEN packet). In practice we'll never hit this for non-coin items.
+    const existingQty = player.bank[bankSlot]?.quantity ?? 0;
+    if (existingQty + toDeposit > 0x7FFFFFFF) {
+      this.sendChatSystem(player, 'Bank slot would overflow.');
+      return;
+    }
+
+    // Atomic per-op: remove from inventory first; if bank-add fails, roll back.
+    if (isStackable) {
+      const removed = player.removeItem(slotIndex, toDeposit);
+      if (removed.completed !== toDeposit) { player.revertRemove(removed); return; }
+      this.bankAdd(player, bankSlot, itemId, toDeposit);
+    } else {
+      // Non-stackable sweep — remove from each matching slot until quota met.
+      let remaining = toDeposit;
+      const reverts: { slot: number; itemId: number; quantity: number; emptied: boolean }[] = [];
+      for (let i = 0; i < player.inventory.length && remaining > 0; i++) {
+        const s = player.inventory[i];
+        if (!s || s.itemId !== itemId) continue;
+        const r = player.removeItem(i, 1);
+        if (r.completed !== 1) {
+          // Roll back any partial removes
+          for (const rev of reverts) player.inventory[rev.slot] = { itemId: rev.itemId, quantity: rev.quantity };
+          return;
+        }
+        reverts.push(r.removed[0]);
+        remaining--;
+      }
+      this.bankAdd(player, bankSlot, itemId, toDeposit);
+    }
+
+    player.setDelay(this.currentTick, 1);
+    this.sendInventory(player);
+    this.sendBankSlot(player, bankSlot);
+  }
+
+  /** Helper: increment bank slot quantity, creating it if empty. */
+  private bankAdd(player: Player, bankSlot: number, itemId: number, qty: number): void {
+    const existing = player.bank[bankSlot];
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      player.bank[bankSlot] = { itemId, quantity: qty };
+    }
+  }
+
+  handleBankWithdraw(playerId: number, bankSlot: number, expectedItemId: number, quantity: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.openInterface !== 'bank') return;
+    if (bankSlot < 0 || bankSlot >= player.bank.length) return;
+    const slot = player.bank[bankSlot];
+    if (!slot || slot.itemId !== expectedItemId) return;
+
+    const itemId = slot.itemId;
+    const itemDef = this.data.getItem(itemId);
+    if (!itemDef) return;
+    const isStackable = itemDef.stackable === true;
+
+    const wantAll = quantity === -1;
+    let toWithdraw = wantAll ? slot.quantity : Math.min(quantity, slot.quantity);
+    if (toWithdraw <= 0) return;
+
+    // Inventory capacity: stackable needs 0 or 1 slot; non-stackable needs N.
+    if (isStackable) {
+      if (!player.canFit(itemId, toWithdraw, this.data.itemDefs)) {
+        this.sendChatSystem(player, 'Not enough inventory space.');
+        return;
+      }
+    } else {
+      // Cap by free slots — partial-fill on withdraw is allowed (RS2 behavior).
+      let freeSlots = 0;
+      for (const s of player.inventory) if (s === null) freeSlots++;
+      toWithdraw = Math.min(toWithdraw, freeSlots);
+      if (toWithdraw <= 0) {
+        this.sendChatSystem(player, 'Not enough inventory space.');
+        return;
+      }
+    }
+
+    // Atomic: decrement bank slot, then add to inventory. Roll back on failure.
+    const beforeQty = slot.quantity;
+    slot.quantity -= toWithdraw;
+    if (slot.quantity <= 0) player.bank[bankSlot] = null;
+
+    const addResult = player.addItem(itemId, toWithdraw, this.data.itemDefs, { assureFullInsertion: !!isStackable });
+    if (addResult.completed !== toWithdraw) {
+      // Add what wasn't placed back in the bank.
+      const shortfall = toWithdraw - addResult.completed;
+      if (shortfall > 0) {
+        if (player.bank[bankSlot]) {
+          player.bank[bankSlot]!.quantity += shortfall;
+        } else {
+          player.bank[bankSlot] = { itemId, quantity: shortfall };
+        }
+      }
+    }
+
+    player.setDelay(this.currentTick, 1);
+    this.sendInventory(player);
+    this.sendBankSlot(player, bankSlot);
+  }
+
+  // ==========================================================================
+  // TRADE
+  // ==========================================================================
+  // Two-stage confirm FSM (mirrors 2004scape):
+  //   stage 0 — open / editing offers
+  //   stage 1 — both pressed Accept once → offers locked, "are you sure?" view
+  //   stage 2 — both pressed Accept again → atomic commit
+  // Any modification (offer/remove) by either side resets BOTH sides' stage
+  // back to 0. This is the entire defense against the "switcheroo" dupe.
+  // Disconnect, movement, attack, or any other interface-open event aborts.
+
+  private tradeSessions: Map<number, TradeSession> = new Map();
+
+  /** Distance within which a trade request is allowed. Both players must remain
+   *  in this range; anyone walking out aborts the trade. */
+  private static readonly TRADE_REQUEST_RANGE = 4;
+
+  handleTradeRequest(playerId: number, targetEntityId: number): void {
+    const player = this.players.get(playerId);
+    const target = this.players.get(targetEntityId);
+    if (!player || !target || player.id === target.id) return;
+    if (player.isInterfaceOpen() || target.isInterfaceOpen()) return;
+    if (player.currentMapLevel !== target.currentMapLevel) return;
+    // Floor check is required even with same x,z map check — multi-floor
+    // buildings let two players overlap in 2D while being on different planes,
+    // and a through-floor trade lets gear teleport up/down a building.
+    if (player.currentFloor !== target.currentFloor) return;
+    if (this.tileChebyshev(player, target) > World.TRADE_REQUEST_RANGE) return;
+
+    // If the target has already requested us, opening from either side commits
+    // the session (same-tick mutual request).
+    const reverse = this.pendingTradeRequests.get(target.id);
+    if (reverse === player.id) {
+      this.pendingTradeRequests.delete(target.id);
+      this.openTradeSession(player, target);
+      return;
+    }
+    this.pendingTradeRequests.set(player.id, target.id);
+    // 5-tick (~3s) request lifetime so stale requests don't pile up.
+    setTimeout(() => {
+      if (this.pendingTradeRequests.get(player.id) === target.id) {
+        this.pendingTradeRequests.delete(player.id);
+      }
+    }, 3000);
+    // Notify the target so their client can show the popup.
+    this.sendToPlayer(target, ServerOpcode.TRADE_REQUEST_RECEIVED, player.id);
+    this.sendChatSystem(player, `Sending trade request to ${target.name}...`);
+  }
+
+  /** Map of pending one-sided trade requests: requester → target. */
+  private pendingTradeRequests: Map<number, number> = new Map();
+
+  handleTradeAcceptRequest(playerId: number, requesterEntityId: number): void {
+    const player = this.players.get(playerId);
+    const requester = this.players.get(requesterEntityId);
+    if (!player || !requester) return;
+    if (player.isInterfaceOpen() || requester.isInterfaceOpen()) return;
+    if (this.pendingTradeRequests.get(requester.id) !== player.id) return;
+    if (player.currentMapLevel !== requester.currentMapLevel) return;
+    if (player.currentFloor !== requester.currentFloor) return;
+    if (this.tileChebyshev(player, requester) > World.TRADE_REQUEST_RANGE) return;
+    this.pendingTradeRequests.delete(requester.id);
+    this.openTradeSession(requester, player);
+  }
+
+  private openTradeSession(a: Player, b: Player): void {
+    const session: TradeSession = {
+      a: { id: a.id, offer: new Array(28).fill(null), stage: 0 },
+      b: { id: b.id, offer: new Array(28).fill(null), stage: 0 },
+    };
+    this.tradeSessions.set(a.id, session);
+    this.tradeSessions.set(b.id, session);
+    a.openInterface = 'trade';
+    b.openInterface = 'trade';
+    // Shops are non-modal but conceptually exclusive with trade — clear any
+    // open shop scope so a player can't trade-confirm and shop-sell on the
+    // same tick. Shop close UI on the client is incidental; the server-side
+    // openShopNpcId is what gates buy/sell handlers.
+    a.openShopNpcId = null;
+    b.openShopNpcId = null;
+    this.sendToPlayer(a, ServerOpcode.TRADE_OPEN, b.id);
+    this.sendToPlayer(b, ServerOpcode.TRADE_OPEN, a.id);
+    this.sendTradeAcceptState(session);
+  }
+
+  /** Look up "this player's side" of a session. Returns null if not in trade. */
+  private mySide(session: TradeSession, playerId: number): TradeSide | null {
+    if (session.a.id === playerId) return session.a;
+    if (session.b.id === playerId) return session.b;
+    return null;
+  }
+  private otherSide(session: TradeSession, playerId: number): TradeSide | null {
+    if (session.a.id === playerId) return session.b;
+    if (session.b.id === playerId) return session.a;
+    return null;
+  }
+
+  /** Reset both sides' accept stage back to 0. Called on every offer mutation. */
+  private resetTradeStages(session: TradeSession): void {
+    session.a.stage = 0;
+    session.b.stage = 0;
+    this.sendTradeAcceptState(session);
+  }
+
+  private sendTradeAcceptState(session: TradeSession): void {
+    const a = this.players.get(session.a.id);
+    const b = this.players.get(session.b.id);
+    if (a) this.sendToPlayer(a, ServerOpcode.TRADE_ACCEPT_STATE, session.a.stage, session.b.stage);
+    if (b) this.sendToPlayer(b, ServerOpcode.TRADE_ACCEPT_STATE, session.b.stage, session.a.stage);
+  }
+
+  private sendTradeOfferUpdate(session: TradeSession, mutatedSide: 'a' | 'b', slot: number): void {
+    const side = mutatedSide === 'a' ? session.a : session.b;
+    const s = side.offer[slot];
+    const itemId = s?.itemId ?? 0;
+    const qty = s?.quantity ?? 0;
+    const a = this.players.get(session.a.id);
+    const b = this.players.get(session.b.id);
+    // From each player's perspective, "side" is 0 if it's their own offer, 1 if the partner's.
+    if (a) {
+      const sideFlag = mutatedSide === 'a' ? 0 : 1;
+      this.sendToPlayer(a, ServerOpcode.TRADE_OFFER_UPDATE, sideFlag, slot, itemId, (qty >>> 16) & 0xFFFF, qty & 0xFFFF);
+    }
+    if (b) {
+      const sideFlag = mutatedSide === 'b' ? 0 : 1;
+      this.sendToPlayer(b, ServerOpcode.TRADE_OFFER_UPDATE, sideFlag, slot, itemId, (qty >>> 16) & 0xFFFF, qty & 0xFFFF);
+    }
+  }
+
+  handleTradeDecline(playerId: number): void {
+    this.pendingTradeRequests.delete(playerId);
+    this.abortTrade(playerId, /*reason*/ 1);
+  }
+
+  /** Abort a trade session. Items in offers go back to the owner's inventory.
+   *  reason: 0=success, 1=declined, 2=aborted (disconnect/move). */
+  abortTrade(playerId: number, reason: number = 2): void {
+    const session = this.tradeSessions.get(playerId);
+    if (!session) return;
+    this.tradeSessions.delete(session.a.id);
+    this.tradeSessions.delete(session.b.id);
+
+    // Return offered items to each side.
+    for (const side of [session.a, session.b] as TradeSide[]) {
+      const owner = this.players.get(side.id);
+      if (!owner) continue;
+      for (const off of side.offer) {
+        if (!off) continue;
+        // Offered items were taken out of inventory. Put them back. Bank-style
+        // overflow protection: if inventory is full (e.g. they equipped/dropped
+        // mid-trade — which shouldn't happen with the lock, but defense in
+        // depth), we drop excess to the ground at the player's tile.
+        const result = owner.addItem(off.itemId, off.quantity, this.data.itemDefs, { assureFullInsertion: false });
+        const placed = result.completed;
+        if (placed < off.quantity) {
+          this.spawnGroundItem(owner, off.itemId, off.quantity - placed);
+        }
+      }
+      owner.openInterface = null;
+      this.sendInventory(owner);
+      this.sendToPlayer(owner, ServerOpcode.TRADE_CLOSE, reason);
+    }
+  }
+
+  /** Move items from inventory → my offer. */
+  handleTradeOfferItem(playerId: number, slotIndex: number, expectedItemId: number, quantity: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const session = this.tradeSessions.get(playerId);
+    if (!session) return;
+    const me = this.mySide(session, playerId);
+    if (!me) return;
+    // No mutating offers after stage 1 — re-enter editing mode by removing/adding.
+    if (me.stage > 0) return;
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
+    const invSlot = player.inventory[slotIndex];
+    if (!invSlot || invSlot.itemId !== expectedItemId) return;
+
+    const itemId = invSlot.itemId;
+    const itemDef = this.data.getItem(itemId);
+    if (!itemDef) return;
+    const isStackable = itemDef.stackable === true;
+
+    const wantAll = quantity === -1;
+    let toOffer: number;
+    if (isStackable) {
+      toOffer = wantAll ? invSlot.quantity : Math.min(quantity, invSlot.quantity);
+    } else {
+      let total = 0;
+      for (const s of player.inventory) if (s?.itemId === itemId) total += 1;
+      toOffer = wantAll ? total : Math.min(quantity, total);
+    }
+    if (toOffer <= 0) return;
+
+    // Find or create an offer slot for this item (collapsed by itemId — same
+    // model as bank slots).
+    let offerSlot = me.offer.findIndex(o => o?.itemId === itemId);
+    if (offerSlot < 0) offerSlot = me.offer.findIndex(o => o === null);
+    if (offerSlot < 0) {
+      this.sendChatSystem(player, 'Trade offer is full.');
+      return;
+    }
+
+    if (isStackable) {
+      const removed = player.removeItem(slotIndex, toOffer);
+      if (removed.completed !== toOffer) { player.revertRemove(removed); return; }
+    } else {
+      let remaining = toOffer;
+      for (let i = 0; i < player.inventory.length && remaining > 0; i++) {
+        const s = player.inventory[i];
+        if (!s || s.itemId !== itemId) continue;
+        const r = player.removeItem(i, 1);
+        if (r.completed !== 1) return;
+        remaining--;
+      }
+    }
+
+    const existing = me.offer[offerSlot];
+    if (existing) existing.quantity += toOffer;
+    else me.offer[offerSlot] = { itemId, quantity: toOffer };
+
+    this.sendInventory(player);
+    this.sendTradeOfferUpdate(session, session.a.id === playerId ? 'a' : 'b', offerSlot);
+    this.resetTradeStages(session);
+  }
+
+  /** Move items from my offer → inventory. */
+  handleTradeRemoveOffered(playerId: number, offerSlot: number, expectedItemId: number, quantity: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const session = this.tradeSessions.get(playerId);
+    if (!session) return;
+    const me = this.mySide(session, playerId);
+    if (!me) return;
+    if (me.stage > 0) return;
+    if (offerSlot < 0 || offerSlot >= me.offer.length) return;
+    const off = me.offer[offerSlot];
+    if (!off || off.itemId !== expectedItemId) return;
+
+    const wantAll = quantity === -1;
+    const toReturn = wantAll ? off.quantity : Math.min(quantity, off.quantity);
+    if (toReturn <= 0) return;
+
+    // Capacity: returning to inventory must fit. If not, refuse — RS2 behavior.
+    if (!player.canFit(off.itemId, toReturn, this.data.itemDefs)) {
+      this.sendChatSystem(player, 'Not enough inventory space.');
+      return;
+    }
+
+    const result = player.addItem(off.itemId, toReturn, this.data.itemDefs);
+    if (result.completed !== toReturn) {
+      player.revertAdd(result);
+      return;
+    }
+
+    off.quantity -= toReturn;
+    if (off.quantity <= 0) me.offer[offerSlot] = null;
+
+    this.sendInventory(player);
+    this.sendTradeOfferUpdate(session, session.a.id === playerId ? 'a' : 'b', offerSlot);
+    this.resetTradeStages(session);
+  }
+
+  handleTradeAccept(playerId: number): void {
+    const session = this.tradeSessions.get(playerId);
+    if (!session) return;
+    const me = this.mySide(session, playerId);
+    const them = this.otherSide(session, playerId);
+    if (!me || !them) return;
+    if (me.stage >= 2) return;
+    me.stage = (me.stage + 1) as 1 | 2;
+    this.sendTradeAcceptState(session);
+
+    // Both sides at stage 2 → commit.
+    if (me.stage === 2 && them.stage === 2) {
+      this.commitTrade(session);
+    }
+  }
+
+  /** Atomic commit. Each side's offered items go to the OTHER side's inventory.
+   *  If either side can't fit the incoming items, the trade aborts and items
+   *  are returned to the original owners (handled by abortTrade). */
+  private commitTrade(session: TradeSession): void {
+    const aPlayer = this.players.get(session.a.id);
+    const bPlayer = this.players.get(session.b.id);
+    if (!aPlayer || !bPlayer) {
+      this.abortTrade(session.a.id, 2);
+      return;
+    }
+
+    // Pre-flight: can A fit B's offer AND can B fit A's offer?
+    const aCanFitB = this.canFitOffer(aPlayer, session.b.offer);
+    const bCanFitA = this.canFitOffer(bPlayer, session.a.offer);
+    if (!aCanFitB || !bCanFitA) {
+      this.sendChatSystem(aPlayer, 'Not enough inventory space to complete trade.');
+      this.sendChatSystem(bPlayer, 'Not enough inventory space to complete trade.');
+      this.abortTrade(session.a.id, 2);
+      return;
+    }
+
+    // Execute. We track add results so we can roll back if anything goes wrong
+    // mid-commit (shouldn't, since pre-flight passed — but defense in depth).
+    const aRollbacks: import('./entity/Player').InventoryAddResult[] = [];
+    const bRollbacks: import('./entity/Player').InventoryAddResult[] = [];
+    for (const off of session.b.offer) {
+      if (!off) continue;
+      const r = aPlayer.addItem(off.itemId, off.quantity, this.data.itemDefs);
+      if (r.completed !== off.quantity) {
+        for (const rb of aRollbacks) aPlayer.revertAdd(rb);
+        for (const rb of bRollbacks) bPlayer.revertAdd(rb);
+        // Pre-flight (canFitOffer) said this would fit but addItem disagreed
+        // — almost always a MAX_STACK overflow on an existing 2.1B stack.
+        // This is exactly the dupe surface to surveil for.
+        audit({
+          type: 'trade.commit_failed',
+          tick: this.currentTick,
+          accountId: aPlayer.accountId,
+          details: {
+            reason: 'addItem_partial_a',
+            requested: off.quantity, completed: r.completed,
+            itemId: off.itemId,
+            a: aPlayer.name, b: bPlayer.name,
+          },
+        });
+        this.abortTrade(session.a.id, 2);
+        return;
+      }
+      aRollbacks.push(r);
+    }
+    for (const off of session.a.offer) {
+      if (!off) continue;
+      const r = bPlayer.addItem(off.itemId, off.quantity, this.data.itemDefs);
+      if (r.completed !== off.quantity) {
+        for (const rb of aRollbacks) aPlayer.revertAdd(rb);
+        for (const rb of bRollbacks) bPlayer.revertAdd(rb);
+        audit({
+          type: 'trade.commit_failed',
+          tick: this.currentTick,
+          accountId: bPlayer.accountId,
+          details: {
+            reason: 'addItem_partial_b',
+            requested: off.quantity, completed: r.completed,
+            itemId: off.itemId,
+            a: aPlayer.name, b: bPlayer.name,
+          },
+        });
+        this.abortTrade(session.a.id, 2);
+        return;
+      }
+      bRollbacks.push(r);
+    }
+
+    // Items already removed from sender inventories at offer time. Commit done.
+    this.tradeSessions.delete(session.a.id);
+    this.tradeSessions.delete(session.b.id);
+    aPlayer.openInterface = null;
+    bPlayer.openInterface = null;
+    this.sendInventory(aPlayer);
+    this.sendInventory(bPlayer);
+    this.sendToPlayer(aPlayer, ServerOpcode.TRADE_CLOSE, 0);
+    this.sendToPlayer(bPlayer, ServerOpcode.TRADE_CLOSE, 0);
+    // Forensic record. If a dupe is ever reported, this is the trail. Include
+    // both sides' offers verbatim so the exact transfer can be reconstructed.
+    audit({
+      type: 'trade.commit',
+      tick: this.currentTick,
+      accountId: aPlayer.accountId,
+      details: {
+        a: { accountId: aPlayer.accountId, name: aPlayer.name, offered: session.a.offer.filter(o => o !== null) },
+        b: { accountId: bPlayer.accountId, name: bPlayer.name, offered: session.b.offer.filter(o => o !== null) },
+      },
+    });
+    console.log(`[trade] ${aPlayer.name} ↔ ${bPlayer.name} committed`);
+  }
+
+  /** Can `player` fit every item in `offer` into their inventory (after their
+   *  own offer's items have already been removed at offer-time)? */
+  private canFitOffer(player: Player, offer: ({ itemId: number; quantity: number } | null)[]): boolean {
+    // Simulate sequentially using a clone of free-slot count. Cheap because
+    // canFit only inspects existing items + free count.
+    const used: Map<number, number> = new Map();
+    let freeSlots = 0;
+    for (const s of player.inventory) if (s === null) freeSlots++;
+    for (const off of offer) {
+      if (!off) continue;
+      const def = this.data.getItem(off.itemId);
+      if (!def) return false;
+      if (def.stackable) {
+        // Existing stack of this item (in inventory or already simulated)?
+        const hasStack = player.inventory.some(s => s?.itemId === off.itemId) || used.has(off.itemId);
+        if (hasStack) {
+          used.set(off.itemId, (used.get(off.itemId) ?? 0) + off.quantity);
+          continue;
+        }
+        if (freeSlots < 1) return false;
+        freeSlots--;
+        used.set(off.itemId, off.quantity);
+      } else {
+        if (freeSlots < off.quantity) return false;
+        freeSlots -= off.quantity;
+      }
+    }
+    return true;
+  }
+
+  /** Close whichever modal interface is open. For trade, decline (with item
+   *  return). For bank, just clear the flag and notify. */
+  private closeOpenInterface(player: Player, declineTrade: boolean): void {
+    if (player.openInterface === 'bank') {
+      player.openInterface = null;
+      this.sendToPlayer(player, ServerOpcode.BANK_CLOSE, 0);
+    } else if (player.openInterface === 'trade' && declineTrade) {
+      this.abortTrade(player.id, 2);
+    }
+  }
+
+  /** Spawn a ground item under a player (used when refunds can't fit). */
+  private spawnGroundItem(player: Player, itemId: number, quantity: number): void {
+    const groundItem: GroundItem = {
+      id: nextGroundItemId++,
+      itemId,
+      quantity,
+      x: player.position.x,
+      z: player.position.y,
+      mapLevel: player.currentMapLevel,
+      despawnTimer: 100,
+    };
+    this.groundItems.set(groundItem.id, groundItem);
+    this.despawningItemIds.add(groundItem.id);
+    const cm = this.chunkManagers.get(player.currentMapLevel);
+    if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+    // Broadcast to nearby players so the dropped item appears immediately
+    // (without this, clients only see it after re-entering the chunk).
+    this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p =>
+      this.sendGroundItemUpdate(p, groundItem));
+  }
+
+  /** Chebyshev distance in tiles between two players. */
+  private tileChebyshev(a: Player, b: Player): number {
+    return Math.max(
+      Math.abs(Math.floor(a.position.x) - Math.floor(b.position.x)),
+      Math.abs(Math.floor(a.position.y) - Math.floor(b.position.y)),
+    );
+  }
+
   // Tick performance monitoring
   private tickOverrunCount: number = 0;
   private lastTickWarnTime: number = 0;
+  /** Wallclock time at the start of the current tick. Read by BotStats hooks
+   *  to compute tick-alignment deltas — bot actions cluster near zero, human
+   *  actions spread to 150-500ms. Captured at the top of tick(). */
+  private currentTickStartMs: number = 0;
+  /** Tick at which we last ran the bot-stats checkpoint. Every 5 minutes
+   *  (= 500 ticks at 600ms) we flush in-memory stats to DB so a server
+   *  crash doesn't lose the whole session. */
+  private lastBotStatsCheckpointTick: number = 0;
 
   private tick(): void {
     const tickStart = performance.now();
+    this.currentTickStartMs = tickStart;
     this.currentTick++;
 
     this.tickPlayerMovement();
@@ -1445,6 +2262,16 @@ export class World {
     this.tickTransitions();
     this.tickDeferredLogouts();
     this.broadcastSync();
+
+    // Bot-stats checkpoint every 500 ticks (~5 min). Flushes each connected
+    // player's accumulated stats to SQLite without emitting a session_summary
+    // — that only fires on logout. Survives mid-session server crashes.
+    if (this.currentTick - this.lastBotStatsCheckpointTick >= 500) {
+      this.lastBotStatsCheckpointTick = this.currentTick;
+      for (const [, player] of this.players) {
+        player.botStats?.checkpoint(this.db, player.accountId);
+      }
+    }
 
     const tickDuration = performance.now() - tickStart;
     if (tickDuration > TICK_RATE * 0.8) {
@@ -1489,6 +2316,14 @@ export class World {
       // next tick (~600ms) lets the client catch up.
       const justArrived = player.lastMovedTick === this.currentTick && player.moveQueue.length === 0;
 
+      // Bot-detection: record the final destination tile when a movement
+      // completes (path drained). Bots concentrate visits to a few tiles
+      // (e.g. rock → bank → rock loop) — the top-destination ratio jumps
+      // above 0.5 for a fishing bot within ~50 movements.
+      if (justArrived) {
+        player.botStats?.recordMovement(player.position.x, player.position.y);
+      }
+
       if (player.pendingPickup >= 0 && player.moveQueue.length === 0 && !justArrived) {
         const pickupId = player.pendingPickup;
         player.pendingPickup = -1;
@@ -1526,7 +2361,10 @@ export class World {
     for (const [, npc] of this.npcs) {
       if (npc.dead) {
         if (npc.tickRespawn()) {
-          this.forEachPlayerNear(npc.currentMapLevel, npc.position.x, npc.position.y, p => this.sendNpcUpdate(p, npc));
+          this.forEachPlayerNear(npc.currentMapLevel, npc.position.x, npc.position.y, p => {
+            this.sendNpcStaticData(p, npc);
+            this.sendNpcUpdate(p, npc);
+          });
         }
         continue;
       }
@@ -1643,6 +2481,7 @@ export class World {
       if (result) {
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
+        player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
         this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, player.currentMapLevel, npc.position.x, npc.position.y);
 
         for (const xp of result.xpDrops) {
@@ -1667,6 +2506,10 @@ export class World {
         if (!npc.alive) {
           npc.die();
           this.clearCombatTarget(playerId);
+          // Bot-detection: mark the kill timestamp so the next attack swing
+          // gets a reaction-time delta. Bots re-engage within 50ms; humans
+          // 300-800ms.
+          player.botStats?.recordNpcDeath(performance.now());
 
           this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
 
@@ -1715,21 +2558,8 @@ export class World {
         this.sendSingleSkill(target, HITPOINTS_SKILL_INDEX);
 
         if (!target.alive) {
-          const map = this.getMap(target.currentMapLevel);
-          const spawn = map.findSpawnPoint();
-          target.health = target.maxHealth;
-          target.skills.hitpoints.currentLevel = target.maxHealth;
-          target.position.x = spawn.x;
-          target.position.y = spawn.z;
-          target.moveQueue = [];
-          target.attackTarget = null;
           npc.combatTarget = null;
-          this.clearCombatTarget(target.id);
-
-          this.sendToPlayer(target, ServerOpcode.PLAYER_STATS,
-            target.health, target.maxHealth
-          );
-          this.sendSkills(target);
+          this.handlePlayerDeath(target);
         }
       }
     }
@@ -1796,6 +2626,9 @@ export class World {
 
       // actionDelay === currentTick — roll this tick.
       {
+        // Bot-detection signal: a roll fired this tick. Records tick-align
+        // delta + bumps session/lifetime counters. Cheap (O(1) field updates).
+        player.botStats?.recordSkillingRoll(this.currentTickStartMs, performance.now());
         const skillId = obj.def.skill as SkillId;
 
         if (obj.def.successChances) {
@@ -2011,6 +2844,146 @@ export class World {
     }
   }
 
+  /** Player died — fully reset state, respawn at the map's spawn point,
+   *  and notify all observers. Called from any path that brings the player
+   *  to 0 HP (NPC combat today; future: environmental damage, PvP).
+   *
+   *  Anti-exploit notes:
+   *  - Any open interface (bank/trade) is aborted BEFORE the position swap.
+   *    Trade refunds items to both sides; without this you could die mid-
+   *    trade and have the session land in an inconsistent state.
+   *  - All transient flags reset: combat lockout, attack cooldown, busy
+   *    delay, pending interactions, skilling action. Otherwise the player
+   *    could respawn still "busy" or "logout-blocked" from a fight they
+   *    just lost.
+   *  - ENTITY_DEATH broadcast to everyone who could see the player so
+   *    their client clears its remote-player entity. Without it, observers
+   *    would see a stuck-at-spawn ghost until the chunk cycles. */
+  handlePlayerDeath(player: Player): void {
+    const oldMapId = player.currentMapLevel;
+    const oldX = player.position.x;
+    const oldZ = player.position.y;
+
+    // Tell observers the player died at their current tile. Mirrors the
+    // NPC death broadcast — clients use this to clear the remote entity.
+    this.broadcastNearby(oldMapId, oldX, oldZ, ServerOpcode.ENTITY_DEATH, player.id);
+
+    // Abort any modal interface BEFORE position changes. Trade abort returns
+    // items to both sides; bank close just clears the flag (contents are
+    // already safe in player.bank).
+    if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
+
+    // Drop all transient combat / action state.
+    this.clearCombatTarget(player.id);
+    this.cancelSkilling(player.id);
+    player.moveQueue = [];
+    player.attackTarget = null;
+    player.pendingInteraction = null;
+    player.pendingPickup = -1;
+    player.attackCooldown = 0;
+    player.delayedUntilTick = 0;
+    player.logoutBlockedUntilTick = 0;
+    player.actionDelay = 0;
+    player.openShopNpcId = null;
+
+    // OSRS-style death drop: keep the 3 most valuable items (sorted by
+    // per-unit value × quantity), drop everything else as ground items at
+    // the death tile. Equipment counts as items — armor unequips into the
+    // sort pool. Stackables (coins) drop as a single stack of N regardless
+    // of quantity; they take one "kept slot" if among the top 3.
+    const itemDefs = this.data.itemDefs;
+    type DropEntry = { itemId: number; quantity: number; totalValue: number };
+    const pool: DropEntry[] = [];
+    for (const s of player.inventory) {
+      if (!s) continue;
+      const def = itemDefs.get(s.itemId);
+      const v = (def?.value ?? 0) * s.quantity;
+      pool.push({ itemId: s.itemId, quantity: s.quantity, totalValue: v });
+    }
+    for (const [, itemId] of player.equipment) {
+      const def = itemDefs.get(itemId);
+      const v = def?.value ?? 0;
+      pool.push({ itemId, quantity: 1, totalValue: v });
+    }
+    pool.sort((a, b) => b.totalValue - a.totalValue);
+    const kept = pool.slice(0, 3);
+    const dropped = pool.slice(3);
+
+    // Wipe inventory + equipment completely. We rebuild inventory from `kept`.
+    // Skipping addItem for the rebuild keeps stackable merging trivial — the
+    // pool already collapsed identical itemIds via the inventory's existing
+    // per-itemId stacking. We're just placing each kept entry into the first
+    // empty slot, no merge math needed.
+    for (let i = 0; i < player.inventory.length; i++) player.inventory[i] = null;
+    player.equipment.clear();
+    for (let i = 0; i < kept.length; i++) {
+      player.inventory[i] = { itemId: kept[i].itemId, quantity: kept[i].quantity };
+    }
+
+    // Drop the rest as ground items at the death tile. Inline the
+    // spawnGroundItem logic because that helper uses player.position which
+    // we're about to teleport away from. Use a 200-tick despawn (~2 min) —
+    // long enough for the player to walk back and reclaim if they want to.
+    for (const d of dropped) {
+      const groundItem: GroundItem = {
+        id: nextGroundItemId++,
+        itemId: d.itemId,
+        quantity: d.quantity,
+        x: oldX,
+        z: oldZ,
+        mapLevel: oldMapId,
+        despawnTimer: 200,
+      };
+      this.groundItems.set(groundItem.id, groundItem);
+      this.despawningItemIds.add(groundItem.id);
+      const cm = this.chunkManagers.get(oldMapId);
+      if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+      this.forEachPlayerNear(oldMapId, oldX, oldZ, p => this.sendGroundItemUpdate(p, groundItem));
+    }
+
+    // Equipment changed — broadcast empty equipment to nearby viewers so
+    // remote-rendered character entities de-gear immediately.
+    this.broadcastRemoteEquipment(player);
+
+    // Restore HP. Skills.hitpoints.currentLevel mirrors player.health for
+    // the client's stat sync; without this the skill panel would show 0 HP.
+    player.health = player.maxHealth;
+    player.skills.hitpoints.currentLevel = player.maxHealth;
+
+    // Respawn destination. For now everyone respawns at the spawn point of
+    // their current map. Future: per-account home tile (set via altar, etc.).
+    const map = this.getMap(oldMapId);
+    const spawn = map.findSpawnPoint();
+    this.teleportPlayer(player, spawn.x, spawn.z);
+
+    // Push the restored HP + skill panel + cleared inventory/equipment to
+    // the player. teleportPlayer sends PLAYER_TELEPORT (position) but not
+    // stats. The client otherwise wouldn't know its inventory just lost
+    // most of its contents.
+    this.sendToPlayer(player, ServerOpcode.PLAYER_STATS, player.health, player.maxHealth);
+    this.sendSkills(player);
+    this.sendInventory(player);
+    this.sendEquipment(player);
+    const droppedCount = dropped.length;
+    if (droppedCount > 0) {
+      this.sendChatSystem(player, `Oh dear, you are dead. You dropped ${droppedCount} item${droppedCount === 1 ? '' : 's'}.`);
+    } else {
+      this.sendChatSystem(player, 'Oh dear, you are dead.');
+    }
+    audit({
+      type: 'player.death',
+      tick: this.currentTick,
+      accountId: player.accountId,
+      details: {
+        name: player.name,
+        mapAtDeath: oldMapId,
+        posAtDeath: { x: oldX, z: oldZ },
+        kept: kept.map(k => ({ itemId: k.itemId, quantity: k.quantity })),
+        dropped: dropped.map(d => ({ itemId: d.itemId, quantity: d.quantity })),
+      },
+    });
+  }
+
   /** Same-map teleport — moves the player and sends a lightweight
    *  PLAYER_TELEPORT packet so the client snaps position without reloading
    *  the map / chunks / entities. Only used for in-map jumps; cross-map
@@ -2053,6 +3026,15 @@ export class World {
     const newMap = transition.targetMap;
 
     if (!this.maps.has(newMap)) return;
+
+    // Defense in depth: any modal interface (bank/trade) must close BEFORE
+    // we save + transition. Movement also auto-closes via handlePlayerMove,
+    // but transitions can fire from admin teleport (PLAYER_TELEPORT path)
+    // which doesn't go through handlePlayerMove — without this, a player
+    // could be admin-teleported with bank state still flagged open, then
+    // pick it back up on the other map and double-deposit.
+    if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
+    player.openShopNpcId = null;
 
     // Save player state
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
@@ -2112,7 +3094,11 @@ export class World {
           continue;
         }
         const npc = this.npcs.get(eid);
-        if (npc && !npc.dead) { this.sendNpcUpdate(player, npc); continue; }
+        if (npc && !npc.dead) {
+          this.sendNpcStaticData(player, npc);
+          this.sendNpcUpdate(player, npc);
+          continue;
+        }
         const obj = this.worldObjects.get(eid);
         if (obj) { this.sendWorldObjectUpdate(player, obj); continue; }
         const item = this.groundItems.get(eid);
@@ -2208,7 +3194,11 @@ export class World {
             return;
           }
           const npc = this.npcs.get(eid);
-          if (npc && !npc.dead) { this.sendNpcUpdate(viewer, npc); return; }
+          if (npc && !npc.dead) {
+            this.sendNpcStaticData(viewer, npc);
+            this.sendNpcUpdate(viewer, npc);
+            return;
+          }
           // Re-sync world objects on chunk transitions. Without this, a player
           // who walks into range of a door that was opened (or a tree that was
           // chopped, etc.) while they were too far away to receive the
@@ -2241,10 +3231,10 @@ export class World {
   }
 
   private sendChatSystem(player: Player, message: string): void {
-    // Find the player's chat socket and send system message
-    try {
-      player.ws.sendBinary(encodePacket(ServerOpcode.CHAT_SYSTEM, 0));
-    } catch { /* ignore */ }
+    // System messages travel over the JSON chat socket, looked up by username.
+    // The binary CHAT_SYSTEM opcode is reserved for future use (e.g. ping the
+    // game socket) and currently carries no string payload.
+    sendSystemMessageToUser(player.name, message);
   }
 
   private sendMapChange(player: Player, mapId: string): void {
@@ -2287,6 +3277,30 @@ export class World {
       npc.health,
       npc.maxHealth
     );
+  }
+
+  /** Push the NPC's per-spawn appearance + equipment to a viewer who is
+   *  about to see this NPC for the first time (map load, chunk entry, or
+   *  respawn). No-op when the NPC has no customization — sprite/built-in
+   *  3D NPCs (rat, cow, chicken, …) skip this entirely. */
+  private sendNpcStaticData(viewer: Player, npc: Npc): void {
+    const a = npc.appearance;
+    if (a) {
+      this.sendToPlayer(viewer, ServerOpcode.NPC_APPEARANCE,
+        npc.id,
+        a.shirtColor, a.pantsColor, a.shoesColor,
+        a.hairColor, a.beltColor, a.skinColor,
+        a.hairStyle, a.gearColor,
+      );
+    }
+    const eq = npc.equipment;
+    if (eq && eq.length === 10) {
+      this.sendToPlayer(viewer, ServerOpcode.NPC_EQUIPMENT,
+        npc.id,
+        eq[0], eq[1], eq[2], eq[3], eq[4],
+        eq[5], eq[6], eq[7], eq[8], eq[9],
+      );
+    }
   }
 
   private sendWorldObjectUpdate(viewer: Player, obj: WorldObject): void {

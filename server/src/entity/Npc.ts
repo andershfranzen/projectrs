@@ -1,11 +1,19 @@
 import { Entity } from './Entity';
-import type { NpcDef } from '@projectrs/shared';
+import type { NpcDef, PlayerAppearance } from '@projectrs/shared';
 
 export class Npc extends Entity {
   readonly npcId: number; // Definition ID
   readonly def: NpcDef;
   readonly spawnX: number;
   readonly spawnZ: number;
+
+  /** Per-spawn customization. When non-null, this NPC is eligible for 3D
+   *  CharacterEntity rendering (subject to mobile LOD on the client). Static
+   *  — set at spawn time, mutated only by the admin /npcedit flow. */
+  appearance: PlayerAppearance | null = null;
+  /** 10-slot equipment array, PLAYER_REMOTE_EQUIPMENT layout. Only consulted
+   *  when `appearance` is also set (gear pipeline runs on CharacterEntity only). */
+  equipment: number[] | null = null;
 
   // AI — initial cooldown randomized so NPCs don't all move in lockstep
   wanderCooldown: number = Math.floor(Math.random() * 15);
@@ -41,13 +49,22 @@ export class Npc extends Entity {
 
   readonly wanderRangeOverride?: number;
 
-  constructor(def: NpcDef, x: number, z: number, wanderRange?: number) {
+  constructor(
+    def: NpcDef,
+    x: number,
+    z: number,
+    wanderRange?: number,
+    appearance?: PlayerAppearance | null,
+    equipment?: number[] | null,
+  ) {
     super(def.name, x, z, def.health);
     this.npcId = def.id;
     this.def = def;
     this.spawnX = x;
     this.spawnZ = z;
     this.wanderRangeOverride = wanderRange;
+    this.appearance = appearance ?? null;
+    this.equipment = equipment ?? null;
   }
 
   get wanderRange(): number {
