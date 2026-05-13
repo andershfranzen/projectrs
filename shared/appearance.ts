@@ -106,6 +106,49 @@ export const HAIR_COLORS: [number, number, number][] = [
 export const HAIR_STYLE_COUNT = 15;       // M_hair_1 … M_hair_15 (0 = bald)
 export const GEAR_COLOR_COUNT = 14;       // objectColor1 … objectColor14
 
+/** Display labels parallel to each palette. Indices match the palette arrays
+ *  above. Used by the character creator stepper to show the picked color's
+ *  name. Kept here so adding a palette entry forces a name update at the same
+ *  site. */
+export const SHIRT_COLOR_NAMES: string[] = [
+  'Dark Blue', 'Forest Green', 'Crimson', 'Purple',
+  'Brown', 'Teal', 'Gold', 'Charcoal',
+  'Light Grey', 'Black', 'Orange', 'Magenta',
+  'White', 'Dark Purple', 'Navy', 'Pink',
+];
+export const PANTS_COLOR_NAMES: string[] = [
+  'Light Grey', 'Brown', 'Dark Blue', 'Dark Green',
+  'Charcoal', 'Black', 'Tan', 'Dark Red',
+  'Khaki', 'Dark Purple', 'Silver', 'Olive', 'White',
+];
+export const SHOES_COLOR_NAMES: string[] = [
+  'Near Black', 'Dark Brown', 'Tan', 'Dark Navy',
+  'Dark Red', 'Dark Green', 'Grey', 'Black', 'White',
+];
+export const BELT_COLOR_NAMES: string[] = [
+  'No Belt', 'Dark Red', 'Dark Brown', 'Black', 'Charcoal',
+  'Gold', 'Dark Green', 'Dark Blue', 'Tan', 'White',
+];
+export const SKIN_COLOR_NAMES: string[] = [
+  'Tan', 'Fair', 'Light Brown', 'Brown',
+  'Dark Brown', 'Very Dark', 'Golden', 'Olive',
+];
+export const HAIR_COLOR_NAMES: string[] = [
+  'Brown', 'Blonde', 'Black', 'Auburn', 'Ginger',
+  'Grey', 'Dark Red', 'Dark Brown', 'White', 'Light Blonde',
+];
+
+/** Hair styles: 0 = bald, 1..HAIR_STYLE_COUNT = M_hair_N. Names are generic. */
+export function hairStyleName(idx: number): string {
+  if (idx === 0) return 'Bald';
+  return `Style ${idx}`;
+}
+
+/** Gear color palette has no human names yet — referenced as Color 1..14. */
+export function gearColorName(idx: number): string {
+  return `Color ${idx + 1}`;
+}
+
 export const DEFAULT_APPEARANCE: PlayerAppearance = {
   shirtColor: 0,
   pantsColor: 0,

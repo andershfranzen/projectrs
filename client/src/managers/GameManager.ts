@@ -1091,6 +1091,9 @@ export class GameManager {
       additionalAnimations: [
         { name: 'idle',                    path: '/Character models/new animations/idle.glb' },
         { name: 'walk',                    path: '/Character models/new animations/walk.glb' },
+        // RS2 turn-on-the-spot. CharacterEntity swaps idle ↔ turn based on
+        // yaw alignment in updateAnimation(); see comment there.
+        { name: 'turn',                    path: '/Character models/new animations/turn in place.glb' },
         // Armed attack — non-aggressive stances use the default downward slash;
         // aggressive stance uses the hand-authored OSRS-style slash.
         { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
@@ -1144,6 +1147,12 @@ export class GameManager {
       this.loadingScreen.setStatus('Loading character…');
 
       this.localPlayer = this.createLocalCharacterEntity();
+      // Click-through: scene.pick raycasts skip the local player's meshes
+      // so right-clicking past yourself hits the NPC / object behind you
+      // instead of being eaten by your own body. setPickable defers to
+      // whenReady if the GLB isn't loaded yet and re-applies after every
+      // gear attach.
+      this.localPlayer.setPickable(false);
       this.localPlayer.setPositionXYZ(this.playerX, spawnY, this.playerZ);
       this.inputManager.setPlayerY(spawnY);
       console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
@@ -2641,6 +2650,10 @@ export class GameManager {
 
   private openCharacterCreator(): void {
     if (this.characterCreator) return;
+    // Pass the player's current appearance as the starting state so /appearance
+    // re-edits open on the current values rather than the global default.
+    // For brand-new characters with no appearance set yet, localAppearance is
+    // null and the creator falls back to DEFAULT_APPEARANCE.
     this.characterCreator = new CharacterCreator(this.scene, (appearance) => {
       this.network.sendRaw(encodePacket(
         ClientOpcode.SET_APPEARANCE,
@@ -2659,6 +2672,12 @@ export class GameManager {
       }
       this.characterCreator!.destroy();
       this.characterCreator = null;
+    }, {
+      initial: this.localAppearance ?? undefined,
+      // Pass the local player so the creator hides them while open and spawns
+      // the preview character at their world position (so the preview canvas
+      // shows them in their actual environment instead of on a flat backdrop).
+      localPlayer: this.localPlayer,
     });
   }
 

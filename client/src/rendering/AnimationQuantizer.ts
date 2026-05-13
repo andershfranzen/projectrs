@@ -174,8 +174,8 @@ export function quantizeAnimationGroup(
 // RS2 rotation: 2048 angle units = full circle, 32 units per client tick (20ms),
 // 50 ticks/sec. In radians: 32/2048 * 2π * 50 ≈ 4.91 rad/sec.
 // Snap threshold: 32/2048 * 2π ≈ 0.098 rad (~5.6°).
-const RS2_TURN_RATE = (32 / 2048) * Math.PI * 2 * 50;
-const RS2_TURN_SNAP = (32 / 2048) * Math.PI * 2;
+export const RS2_TURN_RATE = (32 / 2048) * Math.PI * 2 * 50;
+export const RS2_TURN_SNAP = (32 / 2048) * Math.PI * 2;
 
 export function rs2Rotation(current: number, target: number, dt: number): number {
   let diff = target - current;

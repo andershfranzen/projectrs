@@ -109,6 +109,16 @@ export class SidePanel {
         .inv-slot.hovered {
           background: rgba(255,255,255,0.07);
         }
+        /* Drag-source slot: dim while held so user sees what's moving. */
+        .inv-slot.dragging {
+          opacity: 0.4;
+        }
+        /* Drop-target slot: highlight when something hovers over it. */
+        .inv-slot.drag-over {
+          background: rgba(255,200,80,0.25);
+          outline: 1px solid rgba(255,200,80,0.8);
+          outline-offset: -1px;
+        }
       `;
       document.head.appendChild(style);
     }
@@ -495,6 +505,40 @@ export class SidePanel {
         this.onInvSlotClick(i);
       });
 
+      // --- Drag-and-drop reorder ---
+      // draggable is toggled per-render based on slot fill state (empty slots
+      // can't be drag sources). Browser fires `dragstart` only when draggable.
+      slot.addEventListener('dragstart', (e) => {
+        const data = this.invSlots[i];
+        if (!data) { e.preventDefault(); return; }
+        e.dataTransfer?.setData('text/plain', String(i));
+        e.dataTransfer!.effectAllowed = 'move';
+        slot.classList.add('dragging');
+      });
+      slot.addEventListener('dragend', () => {
+        slot.classList.remove('dragging');
+      });
+      slot.addEventListener('dragover', (e) => {
+        // preventDefault is required to mark this element as a drop target.
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+        slot.classList.add('drag-over');
+      });
+      slot.addEventListener('dragleave', () => {
+        slot.classList.remove('drag-over');
+      });
+      slot.addEventListener('drop', (e) => {
+        e.preventDefault();
+        slot.classList.remove('drag-over');
+        const fromStr = e.dataTransfer?.getData('text/plain');
+        if (!fromStr) return;
+        const from = parseInt(fromStr, 10);
+        if (!Number.isInteger(from) || from === i) return;
+        const src = this.invSlots[from];
+        if (!src) return;
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_MOVE_INV_ITEM, from, i, src.itemId));
+      });
+
       grid.appendChild(slot);
       this.invSlotElements.push(slot);
     }
@@ -707,10 +751,17 @@ export class SidePanel {
     if (!slot) {
       el.innerHTML = '';
       el.dataset.filled = '0';
+      // Empty slots aren't drag sources but ARE drop targets — drag handlers
+      // are wired in buildInventoryContent regardless.
+      el.draggable = false;
+      // Drop into the inner image would steal the drag event from the slot
+      // div; clearing the inner avoids any leftover img acting as a child
+      // dragstart source for a since-emptied slot.
       return;
     }
 
     el.dataset.filled = '1';
+    el.draggable = true;
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || `Item ${slot.itemId}`;
     const sprite = def?.sprite;
@@ -718,12 +769,15 @@ export class SidePanel {
 
     // max-width/height cap the icon at native sprite size; min-cell at 34px so
     // it never has to scale below that. Object-fit keeps aspect.
-    const imgStyle = `max-width:34px;max-height:34px;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));`;
+    // draggable="false" on the inner img so HTML5 drag fires from the slot div
+    // (the registered drag source) and not from the image — otherwise dataTransfer
+    // would carry the img URL instead of our slot index.
+    const imgStyle = `max-width:34px;max-height:34px;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));pointer-events:none;`;
     const iconHtml = sprite
-      ? `<img src="/sprites/items/${sprite}" style="${imgStyle}" />`
+      ? `<img src="/sprites/items/${sprite}" draggable="false" style="${imgStyle}" />`
       : icon
-      ? `<img src="/items/${icon}" style="${imgStyle}" />`
-      : `<div style="width:28px;height:28px;background:rgba(170,170,170,0.6);border-radius:3px;"></div>`;
+      ? `<img src="/items/${icon}" draggable="false" style="${imgStyle}" />`
+      : `<div style="width:28px;height:28px;background:rgba(170,170,170,0.6);border-radius:3px;pointer-events:none;"></div>`;
 
     el.innerHTML = `
       ${iconHtml}
@@ -747,11 +801,14 @@ export class SidePanel {
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || 'Item';
     const menu = document.createElement('div');
+    // Initial placement at click point — the post-mount clamp below keeps the
+    // menu inside the side panel so it never spills off the right edge of the
+    // inventory or runs off the bottom of the screen.
     menu.style.cssText = `
       position: fixed; left: ${event.clientX}px; top: ${event.clientY}px;
       background: #3a3125; border: 2px solid #5a4a35;
       font-family: monospace; font-size: 12px; z-index: 1001;
-      min-width: 100px; box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
+      min-width: 100px; max-width: 180px; box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
     `;
 
     const options: { label: string; action: () => void }[] = [];
@@ -797,6 +854,18 @@ export class SidePanel {
     }
 
     document.body.appendChild(menu);
+    // Clamp the menu inside the side panel container — without this it spills
+    // off the right edge for slots in the right column, and off the bottom
+    // edge when right-clicking near the bottom row.
+    const panel = this.container.getBoundingClientRect();
+    const m = menu.getBoundingClientRect();
+    let left = m.left, top = m.top;
+    if (m.right > panel.right) left = Math.max(panel.left, panel.right - m.width);
+    if (m.bottom > panel.bottom) top = Math.max(panel.top, panel.bottom - m.height);
+    if (left < panel.left) left = panel.left;
+    if (top < panel.top) top = panel.top;
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
     const close = () => { menu.remove(); document.removeEventListener('click', close); };
     setTimeout(() => document.addEventListener('click', close), 0);
   }

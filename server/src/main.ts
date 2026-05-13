@@ -1,5 +1,5 @@
 import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE } from '@projectrs/shared';
-import { resolve } from 'path';
+import { resolve, dirname } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync } from 'fs';
 import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile } from '@projectrs/shared';
 import { defaultKCTile } from '@projectrs/shared';
@@ -779,6 +779,55 @@ const server = Bun.serve<SocketData>({
       try {
         const body = await req.json() as Record<string, any>;
         const filePath = resolve(import.meta.dir, '../data/gear-overrides.json');
+
+        // Two-tier sanity check before clobbering existing data:
+        //   (a) Empty payload + non-empty existing → outright refuse. This is
+        //       almost always a test POST or a panic-save before the dev
+        //       client finished loading. Caused a 535-line wipe on 2026-05-13.
+        //   (b) Drastic shrink (>50% of entries gone) → refuse. Catches the
+        //       "client loaded partial state then saved" variant, which is
+        //       quieter than (a) but just as destructive.
+        // Both checks are bypassable by sending the requested data inline
+        // (you can't accidentally drop 50% of entries unless you really mean to).
+        const incomingCount = (body && typeof body === 'object') ? Object.keys(body).length : 0;
+        if (existsSync(filePath)) {
+          let existingCount = 0;
+          try {
+            const existing = JSON.parse(readFileSync(filePath, 'utf-8'));
+            if (existing && typeof existing === 'object') existingCount = Object.keys(existing).length;
+          } catch { /* unreadable existing → fall through */ }
+
+          if (existingCount > 0 && incomingCount === 0) {
+            return jsonResponse({ ok: false, error: 'Refusing to overwrite non-empty gear-overrides with empty payload' }, 400);
+          }
+          if (existingCount >= 4 && incomingCount * 2 < existingCount) {
+            return jsonResponse({
+              ok: false,
+              error: `Refusing save: would shrink ${existingCount} → ${incomingCount} entries (>50% drop)`,
+            }, 400);
+          }
+        }
+
+        // Rotated timestamped backups (matches the map-editor pattern in
+        // createMapBackup). Keeps the last 10 snapshots so the most recent
+        // burst of edits is recoverable even if multiple bad saves chain.
+        if (existsSync(filePath)) {
+          try {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            const bakDir = dirname(filePath);
+            const bakPath = resolve(bakDir, `gear-overrides.${ts}.bak`);
+            cpSync(filePath, bakPath);
+            // Rotate: keep the 10 newest .bak snapshots, drop the rest.
+            const baks = readdirSync(bakDir)
+              .filter(n => /^gear-overrides\..+\.bak$/.test(n))
+              .sort(); // ISO-prefix sorts oldest-first
+            const excess = Math.max(0, baks.length - 10);
+            for (let i = 0; i < excess; i++) {
+              try { rmSync(resolve(bakDir, baks[i])); } catch { /* best-effort */ }
+            }
+          } catch { /* best-effort: never block the save on backup failure */ }
+        }
+
         const tmpPath = filePath + '.tmp';
         writeFileSync(tmpPath, JSON.stringify(body, null, 2));
         renameSync(tmpPath, filePath);

@@ -12,6 +12,10 @@ export enum ClientOpcode {
   PLAYER_SET_STANCE = 35,
   PLAYER_BUY_ITEM = 36,
   PLAYER_SELL_ITEM = 37,
+  /** Drag-and-drop reorder of two inventory slots. Values: [fromSlot, toSlot, expectedItemId].
+   *  Server validates expectedItemId matches inventory[fromSlot] (stale-click guard) and
+   *  refuses if a modal interface is open. Just swaps the two slots — no merge for stackables. */
+  PLAYER_MOVE_INV_ITEM = 38,
   PLAYER_INTERACT_OBJECT = 40,
   MAP_READY = 50,
   SET_APPEARANCE = 60,

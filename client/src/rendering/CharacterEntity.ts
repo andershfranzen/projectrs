@@ -17,7 +17,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT, GEAR_COLOR_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
-import { quantizeAnimationGroup, rs2Rotation, ANIM_DURATIONS, DEFAULT_QUANTIZE_FRAMES } from './AnimationQuantizer';
+import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, ANIM_DURATIONS, DEFAULT_QUANTIZE_FRAMES } from './AnimationQuantizer';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 
@@ -287,6 +287,10 @@ export class CharacterEntity {
   // Ready state
   private _ready: boolean = false;
   private _readyPromise: Promise<void>;
+  /** Whether scene.pick raycasts can hit this character's meshes. False on
+   *  the local player so clicks pass through to whatever's behind them.
+   *  See setPickable() — re-applied after every gear attach. */
+  private _pickable: boolean = true;
   private _resolveReady!: () => void;
 
   constructor(scene: Scene, options: CharacterEntityOptions) {
@@ -364,10 +368,17 @@ export class CharacterEntity {
         }
       }
 
-      // Index modular hair meshes by name for show/hide (must happen before bounds calc)
+      // Index modular hair meshes by name for show/hide (must happen before bounds calc).
+      // Each hair mesh is skinned to the head bone; nudging mesh.position translates the
+      // rendered hair forward without disturbing the underlying skin weights or skeleton,
+      // and mesh.scaling expands it around the mesh pivot. Tune both constants to taste.
+      const HAIR_FORWARD_OFFSET = 0.01;
+      const HAIR_SCALE = 1.015;
       for (const mesh of this.meshes) {
         if (mesh.name.startsWith('M_hair_')) {
           this.modularMeshes.set(mesh.name, mesh);
+          mesh.position.z += HAIR_FORWARD_OFFSET;
+          mesh.scaling.scaleInPlace(HAIR_SCALE);
           mesh.setEnabled(false);
         }
       }
@@ -773,6 +784,26 @@ export class CharacterEntity {
     else void this._readyPromise.then(stamp);
   }
 
+  /** Make this character transparent to scene.pick raycasts. The local
+   *  player calls this with `false` so right-clicking through your own
+   *  character doesn't intercept the click and steal it from the NPC /
+   *  object behind you. Reapplies on every subsequent gear attach so
+   *  freshly-loaded armor meshes inherit the setting. */
+  setPickable(pickable: boolean): void {
+    this._pickable = pickable;
+    if (this._ready) this.applyPickability();
+    else void this._readyPromise.then(() => this.applyPickability());
+  }
+
+  private applyPickability(): void {
+    if (!this.root) return;
+    for (const node of this.root.getDescendants(false)) {
+      if ('isPickable' in node) {
+        (node as { isPickable: boolean }).isPickable = this._pickable;
+      }
+    }
+  }
+
   /** Freeze the character at the first frame of the idle animation. No
    *  per-frame animation evaluation runs — the skeleton matrix is computed
    *  once and stays. Used for stationary NPCs (bankers, shopkeepers) where
@@ -1025,6 +1056,27 @@ export class CharacterEntity {
       this._rotationY = newYaw;
       this.root.rotation.y = newYaw;
     }
+
+    // RS2-style turn-on-the-spot. While the character is in the Idle state
+    // and its yaw is being stepped toward a target, play the dedicated turn
+    // animation instead of the static idle. Swap back to idle once aligned.
+    // Walk state intentionally not affected — the walk anim handles body
+    // rotation implicitly via rs2Rotation while the legs cycle. Skill/Attack/
+    // Death are higher priority and lock the body anim; turn-in-place is
+    // only a substitute for the idle pose.
+    // Mirrors 2004scape's PathingEntity behavior: seqTurnId plays when
+    // standing still + yaw != dstYaw.
+    if (this.currentState === AnimState.Idle && this.animGroups.has('turn')) {
+      let diff = this.targetRotationY - this._rotationY;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const aligned = Math.abs(diff) < RS2_TURN_SNAP;
+      if (!aligned && this.currentAnimName !== 'turn') {
+        this.playAnim('turn', true);
+      } else if (aligned && this.currentAnimName === 'turn') {
+        this.playAnim('idle', true);
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1093,6 +1145,9 @@ export class CharacterEntity {
 
     this.gearAttachments.set(slot, { itemId, node: clone });
     if (slot === 'head') this.setHeadVisible(false);
+    // New nodes were just parented under the character root — propagate the
+    // entity's pickability flag onto them. No-op when _pickable is true.
+    if (!this._pickable) this.applyPickability();
   }
 
   /** Remove gear from a slot. */
@@ -1181,6 +1236,7 @@ export class CharacterEntity {
     if (slot === 'head') this.setHeadVisible(false);
     if (slot === 'body') this.setBodyVisible(false);
     if (slot === 'legs') this.setLegsVisible(false);
+    if (!this._pickable) this.applyPickability();
     console.log(`[SkinnedArmor] Attached ${kept.length} meshes in slot '${slot}' itemId=${itemId} (remapped ${armorBoneCount} bones, ${unmapped} unmatched)`);
   }
 
@@ -1319,6 +1375,7 @@ export class CharacterEntity {
       if (slot === 'head') this.setHeadVisible(false);
       if (slot === 'body') this.setBodyVisible(false);
       if (slot === 'legs') this.setLegsVisible(false);
+      if (!this._pickable) this.applyPickability();
       console.log(`[ManualSkin] slot='${slot}' item=${itemId} primitives=${kept.length} jointsRemapped=${armorJointNames.length} unmatched=${unmapped}`);
       return true;
     } catch (e) {

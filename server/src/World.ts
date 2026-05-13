@@ -1169,6 +1169,32 @@ export class World {
     this.sendInventory(player);
   }
 
+  /** Drag-and-drop reorder of two inventory slots. Pure swap — no merge for
+   *  stackables (drag-merge is a separate UX gesture and matches RS2 behavior).
+   *  Atomic by construction: a single `[a, b] = [b, a]` mutation, no add/remove
+   *  dance, so there is no failure path that could dupe or destroy items. */
+  handlePlayerMoveInvItem(playerId: number, fromSlot: number, toSlot: number, expectedItemId: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) return;
+    if (fromSlot === toSlot) return;
+    if (fromSlot < 0 || fromSlot >= player.inventory.length) return;
+    if (toSlot < 0 || toSlot >= player.inventory.length) return;
+    // Stale-click guard: source slot must still hold the item the client
+    // thought it was dragging. Without this, a click leaking from a previous
+    // tick (e.g. quick eat → drag) could swap the wrong slot.
+    if (player.inventory[fromSlot]?.itemId !== expectedItemId) return;
+
+    const a = player.inventory[fromSlot];
+    const b = player.inventory[toSlot];
+    player.inventory[fromSlot] = b;
+    player.inventory[toSlot] = a;
+
+    this.sendInventory(player);
+    // No setDelay — reordering is a UI affordance, not a tick-consuming action.
+  }
+
   handlePlayerInteractObject(playerId: number, objectEntityId: number, actionIndex: number, recipeIndex: number = -1): void {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);

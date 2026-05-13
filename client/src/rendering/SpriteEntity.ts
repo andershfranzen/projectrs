@@ -356,7 +356,11 @@ export class SpriteEntity {
 
   constructor(scene: Scene, options: SpriteEntityOptions) {
     this.scene = scene;
-    this.label = options.label || options.name;
+    // Empty string = explicitly no label (used by ground items). The previous
+    // `options.label || options.name` fallback baked the entity's internal
+    // name (e.g. `gitem_42`) into the texture for any caller that omitted a
+    // label, which is almost never what you want.
+    this.label = options.label ?? '';
 
     const width = options.width || 0.8;
     const height = options.height || 1.4;
@@ -389,12 +393,17 @@ export class SpriteEntity {
         const offsetX = (texSize - iconSize) / 2;
         ctx.clearRect(0, 0, texSize, texSize);
         (ctx as CanvasRenderingContext2D).imageSmoothingEnabled = false;
-        ctx.drawImage(img, offsetX, 8, iconSize, iconSize);
-        // Draw label below
-        ctx.fillStyle = options.labelColor || '#ffaa00';
-        ctx.font = 'bold 13px sans-serif';
-        (ctx as any).textAlign = 'center';
-        ctx.fillText(this.label, 64, 104);
+        // Centered icon — recompute offsetY so the icon fills the texture
+        // when there's no label, and stays in the upper area when there is one
+        // (so the label has room beneath it).
+        const yOff = this.label ? 8 : (texSize - iconSize) / 2;
+        ctx.drawImage(img, offsetX, yOff, iconSize, iconSize);
+        if (this.label) {
+          ctx.fillStyle = options.labelColor || '#ffaa00';
+          ctx.font = 'bold 13px sans-serif';
+          (ctx as any).textAlign = 'center';
+          ctx.fillText(this.label, 64, 104);
+        }
         texture.update();
       };
       img.src = options.iconUrl;
@@ -425,10 +434,12 @@ export class SpriteEntity {
       ctx.arc(64, 18, 16, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.fillStyle = options.labelColor || '#ffffff';
-      ctx.font = 'bold 14px sans-serif';
-      (ctx as any).textAlign = 'center';
-      ctx.fillText(this.label, 64, 126);
+      if (this.label) {
+        ctx.fillStyle = options.labelColor || '#ffffff';
+        ctx.font = 'bold 14px sans-serif';
+        (ctx as any).textAlign = 'center';
+        ctx.fillText(this.label, 64, 126);
+      }
 
       texture.update();
 

@@ -218,6 +218,14 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_MOVE_INV_ITEM: {
+      const fromSlot = values[0];
+      const toSlot = values[1];
+      const expectedItemId = values[2];
+      world.handlePlayerMoveInvItem(playerId, fromSlot, toSlot, expectedItemId);
+      break;
+    }
+
     // CLIENT_FLOOR_HINT removed — was a security hole. A malicious client
     // could spoof any floor at any tile that happened to be walkable on
     // multiple floors, bypassing legitimate stair gating. Floor changes are

@@ -268,6 +268,8 @@ export class EntityManager {
       additionalAnimations: [
         { name: 'idle',                    path: '/Character models/new animations/idle.glb' },
         { name: 'walk',                    path: '/Character models/new animations/walk.glb' },
+        // RS2 turn-on-the-spot — see CharacterEntity.updateAnimation comment.
+        { name: 'turn',                    path: '/Character models/new animations/turn in place.glb' },
         { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
         { name: 'attack_slash_aggressive', path: '/Character models/new animations/attack_slash.glb' },
         { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
@@ -372,15 +374,13 @@ export class EntityManager {
 
   createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number): SpriteEntity {
     const itemDef = this.itemDefsCache.get(itemId);
-    const itemName = itemDef?.name ?? `Item ${itemId}`;
     const iconPath = itemDef?.sprite ? `/sprites/items/${itemDef.sprite}`
       : itemDef?.icon ? `/items/${itemDef.icon}`
       : null;
+    // Icon-only — no floating label. Hover/right-click can surface the name later.
     const sprite = new SpriteEntity(this.scene, {
       name: `gitem_${groundItemId}`,
       color: new Color3(0.8, 0.7, 0.2),
-      label: itemName,
-      labelColor: '#ffaa00',
       width: 0.48,
       height: 0.48,
       iconUrl: iconPath ?? undefined,
