@@ -1,6 +1,6 @@
 import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE } from '@projectrs/shared';
 import { resolve, dirname } from 'path';
-import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync } from 'fs';
+import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile } from '@projectrs/shared';
 import { defaultKCTile } from '@projectrs/shared';
 import { World } from './World';
@@ -348,6 +348,23 @@ import {
 
 const CLIENT_DIST = resolve(import.meta.dir, '../../client/dist');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
+const DATA_DIR = resolve(import.meta.dir, '../data');
+
+/** Resolve `child` against `base` and verify the *real* path (symlinks
+ *  followed) still lives under `base`. Without realpath, an attacker who
+ *  could create a symlink inside `base` pointing elsewhere would defeat the
+ *  startsWith check — resolve() handles `..` but doesn't follow links.
+ *  Returns the canonical path if safe, null if out-of-bounds or missing. */
+function resolveWithinBase(base: string, child: string): string | null {
+  const candidate = resolve(base, child);
+  try {
+    const real = realpathSync(candidate);
+    const realBase = realpathSync(base);
+    return real.startsWith(realBase + '/') || real === realBase ? real : null;
+  } catch {
+    return null;
+  }
+}
 
 // MIME type lookup
 const MIME_TYPES: Record<string, string> = {
@@ -754,10 +771,10 @@ const server = Bun.serve<SocketData>({
       if (filename.includes('/') || filename.includes('..')) {
         return new Response('Forbidden', { status: 403 });
       }
-      const filePath = resolve(import.meta.dir, '../data', filename);
-      if (!filePath.startsWith(resolve(import.meta.dir, '../data'))) {
-        return new Response('Forbidden', { status: 403 });
-      }
+      // Symlink-safe path resolution. Without realpath, a `server/data/evil ->
+      // /etc/passwd` symlink would defeat the startsWith check.
+      const filePath = resolveWithinBase(DATA_DIR, filename);
+      if (!filePath) return new Response('Forbidden', { status: 403 });
       try {
         const content = readFileSync(filePath);
         return new Response(content, {
@@ -1245,9 +1262,16 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname.startsWith('/maps/')) {
       const mapPath = url.pathname.slice(6); // remove '/maps/'
-      const filePath = resolve(MAPS_DIR, mapPath);
-      // Prevent directory traversal
-      if (!filePath.startsWith(MAPS_DIR)) {
+      // Refuse to serve backup snapshots. These contain prior map states which
+      // an attacker could enumerate (ISO timestamps are predictable) to find
+      // old object placements, NPC spawns, or interim editor saves. Backups
+      // are an admin operations concern, not public game data.
+      if (mapPath.includes('/backups/') || mapPath.endsWith('/backups')) {
+        return new Response('Forbidden', { status: 403 });
+      }
+      // Symlink-safe path resolution
+      const filePath = resolveWithinBase(MAPS_DIR, mapPath);
+      if (!filePath) {
         return new Response('Forbidden', { status: 403 });
       }
       try {
@@ -1312,6 +1336,13 @@ const server = Bun.serve<SocketData>({
 
   websocket: {
     perMessageDeflate: true,
+    // Hard cap on incoming WS message size. Game packets max out at a few
+    // hundred bytes (movement path of 200 waypoints ≈ 800 bytes); chat messages
+    // are capped client-side to 200 chars and server-side to 4096 bytes. 16 KB
+    // is comfortably above both. Without this, a hostile client can send a
+    // single 1 GB frame and OOM the process before our handler-level checks
+    // ever run.
+    maxPayloadLength: 16 * 1024,
     open(ws: import('bun').ServerWebSocket<SocketData>) {
       // Per-account cap: refuse + close if this account already has too many
       // sockets in flight. Mark the slot as "reserved" via a flag on ws.data

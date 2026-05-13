@@ -2,7 +2,7 @@ import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, 
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
-import { addXp, levelFromXp, statRandom } from '@projectrs/shared';
+import { addXp, levelFromXp, statRandom, npcCombatLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -184,7 +184,7 @@ export class World {
     for (const spawn of spawns.npcs ?? []) {
       const npcDef = this.data.getNpc(spawn.npcId);
       if (!npcDef) continue;
-      const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange);
+      const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange, spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null);
       npc.currentMapLevel = mapId;
       this.npcs.set(npc.id, npc);
       cm.addEntity(npc.id, spawn.x, spawn.z);
@@ -318,6 +318,7 @@ export class World {
           spawn.wanderRange,
           spawn.appearance ?? null,
           spawn.equipment ?? null,
+          spawn.aggressive ?? null,
         );
         npc.currentMapLevel = mapId;
         this.npcs.set(npc.id, npc);
@@ -542,6 +543,7 @@ export class World {
     // PLAYER_SYNC will follow on the next tick; clients cache equipment until
     // the entity is created.
     this.broadcastRemoteEquipment(player);
+    this.broadcastRemoteStance(player);
   }
 
   private cancelSkilling(playerId: number): void {
@@ -942,24 +944,35 @@ export class World {
     const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
 
     if (dist > attackDist) {
-      const map = this.getPlayerMap(player);
-      const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
-      if (!isRanged && path.length > 1) {
-        player.moveQueue = path.slice(0, -1); // melee: walk to adjacent
-      } else if (isRanged) {
-        // Ranged: walk until within range, then stop
-        let cutIdx = path.length;
-        for (let i = 0; i < path.length; i++) {
-          const pdx = Math.abs(path[i].x - npc.position.x);
-          const pdz = Math.abs(path[i].z - npc.position.y);
-          if (pdx <= attackDist && pdz <= attackDist) {
-            cutIdx = i + 1;
-            break;
+      // Prefer the client-sent path. The client sends sendMove(path) right
+      // before PLAYER_ATTACK_NPC; that path lands in moveQueue via
+      // handlePlayerMove. Overwriting it with an independently-pathfound
+      // route would diverge from the client's visual and trip the >1.5-tile
+      // snap-on-divergence (visible as a mid-walk teleport). If moveQueue
+      // is empty — e.g. the client didn't send a path, or it got rejected
+      // for wall validation — fall back to server-side pathfinding so the
+      // chase still happens. tickPlayerCombat re-pathfinds every tick once
+      // engaged, so any subsequent NPC movement is handled there.
+      if (player.moveQueue.length === 0) {
+        const map = this.getPlayerMap(player);
+        const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
+        if (!isRanged && path.length > 1) {
+          player.moveQueue = path.slice(0, -1); // melee: walk to adjacent
+        } else if (isRanged) {
+          // Ranged: walk until within range, then stop
+          let cutIdx = path.length;
+          for (let i = 0; i < path.length; i++) {
+            const pdx = Math.abs(path[i].x - npc.position.x);
+            const pdz = Math.abs(path[i].z - npc.position.y);
+            if (pdx <= attackDist && pdz <= attackDist) {
+              cutIdx = i + 1;
+              break;
+            }
           }
+          player.moveQueue = path.slice(0, cutIdx);
+        } else {
+          player.moveQueue = path;
         }
-        player.moveQueue = path.slice(0, cutIdx);
-      } else {
-        player.moveQueue = path;
       }
     } else {
       player.moveQueue = [];
@@ -1143,6 +1156,10 @@ export class World {
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
+    // Explicit bounds. The expectedItemId guard below already rejects OOB
+    // indices (inventory[-1]?.itemId is undefined, ≠ any int16), but make the
+    // bound check explicit so future refactors can't accidentally remove it.
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
     // Stale-click guard: reject if the slot doesn't currently hold the item the
     // client thought it was clicking. Mirrors 2004scape OpHeldHandler.ts:36.
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
@@ -1546,6 +1563,8 @@ export class World {
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
+    // Explicit bounds — see handlePlayerDrop for rationale.
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const slot = player.inventory[slotIndex];
@@ -1580,6 +1599,9 @@ export class World {
     if (stanceIndex >= 0 && stanceIndex < stances.length) {
       player.stance = stances[stanceIndex];
       player.setDelay(this.currentTick, 1);
+      // Tell nearby clients so they render the correct attack animation
+      // (e.g. 2H + aggressive → smash) when this player swings.
+      this.broadcastRemoteStance(player);
     }
   }
 
@@ -2190,8 +2212,13 @@ export class World {
   }
 
   /** Can `player` fit every item in `offer` into their inventory (after their
-   *  own offer's items have already been removed at offer-time)? */
+   *  own offer's items have already been removed at offer-time)?
+   *  Pre-flight must also reject MAX_STACK overflow: if A has 2.0B coins and
+   *  B offers 500M, the merge would clamp at 2.147B and silently drop the rest.
+   *  Without this guard, the commit-time rollback at line ~2124 fires every
+   *  time, which works but is the wrong layer to catch a predictable failure. */
   private canFitOffer(player: Player, offer: ({ itemId: number; quantity: number } | null)[]): boolean {
+    const MAX_STACK = 0x7FFFFFFF;
     // Simulate sequentially using a clone of free-slot count. Cheap because
     // canFit only inspects existing items + free count.
     const used: Map<number, number> = new Map();
@@ -2202,10 +2229,13 @@ export class World {
       const def = this.data.getItem(off.itemId);
       if (!def) return false;
       if (def.stackable) {
-        // Existing stack of this item (in inventory or already simulated)?
-        const hasStack = player.inventory.some(s => s?.itemId === off.itemId) || used.has(off.itemId);
+        const existing = player.inventory.find(s => s?.itemId === off.itemId)?.quantity ?? 0;
+        const alreadySimulated = used.get(off.itemId) ?? 0;
+        const projected = existing + alreadySimulated + off.quantity;
+        if (projected > MAX_STACK) return false;
+        const hasStack = existing > 0 || used.has(off.itemId);
         if (hasStack) {
-          used.set(off.itemId, (used.get(off.itemId) ?? 0) + off.quantity);
+          used.set(off.itemId, alreadySimulated + off.quantity);
           continue;
         }
         if (freeSlots < 1) return false;
@@ -2397,16 +2427,27 @@ export class World {
 
       const map = this.getMap(npc.currentMapLevel);
 
-      if (npc.def.aggressive && !npc.combatTarget) {
+      if (npc.aggressive && !npc.combatTarget) {
         const cm = this.chunkManagers.get(npc.currentMapLevel);
         if (cm) {
+          // Aggression radius is 3 tiles (Chebyshev). NPCs lose interest in
+          // players more than 20% above their own combat level — that lets
+          // the level scale work both ways: low-level players get hunted,
+          // high-level players walk past without aggro. The level cap fires
+          // *before* the proximity check so we don't waste a player lookup
+          // on someone we wouldn't aggro anyway. NPC level is derived from
+          // the def (health + flat combat stats) via npcCombatLevel; player
+          // level uses the standard SkillBlock formula.
+          const npcLvl = npcCombatLevel(npc.def);
+          const dropoffLvl = npcLvl * 1.2;
           cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
             if (npc.combatTarget) return;
             const player = this.players.get(pid);
             if (!player) return;
+            if (player.combatLevel > dropoffLvl) return;
             const dx = Math.abs(npc.position.x - player.position.x);
             const dz = Math.abs(npc.position.y - player.position.y);
-            if (dx <= 5 && dz <= 5) {
+            if (dx <= 3 && dz <= 3) {
               npc.combatTarget = player;
             }
           });
@@ -2455,29 +2496,36 @@ export class World {
       const cdz = npc.position.y - player.position.y;
       const combatDist = Math.sqrt(cdx * cdx + cdz * cdz);
       if (combatDist > attackDist) {
-        // Out of range — recompute path to the NPC and let tickPlayerMovement
-        // walk us there smoothly. This replaces an older snap-to-tile-center
-        // + manual 1-tile step that bypassed the move queue and looked like
-        // teleporting, especially against moving mobs. We re-pathfind every
-        // tick so the chase tracks NPC movement (cheap on a 256x256 map).
-        const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
-        if (path.length > 0) {
-          if (!isRanged && path.length > 1) {
-            player.moveQueue = path.slice(0, -1); // melee: stop one tile short
-          } else if (isRanged) {
-            // Ranged: walk only as far as needed to be in attack distance
-            let cutIdx = path.length;
-            for (let i = 0; i < path.length; i++) {
-              const pdx = Math.abs(path[i].x - npc.position.x);
-              const pdz = Math.abs(path[i].z - npc.position.y);
-              if (pdx <= attackDist && pdz <= attackDist) {
-                cutIdx = i + 1;
-                break;
+        // Out of range — only re-pathfind when the existing queue has been
+        // fully consumed (player arrived at the previous target tile but the
+        // NPC has since moved). Re-pathing every tick used to trample the
+        // active moveQueue: the client visual was walking the path it
+        // computed locally, but the server kept overwriting moveQueue with
+        // its own findPathOnFloor result. The two paths diverged from tick
+        // one onward, and the >1.5-tile snap guard (GameManager.ts:1229)
+        // teleported the local visual onto the server position. Leaving the
+        // queue alone while it's being walked keeps client + server in sync;
+        // the chase resumes when the queue runs dry.
+        if (player.moveQueue.length === 0) {
+          const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
+          if (path.length > 0) {
+            if (!isRanged && path.length > 1) {
+              player.moveQueue = path.slice(0, -1); // melee: stop one tile short
+            } else if (isRanged) {
+              // Ranged: walk only as far as needed to be in attack distance
+              let cutIdx = path.length;
+              for (let i = 0; i < path.length; i++) {
+                const pdx = Math.abs(path[i].x - npc.position.x);
+                const pdz = Math.abs(path[i].z - npc.position.y);
+                if (pdx <= attackDist && pdz <= attackDist) {
+                  cutIdx = i + 1;
+                  break;
+                }
               }
+              player.moveQueue = path.slice(0, cutIdx);
+            } else {
+              player.moveQueue = path;
             }
-            player.moveQueue = path.slice(0, cutIdx);
-          } else {
-            player.moveQueue = path;
           }
         }
         // Out of range this tick — defer the swing. Cooldown still ticks
@@ -3053,6 +3101,22 @@ export class World {
 
     if (!this.maps.has(newMap)) return;
 
+    // Validate destination coordinates against the target map's bounds. Teleport
+    // destinations originate from editor-authored PlacedObject triggers and
+    // ItemDef.transition data — a typo or malicious map edit could carry NaN,
+    // a negative value, or a coordinate past the map edge, which would put the
+    // player on an unloadable tile. Fall back to the map's spawn point if so.
+    const targetMapObj = this.maps.get(newMap)!;
+    const tx = transition.targetX;
+    const tz = transition.targetZ;
+    const txValid = typeof tx === 'number' && isFinite(tx) && tx >= 0 && tx < targetMapObj.width;
+    const tzValid = typeof tz === 'number' && isFinite(tz) && tz >= 0 && tz < targetMapObj.height;
+    if (!txValid || !tzValid) {
+      const fallback = targetMapObj.findSpawnPoint();
+      console.warn(`[handleMapTransition] invalid target (${tx},${tz}) on ${newMap}; using spawn (${fallback.x},${fallback.z})`);
+      transition = { targetMap: newMap, targetX: fallback.x, targetZ: fallback.z };
+    }
+
     // Defense in depth: any modal interface (bank/trade) must close BEFORE
     // we save + transition. Movement also auto-closes via handlePlayerMove,
     // but transitions can fire from admin teleport (PLAYER_TELEPORT path)
@@ -3217,6 +3281,7 @@ export class World {
             // tick), so push it as a separate packet on chunk entry. Matches
             // what we do for world-object state — full sync on chunk change.
             this.sendRemoteEquipment(viewer, subject);
+            this.sendRemoteStance(viewer, subject);
             return;
           }
           const npc = this.npcs.get(eid);
@@ -3412,6 +3477,33 @@ export class World {
     const cm = this.chunkManagers.get(subject.currentMapLevel);
     if (!cm) return;
     const packet = this.encodeRemoteEquipment(subject);
+    cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
+      if (pid === subject.id) return;
+      const viewer = this.players.get(pid);
+      if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+    });
+  }
+
+  /** Build PLAYER_REMOTE_STANCE packet. Layout: [entityId, stanceIdx]. */
+  private encodeRemoteStance(subject: Player): Uint8Array {
+    const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
+    const idx = Math.max(0, stances.indexOf(subject.stance));
+    return encodePacket(ServerOpcode.PLAYER_REMOTE_STANCE, subject.id, idx);
+  }
+
+  /** Send a subject player's stance to one viewer (for chunk-entry resync). */
+  private sendRemoteStance(viewer: Player, subject: Player): void {
+    try { viewer.ws.sendBinary(this.encodeRemoteStance(subject)); } catch { /* connection closed */ }
+  }
+
+  /** Broadcast a subject player's stance to every viewer near them on the same
+   *  map. Called on stance change so other clients can pick the right attack
+   *  animation (e.g. 2H + aggressive → smash). */
+  private broadcastRemoteStance(subject: Player): void {
+    const cm = this.chunkManagers.get(subject.currentMapLevel);
+    if (!cm) return;
+    const packet = this.encodeRemoteStance(subject);
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (pid === subject.id) return;
       const viewer = this.players.get(pid);

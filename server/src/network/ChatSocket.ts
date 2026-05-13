@@ -219,7 +219,12 @@ function handleCommand(
     case '/give': {
       if (denyIfNotAdmin(ws, from)) return;
       const itemId = parseInt(parts[1]);
-      const quantity = parseInt(parts[2]) || 1;
+      const rawQty = parseInt(parts[2]);
+      // Clamp to [1, MAX_STACK]. parseInt can return huge numbers (e.g.
+      // `/give 1 9999999999`) which propagate into the inventory cap logic.
+      // MAX_STACK matches the bank-protocol encoding (2^31-1).
+      const MAX_STACK = 0x7FFFFFFF;
+      const quantity = (!isFinite(rawQty) || rawQty < 1) ? 1 : Math.min(rawQty, MAX_STACK);
       if (!isFinite(itemId)) {
         ws.send(JSON.stringify({ type: 'system', message: 'Usage: /give <itemId> [quantity]' }));
         return;

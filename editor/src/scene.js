@@ -235,8 +235,8 @@ function tuneModelLighting(model) {
   let selectedNpcSpawn = null
   const npcSpawnGroup = new TransformNode('npcSpawnGroup', scene)
 
-  function addNpcSpawn(npcId, x, z, wanderRange, id) {
-    const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange }
+  function addNpcSpawn(npcId, x, z, wanderRange, id, aggressive) {
+    const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: aggressive ?? null }
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
     return spawn
@@ -249,7 +249,13 @@ function tuneModelLighting(model) {
   }
 
   function serializeNpcSpawns() {
-    return npcSpawns.map(s => ({ id: s.id, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange }))
+    return npcSpawns.map(s => {
+      // Only emit `aggressive` when overridden; null/undefined means
+      // "use the NpcDef default" and shouldn't bloat the save file.
+      const out = { id: s.id, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange }
+      if (s.aggressive === true || s.aggressive === false) out.aggressive = s.aggressive
+      return out
+    })
   }
 
   function loadNpcSpawns(data) {
@@ -257,7 +263,7 @@ function tuneModelLighting(model) {
     _npcSpawnNextId = 1
     selectedNpcSpawn = null
     for (const s of data || []) {
-      addNpcSpawn(s.npcId, s.x, s.z, s.wanderRange ?? 3, s.id)
+      addNpcSpawn(s.npcId, s.x, s.z, s.wanderRange ?? 3, s.id, s.aggressive ?? null)
     }
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
@@ -334,6 +340,19 @@ function tuneModelLighting(model) {
       row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}</span></span>`
       row.addEventListener('click', () => {
         selectedNpcSpawn = spawn
+        // Sync editor sidebar to the selected spawn (slider + aggressive box)
+        // so toggling between spawns reflects each one's overrides.
+        const sel = sidebar.querySelector('#npcTypeSelect')
+        if (sel) sel.value = spawn.npcId
+        const slider = sidebar.querySelector('#wanderRangeSlider')
+        if (slider) { slider.value = spawn.wanderRange; sidebar.querySelector('#wanderRangeLabel').textContent = spawn.wanderRange }
+        const aggCb = sidebar.querySelector('#aggressiveCheckbox')
+        if (aggCb) {
+          const sdef = npcDefs.find(d => d.id === spawn.npcId)
+          aggCb.checked = (spawn.aggressive === true || spawn.aggressive === false)
+            ? spawn.aggressive
+            : !!sdef?.aggressive
+        }
         // Focus camera on spawn
         camera.target = new Vector3(spawn.x, map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z)), spawn.z)
         rebuildNpcSpawnMeshes()
@@ -1165,6 +1184,11 @@ let paintBrushRadius = 1
       <select id="npcTypeSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;"></select>
       <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">3</span></label>
       <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="3" style="width:100%;margin-top:3px;" />
+      <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input id="aggressiveCheckbox" type="checkbox" />
+        Aggressive (hunts players within 3 tiles)
+      </label>
+      <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">Disables if player is &gt;20% above NPC's combat level. Per-spawn override of the NPC type default.</div>
       <div class="hint" style="margin-top:6px;">Click to place · Shift+Click to remove<br>Click existing spawn to select · Delete to remove</div>
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;border-top:1px solid #444;padding-top:8px;">Spawns <span id="npcSpawnCount">0</span></div>
       <div id="npcSpawnList" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
@@ -1354,6 +1378,16 @@ let paintBrushRadius = 1
     if (selectedNpcSpawn) {
       selectedNpcSpawn.wanderRange = parseInt(e.target.value)
       rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+    }
+  })
+
+  sidebar.querySelector('#aggressiveCheckbox')?.addEventListener('change', (e) => {
+    // Persist as a hard boolean override so the spawn always wins over the
+    // NpcDef default once the user has touched the checkbox. To revert to
+    // "follow def", they delete + re-place the spawn.
+    if (selectedNpcSpawn) {
+      selectedNpcSpawn.aggressive = e.target.checked
       refreshNpcSpawnList()
     }
   })
@@ -2414,7 +2448,7 @@ let paintBrushRadius = 1
 
     // Import NPC spawns shifted by offset
     for (const s of data.npcSpawns || []) {
-      addNpcSpawn(s.npcId, s.x + offsetX, s.z + offsetZ, s.wanderRange ?? 3)
+      addNpcSpawn(s.npcId, s.x + offsetX, s.z + offsetZ, s.wanderRange ?? 3, undefined, s.aggressive ?? null)
     }
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
@@ -4852,7 +4886,7 @@ function applyToolAtTile(tile, eventLike = null) {
         placedObjects: mapData.placedObjects || [],
         layers: mapData.layers || [{ id: 'layer_0', name: 'Layer 1', visible: true }],
         activeLayerId: mapData.activeLayerId || 'layer_0',
-        npcSpawns: (spawns.npcs || []).map((s, i) => ({ id: i + 1, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange ?? 3 })),
+        npcSpawns: (spawns.npcs || []).map((s, i) => ({ id: i + 1, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange ?? 3, aggressive: s.aggressive ?? null })),
         itemSpawns: (spawns.items || []).map((s, i) => ({ id: i + 1, itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity ?? 1 })),
         collisionData: walls,
         biomesData: biomes
@@ -4883,9 +4917,14 @@ function applyToolAtTile(tile, eventLike = null) {
       transitions: []
     }
 
-    // Build spawns from editor NPC + item spawns
+    // Build spawns from editor NPC + item spawns. `aggressive` is only emitted
+    // when explicitly overridden — null/undefined means "use NpcDef default".
     const spawns = {
-      npcs: npcSpawns.map(s => ({ npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange })),
+      npcs: npcSpawns.map(s => {
+        const out = { npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange }
+        if (s.aggressive === true || s.aggressive === false) out.aggressive = s.aggressive
+        return out
+      }),
       objects: [],
       items: itemSpawns.map(s => ({ itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity }))
     }
@@ -5914,17 +5953,27 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         if (sel) sel.value = picked.npcId
         const slider = sidebar.querySelector('#wanderRangeSlider')
         if (slider) { slider.value = picked.wanderRange; sidebar.querySelector('#wanderRangeLabel').textContent = picked.wanderRange }
+        const aggCb = sidebar.querySelector('#aggressiveCheckbox')
+        if (aggCb) {
+          // null override = inherit NpcDef default; reflect that in the box.
+          const def = npcDefs.find(d => d.id === picked.npcId)
+          aggCb.checked = (picked.aggressive === true || picked.aggressive === false)
+            ? picked.aggressive
+            : !!def?.aggressive
+        }
         rebuildNpcSpawnMeshes()
         refreshNpcSpawnList()
         updateToolUI()
         return
       }
-      // Place new spawn
+      // Place new spawn — use the current checkbox state as the per-spawn
+      // override so map-makers can toggle the box, then drop a row of mobs.
       const npcId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value)
       const wanderRange = parseInt(sidebar.querySelector('#wanderRangeSlider')?.value) || 3
+      const aggressive = sidebar.querySelector('#aggressiveCheckbox')?.checked ?? null
       if (!npcId) return
       pushUndoState('spawns')
-      const spawn = addNpcSpawn(npcId, tile.x + 0.5, tile.z + 0.5, wanderRange)
+      const spawn = addNpcSpawn(npcId, tile.x + 0.5, tile.z + 0.5, wanderRange, undefined, aggressive)
       selectedNpcSpawn = spawn
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()

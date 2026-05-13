@@ -246,6 +246,12 @@ export interface SpawnEntry {
   x: number;
   z: number;
   wanderRange?: number;
+  /** Per-spawn aggression override. When omitted, the NpcDef's `aggressive`
+   *  flag is used. When set on the spawn, it overrides the def — so a single
+   *  map can have a "hostile" Goblin in one biome and a "tame" Goblin in
+   *  another from the same NpcDef. Aggressive NPCs auto-target any player
+   *  within 3 tiles whose combat level isn't more than 1.2× the NPC's. */
+  aggressive?: boolean;
   /** Per-spawn appearance override. When set, this NPC renders as a 3D
    *  CharacterEntity (subject to LOD + concurrent caps) using these colors,
    *  hair, and skin. Two NPCs of the same npcId can look different. */

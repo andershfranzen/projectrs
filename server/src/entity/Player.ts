@@ -291,16 +291,23 @@ export class Player extends Entity {
   }
 
   /** Returns true if `quantity` of `itemId` can be added without losing any.
-   *  Stackable: 1 slot if no existing stack, 0 if stack exists. Non-stackable: `quantity` slots. */
+   *  Stackable: 1 slot if no existing stack, 0 if stack exists. Non-stackable: `quantity` slots.
+   *  Also guards against MAX_STACK overflow — a stack already at MAX_STACK can't
+   *  accept anything more, and a stack within headroom < quantity can't fit the
+   *  full request. Without this, addItem may clamp + partial-complete and any
+   *  caller that pre-flighted with canFit can't tell the difference. */
   canFit(itemId: number, quantity: number, itemDefs?: Map<number, ItemDef>): boolean {
     if (quantity <= 0) return true;
     const def = itemDefs?.get(itemId);
     const stackable = def?.stackable === true;
     if (stackable) {
       for (const s of this.inventory) {
-        if (s && s.itemId === itemId) return true;
+        if (s && s.itemId === itemId) {
+          const headroom = MAX_STACK - s.quantity;
+          return headroom >= quantity;
+        }
       }
-      return this.freeSlots() >= 1;
+      return this.freeSlots() >= 1 && quantity <= MAX_STACK;
     }
     return this.freeSlots() >= quantity;
   }

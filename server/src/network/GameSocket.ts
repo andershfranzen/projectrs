@@ -23,8 +23,16 @@ export function handleGameSocketOpen(
   try { world.getMap(mapLevel); } catch { mapLevel = 'kcmap'; }
   const map = world.getMap(mapLevel);
   const defaultSpawn = map.findSpawnPoint();
-  const spawnX = saved ? saved.x : defaultSpawn.x;
-  const spawnZ = saved ? saved.z : defaultSpawn.z;
+  // Sanitize saved coordinates: a corrupted DB row (or malicious migration) can
+  // hold any number, including NaN, negative values, or values past the map
+  // bounds. Without validation, such a row would respawn the player far off-map
+  // where chunk loaders silently fail.
+  const savedX = saved?.x;
+  const savedZ = saved?.z;
+  const savedXValid = typeof savedX === 'number' && isFinite(savedX) && savedX >= 0 && savedX < map.width;
+  const savedZValid = typeof savedZ === 'number' && isFinite(savedZ) && savedZ >= 0 && savedZ < map.height;
+  const spawnX = saved && savedXValid && savedZValid ? savedX! : defaultSpawn.x;
+  const spawnZ = saved && savedXValid && savedZValid ? savedZ! : defaultSpawn.z;
   console.log(`[GameSocket] Player "${username}" acct=${accountId} saved=${!!saved} savedPos=(${saved?.x}, ${saved?.z}) defaultSpawn=(${defaultSpawn.x}, ${defaultSpawn.z}) final=(${spawnX}, ${spawnZ})`);
 
   const player = new Player(username, spawnX, spawnZ, ws, accountId);
@@ -44,7 +52,13 @@ export function handleGameSocketOpen(
     while (bank.length < player.bank.length) bank.push(null);
     player.bank = bank.slice(0, player.bank.length);
     player.currentMapLevel = mapLevel; // use validated mapLevel, not raw saved value
-    player.currentFloor = saved.floor;
+    // Clamp floor to the supported range. A corrupted DB row could carry a
+    // floor of 99 or NaN — both would defeat the floor recovery loop below
+    // (which only iterates 0..3) and leave the player suspended above ground.
+    const savedFloor = saved.floor;
+    player.currentFloor = (typeof savedFloor === 'number' && isFinite(savedFloor))
+      ? Math.max(0, Math.min(3, Math.floor(savedFloor)))
+      : 0;
     player.reportedY = saved.y; // restore visual height for spawn
     player.syncHealthFromSkills();
 
@@ -110,6 +124,14 @@ export function handleGameSocketMessage(
 ): void {
   if (typeof message === 'string') return;
 
+  // Rate limit BEFORE parsing so a malformed-packet flood costs the attacker
+  // their rate budget. Without this, garbage frames are caught by the try/catch
+  // below without consuming any budget, letting an attacker burn CPU on decode.
+  const playerId = ws.data.playerId;
+  if (!playerId) return;
+  const player = world.getPlayer(playerId);
+  if (player && !player.checkRateLimit()) return;
+
   // Empty / malformed frames blow up decodePacket (view.getUint8(0) RangeError
   // on a 0-byte buffer). Bun's WS layer usually rejects empty frames but a
   // hostile client can still ship junk. Catch + close instead of crashing the
@@ -123,12 +145,6 @@ export function handleGameSocketMessage(
     try { ws.close(1003, 'malformed packet'); } catch {}
     return;
   }
-  const playerId = ws.data.playerId;
-  if (!playerId) return;
-
-  // Rate limit: drop excessive messages to prevent spam/abuse
-  const player = world.getPlayer(playerId);
-  if (player && !player.checkRateLimit()) return;
 
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE: {

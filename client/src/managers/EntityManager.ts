@@ -107,6 +107,10 @@ export class EntityManager {
   readonly remoteAppearances: Map<number, PlayerAppearance> = new Map();
   /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape]. */
   readonly remoteEquipment: Map<number, number[]> = new Map();
+  /** Combat stance per remote entityId. Used by GameManager.getPlayerAttackAnimName
+   *  to pick the correct attack anim (e.g. 2H + aggressive → smash). Stored as
+   *  the string form ('accurate' | 'aggressive' | 'defensive' | 'controlled'). */
+  readonly remoteStances: Map<number, string> = new Map();
   readonly remoteCombatTargets: Map<number, number> = new Map();
 
   // NPCs
@@ -273,6 +277,7 @@ export class EntityManager {
         { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
         { name: 'attack_slash_aggressive', path: '/Character models/new animations/attack_slash.glb' },
         { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
+        { name: 'attack_2h_smash',         path: '/Character models/new animations/2h smash.glb' },
         { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
         { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
         { name: 'mine',                    path: '/Character models/new animations/mining.glb' },
@@ -403,6 +408,7 @@ export class EntityManager {
       this.remoteWalkUntil.delete(entityId);
       this.remoteAppearances.delete(entityId);
       this.remoteEquipment.delete(entityId);
+      this.remoteStances.delete(entityId);
       const name = this.playerNames.get(entityId);
       if (name) this.nameToEntityId.delete(name.toLowerCase());
       this.playerNames.delete(entityId);
@@ -582,6 +588,7 @@ export class EntityManager {
     this.remoteWalkUntil.clear();
     this.remoteAppearances.clear();
     this.remoteEquipment.clear();
+    this.remoteStances.clear();
 
     for (const [, sprite] of this.npcSprites) sprite.dispose();
     this.npcSprites.clear();

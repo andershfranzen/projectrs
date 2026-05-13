@@ -218,18 +218,24 @@ export class GameDatabase {
     // is_admin=1. Once any admin exists, new signups always get is_admin=0.
     // Keeps the historical "mogn is the dev admin" behavior working without
     // hardcoding the username outside this one bootstrap path.
-    const adminExists = (this.db.query('SELECT COUNT(*) as n FROM accounts WHERE is_admin = 1').get() as { n: number }).n > 0;
-    const isAdmin = !adminExists && username.toLowerCase() === 'mogn' ? 1 : 0;
-
-    const result = this.db.query('INSERT INTO accounts (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, passwordHash, isAdmin);
-    const accountId = Number(result.lastInsertRowid);
-
-    // Create initial player state with starter tools
+    //
+    // Race-safe: the count+insert pair runs inside a single IMMEDIATE
+    // transaction so two concurrent "mogn" signups can't both see zero admins
+    // and both get is_admin=1. SQLite serializes IMMEDIATE writes.
     const starterInventory = JSON.stringify([
       { itemId: 31, quantity: 1 },
       { itemId: 33, quantity: 1 }
     ]);
-    this.db.query('INSERT INTO player_state (account_id, inventory) VALUES (?, ?)').run(accountId, starterInventory);
+    const wantsAdmin = username.toLowerCase() === 'mogn';
+    let accountId = 0;
+    let isAdmin = 0;
+    this.db.transaction(() => {
+      const adminCount = (this.db.query('SELECT COUNT(*) as n FROM accounts WHERE is_admin = 1').get() as { n: number }).n;
+      isAdmin = (adminCount === 0 && wantsAdmin) ? 1 : 0;
+      const result = this.db.query('INSERT INTO accounts (username, password_hash, is_admin) VALUES (?, ?, ?)').run(username, passwordHash, isAdmin);
+      accountId = Number(result.lastInsertRowid);
+      this.db.query('INSERT INTO player_state (account_id, inventory) VALUES (?, ?)').run(accountId, starterInventory);
+    }).immediate();
 
     // Create session
     const token = this.createSession(accountId, deviceId);
@@ -345,20 +351,39 @@ export class GameDatabase {
       skills = initSkills();
     }
 
-    // Parse inventory
+    // Parse inventory. Post-load validation: a corrupted DB row (or hostile
+    // migration) could carry negative quantities, non-integer item IDs, or
+    // quantities past MAX_STACK. Drop bad entries — silently clamping a 4B
+    // coin stack to 2.1B is the kinder behavior, but inviting an attacker to
+    // craft a save row that imports as a 2.1B stack is worse. Same shape for
+    // equipment/bank below.
+    const MAX_STACK = 0x7FFFFFFF;
+    const sanitizeSlot = (s: unknown): { itemId: number; quantity: number } | null => {
+      if (!s || typeof s !== 'object') return null;
+      const o = s as { itemId?: unknown; quantity?: unknown };
+      const id = o.itemId;
+      const q = o.quantity;
+      if (typeof id !== 'number' || !Number.isInteger(id) || id <= 0) return null;
+      if (typeof q !== 'number' || !Number.isInteger(q) || q <= 0 || q > MAX_STACK) return null;
+      return { itemId: id, quantity: q };
+    };
     let inventory: ({ itemId: number; quantity: number } | null)[];
     try {
-      inventory = JSON.parse(row.inventory);
+      const raw = JSON.parse(row.inventory) as unknown[];
+      inventory = Array.isArray(raw) ? raw.map(sanitizeSlot) : new Array(28).fill(null);
     } catch {
       inventory = new Array(28).fill(null);
     }
 
-    // Parse equipment
+    // Parse equipment — same validation
     let equipment: Map<EquipSlot, number>;
     try {
-      const saved = JSON.parse(row.equipment) as Record<string, number>;
+      const saved = JSON.parse(row.equipment) as Record<string, unknown>;
       equipment = new Map();
+      const validSlots: Set<string> = new Set(['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape']);
       for (const [slot, itemId] of Object.entries(saved)) {
+        if (!validSlots.has(slot)) continue;
+        if (typeof itemId !== 'number' || !Number.isInteger(itemId) || itemId <= 0) continue;
         equipment.set(slot as EquipSlot, itemId);
       }
     } catch {
@@ -377,9 +402,11 @@ export class GameDatabase {
 
     // Parse bank — JSON array of slots, possibly null. Older accounts may
     // have no bank row yet (column was added by migration); fall back to empty.
+    // Same sanitization as inventory.
     let bank: ({ itemId: number; quantity: number } | null)[];
     try {
-      bank = row.bank ? JSON.parse(row.bank) : [];
+      const raw = row.bank ? JSON.parse(row.bank) as unknown[] : [];
+      bank = Array.isArray(raw) ? raw.map(sanitizeSlot) : [];
     } catch {
       bank = [];
     }

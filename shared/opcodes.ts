@@ -112,6 +112,12 @@ export enum ServerOpcode {
    *  [npcEntityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape].
    *  itemId=0 → empty slot. Broadcast on chunk-entry only. */
   NPC_EQUIPMENT = 74,
+  /** Combat stance of a remote player. Layout: [entityId, stanceIdx]
+   *  where stanceIdx maps to the same ['accurate','aggressive','defensive','controlled']
+   *  array used by PLAYER_SET_STANCE. Broadcast on stance change + chunk-entry
+   *  resync so other clients can pick the correct attack animation (e.g.
+   *  2H weapon + aggressive → smash anim). */
+  PLAYER_REMOTE_STANCE = 75,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].

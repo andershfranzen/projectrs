@@ -126,6 +126,16 @@ export function combatLevel(skills: SkillBlock): number {
   return Math.floor(base + Math.max(melee, range, mage));
 }
 
+/** Combat level for an NPC, derived from their flat stat block. NPCs don't have
+ *  separate level/xp; their stat values stand in for "level" in the player
+ *  formula, and `health` plays the hitpoints-level role. Ranged/magic terms
+ *  are dropped — NPCs are melee-only at the moment. */
+export function npcCombatLevel(npc: { health: number; attack: number; defence: number; strength: number }): number {
+  const base = 0.25 * (npc.defence + npc.health);
+  const melee = 0.325 * (npc.attack + npc.strength);
+  return Math.floor(base + melee);
+}
+
 // Melee stance types
 export type MeleeStance = 'accurate' | 'aggressive' | 'defensive' | 'controlled';
 

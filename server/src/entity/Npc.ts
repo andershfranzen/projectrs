@@ -49,6 +49,10 @@ export class Npc extends Entity {
 
   readonly wanderRangeOverride?: number;
 
+  /** Per-spawn aggression flag. When set on the spawn it overrides
+   *  NpcDef.aggressive; null means "fall through to the def default". */
+  readonly aggressiveOverride: boolean | null;
+
   constructor(
     def: NpcDef,
     x: number,
@@ -56,6 +60,7 @@ export class Npc extends Entity {
     wanderRange?: number,
     appearance?: PlayerAppearance | null,
     equipment?: number[] | null,
+    aggressive?: boolean | null,
   ) {
     super(def.name, x, z, def.health);
     this.npcId = def.id;
@@ -65,6 +70,12 @@ export class Npc extends Entity {
     this.wanderRangeOverride = wanderRange;
     this.appearance = appearance ?? null;
     this.equipment = equipment ?? null;
+    this.aggressiveOverride = aggressive ?? null;
+  }
+
+  /** Effective aggression: spawn-level flag wins if set, otherwise NpcDef. */
+  get aggressive(): boolean {
+    return this.aggressiveOverride !== null ? this.aggressiveOverride : this.def.aggressive;
   }
 
   get wanderRange(): number {
@@ -156,7 +167,7 @@ export class Npc extends Entity {
       const dz = targetZ - this.position.y;
       const dist = Math.max(Math.abs(dx), Math.abs(dz));
 
-      if (!this.def.aggressive) {
+      if (!this.aggressive) {
         if (dist > 1.5) {
           this.combatTarget = null;
           this.returning = true;

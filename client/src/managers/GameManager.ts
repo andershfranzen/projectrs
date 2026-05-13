@@ -38,7 +38,7 @@ import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, type WorldObjectDef, type ItemDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -134,6 +134,7 @@ export class GameManager {
   private blockedObjectTiles: Set<string> = new Set();
   private objectDefsCache: Map<number, WorldObjectDef> = new Map();
   private itemDefsCache: Map<number, ItemDef> = new Map();
+  private npcDefsCache: Map<number, NpcDef> = new Map();
   // Biome fog overrides — loaded per map. Fog lerps toward the biome under the player.
   private biomesFile: BiomesFile | null = null;
   private biomeById: Map<number, BiomeDef> = new Map();
@@ -262,7 +263,36 @@ export class GameManager {
       if (e.button !== 0) return;
       this.lastClickX = e.clientX;
       this.lastClickY = e.clientY;
+
+      // OSRS-style left-click auto-attack: if the cursor is over an NPC and
+      // the player is at least 10 combat levels above it, treat the click as
+      // Attack instead of letting InputManager turn it into a walk-to-tile.
+      // Lower-level players still need right-click → Attack so they don't
+      // accidentally engage scary mobs while pathing past them.
+      const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+      if (pick?.hit && pick.pickedMesh) {
+        const entityId = this.findNpcEntityIdFromPick(pick.pickedMesh, pick.pickedMesh.name);
+        if (entityId != null) {
+          const npcDefId = this.entities.npcDefs.get(entityId);
+          if (!this.isNonAttackableNpc(npcDefId)) {
+            const npcLvl = this.npcLevelFor(npcDefId);
+            const myLvl = this.getLocalCombatLevel();
+            if (npcLvl > 0 && myLvl >= npcLvl + 10) {
+              this.attackNpc(entityId);
+              // Suppress InputManager's ground-click handling for this event.
+              // stopImmediatePropagation also stops same-phase listeners; we
+              // use capture so it runs before Babylon's bubble-phase handler.
+              e.stopImmediatePropagation();
+              e.preventDefault();
+              return;
+            }
+          }
+        }
+      }
     }, true);
+
+    // Hover tooltip — shows "Name (level-N)" when the cursor is over an NPC.
+    this.setupNpcTooltip(canvas);
 
     // Right-click context menu for NPCs/items
     this.setupContextMenu(canvas);
@@ -544,6 +574,15 @@ export class GameManager {
       console.warn('Failed to load item definitions:', e);
     }
     try {
+      const res = await fetch('/data/npcs.json');
+      const defs: NpcDef[] = await res.json();
+      for (const def of defs) {
+        this.npcDefsCache.set(def.id, def);
+      }
+    } catch (e) {
+      console.warn('Failed to load NPC definitions:', e);
+    }
+    try {
       const res = await fetch('/data/gear-overrides.json');
       const overrides: Record<string, GearOverride> = await res.json();
       this.gearOverrides.clear();
@@ -588,6 +627,7 @@ export class GameManager {
     attack_slash:            0.5,
     attack_slash_aggressive: 0.5,
     attack_2h_slash:         0.5,
+    attack_2h_smash:         0.5,
     attack_punch:            0.4,
     kick:                    0.5,
     bow_attack:              0.6,
@@ -596,25 +636,37 @@ export class GameManager {
   /**
    * Choose the correct attack animation name based on stance and weapon.
    * - Weapon + aggressive stance → 'attack_slash_aggressive' (hand-authored slash)
+   * - 2H weapon + aggressive     → 'attack_2h_smash'
+   * - 2H weapon + other stance   → 'attack_2h_slash'
    * - Weapon + any other stance  → 'attack_slash' (default downward)
    * - No weapon + aggressive     → 'kick'
    * - No weapon + other stance   → 'attack_punch'
-   * For remote players, always use 'attack_punch' (we don't know their stance/equip).
+   * Remote players' weapon + stance come from PLAYER_REMOTE_EQUIPMENT and
+   * PLAYER_REMOTE_STANCE caches; missing cache entries fall back to unarmed.
    */
   private getPlayerAttackAnimName(attackerId: number): string {
+    let weaponId = 0;
+    let stance = 'accurate';
     if (attackerId === this.localPlayerId && this.sidePanel) {
-      const weaponId = this.sidePanel.getEquipItem(0);
-      const stance = this.sidePanel.getStance();
-      if (weaponId > 0) {
-        const weaponDef = this.itemDefsCache.get(weaponId);
-        const style = weaponDef?.weaponStyle;
-        if (style === 'bow' || style === 'crossbow') return 'bow_attack';
-        if (weaponDef?.twoHanded) return 'attack_2h_slash';
-        return stance === 'aggressive' ? 'attack_slash_aggressive' : 'attack_slash';
-      }
-      if (stance === 'aggressive') return 'kick';
+      weaponId = this.sidePanel.getEquipItem(0);
+      stance = this.sidePanel.getStance();
+    } else if (this.entities.remotePlayers.has(attackerId)) {
+      // Equipment slot 0 = weapon (see PLAYER_REMOTE_EQUIPMENT layout).
+      const eq = this.entities.remoteEquipment.get(attackerId);
+      weaponId = eq?.[0] ?? 0;
+      stance = this.entities.remoteStances.get(attackerId) ?? 'accurate';
+    } else {
+      // NPC or unknown attacker — default unarmed punch.
       return 'attack_punch';
     }
+    if (weaponId > 0) {
+      const weaponDef = this.itemDefsCache.get(weaponId);
+      const style = weaponDef?.weaponStyle;
+      if (style === 'bow' || style === 'crossbow') return 'bow_attack';
+      if (weaponDef?.twoHanded) return stance === 'aggressive' ? 'attack_2h_smash' : 'attack_2h_slash';
+      return stance === 'aggressive' ? 'attack_slash_aggressive' : 'attack_slash';
+    }
+    if (stance === 'aggressive') return 'kick';
     return 'attack_punch';
   }
 
@@ -1099,6 +1151,7 @@ export class GameManager {
         { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
         { name: 'attack_slash_aggressive', path: '/Character models/new animations/attack_slash.glb' },
         { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
+        { name: 'attack_2h_smash',         path: '/Character models/new animations/2h smash.glb' },
         // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no weapon
         { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
         { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
@@ -1213,24 +1266,52 @@ export class GameManager {
         const dx = serverX - this.playerX;
         const dz = serverZ - this.playerZ;
         if (dx * dx + dz * dz > 1.5 * 1.5) {
+          // The server is far enough from our local visual that a snap is
+          // warranted. But blowing away the entire path turns a small
+          // intermittent desync (server tick burst, brief frame stutter)
+          // into a full "you stop walking somewhere random" experience.
+          // First, try to find the server's tile inside our active path —
+          // if it's there, the server is just running ahead on the same
+          // route, and we can fast-forward the visual to that tile and
+          // keep walking the rest of the path uninterrupted.
+          const sTx = Math.floor(serverX);
+          const sTz = Math.floor(serverZ);
+          let foundIndex = -1;
+          for (let i = 0; i < this.path.length; i++) {
+            const wp = this.path[i];
+            if (Math.floor(wp.x) === sTx && Math.floor(wp.z) === sTz) {
+              foundIndex = i;
+              break;
+            }
+          }
           this.playerX = serverX;
           this.playerZ = serverZ;
-          // Cancel any in-flight local path; the server may have truncated
-          // it or we're catching up after a freeze. Re-clicking will repath.
-          this.path = [];
-          this.pathIndex = 0;
-          this.tileProgress = 0;
-          this.tileFrom = { x: serverX, z: serverZ };
-          if (this.localPlayer) {
-            this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
-            this.localPlayer.stopWalking();
+          if (foundIndex >= 0) {
+            // Server is on our path: skip ahead, finish walking the rest.
+            this.pathIndex = foundIndex + 1;
+            this.tileProgress = 0;
+            this.tileFrom = { x: serverX, z: serverZ };
+            if (this.localPlayer) {
+              this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
+            }
+            // Don't sendMove([]) — server is correctly walking the same
+            // path we are. No halt needed.
+          } else {
+            // Server is somewhere we don't have a path to (tab hidden +
+            // server-side chase reroute, dropped packet, etc.). Full reset:
+            // halt, clear path, force a fresh click to re-engage. Without
+            // sendMove([]), the server would keep walking its old queue
+            // and produce a new >1.5 delta every tick.
+            this.path = [];
+            this.pathIndex = 0;
+            this.tileProgress = 0;
+            this.tileFrom = { x: serverX, z: serverZ };
+            if (this.localPlayer) {
+              this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
+              this.localPlayer.stopWalking();
+            }
+            this.network.sendMove([]);
           }
-          // Tell the server to halt too. Without this, the server keeps
-          // walking its moveQueue (the original path the client sent before
-          // it lost sync), so each subsequent server tick produces another
-          // 1-tile delta and forces another snap — visible as a 1+ second
-          // string of jumps instead of one clean catch-up.
-          this.network.sendMove([]);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
           this.localAppearance = syncAppearance;
@@ -1304,6 +1385,15 @@ export class GameManager {
       if (remote && remote.isReady) {
         this.applyRemoteEquipmentArray(remote, slots);
       }
+    });
+
+    this.network.on(ServerOpcode.PLAYER_REMOTE_STANCE, (_op, v) => {
+      // Layout: [entityId, stanceIdx]. Index matches the server's stance order.
+      const entityId = v[0];
+      const idx = v[1] ?? 0;
+      const stances = ['accurate', 'aggressive', 'defensive', 'controlled'];
+      const stance = stances[idx] ?? 'accurate';
+      this.entities.remoteStances.set(entityId, stance);
     });
 
     this.network.on(ServerOpcode.NPC_SYNC, (_op, v) => {
@@ -2040,10 +2130,12 @@ export class GameManager {
         const entityId = pickedNpcEntityId;
         const npcDefId = this.entities.npcDefs.get(entityId);
         const name = NPC_NAMES[npcDefId || 0] || 'NPC';
-        if (npcDefId === 8 || npcDefId === 11 || npcDefId === 12 || npcDefId === 13 || npcDefId === 14) {
+        if (this.isNonAttackableNpc(npcDefId)) {
           options.push({ label: `Trade ${name}`, action: () => this.talkToNpc(entityId) });
         } else {
-          options.push({ label: `Attack ${name}`, action: () => this.attackNpc(entityId) });
+          const lvl = this.npcLevelFor(npcDefId);
+          const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
+          options.push({ label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) });
         }
       }
 
@@ -2205,7 +2297,15 @@ export class GameManager {
       item.style.cssText = `padding: 4px 12px; color: #ffcc00; cursor: pointer;`;
       item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
       item.addEventListener('mouseleave', () => item.style.background = 'transparent');
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (ev) => {
+        // Update the cached click position so the per-action cursor burst
+        // (attackNpc, pickupItem, interactObject, etc.) spawns at the menu
+        // item the user actually clicked — without this, the burst fires
+        // at lastClickX/Y, which only updates on left-clicks on the canvas
+        // and is stale (often the previous walk-click) after a right-click
+        // context-menu interaction.
+        this.lastClickX = ev.clientX;
+        this.lastClickY = ev.clientY;
         opt.action();
         this.hideContextMenu();
       });
@@ -2229,10 +2329,120 @@ export class GameManager {
     }
   }
 
+  /** Set of NpcDef IDs that aren't valid attack targets (shopkeepers, smiths,
+   *  bankers). Trade option is shown instead. Banker (16) is included here
+   *  even though the right-click context still falls through to "Attack" for
+   *  it — that's a separate pre-existing bug; for our auto-attack gating we
+   *  treat them all as non-combat. */
+  private isNonAttackableNpc(npcDefId: number | undefined): boolean {
+    return npcDefId === 8 || npcDefId === 11 || npcDefId === 12 || npcDefId === 13 || npcDefId === 14 || npcDefId === 16;
+  }
+
+  /** Walk picked-mesh parent chain looking for an NPC tag (set by Npc3DEntity
+   *  and CharacterEntity metadata); fall back to mesh-name matching on
+   *  SpriteEntity/Npc3DEntity. Returns the entityId or null. */
+  private findNpcEntityIdFromPick(pickedMesh: TransformNode, meshName: string): number | null {
+    let walk: TransformNode | null = pickedMesh;
+    while (walk) {
+      if (walk.metadata?.kind === 'npc' && typeof walk.metadata?.entityId === 'number') {
+        return walk.metadata.entityId;
+      }
+      walk = walk.parent as TransformNode | null;
+    }
+    for (const [entityId, sprite] of this.entities.npcSprites) {
+      if (sprite instanceof CharacterEntity) continue;
+      if (sprite.getMesh()?.name === meshName) return entityId;
+    }
+    return null;
+  }
+
+  /** Combat level for the local player. Reads skill levels from the side
+   *  panel (canonical store) and runs the OSRS-style combat-level formula.
+   *  Returns 0 if skills haven't synced yet. */
+  private getLocalCombatLevel(): number {
+    if (!this.sidePanel) return 0;
+    const get = (id: string) => this.sidePanel!.getSkillLevel(id as any);
+    const defence = get('defence');
+    const hitpoints = get('hitpoints');
+    const accuracy = get('accuracy');
+    const strength = get('strength');
+    const archery = get('archery');
+    const goodmagic = get('goodmagic');
+    const evilmagic = get('evilmagic');
+    const base = 0.25 * (defence + hitpoints);
+    const melee = 0.325 * (accuracy + strength);
+    const range = 0.325 * (Math.floor(archery / 2) + archery);
+    const magicLvl = Math.max(goodmagic, evilmagic);
+    const mage = 0.325 * (Math.floor(magicLvl / 2) + magicLvl);
+    return Math.floor(base + Math.max(melee, range, mage));
+  }
+
+  /** Combat level for an NPC by defId, or 0 if unknown. */
+  private npcLevelFor(npcDefId: number | undefined): number {
+    if (npcDefId == null) return 0;
+    const def = this.npcDefsCache.get(npcDefId);
+    if (!def) return 0;
+    return npcCombatLevel(def);
+  }
+
+  private npcTooltipEl: HTMLDivElement | null = null;
+  private setupNpcTooltip(canvas: HTMLCanvasElement): void {
+    const el = document.createElement('div');
+    el.style.cssText = [
+      'position: fixed', 'pointer-events: none', 'z-index: 999',
+      'background: #1a1410ee', 'border: 1px solid #5a4a35',
+      'color: #ffcc00', 'font: 12px monospace',
+      'padding: 3px 7px', 'display: none', 'white-space: nowrap',
+    ].join('; ');
+    document.body.appendChild(el);
+    this.npcTooltipEl = el;
+
+    let lastPickAt = 0;
+    canvas.addEventListener('pointermove', (e) => {
+      // Throttle: scene.pick walks every pickable mesh; running it on every
+      // raw pointermove (which can fire 100+ times/sec on a high-Hz mouse)
+      // would chew frame budget. 30ms gap = ~33Hz, smooth enough for a
+      // tooltip and harmless to skip a few frames in between.
+      const now = performance.now();
+      if (now - lastPickAt < 30) {
+        el.style.left = `${e.clientX + 14}px`;
+        el.style.top = `${e.clientY + 14}px`;
+        return;
+      }
+      lastPickAt = now;
+      const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+      let label: string | null = null;
+      if (pick?.hit && pick.pickedMesh) {
+        const entityId = this.findNpcEntityIdFromPick(pick.pickedMesh, pick.pickedMesh.name);
+        if (entityId != null) {
+          const npcDefId = this.entities.npcDefs.get(entityId);
+          const name = NPC_NAMES[npcDefId ?? 0] || 'NPC';
+          if (this.isNonAttackableNpc(npcDefId)) {
+            label = name;
+          } else {
+            const lvl = this.npcLevelFor(npcDefId);
+            label = lvl > 0 ? `${name} (level-${lvl})` : name;
+          }
+        }
+      }
+      if (label) {
+        el.textContent = label;
+        el.style.left = `${e.clientX + 14}px`;
+        el.style.top = `${e.clientY + 14}px`;
+        el.style.display = 'block';
+      } else if (el.style.display !== 'none') {
+        el.style.display = 'none';
+      }
+    });
+  }
+
   private attackNpc(npcEntityId: number): void {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.combatTargetId = npcEntityId;
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    // Arm the chase-repath cooldown so updateCombatFollow doesn't re-pathfind
+    // on the very next frame and re-send a near-identical sendMove(). The
+    // 300 ms window matches the throttle elsewhere in updateCombatFollow.
+    this._combatPathTimer = 0.3;
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
@@ -2250,8 +2460,16 @@ export class GameManager {
         this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
+        // Send the path BEFORE the attack packet so the server walks the same
+        // tiles. Otherwise the server's handlePlayerAttackNpc independently
+        // recomputes a path from its authoritative position — that path
+        // diverges from this local one, the server tick advances on its own
+        // queue, and the >1.5-tile divergence guard snaps the local visual
+        // to the server position (visible as a teleport).
+        this.network.sendMove(path);
       }
     }
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
   }
 
   private talkToNpc(npcEntityId: number): void {
@@ -2943,6 +3161,40 @@ export class GameManager {
     const tx = Math.floor(worldX), tz = Math.floor(worldZ);
     const blocked = this.isTileBlocked(tx, tz);
 
+    // Clicking your own tile while walking should halt on that tile.
+    // findPath returns an empty path when start tile == end tile, which the
+    // length-check below silently ignored — so the previous walk kept going.
+    // Treat the click as a stop: end the path at the current tile center,
+    // tell the server to halt too.
+    const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);
+    if (clickedOwnTile) {
+      this.pendingPath = null;
+      this.minimap?.clearDestination();
+      if (this.pathIndex < this.path.length) {
+        // Mid-step: keep the current target tile so the animation completes
+        // the in-progress step and the character lands cleanly on a tile
+        // center rather than freezing between two tiles. The natural
+        // path-finished branch in updateLocalPlayerMovement (~line 3282)
+        // will call stopWalking() when pathIndex catches up.
+        const currentTarget = this.path[this.pathIndex];
+        this.path = [currentTarget];
+        this.pathIndex = 0;
+        // Keep tileProgress / tileFrom so interpolation continues seamlessly.
+        // Send the same one-tile path to the server so its moveQueue ends
+        // on the same tile we're walking to.
+        this.network.sendMove([currentTarget]);
+      } else {
+        // Not walking — just make sure we're idle.
+        this.path = [];
+        this.pathIndex = 0;
+        this.tileProgress = 0;
+        this.tileFrom = { x: this.playerX, z: this.playerZ };
+        this.localPlayer?.stopWalking();
+        this.network.sendMove([]);
+      }
+      return;
+    }
+
     const path = findPath(this.playerX, this.playerZ, worldX, worldZ,
       this.isTileBlocked,
       this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
@@ -3152,8 +3404,22 @@ export class GameManager {
     }
     if (newPath.length > 0) {
       this.path = newPath; this.pathIndex = 0;
+      this.tileProgress = 0;
+      this.tileFrom = { x: this.playerX, z: this.playerZ };
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
+      // Send the re-path to the server so its moveQueue adopts the same
+      // tiles. Without this, the local visual switches to the new path
+      // mid-walk while the server keeps walking the previous one — they
+      // diverge by a tile within ~1s and the snap guard at line 1229 hauls
+      // the visual onto the server position (the "teleport").
+      this.network.sendMove(newPath);
+      // handlePlayerMove on the server clears the combat target on every
+      // PLAYER_MOVE packet (it's the canonical "I want to walk somewhere
+      // else" signal). Re-arm combat immediately so the swing fires when
+      // we arrive — otherwise the player walks to the mob and just stands
+      // there because the server forgot we were attacking.
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
     }
   }
 

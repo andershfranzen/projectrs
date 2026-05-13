@@ -370,14 +370,16 @@ export class CharacterEntity {
 
       // Index modular hair meshes by name for show/hide (must happen before bounds calc).
       // Each hair mesh is skinned to the head bone; nudging mesh.position translates the
-      // rendered hair forward without disturbing the underlying skin weights or skeleton,
-      // and mesh.scaling expands it around the mesh pivot. Tune both constants to taste.
-      const HAIR_FORWARD_OFFSET = 0.01;
+      // rendered hair without disturbing the underlying skin weights or skeleton,
+      // and mesh.scaling expands it around the mesh pivot. Tune all three constants to taste.
+      const HAIR_FORWARD_OFFSET = 0.005; // +Z = forward; was 0.01, pulled back a touch
+      const HAIR_VERTICAL_OFFSET = -0.01; // -Y = down
       const HAIR_SCALE = 1.015;
       for (const mesh of this.meshes) {
         if (mesh.name.startsWith('M_hair_')) {
           this.modularMeshes.set(mesh.name, mesh);
           mesh.position.z += HAIR_FORWARD_OFFSET;
+          mesh.position.y += HAIR_VERTICAL_OFFSET;
           mesh.scaling.scaleInPlace(HAIR_SCALE);
           mesh.setEnabled(false);
         }
