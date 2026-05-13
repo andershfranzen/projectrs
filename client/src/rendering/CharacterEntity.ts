@@ -221,6 +221,13 @@ export class CharacterEntity {
   private queuedState: AnimState = AnimState.Idle;
   private queuedAnimName: string = '';
 
+  // Layered attack: when a swing fires while walking, attack_<v>_upper plays
+  // on top of walk_lower so the legs keep cycling. If walk stops mid-swing we
+  // swap walk_lower → attack_<v>_lower at the attack's current frame.
+  private attackIsLayered: boolean = false;
+  private activeAttackBase: string = '';
+  private attackStartMs: number = 0;
+
   // One-shot animations (attack/death) call back when done
   private oneShotCallback: (() => void) | null = null;
 
@@ -873,6 +880,57 @@ export class CharacterEntity {
     console.warn(`[CharacterEntity] No animation found for state ${AnimState[state]}, tried: ${names.join(', ')}`);
   }
 
+  /** Lower-body bones in our Mixamo 57-bone rig. Hips is treated as
+   *  lower-body so walk drives its slight bob while attacking-while-walking
+   *  (and so attack's hip/spine swing flows through Spine, which lives in
+   *  upper). All toe/foot/leg bones are lower; everything else is upper. */
+  private static readonly LOWER_BODY_BONES = new Set([
+    'hips',
+    'leftupleg', 'leftleg', 'leftfoot', 'lefttoebase', 'lefttoe_end',
+    'rightupleg', 'rightleg', 'rightfoot', 'righttoebase', 'righttoe_end',
+  ]);
+  private isLowerBodyBoneName(name: string): boolean {
+    return CharacterEntity.LOWER_BODY_BONES.has(name.replace(/^mixamorig:/i, '').toLowerCase());
+  }
+
+  /** Lazily build `<name>_upper` and `<name>_lower` AnimationGroups from a
+   *  source group by partitioning its TargetedAnimations by bone. Lets us
+   *  play upper-body and lower-body of different anims concurrently —
+   *  walk_lower + attack_X_upper while moving + swinging. */
+  private ensureBoneSplitVariants(baseName: string): boolean {
+    if (this.animGroups.has(`${baseName}_upper`) && this.animGroups.has(`${baseName}_lower`)) return true;
+    const src = this.animGroups.get(baseName);
+    if (!src) return false;
+    const upper = new AnimationGroup(`${baseName}_upper`, this.scene);
+    const lower = new AnimationGroup(`${baseName}_lower`, this.scene);
+    for (const ta of src.targetedAnimations) {
+      const t = ta.target as { name?: string };
+      if (this.isLowerBodyBoneName(t?.name ?? '')) {
+        lower.addTargetedAnimation(ta.animation, ta.target);
+      } else {
+        upper.addTargetedAnimation(ta.animation, ta.target);
+      }
+    }
+    // normalize() needs at least one targeted animation, so guard each side.
+    if (upper.targetedAnimations.length > 0) upper.normalize(src.from, src.to);
+    if (lower.targetedAnimations.length > 0) lower.normalize(src.from, src.to);
+    this.animGroups.set(`${baseName}_upper`, upper);
+    this.animGroups.set(`${baseName}_lower`, lower);
+    return true;
+  }
+
+  /** Stop any layered-attack groups and clear flags. Used both when the swing
+   *  ends naturally and when we tear down to start a fresh full-body anim. */
+  private clearLayeredAttack(): void {
+    if (this.activeAttackBase) {
+      this.animGroups.get(`${this.activeAttackBase}_upper`)?.stop();
+      this.animGroups.get(`${this.activeAttackBase}_lower`)?.stop();
+    }
+    this.animGroups.get('walk_lower')?.stop();
+    this.attackIsLayered = false;
+    this.activeAttackBase = '';
+  }
+
   /** Low-level: play a named animation group. */
   private playAnim(name: string, loop: boolean, onEnd?: () => void): void {
     if (name === this.currentAnimName && loop) return;
@@ -918,6 +976,22 @@ export class CharacterEntity {
 
   /** Start walking animation. */
   startWalking(): void {
+    // Layered-attack in progress: legs should come from walk again. Stop any
+    // attack-lower that took over when we stopped mid-swing, and re-start
+    // walk_lower so the legs cycle behind the still-running attack-upper.
+    if (this.attackIsLayered) {
+      const base = this.activeAttackBase;
+      this.animGroups.get(`${base}_lower`)?.stop();
+      if (this.ensureBoneSplitVariants('walk')) {
+        const walkLower = this.animGroups.get('walk_lower');
+        if (walkLower && !walkLower.isPlaying) {
+          const speed = ANIM_SPEED_RATIO['walk'] ?? 1.0;
+          walkLower.start(true, speed, walkLower.from, walkLower.to, false);
+        }
+      }
+      this.queuedState = AnimState.Walk;
+      return;
+    }
     if (this.currentState >= AnimState.Attack) return; // don't interrupt attack
     this.queuedState = AnimState.Walk;
     this.queuedAnimName = '';
@@ -930,6 +1004,26 @@ export class CharacterEntity {
 
   /** Stop walking, return to idle. */
   stopWalking(): void {
+    // Layered-attack in progress: the legs were driven by walk_lower. Stop it
+    // and bring in attack_lower at the swing's current frame so the lower body
+    // finishes the attack pose instead of freezing mid-stride.
+    if (this.attackIsLayered) {
+      const base = this.activeAttackBase;
+      this.animGroups.get('walk_lower')?.stop();
+      const lower = this.animGroups.get(`${base}_lower`);
+      if (lower && lower.targetedAnimations.length > 0) {
+        const speed = ANIM_SPEED_RATIO[base] ?? 1.0;
+        const fps = lower.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+        const elapsedMs = performance.now() - this.attackStartMs;
+        // Sync the lower-body to where the upper-body anim currently is, so
+        // the silhouette stays consistent (no rewind / jump-ahead).
+        const frame = Math.min(lower.from + (elapsedMs / 1000) * fps * speed, lower.to);
+        lower.start(false, speed, frame, lower.to, false);
+      }
+      this.queuedState = AnimState.Idle;
+      this.queuedAnimName = '';
+      return;
+    }
     if (this.currentState === AnimState.Walk) {
       this.playAnimByState(AnimState.Idle);
     }
@@ -941,13 +1035,78 @@ export class CharacterEntity {
     return this.currentState === AnimState.Walk;
   }
 
-  /** Play a one-shot attack animation. Optional variant name (e.g. 'attack_slash'). */
+  /** Play a one-shot attack animation. Optional variant name (e.g. 'attack_slash').
+   *  When the player is currently walking, plays an upper-body-only variant
+   *  layered over walk's lower-body so the legs keep cycling — the silhouette
+   *  walks AND swings. stopWalking swaps walk_lower for attack_lower mid-swing
+   *  so the legs finish the attack pose. */
   playAttackAnimation(variant?: string): void {
-    // Don't restart if already playing an attack — let it finish
     if (this.currentState === AnimState.Attack) return;
     this.queuedState = this.currentState >= AnimState.Walk ? AnimState.Walk : AnimState.Idle;
     this.queuedAnimName = '';
+
+    // Resolve the attack anim name the same way playAnimByState would, so
+    // the layered path picks the same group (e.g. attack_2h_smash, falling
+    // back to attack_slash, then attack).
+    const names = this.getAnimNamesForState(AnimState.Attack, variant);
+    let attackName = '';
+    for (const n of names) {
+      if (this.animGroups.has(n)) { attackName = n; break; }
+    }
+
+    const wasWalking = this.isWalking();
+    if (
+      wasWalking
+      && attackName
+      && this.ensureBoneSplitVariants(attackName)
+      && this.ensureBoneSplitVariants('walk')
+    ) {
+      this.playLayeredAttack(attackName);
+      return;
+    }
+    // Non-walking, or split-variants unavailable: existing full-body path.
     this.playAnimByState(AnimState.Attack, variant, false);
+  }
+
+  /** Start a layered attack — walk_lower runs for the legs, attack_X_upper
+   *  for the upper body. Sets up the end-callback to tear both down and
+   *  resume queued state when the swing finishes. */
+  private playLayeredAttack(baseName: string): void {
+    // Switch full-body walk to walk_lower so it doesn't fight attack_upper
+    // for upper-body bones.
+    const fullWalk = this.animGroups.get('walk');
+    if (fullWalk?.isPlaying) fullWalk.stop();
+    const walkLower = this.animGroups.get('walk_lower');
+    if (walkLower) {
+      const wSpeed = ANIM_SPEED_RATIO['walk'] ?? 1.0;
+      walkLower.start(true, wSpeed, walkLower.from, walkLower.to, false);
+    }
+
+    const upper = this.animGroups.get(`${baseName}_upper`);
+    if (!upper) {
+      // Shouldn't happen — caller checked ensureBoneSplitVariants — but be safe.
+      this.playAnimByState(AnimState.Attack, undefined, false);
+      return;
+    }
+    const aSpeed = ANIM_SPEED_RATIO[baseName] ?? 1.0;
+    upper.start(false, aSpeed, upper.from, upper.to, false);
+
+    this.attackIsLayered = true;
+    this.activeAttackBase = baseName;
+    this.attackStartMs = performance.now();
+    this.currentState = AnimState.Attack;
+    // currentAnimName tracks the upper-body group so getAnimationDurationMs
+    // and any other lookups keyed by name resolve correctly during the swing.
+    this.currentAnimName = `${baseName}_upper`;
+
+    upper.onAnimationGroupEndObservable.addOnce(() => {
+      // Could already have been torn down by clearLayeredAttack() if the
+      // caller stacked another action; guard against double-cleanup.
+      if (!this.attackIsLayered || this.activeAttackBase !== baseName) return;
+      this.clearLayeredAttack();
+      this.currentState = AnimState.Idle;
+      this.playAnimByState(this.queuedState, this.queuedAnimName, undefined);
+    });
   }
 
   /** Play a looping skill animation (e.g. 'chop', 'mine', 'fish'). */

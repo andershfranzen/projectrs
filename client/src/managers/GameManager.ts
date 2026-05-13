@@ -268,13 +268,19 @@ export class GameManager {
       // the player is at least 10 combat levels above it, treat the click as
       // Attack instead of letting InputManager turn it into a walk-to-tile.
       // Lower-level players still need right-click → Attack so they don't
-      // accidentally engage scary mobs while pathing past them.
+      // accidentally engage scary mobs while pathing past them. When the level
+      // gate blocks the auto-attack we explicitly click *through* the NPC —
+      // computing the ground tile via ray-plane projection at player Y —
+      // because letting InputManager re-pick can latch onto the NPC mesh
+      // itself (sprite-NPC Y sometimes passes its 0.6-tile tolerance and the
+      // player walks under the mob instead of past it).
       const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
       if (pick?.hit && pick.pickedMesh) {
         const entityId = this.findNpcEntityIdFromPick(pick.pickedMesh, pick.pickedMesh.name);
         if (entityId != null) {
           const npcDefId = this.entities.npcDefs.get(entityId);
-          if (!this.isNonAttackableNpc(npcDefId)) {
+          const attackable = !this.isNonAttackableNpc(npcDefId);
+          if (attackable) {
             const npcLvl = this.npcLevelFor(npcDefId);
             const myLvl = this.getLocalCombatLevel();
             if (npcLvl > 0 && myLvl >= npcLvl + 10) {
@@ -282,6 +288,22 @@ export class GameManager {
               // Suppress InputManager's ground-click handling for this event.
               // stopImmediatePropagation also stops same-phase listeners; we
               // use capture so it runs before Babylon's bubble-phase handler.
+              e.stopImmediatePropagation();
+              e.preventDefault();
+              return;
+            }
+          }
+          // Underleveled (or non-attackable) — click *through* the NPC to the
+          // ground tile directly beneath the cursor at the player's plane.
+          const ray = this.scene.createPickingRay(this.scene.pointerX, this.scene.pointerY, null, this.scene.activeCamera!);
+          if (ray.direction.y !== 0) {
+            const planeY = this.localPlayer?.position.y ?? 0;
+            const t = (planeY - ray.origin.y) / ray.direction.y;
+            if (t > 0) {
+              const tx = Math.floor(ray.origin.x + ray.direction.x * t) + 0.5;
+              const tz = Math.floor(ray.origin.z + ray.direction.z * t) + 0.5;
+              this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
+              this.handleGroundClick(tx, tz);
               e.stopImmediatePropagation();
               e.preventDefault();
               return;
