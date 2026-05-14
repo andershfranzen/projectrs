@@ -27,8 +27,8 @@ export class LoadingScreen {
       @keyframes evilmud-pulse     { 0%,100% { opacity: 0.4; } 50% { opacity: 1; } }
       @keyframes evilmud-spin      { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       @keyframes evilmud-glow      {
-        0%,100% { text-shadow: 0 0 20px rgba(255,204,0,0.4), 0 0 40px rgba(255,80,0,0.2), 2px 2px 6px rgba(0,0,0,0.9); }
-        50%     { text-shadow: 0 0 30px rgba(255,204,0,0.7), 0 0 60px rgba(255,80,0,0.4), 2px 2px 6px rgba(0,0,0,0.9); }
+        0%,100% { text-shadow: 0 0 20px rgba(255, 68, 56, 0.45), 0 0 40px rgba(180, 32, 20, 0.25), 2px 2px 6px rgba(0,0,0,0.9); }
+        50%     { text-shadow: 0 0 30px rgba(255, 90, 70, 0.7), 0 0 60px rgba(220, 50, 30, 0.4), 2px 2px 6px rgba(0,0,0,0.9); }
       }
       @keyframes evilmud-shimmer {
         0% { background-position: -200% 0; }
@@ -37,8 +37,9 @@ export class LoadingScreen {
       .evilmud-loading-overlay {
         position: fixed; inset: 0;
         background:
-          radial-gradient(ellipse at center, rgba(40,28,16,0.92) 0%, rgba(8,4,2,0.98) 80%),
-          repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.02) 4px 5px);
+          radial-gradient(ellipse at center, rgba(36, 12, 10, 0.55) 0%, rgba(6, 6, 8, 0.98) 80%),
+          linear-gradient(135deg, #0a0a0c 0%, #14101a 50%, #0a0a0c 100%),
+          repeating-linear-gradient(45deg, transparent 0 4px, rgba(255,255,255,0.015) 4px 5px);
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
         z-index: 99999; font-family: monospace;
@@ -50,20 +51,20 @@ export class LoadingScreen {
       }
       .evilmud-loading-title {
         font-size: 64px; font-weight: bold; letter-spacing: 6px;
-        color: #fc0;
+        color: #ff4438;
         animation: evilmud-glow 2.6s ease-in-out infinite;
         margin-bottom: 8px;
         user-select: none;
       }
       .evilmud-loading-sub {
-        font-size: 13px; color: #8a7a60;
+        font-size: 13px; color: #8a6868;
         letter-spacing: 3px; text-transform: uppercase;
         margin-bottom: 40px;
       }
       .evilmud-loading-spinner {
         width: 36px; height: 36px; margin-bottom: 22px;
-        border: 3px solid rgba(252, 204, 0, 0.15);
-        border-top-color: #fc0;
+        border: 3px solid rgba(255, 68, 56, 0.15);
+        border-top-color: #ff4438;
         border-radius: 50%;
         animation: evilmud-spin 1.1s linear infinite;
       }
@@ -74,28 +75,28 @@ export class LoadingScreen {
       }
       .evilmud-loading-progress-track {
         width: 100%; height: 12px;
-        background: rgba(0,0,0,0.55);
-        border: 1px solid #5a4a35;
+        background: rgba(0,0,0,0.6);
+        border: 1px solid #4a2824;
         border-radius: 2px;
         overflow: hidden;
-        box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.7);
       }
       .evilmud-loading-progress-fill {
         height: 100%; width: 0%;
-        background: linear-gradient(90deg, #5a4a35 0%, #fc0 40%, #ffb840 100%);
+        background: linear-gradient(90deg, #4a1f18 0%, #ff4438 40%, #ff7050 100%);
         background-size: 200% 100%;
         animation: evilmud-shimmer 2.2s linear infinite;
         transition: width 220ms ease-out;
-        box-shadow: 0 0 12px rgba(255,204,0,0.45);
+        box-shadow: 0 0 12px rgba(255, 68, 56, 0.5);
       }
       .evilmud-loading-progress-pct {
-        font-size: 11px; color: #c8b690;
+        font-size: 11px; color: #c8a89a;
         letter-spacing: 2px;
         font-variant-numeric: tabular-nums;
       }
       .evilmud-loading-status {
         margin-top: 14px;
-        font-size: 13px; color: #c8b690;
+        font-size: 13px; color: #c8a89a;
         animation: evilmud-pulse 1.6s ease-in-out infinite;
         letter-spacing: 1px;
         max-width: 70vw; text-align: center;
