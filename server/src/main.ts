@@ -1328,13 +1328,19 @@ const server = Bun.serve<SocketData>({
         if (!filePath.startsWith(baseDir)) continue;
         try {
           const content = readFileSync(filePath);
+          // Vite emits hashed filenames into client/dist/assets/ — those JS
+          // and CSS chunks are content-addressed and safe to cache forever.
+          // Everything else under /assets/ (GLBs, textures, raw JSON pulled
+          // from client/public/assets/) still uses a short cache so swapped
+          // assets show up without forcing browser-data clears during dev.
+          const isHashedBundle = filePath.endsWith('.js') || filePath.endsWith('.css');
+          const cacheControl = isHashedBundle
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache, must-revalidate';
           return new Response(content, {
             headers: {
               'Content-Type': getMimeType(filePath),
-              // TODO(alpha-test): restore 'public, max-age=3600' before the
-              // weekend build — currently no-cache so swapped GLBs/textures
-              // show up without forcing every contributor to clear browser data.
-              'Cache-Control': 'no-cache, must-revalidate',
+              'Cache-Control': cacheControl,
             },
           });
         } catch { /* try next */ }

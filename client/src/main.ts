@@ -40,10 +40,18 @@ async function startGame(token: string, username: string, preloadedLoadingScreen
   // canvas until our ResizeObserver eventually fires.
   void canvas.offsetWidth;
 
-  const { GameManager } = await loadGameModule();
-  game = new GameManager(canvas, token, username, () => {
-    handleDisconnect();
-  }, preloadedLoadingScreen);
+  try {
+    const { GameManager } = await loadGameModule();
+    game = new GameManager(canvas, token, username, () => {
+      handleDisconnect();
+    }, preloadedLoadingScreen);
+  } catch (err) {
+    console.error('[startGame] failed to load game module:', err);
+    // Failed dynamic import after auth (deploy mid-load, chunk 404, network
+    // drop on the GameManager chunk) — show the user a recoverable state
+    // instead of an indefinite-hang LoadingScreen.
+    preloadedLoadingScreen?.setStatus('Failed to load game. Please reload the page.');
+  }
 }
 
 function handleDisconnect() {
@@ -111,27 +119,39 @@ async function bootstrap() {
   const loadingScreen = new LoadingScreen();
   loadingScreen.show();
 
-  // Three things in parallel: warm the HTTP asset cache, validate any
-  // saved token, and download the dynamically-imported GameManager
-  // bundle (Babylon + game code, ~2 MB). The dynamic import is the
-  // single biggest JS payload, so doing it during preload means it's
-  // ready the instant the user hits Login.
-  const [, tokenResult] = await Promise.all([
-    preloadAssets((p) => {
-      loadingScreen.setProgress(p.pct);
-      loadingScreen.setStatus(p.status);
-    }),
-    validateSavedToken(),
-    loadGameModule(),
-  ]);
+  try {
+    // Three things in parallel: warm the HTTP asset cache, validate any
+    // saved token, and download the dynamically-imported GameManager
+    // bundle (Babylon + game code, ~2 MB). The dynamic import is the
+    // single biggest JS payload, so doing it during preload means it's
+    // ready the instant the user hits Login.
+    const [, tokenResult] = await Promise.all([
+      preloadAssets((p) => {
+        loadingScreen.setProgress(p.pct);
+        loadingScreen.setStatus(p.status);
+      }),
+      validateSavedToken(),
+      loadGameModule(),
+    ]);
 
-  if (tokenResult) {
-    loadingScreen.setProgress(1);
-    loadingScreen.setStatus('Connecting to world…');
-    void startGame(tokenResult.token, tokenResult.username, loadingScreen);
-  } else {
-    loadingScreen.hide();
-    showLoginScreen();
+    if (tokenResult) {
+      loadingScreen.setProgress(1);
+      // GameManager will drive its own phase-2 progress (LOGIN_OK + scene
+      // init). Resetting here keeps the bar from sitting pinned at 100%
+      // while indicators imply work is still happening.
+      loadingScreen.resetProgress();
+      loadingScreen.setStatus('Connecting to world…');
+      void startGame(tokenResult.token, tokenResult.username, loadingScreen);
+    } else {
+      loadingScreen.hide();
+      showLoginScreen();
+    }
+  } catch (err) {
+    console.error('[bootstrap] failed:', err);
+    // Catches dynamic-import failure on the GameManager chunk (deploy
+    // mid-load, network drop, etc). Without this, a `void bootstrap()`
+    // would swallow the rejection and leave the LoadingScreen stuck.
+    loadingScreen.setStatus('Failed to load. Please reload the page.');
   }
 }
 

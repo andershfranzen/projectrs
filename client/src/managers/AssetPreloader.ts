@@ -105,6 +105,20 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
 
   report('Loading game assets…');
 
+  // Dev-mode short-circuit. `CharacterEntity` and `ChunkManager` both
+  // append a `?v=<ts>` cache-bust query param to every GLB/JSON they
+  // fetch in dev so editor saves show up after a hard refresh. Those
+  // URLs don't match the plain URLs we'd warm here, so the preload
+  // would be dead weight — the browser caches `/foo.glb` but the real
+  // load fetches `/foo.glb?v=…`, a different cache key. Skip the
+  // network round-trip entirely in dev; the SceneLoader path handles
+  // its own fetches at game-init time.
+  if (import.meta.env.DEV) {
+    loaded = total;
+    report('Ready');
+    return;
+  }
+
   await Promise.all(
     assets.map(async (url) => {
       try {

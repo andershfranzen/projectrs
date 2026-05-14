@@ -150,7 +150,8 @@ export class LoadingScreen {
     this.statusEl.textContent = text;
   }
 
-  /** Set progress 0–1. Values are clamped and never go backwards. */
+  /** Set progress 0–1. Values are clamped and never go backwards within a
+   *  single phase — call `resetProgress()` to start a new phase. */
   setProgress(pct: number): void {
     const clamped = Math.max(0, Math.min(1, pct));
     if (clamped < this.currentPct) return;
@@ -158,6 +159,17 @@ export class LoadingScreen {
     const pctRounded = Math.round(clamped * 100);
     this.progressFill.style.width = `${pctRounded}%`;
     this.progressPctEl.textContent = `${pctRounded}%`;
+  }
+
+  /** Reset the progress bar for a new phase. Useful when the same overlay
+   *  is reused across multiple distinct load phases (e.g. asset preload →
+   *  WS connect + scene init): the bar would otherwise sit pinned at 100%
+   *  with a spinner suggesting work is still happening, which reads as a
+   *  hang to the user. Hides the percentage label while indeterminate. */
+  resetProgress(): void {
+    this.currentPct = 0;
+    this.progressFill.style.width = '0%';
+    this.progressPctEl.textContent = '';
   }
 
   hide(): void {
