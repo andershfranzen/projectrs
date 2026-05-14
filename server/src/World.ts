@@ -3237,7 +3237,7 @@ export class World {
           player.health, player.maxHealth,
           a ? a.shirtColor : -1, a ? a.pantsColor : -1, a ? a.shoesColor : -1,
           a ? a.hairColor  : -1, a ? a.beltColor  : -1, a ? a.skinColor  : -1,
-          a ? a.hairStyle  : -1, a ? a.gearColor  : -1,
+          a ? a.hairStyle  : -1,
         ));
       }
     }
@@ -3356,7 +3356,6 @@ export class World {
       a ? a.beltColor  : -1,
       a ? a.skinColor  : -1,
       a ? a.hairStyle  : -1,
-      a ? a.gearColor  : -1,
     );
   }
 
@@ -3382,7 +3381,7 @@ export class World {
         npc.id,
         a.shirtColor, a.pantsColor, a.shoesColor,
         a.hairColor, a.beltColor, a.skinColor,
-        a.hairStyle, a.gearColor,
+        a.hairStyle,
       );
     }
     const eq = npc.equipment;

@@ -12,7 +12,6 @@ export interface PlayerAppearance {
   beltColor: number;
   skinColor: number;
   hairStyle: number;
-  gearColor: number;
 }
 
 /** RGB triplets (0-1 linear) — index maps to PlayerAppearance.*Color fields */
@@ -104,7 +103,6 @@ export const HAIR_COLORS: [number, number, number][] = [
 ];
 
 export const HAIR_STYLE_COUNT = 15;       // M_hair_1 … M_hair_15 (0 = bald)
-export const GEAR_COLOR_COUNT = 14;       // objectColor1 … objectColor14
 
 /** Display labels parallel to each palette. Indices match the palette arrays
  *  above. Used by the character creator stepper to show the picked color's
@@ -144,11 +142,6 @@ export function hairStyleName(idx: number): string {
   return `Style ${idx}`;
 }
 
-/** Gear color palette has no human names yet — referenced as Color 1..14. */
-export function gearColorName(idx: number): string {
-  return `Color ${idx + 1}`;
-}
-
 export const DEFAULT_APPEARANCE: PlayerAppearance = {
   shirtColor: 0,
   pantsColor: 0,
@@ -157,7 +150,6 @@ export const DEFAULT_APPEARANCE: PlayerAppearance = {
   beltColor: 1,
   skinColor: 0,
   hairStyle: 1,
-  gearColor: 0,
 };
 
 /** Validate that all indices are within palette range */
@@ -169,8 +161,7 @@ export function isValidAppearance(a: PlayerAppearance): boolean {
     Number.isInteger(a.hairColor)  && a.hairColor >= 0  && a.hairColor < HAIR_COLORS.length &&
     Number.isInteger(a.beltColor)  && a.beltColor >= 0  && a.beltColor < BELT_COLORS.length &&
     Number.isInteger(a.skinColor)  && a.skinColor >= 0  && a.skinColor < SKIN_COLORS.length &&
-    Number.isInteger(a.hairStyle)  && a.hairStyle >= 0  && a.hairStyle <= HAIR_STYLE_COUNT &&
-    Number.isInteger(a.gearColor) && a.gearColor >= 0 && a.gearColor < GEAR_COLOR_COUNT
+    Number.isInteger(a.hairStyle)  && a.hairStyle >= 0  && a.hairStyle <= HAIR_STYLE_COUNT
   );
 }
 
@@ -184,8 +175,7 @@ export function appearanceEquals(a: PlayerAppearance | null, b: PlayerAppearance
     && a.hairColor === b.hairColor
     && a.beltColor === b.beltColor
     && a.skinColor === b.skinColor
-    && a.hairStyle === b.hairStyle
-    && a.gearColor === b.gearColor;
+    && a.hairStyle === b.hairStyle;
 }
 
 /** Fill in missing fields from older saved appearances (backwards compat) */
@@ -198,7 +188,6 @@ export function normalizeAppearance(a: Partial<PlayerAppearance>): PlayerAppeara
     beltColor:  a.beltColor ?? 0,
     skinColor:  a.skinColor ?? 0,
     hairStyle:  a.hairStyle ?? 1,
-    gearColor: a.gearColor ?? 0,
   };
 }
 

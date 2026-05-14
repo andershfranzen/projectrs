@@ -7,32 +7,26 @@ import {
   HAIR_COLORS, HAIR_COLOR_NAMES,
   SKIN_COLORS, SKIN_COLOR_NAMES,
   BELT_COLORS, BELT_COLOR_NAMES,
-  HAIR_STYLE_COUNT, GEAR_COLOR_COUNT,
-  hairStyleName, gearColorName,
+  HAIR_STYLE_COUNT,
+  hairStyleName,
 } from '@projectrs/shared';
+import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
-import { Vector3, Color3 } from '@babylonjs/core/Maths/math';
+import { Vector3, Color3, Color4 } from '@babylonjs/core/Maths/math';
+import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { CharacterEntity } from '../rendering/CharacterEntity';
-// Side-effect import: extends AbstractEngine.prototype with registerView /
-// unRegisterView. Without this, the multi-canvas preview throws
-// "engine.registerView is not a function" because individual Babylon imports
-// don't pull in this prototype patch.
-import '@babylonjs/core/Engines/AbstractEngine/abstractEngine.views';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
 
 /**
- * Layer-mask bit reserved for the CharacterCreator preview character. The
- * world camera (default mask 0x0FFFFFFF) ignores it; the preview camera uses
- * PREVIEW_CAMERA_MASK below which spans BOTH the default world bits AND this
- * preview bit, so the preview canvas shows world meshes (terrain, NPCs,
- * objects) AROUND the preview character instead of a flat backdrop.
+ * Layer-mask bit reserved for the CharacterCreator preview character.
  */
 const PREVIEW_LAYER_MASK = 0x10000000;
-const PREVIEW_CAMERA_MASK = 0x1FFFFFFF;
+const PREVIEW_CAMERA_MASK = PREVIEW_LAYER_MASK;
+const HIDDEN_LAYER_MASK = 0x20000000;
 
 /**
  * Fallback anchor used when no `localPlayer` ref is supplied (e.g. if the
@@ -62,15 +56,10 @@ interface StepperRow {
 /**
  * Full-screen character creation overlay.
  *
- * Renders a live 3D preview INTO the main game's existing Babylon engine +
- * scene by registering the preview canvas as an additional view (see
- * `engine.registerView`). The preview character lives at PREVIEW_ANCHOR with
- * a unique layer mask so the world camera doesn't see it. Sharing the engine
- * avoids creating a second WebGL context (browser context cap is ~16; opening
- * the creator a few times under the old design would evict the main game's
- * context and cause multi-second hitches).
+ * Renders a live 3D preview in an isolated Babylon scene so the modal never
+ * changes the gameplay canvas camera or render views.
  *
- * UI is RS-style stepper rows (label + < value > arrows) for all 8 appearance
+ * UI is RS-style stepper rows (label + < value > arrows) for appearance
  * slots. Visual style matches BankPanel/SidePanel — wood + parchment + gold
  * accents in monospace.
  */
@@ -81,6 +70,8 @@ export class CharacterCreator {
 
   private gameScene: Scene;
   private previewCanvas: HTMLCanvasElement | null = null;
+  private previewEngine: Engine | null = null;
+  private previewScene: Scene | null = null;
   private previewCamera: ArcRotateCamera | null = null;
   private previewLights: { hemi: HemisphericLight; dir: DirectionalLight } | null = null;
   private previewCharacter: CharacterEntity | null = null;
@@ -90,6 +81,8 @@ export class CharacterCreator {
   // at the same world position. Restored on destroy().
   private localPlayer: CharacterEntity | null = null;
   private localPlayerWasEnabled: boolean = true;
+  private localPlayerHidden: boolean = false;
+  private localPlayerMeshMasks: Map<AbstractMesh, number> = new Map();
 
   // Saved layerMasks for nearby remote players + NPCs that need to disappear
   // from the preview camera so the preview shows world geometry only (without
@@ -128,14 +121,12 @@ export class CharacterCreator {
     document.body.appendChild(this.container);
 
     // Hide the local player while the creator is open so the preview char
-    // (spawned at the same spot) doesn't double up. Cached state restored in
-    // destroy().
+    // doesn't double up with the world-rendered character. The character GLB
+    // may still be loading when SHOW_CHARACTER_CREATOR arrives, so retry once
+    // the entity reports ready.
+    this.hideLocalPlayer();
     if (this.localPlayer) {
-      const root = this.localPlayer.getRoot();
-      if (root) {
-        this.localPlayerWasEnabled = root.isEnabled();
-        root.setEnabled(false);
-      }
+      void this.localPlayer.whenReady().then(() => this.hideLocalPlayer());
     }
 
     // Defer preview init to next frame so the DOM canvas is attached
@@ -434,24 +425,47 @@ export class CharacterCreator {
     return FALLBACK_PREVIEW_ANCHOR.clone();
   }
 
+  private hideLocalPlayer(): void {
+    if (!this.localPlayer) return;
+    const root = this.localPlayer.getRoot();
+    if (!root) return;
+    if (!this.localPlayerHidden) {
+      this.localPlayerWasEnabled = root.isEnabled();
+      this.localPlayerMeshMasks.clear();
+    }
+    const meshes = new Set<AbstractMesh>([
+      ...this.localPlayer.getMeshes(),
+      ...root.getChildMeshes(false),
+    ]);
+    for (const mesh of meshes) {
+      if (!this.localPlayerMeshMasks.has(mesh)) {
+        this.localPlayerMeshMasks.set(mesh, mesh.layerMask);
+      }
+      mesh.layerMask = HIDDEN_LAYER_MASK;
+    }
+    root.setEnabled(false);
+    this.localPlayerHidden = true;
+  }
+
   private initPreview(): void {
     if (!this.previewCanvas) return;
 
-    const engine = this.gameScene.getEngine();
-    const anchor = this.getAnchor();
+    const engine = new Engine(this.previewCanvas, false, { antialias: false, adaptToDeviceRatio: false });
+    engine.setHardwareScalingLevel(1);
+    const scene = new Scene(engine);
+    scene.useRightHandedSystem = true;
+    scene.clearColor = new Color4(0.07, 0.10, 0.15, 1);
+    this.previewEngine = engine;
+    this.previewScene = scene;
+    const anchor = Vector3.Zero();
 
-    // Preview camera mask spans BOTH the world default bits AND the preview
-    // bit so the canvas shows world meshes (terrain, NPCs, props) AROUND the
-    // preview character. The world camera (default mask 0x0FFFFFFF) still
-    // ignores the preview character because its mask is the preview bit only.
-    // Target the character's mid-body height. The character spawns at
-    // anchor.y with feet there and head at anchor.y + ~1.3, so middle is
-    // ~0.85 above anchor. The camera looks at the middle so the canvas
-    // frames head-to-feet at the default radius.
+    // Preview camera sees only the preview character layer. Rendering the
+    // world into this small canvas can place walls/props between the camera
+    // and character depending on spawn position.
     const cam = new ArcRotateCamera(
-      'previewCam', Math.PI * 0.75, Math.PI * 0.45, 2.8,
-      anchor.add(new Vector3(0, 0.85, 0)),
-      this.gameScene,
+      'previewCam', Math.PI * 0.75, Math.PI * 0.4, 3.0,
+      anchor.add(new Vector3(0, 0.7, 0)),
+      scene,
     );
     cam.layerMask = PREVIEW_CAMERA_MASK;
     cam.lowerRadiusLimit = 1.8;
@@ -463,31 +477,24 @@ export class CharacterCreator {
     this.previewCamera = cam;
 
     // Preview-only lights. includeOnlyWithLayerMask scopes them to the preview
-    // character so they don't double up on the world's lighting (which the
-    // world camera also sees in this canvas now).
-    const hemi = new HemisphericLight('previewHemi', new Vector3(0, 1, 0), this.gameScene);
+    // character layer.
+    const hemi = new HemisphericLight('previewHemi', new Vector3(0, 1, 0), scene);
     hemi.intensity = 0.6;
     hemi.groundColor = new Color3(0.15, 0.15, 0.15);
     hemi.includeOnlyWithLayerMask = PREVIEW_LAYER_MASK;
-    const dir = new DirectionalLight('previewDir', new Vector3(-0.5, -1, 0.5), this.gameScene);
+    const dir = new DirectionalLight('previewDir', new Vector3(-0.5, -1, 0.5), scene);
     dir.intensity = 0.5;
     dir.includeOnlyWithLayerMask = PREVIEW_LAYER_MASK;
     this.previewLights = { hemi, dir };
 
-    // Fog stays enabled — at world position the existing scene fog gives the
-    // preview the same atmospheric look as the main view, instead of a flat
-    // backdrop. (Previously fog was suppressed because the preview lived at
-    // y=-1000 where fog tinted everything black.)
-
-    // Register the preview canvas as a second view of the same engine. Same
-    // GL context, same materials, same parsed GLBs.
-    engine.registerView(this.previewCanvas, cam);
-
     this.loadPreviewCharacter(anchor);
+    engine.runRenderLoop(() => scene.render());
   }
 
   private loadPreviewCharacter(anchor: Vector3): void {
-    this.previewCharacter = new CharacterEntity(this.gameScene, {
+    const scene = this.previewScene;
+    if (!scene) return;
+    this.previewCharacter = new CharacterEntity(scene, {
       name: 'previewChar',
       modelPath: this.getModelPath(),
       targetHeight: 1.53,
@@ -516,10 +523,6 @@ export class CharacterCreator {
 
   destroy(): void {
     if (this.previewCharacter) { this.previewCharacter.dispose(); this.previewCharacter = null; }
-
-    if (this.previewCanvas) {
-      this.gameScene.getEngine().unRegisterView(this.previewCanvas);
-    }
     if (this.previewCamera) {
       this.previewCamera.dispose();
       this.previewCamera = null;
@@ -529,12 +532,28 @@ export class CharacterCreator {
       this.previewLights.dir.dispose();
       this.previewLights = null;
     }
+    if (this.previewEngine) {
+      this.previewEngine.stopRenderLoop();
+    }
+    if (this.previewScene) {
+      this.previewScene.dispose();
+      this.previewScene = null;
+    }
+    if (this.previewEngine) {
+      this.previewEngine.dispose();
+      this.previewEngine = null;
+    }
     // Restore the local player to whatever enabled state it had before we
     // hid it. Important if the player was already hidden by some other path
     // (e.g. spawning, cutscene) — we don't want to force-enable in that case.
-    if (this.localPlayer) {
+    if (this.localPlayer && this.localPlayerHidden) {
       const root = this.localPlayer.getRoot();
+      for (const [mesh, layerMask] of this.localPlayerMeshMasks) {
+        if (!mesh.isDisposed()) mesh.layerMask = layerMask;
+      }
+      this.localPlayerMeshMasks.clear();
       if (root) root.setEnabled(this.localPlayerWasEnabled);
+      this.localPlayerHidden = false;
     }
     this.container.remove();
   }

@@ -296,7 +296,6 @@ export function handleGameSocketMessage(
         beltColor:  values[4] ?? 0,
         skinColor:  values[5] ?? 0,
         hairStyle:  values[6] ?? 1,
-        gearColor:  values[7] ?? 0,
       };
       world.handleSetAppearance(playerId, appearance);
       break;

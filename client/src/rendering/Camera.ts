@@ -2,6 +2,8 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Scene } from '@babylonjs/core/scene';
 
+const WORLD_CAMERA_MASK = 0x0FFFFFFF;
+
 export class GameCamera {
   private camera: ArcRotateCamera;
   private targetPosition: Vector3;
@@ -19,6 +21,7 @@ export class GameCamera {
       this.targetPosition.clone(),
       scene
     );
+    this.camera.layerMask = WORLD_CAMERA_MASK;
 
     // Clip planes — minZ/maxZ tuned to reduce overdraw (far = fog end)
     this.camera.minZ = 0.5;

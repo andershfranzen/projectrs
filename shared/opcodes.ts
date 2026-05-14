@@ -103,8 +103,8 @@ export enum ServerOpcode {
   PLAYER_REMOTE_EQUIPMENT = 72,
   /** Per-spawn appearance for a customizable NPC. Layout:
    *  [npcEntityId, shirtColor, pantsColor, shoesColor, hairColor, beltColor,
-   *   skinColor, hairStyle, gearColor]. Same field order as SET_APPEARANCE,
-   *  prefixed with npcEntityId. Broadcast on chunk-entry only — appearance
+   *   skinColor, hairStyle]. Same field order as SET_APPEARANCE, prefixed
+   *  with npcEntityId. Broadcast on chunk-entry only — appearance
    *  is static unless an admin edits it (see /npcedit). */
   NPC_APPEARANCE = 73,
   /** Per-spawn equipment for a customizable NPC. Layout matches

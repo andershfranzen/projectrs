@@ -137,6 +137,7 @@ export class GameManager {
 
   // Character creator
   private characterCreator: CharacterCreator | null = null;
+  private characterCreatorOpenPending: boolean = false;
   private localAppearance: PlayerAppearance | null = null;
 
   // Entity management (remote players, NPCs, ground items, sprites)
@@ -843,7 +844,7 @@ export class GameManager {
   /**
    * Shared gear apply path used by both the local player and remote
    * CharacterEntities. `isLocal` controls editor-only behaviors (preview node
-   * disposal, gear-color material registration) that don't apply to remotes.
+   * disposal) that don't apply to remotes.
    *
    * Skinned and head slots can't share cached templates across characters
    * (they bind to specific skeletons / depend on per-character bone bind
@@ -1019,7 +1020,7 @@ export class GameManager {
           def.boneName = 'mixamorig:Head';
           def.centerOrigin = true;
           // Shift mesh children so the head-height vertices sit at bone origin
-          const tmpl = this.buildGearTemplateFromResult(result, def, character);
+          const tmpl = this.buildGearTemplateFromResult(result, def);
           for (const child of tmpl.template.getChildren()) {
             (child as TransformNode).position.y -= headBindY;
           }
@@ -1047,7 +1048,7 @@ export class GameManager {
       }
 
       // Non-skinned — build GearTemplate from the loaded result
-      return this.buildGearTemplateFromResult(result, def, character);
+      return this.buildGearTemplateFromResult(result, def);
     } catch (e) {
       console.warn(`[Gear] Failed to load '${def.file}':`, e);
       return null;
@@ -1057,17 +1058,13 @@ export class GameManager {
   private buildGearTemplateFromResult(
     result: { meshes: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh[] },
     def: GearDef,
-    target?: CharacterEntity | null,
   ): GearTemplate {
     const root = new TransformNode(`gearTemplate_${def.itemId}`, this.scene);
     for (const mesh of result.meshes) {
       if (!mesh.parent || mesh.parent.name === '__root__') mesh.parent = root;
     }
 
-    // PBR → flat conversion (matches main character + skinned-armor paths so the
-    // gear-color texture-swap system can apply uniformly). Polytope-derived
-    // gear ships with `genericRGBMat_Objects` materials; we register those with
-    // the local player so future gearColor changes update them.
+    // PBR → flat conversion (matches main character + skinned-armor paths).
     for (const mesh of result.meshes) {
       const pbr = mesh.material as any;
       if (!pbr || !pbr.getClassName || pbr.getClassName() !== 'PBRMaterial') continue;
@@ -1097,9 +1094,6 @@ export class GameManager {
       }
       flat.backFaceCulling = pbr.backFaceCulling ?? true;
       mesh.material = flat;
-      if (isPolysplitGear) {
-        (target ?? this.localPlayer)?.registerObjectMaterial(flat);
-      }
     }
 
     if (def.metalColor) {
@@ -1268,7 +1262,7 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
-      this.openCharacterCreator();
+      this.openCharacterCreatorWhenReady();
     });
   }
 
@@ -1278,10 +1272,10 @@ export class GameManager {
       const x = x10 / 10;
       const z = z10 / 10;
 
-      const hasAppearance = v.length >= 13 && v[5] >= 0;
+      const hasAppearance = v.length >= 12 && v[5] >= 0;
       const syncAppearance: PlayerAppearance | null = hasAppearance ? {
         shirtColor: v[5], pantsColor: v[6], shoesColor: v[7], hairColor: v[8], beltColor: v[9], skinColor: v[10],
-        hairStyle: v[11], gearColor: v[12] ?? 0,
+        hairStyle: v[11],
       } : null;
 
       if (entityId === this.localPlayerId) {
@@ -1504,7 +1498,7 @@ export class GameManager {
       const appearance: PlayerAppearance = {
         shirtColor: v[1], pantsColor: v[2], shoesColor: v[3],
         hairColor:  v[4], beltColor:  v[5], skinColor:  v[6],
-        hairStyle:  v[7], gearColor:  v[8],
+        hairStyle:  v[7],
       };
       this.entities.npcAppearances.set(entityId, appearance);
       // Live-apply for an already-rendered customizable NPC (admin /npcedit).
@@ -2873,10 +2867,27 @@ export class GameManager {
       return true;
     }
     if (msg === '/appearance') {
-      this.openCharacterCreator();
+      this.openCharacterCreatorWhenReady();
       return true;
     }
     return false;
+  }
+
+  private openCharacterCreatorWhenReady(): void {
+    if (this.characterCreator || this.characterCreatorOpenPending) return;
+    if (!this.localPlayer) {
+      this.characterCreatorOpenPending = true;
+      requestAnimationFrame(() => {
+        this.characterCreatorOpenPending = false;
+        this.openCharacterCreatorWhenReady();
+      });
+      return;
+    }
+    this.characterCreatorOpenPending = true;
+    void this.localPlayer.whenReady().then(() => {
+      this.characterCreatorOpenPending = false;
+      if (!this.characterCreator) this.openCharacterCreator();
+    });
   }
 
   private openCharacterCreator(): void {
@@ -2895,7 +2906,6 @@ export class GameManager {
         appearance.beltColor,
         appearance.skinColor,
         appearance.hairStyle,
-        appearance.gearColor,
       ));
       this.localAppearance = appearance;
       if (this.localPlayer) {

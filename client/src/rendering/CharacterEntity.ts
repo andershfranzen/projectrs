@@ -15,7 +15,7 @@ import { MorphTargetManager } from '@babylonjs/core/Morph/morphTargetManager';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT, GEAR_COLOR_COUNT } from '@projectrs/shared';
+import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, ANIM_DURATIONS, DEFAULT_QUANTIZE_FRAMES } from './AnimationQuantizer';
 
@@ -266,10 +266,6 @@ export class CharacterEntity {
   // Modular mesh parts — keyed by mesh name for show/hide
   private modularMeshes: Map<string, AbstractMesh> = new Map();
 
-  // Gear color texture swapping — materials whose name starts with genericRGBMat_Objects
-  private objectMaterials: StandardMaterial[] = [];
-  private static gearColorTextures: Map<string, Texture> = new Map();
-
   // Last applied appearance — used to restore correct hair/face after helmet unequip
   private lastAppearance: PlayerAppearance | null = null;
 
@@ -465,10 +461,6 @@ export class CharacterEntity {
         // without altering geometry, UVs, or skin weights.
         smoothNormalsByPosition(mesh);
 
-        // Track object materials for gear color texture swapping
-        if (pbrMat.name.startsWith('genericRGBMat_Objects')) {
-          this.objectMaterials.push(flat);
-        }
       }
 
       // Identify hair meshes for hide/show under full helmets, and the
@@ -2085,50 +2077,9 @@ export class CharacterEntity {
       }
     }
 
-    // Gear color: swap diffuseTexture on all genericRGBMat_Objects materials
-    if (this.objectMaterials.length > 0 && appearance.gearColor >= 0 && appearance.gearColor < GEAR_COLOR_COUNT) {
-      const tex = this.getGearColorTexture(appearance.gearColor);
-      if (tex) for (const mat of this.objectMaterials) mat.diffuseTexture = tex;
-    }
-
     // Hair show/hide may have re-enabled meshes; re-propagate layerMask so
     // any newly-enabled hair stays scoped to the right camera.
     this.applyLayerMask();
-  }
-
-  /**
-   * Return the cached `objectColor<N+1>.png` Texture for a given gearColor index,
-   * loading it lazily. The same texture is shared across all gear pieces.
-   */
-  private getGearColorTexture(gearColor: number): Texture | null {
-    if (gearColor < 0 || gearColor >= GEAR_COLOR_COUNT) return null;
-    const colorIdx = gearColor + 1;
-    const cacheKey = `${this.scene.uid}_${colorIdx}`;
-    let tex = CharacterEntity.gearColorTextures.get(cacheKey);
-    if (!tex || !tex.getScene()) {
-      // invertY=false to match glTF texture convention (top-origin V).
-      // Babylon's Texture constructor default is invertY=true which would flip
-      // sampling upside-down vs the embedded palette in glTF-loaded gear meshes.
-      tex = new Texture(
-        `/Character models/gear-colors/objectColor${colorIdx}.png`,
-        this.scene,
-        false, false, Texture.NEAREST_NEAREST,
-      );
-      CharacterEntity.gearColorTextures.set(cacheKey, tex);
-    }
-    return tex;
-  }
-
-  /**
-   * Register a `genericRGBMat_Objects` material from a separately-loaded gear
-   * piece. The current gearColor texture is applied immediately, and future
-   * gearColor changes will update the material via applyAppearance.
-   */
-  registerObjectMaterial(mat: StandardMaterial): void {
-    if (this.objectMaterials.includes(mat)) return;
-    this.objectMaterials.push(mat);
-    const tex = this.lastAppearance ? this.getGearColorTexture(this.lastAppearance.gearColor) : null;
-    if (tex) mat.diffuseTexture = tex;
   }
 
   // ---------------------------------------------------------------------------
