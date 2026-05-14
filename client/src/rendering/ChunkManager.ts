@@ -141,6 +141,10 @@ export class ChunkManager {
   private elevatedFloorHeights: Map<number, number> = new Map();
   /** Bridge tiles — elevated texture planes over originally-blocking terrain (always snap to height) */
   private bridgeFloorTiles: Set<number> = new Set();
+  /** Tiles where at least one non-noRoof flat plane sits in `elevatedFloor-
+   *  Heights`. Tiles registered ONLY by `noRoof` planes are absent here, so
+   *  isUnderRoof's Signal A treats them as outdoor (bridges, terraces). */
+  private nonNoRoofElevatedTiles: Set<number> = new Set();
   /** Placed stair ramp zones for proximity-based height interpolation */
   private placedStairRamps: { cx: number; cz: number; baseY: number; topY: number; direction: 'N' | 'S' | 'E' | 'W'; halfLength: number }[] = [];
   /** Spatial index of roof objects: "tileX,tileZ" → roof entries with floor tag + Y height */
@@ -2271,6 +2275,7 @@ export class ChunkManager {
       this.elevatedFloorHeights.set(idx, entry.y);
       if (entry.isBridge) this.bridgeFloorTiles.add(idx);
       this.texturePlaneFloorTiles.add(idx);
+      if (!entry.allContributorsNoRoof) this.nonNoRoofElevatedTiles.add(idx);
       count++;
     }
     if (count > 0) {
@@ -2336,6 +2341,9 @@ export class ChunkManager {
               this.bridgeFloorTiles.add(idx);
             }
             this.texturePlaneFloorTiles.add(idx);
+            // noRoof flag is sticky-negative: once any non-noRoof plane
+            // touches the tile it stays in nonNoRoofElevatedTiles forever.
+            if (!plane.noRoof) this.nonNoRoofElevatedTiles.add(idx);
           }
         }
       }
@@ -2731,17 +2739,29 @@ export class ChunkManager {
       }
 
       if (this.isRoofLikeAsset(obj.assetId)) {
-        // Stamp ONLY the slab's own tile. The previous 5×5 stamp triggered
-        // indoor mode 2 tiles outside any slab, which with the 1×1 query
-        // bled across walls. Buildings are tiled with one slab per tile in
-        // kcmap, so per-tile registration covers the interior exactly.
-        const tx = Math.floor(obj.position.x);
-        const tz = Math.floor(obj.position.z);
+        // Stamp every tile inside the actual mesh footprint. The previous
+        // 5×5 stamp bled across walls; a 1×1 stamp missed interior tiles
+        // whenever a slab's footprint crossed an integer boundary (kcmap
+        // roofs are placed at sub-integer positions with scales > 1).
+        // World-space bbox is the source of truth — texture-plane roofs
+        // use the same approach (see merged-plane stamp below).
+        root.computeWorldMatrix(true);
+        const { min: bMin, max: bMax } = root.getHierarchyBoundingVectors(true);
+        const tx0 = Math.floor(bMin.x), tx1 = Math.floor(bMax.x);
+        const tz0 = Math.floor(bMin.z), tz1 = Math.floor(bMax.z);
         const roofFloor = this.assignRoofFloor(obj.position.x, obj.position.z, obj.position.y);
-        const rk = `${tx},${tz}`;
-        let arr = this.roofObjectGrid.get(rk);
-        if (!arr) { arr = []; this.roofObjectGrid.set(rk, arr); }
-        arr.push({ node: root, floor: roofFloor, y: obj.position.y });
+        const stampedKeys: string[] = [];
+        for (let tz = tz0; tz <= tz1; tz++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            const rk = `${tx},${tz}`;
+            let arr = this.roofObjectGrid.get(rk);
+            if (!arr) { arr = []; this.roofObjectGrid.set(rk, arr); }
+            arr.push({ node: root, floor: roofFloor, y: obj.position.y });
+            stampedKeys.push(rk);
+          }
+        }
+        // Cached for O(footprint) cleanup in disposeChunkPlacedObjects.
+        root.metadata = { ...root.metadata, roofGridKeys: stampedKeys };
       }
 
       if (STAIR_ASSET_CONFIG[obj.assetId]) {
@@ -2805,19 +2825,17 @@ export class ChunkManager {
           const gridKey = `${Math.floor(node.position.x)},${Math.floor(node.position.z)}`;
           this.placedObjectGrid.delete(gridKey);
         }
-        // Remove from roof grid (must match -2..2 range used when adding)
+        // Remove from roof grid using the cached footprint keys stamped at
+        // add time — bbox-derived, so the cleanup mirrors the stamp exactly.
         if (assetId && this.isRoofLikeAsset(assetId)) {
-          const tx = Math.floor(node.position.x);
-          const tz = Math.floor(node.position.z);
-          for (let dz = -2; dz <= 2; dz++) {
-            for (let dx = -2; dx <= 2; dx++) {
-              const rk = `${tx + dx},${tz + dz}`;
+          const keys: string[] | undefined = node.metadata?.roofGridKeys;
+          if (keys) {
+            for (const rk of keys) {
               const arr = this.roofObjectGrid.get(rk);
-              if (arr) {
-                const ri = arr.findIndex(e => e.node === node);
-                if (ri >= 0) arr.splice(ri, 1);
-                if (arr.length === 0) this.roofObjectGrid.delete(rk);
-              }
+              if (!arr) continue;
+              const ri = arr.findIndex(e => e.node === node);
+              if (ri >= 0) arr.splice(ri, 1);
+              if (arr.length === 0) this.roofObjectGrid.delete(rk);
             }
           }
         }
@@ -2899,11 +2917,14 @@ export class ChunkManager {
     // Indoor signal A: player is literally STANDING on an elevated walkable
     // surface (a building's upper floor). The tile has an entry in
     // elevatedFloorHeights (texture-plane upper floors) AND the player's Y
-    // matches that elevation — i.e. they're on it, not under it.
+    // matches that elevation — i.e. they're on it, not under it. Tiles
+    // covered ONLY by noRoof-flagged planes (bridges, outdoor terraces)
+    // skip this signal so standing on a bridge stays outdoor.
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx >= 0 && tx < this.mapWidth && tz >= 0 && tz < this.mapHeight) {
-      const elev = this.elevatedFloorHeights.get(tz * this.mapWidth + tx);
-      if (elev !== undefined && Math.abs(playerY - elev) < 1.0) return true;
+      const tileIdx = tz * this.mapWidth + tx;
+      const elev = this.elevatedFloorHeights.get(tileIdx);
+      if (elev !== undefined && Math.abs(playerY - elev) < 1.0 && this.nonNoRoofElevatedTiles.has(tileIdx)) return true;
     }
 
     // Indoor signal B: 1×1 roof slab cover. Player's tile has a roof entry
@@ -3250,8 +3271,15 @@ export class ChunkManager {
       // merged mesh with regular planes — the indoor-roof culler can then
       // skip the entire merged mesh by checking its metadata flag.
       const matKey = `${plane.textureId}_${plane.uvRepeat || 0}_${plane.texRotation || 0}_${tintKey}_${plane.doubleSided ? 1 : 0}_${isFlat ? 1 : 0}_${isNoRoof ? 1 : 0}`;
+      // Y-bucket prevents different floor heights from merging into one mesh
+      // when assignRoofFloor returns the same index (kcmap doesn't track per-
+      // tile floor data, so every plane lands on roofFloor=0). Without this,
+      // 1st-floor and 2nd-floor planes in the same chunk shared a single
+      // merged mesh, and the indoor culler hiding the y=5.5 entries also
+      // hid the y=2.7 planes baked into the same mesh.
+      const yBucket = Math.round(plane.position.y * 10);
       const groupKey = isRoof
-        ? `${matKey}_chunk${pcx}_${pcz}_roof${roofFloor}`
+        ? `${matKey}_chunk${pcx}_${pcz}_roof${roofFloor}_y${yBucket}`
         : `${matKey}_chunk${pcx}_${pcz}`;
 
       let group = mergeGroups.get(groupKey);
@@ -3371,6 +3399,7 @@ export class ChunkManager {
     this.placedStairRamps = [];
     this.elevatedFloorHeights.clear();
     this.bridgeFloorTiles.clear();
+    this.nonNoRoofElevatedTiles.clear();
     for (const m of this.texturePlaneMeshes) m.dispose();
     this.texturePlaneMeshes = [];
     this.texturePlanesByChunk.clear();

@@ -166,6 +166,11 @@ export interface ElevatedTileEntry {
   isBridge: boolean;
   /** True if the underlying tile type was BLOCKING (server should upgrade). */
   wasBlocking: boolean;
+  /** True iff every plane that registered this tile carried `noRoof`. The
+   *  client uses this to suppress indoor-mode Signal A on tiles whose only
+   *  cover is an explicit never-roof plane (bridges, outdoor terraces).
+   *  Server doesn't read this field. */
+  allContributorsNoRoof: boolean;
 }
 
 export interface ElevatedTileSourcePlane extends DerivedFloorTilesPlane {
@@ -173,6 +178,9 @@ export interface ElevatedTileSourcePlane extends DerivedFloorTilesPlane {
   width?: number;
   /** height × scale.y = plane's full depth before rotation */
   height?: number;
+  /** Author flag: this plane must never trigger indoor / roof-culling
+   *  detection (used for bridges and outdoor walkable surfaces). */
+  noRoof?: boolean;
 }
 
 export function deriveElevatedFloorTiles(
@@ -248,9 +256,18 @@ export function deriveElevatedFloorTiles(
         // height gate). Anything higher is a roof — gate it on player Y.
         const isBridge = wasBlocking || py < terrainH + 2.0;
 
+        const isNoRoof = !!plane.noRoof;
         const existing = result.get(idx);
-        if (existing === undefined || py < existing.y) {
-          result.set(idx, { y: py, isBridge, wasBlocking });
+        if (existing === undefined) {
+          result.set(idx, { y: py, isBridge, wasBlocking, allContributorsNoRoof: isNoRoof });
+        } else {
+          if (py < existing.y) {
+            existing.y = py;
+            existing.isBridge = isBridge;
+            existing.wasBlocking = wasBlocking;
+          }
+          // Any non-noRoof contributor flips the tile permanently.
+          if (!isNoRoof) existing.allContributorsNoRoof = false;
         }
       }
     }

@@ -1292,7 +1292,6 @@ export class GameManager {
           const tmpl = await this.loadGearSmart(slotName, itemId, buildDef(), target);
           if (tmpl) {
             this.gearTemplateCache.set(cacheKey, tmpl);
-            console.log(`[Gear] Loaded ${slotName} item ${itemId}`);
           }
           this.gearLoadingPromises.delete(cacheKey);
           return tmpl;
@@ -1404,8 +1403,6 @@ export class GameManager {
         if (override) {
           character.applySkinnedArmorTransform(slotName, override);
         }
-
-        console.log(`[Gear] Loaded skinned ${slotName} item ${itemId}`);
         return null;
       }
 

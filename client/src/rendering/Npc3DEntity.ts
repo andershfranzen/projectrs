@@ -115,7 +115,6 @@ export class Npc3DEntity {
       this.playAnim('idle', true);
       this.root.position.set(this._position.x, this._position.y, this._position.z);
       this._ready = true;
-      console.log(`[Npc3DEntity] Loaded '${label}' — meshes: ${this.meshes.length}, anims: ${this.animGroups.size}, minY: ${minY.toFixed(2)}, maxY: ${maxY.toFixed(2)}, pos: ${this._position.toString()}, meshesVisible: ${this.meshes.map(m => m.isVisible).join(',')}, enabled: ${this.meshes.map(m => m.isEnabled()).join(',')}`);
       // Force enable all meshes
       for (const mesh of this.meshes) {
         mesh.isVisible = true;

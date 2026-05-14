@@ -19,7 +19,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
-import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, ANIM_DURATIONS, DEFAULT_QUANTIZE_FRAMES } from './AnimationQuantizer';
+import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP } from './AnimationQuantizer';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
@@ -543,7 +543,6 @@ export class CharacterEntity {
         const name = group.name.toLowerCase().replace(/\s+/g, '_');
         this.animGroups.set(name, group);
         group.stop();
-        console.log(`[CharacterEntity] Animation loaded: '${name}' (${group.targetedAnimations.length} targets, ${this.getAnimDuration(group).toFixed(2)}s)`);
       }
 
       // Load additional animations from separate GLB files
@@ -553,7 +552,6 @@ export class CharacterEntity {
 
       for (const [name, group] of this.animGroups) {
         quantizeAnimationGroup(group, name);
-        console.log(`[CharacterEntity] Quantized '${name}' → ${DEFAULT_QUANTIZE_FRAMES} frames, ${(ANIM_DURATIONS[name] ?? 1.2).toFixed(1)}s`);
       }
 
       // Hips Y lock — strip vertical translation off mixamorig:Hips across
@@ -561,7 +559,6 @@ export class CharacterEntity {
       // GLBs already does this, but the main GLB's bundled animations slip
       // past that path and were dropping the character into the ground at
       // idle. Doing it here as a final pass covers both sources.
-      let zeroedTracks = 0;
       for (const [, group] of this.animGroups) {
         for (const ta of group.targetedAnimations) {
           const target = ta.target as any;
@@ -572,11 +569,7 @@ export class CharacterEntity {
             const v = k.value as any;
             if (v && typeof v.y === 'number') v.y = 0;
           }
-          zeroedTracks++;
         }
-      }
-      if (zeroedTracks > 0) {
-        console.log(`[CharacterEntity] Zeroed Hips Y on ${zeroedTracks} animation tracks`);
       }
 
       // Start idle by default
@@ -626,10 +619,6 @@ export class CharacterEntity {
 
       this._ready = true;
       this._resolveReady();
-      console.log(`[CharacterEntity] '${options.name}' loaded — ${this.meshes.length} meshes, ${this.animGroups.size} animations, skeleton: ${this.skeleton ? 'yes' : 'no'}`);
-      if (this.skeleton) {
-        console.log(`[CharacterEntity] Bone names: ${this.skeleton.bones.map(b => b.name).join(', ')}`);
-      }
     } catch (e) {
       console.error(`[CharacterEntity] Failed to load '${options.modelPath}':`, e);
       this._resolveReady(); // resolve anyway so callers don't hang
@@ -715,16 +704,6 @@ export class CharacterEntity {
           };
           loadedFiles.set(animPath, result);
           for (const g of result.animationGroups) g.stop();
-          // Fingerprint: duration + total keyframes — changes on every re-export
-          // so you can verify at a glance whether the latest GLB is loaded.
-          const fpGroup = result.animationGroups[0];
-          let fpDur = 0, fpKeys = 0;
-          if (fpGroup) {
-            const fps = fpGroup.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
-            fpDur = fps > 0 ? (fpGroup.to - fpGroup.from) / fps : 0;
-            for (const ta of fpGroup.targetedAnimations) fpKeys += ta.animation.getKeys().length;
-          }
-          console.log(`[CharacterEntity] Animation file '${animPath}' loaded | dur=${fpDur.toFixed(3)}s keys=${fpKeys}`);
         } catch {
           console.warn(`[CharacterEntity] Failed to load animation file ${animPath}`);
         }
@@ -749,7 +728,6 @@ export class CharacterEntity {
           group = result.animationGroups.find(g => g.name === anim.animName);
           if (!group && result.animationGroups.length === 1) {
             group = result.animationGroups[0];
-            console.log(`[CharacterEntity] '${anim.name}': animName '${anim.animName}' not found, using sole action '${group.name}'`);
           } else if (!group) {
             console.warn(`[CharacterEntity] '${anim.name}': animName '${anim.animName}' not found in '${anim.path}'. Available: ${result.animationGroups.map(g => g.name).join(', ')}`);
             continue;
@@ -761,7 +739,6 @@ export class CharacterEntity {
 
         const retargetedAnims = [];
         let missCount = 0;
-        let correctedCount = 0;
 
         for (const ta of group.targetedAnimations) {
           const target = ta.target as TransformNode;
@@ -822,13 +799,8 @@ export class CharacterEntity {
           if (!ourTarget) {
             // Thumb bones are intentionally absent on our 57-bone rig (we use
             // Mixamo's 32-bone skeleton plus Polysplit's Index/Middle/Ring/Pinky
-            // fingers — no thumbs). Don't spam the console for those.
-            if (!target.name.includes('Thumb')) {
-              missCount++;
-              if (missCount <= 5) {
-                console.log(`[CharacterEntity] Retarget miss: '${target.name}'`);
-              }
-            }
+            // fingers — no thumbs).
+            if (!target.name.includes('Thumb')) missCount++;
             continue;
           }
 
@@ -846,7 +818,6 @@ export class CharacterEntity {
                   key.value = ourRest.multiply(srcRestInv.multiply(key.value));
                 }
               }
-              correctedCount++;
             }
           }
 
@@ -874,7 +845,6 @@ export class CharacterEntity {
           }
           this.animGroups.set(anim.name, newGroup);
           newGroup.stop();
-          console.log(`[CharacterEntity] '${anim.name}': ${retargetedAnims.length} tracks retargeted, ${correctedCount} rest-corrected, ${missCount} missed`);
         } else {
           console.warn(`[CharacterEntity] Retargeting failed for '${anim.name}' — 0 tracks matched`);
         }
@@ -1077,18 +1047,8 @@ export class CharacterEntity {
     if (!group) return;
 
     if (oldGroup) oldGroup.stop();
-    const _firstAnim = group.targetedAnimations[0]?.animation;
-    const _fps = _firstAnim?.framePerSecond ?? 0;
-    const _frames = group.to - group.from;
-    console.log(`[Anim] '${name}' from=${group.from} to=${group.to} frames=${_frames.toFixed(2)} fps=${_fps} expected_duration=${(_frames / (_fps || 1)).toFixed(3)}s`);
-    const _t0 = performance.now();
     const speed = ANIM_SPEED_RATIO[name] ?? 1.0;
     group.start(loop, speed, group.from, group.to, false);
-    if (!loop) {
-      group.onAnimationGroupEndObservable.addOnce(() => {
-        console.log(`[Anim] '${name}' actual_wallclock=${((performance.now() - _t0) / 1000).toFixed(3)}s`);
-      });
-    }
 
     this.currentAnimName = name;
     this.oneShotCallback = onEnd ?? null;
@@ -1537,7 +1497,6 @@ export class CharacterEntity {
     if (slot === 'body') this.setBodyVisible(false);
     if (slot === 'legs') this.setLegsVisible(false);
     this.applyPickability();
-    console.log(`[SkinnedArmor] Attached ${kept.length} meshes in slot '${slot}' itemId=${itemId} (remapped ${armorBoneCount} bones, ${unmapped} unmatched)`);
   }
 
   detachSkinnedArmor(slot: string): void {
@@ -1676,7 +1635,6 @@ export class CharacterEntity {
       if (slot === 'body') this.setBodyVisible(false);
       if (slot === 'legs') this.setLegsVisible(false);
       this.applyPickability();
-      console.log(`[ManualSkin] slot='${slot}' item=${itemId} primitives=${kept.length} jointsRemapped=${armorJointNames.length} unmatched=${unmapped}`);
       return true;
     } catch (e) {
       console.warn(`[ManualSkin] Failed for ${fileUrl}:`, e);
