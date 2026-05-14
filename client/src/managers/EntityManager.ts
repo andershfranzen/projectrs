@@ -308,7 +308,10 @@ export class EntityManager {
         // Server advances 1 tile per tick regardless of direction. Use
         // Chebyshev distance so diagonals finish in 1 tick same as cardinals
         // — Euclidean would underrun diagonals and cause visible drift.
-        const speed = serverMoving ? EntityManager.NPC_TILES_PER_SEC : 3.0;
+        // Cap post-stall / post-respawn catch-up at 2.0 t/s (1.2× walk).
+        // The previous 3.0 t/s "scoot" made NPCs visibly skate after a
+        // stale-walkUntil window expired.
+        const speed = serverMoving ? EntityManager.NPC_TILES_PER_SEC : 2.0;
         const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
         const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
         const nx = c.x + dx * stepRatio;
