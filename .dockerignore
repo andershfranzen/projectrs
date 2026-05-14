@@ -1,0 +1,25 @@
+.git
+.github
+node_modules
+**/node_modules
+**/dist
+**/.vite
+assets-sources
+pickaxeminingset_sourcefiles
+docs
+editor/public
+editor/src
+editor/scripts
+editor/screenshots
+editor/2d sprites
+editor/worldsave
+tools
+enchant-prototype.html
+*.db
+*.db-shm
+*.db-wal
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md
+CLAUDE.md

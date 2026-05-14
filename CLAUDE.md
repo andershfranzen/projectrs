@@ -1,6 +1,6 @@
-# evilMUD — Browser-Based MMORPG
+# EvilQuest — Browser-Based MMORPG
 
-A multiplayer browser MMORPG inspired by RuneScape Classic and HighSpell. Built with Bun, TypeScript, and Babylon.js. (Project history: ProjectRS → EvilQuest → evilMUD; root npm package is still named `projectrs`.)
+A multiplayer browser MMORPG inspired by RuneScape Classic and HighSpell. Built with Bun, TypeScript, and Babylon.js. (Project history: ProjectRS → evilMUD → EvilQuest; root npm package is still named `projectrs`.)
 
 ## Tech Stack
 
@@ -16,7 +16,7 @@ A multiplayer browser MMORPG inspired by RuneScape Classic and HighSpell. Built 
 ## Project Structure
 
 ```
-evilMUD/
+EvilQuest/
 ├── package.json              # Workspace root
 ├── shared/                   # Shared types, constants, protocol
 │   ├── opcodes.ts            # Client/Server opcode enums

@@ -72,7 +72,7 @@ export class LoadingScreen {
 
     const title = document.createElement('div');
     title.className = 'evilmud-loading-title';
-    title.textContent = 'evilMUD';
+    title.textContent = 'EvilQuest';
     this.overlay.appendChild(title);
 
     const sub = document.createElement('div');

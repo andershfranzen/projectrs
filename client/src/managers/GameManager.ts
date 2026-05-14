@@ -365,7 +365,7 @@ export class GameManager {
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network);
     this.tradePanel = new TradePanel(this.network);
-    this.chatPanel.addSystemMessage(`Welcome to evilMUD!`);
+    this.chatPanel.addSystemMessage(`Welcome to EvilQuest!`);
     this.chatPanel.addSystemMessage(`You last logged in from: ${window.location.hostname}`);
 
     // Chat message handler

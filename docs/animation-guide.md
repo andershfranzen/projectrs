@@ -1,4 +1,4 @@
-# Animation Guide — OSRS-Style Animations for evilMUD
+# Animation Guide — OSRS-Style Animations for EvilQuest
 
 This document covers how to create animations that match the snappy, puppet-like feel of Old School RuneScape. Our system uses a Mixamo-rigged character with a quantization pipeline that resamples any source animation down to a fixed number of keyframes played at a target duration.
 

@@ -1,0 +1,25 @@
+services:
+  evilquest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: evilquest:latest
+    container_name: evilquest
+    restart: unless-stopped
+    networks:
+      - lostcitylabs_net
+    expose:
+      - "4000"
+    volumes:
+      - evilquest_data:/app/data
+    environment:
+      CLIENT_ORIGINS: "https://evilquest.lostcitylabs.com"
+      NODE_ENV: production
+
+networks:
+  lostcitylabs_net:
+    external: true
+    name: lostcitylabs_lostcitylabs_network
+
+volumes:
+  evilquest_data:

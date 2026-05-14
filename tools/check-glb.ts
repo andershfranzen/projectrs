@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * GLB compatibility checker for evilMUD's character/gear pipeline.
+ * GLB compatibility checker for EvilQuest's character/gear pipeline.
  *
  *   bun tools/check-glb.ts <path-to-glb-or-directory> [--ref <reference-glb>]
  *

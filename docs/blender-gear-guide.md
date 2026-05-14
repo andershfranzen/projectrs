@@ -1,6 +1,6 @@
 # Authoring Gear in Blender — RS2 Style
 
-A practical step-by-step for making rigid equipment (weapons, helmets, shields, boots, etc.) that fits both the **RuneScape 2 visual style** and the **evilMUD runtime pipeline**. Skinned/deforming armor (chest plates, leg armor) is harder and not covered here — see [CLAUDE.md](../CLAUDE.md) for why.
+A practical step-by-step for making rigid equipment (weapons, helmets, shields, boots, etc.) that fits both the **RuneScape 2 visual style** and the **EvilQuest runtime pipeline**. Skinned/deforming armor (chest plates, leg armor) is harder and not covered here — see [CLAUDE.md](../CLAUDE.md) for why.
 
 This guide assumes Blender 4.x. All numbers below are starting points — eyeball them in-game and adjust.
 

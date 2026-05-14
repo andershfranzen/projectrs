@@ -1,4 +1,4 @@
-# Contributing to evilMUD
+# Contributing to EvilQuest
 
 Welcome — this is a quick-start that points you at the right places. The deeper architecture lives in [CLAUDE.md](../CLAUDE.md), and animation specifics live in [animation-guide.md](animation-guide.md).
 

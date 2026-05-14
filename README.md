@@ -1,4 +1,4 @@
-# evilMUD
+# EvilQuest
 
 A multiplayer browser MMORPG inspired by RuneScape Classic. Built with Bun, TypeScript, and Babylon.js.
 
@@ -114,7 +114,7 @@ Player height automatically follows floors and interpolates along stairs via `ge
 ## Project Structure
 
 ```
-evilMUD/
+EvilQuest/
 ├── shared/          # Types, opcodes, protocol, skills, constants
 ├── server/          # Bun game server
 │   ├── src/         # World, GameMap, entities, combat, networking

@@ -33,7 +33,7 @@ const MAX_REACTION_SAMPLES = 50;
 const MAX_PATH_DESTINATIONS = 100;
 
 /** Realistic max XP/hour per skill. Anything above flags. Calibrated for
- *  evilMUD's tick rate + drop rates — adjust as content lands. These are
+ *  EvilQuest's tick rate + drop rates — adjust as content lands. These are
  *  ceilings (faster than a human could plausibly grind), not "expected"
  *  rates. */
 const XP_PER_HOUR_CEILING: Record<string, number> = {

@@ -24,7 +24,7 @@ export class LoginScreen {
 
     // Title
     const title = document.createElement('div');
-    title.textContent = 'evilMUD';
+    title.textContent = 'EvilQuest';
     title.style.cssText = `
       font-size: 48px; font-weight: bold; color: #fc0;
       text-shadow: 2px 2px 4px rgba(0,0,0,0.8), 0 0 20px rgba(255,204,0,0.3);

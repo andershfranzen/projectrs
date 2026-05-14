@@ -1,0 +1,41 @@
+name: Deploy to LCL
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-lcl
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: SSH deploy
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.LCL_HOST }}
+          username: ${{ secrets.LCL_USER }}
+          key: ${{ secrets.LCL_SSH_KEY }}
+          port: 22
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd /opt/evilquest
+            echo "--- fetching ---"
+            git fetch --depth 1 origin main
+            git reset --hard origin/main
+            git log -1 --oneline
+            echo "--- building ---"
+            docker compose build --pull
+            echo "--- starting ---"
+            docker compose up -d
+            echo "--- pruning ---"
+            docker image prune -f
+            echo "--- health ---"
+            sleep 4
+            docker ps --filter name=evilquest --format "{{.Status}}"
+            docker logs evilquest --tail 10

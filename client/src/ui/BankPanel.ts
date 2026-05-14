@@ -102,7 +102,7 @@ export class BankPanel {
       border-radius: 4px 4px 0 0;
     `;
     const title = document.createElement('span');
-    title.textContent = 'Bank of evilMUD';
+    title.textContent = 'Bank of EvilQuest';
     title.style.cssText = 'font-size: 16px; color: #ffcc44; font-weight: bold;';
     const closeBtn = document.createElement('button');
     closeBtn.textContent = 'X';
