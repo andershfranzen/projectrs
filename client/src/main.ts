@@ -1,11 +1,13 @@
 import { LoginScreen } from './ui/LoginScreen';
 import { LoadingScreen } from './ui/LoadingScreen';
 import { BackgroundParticles } from './ui/BackgroundParticles';
+import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import type { GameManager as GameManagerType } from './managers/GameManager';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
+installGlobalScrollbars();
 
 let game: GameManagerType | null = null;
 let loginScreen: LoginScreen | null = null;

@@ -409,42 +409,37 @@ export class SidePanel {
     // Good Magic tab
     const goodMagicWrap = document.createElement('div');
     goodMagicWrap.style.display = 'none';
-    goodMagicWrap.innerHTML = `
-      <div style="color: #4ae; font-weight: bold; font-size: 13px; margin-bottom: 8px; text-shadow: 1px 1px 0 #000;">\u2728 Good Magic Spellbook</div>
-      <div style="color: #888; font-size: 11px; font-style: italic;">No spells learned yet...</div>
-    `;
+    goodMagicWrap.appendChild(this.buildEmptyPanelView([
+      { title: 'Good Magic Spellbook', body: 'No spells learned yet...', color: '#4ae' },
+    ]));
     contentArea.appendChild(goodMagicWrap);
     this.tabContents.set('good_magic', goodMagicWrap);
 
     // Evil Magic tab
     const evilMagicWrap = document.createElement('div');
     evilMagicWrap.style.display = 'none';
-    evilMagicWrap.innerHTML = `
-      <div style="color: #c4a; font-weight: bold; font-size: 13px; margin-bottom: 8px; text-shadow: 1px 1px 0 #000;">\uD83D\uDD25 Evil Magic Spellbook</div>
-      <div style="color: #888; font-size: 11px; font-style: italic;">No spells learned yet...</div>
-    `;
+    evilMagicWrap.appendChild(this.buildEmptyPanelView([
+      { title: 'Evil Magic Spellbook', body: 'No spells learned yet...', color: '#c4a' },
+    ]));
     contentArea.appendChild(evilMagicWrap);
     this.tabContents.set('evil_magic', evilMagicWrap);
 
     // Quests tab
     const questsWrap = document.createElement('div');
     questsWrap.style.display = 'none';
-    questsWrap.innerHTML = `
-      <div style="color: #d8372b; font-weight: bold; font-size: 13px; margin-bottom: 8px; text-shadow: 1px 1px 0 #000;">Quest Journal</div>
-      <div style="color: #888; font-size: 11px; font-style: italic;">No quests yet...</div>
-    `;
+    questsWrap.appendChild(this.buildEmptyPanelView([
+      { title: 'Quest Journal', body: 'No quests yet...', color: '#d8372b' },
+    ]));
     contentArea.appendChild(questsWrap);
     this.tabContents.set('quests', questsWrap);
 
     // Social tab (friends + ignore combined)
     const socialWrap = document.createElement('div');
     socialWrap.style.display = 'none';
-    socialWrap.innerHTML = `
-      <div style="color: #0c0; font-weight: bold; font-size: 13px; margin-bottom: 8px; text-shadow: 1px 1px 0 #000;">Friends List</div>
-      <div style="color: #888; font-size: 11px; font-style: italic;">Your friends list is empty.</div>
-      <div style="color: #c44; font-weight: bold; font-size: 13px; margin: 12px 0 8px; padding-top: 8px; border-top: 1px solid #3a3025; text-shadow: 1px 1px 0 #000;">Ignore List</div>
-      <div style="color: #888; font-size: 11px; font-style: italic;">Your ignore list is empty.</div>
-    `;
+    socialWrap.appendChild(this.buildEmptyPanelView([
+      { title: 'Friends List', body: 'Your friends list is empty.', color: '#0c0' },
+      { title: 'Ignore List', body: 'Your ignore list is empty.', color: '#c44' },
+    ]));
     contentArea.appendChild(socialWrap);
     this.tabContents.set('social', socialWrap);
 
@@ -516,6 +511,100 @@ export class SidePanel {
     return panel;
   }
 
+  private buildEmptyPanelView(sections: { title: string; body: string; color?: string }[]): HTMLDivElement {
+    const view = document.createElement('div');
+    view.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 100%;
+      padding: 6px 7px;
+      color: #cfc7b8;
+      font-family: Arial, Helvetica, sans-serif;
+    `;
+
+    for (const section of sections) {
+      const block = document.createElement('div');
+      block.style.cssText = `
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      `;
+
+      const header = document.createElement('div');
+      header.textContent = section.title;
+      const headerColor = section.color ?? '#d8372b';
+      header.style.cssText = `
+        color: ${headerColor};
+        font-size: 13px;
+        line-height: 16px;
+        font-weight: bold;
+        letter-spacing: 0;
+        text-shadow: 1px 1px 0 #000;
+        padding: 0 0 5px;
+        border-bottom: 1px solid color-mix(in srgb, ${headerColor} 38%, transparent);
+      `;
+
+      const body = document.createElement('div');
+      body.textContent = section.body;
+      body.style.cssText = `
+        min-height: 34px;
+        color: #8f8778;
+        font-size: 11px;
+        line-height: 15px;
+        font-style: italic;
+        text-shadow: 1px 1px 0 #000;
+      `;
+
+      block.appendChild(header);
+      block.appendChild(body);
+      view.appendChild(block);
+    }
+
+    return view;
+  }
+
+  private buildPanelFrame(title: string, color: string, body: HTMLDivElement): HTMLDivElement {
+    const view = document.createElement('div');
+    view.style.cssText = `
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 100%;
+      padding: 6px 7px;
+      color: #cfc7b8;
+      font-family: Arial, Helvetica, sans-serif;
+    `;
+
+    const header = document.createElement('div');
+    header.textContent = title;
+    header.style.cssText = `
+      color: ${color};
+      font-size: 13px;
+      line-height: 16px;
+      font-weight: bold;
+      letter-spacing: 0;
+      text-shadow: 1px 1px 0 #000;
+      padding: 0 0 5px;
+      border-bottom: 1px solid color-mix(in srgb, ${color} 38%, transparent);
+      flex: 0 0 auto;
+    `;
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    `;
+    content.appendChild(body);
+
+    view.appendChild(header);
+    view.appendChild(content);
+    return view;
+  }
+
   private roundTabRowCorners(row: HTMLDivElement, edge: 'top' | 'bottom'): void {
     const buttons = Array.from(row.children) as HTMLDivElement[];
     if (buttons.length === 0) return;
@@ -534,13 +623,14 @@ export class SidePanel {
   }
 
   private buildInventoryContent(): HTMLDivElement {
-    const grid = document.createElement('div');
-    grid.style.cssText = `
-      display: grid; grid-template-columns: repeat(5, 1fr);
-      grid-template-rows: repeat(6, minmax(34px, 56px));
-      gap: 0; min-height: 0; margin: 1px 0;
-      position: relative;
-      overflow: hidden;
+	    const grid = document.createElement('div');
+	    grid.style.cssText = `
+	      display: grid; grid-template-columns: repeat(5, 1fr);
+	      grid-template-rows: repeat(6, 1fr);
+	      flex: 1 1 auto;
+	      gap: 0; min-height: 0; margin: 0;
+	      position: relative;
+	      overflow: hidden;
       background:
         repeating-linear-gradient(0deg, rgba(196, 126, 70, 0.035) 0 1px, transparent 1px 4px),
         repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 5px),
@@ -624,11 +714,16 @@ export class SidePanel {
       this.invSlotElements.push(slot);
     }
 
-    return grid;
-  }
+	    return this.buildPanelFrame('Inventory', '#b56d3b', grid);
+	  }
 
-  private buildSkillsContent(): HTMLDivElement {
-    const wrap = document.createElement('div');
+	  private buildSkillsContent(): HTMLDivElement {
+	    const wrap = document.createElement('div');
+	    wrap.style.cssText = `
+	      flex: 1 1 auto;
+	      min-height: 0;
+	      overflow-y: auto;
+	    `;
 
     for (const id of ALL_SKILLS) {
       const row = document.createElement('div');
@@ -694,11 +789,16 @@ export class SidePanel {
     clRow.textContent = 'Combat Lv: 3';
     wrap.appendChild(clRow);
 
-    return wrap;
-  }
+	    return this.buildPanelFrame('Skills', '#d8372b', wrap);
+	  }
 
-  private buildEquipmentContent(): HTMLDivElement {
-    const wrap = document.createElement('div');
+	  private buildEquipmentContent(): HTMLDivElement {
+	    const wrap = document.createElement('div');
+	    wrap.style.cssText = `
+	      flex: 1 1 auto;
+	      min-height: 0;
+	      overflow-y: auto;
+	    `;
 
     for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) {
       const row = document.createElement('div');
@@ -724,16 +824,16 @@ export class SidePanel {
       wrap.appendChild(row);
     }
 
-    return wrap;
-  }
+	    return this.buildPanelFrame('Equipment', '#b8b0a0', wrap);
+	  }
 
-  private buildAttackStyleContent(): HTMLDivElement {
-    const wrap = document.createElement('div');
-
-    const title = document.createElement('div');
-    title.style.cssText = `color: #d8372b; font-weight: bold; font-size: 13px; margin-bottom: 10px; text-shadow: 1px 1px 0 #000; text-align: center;`;
-    title.textContent = 'Attack Style';
-    wrap.appendChild(title);
+	  private buildAttackStyleContent(): HTMLDivElement {
+	    const wrap = document.createElement('div');
+	    wrap.style.cssText = `
+	      flex: 1 1 auto;
+	      min-height: 0;
+	      overflow-y: auto;
+	    `;
 
     const stances: { key: MeleeStance; label: string; desc: string }[] = [
       { key: 'accurate', label: 'Accurate', desc: '+3 Accuracy' },
@@ -773,8 +873,8 @@ export class SidePanel {
     }
 
     this.updateStanceUI();
-    return wrap;
-  }
+	    return this.buildPanelFrame('Combat Style', '#d8372b', wrap);
+	  }
 
   switchTab(tab: string): void {
     this.activeTab = tab;

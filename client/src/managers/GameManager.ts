@@ -50,7 +50,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -785,17 +785,17 @@ export class GameManager {
     for (const [, data] of this.worldObjectDefs) {
       const def = this.objectDefsCache.get(data.defId);
       if (def?.blocking && !data.depleted) {
-        const bx = Math.floor(data.x);
-        const bz = Math.floor(data.z);
-        if (def.category === 'tree') {
-          // Trees block a 2x2 area around their trunk
-          for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-            this.blockedObjectTiles.add(`${bx + dx},${bz + dz}`);
-          }
-        } else {
-          this.blockedObjectTiles.add(`${bx},${bz}`);
-        }
+        this.setObjectTilesBlocked(data.x, data.z, def, true);
       }
+    }
+  }
+
+  private setObjectTilesBlocked(x: number, z: number, def: WorldObjectDef, blocked: boolean): void {
+    if (!def.blocking || def.category === 'door') return;
+    for (const tile of getObjectFootprintTiles(x, z, def)) {
+      const key = `${tile.x},${tile.z}`;
+      if (blocked) this.blockedObjectTiles.add(key);
+      else this.blockedObjectTiles.delete(key);
     }
   }
 
@@ -1848,28 +1848,10 @@ export class GameManager {
         this.animateDoor(objectEntityId, isDepleted, 0);
       }
 
-      // Track blocking tiles for pathfinding
-      const tileKey = `${Math.floor(x)},${Math.floor(z)}`;
       if (def?.category === 'door') {
         // Edge detection deferred until model is linked — handled in linkPlacedNodeToEntity / onChunkObjectsLoaded
-      } else if (def?.blocking && !isDepleted) {
-        const bx = Math.floor(x), bz = Math.floor(z);
-        if (def.category === 'tree') {
-          for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-            this.blockedObjectTiles.add(`${bx + dx},${bz + dz}`);
-          }
-        } else {
-          this.blockedObjectTiles.add(tileKey);
-        }
-      } else {
-        if (def?.category === 'tree') {
-          const bx = Math.floor(x), bz = Math.floor(z);
-          for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-            this.blockedObjectTiles.delete(`${bx + dx},${bz + dz}`);
-          }
-        } else {
-          this.blockedObjectTiles.delete(tileKey);
-        }
+      } else if (def) {
+        this.setObjectTilesBlocked(x, z, def, !isDepleted);
       }
 
       // Try to link to an editor-placed GLB model
@@ -1903,7 +1885,6 @@ export class GameManager {
       // Update blocking tiles for pathfinding
       if (data) {
         const def2 = this.objectDefsCache.get(data.defId);
-        const tileKey = `${Math.floor(data.x)},${Math.floor(data.z)}`;
         if (def2?.category === 'door') {
           const doorEntry = this.doorPivots.get(objectEntityId);
           const rotY = doorEntry ? doorEntry.closedRotY : 0;
@@ -1923,24 +1904,8 @@ export class GameManager {
           }
 
           this.animateDoor(objectEntityId, opened, swingSign || 0);
-        } else if (def2?.blocking && isDepleted === 0) {
-          const bx = Math.floor(data.x), bz = Math.floor(data.z);
-          if (def2.category === 'tree') {
-            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-              this.blockedObjectTiles.add(`${bx + dx},${bz + dz}`);
-            }
-          } else {
-            this.blockedObjectTiles.add(tileKey);
-          }
-        } else {
-          if (def2?.category === 'tree') {
-            const bx = Math.floor(data.x), bz = Math.floor(data.z);
-            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-              this.blockedObjectTiles.delete(`${bx + dx},${bz + dz}`);
-            }
-          } else {
-            this.blockedObjectTiles.delete(tileKey);
-          }
+        } else if (def2) {
+          this.setObjectTilesBlocked(data.x, data.z, def2, isDepleted === 0);
         }
       }
 
@@ -2123,15 +2088,7 @@ export class GameManager {
       }
     });
 
-    this.network.on(ServerOpcode.XP_GAIN, (_op, v) => {
-      const [skillIndex, amount] = v;
-      if (skillIndex >= 0 && skillIndex < ALL_SKILLS.length) {
-        const skillName = SKILL_NAMES[ALL_SKILLS[skillIndex]];
-        if (this.chatPanel && amount > 0) {
-          this.chatPanel.addSystemMessage(`+${amount} ${skillName} XP`, '#8f8');
-        }
-      }
-    });
+    this.network.on(ServerOpcode.XP_GAIN, () => {});
 
     this.network.on(ServerOpcode.LEVEL_UP, (_op, v) => {
       const [skillIndex, newLevel] = v;
@@ -2895,33 +2852,19 @@ export class GameManager {
       return;
     }
 
-    const isHarvestable = def?.category === 'rock' || def?.category === 'tree';
-    const otx = Math.floor(data.x);
-    const otz = Math.floor(data.z);
-    const objTiles = def?.category === 'tree'
-      ? [[-1,-1],[0,-1],[-1,0],[0,0]].map(([ddx,ddz]) => [otx+ddx, otz+ddz])
-      : [[otx, otz]];
-    // Doors: only cardinal + same tile. Harvestable: cardinal only. Others: all 8.
-    const dirs = isHarvestable ? [[0,-1],[0,1],[-1,0],[1,0]] : [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
-
     // Check if already on a valid adjacent tile
     const ptx = Math.floor(this.playerX);
     const ptz = Math.floor(this.playerZ);
-    const alreadyAdj = objTiles.some(([tx, tz]) => {
-      return dirs.some(([ddx, ddz]) => ptx === tx + ddx && ptz === tz + ddz);
-    });
+    const alreadyAdj = def ? isTileAdjacentToObject(ptx, ptz, data.x, data.z, def) : dist <= 1.5;
 
-    if (!alreadyAdj) {
-      const candidates: { ax: number; az: number; dist: number }[] = [];
-      for (const [tx, tz] of objTiles) {
-        for (const [ddx, ddz] of dirs) {
-          const ax = tx + ddx, az = tz + ddz;
-          if (objTiles.some(([ox, oz]) => ox === ax && oz === az)) continue;
-          if (this.isTileBlocked(ax, az)) continue;
-          const dist = Math.hypot(this.playerX - (ax + 0.5), this.playerZ - (az + 0.5));
-          candidates.push({ ax, az, dist });
-        }
-      }
+    if (!alreadyAdj && def) {
+      const candidates = getObjectInteractionTiles(data.x, data.z, def)
+        .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+        .map(tile => ({
+          ax: tile.x,
+          az: tile.z,
+          dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
+        }));
       candidates.sort((a, b) => a.dist - b.dist);
 
       let bestPath: { x: number; z: number }[] | null = null;

@@ -9,3 +9,4 @@ export * from './terrain-shading.js';
 export * from './floorDerivation.js';
 export * from './doorEdge.js';
 export * from './character.js';
+export * from './objectFootprint.js';

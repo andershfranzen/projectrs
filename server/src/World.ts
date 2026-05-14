@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -132,22 +132,13 @@ export class World {
   /** Reusable set for health regen — avoids allocation every 10 ticks */
   private _playersUnderNpcAttack: Set<number> = new Set();
 
-  // Skilling: player -> { objectId, action, cycleTime, toolItemId }
+  // Skilling: player -> { objectId, action, cycleTime, toolItemId, toolBonus }
   // cycleTime = inter-roll period in ticks (computed once at interaction start).
   // Per-player roll tick lives on Player.actionDelay (RS2 %action_delay varp).
-  private skillingActions: Map<number, { objectId: number; action: string; cycleTime: number; toolItemId?: number }> = new Map();
+  private skillingActions: Map<number, { objectId: number; action: string; cycleTime: number; toolItemId?: number; toolBonus?: number }> = new Map();
 
-  /** RS2 mining rates by pickaxe item id (inter-roll period in game ticks).
-   *  Lower = faster. Per LostCityRS `pickaxes.obj`. */
-  private static readonly MINING_RATES: Record<number, number> = {
-    33: 7,  // Bronze
-    53: 6,  // Iron
-    54: 5,  // Steel
-    55: 4,  // Mithril
-    57: 3,  // Runite (RS2 adamant slot)
-    56: 2,  // Black Bronze (highest tier in this game, RS2 rune slot)
-  };
   private static readonly DEFAULT_MINING_RATE = 7;
+  private static readonly MINING_TOOL_ACCURACY_BONUS = 8;
 
   constructor(db: GameDatabase) {
     this.db = db;
@@ -239,16 +230,7 @@ export class World {
         this.depletedObjectIds.add(obj.id);
         // Unblock tiles so paths aren't snagged on a node that's currently
         // depleted (mirrors the depletion site's tile-clear logic).
-        if (obj.def.blocking) {
-          if (obj.def.category === 'tree') {
-            const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
-            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-              this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, bx + dx, bz + dz));
-            }
-          } else {
-            this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, obj.x, obj.z));
-          }
-        }
+        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, false);
         restored++;
       }
       if (restored > 0) console.log(`Restored ${restored} persisted object respawn timer(s)`);
@@ -295,7 +277,7 @@ export class World {
     }
     for (const [id, obj] of this.worldObjects) {
       if (obj.mapLevel === mapId) {
-        this.blockedObjectTiles.delete(this.blockedKeyFor(mapId, obj.x, obj.z));
+        this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false);
         this.worldObjects.delete(id);
       }
     }
@@ -335,17 +317,7 @@ export class World {
       if (spawn.rotY != null) obj.rotationY = spawn.rotY;
       if (spawn.trigger) obj.trigger = spawn.trigger;
       this.worldObjects.set(obj.id, obj);
-      if (objDef.blocking && objDef.category !== 'door') {
-        if (objDef.category === 'tree') {
-          const bx = Math.floor(spawn.x);
-          const bz = Math.floor(spawn.z);
-          for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-            this.blockedObjectTiles.add(this.blockedKeyFor(mapId, bx + dx, bz + dz));
-          }
-        } else {
-          this.blockedObjectTiles.add(this.blockedKeyFor(mapId, spawn.x, spawn.z));
-        }
-      }
+      this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
       if (objDef.category === 'door') {
         this.initDoorEdge(obj);
         this.setDoorWallEdges(obj, gameMap);
@@ -429,6 +401,49 @@ export class World {
     return this.getMap(player.currentMapLevel);
   }
 
+  private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean): void {
+    if (!def.blocking || def.category === 'door') return;
+    for (const tile of getObjectFootprintTiles(x, z, def)) {
+      const key = this.blockedKeyFor(mapId, tile.x, tile.z);
+      if (blocked) this.blockedObjectTiles.add(key);
+      else this.blockedObjectTiles.delete(key);
+    }
+  }
+
+  private isTileBlockedForPlayer(player: Player, map: GameMap, tileX: number, tileZ: number): boolean {
+    if (player.currentFloor !== 0) return map.isTileBlockedOnFloor(tileX, tileZ, player.currentFloor);
+    return map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ));
+  }
+
+  private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
+    const map = this.getPlayerMap(player);
+    const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def)
+      .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
+      .sort((a, b) => {
+        const ad = Math.abs(player.position.x - (a.x + 0.5)) + Math.abs(player.position.y - (a.z + 0.5));
+        const bd = Math.abs(player.position.x - (b.x + 0.5)) + Math.abs(player.position.y - (b.z + 0.5));
+        return ad - bd;
+      });
+
+    for (const tile of candidates) {
+      const goalX = tile.x + 0.5;
+      const goalZ = tile.z + 0.5;
+      const path = player.currentFloor === 0
+        ? map.findPathForNpc(
+            player.position.x,
+            player.position.y,
+            goalX,
+            goalZ,
+            (x, z) => map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, x, z)),
+            800,
+          )
+        : map.findPathOnFloor(player.position.x, player.position.y, goalX, goalZ, player.currentFloor);
+      if (path.length > 0) return path;
+    }
+
+    return [];
+  }
+
   private spawnNpcs(): void {
     for (const [mapId, gameMap] of this.maps) {
       const spawns = this.data.loadSpawns(mapId);
@@ -493,17 +508,7 @@ export class World {
         const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId);
         if (spawn.rotY != null) obj.rotationY = spawn.rotY;
         this.worldObjects.set(obj.id, obj);
-        if (objDef.blocking && objDef.category !== 'door') {
-          if (objDef.category === 'tree') {
-            const bx = Math.floor(spawn.x);
-            const bz = Math.floor(spawn.z);
-            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-              this.blockedObjectTiles.add(this.blockedKeyFor(mapId, bx + dx, bz + dz));
-            }
-          } else {
-            this.blockedObjectTiles.add(this.blockedKeyFor(mapId, spawn.x, spawn.z));
-          }
-        }
+        this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
         if (objDef.category === 'door') {
           this.initDoorEdge(obj);
           this.setDoorWallEdges(obj, gameMap);
@@ -924,6 +929,22 @@ export class World {
     return best;
   }
 
+  private findLowestOwnedToolRequirement(player: Player, toolType: string): number | null {
+    let lowest: number | null = null;
+    const check = (itemId: number) => {
+      const def = this.data.getItem(itemId);
+      if (!def || def.toolType !== toolType) return;
+      const toolLevel = def.toolLevel ?? 1;
+      if (lowest === null || toolLevel < lowest) lowest = toolLevel;
+    };
+    const weaponId = player.equipment.get('weapon');
+    if (weaponId) check(weaponId);
+    for (const slot of player.inventory) {
+      if (slot) check(slot.itemId);
+    }
+    return lowest;
+  }
+
   private isNearby(player: Player, worldX: number, worldZ: number): boolean {
     const cx = Math.floor(worldX / CHUNK_SIZE);
     const cz = Math.floor(worldZ / CHUNK_SIZE);
@@ -1024,27 +1045,16 @@ export class World {
   }
 
   /** Check if player is on a tile adjacent to the object (orthogonal only for harvestable). */
-  private isAdjacentToObject(player: Player, obj: { x: number; z: number; def: { category?: string; blocking?: boolean } }): boolean {
+  private isAdjacentToObject(player: Player, obj: { x: number; z: number; def: WorldObjectDef }): boolean {
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
     const otx = Math.floor(obj.x);
     const otz = Math.floor(obj.z);
-    // Trees use a 2x2 footprint
-    const tiles = obj.def.category === 'tree'
-      ? [[-1,-1],[0,-1],[-1,0],[0,0]].map(([dx,dz]) => [otx+dx, otz+dz])
-      : [[otx, otz]];
     // Doors: player must be on the door tile or the tile the door faces into
     if (obj.def.category === 'door') {
       return (ptx === otx && ptz === otz) || (Math.abs(ptx - otx) + Math.abs(ptz - otz) === 1);
     }
-    const isHarvestable = obj.def.category === 'rock' || obj.def.category === 'tree';
-    return tiles.some(([tx, tz]) => {
-      const ddx = Math.abs(ptx - tx);
-      const ddz = Math.abs(ptz - tz);
-      if (ddx === 0 && ddz === 0) return false;
-      if (isHarvestable) return (ddx === 0 && ddz === 1) || (ddx === 1 && ddz === 0);
-      return ddx <= 1 && ddz <= 1;
-    });
+    return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def);
   }
 
   handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {
@@ -1561,11 +1571,9 @@ export class World {
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') return;
 
-    // Doors: defer one tick instead of silently dropping when busy. Other
-    // interactions (skilling, crafting) keep the early-return because they
-    // rely on the action firing immediately.
     if (player.isBusy(this.currentTick)) {
-      if (obj.def.category === 'door') {
+      const isQueuedObjectAction = obj.def.category === 'door' || (obj.def.skill && obj.def.harvestItemId);
+      if (isQueuedObjectAction) {
         player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0 };
       }
       return;
@@ -1625,10 +1633,15 @@ export class World {
         // and player is on the wrong side, OR maxSteps exhausted). Drop the
         // click — there is no useful action we can queue for them.
         return;
-      } else {
-        player.pendingInteraction = { objectEntityId, actionIndex };
-        return;
       }
+      const path = this.findPathToObjectInteraction(player, obj);
+      if (path.length > 0) {
+        player.moveQueue = path;
+        player.pendingInteraction = { objectEntityId, actionIndex };
+      } else {
+        this.sendChatSystem(player, "I can't reach that.");
+      }
+      return;
     }
 
     // Stop movement
@@ -1687,23 +1700,35 @@ export class World {
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
     const skillId = obj.def.skill as SkillId;
     const playerLevel = player.skills[skillId]?.level ?? 1;
-    if (playerLevel < (obj.def.levelRequired ?? 1)) return;
+    const levelRequired = obj.def.levelRequired ?? 1;
+    if (playerLevel < levelRequired) {
+      this.sendChatSystem(player, `You need level ${levelRequired} ${SKILL_NAMES[skillId] ?? 'skill'} to do that.`);
+      return;
+    }
 
     const requiredTool = obj.def.category === 'tree' ? 'axe' : obj.def.category === 'rock' ? 'pickaxe' : null;
     let toolItemId: number | undefined;
     let toolBonus = 0;
     if (requiredTool) {
       const bestTool = this.findBestTool(player, requiredTool, playerLevel);
-      if (!bestTool) return;
+      if (!bestTool) {
+        const lowestOwnedRequirement = this.findLowestOwnedToolRequirement(player, requiredTool);
+        if (lowestOwnedRequirement !== null && lowestOwnedRequirement > playerLevel) {
+          this.sendChatSystem(player, `You need level ${lowestOwnedRequirement} ${SKILL_NAMES[skillId] ?? 'skill'} to use that ${requiredTool}.`);
+        } else {
+          this.sendChatSystem(player, `You need ${requiredTool === 'axe' ? 'an axe' : 'a pickaxe'} to ${action.toLowerCase()}.`);
+        }
+        return;
+      }
       toolItemId = bestTool.id;
       toolBonus = bestTool.toolBonus ?? 0;
     }
 
-    // Cycle time: per-pickaxe rate for rocks (RS2 model), per-rock harvestTime
-    // minus tool bonus for everything else.
+    // Rocks all roll on the same cadence; better pickaxes affect success chance.
+    // Other harvestables still use tool bonus to shorten the cycle.
     let cycleTime: number;
     if (obj.def.category === 'rock') {
-      cycleTime = (toolItemId != null ? World.MINING_RATES[toolItemId] : undefined) ?? World.DEFAULT_MINING_RATE;
+      cycleTime = obj.def.harvestTime ?? World.DEFAULT_MINING_RATE;
     } else {
       const baseTime = obj.def.harvestTime ?? 4;
       cycleTime = Math.max(2, baseTime - toolBonus);
@@ -1714,7 +1739,9 @@ export class World {
       action,
       cycleTime,
       toolItemId,
+      toolBonus,
     });
+    if (obj.def.category !== 'rock') player.actionDelay = 0;
     const variant = obj.def.category === 'tree'
       ? PlayerSkillAnimationVariant.Chop
       : obj.def.category === 'rock'
@@ -3061,11 +3088,15 @@ export class World {
         if (obj.def.successChances) {
           const chances = action.toolItemId != null ? obj.def.successChances[String(action.toolItemId)] : null;
           if (!chances) {
+            this.sendChatSystem(player, "You can't use that tool here.");
             this.stopPlayerSkilling(playerId, player);
             continue;
           }
           const playerLevel = player.skills[skillId]?.level ?? 1;
-          if (!statRandom(playerLevel, chances[0], chances[1])) {
+          const toolAccuracyBonus = obj.def.category === 'rock'
+            ? (action.toolBonus ?? 0) * World.MINING_TOOL_ACCURACY_BONUS
+            : 0;
+          if (!statRandom(playerLevel, chances[0] + toolAccuracyBonus, chances[1] + toolAccuracyBonus)) {
             // Miss — schedule next roll one cycle out.
             player.actionDelay = this.currentTick + action.cycleTime;
             continue;
@@ -3077,22 +3108,8 @@ export class World {
         const xpReward = obj.def.xpReward ?? 0;
 
         const addedToInv = player.addItem(itemId, qty, this.data.itemDefs).completed > 0;
-        if (!addedToInv && obj.def.category === 'rock') {
-          const groundItem: GroundItem = {
-            id: nextGroundItemId++,
-            itemId,
-            quantity: qty,
-            x: player.position.x,
-            z: player.position.y,
-            mapLevel: player.currentMapLevel,
-            despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
-          };
-          this.groundItems.set(groundItem.id, groundItem);
-          this.despawningItemIds.add(groundItem.id);
-          const dropCm = this.chunkManagers.get(groundItem.mapLevel);
-          if (dropCm) dropCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
-          this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
-        } else if (!addedToInv) {
+        if (!addedToInv) {
+          this.sendChatSystem(player, "You can't carry any more.");
           this.stopPlayerSkilling(playerId, player);
           continue;
         }
@@ -3119,16 +3136,7 @@ export class World {
           // across restarts (within the remaining timer window). On boot we
           // convert this back into a tick countdown.
           this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
-          if (obj.def.blocking) {
-            if (obj.def.category === 'tree') {
-              const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
-              for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-                this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, bx + dx, bz + dz));
-              }
-            } else {
-              this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, obj.x, obj.z));
-            }
-          }
+          this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, false);
           this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
           this.stopPlayerSkilling(playerId, player);
         } else {
@@ -3181,16 +3189,7 @@ export class World {
         // blockedObjectTiles. Without this, the door tile becomes pathing-
         // blocked after the first auto-close and silently breaks every
         // subsequent click.
-        if (obj.def.blocking && obj.def.category !== 'door') {
-          if (obj.def.category === 'tree') {
-            const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
-            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
-              this.blockedObjectTiles.add(this.blockedKeyFor(obj.mapLevel, bx + dx, bz + dz));
-            }
-          } else {
-            this.blockedObjectTiles.add(this.blockedKeyFor(obj.mapLevel, obj.x, obj.z));
-          }
-        }
+        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true);
         if (obj.def.category === 'door') {
           const map = this.maps.get(obj.mapLevel);
           if (map) this.restoreDoorWallEdges(obj, map);
