@@ -100,10 +100,12 @@ export class ChatPanel {
       color: #d8372b; line-height: 1.6;
       font-size: 13px; font-weight: bold;
       text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
-      background: url('/ui/parchment.png') repeat;
-      box-shadow: inset 0 3px 8px rgba(0,0,0,0.35), inset 0 -3px 8px rgba(0,0,0,0.2),
+      background:
+        linear-gradient(rgba(38, 26, 18, 0.18), rgba(38, 26, 18, 0.18)),
+        url('/ui/parchment.png') repeat;
+      box-shadow: inset 0 3px 9px rgba(0,0,0,0.43), inset 0 -3px 9px rgba(0,0,0,0.28),
                   2px 2px 4px rgba(0,0,0,0.3);
-      border: 2px solid #8a7a5a;
+      border: 2px solid #6f6248;
       border-radius: 6px;
       margin: 3px 8px;
     `;

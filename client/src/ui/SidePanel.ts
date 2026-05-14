@@ -7,6 +7,16 @@ import type { NetworkManager } from '../managers/NetworkManager';
 import { clampElementToRect, createContextMenu } from './popupStyle';
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape'];
+const TAB_BUTTON_BG = `
+  repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 4px),
+  repeating-linear-gradient(90deg, rgba(0,0,0,0.22) 0 1px, transparent 1px 6px),
+  linear-gradient(180deg, #302b24 0%, #211d18 48%, #16130f 100%)
+`;
+const TAB_BUTTON_ACTIVE_BG = `
+  repeating-linear-gradient(0deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 4px),
+  repeating-linear-gradient(90deg, rgba(0,0,0,0.28) 0 1px, transparent 1px 5px),
+  linear-gradient(180deg, #17130f 0%, #201913 55%, #2a2119 100%)
+`;
 
 export interface SkillData {
   level: number;
@@ -259,20 +269,30 @@ export class SidePanel {
     const playerInfo = document.createElement('div');
     playerInfo.id = 'side-player-info';
     playerInfo.style.cssText = `
-      display: flex; align-items: center; justify-content: center; gap: 6px;
-      padding: 3px 8px;
+      display: flex; align-items: center; justify-content: center; gap: 5px;
+      padding: 4px 8px 5px;
       background: rgba(0,0,0,0.3);
       border-top: 1px solid rgba(255,200,100,0.08);
       border-bottom: 1px solid rgba(0,0,0,0.4);
     `;
     const combatIcon = document.createElement('img');
     combatIcon.src = '/ui/combat.png';
-    combatIcon.style.cssText = `width: 30px; height: auto; image-rendering: pixelated; object-fit: contain;`;
+    combatIcon.style.cssText = `
+      width: 34px; height: 34px;
+      image-rendering: pixelated; object-fit: contain;
+      flex: 0 0 34px; display: block;
+      transform: translateY(3px);
+    `;
     playerInfo.appendChild(combatIcon);
     const combatText = document.createElement('span');
     combatText.id = 'side-combat-level';
     combatText.textContent = 'Combat Lv: 3';
-    combatText.style.cssText = `font-size: 11px; font-weight: bold; color: #d8372b; text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;`;
+    combatText.style.cssText = `
+      display: inline-flex; align-items: center;
+      height: 24px; line-height: 24px;
+      font-size: 11px; font-weight: bold; color: #d8372b;
+      text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;
+    `;
     playerInfo.appendChild(combatText);
     panel.appendChild(playerInfo);
 
@@ -288,11 +308,13 @@ export class SidePanel {
       flex: 1; text-align: center; padding: 2px 0;
       cursor: pointer; font-size: 13px;
       color: #d8d0c0;
-      background: #4a4035;
-      border-top: 1px solid #5a5548;
-      border-left: 1px solid #5a5548;
-      border-right: 1px solid #1a1815;
-      border-bottom: 1px solid #1a1815;
+      background: ${TAB_BUTTON_BG};
+      border-radius: 0;
+      border-top: 1px solid #4b453b;
+      border-left: 1px solid #474137;
+      border-right: 1px solid #0f0d0a;
+      border-bottom: 1px solid #0e0c09;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -2px 4px rgba(0,0,0,0.32);
       transition: background 0.08s;
       display: flex; align-items: center; justify-content: center;
       overflow: hidden;
@@ -329,6 +351,9 @@ export class SidePanel {
       this.tabButtons.push(btn);
     }
 
+    this.roundTabRowCorners(topTabs, 'top');
+    this.roundTabRowCorners(bottomTabs, 'bottom');
+
     panel.appendChild(topTabs);
 
     // Tab contents
@@ -340,7 +365,7 @@ export class SidePanel {
     // (skills/equipment/etc.) inherit the same envelope.
     contentArea.style.cssText = `
       padding: 2px 3px; overflow: hidden;
-      flex: 1; min-height: 0; max-height: 360px;
+      flex: 0 1 360px; min-height: 0; max-height: 360px;
       background: rgba(30, 26, 20, 0.32);
       border: 2px inset #3a3228;
       display: flex; flex-direction: column;
@@ -428,9 +453,10 @@ export class SidePanel {
 
     const brandArea = document.createElement('div');
     brandArea.style.cssText = `
-      flex: 0 0 58px;
+      flex: 1 1 0;
+      min-height: 44px;
       display: flex; align-items: center; justify-content: center;
-      padding: 4px 8px;
+      padding: 2px 8px;
     `;
 
     const brand = document.createElement('div');
@@ -438,10 +464,10 @@ export class SidePanel {
     brand.style.cssText = `
       text-align: center;
       font-family: 'Cinzel', 'Times New Roman', serif;
-      font-size: 24px;
+      font-size: 20px;
       line-height: 1;
       font-weight: 900;
-      letter-spacing: 2px;
+      letter-spacing: 1px;
       color: #d8372b;
       text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
     `;
@@ -452,7 +478,9 @@ export class SidePanel {
     const logoutBtn = document.createElement('div');
     logoutBtn.textContent = 'Logout';
     logoutBtn.style.cssText = `
-      text-align: center; padding: 6px 0; margin: 0 8px 6px;
+      align-self: center;
+      width: 190px;
+      text-align: center; padding: 6px 0; margin: 0 auto 8px;
       background: rgba(120,40,30,0.5);
       border: 1px solid rgba(180,80,60,0.4);
       border-radius: 3px; color: #d8372b; font-size: 12px;
@@ -486,6 +514,23 @@ export class SidePanel {
     this.switchTab('inventory');
 
     return panel;
+  }
+
+  private roundTabRowCorners(row: HTMLDivElement, edge: 'top' | 'bottom'): void {
+    const buttons = Array.from(row.children) as HTMLDivElement[];
+    if (buttons.length === 0) return;
+
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    const radius = '5px';
+
+    if (edge === 'top') {
+      first.style.borderTopLeftRadius = radius;
+      last.style.borderTopRightRadius = radius;
+    } else {
+      first.style.borderBottomLeftRadius = radius;
+      last.style.borderBottomRightRadius = radius;
+    }
   }
 
   private buildInventoryContent(): HTMLDivElement {
@@ -752,17 +797,19 @@ export class SidePanel {
     for (const btn of this.tabButtons) {
       const isActive = btn.dataset.tab === tab;
       if (isActive) {
-        btn.style.background = '#3a2a22';
+        btn.style.background = TAB_BUTTON_ACTIVE_BG;
         btn.style.borderTop = '1px solid #1a1815';
         btn.style.borderLeft = '1px solid #1a1815';
-        btn.style.borderRight = '1px solid #5a5548';
-        btn.style.borderBottom = '1px solid #5a5548';
+        btn.style.borderRight = '1px solid #4b453b';
+        btn.style.borderBottom = '1px solid #4b453b';
+        btn.style.boxShadow = 'inset 0 2px 5px rgba(0,0,0,0.55), inset 0 -1px 0 rgba(255,255,255,0.03)';
       } else {
-        btn.style.background = '#4a4035';
-        btn.style.borderTop = '1px solid #5a5548';
-        btn.style.borderLeft = '1px solid #5a5548';
-        btn.style.borderRight = '1px solid #1a1815';
-        btn.style.borderBottom = '1px solid #1a1815';
+        btn.style.background = TAB_BUTTON_BG;
+        btn.style.borderTop = '1px solid #4b453b';
+        btn.style.borderLeft = '1px solid #474137';
+        btn.style.borderRight = '1px solid #0f0d0a';
+        btn.style.borderBottom = '1px solid #0e0c09';
+        btn.style.boxShadow = 'inset 0 1px 0 rgba(255,255,255,0.04), inset 0 -2px 4px rgba(0,0,0,0.32)';
       }
     }
   }

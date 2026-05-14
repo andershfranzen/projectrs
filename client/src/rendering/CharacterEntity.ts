@@ -20,6 +20,20 @@ import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, ANIM_DURATIONS, DEFAULT_QUANTIZE_FRAMES } from './AnimationQuantizer';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
+const FACE_DETAIL_MATS = new Set([
+  'Eye Pupil', 'Eye White', 'Eyebrow', 'Mouth', 'Lip',
+  'Eyewhite2', 'Eye colour',
+]);
+
+function keepCloseCameraDetailVisible(mesh: AbstractMesh): void {
+  // These meshes are tiny and skinned to the head. Their imported bounds can
+  // sit just outside the camera frustum at close zoom / low camera angles even
+  // while the visible vertices should still render, which looks like sudden
+  // baldness or missing eyes. Always selecting only these detail meshes is
+  // cheaper than disabling culling for the whole character.
+  mesh.alwaysSelectAsActiveMesh = true;
+  mesh.cullingStrategy = AbstractMesh.CULLINGSTRATEGY_OPTIMISTIC_INCLUSION_THEN_BSPHERE_ONLY;
+}
 
 /**
  * Smooth a mesh's vertex normals by averaging across vertices that share a
@@ -390,6 +404,7 @@ export class CharacterEntity {
       for (const mesh of this.meshes) {
         if (mesh.name.startsWith('M_hair_')) {
           this.modularMeshes.set(mesh.name, mesh);
+          keepCloseCameraDetailVisible(mesh);
           mesh.position.z += HAIR_FORWARD_OFFSET;
           mesh.position.y += HAIR_VERTICAL_OFFSET;
           mesh.scaling.scaleInPlace(HAIR_SCALE);
@@ -429,14 +444,11 @@ export class CharacterEntity {
       // and share vertex positions with the larger Skin mesh, so the generic
       // brighten-and-smooth pass washes them out into the skin and gives them
       // jittery depth ordering. Keep their authored colors and normals intact.
-      const FACE_DETAIL_MATS = new Set([
-        'Eye Pupil', 'Eye White', 'Eyebrow', 'Mouth', 'Lip',
-        'Eyewhite2', 'Eye colour',
-      ]);
       for (const mesh of this.meshes) {
         const pbrMat = mesh.material as any;
         if (!pbrMat) continue;
         const isFaceDetail = FACE_DETAIL_MATS.has(pbrMat.name);
+        if (isFaceDetail) keepCloseCameraDetailVisible(mesh);
 
         const flat = new StandardMaterial(`${pbrMat.name}_flat`, this.scene);
         const hasTexture = !!pbrMat.albedoTexture;

@@ -64,6 +64,8 @@ export class NetworkManager {
         for (const handler of this.rawHandlers) {
           handler(event.data);
         }
+        const rawOpcode = new DataView(event.data).getUint8(0);
+        if (rawOpcode === ServerOpcode.MAP_CHANGE || rawOpcode === ServerOpcode.DIALOGUE_OPEN) return;
         const { opcode, values } = decodePacket(event.data);
         this.dispatch(opcode as ServerOpcode, values);
       }

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, ServerOpcode, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, type SkillId, type ItemDef, type PlayerAppearance, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -696,10 +696,11 @@ export class World {
 
   private cancelSkilling(playerId: number): void {
     if (this.skillingActions.has(playerId)) {
-      this.skillingActions.delete(playerId);
       const player = this.players.get(playerId);
       if (player) {
-        this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+        this.stopPlayerSkilling(playerId, player);
+      } else {
+        this.skillingActions.delete(playerId);
       }
     }
   }
@@ -1714,6 +1715,12 @@ export class World {
       cycleTime,
       toolItemId,
     });
+    const variant = obj.def.category === 'tree'
+      ? PlayerSkillAnimationVariant.Chop
+      : obj.def.category === 'rock'
+        ? PlayerSkillAnimationVariant.Mine
+        : PlayerSkillAnimationVariant.None;
+    this.setPlayerAnimation(player, PlayerAnimationKind.Skill, variant, obj.id);
     this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id);
   }
 
@@ -2894,6 +2901,7 @@ export class World {
         result = processPlayerCombat(player, npc, itemDefs);
       }
       if (result) {
+        this.broadcastPlayerAnimationEvent(player, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, npc.id, true);
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
         player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
@@ -3021,14 +3029,12 @@ export class World {
 
       const obj = this.worldObjects.get(action.objectId);
       if (!obj || obj.depleted || obj.mapLevel !== player.currentMapLevel) {
-        this.skillingActions.delete(playerId);
-        this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+        this.stopPlayerSkilling(playerId, player);
         continue;
       }
 
       if (!this.isAdjacentToObject(player, obj)) {
-        this.skillingActions.delete(playerId);
-        this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+        this.stopPlayerSkilling(playerId, player);
         continue;
       }
 
@@ -3055,8 +3061,7 @@ export class World {
         if (obj.def.successChances) {
           const chances = action.toolItemId != null ? obj.def.successChances[String(action.toolItemId)] : null;
           if (!chances) {
-            this.skillingActions.delete(playerId);
-            this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+            this.stopPlayerSkilling(playerId, player);
             continue;
           }
           const playerLevel = player.skills[skillId]?.level ?? 1;
@@ -3088,8 +3093,7 @@ export class World {
           if (dropCm) dropCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
           this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
         } else if (!addedToInv) {
-          this.skillingActions.delete(playerId);
-          this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+          this.stopPlayerSkilling(playerId, player);
           continue;
         }
 
@@ -3126,8 +3130,7 @@ export class World {
             }
           }
           this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
-          this.skillingActions.delete(playerId);
-          this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+          this.stopPlayerSkilling(playerId, player);
         } else {
           // Successful non-depleting roll — schedule next swing.
           player.actionDelay = this.currentTick + action.cycleTime;
@@ -3663,6 +3666,7 @@ export class World {
             // what we do for world-object state — full sync on chunk change.
             this.sendRemoteEquipment(viewer, subject);
             this.sendRemoteStance(viewer, subject);
+            this.sendRemoteAnimation(viewer, subject);
             return;
           }
           const npc = this.npcs.get(eid);
@@ -3896,6 +3900,57 @@ export class World {
       if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
+  }
+
+  private encodePlayerAnimation(subject: Player): Uint8Array {
+    return encodePacket(
+      ServerOpcode.PLAYER_ANIMATION,
+      subject.id,
+      subject.animationKind,
+      subject.animationVariant,
+      subject.animationTargetId,
+    );
+  }
+
+  private sendRemoteAnimation(viewer: Player, subject: Player): void {
+    try { viewer.ws.sendBinary(this.encodePlayerAnimation(subject)); } catch { /* connection closed */ }
+  }
+
+  private setPlayerAnimation(
+    subject: Player,
+    kind: PlayerAnimationKind,
+    variant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None,
+    targetId: number = 0,
+    includeSelf: boolean = false,
+  ): void {
+    subject.animationKind = kind;
+    subject.animationVariant = variant;
+    subject.animationTargetId = targetId;
+    this.broadcastPlayerAnimationEvent(subject, kind, variant, targetId, includeSelf);
+  }
+
+  private broadcastPlayerAnimationEvent(
+    subject: Player,
+    kind: PlayerAnimationKind,
+    variant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None,
+    targetId: number = 0,
+    includeSelf: boolean = false,
+  ): void {
+    const cm = this.chunkManagers.get(subject.currentMapLevel);
+    if (!cm) return;
+    const packet = encodePacket(ServerOpcode.PLAYER_ANIMATION, subject.id, kind, variant, targetId);
+    cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
+      if (!includeSelf && pid === subject.id) return;
+      const viewer = this.players.get(pid);
+      if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+    });
+  }
+
+  private stopPlayerSkilling(playerId: number, player: Player): void {
+    this.skillingActions.delete(playerId);
+    this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
+    this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
   }
 
   private sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void {

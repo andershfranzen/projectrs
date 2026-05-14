@@ -135,6 +135,13 @@ export enum ServerOpcode {
    *  Broadcast on chunk-entry alongside NPC_APPEARANCE/NPC_EQUIPMENT so the
    *  client can render "Talk-to" / "Trade" / "Bank" right-click options. */
   NPC_INTERACTIONS = 78,
+  /** Player animation state for remote player rendering. Layout:
+   *  [entityId, kind, variant, targetEntityId].
+   *  kind = PlayerAnimationKind, variant = PlayerSkillAnimationVariant for
+   *  Skill, otherwise 0. targetEntityId is an NPC/world-object id for facing
+   *  when available, or 0. Broadcast on animation changes and chunk-entry
+   *  resync so other clients see skilling/combat animations. */
+  PLAYER_ANIMATION = 79,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].
@@ -170,4 +177,16 @@ export enum ServerOpcode {
    *  divergence-snap teleports back" failure mode when a stale/edge path
    *  validation drops tiles. */
   PATH_TRUNCATED = 100,
+}
+
+export enum PlayerAnimationKind {
+  Idle = 0,
+  Skill = 1,
+  Attack = 2,
+}
+
+export enum PlayerSkillAnimationVariant {
+  None = 0,
+  Chop = 1,
+  Mine = 2,
 }

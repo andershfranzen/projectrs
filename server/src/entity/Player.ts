@@ -4,6 +4,7 @@ import {
   SkillBlock, SkillId, MeleeStance, CombatBonuses,
   initSkills, addXp, combatLevel, zeroBonuses, STANCE_XP,
   ACC_BASE, osrsMeleeMaxHit, calculateHitChance, STANCE_BONUSES,
+  PlayerAnimationKind, PlayerSkillAnimationVariant,
   type PlayerAppearance, type ItemDef,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
@@ -60,6 +61,9 @@ export class Player extends Entity {
   moveSpeed: number = 1;
   pendingPickup: number = -1;
   pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number } | null = null;
+  animationKind: PlayerAnimationKind = PlayerAnimationKind.Idle;
+  animationVariant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None;
+  animationTargetId: number = 0;
   /** NPC def-id of the shopkeeper this player is currently talking to, or
    *  null. Set on talk-shopkeeper, cleared on movement / transition / death
    *  / disconnect. Buy + sell handlers require it to match a valid shop so

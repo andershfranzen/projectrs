@@ -23,8 +23,9 @@ export class GameCamera {
     );
     this.camera.layerMask = WORLD_CAMERA_MASK;
 
-    // Clip planes — minZ/maxZ tuned to reduce overdraw (far = fog end)
-    this.camera.minZ = 0.5;
+    // Clip planes — keep the near plane low enough that close zooms don't
+    // slice off tiny face-detail meshes (eyes/brows/hair) before the body.
+    this.camera.minZ = 0.1;
     this.camera.maxZ = 60;
 
     // Constrain camera

@@ -50,7 +50,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -143,6 +143,7 @@ export class GameManager {
 
   // Local player equipment tracking (slot index → item ID)
   private localEquipment: Map<number, number> = new Map();
+  private remoteAnimationStates: Map<number, { kind: PlayerAnimationKind; variant: PlayerSkillAnimationVariant; targetId: number }> = new Map();
 
   // Gear — cached templates so the same GLB isn't loaded twice
   private gearTemplateCache: Map<string, GearTemplate> = new Map();
@@ -846,6 +847,44 @@ export class GameManager {
     return 'attack_punch';
   }
 
+  private applyRemotePlayerAnimation(
+    entityId: number,
+    kind: PlayerAnimationKind,
+    variant: PlayerSkillAnimationVariant,
+    targetId: number,
+  ): void {
+    const remote = this.entities.remotePlayers.get(entityId);
+    if (!remote || !remote.isReady) return;
+
+    if (kind === PlayerAnimationKind.Idle) {
+      remote.stopSkillAnimation();
+      this.entities.remoteCombatTargets.delete(entityId);
+      return;
+    }
+
+    if (kind === PlayerAnimationKind.Skill) {
+      const anim =
+        variant === PlayerSkillAnimationVariant.Chop ? 'chop' :
+        variant === PlayerSkillAnimationVariant.Mine ? 'mine' :
+        undefined;
+      remote.startSkillAnimation(anim);
+      const objectData = this.worldObjectDefs.get(targetId);
+      if (objectData) {
+        remote.faceToward(new Vector3(objectData.x, 0, objectData.z));
+      }
+      return;
+    }
+
+    if (kind === PlayerAnimationKind.Attack) {
+      remote.playAttackAnimation(this.getPlayerAttackAnimName(entityId));
+      if (targetId > 0) {
+        this.entities.remoteCombatTargets.set(entityId, targetId);
+        const target = this.entities.npcSprites.get(targetId) ?? this.entities.remotePlayers.get(targetId);
+        if (target) remote.faceToward(target.position);
+      }
+    }
+  }
+
   /** Reposition all world objects/models after heightmap loads (fixes race condition) */
   private repositionWorldObjects(): void {
     for (const [objectEntityId, data] of this.worldObjectDefs) {
@@ -1466,6 +1505,8 @@ export class GameManager {
           if (appearance) remote.applyAppearance(appearance);
           const eq = this.entities.remoteEquipment.get(entityId);
           if (eq) this.applyRemoteEquipmentArray(remote, eq);
+          const anim = this.remoteAnimationStates.get(entityId);
+          if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId);
         });
       }
       if (syncAppearance) {
@@ -1525,6 +1566,23 @@ export class GameManager {
       const stances = ['accurate', 'aggressive', 'defensive', 'controlled'];
       const stance = stances[idx] ?? 'accurate';
       this.entities.remoteStances.set(entityId, stance);
+    });
+
+    this.network.on(ServerOpcode.PLAYER_ANIMATION, (_op, v) => {
+      const entityId = v[0];
+      const kind = (v[1] ?? PlayerAnimationKind.Idle) as PlayerAnimationKind;
+      const variant = (v[2] ?? PlayerSkillAnimationVariant.None) as PlayerSkillAnimationVariant;
+      const targetId = v[3] ?? 0;
+
+      if (entityId === this.localPlayerId) {
+        if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
+          this.localPlayer.playAttackAnimation(this.getPlayerAttackAnimName(entityId));
+        }
+        return;
+      }
+
+      this.remoteAnimationStates.set(entityId, { kind, variant, targetId });
+      this.applyRemotePlayerAnimation(entityId, kind, variant, targetId);
     });
 
     this.network.on(ServerOpcode.NPC_SYNC, (_op, v) => {
@@ -1628,6 +1686,7 @@ export class GameManager {
       }
 
       this.entities.cleanupCombatTargetsFor(entityId);
+      this.remoteAnimationStates.delete(entityId);
       this.entities.removeRemotePlayer(entityId);
       this.entities.removeNpc(entityId);
     });
@@ -1654,16 +1713,11 @@ export class GameManager {
         ? this.getPlayerAttackAnimName(attackerId)
         : 'attack_punch';
 
-      // Trigger the attack animation (must happen before duration lookup so the
-      // anim group exists; CharacterEntity.getAnimationDurationMs reads loaded groups)
-      if (isLocalAttacker && this.localPlayer) {
-        this.localPlayer.playAttackAnimation(animName);
-      } else if (attackerEntity) {
-        if (isPlayerAttacker) {
-          (attackerEntity as any).playAttackAnimation(animName);
-        } else {
-          (attackerEntity as any).playAttackAnimation();
-        }
+      // NPCs still animate from COMBAT_HIT. Player attacks are now driven by
+      // PLAYER_ANIMATION so swings broadcast even when there is no visible
+      // damage packet in a given viewer's area.
+      if (!isPlayerAttacker && attackerEntity) {
+        (attackerEntity as any).playAttackAnimation();
       }
 
       // Schedule the hitsplat at the impact moment of the attacker's animation
