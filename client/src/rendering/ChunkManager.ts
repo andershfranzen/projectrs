@@ -12,6 +12,7 @@ import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
+import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES } from '@projectrs/shared';
@@ -2404,40 +2405,22 @@ export class ChunkManager {
         }
       }
 
-      // Replicate KC editor's buildCenteredPivotGroup:
-      // Compute bounding box, then offset children so pivot = bottom-center
+      // KC editor's buildCenteredPivotGroup: model bottom-center → origin.
       const root = result.meshes[0];
+      const bb = worldAABB(result.meshes);
+      const centerX = (bb.minX + bb.maxX) / 2;
+      const centerZ = (bb.minZ + bb.maxZ) / 2;
 
-      // Compute world-space bounding box of all meshes
-      let minX = Infinity, maxX = -Infinity;
-      let minY = Infinity, maxY = -Infinity;
-      let minZ = Infinity, maxZ = -Infinity;
-      for (const mesh of result.meshes) {
-        if (mesh.getTotalVertices() === 0) continue;
-        mesh.computeWorldMatrix(true);
-        const bb = mesh.getBoundingInfo().boundingBox;
-        if (bb.minimumWorld.x < minX) minX = bb.minimumWorld.x;
-        if (bb.maximumWorld.x > maxX) maxX = bb.maximumWorld.x;
-        if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
-        if (bb.maximumWorld.y > maxY) maxY = bb.maximumWorld.y;
-        if (bb.minimumWorld.z < minZ) minZ = bb.minimumWorld.z;
-        if (bb.maximumWorld.z > maxZ) maxZ = bb.maximumWorld.z;
-      }
-      const centerX = (minX + maxX) / 2;
-      const centerZ = (minZ + maxZ) / 2;
-
-      // Create pivot TransformNode at bottom-center
       const template = new TransformNode(`template_${assetId}`, this.scene);
-      // Offset the root so model's bottom-center aligns with the template's origin
       root.parent = template;
       root.position.x -= centerX;
-      root.position.y -= minY;
+      root.position.y -= bb.minY;
       root.position.z -= centerZ;
 
       // Auto-scale rock models to fit within 1 tile
       if (assetDef?.path?.toLowerCase().includes('rock')) {
-        const modelWidth = maxX - minX;
-        const modelDepth = maxZ - minZ;
+        const modelWidth = bb.maxX - bb.minX;
+        const modelDepth = bb.maxZ - bb.minZ;
         const maxDim = Math.max(modelWidth, modelDepth);
         if (maxDim > 1.0) {
           const fit = 0.95 / maxDim; // 0.95 to keep a small margin

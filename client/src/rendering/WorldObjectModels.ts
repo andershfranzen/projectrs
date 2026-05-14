@@ -2,6 +2,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { WorldObjectDef } from '@projectrs/shared';
+import { worldAABB } from './MeshBounds';
 
 interface ModelTemplate { template: TransformNode; scale: number; }
 
@@ -71,21 +72,28 @@ export class WorldObjectModels {
   };
 
   private async loadChestDepletedModels(): Promise<void> {
-    const wanted = new Set<string>();
-    for (const def of this.objectDefsCache.values()) {
-      if (def.category === 'chest' && def.depletedAssetId) wanted.add(def.depletedAssetId);
-    }
-    await Promise.all(Array.from(wanted).map(async (assetId) => {
-      const file = WorldObjectModels.DEPLETED_ASSET_FILES[assetId];
-      if (!file) {
-        console.warn(`[WorldObjectModels] No GLB mapping for depletedAssetId='${assetId}'`);
-        return;
-      }
+    // Iterate the static asset→file map rather than objectDefsCache: loadAll()
+    // is called from the GameManager constructor before /data/objects.json
+    // is fetched, so the defs cache is empty at this point. Every entry
+    // here gets pre-loaded; chest defs reference them via depletedAssetId.
+    await Promise.all(Object.entries(WorldObjectModels.DEPLETED_ASSET_FILES).map(async ([assetId, file]) => {
       try {
         const result = await SceneLoader.ImportMeshAsync('', '/models/', file, this.scene);
+        // Bottom-center pivot so the open chest swaps in place with the
+        // placed closed chest, which goes through the same transform in
+        // ChunkManager.loadGLBModel.
+        const bb = worldAABB(result.meshes);
+        const centerX = (bb.minX + bb.maxX) / 2;
+        const centerZ = (bb.minZ + bb.maxZ) / 2;
         const root = new TransformNode(`chestDepletedTemplate_${assetId}`, this.scene);
         for (const mesh of result.meshes) {
           if (!mesh.parent) mesh.parent = root;
+        }
+        for (const child of root.getChildren()) {
+          const c = child as TransformNode;
+          c.position.x -= centerX;
+          c.position.y -= bb.minY;
+          c.position.z -= centerZ;
         }
         root.setEnabled(false);
         this.chestDepletedModels.set(assetId, { template: root, scale: 1 });
@@ -101,26 +109,18 @@ export class WorldObjectModels {
       for (const file of cfg.files) {
         try {
           const result = await SceneLoader.ImportMeshAsync('', '/models/', file, this.scene);
-          let minY = Infinity, maxY = -Infinity;
-          for (const mesh of result.meshes) {
-            if (mesh.getTotalVertices() === 0) continue;
-            mesh.computeWorldMatrix(true);
-            const bb = mesh.getBoundingInfo().boundingBox;
-            if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
-            if (bb.maximumWorld.y > maxY) maxY = bb.maximumWorld.y;
-          }
-          const modelHeight = maxY - minY;
+          const bb = worldAABB(result.meshes);
+          const modelHeight = bb.maxY - bb.minY;
           const scale = modelHeight > 0 ? cfg.targetHeight / modelHeight : 1;
           const root = new TransformNode(`treeTemplate_${cfg.defId}_${file}`, this.scene);
           for (const mesh of result.meshes) {
             if (!mesh.parent) mesh.parent = root;
           }
           for (const child of root.getChildren()) {
-            (child as TransformNode).position.y -= minY;
+            (child as TransformNode).position.y -= bb.minY;
           }
           root.setEnabled(false);
           templates.push({ template: root, scale });
-          console.log(`Tree model '${file}' loaded for defId=${cfg.defId} (height=${modelHeight.toFixed(2)}, scale=${scale.toFixed(3)})`);
         } catch (e) {
           console.warn(`Failed to load tree model '${file}':`, e);
         }
@@ -137,25 +137,16 @@ export class WorldObjectModels {
     const stumpLoads = uniqueStumps.map(async (stumpFile) => {
       try {
         const result = await SceneLoader.ImportMeshAsync('', '/models/', stumpFile, this.scene);
-        let minY = Infinity, maxY = -Infinity;
-        for (const mesh of result.meshes) {
-          if (mesh.getTotalVertices() === 0) continue;
-          mesh.computeWorldMatrix(true);
-          const bb = mesh.getBoundingInfo().boundingBox;
-          if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
-          if (bb.maximumWorld.y > maxY) maxY = bb.maximumWorld.y;
-        }
-        const modelHeight = maxY - minY;
+        const bb = worldAABB(result.meshes);
         const root = new TransformNode(`stumpTemplate_${stumpFile}`, this.scene);
         for (const mesh of result.meshes) {
           if (!mesh.parent) mesh.parent = root;
         }
         for (const child of root.getChildren()) {
-          (child as TransformNode).position.y -= minY;
+          (child as TransformNode).position.y -= bb.minY;
         }
         root.setEnabled(false);
         this.stumpModelsByName.set(stumpFile, { template: root, scale: 1 });
-        console.log(`Stump model '${stumpFile}' loaded (height=${modelHeight.toFixed(3)}, minY=${minY.toFixed(3)})`);
       } catch (e) {
         console.warn(`Failed to load stump model '${stumpFile}':`, e);
       }
@@ -171,39 +162,24 @@ export class WorldObjectModels {
   private async loadDepletedRockModel(): Promise<void> {
     try {
       const result = await SceneLoader.ImportMeshAsync('', '/models/', 'depleted_rock.glb', this.scene);
-      let minX = Infinity, maxX = -Infinity;
-      let minY = Infinity;
-      let minZ = Infinity, maxZ = -Infinity;
-      for (const mesh of result.meshes) {
-        if (mesh.getTotalVertices() === 0) continue;
-        mesh.computeWorldMatrix(true);
-        const bb = mesh.getBoundingInfo().boundingBox;
-        if (bb.minimumWorld.x < minX) minX = bb.minimumWorld.x;
-        if (bb.maximumWorld.x > maxX) maxX = bb.maximumWorld.x;
-        if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
-        if (bb.minimumWorld.z < minZ) minZ = bb.minimumWorld.z;
-        if (bb.maximumWorld.z > maxZ) maxZ = bb.maximumWorld.z;
-      }
-      const centerX = (minX + maxX) / 2;
-      const centerZ = (minZ + maxZ) / 2;
+      // Same bottom-center pivot as ChunkManager.loadGLBModel — without it
+      // the depleted rock lands offset from the original (X/Z centering)
+      // and the lower portion sinks into the ground (minY lift).
+      const bb = worldAABB(result.meshes);
+      const centerX = (bb.minX + bb.maxX) / 2;
+      const centerZ = (bb.minZ + bb.maxZ) / 2;
       const root = new TransformNode('depletedRockTemplate', this.scene);
       for (const mesh of result.meshes) {
         if (!mesh.parent) mesh.parent = root;
       }
-      // Match ChunkManager's pivot-to-bottom-center transform for regular rocks
-      // (ChunkManager.loadModel ~line 2386-2391). Without the X/Z centering the
-      // depleted rock lands offset from the spot the original rock occupied;
-      // without the minY lift the lower portion sinks into the ground, which
-      // visually reads as "smaller" because less mesh is above the floor.
       for (const child of root.getChildren()) {
         const c = child as TransformNode;
         c.position.x -= centerX;
-        c.position.y -= minY;
+        c.position.y -= bb.minY;
         c.position.z -= centerZ;
       }
       root.setEnabled(false);
       this.depletedRockModel = { template: root, scale: 1 };
-      console.log('Depleted rock model loaded');
     } catch (e) {
       console.warn('Failed to load depleted rock model:', e);
     }

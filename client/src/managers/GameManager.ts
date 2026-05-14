@@ -110,7 +110,7 @@ export class GameManager {
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
-  private pendingSkill: { objectId: number; variant?: string } | null = null; // deferred skilling until walk finishes
+  private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -2133,21 +2133,27 @@ export class GameManager {
       this.isSkilling = true;
       this.skillingObjectId = v[0];
       if (this.interactMarker) this.interactMarker.isVisible = false;
-      if (this.chatPanel) {
-        const data = this.worldObjectDefs.get(v[0]);
-        const def = data ? this.objectDefsCache.get(data.defId) : null;
-        const actionName = def?.actions[0] ?? 'Working';
-        this.chatPanel.addSystemMessage(`You begin to ${actionName.toLowerCase()}...`, '#8cf');
-      }
-      // Determine which animation to play
       const objData = this.worldObjectDefs.get(v[0]);
       const objDef = objData ? this.objectDefsCache.get(objData.defId) : null;
-      const variant = objDef?.category === 'tree' ? 'chop' : objDef?.category === 'rock' ? 'mine' : undefined;
+      if (this.chatPanel) {
+        const message = objDef?.category === 'chest'
+          ? `You attempt to lockpick the ${(objDef.name || 'chest').toLowerCase()}...`
+          : `You begin to ${(objDef?.actions[0] ?? 'work').toLowerCase()}...`;
+        this.chatPanel.addSystemMessage(message, '#8cf');
+      }
+      // Chests have no skilling animation — the player stands still while
+      // the lockpick cycle ticks on the server. All other harvestables get
+      // a category-specific looping anim (chop/mine).
+      const variant = objDef?.category === 'tree' ? 'chop'
+        : objDef?.category === 'rock' ? 'mine'
+        : undefined;
+      const skipAnim = objDef?.category === 'chest';
 
-      // If still walking, defer the skill animation until path completes
       const stillWalking = this.pathIndex < this.path.length;
       if (stillWalking) {
-        this.pendingSkill = { objectId: v[0], variant };
+        this.pendingSkill = { objectId: v[0], variant, stationary: skipAnim };
+      } else if (skipAnim) {
+        this.startSkillingStationary(v[0]);
       } else {
         this.startSkillingVisual(v[0], variant);
       }
@@ -2287,11 +2293,10 @@ export class GameManager {
 
     this.network.on(ServerOpcode.LEVEL_UP, (_op, v) => {
       const [skillIndex, newLevel] = v;
-      if (skillIndex >= 0 && skillIndex < ALL_SKILLS.length) {
+      if (skillIndex >= 0 && skillIndex < ALL_SKILLS.length && this.chatPanel) {
         const skillName = SKILL_NAMES[ALL_SKILLS[skillIndex]];
-        if (this.chatPanel) {
-          this.chatPanel.addSystemMessage(`Level up! ${skillName} is now level ${newLevel}!`, '#ff0');
-        }
+        this.chatPanel.addSystemMessage(`Congratulations! You just advanced a ${skillName} level.`, '#ff0');
+        this.chatPanel.addSystemMessage(`Your ${skillName} level is now ${newLevel}.`, '#ff0');
       }
     });
   }
@@ -3575,22 +3580,32 @@ export class GameManager {
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
-  private startSkillingVisual(objectId: number, variant?: string): void {
+  /** Cancel any in-flight path, snap to the current tile's center, and face
+   *  the given object. Shared setup for both animated and stationary
+   *  skilling starts. */
+  private prepareSkillingAtObject(objectId: number): void {
     this.path = []; this.pathIndex = 0; this.tileProgress = 0; this.pendingPath = null;
-    // Snap player to tile center
     this.playerX = Math.round(this.playerX - 0.5) + 0.5;
     this.playerZ = Math.round(this.playerZ - 0.5) + 0.5;
-    if (this.localPlayer) {
-      this.localPlayer.stopWalking();
-      const h = this.getHeight(this.playerX, this.playerZ);
-      this.localPlayer.setPositionXYZ(this.playerX, h, this.playerZ);
-      // Face toward the object
-      const objData = this.worldObjectDefs.get(objectId);
-      if (objData) {
-        this.localPlayer.faceToward(new Vector3(objData.x, 0, objData.z));
-      }
-      this.localPlayer.startSkillAnimation(variant);
+    if (!this.localPlayer) return;
+    this.localPlayer.stopWalking();
+    const h = this.getHeight(this.playerX, this.playerZ);
+    this.localPlayer.setPositionXYZ(this.playerX, h, this.playerZ);
+    const objData = this.worldObjectDefs.get(objectId);
+    if (objData) {
+      this.localPlayer.faceToward(new Vector3(objData.x, 0, objData.z));
     }
+  }
+
+  private startSkillingVisual(objectId: number, variant?: string): void {
+    this.prepareSkillingAtObject(objectId);
+    this.localPlayer?.startSkillAnimation(variant);
+  }
+
+  /** Like startSkillingVisual but with no looping skill animation — the
+   *  character stays in idle (used for lockpicking chests). */
+  private startSkillingStationary(objectId: number): void {
+    this.prepareSkillingAtObject(objectId);
   }
 
   private handleGroundClick(worldX: number, worldZ: number): void {
@@ -4158,9 +4173,10 @@ export class GameManager {
         this.minimap?.clearDestination();
         this.localPlayer.stopWalking();
         if (this.pendingSkill) {
-          const { objectId, variant } = this.pendingSkill;
+          const { objectId, variant, stationary } = this.pendingSkill;
           this.pendingSkill = null;
-          this.startSkillingVisual(objectId, variant);
+          if (stationary) this.startSkillingStationary(objectId);
+          else this.startSkillingVisual(objectId, variant);
         }
         // Face the NPC we were walking up to talk to / attack. Done after
         // stopWalking so the rotation isn't immediately overwritten by the

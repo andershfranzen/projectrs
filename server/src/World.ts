@@ -1726,7 +1726,15 @@ export class World {
     if (!player || !obj) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
-    if (obj.depleted && obj.def.category !== 'door') return;
+    if (obj.depleted && obj.def.category !== 'door') {
+      // Chests give explicit feedback so the player knows the click was
+      // received but the chest is still on cooldown; trees/rocks etc. stay
+      // silent (their depleted variant is visually obvious).
+      if (obj.def.category === 'chest') {
+        this.sendChatSystem(player, `The ${obj.def.name.toLowerCase()} hasn't been restocked yet.`);
+      }
+      return;
+    }
 
     if (player.isBusy(this.currentTick)) {
       const isQueuedObjectAction = obj.def.category === 'door' || (obj.def.skill && obj.def.harvestItemId);
@@ -3287,25 +3295,36 @@ export class World {
         const qty = obj.def.harvestQuantity ?? 1;
         const xpReward = obj.def.xpReward ?? 0;
 
-        const addedToInv = player.addItem(itemId, qty, this.data.itemDefs).completed > 0;
+        const isChest = obj.def.category === 'chest';
+        const foundForChest: Array<{ itemId: number; quantity: number }> = [];
+
+        const primaryAdded = player.addItem(itemId, qty, this.data.itemDefs).completed;
+        const addedToInv = primaryAdded > 0;
         if (!addedToInv) {
           this.sendChatSystem(player, "You can't carry any more.");
           this.stopPlayerSkilling(playerId, player);
           continue;
         }
+        if (isChest) foundForChest.push({ itemId, quantity: primaryAdded });
 
         // Bonus loot — chests use this for relic rolls on top of the
         // primary coin payout. Each entry is independent; misses drop
         // nothing. Skips rolls silently when the inventory is full so a
-        // jackpot relic doesn't get lost in chat noise.
+        // jackpot relic doesn't get lost in chat noise. For chests we
+        // suppress per-item chat lines and send a single combined
+        // "Congratulations!" message at depletion below.
         if (obj.def.extraLoot) {
           for (const drop of obj.def.extraLoot) {
             if (Math.random() >= drop.chance) continue;
             const got = player.addItem(drop.itemId, drop.quantity, this.data.itemDefs);
             if (got.completed > 0) {
-              const itemDef = this.data.itemDefs.get(drop.itemId);
-              const name = itemDef?.name ?? `item ${drop.itemId}`;
-              this.sendChatSystem(player, `You find a ${name}!`);
+              if (isChest) {
+                foundForChest.push({ itemId: drop.itemId, quantity: got.completed });
+              } else {
+                const itemDef = this.data.itemDefs.get(drop.itemId);
+                const name = itemDef?.name ?? `item ${drop.itemId}`;
+                this.sendChatSystem(player, `You find a ${name}!`);
+              }
             }
           }
         }
@@ -3335,6 +3354,19 @@ export class World {
           // Depleted rocks + tree stumps remain blocking — walking through
           // a visible stump looks broken. No tile-clear on deplete.
           this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
+          // Combined chest reward message, built from items the roll
+          // actually added (never overstates the inventory).
+          if (isChest && foundForChest.length > 0) {
+            const parts = foundForChest.map(f => {
+              const itemDef = this.data.itemDefs.get(f.itemId);
+              const name = itemDef?.name ?? `item ${f.itemId}`;
+              return f.quantity > 1 ? `${f.quantity} ${name}` : `a ${name}`;
+            });
+            const joined = parts.length === 1
+              ? parts[0]
+              : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
+            this.sendChatSystem(player, `You open the chest and find: ${joined}.`);
+          }
           this.stopPlayerSkilling(playerId, player);
         } else {
           // Successful non-depleting roll — schedule next swing.
