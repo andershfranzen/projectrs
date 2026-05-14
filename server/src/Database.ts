@@ -211,16 +211,33 @@ export class GameDatabase {
     // Door state persistence. One row per open (or otherwise non-default) door
     // — closed doors don't need a row (the in-memory default is closed). On
     // restart, World re-applies these to keep building interiors continuous
-    // across server reboots. auto_close_at_tick is informational only; the
-    // current implementation just restores doorOpen and lets the next manual
-    // interaction (or proximity check) decide when to close.
+    // across server reboots. auto_close_at_tick is informational only.
+    //
+    // Keyed by (map, defId, tileX, tileZ) — stable across editor saves and
+    // reboots. WorldObject runtime entity IDs come from a process-lifetime
+    // counter assigned in spawn order; any editor change that adds, removes,
+    // or reorders objects in placedObjects shifts every subsequent ID, so an
+    // entity-ID-keyed row would silently latch onto the wrong door (with its
+    // wall edges cleared) after a routine map edit.
+    //
+    // One-time migration: if a stale entity-id-keyed schema exists from a
+    // pre-fix dev build, drop it. Production hasn't shipped this table yet
+    // so the drop is safe.
+    try {
+      const cols = this.db.query("PRAGMA table_info(door_state)").all() as Array<{ name: string }>;
+      if (cols.length > 0 && !cols.some(c => c.name === 'tile_x')) {
+        this.db.exec('DROP TABLE door_state');
+      }
+    } catch { /* table absent */ }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS door_state (
         map_level TEXT NOT NULL,
-        object_entity_id INTEGER NOT NULL,
+        def_id INTEGER NOT NULL,
+        tile_x INTEGER NOT NULL,
+        tile_z INTEGER NOT NULL,
         is_open INTEGER NOT NULL,
         auto_close_at_tick INTEGER,
-        PRIMARY KEY (map_level, object_entity_id)
+        PRIMARY KEY (map_level, def_id, tile_x, tile_z)
       );
     `);
 
@@ -229,41 +246,52 @@ export class GameDatabase {
     // unix ms rather than ticks so a long downtime doesn't leave every node
     // depleted until the tick counter catches up — on boot, anything in the
     // past is dropped (respawns immediately) and anything in the future has
-    // its remaining timer reconstructed.
+    // its remaining timer reconstructed. Keyed by stable identity for the
+    // same reasons door_state is.
+    try {
+      const cols = this.db.query("PRAGMA table_info(world_object_respawn)").all() as Array<{ name: string }>;
+      if (cols.length > 0 && !cols.some(c => c.name === 'tile_x')) {
+        this.db.exec('DROP TABLE world_object_respawn');
+      }
+    } catch { /* table absent */ }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS world_object_respawn (
         map_level TEXT NOT NULL,
-        object_entity_id INTEGER NOT NULL,
+        def_id INTEGER NOT NULL,
+        tile_x INTEGER NOT NULL,
+        tile_z INTEGER NOT NULL,
         respawn_at_unix_ms INTEGER NOT NULL,
-        PRIMARY KEY (map_level, object_entity_id)
+        PRIMARY KEY (map_level, def_id, tile_x, tile_z)
       );
     `);
   }
 
   // -- Door state -----------------------------------------------------------
 
-  saveDoorState(mapLevel: string, entityId: number, isOpen: boolean, autoCloseAtTick: number | null): void {
+  saveDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number, isOpen: boolean, autoCloseAtTick: number | null): void {
     try {
       this.db.query(`
-        INSERT INTO door_state (map_level, object_entity_id, is_open, auto_close_at_tick)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(map_level, object_entity_id) DO UPDATE SET
+        INSERT INTO door_state (map_level, def_id, tile_x, tile_z, is_open, auto_close_at_tick)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(map_level, def_id, tile_x, tile_z) DO UPDATE SET
           is_open = excluded.is_open,
           auto_close_at_tick = excluded.auto_close_at_tick
-      `).run(mapLevel, entityId, isOpen ? 1 : 0, autoCloseAtTick);
+      `).run(mapLevel, defId, tileX, tileZ, isOpen ? 1 : 0, autoCloseAtTick);
     } catch (e) {
       console.error('saveDoorState failed:', e);
     }
   }
 
-  loadAllDoorStates(): Array<{ mapLevel: string; entityId: number; isOpen: boolean; autoCloseAtTick: number | null }> {
+  loadAllDoorStates(): Array<{ mapLevel: string; defId: number; tileX: number; tileZ: number; isOpen: boolean; autoCloseAtTick: number | null }> {
     try {
       const rows = this.db.query(`
-        SELECT map_level, object_entity_id, is_open, auto_close_at_tick FROM door_state
-      `).all() as Array<{ map_level: string; object_entity_id: number; is_open: number; auto_close_at_tick: number | null }>;
+        SELECT map_level, def_id, tile_x, tile_z, is_open, auto_close_at_tick FROM door_state
+      `).all() as Array<{ map_level: string; def_id: number; tile_x: number; tile_z: number; is_open: number; auto_close_at_tick: number | null }>;
       return rows.map(r => ({
         mapLevel: r.map_level,
-        entityId: r.object_entity_id,
+        defId: r.def_id,
+        tileX: r.tile_x,
+        tileZ: r.tile_z,
         isOpen: r.is_open === 1,
         autoCloseAtTick: r.auto_close_at_tick,
       }));
@@ -273,10 +301,10 @@ export class GameDatabase {
     }
   }
 
-  clearDoorState(mapLevel: string, entityId: number): void {
+  clearDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number): void {
     try {
-      this.db.query('DELETE FROM door_state WHERE map_level = ? AND object_entity_id = ?')
-        .run(mapLevel, entityId);
+      this.db.query('DELETE FROM door_state WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ?')
+        .run(mapLevel, defId, tileX, tileZ);
     } catch (e) {
       console.error('clearDoorState failed:', e);
     }
@@ -284,27 +312,29 @@ export class GameDatabase {
 
   // -- World object respawn -------------------------------------------------
 
-  saveObjectRespawn(mapLevel: string, entityId: number, respawnAtUnixMs: number): void {
+  saveObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number, respawnAtUnixMs: number): void {
     try {
       this.db.query(`
-        INSERT INTO world_object_respawn (map_level, object_entity_id, respawn_at_unix_ms)
-        VALUES (?, ?, ?)
-        ON CONFLICT(map_level, object_entity_id) DO UPDATE SET
+        INSERT INTO world_object_respawn (map_level, def_id, tile_x, tile_z, respawn_at_unix_ms)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(map_level, def_id, tile_x, tile_z) DO UPDATE SET
           respawn_at_unix_ms = excluded.respawn_at_unix_ms
-      `).run(mapLevel, entityId, respawnAtUnixMs);
+      `).run(mapLevel, defId, tileX, tileZ, respawnAtUnixMs);
     } catch (e) {
       console.error('saveObjectRespawn failed:', e);
     }
   }
 
-  loadAllObjectRespawns(): Array<{ mapLevel: string; entityId: number; respawnAtUnixMs: number }> {
+  loadAllObjectRespawns(): Array<{ mapLevel: string; defId: number; tileX: number; tileZ: number; respawnAtUnixMs: number }> {
     try {
       const rows = this.db.query(`
-        SELECT map_level, object_entity_id, respawn_at_unix_ms FROM world_object_respawn
-      `).all() as Array<{ map_level: string; object_entity_id: number; respawn_at_unix_ms: number }>;
+        SELECT map_level, def_id, tile_x, tile_z, respawn_at_unix_ms FROM world_object_respawn
+      `).all() as Array<{ map_level: string; def_id: number; tile_x: number; tile_z: number; respawn_at_unix_ms: number }>;
       return rows.map(r => ({
         mapLevel: r.map_level,
-        entityId: r.object_entity_id,
+        defId: r.def_id,
+        tileX: r.tile_x,
+        tileZ: r.tile_z,
         respawnAtUnixMs: r.respawn_at_unix_ms,
       }));
     } catch (e) {
@@ -313,10 +343,10 @@ export class GameDatabase {
     }
   }
 
-  clearObjectRespawn(mapLevel: string, entityId: number): void {
+  clearObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number): void {
     try {
-      this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND object_entity_id = ?')
-        .run(mapLevel, entityId);
+      this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ?')
+        .run(mapLevel, defId, tileX, tileZ);
     } catch (e) {
       console.error('clearObjectRespawn failed:', e);
     }
@@ -468,7 +498,13 @@ export class GameDatabase {
 
   /** Batched save: wraps every per-row UPDATE in a single SQLite transaction
    *  so 100+ players flush in one fsync instead of N. Called by the 15s
-   *  auto-save loop in World.saveAllPlayers. */
+   *  auto-save loop in World.saveAllPlayers.
+   *
+   *  Failure mode: if any row throws (transient SQLITE_BUSY, structurally
+   *  bad in-memory player field that JSON.stringify can't handle), the
+   *  whole transaction rolls back — losing saves for every player in the
+   *  batch. We fall back to per-row autocommits in that case so a single
+   *  bad row only loses its own state, matching the pre-batch behavior. */
   savePlayersBatch(saves: Array<{ accountId: number; player: Player; effectiveY: number }>): void {
     if (saves.length === 0) return;
     const tx = this.db.transaction((rows: Array<{ accountId: number; player: Player; effectiveY: number }>) => {
@@ -479,7 +515,14 @@ export class GameDatabase {
     try {
       tx(saves);
     } catch (e) {
-      console.error('savePlayersBatch failed:', e);
+      console.error('savePlayersBatch failed; falling back to per-row saves:', e);
+      for (const r of saves) {
+        try {
+          this.savePlayerRow(r.accountId, r.player, r.effectiveY);
+        } catch (rowErr) {
+          console.error(`per-row save failed for accountId=${r.accountId}:`, rowErr);
+        }
+      }
     }
   }
 

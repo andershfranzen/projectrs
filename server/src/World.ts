@@ -40,9 +40,14 @@ function qPos(coord: number): number { return Math.round(coord * POSITION_SCALE)
 /** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
  *  At 600ms/tick this is ~2 minutes. */
 const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
-/** Despawn timer (ticks) applied to all ground items — dropped loot, death
+/** Despawn timer (ticks) applied to most ground items — dropped loot, death
  *  drops, and player-dropped items. ~2 minutes at 600ms/tick. */
 const GROUND_ITEM_DESPAWN_TICKS = 200;
+/** Despawn timer (ticks) for items spilled at the player's feet when a
+ *  refund (trade abort, bank close-out) doesn't fit in inventory. Shorter
+ *  than the standard despawn since the item is dropped in the player's
+ *  immediate vicinity and they can pick it back up right away. ~1 minute. */
+const REFUND_SPILL_DESPAWN_TICKS = 100;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -165,15 +170,30 @@ export class World {
 
   /** Re-apply persisted door / respawn state on boot. Called once at the
    *  end of construction, after spawnWorldObjects has populated worldObjects
-   *  with their default (closed / not-depleted) state. */
+   *  with their default (closed / not-depleted) state. Rows are keyed by
+   *  (mapLevel, defId, tileX, tileZ) — stable across editor saves and
+   *  reboots — so we scan worldObjects for the matching live entity instead
+   *  of looking up by runtime entity id. */
   private restorePersistedObjectState(): void {
+    // One-time pass: build a (map|defId|tx|tz) → WorldObject index so the
+    // O(rows × worldObjects) restore work collapses to O(rows + worldObjects).
+    const stableIndex = new Map<string, WorldObject>();
+    const stableKey = (mapLevel: string, defId: number, tileX: number, tileZ: number) =>
+      `${mapLevel}|${defId}|${tileX}|${tileZ}`;
+    for (const [, obj] of this.worldObjects) {
+      stableIndex.set(stableKey(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z)), obj);
+    }
+
     try {
       const doorRows = this.db.loadAllDoorStates();
+      let restored = 0;
       for (const row of doorRows) {
-        const obj = this.worldObjects.get(row.entityId);
-        if (!obj || obj.mapLevel !== row.mapLevel || obj.def.category !== 'door') {
-          // Stale row (entity id reshuffled or definition changed). Drop it.
-          this.db.clearDoorState(row.mapLevel, row.entityId);
+        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ));
+        if (!obj || obj.def.category !== 'door') {
+          // Object was deleted from the map or its def changed — drop the
+          // stale row. With stable identity this only happens on real
+          // edits, not on routine spawn-order reshuffles.
+          this.db.clearDoorState(row.mapLevel, row.defId, row.tileX, row.tileZ);
           continue;
         }
         if (row.isOpen && !obj.doorOpen) {
@@ -185,11 +205,12 @@ export class World {
           // Re-arm a fresh auto-close timer. The persisted auto_close_at_tick
           // is informational only — we don't try to map it back through the
           // pre-restart tick clock, just give the door its full timeout again.
-          obj.respawnTimer = obj.def.respawnTime ?? 200;
+          obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
           this.depletedObjectIds.add(obj.id);
+          restored++;
         }
       }
-      if (doorRows.length > 0) console.log(`Restored ${doorRows.length} persisted door state(s)`);
+      if (restored > 0) console.log(`Restored ${restored} persisted door state(s)`);
     } catch (e) {
       console.error('restorePersistedObjectState (doors) failed:', e);
     }
@@ -199,9 +220,9 @@ export class World {
       const now = Date.now();
       let restored = 0;
       for (const row of respawnRows) {
-        const obj = this.worldObjects.get(row.entityId);
-        if (!obj || obj.mapLevel !== row.mapLevel) {
-          this.db.clearObjectRespawn(row.mapLevel, row.entityId);
+        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ));
+        if (!obj) {
+          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
           continue;
         }
         // Doors handled by door_state above; skip here.
@@ -209,7 +230,7 @@ export class World {
         const msRemaining = row.respawnAtUnixMs - now;
         if (msRemaining <= 0) {
           // Already due — drop the row, leave the live spawn alone.
-          this.db.clearObjectRespawn(row.mapLevel, row.entityId);
+          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
           continue;
         }
         const ticksRemaining = Math.max(1, Math.ceil(msRemaining / TICK_RATE));
@@ -554,6 +575,15 @@ export class World {
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
+        // Refund any items staged in an active trade BEFORE saving so they
+        // come back to inventory and get persisted. removePlayer() also
+        // calls abortTrade via clearCombatReferencesTo, but that runs
+        // AFTER the save below — without this pre-emptive abort, kicking
+        // a player mid-trade silently destroys their offered items on
+        // next login. Reaches via /api/logout and second-tab login on the
+        // same account.
+        if (this.tradeSessions.has(id)) this.abortTrade(id, 2);
+
         // Save BEFORE removing — otherwise a refresh races the WS-close
         // handler, the new session's kick runs first, removePlayer drops
         // the entity, and the close handler's save no-ops because the
@@ -847,14 +877,14 @@ export class World {
       swingSign = 0;
       // Closed is the default state — drop the persisted row so a fresh
       // server boot doesn't waste cycles processing a no-op.
-      this.db.clearDoorState(obj.mapLevel, obj.id);
+      this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
     } else {
       this.clearDoorWallEdges(obj, map);
       obj.doorOpen = true;
       obj.depleted = true;
       obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
       this.depletedObjectIds.add(obj.id);
-      this.db.saveDoorState(obj.mapLevel, obj.id, true, this.currentTick + obj.respawnTimer);
+      this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), true, this.currentTick + obj.respawnTimer);
     }
 
     this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
@@ -2448,7 +2478,7 @@ export class World {
       x: player.position.x,
       z: player.position.y,
       mapLevel: player.currentMapLevel,
-      despawnTimer: 100,
+      despawnTimer: REFUND_SPILL_DESPAWN_TICKS,
     };
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
@@ -2946,7 +2976,7 @@ export class World {
           // Persist the wall-clock respawn target so this stays depleted
           // across restarts (within the remaining timer window). On boot we
           // convert this back into a tick countdown.
-          this.db.saveObjectRespawn(obj.mapLevel, obj.id, Date.now() + obj.respawnTimer * TICK_RATE);
+          this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
           if (obj.def.blocking) {
             if (obj.def.category === 'tree') {
               const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
@@ -3024,10 +3054,10 @@ export class World {
           const map = this.maps.get(obj.mapLevel);
           if (map) this.restoreDoorWallEdges(obj, map);
           obj.doorOpen = false;
-          this.db.clearDoorState(obj.mapLevel, obj.id);
+          this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
         } else {
           // Skilling object respawned — drop the persisted target.
-          this.db.clearObjectRespawn(obj.mapLevel, obj.id);
+          this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
         }
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
