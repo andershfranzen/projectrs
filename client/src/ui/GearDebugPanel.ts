@@ -109,7 +109,7 @@ export class GearDebugPanel {
     Object.assign(div.style, {
       position: 'fixed', top: '60px', left: '10px', width: '320px',
       maxHeight: '90vh', overflow: 'hidden', display: 'flex', flexDirection: 'column',
-      background: 'rgba(15,12,8,0.95)', color: '#ddd', fontFamily: 'monospace',
+      background: 'rgba(15,12,8,0.95)', color: '#ddd', fontFamily: 'Arial, Helvetica, sans-serif',
       fontSize: '12px', borderRadius: '6px', zIndex: '9999',
       userSelect: 'none', border: '1px solid #554a3a',
       boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
@@ -127,7 +127,7 @@ export class GearDebugPanel {
       flexShrink: '0',
     });
     const title = document.createElement('span');
-    title.style.cssText = 'font-weight:bold;color:#ffd700;font-size:13px;letter-spacing:1px;';
+    title.style.cssText = 'font-weight:bold;color:#d8372b;font-size:13px;letter-spacing:1px;';
     title.textContent = 'GEAR FITTING';
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
@@ -173,7 +173,7 @@ export class GearDebugPanel {
         padding: '4px 6px', cursor: 'pointer',
         background: '#1a1510', color: '#555',
         border: '1px solid #2a2520', borderRadius: '3px',
-        fontFamily: 'monospace', fontSize: '10px',
+        fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10px',
         transition: 'all 0.15s',
       });
       btn.addEventListener('click', () => this.switchSlot(slot));
@@ -209,7 +209,7 @@ export class GearDebugPanel {
     this.thumbToggleBtn.textContent = '▾';
     Object.assign(this.thumbToggleBtn.style, {
       background: 'none', border: 'none', color: '#666', cursor: 'pointer',
-      fontFamily: 'monospace', fontSize: '12px', padding: '0 4px',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '12px', padding: '0 4px',
     });
     this.thumbToggleBtn.addEventListener('click', () => {
       this.thumbGridOpen = !this.thumbGridOpen;
@@ -240,7 +240,7 @@ export class GearDebugPanel {
     Object.assign(this.glbInput.style, {
       flex: '1', background: '#1a1510', color: '#ddd',
       border: '1px solid #3a3530', borderRadius: '3px',
-      padding: '4px 6px', fontFamily: 'monospace', fontSize: '10px',
+      padding: '4px 6px', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10px',
     });
     const loadBtn = this.makeButton('Load', '#1a2a3a', '#48c', () => this.loadGlb());
     loadBtn.style.fontSize = '10px';
@@ -281,9 +281,9 @@ export class GearDebugPanel {
       Object.assign(btn.style, {
         flex: '1', padding: '4px 2px', cursor: 'pointer',
         background: anim === 'idle' ? '#2a2a20' : '#12100c',
-        color: anim === 'idle' ? '#ffd700' : '#666',
+        color: anim === 'idle' ? '#d8372b' : '#666',
         border: `1px solid ${anim === 'idle' ? '#554a3a' : '#2a2520'}`,
-        borderRadius: '3px', fontFamily: 'monospace', fontSize: '10px',
+        borderRadius: '3px', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10px',
       });
       btn.addEventListener('click', () => this.playAnim(anim));
       animRow.appendChild(btn);
@@ -346,7 +346,7 @@ export class GearDebugPanel {
     Object.assign(numInput.style, {
       width: '58px', flexShrink: '0', background: '#1a1510', color: '#ddd',
       border: '1px solid #3a3530', borderRadius: '2px', padding: '1px 3px',
-      fontFamily: 'monospace', fontSize: '11px', textAlign: 'right',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px', textAlign: 'right',
     });
 
     const resetBtn = document.createElement('button');
@@ -356,7 +356,7 @@ export class GearDebugPanel {
       color: '#666', border: 'none', cursor: 'pointer', padding: '0',
       fontSize: '12px', lineHeight: '18px',
     });
-    resetBtn.addEventListener('mouseenter', () => { resetBtn.style.color = '#ffd700'; });
+    resetBtn.addEventListener('mouseenter', () => { resetBtn.style.color = '#d8372b'; });
     resetBtn.addEventListener('mouseleave', () => { resetBtn.style.color = '#666'; });
 
     slider.addEventListener('input', () => {
@@ -408,7 +408,7 @@ export class GearDebugPanel {
     Object.assign(btn.style, {
       padding: '5px 8px', cursor: 'pointer', background: bg, color: '#ddd',
       border: `1px solid ${borderColor}`, borderRadius: '3px',
-      fontFamily: 'monospace', fontSize: '11px',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px',
     });
     btn.addEventListener('click', onClick);
     return btn;
@@ -673,7 +673,7 @@ export class GearDebugPanel {
     } else if (!override && matches) {
       this.overrideStatusEl.innerHTML = '<span style="color:#666;">○ slot default</span>';
     } else {
-      this.overrideStatusEl.innerHTML = '<span style="color:#da4;">● unsaved changes</span>';
+      this.overrideStatusEl.innerHTML = '<span style="color:#d8372b;">● unsaved changes</span>';
     }
   }
 
@@ -830,14 +830,14 @@ export class GearDebugPanel {
     for (const [name, btn] of this.animButtons) {
       const isActive = name === anim;
       btn.style.background = isActive ? '#2a2a20' : '#12100c';
-      btn.style.color = isActive ? '#ffd700' : '#666';
+      btn.style.color = isActive ? '#d8372b' : '#666';
       btn.style.border = `1px solid ${isActive ? '#554a3a' : '#2a2520'}`;
     }
   }
 
   private flashStatus(msg: string): void {
     this.statusLabel.textContent = msg;
-    this.statusLabel.style.color = '#ffd700';
+    this.statusLabel.style.color = '#d8372b';
     setTimeout(() => {
       this.statusLabel.style.color = '#666';
       this.statusLabel.textContent = '';

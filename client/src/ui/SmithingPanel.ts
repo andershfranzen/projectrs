@@ -1,5 +1,6 @@
 import type { ObjectRecipe, ItemDef } from '@projectrs/shared';
-import { popupGeometryCss } from './popupStyle';
+import { createModalPanel } from './ModalPanel';
+import { closeActiveContextMenu } from './popupStyle';
 
 export type SmithCallback = (recipeIndex: number) => void;
 
@@ -24,40 +25,15 @@ export class SmithingPanel {
   private cachedItemDefs: Map<number, ItemDef> = new Map();
 
   constructor() {
-    this.container = document.createElement('div');
-    this.container.style.cssText = `
-      ${popupGeometryCss({ widthFrac: 0.3 })}
-      display: none; flex-direction: column;
-      background: url('/ui/stone-dark.png') repeat;
-      border: 2px solid #5a4a35;
-      border-radius: 4px; z-index: 1001;
-      font-family: monospace; color: #ddd; user-select: none;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-    `;
-
-    // Header
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 8px 12px;
-      background: url('/ui/stone-light.png') repeat;
-      border-bottom: 2px solid #1a1510;
-      border-radius: 2px 2px 0 0;
-    `;
-    this.titleEl = document.createElement('span');
-    this.titleEl.textContent = 'Anvil — What would you like to smith?';
-    this.titleEl.style.cssText = 'font-size: 13px; color: #fc0; font-weight: bold; text-shadow: 1px 1px 0 #000;';
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = 'X';
-    closeBtn.style.cssText = `
-      background: linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%);
-      border: 1px solid #6a4a35; color: #d4a44a; cursor: pointer;
-      padding: 2px 8px; border-radius: 3px; font-family: monospace; font-weight: bold;
-    `;
-    closeBtn.onclick = () => this.hide();
-    header.appendChild(this.titleEl);
-    header.appendChild(closeBtn);
-    this.container.appendChild(header);
+    const modal = createModalPanel({
+      id: 'smithing-panel',
+      title: 'Anvil — What would you like to smith?',
+      geometry: { kind: 'canvas', widthFrac: 0.3 },
+      chrome: 'stone',
+      onClose: () => this.hide(),
+    });
+    this.container = modal.root;
+    this.titleEl = modal.title;
 
     // Recipe grid — flex:1 so it fills available vertical space;
     // overflow-y:auto is a last-resort scroll only if content can't fit on very small clients
@@ -76,6 +52,7 @@ export class SmithingPanel {
     itemDefs: Map<number, ItemDef>,
     onSmith: SmithCallback,
   ): void {
+    closeActiveContextMenu();
     this.onSmith = onSmith;
     this.allRecipes = recipes;
     this.allInventory = inventory;
@@ -180,9 +157,9 @@ export class SmithingPanel {
       backBtn.textContent = '← Choose a different bar';
       backBtn.style.cssText = `
         background: linear-gradient(180deg, #3a2518 0%, #2a1810 100%);
-        border: 1px solid #5a4a35; color: #d4a44a; cursor: pointer;
+        border: 1px solid #5a4a35; color: #d8372b; cursor: pointer;
         padding: 4px 10px; margin-bottom: 6px; border-radius: 3px;
-        font-family: monospace; font-size: 11px;
+        font-family: Arial, Helvetica, sans-serif; font-size: 11px;
       `;
       backBtn.onclick = () => {
         const available = new Set<number>();
@@ -197,7 +174,7 @@ export class SmithingPanel {
     const sectionHeader = document.createElement('div');
     sectionHeader.style.cssText = `
       padding: 4px 8px; margin-bottom: 8px; font-size: 12px; font-weight: bold;
-      color: #aa8844; border-bottom: 1px solid #333;
+      color: #d8372b; border-bottom: 1px solid #333;
     `;
     sectionHeader.textContent = `${barName} (${barCount} in inventory)`;
     this.gridEl.appendChild(sectionHeader);

@@ -18,6 +18,8 @@ import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Vector3, Color3, Color4 } from '@babylonjs/core/Maths/math';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { CharacterEntity } from '../rendering/CharacterEntity';
+import { createModalPanel } from './ModalPanel';
+import { closeActiveContextMenu } from './popupStyle';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
 
@@ -60,8 +62,8 @@ interface StepperRow {
  * changes the gameplay canvas camera or render views.
  *
  * UI is RS-style stepper rows (label + < value > arrows) for appearance
- * slots. Visual style matches BankPanel/SidePanel — wood + parchment + gold
- * accents in monospace.
+ * slots. Visual style matches BankPanel/SidePanel — wood + parchment + red
+ * accents.
  */
 export class CharacterCreator {
   private container: HTMLDivElement;
@@ -112,6 +114,7 @@ export class CharacterCreator {
     onConfirm: CharacterCreatorCallback,
     opts?: { initial?: PlayerAppearance; localPlayer?: CharacterEntity | null },
   ) {
+    closeActiveContextMenu();
     this.gameScene = gameScene;
     this.onConfirm = onConfirm;
     this.appearance = { ...(opts?.initial ?? DEFAULT_APPEARANCE) };
@@ -173,36 +176,15 @@ export class CharacterCreator {
     // No full-screen overlay — the panel sits directly in the playable area
     // so the world is visible around it. Matches SmithingPanel/ShopPanel which
     // also center themselves inside the canvas without dimming the background.
-    const panel = document.createElement('div');
-    panel.id = 'character-creator';
-    panel.style.cssText = `
-      position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      display: flex; flex-direction: column;
-      width: min(640px, 92vw); max-height: 92vh;
-      background: url('/ui/stone-dark.png') repeat;
-      border: 2px solid #5a4a35; border-radius: 4px;
-      z-index: 10000; user-select: none; color: #ddd;
-      font-family: monospace;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.6);
-    `;
-
-    // Header — stone-light strip with gold title text-shadowed onto stone.
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 8px 12px;
-      background: url('/ui/stone-light.png') repeat;
-      border-bottom: 2px solid #1a1510;
-      border-radius: 2px 2px 0 0;
-    `;
-    const title = document.createElement('span');
-    title.textContent = 'Create Your Character';
-    title.style.cssText = `font-size: 14px; color: #fc0; font-weight: bold; text-shadow: 1px 1px 0 #000;`;
-    const subtitle = document.createElement('span');
-    subtitle.textContent = 'Choose your appearance';
-    subtitle.style.cssText = `font-size: 11px; color: #c4a44a; text-shadow: 1px 1px 0 #000;`;
-    header.appendChild(title); header.appendChild(subtitle);
-    panel.appendChild(header);
+    const { root: panel } = createModalPanel({
+      id: 'character-creator',
+      title: 'Create Your Character',
+      subtitle: 'Choose your appearance',
+      geometry: { kind: 'center', width: 'min(640px, 92vw)', maxHeight: '92vh', zIndex: 10000 },
+      chrome: 'stone',
+      closeButton: false,
+      display: 'flex',
+    });
 
     // Body — 2-column: 3D preview on left, stepper rows on right.
     const body = document.createElement('div');
@@ -226,7 +208,7 @@ export class CharacterCreator {
     previewCol.appendChild(canvas);
     const hint = document.createElement('div');
     hint.textContent = 'Drag to rotate · Scroll to zoom';
-    hint.style.cssText = `font-size: 10px; color: #8a7a60; margin-top: 6px; text-shadow: 1px 1px 0 #000;`;
+    hint.style.cssText = `font-size: 10px; color: #8a857c; margin-top: 6px; text-shadow: 1px 1px 0 #000;`;
     previewCol.appendChild(hint);
     body.appendChild(previewCol);
 
@@ -281,19 +263,19 @@ export class CharacterCreator {
     // creator's footer reads as part of the same UI family.
     btn.style.cssText = `
       background: linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%);
-      border: 1px solid #6a4a35; color: #d4a44a;
-      font-family: monospace; font-size: 13px; font-weight: bold;
+      border: 1px solid #6a4a35; color: #d8372b;
+      font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold;
       padding: 6px 18px; cursor: pointer; border-radius: 3px;
       letter-spacing: 0.5px;
       text-shadow: 1px 1px 0 #000;
     `;
     btn.addEventListener('mouseenter', () => {
       btn.style.background = 'linear-gradient(180deg, #6a4a35 0%, #4a3528 100%)';
-      btn.style.color = '#fc0';
+      btn.style.color = '#d8372b';
     });
     btn.addEventListener('mouseleave', () => {
       btn.style.background = 'linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%)';
-      btn.style.color = '#d4a44a';
+      btn.style.color = '#d8372b';
     });
     btn.addEventListener('click', onClick);
     return btn;
@@ -314,7 +296,7 @@ export class CharacterCreator {
 
     const label = document.createElement('div');
     label.textContent = spec.label;
-    label.style.cssText = `font-size: 12px; color: #d4a44a; font-weight: bold; text-shadow: 1px 1px 0 #000;`;
+    label.style.cssText = `font-size: 12px; color: #d8372b; font-weight: bold; text-shadow: 1px 1px 0 #000;`;
     row.appendChild(label);
 
     const prev = this.makeArrowBtn('<', () => this.step(rowIdx, -1));
@@ -342,7 +324,7 @@ export class CharacterCreator {
     this.rowSwatchEls[rowIdx] = swatch;
 
     const valueText = document.createElement('div');
-    valueText.style.cssText = `font-size: 12px; color: #fc0; flex: 1; text-shadow: 1px 1px 0 #000;`;
+    valueText.style.cssText = `font-size: 12px; color: #d8372b; flex: 1; text-shadow: 1px 1px 0 #000;`;
     valueCell.appendChild(valueText);
     this.rowValueEls[rowIdx] = valueText;
 
@@ -364,18 +346,18 @@ export class CharacterCreator {
     btn.style.cssText = `
       width: 32px; height: 26px;
       background: linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%);
-      border: 1px solid #6a4a35; color: #d4a44a;
-      font-family: monospace; font-size: 14px; font-weight: bold;
+      border: 1px solid #6a4a35; color: #d8372b;
+      font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold;
       cursor: pointer; padding: 0; line-height: 1;
       text-shadow: 1px 1px 0 #000;
     `;
     btn.addEventListener('mouseenter', () => {
       btn.style.background = 'linear-gradient(180deg, #6a4a35 0%, #4a3528 100%)';
-      btn.style.color = '#fc0';
+      btn.style.color = '#d8372b';
     });
     btn.addEventListener('mouseleave', () => {
       btn.style.background = 'linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%)';
-      btn.style.color = '#d4a44a';
+      btn.style.color = '#d8372b';
     });
     btn.addEventListener('click', onClick);
     return btn;

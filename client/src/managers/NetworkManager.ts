@@ -35,6 +35,7 @@ export class NetworkManager {
   private localPlayerId: number = -1;
 
   private disconnectHandler: (() => void) | null = null;
+  private openHandlers: (() => void)[] = [];
 
   connect(token: string): void {
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -53,6 +54,8 @@ export class NetworkManager {
     this.gameSocket.onopen = () => {
       console.log('[net] Game socket connected');
       this.connected = true;
+      for (const handler of this.openHandlers) handler();
+      this.openHandlers.length = 0;
     };
 
     this.gameSocket.onmessage = (event) => {
@@ -91,6 +94,17 @@ export class NetworkManager {
 
   onDisconnect(handler: () => void): void {
     this.disconnectHandler = handler;
+  }
+
+  /** Register a one-shot handler that runs the next time the game socket
+   *  finishes opening. If the socket is already open, the handler fires
+   *  on the next microtask so behavior is consistent regardless of timing. */
+  onOpen(handler: () => void): void {
+    if (this.connected) {
+      Promise.resolve().then(handler);
+    } else {
+      this.openHandlers.push(handler);
+    }
   }
 
   on(opcode: ServerOpcode, handler: MessageHandler): void {

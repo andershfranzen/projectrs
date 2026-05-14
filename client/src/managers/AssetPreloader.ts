@@ -69,13 +69,6 @@ const mapAssets = (map: string): string[] => [
   `/maps/${map}/biomes.json`,
 ];
 
-/** Display-friendly label for a URL ("idle.glb", "objects.json", …). */
-function labelFor(url: string): string {
-  const noQuery = url.split('?')[0];
-  const slash = noQuery.lastIndexOf('/');
-  return slash >= 0 ? noQuery.substring(slash + 1) : noQuery;
-}
-
 /**
  * Fetch every asset in parallel. Failures are swallowed (logged only) so
  * a single 404 doesn't stall the whole boot — the real consumer code
@@ -94,16 +87,16 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
 
   let loaded = 0;
   const total = assets.length;
-  const report = (status: string) => {
+  const report = (status?: string) => {
     onProgress?.({
       loaded,
       total,
       pct: total > 0 ? loaded / total : 1,
-      status,
+      status: status ?? `Checking game cache (${loaded}/${total})`,
     });
   };
 
-  report('Loading game assets…');
+  report('Checking game cache');
 
   // Dev-mode short-circuit. `CharacterEntity` and `ChunkManager` both
   // append a `?v=<ts>` cache-bust query param to every GLB/JSON they
@@ -115,7 +108,7 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
   // its own fetches at game-init time.
   if (import.meta.env.DEV) {
     loaded = total;
-    report('Ready');
+    report('Cache ready');
     return;
   }
 
@@ -133,9 +126,9 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
         console.warn(`[AssetPreloader] Failed to prefetch ${url}:`, e);
       }
       loaded++;
-      report(`Loaded ${labelFor(url)}`);
+      report();
     }),
   );
 
-  report('Ready');
+  report('Cache ready');
 }

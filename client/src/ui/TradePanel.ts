@@ -1,5 +1,7 @@
 import { ClientOpcode, encodePacket, INVENTORY_SIZE, TRADE_OFFER_SIZE, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
+import { createModalPanel } from './ModalPanel';
+import { closeActiveContextMenu, createContextMenu } from './popupStyle';
 
 interface OfferSlotData { itemId: number; quantity: number }
 
@@ -67,12 +69,12 @@ export class TradePanel {
     pop.style.cssText = `
       position: fixed; right: 16px; bottom: 80px; z-index: 600;
       background: #1a1410; border: 2px solid #aa8844; border-radius: 6px;
-      padding: 12px; font-family: monospace; color: #ddd;
+      padding: 12px; font-family: Arial, Helvetica, sans-serif; color: #ddd;
       box-shadow: 0 4px 12px rgba(0,0,0,0.5);
       min-width: 220px;
     `;
     const text = document.createElement('div');
-    text.innerHTML = `<b style="color:#ffcc44;">${escapeHtml(name)}</b> wants to trade.`;
+    text.innerHTML = `<b style="color:#d8372b;">${escapeHtml(name)}</b> wants to trade.`;
     text.style.cssText = `font-size: 13px; margin-bottom: 10px;`;
     pop.appendChild(text);
 
@@ -80,7 +82,7 @@ export class TradePanel {
     btnRow.style.cssText = `display: flex; gap: 8px;`;
     const accept = document.createElement('button');
     accept.textContent = 'Accept';
-    accept.style.cssText = `flex: 1; background: #3a6633; border: 1px solid #5a8855; color: #fff; padding: 6px; cursor: pointer; font-family: monospace;`;
+    accept.style.cssText = `flex: 1; background: #3a6633; border: 1px solid #5a8855; color: #fff; padding: 6px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
     accept.onclick = () => {
       this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT_REQUEST, requesterId));
       pop.remove();
@@ -88,7 +90,7 @@ export class TradePanel {
     };
     const decline = document.createElement('button');
     decline.textContent = 'Decline';
-    decline.style.cssText = `flex: 1; background: #663333; border: 1px solid #885555; color: #fff; padding: 6px; cursor: pointer; font-family: monospace;`;
+    decline.style.cssText = `flex: 1; background: #663333; border: 1px solid #885555; color: #fff; padding: 6px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
     decline.onclick = () => {
       this.network.sendRaw(encodePacket(ClientOpcode.TRADE_DECLINE));
       pop.remove();
@@ -104,6 +106,9 @@ export class TradePanel {
   }
 
   openSession(otherEntityId: number, otherName: string): void {
+    closeActiveContextMenu();
+    this.requestPopup?.remove();
+    this.requestPopup = null;
     this.otherName = otherName;
     this.titleEl.textContent = `Trade with ${otherName}`;
     this.myOffer.fill(null); this.theirOffer.fill(null);
@@ -130,7 +135,7 @@ export class TradePanel {
       this.acceptBtn.disabled = false;
     } else if (myStage === 0 && theirStage > 0) {
       this.statusLabel.textContent = `${this.otherName} has accepted. Are you sure?`;
-      this.statusLabel.style.color = '#fc0';
+      this.statusLabel.style.color = '#d8372b';
       this.acceptBtn.textContent = 'Accept';
       this.acceptBtn.disabled = false;
     } else if (myStage === 1 && theirStage < 1) {
@@ -140,7 +145,7 @@ export class TradePanel {
       this.acceptBtn.disabled = true;
     } else if (myStage === 1 && theirStage >= 1) {
       this.statusLabel.textContent = 'Confirm trade.';
-      this.statusLabel.style.color = '#fc0';
+      this.statusLabel.style.color = '#d8372b';
       this.acceptBtn.textContent = 'Confirm';
       this.acceptBtn.disabled = false;
     } else if (myStage === 2 && theirStage < 2) {
@@ -160,34 +165,14 @@ export class TradePanel {
   }
 
   private buildUI(): HTMLDivElement {
-    const root = document.createElement('div');
-    root.id = 'trade-panel';
-    root.style.cssText = `
-      position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-      width: min(720px, 92vw); max-height: 90vh;
-      display: none; flex-direction: column;
-      background: #1a1410; border: 2px solid #aa8844;
-      border-radius: 6px; z-index: 500;
-      font-family: monospace; color: #ddd; user-select: none;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.6);
-    `;
-
-    // Header
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 8px 12px; background: #2a1f17; border-bottom: 1px solid #aa8844;
-    `;
-    const title = document.createElement('span');
-    title.textContent = 'Trade';
-    title.style.cssText = 'font-size: 16px; color: #ffcc44; font-weight: bold;';
-    this.titleEl = title;
-    const close = document.createElement('button');
-    close.textContent = 'X';
-    close.style.cssText = `background: #444; border: 1px solid #666; color: #ddd; padding: 2px 8px; cursor: pointer; font-family: monospace;`;
-    close.onclick = () => this.sendDecline();
-    header.appendChild(title); header.appendChild(close);
-    root.appendChild(header);
+    const modal = createModalPanel({
+      id: 'trade-panel',
+      title: 'Trade',
+      geometry: { kind: 'viewport' },
+      onClose: () => this.sendDecline(),
+    });
+    const root = modal.root;
+    this.titleEl = modal.title;
 
     // Two-pane offers
     const offersRow = document.createElement('div');
@@ -196,7 +181,7 @@ export class TradePanel {
     const myWrap = document.createElement('div');
     const myLabel = document.createElement('div');
     myLabel.textContent = 'My offer';
-    myLabel.style.cssText = `color: #fc0; font-size: 12px; margin-bottom: 4px;`;
+    myLabel.style.cssText = `color: #d8372b; font-size: 12px; margin-bottom: 4px;`;
     myWrap.appendChild(myLabel);
     const myGrid = this.makeGrid(7, TRADE_OFFER_SIZE, (slot) => {
       const s = this.myOffer[slot];
@@ -218,7 +203,7 @@ export class TradePanel {
     const theirWrap = document.createElement('div');
     const theirLabel = document.createElement('div');
     theirLabel.textContent = 'Their offer';
-    theirLabel.style.cssText = `color: #fc0; font-size: 12px; margin-bottom: 4px;`;
+    theirLabel.style.cssText = `color: #d8372b; font-size: 12px; margin-bottom: 4px;`;
     theirWrap.appendChild(theirLabel);
     // Their offer is read-only; clicks do nothing.
     const theirGrid = this.makeGrid(7, TRADE_OFFER_SIZE, () => {}, () => {}, this.theirOfferEls);
@@ -236,11 +221,11 @@ export class TradePanel {
     ctrlRow.appendChild(this.statusLabel);
     this.acceptBtn = document.createElement('button');
     this.acceptBtn.textContent = 'Accept';
-    this.acceptBtn.style.cssText = `background: #3a6633; border: 1px solid #5a8855; color: #fff; padding: 6px 14px; cursor: pointer; font-family: monospace;`;
+    this.acceptBtn.style.cssText = `background: #3a6633; border: 1px solid #5a8855; color: #fff; padding: 6px 14px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
     this.acceptBtn.onclick = () => this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT));
     this.declineBtn = document.createElement('button');
     this.declineBtn.textContent = 'Decline';
-    this.declineBtn.style.cssText = `background: #663333; border: 1px solid #885555; color: #fff; padding: 6px 14px; cursor: pointer; font-family: monospace;`;
+    this.declineBtn.style.cssText = `background: #663333; border: 1px solid #885555; color: #fff; padding: 6px 14px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
     this.declineBtn.onclick = () => this.sendDecline();
     ctrlRow.appendChild(this.acceptBtn); ctrlRow.appendChild(this.declineBtn);
     root.appendChild(ctrlRow);
@@ -326,7 +311,7 @@ export class TradePanel {
       ? `<img src="/items/${icon}" style="${imgStyle}" />`
       : `<div style="width:22px;height:22px;background:#555;border-radius:3px;"></div>`;
     const qtyLabel = quantity > 1
-      ? `<div style="position:absolute;top:1px;left:3px;font-size:9px;font-weight:bold;color:#ffe066;text-shadow:1px 1px 0 #000;">${quantity}</div>`
+      ? `<div style="position:absolute;top:1px;left:3px;font-size:9px;font-weight:bold;color:#d8372b;text-shadow:1px 1px 0 #000;">${quantity}</div>`
       : '';
     return `${iconHtml}${qtyLabel}`;
   }
@@ -336,25 +321,14 @@ export class TradePanel {
   }
 
   private showQtyMenu(ev: MouseEvent, opts: { label: string; n: number }[], cb: (n: number) => void): void {
-    const menu = document.createElement('div');
-    menu.style.cssText = `
-      position: fixed; left: ${ev.clientX}px; top: ${ev.clientY}px;
-      background: #3a3125; border: 2px solid #5a4a35;
-      font-family: monospace; font-size: 12px; z-index: 1001;
-      min-width: 110px; box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
-    `;
-    for (const opt of opts) {
-      const item = document.createElement('div');
-      item.textContent = opt.label;
-      item.style.cssText = `padding: 4px 12px; color: #ffcc00; cursor: pointer;`;
-      item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
-      item.addEventListener('mouseleave', () => item.style.background = 'transparent');
-      item.addEventListener('click', () => { cb(opt.n); menu.remove(); });
-      menu.appendChild(item);
-    }
-    document.body.appendChild(menu);
-    const close = () => { menu.remove(); document.removeEventListener('click', close); };
-    setTimeout(() => document.addEventListener('click', close), 0);
+    createContextMenu(opts.map((opt) => ({
+      label: opt.label,
+      action: () => cb(opt.n),
+    })), {
+      x: ev.clientX,
+      y: ev.clientY,
+      minWidthPx: 110,
+    });
   }
 }
 

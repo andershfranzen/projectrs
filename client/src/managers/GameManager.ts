@@ -46,6 +46,7 @@ import { TradePanel } from '../ui/TradePanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
+import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
 import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
@@ -76,6 +77,15 @@ export class GameManager {
   private localPlayer: CharacterEntity | null = null;
   private localPlayerId: number = -1;
   private loadingScreen: LoadingScreen | null = null;
+  /** Set when the map data finished loading before the network socket was
+   *  connected. connectAndAuth flushes MAP_READY as soon as the socket opens. */
+  private _sendMapReadyOnConnect: boolean = false;
+  /** Settles when WorldObjectModels finishes its initial bulk load. */
+  private _objectModelsReady: Promise<void> = Promise.resolve();
+  /** Resolves on the first LOGIN_OK packet so connectAndAuth can await full
+   *  authentication completion (player position applied, spawn chunks
+   *  guaranteed loaded, input enabled). */
+  private _loginOkResolver: (() => void) | null = null;
   private currentFloor: number = 0;
   private playerX: number = 512;
   private playerZ: number = 512;
@@ -156,6 +166,10 @@ export class GameManager {
   private characterCreator: CharacterCreator | null = null;
   private characterCreatorOpenPending: boolean = false;
   private localAppearance: PlayerAppearance | null = null;
+  /** The server sends MAP_CHANGE as part of login/session placement. That
+   *  first map load is not player-facing travel, so don't spam chat with
+   *  "Entered Kcmap." on sign-in. Later transitions can still announce. */
+  private hasHandledInitialMapChange: boolean = false;
 
   // Entity management (remote players, NPCs, ground items, sprites)
   private entities!: EntityManager;
@@ -374,10 +388,16 @@ export class GameManager {
     // Visibility-change tracking for divergence-snap gating
     this.setupVisibilityHandler();
 
-    // Network
+    // Network. Construction + handler registration always run pre-auth so
+    // the socket is ready to receive messages the moment we connect.
+    // `connect(token)` is deferred until `connectAndAuth()` (or fires now
+    // if a token was passed to the ctor — legacy path used by direct
+    // boot-with-known-token tests).
     this.network = new NetworkManager();
     this.setupNetworkHandlers();
-    this.network.connect(token);
+    if (token) {
+      this.network.connect(token);
+    }
     if (onDisconnect) {
       this.network.onDisconnect(onDisconnect);
     }
@@ -461,23 +481,41 @@ export class GameManager {
       // down — and once at Y=0 the gate stays failed permanently.
     });
 
-    // Load map, then tell server we're ready for entity data
+    // Load map. MAP_READY is only sent once we have an authenticated socket,
+    // so during preload we just stage the chunk data and defer the packet
+    // until connectAndAuth wires the socket up.
     this.chunkManager.loadMap('kcmap').then(async () => {
       await this.loadBiomes('kcmap');
       this.applyFog();
-      this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+      if (this.network.isConnected()) {
+        this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+      } else {
+        this._sendMapReadyOnConnect = true;
+      }
       this.repositionWorldObjects();
     });
     this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
-    this.objectModels.loadAll();
+    this._objectModelsReady = this.objectModels.loadAll();
     this.entities = new EntityManager(this.scene, (x, z, cy) => this.getHeightAt(x, z, cy), this.itemDefsCache);
+
+    // Pre-create the local player character at the kcmap default spawn so
+    // the GLB + 10 animation GLBs start parsing during the loading screen,
+    // not after LOGIN_OK. LOGIN_OK later snaps the position to the real
+    // saved spawn (usually a few tiles away — chunks around the default
+    // already cover it) and applies the saved appearance.
+    this.playerX = 160.5;
+    this.playerZ = 170.5;
+    this.localPlayer = this.createLocalCharacterEntity();
+    this.localPlayer.setPickable(false);
+    this.localPlayer.setPositionXYZ(this.playerX, 0, this.playerZ);
+    this.inputManager.setEnabled(false);
 
     // FPS counter (remove stale element from HMR reload)
     document.getElementById('fps-counter')?.remove();
     const fpsEl = document.createElement('div');
     fpsEl.id = 'fps-counter';
-    fpsEl.style.cssText = 'position:fixed;top:4px;left:50%;transform:translateX(-50%);color:#0f0;font:bold 14px monospace;z-index:9999;text-shadow:1px 1px 0 #000;pointer-events:none';
+    fpsEl.style.cssText = 'position:fixed;top:4px;left:50%;transform:translateX(-50%);color:#0f0;font: bold 14px Arial, Helvetica, sans-serif;z-index:9999;text-shadow:1px 1px 0 #000;pointer-events:none';
     document.body.appendChild(fpsEl);
     let fpsFrames = 0, fpsLast = performance.now();
 
@@ -516,6 +554,57 @@ export class GameManager {
       this.resizeObserver = new ResizeObserver(() => this.engine.resize());
       this.resizeObserver.observe(canvas);
     }
+  }
+
+  /** Resolves once every preload-phase artifact is in memory:
+   *   - character GLB + 10 animation GLBs parsed onto the local skeleton
+   *   - default kcmap spawn chunks built (terrain + placed objects)
+   *   - world-object model templates (trees, stumps, rocks) loaded
+   *
+   *  Once this resolves the user is one network round-trip away from a
+   *  playable world — there is no parse work left to do on the post-auth
+   *  path. main.ts awaits this before hiding the LoadingScreen so the
+   *  user only sees the login form when nothing else is loading behind
+   *  the scenes.
+   *
+   *  `onProgress` fires when each of the three internal load steps
+   *  settles. Three milestones at fixed percentages — coarse but
+   *  honest (we don't claim 17% just because one anim of 10 loaded). */
+  whenPreloaded(onProgress?: (pct: number, status: string) => void): Promise<void> {
+    let completed = 0;
+    const step = (status: string) => {
+      completed++;
+      onProgress?.(completed / 3, `${status} (${completed}/3)`);
+    };
+
+    const characterReady = (this.localPlayer?.whenReady() ?? Promise.resolve())
+      .then(() => step('Loaded character models'));
+    const objectsReady = this._objectModelsReady
+      .then(() => step('Loaded scenery models'));
+    const chunksReady = this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ)
+      .then(() => step('Loaded map area'));
+
+    return Promise.all([characterReady, objectsReady, chunksReady]).then(() => {});
+  }
+
+  /** Open the WebSocket and wait for the first LOGIN_OK to finish processing
+   *  (real spawn position applied, saved appearance applied, input enabled).
+   *  Use this after `whenPreloaded()` for a clean "click Login → world is
+   *  immediately playable" handoff. */
+  connectAndAuth(token: string, username: string): Promise<void> {
+    this.token = token;
+    this.username = username;
+    return new Promise<void>((resolve) => {
+      this._loginOkResolver = resolve;
+      this.network.connect(token);
+      if (this._sendMapReadyOnConnect) {
+        this._sendMapReadyOnConnect = false;
+        // network.connect is async (WS open). Send once the socket is open.
+        this.network.onOpen(() => {
+          this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+        });
+      }
+    });
   }
 
   /** Height query for the local player. Uses local player Y as gate input. */
@@ -1259,43 +1348,29 @@ export class GameManager {
       const spawnY = (v[3] ?? 0) / 10;
       this.network.setLocalPlayerId(this.localPlayerId);
 
-      // If main.ts handed us a pre-auth LoadingScreen, reuse it so the user
-      // sees a continuous overlay; otherwise spin one up now (legacy path).
-      if (!this.loadingScreen) {
-        this.loadingScreen = new LoadingScreen();
-        this.loadingScreen.show();
+      // The local character was pre-created in the ctor at the kcmap default
+      // spawn (so its GLB + 10 animation GLBs parsed during the loading
+      // screen). Snap it to the real saved position, then apply any cached
+      // appearance once the model finishes loading.
+      if (this.localPlayer) {
+        this.localPlayer.setPositionXYZ(this.playerX, spawnY, this.playerZ);
       }
-      this.loadingScreen.setStatus('Loading character…');
-
-      this.localPlayer = this.createLocalCharacterEntity();
-      // Click-through: scene.pick raycasts skip the local player's meshes
-      // so right-clicking past yourself hits the NPC / object behind you
-      // instead of being eaten by your own body. setPickable defers to
-      // whenReady if the GLB isn't loaded yet and re-applies after every
-      // gear attach.
-      this.localPlayer.setPickable(false);
-      this.localPlayer.setPositionXYZ(this.playerX, spawnY, this.playerZ);
       this.inputManager.setPlayerY(spawnY);
       console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
 
-      // Gate input until BOTH the local character (mesh + 7 animation GLBs)
-      // and the spawn-area terrain + placed objects have finished loading.
-      // Without the chunk gate, the player could click-walk against the
-      // sentinel-WALL world before chunks streamed in, or pathfind past
-      // trees that hadn't been instantiated yet.
-      this.inputManager.setEnabled(false);
-      const characterReady = this.localPlayer.whenReady().then(() => {
+      // Wait for any chunks around the saved spawn that weren't part of the
+      // preloaded default-spawn cluster (usually nothing — the saved spawn
+      // is typically in the same chunk we already loaded). Apply appearance
+      // and clear the loading screen once everything's in place.
+      const characterReady = this.localPlayer?.whenReady().then(() => {
         if (this.localAppearance && this.localPlayer) {
           this.localPlayer.applyAppearance(this.localAppearance);
         }
-      });
+      }) ?? Promise.resolve();
       const worldReady = this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ);
       Promise.all([characterReady, worldReady]).then(() => {
-        // Now that chunks are loaded, snap the player's Y to the actual
-        // client-computed ground height. Without this, the LOGIN_OK spawnY
-        // (server-side compute, may not match client's per-tile rendered
-        // ground exactly) sticks until the player moves, which causes a
-        // visible "in the ground" pose when there's any drift.
+        // Snap Y to client-computed ground height — see comment in the
+        // pre-refactor version of this handler for why.
         if (this.localPlayer) {
           const groundY = this.getHeight(this.playerX, this.playerZ);
           this.localPlayer.setPositionXYZ(this.playerX, groundY, this.playerZ);
@@ -1304,6 +1379,14 @@ export class GameManager {
         this.loadingScreen?.hide();
         this.loadingScreen = null;
         this.inputManager.setEnabled(true);
+
+        // Settle the connectAndAuth() promise so main.ts can dismiss the
+        // (already-min-display-clamped) LoadingScreen and reveal the world.
+        if (this._loginOkResolver) {
+          const resolver = this._loginOkResolver;
+          this._loginOkResolver = null;
+          resolver();
+        }
       });
     });
 
@@ -2185,7 +2268,9 @@ export class GameManager {
     // Reposition any entities that arrived before map finished loading
     this.repositionWorldObjects();
 
-    if (this.chatPanel) {
+    if (!this.hasHandledInitialMapChange) {
+      this.hasHandledInitialMapChange = true;
+    } else if (this.chatPanel) {
       this.chatPanel.addSystemMessage(`Entered ${this.chunkManager.getMeta()?.name || mapId}.`, '#0f0');
     }
   }
@@ -2370,21 +2455,10 @@ export class GameManager {
   private showContextMenu(x: number, y: number, options: { label: string; action: () => void }[]): void {
     this.hideContextMenu();
 
-    const menu = document.createElement('div');
-    menu.style.cssText = `
-      position: fixed; left: ${x}px; top: ${y}px;
-      background: #3a3125; border: 2px solid #5a4a35;
-      font-family: monospace; font-size: 13px; z-index: 1000;
-      min-width: 120px; box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
-    `;
-
-    for (const opt of options) {
-      const item = document.createElement('div');
-      item.textContent = opt.label;
-      item.style.cssText = `padding: 4px 12px; color: #ffcc00; cursor: pointer;`;
-      item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
-      item.addEventListener('mouseleave', () => item.style.background = 'transparent');
-      item.addEventListener('click', (ev) => {
+    let menu: HTMLDivElement;
+    menu = createContextMenu(options.map((opt) => ({
+      label: opt.label,
+      action: (ev) => {
         // Update the cached click position so the per-action cursor burst
         // (attackNpc, pickupItem, interactObject, etc.) spawns at the menu
         // item the user actually clicked — without this, the burst fires
@@ -2394,24 +2468,23 @@ export class GameManager {
         this.lastClickX = ev.clientX;
         this.lastClickY = ev.clientY;
         opt.action();
-        this.hideContextMenu();
-      });
-      menu.appendChild(item);
-    }
-
-    document.body.appendChild(menu);
+      },
+    })), {
+      x,
+      y,
+      fontSizePx: 13,
+      minWidthPx: 120,
+      zIndex: 1000,
+      onClose: () => {
+        if (this.contextMenu === menu) this.contextMenu = null;
+      },
+    });
     this.contextMenu = menu;
-
-    const closeHandler = () => {
-      this.hideContextMenu();
-      document.removeEventListener('click', closeHandler);
-    };
-    setTimeout(() => document.addEventListener('click', closeHandler), 0);
   }
 
   private hideContextMenu(): void {
     if (this.contextMenu) {
-      this.contextMenu.remove();
+      closeActiveContextMenu(this.contextMenu);
       this.contextMenu = null;
     }
   }
@@ -2477,7 +2550,7 @@ export class GameManager {
     el.style.cssText = [
       'position: fixed', 'pointer-events: none', 'z-index: 999',
       'background: #1a1410ee', 'border: 1px solid #5a4a35',
-      'color: #ffcc00', 'font: 12px monospace',
+      'color: #d8372b', 'font: 12px Arial, Helvetica, sans-serif',
       'padding: 3px 7px', 'display: none', 'white-space: nowrap',
     ].join('; ');
     document.body.appendChild(el);
@@ -3083,7 +3156,7 @@ export class GameManager {
     numEl.textContent = damage.toString();
     numEl.style.cssText = `
       position: relative; z-index: 1;
-      color: #fff; font-family: monospace; font-size: 13px; font-weight: bold;
+      color: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold;
       text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
     `;
     el.appendChild(numEl);

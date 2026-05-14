@@ -211,7 +211,7 @@ export class Npc3DEntity {
       this.healthBarFillEl.style.cssText = `height:100%;transition:width 0.15s,background 0.15s`;
       this.healthBarEl.appendChild(this.healthBarFillEl);
       this.healthBarTextEl = document.createElement('div');
-      this.healthBarTextEl.style.cssText = `position:absolute;top:-1px;left:0;right:0;text-align:center;font-family:monospace;font-size:8px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000,-1px -1px 0 #000;line-height:10px;pointer-events:none`;
+      this.healthBarTextEl.style.cssText = `position:absolute;top:-1px;left:0;right:0;text-align:center;font-family: Arial, Helvetica, sans-serif;font-size:8px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000,-1px -1px 0 #000;line-height:10px;pointer-events:none`;
       this.healthBarEl.appendChild(this.healthBarTextEl);
       document.body.appendChild(this.healthBarEl);
     }

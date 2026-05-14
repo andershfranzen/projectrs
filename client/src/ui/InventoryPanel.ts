@@ -1,6 +1,7 @@
 import { INVENTORY_SIZE, ClientOpcode, encodePacket } from '@projectrs/shared';
 import type { ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
+import { createContextMenu } from './popupStyle';
 
 export interface InventorySlotData {
   itemId: number;
@@ -35,14 +36,14 @@ export class InventoryPanel {
       width: 204px; background: rgba(30, 25, 18, 0.92);
       border: 2px solid #5a4a35; border-radius: 4px;
       padding: 6px; z-index: 100;
-      font-family: monospace; color: #ddd;
+      font-family: Arial, Helvetica, sans-serif; color: #ddd;
     `;
 
     // Header
     const header = document.createElement('div');
     header.style.cssText = `
       text-align: center; padding: 4px; margin-bottom: 4px;
-      border-bottom: 1px solid #5a4a35; color: #fc0;
+      border-bottom: 1px solid #5a4a35; color: #d8372b;
       font-size: 13px; font-weight: bold;
     `;
     header.textContent = 'Inventory';
@@ -140,14 +141,6 @@ export class InventoryPanel {
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || 'Item';
 
-    const menu = document.createElement('div');
-    menu.style.cssText = `
-      position: fixed; left: ${event.clientX}px; top: ${event.clientY}px;
-      background: #3a3125; border: 2px solid #5a4a35;
-      font-family: monospace; font-size: 12px; z-index: 1001;
-      min-width: 100px; box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
-    `;
-
     const options: { label: string; action: () => void }[] = [
       {
         label: `Drop ${name}`,
@@ -175,22 +168,11 @@ export class InventoryPanel {
       });
     }
 
-    for (const opt of options) {
-      const item = document.createElement('div');
-      item.textContent = opt.label;
-      item.style.cssText = `padding: 3px 10px; color: #ffcc00; cursor: pointer;`;
-      item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
-      item.addEventListener('mouseleave', () => item.style.background = 'transparent');
-      item.addEventListener('click', () => {
-        opt.action();
-        menu.remove();
-      });
-      menu.appendChild(item);
-    }
-
-    document.body.appendChild(menu);
-    const close = () => { menu.remove(); document.removeEventListener('click', close); };
-    setTimeout(() => document.addEventListener('click', close), 0);
+    createContextMenu(options, {
+      x: event.clientX,
+      y: event.clientY,
+      itemPadding: '3px 10px',
+    });
   }
 
   toggle(): void {

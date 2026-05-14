@@ -10,14 +10,14 @@ export class StatsPanel {
       background: rgba(0, 0, 0, 0.75);
       border: 2px solid #5a4a35; border-radius: 4px;
       padding: 8px 12px; z-index: 100;
-      font-family: monospace; font-size: 13px;
+      font-family: Arial, Helvetica, sans-serif; font-size: 13px;
       color: #ddd; min-width: 140px;
     `;
 
     // Title
     const title = document.createElement('div');
     title.textContent = 'Stats';
-    title.style.cssText = `color: #fc0; font-weight: bold; margin-bottom: 6px;`;
+    title.style.cssText = `color: #d8372b; font-weight: bold; margin-bottom: 6px;`;
     this.container.appendChild(title);
 
     // HP bar

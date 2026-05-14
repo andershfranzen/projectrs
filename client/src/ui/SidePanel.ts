@@ -4,6 +4,7 @@ import {
   type SkillId, type MeleeStance, type ItemDef,
 } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
+import { clampElementToRect, createContextMenu } from './popupStyle';
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape'];
 
@@ -90,10 +91,10 @@ export class SidePanel {
         }
         .stance-btn.selected {
           background: #7a5a25;
-          color: #ffe066;
-          border-color: #fc0;
+          color: #d8372b;
+          border-color: #d8372b;
           font-weight: bold;
-          box-shadow: inset 0 0 4px rgba(255,200,0,0.5);
+          box-shadow: inset 0 0 4px rgba(216,55,43,0.5);
         }
 
         .inv-slot {
@@ -131,7 +132,7 @@ export class SidePanel {
       width: 100%; flex: 1; min-height: 0;
       background: transparent;
       border-top: 2px solid rgba(0,0,0,0.3);
-      font-family: monospace; color: #ddd;
+      font-family: Arial, Helvetica, sans-serif; color: #ddd;
       display: flex; flex-direction: column;
       overflow: hidden;
       justify-content: flex-start;
@@ -271,7 +272,7 @@ export class SidePanel {
     const combatText = document.createElement('span');
     combatText.id = 'side-combat-level';
     combatText.textContent = 'Combat Lv: 3';
-    combatText.style.cssText = `font-size: 11px; font-weight: bold; color: #fc0; text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;`;
+    combatText.style.cssText = `font-size: 11px; font-weight: bold; color: #d8372b; text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;`;
     playerInfo.appendChild(combatText);
     panel.appendChild(playerInfo);
 
@@ -404,7 +405,7 @@ export class SidePanel {
     const questsWrap = document.createElement('div');
     questsWrap.style.display = 'none';
     questsWrap.innerHTML = `
-      <div style="color: #fc0; font-weight: bold; font-size: 13px; margin-bottom: 8px; text-shadow: 1px 1px 0 #000;">Quest Journal</div>
+      <div style="color: #d8372b; font-weight: bold; font-size: 13px; margin-bottom: 8px; text-shadow: 1px 1px 0 #000;">Quest Journal</div>
       <div style="color: #888; font-size: 11px; font-style: italic;">No quests yet...</div>
     `;
     contentArea.appendChild(questsWrap);
@@ -425,16 +426,36 @@ export class SidePanel {
     panel.appendChild(contentArea);
     panel.appendChild(bottomTabs);
 
-    // Logout button at the bottom — `margin-top: auto` pushes it to the bottom
-    // of the flex column without claiming flex space (the previous flex:1
-    // spacer was halving the inventory's available height, clipping rows).
+    const brandArea = document.createElement('div');
+    brandArea.style.cssText = `
+      flex: 0 0 58px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 4px 8px;
+    `;
+
+    const brand = document.createElement('div');
+    brand.textContent = 'EvilQuest';
+    brand.style.cssText = `
+      text-align: center;
+      font-family: 'Cinzel', 'Times New Roman', serif;
+      font-size: 24px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 2px;
+      color: #d8372b;
+      text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
+    `;
+    brandArea.appendChild(brand);
+    panel.appendChild(brandArea);
+
+    // Logout button at the bottom of the side column.
     const logoutBtn = document.createElement('div');
     logoutBtn.textContent = 'Logout';
     logoutBtn.style.cssText = `
-      text-align: center; padding: 6px 0; margin: auto 8px 6px;
+      text-align: center; padding: 6px 0; margin: 0 8px 6px;
       background: rgba(120,40,30,0.5);
       border: 1px solid rgba(180,80,60,0.4);
-      border-radius: 3px; color: #fc0; font-size: 12px;
+      border-radius: 3px; color: #d8372b; font-size: 12px;
       cursor: pointer; font-weight: bold; letter-spacing: 1px;
       text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
       box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 0 rgba(255,200,100,0.05);
@@ -570,7 +591,7 @@ export class SidePanel {
 
       const levelEl = document.createElement('div');
       levelEl.className = 'skill-level';
-      levelEl.style.cssText = `width: 26px; text-align: center; font-size: 12px; font-weight: bold; color: #fc0; text-shadow: 1px 1px 0 #000;`;
+      levelEl.style.cssText = `width: 26px; text-align: center; font-size: 12px; font-weight: bold; color: #d8372b; text-shadow: 1px 1px 0 #000;`;
       levelEl.textContent = '1';
       row.appendChild(levelEl);
 
@@ -608,7 +629,7 @@ export class SidePanel {
     clRow.id = 'combat-level-row';
     clRow.style.cssText = `
       text-align: center; padding: 6px 0; margin-top: 4px;
-      border-top: 1px solid #5a4a35; color: #fc0; font-size: 12px;
+      border-top: 1px solid #5a4a35; color: #d8372b; font-size: 12px;
     `;
     clRow.textContent = 'Combat Lv: 3';
     wrap.appendChild(clRow);
@@ -636,7 +657,7 @@ export class SidePanel {
 
       const itemEl = document.createElement('div');
       itemEl.className = 'equip-item';
-      itemEl.style.cssText = `flex: 1; font-size: 11px; color: #fc0;`;
+      itemEl.style.cssText = `flex: 1; font-size: 11px; color: #d8372b;`;
       itemEl.textContent = '—';
       row.appendChild(itemEl);
 
@@ -650,7 +671,7 @@ export class SidePanel {
     const wrap = document.createElement('div');
 
     const title = document.createElement('div');
-    title.style.cssText = `color: #fc0; font-weight: bold; font-size: 13px; margin-bottom: 10px; text-shadow: 1px 1px 0 #000; text-align: center;`;
+    title.style.cssText = `color: #d8372b; font-weight: bold; font-size: 13px; margin-bottom: 10px; text-shadow: 1px 1px 0 #000; text-align: center;`;
     title.textContent = 'Attack Style';
     wrap.appendChild(title);
 
@@ -781,7 +802,7 @@ export class SidePanel {
 
     el.innerHTML = `
       ${iconHtml}
-      ${slot.quantity > 1 ? `<div style="position: absolute; top: 2px; left: 4px; font-size: 9px; font-weight: bold; color: #ffe066; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000;">${slot.quantity}</div>` : ''}
+      ${slot.quantity > 1 ? `<div style="position: absolute; top: 2px; left: 4px; font-size: 9px; font-weight: bold; color: #d8372b; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000;">${slot.quantity}</div>` : ''}
     `;
   }
 
@@ -800,16 +821,6 @@ export class SidePanel {
 
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || 'Item';
-    const menu = document.createElement('div');
-    // Initial placement at click point — the post-mount clamp below keeps the
-    // menu inside the side panel so it never spills off the right edge of the
-    // inventory or runs off the bottom of the screen.
-    menu.style.cssText = `
-      position: fixed; left: ${event.clientX}px; top: ${event.clientY}px;
-      background: #3a3125; border: 2px solid #5a4a35;
-      font-family: monospace; font-size: 12px; z-index: 1001;
-      min-width: 100px; max-width: 180px; box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
-    `;
 
     const options: { label: string; action: () => void }[] = [];
 
@@ -840,34 +851,19 @@ export class SidePanel {
       action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId)),
     });
 
-    for (const opt of options) {
-      const item = document.createElement('div');
-      item.textContent = opt.label;
-      item.style.cssText = `padding: 3px 10px; color: #ffcc00; cursor: pointer;`;
-      item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
-      item.addEventListener('mouseleave', () => item.style.background = 'transparent');
-      item.addEventListener('click', () => {
-        opt.action();
-        menu.remove();
-      });
-      menu.appendChild(item);
-    }
+    // Initial placement at click point; the post-mount clamp keeps the menu
+    // inside the side panel for slots near the right or bottom edge.
+    const menu = createContextMenu(options, {
+      x: event.clientX,
+      y: event.clientY,
+      itemPadding: '3px 10px',
+      maxWidthPx: 180,
+    });
 
-    document.body.appendChild(menu);
     // Clamp the menu inside the side panel container — without this it spills
     // off the right edge for slots in the right column, and off the bottom
     // edge when right-clicking near the bottom row.
-    const panel = this.container.getBoundingClientRect();
-    const m = menu.getBoundingClientRect();
-    let left = m.left, top = m.top;
-    if (m.right > panel.right) left = Math.max(panel.left, panel.right - m.width);
-    if (m.bottom > panel.bottom) top = Math.max(panel.top, panel.bottom - m.height);
-    if (left < panel.left) left = panel.left;
-    if (top < panel.top) top = panel.top;
-    menu.style.left = `${left}px`;
-    menu.style.top = `${top}px`;
-    const close = () => { menu.remove(); document.removeEventListener('click', close); };
-    setTimeout(() => document.addEventListener('click', close), 0);
+    clampElementToRect(menu, this.container.getBoundingClientRect());
   }
 
   // === Skills methods ===

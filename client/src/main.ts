@@ -1,5 +1,6 @@
 import { LoginScreen } from './ui/LoginScreen';
 import { LoadingScreen } from './ui/LoadingScreen';
+import { BackgroundParticles } from './ui/BackgroundParticles';
 import { preloadAssets } from './managers/AssetPreloader';
 import type { GameManager as GameManagerType } from './managers/GameManager';
 
@@ -8,6 +9,20 @@ const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
 
 let game: GameManagerType | null = null;
 let loginScreen: LoginScreen | null = null;
+let backgroundParticles: BackgroundParticles | null = null;
+
+document.addEventListener('dragstart', (event) => {
+  if (!(event.target instanceof HTMLElement)) return;
+  const target = event.target;
+
+  // Keep real text fields usable, but prevent browser-native image drags
+  // from UI sprites/icons. Inventory reordering starts from the slot div,
+  // not the inner PNG, so this does not block the intended item drag action.
+  if (target.closest('input, textarea, [contenteditable="true"]')) return;
+  if (target instanceof HTMLImageElement || target.closest('img')) {
+    event.preventDefault();
+  }
+}, true);
 
 /**
  * Lazy-loaded GameManager module. Kicked off in bootstrap() in parallel
@@ -24,36 +39,6 @@ function loadGameModule(): Promise<typeof import('./managers/GameManager')> {
   return gameModulePromise;
 }
 
-async function startGame(token: string, username: string, preloadedLoadingScreen?: LoadingScreen) {
-  gameFrame.style.display = 'grid';
-
-  if (loginScreen) {
-    loginScreen.destroy();
-    loginScreen = null;
-  }
-
-  // Force a synchronous layout pass before constructing the Babylon engine
-  // so it reads the correct canvas dimensions on its very first frame.
-  // Without this, `display: grid` was just applied in the line above but
-  // the browser hasn't reflowed yet — `Engine` sees clientWidth=0,
-  // initializes a 0×0 framebuffer, and the first render produces a black
-  // canvas until our ResizeObserver eventually fires.
-  void canvas.offsetWidth;
-
-  try {
-    const { GameManager } = await loadGameModule();
-    game = new GameManager(canvas, token, username, () => {
-      handleDisconnect();
-    }, preloadedLoadingScreen);
-  } catch (err) {
-    console.error('[startGame] failed to load game module:', err);
-    // Failed dynamic import after auth (deploy mid-load, chunk 404, network
-    // drop on the GameManager chunk) — show the user a recoverable state
-    // instead of an indefinite-hang LoadingScreen.
-    preloadedLoadingScreen?.setStatus('Failed to load game. Please reload the page.');
-  }
-}
-
 function handleDisconnect() {
   if (game) {
     game.destroy();
@@ -65,16 +50,55 @@ function handleDisconnect() {
   showLoginScreen();
 }
 
+/** Reveal the game canvas + tear down pre-auth chrome. Called once the
+ *  player is fully authenticated and the LoadingScreen fade-out has
+ *  completed, so no transparent overlay exposes the canvas briefly. */
+function revealGame(): void {
+  // 340ms covers the LoadingScreen fade-out animation (320ms + a small
+  // buffer). Until then the canvas stays visibility:hidden so the
+  // disappearing overlay doesn't unmask it mid-fade.
+  setTimeout(() => {
+    gameFrame.style.visibility = 'visible';
+    backgroundParticles?.setVisible(false);
+  }, 340);
+}
+
 function showLoginScreen() {
-  gameFrame.style.display = 'none';
-  loginScreen = new LoginScreen((token, username) => {
-    // Manual login: the pre-auth LoadingScreen has already been hidden by
-    // bootstrap(). Spin a fresh one up now so the post-submit gap (WS
-    // connect + LOGIN_OK + scene init) doesn't show a blank canvas.
+  // If we got here via disconnect rather than initial boot, a destroyed
+  // GameManager left the canvas in an unusable state — re-route through
+  // a fresh page load so the next sign-in restarts the preload cycle
+  // from scratch. Cheap, robust, avoids partial-cleanup bugs.
+  if (game === null && document.querySelector('#game-canvas')?.parentElement?.style?.display === 'grid') {
+    location.reload();
+    return;
+  }
+  backgroundParticles?.setVisible(true);
+  loginScreen = new LoginScreen(async (token, username) => {
+    // Manual login: bring up the LoadingScreen FIRST so the canvas stays
+    // covered, then dismiss the login form. Reversing the order leaves a
+    // one-frame window with no overlay → game-world flash.
     const ls = new LoadingScreen();
     ls.show();
-    ls.setStatus('Connecting to world…');
-    void startGame(token, username, ls);
+    ls.setStatus('Connecting to server');
+    backgroundParticles?.setVisible(false);
+    if (loginScreen) {
+      loginScreen.destroy();
+      loginScreen = null;
+    }
+    try {
+      if (!game) {
+        // Reload path: rare. We'd normally still have a pre-built game.
+        const { GameManager } = await loadGameModule();
+        game = new GameManager(canvas, '', '', handleDisconnect, ls);
+        await game.whenPreloaded();
+      }
+      await game!.connectAndAuth(token, username);
+      ls.hide();
+      revealGame();
+    } catch (err) {
+      console.error('[startGame] connect failed:', err);
+      ls.setStatus('Failed to connect. Please reload.');
+    }
   });
 }
 
@@ -103,56 +127,93 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
 /**
  * Boot sequence:
  *   1. Show a single LoadingScreen immediately.
- *   2. Pre-fetch every static asset the game needs (character GLB, animation
- *      GLBs, world-object GLBs, default map data, def JSON) in parallel so
- *      the browser HTTP cache is warm. Drive a progress bar from this.
- *   3. In parallel, validate any saved token so we know whether to skip the
- *      login screen on completion.
- *   4. If we have a valid saved token, hand the same LoadingScreen to
- *      GameManager — it switches the status text and reuses the overlay
- *      through to first playable frame.
- *   5. Otherwise hide the LoadingScreen and present the login form. The
- *      login submit path opens a fresh LoadingScreen for the brief
- *      WS-connect + scene-init gap.
+ *   2. Pre-fetch every static asset the game needs in parallel so the
+ *      browser HTTP cache is warm. Drive a progress bar from this.
+ *   3. Also in parallel: validate any saved token, and download the
+ *      dynamically-imported GameManager module.
+ *   4. Construct GameManager *pre-auth* on the hidden canvas. This
+ *      parses the character GLB, all 10 animation GLBs, world-object
+ *      models, default kcmap chunks — every visual asset the game
+ *      needs to render. No WebSocket connection is opened yet.
+ *   5. Wait for the GameManager to report whenPreloaded() — at that
+ *      point every parse is complete and the world is one network
+ *      round-trip from being playable.
+ *   6. If we have a saved token, call connectAndAuth() to open the
+ *      socket and wait for LOGIN_OK to land the player. Hide the
+ *      LoadingScreen.
+ *   7. Otherwise hide the LoadingScreen and show the login form. On
+ *      submit, call connectAndAuth() on the already-preloaded game.
  */
 async function bootstrap() {
+  // Fire field belongs to the login screen only. Keep it hidden while the
+  // OSRS-style loading screen is doing real preload work.
+  backgroundParticles = new BackgroundParticles();
+  backgroundParticles.setVisible(false);
+
   const loadingScreen = new LoadingScreen();
   loadingScreen.show();
 
-  try {
-    // Three things in parallel: warm the HTTP asset cache, validate any
-    // saved token, and download the dynamically-imported GameManager
-    // bundle (Babylon + game code, ~2 MB). The dynamic import is the
-    // single biggest JS payload, so doing it during preload means it's
-    // ready the instant the user hits Login.
-    const [, tokenResult] = await Promise.all([
-      preloadAssets((p) => {
-        loadingScreen.setProgress(p.pct);
-        loadingScreen.setStatus(p.status);
-      }),
-      validateSavedToken(),
-      loadGameModule(),
-    ]);
+  // Phase 1: warm HTTP cache + dynamic-import the game bundle + token
+  // validate. AssetPreloader drives the bar 0 → 1/2; phase 2 below drives
+  // it the rest of the way to 1.
+  const [, tokenResult] = await Promise.all([
+    preloadAssets((p) => {
+      loadingScreen.setProgress(p.pct * 0.5);
+      loadingScreen.setStatus(p.status);
+    }),
+    validateSavedToken(),
+    loadGameModule(),
+  ]);
 
-    if (tokenResult) {
-      loadingScreen.setProgress(1);
-      // GameManager will drive its own phase-2 progress (LOGIN_OK + scene
-      // init). Resetting here keeps the bar from sitting pinned at 100%
-      // while indicators imply work is still happening.
-      loadingScreen.resetProgress();
-      loadingScreen.setStatus('Connecting to world…');
-      void startGame(tokenResult.token, tokenResult.username, loadingScreen);
-    } else {
+  // Phase 2: construct GameManager and parse every visual asset before the
+  // login form is ever shown. gameFrame is laid out (display:grid) so the
+  // canvas has a real size for the Babylon engine, but kept visibility:
+  // hidden so it never visually appears until the entire sign-in chain
+  // (loading → login → connect) completes. visibility:hidden preserves
+  // layout (clientWidth/clientHeight read correctly) while making the
+  // canvas non-rendering, so overlay fades can't unmask the game world.
+  const { GameManager } = await loadGameModule();
+  loadingScreen.setStatus('Preparing game engine');
+  gameFrame.style.display = 'grid';
+  gameFrame.style.visibility = 'hidden';
+  void canvas.offsetWidth; // force layout so Engine reads a real size
+
+  game = new GameManager(canvas, '', '', handleDisconnect, undefined);
+  await game.whenPreloaded((pct, status) => {
+    // Map the three preload milestones into the second half of the bar
+    // (50% → 100%) so the user sees continuous forward motion across
+    // both phases.
+    loadingScreen.setProgress(0.5 + pct * 0.5);
+    loadingScreen.setStatus(status);
+  });
+  loadingScreen.setProgress(1);
+
+  // Phase 3: either auto-login (saved token) or hand off to the login form.
+  // The world is fully built either way — sign-in is the only step left.
+  if (tokenResult) {
+    loadingScreen.setStatus('Connecting to server');
+    try {
+      await game.connectAndAuth(tokenResult.token, tokenResult.username);
+      loadingScreen.hide();
+      revealGame();
+    } catch (err) {
+      console.error('[bootstrap] auto-login failed:', err);
       loadingScreen.hide();
       showLoginScreen();
     }
-  } catch (err) {
-    console.error('[bootstrap] failed:', err);
-    // Catches dynamic-import failure on the GameManager chunk (deploy
-    // mid-load, network drop, etc). Without this, a `void bootstrap()`
-    // would swallow the rejection and leave the LoadingScreen stuck.
-    loadingScreen.setStatus('Failed to load. Please reload the page.');
+  } else {
+    loadingScreen.hide();
+    showLoginScreen();
   }
 }
 
-void bootstrap();
+void bootstrap().catch((err) => {
+  console.error('[bootstrap] failed:', err);
+  // A failed dynamic-import on the GameManager chunk (deploy mid-load,
+  // network drop) is the most likely cause. Surface a recoverable
+  // message on whatever LoadingScreen is currently visible.
+  const statusEl = document.querySelector<HTMLDivElement>('.eq-loading-status');
+  if (statusEl) {
+    statusEl.textContent = 'Failed to load. Please reload the page.';
+  }
+});

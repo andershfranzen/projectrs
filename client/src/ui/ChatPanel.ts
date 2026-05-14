@@ -54,7 +54,7 @@ export class ChatPanel {
       width: 100%; height: 100%;
       background: transparent;
       display: flex; flex-direction: column;
-      font-family: 'Courier New', Courier, monospace; font-size: 12px;
+      font-family: Arial, Helvetica, sans-serif; font-size: 12px;
     `;
 
     // Tab bar — sits on the stone, no separate background
@@ -78,7 +78,7 @@ export class ChatPanel {
       btn.style.cssText = `
         padding: 3px 12px; cursor: pointer;
         font-size: 11px; font-weight: bold;
-        color: #8a7a60;
+        color: #8a857c;
         border-bottom: 2px solid transparent;
         transition: all 0.1s;
       `;
@@ -97,7 +97,7 @@ export class ChatPanel {
     log.id = 'chat-log';
     log.style.cssText = `
       flex: 1; overflow-y: auto; padding: 6px 10px;
-      color: #fc0; line-height: 1.6;
+      color: #d8372b; line-height: 1.6;
       font-size: 13px; font-weight: bold;
       text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
       background: url('/ui/parchment.png') repeat;
@@ -124,8 +124,8 @@ export class ChatPanel {
     input.maxLength = 200;
     input.style.cssText = `
       flex: 1; background: rgba(0,0,0,0.5);
-      border: 1px solid rgba(255,200,100,0.2); color: #fc0;
-      font-family: 'Courier New', Courier, monospace; font-size: 13px;
+      border: 1px solid rgba(255,200,100,0.2); color: #d8372b;
+      font-family: Arial, Helvetica, sans-serif; font-size: 13px;
       font-weight: bold;
       padding: 5px 8px; outline: none;
       border-radius: 2px;
@@ -134,7 +134,7 @@ export class ChatPanel {
 
     // Style placeholder text
     const style = document.createElement('style');
-    style.textContent = '#chat-input::placeholder { color: rgba(255,204,0,0.8); text-shadow: 1px 1px 0 #000; }';
+    style.textContent = '#chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }';
     panel.appendChild(style);
 
     inputBar.appendChild(input);
@@ -150,10 +150,10 @@ export class ChatPanel {
     this.activeTab = tab;
     for (const btn of this.tabButtons) {
       if (btn.dataset.tab === tab) {
-        btn.style.color = '#fc0';
-        btn.style.borderBottomColor = '#fc0';
+        btn.style.color = '#d8372b';
+        btn.style.borderBottomColor = '#d8372b';
       } else {
-        btn.style.color = '#8a7a60';
+        btn.style.color = '#8a857c';
         btn.style.borderBottomColor = 'transparent';
       }
     }
@@ -176,7 +176,7 @@ export class ChatPanel {
     this.log.scrollTop = this.log.scrollHeight;
   }
 
-  addSystemMessage(message: string, color: string = '#fc0'): void {
+  addSystemMessage(message: string, color: string = '#d8372b'): void {
     const el = document.createElement('div');
     el.innerHTML = `<span style="color: ${color};">${this.escapeHtml(message)}</span>`;
     if (this.activeTab !== 'all' && this.activeTab !== 'game') el.style.display = 'none';

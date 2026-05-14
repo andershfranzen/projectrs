@@ -1849,7 +1849,7 @@ export class CharacterEntity {
       this.healthBarTextEl = document.createElement('div');
       this.healthBarTextEl.style.cssText = `
         position: absolute; top: -1px; left: 0; right: 0;
-        text-align: center; font-family: monospace;
+        text-align: center; font-family: Arial, Helvetica, sans-serif;
         font-size: 8px; font-weight: bold; color: #fff;
         text-shadow: 1px 1px 0 #000, -1px -1px 0 #000;
         line-height: 10px; pointer-events: none;
@@ -1911,7 +1911,7 @@ export class CharacterEntity {
     el.style.cssText = `
       position: fixed; pointer-events: none; z-index: 200;
       background: rgba(0, 0, 0, 0.8); color: #fff;
-      font-family: monospace; font-size: 13px;
+      font-family: Arial, Helvetica, sans-serif; font-size: 13px;
       padding: 4px 10px; border-radius: 6px;
       border: 1px solid #5a4a35; white-space: nowrap;
       transform: translate(-50%, -100%);
@@ -1967,7 +1967,7 @@ export class CharacterEntity {
       el.className = 'character-name-overlay';
       el.style.cssText = `
         position: fixed; pointer-events: none; z-index: 150;
-        font-family: monospace; font-size: 12px;
+        font-family: Arial, Helvetica, sans-serif; font-size: 12px;
         color: ${this.labelColor};
         white-space: nowrap;
         transform: translate(-50%, -100%);

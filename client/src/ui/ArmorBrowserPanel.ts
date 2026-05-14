@@ -121,7 +121,7 @@ export class ArmorBrowserPanel {
     Object.assign(div.style, {
       position: 'fixed', top: '60px', right: '10px',
       width: '520px', maxHeight: '80vh',
-      background: 'rgba(12,10,6,0.96)', color: '#ddd', fontFamily: 'monospace',
+      background: 'rgba(12,10,6,0.96)', color: '#ddd', fontFamily: 'Arial, Helvetica, sans-serif',
       fontSize: '12px', borderRadius: '6px', zIndex: '9999',
       display: 'none', userSelect: 'none', border: '1px solid #554a3a',
       boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
@@ -137,7 +137,7 @@ export class ArmorBrowserPanel {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     });
     const title = document.createElement('span');
-    title.style.cssText = 'font-weight:bold;color:#ffd700;font-size:13px;letter-spacing:1px;';
+    title.style.cssText = 'font-weight:bold;color:#d8372b;font-size:13px;letter-spacing:1px;';
     title.textContent = 'ARMOR BROWSER';
     const closeBtn = document.createElement('button');
     closeBtn.textContent = '×';
@@ -235,7 +235,7 @@ export class ArmorBrowserPanel {
         border: 'none',
         borderBottom: isActive ? `2px solid ${color}` : hasEquipped ? `2px solid ${color}44` : '2px solid transparent',
         borderRadius: '3px 3px 0 0',
-        fontFamily: 'monospace', fontSize: '10px', fontWeight: isActive ? 'bold' : 'normal',
+        fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '10px', fontWeight: isActive ? 'bold' : 'normal',
       });
       btn.addEventListener('click', () => { this.activeCategory = cat; this.render(); });
       this.tabRow.appendChild(btn);
@@ -308,7 +308,7 @@ export class ArmorBrowserPanel {
       Object.assign(equipSetBtn.style, {
         padding: '4px 2px', cursor: 'pointer', fontSize: '9px', fontWeight: 'bold',
         background: '#1a1a2a', color: '#88f', border: '1px solid #44a',
-        borderRadius: '3px', fontFamily: 'monospace', alignSelf: 'center',
+        borderRadius: '3px', fontFamily: 'Arial, Helvetica, sans-serif', alignSelf: 'center',
       });
       equipSetBtn.title = `Equip Set ${set.setId} across all armor slots`;
       equipSetBtn.addEventListener('click', () => this.equipFullSet(set.setId, this.getSelectedTier()));
@@ -336,7 +336,7 @@ export class ArmorBrowserPanel {
           background: isDefault ? '#2a2a3a' : '#12100c',
           color: isDefault ? '#aaf' : '#555',
           border: `1px solid ${isDefault ? '#66a' : '#2a2520'}`,
-          borderRadius: '3px', fontFamily: 'monospace',
+          borderRadius: '3px', fontFamily: 'Arial, Helvetica, sans-serif',
         });
         tb.addEventListener('click', () => {
           tierRow.querySelectorAll('button').forEach((b: any) => {
@@ -509,7 +509,7 @@ export class ArmorBrowserPanel {
     Object.assign(btn.style, {
       padding: '6px 8px', cursor: 'pointer', background: bg, color: '#ddd',
       border: `1px solid ${borderColor}`, borderRadius: '3px',
-      fontFamily: 'monospace', fontSize: '11px',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px',
     });
     btn.addEventListener('click', onClick);
     return btn;
@@ -582,7 +582,7 @@ export class ArmorBrowserPanel {
 
   private flashStatus(msg: string): void {
     this.statusLabel.textContent = msg;
-    this.statusLabel.style.color = '#ffd700';
+    this.statusLabel.style.color = '#d8372b';
     setTimeout(() => { this.statusLabel.style.color = '#555'; this.statusLabel.textContent = ''; }, 2500);
   }
 

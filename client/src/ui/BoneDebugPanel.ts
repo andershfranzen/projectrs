@@ -55,7 +55,7 @@ export class BoneDebugPanel {
     div.id = 'bone-debug-panel';
     Object.assign(div.style, {
       position: 'fixed', top: '60px', right: '10px', width: '310px',
-      background: 'rgba(15,12,8,0.92)', color: '#ddd', fontFamily: 'monospace',
+      background: 'rgba(15,12,8,0.92)', color: '#ddd', fontFamily: 'Arial, Helvetica, sans-serif',
       fontSize: '12px', padding: '12px', borderRadius: '6px', zIndex: '9999',
       display: 'none', userSelect: 'none', border: '1px solid #554a3a',
     });
@@ -72,7 +72,7 @@ export class BoneDebugPanel {
     this.boneSelect = document.createElement('select');
     Object.assign(this.boneSelect.style, {
       flex: '1', background: '#1a1510', color: '#8cf', border: '1px solid #554a3a',
-      borderRadius: '3px', padding: '2px 4px', fontFamily: 'monospace', fontSize: '11px',
+      borderRadius: '3px', padding: '2px 4px', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px',
     });
     for (const bone of ADJUSTABLE_BONES) {
       const opt = document.createElement('option');
@@ -120,7 +120,7 @@ export class BoneDebugPanel {
       Object.assign(numInput.style, {
         width: '58px', flexShrink: '0', background: '#1a1510', color: '#ddd',
         border: '1px solid #3a3530', borderRadius: '2px', padding: '1px 3px',
-        fontFamily: 'monospace', fontSize: '11px', textAlign: 'right',
+        fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px', textAlign: 'right',
       });
 
       const resetBtn = document.createElement('button');
@@ -166,7 +166,7 @@ export class BoneDebugPanel {
     Object.assign(mirrorBtn.style, {
       width: '100%', marginTop: '8px', padding: '5px 8px', cursor: 'pointer',
       background: '#2a2a4a', color: '#ddd', border: '1px solid #44a',
-      borderRadius: '3px', fontFamily: 'monospace', fontSize: '11px',
+      borderRadius: '3px', fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px',
     });
     mirrorBtn.addEventListener('click', () => this.mirrorToOpposite());
     div.appendChild(mirrorBtn);
@@ -180,7 +180,7 @@ export class BoneDebugPanel {
     Object.assign(copyBtn.style, {
       flex: '1', padding: '5px 8px', cursor: 'pointer', background: '#2a4a2a',
       color: '#ddd', border: '1px solid #4a4', borderRadius: '3px',
-      fontFamily: 'monospace', fontSize: '11px',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px',
     });
     copyBtn.addEventListener('click', () => this.copyAllCode());
 
@@ -189,7 +189,7 @@ export class BoneDebugPanel {
     Object.assign(resetAllBtn.style, {
       flex: '1', padding: '5px 8px', cursor: 'pointer', background: '#4a2a2a',
       color: '#ddd', border: '1px solid #a44', borderRadius: '3px',
-      fontFamily: 'monospace', fontSize: '11px',
+      fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '11px',
     });
     resetAllBtn.addEventListener('click', () => {
       this.offsets.clear();

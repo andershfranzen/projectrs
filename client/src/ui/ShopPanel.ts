@@ -1,6 +1,7 @@
 import { ClientOpcode, encodePacket, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
-import { popupGeometryCss } from './popupStyle';
+import { createModalPanel } from './ModalPanel';
+import { closeActiveContextMenu } from './popupStyle';
 
 export interface ShopItem {
   itemId: number;
@@ -16,41 +17,22 @@ export class ShopPanel {
   private visible: boolean = false;
   private shopNpcId: number = -1;
   private gridEl: HTMLDivElement | null = null;
+  private titleEl: HTMLSpanElement | null = null;
   private onCloseCallback: (() => void) | null = null;
 
   constructor(network: NetworkManager, itemDefs: Map<number, ItemDef>) {
     this.network = network;
     this.itemDefs = itemDefs;
 
-    this.container = document.createElement('div');
-    this.container.style.cssText = `
-      ${popupGeometryCss({ widthFrac: 0.32 })}
-      display: none; flex-direction: column;
-      background: #1a1a1a; border: 2px solid #aa8844;
-      border-radius: 6px;
-      font-family: monospace; color: #ddd; user-select: none;
-    `;
-
-    // Header
-    const header = document.createElement('div');
-    header.style.cssText = `
-      display: flex; justify-content: space-between; align-items: center;
-      padding: 8px 12px; background: #2a2a2a; border-bottom: 1px solid #aa8844;
-      border-radius: 4px 4px 0 0;
-    `;
-    const title = document.createElement('span');
-    title.textContent = 'Shop';
-    title.style.cssText = 'font-size: 16px; color: #ffcc44; font-weight: bold;';
-    const closeBtn = document.createElement('button');
-    closeBtn.textContent = 'X';
-    closeBtn.style.cssText = `
-      background: #444; border: 1px solid #666; color: #ddd; cursor: pointer;
-      padding: 2px 8px; border-radius: 3px; font-family: monospace;
-    `;
-    closeBtn.onclick = () => this.hide();
-    header.appendChild(title);
-    header.appendChild(closeBtn);
-    this.container.appendChild(header);
+    const modal = createModalPanel({
+      id: 'shop-panel',
+      title: 'Shop',
+      geometry: { kind: 'canvas', widthFrac: 0.32 },
+      chrome: 'dark',
+      onClose: () => this.hide(),
+    });
+    this.container = modal.root;
+    this.titleEl = modal.title;
 
     // Items grid
     this.gridEl = document.createElement('div');
@@ -66,20 +48,13 @@ export class ShopPanel {
     document.body.appendChild(this.container);
   }
 
-  private titleEl: HTMLSpanElement | null = null;
-
   show(npcEntityId: number, items: ShopItem[], shopTitle?: string): void {
+    closeActiveContextMenu();
     this.shopNpcId = npcEntityId;
     this.items = items;
     this.visible = true;
     this.container.style.display = 'flex';
-    // Update title
-    if (!this.titleEl) {
-      this.titleEl = this.container.querySelector('span');
-    }
-    if (this.titleEl && shopTitle) {
-      this.titleEl.textContent = shopTitle;
-    }
+    if (this.titleEl) this.titleEl.textContent = shopTitle ?? 'Shop';
     this.render();
   }
 
@@ -122,14 +97,14 @@ export class ShopPanel {
 
       const priceEl = document.createElement('span');
       priceEl.textContent = `${item.price} gp`;
-      priceEl.style.cssText = 'color: #ffcc44; font-size: 13px; white-space: nowrap; margin-left: 8px;';
+      priceEl.style.cssText = 'color: #d8372b; font-size: 13px; white-space: nowrap; margin-left: 8px;';
 
       const buyBtn = document.createElement('button');
       buyBtn.textContent = 'Buy';
       buyBtn.style.cssText = `
         background: #3a6633; border: 1px solid #5a8855; color: #ddd;
         padding: 3px 10px; border-radius: 3px; cursor: pointer;
-        font-family: monospace; font-size: 12px; margin-left: 8px;
+        font-family: Arial, Helvetica, sans-serif; font-size: 12px; margin-left: 8px;
       `;
       buyBtn.onclick = () => {
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_BUY_ITEM, item.itemId, 1));
@@ -140,7 +115,7 @@ export class ShopPanel {
       buy5Btn.style.cssText = `
         background: #335566; border: 1px solid #557788; color: #ddd;
         padding: 3px 6px; border-radius: 3px; cursor: pointer;
-        font-family: monospace; font-size: 11px; margin-left: 4px;
+        font-family: Arial, Helvetica, sans-serif; font-size: 11px; margin-left: 4px;
       `;
       buy5Btn.onclick = () => {
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_BUY_ITEM, item.itemId, 5));
