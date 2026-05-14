@@ -23,3 +23,5 @@ networks:
 
 volumes:
   evilquest_data:
+    external: true
+    name: evilquest_evilquest_data
