@@ -207,6 +207,119 @@ export class GameDatabase {
       this.db.exec(`ALTER TABLE login_history ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_login_history_device ON login_history(device_id)`);
+
+    // Door state persistence. One row per open (or otherwise non-default) door
+    // — closed doors don't need a row (the in-memory default is closed). On
+    // restart, World re-applies these to keep building interiors continuous
+    // across server reboots. auto_close_at_tick is informational only; the
+    // current implementation just restores doorOpen and lets the next manual
+    // interaction (or proximity check) decide when to close.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS door_state (
+        map_level TEXT NOT NULL,
+        object_entity_id INTEGER NOT NULL,
+        is_open INTEGER NOT NULL,
+        auto_close_at_tick INTEGER,
+        PRIMARY KEY (map_level, object_entity_id)
+      );
+    `);
+
+    // World object respawn persistence. One row per currently-depleted
+    // skilling object (trees, rocks, fishing spots). Stored as wall-clock
+    // unix ms rather than ticks so a long downtime doesn't leave every node
+    // depleted until the tick counter catches up — on boot, anything in the
+    // past is dropped (respawns immediately) and anything in the future has
+    // its remaining timer reconstructed.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS world_object_respawn (
+        map_level TEXT NOT NULL,
+        object_entity_id INTEGER NOT NULL,
+        respawn_at_unix_ms INTEGER NOT NULL,
+        PRIMARY KEY (map_level, object_entity_id)
+      );
+    `);
+  }
+
+  // -- Door state -----------------------------------------------------------
+
+  saveDoorState(mapLevel: string, entityId: number, isOpen: boolean, autoCloseAtTick: number | null): void {
+    try {
+      this.db.query(`
+        INSERT INTO door_state (map_level, object_entity_id, is_open, auto_close_at_tick)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(map_level, object_entity_id) DO UPDATE SET
+          is_open = excluded.is_open,
+          auto_close_at_tick = excluded.auto_close_at_tick
+      `).run(mapLevel, entityId, isOpen ? 1 : 0, autoCloseAtTick);
+    } catch (e) {
+      console.error('saveDoorState failed:', e);
+    }
+  }
+
+  loadAllDoorStates(): Array<{ mapLevel: string; entityId: number; isOpen: boolean; autoCloseAtTick: number | null }> {
+    try {
+      const rows = this.db.query(`
+        SELECT map_level, object_entity_id, is_open, auto_close_at_tick FROM door_state
+      `).all() as Array<{ map_level: string; object_entity_id: number; is_open: number; auto_close_at_tick: number | null }>;
+      return rows.map(r => ({
+        mapLevel: r.map_level,
+        entityId: r.object_entity_id,
+        isOpen: r.is_open === 1,
+        autoCloseAtTick: r.auto_close_at_tick,
+      }));
+    } catch (e) {
+      console.error('loadAllDoorStates failed:', e);
+      return [];
+    }
+  }
+
+  clearDoorState(mapLevel: string, entityId: number): void {
+    try {
+      this.db.query('DELETE FROM door_state WHERE map_level = ? AND object_entity_id = ?')
+        .run(mapLevel, entityId);
+    } catch (e) {
+      console.error('clearDoorState failed:', e);
+    }
+  }
+
+  // -- World object respawn -------------------------------------------------
+
+  saveObjectRespawn(mapLevel: string, entityId: number, respawnAtUnixMs: number): void {
+    try {
+      this.db.query(`
+        INSERT INTO world_object_respawn (map_level, object_entity_id, respawn_at_unix_ms)
+        VALUES (?, ?, ?)
+        ON CONFLICT(map_level, object_entity_id) DO UPDATE SET
+          respawn_at_unix_ms = excluded.respawn_at_unix_ms
+      `).run(mapLevel, entityId, respawnAtUnixMs);
+    } catch (e) {
+      console.error('saveObjectRespawn failed:', e);
+    }
+  }
+
+  loadAllObjectRespawns(): Array<{ mapLevel: string; entityId: number; respawnAtUnixMs: number }> {
+    try {
+      const rows = this.db.query(`
+        SELECT map_level, object_entity_id, respawn_at_unix_ms FROM world_object_respawn
+      `).all() as Array<{ map_level: string; object_entity_id: number; respawn_at_unix_ms: number }>;
+      return rows.map(r => ({
+        mapLevel: r.map_level,
+        entityId: r.object_entity_id,
+        respawnAtUnixMs: r.respawn_at_unix_ms,
+      }));
+    } catch (e) {
+      console.error('loadAllObjectRespawns failed:', e);
+      return [];
+    }
+  }
+
+  clearObjectRespawn(mapLevel: string, entityId: number): void {
+    try {
+      this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND object_entity_id = ?')
+        .run(mapLevel, entityId);
+    } catch (e) {
+      console.error('clearObjectRespawn failed:', e);
+    }
   }
 
   async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
@@ -309,7 +422,12 @@ export class GameDatabase {
     this.db.query('DELETE FROM sessions WHERE token = ?').run(token);
   }
 
-  savePlayerState(accountId: number, player: Player, effectiveY: number): void {
+  /** Run a single player_state UPDATE. Shared body between the single-row
+   *  savePlayerState() and the batched savePlayersBatch() — keeps the column
+   *  list and serialization logic in one place. Does NOT wrap in a transaction
+   *  itself; callers wrap as appropriate (batch transaction vs implicit per-
+   *  call autocommit). */
+  private savePlayerRow(accountId: number, player: Player, effectiveY: number): void {
     const skills: Record<string, { xp: number; level: number; currentLevel: number }> = {};
     for (const id of ALL_SKILLS) {
       skills[id] = {
@@ -342,6 +460,27 @@ export class GameDatabase {
       JSON.stringify(player.bank),
       accountId,
     );
+  }
+
+  savePlayerState(accountId: number, player: Player, effectiveY: number): void {
+    this.savePlayerRow(accountId, player, effectiveY);
+  }
+
+  /** Batched save: wraps every per-row UPDATE in a single SQLite transaction
+   *  so 100+ players flush in one fsync instead of N. Called by the 15s
+   *  auto-save loop in World.saveAllPlayers. */
+  savePlayersBatch(saves: Array<{ accountId: number; player: Player; effectiveY: number }>): void {
+    if (saves.length === 0) return;
+    const tx = this.db.transaction((rows: Array<{ accountId: number; player: Player; effectiveY: number }>) => {
+      for (const r of rows) {
+        this.savePlayerRow(r.accountId, r.player, r.effectiveY);
+      }
+    });
+    try {
+      tx(saves);
+    } catch (e) {
+      console.error('savePlayersBatch failed:', e);
+    }
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {

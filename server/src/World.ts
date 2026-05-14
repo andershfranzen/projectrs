@@ -154,6 +154,86 @@ export class World {
     // Spawn NPCs and objects from data files
     this.spawnNpcs();
     this.spawnWorldObjects();
+
+    // Re-apply persisted door + respawn state captured before the last
+    // shutdown. Doors that were open stay open, depleted skilling objects
+    // resume their countdown from the saved wall-clock target. Anything
+    // whose wall-clock has already elapsed during downtime is dropped and
+    // respawns immediately on next tick.
+    this.restorePersistedObjectState();
+  }
+
+  /** Re-apply persisted door / respawn state on boot. Called once at the
+   *  end of construction, after spawnWorldObjects has populated worldObjects
+   *  with their default (closed / not-depleted) state. */
+  private restorePersistedObjectState(): void {
+    try {
+      const doorRows = this.db.loadAllDoorStates();
+      for (const row of doorRows) {
+        const obj = this.worldObjects.get(row.entityId);
+        if (!obj || obj.mapLevel !== row.mapLevel || obj.def.category !== 'door') {
+          // Stale row (entity id reshuffled or definition changed). Drop it.
+          this.db.clearDoorState(row.mapLevel, row.entityId);
+          continue;
+        }
+        if (row.isOpen && !obj.doorOpen) {
+          const map = this.maps.get(obj.mapLevel);
+          if (!map) continue;
+          this.clearDoorWallEdges(obj, map);
+          obj.doorOpen = true;
+          obj.depleted = true;
+          // Re-arm a fresh auto-close timer. The persisted auto_close_at_tick
+          // is informational only — we don't try to map it back through the
+          // pre-restart tick clock, just give the door its full timeout again.
+          obj.respawnTimer = obj.def.respawnTime ?? 200;
+          this.depletedObjectIds.add(obj.id);
+        }
+      }
+      if (doorRows.length > 0) console.log(`Restored ${doorRows.length} persisted door state(s)`);
+    } catch (e) {
+      console.error('restorePersistedObjectState (doors) failed:', e);
+    }
+
+    try {
+      const respawnRows = this.db.loadAllObjectRespawns();
+      const now = Date.now();
+      let restored = 0;
+      for (const row of respawnRows) {
+        const obj = this.worldObjects.get(row.entityId);
+        if (!obj || obj.mapLevel !== row.mapLevel) {
+          this.db.clearObjectRespawn(row.mapLevel, row.entityId);
+          continue;
+        }
+        // Doors handled by door_state above; skip here.
+        if (obj.def.category === 'door') continue;
+        const msRemaining = row.respawnAtUnixMs - now;
+        if (msRemaining <= 0) {
+          // Already due — drop the row, leave the live spawn alone.
+          this.db.clearObjectRespawn(row.mapLevel, row.entityId);
+          continue;
+        }
+        const ticksRemaining = Math.max(1, Math.ceil(msRemaining / TICK_RATE));
+        obj.depleted = true;
+        obj.respawnTimer = ticksRemaining;
+        this.depletedObjectIds.add(obj.id);
+        // Unblock tiles so paths aren't snagged on a node that's currently
+        // depleted (mirrors the depletion site's tile-clear logic).
+        if (obj.def.blocking) {
+          if (obj.def.category === 'tree') {
+            const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
+            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
+              this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, bx + dx, bz + dz));
+            }
+          } else {
+            this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, obj.x, obj.z));
+          }
+        }
+        restored++;
+      }
+      if (restored > 0) console.log(`Restored ${restored} persisted object respawn timer(s)`);
+    } catch (e) {
+      console.error('restorePersistedObjectState (respawns) failed:', e);
+    }
   }
 
   private discoverAndLoadMaps(): void {
@@ -586,13 +666,23 @@ export class World {
     const player = this.players.get(playerId);
     if (!player) return;
 
+    // Clear every cross-entity reference BEFORE deleting the player entity so
+    // the helper can still look up the player. Wipes player→NPC combat target,
+    // NPC→player combat target (and the queued chase path), pending trade
+    // requests, and any active trade session. Without this, kickAccountIfOnline
+    // (which bypasses handlePlayerDisconnect's abortTrade call) would leave
+    // orphan trade sessions, and NPCs mid-chase would keep a stale combatTarget
+    // ref for at least one more AI tick.
+    this.clearCombatReferencesTo(playerId);
+
     // Remove from chunk manager
     const cm = this.chunkManagers.get(player.currentMapLevel);
     if (cm) cm.removeEntity(player.id);
 
     this.players.delete(playerId);
-    this.clearCombatTarget(playerId);
     this.skillingActions.delete(playerId);
+    // Defensive sweep: catch any trade sessions whose other side already left.
+    this.sweepOrphanTradeSessions();
     console.log(`Player "${player.name}" left`);
 
     // Notify nearby players
@@ -755,12 +845,16 @@ export class World {
       obj.depleted = false;
       this.depletedObjectIds.delete(obj.id);
       swingSign = 0;
+      // Closed is the default state — drop the persisted row so a fresh
+      // server boot doesn't waste cycles processing a no-op.
+      this.db.clearDoorState(obj.mapLevel, obj.id);
     } else {
       this.clearDoorWallEdges(obj, map);
       obj.doorOpen = true;
       obj.depleted = true;
       obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
       this.depletedObjectIds.add(obj.id);
+      this.db.saveDoorState(obj.mapLevel, obj.id, true, this.currentTick + obj.respawnTimer);
     }
 
     this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
@@ -833,6 +927,51 @@ export class World {
         if (set.size === 0) this.npcTargetedBy.delete(oldNpc);
       }
       this.playerCombatTargets.delete(playerId);
+    }
+  }
+
+  /** Clear every server-side reference to this player from other entities'
+   *  combat / interaction state. Called from removePlayer AND on map transition
+   *  so stale targets don't survive across either event. */
+  private clearCombatReferencesTo(playerId: number): void {
+    const player = this.players.get(playerId);
+    this.clearCombatTarget(playerId);
+    if (player) {
+      player.attackTarget = null;
+      player.pendingInteraction = null;
+    }
+    for (const [, npc] of this.npcs) {
+      if (npc.combatTarget && (npc.combatTarget as any).id === playerId) {
+        npc.combatTarget = null;
+        npc.pathQueue.length = 0;
+      }
+    }
+    for (const [npcId, set] of this.npcTargetedBy) {
+      if (set.delete(playerId) && set.size === 0) {
+        this.npcTargetedBy.delete(npcId);
+      }
+    }
+    this.pendingTradeRequests.delete(playerId);
+    for (const [requester, target] of this.pendingTradeRequests) {
+      if (target === playerId) this.pendingTradeRequests.delete(requester);
+    }
+    if (this.tradeSessions.has(playerId)) {
+      this.abortTrade(playerId, 2);
+    }
+  }
+
+  /** Sweep orphan trade sessions where either side has left this.players. */
+  private sweepOrphanTradeSessions(): void {
+    const seen = new Set<TradeSession>();
+    for (const [, session] of this.tradeSessions) {
+      if (seen.has(session)) continue;
+      seen.add(session);
+      const aGone = !this.players.has(session.a.id);
+      const bGone = !this.players.has(session.b.id);
+      if (aGone || bGone) {
+        const surviving = aGone ? session.b.id : session.a.id;
+        this.abortTrade(surviving, 2);
+      }
     }
   }
 
@@ -2790,6 +2929,10 @@ export class World {
         if (obj.def.depletionChance && Math.random() < obj.def.depletionChance) {
           obj.deplete();
           this.depletedObjectIds.add(obj.id);
+          // Persist the wall-clock respawn target so this stays depleted
+          // across restarts (within the remaining timer window). On boot we
+          // convert this back into a tick countdown.
+          this.db.saveObjectRespawn(obj.mapLevel, obj.id, Date.now() + obj.respawnTimer * TICK_RATE);
           if (obj.def.blocking) {
             if (obj.def.category === 'tree') {
               const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
@@ -2867,6 +3010,10 @@ export class World {
           const map = this.maps.get(obj.mapLevel);
           if (map) this.restoreDoorWallEdges(obj, map);
           obj.doorOpen = false;
+          this.db.clearDoorState(obj.mapLevel, obj.id);
+        } else {
+          // Skilling object respawned — drop the persisted target.
+          this.db.clearObjectRespawn(obj.mapLevel, obj.id);
         }
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
