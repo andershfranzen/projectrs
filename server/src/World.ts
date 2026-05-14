@@ -1035,6 +1035,11 @@ export class World {
     let prevZ = player.position.y;
     const mapId = player.currentMapLevel;
     const pFloor = player.currentFloor;
+    // Total unit-tile count the client requested (sum of per-segment max
+    // axial distances). Used after the validation loop to detect whether
+    // we dropped any tiles relative to what was asked for.
+    let requestedTileCount = 0;
+    let truncated = false;
     // Per-segment cap: legitimate compressed corners can be far apart on a
     // long straight, but never longer than the map's diagonal. 256 covers
     // any practical map while bounding worst-case work per packet.
@@ -1058,11 +1063,12 @@ export class World {
       const stepDZ = Math.sign(dzTotal);
       const distance = Math.max(Math.abs(dxTotal), Math.abs(dzTotal));
       if (distance === 0) continue;
-      if (distance > MAX_SEGMENT_TILES) break;
+      if (distance > MAX_SEGMENT_TILES) { truncated = true; break; }
       // Diagonal compressed steps must move equally on both axes — reject
       // anything that isn't pure cardinal or pure 45° diagonal.
       const isDiagonal = stepDX !== 0 && stepDZ !== 0;
-      if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) break;
+      if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) { truncated = true; break; }
+      requestedTileCount += distance;
       let curTileX = startTileX;
       let curTileZ = startTileZ;
       for (let i = 0; i < distance; i++) {
@@ -1075,7 +1081,7 @@ export class World {
         const wallBlocked = pFloor === 0
           ? map.isWallBlocked(curTileX, curTileZ, nextTileX, nextTileZ, playerEffY)
           : map.isWallBlockedOnFloor(curTileX, curTileZ, nextTileX, nextTileZ, pFloor);
-        if (tileBlocked || wallBlocked) break outer;
+        if (tileBlocked || wallBlocked) { truncated = true; break outer; }
         // Push tile-CENTER coords to match client convention.
         validPath.push({ x: nextTileX + 0.5, z: nextTileZ + 0.5 });
         curTileX = nextTileX;
@@ -1087,6 +1093,14 @@ export class World {
       prevZ = curTileZ + 0.5;
     }
     player.moveQueue = validPath;
+    // If we actually dropped tiles vs. what the client asked for, notify it
+    // so it can trim its local walk to match. Skip when nothing was
+    // requested (zero-distance / empty input) or when the validation
+    // produced exactly what was asked. Fire-and-forget — no server state.
+    if (truncated && validPath.length < requestedTileCount && requestedTileCount > 0) {
+      const last = validPath.length > 0 ? validPath[validPath.length - 1] : { x: player.position.x, z: player.position.y };
+      this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
+    }
   }
 
   handlePlayerAttackNpc(playerId: number, npcId: number): void {

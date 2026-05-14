@@ -144,4 +144,13 @@ export enum ServerOpcode {
   TRADE_ACCEPT_STATE = 93,
   /** Trade session ended. Values: [reason]. 0 = success, 1 = declined, 2 = aborted. */
   TRADE_CLOSE = 94,
+
+  /** Server tells client its requested move path was validated short; abort
+   *  local walk at the given last reachable tile center. Values: [x10, z10]
+   *  — last reachable tile center (×10, matching qPos scale). Fire-and-forget;
+   *  sent only when the truncated server path is shorter than what the client
+   *  requested. Prevents the "client visual walks past where server stopped →
+   *  divergence-snap teleports back" failure mode when a stale/edge path
+   *  validation drops tiles. */
+  PATH_TRUNCATED = 100,
 }
