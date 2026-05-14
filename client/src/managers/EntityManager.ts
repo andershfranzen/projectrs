@@ -87,13 +87,11 @@ export class EntityManager {
         { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
         // RS2 turn-on-the-spot — see CharacterEntity.updateAnimation comment.
         { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
-        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/standing_melee_attack_downward.glb` },
-        { name: 'attack_slash_aggressive', path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
+        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
         { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
         { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
-        // attack_punch removed pending custom punch+kick anim authoring;
-        // CharacterEntity's fallback chain (attack_punch → attack → attack_slash)
-        // keeps unarmed combat playing a usable anim until the new file lands.
+        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
+        { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
         { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
         { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],

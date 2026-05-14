@@ -424,10 +424,19 @@ export class CharacterEntity {
       }
       this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
 
-      // Convert PBR → flat StandardMaterial (matches the low-poly world style)
+      // Convert PBR → flat StandardMaterial (matches the low-poly world style).
+      // Face-detail primitives (eye/mouth/lip/brow) are tiny (4–48 tris each)
+      // and share vertex positions with the larger Skin mesh, so the generic
+      // brighten-and-smooth pass washes them out into the skin and gives them
+      // jittery depth ordering. Keep their authored colors and normals intact.
+      const FACE_DETAIL_MATS = new Set([
+        'Eye Pupil', 'Eye White', 'Eyebrow', 'Mouth', 'Lip',
+        'Eyewhite2', 'Eye colour',
+      ]);
       for (const mesh of this.meshes) {
         const pbrMat = mesh.material as any;
         if (!pbrMat) continue;
+        const isFaceDetail = FACE_DETAIL_MATS.has(pbrMat.name);
 
         const flat = new StandardMaterial(`${pbrMat.name}_flat`, this.scene);
         const hasTexture = !!pbrMat.albedoTexture;
@@ -437,15 +446,17 @@ export class CharacterEntity {
           pbrMat.albedoTexture.updateSamplingMode(Texture.NEAREST_NEAREST);
         }
         if (pbrMat.albedoColor && !hasTexture) {
+          // Face detail keeps its authored color — no 1.3x boost into Skin tone.
+          const boost = isFaceDetail ? 1 : 1.3;
           flat.diffuseColor = new Color3(
-            Math.min(1, pbrMat.albedoColor.r * 1.3),
-            Math.min(1, pbrMat.albedoColor.g * 1.3),
-            Math.min(1, pbrMat.albedoColor.b * 1.3),
+            Math.min(1, pbrMat.albedoColor.r * boost),
+            Math.min(1, pbrMat.albedoColor.g * boost),
+            Math.min(1, pbrMat.albedoColor.b * boost),
           );
         }
 
         flat.specularColor = Color3.Black();
-        if (!hasTexture) {
+        if (!hasTexture && !isFaceDetail) {
           const dc = flat.diffuseColor;
           flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55);
         }
@@ -453,18 +464,14 @@ export class CharacterEntity {
         flat.backFaceCulling = pbrMat.backFaceCulling ?? true;
         flat.alpha = 1;
 
-        // Pull eye meshes slightly forward in clip space — they sit on top of
-        // the face mesh and Z-fight at zoomed-out distances where depth-buffer
-        // precision tightens. Matches both "Eyewhite2" and "Eye colour".
-        if (pbrMat.name && /^eye/i.test(pbrMat.name)) flat.zOffset = -1;
-
         mesh.material = flat;
 
         // Soften visible facet edges on arms/clothing — many meshes ship with
         // split normals from the source DCC, which makes the low-poly silhouette
         // look blocky. Averaging across shared positions gives smooth shading
-        // without altering geometry, UVs, or skin weights.
-        smoothNormalsByPosition(mesh);
+        // without altering geometry, UVs, or skin weights. Skip face detail —
+        // the artist's authored normals carry the silhouette there.
+        if (!isFaceDetail) smoothNormalsByPosition(mesh);
 
       }
 

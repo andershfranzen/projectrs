@@ -28,11 +28,11 @@ const ANIMATION_GLBS = [
   '/Character models/new animations/idle.glb',
   '/Character models/new animations/walk.glb',
   '/Character models/new animations/turn in place.glb',
-  '/Character models/new animations/standing_melee_attack_downward.glb',
   '/Character models/new animations/attack_slash.glb',
   '/Character models/new animations/2h slash.glb',
   '/Character models/new animations/2h smash.glb',
-  '/Character models/new animations/attack_punch.glb',
+  '/Character models/new animations/Punch.glb',
+  '/Character models/new animations/kick.glb',
   '/Character models/new animations/woodcutting.glb',
   '/Character models/new animations/mining.glb',
 ];

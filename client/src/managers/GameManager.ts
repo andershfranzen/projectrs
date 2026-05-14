@@ -801,7 +801,6 @@ export class GameManager {
   // forward extreme. Auto-scales with anim duration on re-export.
   private static readonly ATTACK_IMPACT_FRACTION: Record<string, number> = {
     attack_slash:            0.5,
-    attack_slash_aggressive: 0.5,
     attack_2h_slash:         0.5,
     attack_2h_smash:         0.5,
     attack_punch:            0.4,
@@ -811,10 +810,9 @@ export class GameManager {
 
   /**
    * Choose the correct attack animation name based on stance and weapon.
-   * - Weapon + aggressive stance → 'attack_slash_aggressive' (hand-authored slash)
+   * - 1H weapon (any stance)     → 'attack_slash' (hand-authored OSRS-style slash)
    * - 2H weapon + aggressive     → 'attack_2h_smash'
    * - 2H weapon + other stance   → 'attack_2h_slash'
-   * - Weapon + any other stance  → 'attack_slash' (default downward)
    * - No weapon + aggressive     → 'kick'
    * - No weapon + other stance   → 'attack_punch'
    * Remote players' weapon + stance come from PLAYER_REMOTE_EQUIPMENT and
@@ -840,7 +838,7 @@ export class GameManager {
       const style = weaponDef?.weaponStyle;
       if (style === 'bow' || style === 'crossbow') return 'bow_attack';
       if (weaponDef?.twoHanded) return stance === 'aggressive' ? 'attack_2h_smash' : 'attack_2h_slash';
-      return stance === 'aggressive' ? 'attack_slash_aggressive' : 'attack_slash';
+      return 'attack_slash';
     }
     if (stance === 'aggressive') return 'kick';
     return 'attack_punch';
@@ -1306,16 +1304,12 @@ export class GameManager {
         // RS2 turn-on-the-spot. CharacterEntity swaps idle ↔ turn based on
         // yaw alignment in updateAnimation(); see comment there.
         { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
-        // Armed attack — non-aggressive stances use the default downward slash;
-        // aggressive stance uses the hand-authored OSRS-style slash.
-        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/standing_melee_attack_downward.glb` },
-        { name: 'attack_slash_aggressive', path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
+        // Armed attack — hand-authored OSRS-style slash for all stances.
+        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
         { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
         { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
-        // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no
-        // weapon. File pending custom punch+kick authoring; CharacterEntity's
-        // fallback chain (attack_punch → attack → attack_slash) keeps unarmed
-        // combat usable until the new GLB lands.
+        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
+        { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
         { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
         { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],
