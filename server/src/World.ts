@@ -956,10 +956,13 @@ export class World {
       if (player.moveQueue.length === 0) {
         const map = this.getPlayerMap(player);
         const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
-        if (!isRanged && path.length > 1) {
-          player.moveQueue = path.slice(0, -1); // melee: walk to adjacent
-        } else if (isRanged) {
-          // Ranged: walk until within range, then stop
+        if (!isRanged) {
+          // Melee: walk to adjacent. The path's last entry is the NPC's tile
+          // (blocking) — strip it regardless of path length so a single-step
+          // path doesn't queue a walk onto the mob.
+          player.moveQueue = path.length > 0 ? path.slice(0, -1) : [];
+        } else {
+          // Ranged: walk until within range, then stop.
           let cutIdx = path.length;
           for (let i = 0; i < path.length; i++) {
             const pdx = Math.abs(path[i].x - npc.position.x);
@@ -970,8 +973,6 @@ export class World {
             }
           }
           player.moveQueue = path.slice(0, cutIdx);
-        } else {
-          player.moveQueue = path;
         }
       }
     } else {

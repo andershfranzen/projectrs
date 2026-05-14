@@ -42,6 +42,13 @@ export interface BotStatsRow {
   last_session_summary: string | null;
 }
 
+/** Bump this constant to force every existing account to spawn at the map's
+ *  default spawnPoint on their next login (one-time per bump). Saved skills,
+ *  inventory, bank, etc. are preserved — only position is reset. On respawn
+ *  the player_state row's respawn_version is updated to this value, so
+ *  subsequent logins use the saved position normally. */
+export const WORLD_RESPAWN_VERSION = 2;
+
 export interface SavedPlayerState {
   x: number;
   z: number;
@@ -60,6 +67,7 @@ export interface SavedPlayerState {
   stance: MeleeStance;
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
+  respawnVersion: number;
 }
 
 export class GameDatabase {
@@ -126,6 +134,13 @@ export class GameDatabase {
     // and matches inventory/equipment storage.
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN bank TEXT DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    // Migration: respawn_version. Default 0 so every existing row trips the
+    // < WORLD_RESPAWN_VERSION check in the login flow and gets relocated to
+    // the current map spawn one time. After that, normal save flow writes
+    // the new version and the row stops tripping.
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN respawn_version INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
 
     // Bot detection telemetry. One row per account, updated on session flush
@@ -330,8 +345,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank, respawn_version FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null; respawn_version: number | null } | null;
 
     if (!row) return null;
 
@@ -423,7 +438,17 @@ export class GameDatabase {
       stance,
       appearance,
       bank,
+      respawnVersion: row.respawn_version ?? 0,
     };
+  }
+
+  /** Mark the account's saved state as having been respawned at the current
+   *  WORLD_RESPAWN_VERSION. Called from the login flow after we've relocated
+   *  the player to the map's default spawn — without this, every login would
+   *  re-respawn them. */
+  markRespawnVersion(accountId: number, version: number): void {
+    this.db.query('UPDATE player_state SET respawn_version = ? WHERE account_id = ?')
+      .run(version, accountId);
   }
 
   saveAppearance(accountId: number, appearance: PlayerAppearance): void {

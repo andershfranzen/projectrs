@@ -175,10 +175,6 @@ export class CharacterCreator {
       colorRow('Pants', 'pantsColor', PANTS_COLORS, PANTS_COLOR_NAMES),
       colorRow('Shoes', 'shoesColor', SHOES_COLORS, SHOES_COLOR_NAMES),
       colorRow('Belt',  'beltColor',  BELT_COLORS,  BELT_COLOR_NAMES),
-      { label: 'Gear Color', min: 0, max: GEAR_COLOR_COUNT - 1,
-        get: (a) => a.gearColor, set: (a, i) => { a.gearColor = i; },
-        name: gearColorName,
-        swatch: () => null },
     ];
   }
 
@@ -429,14 +425,12 @@ export class CharacterCreator {
     for (let i = 0; i < this.rowSpecs.length; i++) this.refreshRow(i);
   }
 
-  /** Where to spawn the preview character. If we have a localPlayer ref, use
-   *  their world position so the preview shows them in their actual environment.
-   *  Falls back to the deep-below-world studio anchor otherwise. */
+  /** Use the deep-below-world studio anchor always. Spawning at the local
+   *  player's world position made framing unreliable — variable terrain Y
+   *  and the character-rig feet-offset meant the character would slip above
+   *  or below the preview camera's target. The studio anchor gives a clean,
+   *  fixed reference. */
   private getAnchor(): Vector3 {
-    if (this.localPlayer) {
-      const root = this.localPlayer.getRoot();
-      if (root) return root.position.clone();
-    }
     return FALLBACK_PREVIEW_ANCHOR.clone();
   }
 
@@ -450,13 +444,17 @@ export class CharacterCreator {
     // bit so the canvas shows world meshes (terrain, NPCs, props) AROUND the
     // preview character. The world camera (default mask 0x0FFFFFFF) still
     // ignores the preview character because its mask is the preview bit only.
+    // Target the character's mid-body height. The character spawns at
+    // anchor.y with feet there and head at anchor.y + ~1.3, so middle is
+    // ~0.85 above anchor. The camera looks at the middle so the canvas
+    // frames head-to-feet at the default radius.
     const cam = new ArcRotateCamera(
-      'previewCam', Math.PI * 0.75, Math.PI * 0.4, 3.0,
-      anchor.add(new Vector3(0, 0.7, 0)),
+      'previewCam', Math.PI * 0.75, Math.PI * 0.45, 2.8,
+      anchor.add(new Vector3(0, 0.85, 0)),
       this.gameScene,
     );
     cam.layerMask = PREVIEW_CAMERA_MASK;
-    cam.lowerRadiusLimit = 2;
+    cam.lowerRadiusLimit = 1.8;
     cam.upperRadiusLimit = 5;
     cam.lowerBetaLimit = 0.3;
     cam.upperBetaLimit = Math.PI * 0.55;

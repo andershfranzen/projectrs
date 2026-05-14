@@ -15,7 +15,6 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
-import { SpriteEntity } from '../rendering/SpriteEntity';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
@@ -144,7 +143,6 @@ export class GameManager {
   private entities!: EntityManager;
 
   // World objects
-  private worldObjectSprites: Map<number, SpriteEntity> = new Map();
   private worldObjectModels: Map<number, TransformNode> = new Map();
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; depleted: boolean }> = new Map();
   private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number }> = new Map();
@@ -439,8 +437,6 @@ export class GameManager {
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this.objectModels.loadAll();
     this.entities = new EntityManager(this.scene, (x, z, cy) => this.getHeightAt(x, z, cy), this.itemDefsCache);
-    this.entities.loadPlayerSprites();
-    this.entities.loadNpcSprites();
 
     // FPS counter (remove stale element from HMR reload)
     document.getElementById('fps-counter')?.remove();
@@ -727,10 +723,6 @@ export class GameManager {
           model.position.y = h;
         }
       }
-      const sprite = this.worldObjectSprites.get(objectEntityId);
-      if (sprite) {
-        sprite.position = new Vector3(data.x, h, data.z);
-      }
     }
     this.entities.repositionEntities(this.playerX, this.playerZ, this.localPlayer);
   }
@@ -809,11 +801,6 @@ export class GameManager {
       }
     }
 
-    const sprite = this.worldObjectSprites.get(objectEntityId);
-    if (sprite) {
-      sprite.dispose();
-      this.worldObjectSprites.delete(objectEntityId);
-    }
   }
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
@@ -1251,12 +1238,32 @@ export class GameManager {
       this.inputManager.setPlayerY(spawnY);
       console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
 
-      this.localPlayer.whenReady().then(() => {
+      // Gate input until BOTH the local character (mesh + 7 animation GLBs)
+      // and the spawn-area terrain + placed objects have finished loading.
+      // Without the chunk gate, the player could click-walk against the
+      // sentinel-WALL world before chunks streamed in, or pathfind past
+      // trees that hadn't been instantiated yet.
+      this.inputManager.setEnabled(false);
+      const characterReady = this.localPlayer.whenReady().then(() => {
         if (this.localAppearance && this.localPlayer) {
           this.localPlayer.applyAppearance(this.localAppearance);
         }
+      });
+      const worldReady = this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ);
+      Promise.all([characterReady, worldReady]).then(() => {
+        // Now that chunks are loaded, snap the player's Y to the actual
+        // client-computed ground height. Without this, the LOGIN_OK spawnY
+        // (server-side compute, may not match client's per-tile rendered
+        // ground exactly) sticks until the player moves, which causes a
+        // visible "in the ground" pose when there's any drift.
+        if (this.localPlayer) {
+          const groundY = this.getHeight(this.playerX, this.playerZ);
+          this.localPlayer.setPositionXYZ(this.playerX, groundY, this.playerZ);
+          this.inputManager.setPlayerY(groundY);
+        }
         this.loadingScreen?.hide();
         this.loadingScreen = null;
+        this.inputManager.setEnabled(true);
       });
     });
 
@@ -1455,13 +1462,12 @@ export class GameManager {
       this.entities.npcDefs.set(entityId, npcDefId);
 
       if (!this.entities.npcSprites.has(entityId)) {
-        // Static data (NPC_APPEARANCE / NPC_EQUIPMENT) is sent ahead of NPC_SYNC
-        // by the server, so by the time we reach createNpc the cache is already
-        // populated — shouldRender3DNpc consults it. Mobile budget + LOD live
-        // in EntityManager.shouldRender3DNpc, kept off the hot per-tick path.
+        // NPCs without a dedicated NPC_3D_MODELS entry render as CharacterEntity
+        // and are LOD/budget-gated — createNpc returns null when out of range,
+        // and we retry on the next NPC_SYNC tick once the player gets closer.
         const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
         const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D);
-        if (render3D && created instanceof CharacterEntity) {
+        if (created instanceof CharacterEntity) {
           const character = created;
           // Apply cached appearance + equipment once the GLB + animations
           // finish loading. Mirrors the remote-player whenReady flush above.
@@ -1483,8 +1489,8 @@ export class GameManager {
         t: performance.now(),
       });
 
-      const sprite = this.entities.npcSprites.get(entityId)!;
-      if (!this.pendingHealthApply.has(entityId)) {
+      const sprite = this.entities.npcSprites.get(entityId);
+      if (sprite && !this.pendingHealthApply.has(entityId)) {
         if (health < maxHealth) {
           sprite.showHealthBar(health, maxHealth);
         } else {
@@ -1738,31 +1744,10 @@ export class GameManager {
         const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId);
         if (placedNode) {
           this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, depleted: isDepleted }, placedNode);
-        } else if (!this.chunkManager.isChunkObjectsLoaded(x, z)) {
-          // Chunk is still loading — skip sprite, will link via onChunkObjectsLoaded callback
-        } else if (!this.worldObjectSprites.has(objectEntityId)) {
-          // Chunk loaded but no GLB — fall back to sprite (fishing spots, altars, etc.)
-          const name = def?.name ?? `Object${objectDefId}`;
-          const color = def?.color
-            ? new Color3(def.color[0] / 255, def.color[1] / 255, def.color[2] / 255)
-            : new Color3(0.5, 0.5, 0.5);
-          const width = def?.width ?? 0.8;
-          const height = def?.height ?? 1.0;
-
-          const sprite = new SpriteEntity(this.scene, {
-            name: `obj_${objectEntityId}`,
-            color,
-            label: name,
-            labelColor: '#88ccff',
-            width,
-            height,
-          });
-          sprite.position = new Vector3(x, this.getHeight(x, z), z);
-          // Stamp metadata so picking can resolve via metadata.objectEntityId
-          // (uniform with 3D-modeled world objects).
-          sprite.getMesh().metadata = { kind: 'worldObject', objectEntityId };
-          this.worldObjectSprites.set(objectEntityId, sprite);
         }
+        // If no placed GLB and the chunk has finished loading, the world
+        // object simply isn't rendered. Pre-3D maps had a sprite fallback
+        // here; with the editor pipeline every object should now have a GLB.
       }
 
       // Update depletion visuals
@@ -1774,9 +1759,6 @@ export class GameManager {
         } else if (def?.category !== 'tree') {
           model.setEnabled(!isDepleted);
         }
-      } else {
-        const sprite = this.worldObjectSprites.get(objectEntityId);
-        if (sprite) sprite.getMesh().isVisible = !isDepleted;
       }
     });
 
@@ -1850,9 +1832,6 @@ export class GameManager {
           }
         } else if (model) {
           model.setEnabled(isDepleted === 0);
-        } else {
-          const sprite = this.worldObjectSprites.get(objectEntityId);
-          if (sprite) sprite.getMesh().isVisible = isDepleted === 0;
         }
       }
     });
@@ -2091,8 +2070,6 @@ export class GameManager {
 
     this.entities.disposeAllEntities();
 
-    for (const [, sprite] of this.worldObjectSprites) sprite.dispose();
-    this.worldObjectSprites.clear();
     // Only dispose models that GameManager created, not linked placed objects from ChunkManager
     for (const [, model] of this.worldObjectModels) {
       if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
@@ -2140,6 +2117,9 @@ export class GameManager {
     canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       this.hideContextMenu();
+      // Same gate as left-click: don't surface interaction options against a
+      // half-streamed world.
+      if (!this.inputManager.isEnabled()) return;
 
       const pickResult = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
       if (!pickResult?.hit || !pickResult.pickedMesh) return;
@@ -2151,9 +2131,8 @@ export class GameManager {
       // names from their source GLB, so name matching is ambiguous — every
       // cow click would route to whichever cow happened to be first in the
       // npcSprites map. Check metadata.entityId (stamped by Npc3DEntity.
-      // setEntityIdMetadata) by walking up the picked node's parents first;
-      // fall back to mesh-name matching for sprite-based NPCs (which already
-      // carry unique `npc_<entityId>` mesh names).
+      // setEntityIdMetadata and CharacterEntity.setEntityIdMetadata) by
+      // walking up the picked node's parents.
       let pickedNpcEntityId: number | null = null;
       {
         let walk: TransformNode | null = pickResult.pickedMesh;
@@ -2163,18 +2142,6 @@ export class GameManager {
             break;
           }
           walk = walk.parent as TransformNode | null;
-        }
-      }
-      if (pickedNpcEntityId == null) {
-        for (const [entityId, sprite] of this.entities.npcSprites) {
-          // CharacterEntity NPCs are resolved via the metadata-walk above
-          // (setEntityIdMetadata stamps every mesh). The mesh-name fallback
-          // only applies to SpriteEntity / Npc3DEntity which expose getMesh.
-          if (sprite instanceof CharacterEntity) continue;
-          if (sprite.getMesh()?.name === meshName) {
-            pickedNpcEntityId = entityId;
-            break;
-          }
         }
       }
       if (pickedNpcEntityId != null) {
@@ -2298,14 +2265,6 @@ export class GameManager {
           walk = walk.parent as TransformNode | null;
         }
       }
-      if (pickedSpriteWorldObjectId == null) {
-        for (const [objectEntityId, sprite] of this.worldObjectSprites) {
-          if (sprite.getMesh()?.name === meshName) {
-            pickedSpriteWorldObjectId = objectEntityId;
-            break;
-          }
-        }
-      }
       if (pickedSpriteWorldObjectId != null && pickedObjectEntityId == null) {
         const objectEntityId = pickedSpriteWorldObjectId;
         const data = this.worldObjectDefs.get(objectEntityId);
@@ -2390,8 +2349,7 @@ export class GameManager {
   }
 
   /** Walk picked-mesh parent chain looking for an NPC tag (set by Npc3DEntity
-   *  and CharacterEntity metadata); fall back to mesh-name matching on
-   *  SpriteEntity/Npc3DEntity. Returns the entityId or null. */
+   *  and CharacterEntity metadata). Returns the entityId or null. */
   private findNpcEntityIdFromPick(pickedMesh: TransformNode, meshName: string): number | null {
     let walk: TransformNode | null = pickedMesh;
     while (walk) {
@@ -2501,7 +2459,11 @@ export class GameManager {
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
         this.isWallBlockedForPath);
-      if (path.length > 1) {
+      // The NPC's own tile is blocking — drop it from the path so the player
+      // stops on the adjacent tile. Without this, a single-step path (`length
+      // === 1`) was sent verbatim with the NPC tile included; server rejects
+      // the step onto blocked terrain and the player stands still.
+      if (path.length > 0) {
         const last = path[path.length - 1];
         if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
           path.pop();
@@ -3279,8 +3241,6 @@ export class GameManager {
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();
-    for (const [, sprite] of this.worldObjectSprites) sprite.dispose();
-    this.worldObjectSprites.clear();
     for (const [, model] of this.worldObjectModels) model.dispose();
     this.worldObjectModels.clear();
     this.objectModels.dispose();
@@ -3331,11 +3291,11 @@ export class GameManager {
       }
     };
 
-    const projectSprite = (sprite: SpriteEntity | CharacterEntity | Npc3DEntity, skipDistCheck?: boolean) => {
+    const projectSprite = (sprite: CharacterEntity | Npc3DEntity, skipDistCheck?: boolean) => {
       const hasBubble = sprite.hasChatBubble();
       const hasBar = sprite.hasHealthBar();
-      // CharacterEntity is the only type with HTML name labels — SpriteEntity
-      // and Npc3DEntity lack the methods, so we duck-type via instanceof.
+      // CharacterEntity is the only type with HTML name labels — Npc3DEntity
+      // lacks the methods, so we duck-type via instanceof.
       const labelHost = sprite instanceof CharacterEntity ? sprite : null;
       const hasLabel = labelHost ? labelHost.getLabelWorldPos(this._overlayWorldPos) !== null : false;
       if (!hasBubble && !hasBar && !hasLabel) return;
@@ -3453,7 +3413,10 @@ export class GameManager {
       this.isTileBlocked,
       this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
       this.isWallBlockedForPath);
-    if (newPath.length > 1) {
+    // Drop the NPC's own tile (blocking) regardless of path length; a one-step
+    // chase repath that lands on the mob's tile would otherwise ship a single
+    // blocked tile to the server and stall.
+    if (newPath.length > 0) {
       const last = newPath[newPath.length - 1];
       if (Math.floor(last.x) === Math.floor(npcTarget.x) && Math.floor(last.z) === Math.floor(npcTarget.z)) {
         newPath.pop();

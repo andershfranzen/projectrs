@@ -1,12 +1,12 @@
 {
   "id": "kcmap",
   "name": "Kcmap",
-  "width": 256,
-  "height": 192,
+  "width": 320,
+  "height": 256,
   "waterLevel": -2.5,
   "spawnPoint": {
-    "x": 96.5,
-    "z": 96.5
+    "x": 160.5,
+    "z": 170.5
   },
   "fogColor": [
     0.4,

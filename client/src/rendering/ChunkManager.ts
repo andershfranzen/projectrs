@@ -176,6 +176,35 @@ export class ChunkManager {
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
 
+  /** Resolves once map.json is parsed AND the spawn chunk's terrain data +
+   *  placed objects have finished loading. Used by the login flow's loading
+   *  screen so input doesn't unlock against a half-streamed world (where you
+   *  could click-walk through unloaded trees or fall through holes). Polls
+   *  every 50 ms; resolves after `timeoutMs` even if some assets still
+   *  haven't returned (better to unblock the player than to hang on a slow
+   *  asset fetch). */
+  async whenSpawnChunksReady(playerX: number, playerZ: number, timeoutMs: number = 15000): Promise<void> {
+    const start = performance.now();
+    // Wait for map.json + walls + asset registry — the synchronous data the
+    // streamed-chunk loaders depend on.
+    while (!this.loaded) {
+      if (performance.now() - start > timeoutMs) return;
+      await new Promise(r => setTimeout(r, 50));
+    }
+    // Kick chunk streaming for the spawn position.
+    this.updatePlayerPosition(playerX, playerZ);
+    const cx = Math.floor(playerX / CHUNK_SIZE);
+    const cz = Math.floor(playerZ / CHUNK_SIZE);
+    const spawnKey = `${cx},${cz}`;
+    while (true) {
+      if (performance.now() - start > timeoutMs) return;
+      const terrainReady = this.isGameChunkReady(cx, cz);
+      const objectsReady = this.chunkPlacedNodes.has(spawnKey) && !this.loadingObjectChunks.has(spawnKey);
+      if (terrainReady && objectsReady) return;
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
   /** Load map data from server via HTTP */
   async loadMap(mapId: string): Promise<void> {
     const myToken = ++this.loadMapToken;

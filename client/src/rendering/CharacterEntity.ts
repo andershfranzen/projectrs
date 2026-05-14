@@ -291,6 +291,15 @@ export class CharacterEntity {
   private labelText: string = '';
   private labelColor: string = '#ffffff';
 
+  // Feet-to-root offset. The 57-bone Mixamo rig has its skeleton origin at
+  // hip height, so a naïve `root.position.y = groundY` places the *hips* on
+  // the ground and the *feet* sink ~0.8 units below it. Hardcoded constant
+  // because the runtime measurement was unreliable (idle animation hadn't
+  // advanced enough at load time, gave 0 instead of the real ~0.8). If a
+  // future rig has a different hip-to-foot distance, override this in the
+  // entity options.
+  private feetOffsetY: number = 0.85;
+
   // Ready state
   private _ready: boolean = false;
   private _readyPromise: Promise<void>;
@@ -513,11 +522,34 @@ export class CharacterEntity {
         console.log(`[CharacterEntity] Quantized '${name}' → ${DEFAULT_QUANTIZE_FRAMES} frames, ${(ANIM_DURATIONS[name] ?? 1.2).toFixed(1)}s`);
       }
 
+      // Hips Y lock — strip vertical translation off mixamorig:Hips across
+      // every loaded animation. The retarget pass for additional-animation
+      // GLBs already does this, but the main GLB's bundled animations slip
+      // past that path and were dropping the character into the ground at
+      // idle. Doing it here as a final pass covers both sources.
+      let zeroedTracks = 0;
+      for (const [, group] of this.animGroups) {
+        for (const ta of group.targetedAnimations) {
+          const target = ta.target as any;
+          if (target?.name !== 'mixamorig:Hips') continue;
+          const prop = ta.animation.targetProperty;
+          if (prop !== 'position' && !prop.startsWith('position')) continue;
+          for (const k of ta.animation.getKeys()) {
+            const v = k.value as any;
+            if (v && typeof v.y === 'number') v.y = 0;
+          }
+          zeroedTracks++;
+        }
+      }
+      if (zeroedTracks > 0) {
+        console.log(`[CharacterEntity] Zeroed Hips Y on ${zeroedTracks} animation tracks`);
+      }
+
       // Start idle by default
       this.playAnimByState(AnimState.Idle);
 
-      // Apply initial position
-      this.root.position.set(this._position.x, this._position.y, this._position.z);
+      // Apply initial position (with feet offset)
+      this.root.position.set(this._position.x, this._position.y + this.feetOffsetY, this._position.z);
 
       // Propagate layerMask (if any) to all body+hair meshes
       this.applyLayerMask();
@@ -684,6 +716,17 @@ export class CharacterEntity {
               }
             }
             if (maxMag > 1.0) continue;
+            // Strip vertical Hips translation. Mixamo attack/swing animations
+            // bake root-bone Y dips into the swing wind-up — they pass the
+            // 1m filter (values are tens of cm) but visually pull the character
+            // below the floor since the rest of our rig is anchored to a fixed
+            // ground Y. Keeping XZ preserves any forward lunge.
+            if (target.name === 'mixamorig:Hips') {
+              for (const k of keys) {
+                const v = k.value as any;
+                if (v && typeof v.y === 'number') v.y = 0;
+              }
+            }
           }
 
           // Match source bone → our bone by name
@@ -1194,14 +1237,14 @@ export class CharacterEntity {
   set position(pos: Vector3) {
     this._position = pos;
     if (this.root) {
-      this.root.position.set(pos.x, pos.y, pos.z);
+      this.root.position.set(pos.x, pos.y + this.feetOffsetY, pos.z);
     }
   }
 
   setPositionXYZ(x: number, y: number, z: number): void {
     this._position.set(x, y, z);
     if (this.root) {
-      this.root.position.set(x, y, z);
+      this.root.position.set(x, y + this.feetOffsetY, z);
     }
   }
 

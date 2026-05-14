@@ -25,6 +25,12 @@ export class InputManager {
   private onTeleportClick: TeleportClickCallback | null = null;
   private onObjectClick: ObjectClickCallback | null = null;
   private playerY: number = 0;
+  /** Gates click handling during the post-login loading window. Until the
+   *  spawn chunk's terrain + objects finish streaming, clicks would resolve
+   *  against a sentinel-WALL world or fire pathfinds that walk past
+   *  yet-to-load trees. GameManager flips this after the loading screen
+   *  resolves. */
+  private enabled: boolean = false;
 
   constructor(scene: Scene, chunkManager: ChunkManager) {
     this.scene = scene;
@@ -33,6 +39,7 @@ export class InputManager {
     this.scene.onPointerObservable.add((pointerInfo) => {
       if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
         if (pointerInfo.event.button !== 0) return;
+        if (!this.enabled) return;
 
         // Shift+click = debug teleport
         if (pointerInfo.event.shiftKey && this.onTeleportClick) {
@@ -88,6 +95,9 @@ export class InputManager {
   setPlayerY(y: number): void {
     this.playerY = y;
   }
+
+  setEnabled(enabled: boolean): void { this.enabled = enabled; }
+  isEnabled(): boolean { return this.enabled; }
 
   /**
    * Pick the ground tile the cursor is over by raycasting against any walkable

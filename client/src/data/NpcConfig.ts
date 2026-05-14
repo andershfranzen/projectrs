@@ -1,35 +1,8 @@
-import { Color3 } from '@babylonjs/core/Maths/math.color';
-
-export const NPC_COLORS: Record<number, Color3> = {
-  1: new Color3(0.9, 0.9, 0.8),   // Chicken — white
-  2: new Color3(0.5, 0.4, 0.3),   // Rat — brown
-  3: new Color3(0.3, 0.5, 0.2),   // Goblin — green
-  4: new Color3(0.5, 0.5, 0.5),   // Wolf — grey
-  5: new Color3(0.85, 0.85, 0.8), // Skeleton — bone white
-  6: new Color3(0.3, 0.2, 0.1),   // Spider — dark brown
-  7: new Color3(0.6, 0.6, 0.65),  // Guard — silver
-  8: new Color3(0.7, 0.5, 0.2),   // Shopkeeper — gold
-  9: new Color3(0.15, 0.1, 0.2),  // Dark Knight — dark purple
-  10: new Color3(0.6, 0.4, 0.2),  // Cow — brown
-  11: new Color3(0.6, 0.2, 0.15), // Weapon Smith — dark red
-  12: new Color3(0.4, 0.4, 0.45), // Armorer — steel grey
-  13: new Color3(0.45, 0.35, 0.25), // Leg Armorer — brown
-  14: new Color3(0.3, 0.35, 0.5),  // Shield Smith — blue-grey
-};
-
 export const NPC_NAMES: Record<number, string> = {
   1: 'Chicken', 2: 'Rat', 3: 'Goblin', 4: 'Wolf',
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
-};
-
-export const NPC_SIZES: Record<number, { w: number; h: number }> = {
-  1: { w: 0.7, h: 0.85 },  // Chicken (small, ~half player height)
-  2: { w: 0.5, h: 0.7 },   // Rat (small)
-  6: { w: 0.6, h: 0.5 },   // Spider (wide, short)
-  9: { w: 1.0, h: 1.8 },   // Dark Knight (big)
-  10: { w: 1.6, h: 1.4 },  // Cow (wide, slightly shorter than player)
 };
 
 export const NPC_3D_MODELS: Record<number, { file: string; scale: number; anims: { idle: string; walk?: string; attack?: string; death?: string } }> = {
@@ -39,15 +12,22 @@ export const NPC_3D_MODELS: Record<number, { file: string; scale: number; anims:
   15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'ready', walk: 'walk', attack: 'attack', death: 'death' } },
 };
 
-/** Per-defId profile for customizable (CharacterEntity-rendered) NPCs. Used
- *  by EntityManager to keep their anim set minimal — mobile budget driver.
- *  Stationary NPCs load idle only; mobile ones add walk. Combat anims are
- *  intentionally omitted (friendly NPCs only for now). */
-export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean }> = {
-  8:  { stationary: true },  // Shopkeeper
-  11: { stationary: true },  // Weapon Smith
-  12: { stationary: true },  // Armorer
-  13: { stationary: true },  // Leg Armorer
-  14: { stationary: true },  // Shield Smith
-  16: { stationary: true },  // Banker
+/** Per-defId profile for NPCs rendered as CharacterEntity (humanoid stand-in).
+ *  Every NPC not present in NPC_3D_MODELS falls back to this path, so the
+ *  profile doubles as the registry of "use the player rig for this NPC."
+ *  `stationary` skips the walk anim load (shopkeepers/smiths). `combat` adds
+ *  the punch attack anim for aggressive mobs. */
+export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; combat?: boolean }> = {
+  1:  { stationary: false },                // Chicken
+  3:  { stationary: false, combat: true },  // Goblin
+  4:  { stationary: false, combat: true },  // Wolf
+  5:  { stationary: false, combat: true },  // Skeleton
+  7:  { stationary: false, combat: true },  // Guard
+  8:  { stationary: true },                 // Shopkeeper
+  9:  { stationary: false, combat: true },  // Dark Knight
+  11: { stationary: true },                 // Weapon Smith
+  12: { stationary: true },                 // Armorer
+  13: { stationary: true },                 // Leg Armorer
+  14: { stationary: true },                 // Shield Smith
+  16: { stationary: true },                 // Banker
 };

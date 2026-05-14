@@ -1,6 +1,7 @@
 import { ClientOpcode, ServerOpcode, decodePacket, encodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
+import { WORLD_RESPAWN_VERSION } from '../Database';
 import type { ServerWebSocket } from 'bun';
 
 export type GameSocketData = { type: 'game'; playerId?: number; accountId: number; username: string; isAdmin: boolean; ip: string; deviceId: string };
@@ -23,6 +24,11 @@ export function handleGameSocketOpen(
   try { world.getMap(mapLevel); } catch { mapLevel = 'kcmap'; }
   const map = world.getMap(mapLevel);
   const defaultSpawn = map.findSpawnPoint();
+  // One-time forced respawn: any saved row stamped with an older respawn
+  // version gets relocated to the current map spawn on this login. After
+  // relocation, we bump the row's version so subsequent logins keep their
+  // (newly saved) position. Skills/inventory/bank are preserved.
+  const needsForcedRespawn = !!saved && (saved.respawnVersion ?? 0) < WORLD_RESPAWN_VERSION;
   // Sanitize saved coordinates: a corrupted DB row (or malicious migration) can
   // hold any number, including NaN, negative values, or values past the map
   // bounds. Without validation, such a row would respawn the player far off-map
@@ -31,9 +37,13 @@ export function handleGameSocketOpen(
   const savedZ = saved?.z;
   const savedXValid = typeof savedX === 'number' && isFinite(savedX) && savedX >= 0 && savedX < map.width;
   const savedZValid = typeof savedZ === 'number' && isFinite(savedZ) && savedZ >= 0 && savedZ < map.height;
-  const spawnX = saved && savedXValid && savedZValid ? savedX! : defaultSpawn.x;
-  const spawnZ = saved && savedXValid && savedZValid ? savedZ! : defaultSpawn.z;
-  console.log(`[GameSocket] Player "${username}" acct=${accountId} saved=${!!saved} savedPos=(${saved?.x}, ${saved?.z}) defaultSpawn=(${defaultSpawn.x}, ${defaultSpawn.z}) final=(${spawnX}, ${spawnZ})`);
+  const useSavedPos = saved && savedXValid && savedZValid && !needsForcedRespawn;
+  const spawnX = useSavedPos ? savedX! : defaultSpawn.x;
+  const spawnZ = useSavedPos ? savedZ! : defaultSpawn.z;
+  if (needsForcedRespawn) {
+    world.db.markRespawnVersion(accountId, WORLD_RESPAWN_VERSION);
+  }
+  console.log(`[GameSocket] Player "${username}" acct=${accountId} saved=${!!saved} savedPos=(${saved?.x}, ${saved?.z}) defaultSpawn=(${defaultSpawn.x}, ${defaultSpawn.z}) final=(${spawnX}, ${spawnZ})${needsForcedRespawn ? ' [respawn-version migration]' : ''}`);
 
   const player = new Player(username, spawnX, spawnZ, ws, accountId);
 
@@ -61,6 +71,15 @@ export function handleGameSocketOpen(
       : 0;
     player.reportedY = saved.y; // restore visual height for spawn
     player.syncHealthFromSkills();
+    // Forced-respawn migration: drop floor + reportedY so the player lands
+    // cleanly on ground at the new spawn. Without this, a player saved on
+    // an upper floor of a building gets relocated to the new spawn tile
+    // but stays on the old floor index / Y, which the recovery loop below
+    // only patches up if the old floor happens to be blocked there.
+    if (needsForcedRespawn) {
+      player.currentFloor = 0;
+      player.reportedY = 0;
+    }
 
     // Unstick recovery. Two cases:
     //   1) Saved floor is BLOCKED at the saved tile — try other floors,
