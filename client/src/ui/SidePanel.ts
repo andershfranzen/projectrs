@@ -339,9 +339,9 @@ export class SidePanel {
     // pushed to the bottom of an empty stretched panel. Other tabs
     // (skills/equipment/etc.) inherit the same envelope.
     contentArea.style.cssText = `
-      padding: 4px 6px; overflow: hidden;
+      padding: 2px 3px; overflow: hidden;
       flex: 1; min-height: 0; max-height: 360px;
-      background: #1e1a14;
+      background: rgba(30, 26, 20, 0.32);
       border: 2px inset #3a3228;
       display: flex; flex-direction: column;
     `;
@@ -493,19 +493,34 @@ export class SidePanel {
     grid.style.cssText = `
       display: grid; grid-template-columns: repeat(5, 1fr);
       grid-template-rows: repeat(6, minmax(34px, 56px));
-      gap: 0; min-height: 0;
+      gap: 0; min-height: 0; margin: 1px 0;
       position: relative;
-      background: url('/assets/textures/61.png') center / cover;
+      overflow: hidden;
+      background:
+        repeating-linear-gradient(0deg, rgba(255, 212, 132, 0.045) 0 1px, transparent 1px 4px),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 5px),
+        repeating-linear-gradient(45deg, rgba(255, 170, 86, 0.05) 0 2px, transparent 2px 10px),
+        linear-gradient(180deg, #4a2b1b 0%, #321b11 50%, #20100a 100%);
+      border-top: 2px solid #9b6841;
+      border-left: 2px solid #8a5735;
+      border-right: 2px solid #160b06;
+      border-bottom: 2px solid #120804;
       border-radius: 2px;
       box-shadow:
-        inset 2px 2px 6px rgba(255,255,255,0.04),
-        inset -2px -2px 8px rgba(0,0,0,0.6);
+        inset 2px 2px 0 rgba(222, 148, 82, 0.16),
+        inset -2px -2px 0 rgba(0,0,0,0.42),
+        2px 2px 0 rgba(0,0,0,0.45);
     `;
 
-    // Darken the stone texture so items are readable
-    const darken = document.createElement('div');
-    darken.style.cssText = `position:absolute;inset:0;background:rgba(0,0,0,0.3);pointer-events:none;z-index:1;border-radius:2px;`;
-    grid.appendChild(darken);
+    const stitch = document.createElement('div');
+    stitch.style.cssText = `
+      position: absolute; inset: 3px;
+      border: 1px dotted rgba(218, 145, 80, 0.42);
+      border-radius: 1px;
+      box-shadow: 0 0 0 1px rgba(35, 16, 9, 0.7);
+      pointer-events: none; z-index: 1;
+    `;
+    grid.appendChild(stitch);
 
     this.invSlotElements = [];
     for (let i = 0; i < INVENTORY_SIZE; i++) {

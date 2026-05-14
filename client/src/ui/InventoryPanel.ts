@@ -33,16 +33,26 @@ export class InventoryPanel {
     panel.id = 'inventory-panel';
     panel.style.cssText = `
       position: fixed; right: 10px; bottom: 10px;
-      width: 204px; background: rgba(30, 25, 18, 0.92);
-      border: 2px solid #5a4a35; border-radius: 4px;
-      padding: 6px; z-index: 100;
+      width: 204px;
+      background:
+        repeating-linear-gradient(0deg, rgba(255, 212, 132, 0.045) 0 1px, transparent 1px 4px),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 5px),
+        repeating-linear-gradient(45deg, rgba(255, 170, 86, 0.05) 0 2px, transparent 2px 10px),
+        linear-gradient(180deg, #4a2b1b 0%, #321b11 50%, #20100a 100%);
+      border-top: 2px solid #9b6841;
+      border-left: 2px solid #8a5735;
+      border-right: 2px solid #160b06;
+      border-bottom: 2px solid #120804;
+      border-radius: 2px;
+      padding: 3px; z-index: 100;
       font-family: Arial, Helvetica, sans-serif; color: #ddd;
+      box-shadow: inset 2px 2px 0 rgba(222, 148, 82, 0.16), inset -2px -2px 0 rgba(0,0,0,0.42), 2px 2px 0 rgba(0,0,0,0.45);
     `;
 
     // Header
     const header = document.createElement('div');
     header.style.cssText = `
-      text-align: center; padding: 4px; margin-bottom: 4px;
+      text-align: center; padding: 3px; margin-bottom: 3px;
       border-bottom: 1px solid #5a4a35; color: #d8372b;
       font-size: 13px; font-weight: bold;
     `;
@@ -60,8 +70,8 @@ export class InventoryPanel {
       const slot = document.createElement('div');
       slot.style.cssText = `
         width: 46px; height: 46px;
-        background: rgba(0, 0, 0, 0.4);
-        border: 1px solid #3a3025;
+        background: rgba(0, 0, 0, 0.06);
+        border: 1px solid rgba(43, 24, 16, 0.58);
         display: flex; flex-direction: column;
         align-items: center; justify-content: center;
         cursor: pointer; font-size: 10px;

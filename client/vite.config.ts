@@ -34,7 +34,7 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
     // Anything above the bundler's default 500 KB warning. Babylon's core
     // bundle by itself is ~1.5 MB after minification — we already split it
     // out via manualChunks so it caches independently of game code, but

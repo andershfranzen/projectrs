@@ -1,16 +1,13 @@
 /**
- * Pre-fetches every static asset the game needs on first frame so the
- * browser HTTP cache is warm before the user signs in. Once cached,
- * Babylon's `SceneLoader` and the various `fetch()` callsites inside
- * `GameManager` / `ChunkManager` get instant responses from cache.
+ * Pre-fetches a small set of lightweight boot assets so the browser HTTP
+ * cache is warm before the hidden game scene starts asking for map/def JSON.
  *
- * No parsing — we only populate the network cache. Parsing happens in
- * the real scene at `GameManager` construction time, which is much
- * cheaper than fetching multi-MB GLBs over the network.
+ * No parsing happens here. Heavy GLBs intentionally stay out of this list:
+ * `GameManager`/Babylon already load them, and waiting for a full HTTP
+ * prefetch first turns a cold production visit into two serial waits.
  *
- * Asset list intentionally mirrors the hardcoded paths in
- * `CharacterEntity` (character + animations), `WorldObjectModels`
- * (trees, stumps, rocks), and `GameManager` (map data, defs).
+ * This warmup runs in the background; it should never be a user-visible
+ * gate before login.
  */
 
 export interface PreloadProgress {
@@ -21,37 +18,6 @@ export interface PreloadProgress {
 }
 
 export type PreloadCallback = (p: PreloadProgress) => void;
-
-const CHARACTER_GLB = '/Character models/main character.glb';
-
-const ANIMATION_GLBS = [
-  '/Character models/new animations/idle.glb',
-  '/Character models/new animations/walk.glb',
-  '/Character models/new animations/turn in place.glb',
-  '/Character models/new animations/attack_slash.glb',
-  '/Character models/new animations/2h slash.glb',
-  '/Character models/new animations/2h smash.glb',
-  '/Character models/new animations/Punch.glb',
-  '/Character models/new animations/kick.glb',
-  '/Character models/new animations/woodcutting.glb',
-  '/Character models/new animations/mining.glb',
-];
-
-const WORLD_OBJECT_GLBS = [
-  '/models/sTree_1.glb',
-  '/models/sTree_2.glb',
-  '/models/stree_3.glb',
-  '/models/sTree4.glb',
-  '/models/stree_autumn.glb',
-  '/models/oaktree2.glb',
-  '/models/willow_tree.glb',
-  '/models/DeadTreeLam.glb',
-  '/models/stump1.glb',
-  '/models/oakstump.glb',
-  '/models/willowstump.glb',
-  '/models/stump2.glb',
-  '/models/depleted_rock.glb',
-];
 
 const DEFAULT_MAP = 'kcmap';
 
@@ -78,9 +44,6 @@ const mapAssets = (map: string): string[] => [
  */
 export async function preloadAssets(onProgress?: PreloadCallback): Promise<void> {
   const assets = [
-    CHARACTER_GLB,
-    ...ANIMATION_GLBS,
-    ...WORLD_OBJECT_GLBS,
     ...mapAssets(DEFAULT_MAP),
     ...DEF_FILES,
   ];

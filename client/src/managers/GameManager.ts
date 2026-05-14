@@ -122,6 +122,8 @@ export class GameManager {
   private slideStartMs: number = 0;
   private slideDurationMs: number = 200;
   private static readonly SLIDE_DURATION_MS = 200;
+  private static readonly HIDDEN_RECONCILE_DIST = 2.5;
+  private static readonly VISIBLE_RECONCILE_DIST = 2.25;
   // Tracks when the tab last became hidden. Non-zero means we recently
   // returned to a visible tab and the divergence-snap is armed for ~2 ticks
   // to catch the throttled-prediction backlog. Reset to 0 otherwise so
@@ -1425,88 +1427,22 @@ export class GameManager {
             }
           }
         }
-        // Server-position reconciliation. The local visual is normally
-        // trusted (no rubber-banding), but when the tab has been hidden
-        // Chrome throttles RAF + setInterval to ~1Hz while the server keeps
-        // running at full tick rate. The local prediction freezes; mogn's
-        // view of testchar2 (server-authoritative) advances. On returning
-        // to foreground, the local visual would be many tiles behind unless
-        // we snap. Threshold: if server says we're more than 1.5 tiles away
-        // from our local visual, accept the server value as truth — that's
-        // far enough that something went wrong (throttle, packet loss,
-        // server truncation), not normal lag.
+        // Server-position reconciliation. The client still predicts normal
+        // walking locally, but production desyncs showed several legitimate
+        // server-side path changes can happen without the local path matching
+        // exactly (pickup queues, wall closures, interaction stops). Keep the
+        // threshold above ordinary tick jitter, then accept the server before
+        // a small disagreement turns into a multi-tile split.
         const serverX = v[1] / 10;
         const serverZ = v[2] / 10;
         const dx = serverX - this.playerX;
         const dz = serverZ - this.playerZ;
-        // Only snap when we recently returned from a hidden tab. Normal-play
-        // divergence (under 2.5 tiles) is handled by the smooth slide
-        // already; firing the snap during active play causes the visible
-        // teleport bug. If `_hiddenSinceMs` is zero, the tab has been
-        // visible long enough that any drift is normal jitter — trust the
-        // client visual and do nothing.
-        if (this._hiddenSinceMs !== 0 && dx * dx + dz * dz > 2.5 * 2.5) {
-          // The server is far enough from our local visual that a snap is
-          // warranted. But blowing away the entire path turns a small
-          // intermittent desync (server tick burst, brief frame stutter)
-          // into a full "you stop walking somewhere random" experience.
-          // First, try to find the server's tile inside our active path —
-          // if it's there, the server is just running ahead on the same
-          // route, and we can fast-forward the visual to that tile and
-          // keep walking the rest of the path uninterrupted.
-          const sTx = Math.floor(serverX);
-          const sTz = Math.floor(serverZ);
-          let foundIndex = -1;
-          for (let i = 0; i < this.path.length; i++) {
-            const wp = this.path[i];
-            if (Math.floor(wp.x) === sTx && Math.floor(wp.z) === sTz) {
-              foundIndex = i;
-              break;
-            }
-          }
-          const prevLogicalX = this.playerX;
-          const prevLogicalZ = this.playerZ;
-          this.playerX = serverX;
-          this.playerZ = serverZ;
-          if (foundIndex >= 0) {
-            // Server is on our path: skip ahead, finish walking the rest.
-            // Trigger a smooth slide instead of an instant teleport — the
-            // rendered position stays at the previous visual location and
-            // glides to the new logical position over slideDurationMs.
-            // setPositionXYZ is deliberately not called here; the next
-            // render frame's renderLocalPlayerWithSlide picks up the offset.
-            this.pathIndex = foundIndex + 1;
-            this.tileProgress = 0;
-            this.tileFrom = { x: serverX, z: serverZ };
-            // Scale slide duration with divergence: cap catch-up speed at
-            // 3 tiles/sec so a >2-tile snap doesn't warp-glide in a fixed
-            // 200ms window. Clamp to [200ms, 800ms].
-            const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
-            const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
-            this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
-            // Don't sendMove([]) — server is correctly walking the same
-            // path we are. No halt needed.
-          } else {
-            // Server is somewhere we don't have a path to (tab hidden +
-            // server-side chase reroute, dropped packet, etc.). Full reset:
-            // halt, clear path, force a fresh click to re-engage. Without
-            // sendMove([]), the server would keep walking its old queue
-            // and produce a new >1.5 delta every tick. Hard teleport here —
-            // sliding many tiles would look like skating across the world,
-            // and the user wasn't watching anyway (tab was hidden).
-            this.path = [];
-            this.pathIndex = 0;
-            this.tileProgress = 0;
-            this.tileFrom = { x: serverX, z: serverZ };
-            this.slideOffsetX = 0;
-            this.slideOffsetZ = 0;
-            this.slideStartMs = 0;
-            if (this.localPlayer) {
-              this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
-              this.localPlayer.stopWalking();
-            }
-            this.network.sendMove([]);
-          }
+        const hiddenCatchup = this._hiddenSinceMs !== 0;
+        const reconcileDist = hiddenCatchup
+          ? GameManager.HIDDEN_RECONCILE_DIST
+          : GameManager.VISIBLE_RECONCILE_DIST;
+        if (dx * dx + dz * dz > reconcileDist * reconcileDist) {
+          this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
           this.localAppearance = syncAppearance;
@@ -2705,6 +2641,7 @@ export class GameManager {
       this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
+      this.network.sendMove(path);
     }
     // Send talk opcode — server checks distance
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
@@ -2712,6 +2649,19 @@ export class GameManager {
 
   private pickupItem(groundItemId: number): void {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
+    const item = this.entities.groundItems.get(groundItemId);
+    if (item) {
+      const path = findPath(this.playerX, this.playerZ, item.x, item.z,
+        this.isTileBlocked,
+        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
+        this.isWallBlockedForPath);
+      if (path.length > 0) {
+        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
+        if (this.destMarker) this.destMarker.isVisible = false;
+        this.minimap?.clearDestination();
+        this.network.sendMove(path);
+      }
+    }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, groundItemId));
   }
 
@@ -3698,6 +3648,63 @@ export class GameManager {
     };
     document.addEventListener('visibilitychange', handler);
     this._visibilityHandler = handler;
+  }
+
+  private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean): void {
+    const sTx = Math.floor(serverX);
+    const sTz = Math.floor(serverZ);
+    let foundIndex = -1;
+    for (let i = 0; i < this.path.length; i++) {
+      const wp = this.path[i];
+      if (Math.floor(wp.x) === sTx && Math.floor(wp.z) === sTz) {
+        foundIndex = i;
+        break;
+      }
+    }
+
+    const prevLogicalX = this.playerX;
+    const prevLogicalZ = this.playerZ;
+    this.playerX = serverX;
+    this.playerZ = serverZ;
+
+    if (foundIndex >= 0) {
+      // Server is on our path: skip ahead and keep walking the remainder.
+      this.pathIndex = foundIndex + 1;
+      this.tileProgress = 0;
+      this.tileFrom = { x: serverX, z: serverZ };
+      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
+      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
+      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
+      return;
+    }
+
+    // Server is not on the path the client is currently predicting. During
+    // visible play, keep the server queue authoritative and slide the local
+    // visual onto it. After a hidden-tab return, preserve the older hard reset
+    // behavior so stale background movement is cancelled instead of resumed.
+    this.path = [];
+    this.pathIndex = 0;
+    this.tileProgress = 0;
+    this.pendingPath = null;
+    this.tileFrom = { x: serverX, z: serverZ };
+    if (this.destMarker) this.destMarker.isVisible = false;
+    this.minimap?.clearDestination();
+
+    if (hiddenCatchup) {
+      this.slideOffsetX = 0;
+      this.slideOffsetZ = 0;
+      this.slideStartMs = 0;
+      if (this.localPlayer) {
+        this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
+        this.localPlayer.stopWalking();
+      }
+      this.network.sendMove([]);
+    } else {
+      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
+      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
+      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
+      this.localPlayer?.stopWalking();
+    }
   }
 
   /** Begin a smooth-slide visual catch-up. The logical playerX/Z should
