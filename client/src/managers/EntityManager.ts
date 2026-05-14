@@ -91,7 +91,9 @@ export class EntityManager {
         { name: 'attack_slash_aggressive', path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
         { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
         { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
-        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/attack_punch.glb` },
+        // attack_punch removed pending custom punch+kick anim authoring;
+        // CharacterEntity's fallback chain (attack_punch → attack → attack_slash)
+        // keeps unarmed combat playing a usable anim until the new file lands.
         { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
         { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],
@@ -147,7 +149,8 @@ export class EntityManager {
       anims.push({ name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` });
     }
     if (combat) {
-      anims.push({ name: 'attack_punch', path: `${CHARACTER_ANIM_DIR}/attack_punch.glb` });
+      // Punch anim pending re-authoring; CharacterEntity falls back to
+      // attack/attack_slash when 'attack_punch' isn't loaded.
     }
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,

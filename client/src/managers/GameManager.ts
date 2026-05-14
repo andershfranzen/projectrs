@@ -1223,8 +1223,10 @@ export class GameManager {
         { name: 'attack_slash_aggressive', path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
         { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
         { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
-        // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no weapon
-        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/attack_punch.glb` },
+        // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no
+        // weapon. File pending custom punch+kick authoring; CharacterEntity's
+        // fallback chain (attack_punch → attack → attack_slash) keeps unarmed
+        // combat usable until the new GLB lands.
         { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
         { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],
