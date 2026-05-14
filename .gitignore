@@ -22,3 +22,13 @@ client/public/Character models/*backup*.glb
 
 # Editor assets served via proxy to server (symlink removed for Windows compat)
 editor/public/assets
+# Editor character GLB + animations served via proxy to client dev server
+# (symlink removed for Windows compat — see editor/vite.config.js)
+editor/public/Character models
+
+# Runtime audit log + auto-generated gear-overrides backups (timestamped .bak
+# files created by server/src/main.ts on each gear-overrides save).
+server/data/audit.log
+server/data/gear-overrides.*.bak
+# NPC defs backups created by the /api/editor/npcs endpoint.
+server/data/backups/

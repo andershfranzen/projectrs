@@ -4,7 +4,7 @@ import { SpriteEntity } from '../rendering/SpriteEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
+import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -55,6 +55,10 @@ export class EntityManager {
   readonly npcAppearances: Map<number, PlayerAppearance> = new Map();
   /** Per-spawn equipment, same layout as PLAYER_REMOTE_EQUIPMENT. */
   readonly npcEquipment: Map<number, number[]> = new Map();
+  /** Bitfield of non-combat interactions this NPC supports. Set from
+   *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
+   *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank. */
+  readonly npcInteractions: Map<number, number> = new Map();
   /** Count of NPCs currently rendered as CharacterEntity. Compared against
    *  MAX_3D_NPCS_VISIBLE (shared/constants) for mobile budget enforcement. */
   npc3dCount: number = 0;
@@ -74,22 +78,22 @@ export class EntityManager {
   createRemotePlayer(entityId: number, x: number, z: number, name: string): CharacterEntity {
     const character = new CharacterEntity(this.scene, {
       name: `player_${entityId}`,
-      modelPath: '/Character models/main character.glb',
-      targetHeight: 1.53,
+      modelPath: CHARACTER_MODEL_PATH,
+      targetHeight: CHARACTER_TARGET_HEIGHT,
       label: name,
       labelColor: '#ffffff',
       additionalAnimations: [
-        { name: 'idle',                    path: '/Character models/new animations/idle.glb' },
-        { name: 'walk',                    path: '/Character models/new animations/walk.glb' },
+        { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+        { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
         // RS2 turn-on-the-spot — see CharacterEntity.updateAnimation comment.
-        { name: 'turn',                    path: '/Character models/new animations/turn in place.glb' },
-        { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
-        { name: 'attack_slash_aggressive', path: '/Character models/new animations/attack_slash.glb' },
-        { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
-        { name: 'attack_2h_smash',         path: '/Character models/new animations/2h smash.glb' },
-        { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
-        { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
-        { name: 'mine',                    path: '/Character models/new animations/mining.glb' },
+        { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
+        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/standing_melee_attack_downward.glb` },
+        { name: 'attack_slash_aggressive', path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
+        { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
+        { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
+        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/attack_punch.glb` },
+        { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
+        { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],
     });
     // Spawn at terrain height — pass currentY=0 so the elevation gate
@@ -137,18 +141,18 @@ export class EntityManager {
     const stationary = profile?.stationary ?? false;
     const combat = profile?.combat ?? false;
     const anims: { name: string; path: string }[] = [
-      { name: 'idle', path: '/Character models/new animations/idle.glb' },
+      { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
     ];
     if (!stationary) {
-      anims.push({ name: 'walk', path: '/Character models/new animations/walk.glb' });
+      anims.push({ name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` });
     }
     if (combat) {
-      anims.push({ name: 'attack_punch', path: '/Character models/new animations/attack_punch.glb' });
+      anims.push({ name: 'attack_punch', path: `${CHARACTER_ANIM_DIR}/attack_punch.glb` });
     }
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,
-      modelPath: '/Character models/main character.glb',
-      targetHeight: 1.53,
+      modelPath: CHARACTER_MODEL_PATH,
+      targetHeight: CHARACTER_TARGET_HEIGHT,
       label: name,
       labelColor: '#ffff00',
       additionalAnimations: anims,
@@ -209,6 +213,7 @@ export class EntityManager {
       this.npcDefs.delete(entityId);
       this.npcAppearances.delete(entityId);
       this.npcEquipment.delete(entityId);
+      this.npcInteractions.delete(entityId);
     }
   }
 
@@ -383,6 +388,7 @@ export class EntityManager {
     this.npcDefs.clear();
     this.npcAppearances.clear();
     this.npcEquipment.clear();
+    this.npcInteractions.clear();
     this.npc3dCount = 0;
 
     for (const [, sprite] of this.groundItemSprites) sprite.dispose();

@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import type { NpcDef, PlayerAppearance } from '@projectrs/shared';
+import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree } from '@projectrs/shared';
 
 export class Npc extends Entity {
   readonly npcId: number; // Definition ID
@@ -53,6 +53,12 @@ export class Npc extends Entity {
    *  NpcDef.aggressive; null means "fall through to the def default". */
   readonly aggressiveOverride: boolean | null;
 
+  /** Resolved at spawn time as `spawn.shop ?? def.shop ?? legacyShopsJson`.
+   *  Cached so right-click handlers don't re-resolve every interaction. */
+  readonly effectiveShop: ShopDef | null;
+  /** Resolved at spawn time as `spawn.dialogue ?? def.dialogue`. */
+  readonly effectiveDialogue: DialogueTree | null;
+
   constructor(
     def: NpcDef,
     x: number,
@@ -61,6 +67,8 @@ export class Npc extends Entity {
     appearance?: PlayerAppearance | null,
     equipment?: number[] | null,
     aggressive?: boolean | null,
+    effectiveShop?: ShopDef | null,
+    effectiveDialogue?: DialogueTree | null,
   ) {
     super(def.name, x, z, def.health);
     this.npcId = def.id;
@@ -71,6 +79,22 @@ export class Npc extends Entity {
     this.appearance = appearance ?? null;
     this.equipment = equipment ?? null;
     this.aggressiveOverride = aggressive ?? null;
+    this.effectiveShop = effectiveShop ?? null;
+    this.effectiveDialogue = effectiveDialogue ?? null;
+  }
+
+  get hasDialogue(): boolean {
+    return this.effectiveDialogue !== null;
+  }
+  get hasShop(): boolean {
+    return this.effectiveShop !== null;
+  }
+  get hasBank(): boolean {
+    return this.def.bankAccess === true;
+  }
+  /** Bitfield matching NPC_INTERACTIONS opcode encoding. */
+  interactionFlags(): number {
+    return (this.hasDialogue ? 1 : 0) | (this.hasShop ? 2 : 0) | (this.hasBank ? 4 : 0);
   }
 
   /** Effective aggression: spawn-level flag wins if set, otherwise NpcDef. */

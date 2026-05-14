@@ -1079,6 +1079,70 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    // Save the full server/data/npcs.json from the editor's NPC inspector.
+    // Body shape: { npcs: NpcDef[] }. Atomic via tmp + rename. Snapshots the
+    // pre-save file into server/data/backups/npcs/<ISO>.json and keeps the
+    // last 20. After a successful write we call world.data.reloadNpcs() so
+    // editor edits (stats, shop, dialogue) reflect on the next NPC spawn
+    // without a server restart.
+    if (url.pathname === '/api/editor/npcs' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { npcs: any[] };
+        if (!body || !Array.isArray(body.npcs)) {
+          return jsonResponse({ ok: false, error: 'Body must be { npcs: NpcDef[] }' }, 400);
+        }
+        // Shrinkage guard mirrors the gear-overrides save: refuse a payload
+        // that's lost more than half the entries — an editor bug or stale
+        // working copy shouldn't be able to wipe the canonical defs.
+        const dataDir = resolve(import.meta.dir, '../data');
+        const npcsPath = resolve(dataDir, 'npcs.json');
+        if (existsSync(npcsPath)) {
+          try {
+            const existing = JSON.parse(readFileSync(npcsPath, 'utf-8')) as any[];
+            if (Array.isArray(existing) && existing.length >= 4 && body.npcs.length * 2 < existing.length) {
+              return jsonResponse({
+                ok: false,
+                error: `Refusing save: would shrink ${existing.length} → ${body.npcs.length} NPCs (>50% drop)`,
+              }, 400);
+            }
+          } catch { /* unreadable existing file — proceed */ }
+        }
+        // Pre-save snapshot. Folder lives under data/backups/npcs (separate
+        // from per-map backups so they don't clutter map dirs).
+        const backupsDir = resolve(dataDir, 'backups', 'npcs');
+        try {
+          mkdirSync(backupsDir, { recursive: true });
+          if (existsSync(npcsPath)) {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            cpSync(npcsPath, resolve(backupsDir, `npcs.${ts}.json`));
+            // Rotate: keep the 20 newest snapshots.
+            const snaps = readdirSync(backupsDir)
+              .filter(n => /^npcs\..+\.json$/.test(n))
+              .sort();
+            const excess = Math.max(0, snaps.length - 20);
+            for (let i = 0; i < excess; i++) {
+              try { rmSync(resolve(backupsDir, snaps[i])); } catch { /* best-effort */ }
+            }
+          }
+        } catch (err) {
+          console.warn('[save-npcs] backup failed:', (err as Error)?.message);
+        }
+        const tmpPath = npcsPath + '.tmp';
+        writeFileSync(tmpPath, JSON.stringify(body.npcs, null, 2));
+        renameSync(tmpPath, npcsPath);
+        // Hot-reload — existing live NPC instances keep their old def (changes
+        // mid-fight would be jarring); newly spawned NPCs and respawns pick up
+        // the new defs. Editor users can /reloadmap to force-respawn if they
+        // want their changes applied to in-world NPCs right now.
+        world.data.reloadNpcs();
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
     if (url.pathname === '/api/editor/new-map' && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();

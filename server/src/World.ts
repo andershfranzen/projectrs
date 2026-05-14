@@ -305,7 +305,13 @@ export class World {
     for (const spawn of spawns.npcs ?? []) {
       const npcDef = this.data.getNpc(spawn.npcId);
       if (!npcDef) continue;
-      const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange, spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null);
+      // Per-spawn shop/dialogue fully replace the def's (no field-merge).
+      // Falls through: spawn override → def → legacy shops.json (shop only).
+      const effShop = spawn.shop ?? this.data.getShop(spawn.npcId) ?? null;
+      const effDialogue = spawn.dialogue ?? npcDef.dialogue ?? null;
+      const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange,
+        spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null,
+        effShop, effDialogue);
       npc.currentMapLevel = mapId;
       this.npcs.set(npc.id, npc);
       cm.addEntity(npc.id, spawn.x, spawn.z);
@@ -432,6 +438,10 @@ export class World {
           console.warn(`Unknown NPC id ${spawn.npcId} in ${mapId}/spawns.json`);
           continue;
         }
+        // Resolve effective shop/dialogue once per spawn — Npc caches these
+        // so right-click handlers + interactionFlags() don't re-traverse defs.
+        const effShop = spawn.shop ?? this.data.getShop(spawn.npcId) ?? null;
+        const effDialogue = spawn.dialogue ?? npcDef.dialogue ?? null;
         const npc = new Npc(
           npcDef,
           spawn.x,
@@ -440,6 +450,8 @@ export class World {
           spawn.appearance ?? null,
           spawn.equipment ?? null,
           spawn.aggressive ?? null,
+          effShop,
+          effDialogue,
         );
         npc.currentMapLevel = mapId;
         this.npcs.set(npc.id, npc);
@@ -734,6 +746,7 @@ export class World {
     // will be saved by the call below.
     if (player.openInterface === 'bank') player.openInterface = null;
     player.openShopNpcId = null;
+    player.openDialogueState = null;
 
     // Bot-detection: finalize the session — compute flags, write summary to
     // audit.log, update lifetime aggregates in bot_stats table. Done BEFORE
@@ -1047,6 +1060,7 @@ export class World {
     // Shops aren't a modal interface but they're context-tied to standing at
     // the shopkeeper. Walking away invalidates the scope.
     player.openShopNpcId = null;
+    if (player.openDialogueState) this.sendDialogueClose(player);
 
     const map = this.getPlayerMap(player);
     // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
@@ -1138,8 +1152,10 @@ export class World {
     const npc = this.npcs.get(npcId);
     if (!player || !npc || npc.dead) return;
     if (player.isInterfaceOpen()) return;
-    // Prevent attacking shopkeepers
-    if (this.data.getShop(npc.npcId)) return;
+    // Prevent attacking shopkeepers, dialogue NPCs, and bankers — anything
+    // with a non-combat interaction surface. Mirrors the priority used by
+    // handlePlayerTalkNpc: dialogue > shop > bank.
+    if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
     this.cancelSkilling(playerId);
     if (npc.currentMapLevel !== player.currentMapLevel) return;
 
@@ -1204,27 +1220,141 @@ export class World {
     const dz = npc.position.y - player.position.y;
     if (Math.max(Math.abs(dx), Math.abs(dz)) > 3) return;
 
-    // Bankers take precedence — a single NpcDef with bankAccess shouldn't also
-    // have a shop, but if one ever does, banking is the safer default action.
-    if (npc.def.bankAccess) {
-      this.openBankFor(player);
+    // Priority: dialogue > shop > bank. A dialogue tree can itself open the
+    // shop or bank via DialogueAction, so authoring a dialogue-wrapped
+    // shopkeeper is the supported way to combine the two.
+    if (npc.hasDialogue) {
+      this.openDialogueAt(player, npc, npc.effectiveDialogue!.root);
       return;
     }
 
-    const shop = this.data.getShop(npc.npcId);
+    if (npc.hasShop) {
+      this.openShopFor(player, npc);
+      return;
+    }
+
+    if (npc.hasBank) {
+      this.openBankFor(player);
+      return;
+    }
+  }
+
+  /** Open the shop UI for this player against this NPC. Extracted so the
+   *  dialogue `openShop` action can reuse it. */
+  private openShopFor(player: Player, npc: Npc): void {
+    const shop = npc.effectiveShop;
     if (!shop) return;
-
-    // Track which shop is open so buy/sell can scope item validation. Cleared
-    // on movement, map transition, death, disconnect — keeps the player from
-    // trading across shops without walking between them.
     player.openShopNpcId = npc.npcId;
-
-    // Send SHOP_OPEN: [npcEntityId, itemCount, itemId1, price1, stock1, itemId2, price2, stock2, ...]
-    const values: number[] = [npcEntityId, shop.items.length];
+    const values: number[] = [npc.id, shop.items.length];
     for (const si of shop.items) {
       values.push(si.itemId, si.price, si.stock);
     }
     this.sendToPlayer(player, ServerOpcode.SHOP_OPEN, ...values);
+  }
+
+  /** Push the current dialogue node to the client and update server-side
+   *  state. Sends DIALOGUE_OPEN with a JSON-encoded node payload (lines,
+   *  speaker, options) so the client doesn't need to know the whole tree. */
+  private openDialogueAt(player: Player, npc: Npc, nodeId: string): void {
+    const tree = npc.effectiveDialogue;
+    if (!tree) return;
+    const node = tree.nodes[nodeId];
+    if (!node) {
+      // Author error — node referenced doesn't exist. Close gracefully so we
+      // don't trap the client in a dead conversation.
+      this.sendDialogueClose(player);
+      return;
+    }
+    player.openDialogueState = { npcEntityId: npc.id, nodeId };
+    // Strip layout (editor-only metadata) from the wire payload.
+    const { layout, ...wireNode } = node;
+    void layout;
+    const payload = JSON.stringify({
+      speaker: wireNode.speaker ?? npc.def.name,
+      lines: wireNode.lines,
+      options: wireNode.options.map(o => ({ label: o.label })),
+    });
+    const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id);
+    try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
+  private sendDialogueClose(player: Player): void {
+    if (player.openDialogueState === null) return;
+    player.openDialogueState = null;
+    this.sendToPlayer(player, ServerOpcode.DIALOGUE_CLOSE);
+  }
+
+  handleDialogueChoose(playerId: number, npcEntityId: number, optionIndex: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const state = player.openDialogueState;
+    if (!state || state.npcEntityId !== npcEntityId) return;
+    const npc = this.npcs.get(npcEntityId);
+    if (!npc || npc.dead) { this.sendDialogueClose(player); return; }
+    const tree = npc.effectiveDialogue;
+    if (!tree) { this.sendDialogueClose(player); return; }
+    const node = tree.nodes[state.nodeId];
+    if (!node) { this.sendDialogueClose(player); return; }
+    if (optionIndex < 0 || optionIndex >= node.options.length) return;
+
+    const option = node.options[optionIndex];
+    // Run the action FIRST so an `openShop` action can replace the dialogue
+    // panel with the shop — the order here is the visible UX order.
+    if (option.action) {
+      this.runDialogueAction(player, npc, option.action);
+    }
+    // If the action was openShop/openBank, those took ownership of the UI;
+    // sendDialogueClose already fired inside runDialogueAction. Otherwise
+    // advance to the next node, or close if the option ends the conversation.
+    if (player.openDialogueState && option.next) {
+      this.openDialogueAt(player, npc, option.next);
+    } else if (player.openDialogueState && !option.next) {
+      this.sendDialogueClose(player);
+    }
+  }
+
+  private runDialogueAction(
+    player: Player,
+    npc: Npc,
+    action: import('@projectrs/shared').DialogueAction,
+  ): void {
+    switch (action.type) {
+      case 'closeDialogue':
+        this.sendDialogueClose(player);
+        return;
+      case 'openShop':
+        this.sendDialogueClose(player);
+        if (npc.hasShop) this.openShopFor(player, npc);
+        return;
+      case 'openBank':
+        this.sendDialogueClose(player);
+        if (npc.hasBank) this.openBankFor(player);
+        return;
+      case 'giveItem': {
+        // Best-effort: silently no-op if inventory is full. Authors can chain a
+        // "you don't have room" branch with a hasInventoryRoom check in future.
+        if (action.itemId > 0 && action.qty > 0) {
+          const result = player.addItem(action.itemId, action.qty, this.data.itemDefs);
+          if (result.completed > 0) this.sendInventory(player);
+        }
+        return;
+      }
+      case 'takeItem': {
+        if (action.itemId > 0 && action.qty > 0) {
+          let remaining = action.qty;
+          let mutated = false;
+          for (let i = 0; i < player.inventory.length && remaining > 0; i++) {
+            const slot = player.inventory[i];
+            if (!slot || slot.itemId !== action.itemId) continue;
+            const removed = player.removeItem(i, remaining);
+            remaining -= removed.completed;
+            if (removed.completed > 0) mutated = true;
+          }
+          if (mutated) this.sendInventory(player);
+        }
+        return;
+      }
+    }
   }
 
   handlePlayerBuyItem(playerId: number, itemId: number, quantity: number): void {
@@ -2125,6 +2255,8 @@ export class World {
     // openShopNpcId is what gates buy/sell handlers.
     a.openShopNpcId = null;
     b.openShopNpcId = null;
+    if (a.openDialogueState) this.sendDialogueClose(a);
+    if (b.openDialogueState) this.sendDialogueClose(b);
     this.sendToPlayer(a, ServerOpcode.TRADE_OPEN, b.id);
     this.sendToPlayer(b, ServerOpcode.TRADE_OPEN, a.id);
     this.sendTradeAcceptState(session);
@@ -3176,6 +3308,7 @@ export class World {
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
     player.openShopNpcId = null;
+    player.openDialogueState = null;
 
     // OSRS-style death drop: keep the 3 most valuable items (sorted by
     // per-unit value × quantity), drop everything else as ground items at
@@ -3342,6 +3475,7 @@ export class World {
     // pick it back up on the other map and double-deposit.
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
+    player.openDialogueState = null;
 
     // Clear all cross-entity combat / trade references BEFORE we mutate the
     // player's map. The helper looks up the player by id, so call it while the
@@ -3619,6 +3753,14 @@ export class World {
         eq[0], eq[1], eq[2], eq[3], eq[4],
         eq[5], eq[6], eq[7], eq[8], eq[9],
       );
+    }
+    // Tell the client which non-combat actions this NPC supports, so its
+    // right-click menu can offer Talk-to / Trade / Bank without the client
+    // needing to mirror npcs.json. Skip when there are none — the bit field
+    // would be 0 and the client's default (attackable mob) is correct.
+    const flags = npc.interactionFlags();
+    if (flags !== 0) {
+      this.sendToPlayer(viewer, ServerOpcode.NPC_INTERACTIONS, npc.id, flags);
     }
   }
 
