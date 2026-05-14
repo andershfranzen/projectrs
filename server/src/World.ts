@@ -3299,6 +3299,18 @@ export class World {
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
 
+    // Clear all cross-entity combat / trade references BEFORE we mutate the
+    // player's map. The helper looks up the player by id, so call it while the
+    // entity still exists in this.players — but it doesn't need the old map
+    // string itself, only the player.id, so the precise ordering vs. the
+    // chunk-manager swap below is irrelevant for correctness. Doing it here
+    // (before the chunk-manager removal + save) means any in-flight NPC chase
+    // is dropped before the new MAP_CHANGE packet ships. Without this an NPC
+    // on `kcmap` with combatTarget pointing at this player would keep
+    // pathfinding toward the player's new (sultans_mine) coordinates on its
+    // own map for a tick or two before tickNpcCombat noticed the mismatch.
+    this.clearCombatReferencesTo(player.id);
+
     // Save player state
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
 
