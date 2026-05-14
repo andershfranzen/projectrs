@@ -28,6 +28,26 @@ function blockedKey(mapIdx: number, tileX: number, tileZ: number): number {
 }
 const HITPOINTS_SKILL_INDEX = ALL_SKILLS.indexOf('hitpoints' as SkillId);
 
+// ---------------------------------------------------------------------------
+// Wire-format / timing constants
+// ---------------------------------------------------------------------------
+
+/** World coordinates are quantized to 0.1-tile units for int16 packet fields. */
+const POSITION_SCALE = 10;
+/** Quantize a world coordinate to the int16 wire format (1 unit = 0.1 tile). */
+function qPos(coord: number): number { return Math.round(coord * POSITION_SCALE); }
+
+/** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
+ *  At 600ms/tick this is ~2 minutes. */
+const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
+/** Despawn timer (ticks) applied to all ground items — dropped loot, death
+ *  drops, and player-dropped items. ~2 minutes at 600ms/tick. */
+const GROUND_ITEM_DESPAWN_TICKS = 200;
+
+/** Canonical ordering of equipment slots used for binary opcode encoding.
+ *  Must stay in sync with the client-side decoder in GameManager. */
+const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+
 export interface GroundItem {
   id: number;
   itemId: number;
@@ -426,9 +446,15 @@ export class World {
   }
 
   private saveAllPlayers(): void {
+    const saves: Array<{ accountId: number; player: Player; effectiveY: number }> = [];
     for (const [, player] of this.players) {
-      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+      saves.push({
+        accountId: player.accountId,
+        player,
+        effectiveY: this.computeEffectiveY(player),
+      });
     }
+    this.db.savePlayersBatch(saves);
   }
 
   /** Effective walking Y at the player's current (x, z, floor). Server is
@@ -522,9 +548,9 @@ export class World {
     // first 4 values) still parse without error — they just don't see the
     // mismatch warning. New clients read v[4] and disconnect on mismatch.
     this.sendToPlayer(player, ServerOpcode.LOGIN_OK, player.id,
-      Math.round(player.position.x * 10),
-      Math.round(player.position.y * 10),
-      Math.round(spawnY * 10),
+      qPos(player.position.x),
+      qPos(player.position.y),
+      qPos(spawnY),
       PROTOCOL_VERSION,
     );
 
@@ -733,7 +759,7 @@ export class World {
       this.clearDoorWallEdges(obj, map);
       obj.doorOpen = true;
       obj.depleted = true;
-      obj.respawnTimer = obj.def.respawnTime ?? 200;
+      obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
       this.depletedObjectIds.add(obj.id);
     }
 
@@ -1175,7 +1201,7 @@ export class World {
       x: player.position.x,
       z: player.position.y,
       mapLevel: player.currentMapLevel,
-      despawnTimer: 200,
+      despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
     };
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
@@ -1543,8 +1569,7 @@ export class World {
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
 
-    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
-    const slotName = slotNames[equipSlotIndex];
+    const slotName = EQUIPMENT_SLOT_NAMES[equipSlotIndex];
     if (!slotName) return;
 
     const itemId = player.equipment.get(slotName);
@@ -2597,7 +2622,7 @@ export class World {
               x: npc.spawnX,
               z: npc.spawnZ,
               mapLevel: npc.currentMapLevel,
-              despawnTimer: 200,
+              despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
             };
             this.groundItems.set(groundItem.id, groundItem);
             this.despawningItemIds.add(groundItem.id);
@@ -2734,7 +2759,7 @@ export class World {
             x: player.position.x,
             z: player.position.y,
             mapLevel: player.currentMapLevel,
-            despawnTimer: 200,
+            despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
           };
           this.groundItems.set(groundItem.id, groundItem);
           this.despawningItemIds.add(groundItem.id);
@@ -2818,7 +2843,7 @@ export class World {
       // The base timer is generous (200 ticks ≈ 2 min) — doors are meant
       // to stay open for a while after use.
       if (obj.def.category === 'door' && obj.doorOpen && this.isAnyPlayerNearDoor(obj)) {
-        obj.respawnTimer = obj.def.respawnTime ?? 200;
+        obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
         continue;
       }
       if (obj.tickRespawn()) {
@@ -3007,7 +3032,7 @@ export class World {
         x: oldX,
         z: oldZ,
         mapLevel: oldMapId,
-        despawnTimer: 200,
+        despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
       };
       this.groundItems.set(groundItem.id, groundItem);
       this.despawningItemIds.add(groundItem.id);
@@ -3089,9 +3114,9 @@ export class World {
     player.reportedY = teleportY;
     const packet = encodePacket(
       ServerOpcode.PLAYER_TELEPORT,
-      Math.round(x * 10),
-      Math.round(z * 10),
-      Math.round(teleportY * 10),
+      qPos(x),
+      qPos(z),
+      qPos(teleportY),
     );
     try { player.ws.sendBinary(packet); } catch {}
   }
@@ -3224,8 +3249,8 @@ export class World {
 
     // Phase 1: Dirty-check and pre-build packets for changed entities
     for (const [, player] of this.players) {
-      const sx = Math.round(player.position.x * 10);
-      const sz = Math.round(player.position.y * 10);
+      const sx = qPos(player.position.x);
+      const sz = qPos(player.position.y);
       if (sx !== player.lastSyncX || sz !== player.lastSyncZ || player.health !== player.lastSyncHealth) {
         player.lastSyncX = sx;
         player.lastSyncZ = sz;
@@ -3243,8 +3268,8 @@ export class World {
     }
     for (const [, npc] of this.npcs) {
       if (npc.dead) continue;
-      const sx = Math.round(npc.position.x * 10);
-      const sz = Math.round(npc.position.y * 10);
+      const sx = qPos(npc.position.x);
+      const sz = qPos(npc.position.y);
       if (sx !== npc.lastSyncX || sz !== npc.lastSyncZ || npc.health !== npc.lastSyncHealth) {
         npc.lastSyncX = sx;
         npc.lastSyncZ = sz;
@@ -3333,8 +3358,8 @@ export class World {
     const packet = encodeStringPacket(
       ServerOpcode.MAP_CHANGE,
       mapId,
-      Math.round(player.position.x * 10),
-      Math.round(player.position.y * 10)
+      qPos(player.position.x),
+      qPos(player.position.y)
     );
     try {
       player.ws.sendBinary(packet);
@@ -3345,8 +3370,8 @@ export class World {
     const a = subject.appearance;
     this.sendToPlayer(viewer, ServerOpcode.PLAYER_SYNC,
       subject.id,
-      Math.round(subject.position.x * 10),
-      Math.round(subject.position.y * 10),
+      qPos(subject.position.x),
+      qPos(subject.position.y),
       subject.health,
       subject.maxHealth,
       a ? a.shirtColor : -1,
@@ -3363,8 +3388,8 @@ export class World {
     this.sendToPlayer(viewer, ServerOpcode.NPC_SYNC,
       npc.id,
       npc.npcId,
-      Math.round(npc.position.x * 10),
-      Math.round(npc.position.y * 10),
+      qPos(npc.position.x),
+      qPos(npc.position.y),
       npc.health,
       npc.maxHealth
     );
@@ -3399,8 +3424,8 @@ export class World {
     this.sendToPlayer(viewer, ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
-      Math.round(obj.x * 10),
-      Math.round(obj.z * 10),
+      qPos(obj.x),
+      qPos(obj.z),
       obj.depleted ? 1 : 0
     );
   }
@@ -3410,8 +3435,8 @@ export class World {
       item.id,
       item.itemId,
       item.quantity,
-      Math.round(item.x * 10),
-      Math.round(item.z * 10)
+      qPos(item.x),
+      qPos(item.z)
     );
   }
 
@@ -3447,10 +3472,9 @@ export class World {
 
   sendEquipment(player: Player): void {
     // Batch: [slot0_itemId, slot1_itemId, ...] — 1 packet instead of 10
-    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     const values: number[] = [];
-    for (let i = 0; i < slotNames.length; i++) {
-      values.push(player.equipment.get(slotNames[i]) ?? 0);
+    for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) {
+      values.push(player.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
     this.sendToPlayer(player, ServerOpcode.PLAYER_EQUIPMENT_BATCH, ...values);
   }
@@ -3458,10 +3482,9 @@ export class World {
   /** Build PLAYER_REMOTE_EQUIPMENT packet for a subject player. Layout:
    *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape] */
   private encodeRemoteEquipment(subject: Player): Uint8Array {
-    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     const values: number[] = [subject.id];
-    for (let i = 0; i < slotNames.length; i++) {
-      values.push(subject.equipment.get(slotNames[i]) ?? 0);
+    for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) {
+      values.push(subject.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
     return encodePacket(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, ...values);
   }
