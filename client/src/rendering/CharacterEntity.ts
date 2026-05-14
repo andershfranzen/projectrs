@@ -461,7 +461,12 @@ export class CharacterEntity {
           flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55);
         }
 
-        flat.backFaceCulling = pbrMat.backFaceCulling ?? true;
+        // Face detail (eye pupil/white/brow/mouth/lip) are 4–48-tri quads.
+        // At close zoom the camera-to-face dot-product can flip across the
+        // backface threshold as the camera orbits, culling them entirely.
+        // Disable backface culling for these — negligible cost given the
+        // tri counts, and stable visibility from any angle.
+        flat.backFaceCulling = isFaceDetail ? false : (pbrMat.backFaceCulling ?? true);
         flat.alpha = 1;
 
         mesh.material = flat;

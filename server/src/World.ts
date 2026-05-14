@@ -2929,13 +2929,19 @@ export class World {
           this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
 
           const loot = rollLoot(npc);
+          // Drop where the NPC actually died, not at its spawn tile —
+          // aggressive mobs that chase players multiple tiles before dying
+          // were dumping loot back at the spawn point, far from the player.
+          // Historical naming: position.y is world Z.
+          const deathX = npc.position.x;
+          const deathZ = npc.position.y;
           for (const drop of loot) {
             const groundItem: GroundItem = {
               id: nextGroundItemId++,
               itemId: drop.itemId,
               quantity: drop.quantity,
-              x: npc.spawnX,
-              z: npc.spawnZ,
+              x: deathX,
+              z: deathZ,
               mapLevel: npc.currentMapLevel,
               despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
             };

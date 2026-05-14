@@ -2372,14 +2372,30 @@ export class GameManager {
         }
       }
       if (pickedGroundItemId != null) {
-        const groundItemId = pickedGroundItemId;
-        const gItem = this.entities.groundItems.get(groundItemId);
-        const iDef = gItem ? this.itemDefsCache.get(gItem.itemId) : null;
-        const iName = iDef?.name ?? 'item';
-        options.push({
-          label: `Pick up ${iName}`,
-          action: () => this.pickupItem(groundItemId),
-        });
+        // List every ground item sharing this tile, not just the one the
+        // cursor happened to land on. NPC loot tables can drop 3+ items per
+        // kill (bones + coins + a rare); the picked sprite was hiding the
+        // others under it. Newest-first matches the visible stacking order.
+        const pickedItem = this.entities.groundItems.get(pickedGroundItemId);
+        if (pickedItem) {
+          const tx = Math.floor(pickedItem.x);
+          const tz = Math.floor(pickedItem.z);
+          const stack = [];
+          for (const [, gi] of this.entities.groundItems) {
+            if (Math.floor(gi.x) === tx && Math.floor(gi.z) === tz) stack.push(gi);
+          }
+          stack.sort((a, b) => b.id - a.id);
+          for (const gi of stack) {
+            const iDef = this.itemDefsCache.get(gi.itemId);
+            const iName = iDef?.name ?? 'item';
+            const qtyLabel = gi.quantity > 1 ? ` (${gi.quantity})` : '';
+            const giId = gi.id;
+            options.push({
+              label: `Pick up ${iName}${qtyLabel}`,
+              action: () => this.pickupItem(giId),
+            });
+          }
+        }
       }
 
       // Check 3D models (trees, rocks, placed objects) — walk up parent chain looking for objectEntityId metadata
