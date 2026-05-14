@@ -24,6 +24,7 @@ export type ChatMessage =
   | { type: string; from?: string; to?: string; message: string; entityId?: number; name?: string };
 export type ChatHandler = (data: ChatMessage) => void;
 export type RawMessageHandler = (data: ArrayBuffer) => void;
+export type DisconnectHandler = (event: CloseEvent) => void;
 
 export class NetworkManager {
   private gameSocket: WebSocket | null = null;
@@ -34,10 +35,26 @@ export class NetworkManager {
   private connected: boolean = false;
   private localPlayerId: number = -1;
 
-  private disconnectHandler: (() => void) | null = null;
+  private disconnectHandler: DisconnectHandler | null = null;
   private openHandlers: (() => void)[] = [];
+  private socketGeneration: number = 0;
+  private intentionallyClosedSockets = new WeakSet<WebSocket>();
+
+  private closeQuietly(socket: WebSocket | null): void {
+    if (!socket) return;
+    this.intentionallyClosedSockets.add(socket);
+    try { socket.close(); } catch {}
+  }
 
   connect(token: string): void {
+    this.socketGeneration++;
+    const generation = this.socketGeneration;
+    this.connected = false;
+    this.closeQuietly(this.gameSocket);
+    this.closeQuietly(this.chatSocket);
+    this.gameSocket = null;
+    this.chatSocket = null;
+
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Vite's WS proxy doesn't reliably upgrade on Windows — connect directly to the server in dev.
     const wsOrigin = import.meta.env.DEV
@@ -48,17 +65,20 @@ export class NetworkManager {
     // doesn't appear in reverse-proxy access logs the way `?token=` would. The
     // server matches `auth.<token>` from the offered protocols and echoes it
     // back to complete the handshake.
-    this.gameSocket = new WebSocket(`${wsOrigin}${GAME_WS_PATH}`, [`auth.${token}`]);
-    this.gameSocket.binaryType = 'arraybuffer';
+    const gameSocket = new WebSocket(`${wsOrigin}${GAME_WS_PATH}`, [`auth.${token}`]);
+    this.gameSocket = gameSocket;
+    gameSocket.binaryType = 'arraybuffer';
 
-    this.gameSocket.onopen = () => {
+    gameSocket.onopen = () => {
+      if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       console.log('[net] Game socket connected');
       this.connected = true;
       for (const handler of this.openHandlers) handler();
       this.openHandlers.length = 0;
     };
 
-    this.gameSocket.onmessage = (event) => {
+    gameSocket.onmessage = (event) => {
+      if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       if (event.data instanceof ArrayBuffer) {
         // Fire raw handlers first (for string packets like MAP_CHANGE)
         for (const handler of this.rawHandlers) {
@@ -71,20 +91,30 @@ export class NetworkManager {
       }
     };
 
-    this.gameSocket.onclose = () => {
+    gameSocket.onclose = (event) => {
+      if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       console.log('[net] Game socket disconnected');
       this.connected = false;
-      this.disconnectHandler?.();
+      this.gameSocket = null;
+      if (!this.intentionallyClosedSockets.has(gameSocket)) {
+        this.disconnectHandler?.(event);
+      }
     };
 
     // Chat socket (JSON) — same subprotocol auth scheme as the game socket.
-    this.chatSocket = new WebSocket(`${wsOrigin}${CHAT_WS_PATH}`, [`auth.${token}`]);
+    const chatSocket = new WebSocket(`${wsOrigin}${CHAT_WS_PATH}`, [`auth.${token}`]);
+    this.chatSocket = chatSocket;
 
-    this.chatSocket.onopen = () => {
+    chatSocket.onopen = () => {
+      if (generation !== this.socketGeneration || this.chatSocket !== chatSocket) return;
       console.log('[net] Chat socket connected');
+      if (this.localPlayerId >= 0) {
+        chatSocket.send(JSON.stringify({ type: 'identify', playerId: this.localPlayerId }));
+      }
     };
 
-    this.chatSocket.onmessage = (event) => {
+    chatSocket.onmessage = (event) => {
+      if (generation !== this.socketGeneration || this.chatSocket !== chatSocket) return;
       try {
         const data = JSON.parse(event.data);
         for (const handler of this.chatHandlers) {
@@ -92,9 +122,14 @@ export class NetworkManager {
         }
       } catch { /* ignore */ }
     };
+
+    chatSocket.onclose = () => {
+      if (generation !== this.socketGeneration || this.chatSocket !== chatSocket) return;
+      this.chatSocket = null;
+    };
   }
 
-  onDisconnect(handler: () => void): void {
+  onDisconnect(handler: DisconnectHandler): void {
     this.disconnectHandler = handler;
   }
 
@@ -134,7 +169,7 @@ export class NetworkManager {
   }
 
   sendMove(path: { x: number; z: number }[]): void {
-    if (!this.gameSocket || !this.connected) return;
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return;
 
     // Encode: [opcode, pathLength, x1*10, z1*10, x2*10, z2*10, ...]
     const maxSteps = Math.min(path.length, 50); // Cap path length
@@ -147,12 +182,12 @@ export class NetworkManager {
   }
 
   sendRaw(data: Uint8Array): void {
-    if (!this.gameSocket || !this.connected) return;
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return;
     this.gameSocket.send(data as BufferSource);
   }
 
   sendChat(message: string): void {
-    if (!this.chatSocket) return;
+    if (!this.chatSocket || this.chatSocket.readyState !== WebSocket.OPEN) return;
     this.chatSocket.send(JSON.stringify({ type: 'local', message }));
   }
 
@@ -164,11 +199,13 @@ export class NetworkManager {
    *  other unrecoverable session-level errors that should drop the player
    *  back to the login screen. */
   close(): void {
-    try { this.gameSocket?.close(); } catch {}
-    try { this.chatSocket?.close(); } catch {}
+    this.socketGeneration++;
+    this.closeQuietly(this.gameSocket);
+    this.closeQuietly(this.chatSocket);
     this.gameSocket = null;
     this.chatSocket = null;
     this.connected = false;
+    this.openHandlers.length = 0;
   }
 
   getLocalPlayerId(): number {

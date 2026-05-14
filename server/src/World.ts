@@ -13,6 +13,7 @@ import { processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollL
 import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
 import { ServerChunkManager } from './ChunkManager';
 import { readdirSync } from 'fs';
+import type { ServerWebSocket } from 'bun';
 
 /** Map string IDs to small integers for blockedObjectTiles encoding */
 const mapIdRegistry: Map<string, number> = new Map();
@@ -48,6 +49,9 @@ const GROUND_ITEM_DESPAWN_TICKS = 200;
  *  than the standard despawn since the item is dropped in the player's
  *  immediate vicinity and they can pick it back up right away. ~1 minute. */
 const REFUND_SPILL_DESPAWN_TICKS = 100;
+/** How long to keep a dropped socket's player in-world for client reconnect.
+ *  38 ticks at 600ms is just under 23s, matching the client's retry window. */
+const RECONNECT_GRACE_TICKS = 38;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -361,7 +365,7 @@ export class World {
   /** Client finished loading the map — send all entity data now */
   handleMapReady(playerId: number): void {
     const player = this.players.get(playerId);
-    if (!player) return;
+    if (!player || player.disconnected) return;
     const mapId = player.currentMapLevel;
     const cm = this.chunkManagers.get(mapId);
     if (!cm) return;
@@ -600,6 +604,11 @@ export class World {
         // next login. Reaches via /api/logout and second-tab login on the
         // same account.
         if (this.tradeSessions.has(id)) this.abortTrade(id, 2);
+        if (player.openInterface === 'trade') this.abortTrade(id, 2);
+        if (player.openInterface === 'bank') player.openInterface = null;
+        player.openShopNpcId = null;
+        player.openDialogueState = null;
+        this.finalizePlayerLogoutSession(player);
 
         // Save BEFORE removing — otherwise a refresh races the WS-close
         // handler, the new session's kick runs first, removePlayer drops
@@ -614,6 +623,53 @@ export class World {
         break;
       }
     }
+  }
+
+  reconnectPlayer(
+    accountId: number,
+    ws: ServerWebSocket<{ type: string; playerId?: number; ip?: string; deviceId?: string }>
+  ): Player | null {
+    for (const [, player] of this.players) {
+      if (player.accountId !== accountId) continue;
+      if (!player.disconnected || player.requestIdleLogout) return null;
+      if (this.currentTick >= player.reconnectDeadlineTick) return null;
+
+      player.ws = ws as unknown as Player['ws'];
+      ws.data.playerId = player.id;
+      player.disconnected = false;
+      player.reconnectDeadlineTick = 0;
+      player.ip = ws.data.ip ?? player.ip;
+      player.deviceId = ws.data.deviceId ?? player.deviceId;
+      player.lastBroadcastChunkX = -9999;
+      player.lastBroadcastChunkZ = -9999;
+      player.currentChunkX = Math.floor(player.position.x / CHUNK_SIZE);
+      player.currentChunkZ = Math.floor(player.position.y / CHUNK_SIZE);
+
+      const cm = this.chunkManagers.get(player.currentMapLevel);
+      if (cm) {
+        cm.addEntity(player.id, player.position.x, player.position.y);
+        cm.registerPlayer(player.id);
+      }
+
+      audit({
+        type: 'account.reconnect',
+        tick: this.currentTick,
+        accountId: player.accountId,
+        details: { name: player.name, ip: player.ip, deviceId: player.deviceId, loginRowId: player.loginRowId },
+      });
+
+      this.sendLoginBootstrap(player);
+      broadcastPlayerInfo(player.id, player.name);
+      for (const [, other] of this.players) {
+        if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name);
+      }
+      this.broadcastRemoteEquipment(player);
+      this.broadcastRemoteStance(player);
+      this.sendRemoteAnimation(player, player);
+      console.log(`Player "${player.name}" reconnected`);
+      return player;
+    }
+    return null;
   }
 
   addPlayer(player: Player): void {
@@ -654,6 +710,27 @@ export class World {
     player.currentChunkX = Math.floor(player.position.x / CHUNK_SIZE);
     player.currentChunkZ = Math.floor(player.position.y / CHUNK_SIZE);
 
+    this.sendLoginBootstrap(player);
+
+    // Broadcast player name to all chat sockets
+    broadcastPlayerInfo(player.id, player.name);
+    for (const [, other] of this.players) {
+      if (other.id !== player.id) {
+        broadcastPlayerInfo(other.id, other.name);
+      }
+    }
+
+    // Tell nearby players about the joiner's equipment. Position-driven
+    // PLAYER_SYNC will follow on the next tick; clients cache equipment until
+    // the entity is created.
+    this.broadcastRemoteEquipment(player);
+    this.broadcastRemoteStance(player);
+  }
+
+  private sendLoginBootstrap(player: Player): void {
+    player.disconnected = false;
+    player.reconnectDeadlineTick = 0;
+
     // Send login confirmation — entity data will be sent when client responds with MAP_READY
     // The 4th value is the effective walking Y so the client can spawn at
     // the right elevation (e.g. on top of a texture-plane bridge interior).
@@ -684,19 +761,13 @@ export class World {
     // Send MAP_CHANGE so client loads the correct map (handles underground, dungeons, etc.)
     this.sendMapChange(player, player.currentMapLevel);
 
-    // Broadcast player name to all chat sockets
-    broadcastPlayerInfo(player.id, player.name);
-    for (const [, other] of this.players) {
-      if (other.id !== player.id) {
-        broadcastPlayerInfo(other.id, other.name);
-      }
+    if (player.currentFloor !== 0) {
+      this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
     }
 
-    // Tell nearby players about the joiner's equipment. Position-driven
-    // PLAYER_SYNC will follow on the next tick; clients cache equipment until
-    // the entity is created.
-    this.broadcastRemoteEquipment(player);
-    this.broadcastRemoteStance(player);
+    if (!player.appearance) {
+      this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, 0);
+    }
   }
 
   private cancelSkilling(playerId: number): void {
@@ -737,13 +808,17 @@ export class World {
     this.broadcastNearby(player.currentMapLevel, player.position.x, player.position.y, ServerOpcode.ENTITY_DEATH, playerId);
   }
 
-  /** Called from the WS close handler. If the player is in a post-combat
-   *  logout block, the Player entity is left in the world (still attackable)
-   *  until the block expires or a hard 30s deadline passes. Otherwise the
-   *  player is saved + removed immediately. */
-  handlePlayerDisconnect(playerId: number): void {
+  /** Called from the WS close handler. The Player entity is frozen in-world
+   *  for a short grace window so the browser can reconnect. If no reconnect
+   *  arrives, the normal logout path runs, including the combat logout block. */
+  handlePlayerDisconnect(
+    playerId: number,
+    ws?: ServerWebSocket<{ type: string; playerId?: number }>
+  ): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (ws && player.ws !== ws) return;
+    if (player.disconnected) return;
     // Trade-during-disconnect dupe guard: if we leave the session live, the
     // partner could still accept and trigger commits against an offline player
     // whose inventory might mutate (e.g. on save round-trip). Abort cleanly.
@@ -753,7 +828,20 @@ export class World {
     if (player.openInterface === 'bank') player.openInterface = null;
     player.openShopNpcId = null;
     player.openDialogueState = null;
+    player.moveQueue = [];
+    player.pendingPickup = -1;
+    player.pendingInteraction = null;
+    player.delayedUntilTick = 0;
+    this.cancelSkilling(playerId);
+    this.clearCombatTarget(playerId);
+    this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
+    player.disconnected = true;
+    player.reconnectDeadlineTick = this.currentTick + RECONNECT_GRACE_TICKS;
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    console.log(`Player "${player.name}" disconnected — holding session for reconnect`);
+  }
 
+  private finalizePlayerLogoutSession(player: Player): void {
     // Bot-detection: finalize the session — compute flags, write summary to
     // audit.log, update lifetime aggregates in bot_stats table. Done BEFORE
     // savePlayerState so a crash between the two doesn't lose the session
@@ -764,6 +852,7 @@ export class World {
       for (const skill of ALL_SKILLS) xpNow[skill] = player.skills[skill].xp;
       const summary = player.botStats.finalize(this.db, player.accountId, xpNow, this.currentTick);
       sessionMinutes = summary.sessionMinutes;
+      player.botStats = null;
     }
     // Finalize login_history row regardless of botStats (the IP-correlation
     // index is what matters for gold-farmer detection, even if botStats was
@@ -778,9 +867,11 @@ export class World {
       });
       player.loginRowId = -1;
     }
+  }
 
+  private finishDisconnectedLogout(player: Player): void {
+    this.finalizePlayerLogoutSession(player);
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
-
     if (player.isLogoutBlocked(this.currentTick)) {
       player.requestIdleLogout = true;
       player.logoutDeadlineTick = this.currentTick + 50; // ~30s safety cap
@@ -788,19 +879,30 @@ export class World {
       return;
     }
 
-    this.removePlayer(playerId);
+    this.removePlayer(player.id);
   }
 
   /** Process players whose ws closed during a combat lockout. Once the lockout
    *  expires (or the deadline hits), save and remove. */
   private tickDeferredLogouts(): void {
     let toRemove: number[] | null = null;
+    let expiredReconnects: Player[] | null = null;
     for (const [, player] of this.players) {
+      if (player.disconnected && !player.requestIdleLogout && this.currentTick >= player.reconnectDeadlineTick) {
+        if (!expiredReconnects) expiredReconnects = [];
+        expiredReconnects.push(player);
+        continue;
+      }
       if (!player.requestIdleLogout) continue;
       const expired = !player.isLogoutBlocked(this.currentTick) || this.currentTick >= player.logoutDeadlineTick;
       if (expired) {
         if (!toRemove) toRemove = [];
         toRemove.push(player.id);
+      }
+    }
+    if (expiredReconnects) {
+      for (const player of expiredReconnects) {
+        if (this.players.has(player.id)) this.finishDisconnectedLogout(player);
       }
     }
     if (!toRemove) return;
@@ -959,7 +1061,7 @@ export class World {
     const packet = encodePacket(opcode, ...values);
     cm.forEachPlayerNear(worldX, worldZ, (pid) => {
       const p = this.players.get(pid);
-      if (p) {
+      if (p && !p.disconnected) {
         try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
       }
     });
@@ -971,7 +1073,7 @@ export class World {
     if (!cm) return;
     cm.forEachPlayerNear(worldX, worldZ, (pid) => {
       const p = this.players.get(pid);
-      if (p) fn(p);
+      if (p && !p.disconnected) fn(p);
     });
   }
 
@@ -2700,6 +2802,7 @@ export class World {
     if (this.currentTick - this.lastBotStatsCheckpointTick >= 500) {
       this.lastBotStatsCheckpointTick = this.currentTick;
       for (const [, player] of this.players) {
+        if (player.disconnected) continue;
         player.botStats?.checkpoint(this.db, player.accountId);
       }
     }
@@ -3640,6 +3743,7 @@ export class World {
 
     // Phase 2: Viewer-first iteration — all sends to each viewer are consecutive
     for (const [, viewer] of this.players) {
+      if (viewer.disconnected) continue;
       const cm = this.chunkManagers.get(viewer.currentMapLevel);
       if (!cm) continue;
 
@@ -3713,6 +3817,7 @@ export class World {
   }
 
   private sendMapChange(player: Player, mapId: string): void {
+    if (player.disconnected) return;
     const packet = encodeStringPacket(
       ServerOpcode.MAP_CHANGE,
       mapId,
@@ -3857,6 +3962,7 @@ export class World {
 
   /** Send a subject player's equipment to one viewer (for chunk-entry resync). */
   private sendRemoteEquipment(viewer: Player, subject: Player): void {
+    if (viewer.disconnected) return;
     try { viewer.ws.sendBinary(this.encodeRemoteEquipment(subject)); } catch { /* connection closed */ }
   }
 
@@ -3869,7 +3975,7 @@ export class World {
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (pid === subject.id) return;
       const viewer = this.players.get(pid);
-      if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
   }
@@ -3883,6 +3989,7 @@ export class World {
 
   /** Send a subject player's stance to one viewer (for chunk-entry resync). */
   private sendRemoteStance(viewer: Player, subject: Player): void {
+    if (viewer.disconnected) return;
     try { viewer.ws.sendBinary(this.encodeRemoteStance(subject)); } catch { /* connection closed */ }
   }
 
@@ -3896,7 +4003,7 @@ export class World {
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (pid === subject.id) return;
       const viewer = this.players.get(pid);
-      if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
   }
@@ -3912,6 +4019,7 @@ export class World {
   }
 
   private sendRemoteAnimation(viewer: Player, subject: Player): void {
+    if (viewer.disconnected) return;
     try { viewer.ws.sendBinary(this.encodePlayerAnimation(subject)); } catch { /* connection closed */ }
   }
 
@@ -3941,7 +4049,7 @@ export class World {
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (!includeSelf && pid === subject.id) return;
       const viewer = this.players.get(pid);
-      if (!viewer || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
   }
@@ -3953,6 +4061,7 @@ export class World {
   }
 
   private sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void {
+    if (player.disconnected) return;
     try {
       player.ws.sendBinary(encodePacket(opcode, ...values));
     } catch { /* connection closed */ }

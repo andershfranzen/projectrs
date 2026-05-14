@@ -57,6 +57,10 @@ export class Player extends Entity {
    *  plumbed to the Player via the WS upgrade. Drives the one-account-per-
    *  browser enforcement and the bot-review device-correlation axis. */
   deviceId: string = '';
+  /** The game socket dropped but the player is being held briefly so the
+   *  same browser session can reconnect without a full logout/login cycle. */
+  disconnected: boolean = false;
+  reconnectDeadlineTick: number = 0;
   moveQueue: { x: number; z: number }[] = [];
   moveSpeed: number = 1;
   pendingPickup: number = -1;

@@ -65,6 +65,18 @@ export class GameManager {
   private chunkManager: ChunkManager;
   private inputManager: InputManager;
   private network: NetworkManager;
+  private readonly onFatalDisconnect?: () => void;
+  private destroyed: boolean = false;
+
+  private connectionFrozen: boolean = false;
+  private reconnecting: boolean = false;
+  private reconnectOverlay: HTMLDivElement | null = null;
+  private reconnectStartedAt: number = 0;
+  private reconnectAttempt: number = 0;
+  private reconnectSleepTimer: number | null = null;
+  private static readonly RECONNECT_MAX_MS = 22_000;
+  private static readonly RECONNECT_DELAY_MS = 1_600;
+  private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 4_500;
 
   // Auth
   private token: string;
@@ -246,6 +258,7 @@ export class GameManager {
     preloadedLoadingScreen?: LoadingScreen,
   ) {
     (window as any).gm = this;
+    this.onFatalDisconnect = onDisconnect;
     this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
     this.username = username;
@@ -404,11 +417,9 @@ export class GameManager {
     // boot-with-known-token tests).
     this.network = new NetworkManager();
     this.setupNetworkHandlers();
+    this.network.onDisconnect((event) => this.handleConnectionLost(event));
     if (token) {
       this.network.connect(token);
-    }
-    if (onDisconnect) {
-      this.network.onDisconnect(onDisconnect);
     }
 
     // HUD
@@ -615,6 +626,152 @@ export class GameManager {
         });
       }
     });
+  }
+
+  private handleConnectionLost(event: CloseEvent): void {
+    if (this.destroyed || this.reconnecting) return;
+    console.warn(`[net] Connection lost (code=${event.code}, clean=${event.wasClean})`);
+    void this.reconnectOrLogout();
+  }
+
+  private setConnectionFrozen(frozen: boolean): void {
+    this.connectionFrozen = frozen;
+    this.inputManager.setEnabled(!frozen);
+    if (frozen) {
+      closeActiveContextMenu();
+      this.hideContextMenu();
+      this.path = [];
+      this.pathIndex = 0;
+      this.tileProgress = 0;
+      this.pendingPath = null;
+      this.pendingSkill = null;
+      this.combatTargetId = -1;
+      this.isSkilling = false;
+      this.skillingObjectId = -1;
+      this.localPlayer?.stopWalking();
+      this.localPlayer?.stopSkillAnimation();
+      this.minimap?.clearDestination();
+    }
+  }
+
+  private showReconnectOverlay(status: string): void {
+    if (!this.reconnectOverlay) {
+      const overlay = document.createElement('div');
+      overlay.id = 'connection-lost-overlay';
+      overlay.style.cssText = [
+        'position:fixed',
+        'inset:0',
+        'z-index:10000',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'background:rgba(0,0,0,0.42)',
+        'pointer-events:auto',
+        'font-family:Arial, Helvetica, sans-serif',
+      ].join(';');
+      overlay.innerHTML = `
+        <div style="
+          min-width:260px;
+          max-width:min(420px, calc(100vw - 32px));
+          border:2px solid #2a1b12;
+          outline:1px solid #7a3d24;
+          background:#140d0a;
+          box-shadow:0 8px 24px rgba(0,0,0,0.75), inset 0 0 0 1px rgba(255,210,120,0.12);
+          padding:18px 22px;
+          text-align:center;
+          color:#cfc2a1;
+        ">
+          <div style="font-size:20px;font-weight:700;color:#b3261e;text-shadow:1px 1px 0 #000;margin-bottom:8px;">Connection lost</div>
+          <div data-status style="font-size:14px;line-height:1.4;color:#d7caa9;"></div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      this.reconnectOverlay = overlay;
+    }
+    const statusEl = this.reconnectOverlay.querySelector<HTMLElement>('[data-status]');
+    if (statusEl) statusEl.textContent = status;
+  }
+
+  private hideReconnectOverlay(): void {
+    this.reconnectOverlay?.remove();
+    this.reconnectOverlay = null;
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      this.reconnectSleepTimer = window.setTimeout(() => {
+        this.reconnectSleepTimer = null;
+        resolve();
+      }, ms);
+    });
+  }
+
+  private reconnectOnce(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let onLoginOk: () => void = () => {};
+      const timeout = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        if (this._loginOkResolver === onLoginOk) this._loginOkResolver = null;
+        reject(new Error('Timed out waiting for login confirmation'));
+      }, GameManager.RECONNECT_LOGIN_TIMEOUT_MS);
+
+      onLoginOk = () => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        resolve();
+      };
+
+      this._loginOkResolver = onLoginOk;
+      this.network.connect(this.token);
+    });
+  }
+
+  private async reconnectOrLogout(): Promise<void> {
+    if (this.reconnecting || this.destroyed) return;
+    this.reconnecting = true;
+    this.reconnectStartedAt = performance.now();
+    this.reconnectAttempt = 0;
+    this.setConnectionFrozen(true);
+
+    const token = this.token || localStorage.getItem('projectrs_token') || '';
+    if (!token) {
+      this.finishReconnectFailure();
+      return;
+    }
+    this.token = token;
+
+    while (!this.destroyed && performance.now() - this.reconnectStartedAt < GameManager.RECONNECT_MAX_MS) {
+      this.reconnectAttempt++;
+      this.showReconnectOverlay(`Reconnecting... attempt ${this.reconnectAttempt}`);
+      try {
+        await this.reconnectOnce();
+        if (this.destroyed) return;
+        this.reconnecting = false;
+        this.setConnectionFrozen(false);
+        this.hideReconnectOverlay();
+        this.chatPanel?.addSystemMessage('Reconnected.', '#b3261e');
+        return;
+      } catch (err) {
+        if (this.destroyed) return;
+        console.warn('[net] Reconnect attempt failed', err);
+        this.showReconnectOverlay('Still trying to reconnect...');
+        await this.sleep(GameManager.RECONNECT_DELAY_MS);
+      }
+    }
+
+    this.finishReconnectFailure();
+  }
+
+  private finishReconnectFailure(): void {
+    if (this.destroyed) return;
+    this.reconnecting = false;
+    this.setConnectionFrozen(false);
+    this.hideReconnectOverlay();
+    this.network.close();
+    this.onFatalDisconnect?.();
   }
 
   /** Height query for the local player. Uses local player Y as gate input. */
@@ -3397,6 +3554,13 @@ export class GameManager {
   }
 
   destroy(): void {
+    this.destroyed = true;
+    if (this.reconnectSleepTimer !== null) {
+      window.clearTimeout(this.reconnectSleepTimer);
+      this.reconnectSleepTimer = null;
+    }
+    this.hideReconnectOverlay();
+    this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
     if (this.characterCreator) { this.characterCreator.destroy(); this.characterCreator = null; }
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
@@ -3501,6 +3665,8 @@ export class GameManager {
   }
 
   private update(dt: number): void {
+    if (this.connectionFrozen) return;
+
     this.updateCameraKeys(dt);
 
     if (this.localPlayer) this.localPlayer.updateAnimation(dt);

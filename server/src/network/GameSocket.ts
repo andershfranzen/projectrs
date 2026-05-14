@@ -1,4 +1,4 @@
-import { ClientOpcode, ServerOpcode, decodePacket, encodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
+import { ClientOpcode, decodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
@@ -11,6 +11,9 @@ export function handleGameSocketOpen(
   world: World
 ): void {
   const { accountId, username } = ws.data;
+
+  const reconnected = world.reconnectPlayer(accountId, ws);
+  if (reconnected) return;
 
   // Kick existing session for same account (prevent duplicate logins)
   world.kickAccountIfOnline(accountId);
@@ -119,21 +122,6 @@ export function handleGameSocketOpen(
   player.ip = ws.data.ip;
   player.deviceId = ws.data.deviceId;
   world.addPlayer(player);
-
-  // If the saved floor isn't ground level, tell the client so it positions
-  // the local player on the right floor instead of dangling above ground 0.
-  if (player.currentFloor !== 0) {
-    try {
-      player.ws.sendBinary(encodePacket(ServerOpcode.FLOOR_CHANGE, player.currentFloor));
-    } catch { /* closed */ }
-  }
-
-  // If no appearance set, tell client to show character creator
-  if (!player.appearance) {
-    try {
-      player.ws.sendBinary(encodePacket(ServerOpcode.SHOW_CHARACTER_CREATOR, 0));
-    } catch { /* closed */ }
-  }
 }
 
 export function handleGameSocketMessage(
@@ -149,6 +137,7 @@ export function handleGameSocketMessage(
   const playerId = ws.data.playerId;
   if (!playerId) return;
   const player = world.getPlayer(playerId);
+  if (!player || player.ws !== ws || player.disconnected) return;
   if (player && !player.checkRateLimit()) return;
 
   // Empty / malformed frames blow up decodePacket (view.getUint8(0) RangeError
@@ -377,6 +366,6 @@ export function handleGameSocketClose(
   if (playerId) {
     // Saves + removes, OR defers removal if the player is in a post-combat
     // logout block. See World.handlePlayerDisconnect.
-    world.handlePlayerDisconnect(playerId);
+    world.handlePlayerDisconnect(playerId, ws);
   }
 }
