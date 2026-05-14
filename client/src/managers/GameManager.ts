@@ -111,6 +111,13 @@ export class GameManager {
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private pendingSkill: { objectId: number; variant?: string } | null = null; // deferred skilling until walk finishes
+  /** NPC entityId to face when the current path completes. 2004scape
+   *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
+   *  on arrival or any new ground click. */
+  private pendingFaceTargetEntityId: number = -1;
+  /** Talk-to deferred while mid-tile. Re-pathing from a fractional
+   *  playerX/Z would desync from the server's tile-aligned position. */
+  private pendingTalkEntityId: number = -1;
   private skillCancelTime: number = 0; // timestamp when skilling was last cancelled
   private skillingFacingAngle: number = 0; // locked facing angle while skilling
   private tileProgress: number = 0; // 0→1 progress through current tile step
@@ -355,10 +362,13 @@ export class GameManager {
       // because letting InputManager re-pick can latch onto the NPC mesh
       // itself (sprite-NPC Y sometimes passes its 0.6-tile tolerance and the
       // player walks under the mob instead of past it).
-      const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
-      if (pick?.hit && pick.pickedMesh) {
-        const entityId = this.findNpcEntityIdFromPick(pick.pickedMesh, pick.pickedMesh.name);
-        if (entityId != null) {
+      // multiPick: scenery (walls, anvils, signs) in front of an NPC will
+      // win scene.pick by being closest, so legs/feet aren't clickable.
+      // pickAtCursor walks every hit along the ray and prefers an NPC.
+      const pickInfo = this.pickAtCursor();
+      if (pickInfo.entityId != null) {
+        const entityId = pickInfo.entityId;
+        {
           const npcDefId = this.entities.npcDefs.get(entityId);
           // Treat any server-flagged non-combat NPC as non-attackable here too,
           // so editor-authored dialogue NPCs don't get auto-attacked by a
@@ -377,6 +387,15 @@ export class GameManager {
               e.preventDefault();
               return;
             }
+          } else {
+            // Non-combat NPC (shop, dialogue, banker, or hardcoded). Left-click
+            // becomes "Talk-to" — matches RS2 / OSRS UX where left-click is the
+            // primary action. talkToNpc walks the player into range and sends
+            // PLAYER_TALK_NPC; the server picks dialogue > shop > bank.
+            this.talkToNpc(entityId);
+            e.stopImmediatePropagation();
+            e.preventDefault();
+            return;
           }
           // Underleveled (or non-attackable) — click *through* the NPC to the
           // ground tile directly beneath the cursor at the player's plane.
@@ -519,6 +538,10 @@ export class GameManager {
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this._objectModelsReady = this.objectModels.loadAll();
     this.entities = new EntityManager(this.scene, (x, z, cy) => this.getHeightAt(x, z, cy), this.itemDefsCache);
+    // Dev-only console hook for triage (NPC name overrides, entity sprites).
+    // Tree-shaken Babylon imports remove the global namespace, so without
+    // this the only way to inspect runtime entity state is to hack imports.
+    if (import.meta.env.DEV) (window as any)._gameEntities = this.entities;
 
     // Pre-create the local player character at the kcmap default spawn so
     // the GLB + 10 animation GLBs start parsing during the loading screen,
@@ -936,12 +959,17 @@ export class GameManager {
     this.resolveGearOverridesReady();
   }
 
-  /** Rebuild blockedObjectTiles from all known world objects. */
+  /** Rebuild blockedObjectTiles from all known world objects. Depleted
+   *  ores/stumps stay blocking — they're still physically present at the
+   *  tile and walking through one looks broken. Matches the server's
+   *  blockedObjectTiles policy. */
   private rebuildBlockedObjectTiles(): void {
     this.blockedObjectTiles.clear();
     for (const [, data] of this.worldObjectDefs) {
       const def = this.objectDefsCache.get(data.defId);
-      if (def?.blocking && !data.depleted) {
+      // Depleted ores/stumps stay blocking — they still physically occupy
+      // the tile. setObjectTilesBlocked is a no-op for doors.
+      if (def?.blocking) {
         this.setObjectTilesBlocked(data.x, data.z, def, true);
       }
     }
@@ -1819,6 +1847,14 @@ export class GameManager {
       this.entities.npcInteractions.set(v[0], v[1]);
     });
 
+    this.network.on(ServerOpcode.NPC_FACING, (_op, v) => {
+      // [entityId, angleQ1000] — 2004scape NPC.faceEntity. Both sprite
+      // classes expose setTargetFacing; the per-frame yaw lerp handles
+      // the smooth turn.
+      const [entityId, angleQ] = v;
+      this.entities.npcSprites.get(entityId)?.setTargetFacing(angleQ / 1000);
+    });
+
     this.network.on(ServerOpcode.GROUND_ITEM_SYNC, (_op, v) => {
       const [groundItemId, itemId, quantity, x10, z10] = v;
       if (itemId === 0) {
@@ -1958,7 +1994,7 @@ export class GameManager {
       }
       if (this.shopPanel) {
         const npcDefId = this.entities.npcDefs.get(npcEntityId);
-        const shopTitle = NPC_NAMES[npcDefId || 0] || 'Shop';
+        const shopTitle = this.npcDisplayName(npcEntityId, npcDefId);
         this.shopPanel.show(npcEntityId, items, shopTitle);
         // Enable sell option in inventory context menu
         this.sidePanel?.setSellCallback((slot, itemId) => {
@@ -2008,7 +2044,9 @@ export class GameManager {
       if (def?.category === 'door') {
         // Edge detection deferred until model is linked — handled in linkPlacedNodeToEntity / onChunkObjectsLoaded
       } else if (def) {
-        this.setObjectTilesBlocked(x, z, def, !isDepleted);
+        // Depleted state intentionally ignored — depleted ores/stumps still
+        // occupy their tile (matches server policy at the depletion site).
+        this.setObjectTilesBlocked(x, z, def, true);
       }
 
       // Try to link to an editor-placed GLB model
@@ -2039,7 +2077,9 @@ export class GameManager {
       const data = this.worldObjectDefs.get(objectEntityId);
       if (data) data.depleted = isDepleted === 1;
 
-      // Update blocking tiles for pathfinding
+      // Doors animate + toggle their wall edges on depleted-state change.
+      // For everything else, blocking is set once at chunk-entry / SYNC and
+      // never cleared on depletion — depleted ores/stumps still block.
       if (data) {
         const def2 = this.objectDefsCache.get(data.defId);
         if (def2?.category === 'door') {
@@ -2061,8 +2101,9 @@ export class GameManager {
           }
 
           this.animateDoor(objectEntityId, opened, swingSign || 0);
-        } else if (def2) {
-          this.setObjectTilesBlocked(data.x, data.z, def2, isDepleted === 0);
+          // Depleted ores/stumps keep their blocking tile — see chunk-entry
+          // case in WORLD_OBJECT_SYNC above. Doors animate + toggle edges;
+          // everything else: no-op on depletion.
         }
       }
 
@@ -2348,8 +2389,25 @@ export class GameManager {
         }
       } else if (opcode === ServerOpcode.DIALOGUE_CLOSE) {
         this.dialoguePanel?.hide();
+      } else if (opcode === ServerOpcode.NPC_NAME) {
+        // [npcEntityId] follows the string payload. Override is cached for
+        // the right-click menu, hover tooltip, and shop title — no floating
+        // head label, per UX direction.
+        const { str, values } = decodeStringPacket(data);
+        const entityId = values[0];
+        if (str.length > 0) this.entities.npcOverrideNames.set(entityId, str);
+        else this.entities.npcOverrideNames.delete(entityId);
       }
     });
+  }
+
+  /** Display name for an NPC entity: per-spawn override wins, else the
+   *  hardcoded NPC_NAMES[defId] table, else 'NPC'. Used by right-click,
+   *  tooltip, and shop title. */
+  private npcDisplayName(entityId: number, defId: number | undefined): string {
+    const override = this.entities.npcOverrideNames.get(entityId);
+    if (override) return override;
+    return NPC_NAMES[defId || 0] || 'NPC';
   }
 
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
@@ -2421,22 +2479,15 @@ export class GameManager {
       // cow click would route to whichever cow happened to be first in the
       // npcSprites map. Check metadata.entityId (stamped by Npc3DEntity.
       // setEntityIdMetadata and CharacterEntity.setEntityIdMetadata) by
-      // walking up the picked node's parents.
-      let pickedNpcEntityId: number | null = null;
-      {
-        let walk: TransformNode | null = pickResult.pickedMesh;
-        while (walk) {
-          if (walk.metadata?.kind === 'npc' && typeof walk.metadata?.entityId === 'number') {
-            pickedNpcEntityId = walk.metadata.entityId;
-            break;
-          }
-          walk = walk.parent as TransformNode | null;
-        }
-      }
+      // walking up the picked node's parents. pickAtCursor falls through
+      // placed scenery to find an NPC along the ray, so right-clicking
+      // through a fence/anvil at an NPC's lower body still surfaces the
+      // Talk-to / Attack option.
+      const pickedNpcEntityId = this.pickAtCursor().entityId;
       if (pickedNpcEntityId != null) {
         const entityId = pickedNpcEntityId;
         const npcDefId = this.entities.npcDefs.get(entityId);
-        const name = NPC_NAMES[npcDefId || 0] || 'NPC';
+        const name = this.npcDisplayName(entityId, npcDefId);
         // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
         // hardcoded isNonAttackableNpc allow-list — that list pre-dates the
         // server telling us, and would mislabel any new editor-authored NPC.
@@ -2667,6 +2718,39 @@ export class GameManager {
     return null;
   }
 
+  /** Rotate the local player's facing toward a world (x, z). 2004scape
+   *  Player.faceEntity primitive — used by talkToNpc / attackNpc so the
+   *  player isn't standing sideways during the interaction. Uses the
+   *  CharacterEntity's smooth-yaw state machine (faceToward) so it lerps
+   *  rather than snapping. */
+  private faceLocalPlayerToward(x: number, z: number): void {
+    const lp = this.localPlayer;
+    if (!lp) return;
+    lp.faceToward(new Vector3(x, lp.position.y, z));
+  }
+
+  /** scene.pick returns the closest hit; that lets placed scenery (anvils,
+   *  walls, planes) intercept clicks aimed at an NPC behind them. RuneScape-
+   *  style left-click sees through occluders to NPCs in the same ray, so we
+   *  multiPick and walk hits sorted by distance, returning the FIRST hit
+   *  that resolves to an NPC entity. Falls back to the closest mesh so the
+   *  caller can still pick ground / placed objects / ground-items normally
+   *  when there's no NPC in the ray. */
+  private pickAtCursor(): { entityId: number; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh } | { entityId: null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+    const hits = this.scene.multiPick(this.scene.pointerX, this.scene.pointerY);
+    if (!hits || hits.length === 0) return { entityId: null, closestMesh: null };
+    // multiPick returns hits unsorted; sort by distance ascending.
+    hits.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+    const closest = hits[0].pickedMesh ?? null;
+    for (const h of hits) {
+      const m = h.pickedMesh;
+      if (!m) continue;
+      const eid = this.findNpcEntityIdFromPick(m as unknown as TransformNode, m.name);
+      if (eid != null) return { entityId: eid, closestMesh: closest! };
+    }
+    return { entityId: null, closestMesh: closest };
+  }
+
   /** Combat level for the local player. Reads skill levels from the side
    *  panel (canonical store) and runs the OSRS-style combat-level formula.
    *  Returns 0 if skills haven't synced yet. */
@@ -2721,20 +2805,20 @@ export class GameManager {
         return;
       }
       lastPickAt = now;
-      const pick = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
+      // Same multiPick-prefer-NPC logic as the click handlers so the
+      // tooltip shows the NPC's name when the cursor is over their legs
+      // (which scenery often blocks from the closest-hit picker).
+      const entityId = this.pickAtCursor().entityId;
       let label: string | null = null;
-      if (pick?.hit && pick.pickedMesh) {
-        const entityId = this.findNpcEntityIdFromPick(pick.pickedMesh, pick.pickedMesh.name);
-        if (entityId != null) {
-          const npcDefId = this.entities.npcDefs.get(entityId);
-          const name = NPC_NAMES[npcDefId ?? 0] || 'NPC';
-          const flags = this.entities.npcInteractions.get(entityId) ?? 0;
-          if (flags !== 0 || this.isNonAttackableNpc(npcDefId)) {
-            label = name;
-          } else {
-            const lvl = this.npcLevelFor(npcDefId);
-            label = lvl > 0 ? `${name} (level-${lvl})` : name;
-          }
+      if (entityId != null) {
+        const npcDefId = this.entities.npcDefs.get(entityId);
+        const name = this.npcDisplayName(entityId, npcDefId);
+        const flags = this.entities.npcInteractions.get(entityId) ?? 0;
+        if (flags !== 0 || this.isNonAttackableNpc(npcDefId)) {
+          label = name;
+        } else {
+          const lvl = this.npcLevelFor(npcDefId);
+          label = lvl > 0 ? `${name} (level-${lvl})` : name;
         }
       }
       if (label) {
@@ -2751,6 +2835,12 @@ export class GameManager {
   private attackNpc(npcEntityId: number): void {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.combatTargetId = npcEntityId;
+    // Face the NPC on arrival (2004scape Player.faceEntity). Combat code
+    // also handles facing once engaged, but this guarantees the player is
+    // already facing the right way as the first swing begins.
+    this.pendingFaceTargetEntityId = npcEntityId;
+    const t = this.entities.npcTargets.get(npcEntityId);
+    if (t) this.faceLocalPlayerToward(t.x, t.z);
     // Arm the chase-repath cooldown so updateCombatFollow doesn't re-pathfind
     // on the very next frame and re-send a near-identical sendMove(). The
     // 600 ms window matches the throttle elsewhere in updateCombatFollow —
@@ -2791,15 +2881,40 @@ export class GameManager {
 
   private talkToNpc(npcEntityId: number): void {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
+    this.resumeTalkToNpc(npcEntityId);
+  }
+
+  /** Body of talkToNpc without the cursor ping. Called directly by the
+   *  mid-tile drain so a deferred talk doesn't double-fire the visual
+   *  effect at the original click position. */
+  private resumeTalkToNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (!target) return;
+    // Mid-tile defer: re-pathing from a fractional playerX/Z desyncs from
+    // the server (tile-aligned only). Truncate the active path to the
+    // in-progress step so the player doesn't walk out the rest of the old
+    // route before turning toward the NPC, then queue the talk for the
+    // step-completion drain.
+    if (this.tileProgress > 0 && this.pathIndex < this.path.length) {
+      const currentTarget = this.path[this.pathIndex];
+      this.path = [currentTarget];
+      this.pathIndex = 0;
+      this.network.sendMove([currentTarget]);
+      if (this.destMarker) this.destMarker.isVisible = false;
+      this.minimap?.clearDestination();
+      this.pendingTalkEntityId = npcEntityId;
+      return;
+    }
+    this.pendingFaceTargetEntityId = npcEntityId;
 
-    // Walk to NPC first, then send talk opcode
+    // Stop adjacent to the NPC, never on its tile — pop the NPC tile from
+    // the path regardless of length (single-step paths used to land on top
+    // of the mob).
     const path = findPath(this.playerX, this.playerZ, target.x, target.z,
       this.isTileBlocked,
       this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
       this.isWallBlockedForPath);
-    if (path.length > 1) {
+    if (path.length > 0) {
       const last = path[path.length - 1];
       if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
         path.pop();
@@ -2809,9 +2924,18 @@ export class GameManager {
       this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
+      // sendMove before TALK_NPC: server walks the same tiles instead of
+      // independently pathfinding from its authoritative position and
+      // diverging from the client visual.
       this.network.sendMove(path);
+    } else {
+      // Already adjacent — cancel any in-flight path and face the NPC now;
+      // no path-complete event will fire to do it for us.
+      this.path = []; this.pathIndex = 0; this.tileProgress = 0;
+      if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
+      this.faceLocalPlayerToward(target.x, target.z);
+      this.pendingFaceTargetEntityId = -1;
     }
-    // Send talk opcode — server checks distance
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
   }
 
@@ -3475,6 +3599,10 @@ export class GameManager {
   private handleGroundClick(worldX: number, worldZ: number): void {
     this.combatTargetId = -1;
     this.pendingSkill = null;
+    // Walking elsewhere cancels the queued face-NPC — we'd look weird
+    // turning toward a Shopkeeper after the player has already moved on.
+    this.pendingFaceTargetEntityId = -1;
+    this.pendingTalkEntityId = -1;
     if (this.isSkilling) {
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -3606,58 +3734,124 @@ export class GameManager {
     const camPos = cam.position;
     const maxDistSq = GameManager.MAX_OVERLAY_DIST_SQ;
     const screenPos = this._overlayScreenPos;
+    const wp = this._overlayWorldPos;
 
-    const projectOverlay = (
-      worldPos: Vector3,
-      updateScreenPos: (x: number, y: number) => void,
-    ) => {
-      Vector3.ProjectToRef(worldPos, identity, transform, vp, screenPos);
-      if (screenPos.z > 0 && screenPos.z < 1) {
-        updateScreenPos(screenPos.x, screenPos.y);
-      } else {
-        updateScreenPos(-9999, -9999);
+    // Inline projection — previous version allocated three (x,y) arrow
+    // closures per sprite per frame for the project callback. Hot path at
+    // ~60 FPS × (1 + |remotePlayers| + |npcSprites|).
+    const offscreenX = -9999;
+    const offscreenY = -9999;
+
+    if (this.localPlayer) {
+      const sprite = this.localPlayer;
+      if (sprite.hasChatBubble()) {
+        const got = sprite.getChatBubbleWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateChatBubbleScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateChatBubbleScreenPos(offscreenX, offscreenY);
+        }
       }
-    };
+      if (sprite.hasHealthBar()) {
+        const got = sprite.getHealthBarWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateHealthBarScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateHealthBarScreenPos(offscreenX, offscreenY);
+        }
+      }
+      // Local player has no name label (we don't render our own over our head).
+    }
 
-    const projectSprite = (sprite: CharacterEntity | Npc3DEntity, skipDistCheck?: boolean) => {
+    for (const [, sprite] of this.entities.remotePlayers) {
       const hasBubble = sprite.hasChatBubble();
       const hasBar = sprite.hasHealthBar();
-      // CharacterEntity is the only type with HTML name labels — Npc3DEntity
-      // lacks the methods, so we duck-type via instanceof.
-      const labelHost = sprite instanceof CharacterEntity ? sprite : null;
-      const hasLabel = labelHost ? labelHost.getLabelWorldPos(this._overlayWorldPos) !== null : false;
-      if (!hasBubble && !hasBar && !hasLabel) return;
+      const hasLabel = sprite.getLabelWorldPos(wp) !== null;
+      if (!hasBubble && !hasBar && !hasLabel) continue;
 
-      if (!skipDistCheck) {
-        const pos = sprite.position;
-        const dx = pos.x - camPos.x;
-        const dy = pos.y - camPos.y;
-        const dz = pos.z - camPos.z;
-        if (dx * dx + dy * dy + dz * dz > maxDistSq) {
-          if (hasBar) sprite.updateHealthBarScreenPos(-9999, -9999);
-          if (hasBubble) sprite.updateChatBubbleScreenPos(-9999, -9999);
-          if (hasLabel) labelHost!.updateLabelScreenPos(-9999, -9999);
-          return;
-        }
+      const pos = sprite.position;
+      const dx = pos.x - camPos.x;
+      const dy = pos.y - camPos.y;
+      const dz = pos.z - camPos.z;
+      if (dx * dx + dy * dy + dz * dz > maxDistSq) {
+        if (hasBar) sprite.updateHealthBarScreenPos(offscreenX, offscreenY);
+        if (hasBubble) sprite.updateChatBubbleScreenPos(offscreenX, offscreenY);
+        if (hasLabel) sprite.updateLabelScreenPos(offscreenX, offscreenY);
+        continue;
       }
 
       if (hasBubble) {
-        const wp = sprite.getChatBubbleWorldPos(this._overlayWorldPos);
-        if (wp) projectOverlay(wp, (x, y) => sprite.updateChatBubbleScreenPos(x, y));
+        const got = sprite.getChatBubbleWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateChatBubbleScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateChatBubbleScreenPos(offscreenX, offscreenY);
+        }
       }
       if (hasBar) {
-        const wp = sprite.getHealthBarWorldPos(this._overlayWorldPos);
-        if (wp) projectOverlay(wp, (x, y) => sprite.updateHealthBarScreenPos(x, y));
+        const got = sprite.getHealthBarWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateHealthBarScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateHealthBarScreenPos(offscreenX, offscreenY);
+        }
+      }
+      if (hasLabel) {
+        const got = sprite.getLabelWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateLabelScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateLabelScreenPos(offscreenX, offscreenY);
+        }
+      }
+    }
+
+    for (const [, sprite] of this.entities.npcSprites) {
+      const hasBubble = sprite.hasChatBubble();
+      const hasBar = sprite.hasHealthBar();
+      // Npc3DEntity has no getLabelWorldPos — check via the CharacterEntity
+      // sibling type. instanceof on a hot path is fine (V8 inlines the check),
+      // but cache the cast so we don't re-narrow on each subsequent call.
+      const labelHost = sprite instanceof CharacterEntity ? sprite : null;
+      const hasLabel = labelHost ? labelHost.getLabelWorldPos(wp) !== null : false;
+      if (!hasBubble && !hasBar && !hasLabel) continue;
+
+      const pos = sprite.position;
+      const dx = pos.x - camPos.x;
+      const dy = pos.y - camPos.y;
+      const dz = pos.z - camPos.z;
+      if (dx * dx + dy * dy + dz * dz > maxDistSq) {
+        if (hasBar) sprite.updateHealthBarScreenPos(offscreenX, offscreenY);
+        if (hasBubble) sprite.updateChatBubbleScreenPos(offscreenX, offscreenY);
+        if (hasLabel && labelHost) labelHost.updateLabelScreenPos(offscreenX, offscreenY);
+        continue;
+      }
+
+      if (hasBubble) {
+        const got = sprite.getChatBubbleWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateChatBubbleScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateChatBubbleScreenPos(offscreenX, offscreenY);
+        }
+      }
+      if (hasBar) {
+        const got = sprite.getHealthBarWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateHealthBarScreenPos(screenPos.x, screenPos.y);
+          else sprite.updateHealthBarScreenPos(offscreenX, offscreenY);
+        }
       }
       if (hasLabel && labelHost) {
-        const wp = labelHost.getLabelWorldPos(this._overlayWorldPos);
-        if (wp) projectOverlay(wp, (x, y) => labelHost.updateLabelScreenPos(x, y));
+        const got = labelHost.getLabelWorldPos(wp);
+        if (got) {
+          Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+          if (screenPos.z > 0 && screenPos.z < 1) labelHost.updateLabelScreenPos(screenPos.x, screenPos.y);
+          else labelHost.updateLabelScreenPos(offscreenX, offscreenY);
+        }
       }
-    };
-
-    if (this.localPlayer) projectSprite(this.localPlayer, true);
-    for (const [, sprite] of this.entities.remotePlayers) projectSprite(sprite);
-    for (const [, sprite] of this.entities.npcSprites) projectSprite(sprite);
+    }
   }
 
   private updateHUD(): void {
@@ -3949,6 +4143,13 @@ export class GameManager {
       this.tileFrom = { x: target.x, z: target.z };
       this.pathIndex++;
 
+      // Deferred talk-to fires now that playerX/Z are tile-aligned.
+      if (this.pendingTalkEntityId >= 0) {
+        const id = this.pendingTalkEntityId;
+        this.pendingTalkEntityId = -1;
+        this.resumeTalkToNpc(id);
+      }
+
       if (this.pendingPath) {
         this.path = this.pendingPath;
         this.pathIndex = 0;
@@ -3963,6 +4164,16 @@ export class GameManager {
           const { objectId, variant } = this.pendingSkill;
           this.pendingSkill = null;
           this.startSkillingVisual(objectId, variant);
+        }
+        // Face the NPC we were walking up to talk to / attack. Done after
+        // stopWalking so the rotation isn't immediately overwritten by the
+        // movement-direction logic below. Lookup uses npcTargets which
+        // tracks the latest server-broadcast position even if the NPC has
+        // wandered slightly while we were walking.
+        if (this.pendingFaceTargetEntityId >= 0) {
+          const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
+          if (npcTarget) this.faceLocalPlayerToward(npcTarget.x, npcTarget.z);
+          this.pendingFaceTargetEntityId = -1;
         }
       }
     } else {

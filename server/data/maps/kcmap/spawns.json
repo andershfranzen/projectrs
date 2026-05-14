@@ -1,126 +1,203 @@
 {
   "npcs": [
     {
+      "id": 1,
       "npcId": 10,
       "x": 115.5,
       "z": 181.5,
       "wanderRange": 3
     },
     {
+      "id": 2,
       "npcId": 10,
       "x": 114.5,
       "z": 175.5,
       "wanderRange": 3
     },
     {
+      "id": 3,
       "npcId": 10,
       "x": 114.5,
       "z": 166.5,
       "wanderRange": 3
     },
     {
+      "id": 4,
       "npcId": 10,
       "x": 120.5,
       "z": 170.5,
       "wanderRange": 3
     },
     {
+      "id": 5,
       "npcId": 10,
       "x": 126.5,
       "z": 172.5,
       "wanderRange": 3
     },
     {
+      "id": 6,
       "npcId": 10,
       "x": 127.5,
       "z": 179.5,
       "wanderRange": 3
     },
     {
+      "id": 7,
       "npcId": 10,
       "x": 121.5,
       "z": 177.5,
       "wanderRange": 3
     },
     {
+      "id": 8,
       "npcId": 10,
       "x": 130.5,
       "z": 175.5,
       "wanderRange": 3
     },
     {
+      "id": 9,
       "npcId": 5,
       "x": 137.5,
       "z": 206.5,
       "wanderRange": 3
     },
     {
+      "id": 10,
       "npcId": 8,
       "x": 146.5,
       "z": 152.5,
-      "wanderRange": 1
+      "wanderRange": 1,
+      "appearance": {
+        "shirtColor": 6,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "dialogue": {
+        "root": "greet",
+        "nodes": {
+          "greet": {
+            "id": "greet",
+            "lines": [
+              "Welcome to my shop, traveler!",
+              "What can I do for you today?"
+            ],
+            "options": [
+              {
+                "label": "Show me what you've got.",
+                "action": {
+                  "type": "openShop"
+                }
+              },
+              {
+                "label": "Tell me about this place.",
+                "next": "lore"
+              },
+              {
+                "label": "Goodbye."
+              }
+            ]
+          },
+          "lore": {
+            "id": "lore",
+            "lines": [
+              "This little shop has been in my family for three generations.",
+              "A lot of inexperienced travelers tend to come around these parts. I keep a lot of stuff people would consider basic."
+            ],
+            "options": [
+              {
+                "label": "Show me your wares.",
+                "action": {
+                  "type": "openShop"
+                }
+              },
+              {
+                "label": "Back.",
+                "next": "greet"
+              }
+            ]
+          }
+        }
+      },
+      "name": "Robert"
     },
     {
+      "id": 11,
       "npcId": 2,
       "x": 162.5,
       "z": 164.5,
       "wanderRange": 2
     },
     {
+      "id": 12,
       "npcId": 2,
       "x": 157.5,
       "z": 165.5,
       "wanderRange": 2
     },
     {
+      "id": 13,
       "npcId": 2,
       "x": 155.5,
       "z": 165.5,
       "wanderRange": 2
     },
     {
+      "id": 14,
       "npcId": 2,
       "x": 158.5,
       "z": 164.5,
       "wanderRange": 2
     },
     {
+      "id": 15,
       "npcId": 15,
       "x": 177.5,
       "z": 233.5,
       "wanderRange": 4
     },
     {
+      "id": 16,
       "npcId": 15,
       "x": 194.5,
       "z": 212.5,
       "wanderRange": 4
     },
     {
+      "id": 17,
       "npcId": 1,
       "x": 258.5,
       "z": 95.5,
       "wanderRange": 2
     },
     {
+      "id": 18,
       "npcId": 1,
       "x": 256.5,
       "z": 95.5,
       "wanderRange": 2
     },
     {
+      "id": 19,
       "npcId": 1,
       "x": 259.5,
       "z": 94.5,
       "wanderRange": 2
     },
     {
+      "id": 20,
       "npcId": 1,
       "x": 256.5,
       "z": 96.5,
       "wanderRange": 2
     },
     {
+      "id": 21,
       "npcId": 1,
       "x": 256.5,
       "z": 94.5,

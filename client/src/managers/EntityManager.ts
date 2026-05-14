@@ -59,6 +59,10 @@ export class EntityManager {
    *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
    *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank. */
   readonly npcInteractions: Map<number, number> = new Map();
+  /** Per-spawn display name override (NPC_NAME opcode). When absent the
+   *  display path falls back to NPC_NAMES[defId]. Used in right-click menu,
+   *  tooltip, and shop title. */
+  readonly npcOverrideNames: Map<number, string> = new Map();
   /** Count of NPCs currently rendered as CharacterEntity. Compared against
    *  MAX_3D_NPCS_VISIBLE (shared/constants) for mobile budget enforcement. */
   npc3dCount: number = 0;
@@ -117,7 +121,10 @@ export class EntityManager {
   }
 
   createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false): Npc3DEntity | CharacterEntity | null {
-    const name = NPC_NAMES[defId] || `NPC${defId}`;
+    // If NPC_NAME arrived before this entity was created (chunk-entry order
+    // isn't guaranteed), honour the override on first construction so the
+    // floating label is correct from frame 1.
+    const name = this.npcOverrideNames.get(entityId) || NPC_NAMES[defId] || `NPC${defId}`;
 
     // Dedicated 3D model path (rat, spider, cow, camel). Always preferred when
     // available — these have purpose-built animations.
@@ -137,15 +144,18 @@ export class EntityManager {
     // mobile — caller defers creation until the NPC comes into range.
     if (!render3D) return null;
 
+    // Always load idle + walk. The old "stationary skips walk" optimization
+    // (~50 KB GLB saved per shopkeeper/banker) broke any editor-authored
+    // spawn whose wanderRange > 0 — the NPC tried to wander but had no
+    // walk anim to play. Per-spawn wanderRange isn't known at this call
+    // site (it lives server-side), so loading both anims for every
+    // customizable NPC is the simplest correct policy.
     const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
-    const stationary = profile?.stationary ?? false;
     const combat = profile?.combat ?? false;
     const anims: { name: string; path: string }[] = [
       { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+      { name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` },
     ];
-    if (!stationary) {
-      anims.push({ name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` });
-    }
     if (combat) {
       // Punch anim pending re-authoring; CharacterEntity falls back to
       // attack/attack_slash when 'attack_punch' isn't loaded.
@@ -154,13 +164,16 @@ export class EntityManager {
       name: `npc_${entityId}`,
       modelPath: CHARACTER_MODEL_PATH,
       targetHeight: CHARACTER_TARGET_HEIGHT,
-      label: name,
-      labelColor: '#ffff00',
+      // No floating label — NPCs introduce themselves via chat on interaction
+      // instead. Identity is still surfaced through the hover tooltip + the
+      // right-click menu label.
       additionalAnimations: anims,
     });
     character.setPositionXYZ(x, this.getHeight(x, z, 0), z);
     character.setEntityIdMetadata(entityId);
-    if (stationary) character.freezeAtIdle();
+    // freezeAtIdle removed — same reason as the walk-anim gate. A stationary
+    // shopkeeper's idle is now driven by the regular anim state machine,
+    // which is fine perf-wise outside the worst-case 40-NPC mobile budget.
     this.npcSprites.set(entityId, character);
     this.npc3dCount++;
     return character;
@@ -215,6 +228,7 @@ export class EntityManager {
       this.npcAppearances.delete(entityId);
       this.npcEquipment.delete(entityId);
       this.npcInteractions.delete(entityId);
+      this.npcOverrideNames.delete(entityId);
     }
   }
 
@@ -330,6 +344,15 @@ export class EntityManager {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
+        // Re-snap Y if terrain height resolved since this NPC was created.
+        // Race: NPC_SYNC arrives before the chunk heightmap is ready →
+        // getHeight() returned 0 at createNpc, leaving the NPC half-inside
+        // the ground until they took their first step. Only snaps on a
+        // meaningful mismatch so the per-frame cost stays at 1 read + 1 cmp.
+        const expectedY = this.getHeight(target.x, target.z, sprite.position.y);
+        if (Math.abs(expectedY - sprite.position.y) > 0.05) {
+          sprite.setPositionXYZ(target.x, expectedY, target.z);
+        }
         const combatTarget = this.npcCombatTargets.get(entityId);
         if (combatTarget !== undefined && camPos) {
           if (combatTarget === localPlayerId && localPlayerPos) {
@@ -390,6 +413,7 @@ export class EntityManager {
     this.npcAppearances.clear();
     this.npcEquipment.clear();
     this.npcInteractions.clear();
+    this.npcOverrideNames.clear();
     this.npc3dCount = 0;
 
     for (const [, sprite] of this.groundItemSprites) sprite.dispose();

@@ -58,6 +58,9 @@ export class Npc extends Entity {
   readonly effectiveShop: ShopDef | null;
   /** Resolved at spawn time as `spawn.dialogue ?? def.dialogue`. */
   readonly effectiveDialogue: DialogueTree | null;
+  /** Per-spawn name override (`spawn.name`). When null the runtime falls
+   *  back to def.name (already set on Entity by the super constructor). */
+  readonly nameOverride: string | null;
 
   constructor(
     def: NpcDef,
@@ -69,9 +72,11 @@ export class Npc extends Entity {
     aggressive?: boolean | null,
     effectiveShop?: ShopDef | null,
     effectiveDialogue?: DialogueTree | null,
+    nameOverride?: string | null,
   ) {
-    super(def.name, x, z, def.health);
+    super(nameOverride || def.name, x, z, def.health);
     this.npcId = def.id;
+    this.nameOverride = nameOverride && nameOverride.length > 0 ? nameOverride : null;
     this.def = def;
     this.spawnX = x;
     this.spawnZ = z;
@@ -81,6 +86,11 @@ export class Npc extends Entity {
     this.aggressiveOverride = aggressive ?? null;
     this.effectiveShop = effectiveShop ?? null;
     this.effectiveDialogue = effectiveDialogue ?? null;
+  }
+
+  /** Per-spawn name override if set, otherwise the def's name. */
+  get displayName(): string {
+    return this.nameOverride ?? this.def.name;
   }
 
   get hasDialogue(): boolean {

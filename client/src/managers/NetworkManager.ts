@@ -26,6 +26,16 @@ export type ChatHandler = (data: ChatMessage) => void;
 export type RawMessageHandler = (data: ArrayBuffer) => void;
 export type DisconnectHandler = (event: CloseEvent) => void;
 
+/** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
+ *  instead of the int16-array layout. Handled exclusively by raw handlers;
+ *  the int16 dispatcher must skip them so an even-length UTF-8 payload doesn't
+ *  get re-parsed and re-dispatched with garbage values. */
+const STRING_PACKET_OPCODES = new Set<number>([
+  ServerOpcode.MAP_CHANGE,
+  ServerOpcode.DIALOGUE_OPEN,
+  ServerOpcode.NPC_NAME,
+]);
+
 export class NetworkManager {
   private gameSocket: WebSocket | null = null;
   private chatSocket: WebSocket | null = null;
@@ -79,16 +89,20 @@ export class NetworkManager {
 
     gameSocket.onmessage = (event) => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
-      if (event.data instanceof ArrayBuffer) {
-        // Fire raw handlers first (for string packets like MAP_CHANGE)
-        for (const handler of this.rawHandlers) {
-          handler(event.data);
-        }
-        const rawOpcode = new DataView(event.data).getUint8(0);
-        if (rawOpcode === ServerOpcode.MAP_CHANGE || rawOpcode === ServerOpcode.DIALOGUE_OPEN) return;
-        const { opcode, values } = decodePacket(event.data);
-        this.dispatch(opcode as ServerOpcode, values);
+      if (!(event.data instanceof ArrayBuffer)) return;
+      // Raw handlers consume string-layout packets (UTF-8 payload + trailing
+      // int16s — different shape from the standard binary protocol).
+      for (const handler of this.rawHandlers) {
+        handler(event.data);
       }
+      // String-packet opcodes are handled exclusively above. Skip the int16
+      // dispatch path so we never (a) throw on odd-length UTF-8 payloads or
+      // (b) silently re-dispatch garbage int16s when the payload length
+      // happens to be even. Real decode errors on int16 packets still throw.
+      const opcode = new DataView(event.data).getUint8(0);
+      if (STRING_PACKET_OPCODES.has(opcode)) return;
+      const { values } = decodePacket(event.data);
+      this.dispatch(opcode as ServerOpcode, values);
     };
 
     gameSocket.onclose = (event) => {

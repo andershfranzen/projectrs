@@ -19,7 +19,11 @@ export default defineConfig({
       // Character GLB + Mixamo animations live in client/public; proxy to the
       // client's vite dev server (:5173) so the editor's appearance preview
       // can load them without a symlink. Cross-platform safe.
-      '/Character models': 'http://localhost:5173',
+      // Key must use the URL-encoded form — http-proxy-middleware matches
+      // req.url (encoded) literally, and the browser will encode the space
+      // in 'Character models' before it sends the request. The plain-string
+      // key '/Character models' silently never matches.
+      '/Character%20models': 'http://localhost:5173',
     }
   }
 })

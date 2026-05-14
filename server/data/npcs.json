@@ -1,31 +1,276 @@
 [
-  { "id": 1, "name": "Chicken", "health": 5, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 15, "aggressive": false, "wanderRange": 2,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }, { "itemId": 11, "quantity": 1, "chance": 0.9 }, { "itemId": 19, "quantity": 3, "chance": 1.0 }] },
-  { "id": 10, "name": "Cow", "health": 10, "attack": 2, "defence": 2, "strength": 2, "attackSpeed": 5, "respawnTime": 20, "aggressive": false, "wanderRange": 3,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }, { "itemId": 11, "quantity": 1, "chance": 0.6 }] },
-  { "id": 2, "name": "Rat", "health": 8, "attack": 2, "defence": 1, "strength": 2, "attackSpeed": 4, "respawnTime": 15, "aggressive": false, "wanderRange": 2,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 0.8 }, { "itemId": 14, "quantity": 1, "chance": 0.8 }, { "itemId": 10, "quantity": 3, "chance": 0.4 }] },
-  { "id": 3, "name": "Goblin", "health": 15, "attack": 4, "defence": 3, "strength": 4, "attackSpeed": 4, "respawnTime": 20, "aggressive": false, "wanderRange": 3,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }, { "itemId": 10, "quantity": 8, "chance": 0.6 }, { "itemId": 2, "quantity": 1, "chance": 0.15 }, { "itemId": 13, "quantity": 1, "chance": 0.3 }] },
-  { "id": 4, "name": "Wolf", "health": 25, "attack": 7, "defence": 5, "strength": 6, "attackSpeed": 3, "respawnTime": 25, "aggressive": true, "wanderRange": 4,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }, { "itemId": 20, "quantity": 1, "chance": 0.5 }] },
-  { "id": 5, "name": "Skeleton", "health": 30, "attack": 10, "defence": 8, "strength": 9, "attackSpeed": 4, "respawnTime": 30, "aggressive": true, "wanderRange": 3,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }, { "itemId": 10, "quantity": 15, "chance": 0.7 }, { "itemId": 5, "quantity": 1, "chance": 0.08 }, { "itemId": 9, "quantity": 1, "chance": 0.1 }] },
-  { "id": 6, "name": "Spider", "health": 12, "attack": 3, "defence": 2, "strength": 3, "attackSpeed": 3, "respawnTime": 18, "aggressive": false, "wanderRange": 3,
-    "lootTable": [{ "itemId": 10, "quantity": 4, "chance": 0.3 }] },
-  { "id": 7, "name": "Guard", "health": 40, "attack": 12, "defence": 10, "strength": 10, "attackSpeed": 4, "respawnTime": 50, "aggressive": false, "wanderRange": 2,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }, { "itemId": 10, "quantity": 20, "chance": 1.0 }, { "itemId": 16, "quantity": 1, "chance": 0.05 }] },
-  { "id": 8, "name": "Shopkeeper", "health": 50, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 100, "aggressive": false, "wanderRange": 1,
+  {
+    "id": 1,
+    "name": "Chicken",
+    "health": 5,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 15,
+    "aggressive": false,
+    "wanderRange": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 11,
+        "quantity": 1,
+        "chance": 0.9
+      },
+      {
+        "itemId": 19,
+        "quantity": 3,
+        "chance": 1
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "name": "Cow",
+    "health": 10,
+    "attack": 2,
+    "defence": 2,
+    "strength": 2,
+    "attackSpeed": 5,
+    "respawnTime": 20,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 11,
+        "quantity": 1,
+        "chance": 0.6
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "name": "Rat",
+    "health": 8,
+    "attack": 2,
+    "defence": 1,
+    "strength": 2,
+    "attackSpeed": 4,
+    "respawnTime": 15,
+    "aggressive": false,
+    "wanderRange": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 0.8
+      },
+      {
+        "itemId": 14,
+        "quantity": 1,
+        "chance": 0.8
+      },
+      {
+        "itemId": 10,
+        "quantity": 3,
+        "chance": 0.4
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "name": "Goblin",
+    "health": 15,
+    "attack": 4,
+    "defence": 3,
+    "strength": 4,
+    "attackSpeed": 4,
+    "respawnTime": 20,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 8,
+        "chance": 0.6
+      },
+      {
+        "itemId": 2,
+        "quantity": 1,
+        "chance": 0.15
+      },
+      {
+        "itemId": 13,
+        "quantity": 1,
+        "chance": 0.3
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "name": "Wolf",
+    "health": 25,
+    "attack": 7,
+    "defence": 5,
+    "strength": 6,
+    "attackSpeed": 3,
+    "respawnTime": 25,
+    "aggressive": true,
+    "wanderRange": 4,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 20,
+        "quantity": 1,
+        "chance": 0.5
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "name": "Skeleton",
+    "health": 30,
+    "attack": 10,
+    "defence": 8,
+    "strength": 9,
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": true,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 15,
+        "chance": 0.7
+      },
+      {
+        "itemId": 5,
+        "quantity": 1,
+        "chance": 0.08
+      },
+      {
+        "itemId": 9,
+        "quantity": 1,
+        "chance": 0.1
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "name": "Spider",
+    "health": 12,
+    "attack": 3,
+    "defence": 2,
+    "strength": 3,
+    "attackSpeed": 3,
+    "respawnTime": 18,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 10,
+        "quantity": 4,
+        "chance": 0.3
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "name": "Guard",
+    "health": 40,
+    "attack": 12,
+    "defence": 10,
+    "strength": 10,
+    "attackSpeed": 4,
+    "respawnTime": 50,
+    "aggressive": false,
+    "wanderRange": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 20,
+        "chance": 1
+      },
+      {
+        "itemId": 16,
+        "quantity": 1,
+        "chance": 0.05
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "name": "Shopkeeper",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
     "lootTable": [],
     "shop": {
       "name": "General Store",
       "items": [
-        { "itemId": 13, "price": 5, "stock": 10 },
-        { "itemId": 12, "price": 10, "stock": 5 },
-        { "itemId": 15, "price": 12, "stock": 5 },
-        { "itemId": 28, "price": 10, "stock": 5 },
-        { "itemId": 31, "price": 20, "stock": 3 },
-        { "itemId": 33, "price": 20, "stock": 3 }
+        {
+          "itemId": 13,
+          "price": 5,
+          "stock": 10
+        },
+        {
+          "itemId": 12,
+          "price": 10,
+          "stock": 5
+        },
+        {
+          "itemId": 15,
+          "price": 12,
+          "stock": 5
+        },
+        {
+          "itemId": 28,
+          "price": 10,
+          "stock": 5
+        },
+        {
+          "itemId": 31,
+          "price": 20,
+          "stock": 3
+        },
+        {
+          "itemId": 33,
+          "price": 20,
+          "stock": 3
+        },
+        {
+          "itemId": 52,
+          "price": 5,
+          "stock": 8
+        }
       ]
     },
     "dialogue": {
@@ -33,70 +278,261 @@
       "nodes": {
         "greet": {
           "id": "greet",
-          "lines": ["Welcome to my shop, traveler!", "What can I do for you today?"],
+          "lines": [
+            "Welcome to my shop, traveler!",
+            "What can I do for you today?"
+          ],
           "options": [
-            { "label": "Show me what you've got.", "action": { "type": "openShop" } },
-            { "label": "Tell me about this place.", "next": "lore" },
-            { "label": "Goodbye." }
+            {
+              "label": "Show me what you've got.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Tell me about this place.",
+              "next": "lore"
+            },
+            {
+              "label": "Goodbye."
+            }
           ]
         },
         "lore": {
           "id": "lore",
-          "lines": ["This little shop has been in my family for three generations.", "We sell mostly basics — tools, fishing gear, the odd bit of armor."],
+          "lines": [
+            "This little shop has been in my family for three generations.",
+            "A lot of inexperienced travelers tend to come around these parts. I keep a lot of stuff people would consider basic."
+          ],
           "options": [
-            { "label": "Show me the wares.", "action": { "type": "openShop" } },
-            { "label": "Back.", "next": "greet" }
+            {
+              "label": "Show me your wares.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Back.",
+              "next": "greet"
+            }
           ]
         }
       }
     }
   },
-  { "id": 9, "name": "Dark Knight", "health": 60, "attack": 18, "defence": 15, "strength": 16, "attackSpeed": 5, "respawnTime": 60, "aggressive": true, "wanderRange": 3,
-    "lootTable": [{ "itemId": 20, "quantity": 1, "chance": 1.0 }, { "itemId": 10, "quantity": 40, "chance": 1.0 }, { "itemId": 6, "quantity": 1, "chance": 0.1 }, { "itemId": 17, "quantity": 1, "chance": 0.06 }, { "itemId": 22, "quantity": 1, "chance": 0.03 }] },
-  { "id": 11, "name": "Weapon Smith", "health": 50, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 100, "aggressive": false, "wanderRange": 1,
+  {
+    "id": 9,
+    "name": "Dark Knight",
+    "health": 60,
+    "attack": 18,
+    "defence": 15,
+    "strength": 16,
+    "attackSpeed": 5,
+    "respawnTime": 60,
+    "aggressive": true,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 20,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 40,
+        "chance": 1
+      },
+      {
+        "itemId": 6,
+        "quantity": 1,
+        "chance": 0.1
+      },
+      {
+        "itemId": 17,
+        "quantity": 1,
+        "chance": 0.06
+      },
+      {
+        "itemId": 22,
+        "quantity": 1,
+        "chance": 0.03
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "name": "Weapon Smith",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
     "lootTable": [],
     "shop": {
       "name": "Weapon Shop",
       "items": [
-        { "itemId": 2, "price": 20, "stock": 5 },
-        { "itemId": 3, "price": 30, "stock": 5 },
-        { "itemId": 5, "price": 75, "stock": 3 },
-        { "itemId": 6, "price": 120, "stock": 2 },
-        { "itemId": 31, "price": 20, "stock": 5 },
-        { "itemId": 32, "price": 65, "stock": 3 }
+        {
+          "itemId": 2,
+          "price": 20,
+          "stock": 5
+        },
+        {
+          "itemId": 3,
+          "price": 30,
+          "stock": 5
+        },
+        {
+          "itemId": 5,
+          "price": 75,
+          "stock": 3
+        },
+        {
+          "itemId": 6,
+          "price": 120,
+          "stock": 2
+        },
+        {
+          "itemId": 31,
+          "price": 20,
+          "stock": 5
+        },
+        {
+          "itemId": 32,
+          "price": 65,
+          "stock": 3
+        }
       ]
-    } },
-  { "id": 12, "name": "Armorer", "health": 50, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 100, "aggressive": false, "wanderRange": 1,
+    }
+  },
+  {
+    "id": 12,
+    "name": "Armorer",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
     "lootTable": [],
     "shop": {
       "name": "Armor Shop — Head & Body",
       "items": [
-        { "itemId": 9, "price": 20, "stock": 5 },
-        { "itemId": 18, "price": 40, "stock": 3 },
-        { "itemId": 7, "price": 35, "stock": 5 },
-        { "itemId": 17, "price": 95, "stock": 2 }
+        {
+          "itemId": 9,
+          "price": 20,
+          "stock": 5
+        },
+        {
+          "itemId": 18,
+          "price": 40,
+          "stock": 3
+        },
+        {
+          "itemId": 7,
+          "price": 35,
+          "stock": 5
+        },
+        {
+          "itemId": 17,
+          "price": 95,
+          "stock": 2
+        }
       ]
-    } },
-  { "id": 13, "name": "Leg Armorer", "health": 50, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 100, "aggressive": false, "wanderRange": 1,
+    }
+  },
+  {
+    "id": 13,
+    "name": "Leg Armorer",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
     "lootTable": [],
     "shop": {
       "name": "Armor Shop — Legs",
       "items": [
-        { "itemId": 8, "price": 25, "stock": 5 },
-        { "itemId": 21, "price": 60, "stock": 3 }
+        {
+          "itemId": 8,
+          "price": 25,
+          "stock": 5
+        },
+        {
+          "itemId": 21,
+          "price": 60,
+          "stock": 3
+        }
       ]
-    } },
-  { "id": 14, "name": "Shield Smith", "health": 50, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 100, "aggressive": false, "wanderRange": 1,
+    }
+  },
+  {
+    "id": 14,
+    "name": "Shield Smith",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
     "lootTable": [],
     "shop": {
       "name": "Armor Shop — Shields",
       "items": [
-        { "itemId": 4, "price": 25, "stock": 5 },
-        { "itemId": 16, "price": 60, "stock": 3 }
+        {
+          "itemId": 4,
+          "price": 25,
+          "stock": 5
+        },
+        {
+          "itemId": 16,
+          "price": 60,
+          "stock": 3
+        }
       ]
-    } },
-  { "id": 15, "name": "Camel", "health": 20, "attack": 3, "defence": 3, "strength": 3, "attackSpeed": 5, "respawnTime": 25, "aggressive": false, "wanderRange": 4,
-    "lootTable": [{ "itemId": 1, "quantity": 1, "chance": 1.0 }] },
-  { "id": 16, "name": "Banker", "health": 50, "attack": 1, "defence": 1, "strength": 1, "attackSpeed": 4, "respawnTime": 100, "aggressive": false, "wanderRange": 0,
-    "bankAccess": true, "stationary": true, "lootTable": [] }
+    }
+  },
+  {
+    "id": 15,
+    "name": "Camel",
+    "health": 20,
+    "attack": 3,
+    "defence": 3,
+    "strength": 3,
+    "attackSpeed": 5,
+    "respawnTime": 25,
+    "aggressive": false,
+    "wanderRange": 4,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      }
+    ]
+  },
+  {
+    "id": 16,
+    "name": "Banker",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "bankAccess": true,
+    "stationary": true,
+    "lootTable": []
+  }
 ]

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -232,9 +232,8 @@ export class World {
         obj.depleted = true;
         obj.respawnTimer = ticksRemaining;
         this.depletedObjectIds.add(obj.id);
-        // Unblock tiles so paths aren't snagged on a node that's currently
-        // depleted (mirrors the depletion site's tile-clear logic).
-        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, false);
+        // Tiles stay blocked — depleted ores/stumps still physically occupy
+        // their tile. Mirrors the depletion-site policy below.
         restored++;
       }
       if (restored > 0) console.log(`Restored ${restored} persisted object respawn timer(s)`);
@@ -297,7 +296,7 @@ export class World {
       const effDialogue = spawn.dialogue ?? npcDef.dialogue ?? null;
       const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange,
         spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null,
-        effShop, effDialogue);
+        effShop, effDialogue, spawn.name ?? null);
       npc.currentMapLevel = mapId;
       this.npcs.set(npc.id, npc);
       cm.addEntity(npc.id, spawn.x, spawn.z);
@@ -471,6 +470,7 @@ export class World {
           spawn.aggressive ?? null,
           effShop,
           effDialogue,
+          spawn.name ?? null,
         );
         npc.currentMapLevel = mapId;
         this.npcs.set(npc.id, npc);
@@ -1067,6 +1067,35 @@ export class World {
     });
   }
 
+  /** True when any player currently has a dialogue or shop open with this
+   *  NPC. Used by tickNpcAI to freeze wandering — without this, walk-anim
+   *  movement on the client overrides the NPC_FACING rotation we set on
+   *  talk-to, so the NPC visibly looks away mid-conversation. Combat-only
+   *  NPCs are excluded by the caller's pre-check on hasDialogue/hasShop. */
+  private npcHasInteractionAudience(npc: Npc): boolean {
+    for (const [, player] of this.players) {
+      if (player.openDialogueState?.npcEntityId === npc.id) return true;
+      // openShopNpcId is keyed by def id, not entity id — two NPCs of the
+      // same def in the same area would both freeze when one is shopped at,
+      // which is acceptable (rare, and the wrong-direction facing risk is
+      // worse than the standing-still cost).
+      if (player.openShopNpcId === npc.npcId && player.currentMapLevel === npc.currentMapLevel) return true;
+    }
+    return false;
+  }
+
+  /** Broadcast NPC_FACING to every nearby viewer so they see the NPC turn.
+   *  dx/dz is the direction the NPC should face (from NPC toward target).
+   *  Quantizes to 3 decimals of radians (multiply by 1000) so atan2's
+   *  ±π fits comfortably in an int16. No-op when the direction is zero
+   *  (same tile, undefined yaw). */
+  private broadcastNpcFacing(npc: Npc, dx: number, dz: number): void {
+    if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
+    const angle = Math.atan2(dx, dz);
+    const q = Math.round(angle * 1000);
+    this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.NPC_FACING, npc.id, q);
+  }
+
   /** Call fn for each player near a world position on a given map (zero-allocation) */
   private forEachPlayerNear(mapId: string, worldX: number, worldZ: number, fn: (p: Player) => void): void {
     const cm = this.chunkManagers.get(mapId);
@@ -1106,6 +1135,7 @@ export class World {
     if (player) {
       player.attackTarget = null;
       player.pendingInteraction = null;
+      player.pendingTalkNpcId = -1;
     }
     for (const [, npc] of this.npcs) {
       if (npc.combatTarget && (npc.combatTarget as any).id === playerId) {
@@ -1166,6 +1196,7 @@ export class World {
     this.clearCombatTarget(playerId);
     player.attackTarget = null;
     player.pendingInteraction = null;
+    player.pendingTalkNpcId = -1;
     this.cancelSkilling(playerId);
     // Walking auto-closes any open modal interface (bank/trade) — mirrors
     // RS2 behavior where moving aborts the current dialog.
@@ -1277,6 +1308,10 @@ export class World {
 
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
+    // Face the attacker — 2004scape NPC.faceEntity. The combat loop
+    // continues to update this naturally if the player moves, since the
+    // hit broadcast carries the attacker's tile.
+    this.broadcastNpcFacing(npc, -dx, -dz);
     const dist = Math.sqrt(dx * dx + dz * dz);
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
@@ -1331,7 +1366,27 @@ export class World {
     // (3,0) cardinal would be rejected (dist 3.001) — subtle inconsistency.
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
-    if (Math.max(Math.abs(dx), Math.abs(dz)) > 3) return;
+    // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
+    // queue pendingTalkNpcId; the player tick loop fires it once the player
+    // walks within NPC_INTERACTION_RANGE.
+    if (Math.max(Math.abs(dx), Math.abs(dz)) > NPC_INTERACTION_RANGE) {
+      player.pendingTalkNpcId = npcEntityId;
+      return;
+    }
+    player.pendingTalkNpcId = -1;
+
+    // Turn the NPC to face the player on interaction (2004scape NPC.faceEntity
+    // semantics). Direction goes from NPC → player so atan2 produces the yaw
+    // the NPC needs to look the player's way.
+    this.broadcastNpcFacing(npc, -dx, -dz);
+
+    // NPCs introduce themselves in chat instead of carrying a head label.
+    // Only for dialogue-less NPCs — when there's a dialogue, the panel
+    // itself shows the speaker name on every line, so a chat intro would
+    // be redundant. Same for the shop title (already shows the name).
+    if (!npc.hasDialogue && !npc.hasShop) {
+      this.sendChatSystem(player, `${npc.displayName}: Greetings, traveler.`);
+    }
 
     // Priority: dialogue > shop > bank. A dialogue tree can itself open the
     // shop or bank via DialogueAction, so authoring a dialogue-wrapped
@@ -1383,7 +1438,7 @@ export class World {
     const { layout, ...wireNode } = node;
     void layout;
     const payload = JSON.stringify({
-      speaker: wireNode.speaker ?? npc.def.name,
+      speaker: wireNode.speaker ?? npc.displayName,
       lines: wireNode.lines,
       options: wireNode.options.map(o => ({ label: o.label })),
     });
@@ -2888,6 +2943,19 @@ export class World {
           }
         }
       }
+      // Deferred Talk-to fires once the walk has drained. Mid-walk firing
+      // would open the dialogue while the character is still striding;
+      // waiting matches RS2. If the path drained without reaching range
+      // (blocked, NPC wandered), drop the intent — user re-clicks.
+      if (player.pendingTalkNpcId >= 0 && player.moveQueue.length === 0) {
+        const id = player.pendingTalkNpcId;
+        player.pendingTalkNpcId = -1;
+        const targetNpc = this.npcs.get(id);
+        const inRange = targetNpc && !targetNpc.dead
+          && targetNpc.currentMapLevel === player.currentMapLevel
+          && Math.max(Math.abs(targetNpc.position.x - player.position.x), Math.abs(targetNpc.position.y - player.position.y)) <= NPC_INTERACTION_RANGE;
+        if (inRange) this.handlePlayerTalkNpc(playerId, id);
+      }
     }
   }
 
@@ -2932,12 +3000,21 @@ export class World {
         }
       }
 
-      const mapId = npc.currentMapLevel;
-      const npcBlocked = (x: number, z: number) =>
-        map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z));
-      const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
-        map.findPathForNpc(sx, sz, gx, gz, npcBlocked);
-      npc.processAI(npcBlocked, map.isWallBlockedCb, npcFindPath);
+      // Freeze AI while a player has a dialogue / shop open against this NPC
+      // — wander movement re-fires updateMovementDirection on the client and
+      // overrides the NPC_FACING rotation. Cheap O(1) gate via the def flags
+      // before the O(players) audience scan; combat-only NPCs skip both.
+      const canHaveAudience = npc.hasDialogue || npc.hasShop || npc.hasBank;
+      if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
+        npc.pathQueue.length = 0;
+      } else {
+        const mapId = npc.currentMapLevel;
+        const npcBlocked = (x: number, z: number) =>
+          map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z));
+        const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
+          map.findPathForNpc(sx, sz, gx, gz, npcBlocked);
+        npc.processAI(npcBlocked, map.isWallBlockedCb, npcFindPath);
+      }
 
       const cm = this.chunkManagers.get(npc.currentMapLevel);
       if (cm) cm.updateEntity(npc.id, npc.position.x, npc.position.y);
@@ -3239,7 +3316,8 @@ export class World {
           // across restarts (within the remaining timer window). On boot we
           // convert this back into a tick countdown.
           this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
-          this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, false);
+          // Depleted rocks + tree stumps remain blocking — walking through
+          // a visible stump looks broken. No tile-clear on deplete.
           this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
           this.stopPlayerSkilling(playerId, player);
         } else {
@@ -3413,6 +3491,7 @@ export class World {
     player.moveQueue = [];
     player.attackTarget = null;
     player.pendingInteraction = null;
+    player.pendingTalkNpcId = -1;
     player.pendingPickup = -1;
     player.attackCooldown = 0;
     player.delayedUntilTick = 0;
@@ -3887,6 +3966,12 @@ export class World {
     const flags = npc.interactionFlags();
     if (flags !== 0) {
       this.sendToPlayer(viewer, ServerOpcode.NPC_INTERACTIONS, npc.id, flags);
+    }
+    // Custom per-spawn display name. Most NPCs don't have one — skip the
+    // packet so we're not spamming the wire with default names.
+    if (npc.nameOverride) {
+      const packet = encodeStringPacket(ServerOpcode.NPC_NAME, npc.nameOverride, npc.id);
+      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     }
   }
 

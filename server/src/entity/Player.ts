@@ -82,6 +82,10 @@ export class Player extends Entity {
    *  Cleared in the same lifecycle hooks as openShopNpcId (movement, transition,
    *  death, disconnect). */
   openDialogueState: { npcEntityId: number; nodeId: string } | null = null;
+  /** Talk-to-NPC intent held while the player walks into range. Fires from
+   *  the tick loop once moveQueue drains and Chebyshev distance is within
+   *  NPC_INTERACTION_RANGE. Cleared on movement redirect, death, disconnect. */
+  pendingTalkNpcId: number = -1;
   /** World tick on which this player last consumed a movement waypoint. Used
    *  to defer adjacency-triggered actions (interact/pickup) by one tick when
    *  the player just arrived — gives the client's smooth visual interpolation

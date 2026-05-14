@@ -31,3 +31,10 @@ export const EDITOR_CHUNK_SIZE = 64;
  *  57-bone meshes is tight; LOD is the cheap win. */
 export const NPC_3D_LOD_DISTANCE = 15;
 export const MAX_3D_NPCS_VISIBLE = 8;
+
+/** Chebyshev range (in tiles) at which a Talk-to / interaction packet fires.
+ *  Set to 2 rather than 1 so a 1-tile client/server divergence (typical
+ *  during a walk tick) doesn't cause "I'm clearly next to them" clicks to
+ *  defer for an extra tick. The deferred-talk drain on the server uses the
+ *  same range. */
+export const NPC_INTERACTION_RANGE = 2;

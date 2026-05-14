@@ -300,6 +300,10 @@ export interface SpawnEntry {
   x: number;
   z: number;
   wanderRange?: number;
+  /** Per-spawn display name override. When set, the editor + in-world UI
+   *  use this instead of the NpcDef's name — so a single "Guard" def can
+   *  spawn as "Captain Smith", "Sergeant Vex", etc. */
+  name?: string;
   /** Per-spawn aggression override. When omitted, the NpcDef's `aggressive`
    *  flag is used. When set on the spawn, it overrides the def — so a single
    *  map can have a "hostile" Goblin in one biome and a "tame" Goblin in

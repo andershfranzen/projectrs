@@ -253,7 +253,7 @@ function tuneModelLighting(model) {
   let selectedNpcSpawn = null
   const npcSpawnGroup = new TransformNode('npcSpawnGroup', scene)
 
-  function addNpcSpawn(npcId, x, z, wanderRange, id, aggressive, appearance, equipment, shop, dialogue) {
+  function addNpcSpawn(npcId, x, z, wanderRange, id, aggressive, appearance, equipment, shop, dialogue, name) {
     const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: aggressive ?? null }
     // Optional per-spawn overrides — only set if provided so a fresh spawn
     // doesn't carry empty {} that would falsely flag the override toggles.
@@ -261,6 +261,7 @@ function tuneModelLighting(model) {
     if (equipment) spawn.equipment = equipment
     if (shop) spawn.shop = shop
     if (dialogue) spawn.dialogue = dialogue
+    if (name) spawn.name = name
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
     return spawn
@@ -391,6 +392,7 @@ function tuneModelLighting(model) {
       if (Array.isArray(s.equipment) && s.equipment.length === 10) out.equipment = s.equipment
       if (s.shop) out.shop = s.shop
       if (s.dialogue) out.dialogue = s.dialogue
+      if (s.name) out.name = s.name
       return out
     })
   }
@@ -411,6 +413,7 @@ function tuneModelLighting(model) {
         s.equipment,
         s.shop,
         s.dialogue,
+        s.name,
       )
     }
     rebuildNpcSpawnMeshes()
@@ -517,7 +520,9 @@ function tuneModelLighting(model) {
     listEl.innerHTML = ''
     for (const spawn of npcSpawns) {
       const def = npcDefs.find(d => d.id === spawn.npcId)
-      const name = def?.name || `NPC ${spawn.npcId}`
+      // Per-spawn name takes precedence in the list so renamed NPCs are
+      // easy to spot among generic ones.
+      const name = spawn.name || def?.name || `NPC ${spawn.npcId}`
       const row = document.createElement('div')
       row.style.cssText = `display:flex;justify-content:space-between;align-items:center;padding:3px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;${spawn === selectedNpcSpawn ? 'background:#1a4faf;' : 'background:#222;'}`
       row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}</span></span>`
@@ -1373,7 +1378,7 @@ let paintBrushRadius = 1
            def-level field. POSTs the full npcDefs array to /api/editor/npcs;
            server snapshots the previous file and hot-reloads. -->
       <div style="display:flex;gap:5px;margin-top:10px;border-top:1px solid #444;padding-top:8px;">
-        <button id="saveNpcDefsBtn" disabled style="flex:2;font-size:11px;padding:5px;background:#2a4a2a;color:#aaa;cursor:not-allowed;border:1px solid #444;">Save NPC defs</button>
+        <button id="saveNpcDefsBtn" style="flex:2;font-size:11px;padding:5px;background:#3a6c3a;color:#fff;cursor:pointer;border:1px solid #555;">Save NPC defs</button>
         <span id="saveNpcDefsStatus" style="flex:1;align-self:center;font-size:10px;color:#888;text-align:right;"></span>
       </div>
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;border-top:1px solid #444;padding-top:8px;">Spawns <span id="npcSpawnCount">0</span></div>
@@ -1549,26 +1554,20 @@ let paintBrushRadius = 1
     return npcDefs.find(d => d.id === selectedNpcSpawn.npcId) || null
   }
 
+  // The Save NPC defs button is always clickable; `npcDefsDirty` is kept as a
+  // hint so Save Server can skip a redundant defs POST when nothing changed.
+  // We deliberately don't grey out the button — it's hard for the user to
+  // know which tabs dirty defs (Stats/Shop/Dialogue) vs which only edit
+  // per-spawn data (Look/Gear/Spawn), and a no-op save is idempotent
+  // server-side (atomic write + identical content).
   function markDefsDirty() {
     npcDefsDirty = true
-    const btn = sidebar.querySelector('#saveNpcDefsBtn')
-    if (btn) {
-      btn.disabled = false
-      btn.style.background = '#3a6c3a'
-      btn.style.color = '#fff'
-      btn.style.cursor = 'pointer'
-    }
+    const status = sidebar.querySelector('#saveNpcDefsStatus')
+    if (status && !status.textContent) status.textContent = 'unsaved'
   }
 
   function clearDefsDirty(statusText) {
     npcDefsDirty = false
-    const btn = sidebar.querySelector('#saveNpcDefsBtn')
-    if (btn) {
-      btn.disabled = true
-      btn.style.background = '#2a4a2a'
-      btn.style.color = '#aaa'
-      btn.style.cursor = 'not-allowed'
-    }
     const status = sidebar.querySelector('#saveNpcDefsStatus')
     if (status) {
       status.textContent = statusText || ''
@@ -1581,6 +1580,44 @@ let paintBrushRadius = 1
   function fetchItemDefsOnce() {
     if (itemDefs.length > 0) return Promise.resolve(itemDefs)
     return loadItemDefs().then(() => itemDefs).catch(() => [])
+  }
+
+  /** Shared datalist used by every shop-row item picker. One node appended to
+   *  the body — referenced via `list="shopItemDatalist"` on each input. Built
+   *  once when itemDefs first loads; rebuilt only if the def set changes. */
+  function ensureShopItemDatalist() {
+    let dl = document.getElementById('shopItemDatalist')
+    if (dl && dl.childElementCount === itemDefs.length) return  // already in sync
+    if (!dl) {
+      dl = document.createElement('datalist')
+      dl.id = 'shopItemDatalist'
+      document.body.appendChild(dl)
+    }
+    dl.innerHTML = ''
+    // Sort by name so the dropdown is alphabetic — typing 'dagger' surfaces
+    // every dagger tier in one block.
+    const sorted = [...itemDefs].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    for (const d of sorted) {
+      const opt = document.createElement('option')
+      opt.value = `${d.name} (${d.id})`
+      dl.appendChild(opt)
+    }
+  }
+
+  /** Parse the displayed value back to an item id. Accepts the canonical
+   *  "ItemName (NN)" form, a bare integer (so power users can still type
+   *  IDs), or returns 0 for an empty / unparseable value. */
+  function parseItemIdFromDisplay(value) {
+    if (!value) return 0
+    const tail = value.match(/\((\d+)\)\s*$/)
+    if (tail) return parseInt(tail[1])
+    const n = parseInt(value)
+    return Number.isFinite(n) ? n : 0
+  }
+
+  function formatItemDisplay(id) {
+    const def = itemDefs.find(d => d.id === id)
+    return def ? `${def.name} (${def.id})` : (id > 0 ? String(id) : '')
   }
 
   fetch('/data/npcs.json')
@@ -1620,9 +1657,10 @@ let paintBrushRadius = 1
     })
   }
 
-  // Save NPC defs → POST /api/editor/npcs
+  // Save NPC defs → POST /api/editor/npcs.
+  // Always-clickable: even with no in-session edits, this writes the current
+  // npcDefs back to disk (server side is idempotent: atomic write + snapshot).
   sidebar.querySelector('#saveNpcDefsBtn')?.addEventListener('click', async () => {
-    if (!npcDefsDirty) return
     const status = sidebar.querySelector('#saveNpcDefsStatus')
     if (status) status.textContent = 'saving…'
     try {
@@ -1679,8 +1717,13 @@ let paintBrushRadius = 1
     const aggressiveEffective = spawn
       ? (spawn.aggressive === true || spawn.aggressive === false ? spawn.aggressive : !!def?.aggressive)
       : !!def?.aggressive
+    const nameValue = spawn?.name ?? ''
+    const defName = def?.name ?? ''
     root.innerHTML = `
-      <label style="font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">${wander}</span></label>
+      <label style="font-size:11px;color:rgba(255,255,255,0.45);">Name (override)</label>
+      <input id="spawnNameInput" type="text" value="${nameValue.replace(/"/g, '&quot;')}" placeholder="${defName.replace(/"/g, '&quot;') || 'defaults to NPC type name'}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'} />
+      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Per-spawn name. Leave blank to inherit "${defName}".</div>
+      <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">${wander}</span></label>
       <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="${wander}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
       <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);display:flex;align-items:center;gap:6px;cursor:pointer;">
         <input id="aggressiveCheckbox" type="checkbox" ${aggressiveEffective ? 'checked' : ''} ${spawn ? '' : 'disabled'} />
@@ -1691,6 +1734,16 @@ let paintBrushRadius = 1
         Click empty tile to place · Shift+click to remove.
       </div>
     `
+    root.querySelector('#spawnNameInput')?.addEventListener('input', (e) => {
+      if (selectedNpcSpawn) {
+        const v = e.target.value.trim()
+        // Empty string → drop the override so serializeNpcSpawns omits the
+        // field and the runtime falls back to def.name.
+        if (v) selectedNpcSpawn.name = v
+        else delete selectedNpcSpawn.name
+        refreshNpcSpawnList()
+      }
+    })
     root.querySelector('#wanderRangeSlider')?.addEventListener('input', (e) => {
       root.querySelector('#wanderRangeLabel').textContent = e.target.value
       if (selectedNpcSpawn) {
@@ -1746,7 +1799,13 @@ let paintBrushRadius = 1
       </label>
     `
     for (const input of root.querySelectorAll('[data-def-key]')) {
-      input.addEventListener('change', () => {
+      // 'input' fires every keystroke; 'change' only fires on blur for
+      // number/text. Using 'input' makes the Save NPC defs button light up
+      // the moment the user starts typing so it's obvious there are unsaved
+      // changes. Checkboxes only fire 'change' (no 'input'), so listen to
+      // both — 'change' covers checkbox; 'input' covers everything else.
+      const evt = input.type === 'checkbox' ? 'change' : 'input'
+      input.addEventListener(evt, () => {
         const key = input.dataset.defKey
         if (input.type === 'checkbox') {
           def[key] = input.checked
@@ -1997,47 +2056,112 @@ let paintBrushRadius = 1
     })
     root.appendChild(nameRow)
 
-    // Items table
+    // Items list — two rows per item to fit the narrow sidebar without
+    // truncating item names. Row 1: searchable item picker + delete; row 2:
+    // labelled Price + Stock inputs.
     const items = target.items || (target.items = [])
-    const table = document.createElement('div')
-    table.style.cssText = 'border:1px solid #333;border-radius:3px;padding:4px;background:#161616;'
-    const headerRow = document.createElement('div')
-    headerRow.style.cssText = 'display:flex;gap:4px;font-size:10px;color:#888;padding:2px 4px;'
-    headerRow.innerHTML = `<span style="flex:2;">Item</span><span style="flex:1;">Price</span><span style="flex:1;">Stock</span><span style="width:20px;"></span>`
-    table.appendChild(headerRow)
+    const list = document.createElement('div')
+    list.style.cssText = 'border:1px solid #333;border-radius:3px;padding:6px;background:#161616;max-height:60vh;overflow-y:auto;'
+
+    const needsItemDefs = itemDefs.length === 0
+    if (needsItemDefs) {
+      // Item picker autocomplete depends on the datalist; show a brief
+      // placeholder while items.json loads, then re-render with full UX.
+      const loading = document.createElement('div')
+      loading.style.cssText = 'font-size:11px;color:#888;text-align:center;padding:8px;'
+      loading.textContent = 'Loading item list…'
+      list.appendChild(loading)
+      root.appendChild(list)
+      fetchItemDefsOnce().then(() => {
+        ensureShopItemDatalist()
+        renderShopTab(root, def)
+      })
+      return
+    }
+    ensureShopItemDatalist()
+
     for (let i = 0; i < items.length; i++) {
       const idx = i
       const item = items[i]
-      const row = document.createElement('div')
-      row.style.cssText = 'display:flex;gap:4px;margin-top:3px;'
-      row.innerHTML = `
-        <input type="number" min="0" value="${item.itemId}" style="flex:2;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
-        <input type="number" min="0" value="${item.price}" style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
-        <input type="number" min="0" value="${item.stock}" style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
-        <button style="width:20px;background:#6c2a2a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">×</button>
-      `
-      const inputs = row.querySelectorAll('input')
-      inputs[0].addEventListener('change', (e) => { items[idx].itemId = parseInt(e.target.value) || 0; if (!targetIsOverride) markDefsDirty() })
-      inputs[1].addEventListener('change', (e) => { items[idx].price = parseInt(e.target.value) || 0; if (!targetIsOverride) markDefsDirty() })
-      inputs[2].addEventListener('change', (e) => { items[idx].stock = parseInt(e.target.value) || 0; if (!targetIsOverride) markDefsDirty() })
-      row.querySelector('button').addEventListener('click', () => {
+      const entry = document.createElement('div')
+      entry.style.cssText = `display:flex;flex-direction:column;gap:3px;padding:4px;margin-bottom:4px;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:3px;`
+
+      // Row 1: item picker + delete
+      const row1 = document.createElement('div')
+      row1.style.cssText = 'display:flex;gap:4px;align-items:center;'
+      const itemInput = document.createElement('input')
+      itemInput.type = 'text'
+      itemInput.setAttribute('list', 'shopItemDatalist')
+      itemInput.placeholder = 'Search item name or ID'
+      itemInput.value = formatItemDisplay(item.itemId)
+      itemInput.style.cssText = 'flex:1;min-width:0;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;'
+      const delBtn = document.createElement('button')
+      delBtn.textContent = '×'
+      delBtn.title = 'Remove item'
+      delBtn.style.cssText = 'flex:0 0 auto;width:22px;height:22px;background:#6c2a2a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:13px;line-height:1;'
+      row1.appendChild(itemInput)
+      row1.appendChild(delBtn)
+
+      // Row 2: Price + Stock
+      const row2 = document.createElement('div')
+      row2.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:10px;color:rgba(255,255,255,0.55);'
+      const priceInput = document.createElement('input')
+      priceInput.type = 'number'
+      priceInput.min = '0'
+      priceInput.value = String(item.price)
+      priceInput.style.cssText = 'width:56px;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;'
+      const stockInput = document.createElement('input')
+      stockInput.type = 'number'
+      stockInput.min = '0'
+      stockInput.value = String(item.stock)
+      stockInput.style.cssText = 'width:56px;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;'
+      row2.innerHTML = '<span>Price</span>'
+      row2.appendChild(priceInput)
+      const stockLbl = document.createElement('span')
+      stockLbl.textContent = 'Stock'
+      stockLbl.style.marginLeft = '6px'
+      row2.appendChild(stockLbl)
+      row2.appendChild(stockInput)
+
+      // Wiring
+      const dirty = () => { if (!targetIsOverride) markDefsDirty() }
+      itemInput.addEventListener('change', () => {
+        const id = parseItemIdFromDisplay(itemInput.value)
+        items[idx].itemId = id
+        // Normalize the display back to canonical "Name (ID)" so an ID-only
+        // entry gets its name filled in, and an unresolvable string visibly
+        // resets to the raw ID instead of looking valid.
+        itemInput.value = formatItemDisplay(id)
+        const recognised = itemDefs.some(d => d.id === id)
+        itemInput.style.borderColor = (id > 0 && recognised) ? '#444' : '#aa5544'
+        dirty()
+      })
+      priceInput.addEventListener('change', () => { items[idx].price = parseInt(priceInput.value) || 0; dirty() })
+      stockInput.addEventListener('change', () => { items[idx].stock = parseInt(stockInput.value) || 0; dirty() })
+      delBtn.addEventListener('click', () => {
         items.splice(idx, 1)
-        if (!targetIsOverride) markDefsDirty()
+        dirty()
         renderShopTab(root, def)
       })
-      table.appendChild(row)
+
+      entry.appendChild(row1)
+      entry.appendChild(row2)
+      list.appendChild(entry)
     }
-    root.appendChild(table)
+    root.appendChild(list)
+
     const addBtn = document.createElement('button')
     addBtn.textContent = '+ Add item'
-    addBtn.style.cssText = 'width:100%;margin-top:6px;font-size:11px;padding:5px;background:#2a3a4a;color:#fff;border:1px solid #555;border-radius:3px;cursor:pointer;'
+    addBtn.style.cssText = 'width:100%;margin-top:6px;font-size:11px;padding:6px;background:#2a3a4a;color:#fff;border:1px solid #555;border-radius:3px;cursor:pointer;'
     addBtn.addEventListener('click', () => {
-      items.push({ itemId: 1, price: 1, stock: 1 })
+      // Default to itemId 0 so the user immediately sees the empty picker and
+      // knows they need to choose one. The validation border (#aa5544) makes
+      // unset rows visually loud.
+      items.push({ itemId: 0, price: 1, stock: 1 })
       if (!targetIsOverride) markDefsDirty()
       renderShopTab(root, def)
     })
     root.appendChild(addBtn)
-    fetchItemDefsOnce().then(() => { /* future: replace itemId inputs with searchable dropdown */ })
   }
 
   function renderDialogueTab(root, def) {
@@ -5643,6 +5767,35 @@ function applyToolAtTile(tile, eventLike = null) {
     if (!mapId) return
     if (!confirm(`Overwrite "${mapId}" on the game server?`)) return
 
+    // If the inspector has unsaved NPC-def edits (stats / shared shop /
+    // shared dialogue), flush them first. The map save endpoint only writes
+    // spawns.json + map data; without this, a single "Save Server" click
+    // silently loses every def-level edit since the last explicit "Save NPC
+    // defs". Per-spawn overrides go through with the map save below.
+    if (npcDefsDirty) {
+      statusText.textContent = 'Saving NPC defs…'
+      try {
+        const r = await fetch('/api/editor/npcs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ npcs: npcDefs }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (r.ok && body.ok) {
+          clearDefsDirty('NPC defs saved ✓')
+        } else {
+          // Abort — proceeding would land a half-save where the map was
+          // written but the defs weren't, leaving the editor and live world
+          // inconsistent.
+          statusText.textContent = `NPC defs save failed: ${body.error || 'unknown'}`
+          return
+        }
+      } catch (err) {
+        statusText.textContent = `NPC defs save network error: ${err.message}`
+        return
+      }
+    }
+
     const saveData = buildSaveData()
     const meta = {
       id: mapId,
@@ -5657,14 +5810,12 @@ function applyToolAtTile(tile, eventLike = null) {
       transitions: []
     }
 
-    // Build spawns from editor NPC + item spawns. `aggressive` is only emitted
-    // when explicitly overridden — null/undefined means "use NpcDef default".
+    // Build spawns via the shared serializer so per-spawn overrides
+    // (appearance, equipment, shop, dialogue) round-trip — the previous
+    // inline mapper was silently dropping every override field besides
+    // wanderRange + aggressive.
     const spawns = {
-      npcs: npcSpawns.map(s => {
-        const out = { npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange }
-        if (s.aggressive === true || s.aggressive === false) out.aggressive = s.aggressive
-        return out
-      }),
+      npcs: serializeNpcSpawns(),
       objects: [],
       items: itemSpawns.map(s => ({ itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity }))
     }

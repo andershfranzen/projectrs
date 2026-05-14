@@ -142,6 +142,16 @@ export enum ServerOpcode {
    *  when available, or 0. Broadcast on animation changes and chunk-entry
    *  resync so other clients see skilling/combat animations. */
   PLAYER_ANIMATION = 79,
+  /** Per-spawn name override. String packet — display name string followed
+   *  by [npcEntityId]. Sent on chunk-entry only for spawns with a custom
+   *  spawn.name; absent → client falls back to NPC_NAMES[defId]. */
+  NPC_NAME = 84,
+  /** Server-driven NPC yaw broadcast. Values: [npcEntityId, angleQ1000]
+   *  where angleQ1000 = round(angle_radians * 1000). atan2 produces [-π, π]
+   *  so the quantized value fits in int16 (±3142). Fired by the server when
+   *  the NPC should face a target (talker / attacker) — 2004scape
+   *  NPC.faceEntity equivalent. */
+  NPC_FACING = 85,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].

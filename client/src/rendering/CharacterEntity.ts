@@ -2,6 +2,8 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { Bone } from '@babylonjs/core/Bones/bone';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
@@ -258,6 +260,17 @@ export class CharacterEntity {
   // Body torso meshes — hidden when body armor is equipped to avoid clipping.
   // The character GLB exports torso/belt as separate primitives keyed by
   // material name; we identify them here and toggle their visibility together.
+  /** The single pickable mesh on the character. Skinned mesh bounding
+   *  boxes don't follow the animated skeleton — leaving them pickable
+   *  causes phantom hitboxes (notably ~1 m above the head, from M_hair_1's
+   *  rest-pose AABB). applyPickability() disables picks on every other
+   *  descendant and routes all clicks through this cylinder.
+   *
+   *  Setup: isPickable=true, isVisible=true (Babylon's picker skips
+   *  isVisible=false), visibility=0 (transparent), layerMask=0 (no camera
+   *  renders it — picker doesn't honour layerMask, so it still hits). */
+  private pickProxy: Mesh | null = null;
+
   private bodyMeshes: AbstractMesh[] = [];
   /** Pants + socks mesh primitives — hidden when plate legs are equipped
    *  so the character's bare legs don't poke through the armor. */
@@ -572,6 +585,42 @@ export class CharacterEntity {
       // Apply initial position (with feet offset)
       this.root.position.set(this._position.x, this._position.y + this.feetOffsetY, this._position.z);
 
+      // Picking proxy — the ONLY pickable mesh on the character. All
+      // skinned meshes (body, hair, gear) are forced non-pickable in
+      // applyPickability() because their rest-pose AABBs extend far
+      // above/around the visible silhouette (especially M_hair_1), which
+      // caused the phantom "1 m of clickbox above the head" the user kept
+      // hitting.
+      //
+      // Local-Y math (root scale ≈ 0.972 → world ≈ local × 0.972):
+      //   feet      = -0.75 local  (≈ -0.73 world below root — verified)
+      //   head crown= +0.825 local (≈ +0.80 world above root, char = 1.53 m)
+      // Cutting 20 % off the top of the visible character height:
+      //   top       = 0.825 - 0.315 = +0.510 local
+      //   height    = 0.510 − (−0.75) = 1.26 local
+      //   center    = (−0.75 + 0.510) / 2 = −0.12 local
+      const proxyHeight = 1.26;
+      const proxyDiameter = 1.0;
+      const proxy = MeshBuilder.CreateCylinder(`${options.name}_pickProxy`, {
+        height: proxyHeight,
+        diameter: proxyDiameter,
+        tessellation: 12,
+      }, this.scene);
+      proxy.parent = this.root;
+      proxy.position.y = -0.12;
+      proxy.isVisible = true;
+      proxy.visibility = 0;
+      proxy.isPickable = true;
+      // layerMask=0 → no camera renders the cylinder (saves a per-frame
+      // transparent draw); picker doesn't honour layerMask so it still hits.
+      // applyLayerMask() must skip the proxy or it'll overwrite this.
+      proxy.layerMask = 0;
+      this.pickProxy = proxy;
+
+      // Force all skinned meshes non-pickable so only the proxy catches
+      // clicks (see applyPickability comment).
+      this.applyPickability();
+
       // Propagate layerMask (if any) to all body+hair meshes
       this.applyLayerMask();
 
@@ -865,6 +914,12 @@ export class CharacterEntity {
       for (const mesh of this.meshes) {
         mesh.metadata = { ...(mesh.metadata ?? {}), entityId, kind: 'npc' };
       }
+      // The pick proxy is the primary hit target — without metadata on it
+      // the pick-walk-parents logic can't resolve the NPC entity from a
+      // ray that hits the proxy first.
+      if (this.pickProxy) {
+        this.pickProxy.metadata = { ...(this.pickProxy.metadata ?? {}), entityId, kind: 'npc' };
+      }
     };
     if (this._ready) stamp();
     else void this._readyPromise.then(stamp);
@@ -883,11 +938,16 @@ export class CharacterEntity {
 
   private applyPickability(): void {
     if (!this.root) return;
+    // Pick only the proxy cylinder. Skinned mesh AABBs (especially hair)
+    // don't deform with pose, so leaving them pickable creates phantom
+    // hitboxes above the visible character.
     for (const node of this.root.getDescendants(false)) {
+      if (node === this.pickProxy) continue;
       if ('isPickable' in node) {
-        (node as { isPickable: boolean }).isPickable = this._pickable;
+        (node as { isPickable: boolean }).isPickable = false;
       }
     }
+    if (this.pickProxy) this.pickProxy.isPickable = this._pickable;
   }
 
   /** Freeze the character at the first frame of the idle animation. No
@@ -1383,9 +1443,11 @@ export class CharacterEntity {
 
     this.gearAttachments.set(slot, { itemId, node: clone });
     if (slot === 'head') this.setHeadVisible(false);
-    // New nodes were just parented under the character root — propagate the
-    // entity's pickability flag onto them. No-op when _pickable is true.
-    if (!this._pickable) this.applyPickability();
+    // Newly attached gear meshes default to isPickable=true — re-route picks
+    // through the proxy so a hat/pauldron AABB doesn't re-introduce the
+    // phantom hitbox. Also sets gear.layerMask correctly via applyLayerMask
+    // (called separately by callers that need it).
+    this.applyPickability();
   }
 
   /** Remove gear from a slot. */
@@ -1474,7 +1536,7 @@ export class CharacterEntity {
     if (slot === 'head') this.setHeadVisible(false);
     if (slot === 'body') this.setBodyVisible(false);
     if (slot === 'legs') this.setLegsVisible(false);
-    if (!this._pickable) this.applyPickability();
+    this.applyPickability();
     console.log(`[SkinnedArmor] Attached ${kept.length} meshes in slot '${slot}' itemId=${itemId} (remapped ${armorBoneCount} bones, ${unmapped} unmatched)`);
   }
 
@@ -1613,7 +1675,7 @@ export class CharacterEntity {
       if (slot === 'head') this.setHeadVisible(false);
       if (slot === 'body') this.setBodyVisible(false);
       if (slot === 'legs') this.setLegsVisible(false);
-      if (!this._pickable) this.applyPickability();
+      this.applyPickability();
       console.log(`[ManualSkin] slot='${slot}' item=${itemId} primitives=${kept.length} jointsRemapped=${armorJointNames.length} unmatched=${unmapped}`);
       return true;
     } catch (e) {
@@ -2134,6 +2196,8 @@ export class CharacterEntity {
     if (this.layerMask === undefined || !this.root) return;
     const mask = this.layerMask;
     for (const mesh of this.root.getChildMeshes(false)) {
+      // Proxy keeps layerMask=0 so no camera renders it (picker still hits).
+      if (mesh === this.pickProxy) continue;
       mesh.layerMask = mask;
     }
   }
@@ -2167,6 +2231,10 @@ export class CharacterEntity {
     this.skinIndicesFull = null;
     this.skinIndicesNoArms = null;
     this.modularMeshes.clear();
+    if (this.pickProxy) {
+      this.pickProxy.dispose();
+      this.pickProxy = null;
+    }
 
     if (this.root) {
       this.root.dispose();
