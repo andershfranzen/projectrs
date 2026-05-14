@@ -41,6 +41,7 @@ import { ArmorBrowserPanel } from '../ui/ArmorBrowserPanel';
 import { Minimap } from '../ui/Minimap';
 // StatsPanel removed — HP now shown in side panel
 import { ShopPanel, type ShopItem } from '../ui/ShopPanel';
+import { DialoguePanel, type DialogueNodePayload } from '../ui/DialoguePanel';
 import { BankPanel } from '../ui/BankPanel';
 import { TradePanel } from '../ui/TradePanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
@@ -49,7 +50,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -223,6 +224,7 @@ export class GameManager {
   private armorBrowser: ArmorBrowserPanel | null = null;
   private armorPreviewNodes: Map<string, TransformNode> = new Map();
   private shopPanel: ShopPanel | null = null;
+  private dialoguePanel: DialoguePanel | null = null;
   private smithingPanel: SmithingPanel | null = null;
   private bankPanel: BankPanel | null = null;
   private tradePanel: TradePanel | null = null;
@@ -342,7 +344,11 @@ export class GameManager {
         const entityId = this.findNpcEntityIdFromPick(pick.pickedMesh, pick.pickedMesh.name);
         if (entityId != null) {
           const npcDefId = this.entities.npcDefs.get(entityId);
-          const attackable = !this.isNonAttackableNpc(npcDefId);
+          // Treat any server-flagged non-combat NPC as non-attackable here too,
+          // so editor-authored dialogue NPCs don't get auto-attacked by a
+          // high-level player walking past.
+          const interactFlags = this.entities.npcInteractions.get(entityId) ?? 0;
+          const attackable = interactFlags === 0 && !this.isNonAttackableNpc(npcDefId);
           if (attackable) {
             const npcLvl = this.npcLevelFor(npcDefId);
             const myLvl = this.getLocalCombatLevel();
@@ -415,6 +421,7 @@ export class GameManager {
     this.shopPanel.setOnClose(() => {
       this.sidePanel?.setSellCallback(null);
     });
+    this.dialoguePanel = new DialoguePanel(this.network);
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network);
     this.tradePanel = new TradePanel(this.network);
@@ -1286,29 +1293,31 @@ export class GameManager {
   private createLocalCharacterEntity(): CharacterEntity {
     return new CharacterEntity(this.scene, {
       name: 'localPlayer',
-      modelPath: '/Character models/main character.glb',
-      targetHeight: 1.53,
+      modelPath: CHARACTER_MODEL_PATH,
+      targetHeight: CHARACTER_TARGET_HEIGHT,
       // No label on the local player — matches pre-3D-remote-players behavior.
       // Other players see the local player's name through PLAYER_SYNC + the
       // chat 'player_info' broadcast.
       // Each GLB should hold a single action; the runtime picks it automatically
       // so re-exports don't require renaming the action in Blender first.
       additionalAnimations: [
-        { name: 'idle',                    path: '/Character models/new animations/idle.glb' },
-        { name: 'walk',                    path: '/Character models/new animations/walk.glb' },
+        { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+        { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
         // RS2 turn-on-the-spot. CharacterEntity swaps idle ↔ turn based on
         // yaw alignment in updateAnimation(); see comment there.
-        { name: 'turn',                    path: '/Character models/new animations/turn in place.glb' },
+        { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
         // Armed attack — non-aggressive stances use the default downward slash;
         // aggressive stance uses the hand-authored OSRS-style slash.
-        { name: 'attack_slash',            path: '/Character models/new animations/standing_melee_attack_downward.glb' },
-        { name: 'attack_slash_aggressive', path: '/Character models/new animations/attack_slash.glb' },
-        { name: 'attack_2h_slash',         path: '/Character models/new animations/2h slash.glb' },
-        { name: 'attack_2h_smash',         path: '/Character models/new animations/2h smash.glb' },
-        // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no weapon
-        { name: 'attack_punch',            path: '/Character models/new animations/attack_punch.glb' },
-        { name: 'chop',                    path: '/Character models/new animations/woodcutting.glb' },
-        { name: 'mine',                    path: '/Character models/new animations/mining.glb' },
+        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/standing_melee_attack_downward.glb` },
+        { name: 'attack_slash_aggressive', path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
+        { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
+        { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
+        // Unarmed attack — getPlayerAttackAnimName returns 'attack_punch' when no
+        // weapon. File pending custom punch+kick authoring; CharacterEntity's
+        // fallback chain (attack_punch → attack → attack_slash) keeps unarmed
+        // combat usable until the new GLB lands.
+        { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
+        { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],
     });
   }
@@ -1657,6 +1666,12 @@ export class GameManager {
       if (sprite instanceof CharacterEntity && sprite.isReady) {
         this.applyRemoteEquipmentArray(sprite, slots);
       }
+    });
+
+    this.network.on(ServerOpcode.NPC_INTERACTIONS, (_op, v) => {
+      // [entityId, flagBits]. Cached so the right-click menu can offer
+      // Talk-to / Trade / Bank without round-tripping every click.
+      this.entities.npcInteractions.set(v[0], v[1]);
     });
 
     this.network.on(ServerOpcode.GROUND_ITEM_SYNC, (_op, v) => {
@@ -2221,6 +2236,20 @@ export class GameManager {
         const newX = values[0] / 10;
         const newZ = values[1] / 10;
         this.handleMapChange(mapId, newX, newZ);
+      } else if (opcode === ServerOpcode.DIALOGUE_OPEN) {
+        const { str, values } = decodeStringPacket(data);
+        try {
+          const node = JSON.parse(str) as DialogueNodePayload;
+          const npcEntityId = values[0];
+          // Mid-conversation node transitions just call show() again with the
+          // new node; DialoguePanel.show resets the line index so a multi-line
+          // node restarts from line 0.
+          this.dialoguePanel?.show(npcEntityId, node);
+        } catch (e) {
+          console.warn('[dialogue] failed to parse node payload', e);
+        }
+      } else if (opcode === ServerOpcode.DIALOGUE_CLOSE) {
+        this.dialoguePanel?.hide();
       }
     });
   }
@@ -2310,8 +2339,17 @@ export class GameManager {
         const entityId = pickedNpcEntityId;
         const npcDefId = this.entities.npcDefs.get(entityId);
         const name = NPC_NAMES[npcDefId || 0] || 'NPC';
-        if (this.isNonAttackableNpc(npcDefId)) {
-          options.push({ label: `Trade ${name}`, action: () => this.talkToNpc(entityId) });
+        // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
+        // hardcoded isNonAttackableNpc allow-list — that list pre-dates the
+        // server telling us, and would mislabel any new editor-authored NPC.
+        // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank.
+        const flags = this.entities.npcInteractions.get(entityId) ?? 0;
+        const nonCombat = flags !== 0 || this.isNonAttackableNpc(npcDefId);
+        if (nonCombat) {
+          // Talk-to handles all three (dialogue → priority on server, else
+          // falls through to shop, then bank). One label keeps the menu tidy.
+          const verb = (flags & 1) !== 0 ? 'Talk-to' : 'Trade';
+          options.push({ label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) });
         } else {
           const lvl = this.npcLevelFor(npcDefId);
           const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
@@ -2576,7 +2614,8 @@ export class GameManager {
         if (entityId != null) {
           const npcDefId = this.entities.npcDefs.get(entityId);
           const name = NPC_NAMES[npcDefId ?? 0] || 'NPC';
-          if (this.isNonAttackableNpc(npcDefId)) {
+          const flags = this.entities.npcInteractions.get(entityId) ?? 0;
+          if (flags !== 0 || this.isNonAttackableNpc(npcDefId)) {
             label = name;
           } else {
             const lvl = this.npcLevelFor(npcDefId);

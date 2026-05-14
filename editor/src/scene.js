@@ -25,6 +25,24 @@ import '@babylonjs/loaders/glTF'
 
 import { MapData } from './map/MapData'
 import { ToolMode, toolLabel } from './editor/Tools'
+import {
+  DEFAULT_APPEARANCE,
+  HAIR_STYLE_COUNT,
+  SHIRT_COLORS,
+  PANTS_COLORS,
+  SHOES_COLORS,
+  BELT_COLORS,
+  SKIN_COLORS,
+  HAIR_COLORS,
+  CHARACTER_MODEL_PATH,
+  CHARACTER_TARGET_HEIGHT,
+  CHARACTER_IDLE_ANIM,
+} from '@projectrs/shared'
+// Reused from the client package via vite alias (editor/vite.config.js).
+// CharacterEntity loads the rigged character GLB and exposes applyAppearance —
+// exactly what we need for the editor's per-spawn preview. The GLB + idle anim
+// are served from editor/public/Character models (symlinked to client's copy).
+import { CharacterEntity } from '@client/rendering/CharacterEntity'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
 import { loadAssetModel, cloneAssetModelSync, warmAssetCache, makeGhostMaterial, initAssetLoader } from './assets-system/AssetLoader'
 import { getThumbnail } from './assets-system/ThumbnailRenderer'
@@ -235,8 +253,14 @@ function tuneModelLighting(model) {
   let selectedNpcSpawn = null
   const npcSpawnGroup = new TransformNode('npcSpawnGroup', scene)
 
-  function addNpcSpawn(npcId, x, z, wanderRange, id, aggressive) {
+  function addNpcSpawn(npcId, x, z, wanderRange, id, aggressive, appearance, equipment, shop, dialogue) {
     const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: aggressive ?? null }
+    // Optional per-spawn overrides — only set if provided so a fresh spawn
+    // doesn't carry empty {} that would falsely flag the override toggles.
+    if (appearance) spawn.appearance = appearance
+    if (equipment) spawn.equipment = equipment
+    if (shop) spawn.shop = shop
+    if (dialogue) spawn.dialogue = dialogue
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
     return spawn
@@ -246,24 +270,148 @@ function tuneModelLighting(model) {
     const idx = npcSpawns.indexOf(spawn)
     if (idx >= 0) npcSpawns.splice(idx, 1)
     if (selectedNpcSpawn === spawn) selectedNpcSpawn = null
+    disposeNpcPreview(spawn)
+  }
+
+  // --- Per-spawn 3D character preview ---
+  // Keyed by spawn.id so previews survive the cylinder rebuilds in
+  // rebuildNpcSpawnMeshes (loading the rigged GLB is ~3s; we don't want to
+  // recreate on every selection change). Only spawns with an explicit
+  // appearance override get a preview; everything else stays as a cylinder.
+  // hiddenNodes tracks placed objects we toggled off so the preview is
+  // visually unobstructed — restored when the preview is disposed.
+  const npcPreviews = new Map()  // spawn.id → { entity, hiddenNodes: Set<TransformNode> }
+
+  /** Tiles within this XZ-distance of the spawn get their placed objects
+   *  hidden so the preview character isn't covered by the previously-placed
+   *  NPC GLB. 0.7 catches anything centered on the same tile without
+   *  hiding adjacent scenery. */
+  const PLACED_OBJECT_HIDE_RADIUS = 0.7
+
+  function maskPlacedObjectsForPreview(spawn, entry) {
+    // Re-enable previously hidden objects first so a moved spawn doesn't
+    // leave the old set hidden forever.
+    restorePlacedObjectsFromPreview(entry)
+    for (const node of placedGroup.getChildren()) {
+      const dx = node.position.x - spawn.x
+      const dz = node.position.z - spawn.z
+      if (Math.abs(dx) <= PLACED_OBJECT_HIDE_RADIUS && Math.abs(dz) <= PLACED_OBJECT_HIDE_RADIUS) {
+        if (node.isEnabled()) {
+          entry.hiddenNodes.add(node)
+          node.setEnabled(false)
+        }
+      }
+    }
+  }
+
+  function restorePlacedObjectsFromPreview(entry) {
+    for (const node of entry.hiddenNodes) {
+      // Node may have been disposed (e.g. rebuildPlacedObjectsFromData). Babylon
+      // sets isDisposed() on disposed nodes; skip those.
+      if (!node.isDisposed || !node.isDisposed()) {
+        try { node.setEnabled(true) } catch { /* node gone */ }
+      }
+    }
+    entry.hiddenNodes.clear()
+  }
+
+  // Dev-only console hooks. Tree-shaken Babylon imports remove the global
+  // BABYLON namespace, so without these the only way to inspect the scene
+  // from devtools is to hack imports. Stripped from production builds.
+  if (import.meta.env.DEV) {
+    window._editorScene = scene
+    window._editorCamera = camera
+    window._editorNpcPreviews = npcPreviews
+  }
+
+  function ensureNpcPreview(spawn) {
+    if (!spawn || !spawn.appearance) {
+      disposeNpcPreview(spawn)
+      return
+    }
+    let entry = npcPreviews.get(spawn.id)
+    if (!entry) {
+      const entity = new CharacterEntity(scene, {
+        name: `npcPreview_${spawn.id}`,
+        modelPath: CHARACTER_MODEL_PATH,
+        targetHeight: CHARACTER_TARGET_HEIGHT,
+        additionalAnimations: [
+          { name: 'idle', path: CHARACTER_IDLE_ANIM },
+        ],
+      })
+      entry = { entity, hiddenNodes: new Set() }
+      npcPreviews.set(spawn.id, entry)
+    }
+    const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
+    entry.entity.setPositionXYZ(spawn.x, y, spawn.z)
+    maskPlacedObjectsForPreview(spawn, entry)
+    // applyAppearance idempotently re-derives material colors + hair mesh
+    // visibility from the appearance struct; safe to call on every edit.
+    entry.entity.whenReady().then(() => {
+      if (npcPreviews.get(spawn.id) === entry) {
+        entry.entity.applyAppearance(spawn.appearance)
+      }
+    })
+  }
+
+  function disposeNpcPreview(spawn) {
+    const entry = npcPreviews.get(spawn.id)
+    if (entry) {
+      restorePlacedObjectsFromPreview(entry)
+      entry.entity.dispose()
+      npcPreviews.delete(spawn.id)
+    }
+  }
+
+  function disposeAllNpcPreviews() {
+    for (const [, entry] of npcPreviews) {
+      restorePlacedObjectsFromPreview(entry)
+      entry.entity.dispose()
+    }
+    npcPreviews.clear()
+  }
+
+  /** Re-hide overlapping placed objects after the placedGroup has been
+   *  rebuilt. The previous TransformNode refs in hiddenNodes are now stale
+   *  (disposed); maskPlacedObjectsForPreview discards them and re-scans. */
+  function refreshNpcPreviewMasks() {
+    for (const [id, entry] of npcPreviews) {
+      const spawn = npcSpawns.find(s => s.id === id)
+      if (spawn) maskPlacedObjectsForPreview(spawn, entry)
+    }
   }
 
   function serializeNpcSpawns() {
     return npcSpawns.map(s => {
-      // Only emit `aggressive` when overridden; null/undefined means
+      // Only emit overrides that are actually set — null/undefined means
       // "use the NpcDef default" and shouldn't bloat the save file.
       const out = { id: s.id, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange }
       if (s.aggressive === true || s.aggressive === false) out.aggressive = s.aggressive
+      if (s.appearance) out.appearance = s.appearance
+      if (Array.isArray(s.equipment) && s.equipment.length === 10) out.equipment = s.equipment
+      if (s.shop) out.shop = s.shop
+      if (s.dialogue) out.dialogue = s.dialogue
       return out
     })
   }
 
   function loadNpcSpawns(data) {
+    // Previews from the previous map are tied to its spawn ids — wipe them
+    // before importing new spawns so we don't leak GLB instances when the
+    // editor switches maps.
+    disposeAllNpcPreviews()
     npcSpawns = []
     _npcSpawnNextId = 1
     selectedNpcSpawn = null
     for (const s of data || []) {
-      addNpcSpawn(s.npcId, s.x, s.z, s.wanderRange ?? 3, s.id, s.aggressive ?? null)
+      addNpcSpawn(
+        s.npcId, s.x, s.z, s.wanderRange ?? 3, s.id,
+        s.aggressive ?? null,
+        s.appearance,
+        s.equipment,
+        s.shop,
+        s.dialogue,
+      )
     }
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
@@ -273,25 +421,71 @@ function tuneModelLighting(model) {
     // Dispose all children
     for (const child of [...npcSpawnGroup.getChildren()]) child.dispose()
 
+    // Sync previews against the current spawns: drop entries whose spawn no
+    // longer exists; keep + reposition entries whose spawn does. Skipping the
+    // full dispose preserves the already-loaded GLB instances.
+    const liveIds = new Set(npcSpawns.map(s => s.id))
+    for (const id of [...npcPreviews.keys()]) {
+      if (!liveIds.has(id)) {
+        npcPreviews.get(id).dispose()
+        npcPreviews.delete(id)
+      }
+    }
+    for (const spawn of npcSpawns) {
+      if (spawn.appearance) ensureNpcPreview(spawn)
+    }
+
     for (const spawn of npcSpawns) {
       const def = npcDefs.find(d => d.id === spawn.npcId)
-      const name = def?.name || `NPC ${spawn.npcId}`
       const isSelected = spawn === selectedNpcSpawn
-
-      // Spawn marker — a small cylinder
-      const marker = MeshBuilder.CreateCylinder(`npcSpawn_${spawn.id}`, { height: 1.2, diameterTop: 0.3, diameterBottom: 0.5, tessellation: 8 }, scene)
-      const markerMat = new StandardMaterial(`npcSpawnMat_${spawn.id}`, scene)
       const aggressive = def?.aggressive
-      markerMat.diffuseColor = isSelected ? new Color3(1, 1, 0.2) : (aggressive ? new Color3(0.9, 0.2, 0.15) : new Color3(0.15, 0.7, 0.9))
-      markerMat.emissiveColor = markerMat.diffuseColor.scale(0.4)
-      markerMat.specularColor = new Color3(0, 0, 0)
-      marker.material = markerMat
       const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
-      marker.position = new Vector3(spawn.x, y + 0.6, spawn.z)
-      marker.metadata = { npcSpawn: spawn }
-      marker.parent = npcSpawnGroup
+      const color = isSelected ? new Color3(1, 1, 0.2) : (aggressive ? new Color3(0.9, 0.2, 0.15) : new Color3(0.15, 0.7, 0.9))
 
-      // Wander range circle
+      // Spawns with an appearance override render a full character preview
+      // (ensureNpcPreview above) — the cylinder + top sphere would clip
+      // through it and hide the body the user is trying to design. For those
+      // we drop a thin ground disc as the selection affordance instead.
+      // Spawns without appearance still get the full marker so they stay
+      // visible from a distance.
+      if (spawn.appearance) {
+        const disc = MeshBuilder.CreateDisc(`npcSpawnDisc_${spawn.id}`, { radius: 0.45, tessellation: 24 }, scene)
+        const discMat = new StandardMaterial(`npcSpawnDiscMat_${spawn.id}`, scene)
+        discMat.diffuseColor = color
+        discMat.emissiveColor = color.scale(0.6)
+        discMat.specularColor = new Color3(0, 0, 0)
+        discMat.backFaceCulling = false
+        disc.material = discMat
+        disc.rotation.x = Math.PI / 2
+        disc.position = new Vector3(spawn.x, y + 0.02, spawn.z)
+        disc.metadata = { npcSpawn: spawn }
+        disc.parent = npcSpawnGroup
+      } else {
+        // Cylinder + top dot — visible from far away for sprite/non-customizable NPCs.
+        const marker = MeshBuilder.CreateCylinder(`npcSpawn_${spawn.id}`, { height: 1.2, diameterTop: 0.3, diameterBottom: 0.5, tessellation: 8 }, scene)
+        const markerMat = new StandardMaterial(`npcSpawnMat_${spawn.id}`, scene)
+        markerMat.diffuseColor = color
+        markerMat.emissiveColor = color.scale(0.4)
+        markerMat.specularColor = new Color3(0, 0, 0)
+        marker.material = markerMat
+        marker.position = new Vector3(spawn.x, y + 0.6, spawn.z)
+        marker.metadata = { npcSpawn: spawn }
+        marker.parent = npcSpawnGroup
+
+        const dot = MeshBuilder.CreateSphere(`npcDot_${spawn.id}`, { diameter: 0.25, segments: 6 }, scene)
+        const dotMat = new StandardMaterial(`npcDotMat_${spawn.id}`, scene)
+        dotMat.diffuseColor = new Color3(1, 1, 1)
+        dotMat.emissiveColor = isSelected ? new Color3(1, 1, 0.3) : new Color3(0.8, 0.8, 0.8)
+        dotMat.specularColor = new Color3(0, 0, 0)
+        dot.material = dotMat
+        dot.position = new Vector3(spawn.x, y + 1.35, spawn.z)
+        dot.metadata = { npcSpawn: spawn }
+        dot.parent = npcSpawnGroup
+      }
+
+      // Wander range circle — same for both marker styles. Visible on the
+      // ground next to the preview so designers can still tune wander range
+      // visually without the cylinder.
       if (spawn.wanderRange > 0) {
         const segments = 32
         const points = []
@@ -308,17 +502,6 @@ function tuneModelLighting(model) {
         circle.alpha = isSelected ? 0.9 : 0.5
         circle.parent = npcSpawnGroup
       }
-
-      // Small sphere on top as a secondary visual indicator
-      const dot = MeshBuilder.CreateSphere(`npcDot_${spawn.id}`, { diameter: 0.25, segments: 6 }, scene)
-      const dotMat = new StandardMaterial(`npcDotMat_${spawn.id}`, scene)
-      dotMat.diffuseColor = new Color3(1, 1, 1)
-      dotMat.emissiveColor = isSelected ? new Color3(1, 1, 0.3) : new Color3(0.8, 0.8, 0.8)
-      dotMat.specularColor = new Color3(0, 0, 0)
-      dot.material = dotMat
-      dot.position = new Vector3(spawn.x, y + 1.35, spawn.z)
-      dot.metadata = { npcSpawn: spawn }
-      dot.parent = npcSpawnGroup
     }
 
     // Show/hide based on tool
@@ -340,19 +523,11 @@ function tuneModelLighting(model) {
       row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}</span></span>`
       row.addEventListener('click', () => {
         selectedNpcSpawn = spawn
-        // Sync editor sidebar to the selected spawn (slider + aggressive box)
-        // so toggling between spawns reflects each one's overrides.
+        // Type dropdown reflects the spawn's npcId; per-tab content is
+        // redrawn so the inspector reflects whichever spawn was just selected.
         const sel = sidebar.querySelector('#npcTypeSelect')
         if (sel) sel.value = spawn.npcId
-        const slider = sidebar.querySelector('#wanderRangeSlider')
-        if (slider) { slider.value = spawn.wanderRange; sidebar.querySelector('#wanderRangeLabel').textContent = spawn.wanderRange }
-        const aggCb = sidebar.querySelector('#aggressiveCheckbox')
-        if (aggCb) {
-          const sdef = npcDefs.find(d => d.id === spawn.npcId)
-          aggCb.checked = (spawn.aggressive === true || spawn.aggressive === false)
-            ? spawn.aggressive
-            : !!sdef?.aggressive
-        }
+        if (typeof renderNpcInspector === 'function') renderNpcInspector()
         // Focus camera on spawn
         camera.target = new Vector3(spawn.x, map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z)), spawn.z)
         rebuildNpcSpawnMeshes()
@@ -1182,14 +1357,25 @@ let paintBrushRadius = 1
     <div class="ctx-panel" id="ctx-npc-spawn" style="display:none">
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">NPC Type</div>
       <select id="npcTypeSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;"></select>
-      <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">3</span></label>
-      <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="3" style="width:100%;margin-top:3px;" />
-      <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);display:flex;align-items:center;gap:6px;cursor:pointer;">
-        <input id="aggressiveCheckbox" type="checkbox" />
-        Aggressive (hunts players within 3 tiles)
-      </label>
-      <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">Disables if player is &gt;20% above NPC's combat level. Per-spawn override of the NPC type default.</div>
-      <div class="hint" style="margin-top:6px;">Click to place · Shift+Click to remove<br>Click existing spawn to select · Delete to remove</div>
+      <!-- Tab bar — switches the content area below. Spawn tab shows
+           per-instance controls (wander, aggression); the others edit the
+           shared NpcDef or per-spawn overrides for the selected spawn. -->
+      <div id="npcInspectorTabs" style="display:flex;gap:2px;margin-top:8px;border-bottom:1px solid #444;">
+        <button class="npc-tab active-tool" data-tab="spawn" style="flex:1;font-size:10px;padding:5px 2px;background:#2a2a2a;border:1px solid #555;border-bottom:none;border-radius:3px 3px 0 0;color:#fff;cursor:pointer;">Spawn</button>
+        <button class="npc-tab" data-tab="stats" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Stats</button>
+        <button class="npc-tab" data-tab="appearance" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Look</button>
+        <button class="npc-tab" data-tab="equipment" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Gear</button>
+        <button class="npc-tab" data-tab="shop" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Shop</button>
+        <button class="npc-tab" data-tab="dialogue" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Talk</button>
+      </div>
+      <div id="npcInspectorContent" style="margin-top:8px;"></div>
+      <!-- Footer: per-def save button. Disabled until the user edits a
+           def-level field. POSTs the full npcDefs array to /api/editor/npcs;
+           server snapshots the previous file and hot-reloads. -->
+      <div style="display:flex;gap:5px;margin-top:10px;border-top:1px solid #444;padding-top:8px;">
+        <button id="saveNpcDefsBtn" disabled style="flex:2;font-size:11px;padding:5px;background:#2a4a2a;color:#aaa;cursor:not-allowed;border:1px solid #444;">Save NPC defs</button>
+        <span id="saveNpcDefsStatus" style="flex:1;align-self:center;font-size:10px;color:#888;text-align:right;"></span>
+      </div>
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-top:10px;border-top:1px solid #444;padding-top:8px;">Spawns <span id="npcSpawnCount">0</span></div>
       <div id="npcSpawnList" style="max-height:200px;overflow-y:auto;margin-top:4px;"></div>
     </div>
@@ -1348,7 +1534,55 @@ let paintBrushRadius = 1
   toolButtons[ToolMode.ITEM_SPAWN]?.addEventListener('click', () => setTool(ToolMode.ITEM_SPAWN))
   toolButtons[ToolMode.BIOME]?.addEventListener('click', () => setTool(ToolMode.BIOME))
 
-  // --- NPC Spawn: fetch defs + wire sidebar controls (must be after sidebar is created) ---
+  // --- NPC Inspector: fetch defs + wire tabbed sidebar (must be after sidebar is created) ---
+  // The inspector edits two kinds of state:
+  //   • per-spawn (selectedNpcSpawn): wanderRange, aggressive, appearance,
+  //     equipment, shop?, dialogue? — saved with the map via /api/editor/save-map.
+  //   • shared NpcDef (npcDefs[i] for the spawn's npcId): stats, default shop,
+  //     default dialogue — saved via /api/editor/npcs and hot-reloaded server-side.
+  // npcDefsDirty gates the "Save NPC defs" button and is set by any def edit.
+  let activeNpcTab = 'spawn'
+  let npcDefsDirty = false
+
+  function findSelectedDef() {
+    if (!selectedNpcSpawn) return null
+    return npcDefs.find(d => d.id === selectedNpcSpawn.npcId) || null
+  }
+
+  function markDefsDirty() {
+    npcDefsDirty = true
+    const btn = sidebar.querySelector('#saveNpcDefsBtn')
+    if (btn) {
+      btn.disabled = false
+      btn.style.background = '#3a6c3a'
+      btn.style.color = '#fff'
+      btn.style.cursor = 'pointer'
+    }
+  }
+
+  function clearDefsDirty(statusText) {
+    npcDefsDirty = false
+    const btn = sidebar.querySelector('#saveNpcDefsBtn')
+    if (btn) {
+      btn.disabled = true
+      btn.style.background = '#2a4a2a'
+      btn.style.color = '#aaa'
+      btn.style.cursor = 'not-allowed'
+    }
+    const status = sidebar.querySelector('#saveNpcDefsStatus')
+    if (status) {
+      status.textContent = statusText || ''
+      if (statusText) setTimeout(() => { status.textContent = '' }, 3000)
+    }
+  }
+
+  // Reuses the item-spawn system's itemDefs (declared above) — they share the
+  // same /data/items.json source, no point in loading it twice.
+  function fetchItemDefsOnce() {
+    if (itemDefs.length > 0) return Promise.resolve(itemDefs)
+    return loadItemDefs().then(() => itemDefs).catch(() => [])
+  }
+
   fetch('/data/npcs.json')
     .then(r => r.json())
     .then(defs => {
@@ -1356,41 +1590,544 @@ let paintBrushRadius = 1
       const sel = sidebar.querySelector('#npcTypeSelect')
       if (sel) {
         sel.innerHTML = defs.map(d => `<option value="${d.id}">${d.name} (ID ${d.id}) — HP ${d.health}</option>`).join('')
-        const first = defs[0]
-        if (first) {
-          const slider = sidebar.querySelector('#wanderRangeSlider')
-          if (slider) { slider.value = first.wanderRange; sidebar.querySelector('#wanderRangeLabel').textContent = first.wanderRange }
-        }
       }
+      renderNpcInspector()
     })
     .catch(e => console.warn('Failed to load NPC defs:', e))
 
   sidebar.querySelector('#npcTypeSelect')?.addEventListener('change', (e) => {
-    const def = npcDefs.find(d => d.id === parseInt(e.target.value))
-    if (def) {
-      const slider = sidebar.querySelector('#wanderRangeSlider')
-      if (slider) { slider.value = def.wanderRange; sidebar.querySelector('#wanderRangeLabel').textContent = def.wanderRange }
-    }
-  })
-
-  sidebar.querySelector('#wanderRangeSlider')?.addEventListener('input', (e) => {
-    sidebar.querySelector('#wanderRangeLabel').textContent = e.target.value
     if (selectedNpcSpawn) {
-      selectedNpcSpawn.wanderRange = parseInt(e.target.value)
+      selectedNpcSpawn.npcId = parseInt(e.target.value)
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
     }
+    renderNpcInspector()
   })
 
-  sidebar.querySelector('#aggressiveCheckbox')?.addEventListener('change', (e) => {
-    // Persist as a hard boolean override so the spawn always wins over the
-    // NpcDef default once the user has touched the checkbox. To revert to
-    // "follow def", they delete + re-place the spawn.
-    if (selectedNpcSpawn) {
-      selectedNpcSpawn.aggressive = e.target.checked
-      refreshNpcSpawnList()
+  // Tab switcher
+  for (const tabBtn of sidebar.querySelectorAll('.npc-tab')) {
+    tabBtn.addEventListener('click', () => {
+      activeNpcTab = tabBtn.dataset.tab
+      for (const b of sidebar.querySelectorAll('.npc-tab')) {
+        const active = b.dataset.tab === activeNpcTab
+        b.classList.toggle('active-tool', active)
+        b.style.background = active ? '#2a2a2a' : '#1a1a1a'
+        b.style.color = active ? '#fff' : '#aaa'
+        b.style.border = active ? '1px solid #555' : '1px solid #444'
+        b.style.borderBottom = 'none'
+      }
+      renderNpcInspector()
+    })
+  }
+
+  // Save NPC defs → POST /api/editor/npcs
+  sidebar.querySelector('#saveNpcDefsBtn')?.addEventListener('click', async () => {
+    if (!npcDefsDirty) return
+    const status = sidebar.querySelector('#saveNpcDefsStatus')
+    if (status) status.textContent = 'saving…'
+    try {
+      const r = await fetch('/api/editor/npcs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ npcs: npcDefs }),
+      })
+      const body = await r.json().catch(() => ({}))
+      if (r.ok && body.ok) {
+        clearDefsDirty('saved ✓')
+      } else {
+        if (status) status.textContent = body.error || 'save failed'
+      }
+    } catch (err) {
+      if (status) status.textContent = 'network error'
     }
   })
+
+  /** Render the inspector content for the currently active tab. Called on
+   *  tab switch, on selection change, and after any mutation that affects
+   *  what the tab displays. Each tab rewires its own input listeners. */
+  function renderNpcInspector() {
+    const content = sidebar.querySelector('#npcInspectorContent')
+    if (!content) return
+    const def = findSelectedDef()
+
+    // Always sync the type dropdown — independent of tab.
+    if (selectedNpcSpawn) {
+      const sel = sidebar.querySelector('#npcTypeSelect')
+      if (sel) sel.value = selectedNpcSpawn.npcId
+    }
+
+    if (activeNpcTab === 'spawn') {
+      renderSpawnTab(content)
+    } else if (activeNpcTab === 'stats') {
+      renderStatsTab(content, def)
+    } else if (activeNpcTab === 'appearance') {
+      renderAppearanceTab(content)
+    } else if (activeNpcTab === 'equipment') {
+      renderEquipmentTab(content)
+    } else if (activeNpcTab === 'shop') {
+      renderShopTab(content, def)
+    } else if (activeNpcTab === 'dialogue') {
+      renderDialogueTab(content, def)
+    }
+  }
+
+  function renderSpawnTab(root) {
+    const spawn = selectedNpcSpawn
+    const def = findSelectedDef()
+    const defaultWander = def?.wanderRange ?? 3
+    const wander = spawn?.wanderRange ?? defaultWander
+    const aggressiveEffective = spawn
+      ? (spawn.aggressive === true || spawn.aggressive === false ? spawn.aggressive : !!def?.aggressive)
+      : !!def?.aggressive
+    root.innerHTML = `
+      <label style="font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">${wander}</span></label>
+      <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="${wander}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
+      <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);display:flex;align-items:center;gap:6px;cursor:pointer;">
+        <input id="aggressiveCheckbox" type="checkbox" ${aggressiveEffective ? 'checked' : ''} ${spawn ? '' : 'disabled'} />
+        Aggressive (per-spawn override)
+      </label>
+      <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">
+        ${spawn ? 'Editing the selected spawn.' : 'Click a placed NPC to edit its spawn.'}
+        Click empty tile to place · Shift+click to remove.
+      </div>
+    `
+    root.querySelector('#wanderRangeSlider')?.addEventListener('input', (e) => {
+      root.querySelector('#wanderRangeLabel').textContent = e.target.value
+      if (selectedNpcSpawn) {
+        selectedNpcSpawn.wanderRange = parseInt(e.target.value)
+        rebuildNpcSpawnMeshes()
+        refreshNpcSpawnList()
+      }
+    })
+    root.querySelector('#aggressiveCheckbox')?.addEventListener('change', (e) => {
+      if (selectedNpcSpawn) {
+        selectedNpcSpawn.aggressive = e.target.checked
+        refreshNpcSpawnList()
+      }
+    })
+  }
+
+  function renderStatsTab(root, def) {
+    if (!def) {
+      root.innerHTML = `<div class="hint">Select an NPC spawn (or pick a type) to edit shared stats.</div>`
+      return
+    }
+    const numField = (key, label, step = 1, min = 0) => `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${label}</span>
+        <input data-def-key="${key}" type="number" step="${step}" min="${min}" value="${def[key] ?? 0}"
+               style="width:70px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+      </div>
+    `
+    root.innerHTML = `
+      <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${def.name}".</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
+        <input data-def-key="name" type="text" value="${def.name ?? ''}" style="width:140px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+      </div>
+      ${numField('health', 'Health')}
+      ${numField('attack', 'Attack')}
+      ${numField('strength', 'Strength')}
+      ${numField('defence', 'Defence')}
+      ${numField('attackSpeed', 'Attack speed (ticks)')}
+      ${numField('respawnTime', 'Respawn time (ticks)')}
+      ${numField('wanderRange', 'Default wander range')}
+      <label style="font-size:11px;color:rgba(255,255,255,0.65);display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;">
+        <input data-def-key="aggressive" type="checkbox" ${def.aggressive ? 'checked' : ''} />
+        Aggressive by default
+      </label>
+      <label style="font-size:11px;color:rgba(255,255,255,0.65);display:flex;align-items:center;gap:6px;margin-top:2px;cursor:pointer;">
+        <input data-def-key="bankAccess" type="checkbox" ${def.bankAccess ? 'checked' : ''} />
+        Banker (offers bank when talked-to)
+      </label>
+      <label style="font-size:11px;color:rgba(255,255,255,0.65);display:flex;align-items:center;gap:6px;margin-top:2px;cursor:pointer;">
+        <input data-def-key="stationary" type="checkbox" ${def.stationary ? 'checked' : ''} />
+        Stationary (skip walk anim loading)
+      </label>
+    `
+    for (const input of root.querySelectorAll('[data-def-key]')) {
+      input.addEventListener('change', () => {
+        const key = input.dataset.defKey
+        if (input.type === 'checkbox') {
+          def[key] = input.checked
+        } else if (input.type === 'number') {
+          def[key] = parseFloat(input.value) || 0
+        } else {
+          def[key] = input.value
+        }
+        markDefsDirty()
+        // Reflect Name updates in the dropdown live.
+        if (key === 'name') {
+          const sel = sidebar.querySelector('#npcTypeSelect')
+          if (sel) {
+            for (const opt of sel.options) {
+              if (parseInt(opt.value) === def.id) opt.textContent = `${def.name} (ID ${def.id}) — HP ${def.health}`
+            }
+          }
+        }
+      })
+    }
+  }
+
+  // Render a palette-swatch row for the appearance editor — values map to
+  // shared/appearance.ts arrays. Returns the row element.
+  function appearanceSwatchRow(label, palette, currentValue, onChange) {
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'margin-bottom:6px;'
+    const lbl = document.createElement('div')
+    lbl.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.65);margin-bottom:3px;'
+    lbl.textContent = label
+    wrap.appendChild(lbl)
+    const swatches = document.createElement('div')
+    swatches.style.cssText = 'display:flex;flex-wrap:wrap;gap:3px;'
+    for (let i = 0; i < palette.length; i++) {
+      const [r, g, b] = palette[i]
+      const sw = document.createElement('button')
+      const sel = (i === currentValue)
+      sw.style.cssText = `width:18px;height:18px;border-radius:3px;cursor:pointer;background:rgb(${Math.round(r*255)},${Math.round(g*255)},${Math.round(b*255)});border:${sel ? '2px solid #ffcc44' : '1px solid #333'};padding:0;`
+      sw.title = `#${i}`
+      sw.addEventListener('click', () => onChange(i))
+      swatches.appendChild(sw)
+    }
+    wrap.appendChild(swatches)
+    return wrap
+  }
+
+  function renderAppearanceTab(root) {
+    root.innerHTML = ''
+    const spawn = selectedNpcSpawn
+    if (!spawn) {
+      root.innerHTML = `<div class="hint">Click an NPC spawn to edit its appearance override.</div>`
+      return
+    }
+    const toggle = document.createElement('label')
+    toggle.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.85);display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px;'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = !!spawn.appearance
+    toggle.appendChild(cb)
+    toggle.appendChild(document.createTextNode('Override appearance for this spawn'))
+    root.appendChild(toggle)
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        spawn.appearance = { ...DEFAULT_APPEARANCE }
+        ensureNpcPreview(spawn)
+      } else {
+        spawn.appearance = undefined
+        disposeNpcPreview(spawn)
+      }
+      // Swap the cylinder marker ↔ ground disc so the preview character isn't
+      // bisected by the selection indicator.
+      rebuildNpcSpawnMeshes()
+      renderAppearanceTab(root)
+      refreshNpcSpawnList()
+    })
+    if (!spawn.appearance) {
+      const hint = document.createElement('div')
+      hint.className = 'hint'
+      hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.35);'
+      hint.textContent = 'No override — this spawn uses the default look for its NPC type.'
+      root.appendChild(hint)
+      return
+    }
+    // Persist the swatch pick and rebuild the row so the selected highlight moves.
+    const setField = (field, value) => {
+      spawn.appearance[field] = value
+      ensureNpcPreview(spawn)
+      renderAppearanceTab(root)
+      refreshNpcSpawnList()
+    }
+    root.appendChild(appearanceSwatchRow('Skin', SKIN_COLORS, spawn.appearance.skinColor, v => setField('skinColor', v)))
+    root.appendChild(appearanceSwatchRow('Shirt', SHIRT_COLORS, spawn.appearance.shirtColor, v => setField('shirtColor', v)))
+    root.appendChild(appearanceSwatchRow('Pants', PANTS_COLORS, spawn.appearance.pantsColor, v => setField('pantsColor', v)))
+    root.appendChild(appearanceSwatchRow('Shoes', SHOES_COLORS, spawn.appearance.shoesColor, v => setField('shoesColor', v)))
+    root.appendChild(appearanceSwatchRow('Belt', BELT_COLORS, spawn.appearance.beltColor, v => setField('beltColor', v)))
+    root.appendChild(appearanceSwatchRow('Hair color', HAIR_COLORS, spawn.appearance.hairColor, v => setField('hairColor', v)))
+    // Hair style is just an index 0..HAIR_STYLE_COUNT — no palette, use a slider.
+    const hairWrap = document.createElement('div')
+    hairWrap.style.cssText = 'margin-bottom:6px;'
+    hairWrap.innerHTML = `
+      <div style="font-size:11px;color:rgba(255,255,255,0.65);margin-bottom:3px;">Hair style <span style="opacity:0.5;">${spawn.appearance.hairStyle}</span></div>
+      <input type="range" min="0" max="${HAIR_STYLE_COUNT}" step="1" value="${spawn.appearance.hairStyle}" style="width:100%;" />
+    `
+    hairWrap.querySelector('input').addEventListener('input', (e) => {
+      spawn.appearance.hairStyle = parseInt(e.target.value)
+      e.currentTarget.previousElementSibling.querySelector('span').textContent = spawn.appearance.hairStyle
+      ensureNpcPreview(spawn)
+    })
+    root.appendChild(hairWrap)
+  }
+
+  function renderEquipmentTab(root) {
+    root.innerHTML = ''
+    const spawn = selectedNpcSpawn
+    if (!spawn) {
+      root.innerHTML = `<div class="hint">Click an NPC spawn to edit equipment.</div>`
+      return
+    }
+    const toggle = document.createElement('label')
+    toggle.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.85);display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px;'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = Array.isArray(spawn.equipment) && spawn.equipment.length === 10
+    toggle.appendChild(cb)
+    toggle.appendChild(document.createTextNode('Override equipment for this spawn'))
+    root.appendChild(toggle)
+    cb.addEventListener('change', () => {
+      spawn.equipment = cb.checked ? [0,0,0,0,0,0,0,0,0,0] : undefined
+      renderEquipmentTab(root)
+    })
+    if (!Array.isArray(spawn.equipment)) {
+      const hint = document.createElement('div')
+      hint.className = 'hint'
+      hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.35);'
+      hint.textContent = 'Equipment overrides require Appearance override too (gear renders only on 3D-character NPCs).'
+      root.appendChild(hint)
+      return
+    }
+    const SLOT_LABELS = ['Weapon','Shield','Head','Body','Legs','Neck','Ring','Hands','Feet','Cape']
+    for (let i = 0; i < 10; i++) {
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;'
+      row.innerHTML = `
+        <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${SLOT_LABELS[i]}</span>
+        <input type="number" min="0" value="${spawn.equipment[i] ?? 0}" style="width:80px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+      `
+      const slotIdx = i
+      row.querySelector('input').addEventListener('change', (e) => {
+        spawn.equipment[slotIdx] = parseInt(e.target.value) || 0
+      })
+      root.appendChild(row)
+    }
+    const hint = document.createElement('div')
+    hint.className = 'hint'
+    hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;'
+    hint.textContent = 'Item IDs — see server/data/items.json. 0 = empty slot.'
+    root.appendChild(hint)
+  }
+
+  /** Append a "Shared (def) | Override (this spawn)" mode toggle. Used by
+   *  the Shop and Dialogue tabs — both edit either a shared NpcDef field or
+   *  a per-spawn override of it. The disabled state for "Override" handles
+   *  the "no spawn selected" case so the user understands why it's greyed. */
+  function appendOverrideModeToggle(root, { overrideActive, hasSpawn, onSelectDef, onSelectOverride }) {
+    const modeRow = document.createElement('div')
+    modeRow.style.cssText = 'display:flex;gap:5px;margin-bottom:8px;'
+    const make = (label, active) => {
+      const btn = document.createElement('button')
+      btn.textContent = label
+      btn.style.cssText = `flex:1;font-size:10px;padding:4px;background:${active ? '#2a2a2a' : '#1a1a1a'};color:#fff;border:1px solid ${active ? '#666' : '#444'};cursor:pointer;border-radius:3px;`
+      return btn
+    }
+    const defBtn = make('Shared (def)', !overrideActive)
+    const ovrBtn = make('Override (this spawn)', overrideActive)
+    if (!hasSpawn) ovrBtn.disabled = true
+    defBtn.addEventListener('click', onSelectDef)
+    ovrBtn.addEventListener('click', onSelectOverride)
+    modeRow.appendChild(defBtn)
+    modeRow.appendChild(ovrBtn)
+    root.appendChild(modeRow)
+  }
+
+  function renderShopTab(root, def) {
+    root.innerHTML = ''
+    const spawn = selectedNpcSpawn
+    if (!def) {
+      root.innerHTML = `<div class="hint">Select an NPC spawn to edit its shop.</div>`
+      return
+    }
+    // Mode toggle: edit the def's shop (affects every spawn of this NPC), or
+    // a per-spawn override (this single placement). Default = def-level.
+    const overrideActive = !!(spawn && spawn.shop)
+    appendOverrideModeToggle(root, {
+      overrideActive,
+      hasSpawn: !!spawn,
+      onSelectDef: () => {
+        if (spawn) spawn.shop = undefined
+        renderShopTab(root, def)
+      },
+      onSelectOverride: () => {
+        if (spawn && !spawn.shop) {
+          // Seed override from the def so the user has a starting point.
+          spawn.shop = def.shop
+            ? { name: def.shop.name, items: def.shop.items.map(i => ({ ...i })) }
+            : { name: `${def.name}'s Shop`, items: [] }
+        }
+        renderShopTab(root, def)
+      },
+    })
+
+    // Target object — the shop being edited (either def.shop or spawn.shop).
+    const targetIsOverride = overrideActive
+    const target = targetIsOverride ? spawn.shop : def.shop
+    const hasShop = !!target
+
+    const toggleRow = document.createElement('label')
+    toggleRow.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.85);display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px;'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = hasShop
+    toggleRow.appendChild(cb)
+    toggleRow.appendChild(document.createTextNode(targetIsOverride ? 'Has shop (per spawn)' : 'Has shop (shared)'))
+    root.appendChild(toggleRow)
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        const blank = { name: `${def.name}'s Shop`, items: [] }
+        if (targetIsOverride) spawn.shop = blank
+        else { def.shop = blank; markDefsDirty() }
+      } else {
+        if (targetIsOverride) spawn.shop = undefined
+        else { def.shop = undefined; markDefsDirty() }
+      }
+      renderShopTab(root, def)
+    })
+
+    if (!hasShop) return
+
+    // Shop name
+    const nameRow = document.createElement('div')
+    nameRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;'
+    nameRow.innerHTML = `
+      <span style="flex:0;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
+      <input type="text" value="${target.name ?? ''}" style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+    `
+    nameRow.querySelector('input').addEventListener('input', (e) => {
+      target.name = e.target.value
+      if (!targetIsOverride) markDefsDirty()
+    })
+    root.appendChild(nameRow)
+
+    // Items table
+    const items = target.items || (target.items = [])
+    const table = document.createElement('div')
+    table.style.cssText = 'border:1px solid #333;border-radius:3px;padding:4px;background:#161616;'
+    const headerRow = document.createElement('div')
+    headerRow.style.cssText = 'display:flex;gap:4px;font-size:10px;color:#888;padding:2px 4px;'
+    headerRow.innerHTML = `<span style="flex:2;">Item</span><span style="flex:1;">Price</span><span style="flex:1;">Stock</span><span style="width:20px;"></span>`
+    table.appendChild(headerRow)
+    for (let i = 0; i < items.length; i++) {
+      const idx = i
+      const item = items[i]
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;gap:4px;margin-top:3px;'
+      row.innerHTML = `
+        <input type="number" min="0" value="${item.itemId}" style="flex:2;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+        <input type="number" min="0" value="${item.price}" style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+        <input type="number" min="0" value="${item.stock}" style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+        <button style="width:20px;background:#6c2a2a;color:#fff;border:none;border-radius:3px;cursor:pointer;font-size:11px;">×</button>
+      `
+      const inputs = row.querySelectorAll('input')
+      inputs[0].addEventListener('change', (e) => { items[idx].itemId = parseInt(e.target.value) || 0; if (!targetIsOverride) markDefsDirty() })
+      inputs[1].addEventListener('change', (e) => { items[idx].price = parseInt(e.target.value) || 0; if (!targetIsOverride) markDefsDirty() })
+      inputs[2].addEventListener('change', (e) => { items[idx].stock = parseInt(e.target.value) || 0; if (!targetIsOverride) markDefsDirty() })
+      row.querySelector('button').addEventListener('click', () => {
+        items.splice(idx, 1)
+        if (!targetIsOverride) markDefsDirty()
+        renderShopTab(root, def)
+      })
+      table.appendChild(row)
+    }
+    root.appendChild(table)
+    const addBtn = document.createElement('button')
+    addBtn.textContent = '+ Add item'
+    addBtn.style.cssText = 'width:100%;margin-top:6px;font-size:11px;padding:5px;background:#2a3a4a;color:#fff;border:1px solid #555;border-radius:3px;cursor:pointer;'
+    addBtn.addEventListener('click', () => {
+      items.push({ itemId: 1, price: 1, stock: 1 })
+      if (!targetIsOverride) markDefsDirty()
+      renderShopTab(root, def)
+    })
+    root.appendChild(addBtn)
+    fetchItemDefsOnce().then(() => { /* future: replace itemId inputs with searchable dropdown */ })
+  }
+
+  function renderDialogueTab(root, def) {
+    root.innerHTML = ''
+    const spawn = selectedNpcSpawn
+    if (!def) {
+      root.innerHTML = `<div class="hint">Select an NPC spawn to edit its dialogue.</div>`
+      return
+    }
+    const overrideActive = !!(spawn && spawn.dialogue)
+    appendOverrideModeToggle(root, {
+      overrideActive,
+      hasSpawn: !!spawn,
+      onSelectDef: () => {
+        if (spawn) spawn.dialogue = undefined
+        renderDialogueTab(root, def)
+      },
+      onSelectOverride: () => {
+        if (spawn && !spawn.dialogue) {
+          // Deep-copy from the def so editing the override doesn't mutate
+          // the shared tree.
+          spawn.dialogue = def.dialogue
+            ? JSON.parse(JSON.stringify(def.dialogue))
+            : { root: 'start', nodes: { start: { id: 'start', lines: ['Hello!'], options: [{ label: 'Bye.' }] } } }
+        }
+        renderDialogueTab(root, def)
+      },
+    })
+
+    const targetIsOverride = overrideActive
+    const target = targetIsOverride ? spawn.dialogue : def.dialogue
+
+    const toggleRow = document.createElement('label')
+    toggleRow.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.85);display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px;'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = !!target
+    toggleRow.appendChild(cb)
+    toggleRow.appendChild(document.createTextNode(targetIsOverride ? 'Has dialogue (per spawn)' : 'Has dialogue (shared)'))
+    root.appendChild(toggleRow)
+    cb.addEventListener('change', () => {
+      const blank = { root: 'start', nodes: { start: { id: 'start', lines: ['Hello!'], options: [{ label: 'Bye.' }] } } }
+      if (cb.checked) {
+        if (targetIsOverride) spawn.dialogue = blank
+        else { def.dialogue = blank; markDefsDirty() }
+      } else {
+        if (targetIsOverride) spawn.dialogue = undefined
+        else { def.dialogue = undefined; markDefsDirty() }
+      }
+      renderDialogueTab(root, def)
+    })
+
+    if (!target) return
+
+    const hint = document.createElement('div')
+    hint.className = 'hint'
+    hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:4px;'
+    hint.innerHTML = `JSON view (graph editor coming in phase 4). Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: <code>openShop</code>, <code>openBank</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>.`
+    root.appendChild(hint)
+
+    const ta = document.createElement('textarea')
+    ta.value = JSON.stringify(target, null, 2)
+    ta.style.cssText = 'width:100%;height:240px;background:#0d0d0d;color:#cfc;border:1px solid #444;border-radius:3px;padding:5px;font-family:monospace;font-size:10px;resize:vertical;'
+    root.appendChild(ta)
+    const status = document.createElement('div')
+    status.style.cssText = 'font-size:10px;color:#888;margin-top:3px;min-height:14px;'
+    root.appendChild(status)
+    ta.addEventListener('change', () => {
+      try {
+        const parsed = JSON.parse(ta.value)
+        if (typeof parsed.root !== 'string' || !parsed.nodes || typeof parsed.nodes !== 'object') {
+          status.textContent = 'Tree must have root (string) and nodes (object)'
+          status.style.color = '#e44'
+          return
+        }
+        if (!parsed.nodes[parsed.root]) {
+          status.textContent = `root "${parsed.root}" not in nodes`
+          status.style.color = '#e44'
+          return
+        }
+        if (targetIsOverride) spawn.dialogue = parsed
+        else { def.dialogue = parsed; markDefsDirty() }
+        status.textContent = 'valid ✓'
+        status.style.color = '#6c6'
+      } catch (e) {
+        status.textContent = `parse error: ${e.message}`
+        status.style.color = '#e44'
+      }
+    })
+  }
 
   // --- Texture plane rotation panel ---
   const _rad2deg = r => Math.round(r * 180 / Math.PI)
@@ -2279,6 +3016,9 @@ let paintBrushRadius = 1
       addPlacedModel(model)
     }
     reportMissingAssets(_missing, 'load')
+    // Re-mask the placed objects under any active appearance preview — the
+    // previous TransformNode refs we stashed in hiddenNodes are now disposed.
+    if (typeof refreshNpcPreviewMasks === 'function') refreshNpcPreviewMasks()
   }
 
   function buildSaveData() {
@@ -5948,33 +6688,30 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       const picked = pickNpcSpawn(event)
       if (picked) {
         selectedNpcSpawn = picked
-        // Update UI to reflect selected spawn
         const sel = sidebar.querySelector('#npcTypeSelect')
         if (sel) sel.value = picked.npcId
-        const slider = sidebar.querySelector('#wanderRangeSlider')
-        if (slider) { slider.value = picked.wanderRange; sidebar.querySelector('#wanderRangeLabel').textContent = picked.wanderRange }
-        const aggCb = sidebar.querySelector('#aggressiveCheckbox')
-        if (aggCb) {
-          // null override = inherit NpcDef default; reflect that in the box.
-          const def = npcDefs.find(d => d.id === picked.npcId)
-          aggCb.checked = (picked.aggressive === true || picked.aggressive === false)
-            ? picked.aggressive
-            : !!def?.aggressive
-        }
+        if (typeof renderNpcInspector === 'function') renderNpcInspector()
         rebuildNpcSpawnMeshes()
         refreshNpcSpawnList()
         updateToolUI()
         return
       }
-      // Place new spawn — use the current checkbox state as the per-spawn
-      // override so map-makers can toggle the box, then drop a row of mobs.
+      // Place new spawn — pull wander/aggressive from the Spawn tab if it's
+      // currently rendered, otherwise fall through to the def defaults.
       const npcId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value)
-      const wanderRange = parseInt(sidebar.querySelector('#wanderRangeSlider')?.value) || 3
-      const aggressive = sidebar.querySelector('#aggressiveCheckbox')?.checked ?? null
       if (!npcId) return
+      const defForPlace = npcDefs.find(d => d.id === npcId)
+      const wanderSlider = sidebar.querySelector('#wanderRangeSlider')
+      const aggCb = sidebar.querySelector('#aggressiveCheckbox')
+      const wanderRange = wanderSlider ? (parseInt(wanderSlider.value) || (defForPlace?.wanderRange ?? 3)) : (defForPlace?.wanderRange ?? 3)
+      // Only treat the aggressive box as an override when the Spawn tab is
+      // visible AND the user has set it; otherwise leave it null so the spawn
+      // inherits the def's flag.
+      const aggressive = aggCb ? aggCb.checked : null
       pushUndoState('spawns')
       const spawn = addNpcSpawn(npcId, tile.x + 0.5, tile.z + 0.5, wanderRange, undefined, aggressive)
       selectedNpcSpawn = spawn
+      if (typeof renderNpcInspector === 'function') renderNpcInspector()
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
       updateToolUI()
@@ -6556,6 +7293,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       if (selectedNpcSpawn && state.tool === ToolMode.NPC_SPAWN) {
         pushUndoState('spawns')
         removeNpcSpawn(selectedNpcSpawn)
+        if (typeof renderNpcInspector === 'function') renderNpcInspector()
         rebuildNpcSpawnMeshes()
         refreshNpcSpawnList()
         updateToolUI()

@@ -188,7 +188,7 @@ Auth: `POST /api/signup`, `/api/login`, `/api/logout`. WebSocket upgrade require
 
 ### Character / skinned GLBs
 
-`client/public/Character models/main character.glb` — **57-joint `mixamorig:*` rig**. Originally a Polytope (Low Poly Medieval Fantasy Heroes) modular character, with bones renamed to Mixamo convention and 8 thumb bones removed. Animations are stock Mixamo FBX→GLB at `Character models/new animations/` (active folder — `Character models/animations/` is the older/dead set referenced only by `DEFAULT_PROFILE.additionalAnimations` which is bypassed at runtime).
+`client/public/Character models/main character.glb` — **57-joint `mixamorig:*` rig**. Originally a Polytope (Low Poly Medieval Fantasy Heroes) modular character, with bones renamed to Mixamo convention and 8 thumb bones removed. Animations are stock Mixamo FBX→GLB at `Character models/new animations/` — the FBX sources alongside the GLBs were the only thing the runtime never read, so they were removed along with the older bulk-download Universal Animation Library packs.
 
 The 32 base Mixamo bones drive animations directly. The 25 extra finger bones (Index/Middle/Ring/Pinky × 4 each side) idle in rest pose since vanilla Mixamo anims don't keyframe fingers — that's expected.
 

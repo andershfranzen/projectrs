@@ -91,6 +91,60 @@ export interface NpcDef {
    *  animation evaluation) and skips loading walk anims — major mobile win
    *  for shopkeepers/smiths/bankers. */
   stationary?: boolean;
+  /** Inline shop. New authoring surface — replaces the legacy shops.json
+   *  keyed by NPC id. The DataLoader still reads shops.json as a fallback
+   *  for entries not yet migrated. */
+  shop?: ShopDef;
+  /** Inline dialogue tree. When present, right-clicking the NPC offers a
+   *  "Talk-to" option that opens the DialoguePanel with the root node. */
+  dialogue?: DialogueTree;
+}
+
+export interface ShopItem {
+  itemId: number;
+  price: number;
+  stock: number;
+}
+
+export interface ShopDef {
+  name: string;
+  items: ShopItem[];
+}
+
+/** Action triggered when a dialogue option is chosen. Runs server-side
+ *  before advancing to `option.next`. Use `closeDialogue` to end the
+ *  conversation; omit `next` on the option to also end. */
+export type DialogueAction =
+  | { type: 'openShop' }
+  | { type: 'openBank' }
+  | { type: 'giveItem'; itemId: number; qty: number }
+  | { type: 'takeItem'; itemId: number; qty: number }
+  | { type: 'closeDialogue' };
+
+export interface DialogueOption {
+  label: string;
+  /** ID of the next node, or omitted to end dialogue. */
+  next?: string;
+  /** Server-side effect to run when this option is chosen. */
+  action?: DialogueAction;
+}
+
+export interface DialogueNode {
+  id: string;
+  /** Override speaker name. Defaults to the NPC's name. */
+  speaker?: string;
+  /** Lines shown in order; player advances by clicking. */
+  lines: string[];
+  options: DialogueOption[];
+  /** Editor layout — pixel position in the node graph canvas. Persisted
+   *  so the graph reopens with the same layout. */
+  layout?: { x: number; y: number };
+}
+
+export interface DialogueTree {
+  /** ID of the starting node. */
+  root: string;
+  nodes: Record<string, DialogueNode>;
 }
 
 export interface LootDrop {
@@ -261,6 +315,12 @@ export interface SpawnEntry {
    *  0 = empty slot. Only meaningful when `appearance` is also set (the GLB
    *  gear pipeline only runs on CharacterEntity-rendered NPCs). */
   equipment?: number[];
+  /** Per-spawn shop override. When set, fully replaces NpcDef.shop for
+   *  this spawn (no field-merge). Lets two spawns of the same NpcDef sell
+   *  different inventory. */
+  shop?: ShopDef;
+  /** Per-spawn dialogue override. When set, fully replaces NpcDef.dialogue. */
+  dialogue?: DialogueTree;
 }
 
 export interface ObjectSpawnEntry {

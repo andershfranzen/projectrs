@@ -68,6 +68,12 @@ export class Player extends Entity {
    *  player can still attack/skill/etc. — matches RS where shops auto-close
    *  on distance). */
   openShopNpcId: number | null = null;
+  /** Currently open dialogue, or null. Tracks which NPC entity the player is
+   *  talking to and which node they're parked on. DIALOGUE_CHOOSE handlers
+   *  validate the entity id matches before running the chosen option's action.
+   *  Cleared in the same lifecycle hooks as openShopNpcId (movement, transition,
+   *  death, disconnect). */
+  openDialogueState: { npcEntityId: number; nodeId: string } | null = null;
   /** World tick on which this player last consumed a movement waypoint. Used
    *  to defer adjacency-triggered actions (interact/pickup) by one tick when
    *  the player just arrived — gives the client's smooth visual interpolation

@@ -453,6 +453,11 @@ export class CharacterEntity {
         flat.backFaceCulling = pbrMat.backFaceCulling ?? true;
         flat.alpha = 1;
 
+        // Pull eye meshes slightly forward in clip space — they sit on top of
+        // the face mesh and Z-fight at zoomed-out distances where depth-buffer
+        // precision tightens. Matches both "Eyewhite2" and "Eye colour".
+        if (pbrMat.name && /^eye/i.test(pbrMat.name)) flat.zOffset = -1;
+
         mesh.material = flat;
 
         // Soften visible facet edges on arms/clothing — many meshes ship with

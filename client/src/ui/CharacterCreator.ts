@@ -9,6 +9,9 @@ import {
   BELT_COLORS, BELT_COLOR_NAMES,
   HAIR_STYLE_COUNT,
   hairStyleName,
+  CHARACTER_MODEL_PATH,
+  CHARACTER_TARGET_HEIGHT,
+  CHARACTER_IDLE_ANIM,
 } from '@projectrs/shared';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
@@ -479,10 +482,10 @@ export class CharacterCreator {
     this.previewCharacter = new CharacterEntity(scene, {
       name: 'previewChar',
       modelPath: this.getModelPath(),
-      targetHeight: 1.53,
+      targetHeight: CHARACTER_TARGET_HEIGHT,
       layerMask: PREVIEW_LAYER_MASK,
       additionalAnimations: [
-        { name: 'idle', path: '/Character models/new animations/idle.glb' },
+        { name: 'idle', path: CHARACTER_IDLE_ANIM },
       ],
     });
     this.previewCharacter.setPositionXYZ(anchor.x, anchor.y, anchor.z);
@@ -494,7 +497,7 @@ export class CharacterCreator {
   }
 
   private getModelPath(): string {
-    return '/Character models/main character.glb';
+    return CHARACTER_MODEL_PATH;
   }
 
   private updatePreview(): void {

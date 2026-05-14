@@ -238,6 +238,13 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.DIALOGUE_CHOOSE: {
+      const npcEntityId = values[0];
+      const optionIndex = values[1];
+      world.handleDialogueChoose(playerId, npcEntityId, optionIndex);
+      break;
+    }
+
     case ClientOpcode.PLAYER_BUY_ITEM: {
       const itemId = values[0];
       const quantity = values[1] ?? 1;

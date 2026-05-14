@@ -1,20 +1,13 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef } from '@projectrs/shared';
+import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
 
-export interface ShopItem {
-  itemId: number;
-  price: number;
-  stock: number;
-}
-
-export interface ShopDef {
-  name: string;
-  items: ShopItem[];
-}
+// ShopDef / ShopItem now live in shared/types.ts so they can hang off NpcDef.
+// Re-export so existing imports from this module keep working.
+export type { ShopDef, ShopItem } from '@projectrs/shared';
 
 export class DataLoader {
   private npcs: Map<number, NpcDef> = new Map();
@@ -81,27 +74,56 @@ export class DataLoader {
   }
 
   private loadShops(): void {
+    // Legacy fallback: shops.json keyed by NPC id. New authoring goes inline
+    // on the NpcDef's `shop` field (see getShop). shops.json wins for ids
+    // present in both files, so partial migration is safe.
     try {
       const raw = readFileSync(resolve(DATA_DIR, 'shops.json'), 'utf-8');
       const data: Record<string, ShopDef> = JSON.parse(raw);
       for (const [npcId, shop] of Object.entries(data)) {
         this.shops.set(Number(npcId), shop);
       }
-      console.log(`Loaded ${this.shops.size} shop definitions`);
-      for (const shop of this.shops.values()) {
-        for (const si of shop.items) {
-          if (!this.shopItemPrices.has(si.itemId)) {
-            this.shopItemPrices.set(si.itemId, si.price);
-          }
+      console.log(`Loaded ${this.shops.size} shop definitions (legacy shops.json)`);
+    } catch {
+      // No legacy file — npcs.json inline shops are the source of truth.
+    }
+    // Index every shop's prices for sell-back lookup, drawing from both
+    // legacy shops.json AND inline NpcDef.shop entries.
+    for (const def of this.npcs.values()) {
+      const shop = this.shops.get(def.id) ?? def.shop;
+      if (!shop) continue;
+      for (const si of shop.items) {
+        if (!this.shopItemPrices.has(si.itemId)) {
+          this.shopItemPrices.set(si.itemId, si.price);
         }
       }
-    } catch {
-      console.log('No shops.json found, skipping');
     }
   }
 
+  /** Effective shop for an NPC def: inline `NpcDef.shop` (the editor's
+   *  authoring surface) wins; legacy shops.json is the fallback for any NPC
+   *  that hasn't been migrated yet. Reversing this would silently strand
+   *  editor edits behind the legacy file. */
   getShop(npcDefId: number): ShopDef | undefined {
-    return this.shops.get(npcDefId);
+    return this.npcs.get(npcDefId)?.shop ?? this.shops.get(npcDefId);
+  }
+
+  /** Inline dialogue tree from the NpcDef. Per-spawn overrides are applied
+   *  at instantiation in World.spawnNpcs. */
+  getDialogue(npcDefId: number): DialogueTree | undefined {
+    return this.npcs.get(npcDefId)?.dialogue;
+  }
+
+  /** Hot-reload npcs.json — used by the editor save endpoint so stat edits
+   *  show up live without a server restart. Existing Npc instances keep
+   *  their original def reference (intentional — changing a live NPC's HP
+   *  mid-fight would be jarring); newly spawned NPCs pick up the new defs. */
+  reloadNpcs(): void {
+    this.npcs.clear();
+    this.shops.clear();
+    this.shopItemPrices.clear();
+    this.loadNpcs();
+    this.loadShops();
   }
 
   getShopPrice(itemId: number): number | undefined {
