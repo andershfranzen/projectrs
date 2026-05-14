@@ -497,25 +497,25 @@ export class SidePanel {
       position: relative;
       overflow: hidden;
       background:
-        repeating-linear-gradient(0deg, rgba(255, 212, 132, 0.045) 0 1px, transparent 1px 4px),
-        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 5px),
-        repeating-linear-gradient(45deg, rgba(255, 170, 86, 0.05) 0 2px, transparent 2px 10px),
-        linear-gradient(180deg, #4a2b1b 0%, #321b11 50%, #20100a 100%);
-      border-top: 2px solid #9b6841;
-      border-left: 2px solid #8a5735;
+        repeating-linear-gradient(0deg, rgba(196, 126, 70, 0.035) 0 1px, transparent 1px 4px),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 5px),
+        repeating-linear-gradient(45deg, rgba(138, 74, 42, 0.05) 0 2px, transparent 2px 10px),
+        linear-gradient(180deg, #2c180f 0%, #1f100a 50%, #120806 100%);
+      border-top: 2px solid #6f4227;
+      border-left: 2px solid #5c341f;
       border-right: 2px solid #160b06;
       border-bottom: 2px solid #120804;
       border-radius: 2px;
       box-shadow:
-        inset 2px 2px 0 rgba(222, 148, 82, 0.16),
-        inset -2px -2px 0 rgba(0,0,0,0.42),
+        inset 2px 2px 0 rgba(160, 88, 48, 0.13),
+        inset -2px -2px 0 rgba(0,0,0,0.5),
         2px 2px 0 rgba(0,0,0,0.45);
     `;
 
     const stitch = document.createElement('div');
     stitch.style.cssText = `
       position: absolute; inset: 3px;
-      border: 1px dotted rgba(218, 145, 80, 0.42);
+      border: 1px dotted rgba(150, 82, 46, 0.38);
       border-radius: 1px;
       box-shadow: 0 0 0 1px rgba(35, 16, 9, 0.7);
       pointer-events: none; z-index: 1;
