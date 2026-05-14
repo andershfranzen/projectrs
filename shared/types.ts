@@ -246,6 +246,16 @@ export interface WorldObjectDef {
   // Each attempt rolls statRandom(level, low, high) against 256
   successChances?: Record<string, [number, number]>;
 
+  // Bonus loot rolled on top of the primary harvest. Each entry rolls
+  // independently; misses drop nothing. Items must be stackable (or have
+  // inventory room) — the roll is skipped silently if the player is full.
+  extraLoot?: Array<{ itemId: number; quantity: number; chance: number }>;
+
+  // Asset id (from the editor asset registry) to display when this object
+  // is in its depleted state. Used by chests (closed → open swap) and any
+  // other category that wants a visual variant instead of just hiding.
+  depletedAssetId?: string;
+
   // Crafting station recipes (furnace, cooking range)
   recipes?: ObjectRecipe[];
 

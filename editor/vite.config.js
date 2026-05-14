@@ -24,6 +24,10 @@ export default defineConfig({
       // in 'Character models' before it sends the request. The plain-string
       // key '/Character models' silently never matches.
       '/Character%20models': 'http://localhost:5173',
+      // Static model GLBs (trees, stumps, chests) live under client/public/models.
+      // Proxy to the client's dev server so the editor can load them when an
+      // asset path points into /models/...
+      '/models': 'http://localhost:5173',
     }
   }
 })

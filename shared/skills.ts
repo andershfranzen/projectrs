@@ -2,11 +2,11 @@
 
 export type SkillId =
   | 'accuracy' | 'strength' | 'defence' | 'goodmagic' | 'evilmagic' | 'archery' | 'hitpoints'
-  | 'woodcut' | 'fishing' | 'cooking' | 'mining' | 'smithing' | 'crafting';
+  | 'woodcut' | 'fishing' | 'cooking' | 'mining' | 'smithing' | 'crafting' | 'roguery';
 
 export const ALL_SKILLS: SkillId[] = [
   'accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints',
-  'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting',
+  'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery',
 ];
 
 export const COMBAT_SKILLS: SkillId[] = ['accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery'];
@@ -25,6 +25,7 @@ export const SKILL_NAMES: Record<SkillId, string> = {
   mining: 'Mining',
   smithing: 'Smithing',
   crafting: 'Crafting',
+  roguery: 'Roguery',
 };
 
 export const SKILL_COLORS: Record<SkillId, string> = {
@@ -41,6 +42,7 @@ export const SKILL_COLORS: Record<SkillId, string> = {
   mining: '#888',
   smithing: '#aaa',
   crafting: '#ca4',
+  roguery: '#7a2a7a',
 };
 
 export interface SkillState {

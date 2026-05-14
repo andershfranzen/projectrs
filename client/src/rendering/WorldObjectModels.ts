@@ -22,6 +22,10 @@ export class WorldObjectModels {
   private stumpModels: Map<number, ModelTemplate> = new Map();
   private stumpModelsByName: Map<string, ModelTemplate> = new Map();
   private depletedRockModel: ModelTemplate | null = null;
+  /** Pre-loaded depleted-state templates for chests, keyed by depletedAssetId
+   *  from the object def. Multiple chest tiers can share the same open-chest
+   *  asset without re-importing. */
+  private chestDepletedModels: Map<string, ModelTemplate> = new Map();
 
   private stumps: Map<number, TransformNode> = new Map();
 
@@ -52,7 +56,43 @@ export class WorldObjectModels {
   }
 
   async loadAll(): Promise<void> {
-    await Promise.all([this.loadTreeModels(), this.loadDepletedRockModel()]);
+    await Promise.all([
+      this.loadTreeModels(),
+      this.loadDepletedRockModel(),
+      this.loadChestDepletedModels(),
+    ]);
+  }
+
+  /** Map an `depletedAssetId` (e.g. "open chest") to the GLB file under
+   *  /models/ to import. Add entries here when a new chest tier introduces
+   *  a different open variant. */
+  private static readonly DEPLETED_ASSET_FILES: Record<string, string> = {
+    'open chest': 'OpenChest.glb',
+  };
+
+  private async loadChestDepletedModels(): Promise<void> {
+    const wanted = new Set<string>();
+    for (const def of this.objectDefsCache.values()) {
+      if (def.category === 'chest' && def.depletedAssetId) wanted.add(def.depletedAssetId);
+    }
+    await Promise.all(Array.from(wanted).map(async (assetId) => {
+      const file = WorldObjectModels.DEPLETED_ASSET_FILES[assetId];
+      if (!file) {
+        console.warn(`[WorldObjectModels] No GLB mapping for depletedAssetId='${assetId}'`);
+        return;
+      }
+      try {
+        const result = await SceneLoader.ImportMeshAsync('', '/models/', file, this.scene);
+        const root = new TransformNode(`chestDepletedTemplate_${assetId}`, this.scene);
+        for (const mesh of result.meshes) {
+          if (!mesh.parent) mesh.parent = root;
+        }
+        root.setEnabled(false);
+        this.chestDepletedModels.set(assetId, { template: root, scale: 1 });
+      } catch (e) {
+        console.warn(`[WorldObjectModels] Failed to load chest depleted model '${file}':`, e);
+      }
+    }));
   }
 
   private async loadTreeModels(): Promise<void> {
@@ -225,6 +265,8 @@ export class WorldObjectModels {
       depletedModel = this.stumpModels.get(defId) ?? null;
     } else if (def?.category === 'rock') {
       depletedModel = this.depletedRockModel;
+    } else if (def?.category === 'chest' && def.depletedAssetId) {
+      depletedModel = this.chestDepletedModels.get(def.depletedAssetId) ?? null;
     }
     if (!depletedModel) return undefined;
     const depleted = depletedModel.template.instantiateHierarchy(null, undefined, (source, cloned) => {
@@ -263,6 +305,8 @@ export class WorldObjectModels {
     this.stumpModelsByName.clear();
     if (this.depletedRockModel) this.depletedRockModel.template.dispose();
     this.depletedRockModel = null;
+    for (const [, m] of this.chestDepletedModels) m.template.dispose();
+    this.chestDepletedModels.clear();
     this.disposeStumps();
   }
 }

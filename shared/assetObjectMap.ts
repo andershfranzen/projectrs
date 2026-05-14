@@ -35,6 +35,11 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'basicTruedoor': 13,
   // Cave entrances
   'cavedoor': 15,  // Cave Entrance -> map transition
+  // Chests (roguery / lockpicking). Closed asset is interactable; the open
+  // variant is the depleted-state visual loaded by WorldObjectModels and
+  // never needs its own mapping. Add a new entry per chest tier when a
+  // distinct closed GLB ships.
+  'closed chest': 20, // Wooden Chest
 };
 
 /**

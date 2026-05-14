@@ -2023,5 +2023,59 @@
     "rangedDefence": 0,
     "magicDefence": 0,
     "value": 12
+  },
+  {
+    "id": 224,
+    "name": "Strange Totem",
+    "description": "A tier-1 relic. Worn smooth by countless hands.",
+    "stackable": true,
+    "equippable": false,
+    "value": 50,
+    "icon": "Strange_Totem_224.png"
+  },
+  {
+    "id": 225,
+    "name": "Old Coin",
+    "description": "A tier-1 relic. The face is unfamiliar.",
+    "stackable": true,
+    "equippable": false,
+    "value": 50,
+    "icon": "Old_Coin_225.png"
+  },
+  {
+    "id": 226,
+    "name": "Old Symbol",
+    "description": "A tier-1 relic. The meaning is lost to time.",
+    "stackable": true,
+    "equippable": false,
+    "value": 50,
+    "icon": "Old_Symbol_226.png"
+  },
+  {
+    "id": 227,
+    "name": "Old Jewelry",
+    "description": "A tier-2 relic. Tarnished but unmistakably valuable.",
+    "stackable": true,
+    "equippable": false,
+    "value": 200,
+    "icon": "Old_Jewelry_227.png"
+  },
+  {
+    "id": 228,
+    "name": "Old Bone",
+    "description": "A tier-2 relic. Too smooth to be natural.",
+    "stackable": true,
+    "equippable": false,
+    "value": 200,
+    "icon": "Old_Bone_228.png"
+  },
+  {
+    "id": 229,
+    "name": "Manuscript",
+    "description": "A tier-2 relic. The script bends in patterns that shouldn't make sense.",
+    "stackable": true,
+    "equippable": false,
+    "value": 200,
+    "icon": "Manuscript_229.png"
   }
 ]

@@ -3294,6 +3294,22 @@ export class World {
           continue;
         }
 
+        // Bonus loot — chests use this for relic rolls on top of the
+        // primary coin payout. Each entry is independent; misses drop
+        // nothing. Skips rolls silently when the inventory is full so a
+        // jackpot relic doesn't get lost in chat noise.
+        if (obj.def.extraLoot) {
+          for (const drop of obj.def.extraLoot) {
+            if (Math.random() >= drop.chance) continue;
+            const got = player.addItem(drop.itemId, drop.quantity, this.data.itemDefs);
+            if (got.completed > 0) {
+              const itemDef = this.data.itemDefs.get(drop.itemId);
+              const name = itemDef?.name ?? `item ${drop.itemId}`;
+              this.sendChatSystem(player, `You find a ${name}!`);
+            }
+          }
+        }
+
         if (xpReward > 0) {
           const result = addXp(player.skills, skillId, xpReward);
           const skillIdx = ALL_SKILLS.indexOf(skillId);

@@ -1532,5 +1532,53 @@
         "requiresTool": "hammer"
       }
     ]
+  },
+  {
+    "id": 20,
+    "name": "Wooden Chest",
+    "category": "chest",
+    "actions": ["Lockpick", "Examine"],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [120, 80, 40],
+    "skill": "roguery",
+    "levelRequired": 1,
+    "xpReward": 25,
+    "harvestItemId": 10,
+    "harvestQuantity": 10,
+    "harvestTime": 3,
+    "depletionChance": 1.0,
+    "respawnTime": 300,
+    "depletedAssetId": "open chest",
+    "extraLoot": [
+      { "itemId": 224, "quantity": 1, "chance": 0.05 },
+      { "itemId": 225, "quantity": 1, "chance": 0.05 },
+      { "itemId": 226, "quantity": 1, "chance": 0.05 }
+    ]
+  },
+  {
+    "id": 21,
+    "name": "Iron Chest",
+    "category": "chest",
+    "actions": ["Lockpick", "Examine"],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [80, 80, 100],
+    "skill": "roguery",
+    "levelRequired": 25,
+    "xpReward": 65,
+    "harvestItemId": 10,
+    "harvestQuantity": 40,
+    "harvestTime": 4,
+    "depletionChance": 1.0,
+    "respawnTime": 600,
+    "depletedAssetId": "open chest",
+    "extraLoot": [
+      { "itemId": 227, "quantity": 1, "chance": 0.05 },
+      { "itemId": 228, "quantity": 1, "chance": 0.05 },
+      { "itemId": 229, "quantity": 1, "chance": 0.05 }
+    ]
   }
 ]

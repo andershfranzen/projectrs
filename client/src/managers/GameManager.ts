@@ -2105,7 +2105,7 @@ export class GameManager {
       }
 
       const def = data ? this.objectDefsCache.get(data.defId) : null;
-      const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock';
+      const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
 
       if (def?.category === 'door') {
         // Doors stay visible — animation is handled above
