@@ -1,5 +1,16 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
+// Aliased so it doesn't collide with the DOM's global `Animation`
+// (Web Animations API) — used in private fields below for HTML element
+// animations.
+import { Animation as BabylonAnimation } from '@babylonjs/core/Animations/animation';
 import { Scene } from '@babylonjs/core/scene';
+
+// RS2-style stepped skeletal animation: skip matrix interpolation between
+// keyframes so the already-quantized 8-keyframe anims play discrete instead
+// of lerping smoothly between poses. Set at module load — applies globally
+// to Babylon. Was previously in main.ts but moved here so main.ts can stay
+// Babylon-free and load via dynamic import.
+BabylonAnimation.AllowMatricesInterpolation = false;
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Vector3, Color3, Color4, Matrix, Quaternion } from '@babylonjs/core/Maths/math';
@@ -202,11 +213,25 @@ export class GameManager {
   // WASD camera
   private keysDown: Set<string> = new Set();
 
-  constructor(canvas: HTMLCanvasElement, token: string, username: string, onDisconnect?: () => void) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    token: string,
+    username: string,
+    onDisconnect?: () => void,
+    preloadedLoadingScreen?: LoadingScreen,
+  ) {
     (window as any).gm = this;
     this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
     this.username = username;
+    // If main.ts already constructed a LoadingScreen (during pre-auth asset
+    // preload), reuse it instead of flashing a fresh one on LOGIN_OK. The
+    // pre-auth path hides nothing — the same overlay carries through from
+    // page load to first playable frame.
+    if (preloadedLoadingScreen) {
+      this.loadingScreen = preloadedLoadingScreen;
+      this.loadingScreen.setStatus('Connecting to world…');
+    }
 
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
     // RS-style chunky pixels: render at half resolution and let the browser
@@ -589,47 +614,55 @@ export class GameManager {
   }
 
   private async loadObjectDefs(): Promise<void> {
-    try {
-      const res = await fetch('/data/objects.json');
-      const defs: WorldObjectDef[] = await res.json();
-      for (const def of defs) {
-        this.objectDefsCache.set(def.id, def);
+    // All four def files are independent — fetch them in parallel.
+    // Previously these were four serial awaits, which on a cold start added
+    // up to ~200–400ms of dead time over the lifetime of the constructor.
+    const [objectsRes, itemsRes, npcsRes, gearRes] = await Promise.all([
+      fetch('/data/objects.json').catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
+      fetch('/data/items.json').catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
+      fetch('/data/npcs.json').catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
+      fetch('/data/gear-overrides.json').catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+    ]);
+
+    if (objectsRes) {
+      try {
+        const defs: WorldObjectDef[] = await objectsRes.json();
+        for (const def of defs) this.objectDefsCache.set(def.id, def);
+        this.rebuildBlockedObjectTiles();
+      } catch (e) {
+        console.warn('Failed to parse object definitions:', e);
       }
-      this.rebuildBlockedObjectTiles();
-    } catch (e) {
-      console.warn('Failed to load object definitions:', e);
     }
-    try {
-      const res = await fetch('/data/items.json');
-      const defs: ItemDef[] = await res.json();
-      for (const def of defs) {
-        this.itemDefsCache.set(def.id, def);
+    if (itemsRes) {
+      try {
+        const defs: ItemDef[] = await itemsRes.json();
+        for (const def of defs) this.itemDefsCache.set(def.id, def);
+        if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
+        if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
+        if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
+      } catch (e) {
+        console.warn('Failed to parse item definitions:', e);
       }
-      if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
-      if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
-      if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
-    } catch (e) {
-      console.warn('Failed to load item definitions:', e);
     }
-    try {
-      const res = await fetch('/data/npcs.json');
-      const defs: NpcDef[] = await res.json();
-      for (const def of defs) {
-        this.npcDefsCache.set(def.id, def);
+    if (npcsRes) {
+      try {
+        const defs: NpcDef[] = await npcsRes.json();
+        for (const def of defs) this.npcDefsCache.set(def.id, def);
+      } catch (e) {
+        console.warn('Failed to parse NPC definitions:', e);
       }
-    } catch (e) {
-      console.warn('Failed to load NPC definitions:', e);
     }
-    try {
-      const res = await fetch('/data/gear-overrides.json');
-      const overrides: Record<string, GearOverride> = await res.json();
-      this.gearOverrides.clear();
-      for (const [id, override] of Object.entries(overrides)) {
-        this.gearOverrides.set(Number(id), override);
+    if (gearRes) {
+      try {
+        const overrides: Record<string, GearOverride> = await gearRes.json();
+        this.gearOverrides.clear();
+        for (const [id, override] of Object.entries(overrides)) {
+          this.gearOverrides.set(Number(id), override);
+        }
+        console.log(`[Gear] Loaded ${this.gearOverrides.size} gear overrides`);
+      } catch (e) {
+        console.warn('Failed to parse gear overrides:', e);
       }
-      console.log(`[Gear] Loaded ${this.gearOverrides.size} gear overrides`);
-    } catch (e) {
-      console.warn('Failed to load gear overrides:', e);
     }
     // Unblock any equip calls that came in before this fetch finished.
     // Without this gate, applyGearToCharacter would build a GearDef from
@@ -1217,8 +1250,12 @@ export class GameManager {
       const spawnY = (v[3] ?? 0) / 10;
       this.network.setLocalPlayerId(this.localPlayerId);
 
-      this.loadingScreen = new LoadingScreen();
-      this.loadingScreen.show();
+      // If main.ts handed us a pre-auth LoadingScreen, reuse it so the user
+      // sees a continuous overlay; otherwise spin one up now (legacy path).
+      if (!this.loadingScreen) {
+        this.loadingScreen = new LoadingScreen();
+        this.loadingScreen.show();
+      }
       this.loadingScreen.setStatus('Loading character…');
 
       this.localPlayer = this.createLocalCharacterEntity();

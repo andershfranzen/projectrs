@@ -388,20 +388,36 @@ function getMimeType(path: string): string {
 function serveStatic(pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
   let filePath = resolve(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
+  let isIndexFallback = false;
 
   try {
     const stat = statSync(filePath);
     if (stat.isDirectory()) {
       filePath = resolve(filePath, 'index.html');
+      isIndexFallback = true;
     }
   } catch {
     filePath = resolve(CLIENT_DIST, 'index.html');
+    isIndexFallback = true;
   }
 
   try {
     const content = readFileSync(filePath);
+    // index.html must never be cached so deploys are picked up immediately.
+    // Vite-hashed JS/CSS chunks under /assets/ are content-addressed and
+    // safe to cache long. All other static GLBs/PNGs use a moderate cache
+    // so reloads don't repeatedly re-download multi-MB character models.
+    let cacheControl = 'public, max-age=3600';
+    if (isIndexFallback || filePath.endsWith('.html')) {
+      cacheControl = 'no-cache';
+    } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
+      cacheControl = 'public, max-age=31536000, immutable';
+    }
     return new Response(content, {
-      headers: { 'Content-Type': getMimeType(filePath) },
+      headers: {
+        'Content-Type': getMimeType(filePath),
+        'Cache-Control': cacheControl,
+      },
     });
   } catch {
     return null;

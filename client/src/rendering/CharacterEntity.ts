@@ -604,48 +604,61 @@ export class CharacterEntity {
     }
     const loadedFiles = new Map<string, LoadedFile>();
 
+    // Phase 1: import every unique GLB in parallel. Previously this happened
+    // serially inside the per-anim loop, which made first-time character load
+    // O(N) over the network for N animation files (~2–5s for the 10 we ship).
+    // Babylon's SceneLoader is single-threaded but its imports don't conflict
+    // with each other — each one adds nodes to the scene with unique auto-
+    // renamed names, and we capture per-file source rest rotations into
+    // separately-scoped Maps before any retarget pass runs.
+    const uniquePaths = Array.from(new Set(anims.map((a) => a.path)));
+    await Promise.all(
+      uniquePaths.map(async (animPath) => {
+        try {
+          const lastSlash = animPath.lastIndexOf('/');
+          const dir = animPath.substring(0, lastSlash + 1);
+          const file = devCacheBust(animPath.substring(lastSlash + 1));
+          const imported = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+
+          // Capture source bone rest rotations from TransformNodes
+          // (animation GLBs have no Skeleton — bones are just TransformNodes)
+          const srcRestRotations = new Map<string, Quaternion>();
+          for (const tn of imported.transformNodes) {
+            if (tn.rotationQuaternion) {
+              srcRestRotations.set(tn.name, tn.rotationQuaternion.clone());
+            }
+          }
+
+          const result: LoadedFile = {
+            animationGroups: imported.animationGroups,
+            skeletons: imported.skeletons,
+            meshes: imported.meshes,
+            srcRestRotations,
+          };
+          loadedFiles.set(animPath, result);
+          for (const g of result.animationGroups) g.stop();
+          // Fingerprint: duration + total keyframes — changes on every re-export
+          // so you can verify at a glance whether the latest GLB is loaded.
+          const fpGroup = result.animationGroups[0];
+          let fpDur = 0, fpKeys = 0;
+          if (fpGroup) {
+            const fps = fpGroup.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+            fpDur = fps > 0 ? (fpGroup.to - fpGroup.from) / fps : 0;
+            for (const ta of fpGroup.targetedAnimations) fpKeys += ta.animation.getKeys().length;
+          }
+          console.log(`[CharacterEntity] Animation file '${animPath}' loaded | dur=${fpDur.toFixed(3)}s keys=${fpKeys}`);
+        } catch {
+          console.warn(`[CharacterEntity] Failed to load animation file ${animPath}`);
+        }
+      }),
+    );
+
+    // Phase 2: retarget each declared animation onto our skeleton. Synchronous
+    // and fast — pure data transforms over already-loaded keyframes.
     for (const anim of anims) {
       try {
-        let result = loadedFiles.get(anim.path);
-        if (!result) {
-          try {
-            const lastSlash = anim.path.lastIndexOf('/');
-            const dir = anim.path.substring(0, lastSlash + 1);
-            const file = devCacheBust(anim.path.substring(lastSlash + 1));
-            const imported = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
-
-            // Capture source bone rest rotations from TransformNodes
-            // (animation GLBs have no Skeleton — bones are just TransformNodes)
-            const srcRestRotations = new Map<string, Quaternion>();
-            for (const tn of imported.transformNodes) {
-              if (tn.rotationQuaternion) {
-                srcRestRotations.set(tn.name, tn.rotationQuaternion.clone());
-              }
-            }
-
-            result = {
-              animationGroups: imported.animationGroups,
-              skeletons: imported.skeletons,
-              meshes: imported.meshes,
-              srcRestRotations,
-            };
-            loadedFiles.set(anim.path, result);
-            for (const g of result.animationGroups) g.stop();
-            // Fingerprint: duration + total keyframes — changes on every re-export
-            // so you can verify at a glance whether the latest GLB is loaded.
-            const fpGroup = result.animationGroups[0];
-            let fpDur = 0, fpKeys = 0;
-            if (fpGroup) {
-              const fps = fpGroup.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
-              fpDur = fps > 0 ? (fpGroup.to - fpGroup.from) / fps : 0;
-              for (const ta of fpGroup.targetedAnimations) fpKeys += ta.animation.getKeys().length;
-            }
-            console.log(`[CharacterEntity] Animation '${anim.name}' loaded from ${anim.path} | dur=${fpDur.toFixed(3)}s keys=${fpKeys}`);
-          } catch {
-            console.warn(`[CharacterEntity] Failed to load animation '${anim.name}' from ${anim.path}`);
-            continue;
-          }
-        }
+        const result = loadedFiles.get(anim.path);
+        if (!result) continue;
 
         // Find the animation group. If animName is set, prefer that — but fall
         // back to the first action if the lookup fails. Mixamo-exported GLBs

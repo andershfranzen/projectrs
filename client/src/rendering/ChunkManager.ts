@@ -213,7 +213,14 @@ export class ChunkManager {
     this.loaded = false;
     this.mapId = mapId;
 
-    const cacheBust = `?t=${Date.now()}`;
+    // In dev mode bust the HTTP cache so editor saves show up immediately
+    // (the editor preview workflow relies on a hard refresh picking up new
+    // map JSON without manually clearing site data). In prod the server
+    // serves these with no-cache anyway, so the bust is dead weight and
+    // also defeats the AssetPreloader pre-fetch — the URL it warmed has
+    // no `?t=…` suffix, so loadMap would re-hit the network. Omit it.
+    const cacheBust = import.meta.env.DEV ? `?t=${Date.now()}` : '';
+    const joinCb = cacheBust ? `${cacheBust}&` : '?';
 
     // Fetch meta
     const metaRes = await fetch(`/maps/${mapId}/meta.json${cacheBust}`);
@@ -224,7 +231,7 @@ export class ChunkManager {
     this.mapHeight = this.meta.height;
 
     // Fetch KC map data — request chunked mode (metadata only, no tiles/heights)
-    const mapRes = await fetch(`/maps/${mapId}/map.json${cacheBust}&chunked=1`);
+    const mapRes = await fetch(`/maps/${mapId}/map.json${joinCb}chunked=1`);
     if (isStale()) return;
     const mapFile: KCMapFile = await mapRes.json();
     if (isStale()) return;
