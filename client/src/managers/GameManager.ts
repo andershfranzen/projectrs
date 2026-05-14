@@ -1,5 +1,16 @@
 import { Engine } from '@babylonjs/core/Engines/engine';
+// Aliased so it doesn't collide with the DOM's global `Animation`
+// (Web Animations API) — used in private fields below for HTML element
+// animations.
+import { Animation as BabylonAnimation } from '@babylonjs/core/Animations/animation';
 import { Scene } from '@babylonjs/core/scene';
+
+// RS2-style stepped skeletal animation: skip matrix interpolation between
+// keyframes so the already-quantized 8-keyframe anims play discrete instead
+// of lerping smoothly between poses. Set at module load — applies globally
+// to Babylon. Was previously in main.ts but moved here so main.ts can stay
+// Babylon-free and load via dynamic import.
+BabylonAnimation.AllowMatricesInterpolation = false;
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Vector3, Color3, Color4, Matrix, Quaternion } from '@babylonjs/core/Maths/math';
@@ -100,6 +111,12 @@ export class GameManager {
   private slideStartMs: number = 0;
   private slideDurationMs: number = 200;
   private static readonly SLIDE_DURATION_MS = 200;
+  // Tracks when the tab last became hidden. Non-zero means we recently
+  // returned to a visible tab and the divergence-snap is armed for ~2 ticks
+  // to catch the throttled-prediction backlog. Reset to 0 otherwise so
+  // steady-state play doesn't teleport on transient packet jitter.
+  private _hiddenSinceMs: number = 0;
+  private _visibilityHandler: (() => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
@@ -202,11 +219,25 @@ export class GameManager {
   // WASD camera
   private keysDown: Set<string> = new Set();
 
-  constructor(canvas: HTMLCanvasElement, token: string, username: string, onDisconnect?: () => void) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    token: string,
+    username: string,
+    onDisconnect?: () => void,
+    preloadedLoadingScreen?: LoadingScreen,
+  ) {
     (window as any).gm = this;
     this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
     this.username = username;
+    // If main.ts already constructed a LoadingScreen (during pre-auth asset
+    // preload), reuse it instead of flashing a fresh one on LOGIN_OK. The
+    // pre-auth path hides nothing — the same overlay carries through from
+    // page load to first playable frame.
+    if (preloadedLoadingScreen) {
+      this.loadingScreen = preloadedLoadingScreen;
+      this.loadingScreen.setStatus('Connecting to world…');
+    }
 
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
     // RS-style chunky pixels: render at half resolution and let the browser
@@ -339,6 +370,9 @@ export class GameManager {
 
     // WASD keyboard controls
     this.setupKeyboard();
+
+    // Visibility-change tracking for divergence-snap gating
+    this.setupVisibilityHandler();
 
     // Network
     this.network = new NetworkManager();
@@ -589,47 +623,55 @@ export class GameManager {
   }
 
   private async loadObjectDefs(): Promise<void> {
-    try {
-      const res = await fetch('/data/objects.json');
-      const defs: WorldObjectDef[] = await res.json();
-      for (const def of defs) {
-        this.objectDefsCache.set(def.id, def);
+    // All four def files are independent — fetch them in parallel.
+    // Previously these were four serial awaits, which on a cold start added
+    // up to ~200–400ms of dead time over the lifetime of the constructor.
+    const [objectsRes, itemsRes, npcsRes, gearRes] = await Promise.all([
+      fetch('/data/objects.json').catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
+      fetch('/data/items.json').catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
+      fetch('/data/npcs.json').catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
+      fetch('/data/gear-overrides.json').catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+    ]);
+
+    if (objectsRes) {
+      try {
+        const defs: WorldObjectDef[] = await objectsRes.json();
+        for (const def of defs) this.objectDefsCache.set(def.id, def);
+        this.rebuildBlockedObjectTiles();
+      } catch (e) {
+        console.warn('Failed to parse object definitions:', e);
       }
-      this.rebuildBlockedObjectTiles();
-    } catch (e) {
-      console.warn('Failed to load object definitions:', e);
     }
-    try {
-      const res = await fetch('/data/items.json');
-      const defs: ItemDef[] = await res.json();
-      for (const def of defs) {
-        this.itemDefsCache.set(def.id, def);
+    if (itemsRes) {
+      try {
+        const defs: ItemDef[] = await itemsRes.json();
+        for (const def of defs) this.itemDefsCache.set(def.id, def);
+        if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
+        if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
+        if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
+      } catch (e) {
+        console.warn('Failed to parse item definitions:', e);
       }
-      if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
-      if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
-      if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
-    } catch (e) {
-      console.warn('Failed to load item definitions:', e);
     }
-    try {
-      const res = await fetch('/data/npcs.json');
-      const defs: NpcDef[] = await res.json();
-      for (const def of defs) {
-        this.npcDefsCache.set(def.id, def);
+    if (npcsRes) {
+      try {
+        const defs: NpcDef[] = await npcsRes.json();
+        for (const def of defs) this.npcDefsCache.set(def.id, def);
+      } catch (e) {
+        console.warn('Failed to parse NPC definitions:', e);
       }
-    } catch (e) {
-      console.warn('Failed to load NPC definitions:', e);
     }
-    try {
-      const res = await fetch('/data/gear-overrides.json');
-      const overrides: Record<string, GearOverride> = await res.json();
-      this.gearOverrides.clear();
-      for (const [id, override] of Object.entries(overrides)) {
-        this.gearOverrides.set(Number(id), override);
+    if (gearRes) {
+      try {
+        const overrides: Record<string, GearOverride> = await gearRes.json();
+        this.gearOverrides.clear();
+        for (const [id, override] of Object.entries(overrides)) {
+          this.gearOverrides.set(Number(id), override);
+        }
+        console.log(`[Gear] Loaded ${this.gearOverrides.size} gear overrides`);
+      } catch (e) {
+        console.warn('Failed to parse gear overrides:', e);
       }
-      console.log(`[Gear] Loaded ${this.gearOverrides.size} gear overrides`);
-    } catch (e) {
-      console.warn('Failed to load gear overrides:', e);
     }
     // Unblock any equip calls that came in before this fetch finished.
     // Without this gate, applyGearToCharacter would build a GearDef from
@@ -1217,8 +1259,12 @@ export class GameManager {
       const spawnY = (v[3] ?? 0) / 10;
       this.network.setLocalPlayerId(this.localPlayerId);
 
-      this.loadingScreen = new LoadingScreen();
-      this.loadingScreen.show();
+      // If main.ts handed us a pre-auth LoadingScreen, reuse it so the user
+      // sees a continuous overlay; otherwise spin one up now (legacy path).
+      if (!this.loadingScreen) {
+        this.loadingScreen = new LoadingScreen();
+        this.loadingScreen.show();
+      }
       this.loadingScreen.setStatus('Loading character…');
 
       this.localPlayer = this.createLocalCharacterEntity();
@@ -1307,7 +1353,13 @@ export class GameManager {
         const serverZ = v[2] / 10;
         const dx = serverX - this.playerX;
         const dz = serverZ - this.playerZ;
-        if (dx * dx + dz * dz > 1.5 * 1.5) {
+        // Only snap when we recently returned from a hidden tab. Normal-play
+        // divergence (under 2.5 tiles) is handled by the smooth slide
+        // already; firing the snap during active play causes the visible
+        // teleport bug. If `_hiddenSinceMs` is zero, the tab has been
+        // visible long enough that any drift is normal jitter — trust the
+        // client visual and do nothing.
+        if (this._hiddenSinceMs !== 0 && dx * dx + dz * dz > 2.5 * 2.5) {
           // The server is far enough from our local visual that a snap is
           // warranted. But blowing away the entire path turns a small
           // intermittent desync (server tick burst, brief frame stutter)
@@ -1340,7 +1392,12 @@ export class GameManager {
             this.pathIndex = foundIndex + 1;
             this.tileProgress = 0;
             this.tileFrom = { x: serverX, z: serverZ };
-            this.beginVisualSlide(prevLogicalX, prevLogicalZ);
+            // Scale slide duration with divergence: cap catch-up speed at
+            // 3 tiles/sec so a >2-tile snap doesn't warp-glide in a fixed
+            // 200ms window. Clamp to [200ms, 800ms].
+            const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
+            const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
+            this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
             // Don't sendMove([]) — server is correctly walking the same
             // path we are. No halt needed.
           } else {
@@ -2034,6 +2091,32 @@ export class GameManager {
       // Camera will follow naturally via its target on the next tick.
     });
 
+    this.network.on(ServerOpcode.PATH_TRUNCATED, (_op, v) => {
+      // Server validated our requested path short — collision/wall edge
+      // somewhere mid-path. Trim our local walk so it ends at the last
+      // reachable tile center the server reports. Without this, the visual
+      // keeps marching past the server's stop point and the >1.5-tile
+      // divergence-snap in PLAYER_SYNC fires, producing a visible teleport.
+      const lastX = (v[0] ?? 0) / 10;
+      const lastZ = (v[1] ?? 0) / 10;
+      const tx = Math.floor(lastX);
+      const tz = Math.floor(lastZ);
+      // Find the path waypoint matching the server's final reachable tile.
+      // Cut everything *after* it. If the player's already past that tile,
+      // leave the path alone and let divergence-snap handle the rest.
+      let cutIdx = -1;
+      for (let i = 0; i < this.path.length; i++) {
+        const wp = this.path[i];
+        if (Math.floor(wp.x) === tx && Math.floor(wp.z) === tz) {
+          cutIdx = i + 1;
+          break;
+        }
+      }
+      if (cutIdx >= 0 && cutIdx < this.path.length) {
+        this.path = this.path.slice(0, cutIdx);
+      }
+    });
+
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
       const newFloor = values[0];
       this.currentFloor = newFloor;
@@ -2444,8 +2527,9 @@ export class GameManager {
     this.combatTargetId = npcEntityId;
     // Arm the chase-repath cooldown so updateCombatFollow doesn't re-pathfind
     // on the very next frame and re-send a near-identical sendMove(). The
-    // 300 ms window matches the throttle elsewhere in updateCombatFollow.
-    this._combatPathTimer = 0.3;
+    // 600 ms window matches the throttle elsewhere in updateCombatFollow —
+    // one server tick instead of half, halving moveQueue churn during chase.
+    this._combatPathTimer = 0.6;
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
@@ -3248,6 +3332,7 @@ export class GameManager {
     if (this.characterCreator) { this.characterCreator.destroy(); this.characterCreator = null; }
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
     if (this.onWindowResize) { window.removeEventListener('resize', this.onWindowResize); this.onWindowResize = null; }
+    if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();
@@ -3418,7 +3503,7 @@ export class GameManager {
     const dist = Math.hypot(dx, dz);
     if (dist <= 1.5) return;
     if ((this.pathIndex < this.path.length && dist <= 3) || this._combatPathTimer > 0) return;
-    this._combatPathTimer = 0.3;
+    this._combatPathTimer = 0.6;
     const newPath = findPath(this.playerX, this.playerZ, npcTarget.x, npcTarget.z,
       this.isTileBlocked,
       this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
@@ -3468,6 +3553,29 @@ export class GameManager {
     }
     const factor = 1 - age / this.slideDurationMs;
     return { x: this.slideOffsetX * factor, z: this.slideOffsetZ * factor };
+  }
+
+  /** Wire `document.visibilitychange` so we only treat large server/client
+   *  divergence as a hidden-tab catch-up situation. When the tab goes
+   *  hidden, Chrome throttles RAF + setInterval to ~1Hz while the server
+   *  keeps ticking — local prediction freezes and the server position
+   *  marches on. On returning to visible we stay armed for ~2 ticks
+   *  (enough for the next PLAYER_SYNC + snap), then disarm so steady-state
+   *  play doesn't snap on transient packet jitter. */
+  private setupVisibilityHandler(): void {
+    const handler = () => {
+      if (document.visibilityState === 'hidden') {
+        this._hiddenSinceMs = performance.now();
+      } else {
+        // Stay armed for ~2 ticks after returning to visible — enough for
+        // the first PLAYER_SYNC to arrive and the snap logic to make a
+        // corrective jump if needed, then disarm so steady-state play
+        // doesn't snap.
+        setTimeout(() => { this._hiddenSinceMs = 0; }, 1500);
+      }
+    };
+    document.addEventListener('visibilitychange', handler);
+    this._visibilityHandler = handler;
   }
 
   /** Begin a smooth-slide visual catch-up. The logical playerX/Z should

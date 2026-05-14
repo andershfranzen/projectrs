@@ -28,6 +28,31 @@ function blockedKey(mapIdx: number, tileX: number, tileZ: number): number {
 }
 const HITPOINTS_SKILL_INDEX = ALL_SKILLS.indexOf('hitpoints' as SkillId);
 
+// ---------------------------------------------------------------------------
+// Wire-format / timing constants
+// ---------------------------------------------------------------------------
+
+/** World coordinates are quantized to 0.1-tile units for int16 packet fields. */
+const POSITION_SCALE = 10;
+/** Quantize a world coordinate to the int16 wire format (1 unit = 0.1 tile). */
+function qPos(coord: number): number { return Math.round(coord * POSITION_SCALE); }
+
+/** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
+ *  At 600ms/tick this is ~2 minutes. */
+const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
+/** Despawn timer (ticks) applied to most ground items — dropped loot, death
+ *  drops, and player-dropped items. ~2 minutes at 600ms/tick. */
+const GROUND_ITEM_DESPAWN_TICKS = 200;
+/** Despawn timer (ticks) for items spilled at the player's feet when a
+ *  refund (trade abort, bank close-out) doesn't fit in inventory. Shorter
+ *  than the standard despawn since the item is dropped in the player's
+ *  immediate vicinity and they can pick it back up right away. ~1 minute. */
+const REFUND_SPILL_DESPAWN_TICKS = 100;
+
+/** Canonical ordering of equipment slots used for binary opcode encoding.
+ *  Must stay in sync with the client-side decoder in GameManager. */
+const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+
 export interface GroundItem {
   id: number;
   itemId: number;
@@ -134,6 +159,102 @@ export class World {
     // Spawn NPCs and objects from data files
     this.spawnNpcs();
     this.spawnWorldObjects();
+
+    // Re-apply persisted door + respawn state captured before the last
+    // shutdown. Doors that were open stay open, depleted skilling objects
+    // resume their countdown from the saved wall-clock target. Anything
+    // whose wall-clock has already elapsed during downtime is dropped and
+    // respawns immediately on next tick.
+    this.restorePersistedObjectState();
+  }
+
+  /** Re-apply persisted door / respawn state on boot. Called once at the
+   *  end of construction, after spawnWorldObjects has populated worldObjects
+   *  with their default (closed / not-depleted) state. Rows are keyed by
+   *  (mapLevel, defId, tileX, tileZ) — stable across editor saves and
+   *  reboots — so we scan worldObjects for the matching live entity instead
+   *  of looking up by runtime entity id. */
+  private restorePersistedObjectState(): void {
+    // One-time pass: build a (map|defId|tx|tz) → WorldObject index so the
+    // O(rows × worldObjects) restore work collapses to O(rows + worldObjects).
+    const stableIndex = new Map<string, WorldObject>();
+    const stableKey = (mapLevel: string, defId: number, tileX: number, tileZ: number) =>
+      `${mapLevel}|${defId}|${tileX}|${tileZ}`;
+    for (const [, obj] of this.worldObjects) {
+      stableIndex.set(stableKey(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z)), obj);
+    }
+
+    try {
+      const doorRows = this.db.loadAllDoorStates();
+      let restored = 0;
+      for (const row of doorRows) {
+        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ));
+        if (!obj || obj.def.category !== 'door') {
+          // Object was deleted from the map or its def changed — drop the
+          // stale row. With stable identity this only happens on real
+          // edits, not on routine spawn-order reshuffles.
+          this.db.clearDoorState(row.mapLevel, row.defId, row.tileX, row.tileZ);
+          continue;
+        }
+        if (row.isOpen && !obj.doorOpen) {
+          const map = this.maps.get(obj.mapLevel);
+          if (!map) continue;
+          this.clearDoorWallEdges(obj, map);
+          obj.doorOpen = true;
+          obj.depleted = true;
+          // Re-arm a fresh auto-close timer. The persisted auto_close_at_tick
+          // is informational only — we don't try to map it back through the
+          // pre-restart tick clock, just give the door its full timeout again.
+          obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
+          this.depletedObjectIds.add(obj.id);
+          restored++;
+        }
+      }
+      if (restored > 0) console.log(`Restored ${restored} persisted door state(s)`);
+    } catch (e) {
+      console.error('restorePersistedObjectState (doors) failed:', e);
+    }
+
+    try {
+      const respawnRows = this.db.loadAllObjectRespawns();
+      const now = Date.now();
+      let restored = 0;
+      for (const row of respawnRows) {
+        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ));
+        if (!obj) {
+          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
+          continue;
+        }
+        // Doors handled by door_state above; skip here.
+        if (obj.def.category === 'door') continue;
+        const msRemaining = row.respawnAtUnixMs - now;
+        if (msRemaining <= 0) {
+          // Already due — drop the row, leave the live spawn alone.
+          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
+          continue;
+        }
+        const ticksRemaining = Math.max(1, Math.ceil(msRemaining / TICK_RATE));
+        obj.depleted = true;
+        obj.respawnTimer = ticksRemaining;
+        this.depletedObjectIds.add(obj.id);
+        // Unblock tiles so paths aren't snagged on a node that's currently
+        // depleted (mirrors the depletion site's tile-clear logic).
+        if (obj.def.blocking) {
+          if (obj.def.category === 'tree') {
+            const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
+            for (const [dx, dz] of [[-1,-1],[0,-1],[-1,0],[0,0]]) {
+              this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, bx + dx, bz + dz));
+            }
+          } else {
+            this.blockedObjectTiles.delete(this.blockedKeyFor(obj.mapLevel, obj.x, obj.z));
+          }
+        }
+        restored++;
+      }
+      if (restored > 0) console.log(`Restored ${restored} persisted object respawn timer(s)`);
+    } catch (e) {
+      console.error('restorePersistedObjectState (respawns) failed:', e);
+    }
   }
 
   private discoverAndLoadMaps(): void {
@@ -426,9 +547,15 @@ export class World {
   }
 
   private saveAllPlayers(): void {
+    const saves: Array<{ accountId: number; player: Player; effectiveY: number }> = [];
     for (const [, player] of this.players) {
-      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+      saves.push({
+        accountId: player.accountId,
+        player,
+        effectiveY: this.computeEffectiveY(player),
+      });
     }
+    this.db.savePlayersBatch(saves);
   }
 
   /** Effective walking Y at the player's current (x, z, floor). Server is
@@ -448,6 +575,15 @@ export class World {
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
+        // Refund any items staged in an active trade BEFORE saving so they
+        // come back to inventory and get persisted. removePlayer() also
+        // calls abortTrade via clearCombatReferencesTo, but that runs
+        // AFTER the save below — without this pre-emptive abort, kicking
+        // a player mid-trade silently destroys their offered items on
+        // next login. Reaches via /api/logout and second-tab login on the
+        // same account.
+        if (this.tradeSessions.has(id)) this.abortTrade(id, 2);
+
         // Save BEFORE removing — otherwise a refresh races the WS-close
         // handler, the new session's kick runs first, removePlayer drops
         // the entity, and the close handler's save no-ops because the
@@ -522,9 +658,9 @@ export class World {
     // first 4 values) still parse without error — they just don't see the
     // mismatch warning. New clients read v[4] and disconnect on mismatch.
     this.sendToPlayer(player, ServerOpcode.LOGIN_OK, player.id,
-      Math.round(player.position.x * 10),
-      Math.round(player.position.y * 10),
-      Math.round(spawnY * 10),
+      qPos(player.position.x),
+      qPos(player.position.y),
+      qPos(spawnY),
       PROTOCOL_VERSION,
     );
 
@@ -560,13 +696,23 @@ export class World {
     const player = this.players.get(playerId);
     if (!player) return;
 
+    // Clear every cross-entity reference BEFORE deleting the player entity so
+    // the helper can still look up the player. Wipes player→NPC combat target,
+    // NPC→player combat target (and the queued chase path), pending trade
+    // requests, and any active trade session. Without this, kickAccountIfOnline
+    // (which bypasses handlePlayerDisconnect's abortTrade call) would leave
+    // orphan trade sessions, and NPCs mid-chase would keep a stale combatTarget
+    // ref for at least one more AI tick.
+    this.clearCombatReferencesTo(playerId);
+
     // Remove from chunk manager
     const cm = this.chunkManagers.get(player.currentMapLevel);
     if (cm) cm.removeEntity(player.id);
 
     this.players.delete(playerId);
-    this.clearCombatTarget(playerId);
     this.skillingActions.delete(playerId);
+    // Defensive sweep: catch any trade sessions whose other side already left.
+    this.sweepOrphanTradeSessions();
     console.log(`Player "${player.name}" left`);
 
     // Notify nearby players
@@ -729,12 +875,16 @@ export class World {
       obj.depleted = false;
       this.depletedObjectIds.delete(obj.id);
       swingSign = 0;
+      // Closed is the default state — drop the persisted row so a fresh
+      // server boot doesn't waste cycles processing a no-op.
+      this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
     } else {
       this.clearDoorWallEdges(obj, map);
       obj.doorOpen = true;
       obj.depleted = true;
-      obj.respawnTimer = obj.def.respawnTime ?? 200;
+      obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
       this.depletedObjectIds.add(obj.id);
+      this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), true, this.currentTick + obj.respawnTimer);
     }
 
     this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
@@ -810,6 +960,51 @@ export class World {
     }
   }
 
+  /** Clear every server-side reference to this player from other entities'
+   *  combat / interaction state. Called from removePlayer AND on map transition
+   *  so stale targets don't survive across either event. */
+  private clearCombatReferencesTo(playerId: number): void {
+    const player = this.players.get(playerId);
+    this.clearCombatTarget(playerId);
+    if (player) {
+      player.attackTarget = null;
+      player.pendingInteraction = null;
+    }
+    for (const [, npc] of this.npcs) {
+      if (npc.combatTarget && (npc.combatTarget as any).id === playerId) {
+        npc.combatTarget = null;
+        npc.pathQueue.length = 0;
+      }
+    }
+    for (const [npcId, set] of this.npcTargetedBy) {
+      if (set.delete(playerId) && set.size === 0) {
+        this.npcTargetedBy.delete(npcId);
+      }
+    }
+    this.pendingTradeRequests.delete(playerId);
+    for (const [requester, target] of this.pendingTradeRequests) {
+      if (target === playerId) this.pendingTradeRequests.delete(requester);
+    }
+    if (this.tradeSessions.has(playerId)) {
+      this.abortTrade(playerId, 2);
+    }
+  }
+
+  /** Sweep orphan trade sessions where either side has left this.players. */
+  private sweepOrphanTradeSessions(): void {
+    const seen = new Set<TradeSession>();
+    for (const [, session] of this.tradeSessions) {
+      if (seen.has(session)) continue;
+      seen.add(session);
+      const aGone = !this.players.has(session.a.id);
+      const bGone = !this.players.has(session.b.id);
+      if (aGone || bGone) {
+        const surviving = aGone ? session.b.id : session.a.id;
+        this.abortTrade(surviving, 2);
+      }
+    }
+  }
+
   private blockedKeyFor(mapId: string, x: number, z: number): number {
     return blockedKey(getMapIdx(mapId), Math.floor(x), Math.floor(z));
   }
@@ -870,6 +1065,11 @@ export class World {
     let prevZ = player.position.y;
     const mapId = player.currentMapLevel;
     const pFloor = player.currentFloor;
+    // Total unit-tile count the client requested (sum of per-segment max
+    // axial distances). Used after the validation loop to detect whether
+    // we dropped any tiles relative to what was asked for.
+    let requestedTileCount = 0;
+    let truncated = false;
     // Per-segment cap: legitimate compressed corners can be far apart on a
     // long straight, but never longer than the map's diagonal. 256 covers
     // any practical map while bounding worst-case work per packet.
@@ -893,11 +1093,12 @@ export class World {
       const stepDZ = Math.sign(dzTotal);
       const distance = Math.max(Math.abs(dxTotal), Math.abs(dzTotal));
       if (distance === 0) continue;
-      if (distance > MAX_SEGMENT_TILES) break;
+      if (distance > MAX_SEGMENT_TILES) { truncated = true; break; }
       // Diagonal compressed steps must move equally on both axes — reject
       // anything that isn't pure cardinal or pure 45° diagonal.
       const isDiagonal = stepDX !== 0 && stepDZ !== 0;
-      if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) break;
+      if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) { truncated = true; break; }
+      requestedTileCount += distance;
       let curTileX = startTileX;
       let curTileZ = startTileZ;
       for (let i = 0; i < distance; i++) {
@@ -910,7 +1111,7 @@ export class World {
         const wallBlocked = pFloor === 0
           ? map.isWallBlocked(curTileX, curTileZ, nextTileX, nextTileZ, playerEffY)
           : map.isWallBlockedOnFloor(curTileX, curTileZ, nextTileX, nextTileZ, pFloor);
-        if (tileBlocked || wallBlocked) break outer;
+        if (tileBlocked || wallBlocked) { truncated = true; break outer; }
         // Push tile-CENTER coords to match client convention.
         validPath.push({ x: nextTileX + 0.5, z: nextTileZ + 0.5 });
         curTileX = nextTileX;
@@ -922,6 +1123,14 @@ export class World {
       prevZ = curTileZ + 0.5;
     }
     player.moveQueue = validPath;
+    // If we actually dropped tiles vs. what the client asked for, notify it
+    // so it can trim its local walk to match. Skip when nothing was
+    // requested (zero-distance / empty input) or when the validation
+    // produced exactly what was asked. Fire-and-forget — no server state.
+    if (truncated && validPath.length < requestedTileCount && requestedTileCount > 0) {
+      const last = validPath.length > 0 ? validPath[validPath.length - 1] : { x: player.position.x, z: player.position.y };
+      this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
+    }
   }
 
   handlePlayerAttackNpc(playerId: number, npcId: number): void {
@@ -1175,7 +1384,7 @@ export class World {
       x: player.position.x,
       z: player.position.y,
       mapLevel: player.currentMapLevel,
-      despawnTimer: 200,
+      despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
     };
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
@@ -1543,8 +1752,7 @@ export class World {
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
 
-    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
-    const slotName = slotNames[equipSlotIndex];
+    const slotName = EQUIPMENT_SLOT_NAMES[equipSlotIndex];
     if (!slotName) return;
 
     const itemId = player.equipment.get(slotName);
@@ -2270,7 +2478,7 @@ export class World {
       x: player.position.x,
       z: player.position.y,
       mapLevel: player.currentMapLevel,
-      despawnTimer: 100,
+      despawnTimer: REFUND_SPILL_DESPAWN_TICKS,
     };
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
@@ -2597,7 +2805,7 @@ export class World {
               x: npc.spawnX,
               z: npc.spawnZ,
               mapLevel: npc.currentMapLevel,
-              despawnTimer: 200,
+              despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
             };
             this.groundItems.set(groundItem.id, groundItem);
             this.despawningItemIds.add(groundItem.id);
@@ -2734,7 +2942,7 @@ export class World {
             x: player.position.x,
             z: player.position.y,
             mapLevel: player.currentMapLevel,
-            despawnTimer: 200,
+            despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
           };
           this.groundItems.set(groundItem.id, groundItem);
           this.despawningItemIds.add(groundItem.id);
@@ -2765,6 +2973,10 @@ export class World {
         if (obj.def.depletionChance && Math.random() < obj.def.depletionChance) {
           obj.deplete();
           this.depletedObjectIds.add(obj.id);
+          // Persist the wall-clock respawn target so this stays depleted
+          // across restarts (within the remaining timer window). On boot we
+          // convert this back into a tick countdown.
+          this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
           if (obj.def.blocking) {
             if (obj.def.category === 'tree') {
               const bx = Math.floor(obj.x), bz = Math.floor(obj.z);
@@ -2818,7 +3030,7 @@ export class World {
       // The base timer is generous (200 ticks ≈ 2 min) — doors are meant
       // to stay open for a while after use.
       if (obj.def.category === 'door' && obj.doorOpen && this.isAnyPlayerNearDoor(obj)) {
-        obj.respawnTimer = obj.def.respawnTime ?? 200;
+        obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
         continue;
       }
       if (obj.tickRespawn()) {
@@ -2842,6 +3054,10 @@ export class World {
           const map = this.maps.get(obj.mapLevel);
           if (map) this.restoreDoorWallEdges(obj, map);
           obj.doorOpen = false;
+          this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
+        } else {
+          // Skilling object respawned — drop the persisted target.
+          this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
         }
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
@@ -3007,7 +3223,7 @@ export class World {
         x: oldX,
         z: oldZ,
         mapLevel: oldMapId,
-        despawnTimer: 200,
+        despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
       };
       this.groundItems.set(groundItem.id, groundItem);
       this.despawningItemIds.add(groundItem.id);
@@ -3089,9 +3305,9 @@ export class World {
     player.reportedY = teleportY;
     const packet = encodePacket(
       ServerOpcode.PLAYER_TELEPORT,
-      Math.round(x * 10),
-      Math.round(z * 10),
-      Math.round(teleportY * 10),
+      qPos(x),
+      qPos(z),
+      qPos(teleportY),
     );
     try { player.ws.sendBinary(packet); } catch {}
   }
@@ -3126,6 +3342,18 @@ export class World {
     // pick it back up on the other map and double-deposit.
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
+
+    // Clear all cross-entity combat / trade references BEFORE we mutate the
+    // player's map. The helper looks up the player by id, so call it while the
+    // entity still exists in this.players — but it doesn't need the old map
+    // string itself, only the player.id, so the precise ordering vs. the
+    // chunk-manager swap below is irrelevant for correctness. Doing it here
+    // (before the chunk-manager removal + save) means any in-flight NPC chase
+    // is dropped before the new MAP_CHANGE packet ships. Without this an NPC
+    // on `kcmap` with combatTarget pointing at this player would keep
+    // pathfinding toward the player's new (sultans_mine) coordinates on its
+    // own map for a tick or two before tickNpcCombat noticed the mismatch.
+    this.clearCombatReferencesTo(player.id);
 
     // Save player state
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
@@ -3224,8 +3452,8 @@ export class World {
 
     // Phase 1: Dirty-check and pre-build packets for changed entities
     for (const [, player] of this.players) {
-      const sx = Math.round(player.position.x * 10);
-      const sz = Math.round(player.position.y * 10);
+      const sx = qPos(player.position.x);
+      const sz = qPos(player.position.y);
       if (sx !== player.lastSyncX || sz !== player.lastSyncZ || player.health !== player.lastSyncHealth) {
         player.lastSyncX = sx;
         player.lastSyncZ = sz;
@@ -3243,8 +3471,8 @@ export class World {
     }
     for (const [, npc] of this.npcs) {
       if (npc.dead) continue;
-      const sx = Math.round(npc.position.x * 10);
-      const sz = Math.round(npc.position.y * 10);
+      const sx = qPos(npc.position.x);
+      const sz = qPos(npc.position.y);
       if (sx !== npc.lastSyncX || sz !== npc.lastSyncZ || npc.health !== npc.lastSyncHealth) {
         npc.lastSyncX = sx;
         npc.lastSyncZ = sz;
@@ -3333,8 +3561,8 @@ export class World {
     const packet = encodeStringPacket(
       ServerOpcode.MAP_CHANGE,
       mapId,
-      Math.round(player.position.x * 10),
-      Math.round(player.position.y * 10)
+      qPos(player.position.x),
+      qPos(player.position.y)
     );
     try {
       player.ws.sendBinary(packet);
@@ -3345,8 +3573,8 @@ export class World {
     const a = subject.appearance;
     this.sendToPlayer(viewer, ServerOpcode.PLAYER_SYNC,
       subject.id,
-      Math.round(subject.position.x * 10),
-      Math.round(subject.position.y * 10),
+      qPos(subject.position.x),
+      qPos(subject.position.y),
       subject.health,
       subject.maxHealth,
       a ? a.shirtColor : -1,
@@ -3363,8 +3591,8 @@ export class World {
     this.sendToPlayer(viewer, ServerOpcode.NPC_SYNC,
       npc.id,
       npc.npcId,
-      Math.round(npc.position.x * 10),
-      Math.round(npc.position.y * 10),
+      qPos(npc.position.x),
+      qPos(npc.position.y),
       npc.health,
       npc.maxHealth
     );
@@ -3399,8 +3627,8 @@ export class World {
     this.sendToPlayer(viewer, ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
-      Math.round(obj.x * 10),
-      Math.round(obj.z * 10),
+      qPos(obj.x),
+      qPos(obj.z),
       obj.depleted ? 1 : 0
     );
   }
@@ -3410,8 +3638,8 @@ export class World {
       item.id,
       item.itemId,
       item.quantity,
-      Math.round(item.x * 10),
-      Math.round(item.z * 10)
+      qPos(item.x),
+      qPos(item.z)
     );
   }
 
@@ -3447,10 +3675,9 @@ export class World {
 
   sendEquipment(player: Player): void {
     // Batch: [slot0_itemId, slot1_itemId, ...] — 1 packet instead of 10
-    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     const values: number[] = [];
-    for (let i = 0; i < slotNames.length; i++) {
-      values.push(player.equipment.get(slotNames[i]) ?? 0);
+    for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) {
+      values.push(player.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
     this.sendToPlayer(player, ServerOpcode.PLAYER_EQUIPMENT_BATCH, ...values);
   }
@@ -3458,10 +3685,9 @@ export class World {
   /** Build PLAYER_REMOTE_EQUIPMENT packet for a subject player. Layout:
    *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape] */
   private encodeRemoteEquipment(subject: Player): Uint8Array {
-    const slotNames: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     const values: number[] = [subject.id];
-    for (let i = 0; i < slotNames.length; i++) {
-      values.push(subject.equipment.get(slotNames[i]) ?? 0);
+    for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) {
+      values.push(subject.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
     return encodePacket(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, ...values);
   }

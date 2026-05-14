@@ -35,6 +35,23 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: true,
+    // Anything above the bundler's default 500 KB warning. Babylon's core
+    // bundle by itself is ~1.5 MB after minification — we already split it
+    // out via manualChunks so it caches independently of game code, but
+    // there's no point spamming the build log about it.
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        // Hand-grouped vendor chunks so a code change in the game doesn't
+        // bust Babylon's cache, and so the (large) glTF loader is its own
+        // chunk that can be fetched in parallel with the engine.
+        manualChunks(id: string) {
+          if (id.includes('node_modules/@babylonjs/loaders')) return 'babylon-loaders';
+          if (id.includes('node_modules/@babylonjs/gui')) return 'babylon-gui';
+          if (id.includes('node_modules/@babylonjs/core')) return 'babylon-core';
+        },
+      },
+    },
   },
   server: {
     proxy: {

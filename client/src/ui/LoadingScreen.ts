@@ -13,7 +13,11 @@ export class LoadingScreen {
   private overlay: HTMLDivElement;
   private statusEl: HTMLDivElement;
   private styleEl: HTMLStyleElement;
+  private progressTrack: HTMLDivElement;
+  private progressFill: HTMLDivElement;
+  private progressPctEl: HTMLDivElement;
   private hidden = false;
+  private currentPct: number = 0;
 
   constructor() {
     this.styleEl = document.createElement('style');
@@ -25,6 +29,10 @@ export class LoadingScreen {
       @keyframes evilmud-glow      {
         0%,100% { text-shadow: 0 0 20px rgba(255,204,0,0.4), 0 0 40px rgba(255,80,0,0.2), 2px 2px 6px rgba(0,0,0,0.9); }
         50%     { text-shadow: 0 0 30px rgba(255,204,0,0.7), 0 0 60px rgba(255,80,0,0.4), 2px 2px 6px rgba(0,0,0,0.9); }
+      }
+      @keyframes evilmud-shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
       }
       .evilmud-loading-overlay {
         position: fixed; inset: 0;
@@ -50,19 +58,48 @@ export class LoadingScreen {
       .evilmud-loading-sub {
         font-size: 13px; color: #8a7a60;
         letter-spacing: 3px; text-transform: uppercase;
-        margin-bottom: 56px;
+        margin-bottom: 40px;
       }
       .evilmud-loading-spinner {
-        width: 48px; height: 48px; margin-bottom: 18px;
+        width: 36px; height: 36px; margin-bottom: 22px;
         border: 3px solid rgba(252, 204, 0, 0.15);
         border-top-color: #fc0;
         border-radius: 50%;
         animation: evilmud-spin 1.1s linear infinite;
       }
+      .evilmud-loading-progress-wrap {
+        width: 340px; max-width: 70vw;
+        display: flex; flex-direction: column; align-items: center;
+        gap: 8px;
+      }
+      .evilmud-loading-progress-track {
+        width: 100%; height: 12px;
+        background: rgba(0,0,0,0.55);
+        border: 1px solid #5a4a35;
+        border-radius: 2px;
+        overflow: hidden;
+        box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+      }
+      .evilmud-loading-progress-fill {
+        height: 100%; width: 0%;
+        background: linear-gradient(90deg, #5a4a35 0%, #fc0 40%, #ffb840 100%);
+        background-size: 200% 100%;
+        animation: evilmud-shimmer 2.2s linear infinite;
+        transition: width 220ms ease-out;
+        box-shadow: 0 0 12px rgba(255,204,0,0.45);
+      }
+      .evilmud-loading-progress-pct {
+        font-size: 11px; color: #c8b690;
+        letter-spacing: 2px;
+        font-variant-numeric: tabular-nums;
+      }
       .evilmud-loading-status {
-        font-size: 14px; color: #c8b690;
+        margin-top: 14px;
+        font-size: 13px; color: #c8b690;
         animation: evilmud-pulse 1.6s ease-in-out infinite;
         letter-spacing: 1px;
+        max-width: 70vw; text-align: center;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
     `;
     document.head.appendChild(this.styleEl);
@@ -84,6 +121,20 @@ export class LoadingScreen {
     spinner.className = 'evilmud-loading-spinner';
     this.overlay.appendChild(spinner);
 
+    const progressWrap = document.createElement('div');
+    progressWrap.className = 'evilmud-loading-progress-wrap';
+    this.progressTrack = document.createElement('div');
+    this.progressTrack.className = 'evilmud-loading-progress-track';
+    this.progressFill = document.createElement('div');
+    this.progressFill.className = 'evilmud-loading-progress-fill';
+    this.progressTrack.appendChild(this.progressFill);
+    progressWrap.appendChild(this.progressTrack);
+    this.progressPctEl = document.createElement('div');
+    this.progressPctEl.className = 'evilmud-loading-progress-pct';
+    this.progressPctEl.textContent = '0%';
+    progressWrap.appendChild(this.progressPctEl);
+    this.overlay.appendChild(progressWrap);
+
     this.statusEl = document.createElement('div');
     this.statusEl.className = 'evilmud-loading-status';
     this.statusEl.textContent = 'Loading…';
@@ -97,6 +148,28 @@ export class LoadingScreen {
 
   setStatus(text: string): void {
     this.statusEl.textContent = text;
+  }
+
+  /** Set progress 0–1. Values are clamped and never go backwards within a
+   *  single phase — call `resetProgress()` to start a new phase. */
+  setProgress(pct: number): void {
+    const clamped = Math.max(0, Math.min(1, pct));
+    if (clamped < this.currentPct) return;
+    this.currentPct = clamped;
+    const pctRounded = Math.round(clamped * 100);
+    this.progressFill.style.width = `${pctRounded}%`;
+    this.progressPctEl.textContent = `${pctRounded}%`;
+  }
+
+  /** Reset the progress bar for a new phase. Useful when the same overlay
+   *  is reused across multiple distinct load phases (e.g. asset preload →
+   *  WS connect + scene init): the bar would otherwise sit pinned at 100%
+   *  with a spinner suggesting work is still happening, which reads as a
+   *  hang to the user. Hides the percentage label while indeterminate. */
+  resetProgress(): void {
+    this.currentPct = 0;
+    this.progressFill.style.width = '0%';
+    this.progressPctEl.textContent = '';
   }
 
   hide(): void {

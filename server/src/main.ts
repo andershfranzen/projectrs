@@ -388,20 +388,36 @@ function getMimeType(path: string): string {
 function serveStatic(pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
   let filePath = resolve(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
+  let isIndexFallback = false;
 
   try {
     const stat = statSync(filePath);
     if (stat.isDirectory()) {
       filePath = resolve(filePath, 'index.html');
+      isIndexFallback = true;
     }
   } catch {
     filePath = resolve(CLIENT_DIST, 'index.html');
+    isIndexFallback = true;
   }
 
   try {
     const content = readFileSync(filePath);
+    // index.html must never be cached so deploys are picked up immediately.
+    // Vite-hashed JS/CSS chunks under /assets/ are content-addressed and
+    // safe to cache long. All other static GLBs/PNGs use a moderate cache
+    // so reloads don't repeatedly re-download multi-MB character models.
+    let cacheControl = 'public, max-age=3600';
+    if (isIndexFallback || filePath.endsWith('.html')) {
+      cacheControl = 'no-cache';
+    } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
+      cacheControl = 'public, max-age=31536000, immutable';
+    }
     return new Response(content, {
-      headers: { 'Content-Type': getMimeType(filePath) },
+      headers: {
+        'Content-Type': getMimeType(filePath),
+        'Cache-Control': cacheControl,
+      },
     });
   } catch {
     return null;
@@ -1312,13 +1328,19 @@ const server = Bun.serve<SocketData>({
         if (!filePath.startsWith(baseDir)) continue;
         try {
           const content = readFileSync(filePath);
+          // Vite emits hashed filenames into client/dist/assets/ — those JS
+          // and CSS chunks are content-addressed and safe to cache forever.
+          // Everything else under /assets/ (GLBs, textures, raw JSON pulled
+          // from client/public/assets/) still uses a short cache so swapped
+          // assets show up without forcing browser-data clears during dev.
+          const isHashedBundle = filePath.endsWith('.js') || filePath.endsWith('.css');
+          const cacheControl = isHashedBundle
+            ? 'public, max-age=31536000, immutable'
+            : 'no-cache, must-revalidate';
           return new Response(content, {
             headers: {
               'Content-Type': getMimeType(filePath),
-              // TODO(alpha-test): restore 'public, max-age=3600' before the
-              // weekend build — currently no-cache so swapped GLBs/textures
-              // show up without forcing every contributor to clear browser data.
-              'Cache-Control': 'no-cache, must-revalidate',
+              'Cache-Control': cacheControl,
             },
           });
         } catch { /* try next */ }
