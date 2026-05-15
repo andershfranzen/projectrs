@@ -1,6 +1,15 @@
+import {
+  createTextTabButton,
+  installUiChromeStyles,
+  setToggleButtonActive,
+  UI_RED,
+} from './uiChrome';
+
 export type ChatSendCallback = (message: string) => void;
 
 type ChatTab = 'all' | 'game' | 'public';
+const MAX_CHAT_MESSAGES = 300;
+const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
 
 export class ChatPanel {
   private container: HTMLDivElement;
@@ -10,10 +19,12 @@ export class ChatPanel {
 
   // Chat filtering
   private activeTab: ChatTab = 'all';
-  private tabButtons: HTMLDivElement[] = [];
+  private tabButtons: HTMLButtonElement[] = [];
   private messages: { el: HTMLDivElement; type: 'game' | 'public' | 'private' }[] = [];
 
   constructor() {
+    installUiChromeStyles();
+    this.installChatStyles();
     this.container = this.buildUI();
     this.log = this.container.querySelector('#chat-log') as HTMLDivElement;
     this.input = this.container.querySelector('#chat-input') as HTMLInputElement;
@@ -36,7 +47,7 @@ export class ChatPanel {
     });
 
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && document.activeElement !== this.input) {
+      if (e.key === 'Enter' && this.shouldFocusChatFromGlobalEnter(e)) {
         e.preventDefault();
         this.input.focus();
       }
@@ -45,6 +56,30 @@ export class ChatPanel {
     this.container.addEventListener('click', () => {
       this.input.focus();
     });
+  }
+
+  private installChatStyles(): void {
+    if (document.getElementById(CHAT_PLACEHOLDER_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = CHAT_PLACEHOLDER_STYLE_ID;
+    style.textContent = '#chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }';
+    document.head.appendChild(style);
+  }
+
+  private shouldFocusChatFromGlobalEnter(event: KeyboardEvent): boolean {
+    if (event.defaultPrevented || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return false;
+    if (document.activeElement === this.input) return false;
+    const gameFrame = document.getElementById('game-frame');
+    if (gameFrame && (gameFrame.style.display === 'none' || gameFrame.style.visibility === 'hidden')) return false;
+
+    const active = document.activeElement as HTMLElement | null;
+    if (active && active !== document.body) {
+      const tag = active.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable) return false;
+      if (active.closest('[role="dialog"], .modal, #login-screen')) return false;
+    }
+
+    return true;
   }
 
   private buildUI(): HTMLDivElement {
@@ -72,20 +107,8 @@ export class ChatPanel {
     ];
 
     for (const tab of tabs) {
-      const btn = document.createElement('div');
-      btn.textContent = tab.label;
+      const btn = createTextTabButton(tab.label, () => this.switchTab(tab.key));
       btn.dataset.tab = tab.key;
-      btn.style.cssText = `
-        padding: 3px 12px; cursor: pointer;
-        font-size: 11px; font-weight: bold;
-        color: #8a857c;
-        border-bottom: 2px solid transparent;
-        transition: all 0.1s;
-      `;
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.switchTab(tab.key);
-      });
       tabBar.appendChild(btn);
       this.tabButtons.push(btn);
     }
@@ -134,11 +157,6 @@ export class ChatPanel {
       text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
     `;
 
-    // Style placeholder text
-    const style = document.createElement('style');
-    style.textContent = '#chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }';
-    panel.appendChild(style);
-
     inputBar.appendChild(input);
     panel.appendChild(inputBar);
 
@@ -151,13 +169,7 @@ export class ChatPanel {
   private switchTab(tab: ChatTab): void {
     this.activeTab = tab;
     for (const btn of this.tabButtons) {
-      if (btn.dataset.tab === tab) {
-        btn.style.color = '#d8372b';
-        btn.style.borderBottomColor = '#d8372b';
-      } else {
-        btn.style.color = '#8a857c';
-        btn.style.borderBottomColor = 'transparent';
-      }
+      setToggleButtonActive(btn, btn.dataset.tab === tab);
     }
     // Filter messages
     for (const msg of this.messages) {
@@ -172,18 +184,23 @@ export class ChatPanel {
   addMessage(from: string, message: string, color: string = '#fff'): void {
     const el = document.createElement('div');
     el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${this.escapeHtml(from)}:</span> ${this.escapeHtml(message)}`;
-    if (this.activeTab !== 'all' && this.activeTab !== 'public') el.style.display = 'none';
-    this.log.appendChild(el);
-    this.messages.push({ el, type: 'public' });
-    this.log.scrollTop = this.log.scrollHeight;
+    this.appendMessage(el, 'public');
   }
 
-  addSystemMessage(message: string, color: string = '#d8372b'): void {
+  addSystemMessage(message: string, color: string = UI_RED): void {
     const el = document.createElement('div');
     el.innerHTML = `<span style="color: ${color};">${this.escapeHtml(message)}</span>`;
-    if (this.activeTab !== 'all' && this.activeTab !== 'game') el.style.display = 'none';
+    this.appendMessage(el, 'game');
+  }
+
+  private appendMessage(el: HTMLDivElement, type: 'game' | 'public' | 'private'): void {
+    if (this.activeTab !== 'all' && this.activeTab !== type) el.style.display = 'none';
     this.log.appendChild(el);
-    this.messages.push({ el, type: 'game' });
+    this.messages.push({ el, type });
+    while (this.messages.length > MAX_CHAT_MESSAGES) {
+      const old = this.messages.shift();
+      old?.el.remove();
+    }
     this.log.scrollTop = this.log.scrollHeight;
   }
 

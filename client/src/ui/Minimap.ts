@@ -23,7 +23,7 @@ const FLOOR_COLOR: [number, number, number] = [0x8a, 0x74, 0x52];
 const VIEW_RADIUS = 22;
 // Render buffer matches displaySize 1:1 for crisp pixels. Keep this in sync
 // with the displaySize passed to `new Minimap(...)` in GameManager.
-const RENDER_SIZE = 340;
+const RENDER_SIZE = 260;
 
 export class Minimap {
   private canvas: HTMLCanvasElement;
@@ -52,7 +52,7 @@ export class Minimap {
   private tileColorBuf: Uint8Array;
   private readonly tileSize: number;
 
-  constructor(displaySize: number = 180) {
+  constructor(displaySize: number = RENDER_SIZE) {
     this.tileSize = VIEW_RADIUS * 2;
 
     this.canvas = document.createElement('canvas');
@@ -63,8 +63,15 @@ export class Minimap {
     this.canvas.style.cssText = `
       width: ${displaySize}px; height: ${displaySize}px;
       display: block; margin: 0 auto; cursor: pointer;
-      border: 2px solid #1a1510;
-      box-shadow: inset 0 0 6px rgba(0,0,0,0.6);
+      border: 4px solid #2c251e;
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 1px #090706,
+        0 0 0 3px #5c5549,
+        0 0 0 5px #18130f,
+        inset 0 0 0 2px rgba(255,220,160,0.08),
+        inset 0 0 13px rgba(0,0,0,0.72),
+        2px 3px 5px rgba(0,0,0,0.42);
       background: #0c0a06;
       image-rendering: pixelated;
     `;

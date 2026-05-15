@@ -39,10 +39,10 @@
       width: 100vw; height: 100vh;
       min-width: 800px; min-height: 600px;
       /* minmax(0, 1fr) prevents the flex track from refusing to shrink below
-         its content when the window goes smaller than the fixed 340px/220px
+         its content when the window goes smaller than the fixed 300px/220px
          side panels. Without this, the grid can get stuck in a broken state
          that persists after the window grows back. */
-      grid-template-columns: minmax(0, 1fr) 340px;
+      grid-template-columns: minmax(0, 1fr) 300px;
       grid-template-rows: minmax(0, 1fr) 220px;
       position: relative;
       background: #000;

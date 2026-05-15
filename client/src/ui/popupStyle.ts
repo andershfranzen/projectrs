@@ -1,8 +1,8 @@
 /**
  * Shared popup styling helpers.
  *
- * EvilQuest's playable canvas area is `calc(100vw - 340px)` wide and
- * `calc(100vh - 220px)` tall — the right 340px is the UI column and the
+ * EvilQuest's playable canvas area is `calc(100vw - 300px)` wide and
+ * `calc(100vh - 220px)` tall — the right 300px is the UI column and the
  * bottom 220px is the chat. All popups must:
  *   - Center inside the canvas area (NOT the whole viewport)
  *   - Size themselves relative to the canvas, not fixed pixels
@@ -15,7 +15,7 @@
  */
 
 /** Width/height of the non-canvas UI regions (keep in sync with index.html). */
-export const RIGHT_COLUMN_WIDTH_PX = 340;
+export const RIGHT_COLUMN_WIDTH_PX = 300;
 export const CHAT_HEIGHT_PX = 220;
 
 export interface PopupGeometryOpts {
