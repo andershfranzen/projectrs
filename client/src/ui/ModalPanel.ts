@@ -62,7 +62,7 @@ function rootCss(geometry: ModalGeometry, chrome: ModalChrome): string {
       `
       : `
         background: #1a1a1a; border: 2px solid #aa8844;
-        border-radius: 6px;
+        border-radius: 6px; z-index: 1001;
         font-family: Arial, Helvetica, sans-serif; color: #ddd; user-select: none;
       `;
     return `
