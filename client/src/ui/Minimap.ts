@@ -41,6 +41,9 @@ export class Minimap {
 
   private lastPlayerX: number = 0;
   private lastPlayerZ: number = 0;
+  private hasLastPlayerPosition: boolean = false;
+  private headingDx: number = 0;
+  private headingDz: number = -1;
   private lastScale: number = 1;
   private lastAlpha: number = 0;
 
@@ -142,6 +145,7 @@ export class Minimap {
     chunkManager: ChunkManager,
     cameraAlpha: number = 0,
     worldObjects: MinimapObject[] = [],
+    dt: number = 1 / 60,
   ): void {
     const tileSize = this.tileSize;
     const pxPerTile = RENDER_SIZE / tileSize;
@@ -373,6 +377,16 @@ export class Minimap {
     const playerPxX = (playerX - startX) * scale;
     const playerPxZ = (playerZ - startZ) * scale;
 
+    if (this.hasLastPlayerPosition) {
+      const moveDx = playerX - this.lastPlayerX;
+      const moveDz = playerZ - this.lastPlayerZ;
+      if ((moveDx * moveDx + moveDz * moveDz) > 0.0001) {
+        this.headingDx = moveDx;
+        this.headingDz = moveDz;
+      }
+    } else {
+      this.hasLastPlayerPosition = true;
+    }
     this.lastPlayerX = playerX;
     this.lastPlayerZ = playerZ;
     this.lastScale = scale;
@@ -415,7 +429,7 @@ export class Minimap {
 
     // Destination: red flag
     if (this.destX !== null && this.destZ !== null) {
-      this.destBlinkTimer += 0.016;
+      this.destBlinkTimer += dt;
       if (Math.sin(this.destBlinkTimer * 6) > -0.3) {
         const dx = (this.destX - startX) * scale;
         const dz = (this.destZ - startZ) * scale;
@@ -435,6 +449,8 @@ export class Minimap {
     // Player arrow (always centered)
     ctx.save();
     ctx.translate(center, center);
+    const headingScreen = this.worldVectorToMinimapScreen(this.headingDx, this.headingDz, cameraAlpha);
+    ctx.rotate(Math.atan2(headingScreen.x, -headingScreen.y));
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1.5;
@@ -447,5 +463,17 @@ export class Minimap {
     ctx.fill();
     ctx.stroke();
     ctx.restore();
+  }
+
+  private worldVectorToMinimapScreen(dx: number, dz: number, cameraAlpha: number): { x: number; y: number } {
+    const angle = -(cameraAlpha + Math.PI / 2);
+    const scaledX = -dx;
+    const scaledY = -dz;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    return {
+      x: scaledX * cosA - scaledY * sinA,
+      y: scaledX * sinA + scaledY * cosA,
+    };
   }
 }

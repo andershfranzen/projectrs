@@ -102,7 +102,9 @@ export class SidePanel {
         .stance-btn {
           appearance: none;
           -webkit-appearance: none;
-          flex: 1; text-align: center; padding: 7px 0;
+          width: 100%;
+          flex: 0 0 auto;
+          text-align: center; padding: 7px 0;
           font-size: 11px; cursor: pointer;
           user-select: none; -webkit-user-select: none;
           touch-action: manipulation;
@@ -913,7 +915,7 @@ export class SidePanel {
       btn.className = 'stance-btn';
       btn.style.cssText += `
         display: flex; flex-direction: column; align-items: center;
-        padding: 10px 0; margin-bottom: 3px;
+        width: 100%; padding: 10px 0; margin-bottom: 3px;
       `;
       const nameEl = document.createElement('div');
       nameEl.style.cssText = `font-size: 13px;`;

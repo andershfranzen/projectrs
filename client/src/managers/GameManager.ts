@@ -151,6 +151,7 @@ export class GameManager {
   private static readonly HIDDEN_RECONCILE_DIST = 2.5;
   private static readonly VISIBLE_RECONCILE_DIST = 2.25;
   private static readonly RUN_SPEED_MULTIPLIER = 2.0;
+  private static readonly MINIMAP_UPDATE_INTERVAL_MS = 50;
   // Tracks when the tab last became hidden. Non-zero means we recently
   // returned to a visible tab and the divergence-snap is armed for ~2 ticks
   // to catch the throttled-prediction backlog. Reset to 0 otherwise so
@@ -161,6 +162,7 @@ export class GameManager {
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
   private _minimapObjects: { x: number; z: number; category: string }[] = [];
+  private _lastMinimapUpdateMs: number = 0;
   // NOTE: do NOT reuse a single Vector3 for entity positions — the setter stores the reference
   private _overlayVp = new Viewport(0, 0, 1, 1);
   private _overlayTransform = Matrix.Identity();
@@ -2451,6 +2453,7 @@ export class GameManager {
     await this.loadBiomes(mapId);
     this.applyFog();
     this.minimap?.invalidateTileCache();
+    this._lastMinimapUpdateMs = 0;
     // Tell server we're ready to receive entity data — SYNCs will link trees via the handler
     this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
 
@@ -3933,7 +3936,7 @@ export class GameManager {
     this._overlayTransformReady = false;
     this.updateOverlayPositions();
     this.updateHitSplats(dt);
-    this.updateMinimap();
+    this.updateMinimap(dt);
   }
 
   private updateCameraKeys(dt: number): void {
@@ -4450,8 +4453,15 @@ export class GameManager {
     }
   }
 
-  private updateMinimap(): void {
+  private updateMinimap(_dt: number): void {
     if (!this.minimap || !this.chunkManager.isLoaded()) return;
+    const now = performance.now();
+    const elapsedMs = this._lastMinimapUpdateMs === 0
+      ? GameManager.MINIMAP_UPDATE_INTERVAL_MS
+      : now - this._lastMinimapUpdateMs;
+    if (elapsedMs < GameManager.MINIMAP_UPDATE_INTERVAL_MS) return;
+    this._lastMinimapUpdateMs = now;
+
     this._minimapRemotes.length = 0;
     for (const [, target] of this.entities.remoteTargets) {
       this._minimapRemotes.push(target);
@@ -4474,6 +4484,7 @@ export class GameManager {
       this.chunkManager,
       camAlpha,
       this._minimapObjects,
+      Math.min(elapsedMs / 1000, 0.25),
     );
   }
 }
