@@ -1,0 +1,29 @@
+[
+  {
+    "id": "cow_secret",
+    "name": "The Cow's Whisper",
+    "blurb": "Something glints in the grass where a cow once stood.",
+    "startTrigger": { "type": "npcKill", "npcDefId": 10, "chance": 0.05 },
+    "stages": [
+      {
+        "id": 0,
+        "description": "While butchering a cow you found a small bronze trinket buried under the hide. It feels older than it should. Show it to Robert at the shop in Lumtown.",
+        "trigger": { "type": "dialogue" }
+      },
+      {
+        "id": 1,
+        "description": "Robert says the trinket is a lockmaker's mark from a guild that fell two centuries ago. He thinks more relics might be tucked away in old chests scattered through the countryside. Bring him three relics of any kind.",
+        "trigger": { "type": "itemPickup", "itemId": 224, "quantity": 3 }
+      },
+      {
+        "id": 2,
+        "description": "You have the relics. Return to Robert and let him examine them.",
+        "trigger": { "type": "dialogue" }
+      }
+    ],
+    "rewards": {
+      "xp": { "roguery": 500 },
+      "items": [{ "itemId": 10, "quantity": 250 }]
+    }
+  }
+]

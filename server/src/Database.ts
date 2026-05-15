@@ -68,6 +68,7 @@ export interface SavedPlayerState {
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
+  quests: Record<string, { stage: number; triggerProgress: number }>;
 }
 
 export class GameDatabase {
@@ -141,6 +142,11 @@ export class GameDatabase {
     // the new version and the row stops tripping.
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN respawn_version INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    // Migration: quests JSON column. {questId: {stage, triggerProgress}}.
+    // stage: -1 = completed. Missing entries = not started.
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN quests TEXT NOT NULL DEFAULT '{}'`);
     } catch { /* column already exists */ }
 
     // Bot detection telemetry. One row per account, updated on session flush
@@ -477,7 +483,7 @@ export class GameDatabase {
         x = ?, z = ?, y = ?, floor = ?,
         map_level = ?,
         skills = ?, inventory = ?, equipment = ?,
-        stance = ?, appearance = ?, bank = ?, updated_at = unixepoch()
+        stance = ?, appearance = ?, bank = ?, quests = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
       player.position.x, player.position.y, effectiveY, player.currentFloor,
@@ -488,6 +494,7 @@ export class GameDatabase {
       player.stance,
       player.appearance ? JSON.stringify(player.appearance) : null,
       JSON.stringify(player.bank),
+      JSON.stringify(player.quests),
       accountId,
     );
   }
@@ -527,8 +534,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank, respawn_version FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null; respawn_version: number | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank, respawn_version, quests FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null } | null;
 
     if (!row) return null;
 
@@ -608,6 +615,24 @@ export class GameDatabase {
       bank = [];
     }
 
+    // Parse quests. Sanitize: only accept entries with numeric stage +
+    // triggerProgress. A corrupted row falls back to an empty record so
+    // quests can re-acquire normally.
+    let quests: Record<string, { stage: number; triggerProgress: number }> = {};
+    try {
+      const raw = row.quests ? JSON.parse(row.quests) as Record<string, unknown> : {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (!v || typeof v !== 'object') continue;
+        const o = v as { stage?: unknown; triggerProgress?: unknown };
+        if (typeof o.stage !== 'number' || !Number.isInteger(o.stage)) continue;
+        const prog = typeof o.triggerProgress === 'number' && Number.isInteger(o.triggerProgress) && o.triggerProgress >= 0
+          ? o.triggerProgress : 0;
+        quests[k] = { stage: o.stage, triggerProgress: prog };
+      }
+    } catch {
+      quests = {};
+    }
+
     return {
       x: row.x,
       z: row.z,
@@ -621,6 +646,7 @@ export class GameDatabase {
       appearance,
       bank,
       respawnVersion: row.respawn_version ?? 0,
+      quests,
     };
   }
 

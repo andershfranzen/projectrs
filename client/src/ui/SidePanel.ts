@@ -1,8 +1,10 @@
 import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
-  type SkillId, type MeleeStance, type ItemDef,
+  QUEST_STAGE_COMPLETED,
+  type SkillId, type MeleeStance, type ItemDef, type QuestDef,
 } from '@projectrs/shared';
+import { QuestJournalPopup } from './QuestJournalPopup';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { clampElementToRect, createContextMenu } from './popupStyle';
 
@@ -51,6 +53,14 @@ export class SidePanel {
 
   // Item definitions
   private itemDefs: Map<number, ItemDef> = new Map();
+
+  // Quest journal state — driven by GameManager's quest cache + state record.
+  private questDefs: Map<string, QuestDef> = new Map();
+  private questState: Record<string, { stage: number; triggerProgress: number }> = {};
+  private questsContent: HTMLDivElement | null = null;
+  /** RS2-style journal popup. Mounted lazily on the first quest click so
+   *  players who never open it pay zero startup cost. */
+  private questJournalPopup: QuestJournalPopup | null = null;
 
   // Optional sell callback (active when shop is open)
   private sellCallback: ((slot: number, itemId: number) => void) | null = null;
@@ -424,14 +434,16 @@ export class SidePanel {
     contentArea.appendChild(evilMagicWrap);
     this.tabContents.set('evil_magic', evilMagicWrap);
 
-    // Quests tab
+    // Quests tab — dynamic. Container is reused; renderQuestJournal()
+    // repaints it on every state delta from GameManager.
     const questsWrap = document.createElement('div');
     questsWrap.style.display = 'none';
-    questsWrap.appendChild(this.buildEmptyPanelView([
-      { title: 'Quest Journal', body: 'No quests yet...', color: '#d8372b' },
-    ]));
+    this.questsContent = document.createElement('div');
+    this.questsContent.style.cssText = 'display:flex;flex-direction:column;gap:8px;min-height:100%;padding:6px 7px;color:#cfc7b8;font-family:Arial, Helvetica, sans-serif;';
+    questsWrap.appendChild(this.questsContent);
     contentArea.appendChild(questsWrap);
     this.tabContents.set('quests', questsWrap);
+    this.renderQuestJournal();
 
     // Social tab (friends + ignore combined)
     const socialWrap = document.createElement('div');
@@ -509,6 +521,93 @@ export class SidePanel {
     this.switchTab('inventory');
 
     return panel;
+  }
+
+  /** GameManager pushes the loaded quest defs once on init / after each
+   *  hot-reload. Triggers a re-render of the journal panel. */
+  setQuestDefs(defs: Map<string, QuestDef>): void {
+    this.questDefs = defs;
+    this.renderQuestJournal();
+  }
+
+  /** Replace the full quest-state snapshot. Fired by GameManager on
+   *  QUEST_STATE_SYNC (login). */
+  setQuestState(state: Record<string, { stage: number; triggerProgress: number }>): void {
+    this.questState = state;
+    this.renderQuestJournal();
+  }
+
+  /** Apply a single quest delta (QUEST_STAGE_ADVANCED). Cheaper than
+   *  rebuilding the state record; also nudges the journal popup if the
+   *  player has it open on this quest. */
+  updateQuestState(questId: string, stage: number, triggerProgress: number): void {
+    this.questState[questId] = { stage, triggerProgress };
+    this.renderQuestJournal();
+    this.questJournalPopup?.refresh();
+  }
+
+  /** Re-render the Quests tab body. List of status-colored quest names —
+   *  click one to open the RS2-style journal popup with the cumulative
+   *  story text. Mirrors 2004scape's quest log: list here, story popup
+   *  there. */
+  private renderQuestJournal(): void {
+    const root = this.questsContent;
+    if (!root) return;
+    root.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.textContent = 'Quest Journal';
+    header.style.cssText = 'color:#d8372b;font-size:13px;line-height:16px;font-weight:bold;text-shadow:1px 1px 0 #000;padding:0 0 5px;border-bottom:1px solid color-mix(in srgb,#d8372b 38%,transparent);';
+    root.appendChild(header);
+
+    const defs = [...this.questDefs.values()];
+    if (defs.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'min-height:34px;color:#8f8778;font-size:11px;line-height:15px;font-style:italic;text-shadow:1px 1px 0 #000;';
+      empty.textContent = 'No quests yet...';
+      root.appendChild(empty);
+      return;
+    }
+
+    // Active first (current objectives), then not-started, then completed.
+    // Tie-break alphabetically — stable ordering across deltas.
+    defs.sort((a, b) => {
+      const sa = this.questStatus(a.id), sb = this.questStatus(b.id);
+      const oa = sa === 'active' ? 0 : sa === 'not-started' ? 1 : 2;
+      const ob = sb === 'active' ? 0 : sb === 'not-started' ? 1 : 2;
+      return oa !== ob ? oa - ob : a.name.localeCompare(b.name);
+    });
+
+    for (const def of defs) root.appendChild(this.buildQuestRow(def));
+  }
+
+  private questStatus(questId: string): 'not-started' | 'active' | 'completed' {
+    const s = this.questState[questId];
+    if (!s) return 'not-started';
+    return s.stage === QUEST_STAGE_COMPLETED ? 'completed' : 'active';
+  }
+
+  private buildQuestRow(def: QuestDef): HTMLDivElement {
+    const status = this.questStatus(def.id);
+    const color = status === 'not-started' ? '#c44' : status === 'completed' ? '#6c6' : '#ffcc44';
+
+    const row = document.createElement('div');
+    row.textContent = def.name;
+    row.style.cssText = `padding:4px 8px;font-size:12px;font-weight:bold;color:${color};cursor:pointer;user-select:none;text-shadow:1px 1px 0 #000;`;
+    row.addEventListener('mouseenter', () => { row.style.background = 'rgba(120,80,40,0.18)'; });
+    row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    row.addEventListener('click', () => this.openQuestPopup(def.id));
+    return row;
+  }
+
+  private openQuestPopup(questId: string): void {
+    if (!this.questJournalPopup) {
+      this.questJournalPopup = new QuestJournalPopup(
+        (id) => this.questDefs.get(id),
+        () => this.questState,
+      );
+    }
+    this.questJournalPopup.show(questId);
   }
 
   private buildEmptyPanelView(sections: { title: string; body: string; color?: string }[]): HTMLDivElement {

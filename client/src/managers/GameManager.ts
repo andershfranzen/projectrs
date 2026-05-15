@@ -50,7 +50,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -207,6 +207,11 @@ export class GameManager {
   private objectDefsCache: Map<number, WorldObjectDef> = new Map();
   private itemDefsCache: Map<number, ItemDef> = new Map();
   private npcDefsCache: Map<number, NpcDef> = new Map();
+  private questDefsCache: Map<string, QuestDef> = new Map();
+  /** Per-player quest state, populated on QUEST_STATE_SYNC at login and
+   *  patched per QUEST_STAGE_ADVANCED delta. Mirrored into SidePanel's
+   *  Quest Journal tab for rendering, and drives per-stage chat notifications. */
+  private questState: Record<string, { stage: number; triggerProgress: number }> = {};
   // Biome fog overrides — loaded per map. Fog lerps toward the biome under the player.
   private biomesFile: BiomesFile | null = null;
   private biomeById: Map<number, BiomeDef> = new Map();
@@ -458,6 +463,11 @@ export class GameManager {
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network);
     this.tradePanel = new TradePanel(this.network);
+    // Quest journal is rendered inside SidePanel's existing Quests tab.
+    // Push whatever defs already loaded; subsequent loads (and state deltas)
+    // push from the raw-message dispatcher below.
+    if (this.questDefsCache.size > 0) this.sidePanel?.setQuestDefs(this.questDefsCache);
+    this.sidePanel?.setQuestState(this.questState);
     this.chatPanel.addSystemMessage(`Welcome to EvilQuest!`);
     this.chatPanel.addSystemMessage(`You last logged in from: ${window.location.hostname}`);
 
@@ -905,11 +915,12 @@ export class GameManager {
     // All four def files are independent — fetch them in parallel.
     // Previously these were four serial awaits, which on a cold start added
     // up to ~200–400ms of dead time over the lifetime of the constructor.
-    const [objectsRes, itemsRes, npcsRes, gearRes] = await Promise.all([
+    const [objectsRes, itemsRes, npcsRes, gearRes, questsRes] = await Promise.all([
       fetch('/data/objects.json').catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
       fetch('/data/items.json').catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
       fetch('/data/npcs.json').catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
       fetch('/data/gear-overrides.json').catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+      fetch('/data/quests.json').catch(() => null),
     ]);
 
     if (objectsRes) {
@@ -938,6 +949,15 @@ export class GameManager {
         for (const def of defs) this.npcDefsCache.set(def.id, def);
       } catch (e) {
         console.warn('Failed to parse NPC definitions:', e);
+      }
+    }
+    if (questsRes) {
+      try {
+        const defs: QuestDef[] = await questsRes.json();
+        for (const def of defs) this.questDefsCache.set(def.id, def);
+        this.sidePanel?.setQuestDefs(this.questDefsCache);
+      } catch (e) {
+        console.warn('Failed to parse quest definitions:', e);
       }
     }
     if (gearRes) {
@@ -2399,6 +2419,35 @@ export class GameManager {
         const entityId = values[0];
         if (str.length > 0) this.entities.npcOverrideNames.set(entityId, str);
         else this.entities.npcOverrideNames.delete(entityId);
+      } else if (opcode === ServerOpcode.QUEST_STATE_SYNC) {
+        // Full snapshot on login. JSON record {questId: {stage, triggerProgress}}.
+        const { str } = decodeStringPacket(data);
+        try {
+          this.questState = JSON.parse(str) as Record<string, { stage: number; triggerProgress: number }>;
+          this.sidePanel?.setQuestState(this.questState);
+        } catch (e) { console.warn('[quest] sync parse failed', e); }
+      } else if (opcode === ServerOpcode.QUEST_STAGE_ADVANCED) {
+        // Single delta: questId string + [stage, triggerProgress].
+        const { str: questId, values } = decodeStringPacket(data);
+        const stage = values[0];
+        const triggerProgress = values[1] ?? 0;
+        const prev = this.questState[questId];
+        this.questState[questId] = { stage, triggerProgress };
+        this.sidePanel?.updateQuestState(questId, stage, triggerProgress);
+        // Chat notification on stage change (not on triggerProgress ticks
+        // — those are just intermediate kill/item counters).
+        if (!prev || prev.stage !== stage) {
+          const def = this.questDefsCache.get(questId);
+          if (def) {
+            if (stage === QUEST_STAGE_COMPLETED) {
+              this.chatPanel?.addSystemMessage(`Quest complete: ${def.name}.`, '#ff0');
+            } else if (!prev) {
+              this.chatPanel?.addSystemMessage(`New quest: ${def.name}. ${def.stages[stage]?.description ?? ''}`, '#ff0');
+            } else {
+              this.chatPanel?.addSystemMessage(`Quest updated: ${def.name} — ${def.stages[stage]?.description ?? ''}`, '#ff0');
+            }
+          }
+        }
       }
     });
   }

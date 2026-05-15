@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, QUEST_STAGE_COMPLETED, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -80,6 +80,54 @@ interface TradeSession {
 }
 
 let nextGroundItemId = 1;
+
+// --- Quest trigger helpers ---
+
+type QuestEventDescriptor =
+  | { type: 'itemPickup'; itemId: number; quantity: number }
+  | { type: 'npcKill'; npcDefId: number }
+  | { type: 'chestOpen'; chestDefId: number };
+
+/** True if the trigger's discriminator (type + filter fields) matches the
+ *  event. Count thresholds and probability are evaluated separately. */
+function triggerMatchesEvent(
+  trigger: import('@projectrs/shared').QuestTrigger,
+  event: QuestEventDescriptor,
+): boolean {
+  if (trigger.type === 'dialogue') return false; // dialogue triggers fire via setQuestStage, never auto
+  if (trigger.type !== event.type) return false;
+  if (trigger.type === 'itemPickup' && event.type === 'itemPickup') {
+    return trigger.itemId === event.itemId;
+  }
+  if (trigger.type === 'npcKill' && event.type === 'npcKill') {
+    return trigger.npcDefId === event.npcDefId;
+  }
+  if (trigger.type === 'chestOpen' && event.type === 'chestOpen') {
+    // chestDefId is optional on the trigger — undefined means "any chest"
+    return trigger.chestDefId === undefined || trigger.chestDefId === event.chestDefId;
+  }
+  return false;
+}
+
+/** Threshold count for advancing the trigger. itemPickup uses `quantity`;
+ *  npcKill/chestOpen use `count`. Defaults to 1. */
+function triggerThreshold(
+  trigger: import('@projectrs/shared').QuestTrigger,
+  event: QuestEventDescriptor,
+): number {
+  void event;
+  if (trigger.type === 'itemPickup') return trigger.quantity ?? 1;
+  if (trigger.type === 'npcKill') return trigger.count ?? 1;
+  if (trigger.type === 'chestOpen') return trigger.count ?? 1;
+  return 1;
+}
+
+/** Probability gate. Dialogue triggers (no `chance` field) always pass;
+ *  other triggers default to `chance === undefined → always fire`. */
+function rollTriggerChance(trigger: import('@projectrs/shared').QuestTrigger): boolean {
+  if (trigger.type === 'dialogue') return true;
+  return trigger.chance === undefined || Math.random() < trigger.chance;
+}
 
 export class World {
   readonly maps: Map<string, GameMap> = new Map();
@@ -768,6 +816,11 @@ export class World {
     if (!player.appearance) {
       this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, 0);
     }
+
+    // Quest snapshot — sent unconditionally; the client renders an empty
+    // log when the record is {}. Subsequent stage advances arrive as
+    // QUEST_STAGE_ADVANCED deltas.
+    this.sendQuestStateSync(player);
   }
 
   private cancelSkilling(playerId: number): void {
@@ -1433,14 +1486,22 @@ export class World {
       this.sendDialogueClose(player);
       return;
     }
-    player.openDialogueState = { npcEntityId: npc.id, nodeId };
     // Strip layout (editor-only metadata) from the wire payload.
     const { layout, ...wireNode } = node;
     void layout;
+    const visibleIndices: number[] = [];
+    const visibleOptions: import('@projectrs/shared').DialogueOption[] = [];
+    for (let i = 0; i < wireNode.options.length; i++) {
+      if (this.dialogueOptionVisible(player, wireNode.options[i])) {
+        visibleIndices.push(i);
+        visibleOptions.push(wireNode.options[i]);
+      }
+    }
+    player.openDialogueState = { npcEntityId: npc.id, nodeId, visibleOptionIndices: visibleIndices };
     const payload = JSON.stringify({
       speaker: wireNode.speaker ?? npc.displayName,
       lines: wireNode.lines,
-      options: wireNode.options.map(o => ({ label: o.label })),
+      options: visibleOptions.map(o => ({ label: o.label })),
     });
     const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id);
     try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
@@ -1463,9 +1524,14 @@ export class World {
     if (!tree) { this.sendDialogueClose(player); return; }
     const node = tree.nodes[state.nodeId];
     if (!node) { this.sendDialogueClose(player); return; }
-    if (optionIndex < 0 || optionIndex >= node.options.length) return;
-
-    const option = node.options[optionIndex];
+    // Index is into the filtered option list the client saw, NOT the raw
+    // node options. Use the snapshot captured in openDialogueAt — re-running
+    // the filter here would race the player's quest state advancing between
+    // open and choose (option shifts under their finger).
+    if (optionIndex < 0 || optionIndex >= state.visibleOptionIndices.length) return;
+    const rawIndex = state.visibleOptionIndices[optionIndex];
+    if (rawIndex < 0 || rawIndex >= node.options.length) return;
+    const option = node.options[rawIndex];
     // Run the action FIRST so an `openShop` action can replace the dialogue
     // panel with the shop — the order here is the visible UX order.
     if (option.action) {
@@ -1521,6 +1587,149 @@ export class World {
           if (mutated) this.sendInventory(player);
         }
         return;
+      }
+      case 'setQuestStage':
+        this.setPlayerQuestStage(player, action.questId, action.stage);
+        return;
+      case 'completeQuest':
+        this.completePlayerQuest(player, action.questId);
+        return;
+    }
+  }
+
+  /** Predicate for the `requires` gate on a single dialogue option. Used by
+   *  openDialogueAt to build the visible-options snapshot. Per-option (not
+   *  per-list) so the caller can also record the original index. */
+  private dialogueOptionVisible(player: Player, opt: import('@projectrs/shared').DialogueOption): boolean {
+    const req = opt.requires;
+    if (!req) return true;
+    const state = player.quests[req.questId];
+    if (req.notStarted) return !state || state.stage === QUEST_STAGE_COMPLETED;
+    if (!state) return false;
+    if (state.stage === QUEST_STAGE_COMPLETED) return false;
+    if (req.minStage !== undefined && state.stage < req.minStage) return false;
+    if (req.maxStage !== undefined && state.stage > req.maxStage) return false;
+    return true;
+  }
+
+  /** Set a quest's stage, sending the delta opcode on change. Used by both
+   *  the setQuestStage dialogue action and by the trigger-hook handlers. */
+  private setPlayerQuestStage(player: Player, questId: string, stage: number): void {
+    const def = this.data.getQuest(questId);
+    if (!def) return;
+    const current = player.quests[questId];
+    if (current && current.stage === stage) return;
+    player.quests[questId] = { stage, triggerProgress: 0 };
+    this.sendQuestDelta(player, questId);
+  }
+
+  /** Award rewards and mark the quest as complete (stage = -1). Idempotent —
+   *  re-calling on a completed quest is a no-op unless the quest is
+   *  marked repeatable, in which case it resets to stage 0. */
+  private completePlayerQuest(player: Player, questId: string): void {
+    const def = this.data.getQuest(questId);
+    if (!def) return;
+    const current = player.quests[questId];
+    if (current && current.stage === QUEST_STAGE_COMPLETED && !def.repeatable) return;
+
+    if (def.rewards) {
+      if (def.rewards.xp) {
+        for (const [skillKey, amount] of Object.entries(def.rewards.xp)) {
+          if (typeof amount !== 'number' || amount <= 0) continue;
+          const skillIdx = ALL_SKILLS.indexOf(skillKey as SkillId);
+          if (skillIdx < 0) continue;
+          const result = addXp(player.skills, skillKey as SkillId, amount);
+          this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, amount);
+          if (result.leveled) {
+            this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+          }
+          this.sendSingleSkill(player, skillIdx);
+        }
+      }
+      if (def.rewards.items) {
+        let mutated = false;
+        for (const drop of def.rewards.items) {
+          const got = player.addItem(drop.itemId, drop.quantity, this.data.itemDefs);
+          if (got.completed > 0) mutated = true;
+        }
+        if (mutated) this.sendInventory(player);
+      }
+    }
+
+    player.quests[questId] = { stage: def.repeatable ? 0 : QUEST_STAGE_COMPLETED, triggerProgress: 0 };
+    this.sendQuestDelta(player, questId);
+    this.sendChatSystem(player, `Quest complete: ${def.name}.`);
+  }
+
+  /** Send the current state of one quest to a single player. String packet:
+   *  questId followed by [stage, triggerProgress]. */
+  private sendQuestDelta(player: Player, questId: string): void {
+    const state = player.quests[questId] ?? { stage: QUEST_STAGE_COMPLETED, triggerProgress: 0 };
+    const packet = encodeStringPacket(ServerOpcode.QUEST_STAGE_ADVANCED, questId, state.stage, state.triggerProgress);
+    try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
+  /** Full quest-state snapshot on login. JSON record sent as the packet
+   *  string; no trailing int16 values. */
+  private sendQuestStateSync(player: Player): void {
+    const payload = JSON.stringify(player.quests);
+    const packet = encodeStringPacket(ServerOpcode.QUEST_STATE_SYNC, payload);
+    try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
+  /** Run quest triggers for a world event. Two passes:
+   *
+   *  1. Quest START — for every quest definition with a matching
+   *     startTrigger, the player gains stage 0 if the trigger matches
+   *     (and the probability roll passes) and they don't already have
+   *     the quest active or completed (unless `repeatable`).
+   *  2. Quest ADVANCE — for every active quest, if the current stage's
+   *     trigger matches the event, bump triggerProgress and advance the
+   *     stage when the count threshold is hit (or roll the chance gate). */
+  private notifyQuestEvent(player: Player, event: QuestEventDescriptor): void {
+    // Pass 1: starts. The reverse index scopes the scan to quests whose
+    // startTrigger.type matches this event (one entry today; would matter
+    // at 50+ defs). triggerMatchesEvent still validates the per-trigger
+    // filter fields (npcDefId, itemId, chestDefId).
+    for (const def of this.data.getQuestsByStartTriggerType(event.type)) {
+      if (!def.startTrigger) continue; // defensive — index only contains entries with startTrigger
+      const existing = player.quests[def.id];
+      if (existing) {
+        if (existing.stage === QUEST_STAGE_COMPLETED && !def.repeatable) continue;
+        if (existing.stage !== QUEST_STAGE_COMPLETED) continue; // already in progress
+      }
+      if (!triggerMatchesEvent(def.startTrigger, event)) continue;
+      if (!rollTriggerChance(def.startTrigger)) continue;
+      this.setPlayerQuestStage(player, def.id, 0);
+      this.sendChatSystem(player, `New quest started: ${def.name}.`);
+    }
+
+    // Pass 2: advances
+    for (const [questId, state] of Object.entries(player.quests)) {
+      if (state.stage === QUEST_STAGE_COMPLETED) continue;
+      const def = this.data.getQuest(questId);
+      if (!def) continue;
+      const stageDef = def.stages[state.stage];
+      if (!stageDef?.trigger) continue;
+      if (!triggerMatchesEvent(stageDef.trigger, event)) continue;
+      if (!rollTriggerChance(stageDef.trigger)) continue;
+      const count = state.triggerProgress + 1;
+      const threshold = triggerThreshold(stageDef.trigger, event);
+      if (count >= threshold) {
+        // Advance — stage 0 → 1 → ... → final → completion via dialogue,
+        // or the stage's trigger naturally rolls into the next stage. If
+        // this is the LAST stage and it has a non-dialogue trigger, also
+        // grant rewards + mark complete (otherwise terminal stages must
+        // be ended via the completeQuest dialogue action).
+        const nextStage = state.stage + 1;
+        if (nextStage >= def.stages.length) {
+          this.completePlayerQuest(player, questId);
+        } else {
+          this.setPlayerQuestStage(player, questId, nextStage);
+        }
+      } else {
+        player.quests[questId] = { stage: state.stage, triggerProgress: count };
+        this.sendQuestDelta(player, questId);
       }
     }
   }
@@ -3149,6 +3358,11 @@ export class World {
           // 300-800ms.
           player.botStats?.recordNpcDeath(performance.now());
 
+          // Quest hook — may start a quest (probability-gated, e.g. the
+          // "1/20 on cow kill" starter trigger) AND/OR advance the current
+          // stage of any active quest whose trigger matches this npc def.
+          this.notifyQuestEvent(player, { type: 'npcKill', npcDefId: npc.def.id });
+
           this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
 
           const loot = rollLoot(npc);
@@ -3306,6 +3520,7 @@ export class World {
           continue;
         }
         if (isChest) foundForChest.push({ itemId, quantity: primaryAdded });
+        this.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primaryAdded });
 
         // Bonus loot — chests use this for relic rolls on top of the
         // primary coin payout. Each entry is independent; misses drop
@@ -3325,6 +3540,7 @@ export class World {
                 const name = itemDef?.name ?? `item ${drop.itemId}`;
                 this.sendChatSystem(player, `You find a ${name}!`);
               }
+              this.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: got.completed });
             }
           }
         }
@@ -3366,6 +3582,9 @@ export class World {
               ? parts[0]
               : parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1];
             this.sendChatSystem(player, `You open the chest and find: ${joined}.`);
+          }
+          if (isChest) {
+            this.notifyQuestEvent(player, { type: 'chestOpen', chestDefId: obj.defId });
           }
           this.stopPlayerSkilling(playerId, player);
         } else {

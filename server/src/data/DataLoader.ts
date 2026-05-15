@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
-import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree } from '@projectrs/shared';
+import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree, QuestDef } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
@@ -15,6 +15,12 @@ export class DataLoader {
   private objects: Map<number, WorldObjectDef> = new Map();
   private shops: Map<number, ShopDef> = new Map();
   private shopItemPrices: Map<number, number> = new Map();
+  private quests: Map<string, QuestDef> = new Map();
+  /** Reverse index: trigger type → quest defs whose startTrigger matches that
+   *  type. Built once at load time so notifyQuestEvent's "is this event a
+   *  start trigger for any quest?" pass scans only candidate defs instead
+   *  of every quest. */
+  private questsByStartTrigger: Map<string, QuestDef[]> = new Map();
 
   get itemDefs(): Map<number, ItemDef> {
     return this.items;
@@ -24,54 +30,46 @@ export class DataLoader {
     return this.objects;
   }
 
+  get questDefs(): Map<string, QuestDef> {
+    return this.quests;
+  }
+
   constructor() {
     this.loadNpcs();
     this.loadItems();
     this.loadObjects();
     this.loadShops();
+    this.loadQuests();
   }
 
-  private loadNpcs(): void {
-    const path = resolve(DATA_DIR, 'npcs.json');
+  /** Shared loader for the def files: read JSON array → populate a Map keyed
+   *  by `id`. Required loaders throw on missing/corrupt files (npcs, items,
+   *  objects); optional loaders just log (quests). The cast on `def.id` is
+   *  safe given each def file's schema declares `id` of the matching type. */
+  private loadJsonMap<K, T extends { id: K }>(
+    filename: string,
+    map: Map<K, T>,
+    label: string,
+    optional: boolean = false,
+  ): void {
+    const path = resolve(DATA_DIR, filename);
     try {
       const raw = readFileSync(path, 'utf-8');
-      const defs: NpcDef[] = JSON.parse(raw);
-      for (const def of defs) {
-        this.npcs.set(def.id, def);
-      }
-      console.log(`Loaded ${this.npcs.size} NPC definitions`);
+      const defs: T[] = JSON.parse(raw);
+      for (const def of defs) map.set(def.id, def);
+      console.log(`Loaded ${map.size} ${label}`);
     } catch (e) {
+      if (optional) {
+        console.log(`No ${label} loaded: ${e instanceof Error ? e.message : e}`);
+        return;
+      }
       throw new Error(`Failed to load ${path}: ${e instanceof Error ? e.message : e}`);
     }
   }
 
-  private loadItems(): void {
-    const path = resolve(DATA_DIR, 'items.json');
-    try {
-      const raw = readFileSync(path, 'utf-8');
-      const defs: ItemDef[] = JSON.parse(raw);
-      for (const def of defs) {
-        this.items.set(def.id, def);
-      }
-      console.log(`Loaded ${this.items.size} item definitions`);
-    } catch (e) {
-      throw new Error(`Failed to load ${path}: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-
-  private loadObjects(): void {
-    const path = resolve(DATA_DIR, 'objects.json');
-    try {
-      const raw = readFileSync(path, 'utf-8');
-      const defs: WorldObjectDef[] = JSON.parse(raw);
-      for (const def of defs) {
-        this.objects.set(def.id, def);
-      }
-      console.log(`Loaded ${this.objects.size} object definitions`);
-    } catch (e) {
-      throw new Error(`Failed to load ${path}: ${e instanceof Error ? e.message : e}`);
-    }
-  }
+  private loadNpcs(): void { this.loadJsonMap<number, NpcDef>('npcs.json', this.npcs, 'NPC definitions'); }
+  private loadItems(): void { this.loadJsonMap<number, ItemDef>('items.json', this.items, 'item definitions'); }
+  private loadObjects(): void { this.loadJsonMap<number, WorldObjectDef>('objects.json', this.objects, 'object definitions'); }
 
   private loadShops(): void {
     // Legacy fallback: shops.json keyed by NPC id. New authoring goes inline
@@ -128,6 +126,45 @@ export class DataLoader {
 
   getShopPrice(itemId: number): number | undefined {
     return this.shopItemPrices.get(itemId);
+  }
+
+  private loadQuests(): void {
+    // Missing quests.json is fine — fresh installs / minimal setups.
+    this.loadJsonMap<string, QuestDef>('quests.json', this.quests, 'quest definitions', true);
+    this.rebuildQuestStartTriggerIndex();
+  }
+
+  private rebuildQuestStartTriggerIndex(): void {
+    this.questsByStartTrigger.clear();
+    for (const def of this.quests.values()) {
+      if (!def.startTrigger) continue;
+      const arr = this.questsByStartTrigger.get(def.startTrigger.type);
+      if (arr) arr.push(def);
+      else this.questsByStartTrigger.set(def.startTrigger.type, [def]);
+    }
+  }
+
+  getQuest(id: string): QuestDef | undefined {
+    return this.quests.get(id);
+  }
+
+  getAllQuests(): QuestDef[] {
+    return Array.from(this.quests.values());
+  }
+
+  /** Quest defs whose startTrigger.type matches `type`. Returns an empty
+   *  array (not undefined) so callers can iterate without a null-check. */
+  getQuestsByStartTriggerType(type: string): ReadonlyArray<QuestDef> {
+    return this.questsByStartTrigger.get(type) ?? [];
+  }
+
+  /** Hot-reload quests.json — used by the editor save endpoint. Existing
+   *  in-progress quests on players keep their state (no automatic shift if
+   *  stages were reordered — author's responsibility to keep stage indices
+   *  stable); new triggers + new defs pick up immediately. */
+  reloadQuests(): void {
+    this.quests.clear();
+    this.loadQuests();
   }
 
   getObject(id: number): WorldObjectDef | undefined {

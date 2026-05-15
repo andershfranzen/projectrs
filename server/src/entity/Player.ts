@@ -77,15 +77,24 @@ export class Player extends Entity {
    *  on distance). */
   openShopNpcId: number | null = null;
   /** Currently open dialogue, or null. Tracks which NPC entity the player is
-   *  talking to and which node they're parked on. DIALOGUE_CHOOSE handlers
-   *  validate the entity id matches before running the chosen option's action.
-   *  Cleared in the same lifecycle hooks as openShopNpcId (movement, transition,
-   *  death, disconnect). */
-  openDialogueState: { npcEntityId: number; nodeId: string } | null = null;
+   *  talking to, which node they're parked on, AND the indices of the options
+   *  the client was actually shown (after the `requires` filter). Caching
+   *  the filtered indices closes a race: between DIALOGUE_OPEN and
+   *  DIALOGUE_CHOOSE the player's quest state could change, shifting which
+   *  options pass the filter — without the cache, the option-index the
+   *  client clicked would resolve to a different entry on the server.
+   *  Cleared in the same lifecycle hooks as openShopNpcId (movement,
+   *  transition, death, disconnect). */
+  openDialogueState: { npcEntityId: number; nodeId: string; visibleOptionIndices: number[] } | null = null;
   /** Talk-to-NPC intent held while the player walks into range. Fires from
    *  the tick loop once moveQueue drains and Chebyshev distance is within
    *  NPC_INTERACTION_RANGE. Cleared on movement redirect, death, disconnect. */
   pendingTalkNpcId: number = -1;
+  /** Per-quest state. Key = quest id from quests.json. Value tracks the
+   *  current stage and progress toward that stage's trigger threshold
+   *  (kill count, item count, etc). `stage: -1` = completed. Persisted in
+   *  player_state.quests. */
+  quests: Record<string, { stage: number; triggerProgress: number }> = {};
   /** World tick on which this player last consumed a movement waypoint. Used
    *  to defer adjacency-triggered actions (interact/pickup) by one tick when
    *  the player just arrived — gives the client's smooth visual interpolation

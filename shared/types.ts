@@ -119,7 +119,21 @@ export type DialogueAction =
   | { type: 'openBank' }
   | { type: 'giveItem'; itemId: number; qty: number }
   | { type: 'takeItem'; itemId: number; qty: number }
-  | { type: 'closeDialogue' };
+  | { type: 'closeDialogue' }
+  | { type: 'setQuestStage'; questId: string; stage: number }
+  | { type: 'completeQuest'; questId: string };
+
+/** Gating condition on a dialogue option. When `requires` is set, the
+ *  server only emits the option to the client if the player satisfies it.
+ *  `minStage` defaults to the smallest stage; `maxStage` defaults to one
+ *  less than the quest's stage count (i.e. before completion). `notStarted`
+ *  shows the option only when the player has no progress on this quest. */
+export interface DialogueOptionRequires {
+  questId: string;
+  minStage?: number;
+  maxStage?: number;
+  notStarted?: boolean;
+}
 
 export interface DialogueOption {
   label: string;
@@ -127,6 +141,8 @@ export interface DialogueOption {
   next?: string;
   /** Server-side effect to run when this option is chosen. */
   action?: DialogueAction;
+  /** Hide this option unless the player's quest state matches. */
+  requires?: DialogueOptionRequires;
 }
 
 export interface DialogueNode {
@@ -516,4 +532,78 @@ export function shouldTileRenderWater(
   if (tile.waterPainted) return true;
   const minH = Math.min(cornerHeights.tl, cornerHeights.tr, cornerHeights.bl, cornerHeights.br);
   return minH <= waterLevel;
+}
+
+// --- Quest system ---
+
+/** Per-event trigger that either starts a quest (via QuestDef.startTrigger)
+ *  or advances the current stage (via QuestStageDef.trigger).
+ *
+ *  - `dialogue`: never auto-fires; only the explicit `setQuestStage` /
+ *    `completeQuest` dialogue actions advance this stage. Use this for
+ *    "talk to NPC X" beats.
+ *  - `itemPickup`: fires when the player's running tally of `itemId` reaches
+ *    `quantity` (default 1). Server checks at every successful addItem.
+ *  - `npcKill`: fires when the player kills `npcDefId` (the def id from
+ *    npcs.json) `count` times (default 1). Counted in player.quests[id]
+ *    .triggerProgress.
+ *  - `chestOpen`: fires when the player loots a chest. If `chestDefId` is
+ *    set, only that specific chest type counts. Counted similarly.
+ *
+ *  `chance` (0–1) gates the trigger probabilistically — useful for rare
+ *  quest hand-outs like "5% chance to find a clue on a cow". */
+export type QuestTrigger =
+  | { type: 'dialogue' }
+  | { type: 'itemPickup'; itemId: number; quantity?: number; chance?: number }
+  | { type: 'npcKill'; npcDefId: number; count?: number; chance?: number }
+  | { type: 'chestOpen'; chestDefId?: number; count?: number; chance?: number };
+
+export interface QuestStageDef {
+  /** 0-indexed stage. Stage 0 is the initial state when the quest starts. */
+  id: number;
+  /** Shown in the player's quest log. Plain text; supports newlines. */
+  description: string;
+  /** What advances *from* this stage. Omit for terminal stages (use
+   *  completeQuest dialogue action to finish). */
+  trigger?: QuestTrigger;
+}
+
+export interface QuestReward {
+  /** Skill → XP. Granted on completeQuest. */
+  xp?: Partial<Record<string, number>>;
+  /** Items added to inventory on completeQuest. Drops on the floor if full. */
+  items?: Array<{ itemId: number; quantity: number }>;
+}
+
+export interface QuestDef {
+  id: string;
+  name: string;
+  /** One-line tagline shown in the quest log header. */
+  blurb?: string;
+  /** Stages in order. The player's currentStage indexes into this array.
+   *  Reaching stages.length (or running completeQuest) marks the quest done. */
+  stages: QuestStageDef[];
+  /** Auto-start condition. When omitted, the quest can only start via a
+   *  dialogue `setQuestStage` action. */
+  startTrigger?: QuestTrigger;
+  /** If true, the quest can be re-acquired after completion. Default false. */
+  repeatable?: boolean;
+  /** Rewards granted on completion. */
+  rewards?: QuestReward;
+}
+
+/** Sentinel `stage` value indicating the quest has been completed (rewards
+ *  granted, removed from the active log but kept in the saved record so
+ *  non-repeatable quests don't re-start). Use this constant everywhere
+ *  rather than a literal `-1` so the meaning is self-documenting. */
+export const QUEST_STAGE_COMPLETED = -1;
+
+/** Per-player quest state, persisted on player_state.quests JSON column.
+ *  - `stage`: index into QuestDef.stages while active; QUEST_STAGE_COMPLETED
+ *    once finished. Absent key = never started.
+ *  - `triggerProgress`: count toward the current stage's trigger threshold
+ *    (kills, items, chests opened). Resets to 0 when the stage advances. */
+export interface QuestState {
+  stage: number;
+  triggerProgress: number;
 }

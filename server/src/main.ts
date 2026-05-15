@@ -1143,6 +1143,55 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    if (url.pathname === '/api/editor/quests' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { quests: any[] };
+        if (!body || !Array.isArray(body.quests)) {
+          return jsonResponse({ ok: false, error: 'Body must be { quests: QuestDef[] }' }, 400);
+        }
+        const dataDir = resolve(import.meta.dir, '../data');
+        const questsPath = resolve(dataDir, 'quests.json');
+        // Shrinkage guard, same shape as npcs save.
+        if (existsSync(questsPath)) {
+          try {
+            const existing = JSON.parse(readFileSync(questsPath, 'utf-8')) as any[];
+            if (Array.isArray(existing) && existing.length >= 4 && body.quests.length * 2 < existing.length) {
+              return jsonResponse({
+                ok: false,
+                error: `Refusing save: would shrink ${existing.length} → ${body.quests.length} quests (>50% drop)`,
+              }, 400);
+            }
+          } catch { /* unreadable existing — proceed */ }
+        }
+        const backupsDir = resolve(dataDir, 'backups', 'quests');
+        try {
+          mkdirSync(backupsDir, { recursive: true });
+          if (existsSync(questsPath)) {
+            const ts = new Date().toISOString().replace(/[:.]/g, '-');
+            cpSync(questsPath, resolve(backupsDir, `quests.${ts}.json`));
+            const snaps = readdirSync(backupsDir).filter(n => /^quests\..+\.json$/.test(n)).sort();
+            const excess = Math.max(0, snaps.length - 20);
+            for (let i = 0; i < excess; i++) {
+              try { rmSync(resolve(backupsDir, snaps[i])); } catch { /* best-effort */ }
+            }
+          }
+        } catch (err) {
+          console.warn('[save-quests] backup failed:', (err as Error)?.message);
+        }
+        const tmpPath = questsPath + '.tmp';
+        writeFileSync(tmpPath, JSON.stringify(body.quests, null, 2));
+        renameSync(tmpPath, questsPath);
+        // Hot-reload: existing in-progress quests on players keep their state
+        // (no stage-shift), but new triggers + new defs pick up immediately.
+        world.data.reloadQuests();
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
     if (url.pathname === '/api/editor/new-map' && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();

@@ -187,6 +187,17 @@ export enum ServerOpcode {
    *  divergence-snap teleports back" failure mode when a stale/edge path
    *  validation drops tiles. */
   PATH_TRUNCATED = 100,
+
+  /** Full quest-state snapshot. String packet: JSON-encoded
+   *  Record<questId, {stage, triggerProgress}> followed by no int16s.
+   *  Sent on login (after PLAYER_INIT) so the client can render the quest
+   *  log immediately. Stage -1 = completed; missing keys = not started. */
+  QUEST_STATE_SYNC = 110,
+  /** Single quest state delta. String packet: questId string followed by
+   *  [stage, triggerProgress]. Sent any time a quest starts, advances, or
+   *  completes. Client uses this to drive the chat notification and the
+   *  quest-log re-render. */
+  QUEST_STAGE_ADVANCED = 111,
 }
 
 export enum PlayerAnimationKind {

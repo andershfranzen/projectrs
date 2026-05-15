@@ -1104,6 +1104,7 @@ let paintBrushRadius = 1
     <button id="serverSaveBtn" title="Save map to game server (overwrites!)">Save Server</button>
     <button id="serverReloadBtn" title="Hot-reload map in running game">Reload Game</button>
     <button id="newDungeonBtn" title="Create a new dungeon map">+ Dungeon</button>
+    <button id="questsBtn" title="Edit quests.json (storyline definitions)">Quests</button>
     <span class="top-sep"></span>
     <span class="top-label" id="mapSizeLabel">192 x 64</span>
     <button id="chunkGridBtn" title="Add/remove chunks">Chunks</button>
@@ -2219,7 +2220,7 @@ let paintBrushRadius = 1
     const hint = document.createElement('div')
     hint.className = 'hint'
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:4px;'
-    hint.innerHTML = `JSON view (graph editor coming in phase 4). Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: <code>openShop</code>, <code>openBank</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>.`
+    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: <code>openShop</code>, <code>openBank</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: add <code>"requires": { "questId": "...", "minStage": N, "maxStage": N, "notStarted": true }</code> to hide options unless quest state matches.`
     root.appendChild(hint)
 
     const ta = document.createElement('textarea')
@@ -5668,6 +5669,75 @@ function applyToolAtTile(tile, eventLike = null) {
   const serverLoadBtn = topBar.querySelector('#serverLoadBtn')
   const serverSaveBtn = topBar.querySelector('#serverSaveBtn')
   const serverReloadBtn = topBar.querySelector('#serverReloadBtn')
+  const questsBtn = topBar.querySelector('#questsBtn')
+
+  // Quests modal — single-textarea JSON editor for server/data/quests.json.
+  // Save POSTs the parsed array to /api/editor/quests, server hot-reloads via
+  // DataLoader.reloadQuests so live players' quest defs update without a
+  // server restart. Phase 1: JSON-only. Structured stage/trigger forms can
+  // come later when the schema settles.
+  questsBtn?.addEventListener('click', async () => {
+    let overlay = document.getElementById('questsModal')
+    if (overlay) { overlay.style.display = 'flex'; return }
+    overlay = document.createElement('div')
+    overlay.id = 'questsModal'
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999;display:flex;align-items:center;justify-content:center;'
+    overlay.innerHTML = `
+      <div style="background:#1a1a1a;border:1px solid #555;border-radius:6px;padding:16px;width:min(720px,90vw);max-height:80vh;display:flex;flex-direction:column;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="font-size:13px;font-weight:700;color:#eee;flex:1;">Quests (quests.json)</div>
+          <button id="questsClose" style="background:#3a3a3a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">Close</button>
+        </div>
+        <div style="font-size:10px;color:#888;line-height:1.4;">
+          Edit the quest array directly. Each entry: id, name, stages[{id, description, trigger?}], optional startTrigger, rewards{xp, items}, repeatable.
+          Triggers: <code>{type:"dialogue"}</code> (manual advance via dialogue action), <code>{type:"itemPickup", itemId, quantity?, chance?}</code>, <code>{type:"npcKill", npcDefId, count?, chance?}</code>, <code>{type:"chestOpen", chestDefId?, count?, chance?}</code>.
+          Save hot-reloads server defs; existing player progress is preserved.
+        </div>
+        <textarea id="questsJson" spellcheck="false" style="flex:1;min-height:380px;background:#0d0d0d;color:#cfc;border:1px solid #444;border-radius:3px;padding:6px;font-family:monospace;font-size:11px;resize:vertical;"></textarea>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="questsSave" style="background:#3a6c3a;color:#fff;border:1px solid #555;border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">Save Quests</button>
+          <span id="questsStatus" style="font-size:11px;color:#888;flex:1;"></span>
+        </div>
+      </div>`
+    document.body.appendChild(overlay)
+    const ta = overlay.querySelector('#questsJson')
+    const status = overlay.querySelector('#questsStatus')
+    try {
+      const r = await fetch('/data/quests.json')
+      if (r.ok) ta.value = await r.text()
+      else { ta.value = '[]'; status.textContent = `Failed to load quests.json (${r.status}); starting with []` }
+    } catch (e) { ta.value = '[]'; status.textContent = `Load error: ${e.message}` }
+    overlay.querySelector('#questsClose').addEventListener('click', () => { overlay.style.display = 'none' })
+    overlay.querySelector('#questsSave').addEventListener('click', async () => {
+      let parsed
+      try {
+        parsed = JSON.parse(ta.value)
+        if (!Array.isArray(parsed)) throw new Error('Root must be an array')
+      } catch (e) {
+        status.textContent = `JSON error: ${e.message}`
+        status.style.color = '#e44'
+        return
+      }
+      try {
+        const r = await fetch('/api/editor/quests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ quests: parsed }),
+        })
+        const body = await r.json().catch(() => ({}))
+        if (r.ok && body.ok) {
+          status.textContent = `Saved ${parsed.length} quest(s) ✓`
+          status.style.color = '#6e6'
+        } else {
+          status.textContent = `Save failed: ${body.error || 'unknown'}`
+          status.style.color = '#e44'
+        }
+      } catch (e) {
+        status.textContent = `Network error: ${e.message}`
+        status.style.color = '#e44'
+      }
+    })
+  })
 
   async function refreshServerMapList(preserveSelection) {
     const prev = preserveSelection ? serverMapSelect.value : null
