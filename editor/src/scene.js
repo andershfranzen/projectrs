@@ -5671,73 +5671,453 @@ function applyToolAtTile(tile, eventLike = null) {
   const serverReloadBtn = topBar.querySelector('#serverReloadBtn')
   const questsBtn = topBar.querySelector('#questsBtn')
 
-  // Quests modal — single-textarea JSON editor for server/data/quests.json.
-  // Save POSTs the parsed array to /api/editor/quests, server hot-reloads via
-  // DataLoader.reloadQuests so live players' quest defs update without a
-  // server restart. Phase 1: JSON-only. Structured stage/trigger forms can
-  // come later when the schema settles.
-  questsBtn?.addEventListener('click', async () => {
-    let overlay = document.getElementById('questsModal')
-    if (overlay) { overlay.style.display = 'flex'; return }
-    overlay = document.createElement('div')
+  // Quests editor — structured form. Two-pane modal: list of quests on the
+  // left (with new/delete), per-quest editor on the right with all fields
+  // exposed as proper inputs (no JSON). Save POSTs the entire array to
+  // /api/editor/quests; server hot-reloads via DataLoader.reloadQuests.
+  // Reuses the existing item-picker datalist and npcDefs cache so authors
+  // pick by name rather than typing IDs.
+  questsBtn?.addEventListener('click', () => openQuestsEditor())
+
+  async function openQuestsEditor() {
+    const existing = document.getElementById('questsModal')
+    if (existing) { existing.style.display = 'flex'; return }
+
+    const ALL_QUEST_SKILLS = [
+      'accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints',
+      'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery',
+    ]
+
+    let quests = []
+    let objectDefs = []
+    let selectedQuestId = null
+
+    const overlay = document.createElement('div')
     overlay.id = 'questsModal'
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.65);z-index:999;display:flex;align-items:center;justify-content:center;'
     overlay.innerHTML = `
-      <div style="background:#1a1a1a;border:1px solid #555;border-radius:6px;padding:16px;width:min(720px,90vw);max-height:80vh;display:flex;flex-direction:column;gap:8px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div style="font-size:13px;font-weight:700;color:#eee;flex:1;">Quests (quests.json)</div>
-          <button id="questsClose" style="background:#3a3a3a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;">Close</button>
+      <div style="background:#1a1a1a;border:1px solid #555;border-radius:6px;width:min(960px,95vw);max-height:88vh;display:flex;flex-direction:column;">
+        <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #333;">
+          <div style="font-size:14px;font-weight:700;color:#eee;flex:1;">Quests Editor</div>
+          <button id="qSaveAll" style="background:#3a6c3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:12px;cursor:pointer;">Save All</button>
+          <span id="qStatus" style="font-size:11px;color:#888;min-width:120px;text-align:right;"></span>
+          <button id="qClose" style="background:#3a3a3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 10px;font-size:12px;cursor:pointer;">Close</button>
         </div>
-        <div style="font-size:10px;color:#888;line-height:1.4;">
-          Edit the quest array directly. Each entry: id, name, stages[{id, description, trigger?}], optional startTrigger, rewards{xp, items}, repeatable.
-          Triggers: <code>{type:"dialogue"}</code> (manual advance via dialogue action), <code>{type:"itemPickup", itemId, quantity?, chance?}</code>, <code>{type:"npcKill", npcDefId, count?, chance?}</code>, <code>{type:"chestOpen", chestDefId?, count?, chance?}</code>.
-          Save hot-reloads server defs; existing player progress is preserved.
-        </div>
-        <textarea id="questsJson" spellcheck="false" style="flex:1;min-height:380px;background:#0d0d0d;color:#cfc;border:1px solid #444;border-radius:3px;padding:6px;font-family:monospace;font-size:11px;resize:vertical;"></textarea>
-        <div style="display:flex;align-items:center;gap:8px;">
-          <button id="questsSave" style="background:#3a6c3a;color:#fff;border:1px solid #555;border-radius:3px;padding:6px 14px;font-size:12px;cursor:pointer;">Save Quests</button>
-          <span id="questsStatus" style="font-size:11px;color:#888;flex:1;"></span>
+        <div style="display:flex;flex:1;min-height:0;">
+          <div id="qListPane" style="width:240px;border-right:1px solid #333;display:flex;flex-direction:column;background:#161616;">
+            <div style="padding:8px;display:flex;gap:6px;">
+              <button id="qNew" style="flex:1;background:#2a4a6c;color:#fff;border:1px solid #555;border-radius:3px;padding:5px;font-size:11px;cursor:pointer;">+ New Quest</button>
+              <button id="qDelete" style="background:#6c2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 10px;font-size:11px;cursor:pointer;" title="Delete selected">×</button>
+            </div>
+            <div id="qList" style="flex:1;overflow-y:auto;padding:0 8px 8px 8px;"></div>
+          </div>
+          <div id="qEditor" style="flex:1;overflow-y:auto;padding:14px 18px;color:#ddd;font-family:Arial,Helvetica,sans-serif;"></div>
         </div>
       </div>`
     document.body.appendChild(overlay)
-    const ta = overlay.querySelector('#questsJson')
-    const status = overlay.querySelector('#questsStatus')
-    try {
-      const r = await fetch('/data/quests.json')
-      if (r.ok) ta.value = await r.text()
-      else { ta.value = '[]'; status.textContent = `Failed to load quests.json (${r.status}); starting with []` }
-    } catch (e) { ta.value = '[]'; status.textContent = `Load error: ${e.message}` }
-    overlay.querySelector('#questsClose').addEventListener('click', () => { overlay.style.display = 'none' })
-    overlay.querySelector('#questsSave').addEventListener('click', async () => {
-      let parsed
-      try {
-        parsed = JSON.parse(ta.value)
-        if (!Array.isArray(parsed)) throw new Error('Root must be an array')
-      } catch (e) {
-        status.textContent = `JSON error: ${e.message}`
-        status.style.color = '#e44'
-        return
-      }
+
+    const listEl = overlay.querySelector('#qList')
+    const editorEl = overlay.querySelector('#qEditor')
+    const statusEl = overlay.querySelector('#qStatus')
+    const setStatus = (msg, color) => { statusEl.textContent = msg; statusEl.style.color = color || '#888'; if (color) setTimeout(() => { if (statusEl.textContent === msg) statusEl.textContent = '' }, 4000) }
+
+    overlay.querySelector('#qClose').addEventListener('click', () => { overlay.style.display = 'none' })
+    overlay.querySelector('#qNew').addEventListener('click', () => {
+      const id = 'quest_' + Math.random().toString(36).slice(2, 7)
+      quests.push({ id, name: 'New quest', blurb: '', stages: [{ id: 0, description: '', trigger: { type: 'dialogue' } }], rewards: {} })
+      selectedQuestId = id
+      renderList(); renderEditor()
+    })
+    overlay.querySelector('#qDelete').addEventListener('click', () => {
+      if (!selectedQuestId) return
+      if (!confirm('Delete this quest? In-progress player saves will reference a missing def.')) return
+      quests = quests.filter(q => q.id !== selectedQuestId)
+      selectedQuestId = quests[0]?.id ?? null
+      renderList(); renderEditor()
+    })
+    overlay.querySelector('#qSaveAll').addEventListener('click', async () => {
       try {
         const r = await fetch('/api/editor/quests', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ quests: parsed }),
+          body: JSON.stringify({ quests }),
         })
         const body = await r.json().catch(() => ({}))
-        if (r.ok && body.ok) {
-          status.textContent = `Saved ${parsed.length} quest(s) ✓`
-          status.style.color = '#6e6'
-        } else {
-          status.textContent = `Save failed: ${body.error || 'unknown'}`
-          status.style.color = '#e44'
-        }
-      } catch (e) {
-        status.textContent = `Network error: ${e.message}`
-        status.style.color = '#e44'
-      }
+        if (r.ok && body.ok) setStatus(`Saved ${quests.length} quest(s) ✓`, '#6e6')
+        else setStatus(`Save failed: ${body.error || 'unknown'}`, '#e44')
+      } catch (e) { setStatus(`Network error: ${e.message}`, '#e44') }
     })
-  })
+
+    // Load quests + objects in parallel; itemDefs already lazy-loaded by the
+    // shared shop datalist helper.
+    await Promise.all([
+      fetch('/data/quests.json').then(r => r.json()).then(d => { quests = Array.isArray(d) ? d : [] }).catch(() => { quests = [] }),
+      fetch('/data/objects.json').then(r => r.json()).then(d => { objectDefs = Array.isArray(d) ? d : [] }).catch(() => { objectDefs = [] }),
+      fetchItemDefsOnce().then(() => ensureShopItemDatalist()),
+    ])
+    if (quests.length > 0 && !selectedQuestId) selectedQuestId = quests[0].id
+    renderList(); renderEditor()
+
+    function renderList() {
+      listEl.innerHTML = ''
+      if (quests.length === 0) {
+        const empty = document.createElement('div')
+        empty.style.cssText = 'color:#666;font-size:11px;font-style:italic;padding:8px;text-align:center;'
+        empty.textContent = 'No quests. Click "+ New Quest" to start.'
+        listEl.appendChild(empty)
+        return
+      }
+      for (const q of quests) {
+        const row = document.createElement('div')
+        const selected = q.id === selectedQuestId
+        row.style.cssText = `padding:6px 8px;margin-bottom:3px;font-size:12px;color:#fff;cursor:pointer;border-radius:3px;background:${selected ? '#1a4faf' : '#222'};`
+        row.innerHTML = `<div style="font-weight:bold;">${escapeHtml(q.name || '(unnamed)')}</div><div style="font-size:10px;color:#aaa;">${q.stages?.length || 0} stage(s) · id: ${escapeHtml(q.id)}</div>`
+        row.addEventListener('click', () => { selectedQuestId = q.id; renderList(); renderEditor() })
+        listEl.appendChild(row)
+      }
+    }
+
+    function renderEditor() {
+      editorEl.innerHTML = ''
+      const q = quests.find(x => x.id === selectedQuestId)
+      if (!q) {
+        editorEl.innerHTML = '<div style="color:#666;font-style:italic;text-align:center;padding:40px;">Select a quest from the list, or click "+ New Quest".</div>'
+        return
+      }
+
+      // Top: name + id + blurb + repeatable
+      editorEl.appendChild(field('Name', textInput(q.name || '', v => { q.name = v; renderList() })))
+      editorEl.appendChild(field('Quest ID (do not change after players have started)', textInput(q.id, v => { const nv = v.trim() || q.id; if (nv !== q.id && quests.some(qq => qq.id === nv)) { setStatus('ID already exists', '#e44'); return } q.id = nv; selectedQuestId = nv; renderList() }, { font: 'monospace', color: '#cfc' })))
+      editorEl.appendChild(field('Blurb (shown when not started, italic)', textArea(q.blurb || '', v => { q.blurb = v }, 50)))
+      editorEl.appendChild(checkboxRow('Repeatable (quest can be re-acquired after completion)', !!q.repeatable, v => { q.repeatable = v }))
+
+      // Start trigger
+      const startTrigSection = sectionWrap('Start trigger', 'Fires when the player does the matching event AND the chance roll passes. Leave as "(none — manual)" to require a setQuestStage dialogue action to start the quest.')
+      const startTrigContent = document.createElement('div')
+      startTrigSection.appendChild(startTrigContent)
+      const renderStartTrig = () => {
+        startTrigContent.innerHTML = ''
+        const startTypeRow = document.createElement('div')
+        startTypeRow.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;'
+        const lbl = document.createElement('label')
+        lbl.textContent = 'Type:'
+        lbl.style.cssText = 'font-size:11px;color:#aaa;'
+        startTypeRow.appendChild(lbl)
+        const sel = document.createElement('select')
+        sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;'
+        for (const opt of [
+          ['', '(none — manual)'],
+          ['npcKill', 'npcKill — kill an NPC'],
+          ['itemPickup', 'itemPickup — gain an item'],
+          ['chestOpen', 'chestOpen — open a chest'],
+        ]) {
+          const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
+        }
+        sel.value = q.startTrigger?.type || ''
+        sel.addEventListener('change', () => {
+          if (!sel.value) { delete q.startTrigger; renderStartTrig(); return }
+          q.startTrigger = makeBlankTrigger(sel.value)
+          renderStartTrig()
+        })
+        startTypeRow.appendChild(sel)
+        startTrigContent.appendChild(startTypeRow)
+        if (q.startTrigger) startTrigContent.appendChild(renderTriggerFields(q.startTrigger, true))
+      }
+      renderStartTrig()
+      editorEl.appendChild(startTrigSection)
+
+      // Stages
+      const stagesSection = sectionWrap('Stages', 'Story progression. Stage 0 is where the player starts when the quest begins. Each stage has a journal entry (description) and an optional auto-advance trigger.')
+      const stagesContent = document.createElement('div')
+      stagesSection.appendChild(stagesContent)
+      const renderStages = () => {
+        stagesContent.innerHTML = ''
+        if (!q.stages) q.stages = []
+        for (let i = 0; i < q.stages.length; i++) {
+          stagesContent.appendChild(renderStageBlock(q, i, renderStages))
+        }
+        const addBtn = document.createElement('button')
+        addBtn.textContent = '+ Add stage'
+        addBtn.style.cssText = 'background:#2a4a6c;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:11px;cursor:pointer;margin-top:6px;'
+        addBtn.addEventListener('click', () => {
+          q.stages.push({ id: q.stages.length, description: '', trigger: { type: 'dialogue' } })
+          renderStages()
+        })
+        stagesContent.appendChild(addBtn)
+      }
+      renderStages()
+      editorEl.appendChild(stagesSection)
+
+      // Rewards
+      const rewardsSection = sectionWrap('Rewards', 'Granted on completeQuest action.')
+      rewardsSection.appendChild(renderRewardsBlock(q))
+      editorEl.appendChild(rewardsSection)
+    }
+
+    function renderStageBlock(q, idx, rerender) {
+      const stage = q.stages[idx]
+      stage.id = idx // keep ids in sync with array position so reorder is safe
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#1d1d1d;border:1px solid #3a3a3a;border-radius:4px;padding:8px;margin-bottom:8px;'
+      const head = document.createElement('div')
+      head.style.cssText = 'display:flex;align-items:center;gap:5px;margin-bottom:6px;'
+      const t = document.createElement('div')
+      t.textContent = `Stage ${idx}`
+      t.style.cssText = 'flex:1;font-size:12px;font-weight:bold;color:#ffcc44;'
+      head.appendChild(t)
+      const upBtn = iconBtn('▲', 'Move up', () => { if (idx === 0) return; const tmp = q.stages[idx - 1]; q.stages[idx - 1] = q.stages[idx]; q.stages[idx] = tmp; rerender() })
+      const dnBtn = iconBtn('▼', 'Move down', () => { if (idx === q.stages.length - 1) return; const tmp = q.stages[idx + 1]; q.stages[idx + 1] = q.stages[idx]; q.stages[idx] = tmp; rerender() })
+      const rmBtn = iconBtn('✕', 'Delete stage', () => { if (!confirm(`Delete stage ${idx}?`)) return; q.stages.splice(idx, 1); rerender() })
+      rmBtn.style.background = '#6c2a2a'
+      head.appendChild(upBtn); head.appendChild(dnBtn); head.appendChild(rmBtn)
+      wrap.appendChild(head)
+      wrap.appendChild(field('Journal entry (shown in the quest popup at this stage)', textArea(stage.description || '', v => { stage.description = v }, 70)))
+
+      // Trigger sub-form
+      const trigWrap = document.createElement('div')
+      trigWrap.style.cssText = 'margin-top:6px;'
+      const trigLabel = document.createElement('label')
+      trigLabel.textContent = 'Auto-advance trigger:'
+      trigLabel.style.cssText = 'font-size:11px;color:#aaa;display:block;margin-bottom:4px;'
+      trigWrap.appendChild(trigLabel)
+      const trigBody = document.createElement('div')
+      trigWrap.appendChild(trigBody)
+      const renderTrig = () => {
+        trigBody.innerHTML = ''
+        const sel = document.createElement('select')
+        sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;margin-bottom:6px;'
+        for (const opt of [
+          ['dialogue', 'dialogue — wait for dialogue action'],
+          ['npcKill', 'npcKill — kill an NPC'],
+          ['itemPickup', 'itemPickup — gain an item'],
+          ['chestOpen', 'chestOpen — open a chest'],
+        ]) {
+          const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
+        }
+        sel.value = stage.trigger?.type || 'dialogue'
+        sel.addEventListener('change', () => { stage.trigger = makeBlankTrigger(sel.value); renderTrig() })
+        trigBody.appendChild(sel)
+        if (stage.trigger && stage.trigger.type !== 'dialogue') trigBody.appendChild(renderTriggerFields(stage.trigger, false))
+      }
+      renderTrig()
+      wrap.appendChild(trigWrap)
+      return wrap
+    }
+
+    function renderTriggerFields(trigger, includeChance) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:6px 8px;display:flex;flex-direction:column;gap:6px;'
+      if (trigger.type === 'npcKill') {
+        wrap.appendChild(field('NPC', npcSelect(trigger.npcDefId ?? 0, v => { trigger.npcDefId = v })))
+        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+      } else if (trigger.type === 'itemPickup') {
+        wrap.appendChild(field('Item', itemPicker(trigger.itemId ?? 0, v => { trigger.itemId = v })))
+        wrap.appendChild(field('Quantity needed', numberInput(trigger.quantity ?? 1, 1, v => { if (v <= 1) delete trigger.quantity; else trigger.quantity = v })))
+      } else if (trigger.type === 'chestOpen') {
+        wrap.appendChild(field('Specific chest type (optional — leave blank for any chest)', chestSelect(trigger.chestDefId, v => { if (v == null) delete trigger.chestDefId; else trigger.chestDefId = v })))
+        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+      }
+      if (includeChance && trigger.type !== 'dialogue') {
+        wrap.appendChild(field('Chance (0–1, leave 1 for always)', numberInput(trigger.chance ?? 1, 0, v => { if (v >= 1 || v <= 0) delete trigger.chance; else trigger.chance = v }, { step: '0.01', max: 1 })))
+      }
+      return wrap
+    }
+
+    function renderRewardsBlock(q) {
+      const wrap = document.createElement('div')
+      if (!q.rewards) q.rewards = {}
+
+      // XP rows
+      wrap.appendChild(subhead('XP per skill'))
+      const xpList = document.createElement('div')
+      const renderXp = () => {
+        xpList.innerHTML = ''
+        const entries = Object.entries(q.rewards.xp || {})
+        for (const [skill, amount] of entries) {
+          const row = document.createElement('div')
+          row.style.cssText = 'display:flex;gap:6px;margin-bottom:4px;align-items:center;'
+          const sel = document.createElement('select')
+          sel.style.cssText = 'flex:1;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px;font-size:11px;'
+          for (const s of ALL_QUEST_SKILLS) { const o = document.createElement('option'); o.value = s; o.textContent = s; sel.appendChild(o) }
+          sel.value = skill
+          sel.addEventListener('change', () => {
+            if (!q.rewards.xp) q.rewards.xp = {}
+            const amt = q.rewards.xp[skill]
+            delete q.rewards.xp[skill]
+            q.rewards.xp[sel.value] = amt
+            renderXp()
+          })
+          const amt = numberInput(amount, 0, v => { if (!q.rewards.xp) q.rewards.xp = {}; q.rewards.xp[sel.value] = v }, { width: '90px' })
+          const rm = iconBtn('✕', 'Remove', () => { delete q.rewards.xp[sel.value]; renderXp() })
+          rm.style.background = '#6c2a2a'
+          row.appendChild(sel); row.appendChild(amt); row.appendChild(rm)
+          xpList.appendChild(row)
+        }
+        const addBtn = document.createElement('button')
+        addBtn.textContent = '+ Add XP reward'
+        addBtn.style.cssText = 'background:#2a4a6c;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;margin-top:4px;'
+        addBtn.addEventListener('click', () => {
+          if (!q.rewards.xp) q.rewards.xp = {}
+          const unused = ALL_QUEST_SKILLS.find(s => !(s in q.rewards.xp)) || ALL_QUEST_SKILLS[0]
+          q.rewards.xp[unused] = 100
+          renderXp()
+        })
+        xpList.appendChild(addBtn)
+      }
+      renderXp()
+      wrap.appendChild(xpList)
+
+      // Item rows
+      wrap.appendChild(subhead('Items'))
+      const itemList = document.createElement('div')
+      const renderItems = () => {
+        itemList.innerHTML = ''
+        if (!q.rewards.items) q.rewards.items = []
+        for (let i = 0; i < q.rewards.items.length; i++) {
+          const idx = i
+          const drop = q.rewards.items[idx]
+          const row = document.createElement('div')
+          row.style.cssText = 'display:flex;gap:6px;margin-bottom:4px;align-items:center;'
+          row.appendChild(itemPicker(drop.itemId, v => { drop.itemId = v }))
+          row.appendChild(numberInput(drop.quantity, 1, v => { drop.quantity = v }, { width: '80px' }))
+          const rm = iconBtn('✕', 'Remove', () => { q.rewards.items.splice(idx, 1); renderItems() })
+          rm.style.background = '#6c2a2a'
+          row.appendChild(rm)
+          itemList.appendChild(row)
+        }
+        const addBtn = document.createElement('button')
+        addBtn.textContent = '+ Add item reward'
+        addBtn.style.cssText = 'background:#2a4a6c;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 10px;font-size:11px;cursor:pointer;margin-top:4px;'
+        addBtn.addEventListener('click', () => { q.rewards.items.push({ itemId: 10, quantity: 1 }); renderItems() })
+        itemList.appendChild(addBtn)
+      }
+      renderItems()
+      wrap.appendChild(itemList)
+      return wrap
+    }
+
+    // ---- field widget helpers ----
+
+    function field(labelText, control) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'margin-bottom:10px;'
+      const lbl = document.createElement('label')
+      lbl.textContent = labelText
+      lbl.style.cssText = 'display:block;font-size:11px;color:#aaa;margin-bottom:3px;'
+      wrap.appendChild(lbl)
+      wrap.appendChild(control)
+      return wrap
+    }
+    function sectionWrap(title, hint) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#161616;border:1px solid #2a2a2a;border-radius:4px;padding:10px 12px;margin:14px 0;'
+      const t = document.createElement('div')
+      t.textContent = title
+      t.style.cssText = 'font-size:13px;font-weight:bold;color:#fff;margin-bottom:4px;border-bottom:1px solid #333;padding-bottom:4px;'
+      wrap.appendChild(t)
+      if (hint) {
+        const h = document.createElement('div')
+        h.textContent = hint
+        h.style.cssText = 'font-size:10px;color:#888;margin-bottom:8px;line-height:1.35;'
+        wrap.appendChild(h)
+      }
+      return wrap
+    }
+    function subhead(text) {
+      const h = document.createElement('div')
+      h.textContent = text
+      h.style.cssText = 'font-size:11px;color:#aaa;font-weight:bold;margin:8px 0 4px 0;'
+      return h
+    }
+    function textInput(value, onChange, opts) {
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.value = value
+      input.style.cssText = `width:100%;background:#0d0d0d;color:${opts?.color || '#fff'};border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;font-family:${opts?.font || 'inherit'};box-sizing:border-box;`
+      input.addEventListener('input', () => onChange(input.value))
+      return input
+    }
+    function textArea(value, onChange, minHeight) {
+      const ta = document.createElement('textarea')
+      ta.value = value
+      ta.style.cssText = `width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:6px;font-size:12px;font-family:inherit;resize:vertical;min-height:${minHeight || 50}px;box-sizing:border-box;`
+      ta.addEventListener('input', () => onChange(ta.value))
+      return ta
+    }
+    function numberInput(value, min, onChange, opts) {
+      const input = document.createElement('input')
+      input.type = 'number'
+      input.value = value
+      input.min = min
+      if (opts?.step) input.step = opts.step
+      if (opts?.max != null) input.max = opts.max
+      input.style.cssText = `width:${opts?.width || '100%'};background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;`
+      input.addEventListener('change', () => { const v = parseFloat(input.value); if (!isNaN(v)) onChange(v) })
+      return input
+    }
+    function checkboxRow(label, value, onChange) {
+      const wrap = document.createElement('label')
+      wrap.style.cssText = 'display:flex;align-items:center;gap:8px;margin:6px 0 10px 0;font-size:11px;color:#aaa;cursor:pointer;'
+      const cb = document.createElement('input')
+      cb.type = 'checkbox'
+      cb.checked = value
+      cb.addEventListener('change', () => onChange(cb.checked))
+      wrap.appendChild(cb)
+      wrap.appendChild(document.createTextNode(label))
+      return wrap
+    }
+    function iconBtn(label, title, onClick) {
+      const btn = document.createElement('button')
+      btn.textContent = label
+      btn.title = title
+      btn.style.cssText = 'background:#3a3a3a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 8px;font-size:11px;cursor:pointer;flex:0 0 auto;'
+      btn.addEventListener('click', onClick)
+      return btn
+    }
+    function npcSelect(value, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      const empty = document.createElement('option'); empty.value = '0'; empty.textContent = '(pick an NPC)'; sel.appendChild(empty)
+      for (const def of [...npcDefs].sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+        const o = document.createElement('option'); o.value = String(def.id); o.textContent = `${def.name} (${def.id})`; sel.appendChild(o)
+      }
+      sel.value = String(value)
+      sel.addEventListener('change', () => onChange(parseInt(sel.value)))
+      return sel
+    }
+    function chestSelect(value, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = '(any chest type)'; sel.appendChild(empty)
+      for (const def of objectDefs.filter(d => d.category === 'chest').sort((a, b) => a.name.localeCompare(b.name))) {
+        const o = document.createElement('option'); o.value = String(def.id); o.textContent = `${def.name} (${def.id})`; sel.appendChild(o)
+      }
+      sel.value = value == null ? '' : String(value)
+      sel.addEventListener('change', () => { onChange(sel.value === '' ? null : parseInt(sel.value)) })
+      return sel
+    }
+    function itemPicker(value, onChange) {
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.setAttribute('list', 'shopItemDatalist')
+      input.placeholder = 'Search item name or ID'
+      input.value = formatItemDisplay(value)
+      input.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      input.addEventListener('change', () => {
+        const id = parseItemIdFromDisplay(input.value)
+        onChange(id)
+        input.value = formatItemDisplay(id)
+      })
+      return input
+    }
+    function makeBlankTrigger(type) {
+      if (type === 'npcKill') return { type, npcDefId: 0 }
+      if (type === 'itemPickup') return { type, itemId: 0 }
+      if (type === 'chestOpen') return { type }
+      return { type: 'dialogue' }
+    }
+    function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
+  }
 
   async function refreshServerMapList(preserveSelection) {
     const prev = preserveSelection ? serverMapSelect.value : null
