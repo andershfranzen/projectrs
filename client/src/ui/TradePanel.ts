@@ -2,6 +2,7 @@ import { ClientOpcode, encodePacket, INVENTORY_SIZE, TRADE_OFFER_SIZE, type Item
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu, createContextMenu } from './popupStyle';
+import { renderItemSlot } from '../rendering/ItemIcon';
 
 interface OfferSlotData { itemId: number; quantity: number }
 
@@ -291,29 +292,25 @@ export class TradePanel {
     const el = els[i];
     if (!el) return;
     const s = arr[i];
-    el.innerHTML = s ? this.slotInnerHtml(s.itemId, s.quantity) : '';
+    if (s) this.setSlotInner(el, s.itemId, s.quantity);
+    else el.innerHTML = '';
   }
   private renderInvSlot(i: number): void {
     const el = this.invSlotEls[i];
     if (!el) return;
     const s = this.invSlots[i];
-    el.innerHTML = s ? this.slotInnerHtml(s.itemId, s.quantity) : '';
+    if (s) this.setSlotInner(el, s.itemId, s.quantity);
+    else el.innerHTML = '';
   }
 
-  private slotInnerHtml(itemId: number, quantity: number): string {
+  private setSlotInner(el: HTMLElement, itemId: number, quantity: number): void {
     const def = this.itemDefs.get(itemId);
-    const sprite = def?.sprite;
-    const icon = def?.icon;
-    const imgStyle = `max-width:30px;max-height:30px;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;`;
-    const iconHtml = sprite
-      ? `<img src="/sprites/items/${sprite}" style="${imgStyle}" />`
-      : icon
-      ? `<img src="/items/${icon}" style="${imgStyle}" />`
-      : `<div style="width:22px;height:22px;background:#555;border-radius:3px;"></div>`;
-    const qtyLabel = quantity > 1
-      ? `<div style="position:absolute;top:1px;left:3px;font-size:9px;font-weight:bold;color:#d8372b;text-shadow:1px 1px 0 #000;">${quantity}</div>`
-      : '';
-    return `${iconHtml}${qtyLabel}`;
+    renderItemSlot(el, def, this.itemDefs, {
+      size: 30,
+      extraStyle: 'max-width:30px;max-height:30px;width:100%;height:100%;',
+      quantity,
+      placeholderSize: 22,
+    });
   }
 
   private sendDecline(): void {

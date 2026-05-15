@@ -244,13 +244,22 @@ async function bootstrap() {
   }
 }
 
-void bootstrap().catch((err) => {
-  console.error('[bootstrap] failed:', err);
-  // A failed dynamic-import on the GameManager chunk (deploy mid-load,
-  // network drop) is the most likely cause. Surface a recoverable
-  // message on whatever LoadingScreen is currently visible.
-  const statusEl = document.querySelector<HTMLDivElement>('.eq-loading-status');
-  if (statusEl) {
-    statusEl.textContent = 'Failed to load. Please reload the page.';
-  }
-});
+// Dev-only bake mode. Visiting `?bake=1` short-circuits the normal login/game
+// path and instead renders every item GLB into a PNG, POSTing each to the
+// server. Run once after adding new item GLBs; see client/src/bake/BakeApp.ts.
+if (new URLSearchParams(window.location.search).get('bake') === '1') {
+  void import('./bake/BakeApp').then(({ runBake }) => runBake()).catch((err) => {
+    console.error('[bake] failed to load bake module:', err);
+  });
+} else {
+  void bootstrap().catch((err) => {
+    console.error('[bootstrap] failed:', err);
+    // A failed dynamic-import on the GameManager chunk (deploy mid-load,
+    // network drop) is the most likely cause. Surface a recoverable
+    // message on whatever LoadingScreen is currently visible.
+    const statusEl = document.querySelector<HTMLDivElement>('.eq-loading-status');
+    if (statusEl) {
+      statusEl.textContent = 'Failed to load. Please reload the page.';
+    }
+  });
+}

@@ -1,4 +1,5 @@
 import { ClientOpcode, encodePacket, type ItemDef } from '@projectrs/shared';
+import { renderItemSlot } from '../rendering/ItemIcon';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
@@ -91,9 +92,18 @@ export class ShopPanel {
       row.onmouseenter = () => { row.style.borderColor = '#aa8844'; };
       row.onmouseleave = () => { row.style.borderColor = '#333'; };
 
+      const iconEl = document.createElement('span');
+      iconEl.style.cssText = 'width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; margin-right: 6px; flex-shrink: 0;';
+      if (def) {
+        renderItemSlot(iconEl, def, this.itemDefs, {
+          size: 32,
+          extraStyle: 'max-width:32px;max-height:32px;',
+        });
+      }
+
       const nameEl = document.createElement('span');
       nameEl.textContent = name;
-      nameEl.style.cssText = 'color: #eee; font-size: 13px;';
+      nameEl.style.cssText = 'color: #eee; font-size: 13px; flex: 1; min-width: 0;';
 
       const priceEl = document.createElement('span');
       priceEl.textContent = `${item.price} gp`;
@@ -121,6 +131,7 @@ export class ShopPanel {
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_BUY_ITEM, item.itemId, 5));
       };
 
+      row.appendChild(iconEl);
       row.appendChild(nameEl);
       row.appendChild(priceEl);
       row.appendChild(buyBtn);

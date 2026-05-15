@@ -870,6 +870,60 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    // Pre-baked item-thumbnail upload. Browser bake page (`?bake=1`) POSTs each
+    // 3D render here as `{ id, dataUrl: 'data:image/png;base64,...' }`. Server
+    // decodes and writes to `client/public/items/3d/{id}.png`. Admin-only.
+    if (url.pathname === '/api/dev/item-thumb' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { id?: unknown; dataUrl?: unknown };
+        const id = Number(body.id);
+        const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : '';
+        if (!Number.isInteger(id) || id <= 0 || id > 1_000_000) {
+          return jsonResponse({ ok: false, error: 'Invalid item id' }, 400);
+        }
+        const m = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
+        if (!m) return jsonResponse({ ok: false, error: 'Expected PNG dataURL' }, 400);
+        const pngBytes = Buffer.from(m[1], 'base64');
+        if (pngBytes.length > 256 * 1024) {
+          return jsonResponse({ ok: false, error: `PNG too large: ${pngBytes.length}` }, 400);
+        }
+        const outDir = resolve(import.meta.dir, '../../client/public/items/3d');
+        if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+        const outPath = resolve(outDir, `${id}.png`);
+        // Reject path traversal — id is an integer so this is paranoia.
+        if (!outPath.startsWith(outDir + sep)) {
+          return jsonResponse({ ok: false, error: 'Path outside output dir' }, 400);
+        }
+        writeFileSync(outPath, pngBytes);
+        return jsonResponse({ ok: true, bytes: pngBytes.length });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
+    // Manifest of baked item-thumbnail IDs. Written after a bake run completes;
+    // the client reads it at startup to know which items have pre-baked PNGs.
+    if (url.pathname === '/api/dev/item-thumbs/manifest' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { ids?: unknown };
+        if (!Array.isArray(body.ids)) return jsonResponse({ ok: false, error: 'ids must be an array' }, 400);
+        const ids = body.ids
+          .filter((x): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0 && x <= 1_000_000)
+          .sort((a, b) => a - b);
+        const outDir = resolve(import.meta.dir, '../../client/public/items/3d');
+        if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+        const manifestPath = resolve(outDir, 'manifest.json');
+        writeFileSync(manifestPath, JSON.stringify(ids));
+        return jsonResponse({ ok: true, count: ids.length });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
     if (url.pathname === '/api/dev/gear-files' && req.method === 'GET') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       const slot = url.searchParams.get('slot') || '';

@@ -3,6 +3,7 @@ import { Vector3, Color3 } from '@babylonjs/core/Maths/math';
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
+import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
 import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
 
@@ -181,21 +182,31 @@ export class EntityManager {
 
   createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number): SpriteEntity {
     const itemDef = this.itemDefsCache.get(itemId);
-    const iconPath = itemDef?.sprite ? `/sprites/items/${itemDef.sprite}`
-      : itemDef?.icon ? `/items/${itemDef.icon}`
-      : null;
+    // Sync placeholder so the sprite has something to draw immediately; async-upgrade
+    // to the best icon (baked PNG → IDB cache → runtime render) once it resolves.
+    const syncIcon = itemDef ? getItemIconSyncUrl(itemDef) : null;
     // Icon-only — no floating label. Hover/right-click can surface the name later.
     const sprite = new SpriteEntity(this.scene, {
       name: `gitem_${groundItemId}`,
       color: new Color3(0.8, 0.7, 0.2),
       width: 0.48,
       height: 0.48,
-      iconUrl: iconPath ?? undefined,
+      iconUrl: syncIcon ?? undefined,
     });
     sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);
     sprite.getMesh().metadata = { kind: 'groundItem', groundItemId };
     this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z });
     this.groundItemSprites.set(groundItemId, sprite);
+
+    if (itemDef) {
+      getItemIconUrl(itemDef).then((url) => {
+        if (!url) return;
+        // Sprite may have been disposed before the promise resolved.
+        if (!this.groundItemSprites.has(groundItemId)) return;
+        if (url === syncIcon) return;
+        sprite.setIconUrl(url);
+      });
+    }
     return sprite;
   }
 

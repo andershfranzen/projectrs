@@ -20,6 +20,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP } from './AnimationQuantizer';
+import { remapSkinningToSkeleton } from './skinnedArmor';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
@@ -1459,66 +1460,14 @@ export class CharacterEntity {
       console.warn('[CharacterEntity] Cannot attach skinned armor: no skeleton or armature');
       return;
     }
-
-    // Bone-index remap. Armor is often authored against a smaller skeleton
-    // than the character (e.g. our character has 57 bones — Mixamo base + 25
-    // finger bones — while a body armor might only need the 32 base bones).
-    // The vertex data's JOINTS_0 attribute stores indices into the *armor's*
-    // skeleton, so when we swap to the character's skeleton those indices
-    // would point at the wrong bones (or at static bones like HeadTop_End,
-    // producing a T-pose). Build a name-based translation table and rewrite
-    // the indices before the swap.
-    const remap = new Int32Array(armorSkeleton.bones.length);
-    let unmapped = 0;
-    for (let i = 0; i < armorSkeleton.bones.length; i++) {
-      const name = armorSkeleton.bones[i].name;
-      const charIdx = this.skeleton.bones.findIndex(b => b.name === name);
-      if (charIdx < 0) {
-        remap[i] = 0; // unmatched: pin to root so it doesn't crash, just won't deform
-        unmapped++;
-      } else {
-        remap[i] = charIdx;
-      }
-    }
-    if (unmapped > 0) {
-      console.warn(`[SkinnedArmor] ${unmapped}/${armorSkeleton.bones.length} armor bone(s) had no match in character skeleton`);
-    }
-
-    const remapIndexBuffer = (data: Float32Array | number[]): Float32Array => {
-      const out = new Float32Array(data.length);
-      for (let i = 0; i < data.length; i++) {
-        const src = data[i] | 0;
-        out[i] = src >= 0 && src < remap.length ? remap[src] : 0;
-      }
-      return out;
-    };
-
-    const armorBoneCount = armorSkeleton.bones.length;
-    const kept: AbstractMesh[] = [];
-    for (const mesh of meshes) {
-      if (mesh.getTotalVertices() === 0) continue;
-
-      const indices = mesh.getVerticesData(VertexBuffer.MatricesIndicesKind);
-      if (indices) {
-        mesh.setVerticesData(VertexBuffer.MatricesIndicesKind, remapIndexBuffer(indices), true);
-      }
-      // Optional second slot of 4 indices for >4 weights per vertex
-      const indicesExtra = mesh.getVerticesData(VertexBuffer.MatricesIndicesExtraKind);
-      if (indicesExtra) {
-        mesh.setVerticesData(VertexBuffer.MatricesIndicesExtraKind, remapIndexBuffer(indicesExtra), true);
-      }
-
-      if (mesh.skeleton === armorSkeleton) {
-        mesh.skeleton = this.skeleton;
-      }
-      mesh.parent = this.armatureNode;
-      mesh.rotationQuaternion = null;
-      mesh.position.set(0, 0, 0);
-      mesh.rotation.set(0, 0, 0);
-      mesh.scaling.set(1, 1, 1);
-      kept.push(mesh);
-    }
-    armorSkeleton.dispose();
+    // Armor is often authored against a smaller skeleton than ours (we have
+    // 57 bones — Mixamo base + 25 finger bones — while a body might only
+    // have 32). The shared helper does the name-based remap + vertex-buffer
+    // rewrite + skeleton swap; we wrap with slot/visibility bookkeeping.
+    const { meshes: kept } = remapSkinningToSkeleton(meshes, armorSkeleton, this.skeleton, this.armatureNode, {
+      disposeSourceSkeleton: true,
+      warnOnUnmapped: true,
+    });
     this.skinnedArmorMeshes.set(slot, kept);
     this.skinnedArmorItemIds.set(slot, itemId);
     if (slot === 'head') this.setHeadVisible(false);

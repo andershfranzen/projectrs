@@ -1,6 +1,7 @@
 import type { ObjectRecipe, ItemDef } from '@projectrs/shared';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
+import { renderItemSlot } from '../rendering/ItemIcon';
 
 export type SmithCallback = (recipeIndex: number) => void;
 
@@ -111,13 +112,8 @@ export class SmithingPanel {
 
       const icon = document.createElement('div');
       icon.style.cssText = 'width: 32px; height: 32px; flex-shrink: 0;';
-      const iconFile = barDef?.sprite ?? barDef?.icon;
-      if (iconFile) {
-        const img = document.createElement('img');
-        const folder = barDef?.sprite ? 'sprites/items' : 'items';
-        img.src = `/${folder}/${iconFile}`;
-        img.style.cssText = 'width: 32px; height: 32px; image-rendering: pixelated;';
-        icon.appendChild(img);
+      if (barDef) {
+        renderItemSlot(icon, barDef, this.cachedItemDefs, { size: 32 });
       } else {
         icon.style.background = '#333';
         icon.style.borderRadius = '3px';
@@ -209,13 +205,11 @@ export class SmithingPanel {
       tile.title = `${outputName} — ${recipe.inputQuantity} ${barName}${recipe.inputQuantity > 1 ? 's' : ''}, Lv ${recipe.levelRequired}`;
 
       // Icon — 48px, readable at normal zoom
-      const iconFile = outputDef?.sprite ?? outputDef?.icon;
-      if (iconFile) {
-        const img = document.createElement('img');
-        const folder = outputDef?.sprite ? 'sprites/items' : 'items';
-        img.src = `/${folder}/${iconFile}`;
-        img.style.cssText = 'width: 48px; height: 48px; image-rendering: pixelated; margin-bottom: 3px;';
-        tile.appendChild(img);
+      if (outputDef) {
+        const iconBox = document.createElement('div');
+        iconBox.style.cssText = 'width: 48px; height: 48px; margin-bottom: 3px;';
+        renderItemSlot(iconBox, outputDef, this.cachedItemDefs, { size: 48 });
+        tile.appendChild(iconBox);
       }
 
       // Short name — strip the bar-type prefix (e.g. "Bronze Dagger" → "Dagger")

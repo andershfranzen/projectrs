@@ -1,0 +1,4 @@
+{
+  "_doc": "Per-item thumbnail tuning. Keys are item IDs (as JSON strings); values may set { alpha, beta, distanceMult, rotationY } in radians/multipliers. Override merges over the slot default in client/src/rendering/ItemIcon.ts. Underscore-prefixed keys (like this one) are ignored at load time.",
+  "_example_31": { "alpha": -0.8, "beta": 1.1, "distanceMult": 0.9, "rotationY": 1.5707963 }
+}

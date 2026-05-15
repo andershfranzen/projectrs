@@ -320,6 +320,8 @@ export class SpriteEntity {
   /** Material + texture owned by this sprite (only for iconUrl / fallback rect paths — pooled sprite sets are NOT owned). */
   private ownedMaterial: StandardMaterial | null = null;
   private ownedTexture: DynamicTexture | null = null;
+  /** Monotonic counter so a late `setIconUrl` load can't overwrite a newer one. */
+  private iconLoadGen: number = 0;
 
   // Directional sprites
   private dirSprites: DirectionalSpriteSet | null = null;
@@ -456,6 +458,36 @@ export class SpriteEntity {
       this.ownedMaterial = mat;
       this.ownedTexture = texture;
     }
+  }
+
+  /** Swap the icon texture on a ground-item sprite. The texture is reused;
+   *  only the image is redrawn. A late onload from a previous `setIconUrl`
+   *  is ignored via `iconLoadGen`. No-op if the sprite has no owned texture. */
+  setIconUrl(url: string): void {
+    if (!this.ownedTexture) return;
+    const tex = this.ownedTexture;
+    const gen = ++this.iconLoadGen;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      if (gen !== this.iconLoadGen) return;
+      const ctx = tex.getContext() as CanvasRenderingContext2D;
+      const texSize = 128;
+      const iconSize = 80;
+      const offsetX = (texSize - iconSize) / 2;
+      ctx.clearRect(0, 0, texSize, texSize);
+      ctx.imageSmoothingEnabled = false;
+      const yOff = this.label ? 8 : (texSize - iconSize) / 2;
+      ctx.drawImage(img, offsetX, yOff, iconSize, iconSize);
+      if (this.label) {
+        ctx.fillStyle = '#ffaa00';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(this.label, 64, 104);
+      }
+      tex.update();
+    };
+    img.src = url;
   }
 
   /** Upgrade an existing sprite to use directional sprites (e.g. after async load) */

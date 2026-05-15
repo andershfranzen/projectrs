@@ -7,6 +7,7 @@ import {
 import { QuestJournalPopup } from './QuestJournalPopup';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { clampElementToRect, createContextMenu } from './popupStyle';
+import { renderItemSlot } from '../rendering/ItemIcon';
 import {
   createIconTabButton,
   createPanelFrame,
@@ -37,6 +38,8 @@ export class SidePanel {
   // Inventory state
   private invSlots: ({ itemId: number; quantity: number } | null)[] = new Array(INVENTORY_SIZE).fill(null);
   private invSlotElements: HTMLDivElement[] = [];
+  private using: { slot: number; itemId: number } | null = null;
+  private usingBanner: HTMLDivElement | null = null;
   private invGrid: HTMLDivElement | null = null;
 
   // Skills state
@@ -875,6 +878,11 @@ export class SidePanel {
       label.textContent = EQUIP_SLOT_NAMES[i];
       row.appendChild(label);
 
+      const iconEl = document.createElement('div');
+      iconEl.className = 'equip-icon';
+      iconEl.style.cssText = `width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; margin-right: 6px;`;
+      row.appendChild(iconEl);
+
       const itemEl = document.createElement('div');
       itemEl.className = 'equip-item';
       itemEl.style.cssText = `flex: 1; font-size: 11px; color: #d8372b;`;
@@ -966,6 +974,10 @@ export class SidePanel {
   updateInvSlot(index: number, itemId: number, quantity: number): void {
     if (index < 0 || index >= INVENTORY_SIZE) return;
     this.invSlots[index] = itemId === 0 ? null : { itemId, quantity };
+    // Stack changed under an armed Use slot (consumed, moved, dropped). Cancel.
+    if (this.using?.slot === index && this.invSlots[index]?.itemId !== this.using.itemId) {
+      this.clearUsingInvItem();
+    }
     this.renderInvSlot(index);
   }
 
@@ -976,41 +988,49 @@ export class SidePanel {
     if (!slot) {
       el.innerHTML = '';
       el.dataset.filled = '0';
-      // Empty slots aren't drag sources but ARE drop targets — drag handlers
-      // are wired in buildInventoryContent regardless.
       el.draggable = false;
-      // Drop into the inner image would steal the drag event from the slot
-      // div; clearing the inner avoids any leftover img acting as a child
-      // dragstart source for a since-emptied slot.
+      el.style.boxShadow = '';
+      el.style.outline = '';
       return;
     }
 
     el.dataset.filled = '1';
     el.draggable = true;
     const def = this.itemDefs.get(slot.itemId);
-    const name = def?.name || `Item ${slot.itemId}`;
-    const sprite = def?.sprite;
-    const icon = def?.icon;
 
-    // max-width/height cap the icon at native sprite size; min-cell at 34px so
-    // it never has to scale below that. Object-fit keeps aspect.
     // draggable="false" on the inner img so HTML5 drag fires from the slot div
     // (the registered drag source) and not from the image — otherwise dataTransfer
     // would carry the img URL instead of our slot index.
-    const imgStyle = `max-width:34px;max-height:34px;width:100%;height:100%;image-rendering:pixelated;object-fit:contain;filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));pointer-events:none;`;
-    const iconHtml = sprite
-      ? `<img src="/sprites/items/${sprite}" draggable="false" style="${imgStyle}" />`
-      : icon
-      ? `<img src="/items/${icon}" draggable="false" style="${imgStyle}" />`
-      : `<div style="width:28px;height:28px;background:rgba(170,170,170,0.6);border-radius:3px;pointer-events:none;"></div>`;
-
-    el.innerHTML = `
-      ${iconHtml}
-      ${slot.quantity > 1 ? `<div style="position: absolute; top: 2px; left: 4px; font-size: 9px; font-weight: bold; color: #d8372b; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000;">${slot.quantity}</div>` : ''}
-    `;
+    // Size 42 fills most of the ~54 px slot. The previous 34 px cap dates from
+    // when legacy 32×32 pixel-art was the only source — it shrank 3D thumbs to
+    // 34 px even though slot width is 54 px. object-fit:contain + per-URL
+    // image-rendering keeps both art styles crisp at this size.
+    renderItemSlot(el, def, this.itemDefs, {
+      size: 42,
+      draggable: false,
+      extraStyle: 'filter:drop-shadow(1px 1px 1px rgba(0,0,0,0.5));pointer-events:none;',
+      quantity: slot.quantity,
+      placeholderStyle: 'width:34px;height:34px;background:rgba(170,170,170,0.6);border-radius:3px;pointer-events:none;',
+      badgeStyle: 'position:absolute;top:2px;left:4px;font-size:9px;font-weight:bold;color:#d8372b;text-shadow:1px 1px 0 #000, -1px -1px 0 #000;',
+    });
+    const armed = this.using?.slot === index;
+    el.style.boxShadow = armed ? 'inset 0 0 6px rgba(255, 220, 90, 0.7)' : '';
+    el.style.outline = armed ? '1px solid #e8d04a' : '';
   }
 
   private onInvSlotClick(index: number): void {
+    const using = this.using;
+    if (using) {
+      if (index === using.slot) { this.clearUsingInvItem(); return; }
+      const target = this.invSlots[index];
+      if (!target) { this.clearUsingInvItem(); return; }
+      this.network.sendRaw(encodePacket(
+        ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+        using.slot, using.itemId, index, target.itemId,
+      ));
+      this.clearUsingInvItem();
+      return;
+    }
     const [firstOption] = this.getInvSlotOptions(index);
     firstOption?.action();
   }
@@ -1064,12 +1084,62 @@ export class SidePanel {
       });
     }
 
+    if (!def?.equippable) {
+      options.push({
+        label: `Use ${name}`,
+        action: () => this.setUsingInvItem(index, slot.itemId),
+      });
+    }
+
     options.push({
       label: `Drop ${name}`,
       action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId)),
     });
 
     return options;
+  }
+
+  setUsingInvItem(index: number, itemId: number): void {
+    if (this.using?.slot === index) { this.clearUsingInvItem(); return; }
+    this.clearUsingInvItem();
+    this.using = { slot: index, itemId };
+    this.renderInvSlot(index);
+    this.showUsingBanner();
+  }
+
+  clearUsingInvItem(): void {
+    if (!this.using) return;
+    const prev = this.using.slot;
+    this.using = null;
+    this.renderInvSlot(prev);
+    this.hideUsingBanner();
+  }
+
+  getUsing(): { slot: number; itemId: number } | null { return this.using; }
+
+  private showUsingBanner(): void {
+    if (!this.using) return;
+    if (!this.usingBanner) {
+      this.usingBanner = document.createElement('div');
+      this.usingBanner.style.cssText = `
+        position: fixed; top: 8px; left: 50%; transform: translateX(-50%);
+        background: linear-gradient(180deg, #2a1810 0%, #1a0f08 100%);
+        border: 1px solid #5a4a35; color: #d8d8c8;
+        padding: 5px 14px; border-radius: 3px; font-size: 12px;
+        font-family: Arial, Helvetica, sans-serif; z-index: 200;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        pointer-events: none;
+      `;
+      document.body.appendChild(this.usingBanner);
+    }
+    const def = this.itemDefs.get(this.using.itemId);
+    const name = def?.name ?? `Item ${this.using.itemId}`;
+    this.usingBanner.textContent = `Use ${name} on... (Esc to cancel)`;
+    this.usingBanner.style.display = 'block';
+  }
+
+  private hideUsingBanner(): void {
+    if (this.usingBanner) this.usingBanner.style.display = 'none';
   }
 
   // === Skills methods ===
@@ -1213,6 +1283,7 @@ export class SidePanel {
     if (!row) return;
 
     const itemEl = row.querySelector('.equip-item') as HTMLDivElement;
+    const iconEl = row.querySelector('.equip-icon') as HTMLDivElement | null;
     if (!itemEl) return;
 
     const itemId = this.equipment.get(slotIndex);
@@ -1221,9 +1292,16 @@ export class SidePanel {
       const name = def?.name || `Item ${itemId}`;
       itemEl.textContent = name;
       itemEl.style.color = '#cda';
+      if (iconEl && def) {
+        renderItemSlot(iconEl, def, this.itemDefs, {
+          size: 32, draggable: false,
+          extraStyle: 'max-width:32px;max-height:32px;pointer-events:none;',
+        });
+      }
     } else {
       itemEl.textContent = '—';
       itemEl.style.color = '#555';
+      if (iconEl) iconEl.innerHTML = '';
     }
   }
 
