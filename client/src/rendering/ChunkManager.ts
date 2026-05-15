@@ -14,7 +14,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
@@ -53,6 +53,20 @@ interface FloorLayerClientData {
    *  Y height (used by walls for base height). Texture planes provide the
    *  visual surface so we don't render brown floor planes for these tiles. */
   tiles: Map<number, number>;
+}
+
+export interface MinimapTileSnapshot {
+  tiles: Uint8Array;
+  walls: Uint8Array;
+  roofs: Uint8Array;
+  textured: Uint8Array;
+  voidTiles: Uint8Array;
+  /** RGB triplets per tile; only meaningful where `hasOverride[idx] === 1`. */
+  overrideColors: Uint8Array;
+  hasOverride: Uint8Array;
+  size: number;
+  startX: number;
+  startZ: number;
 }
 
 /**
@@ -174,6 +188,17 @@ export class ChunkManager {
   private activeAnimationGroups: AnimationGroup[] = [];
   private textureCache: Map<string, Texture> = new Map();
   private textureRegistry: Map<string, { path: string }> = new Map();
+  private textureAvgColors: Map<string, [number, number, number]> = new Map();
+  private textureAvgColorLoading: Set<string> = new Set();
+  /** Per-tile painted color derived from flat texture planes. Topmost plane
+   *  wins on overlap — `y` is tracked so later stamps can compare elevations. */
+  private tilePaintedEntries: Map<number, { color: [number, number, number]; y: number }> = new Map();
+  /** Flat texture planes grouped by textureId — lets refresh-on-load touch
+   *  only the planes affected by the texture that just finished sampling. */
+  private flatPlanesByTexture: Map<string, TexturePlane[]> = new Map();
+  private onMinimapDataChanged: (() => void) | null = null;
+  /** Coalesces a burst of texture-load callbacks into one invalidation. */
+  private minimapDirty: boolean = false;
   private overlayMatCache: Map<string, StandardMaterial> = new Map();
   private templateBaseMatrices: Map<string, { sourceMesh: Mesh; baseMatrix: Matrix }[]> = new Map();
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
@@ -2251,7 +2276,7 @@ export class ChunkManager {
     return false;
   }
 
-  getTilesForMinimap(centerX: number, centerZ: number, radius: number): { tiles: Uint8Array; walls: Uint8Array; roofs: Uint8Array; textured: Uint8Array; voidTiles: Uint8Array; size: number; startX: number; startZ: number } {
+  getTilesForMinimap(centerX: number, centerZ: number, radius: number): MinimapTileSnapshot {
     const size = radius * 2;
     const startX = Math.floor(centerX) - radius;
     const startZ = Math.floor(centerZ) - radius;
@@ -2260,6 +2285,8 @@ export class ChunkManager {
     const roofs = new Uint8Array(size * size);
     const textured = new Uint8Array(size * size);
     const voidTiles = new Uint8Array(size * size);
+    const overrideColors = new Uint8Array(size * size * 3);
+    const hasOverride = new Uint8Array(size * size);
     for (let dz = 0; dz < size; dz++) {
       for (let dx = 0; dx < size; dx++) {
         const idx = dz * size + dx;
@@ -2271,14 +2298,34 @@ export class ChunkManager {
         }
         tiles[idx] = this.getTileTypeRaw(tx, tz);
         walls[idx] = this.getWallRaw(tx, tz);
-        if (tx >= 0 && tz >= 0 && tx < this.mapWidth && tz < this.mapHeight) {
-          if (this.roofData.has(tz * this.mapWidth + tx)) roofs[idx] = 1;
-          const kcTile = this.getTileRaw(tx, tz);
-          if (kcTile && kcTile.textureId) textured[idx] = 1;
+        if (tx < 0 || tz < 0 || tx >= this.mapWidth || tz >= this.mapHeight) continue;
+
+        const flatIdx = tz * this.mapWidth + tx;
+        if (this.roofData.has(flatIdx)) roofs[idx] = 1;
+
+        const kcTile = this.getTileRaw(tx, tz);
+        // textureIdB layers over textureId on the ground mesh.
+        const overlayId = kcTile?.textureIdB || kcTile?.textureId || null;
+        let override: [number, number, number] | null = null;
+        if (overlayId) {
+          textured[idx] = 1;
+          override = this.getTextureAvgColor(overlayId);
+        }
+        // Texture planes render above the ground mesh, so a covering flat
+        // plane wins over a tile-level overlay.
+        const planeEntry = this.tilePaintedEntries.get(flatIdx);
+        if (planeEntry) override = planeEntry.color;
+
+        if (override) {
+          const cOff = idx * 3;
+          overrideColors[cOff]     = override[0] | 0;
+          overrideColors[cOff + 1] = override[1] | 0;
+          overrideColors[cOff + 2] = override[2] | 0;
+          hasOverride[idx] = 1;
         }
       }
     }
-    return { tiles, walls, roofs, textured, voidTiles, size, startX, startZ };
+    return { tiles, walls, roofs, textured, voidTiles, overrideColors, hasOverride, size, startX, startZ };
   }
 
   isGroundMesh(meshName: string): boolean {
@@ -3265,6 +3312,99 @@ export class ChunkManager {
     return tex;
   }
 
+  setOnMinimapDataChanged(cb: (() => void) | null): void {
+    this.onMinimapDataChanged = cb;
+  }
+
+  /** Schedule a minimap refresh, coalescing bursts (e.g. many texture-loads
+   *  resolving in the same tick) into a single invalidation. */
+  private markMinimapDirty(): void {
+    if (this.minimapDirty) return;
+    this.minimapDirty = true;
+    queueMicrotask(() => {
+      this.minimapDirty = false;
+      this.onMinimapDataChanged?.();
+    });
+  }
+
+  getTextureAvgColor(textureId: string): [number, number, number] | null {
+    const cached = this.textureAvgColors.get(textureId);
+    if (cached) return cached;
+    this.computeTextureAvgColor(textureId);
+    return null;
+  }
+
+  private computeTextureAvgColor(textureId: string): void {
+    if (this.textureAvgColors.has(textureId)) return;
+    if (this.textureAvgColorLoading.has(textureId)) return;
+    const def = this.textureRegistry.get(textureId);
+    if (!def) return;
+    this.textureAvgColorLoading.add(textureId);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 16; canvas.height = 16;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, 16, 16);
+        const data = ctx.getImageData(0, 0, 16, 16).data;
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < data.length; i += 4) {
+          if (data[i + 3] < 128) continue;
+          r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+        }
+        if (n > 0) {
+          this.textureAvgColors.set(textureId, [r / n, g / n, b / n]);
+          this.refreshPaintedColorsForTexture(textureId);
+          this.markMinimapDirty();
+        }
+      } catch (e) {
+        // decode/CORS failure — leave uncached so callers fall back
+      } finally {
+        this.textureAvgColorLoading.delete(textureId);
+      }
+    };
+    img.onerror = () => { this.textureAvgColorLoading.delete(textureId); };
+    img.src = def.path;
+  }
+
+  private buildMinimapTexturePlaneColors(planes: TexturePlane[]): void {
+    this.tilePaintedEntries.clear();
+    this.flatPlanesByTexture.clear();
+    for (const plane of planes) {
+      if (!isFlatPlane(plane)) continue;
+      let bucket = this.flatPlanesByTexture.get(plane.textureId);
+      if (!bucket) { bucket = []; this.flatPlanesByTexture.set(plane.textureId, bucket); }
+      bucket.push(plane);
+      this.stampPlaneTilePaintedColor(plane);
+    }
+    this.markMinimapDirty();
+  }
+
+  private refreshPaintedColorsForTexture(textureId: string): void {
+    const planes = this.flatPlanesByTexture.get(textureId);
+    if (!planes) return;
+    for (const plane of planes) this.stampPlaneTilePaintedColor(plane);
+  }
+
+  private stampPlaneTilePaintedColor(plane: TexturePlane): void {
+    const avg = this.textureAvgColors.get(plane.textureId);
+    if (!avg) {
+      this.computeTextureAvgColor(plane.textureId);
+      return;
+    }
+    const tint = plane.tintColor;
+    const color: [number, number, number] = tint
+      ? [avg[0] * tint.r, avg[1] * tint.g, avg[2] * tint.b]
+      : [avg[0], avg[1], avg[2]];
+    forEachTileInPlaneFootprint(plane, this.mapWidth, this.mapHeight, (idx, _tx, _tz, py) => {
+      const existing = this.tilePaintedEntries.get(idx);
+      if (existing && existing.y > py) return;
+      this.tilePaintedEntries.set(idx, { color, y: py });
+    });
+  }
+
   private texPlaneMaterialCache: Map<string, StandardMaterial> = new Map();
 
   private getTexPlaneMaterial(plane: TexturePlane, isFlat: boolean): StandardMaterial {
@@ -3340,6 +3480,8 @@ export class ChunkManager {
     if (planes.length === 0) return;
     console.log(`[ChunkManager] Loading ${planes.length} texture planes...`);
 
+    this.buildMinimapTexturePlaneColors(planes);
+
     // Classify each plane into a merge group
     interface MergeGroup {
       planes: TexturePlane[];
@@ -3352,8 +3494,7 @@ export class ChunkManager {
 
     for (const plane of planes) {
       if (!this.getOrLoadTexture(plane.textureId)) continue;
-      const { x: rx } = plane.rotation;
-      const isFlat = Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1;
+      const isFlat = isFlatPlane(plane);
       const pcx = Math.floor(plane.position.x / CHUNK_SIZE);
       const pcz = Math.floor(plane.position.z / CHUNK_SIZE);
 
@@ -3510,6 +3651,10 @@ export class ChunkManager {
     for (const m of this.texturePlaneMeshes) m.dispose();
     this.texturePlaneMeshes = [];
     this.texturePlanesByChunk.clear();
+    this.tilePaintedEntries.clear();
+    this.flatPlanesByTexture.clear();
+    this.textureAvgColors.clear();
+    this.textureAvgColorLoading.clear();
     this.textureOverlayMeshesByChunk.clear();
     for (const [, m] of this.loadedModelCache) m?.dispose();
     this.loadedModelCache.clear();

@@ -26,6 +26,57 @@ export interface DerivedFloorTilesPlane {
   height?: number;
 }
 
+/** True when the plane lies flat on the XZ axis (horizontal surface). */
+export function isFlatPlane(plane: DerivedFloorTilesPlane): boolean {
+  const rx = plane.rotation?.x ?? 0;
+  return Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1;
+}
+
+/** Iterate every tile whose center lies inside the plane's rotated footprint,
+ *  bounded by the map dimensions. The callback receives the flat tile index
+ *  (z*width + x) plus the plane's Y elevation so callers can compare against
+ *  existing entries when planes stack. */
+export function forEachTileInPlaneFootprint(
+  plane: DerivedFloorTilesPlane,
+  mapWidth: number,
+  mapHeight: number,
+  cb: (tileIdx: number, tx: number, tz: number, planeY: number) => void,
+): void {
+  const px = plane.position?.x ?? 0;
+  const py = plane.position?.y ?? 0;
+  const pz = plane.position?.z ?? 0;
+  const sx = plane.scale?.x ?? 1;
+  const sy = plane.scale?.y ?? 1;
+  const ry = plane.rotation?.y ?? 0;
+  const hw = ((plane.width ?? 1) * sx) / 2;
+  const hd = ((plane.height ?? 1) * sy) / 2;
+  const cosR = Math.cos(ry);
+  const sinR = Math.sin(ry);
+
+  // World-space bounding box of the rotated rectangle, clipped to map.
+  const absCosHw = Math.abs(cosR * hw);
+  const absSinHd = Math.abs(sinR * hd);
+  const absSinHw = Math.abs(sinR * hw);
+  const absCosHd = Math.abs(cosR * hd);
+  const tx0 = Math.max(0, Math.floor(px - absCosHw - absSinHd));
+  const tx1 = Math.min(mapWidth - 1, Math.floor(px + absCosHw + absSinHd));
+  const tz0 = Math.max(0, Math.floor(pz - absSinHw - absCosHd));
+  const tz1 = Math.min(mapHeight - 1, Math.floor(pz + absSinHw + absCosHd));
+
+  for (let tz = tz0; tz <= tz1; tz++) {
+    for (let tx = tx0; tx <= tx1; tx++) {
+      // Require the tile CENTER to be inside the plane's rotated footprint.
+      // A plane that barely clips a tile's edge must NOT register the whole
+      // tile — that produced "ghost step" tiles that snapped the player up.
+      const tcx = tx + 0.5, tcz = tz + 0.5;
+      const lx = (tcx - px) * cosR + (tcz - pz) * sinR;
+      const lz = -(tcx - px) * sinR + (tcz - pz) * cosR;
+      if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue;
+      cb(tz * mapWidth + tx, tx, tz, py);
+    }
+  }
+}
+
 /** Cluster the Y values of flat planes — adjacent values within `tol` group
  *  together. Each cluster also reports its `mode` (most common Y rounded to
  *  0.1) — we use that as the canonical floor-surface Y and reject planes

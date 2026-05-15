@@ -23,6 +23,18 @@ export enum ClientOpcode {
    *  node, runs the option's action, then advances to option.next or closes. */
   DIALOGUE_CHOOSE = 22,
   PLAYER_INTERACT_OBJECT = 40,
+  /** Use inventory item on another inventory slot.
+   *  Values: [fromSlot, fromItemId, toSlot, toItemId]. Server validates both
+   *  slots still hold the expected items, then attempts to combine them.
+   *  No matching recipe → "Nothing interesting happens." chat reply. */
+  PLAYER_USE_ITEM_ON_ITEM = 41,
+  /** Use inventory item on a world object.
+   *  Values: [invSlot, itemId, objectEntityId]. Server adjacency-checks like
+   *  PLAYER_INTERACT_OBJECT, then attempts the use action. */
+  PLAYER_USE_ITEM_ON_OBJECT = 42,
+  /** Use inventory item on an NPC.
+   *  Values: [invSlot, itemId, npcEntityId]. */
+  PLAYER_USE_ITEM_ON_NPC = 43,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Client tells server which floor the player is visually on. Sent when

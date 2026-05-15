@@ -1149,6 +1149,11 @@ export class GameManager {
   private setupKeyboard(): void {
     window.addEventListener('keydown', (e) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (e.key === 'Escape' && this.sidePanel?.getUsing()) {
+        this.sidePanel.clearUsingInvItem();
+        e.preventDefault();
+        return;
+      }
       this.keysDown.add(e.key.toLowerCase());
     });
     window.addEventListener('keyup', (e) => {
@@ -2844,7 +2849,22 @@ export class GameManager {
     });
   }
 
+  /** Redirect an NPC/object click to a use-on-target packet if the inventory
+   *  has a Use slot armed. Returns true if the click was consumed. */
+  private tryUseInventoryItemOn(kind: 'npc' | 'object', entityId: number): boolean {
+    const using = this.sidePanel?.getUsing();
+    if (!using) return false;
+    const opcode = kind === 'npc'
+      ? ClientOpcode.PLAYER_USE_ITEM_ON_NPC
+      : ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT;
+    this.network.sendRaw(encodePacket(opcode, using.slot, using.itemId, entityId));
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffd060');
+    this.sidePanel!.clearUsingInvItem();
+    return true;
+  }
+
   private attackNpc(npcEntityId: number): void {
+    if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.combatTargetId = npcEntityId;
     // Face the NPC on arrival (2004scape Player.faceEntity). Combat code
@@ -2889,6 +2909,7 @@ export class GameManager {
   }
 
   private talkToNpc(npcEntityId: number): void {
+    if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.resumeTalkToNpc(npcEntityId);
   }
@@ -2916,27 +2937,15 @@ export class GameManager {
     }
     this.pendingFaceTargetEntityId = npcEntityId;
 
-    // Stop adjacent to the NPC, never on its tile — pop the NPC tile from
-    // the path regardless of length (single-step paths used to land on top
-    // of the mob).
-    const path = findPath(this.playerX, this.playerZ, target.x, target.z,
-      this.isTileBlocked,
-      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
-      this.isWallBlockedForPath);
-    if (path.length > 0) {
-      const last = path[path.length - 1];
-      if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
-        path.pop();
+    // sendMove BEFORE TALK_NPC so the server walks the same tiles.
+    if (!this.isPlayerAdjacentToTile(target.x, target.z)) {
+      const path = this.findPathAdjacentToTarget(target.x, target.z);
+      if (path.length > 0) {
+        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
+        if (this.destMarker) this.destMarker.isVisible = false;
+        this.minimap?.clearDestination();
+        this.network.sendMove(path);
       }
-    }
-    if (path.length > 0) {
-      this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
-      if (this.destMarker) this.destMarker.isVisible = false;
-      this.minimap?.clearDestination();
-      // sendMove before TALK_NPC: server walks the same tiles instead of
-      // independently pathfinding from its authoritative position and
-      // diverging from the client visual.
-      this.network.sendMove(path);
     } else {
       // Already adjacent — cancel any in-flight path and face the NPC now;
       // no path-complete event will fire to do it for us.
@@ -2971,6 +2980,52 @@ export class GameManager {
         this.isWallBlockedForPath),
       preserveCurrentStep: false,
     };
+  }
+
+  /** Chebyshev-1 adjacency between the player's tile and (targetX, targetZ). */
+  private isPlayerAdjacentToTile(targetX: number, targetZ: number): boolean {
+    return Math.max(
+      Math.abs(Math.floor(this.playerX) - Math.floor(targetX)),
+      Math.abs(Math.floor(this.playerZ) - Math.floor(targetZ)),
+    ) <= 1;
+  }
+
+  /** Pathfind so the path ends one unit-tile short of (targetX, targetZ).
+   *  Pathfinding to the target and popping the last waypoint outright is
+   *  broken under corner compression: a straight-line walk compresses to
+   *  [firstStep, lastStep], and the pop leaves just [firstStep] — one tile
+   *  from the player, far from the target. Instead we trim the last
+   *  waypoint by stepping back one unit-tile along the final segment
+   *  direction; the compressed segment between the second-last and the
+   *  trimmed last is server-expanded into unit tiles unchanged, preserving
+   *  the full walk distance. */
+  private findPathAdjacentToTarget(targetX: number, targetZ: number): { x: number; z: number }[] {
+    const path = findPath(this.playerX, this.playerZ, targetX, targetZ,
+      this.isTileBlocked,
+      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
+      this.isWallBlockedForPath);
+    if (path.length === 0) return path;
+
+    const ntx = Math.floor(targetX);
+    const ntz = Math.floor(targetZ);
+    const last = path[path.length - 1];
+    const lastTx = Math.floor(last.x);
+    const lastTz = Math.floor(last.z);
+    // findPath fell back to closest-approach (target unreachable) — the path
+    // already ends on a non-target tile, so no trim needed.
+    if (lastTx !== ntx || lastTz !== ntz) return path;
+
+    const prev = path.length >= 2 ? path[path.length - 2] : { x: this.playerX, z: this.playerZ };
+    const prevTx = Math.floor(prev.x);
+    const prevTz = Math.floor(prev.z);
+    const newTx = lastTx - Math.sign(lastTx - prevTx);
+    const newTz = lastTz - Math.sign(lastTz - prevTz);
+    if (path.length >= 2 && prevTx === newTx && prevTz === newTz) {
+      path.pop();
+    } else {
+      path[path.length - 1] = { x: newTx + 0.5, z: newTz + 0.5 };
+    }
+    return path;
   }
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
@@ -3054,6 +3109,7 @@ export class GameManager {
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
+    if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.combatTargetId = -1;
 
@@ -3751,6 +3807,7 @@ export class GameManager {
     this.minimap.setClickMoveHandler((worldX, worldZ) => {
       this.handleGroundClick(worldX, worldZ);
     });
+    this.chunkManager.setOnMinimapDataChanged(() => this.minimap?.invalidateTileCache());
   }
 
   destroy(): void {

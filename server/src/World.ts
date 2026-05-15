@@ -18,6 +18,8 @@ import type { ServerWebSocket } from 'bun';
 
 /** Map string IDs to small integers for blockedObjectTiles encoding */
 const mapIdRegistry: Map<string, number> = new Map();
+
+const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
 let nextMapIdx = 0;
 function getMapIdx(mapId: string): number {
   let idx = mapIdRegistry.get(mapId);
@@ -761,6 +763,15 @@ export class World {
   private sendLoginBootstrap(player: Player): void {
     player.disconnected = false;
     player.reconnectDeadlineTick = 0;
+    // Force the next broadcastSync to emit a PLAYER_SYNC for this player —
+    // without this, a reconnect (or initial sign-in after a grace-period
+    // reconnect path) keeps `lastSyncX/Z` from the previous WS, so
+    // phase 1 sees `sx === lastSyncX` and never builds a packet. The client
+    // then sits with no appearance/health/position broadcast until the
+    // player moves a tile. Forcing syncDirty here makes the very next tick
+    // hand the full local-player state (including appearance) to the new
+    // socket.
+    player.syncDirty = true;
 
     // Send login confirmation — entity data will be sent when client responds with MAP_READY
     // The 4th value is the effective walking Y so the client can spawn at
@@ -2200,6 +2211,65 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.PLAYER_STATS,
       player.health, player.maxHealth
     );
+  }
+
+  /** Validate a player exists and is in a non-modal state with the expected
+   *  item in `slot`. Returns the player on success, null to drop the packet. */
+  private validateInvUse(playerId: number, slot: number, expectedItemId: number): Player | null {
+    const player = this.players.get(playerId);
+    if (!player) return null;
+    if (player.isBusy(this.currentTick)) return null;
+    if (player.isInterfaceOpen()) return null;
+    if (slot < 0 || slot >= player.inventory.length) return null;
+    if (player.inventory[slot]?.itemId !== expectedItemId) return null;
+    return player;
+  }
+
+  handlePlayerUseItemOnItem(
+    playerId: number,
+    fromSlot: number,
+    fromItemId: number,
+    toSlot: number,
+    toItemId: number,
+  ): void {
+    if (fromSlot === toSlot) return;
+    const player = this.validateInvUse(playerId, fromSlot, fromItemId);
+    if (!player) return;
+    if (player.inventory[toSlot]?.itemId !== toItemId) return;
+    // No recipes wired yet — surface a generic reply so the protocol is exercised.
+    this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
+  }
+
+  handlePlayerUseItemOnObject(
+    playerId: number,
+    invSlot: number,
+    itemId: number,
+    objectEntityId: number,
+  ): void {
+    const obj = this.worldObjects.get(objectEntityId);
+    if (!obj) return;
+    const player = this.validateInvUse(playerId, invSlot, itemId);
+    if (!player) return;
+    if (obj.mapLevel !== player.currentMapLevel) return;
+    if (!this.isAdjacentToObject(player, obj)) {
+      this.sendChatSystem(player, "I can't reach that.");
+      return;
+    }
+    this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
+  }
+
+  handlePlayerUseItemOnNpc(
+    playerId: number,
+    invSlot: number,
+    itemId: number,
+    npcEntityId: number,
+  ): void {
+    const npc = this.npcs.get(npcEntityId);
+    if (!npc) return;
+    const player = this.validateInvUse(playerId, invSlot, itemId);
+    if (!player) return;
+    if (npc.currentMapLevel !== player.currentMapLevel) return;
+    this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
   handlePlayerSetStance(playerId: number, stanceIndex: number): void {

@@ -169,6 +169,8 @@ export class Minimap {
       const roofs = queried.roofs;
       const textured = queried.textured;
       const voidTiles = queried.voidTiles;
+      const overrideColors = queried.overrideColors;
+      const hasOverride = queried.hasOverride;
       const tcBuf = this.tileColorBuf;
 
       const clamp = (v: number) => v < 0 ? 0 : v > 255 ? 255 : v | 0;
@@ -206,10 +208,16 @@ export class Minimap {
 
           const isRoofed = !isCollision && roofs[tIdx] === 1;
           const isTextured = !isCollision && textured[tIdx] === 1;
-          const base = isCollision ? TILE_COLORS[TileType.GRASS]
-            : isRoofed ? ROOF_COLOR
-            : isTextured ? FLOOR_COLOR
-            : (TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS]);
+          // Color priority (lowest → highest): tile-type → FLOOR_COLOR (textured
+          // but unsampled) → sampled override → roof → collision.
+          let base: [number, number, number] = TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS];
+          if (isTextured) base = FLOOR_COLOR;
+          if (hasOverride[tIdx] === 1) {
+            const oOff = tIdx * 3;
+            base = [overrideColors[oOff], overrideColors[oOff + 1], overrideColors[oOff + 2]];
+          }
+          if (isRoofed) base = ROOF_COLOR;
+          if (isCollision) base = TILE_COLORS[TileType.GRASS];
           const wx = startX + dx;
           const wz = startZ + dz;
           const noise = tileHash(wx, wz);

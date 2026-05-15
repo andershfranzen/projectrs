@@ -227,6 +227,31 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM: {
+      const fromSlot = values[0];
+      const fromItemId = values[1];
+      const toSlot = values[2];
+      const toItemId = values[3];
+      world.handlePlayerUseItemOnItem(playerId, fromSlot, fromItemId, toSlot, toItemId);
+      break;
+    }
+
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT: {
+      const invSlot = values[0];
+      const itemId = values[1];
+      const objectEntityId = values[2];
+      world.handlePlayerUseItemOnObject(playerId, invSlot, itemId, objectEntityId);
+      break;
+    }
+
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC: {
+      const invSlot = values[0];
+      const itemId = values[1];
+      const npcEntityId = values[2];
+      world.handlePlayerUseItemOnNpc(playerId, invSlot, itemId, npcEntityId);
+      break;
+    }
+
     case ClientOpcode.PLAYER_TALK_NPC: {
       const npcEntityId = values[0];
       world.handlePlayerTalkNpc(playerId, npcEntityId);
