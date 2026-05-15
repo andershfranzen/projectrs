@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, QUEST_STAGE_COMPLETED, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, QUEST_STAGE_COMPLETED, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -355,6 +355,13 @@ export class World {
       const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
       if (defId != null) {
         objectSpawns.push({ objectId: defId, x: placed.position.x, z: placed.position.z, rotY: placed.rotation?.y, trigger: placed.trigger });
+        continue;
+      }
+      // Thin-instanced decor stays a tile blocker only — no WorldObject entity.
+      if (BLOCKING_DECOR_ASSETS.has(placed.assetId)) {
+        const tx = Math.floor(placed.position.x);
+        const tz = Math.floor(placed.position.z);
+        this.blockedObjectTiles.add(this.blockedKeyFor(mapId, tx, tz));
       }
     }
     // Fallback: sprite-only objects from spawns.json

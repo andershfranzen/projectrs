@@ -15,6 +15,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'stree 3': 1,
   'sTree4': 1,
   'stree autumn': 1,
+  'dying tree': 1,
   // Oak -> objectId 2 (Oak Tree)
   'oaktree2': 2,
   // Willow -> objectId 9 (Willow Tree)
@@ -41,6 +42,19 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   // distinct closed GLB ships.
   'closed chest': 20, // Wooden Chest
 };
+
+/**
+ * Decoration assets that should block their tile but aren't interactable —
+ * no right-click menu, no harvest, no WorldObject entity. Kept thin-instanced
+ * on the client (see `canThinInstance`) so adding many is cheap. Server stamps
+ * the tile into `blockedObjectTiles` at map load; client stamps into
+ * `ChunkManager.decorBlockedTiles` as chunks stream in.
+ */
+export const BLOCKING_DECOR_ASSETS: Set<string> = new Set([
+  'bush1',
+  'bush2',
+  'bush3',
+]);
 
 /**
  * Stair asset config: defines which placed GLB assets are walkable ramps.

@@ -14,7 +14,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
@@ -127,6 +127,9 @@ export class ChunkManager {
   private placedObjectGrid: Map<string, TransformNode> = new Map();
   /** Raw placed object data indexed by chunk key "cx,cz" */
   private placedObjectsByChunk: Map<string, PlacedObject[]> = new Map();
+  /** Tile-index blockers for thin-instanced decor (bushes); mirrored server-side. */
+  private decorBlockedTiles: Set<number> = new Set();
+  private decorBlockedTilesByChunk: Map<string, number[]> = new Map();
   /** Instantiated placed object nodes per chunk */
   private chunkPlacedNodes: Map<string, TransformNode[]> = new Map();
   /** Animation groups per chunk */
@@ -1988,6 +1991,7 @@ export class ChunkManager {
     if (this.floorHeights.has(idx) || this.texturePlaneFloorTiles.has(idx) || this.stairData.has(idx)) {
       return false;
     }
+    if (this.decorBlockedTiles.has(idx)) return true;
     return BLOCKING_TILES.has(this.getTileType(x, z));
   }
 
@@ -2541,6 +2545,19 @@ export class ChunkManager {
       return;
     }
 
+    // Stamps tile blockers for decor that stays thin-instanced (no WorldObject).
+    const decorKeys: number[] = [];
+    for (const obj of objects) {
+      if (!BLOCKING_DECOR_ASSETS.has(obj.assetId)) continue;
+      const tx = Math.floor(obj.position.x);
+      const tz = Math.floor(obj.position.z);
+      const key = tz * this.mapWidth + tx;
+      if (this.decorBlockedTiles.has(key)) continue;
+      this.decorBlockedTiles.add(key);
+      decorKeys.push(key);
+    }
+    if (decorKeys.length > 0) this.decorBlockedTilesByChunk.set(chunkKey, decorKeys);
+
     // Split into thin-instanceable (static decorations) vs regular (interactable/animated/roofs/stairs).
     // Need to load templates first so canThinInstance can check for animations.
     const templatePromises = new Map<string, Promise<TransformNode | null>>();
@@ -2799,6 +2816,12 @@ export class ChunkManager {
 
   /** Dispose placed objects for a chunk leaving the player's radius */
   private disposeChunkPlacedObjects(chunkKey: string): void {
+    const decorKeys = this.decorBlockedTilesByChunk.get(chunkKey);
+    if (decorKeys) {
+      for (const k of decorKeys) this.decorBlockedTiles.delete(k);
+      this.decorBlockedTilesByChunk.delete(chunkKey);
+    }
+
     const nodes = this.chunkPlacedNodes.get(chunkKey);
     if (nodes) {
       for (const node of nodes) {
@@ -3370,6 +3393,8 @@ export class ChunkManager {
     this.placedObjectNodes = [];
     this.placedObjectGrid.clear();
     this.placedObjectsByChunk.clear();
+    this.decorBlockedTiles.clear();
+    this.decorBlockedTilesByChunk.clear();
     this.chunkPlacedNodes.clear();
     this.chunkAnimGroups.clear();
     for (const [, srcs] of this.chunkThinInstSources) {
