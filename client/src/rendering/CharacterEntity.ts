@@ -122,6 +122,9 @@ function devCacheBust(file: string): string {
 const ANIM_SPEED_RATIO: Record<string, number> = {
   walk: 1.1,
 };
+const RUN_WALK_ANIM_MULTIPLIER = 1.35;
+const RUN_FORWARD_LEAN_RADIANS = 0.08;
+const RUN_LEAN_LERP_SPEED = 10;
 
 
 /**
@@ -236,6 +239,8 @@ export class CharacterEntity {
   private currentAnimName: string = '';
   private queuedState: AnimState = AnimState.Idle;
   private queuedAnimName: string = '';
+  private runVisualEnabled: boolean = false;
+  private currentForwardLean: number = 0;
 
   // Layered attack: when a swing fires while walking, attack_<v>_upper plays
   // on top of walk_lower so the legs keep cycling. If walk stops mid-swing we
@@ -1047,7 +1052,7 @@ export class CharacterEntity {
     if (!group) return;
 
     if (oldGroup) oldGroup.stop();
-    const speed = ANIM_SPEED_RATIO[name] ?? 1.0;
+    const speed = this.getAnimationSpeed(name);
     group.start(loop, speed, group.from, group.to, false);
 
     this.currentAnimName = name;
@@ -1067,6 +1072,18 @@ export class CharacterEntity {
     return (group.to - group.from) / 60;
   }
 
+  private getAnimationSpeed(name: string): number {
+    const base = ANIM_SPEED_RATIO[name] ?? 1.0;
+    return name.startsWith('walk') && this.runVisualEnabled ? base * RUN_WALK_ANIM_MULTIPLIER : base;
+  }
+
+  private applyWalkSpeed(): void {
+    for (const name of ['walk', 'walk_lower']) {
+      const group = this.animGroups.get(name);
+      if (group?.isPlaying) group.speedRatio = this.getAnimationSpeed(name);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Public animation API (mirrors SpriteEntity interface)
   // ---------------------------------------------------------------------------
@@ -1082,7 +1099,7 @@ export class CharacterEntity {
       if (this.ensureBoneSplitVariants('walk')) {
         const walkLower = this.animGroups.get('walk_lower');
         if (walkLower && !walkLower.isPlaying) {
-          const speed = ANIM_SPEED_RATIO['walk'] ?? 1.0;
+          const speed = this.getAnimationSpeed('walk_lower');
           walkLower.start(true, speed, walkLower.from, walkLower.to, false);
         }
       }
@@ -1132,6 +1149,12 @@ export class CharacterEntity {
     return this.currentState === AnimState.Walk;
   }
 
+  setRunningVisual(enabled: boolean): void {
+    if (this.runVisualEnabled === enabled) return;
+    this.runVisualEnabled = enabled;
+    this.applyWalkSpeed();
+  }
+
   /** Play a one-shot attack animation. Optional variant name (e.g. 'attack_slash').
    *  When the player is currently walking, plays an upper-body-only variant
    *  layered over walk's lower-body so the legs keep cycling — the silhouette
@@ -1175,7 +1198,7 @@ export class CharacterEntity {
     if (fullWalk?.isPlaying) fullWalk.stop();
     const walkLower = this.animGroups.get('walk_lower');
     if (walkLower) {
-      const wSpeed = ANIM_SPEED_RATIO['walk'] ?? 1.0;
+      const wSpeed = this.getAnimationSpeed('walk_lower');
       walkLower.start(true, wSpeed, walkLower.from, walkLower.to, false);
     }
 
@@ -1314,6 +1337,11 @@ export class CharacterEntity {
       this._rotationY = newYaw;
       this.root.rotation.y = newYaw;
     }
+
+    const targetLean = this.runVisualEnabled && this.currentState === AnimState.Walk ? RUN_FORWARD_LEAN_RADIANS : 0;
+    const leanAlpha = Math.min(1, dt * RUN_LEAN_LERP_SPEED);
+    this.currentForwardLean += (targetLean - this.currentForwardLean) * leanAlpha;
+    this.root.rotation.x = this.currentForwardLean;
 
     // RS2-style turn-on-the-spot. While the character is in the Idle state
     // and its yaw is being stepped toward a target, play the dedicated turn

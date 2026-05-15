@@ -571,7 +571,7 @@ export interface QuestStageDef {
 export interface QuestReward {
   /** Skill → XP. Granted on completeQuest. */
   xp?: Partial<Record<string, number>>;
-  /** Items added to inventory on completeQuest. Drops on the floor if full. */
+  /** Items added to inventory on completeQuest. Completion is refused if they cannot all fit. */
   items?: Array<{ itemId: number; quantity: number }>;
 }
 

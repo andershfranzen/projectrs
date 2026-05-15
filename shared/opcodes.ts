@@ -12,6 +12,8 @@ export enum ClientOpcode {
   PLAYER_SET_STANCE = 35,
   PLAYER_BUY_ITEM = 36,
   PLAYER_SELL_ITEM = 37,
+  /** Toggle run mode. Values: [enabled]. Server owns energy drain/regeneration. */
+  PLAYER_TOGGLE_RUN = 39,
   /** Drag-and-drop reorder of two inventory slots. Values: [fromSlot, toSlot, expectedItemId].
    *  Server validates expectedItemId matches inventory[fromSlot] (stale-click guard) and
    *  refuses if a modal interface is open. Just swaps the two slots — no merge for stackables. */
@@ -82,6 +84,8 @@ export enum ServerOpcode {
   PLAYER_INVENTORY_BATCH = 24,
   PLAYER_SKILLS_BATCH = 25,
   PLAYER_EQUIPMENT_BATCH = 26,
+  /** Run state. Values: [energyPercent, enabled]. Energy is 0-100. */
+  PLAYER_RUN_STATE = 27,
   COMBAT_HIT = 30,
   COMBAT_PROJECTILE = 34,
   ENTITY_DEATH = 31,

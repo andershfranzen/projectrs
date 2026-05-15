@@ -50,6 +50,10 @@ export class SidePanel {
   // Stance
   private currentStance: MeleeStance = 'accurate';
   private stanceButtons: HTMLDivElement[] = [];
+  private runButton: HTMLButtonElement | null = null;
+  private runEnergyEl: HTMLSpanElement | null = null;
+  private runEnabled: boolean = false;
+  private runEnergy: number = 100;
 
   // Item definitions
   private itemDefs: Map<number, ItemDef> = new Map();
@@ -279,7 +283,7 @@ export class SidePanel {
     const playerInfo = document.createElement('div');
     playerInfo.id = 'side-player-info';
     playerInfo.style.cssText = `
-      display: flex; align-items: center; justify-content: center; gap: 5px;
+      display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 5px;
       padding: 4px 8px 5px;
       background: rgba(0,0,0,0.3);
       border-top: 1px solid rgba(255,200,100,0.08);
@@ -304,6 +308,35 @@ export class SidePanel {
       text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;
     `;
     playerInfo.appendChild(combatText);
+    const runWrap = document.createElement('div');
+    runWrap.style.cssText = `
+      display: flex; align-items: center; gap: 4px;
+      height: 24px; min-width: 60px; justify-content: flex-end;
+    `;
+    this.runButton = document.createElement('button');
+    this.runButton.type = 'button';
+    this.runButton.textContent = 'RUN';
+    this.runButton.title = 'Toggle run';
+    this.runButton.style.cssText = `
+      height: 22px; min-width: 32px; padding: 0 5px;
+      border: 1px solid #2f271c; border-radius: 2px;
+      background: linear-gradient(180deg, #2a241c 0%, #17130f 100%);
+      color: #7f786d; font: bold 10px Arial, sans-serif;
+      text-shadow: 1px 1px 0 #000; cursor: pointer;
+      box-shadow: inset 1px 1px 0 rgba(255,255,255,0.05), inset -1px -1px 0 rgba(0,0,0,0.45);
+    `;
+    this.runButton.onclick = () => {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TOGGLE_RUN, this.runEnabled ? 0 : 1));
+    };
+    runWrap.appendChild(this.runButton);
+    this.runEnergyEl = document.createElement('span');
+    this.runEnergyEl.textContent = '100%';
+    this.runEnergyEl.style.cssText = `
+      width: 28px; text-align: right; color: #d8d0c0;
+      font-size: 10px; font-weight: bold; text-shadow: 1px 1px 0 #000;
+    `;
+    runWrap.appendChild(this.runEnergyEl);
+    playerInfo.appendChild(runWrap);
     panel.appendChild(playerInfo);
 
     // Top tab row — 4 tabs above content
@@ -1182,6 +1215,19 @@ export class SidePanel {
     if (rowEl) rowEl.textContent = `Combat Lv: ${cl}`;
     const headerEl = document.getElementById('side-combat-level');
     if (headerEl) headerEl.textContent = `Combat Lv: ${cl}`;
+  }
+
+  updateRunState(energy: number, enabled: boolean): void {
+    this.runEnergy = Math.max(0, Math.min(100, Math.floor(energy)));
+    this.runEnabled = enabled && this.runEnergy > 0;
+    if (this.runEnergyEl) this.runEnergyEl.textContent = `${this.runEnergy}%`;
+    if (this.runButton) {
+      this.runButton.style.color = this.runEnabled ? '#d8372b' : '#7f786d';
+      this.runButton.style.borderColor = this.runEnabled ? '#7b2a20' : '#2f271c';
+      this.runButton.style.background = this.runEnabled
+        ? 'linear-gradient(180deg, #3a2018 0%, #21110d 100%)'
+        : 'linear-gradient(180deg, #2a241c 0%, #17130f 100%)';
+    }
   }
 
   private updateStanceUI(): void {

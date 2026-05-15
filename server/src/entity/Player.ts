@@ -63,6 +63,9 @@ export class Player extends Entity {
   reconnectDeadlineTick: number = 0;
   moveQueue: { x: number; z: number }[] = [];
   moveSpeed: number = 1;
+  runEnabled: boolean = false;
+  runEnergy: number = 10000;
+  movementCredit: number = 0;
   pendingPickup: number = -1;
   pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number } | null = null;
   animationKind: PlayerAnimationKind = PlayerAnimationKind.Idle;
@@ -461,16 +464,22 @@ export class Player extends Entity {
     result.removed.length = 0;
   }
 
-  processMovement(currentTick: number): void {
-    // One unit tile per tick = 1.67 t/s, matching the client's visual interp.
+  processMovement(currentTick: number): boolean {
+    // One unit tile per tick = 1.67 t/s. Running is handled by adding more
+    // movement credit per tick, then consuming whole tile steps.
     // moveQueue is unit-tile expanded by handlePlayerMove (server-side path
     // validation), so each shift here is a 1-tile step.
-    if (this.moveQueue.length > 0) {
+    if (this.moveQueue.length > 0 && this.movementCredit >= 1) {
       const target = this.moveQueue.shift()!;
       this.position.x = target.x;
       this.position.y = target.z;
       this.lastMovedTick = currentTick;
+      this.movementCredit -= 1;
+      if (this.moveQueue.length === 0) this.movementCredit = 0;
+      return true;
     }
+    if (this.moveQueue.length === 0) this.movementCredit = 0;
+    return false;
   }
 
   syncHealthFromSkills(): void {

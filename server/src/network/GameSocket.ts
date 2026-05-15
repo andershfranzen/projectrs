@@ -214,6 +214,11 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_TOGGLE_RUN: {
+      world.handlePlayerToggleRun(playerId, values[0] === 1);
+      break;
+    }
+
     case ClientOpcode.PLAYER_INTERACT_OBJECT: {
       const objectEntityId = values[0];
       const actionIndex = values[1] ?? 0;

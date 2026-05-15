@@ -109,6 +109,8 @@ export class GameManager {
   private path: { x: number; z: number }[] = [];
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
+  private runEnabled: boolean = false;
+  private runEnergy: number = 100;
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
   /** NPC entityId to face when the current path completes. 2004scape
@@ -2193,6 +2195,13 @@ export class GameManager {
       this.updateHUD();
     });
 
+    this.network.on(ServerOpcode.PLAYER_RUN_STATE, (_op, v) => {
+      this.runEnergy = Math.max(0, Math.min(100, v[0] ?? 0));
+      this.runEnabled = (v[1] ?? 0) === 1;
+      if (this.sidePanel) this.sidePanel.updateRunState(this.runEnergy, this.runEnabled);
+      this.localPlayer?.setRunningVisual(this.runEnabled && this.runEnergy > 0);
+    });
+
     this.network.on(ServerOpcode.PLAYER_INVENTORY, (_op, v) => {
       const [slotIndex, itemId, quantity] = v;
       if (this.sidePanel) this.sidePanel.updateInvSlot(slotIndex, itemId, quantity);
@@ -4161,6 +4170,7 @@ export class GameManager {
 
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
     if (this.pathIndex >= this.path.length || !this.localPlayer) return;
+    this.localPlayer.setRunningVisual(this.runEnabled && this.runEnergy > 0);
     if (!this.localPlayer.isWalking()) this.localPlayer.startWalking();
 
     if (this.combatTargetId >= 0) {
@@ -4197,7 +4207,8 @@ export class GameManager {
     // moves faster, the legs cycle faster. Re-enable once run is wired up.
     const remaining = this.path.length - this.pathIndex;
     const speedMult = remaining > 3 ? 1.0 : remaining > 2 ? 1.0 : 1.0;
-    const effectiveSpeed = this.moveSpeed * speedMult;
+    const runMult = this.runEnabled && this.runEnergy > 0 ? 2.0 : 1;
+    const effectiveSpeed = this.moveSpeed * speedMult * runMult;
 
     const stepRate = tileSteps > 0 ? (effectiveSpeed * dt) / tileSteps : 1;
     this.tileProgress += stepRate;
