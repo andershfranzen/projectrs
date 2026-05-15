@@ -15,7 +15,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "attackSpeed": 4,
+    "attackSpeed": 3,
     "weaponStyle": "stab",
     "stabAttack": 5,
     "slashAttack": 2,
@@ -677,7 +677,7 @@
     "icon": "bronze_dagger_62.png",
     "model": "/assets/equipment/weapon/Dagger.glb",
     "weaponStyle": "stab",
-    "attackSpeed": 4,
+    "attackSpeed": 3,
     "stabAttack": 5,
     "slashAttack": 2,
     "meleeStrength": 3
@@ -879,7 +879,7 @@
     "icon": "Iron_dagger_28.png",
     "model": "/assets/equipment/weapon/Dagger.glb",
     "weaponStyle": "stab",
-    "attackSpeed": 4,
+    "attackSpeed": 3,
     "stabAttack": 8,
     "slashAttack": 3,
     "meleeStrength": 5
@@ -1080,7 +1080,7 @@
     "icon": "Steel_dagger_63.png",
     "model": "/assets/equipment/weapon/Dagger.glb",
     "weaponStyle": "stab",
-    "attackSpeed": 4,
+    "attackSpeed": 3,
     "stabAttack": 10,
     "slashAttack": 4,
     "meleeStrength": 6
@@ -1281,7 +1281,7 @@
     "icon": "Mithril_dagger_64.png",
     "model": "/assets/equipment/weapon/Dagger.glb",
     "weaponStyle": "stab",
-    "attackSpeed": 4,
+    "attackSpeed": 3,
     "stabAttack": 15,
     "slashAttack": 6,
     "meleeStrength": 9
@@ -1482,7 +1482,7 @@
     "icon": "Black Bronze_dagger_65.png",
     "model": "/assets/equipment/weapon/Dagger.glb",
     "weaponStyle": "stab",
-    "attackSpeed": 4,
+    "attackSpeed": 3,
     "stabAttack": 20,
     "slashAttack": 8,
     "meleeStrength": 12
