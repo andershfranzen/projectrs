@@ -3234,13 +3234,18 @@ export class GameManager {
         });
         this.gearDebugPanel.setOverrideGetter((itemId) => this.gearOverrides.get(itemId) ?? null);
         this.gearDebugPanel.setSkinnedChecker((slot) => this.localPlayer?.getSkinnedArmorMeshes?.(slot) != null);
+        this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('projectrs_token') || '');
         this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
           this.gearOverrides.set(itemId, override);
           const all: Record<string, any> = {};
           for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
+          const token = this.token || localStorage.getItem('projectrs_token') || '';
           const res = await fetch('/api/dev/gear-overrides', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
             body: JSON.stringify(all),
           });
           if (!res.ok) throw new Error('Server returned ' + res.status);

@@ -12,6 +12,7 @@ type AnimCallback = (anim: string) => void;
 type UnequipCallback = (slot: string) => void;
 type OverrideGetter = (itemId: number) => GearOverride | null;
 type SkinnedChecker = (slot: string) => boolean;
+type AuthTokenGetter = () => string;
 
 interface GearFileInfo {
   file: string;
@@ -76,6 +77,7 @@ export class GearDebugPanel {
   private unequipCallback: UnequipCallback | null = null;
   private overrideGetter: OverrideGetter = () => null;
   private isSkinnedArmor: SkinnedChecker = () => false;
+  private getAuthToken: AuthTokenGetter = () => '';
   private activeSlot = 'weapon';
   private activeAnim = 'idle';
   private thumbGridOpen = true;
@@ -102,6 +104,7 @@ export class GearDebugPanel {
   setUnequipCallback(cb: UnequipCallback): void { this.unequipCallback = cb; }
   setOverrideGetter(getter: OverrideGetter): void { this.overrideGetter = getter; }
   setSkinnedChecker(checker: SkinnedChecker): void { this.isSkinnedArmor = checker; }
+  setAuthTokenGetter(getter: AuthTokenGetter): void { this.getAuthToken = getter; }
 
   private buildUI(): HTMLDivElement {
     const div = document.createElement('div');
@@ -513,7 +516,10 @@ export class GearDebugPanel {
     let files: GearFileInfo[] = this.slotFilesCache.get(slot) || [];
     if (files.length === 0 && !this.slotFilesCache.has(slot)) {
       try {
-        const res = await fetch(`/api/dev/gear-files?slot=${slot}`);
+        const token = this.getAuthToken();
+        const res = await fetch(`/api/dev/gear-files?slot=${slot}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         const data = await res.json();
         files = data.files || [];
       } catch { /* keep empty */ }
