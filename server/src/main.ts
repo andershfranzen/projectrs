@@ -1,5 +1,5 @@
 import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE } from '@projectrs/shared';
-import { resolve, dirname } from 'path';
+import { resolve, dirname, sep } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile } from '@projectrs/shared';
 import { defaultKCTile } from '@projectrs/shared';
@@ -360,7 +360,7 @@ function resolveWithinBase(base: string, child: string): string | null {
   try {
     const real = realpathSync(candidate);
     const realBase = realpathSync(base);
-    return real.startsWith(realBase + '/') || real === realBase ? real : null;
+    return real.startsWith(realBase + sep) || real === realBase ? real : null;
   } catch {
     return null;
   }
