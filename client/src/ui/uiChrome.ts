@@ -163,7 +163,6 @@ export function createIconTabButton(opts: {
   label: string;
   icon?: string;
   iconScale?: number;
-  iconWidth?: number;
   onClick: () => void;
 }): HTMLButtonElement {
   const button = document.createElement('button');
@@ -179,9 +178,16 @@ export function createIconTabButton(opts: {
     img.src = opts.icon;
     img.alt = '';
     img.draggable = false;
-    const scale = (opts.iconScale ?? 1) * 1.2;
-    const width = opts.iconWidth ? `${opts.iconWidth}%` : `${100 * scale}%`;
-    img.style.cssText = `width:${width};height:${100 * scale}%;object-fit:contain;image-rendering:pixelated;pointer-events:none;`;
+    const scale = (opts.iconScale ?? 1) * 0.82;
+    img.style.cssText = `
+      width: auto;
+      height: auto;
+      max-width: ${100 * scale}%;
+      max-height: ${100 * scale}%;
+      object-fit: contain;
+      image-rendering: pixelated;
+      pointer-events: none;
+    `;
     button.appendChild(img);
   } else {
     button.textContent = opts.label;

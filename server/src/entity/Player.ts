@@ -104,6 +104,11 @@ export class Player extends Entity {
    *  time to catch up to the server's authoritative tile, so an interaction
    *  doesn't fire while the character is still mid-step. */
   lastMovedTick: number = -1;
+  /** Last world tick where x/z/floor/map were checkpointed to SQLite. Full
+   *  state still saves on logout/autosave; this is a small position-only
+   *  checkpoint so an unclean reconnect/server stop cannot respawn the player
+   *  many tiles behind their latest authoritative movement. */
+  lastPositionPersistTick: number = -9999;
 
   // Chunk tracking
   currentChunkX: number = -1;

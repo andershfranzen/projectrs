@@ -58,6 +58,11 @@ import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVa
 const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 
+type InteractionOption = {
+  label: string;
+  action: () => void;
+};
+
 export class GameManager {
   private engine: Engine;
   private scene: Scene;
@@ -145,6 +150,7 @@ export class GameManager {
   private static readonly SLIDE_DURATION_MS = 200;
   private static readonly HIDDEN_RECONCILE_DIST = 2.5;
   private static readonly VISIBLE_RECONCILE_DIST = 2.25;
+  private static readonly RUN_SPEED_MULTIPLIER = 2.0;
   // Tracks when the tab last became hidden. Non-zero means we recently
   // returned to a visible tab and the divergence-snap is armed for ~2 ticks
   // to catch the throttled-prediction backlog. Reset to 0 otherwise so
@@ -359,68 +365,15 @@ export class GameManager {
       this.lastClickX = e.clientX;
       this.lastClickY = e.clientY;
 
-      // OSRS-style left-click auto-attack: if the cursor is over an NPC and
-      // the player is at least 10 combat levels above it, treat the click as
-      // Attack instead of letting InputManager turn it into a walk-to-tile.
-      // Lower-level players still need right-click → Attack so they don't
-      // accidentally engage scary mobs while pathing past them. When the level
-      // gate blocks the auto-attack we explicitly click *through* the NPC —
-      // computing the ground tile via ray-plane projection at player Y —
-      // because letting InputManager re-pick can latch onto the NPC mesh
-      // itself (sprite-NPC Y sometimes passes its 0.6-tile tolerance and the
-      // player walks under the mob instead of past it).
-      // multiPick: scenery (walls, anvils, signs) in front of an NPC will
-      // win scene.pick by being closest, so legs/feet aren't clickable.
-      // pickAtCursor walks every hit along the ray and prefers an NPC.
-      const pickInfo = this.pickAtCursor();
-      if (pickInfo.entityId != null) {
-        const entityId = pickInfo.entityId;
-        {
-          const npcDefId = this.entities.npcDefs.get(entityId);
-          // Treat any server-flagged non-combat NPC as non-attackable here too,
-          // so editor-authored dialogue NPCs don't get auto-attacked by a
-          // high-level player walking past.
-          const interactFlags = this.entities.npcInteractions.get(entityId) ?? 0;
-          const attackable = interactFlags === 0 && !this.isNonAttackableNpc(npcDefId);
-          if (attackable) {
-            const npcLvl = this.npcLevelFor(npcDefId);
-            const myLvl = this.getLocalCombatLevel();
-            if (npcLvl > 0 && myLvl >= npcLvl + 10) {
-              this.attackNpc(entityId);
-              // Suppress InputManager's ground-click handling for this event.
-              // stopImmediatePropagation also stops same-phase listeners; we
-              // use capture so it runs before Babylon's bubble-phase handler.
-              e.stopImmediatePropagation();
-              e.preventDefault();
-              return;
-            }
-          } else {
-            // Non-combat NPC (shop, dialogue, banker, or hardcoded). Left-click
-            // becomes "Talk-to" — matches RS2 / OSRS UX where left-click is the
-            // primary action. talkToNpc walks the player into range and sends
-            // PLAYER_TALK_NPC; the server picks dialogue > shop > bank.
-            this.talkToNpc(entityId);
-            e.stopImmediatePropagation();
-            e.preventDefault();
-            return;
-          }
-          // Underleveled (or non-attackable) — click *through* the NPC to the
-          // ground tile directly beneath the cursor at the player's plane.
-          const ray = this.scene.createPickingRay(this.scene.pointerX, this.scene.pointerY, null, this.scene.activeCamera!);
-          if (ray.direction.y !== 0) {
-            const planeY = this.localPlayer?.position.y ?? 0;
-            const t = (planeY - ray.origin.y) / ray.direction.y;
-            if (t > 0) {
-              const tx = Math.floor(ray.origin.x + ray.direction.x * t) + 0.5;
-              const tz = Math.floor(ray.origin.z + ray.direction.z * t) + 0.5;
-              this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
-              this.handleGroundClick(tx, tz);
-              e.stopImmediatePropagation();
-              e.preventDefault();
-              return;
-            }
-          }
-        }
+      if (!this.inputManager.isEnabled() || e.shiftKey) return;
+      const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
+      if (options.length > 0) {
+        this.runInteractionOption(options[0], e.clientX, e.clientY);
+        // Suppress InputManager's object/ground handling for this event. The
+        // first context option is the whole action, including its own walk-to
+        // prediction when needed.
+        e.stopImmediatePropagation();
+        e.preventDefault();
       }
     }, true);
 
@@ -1684,7 +1637,11 @@ export class GameManager {
         const reconcileDist = hiddenCatchup
           ? GameManager.HIDDEN_RECONCILE_DIST
           : GameManager.VISIBLE_RECONCILE_DIST;
-        if (dx * dx + dz * dz > reconcileDist * reconcileDist) {
+        // Movement is tile/Chebyshev based: a diagonal run step can advance
+        // both axes at once. Compare the largest axis delta instead of
+        // Euclidean distance so a legitimate two-tile diagonal run tick
+        // doesn't look farther apart than a two-tile cardinal run tick.
+        if (Math.max(Math.abs(dx), Math.abs(dz)) > reconcileDist) {
           this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
@@ -2528,209 +2485,196 @@ export class GameManager {
       // half-streamed world.
       if (!this.inputManager.isEnabled()) return;
 
-      const pickResult = this.scene.pick(this.scene.pointerX, this.scene.pointerY);
-      if (!pickResult?.hit || !pickResult.pickedMesh) return;
-
-      const meshName = pickResult.pickedMesh.name;
-      const options: { label: string; action: () => void }[] = [];
-
-      // Identify the picked NPC. 3D-modeled NPCs (e.g. cows) all share mesh
-      // names from their source GLB, so name matching is ambiguous — every
-      // cow click would route to whichever cow happened to be first in the
-      // npcSprites map. Check metadata.entityId (stamped by Npc3DEntity.
-      // setEntityIdMetadata and CharacterEntity.setEntityIdMetadata) by
-      // walking up the picked node's parents. pickAtCursor falls through
-      // placed scenery to find an NPC along the ray, so right-clicking
-      // through a fence/anvil at an NPC's lower body still surfaces the
-      // Talk-to / Attack option.
-      const pickedNpcEntityId = this.pickAtCursor().entityId;
-      if (pickedNpcEntityId != null) {
-        const entityId = pickedNpcEntityId;
-        const npcDefId = this.entities.npcDefs.get(entityId);
-        const name = this.npcDisplayName(entityId, npcDefId);
-        // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
-        // hardcoded isNonAttackableNpc allow-list — that list pre-dates the
-        // server telling us, and would mislabel any new editor-authored NPC.
-        // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank.
-        const flags = this.entities.npcInteractions.get(entityId) ?? 0;
-        const nonCombat = flags !== 0 || this.isNonAttackableNpc(npcDefId);
-        if (nonCombat) {
-          // Talk-to handles all three (dialogue → priority on server, else
-          // falls through to shop, then bank). One label keeps the menu tidy.
-          const verb = (flags & 1) !== 0 ? 'Talk-to' : 'Trade';
-          options.push({ label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) });
-        } else {
-          const lvl = this.npcLevelFor(npcDefId);
-          const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
-          options.push({ label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) });
-        }
-      }
-
-      // Ground item: prefer metadata, fall back to name match.
-      let pickedGroundItemId: number | null = null;
-      {
-        let walk: TransformNode | null = pickResult.pickedMesh;
-        while (walk) {
-          if (walk.metadata?.kind === 'groundItem' && typeof walk.metadata?.groundItemId === 'number') {
-            pickedGroundItemId = walk.metadata.groundItemId;
-            break;
-          }
-          walk = walk.parent as TransformNode | null;
-        }
-      }
-      if (pickedGroundItemId == null) {
-        for (const [groundItemId, sprite] of this.entities.groundItemSprites) {
-          if (sprite.getMesh()?.name === meshName) {
-            pickedGroundItemId = groundItemId;
-            break;
-          }
-        }
-      }
-      if (pickedGroundItemId != null) {
-        // List every ground item sharing this tile, not just the one the
-        // cursor happened to land on. NPC loot tables can drop 3+ items per
-        // kill (bones + coins + a rare); the picked sprite was hiding the
-        // others under it. Newest-first matches the visible stacking order.
-        const pickedItem = this.entities.groundItems.get(pickedGroundItemId);
-        if (pickedItem) {
-          const tx = Math.floor(pickedItem.x);
-          const tz = Math.floor(pickedItem.z);
-          const stack = [];
-          for (const [, gi] of this.entities.groundItems) {
-            if (Math.floor(gi.x) === tx && Math.floor(gi.z) === tz) stack.push(gi);
-          }
-          stack.sort((a, b) => b.id - a.id);
-          for (const gi of stack) {
-            const iDef = this.itemDefsCache.get(gi.itemId);
-            const iName = iDef?.name ?? 'item';
-            const qtyLabel = gi.quantity > 1 ? ` (${gi.quantity})` : '';
-            const giId = gi.id;
-            options.push({
-              label: `Pick up ${iName}${qtyLabel}`,
-              action: () => this.pickupItem(giId),
-            });
-          }
-        }
-      }
-
-      // Check 3D models (trees, rocks, placed objects) — walk up parent chain looking for objectEntityId metadata
-      let pickedObjectEntityId: number | null = null;
-      let walkMesh: TransformNode | null = pickResult.pickedMesh;
-      while (walkMesh) {
-        if (walkMesh.metadata?.objectEntityId != null) {
-          pickedObjectEntityId = walkMesh.metadata.objectEntityId;
-          break;
-        }
-        walkMesh = walkMesh.parent as TransformNode | null;
-      }
-
-      // If no objectEntityId found, check if this is a placed object near a world object
-      if (pickedObjectEntityId == null && pickResult.pickedMesh) {
-        // Walk up to root placed node
-        let rootNode: TransformNode = pickResult.pickedMesh!;
-        while (rootNode.parent) {
-          if (this.chunkManager.isPlacedObjectNode(rootNode)) break;
-          rootNode = rootNode.parent as TransformNode;
-        }
-
-        if (this.chunkManager.isPlacedObjectNode(rootNode)) {
-          // Only match if this placed object is actually an interactable asset
-          const rootAssetId = rootNode.metadata?.assetId;
-          if (rootAssetId && rootAssetId in ASSET_TO_OBJECT_DEF) {
-            const expectedDefId = ASSET_TO_OBJECT_DEF[rootAssetId];
-            const px = rootNode.position.x;
-            const pz = rootNode.position.z;
-            let bestEid = -1, bestDist = 3.0;
-            for (const [eid, data] of this.worldObjectDefs) {
-              if (data.defId !== expectedDefId) continue;
-              const dist = Math.hypot(data.x - px, data.z - pz);
-              if (dist < bestDist) {
-                bestDist = dist;
-                bestEid = eid;
-              }
-            }
-            if (bestEid >= 0) {
-              pickedObjectEntityId = bestEid;
-              this.worldObjectModels.set(bestEid, rootNode);
-            }
-          }
-        }
-      }
-
-      if (pickedObjectEntityId != null) {
-        const data = this.worldObjectDefs.get(pickedObjectEntityId);
-        if (data) {
-          const def = this.objectDefsCache.get(data.defId);
-          if (def && (!data.depleted || def.category === 'door')) {
-            const actions = this.actionsForInstance(def, data.depleted);
-            for (let i = 0; i < actions.length; i++) {
-              const actionName = actions[i];
-              const eid = pickedObjectEntityId;
-              const actionIdx = i;
-              options.push({
-                label: `${actionName} ${def.name}`,
-                action: () => this.interactObject(eid, actionIdx),
-              });
-            }
-          }
-        }
-      }
-
-      // Check sprite-based world objects (metadata first, name match fallback).
-      // The sprite's plane is stamped with { kind:'worldObject', objectEntityId }
-      // when created, so picking resolves uniformly with the 3D-model path above.
-      let pickedSpriteWorldObjectId: number | null = null;
-      {
-        let walk: TransformNode | null = pickResult.pickedMesh;
-        while (walk) {
-          if (walk.metadata?.kind === 'worldObject' && typeof walk.metadata?.objectEntityId === 'number') {
-            pickedSpriteWorldObjectId = walk.metadata.objectEntityId;
-            break;
-          }
-          walk = walk.parent as TransformNode | null;
-        }
-      }
-      if (pickedSpriteWorldObjectId != null && pickedObjectEntityId == null) {
-        const objectEntityId = pickedSpriteWorldObjectId;
-        const data = this.worldObjectDefs.get(objectEntityId);
-        if (data) {
-          const def = this.objectDefsCache.get(data.defId);
-          if (def && (!data.depleted || def.category === 'door')) {
-            const actions = this.actionsForInstance(def, data.depleted);
-            for (let i = 0; i < actions.length; i++) {
-              const actionName = actions[i];
-              const actionIdx = i;
-              options.push({
-                label: `${actionName} ${def.name}`,
-                action: () => this.interactObject(objectEntityId, actionIdx),
-              });
-            }
-          }
-        }
-      }
-
+      const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
       if (options.length > 0) {
         this.showContextMenu(e.clientX, e.clientY, options);
       }
     });
   }
 
-  private showContextMenu(x: number, y: number, options: { label: string; action: () => void }[]): void {
+  private getWorldInteractionOptionsAt(clientX: number, clientY: number): InteractionOption[] {
+    const point = this.canvasPointFromClient(clientX, clientY);
+    const pickResult = this.scene.pick(point.x, point.y);
+    if (!pickResult?.hit || !pickResult.pickedMesh) return [];
+
+    const meshName = pickResult.pickedMesh.name;
+    const options: InteractionOption[] = [];
+
+    // Identify the picked NPC. 3D-modeled NPCs (e.g. cows) all share mesh
+    // names from their source GLB, so name matching is ambiguous — every
+    // cow click would route to whichever cow happened to be first in the
+    // npcSprites map. Check metadata.entityId (stamped by Npc3DEntity.
+    // setEntityIdMetadata and CharacterEntity.setEntityIdMetadata) by
+    // walking up the picked node's parents. pickNpcAtPoint falls through
+    // placed scenery to find an NPC along the ray, so clicking through a
+    // fence/anvil at an NPC's lower body still surfaces the Talk-to / Attack
+    // option.
+    const pickedNpcEntityId = this.pickNpcAtPoint(point.x, point.y).entityId;
+    if (pickedNpcEntityId != null) {
+      options.push(...this.getNpcInteractionOptions(pickedNpcEntityId));
+    }
+
+    const pickedGroundItemId = this.findGroundItemIdFromPick(pickResult.pickedMesh as unknown as TransformNode, meshName);
+    if (pickedGroundItemId != null) {
+      options.push(...this.getGroundItemInteractionOptions(pickedGroundItemId));
+    }
+
+    const pickedObjectEntityId = this.findWorldObjectIdFromPick(pickResult.pickedMesh as unknown as TransformNode);
+    if (pickedObjectEntityId != null) {
+      options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId));
+    }
+
+    return options;
+  }
+
+  private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
+    const rect = this.engine.getRenderingCanvas()!.getBoundingClientRect();
+    const scaleX = this.engine.getRenderWidth() / Math.max(1, rect.width);
+    const scaleY = this.engine.getRenderHeight() / Math.max(1, rect.height);
+    return {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
+  }
+
+  private getNpcInteractionOptions(entityId: number): InteractionOption[] {
+    const npcDefId = this.entities.npcDefs.get(entityId);
+    const name = this.npcDisplayName(entityId, npcDefId);
+    // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
+    // hardcoded isNonAttackableNpc allow-list — that list pre-dates the
+    // server telling us, and would mislabel any new editor-authored NPC.
+    // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank.
+    const flags = this.entities.npcInteractions.get(entityId) ?? 0;
+    const nonCombat = flags !== 0 || this.isNonAttackableNpc(npcDefId);
+    if (nonCombat) {
+      // Talk-to handles all three (dialogue → priority on server, else
+      // falls through to shop, then bank). One label keeps the menu tidy.
+      const verb = (flags & 1) !== 0 ? 'Talk-to' : 'Trade';
+      return [{ label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) }];
+    }
+
+    const lvl = this.npcLevelFor(npcDefId);
+    const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
+    return [{ label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) }];
+  }
+
+  private findGroundItemIdFromPick(pickedMesh: TransformNode, meshName: string): number | null {
+    let walk: TransformNode | null = pickedMesh;
+    while (walk) {
+      if (walk.metadata?.kind === 'groundItem' && typeof walk.metadata?.groundItemId === 'number') {
+        return walk.metadata.groundItemId;
+      }
+      walk = walk.parent as TransformNode | null;
+    }
+
+    for (const [groundItemId, sprite] of this.entities.groundItemSprites) {
+      if (sprite.getMesh()?.name === meshName) return groundItemId;
+    }
+    return null;
+  }
+
+  private getGroundItemInteractionOptions(groundItemId: number): InteractionOption[] {
+    // List every ground item sharing this tile, not just the one the cursor
+    // happened to land on. NPC loot tables can drop 3+ items per kill (bones
+    // + coins + a rare); the picked sprite was hiding the others under it.
+    // Newest-first matches the visible stacking order and is now also the
+    // left-click pickup target.
+    const pickedItem = this.entities.groundItems.get(groundItemId);
+    if (!pickedItem) return [];
+
+    const tx = Math.floor(pickedItem.x);
+    const tz = Math.floor(pickedItem.z);
+    const stack: GroundItemData[] = [];
+    for (const [, gi] of this.entities.groundItems) {
+      if (Math.floor(gi.x) === tx && Math.floor(gi.z) === tz) stack.push(gi);
+    }
+    stack.sort((a, b) => b.id - a.id);
+
+    return stack.map((gi) => {
+      const iDef = this.itemDefsCache.get(gi.itemId);
+      const iName = iDef?.name ?? 'item';
+      const qtyLabel = gi.quantity > 1 ? ` (${gi.quantity})` : '';
+      const giId = gi.id;
+      return {
+        label: `Pick up ${iName}${qtyLabel}`,
+        action: () => this.pickupItem(giId),
+      };
+    });
+  }
+
+  private findWorldObjectIdFromPick(pickedMesh: TransformNode): number | null {
+    // Check 3D models (trees, rocks, placed objects) by walking up the parent
+    // chain looking for objectEntityId metadata.
+    let walkMesh: TransformNode | null = pickedMesh;
+    while (walkMesh) {
+      if (typeof walkMesh.metadata?.objectEntityId === 'number') {
+        return walkMesh.metadata.objectEntityId;
+      }
+      if (walkMesh.metadata?.kind === 'worldObject' && typeof walkMesh.metadata?.objectEntityId === 'number') {
+        return walkMesh.metadata.objectEntityId;
+      }
+      walkMesh = walkMesh.parent as TransformNode | null;
+    }
+
+    // If no objectEntityId found, check if this is a placed object near a
+    // world object. The editor-authored model nodes are render-only; this
+    // links the clicked asset back to the server-side object instance.
+    let rootNode: TransformNode = pickedMesh;
+    while (rootNode.parent) {
+      if (this.chunkManager.isPlacedObjectNode(rootNode)) break;
+      rootNode = rootNode.parent as TransformNode;
+    }
+
+    if (!this.chunkManager.isPlacedObjectNode(rootNode)) return null;
+
+    const rootAssetId = rootNode.metadata?.assetId;
+    if (!rootAssetId || !(rootAssetId in ASSET_TO_OBJECT_DEF)) return null;
+
+    const expectedDefId = ASSET_TO_OBJECT_DEF[rootAssetId];
+    const px = rootNode.position.x;
+    const pz = rootNode.position.z;
+    let bestEid = -1;
+    let bestDist = 3.0;
+    for (const [eid, data] of this.worldObjectDefs) {
+      if (data.defId !== expectedDefId) continue;
+      const dist = Math.hypot(data.x - px, data.z - pz);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestEid = eid;
+      }
+    }
+
+    if (bestEid < 0) return null;
+    this.worldObjectModels.set(bestEid, rootNode);
+    return bestEid;
+  }
+
+  private getWorldObjectInteractionOptions(objectEntityId: number): InteractionOption[] {
+    const data = this.worldObjectDefs.get(objectEntityId);
+    if (!data) return [];
+    const def = this.objectDefsCache.get(data.defId);
+    if (!def || (data.depleted && def.category !== 'door')) return [];
+
+    return this.actionsForInstance(def, data.depleted).map((actionName, actionIdx) => ({
+      label: `${actionName} ${def.name}`,
+      action: () => this.interactObject(objectEntityId, actionIdx),
+    }));
+  }
+
+  private runInteractionOption(option: InteractionOption, clientX: number, clientY: number): void {
+    this.lastClickX = clientX;
+    this.lastClickY = clientY;
+    option.action();
+  }
+
+  private showContextMenu(x: number, y: number, options: InteractionOption[]): void {
     this.hideContextMenu();
 
     let menu: HTMLDivElement;
     menu = createContextMenu(options.map((opt) => ({
       label: opt.label,
       action: (ev) => {
-        // Update the cached click position so the per-action cursor burst
-        // (attackNpc, pickupItem, interactObject, etc.) spawns at the menu
-        // item the user actually clicked — without this, the burst fires
-        // at lastClickX/Y, which only updates on left-clicks on the canvas
-        // and is stale (often the previous walk-click) after a right-click
-        // context-menu interaction.
-        this.lastClickX = ev.clientX;
-        this.lastClickY = ev.clientY;
-        opt.action();
+        this.runInteractionOption(opt, ev.clientX, ev.clientY);
       },
     })), {
       x,
@@ -2752,11 +2696,9 @@ export class GameManager {
     }
   }
 
-  /** Set of NpcDef IDs that aren't valid attack targets (shopkeepers, smiths,
-   *  bankers). Trade option is shown instead. Banker (16) is included here
-   *  even though the right-click context still falls through to "Attack" for
-   *  it — that's a separate pre-existing bug; for our auto-attack gating we
-   *  treat them all as non-combat. */
+  /** Set of legacy NpcDef IDs that aren't valid attack targets (shopkeepers,
+   *  smiths, bankers). Server-sent interaction flags are preferred when
+   *  available, but this keeps older authored NPCs on the non-combat path. */
   private isNonAttackableNpc(npcDefId: number | undefined): boolean {
     return npcDefId === 8 || npcDefId === 11 || npcDefId === 12 || npcDefId === 13 || npcDefId === 14 || npcDefId === 16;
   }
@@ -2797,7 +2739,11 @@ export class GameManager {
    *  caller can still pick ground / placed objects / ground-items normally
    *  when there's no NPC in the ray. */
   private pickAtCursor(): { entityId: number; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh } | { entityId: null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
-    const hits = this.scene.multiPick(this.scene.pointerX, this.scene.pointerY);
+    return this.pickNpcAtPoint(this.scene.pointerX, this.scene.pointerY);
+  }
+
+  private pickNpcAtPoint(x: number, y: number): { entityId: number; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh } | { entityId: null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+    const hits = this.scene.multiPick(x, y);
     if (!hits || hits.length === 0) return { entityId: null, closestMesh: null };
     // multiPick returns hits unsorted; sort by distance ascending.
     hits.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
@@ -2909,10 +2855,8 @@ export class GameManager {
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
-      const path = findPath(this.playerX, this.playerZ, target.x, target.z,
-        this.isTileBlocked,
-        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
-        this.isWallBlockedForPath);
+      const pathResult = this.findPathFromMovementAnchor(target.x, target.z);
+      const path = pathResult.path;
       // The NPC's own tile is blocking — drop it from the path so the player
       // stops on the adjacent tile. Without this, a single-step path (`length
       // === 1`) was sent verbatim with the NPC tile included; server rejects
@@ -2924,7 +2868,7 @@ export class GameManager {
         }
       }
       if (path.length > 0) {
-        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
+        this.startPredictedPath(path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
         // Send the path BEFORE the attack packet so the server walks the same
@@ -2933,7 +2877,6 @@ export class GameManager {
         // diverges from this local one, the server tick advances on its own
         // queue, and the >1.5-tile divergence guard snaps the local visual
         // to the server position (visible as a teleport).
-        this.network.sendMove(path);
       }
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
@@ -2999,19 +2942,53 @@ export class GameManager {
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
   }
 
+  private sameTile(a: { x: number; z: number }, b: { x: number; z: number }): boolean {
+    return Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.z) === Math.floor(b.z);
+  }
+
+  private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+    if (this.pathIndex < this.path.length && this.tileProgress > 0) {
+      const currentTarget = this.path[this.pathIndex];
+      const tail = findPath(currentTarget.x, currentTarget.z, goalX, goalZ,
+        this.isTileBlocked,
+        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
+        this.isWallBlockedForPath);
+      if (tail.length > 0) {
+        return { path: [currentTarget, ...tail], preserveCurrentStep: true };
+      }
+    }
+
+    return {
+      path: findPath(this.playerX, this.playerZ, goalX, goalZ,
+        this.isTileBlocked,
+        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
+        this.isWallBlockedForPath),
+      preserveCurrentStep: false,
+    };
+  }
+
+  private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
+    if (path.length === 0) return;
+    const currentTarget = this.pathIndex < this.path.length ? this.path[this.pathIndex] : null;
+    this.path = path;
+    this.pathIndex = 0;
+    if (!preserveCurrentStep || !currentTarget || !this.sameTile(path[0], currentTarget)) {
+      this.tileProgress = 0;
+      this.tileFrom = { x: this.playerX, z: this.playerZ };
+    }
+    this.pendingPath = null;
+    this.network.sendMove(path);
+  }
+
   private pickupItem(groundItemId: number): void {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     const item = this.entities.groundItems.get(groundItemId);
     if (item) {
-      const path = findPath(this.playerX, this.playerZ, item.x, item.z,
-        this.isTileBlocked,
-        this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
-        this.isWallBlockedForPath);
+      const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(item.x, item.z);
       if (path.length > 0) {
-        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
+        this.startPredictedPath(path, preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
-        this.network.sendMove(path);
       }
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_PICKUP_ITEM, groundItemId));
@@ -3118,13 +3095,9 @@ export class GameManager {
           else if (edge === WallEdge.E && this.playerX > dotx + 0.5) tx = dotx + 1;
           else if (edge === WallEdge.W && this.playerX < dotx + 0.5) tx = dotx - 1;
         }
-        const path = findPath(this.playerX, this.playerZ, tx + 0.5, tz + 0.5,
-          this.isTileBlocked,
-          this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 500,
-          this.isWallBlockedForPath);
+        const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(tx + 0.5, tz + 0.5, 500);
         if (path.length > 0) {
-          this.path = path; this.pathIndex = 0; this.tileProgress = 0;
-          this.tileFrom = { x: this.playerX, z: this.playerZ };
+          this.startPredictedPath(path, preserveCurrentStep);
         }
       } else {
         this.path = []; this.pathIndex = 0;
@@ -3173,19 +3146,9 @@ export class GameManager {
       const ptz = Math.floor(this.playerZ);
       if (ptx !== frontX || ptz !== frontZ) {
         if (!this.isTileBlocked(frontX, frontZ)) {
-          const path = findPath(
-            this.playerX, this.playerZ,
-            frontX + 0.5, frontZ + 0.5,
-            this.isTileBlocked,
-            this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 500,
-            this.isWallBlockedForPath,
-          );
+          const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(frontX + 0.5, frontZ + 0.5, 500);
           if (path.length > 0) {
-            this.path = path;
-            this.pathIndex = 0;
-            this.tileProgress = 0;
-            this.tileFrom = { x: this.playerX, z: this.playerZ };
-            this.network.sendMove(path);
+            this.startPredictedPath(path, preserveCurrentStep);
           }
         }
       }
@@ -3210,18 +3173,16 @@ export class GameManager {
 
       let bestPath: { x: number; z: number }[] | null = null;
       for (const { ax, az } of candidates) {
-        const path = findPath(this.playerX, this.playerZ, ax + 0.5, az + 0.5,
-          this.isTileBlocked,
-          this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 500,
-          this.isWallBlockedForPath);
+        const { path } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
         if (path.length > 0) {
           bestPath = path;
           break;
         }
       }
       if (bestPath) {
-        this.path = bestPath; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
-        this.network.sendMove(bestPath);
+        const preserve = this.pathIndex < this.path.length && this.tileProgress > 0
+          && this.sameTile(bestPath[0], this.path[this.pathIndex]);
+        this.startPredictedPath(bestPath, preserve);
       }
     }
 
@@ -3731,21 +3692,13 @@ export class GameManager {
       return;
     }
 
-    const path = findPath(this.playerX, this.playerZ, worldX, worldZ,
-      this.isTileBlocked,
-      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
-      this.isWallBlockedForPath);
+    const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(worldX, worldZ);
     if (path.length > 0) {
-      this.path = path; this.pathIndex = 0;
-      this.tileProgress = 0;
-      this.tileFrom = { x: this.playerX, z: this.playerZ };
-      this.pendingPath = null;
+      this.startPredictedPath(path, preserveCurrentStep);
       const dest = path[path.length - 1];
       // Yellow ground destination disc removed in favor of the cursor burst.
       // Minimap arrow still indicates where you're heading.
       this.minimap?.setDestination(dest.x, dest.z);
-      // Always send the full new path to the server
-      this.network.sendMove(path);
     }
   }
 
@@ -4008,10 +3961,8 @@ export class GameManager {
     if (dist <= 1.5) return;
     if ((this.pathIndex < this.path.length && dist <= 3) || this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
-    const newPath = findPath(this.playerX, this.playerZ, npcTarget.x, npcTarget.z,
-      this.isTileBlocked,
-      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
-      this.isWallBlockedForPath);
+    const pathResult = this.findPathFromMovementAnchor(npcTarget.x, npcTarget.z);
+    const newPath = pathResult.path;
     // Drop the NPC's own tile (blocking) regardless of path length; a one-step
     // chase repath that lands on the mob's tile would otherwise ship a single
     // blocked tile to the server and stall.
@@ -4022,9 +3973,7 @@ export class GameManager {
       }
     }
     if (newPath.length > 0) {
-      this.path = newPath; this.pathIndex = 0;
-      this.tileProgress = 0;
-      this.tileFrom = { x: this.playerX, z: this.playerZ };
+      this.startPredictedPath(newPath, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
       // Send the re-path to the server so its moveQueue adopts the same
@@ -4032,7 +3981,6 @@ export class GameManager {
       // mid-walk while the server keeps walking the previous one — they
       // diverge by a tile within ~1s and the snap guard at line 1229 hauls
       // the visual onto the server position (the "teleport").
-      this.network.sendMove(newPath);
       // handlePlayerMove on the server clears the combat target on every
       // PLAYER_MOVE packet (it's the canonical "I want to walk somewhere
       // else" signal). Re-arm combat immediately so the swing fires when
@@ -4207,17 +4155,18 @@ export class GameManager {
     // moves faster, the legs cycle faster. Re-enable once run is wired up.
     const remaining = this.path.length - this.pathIndex;
     const speedMult = remaining > 3 ? 1.0 : remaining > 2 ? 1.0 : 1.0;
-    const runMult = this.runEnabled && this.runEnergy > 0 ? 2.0 : 1;
+    const runMult = this.runEnabled && this.runEnergy > 0 ? GameManager.RUN_SPEED_MULTIPLIER : 1;
     const effectiveSpeed = this.moveSpeed * speedMult * runMult;
 
     const stepRate = tileSteps > 0 ? (effectiveSpeed * dt) / tileSteps : 1;
     this.tileProgress += stepRate;
 
-    if (this.tileProgress >= 1.0) {
-      this.playerX = target.x;
-      this.playerZ = target.z;
-      this.tileProgress = 0;
-      this.tileFrom = { x: target.x, z: target.z };
+    while (this.tileProgress >= 1.0 && this.pathIndex < this.path.length) {
+      const stepTarget = this.path[this.pathIndex];
+      this.tileProgress -= 1.0;
+      this.playerX = stepTarget.x;
+      this.playerZ = stepTarget.z;
+      this.tileFrom = { x: stepTarget.x, z: stepTarget.z };
       this.pathIndex++;
 
       // Deferred talk-to fires now that playerX/Z are tile-aligned.
@@ -4234,6 +4183,7 @@ export class GameManager {
       }
 
       if (this.pathIndex >= this.path.length) {
+        this.tileProgress = 0;
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
         this.localPlayer.stopWalking();
@@ -4253,8 +4203,17 @@ export class GameManager {
           if (npcTarget) this.faceLocalPlayerToward(npcTarget.x, npcTarget.z);
           this.pendingFaceTargetEntityId = -1;
         }
+        break;
       }
-    } else {
+    }
+
+    if (this.pathIndex < this.path.length) {
+      const activeTarget = this.path[this.pathIndex];
+      const activeDx = activeTarget.x - this.tileFrom.x;
+      const activeDz = activeTarget.z - this.tileFrom.z;
+      this.playerX = this.tileFrom.x + activeDx * this.tileProgress;
+      this.playerZ = this.tileFrom.z + activeDz * this.tileProgress;
+    } else if (this.tileProgress < 1.0) {
       this.playerX = this.tileFrom.x + dx * this.tileProgress;
       this.playerZ = this.tileFrom.z + dz * this.tileProgress;
     }

@@ -616,6 +616,11 @@ export class World {
     );
   }
 
+  private checkpointPlayerPosition(player: Player): void {
+    this.db.savePlayerPosition(player.accountId, player, this.computeEffectiveY(player));
+    player.lastPositionPersistTick = this.currentTick;
+  }
+
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
@@ -1689,12 +1694,16 @@ export class World {
     const dx = Math.abs(player.position.x - item.x);
     const dz = Math.abs(player.position.y - item.z);
     if (dx > 1.5 || dz > 1.5) {
-      const map = this.getPlayerMap(player);
-      const path = map.findPathOnFloor(player.position.x, player.position.y, item.x, item.z, player.currentFloor);
-      if (path.length > 0) {
-        player.moveQueue = path;
-        player.pendingPickup = groundItemId;
+      // The client normally sends PLAYER_MOVE immediately before PICKUP.
+      // Preserve that queue instead of replacing it with a separately
+      // pathfound server route from an earlier authoritative tile; otherwise
+      // running redirects can rubber-band when the two routes differ.
+      if (player.moveQueue.length === 0) {
+        const map = this.getPlayerMap(player);
+        const path = map.findPathOnFloor(player.position.x, player.position.y, item.x, item.z, player.currentFloor);
+        if (path.length > 0) player.moveQueue = path;
       }
+      if (player.moveQueue.length > 0) player.pendingPickup = groundItemId;
       return;
     }
 
@@ -1727,7 +1736,10 @@ export class World {
     // client thought it was clicking. Mirrors 2004scape OpHeldHandler.ts:36.
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
-    const removed = player.removeItem(slotIndex);
+    const slot = player.inventory[slotIndex];
+    if (!slot) return;
+
+    const removed = player.removeItem(slotIndex, slot.quantity);
     if (removed.completed === 0) return;
 
     const groundItem: GroundItem = {
@@ -1803,12 +1815,6 @@ export class World {
     // action; we won't queue clicks behind it.
     if (player.isInterfaceOpen()) return;
 
-    // Doors: cancel current movement so adjacency check uses where the player actually stopped
-    if (obj.def.category === 'door') {
-      player.moveQueue = [];
-      player.pendingInteraction = null;
-    }
-
     // Check adjacency — player must be on a tile next to the object
     if (!this.isAdjacentToObject(player, obj)) {
       if (obj.def.category === 'door') {
@@ -1845,8 +1851,10 @@ export class World {
           path = map.findPathOnFloor(px, pz, tx + 0.5, tz + 0.5, player.currentFloor);
         }
 
-        if (path.length > 0) {
+        if (player.moveQueue.length === 0 && path.length > 0) {
           player.moveQueue = path;
+        }
+        if (player.moveQueue.length > 0) {
           player.pendingInteraction = { objectEntityId, actionIndex, swingSign };
         }
         // Empty path = unreachable (closed door is the only gap in the wall
@@ -1855,8 +1863,10 @@ export class World {
         return;
       }
       const path = this.findPathToObjectInteraction(player, obj);
-      if (path.length > 0) {
+      if (player.moveQueue.length === 0 && path.length > 0) {
         player.moveQueue = path;
+      }
+      if (player.moveQueue.length > 0) {
         player.pendingInteraction = { objectEntityId, actionIndex };
       } else {
         this.sendChatSystem(player, "I can't reach that.");
@@ -3008,6 +3018,10 @@ export class World {
       // above 0.5 for a fishing bot within ~50 movements.
       if (justArrived) {
         player.botStats?.recordMovement(player.position.x, player.position.y);
+      }
+
+      if (movedTiles > 0 && (justArrived || this.currentTick - player.lastPositionPersistTick >= 2)) {
+        this.checkpointPlayerPosition(player);
       }
 
       if (player.pendingPickup >= 0 && player.moveQueue.length === 0 && !justArrived) {

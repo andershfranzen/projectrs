@@ -503,6 +503,25 @@ export class GameDatabase {
     this.savePlayerRow(accountId, player, effectiveY);
   }
 
+  /** Cheap position-only checkpoint used by movement. Full state persistence
+   *  still happens through savePlayerState/savePlayersBatch; this narrows the
+   *  rollback window for relog/restart without serializing inventory, skills,
+   *  bank, and quest JSON every walking tick. */
+  savePlayerPosition(accountId: number, player: Player, effectiveY: number): void {
+    this.db.query(`
+      UPDATE player_state SET
+        x = ?, z = ?, y = ?, floor = ?, map_level = ?, updated_at = unixepoch()
+      WHERE account_id = ?
+    `).run(
+      player.position.x,
+      player.position.y,
+      effectiveY,
+      player.currentFloor,
+      player.currentMapLevel,
+      accountId,
+    );
+  }
+
   /** Batched save: wraps every per-row UPDATE in a single SQLite transaction
    *  so 100+ players flush in one fsync instead of N. Called by the 15s
    *  auto-save loop in World.saveAllPlayers.

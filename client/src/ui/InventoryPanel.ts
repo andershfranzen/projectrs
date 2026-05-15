@@ -139,29 +139,31 @@ export class InventoryPanel {
   }
 
   private onSlotClick(index: number): void {
-    const slot = this.slots[index];
-    if (!slot) return;
-    // TODO: Use item (eat food, etc.)
+    const [firstOption] = this.getSlotOptions(index);
+    firstOption?.action();
   }
 
   private onSlotRightClick(index: number, event: MouseEvent): void {
+    const options = this.getSlotOptions(index);
+    if (options.length === 0) return;
+
+    createContextMenu(options, {
+      x: event.clientX,
+      y: event.clientY,
+      itemPadding: '3px 10px',
+    });
+  }
+
+  private getSlotOptions(index: number): { label: string; action: () => void }[] {
     const slot = this.slots[index];
-    if (!slot) return;
+    if (!slot) return [];
 
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || 'Item';
-
-    const options: { label: string; action: () => void }[] = [
-      {
-        label: `Drop ${name}`,
-        action: () => {
-          this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId));
-        },
-      },
-    ];
+    const options: { label: string; action: () => void }[] = [];
 
     if (def?.equippable) {
-      options.unshift({
+      options.push({
         label: `Equip ${name}`,
         action: () => {
           this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EQUIP_ITEM, index, slot.itemId));
@@ -170,7 +172,7 @@ export class InventoryPanel {
     }
 
     if (def?.healAmount) {
-      options.unshift({
+      options.push({
         label: `Eat ${name}`,
         action: () => {
           this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index, slot.itemId));
@@ -178,11 +180,14 @@ export class InventoryPanel {
       });
     }
 
-    createContextMenu(options, {
-      x: event.clientX,
-      y: event.clientY,
-      itemPadding: '3px 10px',
+    options.push({
+      label: `Drop ${name}`,
+      action: () => {
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId));
+      },
     });
+
+    return options;
   }
 
   toggle(): void {

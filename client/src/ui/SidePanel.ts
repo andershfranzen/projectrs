@@ -350,15 +350,15 @@ export class SidePanel {
     const bottomTabs = document.createElement('div');
     bottomTabs.style.cssText = `display: flex; gap: 1px; padding: 0 2px 2px;`;
 
-    const tabs: { key: string; label: string; icon?: string; iconScale?: number; iconWidth?: number; pos: 'top' | 'bottom' }[] = [
+    const tabs: { key: string; label: string; icon?: string; iconScale?: number; pos: 'top' | 'bottom' }[] = [
       { key: 'attack_style', label: 'Combat Style', icon: '/ui/attack style.png', pos: 'top' },
-      { key: 'skills', label: 'Skills', icon: '/ui/Skill tab.png', iconScale: 1.4, iconWidth: 200, pos: 'top' },
+      { key: 'skills', label: 'Skills', icon: '/ui/Skill tab.png', iconScale: 1.08, pos: 'top' },
       { key: 'inventory', label: 'Inventory', icon: '/ui/Inventory.png', pos: 'top' },
       { key: 'equipment', label: 'Equipment', icon: '/ui/equipment.png', pos: 'top' },
       { key: 'good_magic', label: 'Good Magic', icon: '/ui/good magic.png', pos: 'bottom' },
       { key: 'evil_magic', label: 'Evil Magic', icon: '/ui/evil magic.png', pos: 'bottom' },
       { key: 'quests', label: 'Quests', icon: '/ui/quest icon.png', pos: 'bottom' },
-      { key: 'social', label: 'Friends and Ignore', icon: '/ui/friendlist.png', iconScale: 1.25, pos: 'bottom' },
+      { key: 'social', label: 'Friends and Ignore', icon: '/ui/friendlist.png', iconScale: 1.06, pos: 'bottom' },
     ];
 
     for (const tab of tabs) {
@@ -367,7 +367,6 @@ export class SidePanel {
         label: tab.label,
         icon: tab.icon,
         iconScale: tab.iconScale,
-        iconWidth: tab.iconWidth,
         onClick: () => this.switchTab(tab.key),
       });
       (tab.pos === 'top' ? topTabs : bottomTabs).appendChild(btn);
@@ -1010,21 +1009,35 @@ export class SidePanel {
   }
 
   private onInvSlotClick(index: number): void {
-    const slot = this.invSlots[index];
-    if (!slot) return;
-    const def = this.itemDefs.get(slot.itemId);
-    if (def?.healAmount) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index, slot.itemId));
-    }
+    const [firstOption] = this.getInvSlotOptions(index);
+    firstOption?.action();
   }
 
   private onInvSlotRightClick(index: number, event: MouseEvent): void {
+    const options = this.getInvSlotOptions(index);
+    if (options.length === 0) return;
+
+    // Initial placement at click point; the post-mount clamp keeps the menu
+    // inside the side panel for slots near the right or bottom edge.
+    const menu = createContextMenu(options, {
+      x: event.clientX,
+      y: event.clientY,
+      itemPadding: '3px 10px',
+      maxWidthPx: 180,
+    });
+
+    // Clamp the menu inside the side panel container — without this it spills
+    // off the right edge for slots in the right column, and off the bottom
+    // edge when right-clicking near the bottom row.
+    clampElementToRect(menu, this.container.getBoundingClientRect());
+  }
+
+  private getInvSlotOptions(index: number): { label: string; action: () => void }[] {
     const slot = this.invSlots[index];
-    if (!slot) return;
+    if (!slot) return [];
 
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || 'Item';
-
     const options: { label: string; action: () => void }[] = [];
 
     if (def?.equippable) {
@@ -1054,19 +1067,7 @@ export class SidePanel {
       action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId)),
     });
 
-    // Initial placement at click point; the post-mount clamp keeps the menu
-    // inside the side panel for slots near the right or bottom edge.
-    const menu = createContextMenu(options, {
-      x: event.clientX,
-      y: event.clientY,
-      itemPadding: '3px 10px',
-      maxWidthPx: 180,
-    });
-
-    // Clamp the menu inside the side panel container — without this it spills
-    // off the right edge for slots in the right column, and off the bottom
-    // edge when right-clicking near the bottom row.
-    clampElementToRect(menu, this.container.getBoundingClientRect());
+    return options;
   }
 
   // === Skills methods ===
