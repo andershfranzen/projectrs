@@ -4,6 +4,7 @@ import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
@@ -45,16 +46,18 @@ export class Npc3DEntity {
     scale: number,
     animMap: { idle: string; walk?: string; attack?: string; death?: string },
     label?: string,
+    materialColors?: Record<string, [number, number, number]>,
   ) {
     this.scene = scene;
     this.modelScale = scale;
-    this.load(file, animMap, label);
+    this.load(file, animMap, label, materialColors);
   }
 
   private async load(
     file: string,
     animMap: { idle: string; walk?: string; attack?: string; death?: string },
     label?: string,
+    materialColors?: Record<string, [number, number, number]>,
   ): Promise<void> {
     try {
       const lastSlash = file.lastIndexOf('/');
@@ -62,14 +65,33 @@ export class Npc3DEntity {
       const fname = file.substring(lastSlash + 1);
       const result = await SceneLoader.ImportMeshAsync('', dir, fname, this.scene);
 
-      // Apply nearest-neighbor filtering to NPC textures
+      // Clone every material before touching it — Babylon's glTF loader
+      // shares material instances across multiple ImportMeshAsync() of the
+      // same file, so unguarded mutation cross-contaminates every NPC sharing
+      // the GLB (Snow Wolf would whiten regular wolves too).
+      const cloned = new Map<any, any>();
       for (const mesh of result.meshes) {
-        const mat = mesh.material;
-        if (mat && 'diffuseTexture' in mat && (mat as any).diffuseTexture) {
-          (mat as any).diffuseTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+        const original = mesh.material as any;
+        if (!original) continue;
+        let mat = cloned.get(original);
+        if (!mat) {
+          mat = original.clone(`${original.name}_${label ?? 'npc'}`);
+          cloned.set(original, mat);
         }
-        if (mat && 'albedoTexture' in mat && (mat as any).albedoTexture) {
-          (mat as any).albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+        mesh.material = mat;
+        if (mat.diffuseTexture) mat.diffuseTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+        if (mat.albedoTexture) mat.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+        if (mat.getClassName?.() === 'PBRMaterial') {
+          mat.roughness = 1.0;
+          mat.metallic = 0.0;
+          mat.environmentIntensity = 0;
+          mat.specularIntensity = 0;
+        }
+        const override = materialColors?.[original.name];
+        if (override) {
+          const [r, g, b] = override;
+          if ('albedoColor' in mat) mat.albedoColor = new Color3(r, g, b);
+          else if ('diffuseColor' in mat) mat.diffuseColor = new Color3(r, g, b);
         }
       }
 

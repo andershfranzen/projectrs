@@ -42,9 +42,12 @@ function qPos(coord: number): number { return Math.round(coord * POSITION_SCALE)
 /** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
  *  At 600ms/tick this is ~2 minutes. */
 const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
-/** Despawn timer (ticks) applied to most ground items — dropped loot, death
- *  drops, and player-dropped items. ~2 minutes at 600ms/tick. */
+/** Despawn timer (ticks) applied to most ground items — NPC kill loot and
+ *  player-dropped items. ~2 minutes at 600ms/tick. */
 const GROUND_ITEM_DESPAWN_TICKS = 200;
+/** Longer despawn for items dropped on player death so a corpse run actually
+ *  reaches the pile. ~3 minutes at 600ms/tick. */
+const DEATH_DROP_DESPAWN_TICKS = 300;
 /** Despawn timer (ticks) for items spilled at the player's feet when a
  *  refund (trade abort, bank close-out) doesn't fit in inventory. Shorter
  *  than the standard despawn since the item is dropped in the player's
@@ -1860,6 +1863,15 @@ export class World {
         // Empty path = unreachable (closed door is the only gap in the wall
         // and player is on the wrong side, OR maxSteps exhausted). Drop the
         // click — there is no useful action we can queue for them.
+        return;
+      }
+      // Anvil-style stations (recipes requiring a held tool) demand strict
+      // adjacency. The client walks the player to the anvil before opening
+      // the recipe picker; auto-walking on a craft packet here would let a
+      // stale/open SmithingPanel craft from anywhere. Harvest/door stay on
+      // the walk-then-act path.
+      if (obj.def.recipes?.[0]?.requiresTool) {
+        this.sendChatSystem(player, `I need to stand next to the ${obj.def.name.toLowerCase()}.`);
         return;
       }
       const path = this.findPathToObjectInteraction(player, obj);
@@ -3697,8 +3709,7 @@ export class World {
 
     // Drop the rest as ground items at the death tile. Inline the
     // spawnGroundItem logic because that helper uses player.position which
-    // we're about to teleport away from. Use a 200-tick despawn (~2 min) —
-    // long enough for the player to walk back and reclaim if they want to.
+    // we're about to teleport away from.
     for (const d of dropped) {
       const groundItem: GroundItem = {
         id: nextGroundItemId++,
@@ -3707,7 +3718,7 @@ export class World {
         x: oldX,
         z: oldZ,
         mapLevel: oldMapId,
-        despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
+        despawnTimer: DEATH_DROP_DESPAWN_TICKS,
       };
       this.groundItems.set(groundItem.id, groundItem);
       this.despawningItemIds.add(groundItem.id);

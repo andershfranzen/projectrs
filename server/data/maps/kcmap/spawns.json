@@ -68,7 +68,17 @@
       "npcId": 8,
       "x": 146.5,
       "z": 152.5,
-      "wanderRange": 1
+      "wanderRange": 1,
+      "appearance": {
+        "shirtColor": 7,
+        "pantsColor": 7,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 1
+      },
+      "name": "Robert"
     },
     {
       "id": 11,
@@ -146,6 +156,44 @@
       "x": 256.5,
       "z": 94.5,
       "wanderRange": 2
+    },
+    {
+      "id": 22,
+      "npcId": 4,
+      "x": 231.5,
+      "z": 201.5,
+      "wanderRange": 4
+    },
+    {
+      "id": 23,
+      "npcId": 4,
+      "x": 234.5,
+      "z": 200.5,
+      "wanderRange": 4
+    },
+    {
+      "id": 24,
+      "npcId": 4,
+      "x": 233.5,
+      "z": 202.5,
+      "wanderRange": 4,
+      "aggressive": true
+    },
+    {
+      "id": 25,
+      "npcId": 17,
+      "x": 237.5,
+      "z": 201.5,
+      "wanderRange": 4,
+      "aggressive": true
+    },
+    {
+      "id": 26,
+      "npcId": 17,
+      "x": 238.5,
+      "z": 203.5,
+      "wanderRange": 4,
+      "aggressive": true
     }
   ],
   "objects": [],

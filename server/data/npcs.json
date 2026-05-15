@@ -534,5 +534,21 @@
     "bankAccess": true,
     "stationary": true,
     "lootTable": []
+  },
+  {
+    "id": 17,
+    "name": "Snow Wolf",
+    "health": 40,
+    "attack": 10,
+    "defence": 7,
+    "strength": 9,
+    "attackSpeed": 3,
+    "respawnTime": 30,
+    "aggressive": true,
+    "wanderRange": 4,
+    "lootTable": [
+      { "itemId": 1, "quantity": 1, "chance": 1 },
+      { "itemId": 20, "quantity": 1, "chance": 0.6 }
+    ]
   }
 ]

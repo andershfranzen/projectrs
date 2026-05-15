@@ -118,6 +118,7 @@ export class GameManager {
   private runEnergy: number = 100;
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
+  private pendingSmithing: { objectEntityId: number; def: WorldObjectDef } | null = null; // open smithing panel once walk to anvil finishes
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -635,6 +636,7 @@ export class GameManager {
       this.tileProgress = 0;
       this.pendingPath = null;
       this.pendingSkill = null;
+      this.pendingSmithing = null;
       this.combatTargetId = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -2307,6 +2309,7 @@ export class GameManager {
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.pendingSkill = null;
+      this.pendingSmithing = null;
       if (this.localPlayer) {
         this.localPlayer.stopWalking();
         this.localPlayer.setPositionXYZ(newX, newY, newZ);
@@ -3054,12 +3057,49 @@ export class GameManager {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.combatTargetId = -1;
 
-    // Intercept anvil/tool-based crafting: show recipe UI instead of auto-crafting
+    // Intercept anvil/tool-based crafting: show recipe UI instead of auto-crafting.
+    // Walk to the anvil first if not adjacent — the panel only opens once we're
+    // next to it. Server also refuses crafts when out of range as a backstop.
     const objData = this.worldObjectDefs.get(objectEntityId);
     if (objData) {
       const objDef = this.objectDefsCache.get(objData.defId);
       if (objDef?.recipes && objDef.recipes.length > 0 && objDef.recipes[0].requiresTool) {
-        this.showSmithingUI(objectEntityId, objDef);
+        const ptx = Math.floor(this.playerX);
+        const ptz = Math.floor(this.playerZ);
+        const alreadyAdj = isTileAdjacentToObject(ptx, ptz, objData.x, objData.z, objDef);
+        this.pendingSmithing = null;
+        if (alreadyAdj) {
+          this.showSmithingUI(objectEntityId, objDef);
+        } else {
+          const candidates = getObjectInteractionTiles(objData.x, objData.z, objDef)
+            .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+            .map(tile => ({
+              ax: tile.x,
+              az: tile.z,
+              dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
+            }));
+          candidates.sort((a, b) => a.dist - b.dist);
+
+          let bestPath: { x: number; z: number }[] | null = null;
+          for (const { ax, az } of candidates) {
+            const path = findPath(this.playerX, this.playerZ, ax + 0.5, az + 0.5,
+              this.isTileBlocked,
+              this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 500,
+              this.isWallBlockedForPath);
+            if (path.length > 0) {
+              bestPath = path;
+              break;
+            }
+          }
+          if (bestPath) {
+            this.path = bestPath;
+            this.pathIndex = 0;
+            this.tileProgress = 0;
+            this.tileFrom = { x: this.playerX, z: this.playerZ };
+            this.network.sendMove(bestPath);
+            this.pendingSmithing = { objectEntityId, def: objDef };
+          }
+        }
         return;
       }
     }
@@ -3638,6 +3678,7 @@ export class GameManager {
   private handleGroundClick(worldX: number, worldZ: number): void {
     this.combatTargetId = -1;
     this.pendingSkill = null;
+    this.pendingSmithing = null;
     // Walking elsewhere cancels the queued face-NPC — we'd look weird
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;
@@ -4195,6 +4236,11 @@ export class GameManager {
           this.pendingSkill = null;
           if (stationary) this.startSkillingStationary(objectId);
           else this.startSkillingVisual(objectId, variant);
+        }
+        if (this.pendingSmithing) {
+          const { objectEntityId: smithObjId, def: smithDef } = this.pendingSmithing;
+          this.pendingSmithing = null;
+          this.showSmithingUI(smithObjId, smithDef);
         }
         // Face the NPC we were walking up to talk to / attack. Done after
         // stopWalking so the rotation isn't immediately overwritten by the
