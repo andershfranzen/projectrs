@@ -397,6 +397,19 @@ export interface BiomesFile {
 export type GroundType = 'grass' | 'dirt' | 'sand' | 'path' | 'road' | 'water' | 'desert' | 'sandstone' | 'rock' | 'drysand' | 'dungeon-floor' | 'dungeon-rock';
 export type SplitDirection = 'forward' | 'back';
 
+/** Numeric IDs for GroundType — used to pack ground type into a Uint8Array
+ *  for the minimap snapshot. Order is stable; insert new types at the end. */
+export const GROUND_TYPES_BY_ID: readonly GroundType[] = [
+  'grass', 'dirt', 'sand', 'path', 'road', 'water',
+  'desert', 'sandstone', 'rock', 'drysand', 'dungeon-floor', 'dungeon-rock',
+];
+export const GROUND_TYPE_ID: Record<GroundType, number> = Object.freeze(
+  Object.fromEntries(GROUND_TYPES_BY_ID.map((g, i) => [g, i])) as Record<GroundType, number>,
+);
+/** Sentinel for "no ground data" (e.g. tile outside the map or in an
+ *  unloaded chunk). Minimap callers treat this as "fall through to tileType". */
+export const GROUND_TYPE_NONE = 0xff;
+
 export interface KCTile {
   ground: GroundType;
   groundB: GroundType | null;

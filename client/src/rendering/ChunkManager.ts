@@ -14,7 +14,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
@@ -57,6 +57,10 @@ interface FloorLayerClientData {
 
 export interface MinimapTileSnapshot {
   tiles: Uint8Array;
+  /** Per-tile GroundType ID (see GROUND_TYPE_ID in shared). 0xff = no data,
+   *  caller falls back to the broader TileType for color. Lets the minimap
+   *  distinguish sand vs drysand vs sandstone — TileType collapses these. */
+  grounds: Uint8Array;
   walls: Uint8Array;
   roofs: Uint8Array;
   textured: Uint8Array;
@@ -2281,6 +2285,8 @@ export class ChunkManager {
     const startX = Math.floor(centerX) - radius;
     const startZ = Math.floor(centerZ) - radius;
     const tiles = new Uint8Array(size * size);
+    const grounds = new Uint8Array(size * size);
+    grounds.fill(GROUND_TYPE_NONE);
     const walls = new Uint8Array(size * size);
     const roofs = new Uint8Array(size * size);
     const textured = new Uint8Array(size * size);
@@ -2304,6 +2310,10 @@ export class ChunkManager {
         if (this.roofData.has(flatIdx)) roofs[idx] = 1;
 
         const kcTile = this.getTileRaw(tx, tz);
+        if (kcTile) {
+          const id = GROUND_TYPE_ID[kcTile.ground];
+          if (id !== undefined) grounds[idx] = id;
+        }
         // textureIdB layers over textureId on the ground mesh.
         const overlayId = kcTile?.textureIdB || kcTile?.textureId || null;
         let override: [number, number, number] | null = null;
@@ -2325,7 +2335,7 @@ export class ChunkManager {
         }
       }
     }
-    return { tiles, walls, roofs, textured, voidTiles, overrideColors, hasOverride, size, startX, startZ };
+    return { tiles, grounds, walls, roofs, textured, voidTiles, overrideColors, hasOverride, size, startX, startZ };
   }
 
   isGroundMesh(meshName: string): boolean {

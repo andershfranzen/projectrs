@@ -1,4 +1,4 @@
-import { TileType, WallEdge } from '@projectrs/shared';
+import { TileType, WallEdge, GROUND_TYPE_ID, GROUND_TYPES_BY_ID, GROUND_TYPE_NONE, groundColor } from '@projectrs/shared';
 import type { ChunkManager } from '../rendering/ChunkManager';
 
 const INTERACTIVE_CATEGORIES = new Set([
@@ -17,6 +17,25 @@ const TILE_COLORS: Record<number, [number, number, number]> = {
   [TileType.WOOD]:  [0x74, 0x52, 0x30],
   [TileType.MUD]:   [0x3e, 0x8c, 0x2e],
 };
+/** Per-GroundType colours derived from the shared `groundColor()` source of
+ *  truth (used by 3D terrain rendering + the editor preview). TileType
+ *  collapses sand/drysand/desert and stone/sandstone/rock, so colouring by
+ *  tile type makes painted desert zones indistinguishable; per-ground keeps
+ *  them readable. The 1.25× brightening factor compensates for how dark the
+ *  world colours look at minimap scale (32×32 → ~3-pixel tiles). */
+const MINIMAP_COLOR_BOOST = 1.25;
+const GROUND_COLORS: Record<number, [number, number, number]> = (() => {
+  const out: Record<number, [number, number, number]> = {};
+  for (const g of GROUND_TYPES_BY_ID) {
+    const c = groundColor(g, 1.0);
+    out[GROUND_TYPE_ID[g]] = [
+      Math.min(255, Math.round(c.r * 255 * MINIMAP_COLOR_BOOST)),
+      Math.min(255, Math.round(c.g * 255 * MINIMAP_COLOR_BOOST)),
+      Math.min(255, Math.round(c.b * 255 * MINIMAP_COLOR_BOOST)),
+    ];
+  }
+  return out;
+})();
 const ROOF_COLOR: [number, number, number] = [0x60, 0x40, 0x22];
 const FLOOR_COLOR: [number, number, number] = [0x8a, 0x74, 0x52];
 
@@ -165,6 +184,7 @@ export class Minimap {
 
       const queried = chunkManager.getTilesForMinimap(playerX, playerZ, VIEW_RADIUS);
       const tiles = queried.tiles;
+      const grounds = queried.grounds;
       const walls = queried.walls;
       const roofs = queried.roofs;
       const textured = queried.textured;
@@ -208,16 +228,21 @@ export class Minimap {
 
           const isRoofed = !isCollision && roofs[tIdx] === 1;
           const isTextured = !isCollision && textured[tIdx] === 1;
-          // Color priority (lowest → highest): tile-type → FLOOR_COLOR (textured
-          // but unsampled) → sampled override → roof → collision.
-          let base: [number, number, number] = TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS];
+          // Color priority (lowest → highest): ground-type → tile-type fallback
+          // → FLOOR_COLOR (textured but unsampled) → sampled override → roof →
+          // collision (darker version of base, not forced grass — walls in
+          // sand zones used to come out green).
+          const groundId = grounds[tIdx];
+          let base: [number, number, number] = groundId !== GROUND_TYPE_NONE
+            ? (GROUND_COLORS[groundId] ?? TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS])
+            : (TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS]);
           if (isTextured) base = FLOOR_COLOR;
           if (hasOverride[tIdx] === 1) {
             const oOff = tIdx * 3;
             base = [overrideColors[oOff], overrideColors[oOff + 1], overrideColors[oOff + 2]];
           }
           if (isRoofed) base = ROOF_COLOR;
-          if (isCollision) base = TILE_COLORS[TileType.GRASS];
+          if (isCollision) base = [(base[0] * 0.55) | 0, (base[1] * 0.55) | 0, (base[2] * 0.55) | 0];
           const wx = startX + dx;
           const wz = startZ + dz;
           const noise = tileHash(wx, wz);
