@@ -5104,6 +5104,11 @@ export class GameManager {
     if (def.category === 'door') {
       return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
     }
+    if (def.category === 'ladder') {
+      return this.chunkManager.getMapId() === 'the_sultans_mine'
+        ? ['Climb-up', 'Examine']
+        : ['Climb-down', 'Examine'];
+    }
     if (depleted) return [];
     return def.actions;
   }

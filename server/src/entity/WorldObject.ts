@@ -4,6 +4,8 @@ let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player
 
 const DOOR_ACTIONS_CLOSED: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_OPEN: readonly string[] = ['Close', 'Examine'];
+const LADDER_ACTIONS_SURFACE: readonly string[] = ['Climb-down', 'Examine'];
+const LADDER_ACTIONS_MINE: readonly string[] = ['Climb-up', 'Examine'];
 
 export class WorldObject {
   readonly id: number;
@@ -37,6 +39,9 @@ export class WorldObject {
   get currentActions(): readonly string[] {
     if (this.def.category === 'door') {
       return this.doorOpen ? DOOR_ACTIONS_OPEN : DOOR_ACTIONS_CLOSED;
+    }
+    if (this.def.category === 'ladder') {
+      return this.mapLevel === 'the_sultans_mine' ? LADDER_ACTIONS_MINE : LADDER_ACTIONS_SURFACE;
     }
     return this.def.actions;
   }

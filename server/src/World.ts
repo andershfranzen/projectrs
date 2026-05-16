@@ -1984,7 +1984,7 @@ export class World {
     }
 
     if (obj.def.category === 'ladder' && (action === 'Climb-up' || action === 'Climb-down')) {
-      this.handleLadderInteraction(player, obj, action === 'Climb-up' ? 1 : -1);
+      this.handleLadderInteraction(player, obj, action);
       return;
     }
 
@@ -2023,43 +2023,33 @@ export class World {
     }
   }
 
-  private handleLadderInteraction(player: Player, obj: WorldObject, direction: 1 | -1): void {
-    const map = this.getPlayerMap(player);
-    let target = this.findLadderFloorTarget(player, obj, direction);
-    // Make left-click forgiving on upper-floor ladders: if "Climb-up" has no
-    // valid floor above, climb down instead. Right-click still exposes both.
-    if (!target && direction === 1 && player.currentFloor > 0) {
-      target = this.findLadderFloorTarget(player, obj, -1);
+  private handleLadderInteraction(player: Player, obj: WorldObject, action: 'Climb-up' | 'Climb-down'): void {
+    const targetMap = action === 'Climb-down'
+      ? 'the_sultans_mine'
+      : 'kcmap';
+    if (player.currentMapLevel === targetMap) {
+      this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
+      return;
     }
-    if (!target) {
-      this.sendChatSystem(player, direction === 1 ? "I can't climb up there." : "I can't climb down there.");
+    const targetLadder = this.findMapLadder(targetMap);
+    if (!targetLadder) {
+      this.sendChatSystem(player, "I can't find where this ladder leads.");
       return;
     }
 
     this.interruptPlayerAction(player.id, player);
-    player.currentFloor = target.floor;
-    player.lastFloorChangeTile = Math.floor(target.z) * map.width + Math.floor(target.x);
-    this.refreshPlayerEffectiveY(player);
-    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
-    this.teleportPlayer(player, target.x, target.z);
+    player.currentFloor = 0;
+    player.lastFloorChangeTile = -1;
+    this.handleMapTransition(player, {
+      targetMap,
+      targetX: targetLadder.x,
+      targetZ: targetLadder.z,
+    });
   }
 
-  private findLadderFloorTarget(player: Player, obj: WorldObject, direction: 1 | -1): { floor: number; x: number; z: number } | null {
-    const map = this.getPlayerMap(player);
-    const targetFloor = player.currentFloor + direction;
-    if (targetFloor < 0) return null;
-
-    const ox = Math.floor(obj.x);
-    const oz = Math.floor(obj.z);
-    const candidates = [
-      { x: ox, z: oz },
-      ...getObjectInteractionTiles(obj.x, obj.z, obj.def),
-    ];
-
-    for (const tile of candidates) {
-      if (tile.x < 0 || tile.x >= map.width || tile.z < 0 || tile.z >= map.height) continue;
-      if (map.isTileBlockedOnFloor(tile.x, tile.z, targetFloor)) continue;
-      return { floor: targetFloor, x: tile.x + 0.5, z: tile.z + 0.5 };
+  private findMapLadder(mapId: string): WorldObject | null {
+    for (const [, candidate] of this.worldObjects) {
+      if (candidate.mapLevel === mapId && candidate.def.category === 'ladder') return candidate;
     }
     return null;
   }
