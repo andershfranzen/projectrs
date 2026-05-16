@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, initSkills, xpForLevel, normalizeAppearance } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, combatLevel, initSkills, xpForLevel, normalizeAppearance, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -69,6 +69,24 @@ export interface SavedPlayerState {
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
   quests: Record<string, { stage: number; triggerProgress: number }>;
+}
+
+export interface HiscoreCategory {
+  id: string;
+  name: string;
+}
+
+export interface HiscoreRow {
+  rank: number;
+  username: string;
+  level: number;
+  xp: number;
+}
+
+export interface HiscoreResponse {
+  category: HiscoreCategory;
+  categories: HiscoreCategory[];
+  rows: HiscoreRow[];
 }
 
 export class GameDatabase {
@@ -359,16 +377,10 @@ export class GameDatabase {
   }
 
   async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
-    // Validate
-    if (!username || username.length < 1 || username.length > 16) {
-      return { ok: false, error: 'Username must be 1-16 characters' };
-    }
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-      return { ok: false, error: 'Username must be alphanumeric (underscores allowed)' };
-    }
-    if (!password || password.length < 8 || password.length > 64) {
-      return { ok: false, error: 'Password must be 8-64 characters' };
-    }
+    const usernameError = validateUsername(username);
+    if (usernameError) return { ok: false, error: usernameError };
+    const passwordError = validatePassword(password);
+    if (passwordError) return { ok: false, error: passwordError };
 
     // Check if username exists
     const existing = this.db.query('SELECT id FROM accounts WHERE username = ?').get(username);
@@ -681,6 +693,68 @@ export class GameDatabase {
   saveAppearance(accountId: number, appearance: PlayerAppearance): void {
     this.db.query('UPDATE player_state SET appearance = ? WHERE account_id = ?')
       .run(JSON.stringify(appearance), accountId);
+  }
+
+  getHiscores(categoryId: string = 'overall', limit: number = 100): HiscoreResponse {
+    const categories: HiscoreCategory[] = [
+      { id: 'overall', name: 'Overall' },
+      { id: 'combat', name: 'Combat' },
+      ...ALL_SKILLS.map((id) => ({ id, name: SKILL_NAMES[id] })),
+    ];
+    const category = categories.find((c) => c.id === categoryId) ?? categories[0];
+    const cappedLimit = Math.max(1, Math.min(500, Math.floor(limit) || 100));
+    const rows = this.db.query(`
+      SELECT a.username, ps.skills
+      FROM player_state ps
+      JOIN accounts a ON a.id = ps.account_id
+    `).all() as Array<{ username: string; skills: string }>;
+
+    const ranked = rows.map((row) => {
+      const skills = initSkills();
+      try {
+        const saved = JSON.parse(row.skills) as Partial<Record<SkillId, Partial<SkillBlock[SkillId]>>>;
+        for (const id of ALL_SKILLS) {
+          const skill = saved[id];
+          if (!skill) continue;
+          const xp = typeof skill.xp === 'number' && Number.isFinite(skill.xp) ? Math.max(0, Math.floor(skill.xp)) : skills[id].xp;
+          const level = typeof skill.level === 'number' && Number.isFinite(skill.level) ? Math.max(1, Math.floor(skill.level)) : skills[id].level;
+          const currentLevel = typeof skill.currentLevel === 'number' && Number.isFinite(skill.currentLevel)
+            ? Math.max(0, Math.floor(skill.currentLevel))
+            : level;
+          skills[id] = { xp, level, currentLevel };
+        }
+      } catch {
+        // Keep default level-1/10hp skills for corrupted or legacy rows.
+      }
+
+      if (category.id === 'combat') {
+        return {
+          username: row.username,
+          level: combatLevel(skills),
+          xp: ALL_SKILLS.reduce((sum, id) => sum + skills[id].xp, 0),
+        };
+      }
+      if (category.id === 'overall') {
+        return {
+          username: row.username,
+          level: ALL_SKILLS.reduce((sum, id) => sum + skills[id].level, 0),
+          xp: ALL_SKILLS.reduce((sum, id) => sum + skills[id].xp, 0),
+        };
+      }
+
+      const skillId = category.id as SkillId;
+      return {
+        username: row.username,
+        level: skills[skillId].level,
+        xp: skills[skillId].xp,
+      };
+    }).sort((a, b) => b.xp - a.xp || b.level - a.level || a.username.localeCompare(b.username));
+
+    return {
+      category,
+      categories,
+      rows: ranked.slice(0, cappedLimit).map((row, idx) => ({ rank: idx + 1, ...row })),
+    };
   }
 
   /** Load the bot-detection telemetry blob for an account. Returns a row

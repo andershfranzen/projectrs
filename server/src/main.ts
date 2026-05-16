@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validatePassword, validateUsername } from '@projectrs/shared';
 import { resolve, dirname, sep } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -410,6 +410,7 @@ import {
 } from './network/ChatSocket';
 
 const CLIENT_DIST = resolve(import.meta.dir, '../../client/dist');
+const WEBSITE_DIST = resolve(import.meta.dir, '../../website/dist');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
 
@@ -480,6 +481,33 @@ function serveStatic(pathname: string): Response | null {
       headers: {
         'Content-Type': getMimeType(filePath),
         'Cache-Control': cacheControl,
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+function serveWebsite(pathname: string): Response | null {
+  const decoded = decodeURIComponent(pathname);
+  if (decoded !== '/' && decoded !== '/hiscores' && !decoded.startsWith('/_next/')) return null;
+  let filePath = resolve(WEBSITE_DIST, decoded === '/' ? 'index.html' : decoded === '/hiscores' ? 'hiscores.html' : decoded.slice(1));
+  let isHtml = false;
+
+  try {
+    const stat = statSync(filePath);
+    if (stat.isDirectory()) filePath = resolve(filePath, 'index.html');
+  } catch {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(filePath);
+    isHtml = filePath.endsWith('.html');
+    return new Response(content, {
+      headers: {
+        'Content-Type': getMimeType(filePath),
+        'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=31536000, immutable',
       },
     });
   } catch {
@@ -703,21 +731,35 @@ const server = Bun.serve<SocketData>({
   async fetch(req, server) {
     const url = new URL(req.url);
 
+    if (url.pathname === '/api/status' && req.method === 'GET') {
+      return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
+    }
+
+    if (url.pathname === '/api/hiscores' && req.method === 'GET') {
+      return jsonResponse(db.getHiscores(url.searchParams.get('category') ?? 'overall', Number(url.searchParams.get('limit') ?? 100)));
+    }
+
     // --- REST Auth Endpoints ---
 
     if (url.pathname === '/api/signup' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const ip = server.requestIP(req)?.address ?? 'unknown';
-      if (!checkRate(signupAttempts, ip, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
-        return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
-      }
       try {
         const body = await req.json() as { username?: string; password?: string; deviceId?: string };
+        const username = body.username || '';
+        const password = body.password || '';
+        const usernameError = validateUsername(username);
+        if (usernameError) return jsonResponse({ ok: false, error: usernameError }, 400);
+        const passwordError = validatePassword(password);
+        if (passwordError) return jsonResponse({ ok: false, error: passwordError }, 400);
+        if (!checkRate(signupAttempts, ip, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
+          return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
+        }
         const deviceId = sanitizeDeviceId(body.deviceId);
-        const result = await db.createAccount(body.username || '', body.password || '', deviceId);
+        const result = await db.createAccount(username, password, deviceId);
         if (result.ok) {
-          return jsonResponse({ ok: true, token: result.token, username: body.username });
+          return jsonResponse({ ok: true, token: result.token, username });
         }
         return jsonResponse({ ok: false, error: result.error }, 400);
       } catch {
@@ -1546,6 +1588,9 @@ const server = Bun.serve<SocketData>({
 
     // --- Static File Serving ---
 
+    const websiteResponse = serveWebsite(url.pathname);
+    if (websiteResponse) return websiteResponse;
+
     const response = serveStatic(url.pathname);
     if (response) return response;
 
@@ -1603,4 +1648,3 @@ console.log(`ProjectRS server running on http://localhost:${server.port}`);
 console.log(`Game WebSocket: ws://localhost:${server.port}${GAME_WS_PATH}`);
 console.log(`Chat WebSocket: ws://localhost:${server.port}${CHAT_WS_PATH}`);
 console.log(`World tick rate: ${600}ms — ${world.players.size} players online`);
-

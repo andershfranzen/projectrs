@@ -1,4 +1,5 @@
 import { ensurePreAuthTheme } from './preAuthTheme';
+import { PASSWORD_MAX_LENGTH, validatePassword, validateUsername } from '@projectrs/shared';
 
 export type LoginCallback = (token: string, username: string) => void | Promise<void>;
 
@@ -110,7 +111,7 @@ export class LoginScreen {
     const input = document.createElement('input');
     input.id = id;
     input.type = type;
-    input.maxLength = type === 'password' ? 64 : 16;
+    input.maxLength = type === 'password' ? PASSWORD_MAX_LENGTH : 16;
     input.className = 'eq-login-input';
     wrap.appendChild(input);
 
@@ -150,12 +151,18 @@ export class LoginScreen {
     }
 
     if (this.activeMode === 'signup') {
+      const usernameError = validateUsername(username);
+      if (usernameError) {
+        this.showError(usernameError);
+        return;
+      }
       if (password !== confirm) {
         this.showError('Passwords do not match');
         return;
       }
-      if (password.length < 4) {
-        this.showError('Password must be at least 4 characters');
+      const passwordError = validatePassword(password);
+      if (passwordError) {
+        this.showError(passwordError);
         return;
       }
     }

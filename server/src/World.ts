@@ -115,6 +115,14 @@ export class World {
     return false;
   }
 
+  getOnlinePlayerCount(): number {
+    let count = 0;
+    for (const [, player] of this.players) {
+      if (!player.disconnected && !player.requestIdleLogout) count++;
+    }
+    return count;
+  }
+
   /** Fire-and-forget PTR lookup. Writes back to login_history.reverse_dns
    *  when the lookup resolves; silently ignores failures. Bounded by Node's
    *  DNS resolver — won't block the tick loop. */

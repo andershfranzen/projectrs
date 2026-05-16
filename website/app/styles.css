@@ -1,0 +1,494 @@
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: #050505;
+}
+
+body {
+  position: relative;
+  min-height: 100%;
+  margin: 0;
+  color: #f1eee7;
+  font-family: Arial, Helvetica, sans-serif;
+  background: #050505;
+  text-shadow: 2px 2px 0 #000;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: -50vmax;
+  z-index: 0;
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.86)),
+    url('/ui/stone-bg.png') repeat;
+  transform: rotate(90deg);
+  transform-origin: center;
+  pointer-events: none;
+}
+
+a {
+  color: #b94a3f;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+a:hover {
+  color: #d46a5c;
+  text-decoration: underline;
+}
+
+.button {
+  display: inline-block;
+  cursor: pointer;
+  color: #fff;
+  font: 900 18px/1.1 Arial, Helvetica, sans-serif;
+  text-align: center;
+  text-shadow: 2px 2px 0 #000;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.28)),
+    url('/ui/stone-light.png') repeat;
+  border: 2px solid #3b3b3b;
+  outline: 1px solid #000;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+}
+
+.button:hover {
+  filter: brightness(1.18);
+  text-decoration: none;
+}
+
+.page {
+  position: relative;
+  z-index: 1;
+  width: min(1280px, calc(100vw - 48px));
+  margin: 0 auto;
+  padding: 44px 0 38px;
+}
+
+.top {
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(520px, 1.1fr);
+  gap: 34px;
+  align-items: center;
+  margin-bottom: 26px;
+}
+
+.top-centered {
+  display: flex;
+  justify-content: center;
+}
+
+.hidden-section {
+  display: none;
+}
+
+.brand {
+  min-height: 275px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  width: min(760px, 100%);
+}
+
+.logo {
+  font-family: 'Cinzel', 'Times New Roman', serif;
+  font-size: clamp(58px, 7vw, 104px);
+  line-height: 0.9;
+  font-weight: 900;
+  letter-spacing: 3px;
+  color: #d8372b;
+  text-shadow: 3px 3px 0 #160604, 0 0 10px rgba(216, 55, 43, 0.24);
+}
+
+.online {
+  margin-top: 30px;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.online strong {
+  color: #b94a3f;
+}
+
+.panel {
+  background: #030303;
+  border: 3px solid #2b2b2b;
+  outline: 2px solid #050505;
+  box-shadow:
+    inset 0 0 0 1px #151515,
+    0 0 0 1px rgba(255,255,255,0.05);
+}
+
+.panel-title {
+  margin: 0 0 22px;
+  color: #fff;
+  font-size: 24px;
+  line-height: 1.1;
+  font-weight: 900;
+  text-align: center;
+}
+
+.news {
+  padding: 24px 26px 22px;
+}
+
+.news-grid {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 26px;
+  align-items: center;
+}
+
+.news img {
+  width: 138px;
+  height: 138px;
+  object-fit: contain;
+  image-rendering: pixelated;
+  filter: drop-shadow(7px 8px 0 rgba(0,0,0,0.75));
+}
+
+.news ol {
+  list-style: none;
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+}
+
+.news li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 20px;
+  color: #fff;
+  font-size: 23px;
+  font-weight: 900;
+}
+
+.news time {
+  white-space: nowrap;
+}
+
+.news-footer {
+  margin: 30px 0 0;
+  color: #fff;
+  font-size: 22px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.features {
+  padding: 24px 34px 34px;
+  margin-bottom: 28px;
+}
+
+.feature-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.feature {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.feature .button {
+  width: 100%;
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  margin-bottom: 18px;
+}
+
+.feature span {
+  font-weight: 400;
+}
+
+.feature p {
+  margin: 0;
+  color: #fff;
+  font-size: 21px;
+  line-height: 1.14;
+  font-weight: 900;
+}
+
+.directory {
+  padding: 24px 28px 30px;
+}
+
+.combined-directory {
+  margin-top: 28px;
+}
+
+.tile-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 34px 28px;
+}
+
+.useful-links-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: start;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.tile .button {
+  width: 100%;
+  padding: 9px 10px;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: clamp(14px, 1.45vw, 18px);
+}
+
+.tile p {
+  margin: 18px 0 0;
+  color: #fff;
+  font-size: clamp(16px, 1.6vw, 21px);
+  line-height: 1.14;
+  font-weight: 900;
+  text-align: left;
+}
+
+.inactive-tile {
+  opacity: 0.62;
+}
+
+.disabled-button {
+  cursor: default;
+  color: #c2c2c2;
+  filter: grayscale(1) brightness(0.72);
+}
+
+.disabled-button:hover {
+  filter: grayscale(1) brightness(0.72);
+}
+
+.disabled-link {
+  color: #8f8f8f;
+  font-weight: 900;
+}
+
+.hiscores-page {
+  width: min(1180px, calc(100vw - 48px));
+}
+
+.hiscores-panel {
+  padding: 28px;
+}
+
+.hiscores-heading {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.hiscores-heading .panel-title {
+  margin: 0;
+  text-align: left;
+  font-size: 32px;
+}
+
+.back-link {
+  font-size: 18px;
+}
+
+.hiscores-layout {
+  display: grid;
+  grid-template-columns: 230px 1fr;
+  gap: 26px;
+  align-items: start;
+}
+
+.skill-nav {
+  display: grid;
+  gap: 9px;
+}
+
+.skill-tab {
+  min-height: 42px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #fff;
+  font: 900 17px/1 Arial, Helvetica, sans-serif;
+  text-align: left;
+  text-shadow: 2px 2px 0 #000;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.3)),
+    url('/ui/stone-light.png') repeat;
+  border: 2px solid #3b3b3b;
+  outline: 1px solid #000;
+}
+
+.skill-tab:hover,
+.skill-tab.active {
+  color: #fff;
+  filter: brightness(1.2);
+  border-color: #8d3932;
+}
+
+.ranking-shell {
+  min-width: 0;
+}
+
+.ranking-title {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: baseline;
+  margin-bottom: 14px;
+  color: #fff;
+  font-weight: 900;
+}
+
+.ranking-title h2 {
+  margin: 0;
+  font-size: 25px;
+}
+
+.ranking-title span {
+  font-size: 16px;
+  color: #cfc8bd;
+}
+
+.table-state {
+  margin: 24px 0;
+  color: #fff;
+  font-size: 21px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.hiscores-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+}
+
+.hiscores-table th,
+.hiscores-table td {
+  padding: 12px 14px;
+  border: 2px solid #242424;
+  text-align: left;
+}
+
+.hiscores-table th {
+  background:
+    linear-gradient(180deg, rgba(255,255,255,0.08), rgba(0,0,0,0.3)),
+    url('/ui/stone-light.png') repeat;
+}
+
+.hiscores-table tbody tr:nth-child(odd) {
+  background: #0a0a0a;
+}
+
+.hiscores-table tbody tr:nth-child(even) {
+  background: #111;
+}
+
+.hiscores-table td:first-child,
+.hiscores-table td:nth-child(3),
+.hiscores-table td:nth-child(4),
+.hiscores-table th:first-child,
+.hiscores-table th:nth-child(3),
+.hiscores-table th:nth-child(4) {
+  text-align: right;
+}
+
+@media (max-width: 980px) {
+  .page {
+    width: min(680px, calc(100vw - 24px));
+    padding-top: 22px;
+  }
+
+  .top,
+  .feature-row,
+  .tile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .brand {
+    min-height: 210px;
+  }
+
+  .news-grid {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .news li {
+    font-size: 18px;
+  }
+
+  .feature {
+    display: flex;
+  }
+
+  .feature p,
+  .tile p {
+    font-size: 18px;
+  }
+
+  .hiscores-page {
+    width: min(680px, calc(100vw - 24px));
+  }
+
+  .hiscores-panel {
+    padding: 20px 14px;
+  }
+
+  .hiscores-heading,
+  .hiscores-layout,
+  .ranking-title {
+    grid-template-columns: 1fr;
+  }
+
+  .hiscores-heading .panel-title {
+    text-align: center;
+  }
+
+  .skill-nav {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .skill-tab {
+    text-align: center;
+    font-size: 15px;
+  }
+
+  .hiscores-table {
+    font-size: 15px;
+  }
+
+  .hiscores-table th,
+  .hiscores-table td {
+    padding: 9px 7px;
+  }
+
+}

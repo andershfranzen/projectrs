@@ -1,7 +1,7 @@
 {
   "name": "projectrs",
   "private": true,
-  "workspaces": ["shared", "server", "client", "editor"],
+  "workspaces": ["shared", "server", "client", "editor", "website"],
   "scripts": {
     "dev:client": "cd client && bunx vite --port 5173",
     "dev:server": "bun --watch server/src/main.ts",
@@ -9,6 +9,7 @@
     "dev:enchant": "bun -e \"Bun.serve({ port: 8080, fetch(req) { const url = new URL(req.url); let path = '.' + decodeURIComponent(url.pathname); if (path === './') path = './enchant-prototype.html'; return new Response(Bun.file(path)); } }); console.log('Enchant editor: http://localhost:8080')\"",
     "dev:spell-editor": "bun -e \"Bun.serve({ port: 8081, fetch(req) { const url = new URL(req.url); let path = '.' + decodeURIComponent(url.pathname); if (path === './') path = './spell-editor.html'; return new Response(Bun.file(path)); } }); console.log('Spell editor: http://localhost:8081')\"",
     "build:client": "cd client && bunx vite build",
+    "build:website": "cd website && bunx next build",
     "start": "bun server/src/main.ts",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },

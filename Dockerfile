@@ -8,15 +8,18 @@ COPY shared/package.json ./shared/
 COPY server/package.json ./server/
 COPY client/package.json ./client/
 COPY editor/package.json ./editor/
+COPY website/package.json ./website/
 RUN bun install
 
 # Source
 COPY shared/ ./shared/
 COPY server/ ./server/
 COPY client/ ./client/
+COPY website/ ./website/
 
-# Build client → client/dist (also copies client/public into dist)
+# Build browser surfaces
 RUN cd client && bunx vite build
+RUN cd website && bunx next build
 
 FROM oven/bun:1-alpine
 WORKDIR /app
@@ -27,6 +30,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/shared ./shared
 COPY --from=builder /app/server ./server
 COPY --from=builder /app/client/dist ./client/dist
+COPY --from=builder /app/website/dist ./website/dist
 
 ENV NODE_ENV=production
 EXPOSE 4000
