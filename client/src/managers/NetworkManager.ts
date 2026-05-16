@@ -27,7 +27,7 @@ export type RawMessageHandler = (data: ArrayBuffer) => void;
 export type DisconnectHandler = (event: CloseEvent) => void;
 
 const GAME_HEARTBEAT_INTERVAL_MS = 5_000;
-const GAME_HEARTBEAT_TIMEOUT_MS = 12_000;
+const GAME_HEARTBEAT_TIMEOUT_MS = 60_000;
 
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
  *  instead of the int16-array layout. Handled exclusively by raw handlers;
