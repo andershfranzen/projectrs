@@ -2900,7 +2900,7 @@ export class GameManager {
     const def = this.objectDefsCache.get(data.defId);
     if (!def || (data.depleted && def.category !== 'door')) return [];
 
-    return this.actionsForInstance(def, data.depleted).map((actionName, actionIdx) => ({
+    return this.actionsForInstance(def, data.depleted, data).map((actionName, actionIdx) => ({
       label: `${actionName} ${def.name}`,
       action: () => this.interactObject(objectEntityId, actionIdx),
     }));
@@ -5100,17 +5100,28 @@ export class GameManager {
    *  state, everything else uses the def's static actions. Mirrors
    *  WorldObject.currentActions on the server so right-click labels stay
    *  truthful as the door toggles. */
-  private actionsForInstance(def: WorldObjectDef, depleted: boolean): readonly string[] {
+  private actionsForInstance(
+    def: WorldObjectDef,
+    depleted: boolean,
+    data?: { x: number; z: number },
+  ): readonly string[] {
     if (def.category === 'door') {
       return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
     }
-    if (def.category === 'ladder') {
-      return this.chunkManager.getMapId() === 'the_sultans_mine'
-        ? ['Climb-up', 'Examine']
-        : ['Climb-down', 'Examine'];
-    }
+    if (def.category === 'ladder') return this.ladderActionsForObject(data);
     if (depleted) return [];
     return def.actions;
+  }
+
+  private ladderActionsForObject(data?: { x: number; z: number }): readonly string[] {
+    if (!data) return ['Examine'];
+    const lower = this.chunkManager.getEffectiveHeight(data.x, data.z, 0, Number.NEGATIVE_INFINITY);
+    const upper = this.chunkManager.getEffectiveHeight(data.x, data.z, 0, Number.POSITIVE_INFINITY);
+    if (!Number.isFinite(upper) || upper < lower + 1.0) return ['Examine'];
+    const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
+    return playerY > upper - 1.2
+      ? ['Climb-down', 'Examine']
+      : ['Climb-up', 'Examine'];
   }
 
   private isWorldObjectInteractable(def: WorldObjectDef | undefined | null, depleted: boolean): boolean {

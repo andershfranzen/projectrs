@@ -1976,7 +1976,9 @@ export class World {
     player.attackTarget = null;
     this.clearCombatTarget(playerId);
 
-    const action = obj.currentActions[actionIndex];
+    const action = obj.def.category === 'ladder'
+      ? this.ladderActionsForPlayer(player, obj)[actionIndex]
+      : obj.currentActions[actionIndex];
     if (!action) return;
 
     if (action === 'Examine') {
@@ -2031,34 +2033,34 @@ export class World {
   }
 
   private handleLadderInteraction(player: Player, obj: WorldObject, action: 'Climb-up' | 'Climb-down'): void {
-    const targetMap = action === 'Climb-down'
-      ? 'the_sultans_mine'
-      : 'kcmap';
-    if (player.currentMapLevel === targetMap) {
+    const heights = this.getLadderHeights(player, obj);
+    if (!heights) {
       this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
       return;
     }
-    const targetLadder = this.findMapLadder(targetMap);
-    if (!targetLadder) {
-      this.sendChatSystem(player, "I can't find where this ladder leads.");
-      return;
-    }
 
+    const targetY = action === 'Climb-down' ? heights.lower : heights.upper;
     this.interruptPlayerAction(player.id, player);
     player.currentFloor = 0;
     player.lastFloorChangeTile = -1;
-    this.handleMapTransition(player, {
-      targetMap,
-      targetX: targetLadder.x,
-      targetZ: targetLadder.z,
-    });
+    this.teleportPlayer(player, obj.x, obj.z, targetY);
   }
 
-  private findMapLadder(mapId: string): WorldObject | null {
-    for (const [, candidate] of this.worldObjects) {
-      if (candidate.mapLevel === mapId && candidate.def.category === 'ladder') return candidate;
-    }
-    return null;
+  private ladderActionsForPlayer(player: Player, obj: WorldObject): readonly string[] {
+    const heights = this.getLadderHeights(player, obj);
+    if (!heights) return ['Examine'];
+    return heights.onUpper
+      ? ['Climb-down', 'Examine']
+      : ['Climb-up', 'Examine'];
+  }
+
+  private getLadderHeights(player: Player, obj: WorldObject): { lower: number; upper: number; onUpper: boolean } | null {
+    const map = this.getPlayerMap(player);
+    const lower = map.getInterpolatedHeight(obj.x, obj.z);
+    const upper = map.getEffectiveHeightOnFloor(obj.x, obj.z, 0, Number.POSITIVE_INFINITY);
+    if (!Number.isFinite(upper) || upper < lower + 1.0) return null;
+    const playerY = Math.max(player.effectiveY, player.reportedY);
+    return { lower, upper, onUpper: player.currentFloor > 0 || playerY > upper - 1.2 };
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
@@ -4142,7 +4144,7 @@ export class World {
    *  PLAYER_TELEPORT packet so the client snaps position without reloading
    *  the map / chunks / entities. Only used for in-map jumps; cross-map
    *  transitions still go through MAP_CHANGE (handleMapTransition). */
-  teleportPlayer(player: Player, x: number, z: number): void {
+  teleportPlayer(player: Player, x: number, z: number, forcedY?: number): void {
     const mapId = player.currentMapLevel;
     console.log(`[TP] teleportPlayer: ${player.name} on map="${mapId}" to (${x.toFixed(1)}, ${z.toFixed(1)})`);
     const cm = this.chunkManagers.get(mapId);
@@ -4160,10 +4162,13 @@ export class World {
     // otherwise return terrain). Reset reportedY so the next save persists
     // the new height.
     const map = this.getPlayerMap(player);
-    let teleportY = map.getEffectiveHeightOnFloor(x, z, player.currentFloor, player.reportedY);
-    const elevAtTile = map.getElevatedFloorHeight(x, z);
-    if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && teleportY < elevAtTile - 1.0) {
-      teleportY = elevAtTile;
+    let teleportY = forcedY;
+    if (teleportY == null) {
+      teleportY = map.getEffectiveHeightOnFloor(x, z, player.currentFloor, player.reportedY);
+      const elevAtTile = map.getElevatedFloorHeight(x, z);
+      if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && teleportY < elevAtTile - 1.0) {
+        teleportY = elevAtTile;
+      }
     }
     player.reportedY = teleportY;
     player.effectiveY = teleportY;
