@@ -7,7 +7,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import type { Scene } from '@babylonjs/core/scene'
-import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, CLIFF_R, CLIFF_G, CLIFF_B, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, FULL_TILE_RING } from '@projectrs/shared'
+import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, CLIFF_R, CLIFF_G, CLIFF_B, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit } from '@projectrs/shared'
 import type { RGB, GroundType, UVPoint } from '@projectrs/shared'
 import type { MapData, TexturePlane } from './MapData'
 import type { TextureEntry } from '../assets-system/TextureRegistry'
@@ -843,7 +843,7 @@ export function buildTextureOverlays(
         if (tile.textureId) addPolygon(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
         if (tile.textureIdB) addPolygon(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
       } else if (tile.textureId) {
-        addPolygon(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, FULL_TILE_RING)
+        addPolygon(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, fullTileRingForSplit(tile.split))
       }
     }
   }

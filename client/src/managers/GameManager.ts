@@ -234,6 +234,9 @@ export class GameManager {
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; depleted: boolean }> = new Map();
+  /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
+   *  of rice plants share a single VBO. */
+  private cropProxyTemplate: Mesh | null = null;
   private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number }> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
   /** Tiles blocked by non-depleted world objects (key = `${tileX},${tileZ}`) */
@@ -1131,6 +1134,12 @@ export class GameManager {
       remote.stopSkillAnimation();
       this.entities.remoteCombatTargets.delete(entityId);
       this.restoreSkillingTool(entityId, remote);
+      // Idle + targetId is the "face this object without animating" primitive,
+      // used for crops which pick instantly with no skill cycle.
+      if (targetId > 0) {
+        const objectData = this.worldObjectDefs.get(targetId);
+        if (objectData) remote.faceTowardXZ(objectData.x, objectData.z);
+      }
       return;
     }
 
@@ -1252,6 +1261,29 @@ export class GameManager {
       }
     }
 
+    // Crops have tiny meshes (~0.6 tile) — give them a roomier invisible click
+    // proxy. Cloned from a shared template so N rice plants share one VBO.
+    if (def?.category === 'crop') {
+      if (!this.cropProxyTemplate) {
+        const tmpl = MeshBuilder.CreateBox('crop_pickProxy_tmpl', {
+          width: 1.2, depth: 1.2, height: 1.2,
+        }, this.scene);
+        tmpl.isVisible = false;
+        tmpl.isPickable = false;
+        tmpl.setEnabled(false);
+        this.cropProxyTemplate = tmpl;
+      }
+      const proxy = this.cropProxyTemplate.clone(`crop_pickProxy_${objectEntityId}`, placedNode)!;
+      proxy.setEnabled(true);
+      proxy.position.y = 0.6;
+      proxy.isVisible = true;
+      proxy.visibility = 0;
+      proxy.isPickable = true;
+      proxy.layerMask = 0;
+      proxy.doNotSyncBoundingInfo = true;
+      proxy.freezeWorldMatrix();
+      proxy.metadata = { objectEntityId };
+    }
   }
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
@@ -3312,7 +3344,7 @@ export class GameManager {
     // Doors can always be clicked (open/close toggle). Other objects can't when depleted.
     if (data.depleted && def.category !== 'door') return;
     // Auto-interact with harvestable objects (trees, rocks), doors, and crafting stations (furnace, anvil, range)
-    if ((def.skill && def.harvestItemId) || def.category === 'door' || (def.recipes && def.recipes.length > 0)) {
+    if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || (def.recipes && def.recipes.length > 0)) {
       if (this.interactMarker) {
         let mx = data.x;
         let mz = data.z;
@@ -3334,6 +3366,19 @@ export class GameManager {
         this.alignMarkerToTerrain(mx, mz, this.interactMarker);
         this.interactMarker.isVisible = true;
         if (this.destMarker) this.destMarker.isVisible = false;
+      }
+
+      if (def.category === 'crop') {
+        const ptx = Math.floor(this.playerX);
+        const ptz = Math.floor(this.playerZ);
+        if (isTileAdjacentToObject(ptx, ptz, data.x, data.z, def)) {
+          this.faceLocalPlayerToward(data.x, data.z);
+        } else {
+          // Reuse the stationary-skill arrival path — prepareSkillingAtObject
+          // faces the target on arrival without triggering a skill animation
+          // (server intentionally skips SKILLING_START for crops).
+          this.pendingSkill = { objectId: objectEntityId, stationary: true };
+        }
       }
 
       this.interactObject(objectEntityId, 0);

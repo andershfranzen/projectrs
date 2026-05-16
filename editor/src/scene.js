@@ -43,7 +43,7 @@ import {
   normalizeCutAngle,
   cutSideOf,
   transformOverlayUV,
-  FULL_TILE_RING,
+  fullTileRingForSplit,
   CUT_SNAP_ANGLES,
   CUT_SNAP_TOLERANCE_RAD,
 } from '@projectrs/shared'
@@ -3716,7 +3716,13 @@ let paintBrushRadius = 1
     const shadowInf = _shadowInfluencesCache ?? buildObjectShadowInfluences()
     _shadowInfluencesCache = shadowInf
 
-    // Build new meshes (all created hidden inside their build functions)
+    // Build new meshes (all created hidden inside their build functions).
+    // Clear the per-tile overlay mesh index BEFORE buildTextureOverlays runs —
+    // buildTextureOverlays populates it as it goes, so clearing afterward
+    // (the previous order) wiped every entry it had just added. Subsequent
+    // shift-click erases couldn't find the mesh to dispose, leaving stale
+    // overlays on screen even though the tile data was cleared.
+    if (!skipTextureOverlays) overlayMeshesByTile.clear()
     const newTerrain = buildTerrainMeshes(map, waterTexture, shadowInf, scene)
     const newCliffs = buildCliffMeshes(map, scene)
     const newSplitLines = buildSplitLines()
@@ -3729,7 +3735,7 @@ let paintBrushRadius = 1
     disposeGroup(cliffs)
     if (splitLines) splitLines.dispose()
     if (tileGrid) tileGrid.dispose()
-    if (!skipTextureOverlays && textureOverlayGroup) { textureOverlayGroup.dispose(); overlayMeshesByTile.clear() }
+    if (!skipTextureOverlays && textureOverlayGroup) textureOverlayGroup.dispose()
     if (!skipTexturePlanes && texturePlaneGroup) texturePlaneGroup.dispose()
 
     // Enable and swap in new meshes
@@ -3773,8 +3779,12 @@ let paintBrushRadius = 1
   }
 
   function rebuildTextureOverlaysOnly() {
+    // Clear BEFORE building — buildTextureOverlays populates the per-tile
+    // mesh index, so clearing afterward wipes the fresh entries and breaks
+    // subsequent single-tile dispose lookups (shift-click erase).
+    overlayMeshesByTile.clear()
     const newOverlays = buildTextureOverlays(map, textureRegistry, textureCache, scene, overlayMaterialCache, overlayMeshesByTile)
-    if (textureOverlayGroup) { textureOverlayGroup.dispose(); overlayMeshesByTile.clear() }
+    if (textureOverlayGroup) textureOverlayGroup.dispose()
     if (newOverlays) newOverlays.setEnabled(true)
     textureOverlayGroup = newOverlays
   }
@@ -3863,7 +3873,7 @@ let paintBrushRadius = 1
       if (tile.textureId) addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
       if (tile.textureIdB) addOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
     } else if (tile.textureId) {
-      addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, FULL_TILE_RING)
+      addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, fullTileRingForSplit(tile.split))
     }
   }
 

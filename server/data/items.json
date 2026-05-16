@@ -2114,10 +2114,10 @@
   {
     "id": 231,
     "name": "Cooked Rice",
-    "description": "A bowl of cooked rice. Heals 3 HP.",
+    "description": "A bowl of cooked rice. Heals 2 HP.",
     "stackable": false,
     "equippable": false,
-    "healAmount": 3,
+    "healAmount": 2,
     "value": 8,
     "icon": "Cooked_Rice_231.png"
   }

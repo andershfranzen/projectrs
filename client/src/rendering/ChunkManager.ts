@@ -15,7 +15,7 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
-import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, FULL_TILE_RING, legacyCutAngleFromSplit } from '@projectrs/shared';
+import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
@@ -178,6 +178,10 @@ export class ChunkManager {
    *  Heights`. Tiles registered ONLY by `noRoof` planes are absent here, so
    *  isUnderRoof's Signal A treats them as outdoor (bridges, terraces). */
   private nonNoRoofElevatedTiles: Set<number> = new Set();
+  /** Tiles covered by any flat `noRoof` plane. Vetoes isUnderRoof Signal B —
+   *  a roof-like placed object's bbox-stamped roofObjectGrid entry over the
+   *  same tile would otherwise misfire indoor mode under a balcony/terrace. */
+  private noRoofPlaneTiles: Set<number> = new Set();
   /** Placed stair ramp zones for proximity-based height interpolation */
   private placedStairRamps: { cx: number; cz: number; baseY: number; topY: number; direction: 'N' | 'S' | 'E' | 'W'; halfLength: number }[] = [];
   /** Spatial index of roof objects: "tileX,tileZ" → roof entries with floor tag + Y height */
@@ -1471,7 +1475,7 @@ export class ChunkManager {
           if (tile.textureId) appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA);
           if (tile.textureIdB) appendOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB);
         } else if (tile.textureId) {
-          appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, FULL_TILE_RING);
+          appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, fullTileRingForSplit(tile.split));
         }
       }
     }
@@ -2387,6 +2391,7 @@ export class ChunkManager {
       if (entry.isBridge) this.bridgeFloorTiles.add(idx);
       this.texturePlaneFloorTiles.add(idx);
       if (!entry.allContributorsNoRoof) this.nonNoRoofElevatedTiles.add(idx);
+      else this.noRoofPlaneTiles.add(idx);
       count++;
     }
     if (count > 0) {
@@ -2454,7 +2459,15 @@ export class ChunkManager {
             this.texturePlaneFloorTiles.add(idx);
             // noRoof flag is sticky-negative: once any non-noRoof plane
             // touches the tile it stays in nonNoRoofElevatedTiles forever.
-            if (!plane.noRoof) this.nonNoRoofElevatedTiles.add(idx);
+            // Mirror set noRoofPlaneTiles is sticky-positive: a tile is in
+            // it only while ALL plane contributors are noRoof. A non-noRoof
+            // plane revokes membership; a later noRoof plane can't re-add.
+            if (!plane.noRoof) {
+              this.nonNoRoofElevatedTiles.add(idx);
+              this.noRoofPlaneTiles.delete(idx);
+            } else if (!this.nonNoRoofElevatedTiles.has(idx)) {
+              this.noRoofPlaneTiles.add(idx);
+            }
           }
         }
       }
@@ -2891,12 +2904,13 @@ export class ChunkManager {
       }
 
       if (this.isRoofLikeAsset(obj.assetId)) {
-        // Stamp every tile inside the actual mesh footprint. The previous
-        // 5×5 stamp bled across walls; a 1×1 stamp missed interior tiles
-        // whenever a slab's footprint crossed an integer boundary (kcmap
-        // roofs are placed at sub-integer positions with scales > 1).
-        // World-space bbox is the source of truth — texture-plane roofs
-        // use the same approach (see merged-plane stamp below).
+        // Stamp every tile whose CENTER is inside the slab's AABB. Pure
+        // Math.floor(bMin)..Math.floor(bMax) over-stamps adjacent tiles
+        // whenever the bbox clips into a tile by <1 unit — kcmap slabs at
+        // sub-integer positions routinely bleed 0.01 unit into a neighbor
+        // tile and used to fire indoor mode there via Signal B.
+        // (The texture-plane stamp uses the same center-inside-footprint
+        // gate below.)
         root.computeWorldMatrix(true);
         const { min: bMin, max: bMax } = root.getHierarchyBoundingVectors(true);
         const tx0 = Math.floor(bMin.x), tx1 = Math.floor(bMax.x);
@@ -2905,6 +2919,8 @@ export class ChunkManager {
         const stampedKeys: string[] = [];
         for (let tz = tz0; tz <= tz1; tz++) {
           for (let tx = tx0; tx <= tx1; tx++) {
+            if (tx + 0.5 < bMin.x || tx + 0.5 > bMax.x) continue;
+            if (tz + 0.5 < bMin.z || tz + 0.5 > bMax.z) continue;
             const rk = `${tx},${tz}`;
             let arr = this.roofObjectGrid.get(rk);
             if (!arr) { arr = []; this.roofObjectGrid.set(rk, arr); }
@@ -3084,6 +3100,15 @@ export class ChunkManager {
     // above them (single-storey building case — a roof, no upper floor).
     // Multi-layer suppression handles "under the building" (floor + roof
     // above the player ⇒ basement, not indoor).
+    //
+    // Veto: a flat noRoof texture plane covering this tile means the author
+    // declared this column outdoor (balconies, terraces, open structures).
+    // Without the veto, a roof-like placed object's bbox-stamped roofObject-
+    // Grid entry over the same tile would misfire indoor mode under it.
+    if (tx >= 0 && tx < this.mapWidth && tz >= 0 && tz < this.mapHeight) {
+      const tileIdx = tz * this.mapWidth + tx;
+      if (this.noRoofPlaneTiles.has(tileIdx)) return false;
+    }
     const here = this.roofObjectGrid.get(`${tx},${tz}`);
     if (!here) return false;
     let minAbove = Infinity, maxAbove = -Infinity;
@@ -3652,6 +3677,7 @@ export class ChunkManager {
     this.elevatedFloorHeights.clear();
     this.bridgeFloorTiles.clear();
     this.nonNoRoofElevatedTiles.clear();
+    this.noRoofPlaneTiles.clear();
     for (const m of this.texturePlaneMeshes) m.dispose();
     this.texturePlaneMeshes = [];
     this.texturePlanesByChunk.clear();

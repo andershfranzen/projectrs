@@ -43,13 +43,35 @@ export const CUT_SNAP_ANGLES: readonly number[] = [
 
 export const CUT_SNAP_TOLERANCE_RAD = (10 * Math.PI) / 180
 
-/** Read-only 4-corner CCW ring used when not in half-paint mode. */
+/**
+ * Read-only 4-corner CCW ring used when not in half-paint mode.
+ *
+ * Fan-triangulated from index 0 (TL), this ring's diagonal runs TL→BR —
+ * matching the land mesh for `tile.split === 'back'`. For `'forward'` tiles
+ * the land splits along BL→TR; use [[fullTileRingForSplit]] so the overlay's
+ * diagonal lands on the same edge as the terrain's, otherwise sloped tiles
+ * show terrain poking through where the two diagonals diverge.
+ */
 export const FULL_TILE_RING: readonly UVPoint[] = [
   { u: 0, v: 0 },
   { u: 1, v: 0 },
   { u: 1, v: 1 },
   { u: 0, v: 1 },
 ]
+
+/** Same corners as [[FULL_TILE_RING]] rotated by one so fan-triangulation
+ *  yields the BL→TR diagonal needed for `tile.split === 'forward'`. */
+export const FULL_TILE_RING_FORWARD: readonly UVPoint[] = [
+  FULL_TILE_RING[1], FULL_TILE_RING[2], FULL_TILE_RING[3], FULL_TILE_RING[0],
+]
+
+/** Pick the overlay ring whose fan-triangulation diagonal matches the land
+ *  mesh for the given split direction. */
+export function fullTileRingForSplit(
+  split: 'forward' | 'back' | undefined | null,
+): readonly UVPoint[] {
+  return split === 'back' ? FULL_TILE_RING : FULL_TILE_RING_FORWARD
+}
 
 // --- Helpers ---
 

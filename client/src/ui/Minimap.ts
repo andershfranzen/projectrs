@@ -228,14 +228,21 @@ export class Minimap {
 
           const isRoofed = !isCollision && roofs[tIdx] === 1;
           const isTextured = !isCollision && textured[tIdx] === 1;
-          // Color priority (lowest → highest): ground-type → tile-type fallback
-          // → FLOOR_COLOR (textured but unsampled) → sampled override → roof →
-          // collision (darker version of base, not forced grass — walls in
-          // sand zones used to come out green).
+          // Color priority (low → high): tile-type fallback → per-GroundType
+          // (distinguishes sand/drysand/desert + stone/sandstone/rock) →
+          // FLOOR_COLOR → sampled override → roof → collision-darkened.
+          // WATER and MUD short-circuit to the TileType colour: lakes keep
+          // their underlying 'grass' ground, and the editor's "Mud" swatch
+          // may sit on the 'water' GroundType — without the gate, painted-
+          // water tiles paint as that blue and look identical to real water.
           const groundId = grounds[tIdx];
-          let base: [number, number, number] = groundId !== GROUND_TYPE_NONE
-            ? (GROUND_COLORS[groundId] ?? TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS])
-            : (TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS]);
+          const fallback = TILE_COLORS[tileType] ?? TILE_COLORS[TileType.GRASS];
+          const useTileColor = tileType === TileType.WATER
+            || tileType === TileType.MUD
+            || groundId === GROUND_TYPE_NONE;
+          let base: [number, number, number] = useTileColor
+            ? fallback
+            : (GROUND_COLORS[groundId] ?? fallback);
           if (isTextured) base = FLOOR_COLOR;
           if (hasOverride[tIdx] === 1) {
             const oOff = tIdx * 3;

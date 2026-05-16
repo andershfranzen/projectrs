@@ -1851,7 +1851,7 @@ export class World {
     }
 
     if (player.isBusy(this.currentTick)) {
-      const isQueuedObjectAction = obj.def.category === 'door' || (obj.def.skill && obj.def.harvestItemId);
+      const isQueuedObjectAction = obj.def.category === 'door' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
       if (isQueuedObjectAction) {
         player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0 };
       }
@@ -1954,7 +1954,7 @@ export class World {
       return;
     }
 
-    if (obj.def.skill && obj.def.harvestItemId) {
+    if (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop')) {
       this.handleHarvestInteraction(playerId, player, obj, action);
       return;
     }
@@ -1985,6 +1985,28 @@ export class World {
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
+    // Crops are one-shot picks: no animation, no skilling tick, single roll
+    // with a 1-tick cooldown so each click yields at most one item.
+    if (obj.def.category === 'crop') {
+      const itemId = obj.def.harvestItemId!;
+      const qty = obj.def.harvestQuantity ?? 1;
+      const added = player.addItem(itemId, qty, this.data.itemDefs).completed;
+      if (added <= 0) {
+        this.sendChatSystem(player, "You can't carry any more.");
+        return;
+      }
+      this.sendInventory(player);
+      this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: added });
+      if (obj.def.depletionChance && Math.random() < obj.def.depletionChance) {
+        this.persistAndBroadcastDepletion(obj);
+      }
+      // Idle + targetId orients remote viewers toward the crop without
+      // playing an animation.
+      this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, obj.id);
+      player.setDelay(this.currentTick, 1);
+      return;
+    }
+
     const skillId = obj.def.skill as SkillId;
     const playerLevel = player.skills[skillId]?.level ?? 1;
     const levelRequired = obj.def.levelRequired ?? 1;
@@ -2210,7 +2232,6 @@ export class World {
     const itemDef = this.data.getItem(slot.itemId);
     if (!itemDef || !itemDef.healAmount) return;
 
-    if (player.health >= player.maxHealth) return;
     this.interruptPlayerAction(playerId, player);
 
     player.heal(itemDef.healAmount);
@@ -3173,6 +3194,7 @@ export class World {
           ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, playerEffY)
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
         if (wallBlocked) {
+          this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
           player.clearMoveQueue();
           player.pendingInteraction = null;
           player.movementCredit = 0;
@@ -3716,15 +3738,7 @@ export class World {
         if (harvestSkillIdx >= 0) this.sendSingleSkill(player, harvestSkillIdx);
 
         if (obj.def.depletionChance && Math.random() < obj.def.depletionChance) {
-          obj.deplete();
-          this.depletedObjectIds.add(obj.id);
-          // Persist the wall-clock respawn target so this stays depleted
-          // across restarts (within the remaining timer window). On boot we
-          // convert this back into a tick countdown.
-          this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
-          // Depleted rocks + tree stumps remain blocking — walking through
-          // a visible stump looks broken. No tile-clear on deplete.
-          this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
+          this.persistAndBroadcastDepletion(obj);
           // Combined chest reward message, built from items the roll
           // actually added (never overstates the inventory).
           if (isChest && foundForChest.length > 0) {
@@ -4568,6 +4582,16 @@ export class World {
     this.skillingActions.delete(playerId);
     this.sendToPlayer(player, ServerOpcode.SKILLING_STOP, 0);
     this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
+  }
+
+  /** Mark a world object as depleted, persist its respawn target, and tell
+   *  nearby clients to swap to the depleted visual. Depleted rocks + tree
+   *  stumps stay blocking — walking through a stump looks broken. */
+  private persistAndBroadcastDepletion(obj: WorldObject): void {
+    obj.deplete();
+    this.depletedObjectIds.add(obj.id);
+    this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
+    this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
   }
 
   private sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void {

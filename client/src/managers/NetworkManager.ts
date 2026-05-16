@@ -34,6 +34,8 @@ const STRING_PACKET_OPCODES = new Set<number>([
   ServerOpcode.MAP_CHANGE,
   ServerOpcode.DIALOGUE_OPEN,
   ServerOpcode.NPC_NAME,
+  ServerOpcode.QUEST_STATE_SYNC,
+  ServerOpcode.QUEST_STAGE_ADVANCED,
 ]);
 
 export class NetworkManager {
