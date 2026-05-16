@@ -33,3 +33,4 @@ server/data/gear-overrides.*.bak
 # NPC defs backups created by the /api/editor/npcs endpoint.
 server/data/backups/
 references/
+assets-sources/
