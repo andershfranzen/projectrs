@@ -3220,21 +3220,51 @@ export class GameManager {
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
   }
 
+  private getActiveUnitStep(): { from: { x: number; z: number }; target: { x: number; z: number }; progress: number } | null {
+    if (this.pathIndex >= this.path.length) return null;
+    const target = this.path[this.pathIndex];
+    const dx = Math.sign(Math.floor(target.x) - Math.floor(this.tileFrom.x));
+    const dz = Math.sign(Math.floor(target.z) - Math.floor(this.tileFrom.z));
+    const tileSteps = Math.max(
+      Math.abs(Math.floor(target.x) - Math.floor(this.tileFrom.x)),
+      Math.abs(Math.floor(target.z) - Math.floor(this.tileFrom.z)),
+    );
+    if (tileSteps <= 1) {
+      return {
+        from: { x: this.tileFrom.x, z: this.tileFrom.z },
+        target: { x: target.x, z: target.z },
+        progress: this.tileProgress,
+      };
+    }
+
+    const progressedTiles = Math.max(0, Math.min(tileSteps - 0.0001, this.tileProgress * tileSteps));
+    const completedTiles = Math.floor(progressedTiles);
+    const fromTileX = Math.floor(this.tileFrom.x) + dx * completedTiles;
+    const fromTileZ = Math.floor(this.tileFrom.z) + dz * completedTiles;
+    const targetTileX = fromTileX + dx;
+    const targetTileZ = fromTileZ + dz;
+    return {
+      from: { x: fromTileX + 0.5, z: fromTileZ + 0.5 },
+      target: { x: targetTileX + 0.5, z: targetTileZ + 0.5 },
+      progress: progressedTiles - completedTiles,
+    };
+  }
+
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
-    if (this.pathIndex < this.path.length && this.tileProgress > 0) {
-      const currentTarget = this.path[this.pathIndex];
-      const tail = findPath(currentTarget.x, currentTarget.z, goalX, goalZ,
+    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    if (activeStep) {
+      const tail = findPath(activeStep.target.x, activeStep.target.z, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath);
       if (tail.length === 0) {
-        const currentTileIsGoal = Math.floor(currentTarget.x) === Math.floor(goalX)
-          && Math.floor(currentTarget.z) === Math.floor(goalZ);
-        return { path: currentTileIsGoal ? [currentTarget] : [], preserveCurrentStep: currentTileIsGoal };
+        const currentTileIsGoal = Math.floor(activeStep.target.x) === Math.floor(goalX)
+          && Math.floor(activeStep.target.z) === Math.floor(goalZ);
+        return { path: currentTileIsGoal ? [activeStep.target] : [], preserveCurrentStep: currentTileIsGoal };
       }
-      const startsAtCurrentTarget = this.sameTile(tail[0], currentTarget);
+      const startsAtCurrentTarget = this.sameTile(tail[0], activeStep.target);
       return {
-        path: startsAtCurrentTarget ? tail : [currentTarget, ...tail],
+        path: startsAtCurrentTarget ? tail : [activeStep.target, ...tail],
         preserveCurrentStep: true,
       };
     }
@@ -3295,10 +3325,13 @@ export class GameManager {
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
     if (path.length === 0) return;
-    const currentTarget = this.pathIndex < this.path.length ? this.path[this.pathIndex] : null;
+    const activeStep = this.getActiveUnitStep();
     this.path = path;
     this.pathIndex = 0;
-    if (!preserveCurrentStep || !currentTarget || !this.sameTile(path[0], currentTarget)) {
+    if (preserveCurrentStep && activeStep && this.sameTile(path[0], activeStep.target)) {
+      this.tileProgress = activeStep.progress;
+      this.setTileFrom(activeStep.from.x, activeStep.from.z);
+    } else {
       // Walk from current visual position (often fractional mid-step) to
       // path[0]. Body rotation handles the visible turn — no snap.
       this.tileProgress = 0;
@@ -4317,15 +4350,20 @@ export class GameManager {
       this.pendingPath = null;
       this.minimap?.clearDestination();
       if (this.pathIndex < this.path.length) {
-        // Mid-step: keep the current target tile so the animation completes
+        // Mid-step: keep the current unit target so the animation completes
         // the in-progress step and the character lands cleanly on a tile
         // center rather than freezing between two tiles. The natural
         // path-finished branch in updateLocalPlayerMovement (~line 3282)
         // will call stopWalking() when pathIndex catches up.
-        const currentTarget = this.path[this.pathIndex];
+        const activeStep = this.getActiveUnitStep();
+        const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
         this.path = [currentTarget];
         this.pathIndex = 0;
-        // Keep tileProgress / tileFrom so interpolation continues seamlessly.
+        if (activeStep) {
+          this.tileProgress = activeStep.progress;
+          this.setTileFrom(activeStep.from.x, activeStep.from.z);
+        }
+        // Keep the current unit progress so interpolation continues seamlessly.
         // Send the same one-tile path to the server so its moveQueue ends
         // on the same tile we're walking to.
         this.network.sendMove([currentTarget]);
