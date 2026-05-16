@@ -6,22 +6,13 @@ services:
     image: evilquest:latest
     container_name: evilquest
     restart: unless-stopped
-    networks:
-      - lostcitylabs_net
-    expose:
-      - "4000"
+    ports:
+      - "127.0.0.1:4000:4000"
     volumes:
       - evilquest_data:/app/data
     environment:
-      CLIENT_ORIGINS: "https://evilquest.lostcitylabs.com"
+      CLIENT_ORIGINS: "https://evilquest.net,https://www.evilquest.net"
       NODE_ENV: production
-
-networks:
-  lostcitylabs_net:
-    external: true
-    name: lostcitylabs_lostcitylabs_network
 
 volumes:
   evilquest_data:
-    external: true
-    name: evilquest_evilquest_data
