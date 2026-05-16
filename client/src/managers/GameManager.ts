@@ -3147,9 +3147,14 @@ export class GameManager {
     // route before turning toward the NPC, then queue the talk for the
     // step-completion drain.
     if (this.tileProgress > 0 && this.pathIndex < this.path.length) {
-      const currentTarget = this.path[this.pathIndex];
+      const activeStep = this.getActiveUnitStep();
+      const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
       this.path = [currentTarget];
       this.pathIndex = 0;
+      if (activeStep) {
+        this.tileProgress = activeStep.progress;
+        this.setTileFrom(activeStep.from.x, activeStep.from.z);
+      }
       this.network.sendMove([currentTarget]);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
@@ -3162,10 +3167,9 @@ export class GameManager {
     if (!this.isPlayerAdjacentToTile(target.x, target.z)) {
       const path = this.findPathAdjacentToTarget(target.x, target.z);
       if (path.length > 0) {
-        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.setTileFrom(this.playerX, this.playerZ);
+        this.startPredictedPath(path);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
-        this.network.sendMove(path);
       }
     } else {
       // Already adjacent — cancel any in-flight path and face the NPC now;
@@ -3634,18 +3638,18 @@ export class GameManager {
       candidates.sort((a, b) => a.dist - b.dist);
 
       let bestPath: { x: number; z: number }[] | null = null;
+      let bestPreserveCurrentStep = false;
       for (const { ax, az } of candidates) {
-        const { path } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
+        const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
         if (path.length > 0) {
           bestPath = path;
+          bestPreserveCurrentStep = preserveCurrentStep;
           break;
         }
       }
       if (bestPath) {
         if (shouldRetryOnArrival) this.trackObjectInteractionRetry(objectEntityId, actionIndex);
-        const preserve = this.pathIndex < this.path.length && this.tileProgress > 0
-          && this.sameTile(bestPath[0], this.path[this.pathIndex]);
-        this.startPredictedPath(bestPath, preserve);
+        this.startPredictedPath(bestPath, bestPreserveCurrentStep);
       } else {
         this.clearPendingObjectInteractionRetry();
       }
