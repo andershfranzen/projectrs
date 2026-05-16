@@ -4489,6 +4489,19 @@ export class GameManager {
     return true;
   }
 
+  private overlayFogOpacity(worldPos: Vector3, camPos: Vector3): number {
+    const fogStart = this.scene.fogStart ?? Number.POSITIVE_INFINITY;
+    const fogEnd = this.scene.fogEnd ?? Number.POSITIVE_INFINITY;
+    if (fogEnd <= fogStart) return 1;
+    const dx = worldPos.x - camPos.x;
+    const dy = worldPos.y - camPos.y;
+    const dz = worldPos.z - camPos.z;
+    const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (dist >= fogEnd) return 0;
+    if (dist <= fogStart) return 1;
+    return 1 - ((dist - fogStart) / (fogEnd - fogStart));
+  }
+
   private updateOverlayPositions(): void {
     if (!this.ensureOverlayTransform()) return;
     const cam = this.scene.activeCamera!;
@@ -4564,7 +4577,10 @@ export class GameManager {
         const got = sprite.getLabelWorldPos(wp);
         if (got) {
           Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
-          if (screenPos.z > 0 && screenPos.z < 1) sprite.updateLabelScreenPos(screenPos.x, screenPos.y);
+          const fogOpacity = this.overlayFogOpacity(got, camPos);
+          if (screenPos.z > 0 && screenPos.z < 1 && fogOpacity > 0.01) {
+            sprite.updateLabelScreenPos(screenPos.x, screenPos.y, fogOpacity);
+          }
           else sprite.updateLabelScreenPos(offscreenX, offscreenY);
         }
       }
@@ -4611,7 +4627,10 @@ export class GameManager {
         const got = labelHost.getLabelWorldPos(wp);
         if (got) {
           Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
-          if (screenPos.z > 0 && screenPos.z < 1) labelHost.updateLabelScreenPos(screenPos.x, screenPos.y);
+          const fogOpacity = this.overlayFogOpacity(got, camPos);
+          if (screenPos.z > 0 && screenPos.z < 1 && fogOpacity > 0.01) {
+            labelHost.updateLabelScreenPos(screenPos.x, screenPos.y, fogOpacity);
+          }
           else labelHost.updateLabelScreenPos(offscreenX, offscreenY);
         }
       }
@@ -4978,9 +4997,6 @@ export class GameManager {
     if (!cam) return;
     const sp = this._overlayScreenPos;
     const camPos = cam.position;
-    const fogStart = this.scene.fogStart ?? Number.POSITIVE_INFINITY;
-    const fogEnd = this.scene.fogEnd ?? Number.POSITIVE_INFINITY;
-    const fogSpan = Math.max(0.001, fogEnd - fogStart);
 
     let writeIdx = 0;
     for (let i = 0; i < this.hitSplats.length; i++) {
@@ -4991,15 +5007,7 @@ export class GameManager {
         splat.el.remove();
       } else {
         Vector3.ProjectToRef(splat.worldPos, GameManager.IDENTITY, this._overlayTransform, this._overlayVp, sp);
-        const dx = splat.worldPos.x - camPos.x;
-        const dy = splat.worldPos.y - camPos.y;
-        const dz = splat.worldPos.z - camPos.z;
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        const fogOpacity = dist >= fogEnd
-          ? 0
-          : dist <= fogStart
-            ? 1
-            : 1 - ((dist - fogStart) / fogSpan);
+        const fogOpacity = this.overlayFogOpacity(splat.worldPos, camPos);
         const lifetimeOpacity = splat.timer < 0.3 ? splat.timer / 0.3 : 1;
         const visible = sp.z > 0 && sp.z < 1 && fogOpacity > 0.01;
 

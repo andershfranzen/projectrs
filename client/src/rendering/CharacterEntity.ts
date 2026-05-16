@@ -2247,6 +2247,7 @@ export class CharacterEntity {
         white-space: nowrap;
         transform: translate(-50%, -100%);
         text-shadow: 1px 1px 2px rgba(0,0,0,0.85);
+        opacity: 0;
       `;
       document.body.appendChild(el);
       this.labelEl = el;
@@ -2265,10 +2266,11 @@ export class CharacterEntity {
     return v;
   }
 
-  updateLabelScreenPos(screenX: number, screenY: number): void {
+  updateLabelScreenPos(screenX: number, screenY: number, opacity: number = 1): void {
     if (this.labelEl) {
       this.labelEl.style.left = `${screenX}px`;
       this.labelEl.style.top = `${screenY}px`;
+      this.labelEl.style.opacity = opacity.toString();
     }
   }
 
