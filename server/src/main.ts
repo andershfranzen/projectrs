@@ -937,27 +937,11 @@ const server = Bun.serve<SocketData>({
         const itemMap = new Map<number, string>();
         for (const def of itemDefs) itemMap.set(def.id, def.name);
 
-        const manifestNames = new Map<string, string>();
-        try {
-          const manifest = JSON.parse(readFileSync(resolve(equipRoot, 'polytope/manifest.json'), 'utf-8'));
-          for (const entries of Object.values(manifest) as any[]) {
-            for (const entry of entries) manifestNames.set(entry.file, entry.name);
-          }
-        } catch {}
-
-        const polytopeDirMap: Record<string, string[]> = {
-          weapon:  ['weapon', 'polytope/weapons', 'Tools'],
-          shield:  ['shield', 'polytope/weapons'],
-          head:    ['head', 'polytope/armor_male/helmet'],
-          body:    ['body', 'polytope/armor_male/body'],
-          legs:    ['legs', 'polytope/armor_male/legs'],
-          feet:    ['feet', 'polytope/armor_male/boots'],
-          hands:   ['hands', 'polytope/armor_male/gauntlets'],
-          cape:    ['cape', 'polytope/armor_male/cape'],
-          neck:    ['neck'],
-          ring:    ['ring'],
+        // Weapons share a directory with the Tools subfolder (axes/pickaxes).
+        const slotDirs: Record<string, string[]> = {
+          weapon: ['weapon', 'Tools'],
         };
-        const dirs = polytopeDirMap[slot] || [slot];
+        const dirs = slotDirs[slot] || [slot];
 
         const seen = new Set<string>();
         const files: { file: string; path: string; itemId: number; name: string }[] = [];
@@ -974,7 +958,7 @@ const server = Bun.serve<SocketData>({
               file: f,
               path: relPath,
               itemId: isNaN(itemId) ? -1 : itemId,
-              name: (!isNaN(itemId) && itemMap.get(itemId)) || manifestNames.get(relPath) || f.replace(/\.[^.]+$/, ''),
+              name: (!isNaN(itemId) && itemMap.get(itemId)) || f.replace(/\.[^.]+$/, ''),
             });
           }
         }

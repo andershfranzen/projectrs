@@ -2275,19 +2275,24 @@ export class World {
   handlePlayerSetStance(playerId: number, stanceIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
-    // Gate through busy + a 1-tick lockout so a scripted client can't flip
-    // stance to maximize XP/damage on the same tick a swing lands.
-    if (player.isBusy(this.currentTick)) return;
-    if (player.isInterfaceOpen()) return;
-
     const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
-    if (stanceIndex >= 0 && stanceIndex < stances.length) {
-      player.stance = stances[stanceIndex];
-      player.setDelay(this.currentTick, 1);
-      // Tell nearby clients so they render the correct attack animation
-      // (e.g. 2H + aggressive → smash) when this player swings.
-      this.broadcastRemoteStance(player);
+    // Modal interfaces lock stance — keep the gate but echo the current
+    // server stance back so the client doesn't desync visually.
+    // The previous `isBusy` gate also dropped packets while any unrelated
+    // 1-tick delay (inventory/equip/etc.) was active; the optimistic UI
+    // would then show the new stance while combat kept reading the old
+    // one — surfacing as XP going to the wrong skill. The post-flip
+    // setDelay below still prevents rapid stance flip-flopping.
+    if (player.isInterfaceOpen() || stanceIndex < 0 || stanceIndex >= stances.length) {
+      this.sendRemoteStance(player, player);
+      return;
     }
+    player.stance = stances[stanceIndex];
+    player.setDelay(this.currentTick, 1);
+    // Self-echo lets the client correct its optimistic UI if anything ever
+    // diverges; broadcast to neighbours so they pick the right swing anim.
+    this.sendRemoteStance(player, player);
+    this.broadcastRemoteStance(player);
   }
 
   handlePlayerToggleRun(playerId: number, enabled: boolean): void {

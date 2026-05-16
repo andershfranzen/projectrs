@@ -1224,6 +1224,15 @@ export class SidePanel {
     return this.currentStance;
   }
 
+  /** Apply a stance value sent by the server — keeps the optimistic UI in
+   *  sync with authoritative state when a request was rejected or arrived
+   *  on a different tick than expected. */
+  applyStanceFromServer(stance: MeleeStance): void {
+    if (this.currentStance === stance) return;
+    this.currentStance = stance;
+    this.updateStanceUI();
+  }
+
   /** Set a sell callback (when shop is open) or null to clear */
   setSellCallback(cb: ((slot: number, itemId: number) => void) | null): void {
     this.sellCallback = cb;
