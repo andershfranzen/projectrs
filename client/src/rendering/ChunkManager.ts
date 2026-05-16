@@ -2126,7 +2126,7 @@ export class ChunkManager {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return true;
     const idx = tz * this.mapWidth + tx;
-    return !layer.floors.has(idx) && !layer.stairs.has(idx);
+    return !layer.tiles.has(idx) && !layer.floors.has(idx) && !layer.stairs.has(idx);
   }
 
   getPlacedObjectCount(): number { return this.placedObjectNodes.length; }

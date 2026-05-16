@@ -638,6 +638,20 @@ export class World {
     );
   }
 
+  /** Re-derive the player's server-authoritative walking elevation after a
+   *  tile change. The prior effectiveY feeds getEffectiveHeightOnFloor's
+   *  roof-tile gate, so the player only "sticks" to an elevated surface once
+   *  they have actually climbed onto it via stair ramp tiles (whose height
+   *  is reported ungated). Mirrors the client's per-frame
+   *  getEffectiveHeight(currentY) feedback loop — keeping the two in lock-step
+   *  is what stops wall-edge checks from disagreeing across the wire. */
+  private refreshPlayerEffectiveY(player: Player): void {
+    const map = this.getPlayerMap(player);
+    player.effectiveY = map.getEffectiveHeightOnFloor(
+      player.position.x, player.position.y, player.currentFloor, player.effectiveY,
+    );
+  }
+
   private checkpointPlayerPosition(player: Player): void {
     this.db.savePlayerPosition(player.accountId, player, this.computeEffectiveY(player));
     player.lastPositionPersistTick = this.currentTick;
@@ -807,6 +821,11 @@ export class World {
       spawnY = elevAtTile;
       player.reportedY = elevAtTile; // re-anchor so the next save persists the correct value
     }
+    // Seed the server-authoritative collision elevation from the resolved
+    // spawn height so the first move after (re)login gates wall edges on the
+    // correct Y. Covers both fresh login and grace-period reconnect — both
+    // routes call sendLoginBootstrap.
+    player.effectiveY = spawnY;
     // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
     // Version added at the end so older client builds (which read only the
     // first 4 values) still parse without error — they just don't see the
@@ -1344,9 +1363,14 @@ export class World {
         const tileBlocked = pFloor === 0
           ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ)))
           : map.isTileBlockedOnFloor(nextTileX, nextTileZ, pFloor);
-        const playerEffY = map.getEffectiveHeightOnFloor(curTileX + 0.5, curTileZ + 0.5, pFloor);
+        // The player's authoritative walking elevation gates wall-edge
+        // collision: a wall authored at an upper-floor Y must not block a
+        // player standing at that elevation, and an open upper-floor door
+        // must let them through. Held fixed for the whole validated path —
+        // matches the client, which validates its predicted path against a
+        // single localPlayer.position.y (GameManager.isWallBlockedForPath).
         const wallBlocked = pFloor === 0
-          ? map.isWallBlocked(curTileX, curTileZ, nextTileX, nextTileZ, playerEffY)
+          ? map.isWallBlocked(curTileX, curTileZ, nextTileX, nextTileZ, player.effectiveY)
           : map.isWallBlockedOnFloor(curTileX, curTileZ, nextTileX, nextTileZ, pFloor);
         if (tileBlocked || wallBlocked) { truncated = true; break outer; }
         // Push tile-CENTER coords to match client convention.
@@ -3198,12 +3222,13 @@ export class World {
         if (!next) break;
         const map = this.getPlayerMap(player);
         const pFloor = player.currentFloor;
-        // Pass effective height so a wall edge below an elevated walkable
-        // tile doesn't spuriously truncate the queue. Mirrors the elevation
-        // gating used during path validation in handlePlayerMove.
-        const playerEffY = map.getEffectiveHeightOnFloor(player.position.x, player.position.y, pFloor);
+        // Gate the wall-edge check on the player's authoritative walking
+        // elevation so a wall below an elevated walkable tile doesn't
+        // spuriously truncate the queue — and so an open upper-floor door is
+        // passable. effectiveY is kept current by refreshPlayerEffectiveY
+        // below; mirrors the elevation gating in handlePlayerMove.
         const wallBlocked = pFloor === 0
-          ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, playerEffY)
+          ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, player.effectiveY)
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
         if (wallBlocked) {
           this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
@@ -3213,6 +3238,10 @@ export class World {
           break;
         }
         if (!player.processMovement(this.currentTick)) break;
+        // Tile changed — re-derive the authoritative walking elevation so the
+        // next step's wall check (and the next CLIENT_MOVE validation) gate
+        // on the right Y.
+        this.refreshPlayerEffectiveY(player);
       }
       this.updateEntityChunk(player);
 
@@ -3908,6 +3937,9 @@ export class World {
       }
 
       if (player.currentFloor !== oldFloor) {
+        // The floor index just changed — re-resolve the walking elevation
+        // against the new floor's layer before the next move validates.
+        this.refreshPlayerEffectiveY(player);
         this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
       }
     }
@@ -4083,6 +4115,7 @@ export class World {
       teleportY = elevAtTile;
     }
     player.reportedY = teleportY;
+    player.effectiveY = teleportY;
     const packet = encodePacket(
       ServerOpcode.PLAYER_TELEPORT,
       qPos(x),
@@ -4177,6 +4210,12 @@ export class World {
     player.currentMapLevel = newMap;
     player.position.x = transition.targetX;
     player.position.y = transition.targetZ;
+    // Re-derive the authoritative collision elevation for the new map — the
+    // old map's effectiveY is meaningless here. Transition destinations are
+    // editor-authored ground spawn tiles, so an ungated resolve is correct;
+    // the per-tile refresh self-heals once the player walks.
+    player.effectiveY = targetMapObj.getEffectiveHeightOnFloor(
+      player.position.x, player.position.y, player.currentFloor);
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearCombatTarget(player.id);

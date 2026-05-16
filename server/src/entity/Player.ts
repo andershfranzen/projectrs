@@ -127,6 +127,16 @@ export class Player extends Entity {
    *  the server's floorHeights doesn't capture). */
   reportedY: number = 0;
 
+  /** Server-authoritative walking elevation, in world Y units. Unlike
+   *  reportedY (client-reported, never trusted for logic), this is derived
+   *  entirely server-side: re-resolved every time the player's tile changes,
+   *  one gated getEffectiveHeightOnFloor step per tile, which mirrors the
+   *  client's per-frame getEffectiveHeight(currentY) feedback. It is the Y
+   *  fed into wall-edge collision (wallBlocksAtHeight) during move validation
+   *  so walls/doors authored at an upper-floor elevation resolve correctly
+   *  while the player is up there. Seeded at spawn / teleport / transition. */
+  effectiveY: number = 0;
+
   /** Tile (z*width+x) where the player most recently transitioned floors.
    *  Cleared when the player moves to any other tile. Prevents the top tile
    *  of a stair (which has stair entries on both floors due to GameMap's

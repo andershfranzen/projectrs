@@ -472,6 +472,19 @@ export class GameMap {
     if (this.holes.has(idx)) {
       return !this.floorHeights.has(idx) && !this.stairs.has(idx);
     }
+    // Elevated walkable surfaces (texture-plane floors/bridges/roofs) and
+    // stairs override the underlying terrain tile type. A room authored as an
+    // elevated plane sits on whatever floor-0 terrain was beneath it (often
+    // water/void), and that terrain must NOT block walking on the surface
+    // above. Mirrors the client's ChunkManager.isBlocked, which keys off
+    // texturePlaneFloorTiles. Without this the server rejects every move the
+    // client predicts inside an elevated room — only bridge tiles got their
+    // tileType upgraded to STONE in registerTexturePlaneFloors; roof tiles
+    // (>2 units up, e.g. a room up a staircase) did not — and the resulting
+    // PATH_TRUNCATED + PLAYER_SYNC snap-back jitters the character.
+    if (this.floorHeights.has(idx) || this.elevatedFloorHeights.has(idx) || this.stairs.has(idx)) {
+      return false;
+    }
     return BLOCKING_TILES.has(this.tileTypes[idx] as TileType);
   }
 
@@ -611,7 +624,10 @@ export class GameMap {
     }
     for (const layer of this.floorLayers.values()) {
       const bits = layer.walls.get(idx);
-      if (bits != null && (bits & edge) !== 0) return true;
+      if (bits != null && (bits & edge) !== 0) {
+        if (isOpenDoor && atDoorLevel) return false;
+        return true;
+      }
     }
     return false;
   }
