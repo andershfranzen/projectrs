@@ -202,6 +202,40 @@
       "z": 177.5,
       "wanderRange": 6,
       "aggressive": false
+    },
+    {
+      "id": 35,
+      "npcId": 20,
+      "x": 220.5,
+      "z": 133.5,
+      "wanderRange": 8,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 4,
+        "pantsColor": 3,
+        "shoesColor": 0,
+        "hairColor": 2,
+        "beltColor": 0,
+        "skinColor": 5,
+        "hairStyle": 14
+      },
+      "name": "Farmer"
+    },
+    {
+      "id": 36,
+      "npcId": 20,
+      "x": 227.5,
+      "z": 137.5,
+      "wanderRange": 6,
+      "appearance": {
+        "shirtColor": 5,
+        "pantsColor": 2,
+        "shoesColor": 1,
+        "hairColor": 8,
+        "beltColor": 5,
+        "skinColor": 1,
+        "hairStyle": 5
+      }
     }
   ],
   "objects": [],

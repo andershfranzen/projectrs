@@ -420,7 +420,7 @@
     "wanderRange": 1,
     "lootTable": [],
     "shop": {
-      "name": "Armor Shop \u2014 Head & Body",
+      "name": "Armor Shop — Head & Body",
       "items": [
         {
           "itemId": 9,
@@ -458,7 +458,7 @@
     "wanderRange": 1,
     "lootTable": [],
     "shop": {
-      "name": "Armor Shop \u2014 Legs",
+      "name": "Armor Shop — Legs",
       "items": [
         {
           "itemId": 8,
@@ -486,7 +486,7 @@
     "wanderRange": 1,
     "lootTable": [],
     "shop": {
-      "name": "Armor Shop \u2014 Shields",
+      "name": "Armor Shop — Shields",
       "items": [
         {
           "itemId": 4,
@@ -580,6 +580,38 @@
         "itemId": 14,
         "quantity": 1,
         "chance": 0.5
+      }
+    ]
+  },
+  {
+    "id": 19,
+    "name": "New Friendly NPC",
+    "health": 30,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 60,
+    "aggressive": false,
+    "wanderRange": 2,
+    "lootTable": []
+  },
+  {
+    "id": 20,
+    "name": "Farmer",
+    "health": 14,
+    "attack": 5,
+    "defence": 3,
+    "strength": 5,
+    "attackSpeed": 5,
+    "respawnTime": 18,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
       }
     ]
   }
