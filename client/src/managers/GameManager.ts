@@ -5115,13 +5115,29 @@ export class GameManager {
 
   private ladderActionsForObject(data?: { x: number; z: number }): readonly string[] {
     if (!data) return ['Examine'];
-    const lower = this.chunkManager.getEffectiveHeight(data.x, data.z, 0, Number.NEGATIVE_INFINITY);
-    const upper = this.chunkManager.getEffectiveHeight(data.x, data.z, 0, Number.POSITIVE_INFINITY);
-    if (!Number.isFinite(upper) || upper < lower + 1.0) return ['Examine'];
     const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
-    return playerY > upper - 1.2
-      ? ['Climb-down', 'Examine']
-      : ['Climb-up', 'Examine'];
+    const positions = [
+      { x: Math.floor(data.x) + 0.5, z: Math.floor(data.z) + 0.5 },
+      { x: Math.floor(data.x) + 0.5, z: Math.floor(data.z) - 0.5 },
+      { x: Math.floor(data.x) + 0.5, z: Math.floor(data.z) + 1.5 },
+      { x: Math.floor(data.x) - 0.5, z: Math.floor(data.z) + 0.5 },
+      { x: Math.floor(data.x) + 1.5, z: Math.floor(data.z) + 0.5 },
+    ];
+    const heights: number[] = [];
+    for (const pos of positions) {
+      for (const height of this.chunkManager.getWalkableHeightsAt(pos.x, pos.z)) {
+        if (!heights.some(existing => Math.abs(existing - height) < 0.1)) {
+          heights.push(height);
+        }
+      }
+    }
+    const hasUp = heights.some(height => height > playerY + 0.8);
+    const hasDown = heights.some(height => height < playerY - 0.8);
+    const actions: string[] = [];
+    if (hasDown) actions.push('Climb-down');
+    if (hasUp) actions.push('Climb-up');
+    actions.push('Examine');
+    return actions;
   }
 
   private isWorldObjectInteractable(def: WorldObjectDef | undefined | null, depleted: boolean): boolean {

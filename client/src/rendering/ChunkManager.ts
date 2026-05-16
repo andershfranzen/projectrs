@@ -2046,6 +2046,40 @@ export class ChunkManager {
     return this.floorHeights.get(tz * this.mapWidth + tx);
   }
 
+  getWalkableHeightsAt(x: number, z: number): number[] {
+    const tx = Math.floor(x), tz = Math.floor(z);
+    if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return [];
+    const tileIdx = tz * this.mapWidth + tx;
+    const heights: number[] = [this.getInterpolatedHeight(x, z)];
+    const add = (height: number | undefined | null): void => {
+      if (height == null || !Number.isFinite(height)) return;
+      if (!heights.some(existing => Math.abs(existing - height) < 0.1)) {
+        heights.push(height);
+      }
+    };
+
+    add(this.floorHeights.get(tileIdx));
+    add(this.elevatedFloorHeights.get(tileIdx));
+    const stair = this.stairData.get(tileIdx);
+    if (stair) {
+      add(stair.baseHeight);
+      add(stair.topHeight);
+      add(this.getEffectiveHeight(x, z, 0, Number.POSITIVE_INFINITY));
+    }
+    for (const [floor, layer] of this.floorLayerData) {
+      add(layer.floors.get(tileIdx));
+      add(layer.tiles.get(tileIdx));
+      const layerStair = layer.stairs.get(tileIdx);
+      if (layerStair) {
+        add(layerStair.baseHeight);
+        add(layerStair.topHeight);
+        add(this.getEffectiveHeight(x, z, floor, Number.POSITIVE_INFINITY));
+      }
+    }
+
+    return heights.sort((a, b) => a - b);
+  }
+
   getStairAt(x: number, z: number): StairData | undefined {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return undefined;

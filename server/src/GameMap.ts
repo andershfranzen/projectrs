@@ -335,9 +335,9 @@ export class GameMap {
         };
         this.floorLayers.set(floorIdx, layer);
       }
-      for (const [idx] of tileMap) {
+      for (const [idx, y] of tileMap) {
         if (!layer.tiles.has(idx)) {
-          layer.tiles.set(idx, 1);
+          layer.tiles.set(idx, y);
           derivedTotal++;
         }
       }
@@ -547,6 +547,41 @@ export class GameMap {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.width || tz < 0 || tz >= this.height) return null;
     return this.elevatedFloorHeights.get(tz * this.width + tx) ?? null;
+  }
+
+  getWalkableHeightsAt(x: number, z: number): number[] {
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    if (tx < 0 || tx >= this.width || tz < 0 || tz >= this.height) return [];
+    const idx = tz * this.width + tx;
+    const heights: number[] = [this.getInterpolatedHeight(x, z)];
+    const add = (height: number | undefined | null): void => {
+      if (height == null || !Number.isFinite(height)) return;
+      if (!heights.some(existing => Math.abs(existing - height) < 0.1)) {
+        heights.push(height);
+      }
+    };
+
+    add(this.floorHeights.get(idx));
+    add(this.elevatedFloorHeights.get(idx));
+    const stair = this.stairs.get(idx);
+    if (stair) {
+      add(stair.baseHeight);
+      add(stair.topHeight);
+      add(this.getEffectiveHeightOnFloor(x, z, 0, Number.POSITIVE_INFINITY));
+    }
+    for (const [floor, layer] of this.floorLayers) {
+      add(layer.floors.get(idx));
+      add(layer.tiles.get(idx));
+      const layerStair = layer.stairs.get(idx);
+      if (layerStair) {
+        add(layerStair.baseHeight);
+        add(layerStair.topHeight);
+        add(this.getEffectiveHeightOnFloor(x, z, floor, Number.POSITIVE_INFINITY));
+      }
+    }
+
+    return heights.sort((a, b) => a - b);
   }
 
   /** Get effective walking height at a position, accounting for floors and stairs */

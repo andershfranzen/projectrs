@@ -2033,34 +2033,70 @@ export class World {
   }
 
   private handleLadderInteraction(player: Player, obj: WorldObject, action: 'Climb-up' | 'Climb-down'): void {
-    const heights = this.getLadderHeights(player, obj);
-    if (!heights) {
+    const step = this.getLadderStep(player, obj);
+    const target = action === 'Climb-down' ? step.down : step.up;
+    if (!target) {
       this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
       return;
     }
 
-    const targetY = action === 'Climb-down' ? heights.lower : heights.upper;
     this.interruptPlayerAction(player.id, player);
     player.currentFloor = 0;
     player.lastFloorChangeTile = -1;
-    this.teleportPlayer(player, obj.x, obj.z, targetY);
+    this.teleportPlayer(player, target.x, target.z, target.y);
   }
 
   private ladderActionsForPlayer(player: Player, obj: WorldObject): readonly string[] {
-    const heights = this.getLadderHeights(player, obj);
-    if (!heights) return ['Examine'];
-    return heights.onUpper
-      ? ['Climb-down', 'Examine']
-      : ['Climb-up', 'Examine'];
+    const step = this.getLadderStep(player, obj);
+    const actions: string[] = [];
+    if (step.down) actions.push('Climb-down');
+    if (step.up) actions.push('Climb-up');
+    actions.push('Examine');
+    return actions;
   }
 
-  private getLadderHeights(player: Player, obj: WorldObject): { lower: number; upper: number; onUpper: boolean } | null {
+  private getLadderStep(
+    player: Player,
+    obj: WorldObject,
+  ): { up?: { x: number; z: number; y: number }; down?: { x: number; z: number; y: number } } {
     const map = this.getPlayerMap(player);
-    const lower = map.getInterpolatedHeight(obj.x, obj.z);
-    const upper = map.getEffectiveHeightOnFloor(obj.x, obj.z, 0, Number.POSITIVE_INFINITY);
-    if (!Number.isFinite(upper) || upper < lower + 1.0) return null;
     const playerY = Math.max(player.effectiveY, player.reportedY);
-    return { lower, upper, onUpper: player.currentFloor > 0 || playerY > upper - 1.2 };
+    const allowedWorldSides = obj.interactionSides
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY)
+      : undefined;
+    const positions = [
+      { x: Math.floor(obj.x) + 0.5, z: Math.floor(obj.z) + 0.5 },
+      ...getObjectInteractionTiles(obj.x, obj.z, obj.def, { allowedWorldSides })
+        .map(tile => ({ x: tile.x + 0.5, z: tile.z + 0.5 })),
+    ];
+    const candidates: { x: number; z: number; y: number }[] = [];
+    const add = (candidate: { x: number; z: number; y: number }): void => {
+      if (!Number.isFinite(candidate.y)) return;
+      if (!candidates.some(existing =>
+        Math.abs(existing.x - candidate.x) < 0.01
+        && Math.abs(existing.z - candidate.z) < 0.01
+        && Math.abs(existing.y - candidate.y) < 0.1)) {
+        candidates.push(candidate);
+      }
+    };
+
+    for (const pos of positions) {
+      for (const y of map.getWalkableHeightsAt(pos.x, pos.z)) {
+        add({ ...pos, y });
+      }
+    }
+
+    const byDistance = (a: { x: number; z: number }, b: { x: number; z: number }): number =>
+      (Math.abs(a.x - player.position.x) + Math.abs(a.z - player.position.y))
+      - (Math.abs(b.x - player.position.x) + Math.abs(b.z - player.position.y));
+    const up = candidates
+      .filter(candidate => candidate.y > playerY + 0.8)
+      .sort((a, b) => (a.y - b.y) || byDistance(a, b))[0];
+    const down = candidates
+      .filter(candidate => candidate.y < playerY - 0.8)
+      .sort((a, b) => (b.y - a.y) || byDistance(a, b))[0];
+
+    return { up, down };
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
