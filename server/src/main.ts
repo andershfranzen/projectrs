@@ -526,14 +526,16 @@ function jsonResponse(data: any, status: number = 200): Response {
 // Bun.serve runs in one process, so an in-memory map is sufficient. If we ever
 // shard, this needs to move behind a shared store (Redis). Mirrors 2004scape
 // LoginServer.ts:231-249 — login limit per (account, IP), signup limit per IP.
+// Production sits behind Caddy, so use forwarded client IPs when the direct
+// peer is loopback. Otherwise every signup appears to come from 127.0.0.1.
 
 interface RateBucket { count: number; resetAt: number; }
 const loginAttempts = new Map<string, RateBucket>();
 const signupAttempts = new Map<string, RateBucket>();
 const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MS = 60_000;
-const SIGNUP_LIMIT = 3;
-const SIGNUP_WINDOW_MS = 60 * 60_000;
+const SIGNUP_LIMIT = 20;
+const SIGNUP_WINDOW_MS = 10 * 60_000;
 // Hard cap on entries so an attacker rotating usernames (or IPs, behind a
 // proxy) can't fill the map between sweeps. When the cap is hit, the oldest
 // entry is evicted — Map preserves insertion order, so `keys().next()` is O(1).
@@ -552,6 +554,22 @@ function checkRate(map: Map<string, RateBucket>, key: string, limit: number, win
   }
   bucket.count++;
   return bucket.count <= limit;
+}
+
+function requestClientIp(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): string {
+  const directIp = srv.requestIP(req)?.address ?? '';
+  if (LOOPBACK_IPS.has(directIp)) {
+    const forwardedFor = req.headers.get('x-forwarded-for');
+    if (forwardedFor) {
+      const first = forwardedFor.split(',')[0]?.trim();
+      if (first) return first;
+    }
+    const realIp = req.headers.get('x-real-ip')?.trim();
+    if (realIp) return realIp;
+    const cfIp = req.headers.get('cf-connecting-ip')?.trim();
+    if (cfIp) return cfIp;
+  }
+  return directIp || 'unknown';
 }
 
 setInterval(() => {
@@ -744,7 +762,7 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/api/signup' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
-      const ip = server.requestIP(req)?.address ?? 'unknown';
+      const ip = requestClientIp(req, server);
       try {
         const body = await req.json() as { username?: string; password?: string; deviceId?: string };
         const username = body.username || '';
@@ -770,7 +788,7 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/api/login' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
-      const ip = server.requestIP(req)?.address ?? 'unknown';
+      const ip = requestClientIp(req, server);
       try {
         const body = await req.json() as { username?: string; password?: string; deviceId?: string };
         const username = (body.username || '').toLowerCase();
