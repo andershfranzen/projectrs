@@ -1222,18 +1222,9 @@ export class GameManager {
     placedNode: TransformNode,
   ): void {
     this.worldObjectModels.set(objectEntityId, placedNode);
-    if (!placedNode.metadata) placedNode.metadata = {};
-    placedNode.metadata.objectEntityId = objectEntityId;
-    for (const child of placedNode.getChildMeshes(false)) {
-      if (!child.metadata) child.metadata = {};
-      child.metadata.objectEntityId = objectEntityId;
-    }
-    for (const child of placedNode.getChildTransformNodes(false)) {
-      if (!child.metadata) child.metadata = {};
-      child.metadata.objectEntityId = objectEntityId;
-    }
 
     const def = this.objectDefsCache.get(data.defId);
+    this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), placedNode);
     if (def?.category === 'door') {
       const modelRotY = this.modelRotY(placedNode);
       const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
@@ -1257,7 +1248,8 @@ export class GameManager {
     } else {
       if (data.depleted) placedNode.setEnabled(false);
       if (data.depleted) {
-        this.objectModels.createDepletedModel(objectEntityId, data.defId, placedNode);
+        const depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, placedNode);
+        if (depleted) this.setWorldObjectPickTarget(objectEntityId, false, depleted);
       }
     }
 
@@ -1283,6 +1275,7 @@ export class GameManager {
       proxy.doNotSyncBoundingInfo = true;
       proxy.freezeWorldMatrix();
       proxy.metadata = { objectEntityId };
+      this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), proxy);
     }
   }
 
@@ -2217,8 +2210,18 @@ export class GameManager {
         if (def?.category === 'door') {
           // Doors stay visible — animate rotation instead
           model.setEnabled(true);
-        } else if (def?.category !== 'tree') {
+        } else {
           model.setEnabled(!isDepleted);
+        }
+        this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
+        const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
+        let depletedModel = this.objectModels.getStump(objectEntityId);
+        if (!depletedModel && hasDepleteModel && isDepleted) {
+          depletedModel = this.objectModels.createDepletedModel(objectEntityId, objectDefId, model);
+        }
+        if (depletedModel) {
+          depletedModel.setEnabled(isDepleted);
+          this.setWorldObjectPickTarget(objectEntityId, false, depletedModel);
         }
       }
     });
@@ -2270,15 +2273,20 @@ export class GameManager {
           if (placedNode) {
             if (!model) this.worldObjectModels.set(objectEntityId, placedNode);
             placedNode.setEnabled(isDepleted === 0);
+            this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
 
             let depleted = this.objectModels.getStump(objectEntityId);
             if (!depleted && isDepleted === 1) {
               depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, placedNode);
             }
-            if (depleted) depleted.setEnabled(isDepleted === 1);
+            if (depleted) {
+              depleted.setEnabled(isDepleted === 1);
+              this.setWorldObjectPickTarget(objectEntityId, false, depleted);
+            }
           }
         } else if (model) {
           model.setEnabled(isDepleted === 0);
+          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
         }
       }
     });
@@ -3367,7 +3375,6 @@ export class GameManager {
 
   private handleObjectClick(objectEntityId: number): void {
     if (performance.now() < this.castingUntil) return;
-    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     // Cooldown after cancelling a skill — prevent spam-restarting
     if (performance.now() - this.skillCancelTime < 600) return;
     const data = this.worldObjectDefs.get(objectEntityId);
@@ -3375,7 +3382,8 @@ export class GameManager {
     const def = this.objectDefsCache.get(data.defId);
     if (!def) return;
     // Doors can always be clicked (open/close toggle). Other objects can't when depleted.
-    if (data.depleted && def.category !== 'door') return;
+    if (!this.isWorldObjectInteractable(def, data.depleted)) return;
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     // Auto-interact with harvestable objects (trees, rocks), doors, and crafting stations (furnace, anvil, range)
     if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || (def.recipes && def.recipes.length > 0)) {
       if (this.interactMarker) {
@@ -3434,9 +3442,13 @@ export class GameManager {
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
+    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+    const data = this.worldObjectDefs.get(objectEntityId);
+    if (!data) return;
+    const def = this.objectDefsCache.get(data.defId);
+    if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
-    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
 
     // Intercept anvil/tool-based crafting: show recipe UI instead of auto-crafting.
     // Walk to the anvil first if not adjacent — the panel only opens once we're
@@ -3488,15 +3500,11 @@ export class GameManager {
       this.localPlayer?.stopSkillAnimation();
     }
 
-    const data = this.worldObjectDefs.get(objectEntityId);
-    if (!data) return;
-
     const dx = data.x - this.playerX;
     const dz = data.z - this.playerZ;
     const dist = Math.hypot(dx, dz);
 
     // Find a reachable adjacent tile and walk there
-    const def = this.objectDefsCache.get(data.defId);
     const shouldRetryOnArrival = !!def && def.category !== 'door' && !!((def.skill && def.harvestItemId) || (def.recipes && def.recipes.length > 0));
 
     if (def?.category === 'door') {
@@ -5008,7 +5016,30 @@ export class GameManager {
     if (def.category === 'door') {
       return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
     }
+    if (depleted) return [];
     return def.actions;
+  }
+
+  private isWorldObjectInteractable(def: WorldObjectDef | undefined | null, depleted: boolean): boolean {
+    if (!def) return false;
+    return !depleted || def.category === 'door';
+  }
+
+  private setWorldObjectPickTarget(objectEntityId: number, interactive: boolean, root?: TransformNode | null): void {
+    const target = root ?? this.worldObjectModels.get(objectEntityId);
+    if (!target) return;
+
+    const apply = (node: TransformNode): void => {
+      if (interactive) {
+        node.metadata = { ...node.metadata, objectEntityId };
+      } else if (node.metadata && node.metadata.objectEntityId === objectEntityId) {
+        delete node.metadata.objectEntityId;
+      }
+    };
+
+    apply(target);
+    for (const child of target.getChildMeshes(false)) apply(child);
+    for (const child of target.getChildTransformNodes(false)) apply(child);
   }
 
   private setupDoorPivot(objectEntityId: number): void {
