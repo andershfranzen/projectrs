@@ -86,7 +86,7 @@ function prepareGame(): Promise<GameManagerType> {
     gameFrame.style.visibility = 'hidden';
     void canvas.offsetWidth;
 
-    game = new GameManager(canvas, '', '', handleDisconnect, undefined);
+    game = new GameManager(canvas, '', '', handleDisconnect);
     await game.whenPreloaded((pct, status) => {
       reportPrepProgress(0.18 + pct * 0.82, status);
     });
@@ -157,8 +157,13 @@ function showLoginScreen() {
         ls.setStatus(p.status);
       });
       const preparedGame = await prepareGame();
+      unwatch();
+      ls.resetProgress();
       ls.setStatus('Connecting to server');
-      await preparedGame.connectAndAuth(token, username);
+      await preparedGame.connectAndAuth(token, username, (pct, status) => {
+        ls.setProgress(pct);
+        ls.setStatus(status);
+      });
       ls.hide();
       revealGame();
     } catch (err) {
@@ -224,16 +229,19 @@ async function bootstrap() {
   const tokenResult = await validateSavedToken();
 
   if (tokenResult) {
+    unwatch();
+    loadingScreen.resetProgress();
     loadingScreen.setStatus('Connecting to server');
     try {
       const preparedGame = await prepPromise;
-      await preparedGame.connectAndAuth(tokenResult.token, tokenResult.username);
-      unwatch();
+      await preparedGame.connectAndAuth(tokenResult.token, tokenResult.username, (pct, status) => {
+        loadingScreen.setProgress(pct);
+        loadingScreen.setStatus(status);
+      });
       loadingScreen.hide();
       revealGame();
     } catch (err) {
       console.error('[bootstrap] auto-login failed:', err);
-      unwatch();
       loadingScreen.hide();
       showLoginScreen();
     }

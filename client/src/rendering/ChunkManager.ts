@@ -220,6 +220,7 @@ export class ChunkManager {
   }
 
   isLoaded(): boolean { return this.loaded; }
+  getMapId(): string { return this.mapId; }
   getMeta(): MapMeta | null { return this.meta; }
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }

@@ -46,7 +46,6 @@ import { DialoguePanel, type DialogueNodePayload } from '../ui/DialoguePanel';
 import { BankPanel } from '../ui/BankPanel';
 import { TradePanel } from '../ui/TradePanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
-import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
@@ -64,6 +63,8 @@ type InteractionOption = {
   label: string;
   action: () => void;
 };
+
+type LoadingProgressCallback = (pct: number, status: string) => void;
 
 export class GameManager {
   private engine: Engine;
@@ -96,10 +97,6 @@ export class GameManager {
   // Local player
   private localPlayer: CharacterEntity | null = null;
   private localPlayerId: number = -1;
-  private loadingScreen: LoadingScreen | null = null;
-  /** Set when the map data finished loading before the network socket was
-   *  connected. connectAndAuth flushes MAP_READY as soon as the socket opens. */
-  private _sendMapReadyOnConnect: boolean = false;
   /** Settles when WorldObjectModels finishes its initial bulk load. */
   private _objectModelsReady: Promise<void> = Promise.resolve();
   /** Settles when objectDefs / itemDefs / npcDefs / etc. finish loading. We
@@ -108,10 +105,19 @@ export class GameManager {
    *  defs, linkPlacedNodeToEntity falls into the non-door branch and
    *  doors get stuck at their authored closed pose with no pivot. */
   private _defsReady: Promise<void> = Promise.resolve();
-  /** Resolves on the first LOGIN_OK packet so connectAndAuth can await full
-   *  authentication completion (player position applied, spawn chunks
-   *  guaranteed loaded, input enabled). */
+  /** Resolves once the post-auth world is genuinely playable: LOGIN_OK has
+   *  placed the player, the initial MAP_CHANGE has settled, saved-spawn
+   *  chunks are loaded, and the server bootstrap inventory/skills/equipment
+   *  packets have been applied. */
   private _loginOkResolver: (() => void) | null = null;
+  private _loginProgress: LoadingProgressCallback | null = null;
+  private _loginMapReady: Promise<void> = Promise.resolve();
+  private _resolveLoginMapReady: (() => void) | null = null;
+  private _loginBootstrapPending: Set<'skills' | 'inventory' | 'equipment'> | null = null;
+  private _pendingLoginGearLoads: Promise<void>[] = [];
+  private _loginReadySeq: number = 0;
+  private _loginSettled: boolean = true;
+  private _initialMapReadySent: boolean = false;
   private currentFloor: number = 0;
   private playerX: number = 512;
   private playerZ: number = 512;
@@ -300,22 +306,12 @@ export class GameManager {
     token: string,
     username: string,
     onDisconnect?: () => void,
-    preloadedLoadingScreen?: LoadingScreen,
   ) {
     (window as any).gm = this;
     this.onFatalDisconnect = onDisconnect;
     this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
     this.username = username;
-    // If main.ts already constructed a LoadingScreen (during pre-auth asset
-    // preload), reuse it instead of flashing a fresh one on LOGIN_OK. The
-    // pre-auth path hides nothing — the same overlay carries through from
-    // page load to first playable frame.
-    if (preloadedLoadingScreen) {
-      this.loadingScreen = preloadedLoadingScreen;
-      this.loadingScreen.setStatus('Connecting to world…');
-    }
-
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
     // RS-style chunky pixels: render at half resolution and let the browser
     // upscale the framebuffer with nearest-neighbor (set on canvas via CSS).
@@ -517,18 +513,14 @@ export class GameManager {
       // down — and once at Y=0 the gate stays failed permanently.
     });
 
-    // Load map. MAP_READY is only sent once we have an authenticated socket,
-    // so during preload we just stage the chunk data and defer the packet
-    // until connectAndAuth wires the socket up.
+    // Load the default map during pre-auth as a hidden warm start. This does
+    // not send MAP_READY: the server's authoritative placement arrives after
+    // LOGIN_OK via MAP_CHANGE, and only that final placement should trigger
+    // entity bootstrap packets.
     this.chunkManager.loadMap('kcmap').then(async () => {
       await this.loadBiomes('kcmap');
       this.applyFog();
       await this._defsReady;
-      if (this.network.isConnected()) {
-        this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
-      } else {
-        this._sendMapReadyOnConnect = true;
-      }
       this.repositionWorldObjects();
     });
     this._defsReady = this.loadObjectDefs();
@@ -628,25 +620,89 @@ export class GameManager {
     return Promise.all([characterReady, objectsReady, chunksReady]).then(() => {});
   }
 
+  private noteLoginBootstrapPacket(kind: 'skills' | 'inventory' | 'equipment'): void {
+    const pending = this._loginBootstrapPending;
+    if (!pending) return;
+    pending.delete(kind);
+    const done = 3 - pending.size;
+    this._loginProgress?.(0.82 + done * 0.04, `Loading character state (${done}/3)`);
+    if (pending.size === 0) void this.tryResolveLoginReady(this._loginReadySeq);
+  }
+
+  private async waitForLoginBootstrapPackets(seq: number, timeoutMs: number = 5000): Promise<void> {
+    const start = performance.now();
+    while (this._loginBootstrapPending && this._loginBootstrapPending.size > 0) {
+      if (seq !== this._loginReadySeq || this.destroyed) return;
+      if (performance.now() - start > timeoutMs) {
+        console.warn(`[loading] Timed out waiting for bootstrap packets: ${Array.from(this._loginBootstrapPending).join(', ')}`);
+        return;
+      }
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  private async tryResolveLoginReady(seq: number): Promise<void> {
+    if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
+    this._loginProgress?.(0.6, 'Loading world');
+    await this._loginMapReady;
+    if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
+
+    this._loginProgress?.(0.72, 'Loading character');
+    if (this.localPlayer) await this.localPlayer.whenReady();
+    if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
+
+    this._loginProgress?.(0.78, 'Loading saved location');
+    await this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ);
+    if (this.localPlayer) {
+      const groundY = this.getHeight(this.playerX, this.playerZ);
+      this.localPlayer.setPositionXYZ(this.playerX, groundY, this.playerZ);
+      this.inputManager.setPlayerY(groundY);
+    }
+
+    this._loginProgress?.(0.86, 'Loading character state');
+    await this.waitForLoginBootstrapPackets(seq);
+    if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
+
+    if (this._pendingLoginGearLoads.length > 0) {
+      this._loginProgress?.(0.94, 'Loading equipped gear');
+      const gearLoads = this._pendingLoginGearLoads.splice(0);
+      await Promise.allSettled(gearLoads);
+    }
+    if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
+
+    // Let Babylon commit any meshes/materials applied by packet handlers
+    // before the canvas is revealed.
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
+
+    this._loginProgress?.(1, 'Entering world');
+    this.inputManager.setEnabled(true);
+    this._loginSettled = true;
+    this._loginBootstrapPending = null;
+    const resolver = this._loginOkResolver;
+    this._loginOkResolver = null;
+    this._loginProgress = null;
+    resolver();
+  }
+
   /** Open the WebSocket and wait for the first LOGIN_OK to finish processing
    *  (real spawn position applied, saved appearance applied, input enabled).
    *  Use this after `whenPreloaded()` for a clean "click Login → world is
    *  immediately playable" handoff. */
-  connectAndAuth(token: string, username: string): Promise<void> {
+  connectAndAuth(token: string, username: string, onProgress?: LoadingProgressCallback): Promise<void> {
     this.token = token;
     this.username = username;
     return new Promise<void>((resolve) => {
       this._loginOkResolver = resolve;
+      this._loginProgress = onProgress ?? null;
+      this._loginBootstrapPending = new Set(['skills', 'inventory', 'equipment']);
+      this._pendingLoginGearLoads = [];
+      this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
+      this._loginSettled = false;
+      this._initialMapReadySent = false;
+      this._loginReadySeq++;
+      onProgress?.(0.02, 'Connecting to server');
       this.network.connect(token);
-      if (this._sendMapReadyOnConnect) {
-        this._sendMapReadyOnConnect = false;
-        // network.connect is async (WS open). Send once the socket is open.
-        this.network.onOpen(() => {
-          void this._defsReady.then(() => {
-            this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
-          });
-        });
-      }
     });
   }
 
@@ -745,6 +801,13 @@ export class GameManager {
       };
 
       this._loginOkResolver = onLoginOk;
+      this._loginProgress = null;
+      this._loginBootstrapPending = new Set(['skills', 'inventory', 'equipment']);
+      this._pendingLoginGearLoads = [];
+      this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
+      this._loginSettled = false;
+      this._initialMapReadySent = false;
+      this._loginReadySeq++;
       this.network.connect(this.token);
     });
   }
@@ -1599,6 +1662,8 @@ export class GameManager {
       this.localPlayerId = v[0];
       this.playerX = v[1] / 10;
       this.playerZ = v[2] / 10;
+      const loginSeq = this._loginReadySeq;
+      this._loginProgress?.(0.48, 'Loading saved character');
       // Server-authored spawn Y (effective walking height at our tile/floor).
       // Trust this over locally-computed getHeight: on initial spawn the
       // client's elevatedFloorHeights gates elevation reveal on currentY,
@@ -1616,37 +1681,7 @@ export class GameManager {
       }
       this.inputManager.setPlayerY(spawnY);
       console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
-
-      // Wait for any chunks around the saved spawn that weren't part of the
-      // preloaded default-spawn cluster (usually nothing — the saved spawn
-      // is typically in the same chunk we already loaded). Apply appearance
-      // and clear the loading screen once everything's in place.
-      const characterReady = this.localPlayer?.whenReady().then(() => {
-        if (this.localAppearance && this.localPlayer) {
-          this.localPlayer.applyAppearance(this.localAppearance);
-        }
-      }) ?? Promise.resolve();
-      const worldReady = this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ);
-      Promise.all([characterReady, worldReady]).then(() => {
-        // Snap Y to client-computed ground height — see comment in the
-        // pre-refactor version of this handler for why.
-        if (this.localPlayer) {
-          const groundY = this.getHeight(this.playerX, this.playerZ);
-          this.localPlayer.setPositionXYZ(this.playerX, groundY, this.playerZ);
-          this.inputManager.setPlayerY(groundY);
-        }
-        this.loadingScreen?.hide();
-        this.loadingScreen = null;
-        this.inputManager.setEnabled(true);
-
-        // Settle the connectAndAuth() promise so main.ts can dismiss the
-        // (already-min-display-clamped) LoadingScreen and reveal the world.
-        if (this._loginOkResolver) {
-          const resolver = this._loginOkResolver;
-          this._loginOkResolver = null;
-          resolver();
-        }
-      });
+      void this.tryResolveLoginReady(loginSeq);
     });
 
     this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
@@ -2274,6 +2309,7 @@ export class GameManager {
         if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, v[i], v[i + 1]);
         if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, v[i], v[i + 1]);
       }
+      this.noteLoginBootstrapPacket('inventory');
     });
 
     // --- Bank ---
@@ -2349,6 +2385,7 @@ export class GameManager {
           }
         }
       }
+      this.noteLoginBootstrapPacket('skills');
     });
 
     this.network.on(ServerOpcode.PLAYER_EQUIPMENT, (_op, v) => {
@@ -2360,7 +2397,8 @@ export class GameManager {
         this.sidePanel.updateEquipSlot(slotIndex, itemId);
       }
       // Attach/detach 3D gear on local player
-      this.equipGear(slotIndex, itemId);
+      const gearLoad = this.equipGear(slotIndex, itemId);
+      if (this._loginBootstrapPending) this._pendingLoginGearLoads.push(gearLoad);
     });
 
     // Batch equipment: [slot0_itemId, slot1_itemId, ...]
@@ -2373,8 +2411,10 @@ export class GameManager {
       }
       // Attach/detach 3D gear on local player
       for (let i = 0; i < v.length; i++) {
-        this.equipGear(i, v[i]);
+        const gearLoad = this.equipGear(i, v[i]);
+        if (this._loginBootstrapPending) this._pendingLoginGearLoads.push(gearLoad);
       }
+      this.noteLoginBootstrapPacket('equipment');
     });
 
     this.network.on(ServerOpcode.XP_GAIN, () => {});
@@ -2462,7 +2502,15 @@ export class GameManager {
         const { str: mapId, values } = decodeStringPacket(data);
         const newX = values[0] / 10;
         const newZ = values[1] / 10;
-        this.handleMapChange(mapId, newX, newZ);
+        const mapReady = this.handleMapChange(mapId, newX, newZ);
+        if (!this._loginSettled) {
+          this._loginMapReady = mapReady;
+          void mapReady.then(() => {
+            this._resolveLoginMapReady?.();
+            this._resolveLoginMapReady = null;
+            void this.tryResolveLoginReady(this._loginReadySeq);
+          });
+        }
       } else if (opcode === ServerOpcode.DIALOGUE_OPEN) {
         const { str, values } = decodeStringPacket(data);
         try {
@@ -2530,55 +2578,65 @@ export class GameManager {
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
     console.log(`Map change to '${mapId}' at (${newX}, ${newZ})`);
 
-    this.entities.disposeAllEntities();
-    this.remoteAnimationStates.clear();
-    // Local player persists across map changes — restore any displaced
-    // tool first, then clear the set so a teleport mid-chop doesn't leave
-    // the next chop unable to re-swap.
-    if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
-      this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
-    }
-    this.toolSwappedEntities.clear();
+    const isInitialPlacement = !this.hasHandledInitialMapChange;
+    const mapAlreadyLoaded = this.chunkManager.isLoaded() && this.chunkManager.getMapId() === mapId;
 
-    // Only dispose models that GameManager created, not linked placed objects from ChunkManager
-    for (const [, model] of this.worldObjectModels) {
-      if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
-    }
-    this.worldObjectModels.clear();
-    this.objectModels.disposeStumps();
-    this.worldObjectDefs.clear();
-    this.blockedObjectTiles.clear();
-    for (const [, entry] of this.doorPivots) entry.pivot.dispose();
-    this.doorPivots.clear();
-
-    this.isSkilling = false;
-    this.skillingObjectId = -1;
-
-    // Load new map
-    await this.chunkManager.loadMap(mapId);
-    await this.loadBiomes(mapId);
-    this.applyFog();
-    this.minimap?.invalidateTileCache();
-    this._lastMinimapUpdateMs = 0;
-    // Tell server we're ready to receive entity data — SYNCs will link trees via the handler
-    await this._defsReady;
-    this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
-
-    // Update player position
     this.playerX = newX;
     this.playerZ = newZ;
     this.clearPredictedPath();
     if (this.localPlayer) this.localPlayer.stopWalking();
     this.combatTargetId = -1;
+    this.isSkilling = false;
+    this.skillingObjectId = -1;
+
+    if (!isInitialPlacement || !mapAlreadyLoaded) {
+      this.entities.disposeAllEntities();
+      this.remoteAnimationStates.clear();
+      // Local player persists across map changes — restore any displaced
+      // tool first, then clear the set so a teleport mid-chop doesn't leave
+      // the next chop unable to re-swap.
+      if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
+        this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
+      }
+      this.toolSwappedEntities.clear();
+
+      // Only dispose models that GameManager created, not linked placed objects from ChunkManager
+      for (const [, model] of this.worldObjectModels) {
+        if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
+      }
+      this.worldObjectModels.clear();
+      this.objectModels.disposeStumps();
+      this.worldObjectDefs.clear();
+      this.blockedObjectTiles.clear();
+      for (const [, entry] of this.doorPivots) entry.pivot.dispose();
+      this.doorPivots.clear();
+
+      await this.chunkManager.loadMap(mapId);
+      await this.loadBiomes(mapId);
+      this.applyFog();
+      this.minimap?.invalidateTileCache();
+      this._lastMinimapUpdateMs = 0;
+    } else {
+      this._loginProgress?.(0.58, 'Using preloaded map');
+    }
+
+    // Ensure the actual saved spawn chunk is ready before asking the server
+    // for entities. This keeps WORLD_OBJECT_SYNC linking against live placed
+    // object nodes instead of racing chunk streaming after the overlay hides.
+    await this.chunkManager.whenSpawnChunksReady(newX, newZ);
+    this.repositionWorldObjects();
+
+    await this._defsReady;
+    if (!isInitialPlacement || !this._initialMapReadySent) {
+      this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+      if (isInitialPlacement) this._initialMapReadySent = true;
+    }
 
     // No Y snap here. LOGIN_OK already set Y from the server. Re-snapping
     // via getHeight() can drop the player below an elevated tile because
     // getHeight gates roof reveal on currentY, and the gate fails the
     // moment chunk data is mid-rebuild. For inter-map transitions (portals)
     // the server should send the new Y alongside MAP_CHANGE — TODO Step 3.
-
-    // Reposition any entities that arrived before map finished loading
-    this.repositionWorldObjects();
 
     if (!this.hasHandledInitialMapChange) {
       this.hasHandledInitialMapChange = true;
