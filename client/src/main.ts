@@ -129,6 +129,7 @@ function showLoginScreen() {
   gameFrame.style.visibility = 'hidden';
   gameFrame.style.display = 'none';
   backgroundParticles?.setVisible(true);
+  loginScreen?.destroy();
   loginScreen = new LoginScreen(async (token, username) => {
     backgroundParticles?.setVisible(false);
     try {

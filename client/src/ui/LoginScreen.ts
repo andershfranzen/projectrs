@@ -84,7 +84,7 @@ export class LoginScreen {
 
     // Focus username on show
     setTimeout(() => {
-      (document.getElementById('login-username') as HTMLInputElement)?.focus();
+      (this.container.querySelector('#login-username') as HTMLInputElement | null)?.focus();
     }, 100);
 
     return overlay;
@@ -141,9 +141,9 @@ export class LoginScreen {
   }
 
   private async handleSubmit(): Promise<void> {
-    const username = (document.getElementById('login-username') as HTMLInputElement)?.value.trim();
-    const password = (document.getElementById('login-password') as HTMLInputElement)?.value;
-    const confirm = (document.getElementById('login-confirm') as HTMLInputElement)?.value;
+    const username = (this.container.querySelector('#login-username') as HTMLInputElement | null)?.value.trim();
+    const password = (this.container.querySelector('#login-password') as HTMLInputElement | null)?.value;
+    const confirm = (this.container.querySelector('#login-confirm') as HTMLInputElement | null)?.value;
 
     if (!username || !password) {
       this.showError('Please fill in all fields');
