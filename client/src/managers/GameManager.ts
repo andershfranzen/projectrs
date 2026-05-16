@@ -4136,6 +4136,7 @@ export class GameManager {
       transform: translate(-50%, -50%);
       display: flex; align-items: center; justify-content: center;
       image-rendering: pixelated;
+      opacity: 0;
       transition: opacity 0.3s ease-out;
     `;
 
@@ -4973,7 +4974,13 @@ export class GameManager {
   private updateHitSplats(dt: number): void {
     if (this.hitSplats.length === 0) return;
     if (!this.ensureOverlayTransform()) return;
+    const cam = this.scene.activeCamera;
+    if (!cam) return;
     const sp = this._overlayScreenPos;
+    const camPos = cam.position;
+    const fogStart = this.scene.fogStart ?? Number.POSITIVE_INFINITY;
+    const fogEnd = this.scene.fogEnd ?? Number.POSITIVE_INFINITY;
+    const fogSpan = Math.max(0.001, fogEnd - fogStart);
 
     let writeIdx = 0;
     for (let i = 0; i < this.hitSplats.length; i++) {
@@ -4983,10 +4990,22 @@ export class GameManager {
       if (splat.timer <= 0) {
         splat.el.remove();
       } else {
-        splat.el.style.opacity = (splat.timer < 0.3 ? splat.timer / 0.3 : 1).toString();
         Vector3.ProjectToRef(splat.worldPos, GameManager.IDENTITY, this._overlayTransform, this._overlayVp, sp);
-        splat.el.style.left = `${sp.x}px`;
-        splat.el.style.top = `${sp.y}px`;
+        const dx = splat.worldPos.x - camPos.x;
+        const dy = splat.worldPos.y - camPos.y;
+        const dz = splat.worldPos.z - camPos.z;
+        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const fogOpacity = dist >= fogEnd
+          ? 0
+          : dist <= fogStart
+            ? 1
+            : 1 - ((dist - fogStart) / fogSpan);
+        const lifetimeOpacity = splat.timer < 0.3 ? splat.timer / 0.3 : 1;
+        const visible = sp.z > 0 && sp.z < 1 && fogOpacity > 0.01;
+
+        splat.el.style.opacity = visible ? (lifetimeOpacity * fogOpacity).toString() : '0';
+        splat.el.style.left = visible ? `${sp.x}px` : '-9999px';
+        splat.el.style.top = visible ? `${sp.y}px` : '-9999px';
         this.hitSplats[writeIdx++] = splat;
       }
     }
