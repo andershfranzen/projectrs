@@ -122,8 +122,6 @@ export class GameManager {
   private path: { x: number; z: number }[] = [];
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
-  private runEnabled: boolean = false;
-  private runEnergy: number = 100;
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
   private pendingSmithing: { objectEntityId: number; def: WorldObjectDef } | null = null; // open smithing panel once walk to anvil finishes
@@ -159,7 +157,6 @@ export class GameManager {
   private static readonly SLIDE_DURATION_MS = 200;
   private static readonly HIDDEN_RECONCILE_DIST = 2.5;
   private static readonly VISIBLE_RECONCILE_DIST = 2.25;
-  private static readonly RUN_SPEED_MULTIPLIER = 2.0;
   private static readonly MINIMAP_UPDATE_INTERVAL_MS = 50;
   // Tracks when the tab last became hidden. Non-zero means we recently
   // returned to a visible tab and the divergence-snap is armed for ~2 ticks
@@ -2208,13 +2205,6 @@ export class GameManager {
       this.updateHUD();
     });
 
-    this.network.on(ServerOpcode.PLAYER_RUN_STATE, (_op, v) => {
-      this.runEnergy = Math.max(0, Math.min(100, v[0] ?? 0));
-      this.runEnabled = (v[1] ?? 0) === 1;
-      if (this.sidePanel) this.sidePanel.updateRunState(this.runEnergy, this.runEnabled);
-      this.localPlayer?.setRunningVisual(this.runEnabled && this.runEnergy > 0);
-    });
-
     this.network.on(ServerOpcode.PLAYER_INVENTORY, (_op, v) => {
       const [slotIndex, itemId, quantity] = v;
       if (this.sidePanel) this.sidePanel.updateInvSlot(slotIndex, itemId, quantity);
@@ -3012,15 +3002,17 @@ export class GameManager {
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     if (this.pathIndex < this.path.length && this.tileProgress > 0) {
       const currentTarget = this.path[this.pathIndex];
-      const tail = findPath(currentTarget.x, currentTarget.z, goalX, goalZ,
+      const tail = findPath(this.tileFrom.x, this.tileFrom.z, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath);
-      if (tail.length > 0) {
-        return { path: [currentTarget, ...tail], preserveCurrentStep: true };
-      }
+      if (tail.length === 0) return { path: [], preserveCurrentStep: false };
+      // Same-direction continuation. Without this branch fast-rate clicks
+      // pin the player at tileProgress=0 because every reset starves the
+      // step accumulation.
+      const sameDir = this.sameTile(tail[0], currentTarget);
+      return { path: tail, preserveCurrentStep: sameDir };
     }
-
     return {
       path: findPath(this.playerX, this.playerZ, goalX, goalZ,
         this.isTileBlocked,
@@ -3082,6 +3074,8 @@ export class GameManager {
     this.path = path;
     this.pathIndex = 0;
     if (!preserveCurrentStep || !currentTarget || !this.sameTile(path[0], currentTarget)) {
+      // Walk from current visual position (often fractional mid-step) to
+      // path[0]. Body rotation handles the visible turn — no snap.
       this.tileProgress = 0;
       this.tileFrom = { x: this.playerX, z: this.playerZ };
     }
@@ -3951,6 +3945,9 @@ export class GameManager {
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;
     this.pendingTalkEntityId = -1;
+    // Release any face-lock so the body re-aims along the new travel
+    // direction rather than continuing to strafe toward the previous target.
+    this.localPlayer?.clearFaceLock();
     if (this.isSkilling) {
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -4227,7 +4224,8 @@ export class GameManager {
         const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
         const npcSprite = this.entities.npcSprites.get(this.combatTargetId);
         if (npcTarget && npcSprite) {
-          this.localPlayer.faceToward(npcSprite.position, camPos);
+          // Hold body yaw on the target across chase repaths.
+          this.localPlayer.lockFaceTowardXZ(npcSprite.position.x, npcSprite.position.z);
         }
       }
     }
@@ -4431,7 +4429,6 @@ export class GameManager {
 
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
     if (this.pathIndex >= this.path.length || !this.localPlayer) return;
-    this.localPlayer.setRunningVisual(this.runEnabled && this.runEnergy > 0);
     if (!this.localPlayer.isWalking()) this.localPlayer.startWalking();
 
     if (this.combatTargetId >= 0) {
@@ -4462,14 +4459,7 @@ export class GameManager {
     // position — which is what mogn would see for testchar2 over time.
     const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
 
-    // RS2-style catch-up scaffolding: when the path queue exceeds the
-    // default cadence, accelerate to drain it. Authentic ratios (1.5×, 2×)
-    // require swapping to a run animation at the higher speeds — the body
-    // moves faster, the legs cycle faster. Re-enable once run is wired up.
-    const remaining = this.path.length - this.pathIndex;
-    const speedMult = remaining > 3 ? 1.0 : remaining > 2 ? 1.0 : 1.0;
-    const runMult = this.runEnabled && this.runEnergy > 0 ? GameManager.RUN_SPEED_MULTIPLIER : 1;
-    const effectiveSpeed = this.moveSpeed * speedMult * runMult;
+    const effectiveSpeed = this.moveSpeed;
 
     const stepRate = tileSteps > 0 ? (effectiveSpeed * dt) / tileSteps : 1;
     this.tileProgress += stepRate;
@@ -4542,6 +4532,14 @@ export class GameManager {
         this.localPlayer.updateMovementDirection(nextTarget.x - this.playerX, nextTarget.z - this.playerZ, camPos);
       } else if (camPos && (dx !== 0 || dz !== 0)) {
         this.localPlayer.updateMovementDirection(dx, dz, camPos);
+      }
+
+      // Per-tick faceEntity refresh — combat takes precedence over a
+      // pending talk-to. Both clear on a ground click.
+      const lockId = this.combatTargetId >= 0 ? this.combatTargetId : this.pendingFaceTargetEntityId;
+      if (lockId >= 0) {
+        const npcTarget = this.entities.npcTargets.get(lockId);
+        if (npcTarget) this.localPlayer.lockFaceTowardXZ(npcTarget.x, npcTarget.z);
       }
     }
 

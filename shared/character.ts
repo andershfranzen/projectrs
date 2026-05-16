@@ -26,6 +26,15 @@ export const CHARACTER_IDLE_ANIM = `${CHARACTER_ANIM_DIR}/idle.glb`;
 export const PLAYER_ANIMATIONS: readonly { name: string; path: string }[] = [
   { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
   { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
+  // 2004scape-style 7-slot movement set. Server emits step direction + face
+  // state; CharacterEntity's per-frame strafe picker reads (travelYaw -
+  // bodyYaw) and selects walk / walk_b / walk_l / walk_r each frame. Any
+  // missing slot falls back to walk so a partial set still works — currently
+  // walk_b (backpedal) is unfilled and will visually moonwalk backwards.
+  // Filenames have a space because that's how the source GLBs were exported;
+  // the loader handles it (URL-encoded by SceneLoader).
+  { name: 'walk_l',                  path: `${CHARACTER_ANIM_DIR}/sidestep A.glb` },
+  { name: 'walk_r',                  path: `${CHARACTER_ANIM_DIR}/sidestep B.glb` },
   // RS2 turn-on-the-spot — CharacterEntity.updateAnimation swaps idle ↔ turn
   // based on yaw alignment so the model rotates instead of strafing.
   { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },

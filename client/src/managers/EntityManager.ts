@@ -285,6 +285,26 @@ export class EntityManager {
     for (const [, sprite] of this.npcSprites) sprite.updateAnimation(dt);
   }
 
+  /** Reusable scratch vector for SpriteEntity/Npc3DEntity face fallback —
+   *  CharacterEntity uses lockFaceTowardXZ which needs no Vector3. */
+  private _faceVec = new Vector3();
+
+  /** Lock face on a combat target. CharacterEntity uses lockFaceTowardXZ
+   *  (no allocation); other sprites fall back to a one-shot face. */
+  private applyCombatFaceLock(
+    sprite: CharacterEntity | Npc3DEntity | SpriteEntity,
+    targetX: number,
+    targetZ: number,
+    targetY: number,
+    camPos: Vector3 | null,
+  ): void {
+    if (sprite instanceof CharacterEntity) {
+      sprite.lockFaceTowardXZ(targetX, targetZ);
+    } else if (camPos) {
+      sprite.faceToward(this._faceVec.copyFromFloats(targetX, targetY, targetZ), camPos);
+    }
+  }
+
   interpolateRemotePlayers(dt: number, camPos: Vector3 | null): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
@@ -294,33 +314,34 @@ export class EntityManager {
       const dx = target.x - c.x;
       const dz = target.z - c.z;
       const dist = Math.hypot(dx, dz);
-      // "Server still says they're walking" if a recent PLAYER_SYNC bumped
-      // remoteWalkUntil. Without this grace window, the walk anim drops to
-      // idle for the frame between reaching tile N and receiving the sync
-      // for tile N+1 — visible as a hitch every 600 ms.
+      // Grace window so a remote player doesn't flicker to idle between
+      // arriving at tile N and receiving the sync for N+1.
       const serverWalking = (this.remoteWalkUntil.get(entityId) ?? 0) > now;
+      const combatTarget = this.remoteCombatTargets.get(entityId);
+      const combatTargetSprite = combatTarget !== undefined ? this.npcSprites.get(combatTarget) : undefined;
       if (dist > 0.05) {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
-        // Server advances 1 tile per tick (Chebyshev), so diagonals cover
-        // sqrt(2) euclidean per 0.6 s. Match that pacing — using a flat
-        // 1.67 u/s euclidean cap would lag diagonal-walking remote players
-        // behind their actual server position.
+        if (combatTargetSprite) {
+          const tp = combatTargetSprite.position;
+          this.applyCombatFaceLock(sprite, tp.x, tp.z, tp.y, camPos);
+        }
+        // Chebyshev-paced interpolation matches the server's 1 tile/tick
+        // regardless of direction.
         const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
         const stepRatio = Math.min(1.67 * dt / Math.max(tileSteps, 0.001), 1);
         const nx = c.x + dx * stepRatio;
         const nz = c.z + dz * stepRatio;
         sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
       } else if (serverWalking) {
-        // Visual caught up but the server is still sending move updates —
-        // keep the walk loop running so we don't flicker to idle.
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
-        const combatTarget = this.remoteCombatTargets.get(entityId);
-        if (combatTarget !== undefined && camPos) {
-          const targetSprite = this.npcSprites.get(combatTarget);
-          if (targetSprite) sprite.faceToward(targetSprite.position, camPos);
+        if (combatTargetSprite) {
+          const tp = combatTargetSprite.position;
+          this.applyCombatFaceLock(sprite, tp.x, tp.z, tp.y, camPos);
+        } else if (sprite instanceof CharacterEntity) {
+          sprite.clearFaceLock();
         }
       }
     }
@@ -348,45 +369,46 @@ export class EntityManager {
       // NPC is considered walking if server sent velocity recently
       const serverMoving = moving && elapsed < EntityManager.SERVER_TICK_MS * 2;
 
+      // Resolve combat target world position (local player or remote player).
+      const combatTarget = this.npcCombatTargets.get(entityId);
+      let lockX = 0, lockY = 0, lockZ = 0;
+      let hasLockTarget = false;
+      if (combatTarget !== undefined) {
+        if (combatTarget === localPlayerId && localPlayerPos) {
+          lockX = localPlayerPos.x; lockY = localPlayerPos.y; lockZ = localPlayerPos.z;
+          hasLockTarget = true;
+        } else {
+          const ts = this.remotePlayers.get(combatTarget);
+          if (ts) { lockX = ts.position.x; lockY = ts.position.y; lockZ = ts.position.z; hasLockTarget = true; }
+        }
+      }
+
       if (dist > 0.05) {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
-        // Server advances 1 tile per tick regardless of direction. Use
-        // Chebyshev distance so diagonals finish in 1 tick same as cardinals
-        // — Euclidean would underrun diagonals and cause visible drift.
-        // Cap post-stall / post-respawn catch-up at 2.0 t/s (1.2× walk).
-        // The previous 3.0 t/s "scoot" made NPCs visibly skate after a
-        // stale-walkUntil window expired.
+        if (hasLockTarget) this.applyCombatFaceLock(sprite, lockX, lockZ, lockY, camPos);
+        // Chebyshev pacing matches the server's 1 tile/tick. Catch-up after
+        // a stall caps at 2.0 t/s — higher values caused visible skating.
         const speed = serverMoving ? EntityManager.NPC_TILES_PER_SEC : 2.0;
         const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
         const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
         const nx = c.x + dx * stepRatio;
         const nz = c.z + dz * stepRatio;
-        // Use the NPC's own current Y as gate input so a rat in the basement
-        // doesn't get snapped up to the floor above just because the local
-        // player is up there. Each entity carries its own elevation context.
         sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
       } else if (serverMoving) {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
-        // Re-snap Y if terrain height resolved since this NPC was created.
-        // Race: NPC_SYNC arrives before the chunk heightmap is ready →
-        // getHeight() returned 0 at createNpc, leaving the NPC half-inside
-        // the ground until they took their first step. Only snaps on a
-        // meaningful mismatch so the per-frame cost stays at 1 read + 1 cmp.
+        // Re-snap Y if terrain height resolved since this NPC was created
+        // (NPC_SYNC can arrive before the chunk heightmap loads).
         const expectedY = this.getHeight(target.x, target.z, sprite.position.y);
         if (Math.abs(expectedY - sprite.position.y) > 0.05) {
           sprite.setPositionXYZ(target.x, expectedY, target.z);
         }
-        const combatTarget = this.npcCombatTargets.get(entityId);
-        if (combatTarget !== undefined && camPos) {
-          if (combatTarget === localPlayerId && localPlayerPos) {
-            sprite.faceToward(localPlayerPos, camPos);
-          } else {
-            const targetSprite = this.remotePlayers.get(combatTarget);
-            if (targetSprite) sprite.faceToward(targetSprite.position, camPos);
-          }
+        if (hasLockTarget) {
+          this.applyCombatFaceLock(sprite, lockX, lockZ, lockY, camPos);
+        } else if (sprite instanceof CharacterEntity) {
+          sprite.clearFaceLock();
         }
       }
     }

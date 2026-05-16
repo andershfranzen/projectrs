@@ -16,7 +16,6 @@ export const ANIM_QUANTIZE_FRAMES: Record<string, number> = {
 export const ANIM_DURATIONS: Record<string, number> = {
   idle: 3.6,
   walk: 1.2,
-  run: 1.2,
   attack: 1.2,
   attack_slash: 1.2,
   attack_punch: 1.2,
@@ -34,7 +33,6 @@ export const ANIM_DURATIONS: Record<string, number> = {
 const ANIM_SAMPLE_CURVES: Record<string, number[]> = {
   idle:         [0, 0.14, 0.28, 0.43, 0.57, 0.71, 0.86, 1.0],
   walk:         [0, 0.231, 0.500, 0.731, 1.0], // exact ratios for our 5 canonical poses
-  run:          [0, 0.14, 0.28, 0.43, 0.57, 0.71, 0.86, 1.0],
   attack:       [0, 0.10, 0.25, 0.45, 0.60, 0.75, 0.88, 1.0],
   attack_slash: [0, 0.10, 0.25, 0.45, 0.60, 0.75, 0.88, 1.0],
   attack_punch: [0, 0.10, 0.30, 0.50, 0.65, 0.78, 0.90, 1.0],
@@ -101,8 +99,21 @@ const STEP_EPSILON = 0.05;
  * canonical pose and pose 0. That synthetic segment doesn't represent natural
  * stride motion → foot-slide at the loop point.)
  */
+/** Walk + the three strafe/back variants share cycle length so phase
+ *  preservation in CharacterEntity.swapWalkSeqPreservingPhase produces
+ *  invisible swaps. Quantizer config keys collapse to 'walk'. */
+export const WALK_VARIANT_NAMES = ['walk', 'walk_b', 'walk_l', 'walk_r'] as const;
+export type WalkVariantName = typeof WALK_VARIANT_NAMES[number];
+const WALK_VARIANTS: Set<string> = new Set(WALK_VARIANT_NAMES);
+export function isWalkVariant(name: string): name is WalkVariantName {
+  return WALK_VARIANTS.has(name);
+}
+function canonName(animName: string): string {
+  return WALK_VARIANTS.has(animName) ? 'walk' : animName;
+}
+
 const LOOPING_ANIMS = new Set([
-  'idle', 'walk', 'run',
+  'idle', 'walk',
   'npc_idle', 'npc_walk',
 ]);
 
@@ -123,10 +134,11 @@ export function quantizeAnimationGroup(
   frameCount?: number,
 ): void {
   if (SKIP_QUANTIZE.has(animName)) return;
-  const frames = frameCount ?? ANIM_QUANTIZE_FRAMES[animName] ?? DEFAULT_QUANTIZE_FRAMES;
-  const targetDuration = ANIM_DURATIONS[animName] ?? 1.2;
+  const cfgKey = canonName(animName);
+  const frames = frameCount ?? ANIM_QUANTIZE_FRAMES[cfgKey] ?? DEFAULT_QUANTIZE_FRAMES;
+  const targetDuration = ANIM_DURATIONS[cfgKey] ?? 1.2;
   const targetFps = frames / targetDuration;
-  const sampleCurve = ANIM_SAMPLE_CURVES[animName];
+  const sampleCurve = ANIM_SAMPLE_CURVES[cfgKey];
 
   for (const ta of group.targetedAnimations) {
     const anim = ta.animation;
@@ -150,7 +162,7 @@ export function quantizeAnimationGroup(
     // playback range's end pose matches its start pose — the wrap is then
     // visually invisible. Replicates the source-side "duplicate final frame"
     // technique automatically so authors don't have to add one in Blender.
-    if (LOOPING_ANIMS.has(animName)) {
+    if (LOOPING_ANIMS.has(cfgKey)) {
       const v0 = sampledValues[0];
       sampledValues[frames - 1] = v0?.clone ? v0.clone() : v0;
     }
@@ -177,17 +189,15 @@ export function quantizeAnimationGroup(
 export const RS2_TURN_RATE = (32 / 2048) * Math.PI * 2 * 50;
 export const RS2_TURN_SNAP = (32 / 2048) * Math.PI * 2;
 
+export function wrapAnglePi(a: number): number {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
 export function rs2Rotation(current: number, target: number, dt: number): number {
-  let diff = target - current;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-
+  const diff = wrapAnglePi(target - current);
   if (Math.abs(diff) < RS2_TURN_SNAP) return target;
-
   const step = RS2_TURN_RATE * dt;
-  const next = current + Math.sign(diff) * Math.min(step, Math.abs(diff));
-  let normalized = next;
-  while (normalized > Math.PI) normalized -= Math.PI * 2;
-  while (normalized < -Math.PI) normalized += Math.PI * 2;
-  return normalized;
+  return wrapAnglePi(current + Math.sign(diff) * Math.min(step, Math.abs(diff)));
 }

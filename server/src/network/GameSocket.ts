@@ -215,11 +215,6 @@ export function handleGameSocketMessage(
       break;
     }
 
-    case ClientOpcode.PLAYER_TOGGLE_RUN: {
-      world.handlePlayerToggleRun(playerId, values[0] === 1);
-      break;
-    }
-
     case ClientOpcode.PLAYER_CAST_SPELL: {
       const spellIndex = values[0];
       const targetEntityId = values[1];

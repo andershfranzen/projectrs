@@ -58,14 +58,6 @@ const REFUND_SPILL_DESPAWN_TICKS = 100;
 /** How long to keep a dropped socket's player in-world for client reconnect.
  *  38 ticks at 600ms is just under 23s, matching the client's retry window. */
 const RECONNECT_GRACE_TICKS = 38;
-const RUN_SPEED_MULTIPLIER = 2.0;
-const RUN_ENERGY_MAX = 10000;
-// OSRS stores run energy as 0-10,000 and applies these formulas per tick.
-// EvilQuest has no Agility or carried-weight stat yet, so use level 1 / 0 kg.
-const RUN_ENERGY_BASE_AGILITY = 1;
-const RUN_ENERGY_BASE_WEIGHT = 0;
-const RUN_ENERGY_DRAIN_PER_TICK = Math.floor((60 + (67 * RUN_ENERGY_BASE_WEIGHT / 64)) * (1 - RUN_ENERGY_BASE_AGILITY / 300));
-const RUN_ENERGY_REGEN_PER_TICK = Math.floor(RUN_ENERGY_BASE_AGILITY / 10 + 15);
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -842,7 +834,6 @@ export class World {
     // log when the record is {}. Subsequent stage advances arrive as
     // QUEST_STAGE_ADVANCED deltas.
     this.quests.sendQuestStateSync(player);
-    this.sendRunState(player);
   }
 
   private cancelSkilling(playerId: number): void {
@@ -2295,13 +2286,6 @@ export class World {
     this.broadcastRemoteStance(player);
   }
 
-  handlePlayerToggleRun(playerId: number, enabled: boolean): void {
-    const player = this.players.get(playerId);
-    if (!player) return;
-    player.runEnabled = enabled && player.runEnergy > 0;
-    this.sendRunState(player);
-  }
-
   /**
    * Cast a spell at an NPC. Damage rolls now, applies on the impact tick
    * (cast duration + projectile travel time) so the hit splat lands when the
@@ -3150,17 +3134,8 @@ export class World {
 
   private tickPlayerMovement(): void {
     for (const [playerId, player] of this.players) {
-      const startedWithQueue = player.moveQueue.length > 0;
-      if (startedWithQueue) {
-        if (player.runEnabled && player.runEnergy > 0) {
-          player.movementCredit += RUN_SPEED_MULTIPLIER;
-        } else {
-          player.runEnabled = false;
-          player.movementCredit += 1;
-        }
-      }
+      if (player.moveQueue.length > 0) player.movementCredit += 1;
 
-      let movedTiles = 0;
       while (player.moveQueue.length > 0 && player.movementCredit >= 1) {
         const next = player.moveQueue[0];
         const map = this.getPlayerMap(player);
@@ -3179,20 +3154,6 @@ export class World {
           break;
         }
         if (!player.processMovement(this.currentTick)) break;
-        movedTiles++;
-      }
-      if (startedWithQueue) {
-        if (movedTiles > 0 && player.runEnabled) {
-          player.runEnergy = Math.max(0, player.runEnergy - RUN_ENERGY_DRAIN_PER_TICK);
-          if (player.runEnergy <= 0) player.runEnabled = false;
-          this.sendRunState(player);
-        } else if (!player.runEnabled && player.runEnergy < RUN_ENERGY_MAX) {
-          player.runEnergy = Math.min(RUN_ENERGY_MAX, player.runEnergy + RUN_ENERGY_REGEN_PER_TICK);
-          this.sendRunState(player);
-        }
-      } else if (player.runEnergy < RUN_ENERGY_MAX) {
-        player.runEnergy = Math.min(RUN_ENERGY_MAX, player.runEnergy + RUN_ENERGY_REGEN_PER_TICK);
-        this.sendRunState(player);
       }
       this.updateEntityChunk(player);
 
@@ -3213,7 +3174,8 @@ export class World {
         player.botStats?.recordMovement(player.position.x, player.position.y);
       }
 
-      if (movedTiles > 0 && (justArrived || this.currentTick - player.lastPositionPersistTick >= 2)) {
+      const movedThisTick = player.lastMovedTick === this.currentTick;
+      if (movedThisTick && (justArrived || this.currentTick - player.lastPositionPersistTick >= 2)) {
         this.checkpointPlayerPosition(player);
       }
 
@@ -4454,10 +4416,6 @@ export class World {
       values.push(player.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
     this.sendToPlayer(player, ServerOpcode.PLAYER_EQUIPMENT_BATCH, ...values);
-  }
-
-  private sendRunState(player: Player): void {
-    this.sendToPlayer(player, ServerOpcode.PLAYER_RUN_STATE, Math.floor(player.runEnergy / 100), player.runEnabled ? 1 : 0);
   }
 
   /** Build PLAYER_REMOTE_EQUIPMENT packet for a subject player. Layout:

@@ -19,7 +19,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
-import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP } from './AnimationQuantizer';
+import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, WALK_VARIANT_NAMES, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
@@ -123,9 +123,6 @@ function devCacheBust(file: string): string {
 const ANIM_SPEED_RATIO: Record<string, number> = {
   walk: 1.1,
 };
-const RUN_WALK_ANIM_MULTIPLIER = 1.35;
-const RUN_FORWARD_LEAN_RADIANS = 0.08;
-const RUN_LEAN_LERP_SPEED = 10;
 
 
 /**
@@ -240,14 +237,53 @@ export class CharacterEntity {
   private currentAnimName: string = '';
   private queuedState: AnimState = AnimState.Idle;
   private queuedAnimName: string = '';
-  private runVisualEnabled: boolean = false;
-  private currentForwardLean: number = 0;
+
+  // 7-slot RS2 movement set. Slot fields hold the animGroups key for each
+  // movement direction; missing slots fall back to walkanim so a partial
+  // set still plays (moonwalking sideways/back until the strafes exist).
+  private readyanim: string = 'idle';
+  private turnanim: string = 'turn';
+  private walkanim: string = 'walk';
+  private walkanim_b: string = 'walk_b';
+  private walkanim_l: string = 'walk_l';
+  private walkanim_r: string = 'walk_r';
+  // Cached at ready() — strafe picker hot-path skips Map.has() per frame.
+  private hasWalkB: boolean = false;
+  private hasWalkL: boolean = false;
+  private hasWalkR: boolean = false;
+
+  // Travel direction tracked separately from body yaw (targetRotationY).
+  // When face is unlocked the two coincide; when locked they diverge and
+  // the (travel - body) delta drives the strafe-seq picker.
+  private travelYaw: number = 0;
+  private hasTravelDir: boolean = false;
+  private faceLocked: boolean = false;
+
+  // Wall-clock ms when the current walk cycle began. Lets
+  // swapWalkSeqPreservingPhase resume a strafe variant at the same cycle
+  // phase as the outgoing seq so the legs don't pop. All walk variants
+  // must share cycle length (enforced via canonName in AnimationQuantizer).
+  private walkCycleStartMs: number = 0;
+
+  // Strafe quadrant thresholds. |delta| ≤ FORWARD → walk; ≥ BACK → walk_b;
+  // otherwise walk_l/_r by sign of delta.
+  private static readonly STRAFE_FORWARD_THRESHOLD = Math.PI / 4;   // 45°
+  private static readonly STRAFE_BACK_THRESHOLD = Math.PI * 3 / 4;  // 135°
 
   // Layered attack: when a swing fires while walking, attack_<v>_upper plays
-  // on top of walk_lower so the legs keep cycling. If walk stops mid-swing we
-  // swap walk_lower → attack_<v>_lower at the attack's current frame.
+  // on top of <walk variant>_lower so the legs keep cycling. If walk stops
+  // mid-swing we swap to attack_<v>_lower at the attack's current frame.
+  // activeWalkBase records the variant driving the legs. Stored (not derived
+  // from currentAnimName) because currentAnimName gets clobbered to
+  // `${attack}_upper` during the layered window.
   private attackIsLayered: boolean = false;
   private activeAttackBase: string = '';
+  private activeWalkBase: WalkVariantName = 'walk';
+  // Cached `${activeWalkBase}_lower` name + group reference — avoid
+  // re-allocating the template string and re-querying the Map on every
+  // frame of startWalking's layered hot path.
+  private activeWalkLowerName: string = 'walk_lower';
+  private activeWalkLowerGroup: AnimationGroup | null = null;
   private attackStartMs: number = 0;
 
   // One-shot animations (attack/death) call back when done
@@ -293,6 +329,10 @@ export class CharacterEntity {
   private skinIndicesNoLegs: Uint32Array | null = null;
   private skinIndicesNoArmsNoLegs: Uint32Array | null = null;
   private bodyHidden: boolean = false;
+  /** When true (plate body), arm triangles are also hidden on the skin mesh.
+   *  When false (chain body), arms/shoulders/lower-neck stay visible even
+   *  though the bare-chest mesh primitives are off. */
+  private bodyHidesArms: boolean = false;
   private legsHidden: boolean = false;
 
 
@@ -578,6 +618,10 @@ export class CharacterEntity {
         }
       }
 
+      this.hasWalkB = this.animGroups.has(this.walkanim_b);
+      this.hasWalkL = this.animGroups.has(this.walkanim_l);
+      this.hasWalkR = this.animGroups.has(this.walkanim_r);
+
       // Start idle by default
       this.playAnimByState(AnimState.Idle);
 
@@ -782,15 +826,20 @@ export class CharacterEntity {
               }
             }
             if (maxMag > 1.0) continue;
-            // Strip vertical Hips translation. Mixamo attack/swing animations
-            // bake root-bone Y dips into the swing wind-up — they pass the
-            // 1m filter (values are tens of cm) but visually pull the character
-            // below the floor since the rest of our rig is anchored to a fixed
-            // ground Y. Keeping XZ preserves any forward lunge.
+            // Strip Y on Hips for all anims (Mixamo attack windups bake a
+            // root dip that drops us below the floor); strip XZ too on the
+            // in-place locomotion cycles, otherwise Mixamo sidestep sources
+            // drift the character ~0.5m sideways per step on top of the
+            // engine's movement.
             if (target.name === 'mixamorig:Hips') {
+              const isInPlaceCycle = isWalkVariant(anim.name);
               for (const k of keys) {
                 const v = k.value as any;
                 if (v && typeof v.y === 'number') v.y = 0;
+                if (isInPlaceCycle && v) {
+                  if (typeof v.x === 'number') v.x = 0;
+                  if (typeof v.z === 'number') v.z = 0;
+                }
               }
             }
           }
@@ -960,7 +1009,7 @@ export class CharacterEntity {
       case AnimState.Idle:
         return ['idle'];
       case AnimState.Walk:
-        return ['walk', 'run'];
+        return ['walk'];
       case AnimState.Skill:
         return variant ? [variant, 'skill', 'chop', 'idle'] : ['skill', 'chop', 'mine', 'idle'];
       case AnimState.Attack:
@@ -972,8 +1021,20 @@ export class CharacterEntity {
     }
   }
 
+  /** Begin or restart the walk cycle. Used by both startWalking and the
+   *  playAnimByState(Walk) re-entry path (post-attack resume, etc.). */
+  private startWalkCycle(): void {
+    this.walkCycleStartMs = performance.now();
+    this.playAnim(this.walkanim, true);
+    this.currentState = AnimState.Walk;
+  }
+
   /** Play the best matching animation for a given state. */
   private playAnimByState(state: AnimState, variant?: string, loop?: boolean): void {
+    if (state === AnimState.Walk) {
+      this.startWalkCycle();
+      return;
+    }
     const names = this.getAnimNamesForState(state, variant);
     for (const name of names) {
       const group = this.animGroups.get(name);
@@ -1039,9 +1100,12 @@ export class CharacterEntity {
       this.animGroups.get(`${this.activeAttackBase}_upper`)?.stop();
       this.animGroups.get(`${this.activeAttackBase}_lower`)?.stop();
     }
-    this.animGroups.get('walk_lower')?.stop();
+    this.activeWalkLowerGroup?.stop();
     this.attackIsLayered = false;
     this.activeAttackBase = '';
+    this.activeWalkBase = isWalkVariant(this.walkanim) ? this.walkanim : 'walk';
+    this.activeWalkLowerName = `${this.activeWalkBase}_lower`;
+    this.activeWalkLowerGroup = null;
   }
 
   /** Low-level: play a named animation group. */
@@ -1074,15 +1138,7 @@ export class CharacterEntity {
   }
 
   private getAnimationSpeed(name: string): number {
-    const base = ANIM_SPEED_RATIO[name] ?? 1.0;
-    return name.startsWith('walk') && this.runVisualEnabled ? base * RUN_WALK_ANIM_MULTIPLIER : base;
-  }
-
-  private applyWalkSpeed(): void {
-    for (const name of ['walk', 'walk_lower']) {
-      const group = this.animGroups.get(name);
-      if (group?.isPlaying) group.speedRatio = this.getAnimationSpeed(name);
-    }
+    return ANIM_SPEED_RATIO[name] ?? 1.0;
   }
 
   // ---------------------------------------------------------------------------
@@ -1091,20 +1147,19 @@ export class CharacterEntity {
 
   /** Start walking animation. */
   startWalking(): void {
-    // Layered-attack in progress: legs should come from walk again. Stop any
-    // attack-lower that took over when we stopped mid-swing, and re-start
-    // walk_lower so the legs cycle behind the still-running attack-upper.
+    // Layered-attack in progress: re-attach the active walk variant's
+    // _lower behind the still-running attack_upper. Called every frame
+    // while a path is active, so the steady-state path (lower already
+    // playing) early-returns after the cached group's isPlaying check.
     if (this.attackIsLayered) {
-      const base = this.activeAttackBase;
-      this.animGroups.get(`${base}_lower`)?.stop();
-      if (this.ensureBoneSplitVariants('walk')) {
-        const walkLower = this.animGroups.get('walk_lower');
-        if (walkLower && !walkLower.isPlaying) {
-          const speed = this.getAnimationSpeed('walk_lower');
-          walkLower.start(true, speed, walkLower.from, walkLower.to, false);
-        }
-      }
       this.queuedState = AnimState.Walk;
+      const walkLower = this.activeWalkLowerGroup;
+      if (walkLower?.isPlaying) return;
+      this.animGroups.get(`${this.activeAttackBase}_lower`)?.stop();
+      if (walkLower) {
+        walkLower.start(true, this.getAnimationSpeed(this.activeWalkLowerName),
+          walkLower.from, walkLower.to, false);
+      }
       return;
     }
     if (this.currentState >= AnimState.Attack) return; // don't interrupt attack
@@ -1112,26 +1167,21 @@ export class CharacterEntity {
     this.queuedAnimName = '';
     // Walk preempts Skill (matches RS2 seq `postanim_move=abortanim`) so
     // clicking another rock while mining instantly aborts the swing.
-    if (this.currentState <= AnimState.Skill) {
-      this.playAnimByState(AnimState.Walk);
-    }
+    if (this.currentState <= AnimState.Skill) this.startWalkCycle();
   }
 
   /** Stop walking, return to idle. */
   stopWalking(): void {
-    // Layered-attack in progress: the legs were driven by walk_lower. Stop it
-    // and bring in attack_lower at the swing's current frame so the lower body
-    // finishes the attack pose instead of freezing mid-stride.
     if (this.attackIsLayered) {
       const base = this.activeAttackBase;
-      this.animGroups.get('walk_lower')?.stop();
+      this.activeWalkLowerGroup?.stop();
       const lower = this.animGroups.get(`${base}_lower`);
       if (lower && lower.targetedAnimations.length > 0) {
+        // Sync attack_lower's start frame to where the upper anim is so the
+        // silhouette stays consistent — no rewind / jump-ahead on the legs.
         const speed = ANIM_SPEED_RATIO[base] ?? 1.0;
         const fps = lower.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
         const elapsedMs = performance.now() - this.attackStartMs;
-        // Sync the lower-body to where the upper-body anim currently is, so
-        // the silhouette stays consistent (no rewind / jump-ahead).
         const frame = Math.min(lower.from + (elapsedMs / 1000) * fps * speed, lower.to);
         lower.start(false, speed, frame, lower.to, false);
       }
@@ -1148,12 +1198,6 @@ export class CharacterEntity {
 
   isWalking(): boolean {
     return this.currentState === AnimState.Walk;
-  }
-
-  setRunningVisual(enabled: boolean): void {
-    if (this.runVisualEnabled === enabled) return;
-    this.runVisualEnabled = enabled;
-    this.applyWalkSpeed();
   }
 
   /**
@@ -1196,11 +1240,15 @@ export class CharacterEntity {
     }
 
     const wasWalking = this.isWalking();
+    // ensureBoneSplitVariants for the ACTIVE walk variant (strafe picker
+    // may have swapped currentAnimName to walk_l/r/b during a face-locked
+    // approach). Without this, playLayeredAttack would try to start a
+    // walk_l_lower group that doesn't exist yet.
     if (
       wasWalking
       && attackName
       && this.ensureBoneSplitVariants(attackName)
-      && this.ensureBoneSplitVariants('walk')
+      && this.ensureBoneSplitVariants(this.activeWalkVariant())
     ) {
       this.playLayeredAttack(attackName);
       return;
@@ -1209,18 +1257,30 @@ export class CharacterEntity {
     this.playAnimByState(AnimState.Attack, variant, false);
   }
 
-  /** Start a layered attack — walk_lower runs for the legs, attack_X_upper
-   *  for the upper body. Sets up the end-callback to tear both down and
-   *  resume queued state when the swing finishes. */
+  /** Resolve the active walk variant from currentAnimName. The strafe
+   *  picker may have swapped to walk_l/r/b during a face-locked combat
+   *  approach, so we can't assume 'walk'. Falls back to walkanim. */
+  private activeWalkVariant(): WalkVariantName {
+    return isWalkVariant(this.currentAnimName)
+      ? this.currentAnimName
+      : (isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
+  }
+
+  /** Start a layered attack — `<variant>_lower` runs for the legs,
+   *  attack_X_upper for the upper body. Detects which walk variant was
+   *  playing (forward / strafe / back) so a player attacking mid-strafe
+   *  keeps strafing on the legs instead of snapping to forward. */
   private playLayeredAttack(baseName: string): void {
-    // Switch full-body walk to walk_lower so it doesn't fight attack_upper
-    // for upper-body bones.
-    const fullWalk = this.animGroups.get('walk');
-    if (fullWalk?.isPlaying) fullWalk.stop();
-    const walkLower = this.animGroups.get('walk_lower');
+    const walkVariant = this.activeWalkVariant();
+    // Stop whichever walk variant is currently driving the body so it
+    // doesn't fight attack_upper for upper-body bones.
+    const currentWalk = this.animGroups.get(walkVariant);
+    if (currentWalk?.isPlaying) currentWalk.stop();
+    this.ensureBoneSplitVariants(walkVariant);
+    const lowerName = `${walkVariant}_lower`;
+    const walkLower = this.animGroups.get(lowerName) ?? null;
     if (walkLower) {
-      const wSpeed = this.getAnimationSpeed('walk_lower');
-      walkLower.start(true, wSpeed, walkLower.from, walkLower.to, false);
+      walkLower.start(true, this.getAnimationSpeed(lowerName), walkLower.from, walkLower.to, false);
     }
 
     const upper = this.animGroups.get(`${baseName}_upper`);
@@ -1229,15 +1289,15 @@ export class CharacterEntity {
       this.playAnimByState(AnimState.Attack, undefined, false);
       return;
     }
-    const aSpeed = ANIM_SPEED_RATIO[baseName] ?? 1.0;
-    upper.start(false, aSpeed, upper.from, upper.to, false);
+    upper.start(false, ANIM_SPEED_RATIO[baseName] ?? 1.0, upper.from, upper.to, false);
 
     this.attackIsLayered = true;
     this.activeAttackBase = baseName;
+    this.activeWalkBase = walkVariant;
+    this.activeWalkLowerName = lowerName;
+    this.activeWalkLowerGroup = walkLower;
     this.attackStartMs = performance.now();
     this.currentState = AnimState.Attack;
-    // currentAnimName tracks the upper-body group so getAnimationDurationMs
-    // and any other lookups keyed by name resolve correctly during the swing.
     this.currentAnimName = `${baseName}_upper`;
 
     upper.onAnimationGroupEndObservable.addOnce(() => {
@@ -1298,6 +1358,7 @@ export class CharacterEntity {
   setFacingAngle(radians: number): void {
     this._rotationY = radians;
     this.targetRotationY = radians;
+    this.faceLocked = false;
     if (this.root) {
       this.root.rotation.y = radians;
     }
@@ -1305,18 +1366,87 @@ export class CharacterEntity {
 
   setTargetFacing(radians: number): void {
     this.targetRotationY = radians;
+    this.faceLocked = false;
   }
 
   faceToward(target: Vector3, _cameraPos?: Vector3): void {
-    const dx = target.x - this._position.x;
-    const dz = target.z - this._position.z;
+    this.faceTowardXZ(target.x, target.z);
+  }
+
+  /** No-allocation variant of faceToward — accepts raw x/z so the per-frame
+   *  combat-follow loop doesn't need to construct a Vector3. */
+  faceTowardXZ(x: number, z: number): void {
+    const dx = x - this._position.x;
+    const dz = z - this._position.z;
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     this.targetRotationY = Math.atan2(dx, dz);
+    this.faceLocked = false;
+  }
+
+  /** Lock body yaw to a world-space point. While locked, walk emits strafe
+   *  seqs instead of re-aiming the body. Mirrors RS2's faceEntity/faceSquare.
+   *  Re-call each frame to track a moving target. */
+  lockFaceToward(target: Vector3): void {
+    this.lockFaceTowardXZ(target.x, target.z);
+  }
+
+  /** No-allocation overload for the per-frame combat hot path. */
+  lockFaceTowardXZ(x: number, z: number): void {
+    const dx = x - this._position.x;
+    const dz = z - this._position.z;
+    if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
+    this.targetRotationY = Math.atan2(dx, dz);
+    this.faceLocked = true;
+  }
+
+  clearFaceLock(): void {
+    if (!this.faceLocked) return;
+    this.faceLocked = false;
   }
 
   updateMovementDirection(dx: number, dz: number, _cameraPos?: Vector3): void {
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
-    this.targetRotationY = Math.atan2(dx, dz);
+    this.travelYaw = Math.atan2(dx, dz);
+    this.hasTravelDir = true;
+    // When unlocked the body chases travel; when locked the caller (combat/
+    // talk) owns the body yaw target so the strafe picker can fire.
+    if (!this.faceLocked) this.targetRotationY = this.travelYaw;
+  }
+
+  /** Pick the walk-seq slot name for the current body-yaw vs travel-yaw
+   *  delta. Only meaningful while face-locked: an unlocked body chases
+   *  travel direction so the diff is only non-zero during the rotation
+   *  lerp, and we don't want strafe to flicker through that catch-up. */
+  private pickWalkSeq(): string {
+    const diff = wrapAnglePi(this.travelYaw - this._rotationY);
+    const a = Math.abs(diff);
+    if (a <= CharacterEntity.STRAFE_FORWARD_THRESHOLD) return this.walkanim;
+    if (a >= CharacterEntity.STRAFE_BACK_THRESHOLD) return this.hasWalkB ? this.walkanim_b : this.walkanim;
+    if (diff > 0) return this.hasWalkR ? this.walkanim_r : this.walkanim;
+    return this.hasWalkL ? this.walkanim_l : this.walkanim;
+  }
+
+  /** Swap to a different walk-cycle group while preserving cycle phase, so
+   *  the legs don't snap back to frame 0 on every strafe-direction change.
+   *  Relies on all walk variants sharing cycle length (enforced via canonName
+   *  in AnimationQuantizer). */
+  private swapWalkSeqPreservingPhase(name: string): void {
+    if (name === this.currentAnimName) return;
+    const newGroup = this.animGroups.get(name);
+    if (!newGroup) return;
+    const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
+    if (oldGroup) oldGroup.stop();
+
+    const range = newGroup.to - newGroup.from;
+    const fps = newGroup.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+    const cycleSec = range / fps;
+    const elapsedSec = (performance.now() - this.walkCycleStartMs) / 1000;
+    const phase = cycleSec > 0 ? (elapsedSec % cycleSec) / cycleSec : 0;
+    const startFrame = newGroup.from + phase * range;
+
+    newGroup.start(true, this.getAnimationSpeed(name), newGroup.from, newGroup.to, false);
+    newGroup.goToFrame(startFrame);
+    this.currentAnimName = name;
   }
 
   /** SpriteEntity compat — no-op for 3D characters. */
@@ -1359,29 +1489,29 @@ export class CharacterEntity {
       this.root.rotation.y = newYaw;
     }
 
-    const targetLean = this.runVisualEnabled && this.currentState === AnimState.Walk ? RUN_FORWARD_LEAN_RADIANS : 0;
-    const leanAlpha = Math.min(1, dt * RUN_LEAN_LERP_SPEED);
-    this.currentForwardLean += (targetLean - this.currentForwardLean) * leanAlpha;
-    this.root.rotation.x = this.currentForwardLean;
+    // Strafe picker — only meaningful when face-locked AND we have a
+    // travel direction. Layered attacks drive walk_lower directly and
+    // would fight a swap, so skip them too.
+    if (
+      this.currentState === AnimState.Walk
+      && this.faceLocked
+      && this.hasTravelDir
+      && !this.attackIsLayered
+    ) {
+      const seq = this.pickWalkSeq();
+      if (seq !== this.currentAnimName) this.swapWalkSeqPreservingPhase(seq);
+    }
 
-    // RS2-style turn-on-the-spot. While the character is in the Idle state
-    // and its yaw is being stepped toward a target, play the dedicated turn
-    // animation instead of the static idle. Swap back to idle once aligned.
-    // Walk state intentionally not affected — the walk anim handles body
-    // rotation implicitly via rs2Rotation while the legs cycle. Skill/Attack/
-    // Death are higher priority and lock the body anim; turn-in-place is
-    // only a substitute for the idle pose.
-    // Mirrors 2004scape's PathingEntity behavior: seqTurnId plays when
-    // standing still + yaw != dstYaw.
-    if (this.currentState === AnimState.Idle && this.animGroups.has('turn')) {
-      let diff = this.targetRotationY - this._rotationY;
-      while (diff > Math.PI) diff -= Math.PI * 2;
-      while (diff < -Math.PI) diff += Math.PI * 2;
-      const aligned = Math.abs(diff) < RS2_TURN_SNAP;
-      if (!aligned && this.currentAnimName !== 'turn') {
-        this.playAnim('turn', true);
-      } else if (aligned && this.currentAnimName === 'turn') {
-        this.playAnim('idle', true);
+    // 2004scape-style turn-in-place: while idle and rotating, swap to
+    // turnanim until aligned. Walk state isn't affected — the walk cycle
+    // covers body rotation implicitly. Higher-priority states (skill,
+    // attack, death) lock the body anim.
+    if (this.currentState === AnimState.Idle && this.animGroups.has(this.turnanim)) {
+      const aligned = Math.abs(wrapAnglePi(this.targetRotationY - this._rotationY)) < RS2_TURN_SNAP;
+      if (!aligned && this.currentAnimName !== this.turnanim) {
+        this.playAnim(this.turnanim, true);
+      } else if (aligned && this.currentAnimName === this.turnanim) {
+        this.playAnim(this.readyanim, true);
       }
     }
   }
@@ -1474,7 +1604,13 @@ export class CharacterEntity {
    * This ensures the mesh world matrix chain is identical to the character mesh,
    * so GPU skinning produces correct results with no clipping.
    */
-  attachSkinnedArmor(slot: string, meshes: AbstractMesh[], armorSkeleton: Skeleton, itemId: number = -1): void {
+  attachSkinnedArmor(
+    slot: string,
+    meshes: AbstractMesh[],
+    armorSkeleton: Skeleton,
+    itemId: number = -1,
+    bodyHideStyle: 'plate' | 'chain' = 'plate',
+  ): void {
     this.detachSkinnedArmor(slot);
     if (!this.skeleton || !this.armatureNode) {
       console.warn('[CharacterEntity] Cannot attach skinned armor: no skeleton or armature');
@@ -1491,7 +1627,7 @@ export class CharacterEntity {
     this.skinnedArmorMeshes.set(slot, kept);
     this.skinnedArmorItemIds.set(slot, itemId);
     if (slot === 'head') this.setHeadVisible(false);
-    if (slot === 'body') this.setBodyVisible(false);
+    if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
     if (slot === 'legs') this.setLegsVisible(false);
     this.applyPickability();
   }
@@ -1520,6 +1656,7 @@ export class CharacterEntity {
     fileUrl: string,
     importedMeshes: AbstractMesh[],
     itemId: number = -1,
+    bodyHideStyle: 'plate' | 'chain' = 'plate',
   ): Promise<boolean> {
     if (!this.skeleton || !this.armatureNode) {
       console.warn('[ManualSkin] No character skeleton/armature; skipping');
@@ -1629,7 +1766,7 @@ export class CharacterEntity {
       this.skinnedArmorMeshes.set(slot, kept);
       this.skinnedArmorItemIds.set(slot, itemId);
       if (slot === 'head') this.setHeadVisible(false);
-      if (slot === 'body') this.setBodyVisible(false);
+      if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
       if (slot === 'legs') this.setLegsVisible(false);
       this.applyPickability();
       return true;
@@ -1669,9 +1806,13 @@ export class CharacterEntity {
    *  the character's torso geometry beneath it. Also swaps the Skin
    *  primitive's index buffer to drop arm triangles only — hands/face/legs
    *  remain visible. */
-  setBodyVisible(visible: boolean): void {
+  /** Toggle bare-chest visibility for a body-slot item. `hideStyle` only
+   *  matters when hiding (visible=false) — 'plate' also hides arm triangles
+   *  on the skin mesh, 'chain' leaves them visible. */
+  setBodyVisible(visible: boolean, hideStyle: 'plate' | 'chain' = 'plate'): void {
     for (const m of this.bodyMeshes) m.setEnabled(visible);
     this.bodyHidden = !visible;
+    this.bodyHidesArms = !visible && hideStyle === 'plate';
     this.applySkinIndexMask();
   }
 
@@ -1688,8 +1829,8 @@ export class CharacterEntity {
   private applySkinIndexMask(): void {
     if (!this.skinMesh || !this.skinIndicesFull) return;
     let target: Uint32Array | null = this.skinIndicesFull;
-    if (this.bodyHidden && this.legsHidden && this.skinIndicesNoArmsNoLegs) target = this.skinIndicesNoArmsNoLegs;
-    else if (this.bodyHidden && this.skinIndicesNoArms) target = this.skinIndicesNoArms;
+    if (this.bodyHidesArms && this.legsHidden && this.skinIndicesNoArmsNoLegs) target = this.skinIndicesNoArmsNoLegs;
+    else if (this.bodyHidesArms && this.skinIndicesNoArms) target = this.skinIndicesNoArms;
     else if (this.legsHidden && this.skinIndicesNoLegs) target = this.skinIndicesNoLegs;
     if (target) this.skinMesh.setIndices(target, null);
   }

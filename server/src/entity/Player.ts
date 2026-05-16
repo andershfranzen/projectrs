@@ -64,8 +64,6 @@ export class Player extends Entity {
   reconnectDeadlineTick: number = 0;
   moveQueue: { x: number; z: number }[] = [];
   moveSpeed: number = 1;
-  runEnabled: boolean = false;
-  runEnergy: number = 10000;
   movementCredit: number = 0;
   pendingPickup: number = -1;
   pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number } | null = null;
@@ -507,8 +505,7 @@ export class Player extends Entity {
   }
 
   processMovement(currentTick: number): boolean {
-    // One unit tile per tick = 1.67 t/s. Running is handled by adding more
-    // movement credit per tick, then consuming whole tile steps.
+    // One unit tile per tick = 1.67 t/s.
     // moveQueue is unit-tile expanded by handlePlayerMove (server-side path
     // validation), so each shift here is a 1-tile step.
     if (this.moveQueue.length > 0 && this.movementCredit >= 1) {
