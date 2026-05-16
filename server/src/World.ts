@@ -2105,13 +2105,12 @@ export class World {
     if (obj.def.category === 'crop') {
       const itemId = obj.def.harvestItemId!;
       const qty = obj.def.harvestQuantity ?? 1;
-      const added = player.addItem(itemId, qty, this.data.itemDefs).completed;
-      if (added <= 0) {
-        this.sendChatSystem(player, "You can't carry any more.");
-        return;
+      const { added, dropped } = this.awardHarvestItem(player, itemId, qty);
+      if (added > 0) {
+        this.sendInventory(player);
+        this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: added });
       }
-      this.sendInventory(player);
-      this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: added });
+      if (dropped > 0) this.sendChatSystem(player, "Your inventory is full, so the harvest falls to the ground.");
       if (obj.def.depletionChance && Math.random() < obj.def.depletionChance) {
         this.persistAndBroadcastDepletion(obj);
       }
@@ -3217,8 +3216,14 @@ export class World {
     }
   }
 
-  /** Spawn a ground item under a player (used when refunds can't fit). */
-  private spawnGroundItem(player: Player, itemId: number, quantity: number): void {
+  /** Spawn a ground item under a player (used when rewards/refunds can't fit). */
+  private spawnGroundItem(
+    player: Player,
+    itemId: number,
+    quantity: number,
+    despawnTimer: number = REFUND_SPILL_DESPAWN_TICKS,
+  ): void {
+    if (quantity <= 0) return;
     const groundItem: GroundItem = {
       id: nextGroundItemId++,
       itemId,
@@ -3226,7 +3231,7 @@ export class World {
       x: player.position.x,
       z: player.position.y,
       mapLevel: player.currentMapLevel,
-      despawnTimer: REFUND_SPILL_DESPAWN_TICKS,
+      despawnTimer,
     };
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
@@ -3236,6 +3241,13 @@ export class World {
     // (without this, clients only see it after re-entering the chunk).
     this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p =>
       this.sendGroundItemUpdate(p, groundItem));
+  }
+
+  private awardHarvestItem(player: Player, itemId: number, quantity: number): { added: number; dropped: number } {
+    const added = player.addItem(itemId, quantity, this.data.itemDefs, { assureFullInsertion: false }).completed;
+    const dropped = quantity - added;
+    if (dropped > 0) this.spawnGroundItem(player, itemId, dropped, GROUND_ITEM_DESPAWN_TICKS);
+    return { added, dropped };
   }
 
   /** Chebyshev distance in tiles between two players. */
@@ -3688,15 +3700,17 @@ export class World {
         this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
 
         const loot = rollLoot(npc);
+        const deathX = npc.position.x;
+        const deathZ = npc.position.y;
         for (const drop of loot) {
           const groundItem: GroundItem = {
             id: nextGroundItemId++,
             itemId: drop.itemId,
             quantity: drop.quantity,
-            x: npc.spawnX,
-            z: npc.spawnZ,
+            x: deathX,
+            z: deathZ,
             mapLevel: npc.currentMapLevel,
-            despawnTimer: 200,
+            despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
           };
           this.groundItems.set(groundItem.id, groundItem);
           this.despawningItemIds.add(groundItem.id);
@@ -3827,16 +3841,24 @@ export class World {
 
         const isChest = obj.def.category === 'chest';
         const foundForChest: Array<{ itemId: number; quantity: number }> = [];
+        let inventoryChanged = false;
 
-        const primaryAdded = player.addItem(itemId, qty, this.data.itemDefs).completed;
-        const addedToInv = primaryAdded > 0;
-        if (!addedToInv) {
+        const primary = isChest
+          ? { added: player.addItem(itemId, qty, this.data.itemDefs).completed, dropped: 0 }
+          : this.awardHarvestItem(player, itemId, qty);
+        const addedToInv = primary.added > 0;
+        const harvestedAnything = primary.added + primary.dropped > 0;
+        if (!harvestedAnything) {
           this.sendChatSystem(player, "You can't carry any more.");
           this.stopPlayerSkilling(playerId, player);
           continue;
         }
-        if (isChest) foundForChest.push({ itemId, quantity: primaryAdded });
-        this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primaryAdded });
+        if (isChest && addedToInv) foundForChest.push({ itemId, quantity: primary.added });
+        if (addedToInv) {
+          inventoryChanged = true;
+          this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primary.added });
+        }
+        if (primary.dropped > 0) this.sendChatSystem(player, "Your inventory is full, so the harvest falls to the ground.");
 
         // Bonus loot — chests use this for relic rolls on top of the
         // primary coin payout. Each entry is independent; misses drop
@@ -3847,8 +3869,14 @@ export class World {
         if (obj.def.extraLoot) {
           for (const drop of obj.def.extraLoot) {
             if (Math.random() >= drop.chance) continue;
-            const got = player.addItem(drop.itemId, drop.quantity, this.data.itemDefs);
+            const got = isChest
+              ? { completed: player.addItem(drop.itemId, drop.quantity, this.data.itemDefs).completed, dropped: 0 }
+              : {
+                  completed: this.awardHarvestItem(player, drop.itemId, drop.quantity).added,
+                  dropped: 0,
+                };
             if (got.completed > 0) {
+              inventoryChanged = true;
               if (isChest) {
                 foundForChest.push({ itemId: drop.itemId, quantity: got.completed });
               } else {
@@ -3872,7 +3900,7 @@ export class World {
           }
         }
 
-        if (addedToInv) this.sendInventory(player);
+        if (inventoryChanged) this.sendInventory(player);
         const harvestSkillIdx = ALL_SKILLS.indexOf(skillId);
         if (harvestSkillIdx >= 0) this.sendSingleSkill(player, harvestSkillIdx);
 

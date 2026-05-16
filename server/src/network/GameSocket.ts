@@ -43,9 +43,6 @@ export function handleGameSocketOpen(
   const useSavedPos = saved && savedXValid && savedZValid && !needsForcedRespawn;
   const spawnX = useSavedPos ? savedX! : defaultSpawn.x;
   const spawnZ = useSavedPos ? savedZ! : defaultSpawn.z;
-  if (needsForcedRespawn) {
-    world.db.markRespawnVersion(accountId, WORLD_RESPAWN_VERSION);
-  }
   console.log(`[GameSocket] Player "${username}" acct=${accountId} saved=${!!saved} savedPos=(${saved?.x}, ${saved?.z}) defaultSpawn=(${defaultSpawn.x}, ${defaultSpawn.z}) final=(${spawnX}, ${spawnZ})${needsForcedRespawn ? ' [respawn-version migration]' : ''}`);
 
   const player = new Player(username, spawnX, spawnZ, ws, accountId);
@@ -117,6 +114,16 @@ export function handleGameSocketOpen(
     } else if (player.currentFloor > 0 && !map.isTileBlockedOnFloor(tx, tz, 0)) {
       console.log(`[GameSocket] Downgrading "${username}" from floor ${player.currentFloor} → 0 (floor 0 walkable at saved tile, corrupted upper-floor state)`);
       player.currentFloor = 0;
+    }
+
+    if (needsForcedRespawn) {
+      const effectiveY = map.getEffectiveHeightOnFloor(
+        player.position.x,
+        player.position.y,
+        player.currentFloor,
+        player.reportedY,
+      );
+      world.db.saveRespawnMigration(accountId, player, effectiveY, WORLD_RESPAWN_VERSION);
     }
   }
 

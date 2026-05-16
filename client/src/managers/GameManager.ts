@@ -51,7 +51,7 @@ import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -692,6 +692,46 @@ export class GameManager {
     resolver();
   }
 
+  private appearanceStorageKey(username: string = this.username): string {
+    return `projectrs_appearance_${username.toLowerCase()}`;
+  }
+
+  private cacheLocalAppearance(appearance: PlayerAppearance): void {
+    this.localAppearance = appearance;
+    try {
+      localStorage.setItem(this.appearanceStorageKey(), JSON.stringify(appearance));
+    } catch { /* storage unavailable */ }
+  }
+
+  private loadCachedAppearance(username: string = this.username): PlayerAppearance | null {
+    try {
+      const raw = localStorage.getItem(this.appearanceStorageKey(username));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as PlayerAppearance;
+      return isValidAppearance(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private resendCachedAppearance(): boolean {
+    const appearance = this.localAppearance ?? this.loadCachedAppearance();
+    if (!appearance) return false;
+    this.cacheLocalAppearance(appearance);
+    this.network.sendRaw(encodePacket(
+      ClientOpcode.SET_APPEARANCE,
+      appearance.shirtColor,
+      appearance.pantsColor,
+      appearance.shoesColor,
+      appearance.hairColor,
+      appearance.beltColor,
+      appearance.skinColor,
+      appearance.hairStyle,
+    ));
+    if (this.localPlayer) this.localPlayer.applyAppearance(appearance);
+    return true;
+  }
+
   /** Open the WebSocket and wait for the first LOGIN_OK to finish processing
    *  (real spawn position applied, saved appearance applied, input enabled).
    *  Use this after `whenPreloaded()` for a clean "click Login → world is
@@ -699,6 +739,7 @@ export class GameManager {
   connectAndAuth(token: string, username: string, onProgress?: LoadingProgressCallback): Promise<void> {
     this.token = token;
     this.username = username;
+    this.localAppearance = this.loadCachedAppearance(username);
     return new Promise<void>((resolve) => {
       this._loginOkResolver = resolve;
       this._loginProgress = onProgress ?? null;
@@ -1721,6 +1762,7 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
+      if (this.resendCachedAppearance()) return;
       this.openCharacterCreatorWhenReady();
     });
 
@@ -1779,7 +1821,7 @@ export class GameManager {
           this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
-          this.localAppearance = syncAppearance;
+          this.cacheLocalAppearance(syncAppearance);
           if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
         }
         return;
@@ -4059,7 +4101,7 @@ export class GameManager {
         appearance.skinColor,
         appearance.hairStyle,
       ));
-      this.localAppearance = appearance;
+      this.cacheLocalAppearance(appearance);
       if (this.localPlayer) {
         this.localPlayer.applyAppearance(appearance);
       }

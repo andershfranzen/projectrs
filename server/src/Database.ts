@@ -681,13 +681,24 @@ export class GameDatabase {
     };
   }
 
-  /** Mark the account's saved state as having been respawned at the current
-   *  WORLD_RESPAWN_VERSION. Called from the login flow after we've relocated
-   *  the player to the map's default spawn — without this, every login would
-   *  re-respawn them. */
-  markRespawnVersion(accountId: number, version: number): void {
-    this.db.query('UPDATE player_state SET respawn_version = ? WHERE account_id = ?')
-      .run(version, accountId);
+  /** Persist a forced-respawn migration atomically with the version bump. This
+   *  closes the window where a restart/drop could leave the row stamped as
+   *  migrated while still carrying the old position. */
+  saveRespawnMigration(accountId: number, player: Player, effectiveY: number, version: number): void {
+    this.db.query(`
+      UPDATE player_state SET
+        x = ?, z = ?, y = ?, floor = ?, map_level = ?,
+        respawn_version = ?, updated_at = unixepoch()
+      WHERE account_id = ?
+    `).run(
+      player.position.x,
+      player.position.y,
+      effectiveY,
+      player.currentFloor,
+      player.currentMapLevel,
+      version,
+      accountId,
+    );
   }
 
   saveAppearance(accountId: number, appearance: PlayerAppearance): void {
