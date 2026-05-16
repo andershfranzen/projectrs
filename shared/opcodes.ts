@@ -94,7 +94,6 @@ export enum ServerOpcode {
   PLAYER_SYNC = 10,
   NPC_SYNC = 11,
   GROUND_ITEM_SYNC = 12,
-  PLAYER_INVENTORY = 20,
   PLAYER_STATS = 21,
   PLAYER_SKILLS = 22,
   PLAYER_EQUIPMENT = 23,
@@ -241,4 +240,5 @@ export enum PlayerSkillAnimationVariant {
   None = 0,
   Chop = 1,
   Mine = 2,
+  Magic = 3,
 }

@@ -48,6 +48,8 @@ import {
   CUT_SNAP_TOLERANCE_RAD,
   getObjectInteractionTiles,
   localSidesToWorldSides,
+  localAdjacentTilesOrdered,
+  ASSET_TO_OBJECT_DEF,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -1390,13 +1392,13 @@ let paintBrushRadius = 1
         </div>
       </div>
       <div id="interactionSidesRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
-        <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Interaction sides (player must approach from)</div>
-        <div style="font-size:10px;color:#777;margin-bottom:6px;">Relative to object forward (+Z when unrotated). All off = any side.</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;">
-          <label style="cursor:pointer;"><input type="checkbox" id="interactSideF" /> Front</label>
-          <label style="cursor:pointer;"><input type="checkbox" id="interactSideR" /> Right</label>
-          <label style="cursor:pointer;"><input type="checkbox" id="interactSideB" /> Back</label>
-          <label style="cursor:pointer;"><input type="checkbox" id="interactSideL" /> Left</label>
+        <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Interaction tiles (player must approach from)</div>
+        <div style="font-size:10px;color:#777;margin-bottom:6px;">Click a green cell to toggle. All off = any cardinal-adjacent tile. ↑ marks local +Z (forward).</div>
+        <div id="interactionTilesGrid" style="display:inline-block;"></div>
+        <div style="margin-top:6px;display:flex;gap:6px;">
+          <button id="interactSidesAll" style="font-size:10px;padding:3px 6px;">All</button>
+          <button id="interactSidesNone" style="font-size:10px;padding:3px 6px;">None</button>
+          <button id="interactSidesFront" style="font-size:10px;padding:3px 6px;">Front only</button>
         </div>
       </div>
       <div id="planeRotationRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
@@ -2688,28 +2690,84 @@ let paintBrushRadius = 1
     sidebar.querySelector(id).addEventListener('change', saveTriggerFromUI)
   }
 
-  // Interaction sides (local-frame bitmask: F=1, R=2, B=4, L=8)
-  const interactSideInputs = [
-    { id: '#interactSideF', bit: 1 },
-    { id: '#interactSideR', bit: 2 },
-    { id: '#interactSideB', bit: 4 },
-    { id: '#interactSideL', bit: 8 },
-  ]
-  function saveInteractionSidesFromUI() {
+  // Per-tile interaction bitmask in local frame: 4*W bits enumerating
+  // cardinal-adjacent tiles in canonical CW order (see shared/objectFootprint).
+  // For width=1 the 4 bits coincide with the legacy F/R/B/L layout.
+  function placedObjectWidth(obj) {
+    const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
+    if (defId == null) return 1
+    const def = objectDefs.find(d => d.id === defId)
+    return Math.max(1, Math.round(def?.width ?? 1))
+  }
+  function setInteractionMask(mask, opts = {}) {
     if (!selectedPlacedObject) return
-    let mask = 0
-    for (const { id, bit } of interactSideInputs) {
-      if (sidebar.querySelector(id).checked) mask |= bit
-    }
-    // Delete only on empty mask. All-four-ticked (0xF) is stored as-is so the
-    // checkbox state doesn't silently reset on the next inspector update.
     if (mask === 0) delete selectedPlacedObject.userData.interactionSides
-    else selectedPlacedObject.userData.interactionSides = mask
+    else selectedPlacedObject.userData.interactionSides = mask | 0
+    if (opts.rerender !== false) renderInteractionTilesGrid()
     updateSelectionHelper()
   }
-  for (const { id } of interactSideInputs) {
-    sidebar.querySelector(id).addEventListener('change', saveInteractionSidesFromUI)
+  function renderInteractionTilesGrid() {
+    const container = sidebar.querySelector('#interactionTilesGrid')
+    if (!container || !selectedPlacedObject) return
+    const W = placedObjectWidth(selectedPlacedObject)
+    const mask = selectedPlacedObject.userData.interactionSides | 0
+    const cell = 24
+    const gap = 2
+    container.innerHTML = ''
+    container.style.cssText = `display:grid;gap:${gap}px;grid-template-columns:repeat(${W + 2},${cell}px);grid-template-rows:repeat(${W + 2},${cell}px);`
+    // Build the bit-index lookup from grid (row, col) → bit. Reuse the canonical
+    // local order so what the user clicks here is exactly what the runtime checks.
+    const local = localAdjacentTilesOrdered(W)
+    const startOff = -Math.floor((W - 1) / 2)
+    const cellBit = new Map() // 'r,c' -> bitIndex
+    for (let bit = 0; bit < local.length; bit++) {
+      const { x: lx, z: lz } = local[bit]
+      const col = (lx - startOff) + 1
+      const row = W + 1 - (lz - startOff) // +Z up means row 0 = top
+      cellBit.set(`${row},${col}`, bit)
+    }
+    for (let row = 0; row < W + 2; row++) {
+      for (let col = 0; col < W + 2; col++) {
+        const div = document.createElement('div')
+        div.style.cssText = `width:${cell}px;height:${cell}px;box-sizing:border-box;font-size:9px;display:flex;align-items:center;justify-content:center;`
+        const isFootprint = row >= 1 && row <= W && col >= 1 && col <= W
+        const isCorner = (row === 0 || row === W + 1) && (col === 0 || col === W + 1)
+        const bitIdx = cellBit.get(`${row},${col}`)
+        if (isFootprint) {
+          div.style.background = '#444'
+          div.style.border = '1px solid #222'
+          // Arrow on the front-center footprint cell so rotation is unambiguous.
+          if (row === 1 && col === Math.ceil((W + 1) / 2)) {
+            div.textContent = '↑'
+            div.style.color = '#aaa'
+          }
+        } else if (isCorner) {
+          div.style.visibility = 'hidden'
+        } else if (bitIdx !== undefined) {
+          const on = (mask & (1 << bitIdx)) !== 0
+          div.style.background = on ? '#0a7' : '#1a1a1a'
+          div.style.border = on ? '1px solid #0fa' : '1px solid #444'
+          div.style.cursor = 'pointer'
+          div.title = `Bit ${bitIdx}`
+          div.addEventListener('click', () => setInteractionMask(mask ^ (1 << bitIdx)))
+        }
+        container.appendChild(div)
+      }
+    }
   }
+  // Quick-set buttons. "Front only" is the common case for furnaces / ranges.
+  sidebar.querySelector('#interactSidesAll')?.addEventListener('click', () => {
+    if (!selectedPlacedObject) return
+    const W = placedObjectWidth(selectedPlacedObject)
+    const full = (1 << (4 * W)) - 1
+    setInteractionMask(full)
+  })
+  sidebar.querySelector('#interactSidesNone')?.addEventListener('click', () => setInteractionMask(0))
+  sidebar.querySelector('#interactSidesFront')?.addEventListener('click', () => {
+    if (!selectedPlacedObject) return
+    const W = placedObjectWidth(selectedPlacedObject)
+    setInteractionMask((1 << W) - 1) // bits 0..W-1 = front row
+  })
 
   const replaceBtnEl = sidebar.querySelector('#replaceBtn')
   const replacePanel = sidebar.querySelector('#replacePanel')
@@ -3000,12 +3058,7 @@ let paintBrushRadius = 1
     if (interactionSidesRow) {
       const showSides = state.tool === ToolMode.SELECT && selectedPlacedObject
       interactionSidesRow.style.display = showSides ? 'block' : 'none'
-      if (showSides) {
-        const mask = selectedPlacedObject.userData.interactionSides | 0
-        for (const { id, bit } of interactSideInputs) {
-          sidebar.querySelector(id).checked = (mask & bit) !== 0
-        }
-      }
+      if (showSides) renderInteractionTilesGrid()
     }
     const planeRotationRow = sidebar.querySelector('#planeRotationRow')
     if (planeRotationRow) {
@@ -3182,11 +3235,10 @@ let paintBrushRadius = 1
       const e = obj.rotationQuaternion.toEulerAngles()
       rotY = e.y
     }
-    const worldMask = localSidesToWorldSides(localMask, rotY)
+    const width = placedObjectWidth(obj)
+    const worldMask = localSidesToWorldSides(localMask, rotY, width)
     if (!worldMask) return []
-    // Most editable interactables (cooking range, furnace) are 1x1. Width is
-    // the only field consulted by the shared util; pass width:1 as the default.
-    const tiles = getObjectInteractionTiles(obj.position.x, obj.position.z, { width: 1 }, { allowedWorldSides: worldMask })
+    const tiles = getObjectInteractionTiles(obj.position.x, obj.position.z, { width }, { allowedWorldSides: worldMask })
     const mat = getInteractionSideMaterial()
     const yBase = (obj.position.y || 0) + 0.02 // hair above ground to avoid z-fighting
     const meshes = []

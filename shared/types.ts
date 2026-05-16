@@ -258,7 +258,7 @@ export interface WallsFile extends FloorLayerData {
 export interface WorldObjectDef {
   id: number;
   name: string;
-  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'door' | 'ladder' | 'chest' | 'crop' | 'scenery';
+  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'scenery';
   actions: string[]; // e.g. ["Chop", "Examine"]
   blocking: boolean;
   width: number;

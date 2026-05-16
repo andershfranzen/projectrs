@@ -45,6 +45,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'closed chest': 20, // Wooden Chest
   // Crops
   'rice': 22, // Rice Plant
+  // Evil magic altar
+  'Obelisk': 24, // Obelisk — offer bones for evilmagic xp + evil tokens
 };
 
 /**

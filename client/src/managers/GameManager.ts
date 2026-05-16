@@ -1187,15 +1187,21 @@ export class GameManager {
     }
 
     if (kind === PlayerAnimationKind.Skill) {
+      const objectData = this.worldObjectDefs.get(targetId);
+      if (objectData) {
+        remote.faceToward(new Vector3(objectData.x, 0, objectData.z));
+      }
+      // Magic is a one-shot cast (single-tick obelisk offering); other skill
+      // variants loop until the server sends Idle.
+      if (variant === PlayerSkillAnimationVariant.Magic) {
+        remote.playNamedOneShot('spell_cast_2h');
+        return;
+      }
       const anim =
         variant === PlayerSkillAnimationVariant.Chop ? 'chop' :
         variant === PlayerSkillAnimationVariant.Mine ? 'mine' :
         undefined;
       remote.startSkillAnimation(anim);
-      const objectData = this.worldObjectDefs.get(targetId);
-      if (objectData) {
-        remote.faceToward(new Vector3(objectData.x, 0, objectData.z));
-      }
       if (toolItemId > 0) this.applySkillingTool(entityId, remote, toolItemId);
       return;
     }
@@ -1918,6 +1924,8 @@ export class GameManager {
       if (entityId === this.localPlayerId) {
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
           this.localPlayer.playAttackAnimation(this.getPlayerAttackAnimName(entityId));
+        } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
+          this.localPlayer.playNamedOneShot('spell_cast_2h');
         }
         return;
       }
@@ -2402,16 +2410,12 @@ export class GameManager {
       this.updateHUD();
     });
 
-    this.network.on(ServerOpcode.PLAYER_INVENTORY, (_op, v) => {
-      this.clearPendingObjectInteractionRetry();
-      const [slotIndex, itemId, quantity] = v;
-      if (this.sidePanel) this.sidePanel.updateInvSlot(slotIndex, itemId, quantity);
-      if (this.bankPanel) this.bankPanel.updateInventorySlot(slotIndex, itemId, quantity);
-      if (this.tradePanel) this.tradePanel.updateInventorySlot(slotIndex, itemId, quantity);
-    });
-
     // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
     this.network.on(ServerOpcode.PLAYER_INVENTORY_BATCH, (_op, v) => {
+      // Inventory changed means the last interaction landed — cancel any
+      // pending arrival retry so recipe-based stations (obelisk, furnace,
+      // range) don't fire a second packet 700ms later and double-consume.
+      this.clearPendingObjectInteractionRetry();
       for (let i = 0; i < v.length; i += 2) {
         const slot = i / 2;
         if (this.sidePanel) this.sidePanel.updateInvSlot(slot, v[i], v[i + 1]);

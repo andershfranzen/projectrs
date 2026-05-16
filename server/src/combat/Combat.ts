@@ -2,9 +2,16 @@ import type { Player } from '../entity/Player';
 import type { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
-  osrsMeleeMaxHit, rollHit,
+  osrsMeleeMaxHit, rollHit, npcCombatLevel,
   type CombatBonuses, type ItemDef,
 } from '@projectrs/shared';
+
+/** Item-id pools for the combat-level-gated bonus relic drop. Tier 1 covers
+ *  sub-30 mobs, tier 2 covers 30–60. RELIC_DROP_CHANCE applies once per kill;
+ *  on a hit, one variant is picked uniformly from the tier pool. */
+const RELIC_TIER_1_IDS = [224, 225, 226] as const;
+const RELIC_TIER_2_IDS = [227, 228, 229] as const;
+const RELIC_DROP_CHANCE = 1 / 30;
 
 export interface CombatHit {
   attackerId: number;
@@ -295,6 +302,10 @@ export function processNpcCombat(
 
 /**
  * Roll loot — drops go to the player with the most hero points (kill credit).
+ * Adds a combat-level-gated relic drop on top of the def's loot table:
+ *   lvl  < 30 → 1/30 chance of a random tier-1 relic
+ *   lvl 30–60 → 1/30 chance of a random tier-2 relic
+ *   lvl >  60 → no bonus relic (reserved for future higher tiers)
  */
 export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
   const drops: { itemId: number; quantity: number }[] = [];
@@ -303,5 +314,14 @@ export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
       drops.push({ itemId: drop.itemId, quantity: drop.quantity });
     }
   }
+
+  if (Math.random() < RELIC_DROP_CHANCE) {
+    const level = npcCombatLevel(npc.def);
+    const pool = level < 30 ? RELIC_TIER_1_IDS : level <= 60 ? RELIC_TIER_2_IDS : null;
+    if (pool) {
+      drops.push({ itemId: pool[Math.floor(Math.random() * pool.length)], quantity: 1 });
+    }
+  }
+
   return drops;
 }

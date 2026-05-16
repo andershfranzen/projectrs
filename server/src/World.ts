@@ -503,7 +503,7 @@ export class World {
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
     const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY)
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
       : undefined;
     const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def, { allowedWorldSides })
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
@@ -1332,7 +1332,7 @@ export class World {
       return (ptx === otx && ptz === otz) || (Math.abs(ptx - otx) + Math.abs(ptz - otz) === 1);
     }
     const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY)
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
       : undefined;
     return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def, { allowedWorldSides });
   }
@@ -2053,6 +2053,11 @@ export class World {
       return;
     }
 
+    if (obj.def.category === 'obelisk' && obj.def.recipes && obj.def.recipes.length > 0) {
+      this.handleObeliskOffer(playerId, player, obj);
+      return;
+    }
+
     if (obj.def.recipes && obj.def.recipes.length > 0) {
       this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
       return;
@@ -2108,7 +2113,7 @@ export class World {
     const map = this.getPlayerMap(player);
     const playerY = Math.max(player.effectiveY, player.reportedY);
     const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY)
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
       : undefined;
     const positions = [
       { x: Math.floor(obj.x) + 0.5, z: Math.floor(obj.z) + 0.5 },
@@ -2220,7 +2225,7 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id, toolItemId ?? 0);
   }
 
-  private handleCraftingInteraction(playerId: number, player: Player, obj: WorldObject, recipeIndex: number): void {
+  private handleCraftingInteraction(playerId: number, player: Player, obj: WorldObject, recipeIndex: number): boolean {
     const recipes = obj.def.recipes!;
     const recipesToTry = (recipeIndex >= 0 && recipeIndex < recipes.length)
       ? [recipes[recipeIndex]]
@@ -2257,7 +2262,7 @@ export class World {
       if (recipe.successChance !== undefined && Math.random() > recipe.successChance) {
         // Recipe rolled fail — inputs are consumed, no output. Matches RS2 behavior.
         this.sendInventory(player);
-        return;
+        return false;
       }
 
       const addResult = player.addItem(recipe.outputItemId, recipe.outputQuantity, this.data.itemDefs);
@@ -2265,7 +2270,7 @@ export class World {
         if (secondRemoval) player.revertRemove(secondRemoval);
         player.revertRemove(inputRemoval);
         this.sendInventory(player);
-        return;
+        return false;
       }
 
       const result = addXp(player.skills, skillId, recipe.xpReward);
@@ -2279,8 +2284,22 @@ export class World {
 
       this.sendInventory(player);
       if (skillIdx >= 0) this.sendSingleSkill(player, skillIdx);
-      return;
+      return true;
     }
+    return false;
+  }
+
+  private handleObeliskOffer(playerId: number, player: Player, obj: WorldObject): void {
+    // Reuse the recipe pipeline for inventory + xp; only fire animation + tick
+    // delay on a successful offering so a player without bones (or with a full
+    // inventory) doesn't get locked into a useless 1-tick lockout.
+    const success = this.handleCraftingInteraction(playerId, player, obj, -1);
+    if (!success) return;
+    // Broadcast-only (mirrors attack handling) so the player's persistent
+    // animation state stays Idle — late-joiners shouldn't see the offering
+    // animation replay when they stream into chunk range.
+    this.broadcastPlayerAnimationEvent(player, PlayerAnimationKind.Skill, PlayerSkillAnimationVariant.Magic, obj.id, true);
+    player.setDelay(this.currentTick, 1);
   }
 
   handlePlayerEquip(playerId: number, slotIndex: number, expectedItemId: number): void {

@@ -8,20 +8,25 @@ export interface TileCoord {
   z: number;
 }
 
-/** OSRS-style: interaction is allowed from the 4 cardinal neighbours of an
- *  object's footprint only. Diagonals are NOT adjacent — standing in the
- *  corner of a 2×2 around an object should require taking one more step. */
-const CARDINAL_DIRS: readonly TileCoord[] = [
-  { x: 0, z: -1 },
-  { x: 0, z: 1 },
-  { x: -1, z: 0 },
-  { x: 1, z: 0 },
-];
+/** Per-tile interaction bitmask. For an object of width W, the mask is
+ *  `4*W` bits long and enumerates cardinal-adjacent tiles in canonical
+ *  clockwise order, starting from the front-left tile of the +Z side:
+ *
+ *    bits [0 .. W)       — +Z (front), left → right
+ *    bits [W .. 2W)      — +X (right), front → back
+ *    bits [2W .. 3W)     — -Z (back),  right → left
+ *    bits [3W .. 4W)     — -X (left),  back → front
+ *
+ *  CW order means rotating the object 90° CW (rotY += π/2) shifts the bitmask
+ *  left by exactly W bits, so the same local-frame mask describes the same
+ *  visual relationship to the model at any rotation.
+ *
+ *  For W=1 this collapses to the legacy 4-bit F/R/B/L layout:
+ *    bit 0 = SIDE_PLUS_Z = FRONT
+ *    bit 1 = SIDE_PLUS_X = RIGHT
+ *    bit 2 = SIDE_MINUS_Z = BACK
+ *    bit 3 = SIDE_MINUS_X = LEFT */
 
-/** Side bitmask. World frame uses absolute (dx,dz); local frame is relative to
- *  the object's forward (+Z at rotY=0). Bit layout for both:
- *    +Z = 1, +X = 2, -Z = 4, -X = 8
- *  In local frame this reads as FRONT/RIGHT/BACK/LEFT. */
 export const SIDE_PLUS_Z = 1;
 export const SIDE_PLUS_X = 2;
 export const SIDE_MINUS_Z = 4;
@@ -32,28 +37,48 @@ export const SIDE_RIGHT = SIDE_PLUS_X;
 export const SIDE_BACK = SIDE_MINUS_Z;
 export const SIDE_LEFT = SIDE_MINUS_X;
 
-/** Rotate a local-frame side bitmask into world frame using the object's Y rotation.
- *  rotY is snapped to the nearest 90° step before rotating. A local FRONT (+Z)
- *  at rotY=π/2 maps to world +X. */
-export function localSidesToWorldSides(localSides: number, rotY: number): number {
-  if (!localSides) return 0;
-  const q = (((Math.round(rotY / (Math.PI / 2)) % 4) + 4) % 4);
-  const m = localSides & 0xF;
-  return ((m << q) | (m >>> (4 - q))) & 0xF;
+function normalizeWidth(w: number | undefined): number {
+  return Math.max(1, Math.round(w ?? 1));
 }
 
-function sideBitFromOffset(dx: number, dz: number): number {
-  if (dx === 0 && dz === 1) return SIDE_PLUS_Z;
-  if (dx === 1 && dz === 0) return SIDE_PLUS_X;
-  if (dx === 0 && dz === -1) return SIDE_MINUS_Z;
-  if (dx === -1 && dz === 0) return SIDE_MINUS_X;
-  return 0;
+/** Rotate a local-frame per-tile interaction bitmask into world frame. The
+ *  bitmask layout is `4*width` bits in canonical CW order (see file header);
+ *  a 90° CW rotation shifts each side block forward by `width` bits.
+ *
+ *  Width defaults to 1 for backward compat with the legacy 4-bit F/R/B/L
+ *  mask — at width=1 the shift-by-W reduces to the previous shift-by-1.   */
+export function localSidesToWorldSides(localSides: number, rotY: number, width: number = 1): number {
+  if (!localSides) return 0;
+  const W = normalizeWidth(width);
+  const totalBits = 4 * W;
+  const full = totalBits === 32 ? 0xFFFFFFFF : ((1 << totalBits) - 1);
+  const q = (((Math.round(rotY / (Math.PI / 2)) % 4) + 4) % 4);
+  const shift = q * W;
+  const m = localSides & full;
+  if (shift === 0) return m;
+  return ((m << shift) | (m >>> (totalBits - shift))) & full;
+}
+
+/** Cardinal-adjacent tiles of a width-W footprint in canonical local order
+ *  (same enumeration the per-tile interaction bitmask indexes). Anchor is
+ *  the object's local origin; offsets are in tile units. */
+export function localAdjacentTilesOrdered(width: number): TileCoord[] {
+  const W = normalizeWidth(width);
+  const startOff = -Math.floor((W - 1) / 2);
+  const minTile = startOff;
+  const maxTile = startOff + W - 1;
+  const out: TileCoord[] = [];
+  for (let i = 0; i < W; i++) out.push({ x: minTile + i, z: maxTile + 1 }); // +Z front, L→R
+  for (let i = 0; i < W; i++) out.push({ x: maxTile + 1, z: maxTile - i }); // +X right, F→B
+  for (let i = 0; i < W; i++) out.push({ x: maxTile - i, z: minTile - 1 }); // -Z back,  R→L
+  for (let i = 0; i < W; i++) out.push({ x: minTile - 1, z: minTile + i }); // -X left,  B→F
+  return out;
 }
 
 export function getObjectFootprintTiles(x: number, z: number, def: ObjectFootprintDef): TileCoord[] {
   const centerTileX = Math.floor(x);
   const centerTileZ = Math.floor(z);
-  const span = Math.max(1, Math.round(def.width ?? 1));
+  const span = normalizeWidth(def.width);
   const startOffset = -Math.floor((span - 1) / 2);
   const tiles: TileCoord[] = [];
 
@@ -67,9 +92,27 @@ export function getObjectFootprintTiles(x: number, z: number, def: ObjectFootpri
 }
 
 export interface InteractionTileOptions {
-  /** World-frame side bitmask. 0 / undefined = all sides allowed. Use
-   *  localSidesToWorldSides() to convert a local-frame mask first. */
+  /** World-frame per-tile bitmask (4*width bits). 0 / undefined = all tiles
+   *  allowed. Use `localSidesToWorldSides(mask, rotY, width)` to convert a
+   *  local-frame mask first. */
   allowedWorldSides?: number;
+}
+
+/** Map a (dx, dz) cardinal offset from a footprint tile at (ftX, ftZ) to a
+ *  bit index in the per-tile world-frame mask. Returns -1 if the offset
+ *  doesn't actually leave the footprint (i.e. the candidate is inside).
+ *  Width-aware via the precomputed footprint bounds passed in. */
+function adjacentBitIndex(
+  ftX: number, ftZ: number, dx: number, dz: number,
+  minX: number, maxX: number, minZ: number, maxZ: number, W: number,
+): number {
+  const tx = ftX + dx;
+  const tz = ftZ + dz;
+  if (tz === maxZ + 1 && tx >= minX && tx <= maxX) return (tx - minX);            // +Z, L→R
+  if (tx === maxX + 1 && tz >= minZ && tz <= maxZ) return W + (maxZ - tz);        // +X, F→B
+  if (tz === minZ - 1 && tx >= minX && tx <= maxX) return 2 * W + (maxX - tx);    // -Z, R→L
+  if (tx === minX - 1 && tz >= minZ && tz <= maxZ) return 3 * W + (tz - minZ);    // -X, B→F
+  return -1;
 }
 
 export function getObjectInteractionTiles(
@@ -78,26 +121,43 @@ export function getObjectInteractionTiles(
   def: ObjectFootprintDef,
   opts?: InteractionTileOptions,
 ): TileCoord[] {
-  const footprint = getObjectFootprintTiles(x, z, def);
-  const footprintKeys = new Set(footprint.map(tileKey));
-  const seen = new Set<string>();
-  const tiles: TileCoord[] = [];
+  const W = normalizeWidth(def.width);
+  const centerTileX = Math.floor(x);
+  const centerTileZ = Math.floor(z);
+  const startOff = -Math.floor((W - 1) / 2);
+  const minX = centerTileX + startOff;
+  const maxX = minX + W - 1;
+  const minZ = centerTileZ + startOff;
+  const maxZ = minZ + W - 1;
   const allowed = opts?.allowedWorldSides;
-
-  for (const tile of footprint) {
-    for (const dir of CARDINAL_DIRS) {
-      if (allowed) {
-        const bit = sideBitFromOffset(dir.x, dir.z);
-        if ((allowed & bit) === 0) continue;
-      }
-      const candidate = { x: tile.x + dir.x, z: tile.z + dir.z };
-      const key = tileKey(candidate);
-      if (footprintKeys.has(key) || seen.has(key)) continue;
-      seen.add(key);
-      tiles.push(candidate);
+  const tiles: TileCoord[] = [];
+  // Enumerate in the same canonical CW order the bitmask indexes — duplicates
+  // can't arise (the 4 sides are disjoint outside the footprint), so no Set
+  // dedup needed.
+  for (let i = 0; i < W; i++) {
+    const bit = i;
+    if (allowed === undefined || (allowed & (1 << bit)) !== 0) {
+      tiles.push({ x: minX + i, z: maxZ + 1 });
     }
   }
-
+  for (let i = 0; i < W; i++) {
+    const bit = W + i;
+    if (allowed === undefined || (allowed & (1 << bit)) !== 0) {
+      tiles.push({ x: maxX + 1, z: maxZ - i });
+    }
+  }
+  for (let i = 0; i < W; i++) {
+    const bit = 2 * W + i;
+    if (allowed === undefined || (allowed & (1 << bit)) !== 0) {
+      tiles.push({ x: maxX - i, z: minZ - 1 });
+    }
+  }
+  for (let i = 0; i < W; i++) {
+    const bit = 3 * W + i;
+    if (allowed === undefined || (allowed & (1 << bit)) !== 0) {
+      tiles.push({ x: minX - 1, z: minZ + i });
+    }
+  }
   return tiles;
 }
 
@@ -109,33 +169,24 @@ export function isTileAdjacentToObject(
   def: ObjectFootprintDef,
   opts?: InteractionTileOptions,
 ): boolean {
-  // Allocation-free: derive footprint bounds, classify (tileX,tileZ) against them.
-  // Called every tick per active skiller (World.tickPlayerSkilling), so the
-  // previous Set/Array enumeration was wasted work.
+  // Allocation-free fast path — World.tickPlayerSkilling calls this every
+  // tick per active skiller.
+  const W = normalizeWidth(def.width);
   const centerTileX = Math.floor(objX);
   const centerTileZ = Math.floor(objZ);
-  const span = Math.max(1, Math.round(def.width ?? 1));
-  const minX = centerTileX - Math.floor((span - 1) / 2);
-  const maxX = minX + span - 1;
-  const minZ = centerTileZ - Math.floor((span - 1) / 2);
-  const maxZ = minZ + span - 1;
+  const startOff = -Math.floor((W - 1) / 2);
+  const minX = centerTileX + startOff;
+  const maxX = minX + W - 1;
+  const minZ = centerTileZ + startOff;
+  const maxZ = minZ + W - 1;
 
   // Inside footprint → not adjacent.
   if (tileX >= minX && tileX <= maxX && tileZ >= minZ && tileZ <= maxZ) return false;
 
-  const inXBand = tileX >= minX && tileX <= maxX;
-  const inZBand = tileZ >= minZ && tileZ <= maxZ;
-  let sideBit = 0;
-  if (inXBand && tileZ === minZ - 1) sideBit = SIDE_MINUS_Z;
-  else if (inXBand && tileZ === maxZ + 1) sideBit = SIDE_PLUS_Z;
-  else if (inZBand && tileX === minX - 1) sideBit = SIDE_MINUS_X;
-  else if (inZBand && tileX === maxX + 1) sideBit = SIDE_PLUS_X;
-  else return false; // diagonal or further — not cardinal-adjacent
+  // Classify cardinal side + per-side index, then check the matching bit.
+  const bit = adjacentBitIndex(tileX, tileZ, 0, 0, minX, maxX, minZ, maxZ, W);
+  if (bit < 0) return false; // diagonal or further — not cardinal-adjacent
 
   const allowed = opts?.allowedWorldSides;
-  return !allowed || (allowed & sideBit) !== 0;
-}
-
-function tileKey(tile: TileCoord): string {
-  return `${tile.x},${tile.z}`;
+  return allowed === undefined || (allowed & (1 << bit)) !== 0;
 }

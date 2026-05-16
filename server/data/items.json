@@ -2152,5 +2152,14 @@
     "value": 7000,
     "icon": "staff_100.png",
     "model": "/assets/equipment/weapon/CrystalStaff.glb"
+  },
+  {
+    "id": 234,
+    "name": "Evil token (tier 1)",
+    "description": "A token imbued with faint evil energy. Used as a resource for evil magic.",
+    "stackable": true,
+    "equippable": false,
+    "value": 1,
+    "icon": "Evil token (tier 1).png"
   }
 ]

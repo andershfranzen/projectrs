@@ -1667,5 +1667,33 @@
       95,
       40
     ]
+  },
+  {
+    "id": 24,
+    "name": "Obelisk",
+    "category": "obelisk",
+    "actions": [
+      "Offer-bones",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 3,
+    "color": [
+      80,
+      40,
+      120
+    ],
+    "recipes": [
+      {
+        "inputItemId": 1,
+        "inputQuantity": 1,
+        "outputItemId": 234,
+        "outputQuantity": 1,
+        "skill": "evilmagic",
+        "levelRequired": 1,
+        "xpReward": 5
+      }
+    ]
   }
 ]
