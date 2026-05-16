@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
+import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
@@ -638,8 +638,9 @@ export class GameMap {
   }
 
   /** Check if a wall at tile (x,z) actually blocks at the given player height.
-   *  Walls on floor 0 use the tile's floor-0 elevation; walls on upper floor layers
-   *  block regardless of player Y (editor-authored walls always count as solid). */
+   *  Each layer's walls are gated against that layer's floor band — a wall
+   *  above the player's head must not block them. With no playerY supplied
+   *  (NPC pathing) we keep the conservative "any wall blocks" behaviour. */
   private wallBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.width + x;
     const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
@@ -657,10 +658,33 @@ export class GameMap {
       if (playerY == null) return true;
       if (playerY < floorH + wallH) return true;
     }
+    if (this.floorLayers.size === 0) return false;
+    if (playerY == null) {
+      for (const layer of this.floorLayers.values()) {
+        const bits = layer.walls.get(idx);
+        if (bits != null && (bits & edge) !== 0) return true;
+      }
+      return false;
+    }
+    // Boundary walls are commonly authored on the tile that sits OUTSIDE the
+    // upper-floor footprint, so the layer's floor/tile elevation lives on
+    // the neighbour rather than this tile.
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
+    const nIdx = (z + nb.dz) * this.width + (x + nb.dx);
     for (const layer of this.floorLayers.values()) {
       const bits = layer.walls.get(idx);
-      if (bits != null && (bits & edge) !== 0) {
-        if (isOpenDoor && atDoorLevel) return false;
+      if (bits == null || (bits & edge) === 0) continue;
+      // layer.floors is usually empty in KC-authored maps; layer.tiles gets
+      // seeded from texture planes covering the footprint.
+      const layerFloorH = layer.floors.get(idx)
+        ?? layer.tiles.get(idx)
+        ?? layer.floors.get(nIdx)
+        ?? layer.tiles.get(nIdx)
+        ?? this.elevatedFloorHeights.get(idx)
+        ?? this.elevatedFloorHeights.get(nIdx);
+      if (layerFloorH === undefined) continue;
+      const layerWallH = layer.wallHeights.get(idx) ?? wallH;
+      if (playerY >= layerFloorH - 0.5 && playerY < layerFloorH + layerWallH) {
         return true;
       }
     }

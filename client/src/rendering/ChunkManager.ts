@@ -13,7 +13,7 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
-import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
+import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
@@ -2249,9 +2249,7 @@ export class ChunkManager {
     return false;
   }
 
-  /** Check if a wall edge blocks at a given player height.
-   *  Walls on floor 0 use the tile's elevation; walls on upper floor layers
-   *  block regardless of player Y (editor-authored walls always count as solid). */
+  /** Mirrors GameMap.wallBlocksAtHeight — see that doc comment for semantics. */
   private wallEdgeBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.mapWidth + x;
     const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
@@ -2269,9 +2267,35 @@ export class ChunkManager {
       if (playerY == null) return true;
       if (playerY < floorH + wallH) return true;
     }
+    if (this.floorLayerData.size === 0) return false;
+    if (playerY == null) {
+      for (const layer of this.floorLayerData.values()) {
+        const bits = layer.walls.get(idx);
+        if (bits != null && (bits & edge) !== 0) return true;
+      }
+      return false;
+    }
+    // Boundary walls are commonly authored on the tile that sits OUTSIDE the
+    // upper-floor footprint, so the layer's floor/tile elevation lives on
+    // the neighbour rather than this tile.
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
+    const nIdx = (z + nb.dz) * this.mapWidth + (x + nb.dx);
     for (const layer of this.floorLayerData.values()) {
       const bits = layer.walls.get(idx);
-      if (bits != null && (bits & edge) !== 0) return true;
+      if (bits == null || (bits & edge) === 0) continue;
+      // layer.floors is usually empty in KC-authored maps; layer.tiles gets
+      // seeded from texture planes covering the footprint.
+      const layerFloorH = layer.floors.get(idx)
+        ?? layer.tiles.get(idx)
+        ?? layer.floors.get(nIdx)
+        ?? layer.tiles.get(nIdx)
+        ?? this.elevatedFloorHeights.get(idx)
+        ?? this.elevatedFloorHeights.get(nIdx);
+      if (layerFloorH === undefined) continue;
+      const layerWallH = layer.wallHeights.get(idx) ?? wallH;
+      if (playerY >= layerFloorH - 0.5 && playerY < layerFloorH + layerWallH) {
+        return true;
+      }
     }
     return false;
   }
