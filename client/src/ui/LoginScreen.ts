@@ -1,12 +1,13 @@
 import { ensurePreAuthTheme } from './preAuthTheme';
 
-export type LoginCallback = (token: string, username: string) => void;
+export type LoginCallback = (token: string, username: string) => void | Promise<void>;
 
 export class LoginScreen {
   private container: HTMLDivElement;
   private onLogin: LoginCallback;
   private activeMode: 'login' | 'signup' = 'login';
   private errorEl: HTMLDivElement | null = null;
+  private submitBtn: HTMLButtonElement | null = null;
 
   constructor(onLogin: LoginCallback) {
     this.onLogin = onLogin;
@@ -69,6 +70,7 @@ export class LoginScreen {
     submitBtn.className = 'eq-login-submit';
     submitBtn.textContent = 'Login';
     submitBtn.addEventListener('click', () => this.handleSubmit());
+    this.submitBtn = submitBtn;
     form.appendChild(submitBtn);
 
     card.appendChild(form);
@@ -133,7 +135,7 @@ export class LoginScreen {
     }
 
     // Update submit button
-    const btn = document.getElementById('login-submit');
+    const btn = this.submitBtn;
     if (btn) btn.textContent = mode === 'login' ? 'Login' : 'Sign Up';
   }
 
@@ -158,7 +160,7 @@ export class LoginScreen {
       }
     }
 
-    const btn = document.getElementById('login-submit') as HTMLButtonElement;
+    const btn = this.submitBtn;
     if (btn) {
       btn.textContent = 'Please wait...';
       btn.disabled = true;
@@ -180,14 +182,15 @@ export class LoginScreen {
       if (data.ok) {
         localStorage.setItem('projectrs_token', data.token);
         localStorage.setItem('projectrs_username', data.username || username);
-        this.onLogin(data.token, data.username || username);
+        if (btn) btn.textContent = 'Entering world...';
+        await this.onLogin(data.token, data.username || username);
       } else {
         this.showError(data.error || 'Unknown error');
       }
     } catch (err) {
       this.showError('Connection failed — is the server running?');
     } finally {
-      if (btn) {
+      if (btn && this.container.isConnected) {
         btn.textContent = this.activeMode === 'login' ? 'Login' : 'Sign Up';
         btn.disabled = false;
       }

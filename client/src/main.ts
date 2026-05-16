@@ -118,14 +118,11 @@ function handleDisconnect() {
 /** Reveal the game canvas + tear down pre-auth chrome. Called once the
  *  player is fully authenticated and the LoadingScreen fade-out has
  *  completed, so no transparent overlay exposes the canvas briefly. */
-function revealGame(): void {
-  // 340ms covers the LoadingScreen fade-out animation (320ms + a small
-  // buffer). Until then the canvas stays visibility:hidden so the
-  // disappearing overlay doesn't unmask it mid-fade.
+function revealGame(afterMs: number = 0): void {
   setTimeout(() => {
     gameFrame.style.visibility = 'visible';
     backgroundParticles?.setVisible(false);
-  }, 340);
+  }, afterMs);
 }
 
 function showLoginScreen() {
@@ -139,38 +136,19 @@ function showLoginScreen() {
   }
   backgroundParticles?.setVisible(true);
   loginScreen = new LoginScreen(async (token, username) => {
-    // Manual login: bring up the LoadingScreen FIRST so the canvas stays
-    // covered, then dismiss the login form. Reversing the order leaves a
-    // one-frame window with no overlay → game-world flash.
-    const ls = new LoadingScreen();
-    ls.show();
-    ls.setStatus('Connecting to server');
     backgroundParticles?.setVisible(false);
-    if (loginScreen) {
-      loginScreen.destroy();
-      loginScreen = null;
-    }
-    let unwatch = () => {};
     try {
-      unwatch = watchPrepProgress((p) => {
-        ls.setProgress(p.pct * 0.9);
-        ls.setStatus(p.status);
-      });
       const preparedGame = await prepareGame();
-      unwatch();
-      ls.resetProgress();
-      ls.setStatus('Connecting to server');
-      await preparedGame.connectAndAuth(token, username, (pct, status) => {
-        ls.setProgress(pct);
-        ls.setStatus(status);
-      });
-      ls.hide();
+      await preparedGame.connectAndAuth(token, username);
+      if (loginScreen) {
+        loginScreen.destroy();
+        loginScreen = null;
+      }
       revealGame();
     } catch (err) {
       console.error('[startGame] connect failed:', err);
-      ls.setStatus('Failed to connect. Please reload.');
-    } finally {
-      unwatch();
+      backgroundParticles?.setVisible(true);
+      throw err;
     }
   });
 }
@@ -204,8 +182,9 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
  *      GameManager bundle, construct the hidden scene, parse character
  *      assets, and load the default map area.
  *   3. Validate any saved token in parallel.
- *   4. If there is no saved token, show the login form as soon as token
- *      validation finishes; game preparation continues behind it.
+ *   4. If there is no saved token, keep the LoadingScreen up until game
+ *      preparation is complete, then show the login form. The login screen
+ *      should never mask hidden model/map loading.
  *   5. If there is a saved token, keep the LoadingScreen up until the
  *      prepared scene connects and becomes playable.
  */
@@ -239,16 +218,25 @@ async function bootstrap() {
         loadingScreen.setStatus(status);
       });
       loadingScreen.hide();
-      revealGame();
+      revealGame(340);
     } catch (err) {
       console.error('[bootstrap] auto-login failed:', err);
       loadingScreen.hide();
       showLoginScreen();
     }
   } else {
-    unwatch();
-    loadingScreen.hide();
-    showLoginScreen();
+    try {
+      await prepPromise;
+      unwatch();
+      loadingScreen.hide();
+      // Match LoadingScreen fade-out before revealing login chrome; otherwise
+      // the login panel appears underneath the fading overlay.
+      setTimeout(() => showLoginScreen(), 260);
+    } catch (err) {
+      console.error('[bootstrap] game preparation failed:', err);
+      unwatch();
+      loadingScreen.setStatus('Failed to load. Please reload the page.');
+    }
   }
 }
 
