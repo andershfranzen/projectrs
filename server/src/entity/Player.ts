@@ -62,7 +62,8 @@ export class Player extends Entity {
    *  same browser session can reconnect without a full logout/login cycle. */
   disconnected: boolean = false;
   reconnectDeadlineTick: number = 0;
-  moveQueue: { x: number; z: number }[] = [];
+  private moveQueue: { x: number; z: number }[] = [];
+  private moveQueueIndex: number = 0;
   moveSpeed: number = 1;
   movementCredit: number = 0;
   pendingPickup: number = -1;
@@ -513,18 +514,38 @@ export class Player extends Entity {
   processMovement(currentTick: number): boolean {
     // One unit tile per tick = 1.67 t/s.
     // moveQueue is unit-tile expanded by handlePlayerMove (server-side path
-    // validation), so each shift here is a 1-tile step.
-    if (this.moveQueue.length > 0 && this.movementCredit >= 1) {
-      const target = this.moveQueue.shift()!;
+    // validation), so each cursor advance here is a 1-tile step.
+    if (this.hasMoveQueue() && this.movementCredit >= 1) {
+      const target = this.moveQueue[this.moveQueueIndex++]!;
       this.position.x = target.x;
       this.position.y = target.z;
       this.lastMovedTick = currentTick;
       this.movementCredit -= 1;
-      if (this.moveQueue.length === 0) this.movementCredit = 0;
+      if (!this.hasMoveQueue()) this.clearMoveQueue();
       return true;
     }
-    if (this.moveQueue.length === 0) this.movementCredit = 0;
+    if (!this.hasMoveQueue()) this.clearMoveQueue();
     return false;
+  }
+
+  setMoveQueue(path: { x: number; z: number }[]): void {
+    this.moveQueue = path;
+    this.moveQueueIndex = 0;
+    if (path.length === 0) this.movementCredit = 0;
+  }
+
+  clearMoveQueue(): void {
+    this.moveQueue = [];
+    this.moveQueueIndex = 0;
+    this.movementCredit = 0;
+  }
+
+  hasMoveQueue(): boolean {
+    return this.moveQueueIndex < this.moveQueue.length;
+  }
+
+  peekNextMove(): { x: number; z: number } | null {
+    return this.moveQueue[this.moveQueueIndex] ?? null;
   }
 
   syncHealthFromSkills(): void {

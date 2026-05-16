@@ -8,9 +8,15 @@
 
 const SEARCH_SIZE = 128;
 const SEARCH_HALF = 64;
-const QUEUE_SIZE = 4096;
+const QUEUE_SIZE = SEARCH_SIZE * SEARCH_SIZE;
 const MAX_APPROACH_DISTANCE = 10;
 const MAX_WAYPOINTS = 25;
+const UNVISITED_DISTANCE = 99999;
+
+const directions = new Uint8Array(SEARCH_SIZE * SEARCH_SIZE);
+const distances = new Int32Array(SEARCH_SIZE * SEARCH_SIZE);
+const queueX = new Int32Array(QUEUE_SIZE);
+const queueZ = new Int32Array(QUEUE_SIZE);
 
 // Direction flags for backtracking
 const DIR_WEST  = 0x01;
@@ -53,14 +59,10 @@ export function findPath(
   // Check if destination is in search area
   if (dstLX < 0 || dstLX >= SEARCH_SIZE || dstLZ < 0 || dstLZ >= SEARCH_SIZE) return [];
 
-  // BFS arrays
-  const directions = new Uint8Array(SEARCH_SIZE * SEARCH_SIZE);
-  const distances = new Int32Array(SEARCH_SIZE * SEARCH_SIZE);
-  distances.fill(99999);
+  directions.fill(0);
+  distances.fill(UNVISITED_DISTANCE);
 
   // Ring buffer queue
-  const queueX = new Int32Array(QUEUE_SIZE);
-  const queueZ = new Int32Array(QUEUE_SIZE);
   let queueRead = 0;
   let queueWrite = 0;
 
@@ -202,8 +204,8 @@ export function findPath(
 
   // If destination not reached, find closest approach point
   if (!pathFound) {
-    let bestDist = 99999;
-    let bestCost = 99999;
+    let bestDist = UNVISITED_DISTANCE;
+    let bestCost = UNVISITED_DISTANCE;
     const range = MAX_APPROACH_DISTANCE;
 
     for (let dz = -range; dz <= range; dz++) {
@@ -212,7 +214,7 @@ export function findPath(
         const lz = dstLZ + dz;
         if (lx < 0 || lx >= SEARCH_SIZE || lz < 0 || lz >= SEARCH_SIZE) continue;
         const i = idx(lx, lz);
-        if (distances[i] >= 99999) continue; // not reached by BFS
+        if (distances[i] >= UNVISITED_DISTANCE) continue; // not reached by BFS
 
         const cost = dx * dx + dz * dz; // squared distance to goal
         if (cost < bestCost || (cost === bestCost && distances[i] < bestDist)) {

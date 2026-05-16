@@ -894,7 +894,7 @@ export class World {
     if (player.openInterface === 'bank') player.openInterface = null;
     player.openShopNpcId = null;
     player.openDialogueState = null;
-    player.moveQueue = [];
+    player.clearMoveQueue();
     player.pendingPickup = -1;
     player.pendingInteraction = null;
     player.delayedUntilTick = 0;
@@ -1346,7 +1346,7 @@ export class World {
       prevX = curTileX + 0.5;
       prevZ = curTileZ + 0.5;
     }
-    player.moveQueue = validPath;
+    player.setMoveQueue(validPath);
     // If we actually dropped tiles vs. what the client asked for, notify it
     // so it can trim its local walk to match. Skip when nothing was
     // requested (zero-distance / empty input) or when the validation
@@ -1392,14 +1392,14 @@ export class World {
       // for wall validation — fall back to server-side pathfinding so the
       // chase still happens. tickPlayerCombat re-pathfinds every tick once
       // engaged, so any subsequent NPC movement is handled there.
-      if (player.moveQueue.length === 0) {
+      if (!player.hasMoveQueue()) {
         const map = this.getPlayerMap(player);
         const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
         if (!isRanged) {
           // Melee: walk to adjacent. The path's last entry is the NPC's tile
           // (blocking) — strip it regardless of path length so a single-step
           // path doesn't queue a walk onto the mob.
-          player.moveQueue = path.length > 0 ? path.slice(0, -1) : [];
+          player.setMoveQueue(path.length > 0 ? path.slice(0, -1) : []);
         } else {
           // Ranged: walk until within range, then stop.
           let cutIdx = path.length;
@@ -1411,11 +1411,11 @@ export class World {
               break;
             }
           }
-          player.moveQueue = path.slice(0, cutIdx);
+          player.setMoveQueue(path.slice(0, cutIdx));
         }
       }
     } else {
-      player.moveQueue = [];
+      player.clearMoveQueue();
     }
   }
 
@@ -1730,12 +1730,12 @@ export class World {
       // Preserve that queue instead of replacing it with a separately
       // pathfound server route from an earlier authoritative tile; otherwise
       // running redirects can rubber-band when the two routes differ.
-      if (player.moveQueue.length === 0) {
+      if (!player.hasMoveQueue()) {
         const map = this.getPlayerMap(player);
         const path = map.findPathOnFloor(player.position.x, player.position.y, item.x, item.z, player.currentFloor);
-        if (path.length > 0) player.moveQueue = path;
+        if (path.length > 0) player.setMoveQueue(path);
       }
-      if (player.moveQueue.length > 0) player.pendingPickup = groundItemId;
+      if (player.hasMoveQueue()) player.pendingPickup = groundItemId;
       return;
     }
 
@@ -1883,10 +1883,10 @@ export class World {
           path = map.findPathOnFloor(px, pz, tx + 0.5, tz + 0.5, player.currentFloor);
         }
 
-        if (player.moveQueue.length === 0 && path.length > 0) {
-          player.moveQueue = path;
+        if (!player.hasMoveQueue() && path.length > 0) {
+          player.setMoveQueue(path);
         }
-        if (player.moveQueue.length > 0) {
+        if (player.hasMoveQueue()) {
           player.pendingInteraction = { objectEntityId, actionIndex, swingSign };
         }
         // Empty path = unreachable (closed door is the only gap in the wall
@@ -1904,10 +1904,10 @@ export class World {
         return;
       }
       const path = this.findPathToObjectInteraction(player, obj);
-      if (player.moveQueue.length === 0 && path.length > 0) {
-        player.moveQueue = path;
+      if (!player.hasMoveQueue() && path.length > 0) {
+        player.setMoveQueue(path);
       }
-      if (player.moveQueue.length > 0) {
+      if (player.hasMoveQueue()) {
         player.pendingInteraction = { objectEntityId, actionIndex };
       } else {
         this.sendChatSystem(player, "I can't reach that.");
@@ -1916,7 +1916,7 @@ export class World {
     }
 
     // Stop movement
-    player.moveQueue = [];
+    player.clearMoveQueue();
     player.attackTarget = null;
     this.clearCombatTarget(playerId);
 
@@ -3134,10 +3134,11 @@ export class World {
 
   private tickPlayerMovement(): void {
     for (const [playerId, player] of this.players) {
-      if (player.moveQueue.length > 0) player.movementCredit += 1;
+      if (player.hasMoveQueue()) player.movementCredit += 1;
 
-      while (player.moveQueue.length > 0 && player.movementCredit >= 1) {
-        const next = player.moveQueue[0];
+      while (player.hasMoveQueue() && player.movementCredit >= 1) {
+        const next = player.peekNextMove();
+        if (!next) break;
         const map = this.getPlayerMap(player);
         const pFloor = player.currentFloor;
         // Pass effective height so a wall edge below an elevated walkable
@@ -3148,7 +3149,7 @@ export class World {
           ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, playerEffY)
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
         if (wallBlocked) {
-          player.moveQueue = [];
+          player.clearMoveQueue();
           player.pendingInteraction = null;
           player.movementCredit = 0;
           break;
@@ -3164,7 +3165,7 @@ export class World {
       // character is still visually mid-step (looks like you're chopping a tree
       // a tile away from where you're standing). Holding the action for the
       // next tick (~600ms) lets the client catch up.
-      const justArrived = player.lastMovedTick === this.currentTick && player.moveQueue.length === 0;
+      const justArrived = player.lastMovedTick === this.currentTick && !player.hasMoveQueue();
 
       // Bot-detection: record the final destination tile when a movement
       // completes (path drained). Bots concentrate visits to a few tiles
@@ -3179,12 +3180,12 @@ export class World {
         this.checkpointPlayerPosition(player);
       }
 
-      if (player.pendingPickup >= 0 && player.moveQueue.length === 0 && !justArrived) {
+      if (player.pendingPickup >= 0 && !player.hasMoveQueue() && !justArrived) {
         const pickupId = player.pendingPickup;
         player.pendingPickup = -1;
         this.handlePlayerPickup(playerId, pickupId);
       }
-      if (player.pendingInteraction && player.moveQueue.length === 0) {
+      if (player.pendingInteraction && !player.hasMoveQueue()) {
         const { objectEntityId, actionIndex, swingSign } = player.pendingInteraction;
         const obj = this.worldObjects.get(objectEntityId);
         // Doors fire instantly on arrival — toggling is visually
@@ -3197,7 +3198,7 @@ export class World {
         player.pendingInteraction = null;
         if (obj && obj.mapLevel === player.currentMapLevel) {
           if (this.isAdjacentToObject(player, obj)) {
-            player.moveQueue = [];
+            player.clearMoveQueue();
             player.attackTarget = null;
             this.clearCombatTarget(playerId);
             const action = obj.currentActions[actionIndex];
@@ -3213,7 +3214,7 @@ export class World {
       // would open the dialogue while the character is still striding;
       // waiting matches RS2. If the path drained without reaching range
       // (blocked, NPC wandered), drop the intent — user re-clicks.
-      if (player.pendingTalkNpcId >= 0 && player.moveQueue.length === 0) {
+      if (player.pendingTalkNpcId >= 0 && !player.hasMoveQueue()) {
         const id = player.pendingTalkNpcId;
         player.pendingTalkNpcId = -1;
         const targetNpc = this.npcs.get(id);
@@ -3327,11 +3328,11 @@ export class World {
         // teleported the local visual onto the server position. Leaving the
         // queue alone while it's being walked keeps client + server in sync;
         // the chase resumes when the queue runs dry.
-        if (player.moveQueue.length === 0) {
+        if (!player.hasMoveQueue()) {
           const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
           if (path.length > 0) {
             if (!isRanged && path.length > 1) {
-              player.moveQueue = path.slice(0, -1); // melee: stop one tile short
+              player.setMoveQueue(path.slice(0, -1)); // melee: stop one tile short
             } else if (isRanged) {
               // Ranged: walk only as far as needed to be in attack distance
               let cutIdx = path.length;
@@ -3343,9 +3344,9 @@ export class World {
                   break;
                 }
               }
-              player.moveQueue = path.slice(0, cutIdx);
+              player.setMoveQueue(path.slice(0, cutIdx));
             } else {
-              player.moveQueue = path;
+              player.setMoveQueue(path);
             }
           }
         }
@@ -3872,7 +3873,7 @@ export class World {
     // Drop all transient combat / action state.
     this.clearCombatTarget(player.id);
     this.cancelSkilling(player.id);
-    player.moveQueue = [];
+    player.clearMoveQueue();
     player.attackTarget = null;
     player.pendingInteraction = null;
     player.pendingTalkNpcId = -1;
@@ -3992,7 +3993,7 @@ export class World {
     if (cm) cm.removeEntity(player.id);
     player.position.x = x;
     player.position.y = z;
-    player.moveQueue = [];
+    player.clearMoveQueue();
     player.attackTarget = null;
     this.clearCombatTarget(player.id);
     player.currentChunkX = Math.floor(x / CHUNK_SIZE);
@@ -4102,7 +4103,7 @@ export class World {
     player.currentMapLevel = newMap;
     player.position.x = transition.targetX;
     player.position.y = transition.targetZ;
-    player.moveQueue = [];
+    player.clearMoveQueue();
     player.attackTarget = null;
     this.clearCombatTarget(player.id);
 

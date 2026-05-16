@@ -659,10 +659,7 @@ export class GameManager {
     if (frozen) {
       closeActiveContextMenu();
       this.hideContextMenu();
-      this.path = [];
-      this.pathIndex = 0;
-      this.tileProgress = 0;
-      this.pendingPath = null;
+      this.clearPredictedPath();
       this.pendingSkill = null;
       this.pendingSmithing = null;
       this.combatTargetId = -1;
@@ -2394,11 +2391,8 @@ export class GameManager {
       const newY = (values[2] ?? 0) / 10;
       this.playerX = newX;
       this.playerZ = newZ;
-      this.path = [];
-      this.pathIndex = 0;
-      this.tileProgress = 0;
-      this.pendingPath = null;
-      this.tileFrom = { x: newX, z: newZ };
+      this.clearPredictedPath();
+      this.setTileFrom(newX, newZ);
       this.combatTargetId = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -2566,7 +2560,7 @@ export class GameManager {
     // Update player position
     this.playerX = newX;
     this.playerZ = newZ;
-    this.path = []; this.pathIndex = 0; this.tileProgress = 0; this.pendingPath = null;
+    this.clearPredictedPath();
     if (this.localPlayer) this.localPlayer.stopWalking();
     this.combatTargetId = -1;
 
@@ -3039,7 +3033,7 @@ export class GameManager {
     if (!this.isPlayerAdjacentToTile(target.x, target.z)) {
       const path = this.findPathAdjacentToTarget(target.x, target.z);
       if (path.length > 0) {
-        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.tileFrom = { x: this.playerX, z: this.playerZ };
+        this.path = path; this.pathIndex = 0; this.tileProgress = 0; this.setTileFrom(this.playerX, this.playerZ);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
         this.network.sendMove(path);
@@ -3047,7 +3041,7 @@ export class GameManager {
     } else {
       // Already adjacent — cancel any in-flight path and face the NPC now;
       // no path-complete event will fire to do it for us.
-      this.path = []; this.pathIndex = 0; this.tileProgress = 0;
+      this.clearPredictedPath();
       if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
       this.faceLocalPlayerToward(target.x, target.z);
       this.pendingFaceTargetEntityId = -1;
@@ -3057,6 +3051,19 @@ export class GameManager {
 
   private sameTile(a: { x: number; z: number }, b: { x: number; z: number }): boolean {
     return Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.z) === Math.floor(b.z);
+  }
+
+  private setTileFrom(x: number, z: number): void {
+    this.tileFrom.x = x;
+    this.tileFrom.z = z;
+  }
+
+  private clearPredictedPath(resetAnchor: boolean = false): void {
+    this.path = [];
+    this.pathIndex = 0;
+    this.tileProgress = 0;
+    this.pendingPath = null;
+    if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
   }
 
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
@@ -3137,7 +3144,7 @@ export class GameManager {
       // Walk from current visual position (often fractional mid-step) to
       // path[0]. Body rotation handles the visible turn — no snap.
       this.tileProgress = 0;
-      this.tileFrom = { x: this.playerX, z: this.playerZ };
+      this.setTileFrom(this.playerX, this.playerZ);
     }
     this.pendingPath = null;
     this.network.sendMove(path);
@@ -3253,7 +3260,7 @@ export class GameManager {
             this.path = bestPath;
             this.pathIndex = 0;
             this.tileProgress = 0;
-            this.tileFrom = { x: this.playerX, z: this.playerZ };
+            this.setTileFrom(this.playerX, this.playerZ);
             this.network.sendMove(bestPath);
             this.pendingSmithing = { objectEntityId, def: objDef };
           }
@@ -3301,7 +3308,7 @@ export class GameManager {
           this.startPredictedPath(path, preserveCurrentStep);
         }
       } else {
-        this.path = []; this.pathIndex = 0;
+        this.clearPredictedPath();
         this.localPlayer?.stopWalking();
       }
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
@@ -3973,9 +3980,10 @@ export class GameManager {
    *  the given object. Shared setup for both animated and stationary
    *  skilling starts. */
   private prepareSkillingAtObject(objectId: number): void {
-    this.path = []; this.pathIndex = 0; this.tileProgress = 0; this.pendingPath = null;
+    this.clearPredictedPath();
     this.playerX = Math.round(this.playerX - 0.5) + 0.5;
     this.playerZ = Math.round(this.playerZ - 0.5) + 0.5;
+    this.setTileFrom(this.playerX, this.playerZ);
     if (!this.localPlayer) return;
     this.localPlayer.stopWalking();
     const h = this.getHeight(this.playerX, this.playerZ);
@@ -4026,7 +4034,6 @@ export class GameManager {
     if (this.interactMarker) this.interactMarker.isVisible = false;
 
     const tx = Math.floor(worldX), tz = Math.floor(worldZ);
-    const blocked = this.isTileBlocked(tx, tz);
 
     // Clicking your own tile while walking should halt on that tile.
     // findPath returns an empty path when start tile == end tile, which the
@@ -4052,10 +4059,7 @@ export class GameManager {
         this.network.sendMove([currentTarget]);
       } else {
         // Not walking — just make sure we're idle.
-        this.path = [];
-        this.pathIndex = 0;
-        this.tileProgress = 0;
-        this.tileFrom = { x: this.playerX, z: this.playerZ };
+        this.clearPredictedPath(true);
         this.localPlayer?.stopWalking();
         this.network.sendMove([]);
       }
@@ -4423,7 +4427,7 @@ export class GameManager {
       // Server is on our path: skip ahead and keep walking the remainder.
       this.pathIndex = foundIndex + 1;
       this.tileProgress = 0;
-      this.tileFrom = { x: serverX, z: serverZ };
+      this.setTileFrom(serverX, serverZ);
       const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
       const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
       this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
@@ -4434,11 +4438,8 @@ export class GameManager {
     // visible play, keep the server queue authoritative and slide the local
     // visual onto it. After a hidden-tab return, preserve the older hard reset
     // behavior so stale background movement is cancelled instead of resumed.
-    this.path = [];
-    this.pathIndex = 0;
-    this.tileProgress = 0;
-    this.pendingPath = null;
-    this.tileFrom = { x: serverX, z: serverZ };
+    this.clearPredictedPath();
+    this.setTileFrom(serverX, serverZ);
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
 
@@ -4530,7 +4531,7 @@ export class GameManager {
       this.tileProgress -= 1.0;
       this.playerX = stepTarget.x;
       this.playerZ = stepTarget.z;
-      this.tileFrom = { x: stepTarget.x, z: stepTarget.z };
+      this.setTileFrom(stepTarget.x, stepTarget.z);
       this.pathIndex++;
 
       // Deferred talk-to fires now that playerX/Z are tile-aligned.

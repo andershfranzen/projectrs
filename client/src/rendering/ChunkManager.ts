@@ -956,6 +956,7 @@ export class ChunkManager {
       textureIdB: partial.textureIdB ?? null,
       textureRotationB: partial.textureRotationB ?? 0,
       textureScaleB: partial.textureScaleB ?? 1,
+      textureCutAngle: partial.textureCutAngle ?? (3 * Math.PI) / 4,
       waterPainted: partial.waterPainted ?? false,
       waterSurface: partial.waterSurface ?? false,
     };
