@@ -799,6 +799,7 @@
     "equipSlot": "head",
     "value": 45,
     "icon": "Large_Bronze_Helmet_108.png",
+    "model": "/assets/equipment/head/BronzeFullHelm.glb",
     "stabDefence": 5,
     "slashDefence": 6,
     "crushDefence": 4
@@ -1008,6 +1009,7 @@
     "equipSlot": "head",
     "value": 90,
     "icon": "Large_Iron_Helmet_6.png",
+    "model": "/assets/equipment/head/IronFullHelm.glb",
     "stabDefence": 8,
     "slashDefence": 9,
     "crushDefence": 6

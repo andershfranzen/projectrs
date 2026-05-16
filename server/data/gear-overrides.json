@@ -259,6 +259,19 @@
     },
     "scale": 1.042
   },
+  "66": {
+    "localPosition": {
+      "x": -0.011,
+      "y": 0.011,
+      "z": 0.034
+    },
+    "localRotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": 0.92
+  },
   "67": {
     "localPosition": {
       "x": -0.023,
@@ -349,6 +362,19 @@
       "z": 0
     },
     "scale": 1.042
+  },
+  "80": {
+    "localPosition": {
+      "x": -0.011,
+      "y": 0.011,
+      "z": 0.034
+    },
+    "localRotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": 0.92
   },
   "81": {
     "localPosition": {
