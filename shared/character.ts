@@ -38,4 +38,7 @@ export const PLAYER_ANIMATIONS: readonly { name: string; path: string }[] = [
   { name: 'attack_1h_slash',         path: `${CHARACTER_ANIM_DIR}/one handed slash.glb` },
   { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
   { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
+  // Two-handed spell cast — driven by spell-system playSpellEffect()
+  // (SPELL_CAST broadcasts + the spellbook tab's click handler).
+  { name: 'spell_cast_2h',           path: `${CHARACTER_ANIM_DIR}/twohand_spell_cast.glb` },
 ];

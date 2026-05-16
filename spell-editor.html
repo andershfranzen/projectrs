@@ -1,0 +1,1556 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Spell Effect Editor</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylonjs.loaders.min.js"></script>
+    <style>
+        html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #111; }
+        #renderCanvas { width: 100%; height: 100%; touch-action: none; }
+        #controls {
+            position: absolute; top: 10px; right: 10px; bottom: 10px; color: #ddd;
+            font-family: 'Segoe UI', monospace; font-size: 13px;
+            background: rgba(0,0,0,0.82); padding: 16px 20px; border-radius: 8px;
+            min-width: 310px; max-width: 340px; user-select: none; overflow-y: auto;
+        }
+        #controls::-webkit-scrollbar { width: 6px; }
+        #controls::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        #controls h3 { margin: 0 0 10px 0; color: #8cf; font-size: 16px; }
+        .ctrl-group { margin-bottom: 6px; border-bottom: 1px solid #333; padding-bottom: 6px; }
+        .ctrl-group:last-child { border-bottom: none; }
+        .ctrl-group h4 {
+            margin: 0 0 5px 0; color: #aaa; font-size: 12px; text-transform: uppercase;
+            letter-spacing: 1px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+        }
+        .ctrl-group h4::before { content: '\25BC'; font-size: 8px; transition: transform 0.2s; display: inline-block; }
+        .ctrl-group.collapsed h4::before { transform: rotate(-90deg); }
+        .ctrl-group.collapsed .ctrl-content { display: none; }
+        .ctrl-row { display: flex; align-items: center; justify-content: space-between; margin: 3px 0; }
+        .ctrl-row label { flex: 0 0 120px; font-size: 12px; }
+        .ctrl-row input[type=range] { flex: 1; margin: 0 6px; }
+        .ctrl-row .val { flex: 0 0 38px; text-align: right; color: #8cf; font-size: 11px; }
+        .ctrl-row select, .ctrl-row input[type=text] {
+            flex: 1; margin: 0 6px; background: #222; color: #ddd; border: 1px solid #555;
+            border-radius: 3px; padding: 3px 6px; font-size: 12px; font-family: inherit;
+        }
+        .ctrl-row input[type=checkbox] { margin: 0 8px 0 0; }
+        .preset-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+        .preset-btn {
+            padding: 4px 8px; border: 1px solid #555; border-radius: 4px; cursor: pointer;
+            font-size: 11px; font-family: inherit; color: #ddd; background: #222;
+        }
+        .preset-btn:hover { border-color: #8cf; color: #fff; }
+        .preset-btn.fire { border-color: #f63; } .preset-btn.water { border-color: #48f; }
+        .preset-btn.earth { border-color: #a84; } .preset-btn.air { border-color: #bcf; }
+        .preset-btn.dark { border-color: #a4f; } .preset-btn.holy { border-color: #fd4; }
+        .action-btn {
+            padding: 7px 12px; cursor: pointer; border: none; border-radius: 4px;
+            font-size: 13px; font-weight: bold; font-family: inherit; color: white;
+        }
+        .btn-play { background: #2a7; } .btn-play:hover { background: #3b8; }
+        .btn-export { background: #47a; } .btn-export:hover { background: #58b; }
+        .btn-import { background: #666; } .btn-import:hover { background: #777; }
+        .action-row { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; align-items: center; }
+        .action-row label { font-size: 12px; }
+        #info { position: absolute; bottom: 10px; left: 10px; color: #555; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <canvas id="renderCanvas"></canvas>
+    <div id="controls">
+        <h3>Spell Effect Editor</h3>
+
+        <div class="ctrl-row" style="margin-bottom:8px">
+            <label>Spell Name</label>
+            <input type="text" id="spellName" value="Fire Bolt" style="flex:1">
+        </div>
+
+        <div class="preset-row">
+            <button class="preset-btn fire" onclick="applyPreset('fire')">Fire</button>
+            <button class="preset-btn water" onclick="applyPreset('water')">Water</button>
+            <button class="preset-btn earth" onclick="applyPreset('earth')">Earth</button>
+            <button class="preset-btn air" onclick="applyPreset('air')">Air</button>
+            <button class="preset-btn dark" onclick="applyPreset('dark')">Dark</button>
+            <button class="preset-btn holy" onclick="applyPreset('holy')">Holy</button>
+        </div>
+
+        <div class="ctrl-row" style="margin-bottom:6px">
+            <label>Tier</label>
+            <input type="range" id="tier" min="1" max="5" step="1" value="2">
+            <span class="val" id="tierVal">2</span>
+        </div>
+
+        <!-- Projectile -->
+        <div class="ctrl-group" id="grp-projectile">
+            <h4>Projectile</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row"><label>Shape</label><select id="projShape"><option value="blast">Blast</option><option value="skull">Skull</option><option value="ankh">Ankh</option></select></div>
+                <div class="ctrl-row"><label>Size</label><input type="range" id="projSize" min="0.1" max="2" step="0.05" value="0.5"><span class="val" id="projSizeVal">0.5</span></div>
+                <div class="ctrl-row"><label>Primary R</label><input type="range" id="projR" min="0" max="1" step="0.01" value="1"><span class="val" id="projRVal">1</span></div>
+                <div class="ctrl-row"><label>Primary G</label><input type="range" id="projG" min="0" max="1" step="0.01" value="0.4"><span class="val" id="projGVal">0.4</span></div>
+                <div class="ctrl-row"><label>Primary B</label><input type="range" id="projB" min="0" max="1" step="0.01" value="0"><span class="val" id="projBVal">0</span></div>
+                <div class="ctrl-row"><label>Secondary R</label><input type="range" id="projR2" min="0" max="1" step="0.01" value="1"><span class="val" id="projR2Val">1</span></div>
+                <div class="ctrl-row"><label>Secondary G</label><input type="range" id="projG2" min="0" max="1" step="0.01" value="0.1"><span class="val" id="projG2Val">0.1</span></div>
+                <div class="ctrl-row"><label>Secondary B</label><input type="range" id="projB2" min="0" max="1" step="0.01" value="0"><span class="val" id="projB2Val">0</span></div>
+                <div class="ctrl-row"><label>Glow</label><input type="range" id="projGlow" min="0" max="3" step="0.05" value="1.5"><span class="val" id="projGlowVal">1.5</span></div>
+                <div class="ctrl-row"><label>Rotation</label><input type="range" id="projRot" min="0" max="10" step="0.1" value="2"><span class="val" id="projRotVal">2</span></div>
+                <div class="ctrl-row"><label>Texture</label><select id="projTex"><option value="none">None</option><option value="fire">Fire</option><option value="ice">Ice</option><option value="earth">Earth</option><option value="wind">Wind</option><option value="dark">Dark</option><option value="holy">Holy</option></select></div>
+            </div>
+        </div>
+
+        <!-- Trajectory -->
+        <div class="ctrl-group" id="grp-trajectory">
+            <h4>Trajectory</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row"><label>Type</label><select id="trajType"><option value="straight">Straight</option><option value="arc">Arc</option><option value="homing">Homing</option></select></div>
+                <div class="ctrl-row"><label>Travel Time (ms)</label><input type="range" id="trajTime" min="100" max="2000" step="25" value="600"><span class="val" id="trajTimeVal">600</span></div>
+                <div class="ctrl-row" id="arcHeightRow"><label>Arc Height</label><input type="range" id="trajArc" min="0" max="4" step="0.1" value="1.5"><span class="val" id="trajArcVal">1.5</span></div>
+                <div class="ctrl-row" id="homingRow"><label>Homing Curve</label><input type="range" id="trajHoming" min="0" max="3" step="0.1" value="1"><span class="val" id="trajHomingVal">1</span></div>
+            </div>
+        </div>
+
+        <!-- Trail -->
+        <div class="ctrl-group" id="grp-trail">
+            <h4>Trail</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row"><label>Particle</label><select id="trailShape"><option value="ember">Ember</option><option value="spark">Spark</option><option value="smoke">Smoke</option><option value="snowflake">Snowflake</option><option value="leaf">Leaf</option><option value="rune">Rune</option></select></div>
+                <div class="ctrl-row"><label>Density</label><input type="range" id="trailDensity" min="5" max="400" step="5" value="100"><span class="val" id="trailDensityVal">100</span></div>
+                <div class="ctrl-row"><label>Width</label><input type="range" id="trailWidth" min="0" max="1" step="0.02" value="0.2"><span class="val" id="trailWidthVal">0.2</span></div>
+                <div class="ctrl-row"><label>Color R</label><input type="range" id="trailR" min="0" max="1" step="0.01" value="1"><span class="val" id="trailRVal">1</span></div>
+                <div class="ctrl-row"><label>Color G</label><input type="range" id="trailG" min="0" max="1" step="0.01" value="0.5"><span class="val" id="trailGVal">0.5</span></div>
+                <div class="ctrl-row"><label>Color B</label><input type="range" id="trailB" min="0" max="1" step="0.01" value="0.1"><span class="val" id="trailBVal">0.1</span></div>
+                <div class="ctrl-row"><label>Fade Time</label><input type="range" id="trailFade" min="0.1" max="3" step="0.05" value="0.6"><span class="val" id="trailFadeVal">0.6</span></div>
+                <div class="ctrl-row"><label>Motion</label><select id="trailMotion"><option value="straight">Straight</option><option value="wavy">Wavy</option><option value="spiral">Spiral</option></select></div>
+            </div>
+        </div>
+
+        <!-- Cast Effect -->
+        <div class="ctrl-group" id="grp-cast">
+            <h4>Cast Effect</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row"><label>Duration (ms)</label><input type="range" id="castDur" min="100" max="2000" step="25" value="400"><span class="val" id="castDurVal">400</span></div>
+                <div class="ctrl-row"><label>Burst Particle</label><select id="castShape"><option value="ember">Ember</option><option value="spark">Spark</option><option value="smoke">Smoke</option><option value="snowflake">Snowflake</option><option value="leaf">Leaf</option><option value="rune">Rune</option><option value="skull">Skull</option><option value="star">Star</option></select></div>
+                <div class="ctrl-row"><label>Burst Count</label><input type="range" id="castCount" min="5" max="200" step="5" value="60"><span class="val" id="castCountVal">60</span></div>
+                <div class="ctrl-row"><label>Burst Color R</label><input type="range" id="castR" min="0" max="1" step="0.01" value="1"><span class="val" id="castRVal">1</span></div>
+                <div class="ctrl-row"><label>Burst Color G</label><input type="range" id="castG" min="0" max="1" step="0.01" value="0.5"><span class="val" id="castGVal">0.5</span></div>
+                <div class="ctrl-row"><label>Burst Color B</label><input type="range" id="castB" min="0" max="1" step="0.01" value="0"><span class="val" id="castBVal">0</span></div>
+                <div class="ctrl-row"><label>Spread</label><input type="range" id="castSpread" min="0.1" max="3" step="0.05" value="0.5"><span class="val" id="castSpreadVal">0.5</span></div>
+                <div class="ctrl-row"><label>Hand Glow</label><input type="checkbox" id="castHandGlow" checked><label style="flex:0">Glow at hands</label></div>
+                <div class="ctrl-row"><label>Hand Glow R</label><input type="range" id="handR" min="0" max="1" step="0.01" value="1"><span class="val" id="handRVal">1</span></div>
+                <div class="ctrl-row"><label>Hand Glow G</label><input type="range" id="handG" min="0" max="1" step="0.01" value="0.5"><span class="val" id="handGVal">0.5</span></div>
+                <div class="ctrl-row"><label>Hand Glow B</label><input type="range" id="handB" min="0" max="1" step="0.01" value="0"><span class="val" id="handBVal">0</span></div>
+                <div class="ctrl-row"><label>Hand Intensity</label><input type="range" id="handInt" min="0" max="3" step="0.1" value="1.5"><span class="val" id="handIntVal">1.5</span></div>
+            </div>
+        </div>
+
+        <!-- Impact Effect -->
+        <div class="ctrl-group" id="grp-impact">
+            <h4>Impact Effect</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row"><label>Splash Particle</label><select id="impShape"><option value="ember">Ember</option><option value="spark">Spark</option><option value="smoke">Smoke</option><option value="snowflake">Snowflake</option><option value="leaf">Leaf</option><option value="rune">Rune</option><option value="skull">Skull</option><option value="star">Star</option></select></div>
+                <div class="ctrl-row"><label>Splash Count</label><input type="range" id="impCount" min="5" max="300" step="5" value="80"><span class="val" id="impCountVal">80</span></div>
+                <div class="ctrl-row"><label>Splash Spread</label><input type="range" id="impSpread" min="0.1" max="3" step="0.05" value="1"><span class="val" id="impSpreadVal">1</span></div>
+                <div class="ctrl-row"><label>Splash R</label><input type="range" id="impR" min="0" max="1" step="0.01" value="1"><span class="val" id="impRVal">1</span></div>
+                <div class="ctrl-row"><label>Splash G</label><input type="range" id="impG" min="0" max="1" step="0.01" value="0.3"><span class="val" id="impGVal">0.3</span></div>
+                <div class="ctrl-row"><label>Splash B</label><input type="range" id="impB" min="0" max="1" step="0.01" value="0"><span class="val" id="impBVal">0</span></div>
+                <div class="ctrl-row"><label>Ground Decal</label><select id="impDecal"><option value="none">None</option><option value="scorch">Scorch</option><option value="ice">Ice</option><option value="generic">Generic</option></select></div>
+                <div class="ctrl-row"><label>Lightning Arcs</label><input type="range" id="impArcCount" min="0" max="8" step="1" value="0"><span class="val" id="impArcCountVal">0</span></div>
+                <div class="ctrl-row"><label>Arc Flicker</label><input type="range" id="impArcFlicker" min="1" max="30" step="1" value="12"><span class="val" id="impArcFlickerVal">12</span></div>
+                <div class="ctrl-row"><label>Arc Jagged</label><input type="range" id="impArcJagged" min="2" max="16" step="1" value="6"><span class="val" id="impArcJaggedVal">6</span></div>
+                <div class="ctrl-row"><label>Arc Spread</label><input type="range" id="impArcSpread" min="0" max="1" step="0.02" value="0.3"><span class="val" id="impArcSpreadVal">0.3</span></div>
+                <div class="ctrl-row"><label>Arc R</label><input type="range" id="impArcR" min="0" max="1" step="0.01" value="1"><span class="val" id="impArcRVal">1</span></div>
+                <div class="ctrl-row"><label>Arc G</label><input type="range" id="impArcG" min="0" max="1" step="0.01" value="0.5"><span class="val" id="impArcGVal">0.5</span></div>
+                <div class="ctrl-row"><label>Arc B</label><input type="range" id="impArcB" min="0" max="1" step="0.01" value="0"><span class="val" id="impArcBVal">0</span></div>
+                <div class="ctrl-row"><label>Arc Glow</label><input type="range" id="impArcGlow" min="0" max="3" step="0.1" value="1"><span class="val" id="impArcGlowVal">1</span></div>
+                <div class="ctrl-row"><label>Linger</label><input type="checkbox" id="impLinger"><label style="flex:0">DoT particles</label></div>
+                <div class="ctrl-row"><label>Linger Duration</label><input type="range" id="lingerDur" min="500" max="5000" step="100" value="2000"><span class="val" id="lingerDurVal">2000</span></div>
+                <div class="ctrl-row"><label>Linger Rate</label><input type="range" id="lingerRate" min="5" max="60" step="1" value="20"><span class="val" id="lingerRateVal">20</span></div>
+                <div class="ctrl-row"><label>Linger R</label><input type="range" id="lingerR" min="0" max="1" step="0.01" value="0.5"><span class="val" id="lingerRVal">0.5</span></div>
+                <div class="ctrl-row"><label>Linger G</label><input type="range" id="lingerG" min="0" max="1" step="0.01" value="0.2"><span class="val" id="lingerGVal">0.2</span></div>
+                <div class="ctrl-row"><label>Linger B</label><input type="range" id="lingerB" min="0" max="1" step="0.01" value="0"><span class="val" id="lingerBVal">0</span></div>
+            </div>
+        </div>
+
+        <!-- Preview controls -->
+        <div class="ctrl-group" id="grp-preview">
+            <h4>Preview</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row"><label>Distance</label><input type="range" id="prevDist" min="2" max="15" step="0.5" value="6"><span class="val" id="prevDistVal">6</span></div>
+                <div class="ctrl-row"><label>AoE Mode</label><input type="checkbox" id="prevAoe"><label style="flex:0">Multi-target</label></div>
+                <div class="ctrl-row"><label>Target Count</label><input type="range" id="prevAoeCount" min="2" max="5" step="1" value="3"><span class="val" id="prevAoeCountVal">3</span></div>
+            </div>
+        </div>
+
+        <div class="action-row">
+            <button class="action-btn btn-play" id="btnPlay">Play</button>
+            <label><input type="checkbox" id="chkLoop"> Loop</label>
+        </div>
+        <div class="action-row">
+            <button class="action-btn btn-export" id="btnExport">Export JSON</button>
+            <button class="action-btn btn-import" id="btnImport">Import JSON</button>
+        </div>
+    </div>
+    <div id="info">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
+
+    <script>
+    (async function() {
+        const canvas = document.getElementById('renderCanvas');
+        const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+        const scene = new BABYLON.Scene(engine);
+        scene.clearColor = new BABYLON.Color4(0.18, 0.2, 0.25, 1);
+        scene.ambientColor = new BABYLON.Color3(0.2, 0.2, 0.25);
+
+        // ── Camera ──
+        const camera = new BABYLON.ArcRotateCamera('cam', Math.PI * 0.75, Math.PI / 3, 10, new BABYLON.Vector3(0, 0.8, 0), scene);
+        camera.attachControl(canvas, true);
+        camera.lowerRadiusLimit = 3;
+        camera.upperRadiusLimit = 25;
+        camera.wheelPrecision = 30;
+        const cameraBaseTarget = camera.target.clone();
+        const cameraBasePos = camera.position.clone();
+
+        // ── Lights ──
+        const dirLight = new BABYLON.DirectionalLight('dir', new BABYLON.Vector3(-1, -2, 1).normalize(), scene);
+        dirLight.intensity = 0.5;
+        const hemiLight = new BABYLON.HemisphericLight('hemi', new BABYLON.Vector3(0, 1, 0), scene);
+        hemiLight.intensity = 0.5;
+
+        // ── Glow layer ──
+        const glowLayer = new BABYLON.GlowLayer('glow', scene, { mainTextureFixedSize: 512, blurKernelSize: 64 });
+        glowLayer.intensity = 1.0;
+
+        // ── Ground ──
+        const ground = BABYLON.MeshBuilder.CreateGround('ground', { width: 20, height: 12 }, scene);
+        const groundMat = new BABYLON.StandardMaterial('groundMat', scene);
+        groundMat.diffuseColor = new BABYLON.Color3(0.25, 0.25, 0.3);
+        groundMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+        ground.material = groundMat;
+        ground.isPickable = false;
+
+        // Grid lines on ground
+        const gridDT = new BABYLON.DynamicTexture('gridTex', 512, scene, false);
+        const gridCtx = gridDT.getContext();
+        gridCtx.fillStyle = 'rgba(55,58,68,1)';
+        gridCtx.fillRect(0, 0, 512, 512);
+        gridCtx.strokeStyle = 'rgba(120,125,145,0.5)';
+        gridCtx.lineWidth = 1;
+        for (let i = 0; i <= 512; i += 32) { gridCtx.beginPath(); gridCtx.moveTo(i,0); gridCtx.lineTo(i,512); gridCtx.stroke(); gridCtx.beginPath(); gridCtx.moveTo(0,i); gridCtx.lineTo(512,i); gridCtx.stroke(); }
+        gridDT.update();
+        groundMat.diffuseTexture = gridDT;
+
+        // ── Caster & Target boxes ──
+        const casterMat = new BABYLON.StandardMaterial('casterMat', scene);
+        casterMat.diffuseColor = new BABYLON.Color3(0.15, 0.25, 0.5);
+        casterMat.alpha = 0.6;
+        const targetMat = new BABYLON.StandardMaterial('targetMat', scene);
+        targetMat.diffuseColor = new BABYLON.Color3(0.5, 0.15, 0.15);
+        targetMat.alpha = 0.6;
+
+        const casterBox = BABYLON.MeshBuilder.CreateBox('caster', { height: 1.8, width: 0.6, depth: 0.4 }, scene);
+        casterBox.material = casterMat;
+        casterBox.isPickable = false;
+        const targetBox = BABYLON.MeshBuilder.CreateBox('target', { height: 1.8, width: 0.6, depth: 0.4 }, scene);
+        targetBox.material = targetMat;
+        targetBox.isPickable = false;
+
+        let aoeTargets = [];
+        function updateEntityPositions() {
+            const d = parseFloat(document.getElementById('prevDist').value) / 2;
+            casterBox.position.set(-d, 0.9, 0);
+            targetBox.position.set(d, 0.9, 0);
+            // AoE extra targets
+            aoeTargets.forEach(m => m.dispose());
+            aoeTargets = [];
+            if (document.getElementById('prevAoe').checked) {
+                const count = parseInt(document.getElementById('prevAoeCount').value);
+                for (let i = 1; i < count; i++) {
+                    const a = (i / (count - 1)) * Math.PI - Math.PI / 2;
+                    const extra = BABYLON.MeshBuilder.CreateBox('aoeTarget' + i, { height: 1.8, width: 0.6, depth: 0.4 }, scene);
+                    extra.material = targetMat;
+                    extra.isPickable = false;
+                    extra.position.set(d + Math.cos(a) * 1.2, 0.9, Math.sin(a) * 1.5);
+                    aoeTargets.push(extra);
+                }
+            }
+        }
+        updateEntityPositions();
+
+        // ─────────────────────────────────────────────
+        // PROCEDURAL TEXTURES (from enchant editor + new)
+        // ─────────────────────────────────────────────
+        function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+        function lerp(a, b, t) { return a + t * (b - a); }
+
+        const perm = new Uint8Array(512);
+        for (let i = 0; i < 256; i++) perm[i] = i;
+        for (let i = 255; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [perm[i], perm[j]] = [perm[j], perm[i]]; }
+        for (let i = 0; i < 256; i++) perm[256 + i] = perm[i];
+
+        function noise2D(x, y) {
+            const X = Math.floor(x) & 255, Y = Math.floor(y) & 255;
+            const xf = x - Math.floor(x), yf = y - Math.floor(y);
+            const u = fade(xf), v = fade(yf);
+            const aa = perm[perm[X] + Y], ab = perm[perm[X] + Y + 1];
+            const ba = perm[perm[X + 1] + Y], bb = perm[perm[X + 1] + Y + 1];
+            return lerp(lerp(aa / 255, ba / 255, u), lerp(ab / 255, bb / 255, u), v);
+        }
+        function fbm(x, y, oct) { let v = 0, a = 0.5, f = 1; for (let i = 0; i < oct; i++) { v += a * noise2D(x * f, y * f); a *= 0.5; f *= 2; } return v; }
+
+        function makeDynTex(size) {
+            const dt = new BABYLON.DynamicTexture('ptex_' + Math.random(), size, scene, false);
+            return { dt, ctx: dt.getContext(), size };
+        }
+
+        function createEmberTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+            g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.2, 'rgba(255,255,200,0.9)');
+            g.addColorStop(0.5, 'rgba(255,200,100,0.5)'); g.addColorStop(0.8, 'rgba(255,100,50,0.15)');
+            g.addColorStop(1, 'rgba(200,50,0,0)');
+            ctx.fillStyle = g; ctx.fillRect(0, 0, size, size); dt.update(); return dt;
+        }
+
+        function createSparkTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const c = size / 2; ctx.clearRect(0, 0, size, size);
+            for (let a = 0; a < Math.PI * 2; a += Math.PI / 2) {
+                const lg = ctx.createLinearGradient(c + Math.cos(a) * size * 0.45, c + Math.sin(a) * size * 0.45, c, c);
+                lg.addColorStop(0, 'rgba(255,255,255,0)'); lg.addColorStop(0.5, 'rgba(255,255,220,0.6)'); lg.addColorStop(1, 'rgba(255,255,255,1)');
+                ctx.fillStyle = lg; ctx.beginPath(); ctx.moveTo(c, c);
+                ctx.lineTo(c + Math.cos(a - 0.15) * size * 0.48, c + Math.sin(a - 0.15) * size * 0.48);
+                ctx.lineTo(c + Math.cos(a + 0.15) * size * 0.48, c + Math.sin(a + 0.15) * size * 0.48); ctx.fill();
+            }
+            const rg = ctx.createRadialGradient(c, c, 0, c, c, size * 0.15);
+            rg.addColorStop(0, 'rgba(255,255,255,1)'); rg.addColorStop(1, 'rgba(255,255,255,0)');
+            ctx.fillStyle = rg; ctx.fillRect(0, 0, size, size); dt.update(); return dt;
+        }
+
+        function createSkullTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const c = size / 2; ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.beginPath();
+            ctx.save(); ctx.translate(c, c * 0.9); ctx.scale(1, 1.19); ctx.arc(0, 0, size * 0.32, 0, Math.PI * 2); ctx.restore(); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(c - size * 0.12, size * 0.78); ctx.lineTo(c + size * 0.12, size * 0.78); ctx.lineTo(c + size * 0.08, size * 0.68); ctx.lineTo(c - size * 0.08, size * 0.68); ctx.fill();
+            ctx.fillStyle = 'rgba(0,0,0,0.9)';
+            ctx.beginPath(); ctx.save(); ctx.translate(c - size * 0.12, c * 0.82); ctx.scale(1, 1.22); ctx.arc(0, 0, size * 0.09, 0, Math.PI * 2); ctx.restore(); ctx.fill();
+            ctx.beginPath(); ctx.save(); ctx.translate(c + size * 0.12, c * 0.82); ctx.scale(1, 1.22); ctx.arc(0, 0, size * 0.09, 0, Math.PI * 2); ctx.restore(); ctx.fill();
+            ctx.beginPath(); ctx.moveTo(c, c * 1.05); ctx.lineTo(c - size * 0.04, c * 1.15); ctx.lineTo(c + size * 0.04, c * 1.15); ctx.fill();
+            ctx.fillStyle = 'rgba(0,0,0,0.7)';
+            for (let i = -1.5; i <= 1.5; i++) ctx.fillRect(c + i * size * 0.055 - 1, size * 0.68, 2, size * 0.1);
+            const fg = ctx.createRadialGradient(c, c, size * 0.2, c, c, size * 0.5);
+            fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = fg; ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over'; dt.update(); return dt;
+        }
+
+        function createStarTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const c = size / 2; ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = 'rgba(255,255,255,0.95)'; ctx.beginPath();
+            for (let i = 0; i < 5; i++) {
+                const outerA = -Math.PI / 2 + i * Math.PI * 2 / 5, innerA = outerA + Math.PI / 5;
+                ctx.lineTo(c + Math.cos(outerA) * size * 0.44, c + Math.sin(outerA) * size * 0.44);
+                ctx.lineTo(c + Math.cos(innerA) * size * 0.18, c + Math.sin(innerA) * size * 0.18);
+            }
+            ctx.closePath(); ctx.fill();
+            const fg = ctx.createRadialGradient(c, c, size * 0.1, c, c, size * 0.5);
+            fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = fg; ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over'; dt.update(); return dt;
+        }
+
+        function createRuneTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const c = size / 2; ctx.clearRect(0, 0, size, size);
+            ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+            const runes = [
+                [[0.3,0.2],[0.3,0.8],[0.3,0.5],[0.6,0.3],[0.3,0.5],[0.6,0.7]],
+                [[0.3,0.2],[0.5,0.5],[0.3,0.8],[0.7,0.2],[0.5,0.5],[0.7,0.8]],
+                [[0.5,0.2],[0.5,0.8],[0.3,0.35],[0.7,0.35],[0.3,0.65],[0.7,0.65]],
+            ];
+            const r = runes[Math.floor(Math.random() * runes.length)];
+            ctx.beginPath();
+            for (let i = 0; i < r.length; i++) { if (i % 2 === 0) ctx.moveTo(r[i][0] * size, r[i][1] * size); else ctx.lineTo(r[i][0] * size, r[i][1] * size); }
+            ctx.stroke();
+            const fg = ctx.createRadialGradient(c, c, size * 0.15, c, c, size * 0.5);
+            fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = fg; ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over'; dt.update(); return dt;
+        }
+
+        function createSmokeTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            ctx.clearRect(0, 0, size, size);
+            for (let i = 0; i < 6; i++) {
+                const ox = size / 2 + (Math.random() - 0.5) * size * 0.3, oy = size / 2 + (Math.random() - 0.5) * size * 0.3;
+                const r = size * (0.15 + Math.random() * 0.2);
+                const g = ctx.createRadialGradient(ox, oy, 0, ox, oy, r);
+                g.addColorStop(0, 'rgba(200,200,200,0.3)'); g.addColorStop(1, 'rgba(100,100,100,0)');
+                ctx.fillStyle = g; ctx.fillRect(0, 0, size, size);
+            }
+            dt.update(); return dt;
+        }
+
+        function createSnowflakeTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const c = size / 2; ctx.clearRect(0, 0, size, size);
+            ctx.strokeStyle = 'rgba(200,230,255,0.9)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+            for (let i = 0; i < 6; i++) {
+                const a = i * Math.PI / 3;
+                ctx.beginPath(); ctx.moveTo(c, c);
+                ctx.lineTo(c + Math.cos(a) * size * 0.4, c + Math.sin(a) * size * 0.4); ctx.stroke();
+                for (let b = 0.3; b <= 0.6; b += 0.3) {
+                    const bx = c + Math.cos(a) * size * b, by = c + Math.sin(a) * size * b;
+                    ctx.beginPath(); ctx.moveTo(bx, by);
+                    ctx.lineTo(bx + Math.cos(a + 0.6) * size * 0.12, by + Math.sin(a + 0.6) * size * 0.12); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(bx, by);
+                    ctx.lineTo(bx + Math.cos(a - 0.6) * size * 0.12, by + Math.sin(a - 0.6) * size * 0.12); ctx.stroke();
+                }
+            }
+            const fg = ctx.createRadialGradient(c, c, size * 0.15, c, c, size * 0.48);
+            fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,1)');
+            ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = fg; ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over'; dt.update(); return dt;
+        }
+
+        function createLeafTex() {
+            const { dt, ctx, size } = makeDynTex(64);
+            const c = size / 2; ctx.clearRect(0, 0, size, size);
+            ctx.fillStyle = 'rgba(120,200,80,0.9)';
+            ctx.beginPath(); ctx.moveTo(c, size * 0.1);
+            ctx.bezierCurveTo(c + size * 0.35, size * 0.3, c + size * 0.3, size * 0.7, c, size * 0.9);
+            ctx.bezierCurveTo(c - size * 0.3, size * 0.7, c - size * 0.35, size * 0.3, c, size * 0.1);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(60,120,30,0.7)'; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(c, size * 0.15); ctx.lineTo(c, size * 0.85); ctx.stroke();
+            for (let i = 0.3; i < 0.8; i += 0.15) {
+                ctx.beginPath(); ctx.moveTo(c, size * i);
+                ctx.lineTo(c + size * 0.15, size * (i - 0.08)); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(c, size * i);
+                ctx.lineTo(c - size * 0.15, size * (i - 0.08)); ctx.stroke();
+            }
+            const fg = ctx.createRadialGradient(c, c, size * 0.2, c, c, size * 0.48);
+            fg.addColorStop(0, 'rgba(0,0,0,0)'); fg.addColorStop(1, 'rgba(0,0,0,0.8)');
+            ctx.globalCompositeOperation = 'destination-out'; ctx.fillStyle = fg; ctx.fillRect(0, 0, size, size);
+            ctx.globalCompositeOperation = 'source-over'; dt.update(); return dt;
+        }
+
+        const particleTexCache = {};
+        function getParticleTex(shape) {
+            if (particleTexCache[shape]) {
+                if (shape === 'rune') return createRuneTex();
+                return particleTexCache[shape];
+            }
+            const creators = { ember: createEmberTex, spark: createSparkTex, skull: createSkullTex, star: createStarTex, rune: createRuneTex, smoke: createSmokeTex, snowflake: createSnowflakeTex, leaf: createLeafTex };
+            particleTexCache[shape] = creators[shape]();
+            return particleTexCache[shape];
+        }
+
+        // ─────────────────────────────────────────────
+        // PROJECTILE MESH FACTORY (composite: core + shell + aura)
+        // ─────────────────────────────────────────────
+        let currentProjMesh = null;
+        let projParts = [];
+        let projAuraPS = null;
+
+        const projCoreMat = new BABYLON.StandardMaterial('projCoreMat', scene);
+        projCoreMat.disableLighting = true;
+        projCoreMat.emissiveColor = new BABYLON.Color3(1, 0.9, 0.6);
+        projCoreMat.alpha = 1.0;
+
+        const projShellMat = new BABYLON.StandardMaterial('projShellMat', scene);
+        projShellMat.disableLighting = true;
+        projShellMat.emissiveColor = new BABYLON.Color3(1, 0.4, 0);
+        projShellMat.alpha = 0.35;
+        projShellMat.backFaceCulling = false;
+        projShellMat.emissiveFresnelParameters = new BABYLON.FresnelParameters();
+        projShellMat.emissiveFresnelParameters.bias = 0.2;
+        projShellMat.emissiveFresnelParameters.power = 2;
+        projShellMat.emissiveFresnelParameters.leftColor = new BABYLON.Color3(1, 0.8, 0.3);
+        projShellMat.emissiveFresnelParameters.rightColor = new BABYLON.Color3(1, 0.2, 0);
+        projShellMat.opacityFresnelParameters = new BABYLON.FresnelParameters();
+        projShellMat.opacityFresnelParameters.bias = 0.1;
+        projShellMat.opacityFresnelParameters.power = 1.5;
+
+        const projWispMat = new BABYLON.StandardMaterial('projWispMat', scene);
+        projWispMat.disableLighting = true;
+        projWispMat.emissiveColor = new BABYLON.Color3(1, 0.5, 0.1);
+        projWispMat.alpha = 0.2;
+        projWispMat.backFaceCulling = false;
+
+        // Keep old projMat reference for glow selector compatibility
+        const projMat = projCoreMat;
+
+        function disposeProjParts() {
+            projParts.forEach(p => p.dispose());
+            projParts = [];
+            if (projAuraPS) { projAuraPS.stop(); projAuraPS.dispose(); projAuraPS = null; }
+        }
+
+        function createProjMesh(shape) {
+            if (currentProjMesh) { currentProjMesh.dispose(); currentProjMesh = null; }
+            disposeProjParts();
+
+            const root = new BABYLON.TransformNode('projRoot', scene);
+            let core, shell, extras = [];
+
+            switch (shape) {
+                case 'blast': {
+                    core = BABYLON.MeshBuilder.CreateSphere('projCore', { diameter: 0.2, segments: 10 }, scene);
+                    shell = BABYLON.MeshBuilder.CreateSphere('projShell', { diameter: 0.32, segments: 10 }, scene);
+
+                    // Fading tail built along -Z so the head faces +Z (Babylon's lookAt forward)
+                    const tailSegs = [
+                        { z: -0.18, h: 0.2,  dTop: 0.22, dBot: 0.14, alpha: 0.3  },
+                        { z: -0.34, h: 0.18, dTop: 0.14, dBot: 0.07, alpha: 0.15 },
+                        { z: -0.47, h: 0.14, dTop: 0.07, dBot: 0.0,  alpha: 0.06 },
+                    ];
+                    for (let i = 0; i < tailSegs.length; i++) {
+                        const s = tailSegs[i];
+                        const seg = BABYLON.MeshBuilder.CreateCylinder('tail' + i, {
+                            height: s.h, diameterTop: s.dTop, diameterBottom: s.dBot, tessellation: 10
+                        }, scene);
+                        seg.rotation.x = Math.PI / 2;
+                        seg.position.z = s.z;
+                        const mat = new BABYLON.StandardMaterial('tailMat' + i, scene);
+                        mat.disableLighting = true;
+                        mat.emissiveColor = projShellMat.emissiveColor.clone();
+                        mat.alpha = s.alpha;
+                        mat.backFaceCulling = false;
+                        seg.material = mat;
+                        seg.isPickable = false;
+                        seg.parent = root;
+                        extras.push(seg);
+                    }
+                    break;
+                }
+                case 'skull': {
+                    // Cranium — slightly tall sphere
+                    core = BABYLON.MeshBuilder.CreateSphere('projCore', { diameter: 0.22, segments: 8 }, scene);
+                    core.scaling.set(0.9, 1.1, 0.95);
+
+                    // No outer glow shell for skull — invisible placeholder
+                    shell = BABYLON.MeshBuilder.CreateSphere('projShell', { diameter: 0.01, segments: 3 }, scene);
+                    shell.isVisible = false;
+
+                    // Brow ridge — flattened box across the top of the eye line
+                    const brow = BABYLON.MeshBuilder.CreateBox('brow', { width: 0.18, height: 0.03, depth: 0.06 }, scene);
+                    brow.position.set(0, 0.03, 0.08);
+                    brow.material = projCoreMat; brow.isPickable = false; brow.parent = root;
+
+                    // Eye sockets — two small dark spheres inset into the skull face
+                    const eyeSocketMat = new BABYLON.StandardMaterial('eyeSocketMat', scene);
+                    eyeSocketMat.disableLighting = true;
+                    eyeSocketMat.emissiveColor = new BABYLON.Color3(0, 0, 0);
+                    eyeSocketMat.alpha = 1;
+
+                    const eyeL = BABYLON.MeshBuilder.CreateSphere('eyeL', { diameter: 0.05, segments: 6 }, scene);
+                    eyeL.position.set(-0.04, 0.02, 0.1);
+                    eyeL.material = eyeSocketMat; eyeL.isPickable = false; eyeL.parent = root;
+
+                    const eyeR = BABYLON.MeshBuilder.CreateSphere('eyeR', { diameter: 0.05, segments: 6 }, scene);
+                    eyeR.position.set(0.04, 0.02, 0.1);
+                    eyeR.material = eyeSocketMat; eyeR.isPickable = false; eyeR.parent = root;
+
+                    // Glowing eye pupils inside the sockets
+                    const pupilL = BABYLON.MeshBuilder.CreateSphere('pupilL', { diameter: 0.025, segments: 4 }, scene);
+                    pupilL.position.set(-0.04, 0.02, 0.11);
+                    pupilL.material = projWispMat; pupilL.isPickable = false; pupilL.parent = root;
+
+                    const pupilR = BABYLON.MeshBuilder.CreateSphere('pupilR', { diameter: 0.025, segments: 4 }, scene);
+                    pupilR.position.set(0.04, 0.02, 0.11);
+                    pupilR.material = projWispMat; pupilR.isPickable = false; pupilR.parent = root;
+
+                    // Nose cavity
+                    const nose = BABYLON.MeshBuilder.CreateSphere('nose', { diameter: 0.03, segments: 4 }, scene);
+                    nose.position.set(0, -0.02, 0.1);
+                    nose.scaling.set(1, 1.3, 0.8);
+                    nose.material = eyeSocketMat; nose.isPickable = false; nose.parent = root;
+
+                    // Upper jaw / maxilla — row of teeth
+                    const upperJaw = BABYLON.MeshBuilder.CreateBox('upperJaw', { width: 0.12, height: 0.025, depth: 0.05 }, scene);
+                    upperJaw.position.set(0, -0.065, 0.07);
+                    upperJaw.material = projCoreMat; upperJaw.isPickable = false; upperJaw.parent = root;
+
+                    // Lower jaw — separate piece that animates for chattering
+                    const jaw = BABYLON.MeshBuilder.CreateBox('jaw', { width: 0.11, height: 0.025, depth: 0.05 }, scene);
+                    jaw.position.set(0, -0.09, 0.07);
+                    jaw.material = projCoreMat; jaw.isPickable = false; jaw.parent = root;
+
+                    // Cheekbones
+                    const cheekL = BABYLON.MeshBuilder.CreateSphere('cheekL', { diameter: 0.04, segments: 4 }, scene);
+                    cheekL.position.set(-0.08, -0.01, 0.07);
+                    cheekL.scaling.set(0.7, 0.8, 0.6);
+                    cheekL.material = projCoreMat; cheekL.isPickable = false; cheekL.parent = root;
+
+                    const cheekR = BABYLON.MeshBuilder.CreateSphere('cheekR', { diameter: 0.04, segments: 4 }, scene);
+                    cheekR.position.set(0.08, -0.01, 0.07);
+                    cheekR.scaling.set(0.7, 0.8, 0.6);
+                    cheekR.material = projCoreMat; cheekR.isPickable = false; cheekR.parent = root;
+
+                    extras.push(brow, eyeL, eyeR, pupilL, pupilR, nose, upperJaw, jaw, cheekL, cheekR);
+                    break;
+                }
+                case 'ankh': {
+                    // Ankh — Egyptian cross / key of life, oriented facing +Z
+                    const t = 0.03; // bar thickness
+
+                    // Vertical shaft (long downward bar)
+                    const shaft = BABYLON.MeshBuilder.CreateBox('shaft', { width: t, height: 0.22, depth: t }, scene);
+                    shaft.position.y = -0.05;
+                    shaft.material = projCoreMat; shaft.isPickable = false; shaft.parent = root;
+
+                    // Horizontal crossbar
+                    const crossbar = BABYLON.MeshBuilder.CreateBox('crossbar', { width: 0.14, height: t, depth: t }, scene);
+                    crossbar.position.y = 0.04;
+                    crossbar.material = projCoreMat; crossbar.isPickable = false; crossbar.parent = root;
+
+                    // Loop at the top — torus forming the oval/circle head of the ankh
+                    const loop = BABYLON.MeshBuilder.CreateTorus('loop', { diameter: 0.1, thickness: t, tessellation: 20 }, scene);
+                    loop.position.y = 0.12;
+                    loop.rotation.x = Math.PI / 2;
+                    loop.material = projCoreMat; loop.isPickable = false; loop.parent = root;
+
+                    // No core/shell glow — invisible placeholders
+                    core = BABYLON.MeshBuilder.CreateSphere('projCore', { diameter: 0.01, segments: 3 }, scene);
+                    core.isVisible = false;
+                    shell = BABYLON.MeshBuilder.CreateSphere('projShell', { diameter: 0.01, segments: 3 }, scene);
+                    shell.isVisible = false;
+
+                    extras.push(shaft, crossbar, loop);
+                    break;
+                }
+                default: {
+                    core = BABYLON.MeshBuilder.CreateSphere('projCore', { diameter: 0.22, segments: 8 }, scene);
+                    shell = BABYLON.MeshBuilder.CreateSphere('projShell', { diameter: 0.36, segments: 8 }, scene);
+                }
+            }
+
+            core.material = projCoreMat; core.isPickable = false; core.parent = root;
+            shell.material = projShellMat; shell.isPickable = false; shell.parent = root;
+            projParts = [core, shell, ...extras];
+
+            // Aura particle system — small energy wisps clinging to projectile
+            projAuraPS = new BABYLON.ParticleSystem('projAura', 60, scene);
+            projAuraPS.particleTexture = getParticleTex('ember');
+            projAuraPS.createSphereEmitter(0.15);
+            projAuraPS.emitter = root.position;
+            projAuraPS.minSize = 0.02; projAuraPS.maxSize = 0.06;
+            projAuraPS.minLifeTime = 0.15; projAuraPS.maxLifeTime = 0.35;
+            projAuraPS.emitRate = 40;
+            projAuraPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+            projAuraPS.color1 = new BABYLON.Color4(1, 0.8, 0.4, 0.8);
+            projAuraPS.colorDead = new BABYLON.Color4(1, 0.3, 0, 0);
+            projAuraPS.minEmitPower = 0.02; projAuraPS.maxEmitPower = 0.08;
+            projAuraPS.gravity = BABYLON.Vector3.Zero();
+
+            // Create a visible mesh for the root so glow selector can reference it
+            const rootVis = BABYLON.MeshBuilder.CreateSphere('projRootVis', { diameter: 0.01 }, scene);
+            rootVis.material = projCoreMat; rootVis.isPickable = false; rootVis.parent = root;
+            rootVis.isVisible = false;
+
+            root.setEnabled(false);
+            currentProjMesh = root;
+            currentProjMesh._core = core;
+            currentProjMesh._shell = shell;
+            currentProjMesh._extras = extras;
+            return root;
+        }
+        createProjMesh('blast');
+
+        function setProjVisible(visible) {
+            if (!currentProjMesh) return;
+            currentProjMesh.setEnabled(visible);
+            if (visible && projAuraPS) projAuraPS.start();
+            else if (projAuraPS) projAuraPS.stop();
+        }
+
+        function updateProjColors() {
+            const pr = parseFloat(document.getElementById('projR').value);
+            const pg = parseFloat(document.getElementById('projG').value);
+            const pb = parseFloat(document.getElementById('projB').value);
+            const pr2 = parseFloat(document.getElementById('projR2').value);
+            const pg2 = parseFloat(document.getElementById('projG2').value);
+            const pb2 = parseFloat(document.getElementById('projB2').value);
+
+            projCoreMat.emissiveColor.set(
+                Math.min(1, pr * 1.3 + 0.2),
+                Math.min(1, pg * 1.3 + 0.15),
+                Math.min(1, pb * 1.3 + 0.1)
+            );
+            projShellMat.emissiveColor.set(pr, pg, pb);
+            projShellMat.emissiveFresnelParameters.leftColor.set(
+                Math.min(1, pr + 0.3), Math.min(1, pg + 0.2), Math.min(1, pb + 0.1)
+            );
+            projShellMat.emissiveFresnelParameters.rightColor.set(pr2, pg2, pb2);
+            projWispMat.emissiveColor.set(pr * 0.8, pg * 0.8, pb * 0.8);
+            if (currentProjMesh && currentProjMesh._extras) {
+                for (const e of currentProjMesh._extras) {
+                    if (e.material && e.material.name && e.material.name.startsWith('tailMat')) {
+                        e.material.emissiveColor.set(pr, pg, pb);
+                    }
+                }
+            }
+            if (projAuraPS) {
+                projAuraPS.color1 = new BABYLON.Color4(Math.min(1, pr + 0.2), Math.min(1, pg + 0.1), pb, 0.8);
+                projAuraPS.colorDead = new BABYLON.Color4(pr2 * 0.5, pg2 * 0.3, pb2 * 0.2, 0);
+            }
+        }
+
+        function animateProjectile(time, dt, shape) {
+            if (!currentProjMesh || !currentProjMesh.isEnabled()) return;
+            const core = currentProjMesh._core;
+            const shell = currentProjMesh._shell;
+            const extras = currentProjMesh._extras;
+
+            if (shape === 'blast') {
+                const pulse = 1 + 0.08 * Math.sin(time * 6);
+                core.scaling.setAll(pulse);
+                shell.scaling.setAll(1 + 0.05 * Math.sin(time * 6 + 0.5));
+            } else if (shape === 'skull') {
+                // Chattering jaw — rapid open/close cycle
+                const jaw = extras.find(e => e.name === 'jaw');
+                if (jaw) {
+                    const chatter = Math.abs(Math.sin(time * 18)) * 0.03;
+                    jaw.position.y = -0.09 - chatter;
+                }
+            }
+
+            // Sync aura emitter position
+            if (projAuraPS) projAuraPS.emitter = currentProjMesh.position;
+        }
+
+        // Animated projectile surface texture
+        const PROJ_TEX_SIZE = 128;
+        const projDynTex = new BABYLON.DynamicTexture('projSurfTex', PROJ_TEX_SIZE, scene, false);
+        const projTexCtx = projDynTex.getContext();
+        let projTexType = 'none';
+
+        function updateProjTexture(time) {
+            if (projTexType === 'none') { projCoreMat.emissiveTexture = null; return; }
+            const S = PROJ_TEX_SIZE;
+            const img = projTexCtx.createImageData(S, S);
+            const d = img.data;
+            const scroll = time * 1.5;
+            for (let y = 0; y < S; y++) {
+                for (let x = 0; x < S; x++) {
+                    const nx = x / S * 6, ny = y / S * 6 + scroll;
+                    let n = fbm(nx, ny, 3);
+                    n = Math.pow(Math.max(0, n), 0.7);
+                    const edge = 1 - Math.abs(x / S - 0.5) * 2;
+                    const ef = Math.min(1, edge * 3);
+                    let cr, cg, cb;
+                    switch (projTexType) {
+                        case 'fire': cr = n * 1.2; cg = n * 0.5; cb = n * 0.1; break;
+                        case 'ice': cr = n * 0.3; cg = n * 0.6; cb = n * 1.2; break;
+                        case 'earth': cr = n * 0.6; cg = n * 0.4; cb = n * 0.15; break;
+                        case 'wind': cr = n * 0.7; cg = n * 0.8; cb = n * 1.0; break;
+                        case 'dark': cr = n * 0.5; cg = n * 0.1; cb = n * 0.9; break;
+                        case 'holy': cr = n * 1.2; cg = n * 1.1; cb = n * 0.5; break;
+                        default: cr = n; cg = n; cb = n;
+                    }
+                    const idx = (y * S + x) * 4;
+                    d[idx] = Math.min(255, cr * 255); d[idx + 1] = Math.min(255, cg * 255);
+                    d[idx + 2] = Math.min(255, cb * 255); d[idx + 3] = Math.min(255, n * ef * 220);
+                }
+            }
+            projTexCtx.putImageData(img, 0, 0);
+            projDynTex.update();
+            projCoreMat.emissiveTexture = projDynTex;
+        }
+
+        // ─────────────────────────────────────────────
+        // TRAJECTORY
+        // ─────────────────────────────────────────────
+        function getTrajectoryPos(t, from, to) {
+            const type = document.getElementById('trajType').value;
+            const pos = BABYLON.Vector3.Lerp(from, to, t);
+            if (type === 'arc') {
+                const h = parseFloat(document.getElementById('trajArc').value);
+                pos.y += h * 4 * t * (1 - t);
+            } else if (type === 'homing') {
+                const curve = parseFloat(document.getElementById('trajHoming').value);
+                const mid = BABYLON.Vector3.Center(from, to);
+                const perp = new BABYLON.Vector3(0, curve * 0.5, curve);
+                const cp = mid.add(perp);
+                const it = 1 - t;
+                pos.x = it * it * from.x + 2 * it * t * cp.x + t * t * to.x;
+                pos.y = it * it * from.y + 2 * it * t * cp.y + t * t * to.y;
+                pos.z = it * it * from.z + 2 * it * t * cp.z + t * t * to.z;
+            }
+            return pos;
+        }
+
+        // ─────────────────────────────────────────────
+        // TRAIL PARTICLE SYSTEM
+        // ─────────────────────────────────────────────
+        const trailEmitPos = new BABYLON.Vector3(0, 0, 0);
+        const trailPS = new BABYLON.ParticleSystem('trail', 500, scene);
+        trailPS.particleTexture = getParticleTex('ember');
+        trailPS.createSphereEmitter(0.08);
+        trailPS.emitter = trailEmitPos;
+        trailPS.minSize = 0.04; trailPS.maxSize = 0.12;
+        trailPS.minLifeTime = 0.3; trailPS.maxLifeTime = 0.6;
+        trailPS.emitRate = 100;
+        trailPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+        trailPS.color1 = new BABYLON.Color4(1, 0.5, 0.1, 1);
+        trailPS.color2 = new BABYLON.Color4(1, 0.2, 0, 0.8);
+        trailPS.colorDead = new BABYLON.Color4(0.2, 0.05, 0, 0);
+        trailPS.gravity = new BABYLON.Vector3(0, -0.3, 0);
+        trailPS.minEmitPower = 0.05; trailPS.maxEmitPower = 0.2;
+
+        function standardParticleUpdate(particles) {
+            for (let i = 0; i < particles.length; i++) {
+                const p = particles[i];
+                p.age += this._scaledUpdateSpeed;
+                if (p.age >= p.lifeTime) { this.recycleParticle(p); i--; continue; }
+                const ratio = p.age / p.lifeTime;
+                p.position.addInPlace(p.direction.scale(this._scaledUpdateSpeed));
+                p.color.r = lerp(this.color1.r, this.colorDead.r, ratio);
+                p.color.g = lerp(this.color1.g, this.colorDead.g, ratio);
+                p.color.b = lerp(this.color1.b, this.colorDead.b, ratio);
+                p.color.a = 1 - ratio;
+            }
+        }
+
+        function applyTrailMotion() {
+            const motion = document.getElementById('trailMotion').value;
+            if (motion === 'wavy') {
+                trailPS.updateFunction = function(particles) {
+                    for (let i = 0; i < particles.length; i++) {
+                        const p = particles[i]; p.age += this._scaledUpdateSpeed;
+                        if (p.age >= p.lifeTime) { this.recycleParticle(p); i--; continue; }
+                        const ratio = p.age / p.lifeTime;
+                        if (!p._phase) p._phase = Math.random() * Math.PI * 20;
+                        p.position.x += Math.sin(globalTime * 5 + p._phase) * 0.01;
+                        p.position.z += Math.cos(globalTime * 5 + p._phase) * 0.01;
+                        p.position.y += p.direction.y * this._scaledUpdateSpeed;
+                        p.color.a = 1 - ratio;
+                    }
+                };
+            } else if (motion === 'spiral') {
+                trailPS.updateFunction = function(particles) {
+                    for (let i = 0; i < particles.length; i++) {
+                        const p = particles[i]; p.age += this._scaledUpdateSpeed;
+                        if (p.age >= p.lifeTime) { this.recycleParticle(p); i--; continue; }
+                        const ratio = p.age / p.lifeTime;
+                        if (!p._phase) p._phase = Math.random() * Math.PI * 20;
+                        const ang = globalTime * 6 + p._phase + ratio * 10;
+                        const r = 0.05 + Math.sin(ratio * Math.PI) * 0.12;
+                        p.position.x += Math.cos(ang) * r * this._scaledUpdateSpeed;
+                        p.position.z += Math.sin(ang) * r * this._scaledUpdateSpeed;
+                        p.position.y += p.direction.y * this._scaledUpdateSpeed * 0.5;
+                        p.color.a = 1 - ratio;
+                    }
+                };
+            } else {
+                trailPS.updateFunction = standardParticleUpdate;
+            }
+        }
+
+        // ─────────────────────────────────────────────
+        // CAST EFFECT SYSTEMS
+        // ─────────────────────────────────────────────
+        const castPS = new BABYLON.ParticleSystem('castBurst', 250, scene);
+        castPS.particleTexture = getParticleTex('ember');
+        castPS.createSphereEmitter(0.4);
+        castPS.minSize = 0.03; castPS.maxSize = 0.1;
+        castPS.minLifeTime = 0.3; castPS.maxLifeTime = 0.8;
+        castPS.emitRate = 0;
+        castPS.manualEmitCount = 0;
+        castPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+        castPS.color1 = new BABYLON.Color4(1, 0.5, 0, 1);
+        castPS.colorDead = new BABYLON.Color4(0.2, 0.05, 0, 0);
+        castPS.gravity = new BABYLON.Vector3(0, 0.5, 0);
+        castPS.minEmitPower = 0.5; castPS.maxEmitPower = 1.5;
+        castPS.targetStopDuration = 0.5;
+        castPS.emitter = casterBox;
+
+        // Hand glow spheres
+        const handGlowMat = new BABYLON.StandardMaterial('handGlowMat', scene);
+        handGlowMat.disableLighting = true;
+        handGlowMat.emissiveColor = new BABYLON.Color3(1, 0.5, 0);
+        handGlowMat.alpha = 0;
+        const handL = BABYLON.MeshBuilder.CreateSphere('handL', { diameter: 0.15 }, scene);
+        const handR = BABYLON.MeshBuilder.CreateSphere('handR', { diameter: 0.15 }, scene);
+        handL.material = handGlowMat; handR.material = handGlowMat;
+        handL.isPickable = false; handR.isPickable = false;
+        handL.isVisible = false; handR.isVisible = false;
+
+        // ─────────────────────────────────────────────
+        // IMPACT EFFECT SYSTEMS
+        // ─────────────────────────────────────────────
+        const impactPS = new BABYLON.ParticleSystem('impactSplash', 400, scene);
+        impactPS.particleTexture = getParticleTex('ember');
+        impactPS.createSphereEmitter(0.3);
+        impactPS.minSize = 0.03; impactPS.maxSize = 0.12;
+        impactPS.minLifeTime = 0.3; impactPS.maxLifeTime = 0.8;
+        impactPS.emitRate = 0;
+        impactPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_ADD;
+        impactPS.color1 = new BABYLON.Color4(1, 0.3, 0, 1);
+        impactPS.colorDead = new BABYLON.Color4(0.2, 0.05, 0, 0);
+        impactPS.gravity = new BABYLON.Vector3(0, -1, 0);
+        impactPS.minEmitPower = 0.8; impactPS.maxEmitPower = 2.0;
+        impactPS.targetStopDuration = 0.3;
+        impactPS.emitter = targetBox;
+
+        // Impact ground decal
+        const impDecalDisc = BABYLON.MeshBuilder.CreateDisc('impDecal', { radius: 1, tessellation: 32 }, scene);
+        impDecalDisc.rotation.x = Math.PI / 2; impDecalDisc.position.y = 0.03;
+        impDecalDisc.isPickable = false; impDecalDisc.isVisible = false;
+        const impDecalMat = new BABYLON.StandardMaterial('impDecalMat', scene);
+        impDecalMat.disableLighting = true; impDecalMat.backFaceCulling = false; impDecalMat.alpha = 0;
+        impDecalDisc.material = impDecalMat;
+        const decalDT = new BABYLON.DynamicTexture('decalTex', 128, scene, false);
+        const decalCtx = decalDT.getContext();
+        function drawDecal(type) {
+            const S = 128, c = S / 2; decalCtx.clearRect(0, 0, S, S);
+            if (type === 'scorch') {
+                const g = decalCtx.createRadialGradient(c, c, 0, c, c, S * 0.45);
+                g.addColorStop(0, 'rgba(40,20,10,0.8)'); g.addColorStop(0.5, 'rgba(80,40,15,0.5)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+                decalCtx.fillStyle = g; decalCtx.fillRect(0, 0, S, S);
+                for (let i = 0; i < 12; i++) {
+                    const a = Math.random() * Math.PI * 2, r = Math.random() * S * 0.35;
+                    decalCtx.fillStyle = 'rgba(60,30,10,0.4)';
+                    decalCtx.beginPath(); decalCtx.arc(c + Math.cos(a) * r, c + Math.sin(a) * r, 3 + Math.random() * 5, 0, Math.PI * 2); decalCtx.fill();
+                }
+            } else if (type === 'ice') {
+                const g = decalCtx.createRadialGradient(c, c, 0, c, c, S * 0.45);
+                g.addColorStop(0, 'rgba(150,200,255,0.6)'); g.addColorStop(0.5, 'rgba(100,160,220,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+                decalCtx.fillStyle = g; decalCtx.fillRect(0, 0, S, S);
+                decalCtx.strokeStyle = 'rgba(200,230,255,0.4)'; decalCtx.lineWidth = 1;
+                for (let i = 0; i < 8; i++) {
+                    const a = Math.random() * Math.PI * 2, r1 = Math.random() * S * 0.15, r2 = r1 + Math.random() * S * 0.25;
+                    decalCtx.beginPath(); decalCtx.moveTo(c + Math.cos(a) * r1, c + Math.sin(a) * r1);
+                    decalCtx.lineTo(c + Math.cos(a) * r2, c + Math.sin(a) * r2); decalCtx.stroke();
+                }
+            } else {
+                const g = decalCtx.createRadialGradient(c, c, 0, c, c, S * 0.45);
+                g.addColorStop(0, 'rgba(180,180,180,0.5)'); g.addColorStop(0.5, 'rgba(100,100,100,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+                decalCtx.fillStyle = g; decalCtx.fillRect(0, 0, S, S);
+            }
+            decalDT.update(); impDecalMat.emissiveTexture = decalDT;
+        }
+
+        // Linger particle system
+        const lingerPS = new BABYLON.ParticleSystem('linger', 200, scene);
+        lingerPS.particleTexture = getParticleTex('smoke');
+        lingerPS.createSphereEmitter(0.5);
+        lingerPS.minSize = 0.05; lingerPS.maxSize = 0.15;
+        lingerPS.minLifeTime = 1; lingerPS.maxLifeTime = 2.5;
+        lingerPS.emitRate = 20;
+        lingerPS.blendMode = BABYLON.ParticleSystem.BLENDMODE_STANDARD;
+        lingerPS.color1 = new BABYLON.Color4(0.5, 0.2, 0, 0.6);
+        lingerPS.colorDead = new BABYLON.Color4(0.1, 0.05, 0, 0);
+        lingerPS.gravity = new BABYLON.Vector3(0, 0.2, 0);
+        lingerPS.minEmitPower = 0.05; lingerPS.maxEmitPower = 0.15;
+        lingerPS.emitter = targetBox;
+
+        // ─────────────────────────────────────────────
+        // LIGHTNING ARC SYSTEM (from enchant editor)
+        // ─────────────────────────────────────────────
+        const MAX_ARCS = 8;
+        const arcMeshes = [];
+        const arcMats = [];
+        for (let i = 0; i < MAX_ARCS; i++) {
+            const mat = new BABYLON.StandardMaterial('arcMat' + i, scene);
+            mat.emissiveColor = new BABYLON.Color3(1, 0.5, 0); mat.diffuseColor = BABYLON.Color3.Black();
+            mat.specularColor = BABYLON.Color3.Black(); mat.disableLighting = true;
+            arcMats.push(mat);
+            const pts = [new BABYLON.Vector3(0, 0, 0), new BABYLON.Vector3(0, 0.01, 0)];
+            const line = BABYLON.MeshBuilder.CreateLines('arc' + i, { points: pts, updatable: true }, scene);
+            line.material = mat; line.isVisible = false; line.isPickable = false;
+            arcMeshes.push(line);
+        }
+        function genArcPts(start, end, segments, jitter) {
+            const pts = [start.clone()];
+            for (let i = 1; i < segments; i++) {
+                const t = i / segments, base = BABYLON.Vector3.Lerp(start, end, t);
+                base.x += (Math.random() - 0.5) * 2 * jitter;
+                base.y += (Math.random() - 0.5) * jitter * 0.5;
+                base.z += (Math.random() - 0.5) * 2 * jitter;
+                pts.push(base);
+            }
+            pts.push(end.clone()); return pts;
+        }
+        let arcRegenCounter = 0;
+
+        function updateImpactArcs(center, count, segments, spread, color, glow) {
+            for (let i = 0; i < MAX_ARCS; i++) {
+                if (i < count) {
+                    const angle1 = Math.random() * Math.PI * 2, angle2 = Math.random() * Math.PI * 2;
+                    const r = 0.3 + Math.random() * 0.5;
+                    const start = center.add(new BABYLON.Vector3(Math.cos(angle1) * 0.1, 0.2 + Math.random() * 1.2, Math.sin(angle1) * 0.1));
+                    const end = center.add(new BABYLON.Vector3(Math.cos(angle2) * r, Math.random() * 0.5, Math.sin(angle2) * r));
+                    const pts = genArcPts(start, end, segments, spread * 0.3);
+                    arcMeshes[i].dispose();
+                    const line = BABYLON.MeshBuilder.CreateLines('arc' + i, { points: pts }, scene);
+                    line.color = new BABYLON.Color3(color.r, color.g, color.b);
+                    line.material = arcMats[i]; line.isPickable = false; line.isVisible = true;
+                    line.alpha = 0.7 + Math.random() * 0.3;
+                    const g = Math.max(1, glow);
+                    arcMats[i].emissiveColor.set(color.r * g, color.g * g, color.b * g);
+                    arcMeshes[i] = line;
+                } else {
+                    arcMeshes[i].isVisible = false;
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────
+        // GLOW LAYER SELECTOR
+        // ─────────────────────────────────────────────
+        glowLayer.customEmissiveColorSelector = function(mesh, subMesh, material, result) {
+            if (projParts.includes(mesh) && currentProjMesh && currentProjMesh.isEnabled()) {
+                const g = parseFloat(document.getElementById('projGlow').value) * tierScale('glow');
+                const r = parseFloat(document.getElementById('projR').value);
+                const gv = parseFloat(document.getElementById('projG').value);
+                const b = parseFloat(document.getElementById('projB').value);
+                const intensity = (mesh === currentProjMesh._core) ? g * 1.2 : g * 0.7;
+                result.set(r * intensity, gv * intensity, b * intensity, 1);
+            } else if ((mesh === handL || mesh === handR) && mesh.isVisible) {
+                const int = parseFloat(document.getElementById('handInt').value);
+                const r = parseFloat(document.getElementById('handR').value);
+                const g = parseFloat(document.getElementById('handG').value);
+                const b = parseFloat(document.getElementById('handB').value);
+                result.set(r * int, g * int, b * int, 1);
+            } else if (arcMeshes.includes(mesh) && mesh.isVisible) {
+                const r = parseFloat(document.getElementById('impArcR').value);
+                const g = parseFloat(document.getElementById('impArcG').value);
+                const b = parseFloat(document.getElementById('impArcB').value);
+                const gl = parseFloat(document.getElementById('impArcGlow').value);
+                result.set(r * gl, g * gl, b * gl, 1);
+            } else {
+                result.set(0, 0, 0, 0);
+            }
+        };
+
+        // ─────────────────────────────────────────────
+        // TIER SCALING
+        // ─────────────────────────────────────────────
+        const TIER_MULT = {
+            size:     [0.6, 0.8, 1.0, 1.3, 1.6],
+            density:  [0.5, 0.7, 1.0, 1.4, 1.8],
+            glow:     [0.6, 0.8, 1.0, 1.3, 1.5],
+            splash:   [0.5, 0.7, 1.0, 1.5, 2.0],
+            castDur:  [1.2, 1.1, 1.0, 0.9, 0.8],
+        };
+        function tierScale(param) {
+            const tier = parseInt(document.getElementById('tier').value) - 1;
+            return (TIER_MULT[param] || [1,1,1,1,1])[tier];
+        }
+
+        // ─────────────────────────────────────────────
+        // CONTROLS WIRING
+        // ─────────────────────────────────────────────
+        function ctrl(id) {
+            const el = document.getElementById(id);
+            const valEl = document.getElementById(id + 'Val');
+            if (valEl) el.addEventListener('input', () => { valEl.textContent = el.value; });
+            return el;
+        }
+
+        // Wire all sliders
+        const allSliders = document.querySelectorAll('#controls input[type=range]');
+        allSliders.forEach(s => {
+            const valEl = document.getElementById(s.id + 'Val');
+            if (valEl) { s.addEventListener('input', () => { valEl.textContent = s.value; }); }
+        });
+
+        // Collapsible sections
+        document.querySelectorAll('.ctrl-group h4').forEach(h4 => {
+            h4.addEventListener('click', () => { h4.parentElement.classList.toggle('collapsed'); });
+        });
+
+        // Shape change → recreate mesh
+        document.getElementById('projShape').addEventListener('change', () => { createProjMesh(document.getElementById('projShape').value); });
+        document.getElementById('projTex').addEventListener('change', () => { projTexType = document.getElementById('projTex').value; });
+
+        // Trail shape change
+        document.getElementById('trailShape').addEventListener('change', () => {
+            const shape = document.getElementById('trailShape').value;
+            trailPS.particleTexture = getParticleTex(shape);
+            trailPS.blendMode = shape === 'smoke' ? BABYLON.ParticleSystem.BLENDMODE_STANDARD : BABYLON.ParticleSystem.BLENDMODE_ADD;
+        });
+        document.getElementById('trailMotion').addEventListener('change', applyTrailMotion);
+
+        // Trajectory type → show/hide arc/homing controls
+        document.getElementById('trajType').addEventListener('change', () => {
+            const t = document.getElementById('trajType').value;
+            document.getElementById('arcHeightRow').style.display = t === 'arc' ? 'flex' : 'none';
+            document.getElementById('homingRow').style.display = t === 'homing' ? 'flex' : 'none';
+        });
+        document.getElementById('arcHeightRow').style.display = 'none';
+        document.getElementById('homingRow').style.display = 'none';
+
+        // Distance change
+        document.getElementById('prevDist').addEventListener('input', updateEntityPositions);
+        document.getElementById('prevAoe').addEventListener('change', updateEntityPositions);
+        document.getElementById('prevAoeCount').addEventListener('input', updateEntityPositions);
+
+        // Cast shape change
+        document.getElementById('castShape').addEventListener('change', () => { castPS.particleTexture = getParticleTex(document.getElementById('castShape').value); });
+        // Impact shape change
+        document.getElementById('impShape').addEventListener('change', () => { impactPS.particleTexture = getParticleTex(document.getElementById('impShape').value); });
+
+        // ─────────────────────────────────────────────
+        // SPELL TIMELINE STATE MACHINE
+        // ─────────────────────────────────────────────
+        let globalTime = 0;
+        let spellPhase = 'idle'; // idle, cast, travel, impact, linger, done
+        let phaseStart = 0;
+
+        function startSpell() {
+            spellPhase = 'cast';
+            phaseStart = performance.now();
+            // Start cast effects
+            const castCount = parseInt(document.getElementById('castCount').value) * tierScale('splash');
+            castPS.emitRate = 0;
+            castPS.manualEmitCount = Math.round(castCount);
+            castPS.particleTexture = getParticleTex(document.getElementById('castShape').value);
+            const spread = parseFloat(document.getElementById('castSpread').value);
+            castPS.createSphereEmitter(spread);
+            castPS.minEmitPower = spread * 0.8; castPS.maxEmitPower = spread * 2.5;
+            const cr = parseFloat(document.getElementById('castR').value);
+            const cg = parseFloat(document.getElementById('castG').value);
+            const cb = parseFloat(document.getElementById('castB').value);
+            castPS.color1 = new BABYLON.Color4(cr, cg, cb, 1);
+            castPS.color2 = new BABYLON.Color4(cr * 0.7, cg * 0.7, cb * 0.7, 0.8);
+            castPS.colorDead = new BABYLON.Color4(cr * 0.2, cg * 0.1, cb * 0.1, 0);
+            castPS.emitter = casterBox.position.clone();
+            castPS.start();
+
+            // Hand glow
+            if (document.getElementById('castHandGlow').checked) {
+                handL.isVisible = true; handR.isVisible = true;
+                handL.position.set(casterBox.position.x - 0.3, 1.2, casterBox.position.z + 0.2);
+                handR.position.set(casterBox.position.x + 0.3, 1.2, casterBox.position.z + 0.2);
+                handGlowMat.alpha = 0;
+                handGlowMat.emissiveColor.set(parseFloat(document.getElementById('handR').value), parseFloat(document.getElementById('handG').value), parseFloat(document.getElementById('handB').value));
+            }
+
+            // Projectile hidden during cast
+            setProjVisible(false);
+            trailPS.stop();
+            impactPS.stop();
+            lingerPS.stop();
+            impDecalDisc.isVisible = false;
+            for (let i = 0; i < MAX_ARCS; i++) arcMeshes[i].isVisible = false;
+        }
+
+        function startTravel() {
+            spellPhase = 'travel';
+            phaseStart = performance.now();
+            createProjMesh(document.getElementById('projShape').value);
+            const sz = parseFloat(document.getElementById('projSize').value) * tierScale('size');
+            currentProjMesh.scaling.setAll(sz);
+            const startPos = casterBox.position.clone(); startPos.y = 1.0;
+            const endPos = targetBox.position.clone(); endPos.y = 1.0;
+            currentProjMesh.position.copyFrom(startPos);
+            const initAhead = getTrajectoryPos(0.01, startPos, endPos);
+            currentProjMesh.lookAt(initAhead);
+            trailEmitPos.copyFrom(startPos);
+            updateProjColors();
+            setProjVisible(true);
+            const pr = parseFloat(document.getElementById('projR').value);
+            const pg = parseFloat(document.getElementById('projG').value);
+            const pb = parseFloat(document.getElementById('projB').value);
+            projMat.emissiveColor.set(pr, pg, pb);
+            projTexType = document.getElementById('projTex').value;
+
+            // Trail — use stable Vector3 emitter, updated each frame in render loop
+            const tw = parseFloat(document.getElementById('trailWidth').value);
+            trailPS.createSphereEmitter(Math.max(0.05, tw * tierScale('size')));
+            trailPS.emitRate = parseFloat(document.getElementById('trailDensity').value) * tierScale('density');
+            const ft = parseFloat(document.getElementById('trailFade').value);
+            trailPS.minLifeTime = ft * 0.5; trailPS.maxLifeTime = ft;
+            const pSz = parseFloat(document.getElementById('projSize').value) * tierScale('size');
+            trailPS.minSize = pSz * 0.06; trailPS.maxSize = pSz * 0.18;
+            const tr = parseFloat(document.getElementById('trailR').value);
+            const tg = parseFloat(document.getElementById('trailG').value);
+            const tb = parseFloat(document.getElementById('trailB').value);
+            trailPS.color1 = new BABYLON.Color4(tr, tg, tb, 1);
+            trailPS.color2 = new BABYLON.Color4(tr * 0.7, tg * 0.5, tb * 0.3, 0.8);
+            trailPS.colorDead = new BABYLON.Color4(tr * 0.15, tg * 0.1, tb * 0.05, 0);
+            trailPS.particleTexture = getParticleTex(document.getElementById('trailShape').value);
+            trailPS.blendMode = document.getElementById('trailShape').value === 'smoke' ? BABYLON.ParticleSystem.BLENDMODE_STANDARD : BABYLON.ParticleSystem.BLENDMODE_ADD;
+            applyTrailMotion();
+            trailPS.emitter = trailEmitPos;
+            trailPS.start();
+
+            // Fade out cast effects
+            handL.isVisible = false; handR.isVisible = false; handGlowMat.alpha = 0;
+        }
+
+        function startImpact() {
+            spellPhase = 'impact';
+            phaseStart = performance.now();
+            setProjVisible(false);
+            trailPS.stop();
+
+            // Impact splash
+            const impCount = parseInt(document.getElementById('impCount').value) * tierScale('splash');
+            impactPS.manualEmitCount = Math.round(impCount);
+            impactPS.emitRate = 0;
+            const impSpread = parseFloat(document.getElementById('impSpread').value);
+            impactPS.createSphereEmitter(impSpread);
+            impactPS.minEmitPower = impSpread; impactPS.maxEmitPower = impSpread * 2.5;
+            const ir = parseFloat(document.getElementById('impR').value);
+            const ig = parseFloat(document.getElementById('impG').value);
+            const ib = parseFloat(document.getElementById('impB').value);
+            impactPS.color1 = new BABYLON.Color4(ir, ig, ib, 1);
+            impactPS.color2 = new BABYLON.Color4(ir * 0.6, ig * 0.6, ib * 0.6, 0.8);
+            impactPS.colorDead = new BABYLON.Color4(ir * 0.15, ig * 0.1, ib * 0.05, 0);
+            impactPS.particleTexture = getParticleTex(document.getElementById('impShape').value);
+            impactPS.blendMode = (document.getElementById('impShape').value === 'smoke') ? BABYLON.ParticleSystem.BLENDMODE_STANDARD : BABYLON.ParticleSystem.BLENDMODE_ADD;
+            impactPS.emitter = targetBox.position.clone();
+            impactPS.start();
+
+            // Ground decal
+            const decalType = document.getElementById('impDecal').value;
+            if (decalType !== 'none') {
+                impDecalDisc.isVisible = true;
+                impDecalDisc.position.x = targetBox.position.x;
+                impDecalDisc.position.z = targetBox.position.z;
+                impDecalMat.alpha = 0.7;
+                drawDecal(decalType);
+            }
+
+            // Lightning arcs
+            const arcCount = parseInt(document.getElementById('impArcCount').value);
+            if (arcCount > 0) {
+                const seg = parseInt(document.getElementById('impArcJagged').value);
+                const spr = parseFloat(document.getElementById('impArcSpread').value);
+                const acr = parseFloat(document.getElementById('impArcR').value);
+                const acg = parseFloat(document.getElementById('impArcG').value);
+                const acb = parseFloat(document.getElementById('impArcB').value);
+                const agl = parseFloat(document.getElementById('impArcGlow').value);
+                updateImpactArcs(targetBox.position, arcCount, seg, spr, { r: acr, g: acg, b: acb }, agl);
+            }
+
+            // Linger
+            if (document.getElementById('impLinger').checked) {
+                lingerPS.emitRate = parseInt(document.getElementById('lingerRate').value);
+                const lr = parseFloat(document.getElementById('lingerR').value);
+                const lg_ = parseFloat(document.getElementById('lingerG').value);
+                const lb = parseFloat(document.getElementById('lingerB').value);
+                lingerPS.color1 = new BABYLON.Color4(lr, lg_, lb, 0.6);
+                lingerPS.colorDead = new BABYLON.Color4(lr * 0.2, lg_ * 0.1, lb * 0.1, 0);
+                lingerPS.emitter = targetBox.position.clone();
+                lingerPS.start();
+            }
+        }
+
+        function stopAll() {
+            spellPhase = 'idle';
+            setProjVisible(false);
+            trailPS.stop(); castPS.stop(); impactPS.stop(); lingerPS.stop();
+            handL.isVisible = false; handR.isVisible = false; handGlowMat.alpha = 0;
+            impDecalDisc.isVisible = false; impDecalMat.alpha = 0;
+            for (let i = 0; i < MAX_ARCS; i++) arcMeshes[i].isVisible = false;
+        }
+
+        // ─────────────────────────────────────────────
+        // PLAY / LOOP
+        // ─────────────────────────────────────────────
+        document.getElementById('btnPlay').addEventListener('click', () => { stopAll(); startSpell(); });
+
+        // ─────────────────────────────────────────────
+        // RENDER LOOP
+        // ─────────────────────────────────────────────
+        engine.runRenderLoop(() => {
+            const dt = engine.getDeltaTime() / 1000;
+            globalTime += dt;
+            const now = performance.now();
+            try {
+
+            if (spellPhase === 'cast') {
+                const castDur = parseFloat(document.getElementById('castDur').value) * tierScale('castDur');
+                const elapsed = now - phaseStart;
+                const t = Math.min(1, elapsed / castDur);
+
+                // Animate hand glow
+                if (document.getElementById('castHandGlow').checked) {
+                    const hInt = parseFloat(document.getElementById('handInt').value);
+                    handGlowMat.alpha = Math.min(0.9, t * 2);
+                }
+
+                if (elapsed >= castDur) startTravel();
+            }
+
+            else if (spellPhase === 'travel') {
+                const travelTime = parseFloat(document.getElementById('trajTime').value);
+                const elapsed = now - phaseStart;
+                const t = Math.min(1, elapsed / travelTime);
+
+                const fromPos = casterBox.position.clone(); fromPos.y = 1.0;
+                const toPos = targetBox.position.clone(); toPos.y = 1.0;
+                const pos = getTrajectoryPos(t, fromPos, toPos);
+                currentProjMesh.position.copyFrom(pos);
+                trailEmitPos.copyFrom(pos);
+
+                // Orient projectile to face direction of travel
+                const tNext = Math.min(1, t + 0.01);
+                const posAhead = getTrajectoryPos(tNext, fromPos, toPos);
+                const dir = posAhead.subtract(pos);
+                if (dir.lengthSquared() > 0.0001) {
+                    const target = pos.add(dir);
+                    currentProjMesh.lookAt(target);
+                }
+
+                // Animate composite parts
+                const shape = document.getElementById('projShape').value;
+                animateProjectile(globalTime, dt, shape);
+
+                // Animated surface texture
+                updateProjTexture(globalTime);
+
+
+                if (t >= 1) startImpact();
+            }
+
+            else if (spellPhase === 'impact') {
+                const elapsed = now - phaseStart;
+
+                // Decal fade
+                if (impDecalDisc.isVisible) {
+                    const decalFade = Math.max(0, 1 - elapsed / 3000);
+                    impDecalMat.alpha = 0.7 * decalFade;
+                    if (decalFade <= 0) impDecalDisc.isVisible = false;
+                }
+
+                // Lightning flicker
+                const arcCount = parseInt(document.getElementById('impArcCount').value);
+                if (arcCount > 0 && elapsed < 500) {
+                    arcRegenCounter++;
+                    const flicker = parseInt(document.getElementById('impArcFlicker').value);
+                    const interval = Math.max(1, Math.round(60 / flicker));
+                    if (arcRegenCounter % interval === 0) {
+                        const seg = parseInt(document.getElementById('impArcJagged').value);
+                        const spr = parseFloat(document.getElementById('impArcSpread').value);
+                        const acr = parseFloat(document.getElementById('impArcR').value);
+                        const acg = parseFloat(document.getElementById('impArcG').value);
+                        const acb = parseFloat(document.getElementById('impArcB').value);
+                        const agl = parseFloat(document.getElementById('impArcGlow').value);
+                        updateImpactArcs(targetBox.position, arcCount, seg, spr, { r: acr, g: acg, b: acb }, agl);
+                    }
+                } else if (elapsed >= 500) {
+                    for (let i = 0; i < MAX_ARCS; i++) arcMeshes[i].isVisible = false;
+                }
+
+                // Transition to linger or done
+                const lingerEnabled = document.getElementById('impLinger').checked;
+                if (elapsed > 500 && !lingerEnabled) {
+                    spellPhase = 'done'; phaseStart = now;
+                } else if (elapsed > 500 && lingerEnabled) {
+                    spellPhase = 'linger'; phaseStart = now;
+                }
+            }
+
+            else if (spellPhase === 'linger') {
+                const elapsed = now - phaseStart;
+                const lingerDur = parseFloat(document.getElementById('lingerDur').value);
+                // Fade decal
+                if (impDecalDisc.isVisible) {
+                    const f = Math.max(0, 1 - (now - phaseStart + 500) / 3000);
+                    impDecalMat.alpha = 0.7 * f;
+                    if (f <= 0) impDecalDisc.isVisible = false;
+                }
+                if (elapsed >= lingerDur) {
+                    lingerPS.stop();
+                    spellPhase = 'done'; phaseStart = now;
+                }
+            }
+
+            else if (spellPhase === 'done') {
+                const elapsed = now - phaseStart;
+                if (elapsed > 1500) {
+                    stopAll();
+                    if (document.getElementById('chkLoop').checked) {
+                        setTimeout(() => startSpell(), 300);
+                    }
+                }
+            }
+
+            } catch (e) { console.error('Render error:', e); spellPhase = 'idle'; }
+            scene.render();
+        });
+
+        window.addEventListener('resize', () => engine.resize());
+
+        // ─────────────────────────────────────────────
+        // PRESETS
+        // ─────────────────────────────────────────────
+        function setVal(id, val) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (el.type === 'checkbox') { el.checked = val; }
+            else { el.value = val; }
+            const valEl = document.getElementById(id + 'Val');
+            if (valEl) valEl.textContent = val;
+            el.dispatchEvent(new Event('change'));
+        }
+
+        window.applyPreset = function(element) {
+            const presets = {
+                fire: {
+                    spellName: 'Fire Bolt', projShape: 'blast', projSize: 0.5, projR: 1, projG: 0.4, projB: 0, projR2: 1, projG2: 0.1, projB2: 0, projGlow: 1.5, projRot: 2, projTex: 'fire',
+                    trajType: 'straight', trajTime: 600, trajArc: 1.5, trajHoming: 1,
+                    trailShape: 'ember', trailDensity: 120, trailWidth: 0.2, trailR: 1, trailG: 0.5, trailB: 0.1, trailFade: 0.6, trailMotion: 'straight',
+                    castDur: 400, castShape: 'ember', castCount: 60, castR: 1, castG: 0.5, castB: 0, castSpread: 0.5, castHandGlow: true, handR: 1, handG: 0.5, handB: 0, handInt: 1.5,
+                    impShape: 'ember', impCount: 80, impSpread: 1, impR: 1, impG: 0.3, impB: 0, impDecal: 'scorch',
+                    impArcCount: 0, impArcFlicker: 12, impArcJagged: 6, impArcSpread: 0.3, impArcR: 1, impArcG: 0.5, impArcB: 0, impArcGlow: 1,
+                    impLinger: false, lingerDur: 2000, lingerRate: 20, lingerR: 0.5, lingerG: 0.2, lingerB: 0,
+                },
+                water: {
+                    spellName: 'Ice Blast', projShape: 'blast', projSize: 0.5, projR: 0.2, projG: 0.5, projB: 1, projR2: 0.1, projG2: 0.3, projB2: 0.8, projGlow: 1.2, projRot: 1.5, projTex: 'ice',
+                    trajType: 'straight', trajTime: 550, trajArc: 1.5, trajHoming: 1,
+                    trailShape: 'snowflake', trailDensity: 80, trailWidth: 0.25, trailR: 0.3, trailG: 0.6, trailB: 1, trailFade: 0.8, trailMotion: 'wavy',
+                    castDur: 450, castShape: 'spark', castCount: 50, castR: 0.3, castG: 0.6, castB: 1, castSpread: 0.4, castHandGlow: true, handR: 0.2, handG: 0.5, handB: 1, handInt: 1.3,
+                    impShape: 'snowflake', impCount: 70, impSpread: 1.2, impR: 0.4, impG: 0.7, impB: 1, impDecal: 'ice',
+                    impArcCount: 0, impArcFlicker: 12, impArcJagged: 6, impArcSpread: 0.3, impArcR: 0.3, impArcG: 0.6, impArcB: 1, impArcGlow: 1,
+                    impLinger: false, lingerDur: 2000, lingerRate: 15, lingerR: 0.3, lingerG: 0.5, lingerB: 0.8,
+                },
+                earth: {
+                    spellName: 'Earth Wave', projShape: 'blast', projSize: 0.6, projR: 0.5, projG: 0.35, projB: 0.15, projR2: 0.3, projG2: 0.2, projB2: 0.1, projGlow: 0.6, projRot: 3, projTex: 'earth',
+                    trajType: 'arc', trajTime: 800, trajArc: 2, trajHoming: 1,
+                    trailShape: 'smoke', trailDensity: 40, trailWidth: 0.3, trailR: 0.4, trailG: 0.3, trailB: 0.2, trailFade: 0.8, trailMotion: 'straight',
+                    castDur: 500, castShape: 'smoke', castCount: 40, castR: 0.5, castG: 0.4, castB: 0.2, castSpread: 0.6, castHandGlow: true, handR: 0.5, handG: 0.35, handB: 0.15, handInt: 1,
+                    impShape: 'smoke', impCount: 60, impSpread: 1.5, impR: 0.5, impG: 0.35, impB: 0.15, impDecal: 'generic',
+                    impArcCount: 0, impArcFlicker: 12, impArcJagged: 6, impArcSpread: 0.3, impArcR: 0.5, impArcG: 0.4, impArcB: 0.2, impArcGlow: 1,
+                    impLinger: false, lingerDur: 2000, lingerRate: 15, lingerR: 0.4, lingerG: 0.3, lingerB: 0.15,
+                },
+                air: {
+                    spellName: 'Wind Strike', projShape: 'blast', projSize: 0.45, projR: 0.8, projG: 0.9, projB: 1, projR2: 0.6, projG2: 0.7, projB2: 0.9, projGlow: 0.9, projRot: 5, projTex: 'wind',
+                    trajType: 'straight', trajTime: 400, trajArc: 1, trajHoming: 1,
+                    trailShape: 'spark', trailDensity: 60, trailWidth: 0.15, trailR: 0.7, trailG: 0.8, trailB: 1, trailFade: 0.4, trailMotion: 'spiral',
+                    castDur: 300, castShape: 'spark', castCount: 40, castR: 0.7, castG: 0.8, castB: 1, castSpread: 0.5, castHandGlow: true, handR: 0.7, handG: 0.85, handB: 1, handInt: 1.2,
+                    impShape: 'spark', impCount: 50, impSpread: 0.8, impR: 0.8, impG: 0.9, impB: 1, impDecal: 'none',
+                    impArcCount: 0, impArcFlicker: 12, impArcJagged: 6, impArcSpread: 0.3, impArcR: 0.7, impArcG: 0.8, impArcB: 1, impArcGlow: 1,
+                    impLinger: false, lingerDur: 1000, lingerRate: 10, lingerR: 0.6, lingerG: 0.7, lingerB: 0.9,
+                },
+                dark: {
+                    spellName: 'Shadow Bolt', projShape: 'blast', projSize: 0.55, projR: 0.5, projG: 0.05, projB: 0.7, projR2: 0.2, projG2: 0, projB2: 0.4, projGlow: 1.4, projRot: 1, projTex: 'dark',
+                    trajType: 'homing', trajTime: 700, trajArc: 1.5, trajHoming: 1.2,
+                    trailShape: 'rune', trailDensity: 100, trailWidth: 0.2, trailR: 0.5, trailG: 0.1, trailB: 0.8, trailFade: 0.7, trailMotion: 'spiral',
+                    castDur: 600, castShape: 'skull', castCount: 50, castR: 0.5, castG: 0.1, castB: 0.7, castSpread: 0.5, castHandGlow: true, handR: 0.5, handG: 0.05, handB: 0.7, handInt: 1.8,
+                    impShape: 'skull', impCount: 60, impSpread: 1, impR: 0.5, impG: 0.1, impB: 0.7, impDecal: 'generic',
+                    impArcCount: 4, impArcFlicker: 15, impArcJagged: 8, impArcSpread: 0.4, impArcR: 0.5, impArcG: 0.1, impArcB: 0.8, impArcGlow: 1.5,
+                    impLinger: true, lingerDur: 2500, lingerRate: 25, lingerR: 0.3, lingerG: 0.05, lingerB: 0.4,
+                },
+                holy: {
+                    spellName: 'Holy Smite', projShape: 'blast', projSize: 0.5, projR: 1, projG: 1, projB: 0.6, projR2: 1, projG2: 0.9, projB2: 0.3, projGlow: 2.2, projRot: 1.5, projTex: 'holy',
+                    trajType: 'straight', trajTime: 500, trajArc: 1, trajHoming: 1,
+                    trailShape: 'star', trailDensity: 90, trailWidth: 0.2, trailR: 1, trailG: 1, trailB: 0.5, trailFade: 0.5, trailMotion: 'straight',
+                    castDur: 500, castShape: 'star', castCount: 70, castR: 1, castG: 1, castB: 0.5, castSpread: 0.5, castHandGlow: true, handR: 1, handG: 1, handB: 0.5, handInt: 2,
+                    impShape: 'star', impCount: 90, impSpread: 1.2, impR: 1, impG: 1, impB: 0.5, impDecal: 'generic',
+                    impArcCount: 0, impArcFlicker: 12, impArcJagged: 6, impArcSpread: 0.3, impArcR: 1, impArcG: 0.9, impArcB: 0.3, impArcGlow: 1,
+                    impLinger: false, lingerDur: 1500, lingerRate: 15, lingerR: 0.8, lingerG: 0.8, lingerB: 0.3,
+                },
+            };
+            const p = presets[element]; if (!p) return;
+            for (const [k, v] of Object.entries(p)) setVal(k, v);
+            // Trigger trajectory visibility
+            document.getElementById('trajType').dispatchEvent(new Event('change'));
+            // Recreate projectile mesh
+            createProjMesh(p.projShape);
+            projTexType = p.projTex;
+        };
+
+        // ─────────────────────────────────────────────
+        // EXPORT / IMPORT
+        // ─────────────────────────────────────────────
+        function v(id) { const el = document.getElementById(id); return el.type === 'checkbox' ? el.checked : parseFloat(el.value); }
+        function sv(id) { return document.getElementById(id).value; }
+
+        // Preserve the spell's school across edits even though the editor
+        // doesn't expose a control for it yet. Set from applyDef on import,
+        // defaults to 'evil' for fresh sessions (matches SpellEffectDef default).
+        let currentSpellSchool = 'evil';
+
+        function collectDef() {
+            return {
+                id: sv('spellName').toLowerCase().replace(/\s+/g, '_'),
+                name: sv('spellName'),
+                element: 'fire',
+                school: currentSpellSchool,
+                tier: parseInt(document.getElementById('tier').value),
+                projectile: { shape: sv('projShape'), size: v('projSize'), primaryColor: { r: v('projR'), g: v('projG'), b: v('projB') }, secondaryColor: { r: v('projR2'), g: v('projG2'), b: v('projB2') }, glowIntensity: v('projGlow'), rotationSpeed: v('projRot'), texture: sv('projTex') },
+                trajectory: { type: sv('trajType'), travelTimeMs: v('trajTime'), arcHeight: v('trajArc'), homingCurve: v('trajHoming') },
+                trail: { particleType: sv('trailShape'), density: v('trailDensity'), width: v('trailWidth'), color: { r: v('trailR'), g: v('trailG'), b: v('trailB') }, fadeTime: v('trailFade'), motion: sv('trailMotion') },
+                cast: { durationMs: v('castDur'), burstParticle: sv('castShape'), burstCount: v('castCount'), burstColor: { r: v('castR'), g: v('castG'), b: v('castB') }, burstSpread: v('castSpread'), handGlow: v('castHandGlow'), handGlowColor: { r: v('handR'), g: v('handG'), b: v('handB') }, handGlowIntensity: v('handInt') },
+                impact: {
+                    splashParticle: sv('impShape'), splashCount: v('impCount'), splashSpread: v('impSpread'), splashColor: { r: v('impR'), g: v('impG'), b: v('impB') },
+                    groundDecal: sv('impDecal'),
+                    lightning: { arcCount: v('impArcCount'), flickerSpeed: v('impArcFlicker'), jaggedness: v('impArcJagged'), spread: v('impArcSpread'), thickness: 2, color: { r: v('impArcR'), g: v('impArcG'), b: v('impArcB') }, coverage: 0.8, glow: v('impArcGlow') },
+                    lingerEnabled: v('impLinger'), lingerDurationMs: v('lingerDur'), lingerEmitRate: v('lingerRate'), lingerColor: { r: v('lingerR'), g: v('lingerG'), b: v('lingerB') },
+                },
+                aoe: v('prevAoe'),
+                aoeTargetCount: v('prevAoeCount'),
+            };
+        }
+
+        function applyDef(def) {
+            setVal('spellName', def.name || 'Untitled');
+            currentSpellSchool = def.school === 'good' ? 'good' : 'evil';
+            setVal('tier', def.tier || 2);
+            const p = def.projectile || {};
+            setVal('projShape', p.shape || 'blast'); setVal('projSize', p.size || 0.5);
+            setVal('projR', p.primaryColor?.r ?? 1); setVal('projG', p.primaryColor?.g ?? 0.4); setVal('projB', p.primaryColor?.b ?? 0);
+            setVal('projR2', p.secondaryColor?.r ?? 1); setVal('projG2', p.secondaryColor?.g ?? 0.1); setVal('projB2', p.secondaryColor?.b ?? 0);
+            setVal('projGlow', p.glowIntensity ?? 1.5); setVal('projRot', p.rotationSpeed ?? 2); setVal('projTex', p.texture || 'none');
+            const tr = def.trajectory || {};
+            setVal('trajType', tr.type || 'straight'); setVal('trajTime', tr.travelTimeMs || 600); setVal('trajArc', tr.arcHeight ?? 1.5); setVal('trajHoming', tr.homingCurve ?? 1);
+            const tl = def.trail || {};
+            setVal('trailShape', tl.particleType || 'ember'); setVal('trailDensity', tl.density || 100); setVal('trailWidth', tl.width ?? 0.2);
+            setVal('trailR', tl.color?.r ?? 1); setVal('trailG', tl.color?.g ?? 0.5); setVal('trailB', tl.color?.b ?? 0.1);
+            setVal('trailFade', tl.fadeTime ?? 0.6); setVal('trailMotion', tl.motion || 'straight');
+            const c = def.cast || {};
+            setVal('castDur', c.durationMs || 400); setVal('castShape', c.burstParticle || 'ember'); setVal('castCount', c.burstCount || 60);
+            setVal('castR', c.burstColor?.r ?? 1); setVal('castG', c.burstColor?.g ?? 0.5); setVal('castB', c.burstColor?.b ?? 0);
+            setVal('castSpread', c.burstSpread ?? 0.5);
+            setVal('castHandGlow', c.handGlow ?? true);
+            setVal('handR', c.handGlowColor?.r ?? 1); setVal('handG', c.handGlowColor?.g ?? 0.5); setVal('handB', c.handGlowColor?.b ?? 0);
+            setVal('handInt', c.handGlowIntensity ?? 1.5);
+            const im = def.impact || {};
+            setVal('impShape', im.splashParticle || 'ember'); setVal('impCount', im.splashCount || 80); setVal('impSpread', im.splashSpread ?? 1);
+            setVal('impR', im.splashColor?.r ?? 1); setVal('impG', im.splashColor?.g ?? 0.3); setVal('impB', im.splashColor?.b ?? 0);
+            setVal('impDecal', im.groundDecal || 'none');
+            const li = im.lightning || {};
+            setVal('impArcCount', li.arcCount || 0); setVal('impArcFlicker', li.flickerSpeed || 12);
+            setVal('impArcJagged', li.jaggedness || 6); setVal('impArcSpread', li.spread ?? 0.3);
+            setVal('impArcR', li.color?.r ?? 1); setVal('impArcG', li.color?.g ?? 0.5); setVal('impArcB', li.color?.b ?? 0);
+            setVal('impArcGlow', li.glow ?? 1);
+            setVal('impLinger', im.lingerEnabled ?? false); setVal('lingerDur', im.lingerDurationMs || 2000);
+            setVal('lingerRate', im.lingerEmitRate || 20);
+            setVal('lingerR', im.lingerColor?.r ?? 0.5); setVal('lingerG', im.lingerColor?.g ?? 0.2); setVal('lingerB', im.lingerColor?.b ?? 0);
+            setVal('prevAoe', def.aoe ?? false); setVal('prevAoeCount', def.aoeTargetCount || 3);
+            // Refresh
+            document.getElementById('trajType').dispatchEvent(new Event('change'));
+            createProjMesh(p.shape || 'blast');
+            projTexType = p.texture || 'none';
+            updateEntityPositions();
+        }
+
+        document.getElementById('btnExport').addEventListener('click', () => {
+            const def = collectDef();
+            const json = JSON.stringify(def, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+            a.download = `${def.id}.json`; a.click();
+        });
+
+        document.getElementById('btnImport').addEventListener('click', () => {
+            const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
+            input.onchange = async () => {
+                const text = await input.files[0].text();
+                try { applyDef(JSON.parse(text)); } catch (e) { console.error('Import failed:', e); }
+            };
+            input.click();
+        });
+
+    })();
+    </script>
+</body>
+</html>

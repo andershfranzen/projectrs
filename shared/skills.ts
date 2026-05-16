@@ -169,6 +169,17 @@ export function osrsMeleeMaxHit(effStr: number, bStr: number, dmgMult: number = 
 }
 
 /**
+ * Max damage for a magic spell, scaling with the caster's level in the
+ * relevant school plus the spell's tier. Tier provides the floor (tier 1 →
+ * 2-damage cap, tier 5 → 10-damage cap), level adds 1 per 10 levels on top.
+ * Hand-tuned for a level-1 caster doing chip damage with tier 1 and a level-99
+ * caster topping out around 19 on a tier-5 spell.
+ */
+export function magicMaxHit(magicLevel: number, tier: number): number {
+  return tier * 2 + Math.floor(magicLevel / 10);
+}
+
+/**
  * 2004Scape hit check: two independent random rolls compared.
  * Returns true if the attack lands.
  * randominc(n) = random integer from 0 to n inclusive.

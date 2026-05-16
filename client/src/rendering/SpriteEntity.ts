@@ -690,6 +690,11 @@ export class SpriteEntity {
     return this._position;
   }
 
+  /** World-space point projectiles aim at: the sprite's visual centre. */
+  getTargetAnchor(): Vector3 {
+    return this.plane.position.clone();
+  }
+
   set position(pos: Vector3) {
     this._position = pos;
     this.plane.position.x = pos.x;

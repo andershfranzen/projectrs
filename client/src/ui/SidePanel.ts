@@ -2,7 +2,9 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   QUEST_STAGE_COMPLETED,
+  spellSchoolSkill,
   type SkillId, type MeleeStance, type ItemDef, type QuestDef,
+  type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
 import { QuestJournalPopup } from './QuestJournalPopup';
 import type { NetworkManager } from '../managers/NetworkManager';
@@ -75,6 +77,15 @@ export class SidePanel {
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
   private tabButtons: HTMLButtonElement[] = [];
+
+  // Spellbook state. Catalogue is supplied by GameManager after /api/spells
+  // fetches; callback fires PLAYER_CAST_SPELL with the spell's stable index.
+  // Tab contents re-render whenever the catalogue, callback, or relevant
+  // school skill level changes.
+  private spellCatalogue: SpellEffectDef[] = [];
+  private spellCastCallback: ((spellIndex: number) => void) | null = null;
+  private goodMagicGridEl: HTMLDivElement | null = null;
+  private evilMagicGridEl: HTMLDivElement | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
     this.network = network;
@@ -436,18 +447,16 @@ export class SidePanel {
     // Good Magic tab
     const goodMagicWrap = document.createElement('div');
     goodMagicWrap.style.display = 'none';
-    goodMagicWrap.appendChild(this.buildEmptyPanelView([
-      { title: 'Good Magic Spellbook', body: 'No spells learned yet...', color: '#4ae' },
-    ]));
+    this.goodMagicGridEl = this.buildSpellbookView('good', 'Good Magic Spellbook', '#4ae');
+    goodMagicWrap.appendChild(this.goodMagicGridEl);
     contentArea.appendChild(goodMagicWrap);
     this.tabContents.set('good_magic', goodMagicWrap);
 
     // Evil Magic tab
     const evilMagicWrap = document.createElement('div');
     evilMagicWrap.style.display = 'none';
-    evilMagicWrap.appendChild(this.buildEmptyPanelView([
-      { title: 'Evil Magic Spellbook', body: 'No spells learned yet...', color: '#c4a' },
-    ]));
+    this.evilMagicGridEl = this.buildSpellbookView('evil', 'Evil Magic Spellbook', '#c4a');
+    evilMagicWrap.appendChild(this.evilMagicGridEl);
     contentArea.appendChild(evilMagicWrap);
     this.tabContents.set('evil_magic', evilMagicWrap);
 
@@ -628,6 +637,119 @@ export class SidePanel {
       );
     }
     this.questJournalPopup.show(questId);
+  }
+
+  // === Spellbook ===
+
+  /** Catalogue of all loaded spells in stable-index order. Setting this
+   *  re-renders both spellbook tabs so unlocked icons appear immediately. */
+  setSpellCatalogue(spells: SpellEffectDef[]): void {
+    this.spellCatalogue = spells;
+    this.renderSpellbook('good');
+    this.renderSpellbook('evil');
+  }
+
+  /** Wired to PLAYER_CAST_SPELL; click on an unlocked spell fires this with
+   *  the spell's index in the catalogue. */
+  setSpellCastCallback(cb: (spellIndex: number) => void): void {
+    this.spellCastCallback = cb;
+  }
+
+  /** Build the static frame for a spellbook tab — header + grid container.
+   *  Returns the root view; the grid inside is repopulated by renderSpellbook. */
+  private buildSpellbookView(school: SpellSchool, title: string, color: string): HTMLDivElement {
+    const view = document.createElement('div');
+    view.style.cssText = `${panelFrameCss()} gap: 8px;`;
+
+    const header = document.createElement('div');
+    header.textContent = title;
+    header.style.cssText = panelHeaderCss(color);
+    view.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.dataset.school = school;
+    grid.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(40px, 40px));
+      gap: 6px; padding: 4px;
+      justify-content: start;
+    `;
+    view.appendChild(grid);
+    return view;
+  }
+
+  /** Repopulate one school's grid. Greyed-out '?' for locked spells, real icon
+   *  from `/(good|evil) magic spellbook icons/<spell.id>.png` for unlocked. */
+  private renderSpellbook(school: SpellSchool): void {
+    const root = school === 'evil' ? this.evilMagicGridEl : this.goodMagicGridEl;
+    if (!root) return;
+    const grid = root.querySelector(`[data-school="${school}"]`) as HTMLDivElement | null;
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    const spells = this.spellCatalogue.filter(s => (s.school ?? 'evil') === school);
+    if (spells.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = `${mutedBodyCss()} grid-column: 1 / -1;`;
+      empty.textContent = 'No spells in this book yet.';
+      grid.appendChild(empty);
+      return;
+    }
+
+    const skillId = school === 'evil' ? 'evilmagic' : 'goodmagic';
+    const playerLevel = this.skills.get(skillId)?.level ?? 1;
+    const iconDir = `/${school === 'evil' ? 'evil' : 'good'} magic spellbook icons`;
+
+    for (let i = 0; i < this.spellCatalogue.length; i++) {
+      const def = this.spellCatalogue[i];
+      if ((def.school ?? 'evil') !== school) continue;
+      grid.appendChild(this.buildSpellCell(def, i, playerLevel, iconDir));
+    }
+  }
+
+  private buildSpellCell(
+    def: SpellEffectDef,
+    spellIndex: number,
+    playerLevel: number,
+    iconDir: string,
+  ): HTMLDivElement {
+    const required = def.levelRequired ?? 1;
+    const unlocked = playerLevel >= required;
+
+    const cell = document.createElement('div');
+    cell.style.cssText = `
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      background: #1a120a; border: 1px solid #3a2a18; border-radius: 3px;
+      ${unlocked ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.55;'}
+      transition: border-color 0.1s, transform 0.05s;
+    `;
+    cell.title = unlocked
+      ? def.name
+      : `??? — requires level ${required} ${SKILL_NAMES[(spellSchoolSkill(def)) as SkillId]}`;
+
+    if (unlocked) {
+      const img = document.createElement('img');
+      img.src = `${iconDir}/${def.id}.png`;
+      img.alt = def.name;
+      img.draggable = false;
+      img.style.cssText = 'width: 32px; height: 32px; image-rendering: pixelated;';
+      // Hover affordance
+      cell.addEventListener('mouseenter', () => { cell.style.borderColor = '#c44'; });
+      cell.addEventListener('mouseleave', () => { cell.style.borderColor = '#3a2a18'; });
+      cell.addEventListener('click', () => this.spellCastCallback?.(spellIndex));
+      cell.appendChild(img);
+    } else {
+      const q = document.createElement('div');
+      q.textContent = '?';
+      q.style.cssText = `
+        font-size: 22px; font-weight: bold; color: #555;
+        text-shadow: 1px 1px 0 #000;
+        font-family: Arial, Helvetica, sans-serif;
+      `;
+      cell.appendChild(q);
+    }
+    return cell;
   }
 
   private buildEmptyPanelView(sections: { title: string; body: string; color?: string }[]): HTMLDivElement {
@@ -1150,6 +1272,10 @@ export class SidePanel {
     this.skills.set(id, { level, currentLevel, xp });
     this.renderSkill(id);
     this.updateCombatLevel();
+    // Repaint the matching spellbook so newly-unlocked spells reveal at
+    // the moment of level-up. Cheap — small grid, no images re-fetch.
+    if (id === 'goodmagic') this.renderSpellbook('good');
+    else if (id === 'evilmagic') this.renderSpellbook('evil');
   }
 
   private renderSkill(id: SkillId): void {

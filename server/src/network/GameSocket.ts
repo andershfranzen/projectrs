@@ -219,6 +219,13 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_CAST_SPELL: {
+      const spellIndex = values[0];
+      const targetEntityId = values[1];
+      world.handlePlayerCastSpell(playerId, spellIndex, targetEntityId);
+      break;
+    }
+
     case ClientOpcode.PLAYER_INTERACT_OBJECT: {
       const objectEntityId = values[0];
       const actionIndex = values[1] ?? 0;

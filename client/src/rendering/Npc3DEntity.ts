@@ -172,6 +172,11 @@ export class Npc3DEntity {
     if (this.root) this.root.position.set(pos.x, pos.y, pos.z);
   }
 
+  /** World-space point projectiles aim at: roughly chest-height above the NPC's base. */
+  getTargetAnchor(): Vector3 {
+    return new Vector3(this._position.x, this._position.y + 0.7, this._position.z);
+  }
+
   startWalking(): void {
     if (this._walking) return;
     this._walking = true;

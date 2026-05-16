@@ -4,6 +4,7 @@ import { SpriteEntity } from '../rendering/SpriteEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
+import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
 import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
 
@@ -196,6 +197,32 @@ export class EntityManager {
       });
     }
     return sprite;
+  }
+
+  // --- Target lookup ---
+
+  /**
+   * Find a `Targetable` (NPC or remote player) by its server entity id.
+   * Returns null if the id doesn't match any tracked entity.
+   */
+  resolveTargetable(entityId: number): Targetable | null {
+    return this.npcSprites.get(entityId) ?? this.remotePlayers.get(entityId) ?? null;
+  }
+
+  /**
+   * Closest NPC (sprite or 3D) to a given world position. Skips remote players
+   * — for friendly-fire targeting, walk `remotePlayers` separately. Returns
+   * the NPC's entity id alongside so callers can pass it back to the server.
+   */
+  findNearestNpc(pos: Vector3): { entityId: number; npc: Targetable } | null {
+    let bestId = -1;
+    let bestNpc: Targetable | null = null;
+    let bestDist = Infinity;
+    for (const [id, sprite] of this.npcSprites) {
+      const d = Vector3.DistanceSquared(pos, sprite.position);
+      if (d < bestDist) { bestDist = d; bestId = id; bestNpc = sprite; }
+    }
+    return bestNpc ? { entityId: bestId, npc: bestNpc } : null;
   }
 
   // --- Entity removal ---

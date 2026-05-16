@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ServerOpcode, encodePacket } from '@projectrs/shared';
+import { ServerOpcode, encodePacket, ALL_SKILLS, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
@@ -250,6 +250,25 @@ function handleCommand(
         }
         world.sendInventory(player);
         ws.send(JSON.stringify({ type: 'system', message: 'Inventory cleared' }));
+      }
+      break;
+    }
+
+    case '/xp': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const skillName = (parts[1] ?? '').toLowerCase();
+      const amount = parseInt(parts[2]);
+      if (!ALL_SKILLS.includes(skillName as SkillId) || !isFinite(amount) || amount <= 0) {
+        ws.send(JSON.stringify({
+          type: 'system',
+          message: `Usage: /xp <skill> <amount>. Skills: ${ALL_SKILLS.join(', ')}`,
+        }));
+        return;
+      }
+      const player = findPlayerByUsername(from, world);
+      if (player) {
+        world.grantXp(player, skillName as SkillId, amount);
+        ws.send(JSON.stringify({ type: 'system', message: `Granted ${amount} ${skillName} XP` }));
       }
       break;
     }

@@ -35,6 +35,13 @@ export enum ClientOpcode {
   /** Use inventory item on an NPC.
    *  Values: [invSlot, itemId, npcEntityId]. */
   PLAYER_USE_ITEM_ON_NPC = 43,
+  /**
+   * Cast a spell at a target. Payload: [spellIndex, targetEntityId].
+   * spellIndex refers to the position in the alphabetical spell list returned
+   * by GET /api/spells; both client and server agree on the order because
+   * DataLoader sorts by spell.id at load time.
+   */
+  PLAYER_CAST_SPELL = 44,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Client tells server which floor the player is visually on. Sent when
@@ -100,6 +107,12 @@ export enum ServerOpcode {
   PLAYER_RUN_STATE = 27,
   COMBAT_HIT = 30,
   COMBAT_PROJECTILE = 34,
+  /**
+   * Broadcast when a player casts a spell. Payload: [casterId, targetId, spellIndex].
+   * Receivers play visuals (cast anim, projectile, impact effects). Damage
+   * arrives separately via a deferred COMBAT_HIT scheduled for the impact tick.
+   */
+  SPELL_CAST = 35,
   ENTITY_DEATH = 31,
   XP_GAIN = 32,
   LEVEL_UP = 33,

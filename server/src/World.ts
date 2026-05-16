@@ -2,7 +2,7 @@ import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RA
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
-import { addXp, levelFromXp, statRandom, npcCombatLevel } from '@projectrs/shared';
+import { addXp, levelFromXp, statRandom, npcCombatLevel, magicMaxHit, rollHit, ACC_BASE, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -95,6 +95,9 @@ interface TradeSession {
 
 let nextGroundItemId = 1;
 
+/** Max distance in tiles a player can cast a spell from. Generous for testing — refine in Phase 5. */
+const SPELL_CAST_DISTANCE = 10;
+
 export class World {
   readonly maps: Map<string, GameMap> = new Map();
   readonly chunkManagers: Map<string, ServerChunkManager> = new Map();
@@ -158,6 +161,23 @@ export class World {
 
   private static readonly DEFAULT_MINING_RATE = 7;
   private static readonly MINING_TOOL_ACCURACY_BONUS = 8;
+
+  /**
+   * Damage queued by a spell cast, fired on the tick the projectile visually
+   * arrives. We roll damage at cast time (so the result is settled even if the
+   * target moves) but defer application so the hit splat matches the visual.
+   */
+  private pendingSpellImpacts: {
+    impactTick: number;
+    attackerId: number;
+    targetId: number;
+    damage: number;
+    spellId: string;
+    /** Skill to credit XP to on hit. Captured at cast time so a mid-flight
+     *  spell def reload couldn't reroute XP to a different school. */
+    xpSkill: SkillId;
+    mapLevel: string;
+  }[] = [];
 
   constructor(db: GameDatabase) {
     this.db = db;
@@ -2302,6 +2322,85 @@ export class World {
     this.sendRunState(player);
   }
 
+  /**
+   * Cast a spell at an NPC. Damage rolls now, applies on the impact tick
+   * (cast duration + projectile travel time) so the hit splat lands when the
+   * visual does. The cast is broadcast immediately so all nearby clients can
+   * start playing the animation + effect.
+   *
+   * PvP is intentionally off — only NPC targets accepted for now.
+   * Combat formula is a placeholder; Phase 5 will swap in magic level + tier.
+   */
+  handlePlayerCastSpell(playerId: number, spellIndex: number, targetEntityId: number): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.alive) return;
+    if (player.isBusy(this.currentTick)) return;
+    if (player.attackCooldown > 0) return;
+
+    const def = this.data.getSpellByIndex(spellIndex);
+    if (!def) return;
+
+    const npc = this.npcs.get(targetEntityId);
+    if (!npc || npc.dead) return;
+    if (this.data.getShop(npc.npcId)) return;                 // shopkeepers immune
+    if (npc.currentMapLevel !== player.currentMapLevel) return;
+
+    const dx = npc.position.x - player.position.x;
+    const dz = npc.position.y - player.position.y;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    if (dist > SPELL_CAST_DISTANCE) return;
+
+    this.cancelSkilling(playerId);
+    this.clearCombatTarget(playerId);                          // cancel auto-attack
+
+    // Magic combat roll. Mirrors the OSRS pattern in processPlayerCombat /
+    // processPlayerRangedCombat: dual roll (attacker vs defender), miss → 0
+    // damage, hit → uniform [0..maxHit]. Equipment's magicAccuracy bonus feeds
+    // the attack roll. NPC magic defence falls back to base defence — NpcDef
+    // doesn't carry a magicDefence stat (yet).
+    const xpSkill: SkillId = spellSchoolSkill(def);
+
+    // Level gate. Server-authoritative — the UI hides locked spells but a
+    // crafted packet could still try to cast them, so we re-check here.
+    // `.level` (not `.currentLevel`) so temporary stat drains don't lock you out.
+    const requiredLevel = def.levelRequired ?? 1;
+    if (player.skills[xpSkill].level < requiredLevel) return;
+
+    const magicLevel = player.skills[xpSkill].currentLevel;
+    const effMagic = magicLevel + 8;
+    const bonuses = player.computeBonuses(this.data.itemDefs);
+    const attackRoll = effMagic * (bonuses.magicAccuracy + ACC_BASE);
+    const defRoll = (npc.def.defence + 8) * ACC_BASE;
+    const damage = rollHit(attackRoll, defRoll)
+      ? Math.floor(Math.random() * (magicMaxHit(magicLevel, def.tier) + 1))
+      : 0;
+
+    // Total wall time before damage applies — matches client visual length.
+    const totalDelayMs = def.cast.durationMs + def.trajectory.travelTimeMs;
+    const totalDelayTicks = Math.max(1, Math.ceil(totalDelayMs / TICK_RATE));
+
+    // Lock other actions for the cast window; block recasts until impact.
+    const castTicks = Math.max(1, Math.ceil(def.cast.durationMs / TICK_RATE));
+    player.setDelay(this.currentTick, castTicks + 1);
+    player.attackCooldown = totalDelayTicks;
+    player.markInCombat(this.currentTick);
+
+    this.broadcastNearby(
+      player.currentMapLevel, player.position.x, player.position.y,
+      ServerOpcode.SPELL_CAST, player.id, npc.id, spellIndex,
+    );
+
+    this.pendingSpellImpacts.push({
+      impactTick: this.currentTick + totalDelayTicks,
+      attackerId: player.id,
+      targetId: npc.id,
+      damage,
+      spellId: def.id,
+      xpSkill,
+      mapLevel: player.currentMapLevel,
+    });
+  }
+
   handleSetAppearance(playerId: number, appearance: PlayerAppearance): void {
     const player = this.players.get(playerId);
     if (!player) return;
@@ -2329,6 +2428,32 @@ export class World {
   // The interface lock (player.openInterface = 'bank') gates every
   // state-mutating handler, so a click leaking from the inventory panel can't
   // dupe via deposit-while-trading or similar.
+
+  /**
+   * Award XP to a single skill on a player. Handles the full payload the
+   * combat / skilling paths emit: XP_GAIN packet, optional LEVEL_UP, full
+   * skill resync, plus the auto-HP-level-up for combat skills (addXp routes
+   * 1/3 of combat XP to hitpoints, so HP can level up too).
+   *
+   * Used by admin chat commands (`/xp`) and any future scripted reward path.
+   */
+  grantXp(player: Player, skillId: SkillId, amount: number): void {
+    if (amount <= 0) return;
+    const oldHpLevel = player.skills.hitpoints.level;
+    const r = addXp(player.skills, skillId, amount);
+    const skillIdx = ALL_SKILLS.indexOf(skillId);
+    if (skillIdx >= 0) {
+      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amount));
+      if (r.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, r.newLevel);
+      this.sendSingleSkill(player, skillIdx);
+    }
+    const hpIdx = ALL_SKILLS.indexOf('hitpoints');
+    if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
+      this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
+      this.sendSingleSkill(player, hpIdx);
+      player.syncHealthFromSkills();
+    }
+  }
 
   /** Server-side entry point: open the bank for a player. Called from the
    *  banker NPC interaction path AND from the /bank admin chat command. */
@@ -3010,6 +3135,7 @@ export class World {
     this.tickPlayerCooldowns();
     this.tickPlayerCombat();
     this.tickNpcCombat();
+    this.tickPendingSpells();
     if (this.currentTick % 10 === 0) this.tickHealthRegen();
     this.tickSkillingActions();
     this.tickObjectRespawns();
@@ -3372,6 +3498,74 @@ export class World {
         }
       }
     }
+  }
+
+  /**
+   * Apply queued spell damage that has reached its impact tick. Damage was
+   * already rolled at cast time, so this just delivers the result. Target may
+   * have died, moved maps, or the caster may have disconnected — all skipped.
+   */
+  private tickPendingSpells(): void {
+    if (this.pendingSpellImpacts.length === 0) return;
+
+    const remaining: typeof this.pendingSpellImpacts = [];
+    for (const imp of this.pendingSpellImpacts) {
+      if (imp.impactTick > this.currentTick) { remaining.push(imp); continue; }
+
+      const player = this.players.get(imp.attackerId);
+      const npc = this.npcs.get(imp.targetId);
+      if (!player || !npc || npc.dead) continue;
+      if (npc.currentMapLevel !== imp.mapLevel) continue;
+
+      const actual = npc.takeDamage(imp.damage);
+
+      // XP: 4 per damage to the spell's school (locked in at cast time).
+      // Same rate as melee/ranged so a magic-only player isn't penalised.
+      if (actual > 0) {
+        const oldHpLevel = player.skills.hitpoints.level;
+        const amt = actual * 4;
+        const r = addXp(player.skills, imp.xpSkill, amt);
+        const skillIdx = ALL_SKILLS.indexOf(imp.xpSkill);
+        if (skillIdx >= 0) {
+          this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amt));
+          if (r.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, r.newLevel);
+          this.sendSingleSkill(player, skillIdx);
+        }
+        const hpIdx = ALL_SKILLS.indexOf('hitpoints');
+        if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
+          this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
+        }
+        npc.addHeroPoints(player.id, actual);
+        player.syncHealthFromSkills();
+      }
+
+      this.broadcastCombatHit(player.id, npc.id, actual, npc.health, npc.maxHealth, npc.currentMapLevel, npc.position.x, npc.position.y);
+
+      if (!npc.alive) {
+        npc.die();
+        this.clearCombatTarget(imp.attackerId);
+        this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
+
+        const loot = rollLoot(npc);
+        for (const drop of loot) {
+          const groundItem: GroundItem = {
+            id: nextGroundItemId++,
+            itemId: drop.itemId,
+            quantity: drop.quantity,
+            x: npc.spawnX,
+            z: npc.spawnZ,
+            mapLevel: npc.currentMapLevel,
+            despawnTimer: 200,
+          };
+          this.groundItems.set(groundItem.id, groundItem);
+          this.despawningItemIds.add(groundItem.id);
+          const lootCm = this.chunkManagers.get(groundItem.mapLevel);
+          if (lootCm) lootCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+          this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
+        }
+      }
+    }
+    this.pendingSpellImpacts = remaining;
   }
 
   private tickNpcCombat(): void {

@@ -1,6 +1,6 @@
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree, QuestDef } from '@projectrs/shared';
+import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree, QuestDef, SpellEffectDef } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
@@ -21,6 +21,14 @@ export class DataLoader {
    *  start trigger for any quest?" pass scans only candidate defs instead
    *  of every quest. */
   private questsByStartTrigger: Map<string, QuestDef[]> = new Map();
+  private spells: Map<string, SpellEffectDef> = new Map();
+  /**
+   * Spells sorted alphabetically by id, so a stable numeric index can be used
+   * in the binary protocol (PLAYER_CAST_SPELL / SPELL_CAST). The /api/spells
+   * endpoint returns this same array, giving the client matching indices.
+   */
+  private spellsByIndex: SpellEffectDef[] = [];
+  private spellIndexById: Map<string, number> = new Map();
 
   get itemDefs(): Map<number, ItemDef> {
     return this.items;
@@ -40,6 +48,7 @@ export class DataLoader {
     this.loadObjects();
     this.loadShops();
     this.loadQuests();
+    this.loadSpells();
   }
 
   /** Shared loader for the def files: read JSON array → populate a Map keyed
@@ -96,6 +105,50 @@ export class DataLoader {
         }
       }
     }
+  }
+
+  private loadSpells(): void {
+    const dir = resolve(DATA_DIR, 'spells');
+    if (!existsSync(dir)) {
+      console.log('No spells/ directory found, skipping');
+      return;
+    }
+    for (const file of readdirSync(dir)) {
+      if (!file.endsWith('.json')) continue;
+      const path = resolve(dir, file);
+      try {
+        const def: SpellEffectDef = JSON.parse(readFileSync(path, 'utf-8'));
+        this.spells.set(def.id, def);
+      } catch (e) {
+        throw new Error(`Failed to load ${path}: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    // Build the stable index. Both the binary protocol and /api/spells reflect
+    // this order — clients fetch /api/spells at boot and never reorder.
+    this.spellsByIndex = Array.from(this.spells.values()).sort((a, b) => a.id.localeCompare(b.id));
+    for (let i = 0; i < this.spellsByIndex.length; i++) {
+      this.spellIndexById.set(this.spellsByIndex[i].id, i);
+    }
+    console.log(`Loaded ${this.spells.size} spell definitions`);
+  }
+
+  getSpell(id: string): SpellEffectDef | undefined {
+    return this.spells.get(id);
+  }
+
+  /** Spells in stable order (alphabetical by id). Use this for /api/spells responses. */
+  getAllSpells(): SpellEffectDef[] {
+    return this.spellsByIndex;
+  }
+
+  /** Spell at the given binary-protocol index, or undefined if out of range. */
+  getSpellByIndex(idx: number): SpellEffectDef | undefined {
+    return this.spellsByIndex[idx];
+  }
+
+  /** Binary-protocol index for a spell id, or -1 if unknown. */
+  getSpellIndex(id: string): number {
+    return this.spellIndexById.get(id) ?? -1;
   }
 
   /** Effective shop for an NPC def: inline `NpcDef.shop` (the editor's
