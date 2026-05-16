@@ -2136,5 +2136,21 @@
     "value": 50,
     "icon": "staff_100.png",
     "model": "/assets/equipment/weapon/Staff.glb"
+  },
+  {
+    "id": 233,
+    "name": "Crystal Staff",
+    "description": "A staff crafted from pure crystal, humming with magical energy.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "weapon",
+    "attackSpeed": 5,
+    "weaponStyle": "crush",
+    "crushAttack": 7,
+    "meleeStrength": 10,
+    "magicAccuracy": 15,
+    "value": 7000,
+    "icon": "staff_100.png",
+    "model": "/assets/equipment/weapon/CrystalStaff.glb"
   }
 ]
