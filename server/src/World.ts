@@ -2018,8 +2018,8 @@ export class World {
       : obj.def.category === 'rock'
         ? PlayerSkillAnimationVariant.Mine
         : PlayerSkillAnimationVariant.None;
-    this.setPlayerAnimation(player, PlayerAnimationKind.Skill, variant, obj.id);
-    this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id);
+    this.setPlayerAnimation(player, PlayerAnimationKind.Skill, variant, obj.id, false, toolItemId ?? 0);
+    this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id, toolItemId ?? 0);
   }
 
   private handleCraftingInteraction(player: Player, obj: WorldObject, recipeIndex: number): void {
@@ -4483,6 +4483,7 @@ export class World {
       subject.animationKind,
       subject.animationVariant,
       subject.animationTargetId,
+      subject.animationToolItemId,
     );
   }
 
@@ -4497,11 +4498,13 @@ export class World {
     variant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None,
     targetId: number = 0,
     includeSelf: boolean = false,
+    toolItemId: number = 0,
   ): void {
     subject.animationKind = kind;
     subject.animationVariant = variant;
     subject.animationTargetId = targetId;
-    this.broadcastPlayerAnimationEvent(subject, kind, variant, targetId, includeSelf);
+    subject.animationToolItemId = toolItemId;
+    this.broadcastPlayerAnimationEvent(subject, kind, variant, targetId, includeSelf, toolItemId);
   }
 
   private broadcastPlayerAnimationEvent(
@@ -4510,10 +4513,11 @@ export class World {
     variant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None,
     targetId: number = 0,
     includeSelf: boolean = false,
+    toolItemId: number = 0,
   ): void {
     const cm = this.chunkManagers.get(subject.currentMapLevel);
     if (!cm) return;
-    const packet = encodePacket(ServerOpcode.PLAYER_ANIMATION, subject.id, kind, variant, targetId);
+    const packet = encodePacket(ServerOpcode.PLAYER_ANIMATION, subject.id, kind, variant, targetId, toolItemId);
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (!includeSelf && pid === subject.id) return;
       const viewer = this.players.get(pid);

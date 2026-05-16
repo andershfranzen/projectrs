@@ -70,6 +70,12 @@ export class Player extends Entity {
   animationKind: PlayerAnimationKind = PlayerAnimationKind.Idle;
   animationVariant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None;
   animationTargetId: number = 0;
+  /** Item ID of the tool currently visible in the player's hand for the
+   *  active skill animation (chop/mine). 0 = no override (e.g. combat,
+   *  idle). Set when handleHarvestInteraction picks the best tool; cleared
+   *  when skilling stops. Replayed on chunk entry so a viewer who pages in
+   *  mid-swing sees the axe in the chopper's hand. */
+  animationToolItemId: number = 0;
   /** NPC def-id of the shopkeeper this player is currently talking to, or
    *  null. Set on talk-shopkeeper, cleared on movement / transition / death
    *  / disconnect. Buy + sell handlers require it to match a valid shop so

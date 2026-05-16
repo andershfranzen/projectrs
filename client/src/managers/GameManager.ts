@@ -178,7 +178,14 @@ export class GameManager {
 
   // Local player equipment tracking (slot index → item ID)
   private localEquipment: Map<number, number> = new Map();
-  private remoteAnimationStates: Map<number, { kind: PlayerAnimationKind; variant: PlayerSkillAnimationVariant; targetId: number }> = new Map();
+  private remoteAnimationStates: Map<number, { kind: PlayerAnimationKind; variant: PlayerSkillAnimationVariant; targetId: number; toolItemId: number }> = new Map();
+
+  // Set of entityIds currently holding a server-broadcast skilling tool in
+  // place of their real weapon. Restored via localEquipment / remoteEquipment
+  // (authoritative source) when the skill animation ends — reading from
+  // those maps avoids a race where getGearItemId() returns -1 during the
+  // async gear-attach window and we'd "restore" the player to unarmed.
+  private toolSwappedEntities: Set<number> = new Set();
 
   // Gear — cached templates so the same GLB isn't loaded twice
   private gearTemplateCache: Map<string, GearTemplate> = new Map();
@@ -1050,6 +1057,7 @@ export class GameManager {
     kind: PlayerAnimationKind,
     variant: PlayerSkillAnimationVariant,
     targetId: number,
+    toolItemId: number = 0,
   ): void {
     const remote = this.entities.remotePlayers.get(entityId);
     if (!remote || !remote.isReady) return;
@@ -1057,6 +1065,7 @@ export class GameManager {
     if (kind === PlayerAnimationKind.Idle) {
       remote.stopSkillAnimation();
       this.entities.remoteCombatTargets.delete(entityId);
+      this.restoreSkillingTool(entityId, remote);
       return;
     }
 
@@ -1070,6 +1079,7 @@ export class GameManager {
       if (objectData) {
         remote.faceToward(new Vector3(objectData.x, 0, objectData.z));
       }
+      if (toolItemId > 0) this.applySkillingTool(entityId, remote, toolItemId);
       return;
     }
 
@@ -1320,6 +1330,32 @@ export class GameManager {
     if (template) {
       target.attachGear(slotName, itemId, template);
     }
+  }
+
+  /** Swap the weapon slot to the server-picked skilling tool. Passes
+   *  isLocal=false so the gear-template cache is reused across repeated
+   *  chops instead of reloading the GLB on each swap. */
+  private applySkillingTool(
+    entityId: number,
+    character: CharacterEntity,
+    toolItemId: number,
+  ): void {
+    if (toolItemId <= 0 || this.toolSwappedEntities.has(entityId)) return;
+    if (character.getGearItemId('weapon') === toolItemId) return;
+    this.toolSwappedEntities.add(entityId);
+    void this.applyGearToCharacter(character, 'weapon', toolItemId, /* isLocal */ false);
+  }
+
+  /** Restore the entity's real weapon after a skilling swap. Reads from
+   *  localEquipment / remoteEquipment (authoritative, synchronously updated
+   *  on packet receipt) — a snapshot taken at swap-time can be -1 inside
+   *  the async gear-attach window for a freshly-spawned remote. */
+  private restoreSkillingTool(entityId: number, character: CharacterEntity): void {
+    if (!this.toolSwappedEntities.delete(entityId)) return;
+    const realWeapon = entityId === this.localPlayerId
+      ? (this.localEquipment.get(0) ?? 0)
+      : (this.entities.remoteEquipment.get(entityId)?.[0] ?? 0);
+    void this.applyGearToCharacter(character, 'weapon', realWeapon, /* isLocal */ false);
   }
 
   /**
@@ -1694,7 +1730,7 @@ export class GameManager {
           const eq = this.entities.remoteEquipment.get(entityId);
           if (eq) this.applyRemoteEquipmentArray(remote, eq);
           const anim = this.remoteAnimationStates.get(entityId);
-          if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId);
+          if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId, anim.toolItemId);
         });
       }
       if (syncAppearance) {
@@ -1764,6 +1800,7 @@ export class GameManager {
       const kind = (v[1] ?? PlayerAnimationKind.Idle) as PlayerAnimationKind;
       const variant = (v[2] ?? PlayerSkillAnimationVariant.None) as PlayerSkillAnimationVariant;
       const targetId = v[3] ?? 0;
+      const toolItemId = v[4] ?? 0;
 
       if (entityId === this.localPlayerId) {
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
@@ -1772,8 +1809,8 @@ export class GameManager {
         return;
       }
 
-      this.remoteAnimationStates.set(entityId, { kind, variant, targetId });
-      this.applyRemotePlayerAnimation(entityId, kind, variant, targetId);
+      this.remoteAnimationStates.set(entityId, { kind, variant, targetId, toolItemId });
+      this.applyRemotePlayerAnimation(entityId, kind, variant, targetId, toolItemId);
     });
 
     this.network.on(ServerOpcode.NPC_SYNC, (_op, v) => {
@@ -1886,6 +1923,7 @@ export class GameManager {
 
       this.entities.cleanupCombatTargetsFor(entityId);
       this.remoteAnimationStates.delete(entityId);
+      this.toolSwappedEntities.delete(entityId);
       this.entities.removeRemotePlayer(entityId);
       this.entities.removeNpc(entityId);
     });
@@ -2164,6 +2202,7 @@ export class GameManager {
     this.network.on(ServerOpcode.SKILLING_START, (_op, v) => {
       this.isSkilling = true;
       this.skillingObjectId = v[0];
+      const toolItemId = v[1] ?? 0;
       if (this.interactMarker) this.interactMarker.isVisible = false;
       const objData = this.worldObjectDefs.get(v[0]);
       const objDef = objData ? this.objectDefsCache.get(objData.defId) : null;
@@ -2181,6 +2220,10 @@ export class GameManager {
         : undefined;
       const skipAnim = objDef?.category === 'chest';
 
+      if (this.localPlayer && toolItemId > 0) {
+        this.applySkillingTool(this.localPlayerId, this.localPlayer, toolItemId);
+      }
+
       const stillWalking = this.pathIndex < this.path.length;
       if (stillWalking) {
         this.pendingSkill = { objectId: v[0], variant, stationary: skipAnim };
@@ -2192,10 +2235,19 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SKILLING_STOP, (_op, _v) => {
-      this.isSkilling = false;
-      this.skillingObjectId = -1;
-      this.localPlayer?.stopSkillAnimation();
+      this.endLocalSkilling();
     });
+  }
+
+  /** Tear down the local-player skilling state: clear the active-object
+   *  tracking, stop the chop/mine loop, and restore the displaced weapon.
+   *  Shared by SKILLING_STOP (server-triggered) and handleGroundClick
+   *  (player-cancel). */
+  private endLocalSkilling(): void {
+    this.isSkilling = false;
+    this.skillingObjectId = -1;
+    this.localPlayer?.stopSkillAnimation();
+    if (this.localPlayer) this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
   }
 
   private setupPlayerStateHandlers(): void {
@@ -2478,6 +2530,14 @@ export class GameManager {
     console.log(`Map change to '${mapId}' at (${newX}, ${newZ})`);
 
     this.entities.disposeAllEntities();
+    this.remoteAnimationStates.clear();
+    // Local player persists across map changes — restore any displaced
+    // tool first, then clear the set so a teleport mid-chop doesn't leave
+    // the next chop unable to re-swap.
+    if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
+      this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
+    }
+    this.toolSwappedEntities.clear();
 
     // Only dispose models that GameManager created, not linked placed objects from ChunkManager
     for (const [, model] of this.worldObjectModels) {
@@ -3961,6 +4021,7 @@ export class GameManager {
       } else {
         this.localPlayer?.stopSkillAnimation();
       }
+      if (this.localPlayer) this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
     }
     if (this.interactMarker) this.interactMarker.isVisible = false;
 
