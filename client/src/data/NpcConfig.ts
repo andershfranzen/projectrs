@@ -1,9 +1,9 @@
 export const NPC_NAMES: Record<number, string> = {
-  1: 'Chicken', 2: 'Rat', 3: 'Goblin', 4: 'Wolf',
+  1: 'Chicken', 2: 'Giant Rat', 3: 'Goblin', 4: 'Wolf',
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
-  17: 'Snow Wolf',
+  17: 'Snow Wolf', 18: 'Rat',
 };
 
 export interface Npc3DModelEntry {
@@ -21,7 +21,9 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   4:  { file: '/models/npcs/wolf.glb', scale: 0.4, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   6:  { file: '/models/npcs/spider.glb', scale: 0.2, anims: { idle: 'SpiderArmature|SpiderArmature|Spider_Idle', walk: 'SpiderArmature|SpiderArmature|Spider_Walk', attack: 'SpiderArmature|SpiderArmature|Spider_Attack', death: 'SpiderArmature|SpiderArmature|Spider_Death' } },
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', death: 'Armature|Armature|Death' } },
-  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'ready', walk: 'walk', attack: 'attack', death: 'death' } },
+  // Camel.glb only ships with idle/walk/eat — no attack or death tracks.
+  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk' } },
+  18: { file: '/models/npcs/rat_small.glb', scale: 0.15, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   17: {
     file: '/models/npcs/wolf.glb',
     scale: 0.4,

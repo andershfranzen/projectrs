@@ -1,6 +1,7 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE } from '@projectrs/shared';
 import { resolve, dirname, sep } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
+import { promises as fsp } from 'fs';
 import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile } from '@projectrs/shared';
 import { defaultKCTile } from '@projectrs/shared';
 import { World } from './World';
@@ -22,27 +23,30 @@ function splitObjectsByChunk(objects: PlacedObject[]): Map<string, PlacedObject[
   return chunks;
 }
 
-/** Save placed objects as per-chunk JSON files, removing chunks that are now empty */
-function saveChunkedObjects(mapDir: string, objects: PlacedObject[]): void {
+/** Save placed objects as per-chunk JSON files, removing chunks that are now empty.
+ *  Async fs so the main thread stays responsive — editor saves no longer freeze
+ *  ticks for connected players. */
+async function saveChunkedObjects(mapDir: string, objects: PlacedObject[]): Promise<void> {
   const objectsDir = resolve(mapDir, 'objects');
-  mkdirSync(objectsDir, { recursive: true });
+  await fsp.mkdir(objectsDir, { recursive: true });
 
-  // Track which chunk files we write so we can delete stale ones
   const written = new Set<string>();
   const chunks = splitObjectsByChunk(objects);
+  const writes: Promise<void>[] = [];
   for (const [key, objs] of chunks) {
-    const filePath = resolve(objectsDir, `${key}.json`);
-    writeFileSync(filePath, JSON.stringify(objs, null, 2));
+    writes.push(fsp.writeFile(resolve(objectsDir, `${key}.json`), JSON.stringify(objs, null, 2)));
     written.add(`${key}.json`);
   }
+  await Promise.all(writes);
 
   // Remove chunk files that no longer have objects
   try {
-    for (const file of readdirSync(objectsDir)) {
+    const files = await fsp.readdir(objectsDir);
+    await Promise.all(files.map(async (file) => {
       if (file.startsWith('chunk_') && file.endsWith('.json') && !written.has(file)) {
-        rmSync(resolve(objectsDir, file));
+        await fsp.rm(resolve(objectsDir, file));
       }
-    }
+    }));
   } catch { /* dir may not exist yet */ }
 }
 
@@ -61,34 +65,89 @@ function loadChunkedObjects(mapDir: string): PlacedObject[] | null {
   return objects.length > 0 ? objects : null;
 }
 
+/** Read + parse JSON, returning null on any failure (missing file, bad JSON, etc.). */
+async function loadJsonOrNull<T = unknown>(path: string): Promise<T | null> {
+  try {
+    return JSON.parse(await fsp.readFile(path, 'utf-8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Atomic JSON save + timestamped backup of the prior file. Shape shared by
+ * the NPC / quest / gear-overrides editor endpoints, all of which need:
+ *   - tmp file + rename → atomic publish
+ *   - copy old file into a rotated backup dir before publishing
+ *   - keep last `maxKeep` snapshots, drop the rest
+ *
+ * Backup IO runs in parallel with the tmp-file write since the rename at the
+ * end commits regardless of which finishes first.
+ */
+async function saveJsonWithBackup(opts: {
+  path: string;
+  data: unknown;
+  backupDir: string;
+  backupPrefix: string;
+  backupExt: string;
+  maxKeep: number;
+}): Promise<void> {
+  const { path, data, backupDir, backupPrefix, backupExt, maxKeep } = opts;
+  const tmpPath = path + '.tmp';
+  const filenameRe = new RegExp(`^${backupPrefix}\\..+\\.${backupExt.replace(/^\./, '')}$`);
+
+  await Promise.all([
+    (async () => {
+      try {
+        await fsp.mkdir(backupDir, { recursive: true });
+        const sourceExists = await fsp.stat(path).then(() => true).catch(() => false);
+        if (sourceExists) {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          await fsp.cp(path, resolve(backupDir, `${backupPrefix}.${ts}.${backupExt.replace(/^\./, '')}`));
+          const snaps = (await fsp.readdir(backupDir)).filter((n) => filenameRe.test(n)).sort();
+          const excess = Math.max(0, snaps.length - maxKeep);
+          await Promise.all(
+            snaps.slice(0, excess).map((n) => fsp.rm(resolve(backupDir, n)).catch(() => {})),
+          );
+        }
+      } catch (err) {
+        console.warn(`[save-${backupPrefix}] backup failed:`, (err as Error)?.message);
+      }
+    })(),
+    fsp.writeFile(tmpPath, JSON.stringify(data, null, 2)),
+  ]);
+  await fsp.rename(tmpPath, path);
+}
+
 // --- Backup helper ---
 
 /** Copy the current map dir into backups/{timestamp}/ and prune to maxKeep snapshots.
- *  Excludes the backups/ subdir itself. Any error is logged and swallowed. */
-function createMapBackup(mapDir: string, maxKeep: number = 20): void {
+ *  Excludes the backups/ subdir itself. Any error is logged and swallowed.
+ *  Async so it doesn't pin the libuv thread pool during editor saves. */
+async function createMapBackup(mapDir: string, maxKeep: number = 20): Promise<void> {
   try {
-    if (!existsSync(mapDir)) return;
     const backupsRoot = resolve(mapDir, 'backups');
-    mkdirSync(backupsRoot, { recursive: true });
+    await fsp.mkdir(backupsRoot, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const dest = resolve(backupsRoot, ts);
 
-    // Copy each non-'backups' entry from the map dir into the snapshot
-    for (const entry of readdirSync(mapDir)) {
-      if (entry === 'backups') continue;
-      cpSync(resolve(mapDir, entry), resolve(dest, entry), { recursive: true });
-    }
+    const entries = await fsp.readdir(mapDir);
+    await Promise.all(entries.map((entry) =>
+      entry === 'backups'
+        ? Promise.resolve()
+        : fsp.cp(resolve(mapDir, entry), resolve(dest, entry), { recursive: true })
+    ));
 
-    // Rotate: keep the N newest snapshots, delete the rest
-    const snapshots = readdirSync(backupsRoot)
+    // Rotate: keep the N newest snapshots. Everything under backups/ is a
+    // timestamped snapshot directory by construction, so we can sort the
+    // readdir output directly without per-entry stat() calls.
+    const snapshots = (await fsp.readdir(backupsRoot))
       .filter((n) => n !== '.' && n !== '..')
-      .map((n) => ({ n, path: resolve(backupsRoot, n) }))
-      .filter((e) => { try { return statSync(e.path).isDirectory(); } catch { return false; } })
-      .sort((a, b) => a.n.localeCompare(b.n)); // ISO timestamps sort lexicographically
+      .sort(); // ISO timestamps sort lexicographically oldest-first
     const toDelete = snapshots.slice(0, Math.max(0, snapshots.length - maxKeep));
-    for (const s of toDelete) {
-      try { rmSync(s.path, { recursive: true, force: true }); } catch {}
-    }
+    await Promise.all(toDelete.map((n) =>
+      fsp.rm(resolve(backupsRoot, n), { recursive: true, force: true }).catch(() => {}),
+    ));
   } catch (err) {
     console.warn('[save-map] backup failed:', (err as Error)?.message);
   }
@@ -111,7 +170,7 @@ const TILE_DEFAULTS: Record<string, any> = {
   textureIdB: null,
   textureRotationB: 0,
   textureScaleB: 1,
-  textureCutAngle: (3 * Math.PI) / 4,
+  textureCutAngle: DEFAULT_CUT_ANGLE,
   waterPainted: false,
   waterSurface: false,
 };
@@ -135,13 +194,14 @@ function expandTile(partial: Partial<KCTile>): KCTile {
 }
 
 /** Save tiles as per-chunk JSON files */
-function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number, height: number): void {
+async function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number, height: number): Promise<void> {
   const tilesDir = resolve(mapDir, 'tiles');
-  mkdirSync(tilesDir, { recursive: true });
+  await fsp.mkdir(tilesDir, { recursive: true });
 
   const chunksX = Math.ceil(width / EDITOR_CHUNK_SIZE);
   const chunksZ = Math.ceil(height / EDITOR_CHUNK_SIZE);
   const written = new Set<string>();
+  const writes: Promise<void>[] = [];
 
   for (let cz = 0; cz < chunksZ; cz++) {
     for (let cx = 0; cx < chunksX; cx++) {
@@ -166,42 +226,43 @@ function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number, heig
 
       if (Object.keys(chunkData).length > 0) {
         const filename = `chunk_${cx}_${cz}.json`;
-        writeFileSync(resolve(tilesDir, filename), JSON.stringify(chunkData));
+        writes.push(fsp.writeFile(resolve(tilesDir, filename), JSON.stringify(chunkData)));
         written.add(filename);
       }
     }
   }
+  await Promise.all(writes);
 
   // Partial-payload guard: if the editor sent a tiles array with zero
   // non-default tiles across the entire map, treat it as an empty payload
   // and preserve existing chunk files instead of deleting them.
   if (written.size === 0) return;
 
-  // Remove stale chunk files
   try {
-    for (const file of readdirSync(tilesDir)) {
+    const files = await fsp.readdir(tilesDir);
+    await Promise.all(files.map(async (file) => {
       if (file.startsWith('chunk_') && file.endsWith('.json') && !written.has(file)) {
-        rmSync(resolve(tilesDir, file));
+        await fsp.rm(resolve(tilesDir, file));
       }
-    }
+    }));
   } catch { /* dir may not exist yet */ }
 }
 
 /** Save heights as per-chunk JSON files (vertex grid: 65x65 per chunk including shared boundaries) */
-function saveChunkedHeights(mapDir: string, heights: number[][], width: number, height: number): void {
+async function saveChunkedHeights(mapDir: string, heights: number[][], width: number, height: number): Promise<void> {
   const heightsDir = resolve(mapDir, 'heights');
-  mkdirSync(heightsDir, { recursive: true });
+  await fsp.mkdir(heightsDir, { recursive: true });
 
   const chunksX = Math.ceil(width / EDITOR_CHUNK_SIZE);
   const chunksZ = Math.ceil(height / EDITOR_CHUNK_SIZE);
   const written = new Set<string>();
+  const writes: Promise<void>[] = [];
 
   for (let cz = 0; cz < chunksZ; cz++) {
     for (let cx = 0; cx < chunksX; cx++) {
       const chunkData: Record<string, number> = {};
       const startZ = cz * EDITOR_CHUNK_SIZE;
       const startX = cx * EDITOR_CHUNK_SIZE;
-      // Vertices: +1 for shared boundary
       const endZ = Math.min(startZ + EDITOR_CHUNK_SIZE + 1, height + 1);
       const endX = Math.min(startX + EDITOR_CHUNK_SIZE + 1, width + 1);
 
@@ -218,24 +279,25 @@ function saveChunkedHeights(mapDir: string, heights: number[][], width: number, 
 
       if (Object.keys(chunkData).length > 0) {
         const filename = `chunk_${cx}_${cz}.json`;
-        writeFileSync(resolve(heightsDir, filename), JSON.stringify(chunkData));
+        writes.push(fsp.writeFile(resolve(heightsDir, filename), JSON.stringify(chunkData)));
         written.add(filename);
       }
     }
   }
+  await Promise.all(writes);
 
   // Partial-payload guard: zero non-zero vertices across the whole map almost
   // always means a bad payload, not a deliberate flatten. Preserve existing
   // chunk files; for a real flatten, delete heights/ manually.
   if (written.size === 0) return;
 
-  // Remove stale chunk files
   try {
-    for (const file of readdirSync(heightsDir)) {
+    const files = await fsp.readdir(heightsDir);
+    await Promise.all(files.map(async (file) => {
       if (file.startsWith('chunk_') && file.endsWith('.json') && !written.has(file)) {
-        rmSync(resolve(heightsDir, file));
+        await fsp.rm(resolve(heightsDir, file));
       }
-    }
+    }));
   } catch { /* dir may not exist yet */ }
 }
 
@@ -824,47 +886,26 @@ const server = Bun.serve<SocketData>({
         // Both checks are bypassable by sending the requested data inline
         // (you can't accidentally drop 50% of entries unless you really mean to).
         const incomingCount = (body && typeof body === 'object') ? Object.keys(body).length : 0;
-        if (existsSync(filePath)) {
-          let existingCount = 0;
-          try {
-            const existing = JSON.parse(readFileSync(filePath, 'utf-8'));
-            if (existing && typeof existing === 'object') existingCount = Object.keys(existing).length;
-          } catch { /* unreadable existing → fall through */ }
-
-          if (existingCount > 0 && incomingCount === 0) {
-            return jsonResponse({ ok: false, error: 'Refusing to overwrite non-empty gear-overrides with empty payload' }, 400);
-          }
-          if (existingCount >= 4 && incomingCount * 2 < existingCount) {
-            return jsonResponse({
-              ok: false,
-              error: `Refusing save: would shrink ${existingCount} → ${incomingCount} entries (>50% drop)`,
-            }, 400);
-          }
+        const existing = await loadJsonOrNull<Record<string, unknown>>(filePath);
+        const existingCount = (existing && typeof existing === 'object') ? Object.keys(existing).length : 0;
+        if (existingCount > 0 && incomingCount === 0) {
+          return jsonResponse({ ok: false, error: 'Refusing to overwrite non-empty gear-overrides with empty payload' }, 400);
+        }
+        if (existingCount >= 4 && incomingCount * 2 < existingCount) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing save: would shrink ${existingCount} → ${incomingCount} entries (>50% drop)`,
+          }, 400);
         }
 
-        // Rotated timestamped backups (matches the map-editor pattern in
-        // createMapBackup). Keeps the last 10 snapshots so the most recent
-        // burst of edits is recoverable even if multiple bad saves chain.
-        if (existsSync(filePath)) {
-          try {
-            const ts = new Date().toISOString().replace(/[:.]/g, '-');
-            const bakDir = dirname(filePath);
-            const bakPath = resolve(bakDir, `gear-overrides.${ts}.bak`);
-            cpSync(filePath, bakPath);
-            // Rotate: keep the 10 newest .bak snapshots, drop the rest.
-            const baks = readdirSync(bakDir)
-              .filter(n => /^gear-overrides\..+\.bak$/.test(n))
-              .sort(); // ISO-prefix sorts oldest-first
-            const excess = Math.max(0, baks.length - 10);
-            for (let i = 0; i < excess; i++) {
-              try { rmSync(resolve(bakDir, baks[i])); } catch { /* best-effort */ }
-            }
-          } catch { /* best-effort: never block the save on backup failure */ }
-        }
-
-        const tmpPath = filePath + '.tmp';
-        writeFileSync(tmpPath, JSON.stringify(body, null, 2));
-        renameSync(tmpPath, filePath);
+        await saveJsonWithBackup({
+          path: filePath,
+          data: body,
+          backupDir: dirname(filePath),
+          backupPrefix: 'gear-overrides',
+          backupExt: 'bak',
+          maxKeep: 10,
+        });
         return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
@@ -1061,62 +1102,46 @@ const server = Bun.serve<SocketData>({
           return new Response('Forbidden', { status: 403 });
         }
 
-        // Snapshot current state before any writes. Cheap insurance against partial-payload wipes.
-        createMapBackup(mapDir);
+        // (No pre-save backup: the PREVIOUS save's post-save snapshot is the
+        // same data as a pre-save would capture — nothing has been written
+        // since. The very first save is unguarded; partial-payload protection
+        // is handled inline by the preserve-existing checks below.)
 
         // Use editor's dimensions (may have changed via chunk add/remove), preserve spawn point
         const metaPath = resolve(mapDir, 'meta.json');
-        try {
-          const existingMeta = JSON.parse(readFileSync(metaPath, 'utf-8'));
-          if (existingMeta.spawnPoint) meta.spawnPoint = existingMeta.spawnPoint;
-        } catch { /* first save */ }
-        // Use dimensions from map data if available (editor backing array may have grown)
+        const existingMeta = await loadJsonOrNull<MapMeta>(metaPath);
+        if (existingMeta?.spawnPoint) meta.spawnPoint = existingMeta.spawnPoint;
         if (mapData.map?.width) meta.width = mapData.map.width;
         if (mapData.map?.height) meta.height = mapData.map.height;
-        writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
-        // Save spawns (NPCs, items, and any sprite-only objects from editor)
         const spawnsPath = resolve(mapDir, 'spawns.json');
         const mergedSpawns = {
           npcs: spawns?.npcs ?? [],
           objects: spawns?.objects ?? [],
           items: spawns?.items ?? [],
         };
-        writeFileSync(spawnsPath, JSON.stringify(mergedSpawns, null, 2));
 
-        // Save placed objects as per-chunk files
         const mapJsonPath = resolve(mapDir, 'map.json');
         let objectsToSave = mapData.placedObjects ?? [];
         // Preserve existing objects if editor sends empty (prevents accidental wipe)
         if (objectsToSave.length === 0) {
           const existing = loadChunkedObjects(mapDir);
           if (existing) objectsToSave = existing;
-          else try {
-            const existingMap: KCMapFile = JSON.parse(readFileSync(mapJsonPath, 'utf-8'));
-            objectsToSave = existingMap.placedObjects ?? [];
-          } catch { /* no existing data */ }
+          else {
+            const existingMap = await loadJsonOrNull<KCMapFile>(mapJsonPath);
+            if (existingMap) objectsToSave = existingMap.placedObjects ?? [];
+          }
         }
-        saveChunkedObjects(mapDir, objectsToSave);
 
-        // Save tiles and heights as per-chunk files
         const mapWidth = mapData.map?.width ?? meta.width;
         const mapHeight = mapData.map?.height ?? meta.height;
-        if (mapData.map?.tiles?.length > 0) {
-          saveChunkedTiles(mapDir, mapData.map.tiles, mapWidth, mapHeight);
-        }
-        if (mapData.map?.heights?.length > 0) {
-          saveChunkedHeights(mapDir, mapData.map.heights, mapWidth, mapHeight);
-        }
 
-        // Save map.json WITHOUT placedObjects, tiles, or heights (they're in chunk files now).
         // Preserve existing texturePlanes if editor didn't include the field (partial-payload protection).
         const { placedObjects: _, ...mapDataWithoutObjects } = mapData;
         let preservedTexturePlanes = mapDataWithoutObjects.map?.texturePlanes;
         if (preservedTexturePlanes === undefined) {
-          try {
-            const existingMap: KCMapFile = JSON.parse(readFileSync(mapJsonPath, 'utf-8'));
-            preservedTexturePlanes = existingMap.map?.texturePlanes ?? [];
-          } catch { preservedTexturePlanes = []; }
+          const existingMap = await loadJsonOrNull<KCMapFile>(mapJsonPath);
+          preservedTexturePlanes = existingMap?.map?.texturePlanes ?? [];
         }
         const mapFileToSave = {
           ...mapDataWithoutObjects,
@@ -1128,34 +1153,41 @@ const server = Bun.serve<SocketData>({
             texturePlanes: preservedTexturePlanes,
           },
         };
-        writeFileSync(mapJsonPath, JSON.stringify(mapFileToSave, null, 2));
-        // Walls — preserve existing if editor didn't include the field (partial-payload protection).
+
+        // Walls + biomes: preserve existing if editor omitted the field
+        // (partial-payload protection).
         const wallsPath = resolve(mapDir, 'walls.json');
-        let wallsToSave = walls;
-        if (wallsToSave === undefined) {
-          try {
-            wallsToSave = JSON.parse(readFileSync(wallsPath, 'utf-8')) as WallsFile;
-          } catch {
-            wallsToSave = { walls: {} };
-          }
-        }
-        writeFileSync(wallsPath, JSON.stringify(wallsToSave, null, 2));
+        const wallsToSave: WallsFile = walls
+          ?? (await loadJsonOrNull<WallsFile>(wallsPath))
+          ?? { walls: {} };
 
-        // Biomes — preserve existing if editor didn't include the field (partial-payload protection).
         const biomesPath = resolve(mapDir, 'biomes.json');
-        let biomesToSave: BiomesFile | undefined = biomes;
-        if (biomesToSave === undefined) {
-          try {
-            biomesToSave = JSON.parse(readFileSync(biomesPath, 'utf-8')) as BiomesFile;
-          } catch {
-            biomesToSave = { defs: [], cells: {} };
-          }
-        }
-        writeFileSync(biomesPath, JSON.stringify(biomesToSave, null, 2));
+        const biomesToSave: BiomesFile = biomes
+          ?? (await loadJsonOrNull<BiomesFile>(biomesPath))
+          ?? { defs: [], cells: {} };
 
-        // Post-save snapshot so the fresh state is immediately backed up,
-        // not just the state that was about to be overwritten.
-        createMapBackup(mapDir);
+        // Fan out the independent writes. Each is its own file; ordering doesn't
+        // matter and the OS can pipeline them. The chunked tile/height/object
+        // writers internally parallelize their per-chunk writes too.
+        await Promise.all([
+          fsp.writeFile(metaPath, JSON.stringify(meta, null, 2)),
+          fsp.writeFile(spawnsPath, JSON.stringify(mergedSpawns, null, 2)),
+          fsp.writeFile(mapJsonPath, JSON.stringify(mapFileToSave, null, 2)),
+          fsp.writeFile(wallsPath, JSON.stringify(wallsToSave, null, 2)),
+          fsp.writeFile(biomesPath, JSON.stringify(biomesToSave, null, 2)),
+          saveChunkedObjects(mapDir, objectsToSave),
+          mapData.map?.tiles?.length > 0
+            ? saveChunkedTiles(mapDir, mapData.map.tiles, mapWidth, mapHeight)
+            : Promise.resolve(),
+          mapData.map?.heights?.length > 0
+            ? saveChunkedHeights(mapDir, mapData.map.heights, mapWidth, mapHeight)
+            : Promise.resolve(),
+        ]);
+
+        // Post-save snapshot of the fresh state. Fire-and-forget: the editor
+        // doesn't need to wait, and the bulk-copy can run while other requests
+        // (including game ticks) are serviced.
+        void createMapBackup(mapDir);
 
         return jsonResponse({ ok: true });
       } catch (e: any) {
@@ -1182,40 +1214,21 @@ const server = Bun.serve<SocketData>({
         // working copy shouldn't be able to wipe the canonical defs.
         const dataDir = resolve(import.meta.dir, '../data');
         const npcsPath = resolve(dataDir, 'npcs.json');
-        if (existsSync(npcsPath)) {
-          try {
-            const existing = JSON.parse(readFileSync(npcsPath, 'utf-8')) as any[];
-            if (Array.isArray(existing) && existing.length >= 4 && body.npcs.length * 2 < existing.length) {
-              return jsonResponse({
-                ok: false,
-                error: `Refusing save: would shrink ${existing.length} → ${body.npcs.length} NPCs (>50% drop)`,
-              }, 400);
-            }
-          } catch { /* unreadable existing file — proceed */ }
+        const existingNpcs = await loadJsonOrNull<any[]>(npcsPath);
+        if (Array.isArray(existingNpcs) && existingNpcs.length >= 4 && body.npcs.length * 2 < existingNpcs.length) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing save: would shrink ${existingNpcs.length} → ${body.npcs.length} NPCs (>50% drop)`,
+          }, 400);
         }
-        // Pre-save snapshot. Folder lives under data/backups/npcs (separate
-        // from per-map backups so they don't clutter map dirs).
-        const backupsDir = resolve(dataDir, 'backups', 'npcs');
-        try {
-          mkdirSync(backupsDir, { recursive: true });
-          if (existsSync(npcsPath)) {
-            const ts = new Date().toISOString().replace(/[:.]/g, '-');
-            cpSync(npcsPath, resolve(backupsDir, `npcs.${ts}.json`));
-            // Rotate: keep the 20 newest snapshots.
-            const snaps = readdirSync(backupsDir)
-              .filter(n => /^npcs\..+\.json$/.test(n))
-              .sort();
-            const excess = Math.max(0, snaps.length - 20);
-            for (let i = 0; i < excess; i++) {
-              try { rmSync(resolve(backupsDir, snaps[i])); } catch { /* best-effort */ }
-            }
-          }
-        } catch (err) {
-          console.warn('[save-npcs] backup failed:', (err as Error)?.message);
-        }
-        const tmpPath = npcsPath + '.tmp';
-        writeFileSync(tmpPath, JSON.stringify(body.npcs, null, 2));
-        renameSync(tmpPath, npcsPath);
+        await saveJsonWithBackup({
+          path: npcsPath,
+          data: body.npcs,
+          backupDir: resolve(dataDir, 'backups', 'npcs'),
+          backupPrefix: 'npcs',
+          backupExt: 'json',
+          maxKeep: 20,
+        });
         // Hot-reload — existing live NPC instances keep their old def (changes
         // mid-fight would be jarring); newly spawned NPCs and respawns pick up
         // the new defs. Editor users can /reloadmap to force-respawn if they
@@ -1237,36 +1250,21 @@ const server = Bun.serve<SocketData>({
         }
         const dataDir = resolve(import.meta.dir, '../data');
         const questsPath = resolve(dataDir, 'quests.json');
-        // Shrinkage guard, same shape as npcs save.
-        if (existsSync(questsPath)) {
-          try {
-            const existing = JSON.parse(readFileSync(questsPath, 'utf-8')) as any[];
-            if (Array.isArray(existing) && existing.length >= 4 && body.quests.length * 2 < existing.length) {
-              return jsonResponse({
-                ok: false,
-                error: `Refusing save: would shrink ${existing.length} → ${body.quests.length} quests (>50% drop)`,
-              }, 400);
-            }
-          } catch { /* unreadable existing — proceed */ }
+        const existingQuests = await loadJsonOrNull<any[]>(questsPath);
+        if (Array.isArray(existingQuests) && existingQuests.length >= 4 && body.quests.length * 2 < existingQuests.length) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing save: would shrink ${existingQuests.length} → ${body.quests.length} quests (>50% drop)`,
+          }, 400);
         }
-        const backupsDir = resolve(dataDir, 'backups', 'quests');
-        try {
-          mkdirSync(backupsDir, { recursive: true });
-          if (existsSync(questsPath)) {
-            const ts = new Date().toISOString().replace(/[:.]/g, '-');
-            cpSync(questsPath, resolve(backupsDir, `quests.${ts}.json`));
-            const snaps = readdirSync(backupsDir).filter(n => /^quests\..+\.json$/.test(n)).sort();
-            const excess = Math.max(0, snaps.length - 20);
-            for (let i = 0; i < excess; i++) {
-              try { rmSync(resolve(backupsDir, snaps[i])); } catch { /* best-effort */ }
-            }
-          }
-        } catch (err) {
-          console.warn('[save-quests] backup failed:', (err as Error)?.message);
-        }
-        const tmpPath = questsPath + '.tmp';
-        writeFileSync(tmpPath, JSON.stringify(body.quests, null, 2));
-        renameSync(tmpPath, questsPath);
+        await saveJsonWithBackup({
+          path: questsPath,
+          data: body.quests,
+          backupDir: resolve(dataDir, 'backups', 'quests'),
+          backupPrefix: 'quests',
+          backupExt: 'json',
+          maxKeep: 20,
+        });
         // Hot-reload: existing in-progress quests on players keep their state
         // (no stage-shift), but new triggers + new defs pick up immediately.
         world.data.reloadQuests();
@@ -1415,38 +1413,39 @@ const server = Bun.serve<SocketData>({
 
         const mapDir = resolve(MAPS_DIR, mapId);
         if (!mapDir.startsWith(MAPS_DIR)) return new Response('Forbidden', { status: 403 });
-        mkdirSync(mapDir, { recursive: true });
+        await fsp.mkdir(mapDir, { recursive: true });
 
-        writeFileSync(resolve(mapDir, 'meta.json'), data.files['meta.json']);
-        writeFileSync(resolve(mapDir, 'spawns.json'), data.files['spawns.json']);
-        if (data.files['walls.json']) {
-          writeFileSync(resolve(mapDir, 'walls.json'), data.files['walls.json']);
-        }
-        if (data.files['biomes.json']) {
-          writeFileSync(resolve(mapDir, 'biomes.json'), data.files['biomes.json']);
-        }
-
-        // Parse imported map.json, split tiles/heights into chunks, then write metadata-only map.json
+        // Parse imported map.json once; split tiles/heights/objects into chunks.
         const importedMap: KCMapFile = JSON.parse(data.files['map.json']);
         const importedObjects = importedMap.placedObjects ?? [];
-        if (importedObjects.length > 0) {
-          saveChunkedObjects(mapDir, importedObjects);
-        }
         const iw = importedMap.map?.width ?? 0;
         const ih = importedMap.map?.height ?? 0;
-        if (importedMap.map?.tiles?.length > 0 && iw > 0 && ih > 0) {
-          saveChunkedTiles(mapDir, importedMap.map.tiles, iw, ih);
-        }
-        if (importedMap.map?.heights?.length > 0 && iw > 0 && ih > 0) {
-          saveChunkedHeights(mapDir, importedMap.map.heights, iw, ih);
-        }
-        // Write metadata-only map.json (tiles/heights/objects stripped)
         const metadataOnly: KCMapFile = {
           ...importedMap,
           placedObjects: [],
           map: { ...importedMap.map, tiles: [], heights: [] },
         };
-        writeFileSync(resolve(mapDir, 'map.json'), JSON.stringify(metadataOnly, null, 2));
+
+        await Promise.all([
+          fsp.writeFile(resolve(mapDir, 'meta.json'), data.files['meta.json']),
+          fsp.writeFile(resolve(mapDir, 'spawns.json'), data.files['spawns.json']),
+          data.files['walls.json']
+            ? fsp.writeFile(resolve(mapDir, 'walls.json'), data.files['walls.json'])
+            : Promise.resolve(),
+          data.files['biomes.json']
+            ? fsp.writeFile(resolve(mapDir, 'biomes.json'), data.files['biomes.json'])
+            : Promise.resolve(),
+          fsp.writeFile(resolve(mapDir, 'map.json'), JSON.stringify(metadataOnly, null, 2)),
+          importedObjects.length > 0
+            ? saveChunkedObjects(mapDir, importedObjects)
+            : Promise.resolve(),
+          importedMap.map?.tiles?.length > 0 && iw > 0 && ih > 0
+            ? saveChunkedTiles(mapDir, importedMap.map.tiles, iw, ih)
+            : Promise.resolve(),
+          importedMap.map?.heights?.length > 0 && iw > 0 && ih > 0
+            ? saveChunkedHeights(mapDir, importedMap.map.heights, iw, ih)
+            : Promise.resolve(),
+        ]);
 
         return jsonResponse({ ok: true, mapId });
       } catch (e: any) {

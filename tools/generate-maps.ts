@@ -47,7 +47,6 @@ function tile(ground: string, waterPainted = false) {
     textureId: null, textureRotation: 0, textureScale: 1,
     textureWorldUV: false, textureHalfMode: false,
     textureIdB: null, textureRotationB: 0, textureScaleB: 1,
-    textureCutAngle: (3 * Math.PI) / 4,
     waterPainted,
   };
 }

@@ -1442,12 +1442,14 @@ export class GameManager {
       // imported meshes for slots that need skinning. attachSkinnedArmor's
       // name-based bone remap then handles the bind to our character skeleton.
       const SKINNED_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet', 'cape']);
+      const bodyHideStyle: 'plate' | 'chain' =
+        this.itemDefsCache.get(itemId)?.bodyHideStyle === 'chain' ? 'chain' : 'plate';
       if (
         result.skeletons.length === 0 &&
         SKINNED_SLOTS.has(slotName) &&
         character
       ) {
-        const ok = await character.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId);
+        const ok = await character.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId, bodyHideStyle);
         if (ok) {
           const loaderRoot = result.meshes.find(m => m.name === '__root__');
           if (loaderRoot) loaderRoot.dispose();
@@ -1506,7 +1508,7 @@ export class GameManager {
 
         character.detachGear(slotName);
 
-        character.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId);
+        character.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId, bodyHideStyle);
         const loaderRoot = result.meshes.find(m => m.name === '__root__');
         if (loaderRoot) loaderRoot.dispose();
 

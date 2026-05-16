@@ -1,0 +1,551 @@
+# Contributor: Add Examine Text
+
+Fill in the blank after each item. We will batch them into the project later.
+
+Format: `Name — <your examine text here>`
+
+
+## All GLB files
+
+- `Character models/Universal Animation Library 2[Source]/Female Mannequin/Unreal-Godot/Mannequin_F.glb` — 
+- `Character models/Universal Animation Library 2[Source]/Unreal-Godot/UAL2.glb` — 
+- `Character models/Universal Animation Library[Standard]/Unreal-Godot/UAL1_Standard.glb` — 
+- `Character models/animations/start_walking.glb` — 
+- `Character models/main character backup.glb` — 
+- `Character models/main character.glb` — 
+- `Character models/new animations/attack.glb` — 
+- `Character models/new animations/attack_punch.glb` — 
+- `Character models/new animations/attack_slash.glb` — 
+- `Character models/new animations/great_sword_slash.glb` — 
+- `Character models/new animations/idle.glb` — 
+- `Character models/new animations/punching.glb` — 
+- `Character models/new animations/standard_walk.glb` — 
+- `Character models/new animations/standard_walk_new.glb` — 
+- `Character models/new animations/standing_melee_attack_downward.glb` — 
+- `Character models/new animations/walk.glb` — 
+- `Character models/new animations/woodcutting.glb` — 
+- `assets/Roofs/roof corner inverse.glb` — 
+- `assets/Roofs/roof corner.glb` — 
+- `assets/Roofs/roof triangle.glb` — 
+- `assets/Roofs/roof.glb` — 
+- `assets/Roofs/tile roofing.glb` — 
+- `assets/Roofs/tile roofing2.glb` — 
+- `assets/equipment/Tools/Axe.glb` — 
+- `assets/equipment/Tools/Pickaxe.glb` — 
+- `assets/equipment/head/200.glb` — 
+- `assets/equipment/head/201.glb` — 
+- `assets/equipment/head/202.glb` — 
+- `assets/equipment/head/203.glb` — 
+- `assets/equipment/head/204.glb` — 
+- `assets/equipment/head/205.glb` — 
+- `assets/equipment/head/206.glb` — 
+- `assets/equipment/head/207.glb` — 
+- `assets/equipment/head/208.glb` — 
+- `assets/equipment/head/209.glb` — 
+- `assets/equipment/head/210.glb` — 
+- `assets/equipment/head/211.glb` — 
+- `assets/equipment/head/212.glb` — 
+- `assets/equipment/head/213.glb` — 
+- `assets/equipment/head/214.glb` — 
+- `assets/equipment/head/215.glb` — 
+- `assets/equipment/head/216.glb` — 
+- `assets/equipment/head/217.glb` — 
+- `assets/equipment/head/218.glb` — 
+- `assets/equipment/head/219.glb` — 
+- `assets/equipment/head/220.glb` — 
+- `assets/equipment/head/221.glb` — 
+- `assets/equipment/head/222.glb` — 
+- `assets/equipment/head/223.glb` — 
+- `assets/equipment/head/66.glb` — 
+- `assets/equipment/head/79.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_01_A_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_01_B_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_01_C_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_02_A_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_02_B_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_02_C_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_03_A_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_03_B_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_03_C_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_04_A_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_04_B_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_04_C_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_05_A_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_05_B_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_05_C_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_cloth_00_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_leather_00_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_naked_00_body.glb` — 
+- `assets/equipment/polytope/armor_male/body/PT_Male_Armor_plate_00_body.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_01_A_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_01_B_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_01_C_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_02_A_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_02_B_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_02_C_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_03_A_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_03_B_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_03_C_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_04_A_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_04_B_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_04_C_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_05_A_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_05_B_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_05_C_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_cloth_00_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_leather_00_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_naked_00_boots.glb` — 
+- `assets/equipment/polytope/armor_male/boots/PT_Male_Armor_plate_00_boots.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_01_A_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_01_B_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_01_C_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_02_A_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_02_B_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_02_C_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_03_A_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_03_B_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_03_C_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_04_A_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_04_B_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_04_C_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_05_A_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_05_B_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_05_C_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_leather_00_cape.glb` — 
+- `assets/equipment/polytope/armor_male/cape/PT_Male_Armor_plate_00_cape.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_01_A_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_01_B_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_01_C_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_02_A_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_02_B_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_02_C_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_03_A_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_03_B_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_03_C_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_04_A_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_04_B_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_04_C_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_05_A_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_05_B_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_05_C_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_cloth_00_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_leather_00_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_naked_00_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/gauntlets/PT_Male_Armor_plate_00_gauntlets.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_01_A_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_01_B_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_01_C_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_02_A_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_02_B_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_02_C_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_04_A_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_04_B_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_04_C_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_05_A_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_05_B_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/helmet/PT_Male_Armor_05_C_helmet.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_01_A_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_01_B_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_01_C_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_02_A_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_02_B_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_02_C_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_03_A_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_03_B_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_03_C_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_04_A_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_04_B_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_04_C_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_05_A_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_05_B_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_05_C_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_cloth_00_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_leather_00_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_naked_00_legs.glb` — 
+- `assets/equipment/polytope/armor_male/legs/PT_Male_Armor_plate_00_legs.glb` — 
+- `assets/equipment/polytope/weapons/PT_Arrow_03_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Bow_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Club_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Crossbow_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Dagger_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_LongWaraxe_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Longbow_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Longsword_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Mace_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Pike_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Quiver_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Sheath_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Shield_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Shield_06_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Shield_10_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Shield_14_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Shield_19_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_ShortWaraxe_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Sword_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_WarHammer_01_a.glb` — 
+- `assets/equipment/polytope/weapons/PT_Waraxe_01_a.glb` — 
+- `assets/equipment/shield/16.glb` — 
+- `assets/equipment/shield/4.glb` — 
+- `assets/equipment/weapon/2.glb` — 
+- `assets/equipment/weapon/3.glb` — 
+- `assets/equipment/weapon/31.glb` — 
+- `assets/equipment/weapon/32.glb` — 
+- `assets/equipment/weapon/33.glb` — 
+- `assets/equipment/weapon/36.glb` — 
+- `assets/equipment/weapon/37.glb` — 
+- `assets/equipment/weapon/38.glb` — 
+- `assets/equipment/weapon/40.glb` — 
+- `assets/equipment/weapon/41.glb` — 
+- `assets/equipment/weapon/5.glb` — 
+- `assets/equipment/weapon/53.glb` — 
+- `assets/equipment/weapon/54.glb` — 
+- `assets/equipment/weapon/55.glb` — 
+- `assets/equipment/weapon/56.glb` — 
+- `assets/equipment/weapon/57.glb` — 
+- `assets/equipment/weapon/6.glb` — 
+- `assets/equipment/weapon/63.glb` — 
+- `assets/equipment/weapon/bronze_2h.glb` — 
+- `assets/interactive-objects/RiceMill.glb` — 
+- `assets/interactive-objects/depleted rock.glb` — 
+- `assets/interactive-objects/maplestump.glb` — 
+- `assets/interactive-objects/oakstump.glb` — 
+- `assets/interactive-objects/stump1.glb` — 
+- `assets/interactive-objects/stump2.glb` — 
+- `assets/interactive-objects/willowstump.glb` — 
+- `assets/models/Bought packs/Medieval_Dracula_Assets.glb` — 
+- `assets/models/Bucket2.glb` — 
+- `assets/models/CoalRock.glb` — 
+- `assets/models/CopperRock.glb` — 
+- `assets/models/Crate1.glb` — 
+- `assets/models/DeadTreeLam.glb` — 
+- `assets/models/Fence1.glb` — 
+- `assets/models/Fence1Fix.glb` — 
+- `assets/models/Fence2.glb` — 
+- `assets/models/Fence3.glb` — 
+- `assets/models/IronFence1.glb` — 
+- `assets/models/IronRock.glb` — 
+- `assets/models/Ladder.glb` — 
+- `assets/models/MinecartTrackStraight.glb` — 
+- `assets/models/MinecartTrackTurn.glb` — 
+- `assets/models/MithrilRock.glb` — 
+- `assets/models/OnePersonBed1.glb` — 
+- `assets/models/RiceMill.glb` — 
+- `assets/models/Roofs/roof corner inverse.glb` — 
+- `assets/models/Roofs/roof corner.glb` — 
+- `assets/models/Roofs/roof triangle.glb` — 
+- `assets/models/Roofs/roof.glb` — 
+- `assets/models/Sack1.glb` — 
+- `assets/models/Sack2.glb` — 
+- `assets/models/SilverRock.glb` — 
+- `assets/models/Stairs2.glb` — 
+- `assets/models/TinRock.glb` — 
+- `assets/models/TrapdoorClosed.glb` — 
+- `assets/models/TrapdoorOpenFinal.glb` — 
+- `assets/models/WIPStair1.glb` — 
+- `assets/models/Walltorch.glb` — 
+- `assets/models/Waterwheel.glb` — 
+- `assets/models/anvil.glb` — 
+- `assets/models/basicTruedoor.glb` — 
+- `assets/models/bookcase2.glb` — 
+- `assets/models/bush1.glb` — 
+- `assets/models/bush2.glb` — 
+- `assets/models/bush3.glb` — 
+- `assets/models/castleTruedoor.glb` — 
+- `assets/models/cavedoor.glb` — 
+- `assets/models/chair.glb` — 
+- `assets/models/chest.glb` — 
+- `assets/models/cookingrange.glb` — 
+- `assets/models/depleted_rock.glb` — 
+- `assets/models/desert well.glb` — 
+- `assets/models/dying tree.glb` — 
+- `assets/models/flat roof.glb` — 
+- `assets/models/forge.glb` — 
+- `assets/models/grass1.glb` — 
+- `assets/models/halfwall30.glb` — 
+- `assets/models/halfwall45.glb` — 
+- `assets/models/maple tree.glb` — 
+- `assets/models/oaktree.glb` — 
+- `assets/models/oaktree2.glb` — 
+- `assets/models/rice.glb` — 
+- `assets/models/sTree 1.glb` — 
+- `assets/models/sTree 2.glb` — 
+- `assets/models/sTree4.glb` — 
+- `assets/models/stree 3.glb` — 
+- `assets/models/stree autumn.glb` — 
+- `assets/models/stree magic.glb` — 
+- `assets/models/table1.glb` — 
+- `assets/models/tile roofing.glb` — 
+- `assets/models/tile roofing2.glb` — 
+- `assets/models/tree.glb` — 
+- `assets/models/tree2.glb` — 
+- `assets/models/well.glb` — 
+- `assets/models/wheat.glb` — 
+- `assets/models/willow tree.glb` — 
+- `assets/models/wood plank.glb` — 
+- `assets/models/wood pole.glb` — 
+- `assets/modular-assets/limestone-modular/limestone doorframe.glb` — 
+- `assets/modular-assets/limestone-modular/limestone halfpillar.glb` — 
+- `assets/modular-assets/limestone-modular/limestone pillar.glb` — 
+- `assets/modular-assets/limestone-modular/limestone slab.glb` — 
+- `assets/modular-assets/limestone-modular/limestone stairs.glb` — 
+- `assets/modular-assets/limestone-modular/limestone wall.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone arrowslit.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone door1.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone door2.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone door3.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone small wall.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone wall.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone window.glb` — 
+- `assets/modular-assets/new-dark-modular/dark stone window2.glb` — 
+- `assets/modular-assets/new-stone-modular/stone arrowslit .glb` — 
+- `assets/modular-assets/new-stone-modular/stone arrowslit.glb` — 
+- `assets/modular-assets/new-stone-modular/stone door1.glb` — 
+- `assets/modular-assets/new-stone-modular/stone door2.glb` — 
+- `assets/modular-assets/new-stone-modular/stone door3.glb` — 
+- `assets/modular-assets/new-stone-modular/stone halfwall.glb` — 
+- `assets/modular-assets/new-stone-modular/stone small stairs.glb` — 
+- `assets/modular-assets/new-stone-modular/stone small wall .glb` — 
+- `assets/modular-assets/new-stone-modular/stone small wall.glb` — 
+- `assets/modular-assets/new-stone-modular/stone wall.glb` — 
+- `assets/modular-assets/new-stone-modular/stone window .glb` — 
+- `assets/modular-assets/new-stone-modular/stone window.glb` — 
+- `assets/modular-assets/new-stone-modular/stone window1.glb` — 
+- `assets/modular-assets/stone-modular/halfwall 30.glb` — 
+- `assets/modular-assets/stone-modular/halfwall 45.glb` — 
+- `assets/modular-assets/stone-modular/small wall.glb` — 
+- `assets/modular-assets/stone-modular/stone arrowslit.glb` — 
+- `assets/modular-assets/stone-modular/stone arrowslit2.glb` — 
+- `assets/modular-assets/stone-modular/stone big arrowslit.glb` — 
+- `assets/modular-assets/stone-modular/stone big.glb` — 
+- `assets/modular-assets/stone-modular/stone block walk way.glb` — 
+- `assets/modular-assets/stone-modular/stone block walk way2.glb` — 
+- `assets/modular-assets/stone-modular/stone block walk way3.glb` — 
+- `assets/modular-assets/stone-modular/stone block walk way4.glb` — 
+- `assets/modular-assets/stone-modular/stone corner.glb` — 
+- `assets/modular-assets/stone-modular/stone decorations.glb` — 
+- `assets/modular-assets/stone-modular/stone decorations2.glb` — 
+- `assets/modular-assets/stone-modular/stone defense corner.glb` — 
+- `assets/modular-assets/stone-modular/stone defense.glb` — 
+- `assets/modular-assets/stone-modular/stone defense2.glb` — 
+- `assets/modular-assets/stone-modular/stone door3.glb` — 
+- `assets/modular-assets/stone-modular/stone halfwall.glb` — 
+- `assets/modular-assets/stone-modular/stone pillar bent half.glb` — 
+- `assets/modular-assets/stone-modular/stone pillar bent.glb` — 
+- `assets/modular-assets/stone-modular/stone pillar nice.glb` — 
+- `assets/modular-assets/stone-modular/stone pillar small.glb` — 
+- `assets/modular-assets/stone-modular/stone pillar.glb` — 
+- `assets/modular-assets/stone-modular/stone roof.glb` — 
+- `assets/modular-assets/stone-modular/stone slab.glb` — 
+- `assets/modular-assets/stone-modular/stone slab2.glb` — 
+- `assets/modular-assets/stone-modular/stone slabs.glb` — 
+- `assets/modular-assets/stone-modular/stone slope.glb` — 
+- `assets/modular-assets/stone-modular/stone small pillar.glb` — 
+- `assets/modular-assets/stone-modular/stone square.glb` — 
+- `assets/modular-assets/stone-modular/stone stairs doorway.glb` — 
+- `assets/modular-assets/stone-modular/stone stairs small.glb` — 
+- `assets/modular-assets/stone-modular/stone stairs.glb` — 
+- `assets/modular-assets/stone-modular/stone wall door.glb` — 
+- `assets/modular-assets/stone-modular/stone wall door2.glb` — 
+- `assets/modular-assets/stone-modular/stone wall fireplace.glb` — 
+- `assets/modular-assets/stone-modular/stone wall fireplace2.glb` — 
+- `assets/modular-assets/stone-modular/stone wall fireplace3.glb` — 
+- `assets/modular-assets/stone-modular/stone wall gate.glb` — 
+- `assets/modular-assets/stone-modular/stone wall shelf.glb` — 
+- `assets/modular-assets/stone-modular/stone wall sloped.glb` — 
+- `assets/modular-assets/stone-modular/stone wall window.glb` — 
+- `assets/modular-assets/stone-modular/stone wall window2.glb` — 
+- `assets/modular-assets/stone-modular/stone wall window3.glb` — 
+- `assets/modular-assets/stone-modular/stone wall.glb` — 
+- `assets/modular-assets/white-modular/white corner.glb` — 
+- `assets/modular-assets/white-modular/white doorway with wood.glb` — 
+- `assets/modular-assets/white-modular/white doorway.glb` — 
+- `assets/modular-assets/white-modular/white halfwall.glb` — 
+- `assets/modular-assets/white-modular/white pole.glb` — 
+- `assets/modular-assets/white-modular/white wall.glb` — 
+- `assets/modular-assets/white-modular/wood plank.glb` — 
+- `assets/modular-assets/white-modular/wood pole.glb` — 
+- `assets/modular-assets/wood-modular/Wood 45.glb` — 
+- `assets/modular-assets/wood-modular/wood arrowslit.glb` — 
+- `assets/modular-assets/wood-modular/wood door1.glb` — 
+- `assets/modular-assets/wood-modular/wood door2.glb` — 
+- `assets/modular-assets/wood-modular/wood door3.glb` — 
+- `assets/modular-assets/wood-modular/wood pole.glb` — 
+- `assets/modular-assets/wood-modular/wood roofing.glb` — 
+- `assets/modular-assets/wood-modular/wood small wall.glb` — 
+- `assets/modular-assets/wood-modular/wood wall.glb` — 
+- `assets/modular-assets/wood-modular/wood window1.glb` — 
+- `assets/modular-assets/wood-modular/wood window2.glb` — 
+- `models/DeadTreeLam.glb` — 
+- `models/depleted_rock.glb` — 
+- `models/maplestump.glb` — 
+- `models/npcs/Camel.glb` — 
+- `models/npcs/cow.glb` — 
+- `models/npcs/frog.glb` — 
+- `models/npcs/pig.glb` — 
+- `models/npcs/rat.glb` — 
+- `models/npcs/sheep.glb` — 
+- `models/npcs/snake.glb` — 
+- `models/npcs/spider.glb` — 
+- `models/npcs/wasp.glb` — 
+- `models/oakstump.glb` — 
+- `models/oaktree2.glb` — 
+- `models/pinetree.glb` — 
+- `models/rpgRock.glb` — 
+- `models/sTree4.glb` — 
+- `models/sTree_1.glb` — 
+- `models/sTree_2.glb` — 
+- `models/stree_3.glb` — 
+- `models/stree_autumn.glb` — 
+- `models/stump1.glb` — 
+- `models/stump2.glb` — 
+- `models/tree.glb` — 
+- `models/willow_tree.glb` — 
+- `models/willowstump.glb` — 
+
+## Equippable items
+
+- **Copper Dagger** (id 2, slot: weapon) — [has: "A short copper dagger."]
+- **Copper Sword** (id 3, slot: weapon) — [has: "A basic copper sword."]
+- **Copper Shield** (id 4, slot: shield) — [has: "A basic copper shield."]
+- **Iron Sword** (id 5, slot: weapon) — [has: "A sturdy iron sword."]
+- **Iron Battleaxe** (id 6, slot: weapon) — [has: "A heavy iron battleaxe."]
+- **Leather Body** (id 7, slot: body) — [has: "Basic leather armour."]
+- **Leather Legs** (id 8, slot: legs) — [has: "Basic leather leg armour."]
+- **Copper Helm** (id 9, slot: head) — [has: "A copper medium helmet."]
+- **Iron Shield** (id 16, slot: shield) — [has: "A sturdy iron shield."]
+- **Chainmail** (id 17, slot: body) — [has: "Iron chainmail armour."]
+- **Iron Helm** (id 18, slot: head) — [has: "An iron full helmet."]
+- **Iron Legs** (id 21, slot: legs) — [has: "Iron platelegs."]
+- **Amulet of Power** (id 22, slot: neck) — [has: "A magical amulet."]
+- **Bronze Axe** (id 31, slot: weapon) — [has: "A basic bronze axe for woodcutting."]
+- **Iron Axe** (id 32, slot: weapon) — [has: "A sturdy iron axe for woodcutting."]
+- **Bronze Pickaxe** (id 33, slot: weapon) — [has: "A basic bronze pickaxe for mining."]
+- **Steel Axe** (id 36, slot: weapon) — [has: "A sharp steel axe for woodcutting."]
+- **Mithril Axe** (id 37, slot: weapon) — [has: "A lightweight mithril axe for woodcutting."]
+- **Black Axe** (id 38, slot: weapon) — [has: "A menacing black axe for woodcutting."]
+- **Shortbow** (id 40, slot: weapon) — [has: "A short bow made from wood."]
+- **Longbow** (id 41, slot: weapon) — [has: "A long bow with greater range."]
+- **Iron Pickaxe** (id 53, slot: weapon) — [has: "A iron pickaxe for mining."]
+- **Steel Pickaxe** (id 54, slot: weapon) — [has: "A steel pickaxe for mining."]
+- **Mithril Pickaxe** (id 55, slot: weapon) — [has: "A mithril pickaxe for mining."]
+- **Black Bronze Pickaxe** (id 56, slot: weapon) — [has: "A adamantite pickaxe for mining."]
+- **Runite Pickaxe** (id 57, slot: weapon) — [has: "A runite pickaxe for mining."]
+- **Bronze Dagger** (id 58, slot: weapon) — [has: "Bronze dagger."]
+- **Bronze Short Sword** (id 59, slot: weapon) — [has: "Bronze short sword."]
+- **Bronze Mace** (id 60, slot: weapon) — [has: "Bronze mace."]
+- **Bronze Scimitar** (id 61, slot: weapon) — [has: "Bronze scimitar."]
+- **Bronze Long Sword** (id 62, slot: weapon) — [has: "Bronze long sword."]
+- **Bronze Battle Axe** (id 63, slot: weapon) — [has: "Bronze battle axe."]
+- **Bronze 2-handed Sword** (id 64, slot: weapon) — [has: "Bronze 2-handed sword."]
+- **Bronze Medium Helmet** (id 65, slot: head) — [has: "Bronze medium helmet."]
+- **Bronze Full Helmet** (id 66, slot: head) — [has: "Bronze full helmet."]
+- **Bronze Square Shield** (id 67, slot: shield) — [has: "Bronze square shield."]
+- **Bronze Chain Mail Body** (id 68, slot: body) — [has: "Bronze chain mail body."]
+- **Bronze Kite Shield** (id 69, slot: shield) — [has: "Bronze kite shield."]
+- **Bronze Plate Mail Legs** (id 70, slot: legs) — [has: "Bronze plate mail legs."]
+- **Bronze Plate Mail Body** (id 71, slot: body) — [has: "Bronze plate mail body."]
+- **Iron Dagger** (id 72, slot: weapon) — [has: "Iron dagger."]
+- **Iron Short Sword** (id 73, slot: weapon) — [has: "Iron short sword."]
+- **Iron Mace** (id 74, slot: weapon) — [has: "Iron mace."]
+- **Iron Scimitar** (id 75, slot: weapon) — [has: "Iron scimitar."]
+- **Iron Long Sword** (id 76, slot: weapon) — [has: "Iron long sword."]
+- **Iron Battle Axe** (id 77, slot: weapon) — [has: "Iron battle axe."]
+- **Iron 2-handed Sword** (id 78, slot: weapon) — [has: "Iron 2-handed sword."]
+- **Iron Medium Helmet** (id 79, slot: head) — [has: "Iron medium helmet."]
+- **Iron Full Helmet** (id 80, slot: head) — [has: "Iron full helmet."]
+- **Iron Square Shield** (id 81, slot: shield) — [has: "Iron square shield."]
+- **Iron Chain Mail Body** (id 82, slot: body) — [has: "Iron chain mail body."]
+- **Iron Kite Shield** (id 83, slot: shield) — [has: "Iron kite shield."]
+- **Iron Plate Mail Legs** (id 84, slot: legs) — [has: "Iron plate mail legs."]
+- **Iron Plate Mail Body** (id 85, slot: body) — [has: "Iron plate mail body."]
+- **Steel Dagger** (id 86, slot: weapon) — [has: "Steel dagger."]
+- **Steel Short Sword** (id 87, slot: weapon) — [has: "Steel short sword."]
+- **Steel Mace** (id 88, slot: weapon) — [has: "Steel mace."]
+- **Steel Scimitar** (id 89, slot: weapon) — [has: "Steel scimitar."]
+- **Steel Long Sword** (id 90, slot: weapon) — [has: "Steel long sword."]
+- **Steel Battle Axe** (id 91, slot: weapon) — [has: "Steel battle axe."]
+- **Steel 2-handed Sword** (id 92, slot: weapon) — [has: "Steel 2-handed sword."]
+- **Steel Medium Helmet** (id 93, slot: head) — [has: "Steel medium helmet."]
+- **Steel Full Helmet** (id 94, slot: head) — [has: "Steel full helmet."]
+- **Steel Square Shield** (id 95, slot: shield) — [has: "Steel square shield."]
+- **Steel Chain Mail Body** (id 96, slot: body) — [has: "Steel chain mail body."]
+- **Steel Kite Shield** (id 97, slot: shield) — [has: "Steel kite shield."]
+- **Steel Plate Mail Legs** (id 98, slot: legs) — [has: "Steel plate mail legs."]
+- **Steel Plate Mail Body** (id 99, slot: body) — [has: "Steel plate mail body."]
+- **Mithril Dagger** (id 100, slot: weapon) — [has: "Mithril dagger."]
+- **Mithril Short Sword** (id 101, slot: weapon) — [has: "Mithril short sword."]
+- **Mithril Mace** (id 102, slot: weapon) — [has: "Mithril mace."]
+- **Mithril Scimitar** (id 103, slot: weapon) — [has: "Mithril scimitar."]
+- **Mithril Long Sword** (id 104, slot: weapon) — [has: "Mithril long sword."]
+- **Mithril Battle Axe** (id 105, slot: weapon) — [has: "Mithril battle axe."]
+- **Mithril 2-handed Sword** (id 106, slot: weapon) — [has: "Mithril 2-handed sword."]
+- **Mithril Medium Helmet** (id 107, slot: head) — [has: "Mithril medium helmet."]
+- **Mithril Full Helmet** (id 108, slot: head) — [has: "Mithril full helmet."]
+- **Mithril Square Shield** (id 109, slot: shield) — [has: "Mithril square shield."]
+- **Mithril Chain Mail Body** (id 110, slot: body) — [has: "Mithril chain mail body."]
+- **Mithril Kite Shield** (id 111, slot: shield) — [has: "Mithril kite shield."]
+- **Mithril Plate Mail Legs** (id 112, slot: legs) — [has: "Mithril plate mail legs."]
+- **Mithril Plate Mail Body** (id 113, slot: body) — [has: "Mithril plate mail body."]
+- **Black Bronze Dagger** (id 114, slot: weapon) — [has: "Black Bronze dagger."]
+- **Black Bronze Short Sword** (id 115, slot: weapon) — [has: "Black Bronze short sword."]
+- **Black Bronze Mace** (id 116, slot: weapon) — [has: "Black Bronze mace."]
+- **Black Bronze Scimitar** (id 117, slot: weapon) — [has: "Black Bronze scimitar."]
+- **Black Bronze Long Sword** (id 118, slot: weapon) — [has: "Black Bronze long sword."]
+- **Black Bronze Battle Axe** (id 119, slot: weapon) — [has: "Black Bronze battle axe."]
+- **Black Bronze 2-handed Sword** (id 120, slot: weapon) — [has: "Black Bronze 2-handed sword."]
+- **Black Bronze Medium Helmet** (id 121, slot: head) — [has: "Black Bronze medium helmet."]
+- **Black Bronze Full Helmet** (id 122, slot: head) — [has: "Black Bronze full helmet."]
+- **Black Bronze Square Shield** (id 123, slot: shield) — [has: "Black Bronze square shield."]
+- **Black Bronze Chain Mail Body** (id 124, slot: body) — [has: "Black Bronze chain mail body."]
+- **Black Bronze Kite Shield** (id 125, slot: shield) — [has: "Black Bronze kite shield."]
+- **Black Bronze Plate Mail Legs** (id 126, slot: legs) — [has: "Black Bronze plate mail legs."]
+- **Black Bronze Plate Mail Body** (id 127, slot: body) — [has: "Black Bronze plate mail body."]
+- **Armet Helmet** (id 200, slot: head) — [has: "Full plate helmet with a visor."]
+- **Great Helm** (id 201, slot: head) — [has: "A heavy enclosed knight's helm."]
+- **Kettle Hat** (id 202, slot: head) — [has: "A wide-brimmed iron hat."]
+- **Leather Coif** (id 203, slot: head) — [has: "A simple leather skullcap."]
+- **Skullcap** (id 204, slot: head) — [has: "A close-fitting iron skullcap."]
+- **Hood** (id 205, slot: head) — [has: "A traveller's hood."]
+- **Pointed Mage Hat** (id 206, slot: head) — [has: "A tall pointed wizard hat."]
+- **Wide Mage Hat** (id 207, slot: head) — [has: "A wide-brimmed wizard hat."]
+- **Witch Hat** (id 208, slot: head) — [has: "A pointed witch's hat."]
+- **Bishop Hat** (id 209, slot: head) — [has: "A bishop's mitre."]
+- **Bycocket Hat** (id 210, slot: head) — [has: "A pointed felt hunter's hat."]
+- **Felted Hat** (id 211, slot: head) — [has: "A simple felt hat."]
+- **Tyrolean Hat** (id 212, slot: head) — [has: "A small alpine hat."]
+- **Beret** (id 213, slot: head) — [has: "A soft round cloth cap."]
+- **Headband** (id 214, slot: head) — [has: "A simple cloth headband."]
+- **Circlet** (id 215, slot: head) — [has: "A jewelled circlet."]
+- **Face Mask** (id 216, slot: head) — [has: "A cloth face mask."]
+- **Eyepatch (Right)** (id 217, slot: head) — [has: "A leather eyepatch over the right eye."]
+- **Eyepatch (Left)** (id 218, slot: head) — [has: "A leather eyepatch over the left eye."]
+- **Armet Helmet (F)** (id 219, slot: head) — [has: "Female-sized full plate helmet."]
+- **Kettle Hat (F)** (id 220, slot: head) — [has: "Female-sized kettle hat."]
+- **Leather Coif (F)** (id 221, slot: head) — [has: "Female-sized leather coif."]
+- **Circlet (F)** (id 222, slot: head) — [has: "Female-sized jewelled circlet."]
+- **Face Mask (F)** (id 223, slot: head) — [has: "Female-sized cloth face mask."]
+
+## Resources & world objects
+
+- **Tree** (id 1, category: tree) — 
+- **Oak Tree** (id 2, category: tree) — 
+- **Copper Rock** (id 3, category: rock) — 
+- **Iron Rock** (id 4, category: rock) — 
+- **Fishing Spot** (id 5, category: fishingspot) — 
+- **Furnace** (id 6, category: furnace) — 
+- **Cooking Range** (id 7, category: cookingrange) — 
+- **Altar** (id 8, category: altar) — 
+- **Willow Tree** (id 9, category: tree) — 
+- **Dead Tree** (id 10, category: tree) — 
+- **Tin Rock** (id 11, category: rock) — 
+- **Coal Rock** (id 12, category: rock) — 
+- **Door** (id 13, category: door) — 
+- **Maple Tree** (id 14, category: tree) — 
+- **Cave Entrance** (id 15, category: scenery) — 
+- **Mithril Rock** (id 16, category: rock) — 
+- **Adamantite Rock** (id 17, category: rock) — 
+- **Runite Rock** (id 18, category: rock) — 
+- **Anvil** (id 19, category: anvil) — 
+
+---
+*Generated: 394 GLBs, 120 equippable items, 19 world objects.*

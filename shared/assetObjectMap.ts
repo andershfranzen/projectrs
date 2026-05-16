@@ -41,6 +41,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   // never needs its own mapping. Add a new entry per chest tier when a
   // distinct closed GLB ships.
   'closed chest': 20, // Wooden Chest
+  // Crops
+  'rice': 22, // Rice Plant
 };
 
 /**

@@ -314,6 +314,11 @@ export class CharacterEntity {
   private pickProxy: Mesh | null = null;
 
   private bodyMeshes: AbstractMesh[] = [];
+  /** Per body-mesh: original index buffer + a filtered version with chest /
+   *  waist triangles removed. Chain mode swaps to the filtered buffer so
+   *  only the sleeves/shoulders/collar of the shirt render (the chest
+   *  area would otherwise z-fight with the chainbody GLB on top of it). */
+  private bodyMeshIndices: Map<AbstractMesh, { full: Uint32Array; noChest: Uint32Array }> = new Map();
   /** Pants + socks mesh primitives — hidden when plate legs are equipped
    *  so the character's bare legs don't poke through the armor. */
   private legMeshes: AbstractMesh[] = [];
@@ -583,6 +588,7 @@ export class CharacterEntity {
         }
       }
       this.buildSkinArmFilter();
+      this.buildBodyChestFilter();
 
       // Collect animation groups from the main GLB
       for (const group of result.animationGroups) {
@@ -1807,10 +1813,25 @@ export class CharacterEntity {
    *  primitive's index buffer to drop arm triangles only — hands/face/legs
    *  remain visible. */
   /** Toggle bare-chest visibility for a body-slot item. `hideStyle` only
-   *  matters when hiding (visible=false) — 'plate' also hides arm triangles
-   *  on the skin mesh, 'chain' leaves them visible. */
+   *  matters when hiding (visible=false):
+   *    - 'plate' hides the bare-chest (shirt) primitive AND hides arm
+   *      triangles on the skin mesh. Plate armor brings its own sleeves
+   *      and shoulders.
+   *    - 'chain' leaves the shirt visible BUT swaps it to a filtered index
+   *      buffer that drops chest/waist triangles. The chainbody GLB sits
+   *      over the now-empty chest area; the shirt's sleeves/shoulders/
+   *      collar render normally and provide the upper-arm + lower-neck
+   *      coverage the bare-skin mesh doesn't have geometry for. */
   setBodyVisible(visible: boolean, hideStyle: 'plate' | 'chain' = 'plate'): void {
-    for (const m of this.bodyMeshes) m.setEnabled(visible);
+    for (const m of this.bodyMeshes) {
+      if (visible || hideStyle === 'chain') {
+        const bufs = this.bodyMeshIndices.get(m);
+        if (bufs) m.setIndices(visible ? bufs.full : bufs.noChest, null);
+        m.setEnabled(true);
+      } else {
+        m.setEnabled(false);
+      }
+    }
     this.bodyHidden = !visible;
     this.bodyHidesArms = !visible && hideStyle === 'plate';
     this.applySkinIndexMask();
@@ -1903,6 +1924,72 @@ export class CharacterEntity {
     this.skinIndicesNoArms = armIdx.size > 0 ? new Uint32Array(noArm) : null;
     this.skinIndicesNoLegs = legIdx.size > 0 ? new Uint32Array(noLeg) : null;
     this.skinIndicesNoArmsNoLegs = (armIdx.size > 0 && legIdx.size > 0) ? new Uint32Array(noArmNoLeg) : null;
+  }
+
+  /** Pre-compute a filtered index buffer for every body-slot mesh (shirt,
+   *  shirt openings, belt, etc.) that drops chest/waist triangles. Chain
+   *  mode swaps to this buffer so the chainbody GLB owns the chest while
+   *  the shirt's sleeves/shoulders/collar/neckline remain visible.
+   *
+   *  Bone-based classification with a Y override for Spine2. The shirt's
+   *  Spine2-weighted verts span Y[1.12, 1.30] — the lower half is upper
+   *  chest (drop, the chainbody covers it), the upper half is the collar
+   *  and neckline (keep, otherwise the bare-skin "Neck" region has no
+   *  geometry to fill). Threshold of 1.20 cleanly splits the two.
+   *  Hips/Spine/Spine1 are always chest (no neck mixing). */
+  private buildBodyChestFilter(): void {
+    if (!this.skeleton) return;
+    const SOLID_CHEST_BONES = new Set([
+      'mixamorig:Hips', 'mixamorig:Spine', 'mixamorig:Spine1',
+    ]);
+    const SPINE2_NAME = 'mixamorig:Spine2';
+    const NECK_KEEP_Y = 1.20;
+
+    const solidChestIdx = new Set<number>();
+    let spine2Idx = -1;
+    for (let i = 0; i < this.skeleton.bones.length; i++) {
+      const n = this.skeleton.bones[i].name;
+      if (SOLID_CHEST_BONES.has(n)) solidChestIdx.add(i);
+      else if (n === SPINE2_NAME) spine2Idx = i;
+    }
+
+    for (const mesh of this.bodyMeshes) {
+      const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+      const joints = mesh.getVerticesData(VertexBuffer.MatricesIndicesKind);
+      const weights = mesh.getVerticesData(VertexBuffer.MatricesWeightsKind);
+      const indices = mesh.getIndices();
+      if (!positions || !joints || !weights || !indices) continue;
+
+      const numVerts = positions.length / 3;
+      const isChestVert = new Uint8Array(numVerts);
+      for (let v = 0; v < numVerts; v++) {
+        let bestW = -1, bestJ = -1;
+        for (let k = 0; k < 4; k++) {
+          const w = weights[v * 4 + k];
+          if (w > bestW) { bestW = w; bestJ = joints[v * 4 + k] | 0; }
+        }
+        if (bestJ < 0) continue;
+        if (solidChestIdx.has(bestJ)) {
+          isChestVert[v] = 1;
+        } else if (bestJ === spine2Idx) {
+          // Spine2 covers both upper chest and collar. Y separates them.
+          if (positions[v * 3 + 1] < NECK_KEEP_Y) isChestVert[v] = 1;
+        }
+      }
+
+      const numTris = indices.length / 3;
+      const noChest: number[] = [];
+      for (let t = 0; t < numTris; t++) {
+        const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
+        if (!(isChestVert[a] && isChestVert[b] && isChestVert[c])) {
+          noChest.push(a, b, c);
+        }
+      }
+      this.bodyMeshIndices.set(mesh, {
+        full: new Uint32Array(indices as ArrayLike<number>),
+        noChest: new Uint32Array(noChest),
+      });
+    }
   }
 
   setHeadVisible(visible: boolean): void {
@@ -2354,6 +2441,7 @@ export class CharacterEntity {
     this.meshes = [];
     this.headMeshes = [];
     this.bodyMeshes = [];
+    this.bodyMeshIndices.clear();
     this.legMeshes = [];
     this.skinMesh = null;
     this.skinIndicesFull = null;

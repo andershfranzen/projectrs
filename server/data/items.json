@@ -200,7 +200,8 @@
     "crushDefence": 8,
     "rangedDefence": 10,
     "magicDefence": -5,
-    "value": 80
+    "value": 80,
+    "bodyHideStyle": "chain"
   },
   {
     "id": 18,
@@ -469,7 +470,8 @@
     "description": "Logs cut from a maple tree.",
     "stackable": false,
     "equippable": false,
-    "value": 20
+    "value": 20,
+    "icon": "Maple_Logs_634.png"
   },
   {
     "id": 40,
@@ -829,7 +831,8 @@
     "stabDefence": 8,
     "slashDefence": 10,
     "crushDefence": 6,
-    "rangedDefence": 8
+    "rangedDefence": 8,
+    "bodyHideStyle": "chain"
   },
   {
     "id": 69,
@@ -1037,7 +1040,8 @@
     "stabDefence": 12,
     "slashDefence": 15,
     "crushDefence": 9,
-    "rangedDefence": 12
+    "rangedDefence": 12,
+    "bodyHideStyle": "chain"
   },
   {
     "id": 83,
@@ -1241,7 +1245,8 @@
     "stabDefence": 16,
     "slashDefence": 20,
     "crushDefence": 12,
-    "rangedDefence": 16
+    "rangedDefence": 16,
+    "bodyHideStyle": "chain"
   },
   {
     "id": 97,
@@ -1442,7 +1447,8 @@
     "stabDefence": 24,
     "slashDefence": 30,
     "crushDefence": 18,
-    "rangedDefence": 24
+    "rangedDefence": 24,
+    "bodyHideStyle": "chain"
   },
   {
     "id": 111,
@@ -1643,7 +1649,8 @@
     "stabDefence": 32,
     "slashDefence": 40,
     "crushDefence": 24,
-    "rangedDefence": 32
+    "rangedDefence": 32,
+    "bodyHideStyle": "chain"
   },
   {
     "id": 125,
@@ -2092,5 +2099,24 @@
     "equippable": false,
     "value": 200,
     "icon": "Manuscript_229.png"
+  },
+  {
+    "id": 230,
+    "name": "Rice",
+    "description": "A handful of raw rice grains.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "icon": "Rice_230.png"
+  },
+  {
+    "id": 231,
+    "name": "Cooked Rice",
+    "description": "A bowl of cooked rice. Heals 3 HP.",
+    "stackable": false,
+    "equippable": false,
+    "healAmount": 3,
+    "value": 8,
+    "icon": "Cooked_Rice_231.png"
   }
 ]

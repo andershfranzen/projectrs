@@ -37,6 +37,15 @@ import {
   CHARACTER_MODEL_PATH,
   CHARACTER_TARGET_HEIGHT,
   CHARACTER_IDLE_ANIM,
+  computeCutPolygons,
+  fanTriangulate,
+  bilerpCorners,
+  normalizeCutAngle,
+  cutSideOf,
+  transformOverlayUV,
+  FULL_TILE_RING,
+  CUT_SNAP_ANGLES,
+  CUT_SNAP_TOLERANCE_RAD,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -55,7 +64,8 @@ import {
   buildTextureOverlays,
   buildTexturePlanes,
   buildSingleTexturePlane,
-  updateTerrainLandHeights
+  updateTerrainLandHeights,
+  getOrCreateOverlayMaterial,
 } from './map/TerrainMesh.ts'
 
 export function createEditorScene(container) {
@@ -808,7 +818,6 @@ function tuneModelLighting(model) {
       biomeOverlayMesh = null
     }
     const entries = Object.entries(biomeData.cells)
-    console.log('[biome] rebuildBiomeOverlay: cells =', entries.length, 'defs =', biomeData.defs.length)
     if (entries.length === 0) return
 
     // Build one translucent quad per painted cell, just above terrain so it's
@@ -858,7 +867,6 @@ function tuneModelLighting(model) {
     mesh.parent = biomeGroup
     mesh.isPickable = false
     biomeOverlayMesh = mesh
-    console.log('[biome] overlay mesh created, vertices =', positions.length / 3, 'biomeGroup.isEnabled =', biomeGroup.isEnabled())
   }
 
   /** Get the best display height for collision visualization at a tile.
@@ -1088,6 +1096,86 @@ let paintBrushRadius = 1
   highlightMat.alpha = 0.18
   highlightMat.backFaceCulling = false
   highlight.material = highlightMat
+
+  // Half-paint hover preview: a cut line + filled polygon over the half
+  // that will be painted on click.
+  let halfPaintPreviewLine = null
+  let halfPaintPreviewFill = null
+  const halfPaintFillMat = new StandardMaterial('halfPaintFillMat', scene)
+  halfPaintFillMat.emissiveColor = new Color3(0.2, 0.9, 0.4)
+  halfPaintFillMat.diffuseColor = new Color3(0, 0, 0)
+  halfPaintFillMat.specularColor = new Color3(0, 0, 0)
+  halfPaintFillMat.disableLighting = true
+  halfPaintFillMat.alpha = 0.28
+  halfPaintFillMat.backFaceCulling = false
+  halfPaintFillMat.zOffset = -3
+
+  // Memo of last preview inputs. Mousemove fires far more often than the
+  // cursor crosses tile/half/angle boundaries, so skip the mesh rebuild
+  // when nothing relevant has changed since the last frame.
+  let halfPaintPreviewKey = null
+
+  function clearHalfPaintPreview() {
+    if (halfPaintPreviewLine) { halfPaintPreviewLine.dispose(); halfPaintPreviewLine = null }
+    if (halfPaintPreviewFill) { halfPaintPreviewFill.dispose(); halfPaintPreviewFill = null }
+    halfPaintPreviewKey = null
+  }
+
+  function updateHalfPaintPreview(tile, eventLike) {
+    if (state.tool !== ToolMode.PAINT || !state.halfPaint || !tile) {
+      clearHalfPaintPreview()
+      return
+    }
+    const u = tile.u ?? 0.5
+    const v = tile.v ?? 0.5
+
+    const existing = map.getTile(tile.x, tile.z)
+    const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
+    const cutAngle = hadHalfMode
+      ? existing.textureCutAngle
+      : pickTextureCutAngle(u, v, eventLike)
+    const cursorHalf = cutSideOf(u, v, cutAngle)
+
+    const key = `${tile.x},${tile.z},${cutAngle.toFixed(4)},${cursorHalf}`
+    if (key === halfPaintPreviewKey) return
+    halfPaintPreviewKey = key
+
+    if (halfPaintPreviewLine) { halfPaintPreviewLine.dispose(); halfPaintPreviewLine = null }
+    if (halfPaintPreviewFill) { halfPaintPreviewFill.dispose(); halfPaintPreviewFill = null }
+
+    const { halfA, halfB, cutEndpoints } = computeCutPolygons(cutAngle)
+    const ring = cursorHalf === 'A' ? halfA : halfB
+    if (ring.length < 3) return
+
+    const h = map.getTileCornerHeights(tile.x, tile.z)
+    const lift = 0.05
+
+    const positions = []
+    for (const p of ring) {
+      positions.push(tile.x + p.u, bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + lift, tile.z + p.v)
+    }
+    const indices = fanTriangulate(ring.length)
+    halfPaintPreviewFill = new Mesh('halfPaintFill', scene)
+    const vd = new VertexData()
+    vd.positions = positions
+    vd.indices = indices
+    const normals = []
+    VertexData.ComputeNormals(positions, indices, normals)
+    vd.normals = normals
+    vd.applyToMesh(halfPaintPreviewFill)
+    halfPaintPreviewFill.material = halfPaintFillMat
+    halfPaintPreviewFill.isPickable = false
+
+    const linePoints = cutEndpoints.map((p) => new Vector3(
+      tile.x + p.u,
+      bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + lift + 0.005,
+      tile.z + p.v,
+    ))
+    halfPaintPreviewLine = MeshBuilder.CreateLines('halfPaintCut', { points: linePoints }, scene)
+    halfPaintPreviewLine.color = new Color3(0.05, 1, 0.4)
+    halfPaintPreviewLine.isPickable = false
+    halfPaintPreviewLine.renderingGroupId = 1
+  }
 
   const uiRoot = document.createElement('div')
   uiRoot.style.position = 'absolute'
@@ -3633,7 +3721,7 @@ let paintBrushRadius = 1
     const newCliffs = buildCliffMeshes(map, scene)
     const newSplitLines = buildSplitLines()
     const newTileGrid = buildTileGrid()
-    const newOverlays = !skipTextureOverlays ? buildTextureOverlays(map, textureRegistry, textureCache, scene) : null
+    const newOverlays = !skipTextureOverlays ? buildTextureOverlays(map, textureRegistry, textureCache, scene, overlayMaterialCache, overlayMeshesByTile) : null
     const newPlanes = !skipTexturePlanes ? buildTexturePlanes(map, textureRegistry, textureCache, scene) : null
 
     // Dispose old meshes
@@ -3641,7 +3729,7 @@ let paintBrushRadius = 1
     disposeGroup(cliffs)
     if (splitLines) splitLines.dispose()
     if (tileGrid) tileGrid.dispose()
-    if (!skipTextureOverlays && textureOverlayGroup) textureOverlayGroup.dispose()
+    if (!skipTextureOverlays && textureOverlayGroup) { textureOverlayGroup.dispose(); overlayMeshesByTile.clear() }
     if (!skipTexturePlanes && texturePlaneGroup) texturePlaneGroup.dispose()
 
     // Enable and swap in new meshes
@@ -3685,99 +3773,97 @@ let paintBrushRadius = 1
   }
 
   function rebuildTextureOverlaysOnly() {
-    const newOverlays = buildTextureOverlays(map, textureRegistry, textureCache, scene)
-    if (textureOverlayGroup) textureOverlayGroup.dispose()
+    const newOverlays = buildTextureOverlays(map, textureRegistry, textureCache, scene, overlayMaterialCache, overlayMeshesByTile)
+    if (textureOverlayGroup) { textureOverlayGroup.dispose(); overlayMeshesByTile.clear() }
     if (newOverlays) newOverlays.setEnabled(true)
     textureOverlayGroup = newOverlays
   }
 
   /** Fast single-tile texture overlay update — avoids full map rebuild */
+  // One StandardMaterial per textureId, shared across all overlay meshes
+  // (full-rebuild and single-tile paths both feed this cache via
+  // getOrCreateOverlayMaterial). Without sharing, every paint click would
+  // create a fresh material and leak it on dispose.
+  const overlayMaterialCache = new Map()
+
+  // Tile-coord → its current overlay meshes. Lets the single-tile incremental
+  // rebuild path dispose in O(1) instead of scanning every child of the
+  // texture-overlay group for name matches on every paint click.
+  const overlayMeshesByTile = new Map()
+
+  function disposeOverlayMeshesForTile(tx, tz) {
+    const key = `${tx},${tz}`
+    const meshes = overlayMeshesByTile.get(key)
+    if (!meshes) return
+    for (const m of meshes) m.dispose(false, false)
+    overlayMeshesByTile.delete(key)
+  }
+
   function updateTileTextureOverlay(tx, tz) {
     if (!textureOverlayGroup) {
       textureOverlayGroup = new TransformNode('texture-overlays', scene)
     }
-    // Ensure the group is enabled so newly added overlays are visible
     if (!textureOverlayGroup.isEnabled()) textureOverlayGroup.setEnabled(true)
-    // Remove existing overlay meshes for this tile
-    const prefix = `texoverlay_${tx}_${tz}`
-    for (const child of [...textureOverlayGroup.getChildMeshes()]) {
-      if (child.name === prefix) child.dispose()
-    }
+    // Drop any existing overlay meshes for this tile. Don't dispose the
+    // material — it's shared across tiles via overlayMaterialCache.
+    disposeOverlayMeshesForTile(tx, tz)
 
     const tile = map.getTile(tx, tz)
     if (!tile || (!tile.textureId && !tile.textureIdB)) return
+    const tileKey = `${tx},${tz}`
 
     const h = map.getTileCornerHeights(tx, tz)
     const overlayOffset = 0.008
-    const positions = [
-      tx, h.tl + overlayOffset, tz,
-      tx + 1, h.tr + overlayOffset, tz,
-      tx, h.bl + overlayOffset, tz + 1,
-      tx + 1, h.br + overlayOffset, tz + 1
-    ]
-    const fwd = tile.split === 'forward'
-    const firstIndices  = fwd ? [0, 2, 1]       : [0, 2, 3]
-    const secondIndices = fwd ? [2, 3, 1]       : [0, 3, 1]
-    const fullIndices   = fwd ? [0, 2, 1, 2, 3, 1] : [0, 2, 3, 0, 3, 1]
 
-    const makeUVs = (rotation, scale, worldUV) => {
-      if (worldUV) {
-        const s = Math.max(0.1, scale)
-        return [tx/s, tz/s, (tx+1)/s, tz/s, tx/s, (tz+1)/s, (tx+1)/s, (tz+1)/s]
-      }
-      const base = [[0,0],[1,0],[0,1],[1,1]]
-      const s = Math.max(0.1, scale)
-      const r = rotation % 4
+    const addOverlay = (textureId, rotation, scale, worldUV, ring) => {
+      if (ring.length < 3) return
+      // Emissive 0.45 matches the full-rebuild path (TerrainMesh.buildTextureOverlays).
+      // Cache is shared so first caller wins anyway — the single-tile path's
+      // previous 0.18 was dead since map load always pre-seeded 0.45.
+      const mat = getOrCreateOverlayMaterial(textureId, textureRegistry, textureCache, scene, overlayMaterialCache, 0.45)
+      if (!mat) return
+
+      const positions = []
       const uvs = []
-      for (const [u, v] of base) {
-        const su = (u - 0.5) / s + 0.5, sv = (v - 0.5) / s + 0.5
-        let ru = su, rv = sv
-        if (r === 1) { ru = -(sv - 0.5) + 0.5; rv = (su - 0.5) + 0.5 }
-        else if (r === 2) { ru = -(su - 0.5) + 0.5; rv = -(sv - 0.5) + 0.5 }
-        else if (r === 3) { ru = (sv - 0.5) + 0.5; rv = -(su - 0.5) + 0.5 }
-        uvs.push(ru, rv)
+      const s = Math.max(0.1, scale)
+      const r = ((rotation % 4) + 4) % 4
+      for (const p of ring) {
+        const wx = tx + p.u
+        const wz = tz + p.v
+        const wy = bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + overlayOffset
+        positions.push(wx, wy, wz)
+        if (worldUV) {
+          uvs.push(wx / s, wz / s)
+        } else {
+          const [tu, tv] = transformOverlayUV(p.u, p.v, r, s)
+          uvs.push(tu, tv)
+        }
       }
-      return uvs
-    }
+      const indices = fanTriangulate(ring.length)
 
-    const addOverlay = (textureId, rotation, scale, worldUV, idxs) => {
-      const textureInfo = textureRegistry.find((t) => t.id === textureId)
-      if (!textureInfo) return
-      const texture = textureCache.get(textureInfo.id)
-      if (!texture) return
-      texture.wrapU = Texture.WRAP_ADDRESSMODE
-      texture.wrapV = Texture.WRAP_ADDRESSMODE
-
-      const mesh = new Mesh(prefix, scene)
+      const mesh = new Mesh(`texoverlay_${tx}_${tz}`, scene)
       const vd = new VertexData()
       vd.positions = positions
-      vd.uvs = makeUVs(rotation, scale, worldUV)
-      vd.indices = idxs
+      vd.uvs = uvs
+      vd.indices = indices
       const normals = []
-      VertexData.ComputeNormals(positions, idxs, normals)
+      VertexData.ComputeNormals(positions, indices, normals)
       vd.normals = normals
       vd.applyToMesh(mesh)
 
-      const mat = new StandardMaterial(`texoverlay_mat_${tx}_${tz}`, scene)
-      mat.diffuseTexture = texture
-      mat.diffuseColor = new Color3(0.82, 0.82, 0.82)
-      mat.emissiveTexture = texture
-      mat.emissiveColor = new Color3(0.18, 0.18, 0.18)
-      mat.specularColor = new Color3(0, 0, 0)
-      mat.useAlphaFromDiffuseTexture = true
-      mat.transparencyMode = 1
-      mat.backFaceCulling = false
-      mat.zOffset = -2
       mesh.material = mat
       mesh.parent = textureOverlayGroup
-      console.log(`[TexOverlay] Created overlay at (${tx},${tz}), group enabled: ${textureOverlayGroup.isEnabled()}, mesh verts: ${mesh.getTotalVertices()}, textureId: ${textureId}`)
+      let list = overlayMeshesByTile.get(tileKey)
+      if (!list) { list = []; overlayMeshesByTile.set(tileKey, list) }
+      list.push(mesh)
     }
 
     if (tile.textureHalfMode) {
-      if (tile.textureId) addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, firstIndices)
-      if (tile.textureIdB) addOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, secondIndices)
+      const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle)
+      if (tile.textureId) addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
+      if (tile.textureIdB) addOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
     } else if (tile.textureId) {
-      addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, fullIndices)
+      addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, FULL_TILE_RING)
     }
   }
 
@@ -4398,6 +4484,32 @@ function applySmoothBrush(centerX, centerZ, strength = 0.55) {
   }
 }
 
+/**
+ * Pick a texture-cut angle from a cursor position inside a tile. The cut
+ * line passes through tile center perpendicular to (cursor − center) so the
+ * cursor sits on one clean side of the resulting cut. Snaps to common angles
+ * (0°, 45°, 90°, 135°) within ±10° unless Alt is held — Alt gives free-form
+ * angles for walls that aren't grid-aligned.
+ */
+function pickTextureCutAngle(u, v, eventLike) {
+  const dx = u - 0.5
+  const dy = v - 0.5
+  // Within a tiny radius of center the direction is undefined — fall back
+  // to a horizontal cut so the result is stable instead of jittery.
+  if (Math.hypot(dx, dy) < 0.05) return 0
+
+  let cutAngle = normalizeCutAngle(Math.atan2(dy, dx) + Math.PI / 2)
+
+  if (!eventLike?.altKey) {
+    for (const s of CUT_SNAP_ANGLES) {
+      let d = Math.abs(cutAngle - s)
+      if (d > Math.PI / 2) d = Math.PI - d
+      if (d <= CUT_SNAP_TOLERANCE_RAD) { cutAngle = s; break }
+    }
+  }
+  return cutAngle
+}
+
 function captureStrokeHistoryOnce(scope) {
   if (!state.historyCapturedThisStroke) {
     pushUndoState(scope || 'terrain')
@@ -4469,20 +4581,36 @@ function applyToolAtTile(tile, eventLike = null) {
 
     if (eventLike?.shiftKey || paintTabTextureId) {
       const isErase = eventLike?.shiftKey || paintTabTextureId === '__erase__'
-      if (state.halfPaint && paintTabTextureIdB && !isErase) {
-        // Both slots set: one click paints A on first half, B on second half
-        map.paintTextureTileFirst(tile.x, tile.z, paintTabTextureId, textureRotation, textureScale)
-        map.paintTextureTileSecond(tile.x, tile.z, paintTabTextureIdB, textureRotation, textureScale)
-      } else if (state.halfPaint) {
-        // Auto-set split based on cursor corner, then paint/erase that half
+      if (state.halfPaint) {
         const u = tile.u ?? 0.5
         const v = tile.v ?? 0.5
-        const nearLeft = u < 0.5
-        const nearTop = v < 0.5
-        const needForward = nearLeft === nearTop // TL or BR → forward, TR or BL → back
-        map.setTileSplit(tile.x, tile.z, needForward ? 'forward' : 'back')
-        const isFirst = nearTop
-        if (isFirst) {
+
+        // Cut policy: if the tile is already half-painted, preserve the
+        // existing cut so each side can be refined without the diagonal
+        // jumping around. Fresh tiles (or tiles being converted from full
+        // paint to half) derive the cut from cursor position — the cut is
+        // perpendicular to (cursor − center), with snapping to common angles
+        // unless Alt is held.
+        const existing = map.getTile(tile.x, tile.z)
+        const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
+        let cutAngle
+        if (hadHalfMode) {
+          cutAngle = existing.textureCutAngle
+        } else {
+          cutAngle = pickTextureCutAngle(u, v, eventLike)
+          map.setTextureCutAngle(tile.x, tile.z, cutAngle)
+        }
+
+        const cursorHalf = cutSideOf(u, v, cutAngle)
+
+        if (paintTabTextureIdB && !isErase) {
+          // Cursor side wins: whichever slot the user is pointing at goes to A.
+          const [aTex, bTex] = cursorHalf === 'A'
+            ? [paintTabTextureId, paintTabTextureIdB]
+            : [paintTabTextureIdB, paintTabTextureId]
+          map.paintTextureTileFirst(tile.x, tile.z, aTex, textureRotation, textureScale)
+          map.paintTextureTileSecond(tile.x, tile.z, bTex, textureRotation, textureScale)
+        } else if (cursorHalf === 'A') {
           if (isErase) map.clearTextureTileFirst(tile.x, tile.z)
           else map.paintTextureTileFirst(tile.x, tile.z, paintTabTextureId, textureRotation, textureScale)
         } else {
@@ -4507,19 +4635,21 @@ function applyToolAtTile(tile, eventLike = null) {
         if (state.paintType === 'water') {
           map.paintWaterTile(tx, tz)
         } else if (state.halfPaint && dx === 0 && dz === 0) {
+          // Ground-color half paint is constrained to the two diagonals
+          // (it shares tile.split with terrain triangulation, so we can't
+          // add arbitrary angles here without changing slope rendering).
+          // Pick the diagonal so the cursor's quadrant is its own triangle,
+          // then paint that triangle. `isFirst = nearLeft` is correct for
+          // both diagonals — the "first" triangle always contains the left
+          // edge of the tile (TL+BL for forward, TL+BL+BR for back).
           const u = tile.u ?? 0.5
           const v = tile.v ?? 0.5
           const nearLeft = u < 0.5
           const nearTop = v < 0.5
-          if (nearLeft === nearTop) {
-            map.setTileSplit(tx, tz, 'forward')
-            if (nearTop) map.paintTileFirst(tx, tz, state.paintType)
-            else map.paintTileSecond(tx, tz, state.paintType)
-          } else {
-            map.setTileSplit(tx, tz, 'back')
-            if (nearTop) map.paintTileFirst(tx, tz, state.paintType)
-            else map.paintTileSecond(tx, tz, state.paintType)
-          }
+          const needForward = nearLeft === nearTop
+          map.setTileSplit(tx, tz, needForward ? 'forward' : 'back')
+          if (nearLeft) map.paintTileFirst(tx, tz, state.paintType)
+          else map.paintTileSecond(tx, tz, state.paintType)
         } else if (!state.halfPaint) {
           map.paintTile(tx, tz, state.paintType)
         }
@@ -4546,16 +4676,30 @@ function applyToolAtTile(tile, eventLike = null) {
     return                 { x: x + 0.5,  z: z + 0.75, edge: 4 } // S
   }
 
-  function updateHoverEdgeHelper() {
+  // Cache the (tile, nearest edge) signature so mousemove ticks that don't
+  // change which edge is highlighted skip the 4-LinesMesh rebuild entirely.
+  let hoverEdgeKey = null
+
+  function clearHoverEdge() {
     if (hoverEdgeHelper) { hoverEdgeHelper.dispose(); hoverEdgeHelper = null }
+    hoverEdgeKey = null
+  }
 
-    if (state.tool !== ToolMode.PLACE) return
+  function updateHoverEdgeHelper() {
+    if (state.tool !== ToolMode.PLACE) { clearHoverEdge(); return }
     const asset = assetRegistry.find((a) => a.id === selectedAssetId)
-    if (!asset?.name?.toLowerCase().includes('wall')) return
-
+    if (!asset?.name?.toLowerCase().includes('wall')) { clearHoverEdge(); return }
     const hovered = state.hovered
-    if (hovered == null) return
+    if (hovered == null) { clearHoverEdge(); return }
     const { x, z, u = 0.5, v = 0.5 } = hovered
+    const dists = [u, 1 - u, v, 1 - v]
+    const nearestIdx = dists.indexOf(Math.min(...dists))
+
+    const key = `${x},${z},${nearestIdx}`
+    if (key === hoverEdgeKey && hoverEdgeHelper) return
+    hoverEdgeKey = key
+
+    if (hoverEdgeHelper) { hoverEdgeHelper.dispose(); hoverEdgeHelper = null }
     const h = map.getTileCornerHeights(x, z)
 
     // Marker positions match the inset snap positions
@@ -4565,8 +4709,6 @@ function applyToolAtTile(tile, eventLike = null) {
       { px: x + 0.5,  pz: z + 0.25, ht: (h.tl * 0.75 + h.tr * 0.75 + h.bl * 0.25 + h.br * 0.25) * 0.5 },
       { px: x + 0.5,  pz: z + 0.75, ht: (h.tl * 0.25 + h.tr * 0.25 + h.bl * 0.75 + h.br * 0.75) * 0.5 },
     ]
-    const dists = [u, 1 - u, v, 1 - v]
-    const nearestIdx = dists.indexOf(Math.min(...dists))
 
     const group = new TransformNode('hoverEdge', scene)
     const S = 0.22
@@ -6654,6 +6796,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
   sidebar.querySelector('#toggleHalfPaint').addEventListener('change', (e) => {
     state.halfPaint = e.target.checked
+    if (!state.halfPaint) clearHalfPaintPreview()
   })
 
   const panModeCheckbox = sidebar.querySelector('#togglePanMode')
@@ -6833,6 +6976,7 @@ function applyToolAtTile(tile, eventLike = null) {
       previewObject.position.copyFrom(pos)
     }
     updateHoverEdgeHelper()
+    updateHalfPaintPreview(tile, event)
 
     // Diagonal floor preview
     if (diagFloorMode && diagFloorStart && (state.tool === ToolMode.TEXTURE_PLANE || state.tool === ToolMode.PAINT)) {
@@ -7686,6 +7830,10 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
   updateCamera()
 
   canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+
+  canvas.addEventListener('mouseleave', () => {
+    clearHalfPaintPreview()
+  })
 
   canvas.addEventListener('mousedown', (e) => {
     if (e.button === 2) isRightDragging = true

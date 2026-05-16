@@ -1,4 +1,5 @@
 import type { PlayerAppearance } from './appearance.js';
+import { DEFAULT_CUT_ANGLE } from './tileCut.js';
 
 export interface Position {
   x: number;
@@ -31,6 +32,15 @@ export interface ItemDef {
   stackable: boolean;
   equippable: boolean;
   equipSlot?: 'weapon' | 'head' | 'body' | 'legs' | 'shield' | 'neck' | 'ring' | 'hands' | 'feet' | 'cape';
+  /**
+   * For `equipSlot === 'body'` items only — how much of the character's bare
+   * skin to hide while equipped.
+   *   - 'plate' (default): hide the bare-chest geometry AND arm triangles on
+   *     the skin mesh. Matches plate/full body armor that has its own sleeves.
+   *   - 'chain': hide only the bare-chest geometry. Arms, shoulders, and lower
+   *     neck stay visible (RuneScape-style chainbody/sleeveless aesthetic).
+   */
+  bodyHideStyle?: 'plate' | 'chain';
   attackSpeed?: number;
   weaponStyle?: 'stab' | 'slash' | 'crush' | 'bow' | 'crossbow';
   twoHanded?: boolean;
@@ -500,7 +510,7 @@ export function defaultKCTile(ground: GroundType = 'grass'): KCTile {
     textureIdB: null,
     textureRotationB: 0,
     textureScaleB: 1,
-    textureCutAngle: (3 * Math.PI) / 4,
+    textureCutAngle: DEFAULT_CUT_ANGLE,
     waterPainted: false,
     waterSurface: false,
   };

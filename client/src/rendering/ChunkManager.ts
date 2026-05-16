@@ -15,7 +15,8 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
-import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES } from '@projectrs/shared';
+import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, FULL_TILE_RING, legacyCutAngleFromSplit } from '@projectrs/shared';
+import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
 
@@ -957,7 +958,7 @@ export class ChunkManager {
       textureIdB: partial.textureIdB ?? null,
       textureRotationB: partial.textureRotationB ?? 0,
       textureScaleB: partial.textureScaleB ?? 1,
-      textureCutAngle: partial.textureCutAngle ?? (3 * Math.PI) / 4,
+      textureCutAngle: partial.textureCutAngle ?? legacyCutAngleFromSplit(partial.split),
       waterPainted: partial.waterPainted ?? false,
       waterSurface: partial.waterSurface ?? false,
     };
@@ -1436,50 +1437,41 @@ export class ChunkManager {
 
         const h = this.getTileCornerHeights(x, z);
         const offset = 0.008;
-        const splitFwd = tile.split === 'forward';
 
-        const appendOverlay = (textureId: string, rotation: number, scale: number, worldUV: boolean, useFirst: boolean) => {
+        const appendOverlay = (textureId: string, rotation: number, scale: number, worldUV: boolean, ring: readonly UVPoint[]) => {
+          if (ring.length < 3) return;
           if (!this.getOrLoadTexture(textureId)) return;
 
           let batch = batches.get(textureId);
           if (!batch) { batch = { positions: [], uvs: [], indices: [], vertCount: 0 }; batches.set(textureId, batch); }
 
           const base = batch.vertCount;
-          batch.positions.push(x, h.tl + offset, z, x + 1, h.tr + offset, z, x, h.bl + offset, z + 1, x + 1, h.br + offset, z + 1);
-
           const s = Math.max(0.1, scale);
-          if (worldUV) {
-            batch.uvs.push(x / s, z / s, (x + 1) / s, z / s, x / s, (z + 1) / s, (x + 1) / s, (z + 1) / s);
-          } else {
-            const baseUV: [number, number][] = [[0, 0], [1, 0], [0, 1], [1, 1]];
-            const r = rotation % 4;
-            for (const [u, v] of baseUV) {
-              const su = (u - 0.5) / s + 0.5, sv = (v - 0.5) / s + 0.5;
-              let ru = su, rv = sv;
-              if (r === 1) { ru = -(sv - 0.5) + 0.5; rv = (su - 0.5) + 0.5; }
-              else if (r === 2) { ru = -(su - 0.5) + 0.5; rv = -(sv - 0.5) + 0.5; }
-              else if (r === 3) { ru = (sv - 0.5) + 0.5; rv = -(su - 0.5) + 0.5; }
-              batch.uvs.push(ru, rv);
+          const r = ((rotation % 4) + 4) % 4;
+          for (const p of ring) {
+            const wx = x + p.u;
+            const wz = z + p.v;
+            const wy = bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + offset;
+            batch.positions.push(wx, wy, wz);
+            if (worldUV) {
+              batch.uvs.push(wx / s, wz / s);
+            } else {
+              const [tu, tv] = transformOverlayUV(p.u, p.v, r, s);
+              batch.uvs.push(tu, tv);
             }
           }
-
-          if (tile.textureHalfMode) {
-            const tri = useFirst
-              ? (splitFwd ? [0, 2, 1] : [0, 2, 3])
-              : (splitFwd ? [2, 3, 1] : [0, 3, 1]);
-            for (const i of tri) batch.indices.push(base + i);
-          } else {
-            const quad = splitFwd ? [0, 2, 1, 2, 3, 1] : [0, 2, 3, 0, 3, 1];
-            for (const i of quad) batch.indices.push(base + i);
+          for (let i = 1; i < ring.length - 1; i++) {
+            batch.indices.push(base, base + i, base + i + 1);
           }
-          batch.vertCount += 4;
+          batch.vertCount += ring.length;
         };
 
         if (tile.textureHalfMode) {
-          if (tile.textureId) appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, true);
-          if (tile.textureIdB) appendOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, false);
+          const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle);
+          if (tile.textureId) appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA);
+          if (tile.textureIdB) appendOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB);
         } else if (tile.textureId) {
-          appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, true);
+          appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, FULL_TILE_RING);
         }
       }
     }

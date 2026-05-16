@@ -7,8 +7,8 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import type { Scene } from '@babylonjs/core/scene'
-import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, CLIFF_R, CLIFF_G, CLIFF_B, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity } from '@projectrs/shared'
-import type { RGB, GroundType } from '@projectrs/shared'
+import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, CLIFF_R, CLIFF_G, CLIFF_B, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, FULL_TILE_RING } from '@projectrs/shared'
+import type { RGB, GroundType, UVPoint } from '@projectrs/shared'
 import type { MapData, TexturePlane } from './MapData'
 import type { TextureEntry } from '../assets-system/TextureRegistry'
 
@@ -666,34 +666,6 @@ export function buildCliffMeshes(map: MapData, scene: Scene): Mesh | null {
   return mesh
 }
 
-function rotateUV(u: number, v: number, rotation: number): [number, number] {
-  const cx = 0.5
-  const cy = 0.5
-  const x = u - cx
-  const y = v - cy
-
-  const r = rotation % 4
-  if (r === 1) return [-y + cx, x + cy]
-  if (r === 2) return [-x + cx, -y + cy]
-  if (r === 3) return [y + cx, -x + cy]
-  return [u, v]
-}
-
-function scaledRotatedUVs(rotation: number, scale: number): [number, number][] {
-  const s = Math.max(0.1, scale)
-  const base: [number, number][] = [
-    [0, 0],
-    [1, 0],
-    [0, 1],
-    [1, 1]
-  ]
-
-  return base.map(([u, v]) => {
-    const su = (u - 0.5) / s + 0.5
-    const sv = (v - 0.5) / s + 0.5
-    return rotateUV(su, sv, rotation)
-  })
-}
 
 export function updateTerrainLandHeights(map: MapData, shadowInf: number[][] | null, x1: number, z1: number, x2: number, z2: number): boolean {
   // Fast-path is incompatible with convertToFlatShadedMesh: that call un-
@@ -752,9 +724,70 @@ export function updateTerrainLandHeights(map: MapData, shadowInf: number[][] | n
   return true
 }
 
-export function buildTextureOverlays(map: MapData, textureRegistry: TextureEntry[], textureCache: Map<string, Texture>, scene: Scene): TransformNode {
+/**
+ * Get or create the shared StandardMaterial for a texture overlay. Per-scene
+ * cache — without it, a 256×256 map with 30% painted tiles allocates ~20K
+ * materials on every rebuild, and per-tile dispose() leaks the materials.
+ *
+ * `emissiveLevel` controls the matte-on-terrain look: full-rebuild path uses
+ * 0.45 (richer baked-in lighting), single-tile incremental rebuild uses 0.18
+ * (dimmer to match the surrounding terrain shading). Keep the caches separate
+ * if you need both levels live at the same scene — the cache key is just the
+ * texture id and would alias otherwise.
+ */
+export function getOrCreateOverlayMaterial(
+  textureId: string,
+  textureRegistry: TextureEntry[],
+  textureCache: Map<string, Texture>,
+  scene: Scene,
+  materialCache: Map<string, StandardMaterial>,
+  emissiveLevel: number,
+): StandardMaterial | null {
+  let mat = materialCache.get(textureId)
+  if (mat) return mat
+  const textureInfo = textureRegistry.find((t) => t.id === textureId)
+  if (!textureInfo) return null
+  const texture = textureCache.get(textureInfo.id)
+  if (!texture) return null
+  texture.wrapU = Texture.WRAP_ADDRESSMODE
+  texture.wrapV = Texture.WRAP_ADDRESSMODE
+  mat = new StandardMaterial(`texoverlay_mat_${textureId}`, scene)
+  mat.diffuseTexture = texture
+  mat.diffuseColor = new Color3(0.82, 0.82, 0.82)
+  mat.emissiveTexture = texture
+  mat.emissiveColor = new Color3(emissiveLevel, emissiveLevel, emissiveLevel)
+  mat.specularColor = new Color3(0, 0, 0)
+  mat.useAlphaFromDiffuseTexture = true
+  mat.transparencyMode = 1
+  mat.backFaceCulling = false
+  mat.zOffset = -2
+  materialCache.set(textureId, mat)
+  return mat
+}
+
+/**
+ * Build all texture overlay meshes for the map. `materialCache` is shared
+ * across rebuilds so materials are created once per distinct texture rather
+ * than once per tile. See [[getOrCreateOverlayMaterial]].
+ *
+ * `meshesByTile`, when provided, is populated with `${x},${z}` → Mesh[] so
+ * that incremental single-tile rebuilds (editor's updateTileTextureOverlay)
+ * can dispose just the affected meshes in O(1) instead of scanning the
+ * entire overlay group's children.
+ */
+export function buildTextureOverlays(
+  map: MapData,
+  textureRegistry: TextureEntry[],
+  textureCache: Map<string, Texture>,
+  scene: Scene,
+  materialCache: Map<string, StandardMaterial> = new Map(),
+  meshesByTile?: Map<string, Mesh[]>,
+): TransformNode {
   const group = new TransformNode('texture-overlays', scene)
   group.setEnabled(false)
+
+  const getMaterial = (textureId: string): StandardMaterial | null =>
+    getOrCreateOverlayMaterial(textureId, textureRegistry, textureCache, scene, materialCache, 0.45)
 
   for (let z = 0; z < map.height; z++) {
     for (let x = 0; x < map.width; x++) {
@@ -765,56 +798,52 @@ export function buildTextureOverlays(map: MapData, textureRegistry: TextureEntry
       const h = map.getTileCornerHeights(x, z)
       const overlayOffset = 0.008
 
-      const positions = [
-        x,     h.tl + overlayOffset, z,
-        x + 1, h.tr + overlayOffset, z,
-        x,     h.bl + overlayOffset, z + 1,
-        x + 1, h.br + overlayOffset, z + 1
-      ]
+      const addPolygon = (
+        textureId: string,
+        rotation: number,
+        scale: number,
+        worldUV: boolean,
+        ring: readonly UVPoint[],
+      ): void => {
+        if (ring.length < 3) return
+        const mat = getMaterial(textureId)
+        if (!mat) return
 
-      const fwd = tile.split === 'forward'
-      const firstIndices  = fwd ? [0, 2, 1]       : [0, 2, 3]
-      const secondIndices = fwd ? [2, 3, 1]       : [0, 3, 1]
-      const fullIndices   = fwd ? [0, 2, 1, 2, 3, 1] : [0, 2, 3, 0, 3, 1]
-
-      const makeUVs = (rotation: number, scale: number, worldUV: boolean): number[] => {
-        if (worldUV) {
-          const s = Math.max(0.1, scale)
-          return [x/s, z/s, (x+1)/s, z/s, x/s, (z+1)/s, (x+1)/s, (z+1)/s]
+        const positions: number[] = []
+        const uvs: number[] = []
+        const s = Math.max(0.1, scale)
+        const r = ((rotation % 4) + 4) % 4
+        for (const p of ring) {
+          const wx = x + p.u
+          const wz = z + p.v
+          const wy = bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + overlayOffset
+          positions.push(wx, wy, wz)
+          if (worldUV) {
+            uvs.push(wx / s, wz / s)
+          } else {
+            const [tu, tv] = transformOverlayUV(p.u, p.v, r, s)
+            uvs.push(tu, tv)
+          }
         }
-        const uv = scaledRotatedUVs(rotation, scale)
-        return [uv[0][0], uv[0][1], uv[1][0], uv[1][1], uv[2][0], uv[2][1], uv[3][0], uv[3][1]]
-      }
+        const indices = fanTriangulate(ring.length)
 
-      const addMesh = (textureId: string, rotation: number, scale: number, worldUV: boolean, idxs: number[]): void => {
-        const textureInfo = textureRegistry.find((t) => t.id === textureId)
-        if (!textureInfo) return
-        const texture = textureCache.get(textureInfo.id)
-        if (!texture) return
-
-        texture.wrapU = Texture.WRAP_ADDRESSMODE
-        texture.wrapV = Texture.WRAP_ADDRESSMODE
-
-        const mesh = createMeshFromArrays(`texoverlay_${x}_${z}`, positions, null, makeUVs(rotation, scale, worldUV), idxs, scene)
-        const mat = new StandardMaterial(`texoverlay_mat_${x}_${z}`, scene)
-        mat.diffuseTexture = texture
-        mat.diffuseColor = new Color3(0.82, 0.82, 0.82)
-        mat.emissiveTexture = texture
-        mat.emissiveColor = new Color3(0.45, 0.45, 0.45)
-        mat.specularColor = new Color3(0, 0, 0)
-        mat.useAlphaFromDiffuseTexture = true
-        mat.transparencyMode = 1
-        mat.backFaceCulling = false
-        mat.zOffset = -2
+        const mesh = createMeshFromArrays(`texoverlay_${x}_${z}`, positions, null, uvs, indices, scene)
         mesh.material = mat
         mesh.parent = group
+        if (meshesByTile) {
+          const key = `${x},${z}`
+          let list = meshesByTile.get(key)
+          if (!list) { list = []; meshesByTile.set(key, list) }
+          list.push(mesh)
+        }
       }
 
       if (tile.textureHalfMode) {
-        if (tile.textureId) addMesh(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, firstIndices)
-        if (tile.textureIdB) addMesh(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, secondIndices)
+        const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle)
+        if (tile.textureId) addPolygon(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
+        if (tile.textureIdB) addPolygon(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
       } else if (tile.textureId) {
-        addMesh(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, fullIndices)
+        addPolygon(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, FULL_TILE_RING)
       }
     }
   }

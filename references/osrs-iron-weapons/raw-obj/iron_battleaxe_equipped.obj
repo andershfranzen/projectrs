@@ -1,0 +1,246 @@
+mtllib iron_battleaxe_equipped.mtl
+o runescapemodel
+v -33 96 3
+v -33 104 51
+v -33 112 50
+v -33 100 2
+v -27 100 2
+v -27 112 50
+v -27 104 51
+v -27 96 3
+v -32 99 -4
+v -33 98 -11
+v -33 93 -9
+v -32 95 -4
+v -28 95 -4
+v -27 93 -9
+v -27 98 -11
+v -28 99 -4
+v -30 129 36
+v -30 124 53
+v -28 117 48
+v -28 110 45
+v -28 109 40
+v -28 115 36
+v -30 118 26
+v -32 115 36
+v -32 109 40
+v -32 110 45
+v -32 117 48
+v -28 98 51
+v -30 94 59
+v -30 82 45
+v -28 104 46
+v -32 98 51
+v -32 104 46
+v -32 103 42
+v -32 95 39
+v -30 89 32
+v -28 95 39
+v -28 103 42
+vn -512 189 -298
+vn -256 474 -340
+vn -512 -562 -388
+vn -256 -377 -450
+vn 512 -562 -132
+vn 256 -281 -194
+vn 512 189 -554
+vn 256 378 -596
+vn -512 -269 207
+vn -256 -429 278
+vn -512 662 202
+vn -256 243 364
+vn 512 466 -17
+vn 256 319 100
+vn 512 -81 436
+vn 256 -512 548
+vn 0 -328 4
+vn 0 34 -244
+vn 505 182 -436
+vn 512 168 -443
+vn 507 233 389
+vn 501 325 279
+vn 0 179 152
+vn -501 471 498
+vn -507 87 170
+vn -512 66 -205
+vn -505 284 -674
+vn 502 -333 -328
+vn 0 -144 -195
+vn 0 314 -74
+vn 509 -286 -375
+vn -502 -498 -526
+vn -509 -121 -177
+vn -509 -140 429
+vn -503 -221 391
+vn 0 -97 224
+vn 503 -311 631
+vn 509 -50 189
+usemtl m0
+f 1 2 3
+
+usemtl m1
+f 1 3 4
+
+usemtl m2
+f 4 3 5
+
+usemtl m3
+f 5 3 6
+
+usemtl m4
+f 5 6 7
+
+usemtl m5
+f 5 7 8
+
+usemtl m6
+f 8 7 2
+
+usemtl m7
+f 8 2 1
+
+usemtl m8
+f 4 1 8
+
+usemtl m9
+f 4 8 5
+
+usemtl m10
+f 3 2 7
+
+usemtl m11
+f 3 7 6
+
+usemtl m12
+f 9 10 11
+
+usemtl m13
+f 9 11 12
+
+usemtl m14
+f 12 11 13
+
+usemtl m15
+f 13 11 14
+
+usemtl m16
+f 13 14 15
+
+usemtl m17
+f 13 15 16
+
+usemtl m18
+f 16 15 10
+
+usemtl m19
+f 16 10 9
+
+usemtl m20
+f 12 9 16
+
+usemtl m21
+f 12 16 13
+
+usemtl m22
+f 11 10 15
+
+usemtl m23
+f 11 15 14
+
+usemtl m24
+f 17 18 19
+
+usemtl m25
+f 17 19 20
+
+usemtl m26
+f 17 20 21
+
+usemtl m27
+f 17 21 22
+
+usemtl m28
+f 17 22 23
+
+usemtl m29
+f 17 23 24
+
+usemtl m30
+f 17 24 25
+
+usemtl m31
+f 17 25 26
+
+usemtl m32
+f 17 26 27
+
+usemtl m33
+f 17 27 18
+
+usemtl m34
+f 18 27 19
+
+usemtl m35
+f 19 27 20
+
+usemtl m36
+f 20 27 26
+
+usemtl m37
+f 24 22 21
+
+usemtl m38
+f 24 21 25
+
+usemtl m39
+f 23 22 24
+
+usemtl m40
+f 28 29 30
+
+usemtl m41
+f 28 30 31
+
+usemtl m42
+f 28 31 32
+
+usemtl m43
+f 28 32 29
+
+usemtl m44
+f 29 32 30
+
+usemtl m45
+f 30 32 33
+
+usemtl m46
+f 30 33 34
+
+usemtl m47
+f 30 34 35
+
+usemtl m48
+f 30 35 36
+
+usemtl m49
+f 30 36 37
+
+usemtl m50
+f 30 37 38
+
+usemtl m51
+f 30 38 31
+
+usemtl m52
+f 32 31 33
+
+usemtl m53
+f 34 38 37
+
+usemtl m54
+f 34 37 35
+
+usemtl m55
+f 35 37 36
+

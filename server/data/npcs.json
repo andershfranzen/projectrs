@@ -54,15 +54,15 @@
   },
   {
     "id": 2,
-    "name": "Rat",
-    "health": 8,
-    "attack": 2,
-    "defence": 1,
-    "strength": 2,
+    "name": "Giant Rat",
+    "health": 15,
+    "attack": 4,
+    "defence": 2,
+    "strength": 4,
     "attackSpeed": 4,
     "respawnTime": 15,
     "aggressive": false,
-    "wanderRange": 2,
+    "wanderRange": 3,
     "lootTable": [
       {
         "itemId": 1,
@@ -420,7 +420,7 @@
     "wanderRange": 1,
     "lootTable": [],
     "shop": {
-      "name": "Armor Shop — Head & Body",
+      "name": "Armor Shop \u2014 Head & Body",
       "items": [
         {
           "itemId": 9,
@@ -458,7 +458,7 @@
     "wanderRange": 1,
     "lootTable": [],
     "shop": {
-      "name": "Armor Shop — Legs",
+      "name": "Armor Shop \u2014 Legs",
       "items": [
         {
           "itemId": 8,
@@ -486,7 +486,7 @@
     "wanderRange": 1,
     "lootTable": [],
     "shop": {
-      "name": "Armor Shop — Shields",
+      "name": "Armor Shop \u2014 Shields",
       "items": [
         {
           "itemId": 4,
@@ -556,6 +556,30 @@
         "itemId": 20,
         "quantity": 1,
         "chance": 0.6
+      }
+    ]
+  },
+  {
+    "id": 18,
+    "name": "Rat",
+    "health": 5,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 12,
+    "aggressive": false,
+    "wanderRange": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 0.6
+      },
+      {
+        "itemId": 14,
+        "quantity": 1,
+        "chance": 0.5
       }
     ]
   }

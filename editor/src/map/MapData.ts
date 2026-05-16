@@ -1,3 +1,5 @@
+import { DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeCutAngle } from '@projectrs/shared'
+
 export interface Tile {
   ground: string
   groundB: string | null
@@ -75,7 +77,7 @@ function createDefaultTile(): Tile {
     textureIdB: null,
     textureRotationB: 0,
     textureScaleB: 1,
-    textureCutAngle: (3 * Math.PI) / 4,
+    textureCutAngle: DEFAULT_CUT_ANGLE,
     waterPainted: false,
     waterSurface: false
   }
@@ -356,9 +358,7 @@ export class MapData {
   setTextureCutAngle(x: number, z: number, angle: number): void {
     const tile = this.getTile(x, z)
     if (!tile) return
-    let a = angle % Math.PI
-    if (a < 0) a += Math.PI
-    tile.textureCutAngle = a
+    tile.textureCutAngle = normalizeCutAngle(angle)
   }
 
   clearTextureTile(x: number, z: number): void {
@@ -533,13 +533,9 @@ export class MapData {
           const src = data.tiles?.[z]?.[x]
           if (!src) continue
 
-          // Legacy migration: tiles painted before the arbitrary-angle cut
-          // existed only had `split`. Map forward→3π/4 (BL-TR line),
-          // back→π/4 (TL-BR line) so old half-painted maps render identically.
-          const legacyAngle = src.split === 'back' ? Math.PI / 4 : (3 * Math.PI) / 4
           const cutAngle = typeof (src as any).textureCutAngle === 'number'
             ? (src as any).textureCutAngle
-            : legacyAngle
+            : legacyCutAngleFromSplit(src.split)
 
           map.tiles[z][x] = {
             ground: src.ground || 'grass',
