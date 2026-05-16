@@ -4817,12 +4817,8 @@ export class GameManager {
     if (this.lastSelfAuthorityAt === 0) return;
     if (this.selfAuthorityGraceUntil !== 0 && performance.now() < this.selfAuthorityGraceUntil) return;
     if (performance.now() - this.lastSelfAuthorityAt <= GameManager.AUTHORITY_STALE_MS) return;
-    console.warn('[net] Local authority stream went stale');
-    this.handleConnectionLost(new CloseEvent('close', {
-      code: 4006,
-      reason: 'authority stream stale',
-      wasClean: false,
-    }));
+    console.warn('[net] Local authority stream stale; waiting for socket heartbeat before reconnecting');
+    this.lastSelfAuthorityAt = performance.now();
   }
 
   private update(dt: number): void {
