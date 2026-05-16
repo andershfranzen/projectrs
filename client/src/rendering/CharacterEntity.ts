@@ -463,7 +463,7 @@ export class CharacterEntity {
       // rendered hair without disturbing the underlying skin weights or skeleton,
       // and mesh.scaling expands it around the mesh pivot. Tune all three constants to taste.
       const HAIR_FORWARD_OFFSET = 0.005; // +Z = forward; was 0.01, pulled back a touch
-      const HAIR_VERTICAL_OFFSET = -0.01; // -Y = down
+      const HAIR_VERTICAL_OFFSET = -0.005; // -Y = down; raised slightly (was -0.01) to fix tiny scalp clipping
       const HAIR_SCALE = 1.015;
       for (const mesh of this.meshes) {
         if (mesh.name.startsWith('M_hair_')) {

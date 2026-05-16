@@ -46,6 +46,8 @@ import {
   fullTileRingForSplit,
   CUT_SNAP_ANGLES,
   CUT_SNAP_TOLERANCE_RAD,
+  getObjectInteractionTiles,
+  localSidesToWorldSides,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -1387,6 +1389,16 @@ let paintBrushRadius = 1
           </div>
         </div>
       </div>
+      <div id="interactionSidesRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
+        <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Interaction sides (player must approach from)</div>
+        <div style="font-size:10px;color:#777;margin-bottom:6px;">Relative to object forward (+Z when unrotated). All off = any side.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:11px;">
+          <label style="cursor:pointer;"><input type="checkbox" id="interactSideF" /> Front</label>
+          <label style="cursor:pointer;"><input type="checkbox" id="interactSideR" /> Right</label>
+          <label style="cursor:pointer;"><input type="checkbox" id="interactSideB" /> Back</label>
+          <label style="cursor:pointer;"><input type="checkbox" id="interactSideL" /> Left</label>
+        </div>
+      </div>
       <div id="planeRotationRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
         <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Plane Rotation</div>
         <div style="display:flex;gap:3px;margin-bottom:5px;">
@@ -2676,6 +2688,29 @@ let paintBrushRadius = 1
     sidebar.querySelector(id).addEventListener('change', saveTriggerFromUI)
   }
 
+  // Interaction sides (local-frame bitmask: F=1, R=2, B=4, L=8)
+  const interactSideInputs = [
+    { id: '#interactSideF', bit: 1 },
+    { id: '#interactSideR', bit: 2 },
+    { id: '#interactSideB', bit: 4 },
+    { id: '#interactSideL', bit: 8 },
+  ]
+  function saveInteractionSidesFromUI() {
+    if (!selectedPlacedObject) return
+    let mask = 0
+    for (const { id, bit } of interactSideInputs) {
+      if (sidebar.querySelector(id).checked) mask |= bit
+    }
+    // Delete only on empty mask. All-four-ticked (0xF) is stored as-is so the
+    // checkbox state doesn't silently reset on the next inspector update.
+    if (mask === 0) delete selectedPlacedObject.userData.interactionSides
+    else selectedPlacedObject.userData.interactionSides = mask
+    updateSelectionHelper()
+  }
+  for (const { id } of interactSideInputs) {
+    sidebar.querySelector(id).addEventListener('change', saveInteractionSidesFromUI)
+  }
+
   const replaceBtnEl = sidebar.querySelector('#replaceBtn')
   const replacePanel = sidebar.querySelector('#replacePanel')
   const replaceSearchEl = sidebar.querySelector('#replaceSearch')
@@ -2961,6 +2996,17 @@ let paintBrushRadius = 1
         }
       }
     }
+    const interactionSidesRow = sidebar.querySelector('#interactionSidesRow')
+    if (interactionSidesRow) {
+      const showSides = state.tool === ToolMode.SELECT && selectedPlacedObject
+      interactionSidesRow.style.display = showSides ? 'block' : 'none'
+      if (showSides) {
+        const mask = selectedPlacedObject.userData.interactionSides | 0
+        for (const { id, bit } of interactSideInputs) {
+          sidebar.querySelector(id).checked = (mask & bit) !== 0
+        }
+      }
+    }
     const planeRotationRow = sidebar.querySelector('#planeRotationRow')
     if (planeRotationRow) {
       const showPlaneRot = (state.tool === ToolMode.SELECT || state.tool === ToolMode.TEXTURE_PLANE) && selectedTexturePlane
@@ -3113,6 +3159,50 @@ let paintBrushRadius = 1
     } catch { return null }
   }
 
+  let _interactionSideMat = null
+  function getInteractionSideMaterial() {
+    if (_interactionSideMat) return _interactionSideMat
+    const m = new StandardMaterial('interactionSideMat', scene)
+    m.emissiveColor = new Color3(0.2, 1.0, 0.4)
+    m.diffuseColor = new Color3(0, 0, 0)
+    m.specularColor = new Color3(0, 0, 0)
+    m.alpha = 0.4
+    m.disableLighting = true
+    m.backFaceCulling = false
+    m.zOffset = -2 // push toward camera in depth so ground doesn't z-fight
+    _interactionSideMat = m
+    return m
+  }
+
+  function createInteractionSideMarkers(obj) {
+    const localMask = obj?.userData?.interactionSides | 0
+    if (!localMask) return []
+    let rotY = obj.rotation?.y || 0
+    if (obj.rotationQuaternion) {
+      const e = obj.rotationQuaternion.toEulerAngles()
+      rotY = e.y
+    }
+    const worldMask = localSidesToWorldSides(localMask, rotY)
+    if (!worldMask) return []
+    // Most editable interactables (cooking range, furnace) are 1x1. Width is
+    // the only field consulted by the shared util; pass width:1 as the default.
+    const tiles = getObjectInteractionTiles(obj.position.x, obj.position.z, { width: 1 }, { allowedWorldSides: worldMask })
+    const mat = getInteractionSideMaterial()
+    const yBase = (obj.position.y || 0) + 0.02 // hair above ground to avoid z-fighting
+    const meshes = []
+    for (const t of tiles) {
+      const marker = MeshBuilder.CreatePlane(`interactSide_${t.x}_${t.z}`, { size: 0.92 }, scene)
+      marker.rotation.x = Math.PI / 2 // lay flat on XZ plane
+      marker.position.set(t.x + 0.5, yBase, t.z + 0.5)
+      marker.material = mat
+      marker.isPickable = false
+      marker.doNotSyncBoundingInfo = true
+      marker.renderingGroupId = 1 // draw above default scene to stay visible
+      meshes.push(marker)
+    }
+    return meshes
+  }
+
   function clearSelectionHelper() {
     if (Array.isArray(selectionHelper)) {
       for (const h of selectionHelper) { if (h) h.dispose() }
@@ -3135,6 +3225,8 @@ let paintBrushRadius = 1
     for (const obj of selectedPlacedObjects) {
       const h = createBoundingBoxHelper(obj, boxColor)
       if (h) helpers.push(h)
+      const sideMarkers = createInteractionSideMarkers(obj)
+      for (const m of sideMarkers) helpers.push(m)
     }
 
     // Update emissive colors on all texture plane meshes to reflect selection state
@@ -3190,6 +3282,7 @@ let paintBrushRadius = 1
         scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
       }
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
+      if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
       return out
     })
     // Append orphaned placements (assetId not in registry) so they survive save/load.
@@ -3231,6 +3324,7 @@ let paintBrushRadius = 1
       model.userData.type = 'asset'
       model.userData.layerId = placed.layerId || 'layer_0'
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+      if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const layer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(layer ? layer.visible : true)
       addPlacedModel(model)
@@ -3400,6 +3494,7 @@ let paintBrushRadius = 1
       model.userData.type = 'asset'
       model.userData.layerId = placed.layerId || activeLayerId
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+      if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const _layer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(_layer ? _layer.visible : true)
       addPlacedModel(model)

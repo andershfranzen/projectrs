@@ -22,6 +22,9 @@ export class WorldObject {
   closedEdge: number = 0;
   /** Per-instance transition override from editor trigger data */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
+  /** Local-frame side bitmask of valid interaction tiles (F=1,R=2,B=4,L=8).
+   *  0 / undefined = all 4 cardinal sides allowed (legacy behavior). */
+  interactionSides?: number;
 
   constructor(def: WorldObjectDef, x: number, z: number, mapLevel: string) {
     this.id = nextObjectEntityId++;

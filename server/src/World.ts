@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -348,11 +348,11 @@ export class World {
       cm.addEntity(npc.id, spawn.x, spawn.z);
     }
     // Derive world objects from placed objects in map.json (single source of truth)
-    const objectSpawns: { objectId: number; x: number; z: number; rotY?: number; trigger?: any }[] = [];
+    const objectSpawns: { objectId: number; x: number; z: number; rotY?: number; trigger?: any; interactionSides?: number }[] = [];
     for (const placed of gameMap.placedObjects) {
       const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
       if (defId != null) {
-        objectSpawns.push({ objectId: defId, x: placed.position.x, z: placed.position.z, rotY: placed.rotation?.y, trigger: placed.trigger });
+        objectSpawns.push({ objectId: defId, x: placed.position.x, z: placed.position.z, rotY: placed.rotation?.y, trigger: placed.trigger, interactionSides: placed.interactionSides });
         continue;
       }
       // Thin-instanced decor stays a tile blocker only — no WorldObject entity.
@@ -372,6 +372,7 @@ export class World {
       const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId);
       if (spawn.rotY != null) obj.rotationY = spawn.rotY;
       if (spawn.trigger) obj.trigger = spawn.trigger;
+      if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
       this.worldObjects.set(obj.id, obj);
       this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
       if (objDef.category === 'door') {
@@ -473,7 +474,10 @@ export class World {
 
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
-    const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def)
+    const allowedWorldSides = obj.interactionSides
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY)
+      : undefined;
+    const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def, { allowedWorldSides })
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
       .sort((a, b) => {
         const ad = Math.abs(player.position.x - (a.x + 0.5)) + Math.abs(player.position.y - (a.z + 0.5));
@@ -1282,7 +1286,7 @@ export class World {
   }
 
   /** Check if player is on a tile adjacent to the object (orthogonal only for harvestable). */
-  private isAdjacentToObject(player: Player, obj: { x: number; z: number; def: WorldObjectDef }): boolean {
+  private isAdjacentToObject(player: Player, obj: WorldObject): boolean {
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
     const otx = Math.floor(obj.x);
@@ -1291,7 +1295,10 @@ export class World {
     if (obj.def.category === 'door') {
       return (ptx === otx && ptz === otz) || (Math.abs(ptx - otx) + Math.abs(ptz - otz) === 1);
     }
-    return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def);
+    const allowedWorldSides = obj.interactionSides
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY)
+      : undefined;
+    return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def, { allowedWorldSides });
   }
 
   handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {

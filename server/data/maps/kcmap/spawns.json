@@ -67,41 +67,6 @@
       "wanderRange": 4
     },
     {
-      "id": 17,
-      "npcId": 1,
-      "x": 258.5,
-      "z": 95.5,
-      "wanderRange": 2
-    },
-    {
-      "id": 18,
-      "npcId": 1,
-      "x": 256.5,
-      "z": 95.5,
-      "wanderRange": 2
-    },
-    {
-      "id": 19,
-      "npcId": 1,
-      "x": 259.5,
-      "z": 94.5,
-      "wanderRange": 2
-    },
-    {
-      "id": 20,
-      "npcId": 1,
-      "x": 256.5,
-      "z": 96.5,
-      "wanderRange": 2
-    },
-    {
-      "id": 21,
-      "npcId": 1,
-      "x": 256.5,
-      "z": 94.5,
-      "wanderRange": 2
-    },
-    {
       "id": 22,
       "npcId": 4,
       "x": 231.5,
@@ -235,8 +200,7 @@
         "beltColor": 5,
         "skinColor": 1,
         "hairStyle": 5
-      },
-      "name": "Farmer"
+      }
     },
     {
       "id": 38,
@@ -295,12 +259,30 @@
       "aggressive": false
     },
     {
-      "id": 45,
+      "id": 46,
       "npcId": 15,
-      "x": 141.5,
-      "z": 158.5,
+      "x": 215.5,
+      "z": 199.5,
       "wanderRange": 3,
       "aggressive": false
+    },
+    {
+      "id": 47,
+      "npcId": 15,
+      "x": 219.5,
+      "z": 200.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "name": "Camel"
+    },
+    {
+      "id": 48,
+      "npcId": 15,
+      "x": 215.5,
+      "z": 199.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "name": "Camel"
     }
   ],
   "objects": [],

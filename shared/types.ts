@@ -468,6 +468,9 @@ export interface PlacedObject {
   scale: { x: number; y: number; z: number };
   /** Per-instance trigger override (e.g. teleport doors authored in the editor) */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
+  /** Bitmask of allowed interaction sides in OBJECT-LOCAL frame
+   *  (F=1, R=2, B=4, L=8). Forward = +Z when rotY=0. 0 / undefined = all sides. */
+  interactionSides?: number;
 }
 
 export interface EditorLayer {
