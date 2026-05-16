@@ -924,6 +924,10 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    if (url.pathname === '/api/spells' && req.method === 'GET') {
+      return jsonResponse({ spells: world.data.getAllSpells() });
+    }
+
     if (url.pathname === '/api/dev/gear-files' && req.method === 'GET') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       const slot = url.searchParams.get('slot') || '';

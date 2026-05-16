@@ -1156,6 +1156,26 @@ export class CharacterEntity {
     this.applyWalkSpeed();
   }
 
+  /**
+   * Play a named animation as a one-shot, returning to idle when done.
+   * Returns false (and does nothing) if the name isn't loaded — no fallback,
+   * unlike playAttackAnimation. Used by debug commands like /spell and /anim.
+   */
+  playNamedOneShot(name: string): boolean {
+    if (this.currentState === AnimState.Attack) return false;
+    if (!this.animGroups.has(name)) return false;
+    this.queuedState = this.currentState >= AnimState.Walk ? AnimState.Walk : AnimState.Idle;
+    this.queuedAnimName = '';
+    this.playAnim(name, false, () => {
+      if (this.currentState === AnimState.Attack) {
+        this.currentState = this.queuedState;
+        this.playAnimByState(this.queuedState, this.queuedAnimName, undefined);
+      }
+    });
+    this.currentState = AnimState.Attack;
+    return true;
+  }
+
   /** Play a one-shot attack animation. Optional variant name (e.g. 'attack_slash').
    *  When the player is currently walking, plays an upper-body-only variant
    *  layered over walk's lower-body so the legs keep cycling — the silhouette
@@ -2060,6 +2080,38 @@ export class CharacterEntity {
 
   getBoneRestRotation(boneName: string): Quaternion | null {
     return this.boneRestRotations.get(boneName) ?? null;
+  }
+
+  /** World-space position of a named bone, or null if the skeleton or bone isn't loaded. */
+  getBoneWorldPosition(boneName: string): Vector3 | null {
+    if (!this.skeleton) return null;
+    const bone = this.skeleton.bones.find(b => b.name === boneName);
+    const tn = bone?.getTransformNode();
+    return tn ? tn.getAbsolutePosition().clone() : null;
+  }
+
+  /**
+   * World-space origin point for spell effects emitted from the caster's hand(s).
+   * Midpoint of both hands (suits two-handed staff poses). Falls back to torso or
+   * model position if the hand bones aren't found.
+   */
+  getCastOrigin(): Vector3 {
+    const r = this.getBoneWorldPosition('mixamorig:RightHand');
+    const l = this.getBoneWorldPosition('mixamorig:LeftHand');
+    if (r && l) return Vector3.Center(r, l);
+    if (r) return r;
+    if (l) return l;
+    return this.getTargetAnchor();
+  }
+
+  /**
+   * World-space point on this character that incoming projectiles should aim at.
+   * Chest-height (mixamorig:Spine2). Falls back to model midpoint.
+   */
+  getTargetAnchor(): Vector3 {
+    const p = this.getBoneWorldPosition('mixamorig:Spine2');
+    if (p) return p;
+    return new Vector3(this._position.x, this._position.y + this.yOffset, this._position.z);
   }
 
   // ---------------------------------------------------------------------------

@@ -28,6 +28,8 @@ import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
+import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
+import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
 import { EntityManager, type GroundItemData } from './EntityManager';
 import { InputManager } from './InputManager';
@@ -49,7 +51,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -264,6 +266,14 @@ export class GameManager {
   private bankPanel: BankPanel | null = null;
   private tradePanel: TradePanel | null = null;
 
+  // Spell effect runtime. Catalogue is lazy-loaded from /api/spells on first /spell command.
+  // spellsByIndex mirrors the server's alphabetical order so binary protocol
+  // indices line up — DataLoader sorts by id at boot, /api/spells returns that
+  // exact list, and we never reorder client-side.
+  private spellEffectPlayer: SpellEffectPlayer | null = null;
+  private spellsById: Map<string, SpellEffectDef> | null = null;
+  private spellsByIndex: SpellEffectDef[] = [];
+
   // Combat hit splats (HTML overlay)
   private hitSplats: { worldPos: Vector3; el: HTMLDivElement; timer: number; startY: number }[] = [];
 
@@ -304,9 +314,9 @@ export class GameManager {
     this.scene.setRenderingAutoClearDepthStencil(2, false, false, false);
     // skipPointerMovePicking disabled — InputManager relies on pointer events
 
-    // Disable unused Babylon subsystems to skip per-frame checks
+    // Disable unused Babylon subsystems to skip per-frame checks.
+    // particlesEnabled stays on — SpellEffectPlayer uses them for cast/trail/impact effects.
     this.scene.lensFlaresEnabled = false;
-    this.scene.particlesEnabled = false;
     this.scene.spritesEnabled = false;
     this.scene.proceduralTexturesEnabled = false;
     this.scene.physicsEnabled = false;
@@ -1955,6 +1965,29 @@ export class GameManager {
         this.spawnProjectile(fromPos, toPos);
       }
     });
+
+    // Spell cast — server broadcasts [casterId, targetId, spellIndex] when any
+    // player casts. Receivers play the full visual sequence; damage arrives
+    // independently via the deferred COMBAT_HIT scheduled at the impact tick.
+    this.network.on(ServerOpcode.SPELL_CAST, (_op, v) => {
+      const [casterId, targetId, spellIndex] = v;
+      this.handleSpellCastBroadcast(casterId, targetId, spellIndex).catch(err => console.error('[spell-cast]', err));
+    });
+  }
+
+  private async handleSpellCastBroadcast(casterId: number, targetId: number, spellIndex: number): Promise<void> {
+    await this.ensureSpellsLoaded();
+    const def = this.spellsByIndex[spellIndex];
+    if (!def) {
+      console.warn(`[spell-cast] unknown spell index ${spellIndex}`);
+      return;
+    }
+    const caster = casterId === this.localPlayerId
+      ? this.localPlayer
+      : (this.entities.remotePlayers.get(casterId) ?? null);
+    const target = this.entities.resolveTargetable(targetId);
+    if (!caster || !target) return;  // caster/target out of our chunk window
+    this.playSpellEffect(caster, target, def);
   }
 
   private setupWorldObjectHandlers(): void {
@@ -3385,6 +3418,23 @@ export class GameManager {
       this.openCharacterCreatorWhenReady();
       return true;
     }
+    if (msg.startsWith('/anim ')) {
+      this.runAnimCommand(msg.slice(6).trim());
+      return true;
+    }
+    if (msg === '/anim' || msg === '/anim ?') {
+      const names = this.localPlayer?.getAnimationNames() ?? [];
+      this.chatPanel?.addSystemMessage(`Animations: ${names.join(', ') || '(none loaded)'}`);
+      return true;
+    }
+    if (msg.startsWith('/spell')) {
+      this.runSpellCommand(msg.slice(6).trim());
+      return true;
+    }
+    if (msg.startsWith('/cast')) {
+      this.runCastCommand(msg.slice(5).trim());
+      return true;
+    }
     return false;
   }
 
@@ -3403,6 +3453,151 @@ export class GameManager {
       this.characterCreatorOpenPending = false;
       if (!this.characterCreator) this.openCharacterCreator();
     });
+  }
+
+  /** Play a named animation on the local player as a one-shot. Used by /anim debug. */
+  private runAnimCommand(animName: string): void {
+    if (!animName) return;
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+    const ok = this.localPlayer.playNamedOneShot(animName);
+    if (!ok) {
+      const names = this.localPlayer.getAnimationNames();
+      this.chatPanel?.addSystemMessage(`Unknown animation '${animName}'. Available: ${names.join(', ')}`);
+    }
+  }
+
+  /**
+   * Run a spell effect locally for testing. Syntax: `/spell <id> [targetEntityId]`.
+   * - Empty / `?` → list known spells
+   * - No target → picks the nearest NPC
+   *
+   * Pure client-side; no server interaction yet (Phase 4 hooks this up to CAST_SPELL).
+   */
+  private async runSpellCommand(args: string): Promise<void> {
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+    await this.ensureSpellsLoaded();
+    const known = this.spellsById!;
+    if (!args || args === '?') {
+      const ids = [...known.keys()];
+      this.chatPanel?.addSystemMessage(`Spells: ${ids.join(', ') || '(none — drop a JSON in server/data/spells/)'}`);
+      return;
+    }
+    const parts = args.split(/\s+/);
+    const spellId = parts[0];
+    const targetIdRaw = parts[1];
+    const def = known.get(spellId);
+    if (!def) {
+      this.chatPanel?.addSystemMessage(`No spell '${spellId}'. Known: ${[...known.keys()].join(', ')}`);
+      return;
+    }
+
+    const target = targetIdRaw
+      ? this.entities.resolveTargetable(parseInt(targetIdRaw, 10))
+      : this.entities.findNearestNpc(this.localPlayer.position)?.npc ?? null;
+    if (!target) {
+      this.chatPanel?.addSystemMessage('No target — cast failed.');
+      return;
+    }
+
+    this.playSpellEffect(this.localPlayer, target, def, () => {
+      this.chatPanel?.addSystemMessage(`Impact: ${def.name}`);
+    });
+  }
+
+  /**
+   * Run the full cast→travel→impact pipeline for one spell. Pure presentation:
+   * plays the caster's cast animation and hands a snapshot of caster/target
+   * positions to SpellEffectPlayer. Reused by Phase 4's SPELL_CAST broadcast
+   * handler (caster may be a remote player, target may be the local player).
+   *
+   * No damage / no network — just visuals + the `onImpact` callback.
+   */
+  private playSpellEffect(
+    caster: CharacterEntity,
+    target: Targetable,
+    def: SpellEffectDef,
+    onImpact?: () => void,
+  ): void {
+    if (!this.spellEffectPlayer) this.spellEffectPlayer = new SpellEffectPlayer(this.scene);
+    caster.playNamedOneShot('spell_cast_2h');
+    const from = caster.getCastOrigin();
+    const to = target.getTargetAnchor();
+    // Ground decals sit at the target's foot height; falling back to to.y
+    // would float them at chest level.
+    const groundY = target.position.y;
+    this.spellEffectPlayer.play({ def, from, to, groundY, onImpact })
+      .catch(err => console.error('[spell]', err));
+  }
+
+  /**
+   * Send a real cast packet to the server. Syntax: `/cast <id> [targetEntityId]`.
+   * Server validates range / cooldown / target, broadcasts SPELL_CAST, queues
+   * the damage for the impact tick. The visuals replay via the SPELL_CAST
+   * broadcast handler, not from this method.
+   */
+  private async runCastCommand(args: string): Promise<void> {
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+    await this.ensureSpellsLoaded();
+    const known = this.spellsById!;
+    if (!args || args === '?') {
+      const ids = [...known.keys()];
+      this.chatPanel?.addSystemMessage(`Cast: ${ids.join(', ') || '(no spells loaded)'}`);
+      return;
+    }
+    const parts = args.split(/\s+/);
+    const spellId = parts[0];
+    const targetIdRaw = parts[1];
+
+    const def = known.get(spellId);
+    if (!def) {
+      this.chatPanel?.addSystemMessage(`No spell '${spellId}'.`);
+      return;
+    }
+    const spellIndex = this.spellsByIndex.indexOf(def);
+    if (spellIndex < 0) return;
+
+    let targetId = targetIdRaw ? parseInt(targetIdRaw, 10) : NaN;
+    if (!Number.isFinite(targetId)) {
+      const nearest = this.entities.findNearestNpc(this.localPlayer.position);
+      if (!nearest) {
+        this.chatPanel?.addSystemMessage('No target — cast failed.');
+        return;
+      }
+      targetId = nearest.entityId;
+    }
+
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId));
+  }
+
+  /**
+   * Fetch /api/spells once and cache. The server returns spells already sorted
+   * by id; we preserve that order so the array index matches the server's
+   * binary protocol index (PLAYER_CAST_SPELL / SPELL_CAST).
+   */
+  private async ensureSpellsLoaded(): Promise<void> {
+    if (this.spellsById) return;
+    try {
+      const res = await fetch('/api/spells');
+      const data = await res.json();
+      const list = (data.spells as SpellEffectDef[]) ?? [];
+      this.spellsByIndex = list;
+      const map = new Map<string, SpellEffectDef>();
+      for (const s of list) map.set(s.id, s);
+      this.spellsById = map;
+    } catch (e) {
+      console.error('[spell] failed to load /api/spells:', e);
+      this.spellsById = new Map();
+      this.spellsByIndex = [];
+    }
   }
 
   private openCharacterCreator(): void {

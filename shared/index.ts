@@ -10,3 +10,4 @@ export * from './floorDerivation.js';
 export * from './doorEdge.js';
 export * from './character.js';
 export * from './objectFootprint.js';
+export * from './spells.js';

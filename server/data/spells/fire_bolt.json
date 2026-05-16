@@ -1,0 +1,94 @@
+{
+  "id": "fire_bolt",
+  "name": "Fire Bolt",
+  "element": "fire",
+  "tier": 2,
+  "projectile": {
+    "shape": "blast",
+    "size": 0.95,
+    "primaryColor": {
+      "r": 1,
+      "g": 0.4,
+      "b": 0
+    },
+    "secondaryColor": {
+      "r": 1,
+      "g": 0.1,
+      "b": 0
+    },
+    "glowIntensity": 0,
+    "rotationSpeed": 2,
+    "texture": "none"
+  },
+  "trajectory": {
+    "type": "arc",
+    "travelTimeMs": 900,
+    "arcHeight": 1.5,
+    "homingCurve": 1
+  },
+  "trail": {
+    "particleType": "smoke",
+    "density": 100,
+    "width": 0.2,
+    "color": {
+      "r": 1,
+      "g": 0.5,
+      "b": 0.1
+    },
+    "fadeTime": 0.25,
+    "motion": "straight"
+  },
+  "cast": {
+    "durationMs": 100,
+    "burstParticle": "ember",
+    "burstCount": 5,
+    "burstColor": {
+      "r": 0,
+      "g": 0,
+      "b": 0
+    },
+    "burstSpread": 0.1,
+    "handGlow": false,
+    "handGlowColor": {
+      "r": 1,
+      "g": 0.5,
+      "b": 0
+    },
+    "handGlowIntensity": 1.5
+  },
+  "impact": {
+    "splashParticle": "spark",
+    "splashCount": 30,
+    "splashSpread": 0.7,
+    "splashColor": {
+      "r": 1,
+      "g": 0.5,
+      "b": 0.1
+    },
+    "groundDecal": "none",
+    "lightning": {
+      "arcCount": 0,
+      "flickerSpeed": 1,
+      "jaggedness": 2,
+      "spread": 0,
+      "thickness": 2,
+      "color": {
+        "r": 0,
+        "g": 0,
+        "b": 0
+      },
+      "coverage": 0.8,
+      "glow": 0
+    },
+    "lingerEnabled": false,
+    "lingerDurationMs": 500,
+    "lingerEmitRate": 5,
+    "lingerColor": {
+      "r": 0,
+      "g": 0,
+      "b": 0
+    }
+  },
+  "aoe": false,
+  "aoeTargetCount": 3
+}
