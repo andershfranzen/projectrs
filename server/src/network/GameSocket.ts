@@ -411,6 +411,7 @@ export function handleGameSocketClose(
   world: World
 ): void {
   const playerId = ws.data.playerId;
+  console.log(`[GameSocket] close account=${ws.data.accountId} player=${playerId ?? 'none'}`);
   if (playerId) {
     // Saves + removes, OR defers removal if the player is in a post-combat
     // logout block. See World.handlePlayerDisconnect.

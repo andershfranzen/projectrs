@@ -1629,6 +1629,7 @@ const server = Bun.serve<SocketData>({
       // sockets in flight. Mark the slot as "reserved" via a flag on ws.data
       // so close() knows whether to release.
       if (!tryReserveWsSlot(ws.data.accountId)) {
+        console.warn(`[ws] Refusing ${ws.data.type} socket for account=${ws.data.accountId}: too many open sockets`);
         try { ws.close(1008, 'Too many connections for this account'); } catch {}
         return;
       }

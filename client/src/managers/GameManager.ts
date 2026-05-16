@@ -90,6 +90,7 @@ export class GameManager {
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 12_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
+  private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
 
   // Auth
   private token: string;
@@ -224,6 +225,7 @@ export class GameManager {
   // splat instead of leading it. Maps entityId → pending timeout handle.
   private pendingHealthApply: Map<number, ReturnType<typeof setTimeout>> = new Map();
   private lastSelfAuthorityAt: number = 0;
+  private selfAuthorityGraceUntil: number = 0;
   private lastSelfServerTick: number = -1;
 
   // Character creator
@@ -723,6 +725,8 @@ export class GameManager {
     this._loginProgress?.(1, 'Entering world');
     this.inputManager.setEnabled(true);
     this._loginSettled = true;
+    this.lastSelfAuthorityAt = performance.now();
+    this.selfAuthorityGraceUntil = this.lastSelfAuthorityAt + GameManager.AUTHORITY_LOGIN_GRACE_MS;
     this._loginBootstrapPending = null;
     const resolver = this._loginOkResolver;
     this._loginOkResolver = null;
@@ -796,7 +800,7 @@ export class GameManager {
 
   private handleConnectionLost(event: CloseEvent): void {
     if (this.destroyed || this.reconnecting) return;
-    console.warn(`[net] Connection lost (code=${event.code}, clean=${event.wasClean})`);
+    console.warn(`[net] Connection lost (code=${event.code}, clean=${event.wasClean}, reason=${event.reason || 'none'})`);
     void this.reconnectOrLogout();
   }
 
@@ -1972,6 +1976,7 @@ export class GameManager {
       const serverMoving = (v[5] ?? 0) === 1;
 
       this.lastSelfAuthorityAt = performance.now();
+      this.selfAuthorityGraceUntil = 0;
       this.lastSelfServerTick = serverTick;
       if (!this.pendingHealthApply.has(this.localPlayerId)) {
         this.applyLocalHealth(health, maxHealth, { clearPendingImpact: health >= maxHealth });
@@ -4808,6 +4813,7 @@ export class GameManager {
   private checkSelfAuthorityFreshness(): void {
     if (this.destroyed || this.reconnecting || this.connectionFrozen || !this._loginSettled) return;
     if (this.lastSelfAuthorityAt === 0) return;
+    if (this.selfAuthorityGraceUntil !== 0 && performance.now() < this.selfAuthorityGraceUntil) return;
     if (performance.now() - this.lastSelfAuthorityAt <= GameManager.AUTHORITY_STALE_MS) return;
     console.warn('[net] Local authority stream went stale');
     this.handleConnectionLost(new CloseEvent('close', {
