@@ -495,7 +495,7 @@ export class GameDatabase {
         x = ?, z = ?, y = ?, floor = ?,
         map_level = ?,
         skills = ?, inventory = ?, equipment = ?,
-        stance = ?, appearance = ?, bank = ?, quests = ?, updated_at = unixepoch()
+        stance = ?, appearance = COALESCE(?, appearance), bank = ?, quests = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
       player.position.x, player.position.y, effectiveY, player.currentFloor,
@@ -704,6 +704,11 @@ export class GameDatabase {
   saveAppearance(accountId: number, appearance: PlayerAppearance): void {
     this.db.query('UPDATE player_state SET appearance = ? WHERE account_id = ?')
       .run(JSON.stringify(appearance), accountId);
+  }
+
+  saveStance(accountId: number, stance: MeleeStance): void {
+    this.db.query('UPDATE player_state SET stance = ?, updated_at = unixepoch() WHERE account_id = ?')
+      .run(stance, accountId);
   }
 
   getHiscores(categoryId: string = 'overall', limit: number = 100): HiscoreResponse {

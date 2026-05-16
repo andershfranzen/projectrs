@@ -753,6 +753,18 @@ const server = Bun.serve<SocketData>({
       return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
     }
 
+    if (url.pathname === '/api/client-log' && req.method === 'POST') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, 8 * 1024)) return tooLarge();
+      try {
+        const body = await req.json() as { event?: string; username?: string; details?: unknown; at?: number };
+        console.warn(`[client-log] ${body.event ?? 'unknown'} user=${body.username ?? 'unknown'} details=${JSON.stringify(body.details ?? {})}`);
+      } catch {
+        console.warn('[client-log] invalid payload');
+      }
+      return jsonResponse({ ok: true });
+    }
+
     if (url.pathname === '/api/hiscores' && req.method === 'GET') {
       return jsonResponse(db.getHiscores(url.searchParams.get('category') ?? 'overall', Number(url.searchParams.get('limit') ?? 100)));
     }
@@ -1629,6 +1641,7 @@ const server = Bun.serve<SocketData>({
       // sockets in flight. Mark the slot as "reserved" via a flag on ws.data
       // so close() knows whether to release.
       if (!tryReserveWsSlot(ws.data.accountId)) {
+        console.warn(`[ws] Refusing ${ws.data.type} socket for account=${ws.data.accountId}: too many open sockets`);
         try { ws.close(1008, 'Too many connections for this account'); } catch {}
         return;
       }
@@ -1641,7 +1654,12 @@ const server = Bun.serve<SocketData>({
     },
     message(ws: import('bun').ServerWebSocket<SocketData>, message: string | Buffer) {
       if (ws.data.type === 'game') {
-        const buf = message instanceof ArrayBuffer ? message : (message as unknown as Buffer).buffer.slice(0) as ArrayBuffer;
+        const buf = message instanceof ArrayBuffer
+          ? message
+          : (message as unknown as Buffer).buffer.slice(
+              (message as unknown as Buffer).byteOffset,
+              (message as unknown as Buffer).byteOffset + (message as unknown as Buffer).byteLength,
+            ) as ArrayBuffer;
         handleGameSocketMessage(ws as import('bun').ServerWebSocket<GameSocketData>, buf, world);
       } else {
         handleChatSocketMessage(ws as import('bun').ServerWebSocket<ChatSocketData>, String(message), world);

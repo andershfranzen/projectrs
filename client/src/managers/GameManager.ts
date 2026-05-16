@@ -85,7 +85,12 @@ export class GameManager {
   private reconnectSleepTimer: number | null = null;
   private static readonly RECONNECT_MAX_MS = 22_000;
   private static readonly RECONNECT_DELAY_MS = 1_600;
-  private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 4_500;
+  private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
+  private static readonly AUTHORITY_STALE_MS = 12_000;
+  private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
+  private static readonly PRELOAD_STEP_TIMEOUT_MS = 12_000;
+  private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
+  private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
 
   // Auth
   private token: string;
@@ -219,6 +224,9 @@ export class GameManager {
   // health-bar updates for the same entity so the bar drops in sync with the
   // splat instead of leading it. Maps entityId → pending timeout handle.
   private pendingHealthApply: Map<number, ReturnType<typeof setTimeout>> = new Map();
+  private lastSelfAuthorityAt: number = 0;
+  private selfAuthorityGraceUntil: number = 0;
+  private lastSelfServerTick: number = -1;
 
   // Character creator
   private characterCreator: CharacterCreator | null = null;
@@ -616,22 +624,52 @@ export class GameManager {
       onProgress?.(completed / 3, `${status} (${completed}/3)`);
     };
 
-    const characterReady = (this.localPlayer?.whenReady() ?? Promise.resolve())
-      .then(() => step('Loaded character models'));
-    const objectsReady = this._objectModelsReady
-      .then(() => step('Loaded scenery models'));
-    const chunksReady = this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ)
-      .then(() => step('Loaded map area'));
+    const characterReady = this.waitWithTimeout(
+      this.localPlayer?.whenReady() ?? Promise.resolve(),
+      GameManager.PRELOAD_STEP_TIMEOUT_MS,
+      'character preload',
+    ).then(() => step('Loaded character models'));
+    const objectsReady = this.waitWithTimeout(
+      this._objectModelsReady,
+      GameManager.PRELOAD_STEP_TIMEOUT_MS,
+      'scenery preload',
+    ).then(() => step('Loaded scenery models'));
+    const chunksReady = this.waitWithTimeout(
+      this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ),
+      GameManager.PRELOAD_STEP_TIMEOUT_MS,
+      'map preload',
+    ).then(() => step('Loaded map area'));
 
     return Promise.all([characterReady, objectsReady, chunksReady]).then(() => {});
+  }
+
+  private async waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T | undefined> {
+    let timer: number | null = null;
+    try {
+      return await Promise.race<T | undefined>([
+        promise,
+        new Promise<undefined>((resolve) => {
+          timer = window.setTimeout(() => {
+            console.warn(`[loading] ${label} timed out after ${timeoutMs}ms; continuing`);
+            resolve(undefined);
+          }, timeoutMs);
+        }),
+      ]);
+    } catch (err) {
+      console.warn(`[loading] ${label} failed; continuing`, err);
+      return undefined;
+    } finally {
+      if (timer !== null) window.clearTimeout(timer);
+    }
   }
 
   private noteLoginBootstrapPacket(kind: 'skills' | 'inventory' | 'equipment'): void {
     const pending = this._loginBootstrapPending;
     if (!pending) return;
     pending.delete(kind);
-    const done = 3 - pending.size;
-    this._loginProgress?.(0.82 + done * 0.04, `Loading character state (${done}/3)`);
+    const total = 3;
+    const done = total - pending.size;
+    this._loginProgress?.(0.82 + done * 0.04, `Loading character state (${done}/${total})`);
     if (pending.size === 0) void this.tryResolveLoginReady(this._loginReadySeq);
   }
 
@@ -654,7 +692,9 @@ export class GameManager {
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
 
     this._loginProgress?.(0.72, 'Loading character');
-    if (this.localPlayer) await this.localPlayer.whenReady();
+    if (this.localPlayer) {
+      await this.waitWithTimeout(this.localPlayer.whenReady(), GameManager.LOGIN_READY_TIMEOUT_MS, 'login character ready');
+    }
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
 
     this._loginProgress?.(0.78, 'Loading saved location');
@@ -672,7 +712,7 @@ export class GameManager {
     if (this._pendingLoginGearLoads.length > 0) {
       this._loginProgress?.(0.94, 'Loading equipped gear');
       const gearLoads = this._pendingLoginGearLoads.splice(0);
-      await Promise.allSettled(gearLoads);
+      await this.waitWithTimeout(Promise.allSettled(gearLoads).then(() => {}), GameManager.LOGIN_READY_TIMEOUT_MS, 'login gear ready');
     }
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
@@ -685,6 +725,8 @@ export class GameManager {
     this._loginProgress?.(1, 'Entering world');
     this.inputManager.setEnabled(true);
     this._loginSettled = true;
+    this.lastSelfAuthorityAt = performance.now();
+    this.selfAuthorityGraceUntil = this.lastSelfAuthorityAt + GameManager.AUTHORITY_LOGIN_GRACE_MS;
     this._loginBootstrapPending = null;
     const resolver = this._loginOkResolver;
     this._loginOkResolver = null;
@@ -748,6 +790,9 @@ export class GameManager {
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
       this._initialMapReadySent = false;
+      this.lastSelfAuthorityAt = 0;
+      this.selfAuthorityGraceUntil = 0;
+      this.lastSelfServerTick = -1;
       this._loginReadySeq++;
       onProgress?.(0.02, 'Connecting to server');
       this.network.connect(token);
@@ -756,8 +801,38 @@ export class GameManager {
 
   private handleConnectionLost(event: CloseEvent): void {
     if (this.destroyed || this.reconnecting) return;
-    console.warn(`[net] Connection lost (code=${event.code}, clean=${event.wasClean})`);
+    console.warn(`[net] Connection lost (code=${event.code}, clean=${event.wasClean}, reason=${event.reason || 'none'})`);
+    this.reportClientLog('game_connection_lost', {
+      code: event.code,
+      clean: event.wasClean,
+      reason: event.reason || '',
+      loginSettled: this._loginSettled,
+      hasAuthority: this.lastSelfAuthorityAt !== 0,
+      sinceAuthorityMs: this.lastSelfAuthorityAt === 0 ? -1 : Math.round(performance.now() - this.lastSelfAuthorityAt),
+      connected: this.network.isConnected(),
+    });
     void this.reconnectOrLogout();
+  }
+
+  private reportClientLog(event: string, details: Record<string, unknown>): void {
+    try {
+      const payload = JSON.stringify({
+        event,
+        username: this.username,
+        details,
+        at: Date.now(),
+      });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
+        return;
+      }
+      void fetch('/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      });
+    } catch { /* best-effort diagnostics only */ }
   }
 
   private setConnectionFrozen(frozen: boolean): void {
@@ -855,6 +930,9 @@ export class GameManager {
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
       this._initialMapReadySent = false;
+      this.lastSelfAuthorityAt = 0;
+      this.selfAuthorityGraceUntil = 0;
+      this.lastSelfServerTick = -1;
       this._loginReadySeq++;
       this.network.connect(this.token);
     });
@@ -1260,6 +1338,52 @@ export class GameManager {
       if (placedNode) {
         this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
         linked++;
+      }
+    }
+  }
+
+  private worldObjectIdForNode(node: TransformNode): number | null {
+    for (const [objectEntityId, model] of this.worldObjectModels) {
+      if (model === node) return objectEntityId;
+    }
+    return null;
+  }
+
+  private shouldPlacedWorldObjectBeEnabled(objectEntityId: number): boolean {
+    const data = this.worldObjectDefs.get(objectEntityId);
+    if (!data) return true;
+    const def = this.objectDefsCache.get(data.defId);
+    return !data.depleted || def?.category === 'door';
+  }
+
+  private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
+    if (!enabled) {
+      node.setEnabled(false);
+      return;
+    }
+    const objectEntityId = this.worldObjectIdForNode(node);
+    if (objectEntityId !== null && !this.shouldPlacedWorldObjectBeEnabled(objectEntityId)) {
+      node.setEnabled(false);
+      return;
+    }
+    node.setEnabled(true);
+  }
+
+  private reapplyWorldObjectVisualStates(): void {
+    for (const [objectEntityId, model] of this.worldObjectModels) {
+      this.setPlacedWorldObjectEnabled(model, this.shouldPlacedWorldObjectBeEnabled(objectEntityId));
+      const data = this.worldObjectDefs.get(objectEntityId);
+      if (!data) continue;
+      const def = this.objectDefsCache.get(data.defId);
+      const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
+      if (!hasDepleteModel) continue;
+      let depleted = this.objectModels.getStump(objectEntityId);
+      if (!depleted && data.depleted) {
+        depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, model);
+      }
+      if (depleted) {
+        depleted.setEnabled(data.depleted);
+        this.setWorldObjectPickTarget(objectEntityId, false, depleted);
       }
     }
   }
@@ -1794,16 +1918,7 @@ export class GameManager {
         // While a COMBAT_HIT splat is pending for the local player, defer
         // applying the new HP so the bar/HUD drop in sync with the splat.
         if (!this.pendingHealthApply.has(entityId)) {
-          this.playerHealth = health;
-          this.playerMaxHealth = maxHealth;
-          this.updateHUD();
-          if (this.localPlayer) {
-            if (health < maxHealth) {
-              this.localPlayer.showHealthBar(health, maxHealth);
-            } else {
-              this.localPlayer.hideHealthBar();
-            }
-          }
+          this.applyLocalHealth(health, maxHealth, { clearPendingImpact: health >= maxHealth });
         }
         // Server-position reconciliation. The client still predicts normal
         // walking locally, but production desyncs showed several legitimate
@@ -1888,6 +2003,30 @@ export class GameManager {
           character.hideHealthBar();
         }
       }
+    });
+
+    this.network.on(ServerOpcode.PLAYER_SELF_SYNC, (_op, v) => {
+      const serverX = (v[0] ?? 0) / 10;
+      const serverZ = (v[1] ?? 0) / 10;
+      const health = v[2] ?? this.playerHealth;
+      const maxHealth = v[3] ?? this.playerMaxHealth;
+      const serverTick = v[4] ?? -1;
+      const serverMoving = (v[5] ?? 0) === 1;
+
+      this.lastSelfAuthorityAt = performance.now();
+      this.selfAuthorityGraceUntil = 0;
+      this.lastSelfServerTick = serverTick;
+      if (!this.pendingHealthApply.has(this.localPlayerId)) {
+        this.applyLocalHealth(health, maxHealth, { clearPendingImpact: health >= maxHealth });
+      }
+
+      const dx = serverX - this.playerX;
+      const dz = serverZ - this.playerZ;
+      const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
+      if (maxAxisDelta <= GameManager.SELF_SYNC_RECONCILE_DIST) return;
+
+      const hiddenCatchup = this._hiddenSinceMs !== 0;
+      this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup || !serverMoving);
     });
 
     this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
@@ -2271,7 +2410,7 @@ export class GameManager {
           // Doors stay visible — animate rotation instead
           model.setEnabled(true);
         } else {
-          model.setEnabled(!isDepleted);
+          this.setPlacedWorldObjectEnabled(model, !isDepleted);
         }
         this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
         const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
@@ -2332,7 +2471,7 @@ export class GameManager {
           const placedNode = model ?? this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId);
           if (placedNode) {
             if (!model) this.worldObjectModels.set(objectEntityId, placedNode);
-            placedNode.setEnabled(isDepleted === 0);
+            this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
             this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
 
             let depleted = this.objectModels.getStump(objectEntityId);
@@ -2345,7 +2484,7 @@ export class GameManager {
             }
           }
         } else if (model) {
-          model.setEnabled(isDepleted === 0);
+          this.setPlacedWorldObjectEnabled(model, isDepleted === 0);
           this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
         }
       }
@@ -2405,9 +2544,7 @@ export class GameManager {
 
   private setupPlayerStateHandlers(): void {
     this.network.on(ServerOpcode.PLAYER_STATS, (_op, v) => {
-      this.playerHealth = v[0];
-      this.playerMaxHealth = v[1];
-      this.updateHUD();
+      this.applyLocalHealth(v[0], v[1], { clearPendingImpact: v[0] >= v[1] });
     });
 
     // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
@@ -2477,9 +2614,7 @@ export class GameManager {
         this.sidePanel.updateSkill(skillIndex, level, currentLevel, xp);
       }
       if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-        this.playerHealth = currentLevel;
-        this.playerMaxHealth = level;
-        this.updateHUD();
+        this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
       }
     });
 
@@ -2492,9 +2627,7 @@ export class GameManager {
           const xp = (v[i + 2] << 16) | (v[i + 3] & 0xFFFF);
           this.sidePanel.updateSkill(skillIndex, level, currentLevel, xp);
           if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-            this.playerHealth = currentLevel;
-            this.playerMaxHealth = level;
-            this.updateHUD();
+            this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
           }
         }
       }
@@ -3420,6 +3553,7 @@ export class GameManager {
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
     if (path.length === 0) return;
+    if (!this.network.sendMove(path)) return;
     const activeStep = this.getActiveUnitStep();
     this.path = path;
     this.pathIndex = 0;
@@ -3433,7 +3567,6 @@ export class GameManager {
       this.setTileFrom(this.playerX, this.playerZ);
     }
     this.pendingPath = null;
-    this.network.sendMove(path);
   }
 
   private clearPendingObjectInteractionRetry(): void {
@@ -4688,7 +4821,43 @@ export class GameManager {
     this.sidePanel?.updateHP(this.playerHealth, this.playerMaxHealth);
   }
 
+  private clearPendingHealthApply(entityId: number): void {
+    const pending = this.pendingHealthApply.get(entityId);
+    if (pending !== undefined) {
+      clearTimeout(pending);
+      this.pendingHealthApply.delete(entityId);
+    }
+  }
+
+  private applyLocalHealth(
+    health: number,
+    maxHealth: number,
+    opts: { clearPendingImpact?: boolean } = {},
+  ): void {
+    if (opts.clearPendingImpact) this.clearPendingHealthApply(this.localPlayerId);
+    this.playerHealth = health;
+    this.playerMaxHealth = maxHealth;
+    this.updateHUD();
+    if (!this.localPlayer) return;
+    if (health < maxHealth) {
+      this.localPlayer.showHealthBar(health, maxHealth);
+    } else {
+      this.localPlayer.hideHealthBar();
+    }
+  }
+
+  private checkSelfAuthorityFreshness(): void {
+    if (this.destroyed || this.reconnecting || this.connectionFrozen || !this._loginSettled) return;
+    if (this.lastSelfAuthorityAt === 0) return;
+    if (this.selfAuthorityGraceUntil !== 0 && performance.now() < this.selfAuthorityGraceUntil) return;
+    if (performance.now() - this.lastSelfAuthorityAt <= GameManager.AUTHORITY_STALE_MS) return;
+    console.warn('[net] Local authority stream stale; waiting for socket heartbeat before reconnecting');
+    this.lastSelfAuthorityAt = performance.now();
+  }
+
   private update(dt: number): void {
+    if (this.connectionFrozen) return;
+    this.checkSelfAuthorityFreshness();
     if (this.connectionFrozen) return;
 
     this.updateCameraKeys(dt);
@@ -4698,7 +4867,9 @@ export class GameManager {
 
     const camPos = this.scene.activeCamera?.position ?? null;
 
-    this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ);
+    if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
+      this.reapplyWorldObjectVisualStates();
+    }
     this.chunkManager.updateAnimations();
     this.updateFog(dt);
 
@@ -5071,6 +5242,7 @@ export class GameManager {
   private _ySendCooldown: number = 0;
   private reportYToServer(): void {
     if (!this.localPlayer) return;
+    if (!this._loginSettled || !this.network.isConnected()) return;
     this._ySendCooldown -= 1;
     if (this._ySendCooldown > 0) return;
     const y = this.localPlayer.position.y;
@@ -5101,7 +5273,7 @@ export class GameManager {
       this._outdoorFrameCount++;
       if (this._outdoorFrameCount >= 6 && this.isIndoors) {
         this.isIndoors = false;
-        for (const node of this.hiddenRoofNodes) node.setEnabled(true);
+        for (const node of this.hiddenRoofNodes) this.setPlacedWorldObjectEnabled(node, true);
         this.hiddenRoofNodes = [];
         this._lastIndoorTileX = -9999;
         this._lastIndoorTileZ = -9999;
@@ -5149,7 +5321,7 @@ export class GameManager {
 
     // Re-enable nodes that LEFT the hidden set
     for (const node of this.hiddenRoofNodes) {
-      if (!newSet.has(node)) node.setEnabled(true);
+      if (!newSet.has(node)) this.setPlacedWorldObjectEnabled(node, true);
     }
     // Disable nodes that ENTERED the hidden set (don't touch ones already in)
     const oldSet = new Set(this.hiddenRoofNodes);

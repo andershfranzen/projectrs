@@ -86,6 +86,10 @@ export enum ClientOpcode {
   /** Press the Accept button at stage 1 (offer locked) or stage 2 (final commit).
    *  Server tracks the stage; client just sends "I accept". */
   TRADE_ACCEPT = 95,
+  /** Browser WebSockets do not expose protocol-level ping/pong, so the game
+   *  socket uses this tiny app-level heartbeat to detect half-open connections
+   *  before the client keeps simulating into a silent desync. Values: [seq]. */
+  CLIENT_PING = 120,
 }
 
 // Server → Client opcodes
@@ -228,6 +232,15 @@ export enum ServerOpcode {
    *  like the free-camera mode (non-admins are locked to a 2004scape-style
    *  fixed-pitch / fixed-zoom view). */
   ADMIN_FLAGS = 120,
+  /** Reply to CLIENT_PING. Values: [seq]. Any inbound game packet also counts
+   *  as liveness on the client, but this guarantees traffic when the player is
+   *  standing still in a quiet area. */
+  SERVER_PONG = 121,
+  /** Authoritative state for the local player. Unlike PLAYER_SYNC, this is
+   *  sent to the subject themselves on every server tick so the client can
+   *  detect stale authority and reconcile prediction continuously. Layout:
+   *  [x10, z10, health, maxHealth, tickLow, movingFlag]. */
+  PLAYER_SELF_SYNC = 122,
 }
 
 export enum PlayerAnimationKind {

@@ -80,10 +80,12 @@ export class Minimap {
     this.canvas = document.createElement('canvas');
     this.canvas.width = RENDER_SIZE;
     this.canvas.height = RENDER_SIZE;
-    // Fixed pixel size (matches RENDER_SIZE 1:1 — crisp, no scaling artifacts).
-    // Smaller than the right column so it centers with horizontal margin.
+    // Render internally at a fixed crisp size, but let CSS scale the displayed
+    // footprint down in compact layouts so the side rail does not crush panels.
     this.canvas.style.cssText = `
-      width: ${displaySize}px; height: ${displaySize}px;
+      width: var(--minimap-size, ${displaySize}px);
+      height: var(--minimap-size, ${displaySize}px);
+      flex: 0 0 var(--minimap-size, ${displaySize}px);
       display: block; margin: 0 auto; cursor: pointer;
       border: 4px solid #2c251e;
       border-radius: 50%;

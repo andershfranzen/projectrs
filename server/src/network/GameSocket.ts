@@ -1,4 +1,4 @@
-import { ClientOpcode, decodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
+import { ClientOpcode, ServerOpcode, decodePacket, encodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
@@ -394,6 +394,13 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.CLIENT_PING: {
+      try {
+        ws.sendBinary(encodePacket(ServerOpcode.SERVER_PONG, values[0] ?? 0, world.getTickForHeartbeat()));
+      } catch { /* connection closed */ }
+      break;
+    }
+
     default:
       console.log(`Unknown game opcode: ${opcode}`);
   }
@@ -404,6 +411,7 @@ export function handleGameSocketClose(
   world: World
 ): void {
   const playerId = ws.data.playerId;
+  console.log(`[GameSocket] close account=${ws.data.accountId} player=${playerId ?? 'none'}`);
   if (playerId) {
     // Saves + removes, OR defers removal if the player is in a post-combat
     // logout block. See World.handlePlayerDisconnect.

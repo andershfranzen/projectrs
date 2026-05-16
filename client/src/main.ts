@@ -126,15 +126,10 @@ function revealGame(afterMs: number = 0): void {
 }
 
 function showLoginScreen() {
-  // If we got here via disconnect rather than initial boot, a destroyed
-  // GameManager left the canvas in an unusable state — re-route through
-  // a fresh page load so the next sign-in restarts the preload cycle
-  // from scratch. Cheap, robust, avoids partial-cleanup bugs.
-  if (game === null && !gamePrepPromise && document.querySelector('#game-canvas')?.parentElement?.style?.display === 'grid') {
-    location.reload();
-    return;
-  }
+  gameFrame.style.visibility = 'hidden';
+  gameFrame.style.display = 'none';
   backgroundParticles?.setVisible(true);
+  loginScreen?.destroy();
   loginScreen = new LoginScreen(async (token, username) => {
     backgroundParticles?.setVisible(false);
     try {
