@@ -692,6 +692,7 @@ export class World {
       player.deviceId = ws.data.deviceId ?? player.deviceId;
       player.lastBroadcastChunkX = -9999;
       player.lastBroadcastChunkZ = -9999;
+      player.visibleEntityIds.clear();
       player.currentChunkX = Math.floor(player.position.x / CHUNK_SIZE);
       player.currentChunkZ = Math.floor(player.position.y / CHUNK_SIZE);
 
@@ -4151,6 +4152,7 @@ export class World {
     }
 
     // Update player state
+    player.visibleEntityIds.clear();
     player.currentMapLevel = newMap;
     player.position.x = transition.targetX;
     player.position.y = transition.targetZ;
@@ -4261,20 +4263,28 @@ export class World {
       const cm = this.chunkManagers.get(viewer.currentMapLevel);
       if (!cm) continue;
 
-      const chunkChanged = viewer.currentChunkX !== viewer.lastBroadcastChunkX ||
-                            viewer.currentChunkZ !== viewer.lastBroadcastChunkZ;
-      if (chunkChanged) {
-        viewer.lastBroadcastChunkX = viewer.currentChunkX;
-        viewer.lastBroadcastChunkZ = viewer.currentChunkZ;
-      }
-
       try {
+        const nextVisible = new Set<number>();
         cm.forEachEntityNearChunk(viewer.currentChunkX, viewer.currentChunkZ, (eid) => {
-          const pkt = dirtyPlayerPackets.get(eid);
-          if (pkt) { viewer.ws.sendBinary(pkt); return; }
-          const npkt = dirtyNpcPackets.get(eid);
-          if (npkt) { viewer.ws.sendBinary(npkt); return; }
-          if (!chunkChanged || eid === viewer.id) return;
+          if (eid !== viewer.id) nextVisible.add(eid);
+        });
+
+        for (const eid of viewer.visibleEntityIds) {
+          if (!nextVisible.has(eid)) {
+            this.sendToPlayer(viewer, ServerOpcode.ENTITY_DEATH, eid);
+          }
+        }
+
+        nextVisible.forEach((eid) => {
+          const wasVisible = viewer.visibleEntityIds.has(eid);
+          if (wasVisible) {
+            const pkt = dirtyPlayerPackets.get(eid);
+            if (pkt) { viewer.ws.sendBinary(pkt); return; }
+            const npkt = dirtyNpcPackets.get(eid);
+            if (npkt) { viewer.ws.sendBinary(npkt); return; }
+            return;
+          }
+
           const subject = this.players.get(eid);
           if (subject) {
             this.sendPlayerUpdate(viewer, subject);
@@ -4307,6 +4317,10 @@ export class World {
             this.sendGroundItemUpdate(viewer, item);
           }
         });
+
+        viewer.visibleEntityIds = nextVisible;
+        viewer.lastBroadcastChunkX = viewer.currentChunkX;
+        viewer.lastBroadcastChunkZ = viewer.currentChunkZ;
       } catch { /* connection closed */ }
     }
 

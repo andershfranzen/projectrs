@@ -135,6 +135,10 @@ export class Player extends Entity {
   /** Previous chunk position for broadcastSync — when this changes, viewer needs full resync */
   lastBroadcastChunkX: number = -9999;
   lastBroadcastChunkZ: number = -9999;
+  /** Entity ids currently visible to this player. broadcastSync diffs this
+   *  against the latest chunk query and sends despawns for anything that
+   *  leaves range, preventing stale remote-player/NPC ghosts. */
+  visibleEntityIds: Set<number> = new Set();
 
   // Combat
   attackTarget: Entity | null = null;
