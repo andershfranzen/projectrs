@@ -2815,15 +2815,15 @@ export class GameManager {
     return null;
   }
 
-  private getGroundItemInteractionOptions(groundItemId: number): InteractionOption[] {
-    // List every ground item sharing this tile, not just the one the cursor
-    // happened to land on. NPC loot tables can drop 3+ items per kill (bones
-    // + coins + a rare); the picked sprite was hiding the others under it.
-    // Newest-first matches the visible stacking order and is now also the
-    // left-click pickup target.
+  /** All ground items sharing the tile of `groundItemId`, newest-first.
+   *  NPC loot tables drop 3+ items per kill (bones + coins + a rare) onto one
+   *  tile and the picked sprite hides the others under it — callers that care
+   *  about the whole pile (right-click menu, hover tooltip) gather the tile
+   *  rather than the single picked sprite. Newest-first matches the visible
+   *  stacking order and the left-click pickup target. */
+  private groundItemStackForTile(groundItemId: number): GroundItemData[] {
     const pickedItem = this.entities.groundItems.get(groundItemId);
     if (!pickedItem) return [];
-
     const tx = Math.floor(pickedItem.x);
     const tz = Math.floor(pickedItem.z);
     const stack: GroundItemData[] = [];
@@ -2831,8 +2831,11 @@ export class GameManager {
       if (Math.floor(gi.x) === tx && Math.floor(gi.z) === tz) stack.push(gi);
     }
     stack.sort((a, b) => b.id - a.id);
+    return stack;
+  }
 
-    return stack.map((gi) => {
+  private getGroundItemInteractionOptions(groundItemId: number): InteractionOption[] {
+    return this.groundItemStackForTile(groundItemId).map((gi) => {
       const iDef = this.itemDefsCache.get(gi.itemId);
       const iName = iDef?.name ?? 'item';
       const qtyLabel = gi.quantity > 1 ? ` (${gi.quantity})` : '';
@@ -2980,23 +2983,33 @@ export class GameManager {
    *  that resolves to an NPC entity. Falls back to the closest mesh so the
    *  caller can still pick ground / placed objects / ground-items normally
    *  when there's no NPC in the ray. */
-  private pickAtCursor(): { entityId: number; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh } | { entityId: null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+  private pickAtCursor(): { entityId: number | null; groundItemId: number | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
     return this.pickNpcAtPoint(this.scene.pointerX, this.scene.pointerY);
   }
 
-  private pickNpcAtPoint(x: number, y: number): { entityId: number; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh } | { entityId: null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+  private pickNpcAtPoint(x: number, y: number): { entityId: number | null; groundItemId: number | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
     const hits = this.scene.multiPick(x, y);
-    if (!hits || hits.length === 0) return { entityId: null, closestMesh: null };
+    if (!hits || hits.length === 0) return { entityId: null, groundItemId: null, closestMesh: null };
     // multiPick returns hits unsorted; sort by distance ascending.
     hits.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
     const closest = hits[0].pickedMesh ?? null;
+    // Walk every hit, not just the closest: an NPC's legs or a ground-item
+    // sprite is often occluded by nearer scenery. Take the first match of
+    // each kind so a hover resolves to whatever is actually under the cursor.
+    let entityId: number | null = null;
+    let groundItemId: number | null = null;
     for (const h of hits) {
       const m = h.pickedMesh;
       if (!m) continue;
-      const eid = this.findNpcEntityIdFromPick(m as unknown as TransformNode, m.name);
-      if (eid != null) return { entityId: eid, closestMesh: closest! };
+      if (entityId == null) {
+        entityId = this.findNpcEntityIdFromPick(m as unknown as TransformNode, m.name);
+      }
+      if (groundItemId == null) {
+        groundItemId = this.findGroundItemIdFromPick(m as unknown as TransformNode, m.name);
+      }
+      if (entityId != null && groundItemId != null) break;
     }
-    return { entityId: null, closestMesh: closest };
+    return { entityId, groundItemId, closestMesh: closest };
   }
 
   /** Combat level for the local player. Reads skill levels from the side
@@ -3053,24 +3066,44 @@ export class GameManager {
         return;
       }
       lastPickAt = now;
-      // Same multiPick-prefer-NPC logic as the click handlers so the
-      // tooltip shows the NPC's name when the cursor is over their legs
-      // (which scenery often blocks from the closest-hit picker).
-      const entityId = this.pickAtCursor().entityId;
-      let label: string | null = null;
+      // Same multiPick logic as the click handlers so the tooltip resolves
+      // an NPC or a ground item even when scenery occludes it from the
+      // closest-hit picker.
+      const { entityId, groundItemId } = this.pickAtCursor();
+      let npcLabel: string | null = null;
       if (entityId != null) {
         const npcDefId = this.entities.npcDefs.get(entityId);
         const name = this.npcDisplayName(entityId, npcDefId);
         const flags = this.entities.npcInteractions.get(entityId) ?? 0;
         if (flags !== 0 || this.isNonAttackableNpc(npcDefId)) {
-          label = name;
+          npcLabel = name;
         } else {
           const lvl = this.npcLevelFor(npcDefId);
-          label = lvl > 0 ? `${name} (level-${lvl})` : name;
+          npcLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
         }
       }
-      if (label) {
-        el.textContent = label;
+      // Ground items: only when the cursor isn't already over an NPC — NPC
+      // wins, mirroring the click priority. Show the whole tile pile, not
+      // just the picked sprite, since a kill drops several items per tile.
+      let itemLines: string[] = [];
+      if (npcLabel == null && groundItemId != null) {
+        itemLines = this.groundItemStackForTile(groundItemId).map((gi) => {
+          const iName = this.itemDefsCache.get(gi.itemId)?.name ?? 'item';
+          return gi.quantity > 1 ? `${iName} (${gi.quantity})` : iName;
+        });
+      }
+      if (npcLabel != null) {
+        el.style.color = '#d8372b';
+        el.textContent = npcLabel;
+      } else if (itemLines.length > 0) {
+        // Escape — item names are project data, but the tooltip writes them
+        // as innerHTML to get one line per stacked item.
+        const esc = (s: string) => s.replace(/[&<>]/g, (c) =>
+          c === '&' ? '&amp;' : c === '<' ? '&lt;' : '&gt;');
+        el.style.color = '#c8b88a';
+        el.innerHTML = itemLines.map(esc).join('<br>');
+      }
+      if (npcLabel != null || itemLines.length > 0) {
         el.style.left = `${e.clientX + 14}px`;
         el.style.top = `${e.clientY + 14}px`;
         el.style.display = 'block';
