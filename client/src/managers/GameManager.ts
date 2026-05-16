@@ -37,7 +37,6 @@ import { SidePanel } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
-import { ArmorBrowserPanel } from '../ui/ArmorBrowserPanel';
 import { Minimap } from '../ui/Minimap';
 // StatsPanel removed — HP now shown in side panel
 import { ShopPanel, type ShopItem } from '../ui/ShopPanel';
@@ -50,7 +49,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -259,8 +258,6 @@ export class GameManager {
   private minimap: Minimap | null = null;
   private gearDebugPanel: GearDebugPanel | null = null;
   private boneDebugPanel: BoneDebugPanel | null = null;
-  private armorBrowser: ArmorBrowserPanel | null = null;
-  private armorPreviewNodes: Map<string, TransformNode> = new Map();
   private shopPanel: ShopPanel | null = null;
   private dialoguePanel: DialoguePanel | null = null;
   private smithingPanel: SmithingPanel | null = null;
@@ -968,6 +965,7 @@ export class GameManager {
   // forward extreme. Auto-scales with anim duration on re-export.
   private static readonly ATTACK_IMPACT_FRACTION: Record<string, number> = {
     attack_slash:            0.5,
+    attack_1h_slash:         0.5,
     attack_2h_slash:         0.5,
     attack_2h_smash:         0.5,
     attack_punch:            0.4,
@@ -978,7 +976,10 @@ export class GameManager {
 
   /**
    * Choose the correct attack animation name based on stance and weapon.
-   * - Any sword/scimitar (1H or 2H) → 'stab'
+   * - Scimitar (any stance)        → 'attack_1h_slash'
+   * - Sword + aggressive           → 'attack_1h_slash'
+   * - Sword + other stance         → 'stab'
+   * - Dagger (any stance)          → 'stab'
    * - Other 1H weapon              → 'attack_slash'
    * - Other 2H + aggressive        → 'attack_2h_smash'
    * - Other 2H + other stance      → 'attack_2h_slash'
@@ -1006,10 +1007,13 @@ export class GameManager {
       const weaponDef = this.itemDefsCache.get(weaponId);
       const style = weaponDef?.weaponStyle;
       if (style === 'bow' || style === 'crossbow') return 'bow_attack';
-      // All swords (1H or 2H, slash or stab style — Short/Long/2H Sword + Scimitar)
-      // use the new stab animation for now. Axes/maces still use the slash variants.
       const name = weaponDef?.name ?? '';
-      if (/sword|scimitar/i.test(name)) return 'stab';
+      // Scimitars always swing the 1H slash. Swords default to stab but
+      // commit to a full 1H slash on aggressive stance. Daggers stay on stab
+      // regardless of stance — short blade, fast jab fits all styles.
+      if (/scimitar/i.test(name)) return 'attack_1h_slash';
+      if (/sword/i.test(name)) return stance === 'aggressive' ? 'attack_1h_slash' : 'stab';
+      if (/dagger/i.test(name)) return 'stab';
       if (weaponDef?.twoHanded) return stance === 'aggressive' ? 'attack_2h_smash' : 'attack_2h_slash';
       return 'attack_slash';
     }
@@ -1214,7 +1218,6 @@ export class GameManager {
     if (itemId <= 0) {
       target.detachGear(slotName);
       target.detachSkinnedArmor(slotName);
-      if (isLocal) this.disposeArmorSlot(slotName);
       return;
     }
 
@@ -1379,7 +1382,6 @@ export class GameManager {
         }
 
         character.detachGear(slotName);
-        if (isLocal) this.disposeArmorSlot(slotName);
 
         character.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId);
         const loaderRoot = result.meshes.find(m => m.name === '__root__');
@@ -1496,11 +1498,6 @@ export class GameManager {
     };
   }
 
-  private disposeArmorSlot(slot: string): void {
-    const node = this.armorPreviewNodes.get(slot);
-    if (node) { node.dispose(); this.armorPreviewNodes.delete(slot); }
-  }
-
   private createLocalCharacterEntity(): CharacterEntity {
     return new CharacterEntity(this.scene, {
       name: 'localPlayer',
@@ -1511,22 +1508,7 @@ export class GameManager {
       // chat 'player_info' broadcast.
       // Each GLB should hold a single action; the runtime picks it automatically
       // so re-exports don't require renaming the action in Blender first.
-      additionalAnimations: [
-        { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
-        { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
-        // RS2 turn-on-the-spot. CharacterEntity swaps idle ↔ turn based on
-        // yaw alignment in updateAnimation(); see comment there.
-        { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
-        // Armed attack — hand-authored OSRS-style slash for all stances.
-        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
-        { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
-        { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
-        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
-        { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
-        { name: 'stab',                    path: `${CHARACTER_ANIM_DIR}/stab.glb` },
-        { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
-        { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
-      ],
+      additionalAnimations: [...PLAYER_ANIMATIONS],
     });
   }
 
@@ -1740,9 +1722,12 @@ export class GameManager {
       // Layout: [entityId, stanceIdx]. Index matches the server's stance order.
       const entityId = v[0];
       const idx = v[1] ?? 0;
-      const stances = ['accurate', 'aggressive', 'defensive', 'controlled'];
+      const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
       const stance = stances[idx] ?? 'accurate';
       this.entities.remoteStances.set(entityId, stance);
+      // Self-echo from the server — reconcile the sidePanel's optimistic
+      // UI if the request was rejected or applied differently than expected.
+      if (entityId === this.localPlayerId) this.sidePanel?.applyStanceFromServer(stance);
     });
 
     this.network.on(ServerOpcode.PLAYER_ANIMATION, (_op, v) => {
@@ -3300,7 +3285,7 @@ export class GameManager {
     if (msg === '/geardebug') {
       if (!this.gearDebugPanel) {
         this.gearDebugPanel = new GearDebugPanel();
-        this.gearDebugPanel.setSlotGetter((slot) => this.localPlayer?.getGearNode?.(slot) ?? this.armorPreviewNodes.get(slot) ?? null);
+        this.gearDebugPanel.setSlotGetter((slot) => this.localPlayer?.getGearNode?.(slot) ?? null);
         this.gearDebugPanel.setSlotBoneGetter((slot) => EQUIP_SLOT_BONES[slot]?.boneName ?? '');
         this.gearDebugPanel.setItemInfoGetter((slot) => {
           const itemId = this.localPlayer?.getGearItemId(slot) ?? -1;
@@ -3341,7 +3326,6 @@ export class GameManager {
 
           if (hasSkeleton) {
             this.localPlayer.detachGear(slot);
-            this.disposeArmorSlot(slot);
 
             this.localPlayer.attachSkinnedArmor(slot, result.meshes, result.skeletons[0]);
             const loaderRoot = result.meshes.find(m => m.name === '__root__');
@@ -3365,7 +3349,6 @@ export class GameManager {
           if (!this.localPlayer) return;
           this.localPlayer.detachGear(slot);
           this.localPlayer.detachSkinnedArmor(slot);
-          this.disposeArmorSlot(slot);
         });
         this.gearDebugPanel.setAnimCallback((anim) => {
           if (!this.localPlayer) return;
@@ -3395,40 +3378,6 @@ export class GameManager {
       }
       this.boneDebugPanel.toggle();
       if (this.boneDebugPanel.isVisible) this.camera.enterDebugZoom();
-      else this.camera.exitDebugZoom();
-      return true;
-    }
-    if (msg === '/armor') {
-      if (!this.armorBrowser) {
-        this.armorBrowser = new ArmorBrowserPanel();
-        this.armorBrowser.setScene(this.scene);
-        this.armorBrowser.setEquipCallback((category, item, root, armorSkeleton) => {
-          this.disposeArmorSlot(category);
-          this.localPlayer?.detachSkinnedArmor?.(category);
-
-          if (armorSkeleton && this.localPlayer) {
-            const meshes = root.getChildMeshes();
-            this.localPlayer.attachSkinnedArmor(category, meshes, armorSkeleton);
-            root.dispose();
-          } else {
-            const charRoot = this.localPlayer?.getRoot?.();
-            if (charRoot) {
-              root.parent = charRoot;
-              root.rotationQuaternion = null;
-              root.position.set(0, this.localPlayer?.getChildYOffset?.() ?? 0, 0);
-              root.rotation.set(0, 0, 0);
-              root.scaling.set(1, 1, 1);
-            }
-            this.armorPreviewNodes.set(category, root);
-          }
-        });
-        this.armorBrowser.setUnequipCallback((category) => {
-          this.localPlayer?.detachSkinnedArmor?.(category);
-          this.disposeArmorSlot(category);
-        });
-      }
-      this.armorBrowser.toggle();
-      if (this.armorBrowser.isVisible) this.camera.enterDebugZoom();
       else this.camera.exitDebugZoom();
       return true;
     }

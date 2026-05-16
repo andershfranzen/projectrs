@@ -5,7 +5,7 @@ import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
+import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -87,20 +87,7 @@ export class EntityManager {
       targetHeight: CHARACTER_TARGET_HEIGHT,
       label: name,
       labelColor: '#ffffff',
-      additionalAnimations: [
-        { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
-        { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
-        // RS2 turn-on-the-spot — see CharacterEntity.updateAnimation comment.
-        { name: 'turn',                    path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
-        { name: 'attack_slash',            path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
-        { name: 'attack_2h_slash',         path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
-        { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
-        { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
-        { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
-        { name: 'stab',                    path: `${CHARACTER_ANIM_DIR}/stab.glb` },
-        { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
-        { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
-      ],
+      additionalAnimations: [...PLAYER_ANIMATIONS],
     });
     // Spawn at terrain height — pass currentY=0 so the elevation gate
     // doesn't snap a remote player up to a roof above their actual tile.
@@ -190,8 +177,8 @@ export class EntityManager {
     const sprite = new SpriteEntity(this.scene, {
       name: `gitem_${groundItemId}`,
       color: new Color3(0.8, 0.7, 0.2),
-      width: 0.48,
-      height: 0.48,
+      width: 0.85,
+      height: 0.85,
       iconUrl: syncIcon ?? undefined,
     });
     sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);

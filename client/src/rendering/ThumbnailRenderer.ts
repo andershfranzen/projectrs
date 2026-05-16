@@ -24,8 +24,8 @@ const THUMB_INTERNAL_SIZE = 256;
 const THUMB_PADDING = 0.02;
 /** Alpha threshold below which a pixel is considered transparent. Trims AA halos. */
 const TRIM_ALPHA_MIN = 12;
-// Bump to invalidate every cached thumbnail across clients. v5: skinned-armor donor binding.
-const THUMB_VERSION = 5;
+// Bump to invalidate every cached thumbnail across clients. v6: refreshed BronzeSword.glb.
+const THUMB_VERSION = 6;
 const RENDER_TIMEOUT_MS = 8000;
 
 // ArcRotateCamera defaults applied when options.camera doesn't specify an axis.
