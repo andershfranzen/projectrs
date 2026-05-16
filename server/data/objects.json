@@ -1649,5 +1649,23 @@
     "harvestTime": 2,
     "depletionChance": 0.5,
     "respawnTime": 12
+  },
+  {
+    "id": 23,
+    "name": "Ladder",
+    "category": "ladder",
+    "actions": [
+      "Climb-up",
+      "Climb-down",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 1,
+    "height": 2,
+    "color": [
+      150,
+      95,
+      40
+    ]
   }
 ]

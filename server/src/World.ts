@@ -1885,7 +1885,7 @@ export class World {
     }
 
     if (player.isBusy(this.currentTick)) {
-      const isQueuedObjectAction = obj.def.category === 'door' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
+      const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
       if (isQueuedObjectAction) {
         player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0 };
       }
@@ -1983,6 +1983,11 @@ export class World {
       return;
     }
 
+    if (obj.def.category === 'ladder' && (action === 'Climb-up' || action === 'Climb-down')) {
+      this.handleLadderInteraction(player, obj, action === 'Climb-up' ? 1 : -1);
+      return;
+    }
+
     if (obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
       this.toggleDoor(obj, this.computeSwingSign(player, obj));
       return;
@@ -2016,6 +2021,47 @@ export class World {
         targetZ: obj.def.transition.targetZ,
       });
     }
+  }
+
+  private handleLadderInteraction(player: Player, obj: WorldObject, direction: 1 | -1): void {
+    const map = this.getPlayerMap(player);
+    let target = this.findLadderFloorTarget(player, obj, direction);
+    // Make left-click forgiving on upper-floor ladders: if "Climb-up" has no
+    // valid floor above, climb down instead. Right-click still exposes both.
+    if (!target && direction === 1 && player.currentFloor > 0) {
+      target = this.findLadderFloorTarget(player, obj, -1);
+    }
+    if (!target) {
+      this.sendChatSystem(player, direction === 1 ? "I can't climb up there." : "I can't climb down there.");
+      return;
+    }
+
+    this.interruptPlayerAction(player.id, player);
+    player.currentFloor = target.floor;
+    player.lastFloorChangeTile = Math.floor(target.z) * map.width + Math.floor(target.x);
+    this.refreshPlayerEffectiveY(player);
+    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+    this.teleportPlayer(player, target.x, target.z);
+  }
+
+  private findLadderFloorTarget(player: Player, obj: WorldObject, direction: 1 | -1): { floor: number; x: number; z: number } | null {
+    const map = this.getPlayerMap(player);
+    const targetFloor = player.currentFloor + direction;
+    if (targetFloor < 0) return null;
+
+    const ox = Math.floor(obj.x);
+    const oz = Math.floor(obj.z);
+    const candidates = [
+      { x: ox, z: oz },
+      ...getObjectInteractionTiles(obj.x, obj.z, obj.def),
+    ];
+
+    for (const tile of candidates) {
+      if (tile.x < 0 || tile.x >= map.width || tile.z < 0 || tile.z >= map.height) continue;
+      if (map.isTileBlockedOnFloor(tile.x, tile.z, targetFloor)) continue;
+      return { floor: targetFloor, x: tile.x + 0.5, z: tile.z + 0.5 };
+    }
+    return null;
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {

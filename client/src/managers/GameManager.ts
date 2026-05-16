@@ -3465,8 +3465,9 @@ export class GameManager {
     // Doors can always be clicked (open/close toggle). Other objects can't when depleted.
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
-    // Auto-interact with harvestable objects (trees, rocks), doors, and crafting stations (furnace, anvil, range)
-    if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || (def.recipes && def.recipes.length > 0)) {
+    // Auto-interact with harvestable objects (trees, rocks), doors, ladders,
+    // and crafting stations (furnace, anvil, range).
+    if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || (def.recipes && def.recipes.length > 0)) {
       if (this.interactMarker) {
         let mx = data.x;
         let mz = data.z;
@@ -3586,7 +3587,7 @@ export class GameManager {
     const dist = Math.hypot(dx, dz);
 
     // Find a reachable adjacent tile and walk there
-    const shouldRetryOnArrival = !!def && def.category !== 'door' && !!((def.skill && def.harvestItemId) || (def.recipes && def.recipes.length > 0));
+    const shouldRetryOnArrival = !!def && def.category !== 'door' && !!((def.skill && def.harvestItemId) || def.category === 'ladder' || (def.recipes && def.recipes.length > 0));
 
     if (def?.category === 'door') {
       this.clearPendingObjectInteractionRetry();
