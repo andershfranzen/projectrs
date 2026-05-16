@@ -283,6 +283,40 @@
       "wanderRange": 3,
       "aggressive": false,
       "name": "Camel"
+    },
+    {
+      "id": 49,
+      "npcId": 16,
+      "x": 279.5,
+      "z": 167.5,
+      "wanderRange": 0,
+      "appearance": {
+        "shirtColor": 5,
+        "pantsColor": 2,
+        "shoesColor": 0,
+        "hairColor": 9,
+        "beltColor": 1,
+        "skinColor": 1,
+        "hairStyle": 9
+      }
+    },
+    {
+      "id": 50,
+      "npcId": 16,
+      "x": 134.5,
+      "z": 153.5,
+      "wanderRange": 1,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 7,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 2,
+        "hairStyle": 1
+      },
+      "name": "Banker"
     }
   ],
   "objects": [],

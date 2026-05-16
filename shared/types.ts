@@ -108,6 +108,12 @@ export interface NpcDef {
   /** Inline dialogue tree. When present, right-clicking the NPC offers a
    *  "Talk-to" option that opens the DialoguePanel with the root node. */
   dialogue?: DialogueTree;
+  /** OSRS-style NxN tile footprint. Default 1. Anchor is the SW tile center
+   *  (i.e. `position.x = Math.floor(swX) + 0.5`); the footprint extends
+   *  `+X` and `+Z` from there for even sizes, and centers on the anchor for
+   *  odd sizes (matches `getObjectFootprintTiles` in objectFootprint.ts).
+   *  Pathfinding, blocking, and wall checks all consider the full footprint. */
+  size?: number;
 }
 
 export interface ShopItem {
@@ -127,6 +133,7 @@ export interface ShopDef {
 export type DialogueAction =
   | { type: 'openShop' }
   | { type: 'openBank' }
+  | { type: 'openAppearance' }
   | { type: 'giveItem'; itemId: number; qty: number }
   | { type: 'takeItem'; itemId: number; qty: number }
   | { type: 'closeDialogue' }

@@ -110,7 +110,7 @@ export class EntityManager {
     return true;
   }
 
-  createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false): Npc3DEntity | CharacterEntity | null {
+  createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false, tileSize: number = 1): Npc3DEntity | CharacterEntity | null {
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
     // floating label is correct from frame 1.
@@ -120,7 +120,7 @@ export class EntityManager {
     // available — these have purpose-built animations.
     const modelCfg = NPC_3D_MODELS[defId];
     if (modelCfg) {
-      const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, name, modelCfg.materialColors);
+      const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, name, modelCfg.materialColors, tileSize);
       npc3d.position = new Vector3(x, this.getHeight(x, z, 0), z);
       // Stamp entityId on every mesh's metadata so picking can disambiguate
       // multiple instances of the same GLB (every cow shares mesh names).

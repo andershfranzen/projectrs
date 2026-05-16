@@ -1938,7 +1938,8 @@ export class GameManager {
         // and are LOD/budget-gated — createNpc returns null when out of range,
         // and we retry on the next NPC_SYNC tick once the player gets closer.
         const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
-        const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D);
+        const tileSize = this.npcDefsCache.get(npcDefId)?.size ?? 1;
+        const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D, tileSize);
         if (created instanceof CharacterEntity) {
           const character = created;
           // Apply cached appearance + equipment once the GLB + animations

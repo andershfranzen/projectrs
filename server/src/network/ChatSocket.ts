@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ServerOpcode, encodePacket, ALL_SKILLS, type SkillId } from '@projectrs/shared';
+import { ALL_SKILLS, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
@@ -286,10 +286,8 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);
       if (player) {
-        try {
-          player.ws.sendBinary(encodePacket(ServerOpcode.SHOW_CHARACTER_CREATOR, 0));
-          ws.send(JSON.stringify({ type: 'system', message: 'Opening character editor...' }));
-        } catch { /* closed */ }
+        world.openCharacterCreatorFor(player);
+        ws.send(JSON.stringify({ type: 'system', message: 'Opening character editor...' }));
       }
       break;
     }

@@ -762,8 +762,82 @@ export class GameMap {
     startX: number, startZ: number, goalX: number, goalZ: number,
     tileBlocked: (x: number, z: number) => boolean,
     maxSearchSteps: number = 100,
+    wallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
   ): { x: number; z: number }[] {
-    return this.findPathGeneric(startX, startZ, goalX, goalZ, tileBlocked, this.isWallBlockedCb, maxSearchSteps);
+    return this.findPathGeneric(startX, startZ, goalX, goalZ, tileBlocked, wallBlocked ?? this.isWallBlockedCb, maxSearchSteps);
+  }
+
+  /** True if any tile in a size-N footprint anchored at (x,z) is blocked.
+   *  Anchor convention matches getObjectFootprintTiles: SW for even sizes,
+   *  centered for odd. Hot path — enumerates inline (no array alloc) since
+   *  NPC AI calls this many times per A* expansion. */
+  isNpcBlocked(x: number, z: number, size: number): boolean {
+    if (size <= 1) return this.isBlocked(x, z);
+    const minX = Math.floor(x) - Math.floor((size - 1) / 2);
+    const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        if (this.isBlocked(minX + i + 0.5, minZ + j + 0.5)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** Wall-edge check for a size-N NPC moving its anchor from (fromX,fromZ)
+   *  to (toX,toZ). For cardinals, checks the wall along the leading edge of
+   *  the move (N edges total). For diagonals, OSRS rule: at least one of
+   *  the two cardinal sub-paths (E-then-S or S-then-E) must be fully open.
+   *  Allocation-free for cardinals; diagonals recurse exactly two levels
+   *  (each into a cardinal), so the diagonal cost is 2 * cardinal cost. */
+  isNpcWallBlocked(fromX: number, fromZ: number, toX: number, toZ: number, size: number): boolean {
+    if (size <= 1) return this.isWallBlocked(fromX, fromZ, toX, toZ);
+    const dx = Math.round(toX - fromX);
+    const dz = Math.round(toZ - fromZ);
+    if (dx === 0 && dz === 0) return false;
+
+    if (dx !== 0 && dz !== 0) {
+      const tryPath = (midX: number, midZ: number): boolean =>
+        !this.isNpcBlocked(midX, midZ, size) &&
+        !this.isNpcWallBlocked(fromX, fromZ, midX, midZ, size) &&
+        !this.isNpcWallBlocked(midX, midZ, toX, toZ, size);
+      if (tryPath(fromX + dx, fromZ)) return false;
+      if (tryPath(fromX, fromZ + dz)) return false;
+      return true;
+    }
+
+    // Cardinal: walk the N tiles along the leading edge, checking the wall
+    // between each source-side tile and its dest-side neighbour.
+    const sx = Math.floor(fromX);
+    const sz = Math.floor(fromZ);
+    const startOff = -Math.floor((size - 1) / 2);
+    if (dx !== 0) {
+      const srcEdgeX = sx + startOff + (dx > 0 ? size - 1 : 0);
+      const destEdgeX = srcEdgeX + dx;
+      for (let j = 0; j < size; j++) {
+        const z = sz + startOff + j + 0.5;
+        if (this.isWallBlocked(srcEdgeX + 0.5, z, destEdgeX + 0.5, z)) return true;
+      }
+    } else {
+      const srcEdgeZ = sz + startOff + (dz > 0 ? size - 1 : 0);
+      const destEdgeZ = srcEdgeZ + dz;
+      for (let i = 0; i < size; i++) {
+        const x = sx + startOff + i + 0.5;
+        if (this.isWallBlocked(x, srcEdgeZ + 0.5, x, destEdgeZ + 0.5)) return true;
+      }
+    }
+    return false;
+  }
+
+  /** A* path for a size-N NPC. Each node represents an anchor position whose
+   *  full footprint fits + can be reached from the previous step's anchor
+   *  without crossing any wall edges. */
+  findPathForSizedNpc(startX: number, startZ: number, goalX: number, goalZ: number, size: number): { x: number; z: number }[] {
+    if (size <= 1) return this.findPath(startX, startZ, goalX, goalZ);
+    return this.findPathGeneric(
+      startX, startZ, goalX, goalZ,
+      (x, z) => this.isNpcBlocked(x, z, size),
+      (fx, fz, tx, tz) => this.isNpcWallBlocked(fx, fz, tx, tz, size),
+    );
   }
 
   private findPathGeneric(

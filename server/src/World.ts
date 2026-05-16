@@ -458,6 +458,34 @@ export class World {
     return this.getMap(player.currentMapLevel);
   }
 
+  /** Path from the player to the NPC's interaction surface.
+   *  - Size-1: path to the anchor tile; melee callers strip the trailing tile.
+   *  - Size-N: target the cardinal-adjacent tile closest to the player and
+   *    pathfind there directly. The returned queue stops adjacent to the
+   *    footprint, so melee callers do NOT slice(0, -1) in this case. */
+  private findPlayerPathToNpc(player: Player, npc: Npc): { x: number; z: number }[] {
+    const map = this.getPlayerMap(player);
+    const ps = player.position;
+    if (npc.size <= 1) {
+      return map.findPathOnFloor(ps.x, ps.y, npc.position.x, npc.position.y, player.currentFloor);
+    }
+    const candidates = npc.interactionTiles();
+    // Sort in place by Chebyshev to the player so the closest candidate is
+    // tried first — for the common case (player already standing next to the
+    // mob) this returns after a single findPathOnFloor call.
+    candidates.sort((a, b) => {
+      const da = Math.max(Math.abs((a.x + 0.5) - ps.x), Math.abs((a.z + 0.5) - ps.y));
+      const db = Math.max(Math.abs((b.x + 0.5) - ps.x), Math.abs((b.z + 0.5) - ps.y));
+      return da - db;
+    });
+    for (const t of candidates) {
+      if (Math.floor(ps.x) === t.x && Math.floor(ps.y) === t.z) return [];
+      const path = map.findPathOnFloor(ps.x, ps.y, t.x + 0.5, t.z + 0.5, player.currentFloor);
+      if (path.length > 0) return path;
+    }
+    return [];
+  }
+
   private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean): void {
     if (!def.blocking || def.category === 'door') return;
     for (const tile of getObjectFootprintTiles(x, z, def)) {
@@ -531,6 +559,14 @@ export class World {
         );
         npc.currentMapLevel = mapId;
         this.npcs.set(npc.id, npc);
+
+        // Sized NPCs need an unblocked NxN footprint at their anchor or
+        // they spawn stuck (wander finds no goal, chase can't step). Spawns
+        // were authored as single-tile coords before the size system existed,
+        // so flag them here for the map author to fix.
+        if (npc.size > 1 && gameMap.isNpcBlocked(spawn.x, spawn.z, npc.size)) {
+          console.warn(`NPC ${spawn.npcId} (${npcDef.name}, size ${npc.size}) at ${mapId} (${spawn.x}, ${spawn.z}): footprint lands on a blocked tile — adjust spawn coords.`);
+        }
 
         // Register with chunk manager
         const cm = this.chunkManagers.get(mapId)!;
@@ -859,7 +895,7 @@ export class World {
     }
 
     if (!player.appearance) {
-      this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, 0);
+      this.openCharacterCreatorFor(player);
     }
 
     // Quest snapshot — sent unconditionally; the client renders an empty
@@ -1430,7 +1466,11 @@ export class World {
     // continues to update this naturally if the player moves, since the
     // hit broadcast carries the attacker's tile.
     this.broadcastNpcFacing(npc, -dx, -dz);
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    // Distance to the NPC's nearest footprint tile (size-1 falls through to
+    // a plain target-anchor distance) — sized mobs are "in range" when the
+    // player is adjacent to their body, not just their SW anchor.
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
 
@@ -1445,20 +1485,19 @@ export class World {
       // chase still happens. tickPlayerCombat re-pathfinds every tick once
       // engaged, so any subsequent NPC movement is handled there.
       if (!player.hasMoveQueue()) {
-        const map = this.getPlayerMap(player);
-        const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
+        const path = this.findPlayerPathToNpc(player, npc);
         if (!isRanged) {
-          // Melee: walk to adjacent. The path's last entry is the NPC's tile
-          // (blocking) — strip it regardless of path length so a single-step
-          // path doesn't queue a walk onto the mob.
-          player.setMoveQueue(path.length > 0 ? path.slice(0, -1) : []);
+          // Size-1: the path ends on the NPC's anchor (blocking) — strip it
+          // so a single-step path doesn't queue a walk onto the mob.
+          // Sized NPCs: findPlayerPathToNpc already lands adjacent.
+          const queue = (npc.size <= 1 && path.length > 0) ? path.slice(0, -1) : path;
+          player.setMoveQueue(queue);
         } else {
-          // Ranged: walk until within range, then stop.
+          // Ranged: walk until within range of the nearest footprint tile.
           let cutIdx = path.length;
           for (let i = 0; i < path.length; i++) {
-            const pdx = Math.abs(path[i].x - npc.position.x);
-            const pdz = Math.abs(path[i].z - npc.position.y);
-            if (pdx <= attackDist && pdz <= attackDist) {
+            const pf = npc.distToFootprint(path[i].x, path[i].z);
+            if (Math.abs(pf.dx) <= attackDist && Math.abs(pf.dz) <= attackDist) {
               cutIdx = i + 1;
               break;
             }
@@ -1482,12 +1521,15 @@ export class World {
     // pickup, combat, harvest are all Chebyshev. Euclidean here would let a
     // diagonal NPC at (2,2) be talkable (dist 2.83) while the same NPC at
     // (3,0) cardinal would be rejected (dist 3.001) — subtle inconsistency.
+    // Sized NPCs measure to nearest footprint tile so a player adjacent to
+    // a 2x2 camel's east face still passes the range check.
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
     // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
     // queue pendingTalkNpcId; the player tick loop fires it once the player
     // walks within NPC_INTERACTION_RANGE.
-    if (Math.max(Math.abs(dx), Math.abs(dz)) > NPC_INTERACTION_RANGE) {
+    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > NPC_INTERACTION_RANGE) {
       player.pendingTalkNpcId = npcEntityId;
       return;
     }
@@ -1628,6 +1670,10 @@ export class World {
       case 'openBank':
         this.sendDialogueClose(player);
         if (npc.hasBank) this.openBankFor(player);
+        return;
+      case 'openAppearance':
+        this.sendDialogueClose(player);
+        this.openCharacterCreatorFor(player);
         return;
       case 'giveItem': {
         // Best-effort: silently no-op if inventory is full. Authors can chain a
@@ -2474,9 +2520,8 @@ export class World {
     if (this.data.getShop(npc.npcId)) return;                 // shopkeepers immune
     if (npc.currentMapLevel !== player.currentMapLevel) return;
 
-    const dx = npc.position.x - player.position.x;
-    const dz = npc.position.y - player.position.y;
-    const dist = Math.sqrt(dx * dx + dz * dz);
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     if (dist > SPELL_CAST_DISTANCE) return;
 
     this.cancelSkilling(playerId);
@@ -2585,6 +2630,13 @@ export class World {
       this.sendSingleSkill(player, hpIdx);
       player.syncHealthFromSkills();
     }
+  }
+
+  /** Server-side entry point: open the character creator for a player. Called
+   *  from the login path (no appearance set yet), the openAppearance dialogue
+   *  action, and the /appearance admin chat command. */
+  openCharacterCreatorFor(player: Player): void {
+    this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, 0);
   }
 
   /** Server-side entry point: open the bank for a player. Called from the
@@ -3446,9 +3498,8 @@ export class World {
             const player = this.players.get(pid);
             if (!player) return;
             if (player.combatLevel > dropoffLvl) return;
-            const dx = Math.abs(npc.position.x - player.position.x);
-            const dz = Math.abs(npc.position.y - player.position.y);
-            if (dx <= 3 && dz <= 3) {
+            const fp = npc.distToFootprint(player.position.x, player.position.y);
+            if (Math.abs(fp.dx) <= 3 && Math.abs(fp.dz) <= 3) {
               npc.combatTarget = player;
             }
           });
@@ -3465,11 +3516,32 @@ export class World {
         npc.pathQueue.length = 0;
       } else {
         const mapId = npc.currentMapLevel;
-        const npcBlocked = (x: number, z: number) =>
-          map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z));
+        const size = npc.size;
+        // For size-1 NPCs the callbacks reduce to the original single-tile
+        // checks. For larger NPCs the wrappers test every footprint tile
+        // against terrain (map.isNpcBlocked) AND world-object blockers, and
+        // require the move's leading wall edges to be open. Both wrappers
+        // are allocation-free in the hot path (no footprint array per call).
+        const npcBlocked = size <= 1
+          ? (x: number, z: number) =>
+              map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z))
+          : (x: number, z: number) => {
+              if (map.isNpcBlocked(x, z, size)) return true;
+              const minX = Math.floor(x) - Math.floor((size - 1) / 2);
+              const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
+              for (let i = 0; i < size; i++) {
+                for (let j = 0; j < size; j++) {
+                  if (this.blockedObjectTiles.has(this.blockedKeyFor(mapId, minX + i, minZ + j))) return true;
+                }
+              }
+              return false;
+            };
+        const npcWallBlocked = size <= 1
+          ? map.isWallBlockedCb
+          : (fx: number, fz: number, tx: number, tz: number) => map.isNpcWallBlocked(fx, fz, tx, tz, size);
         const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
-          map.findPathForNpc(sx, sz, gx, gz, npcBlocked);
-        npc.processAI(npcBlocked, map.isWallBlockedCb, npcFindPath);
+          map.findPathForNpc(sx, sz, gx, gz, npcBlocked, 100, npcWallBlocked);
+        npc.processAI(npcBlocked, npcWallBlocked, npcFindPath);
       }
       if (hadCombatTarget && npc.combatTarget == null) {
         this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y,
@@ -3516,9 +3588,8 @@ export class World {
 
       const isRanged = player.isRangedWeapon(itemDefs);
       const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
-      const cdx = npc.position.x - player.position.x;
-      const cdz = npc.position.y - player.position.y;
-      const combatDist = Math.sqrt(cdx * cdx + cdz * cdz);
+      const cfp = npc.distToFootprint(player.position.x, player.position.y);
+      const combatDist = Math.sqrt(cfp.dx * cfp.dx + cfp.dz * cfp.dz);
       if (combatDist > attackDist) {
         // Out of range — only re-pathfind when the existing queue has been
         // fully consumed (player arrived at the previous target tile but the
@@ -3531,24 +3602,25 @@ export class World {
         // queue alone while it's being walked keeps client + server in sync;
         // the chase resumes when the queue runs dry.
         if (!player.hasMoveQueue()) {
-          const path = map.findPathOnFloor(player.position.x, player.position.y, npc.position.x, npc.position.y, player.currentFloor);
+          const path = this.findPlayerPathToNpc(player, npc);
           if (path.length > 0) {
-            if (!isRanged && path.length > 1) {
-              player.setMoveQueue(path.slice(0, -1)); // melee: stop one tile short
-            } else if (isRanged) {
-              // Ranged: walk only as far as needed to be in attack distance
+            if (!isRanged) {
+              // Size-1: strip the trailing anchor tile so the player stops
+              // adjacent. Sized NPCs: findPlayerPathToNpc already lands
+              // adjacent, so the queue is used as-is.
+              const queue = (npc.size <= 1 && path.length > 1) ? path.slice(0, -1) : path;
+              player.setMoveQueue(queue);
+            } else {
+              // Ranged: walk only as far as needed to be in attack distance.
               let cutIdx = path.length;
               for (let i = 0; i < path.length; i++) {
-                const pdx = Math.abs(path[i].x - npc.position.x);
-                const pdz = Math.abs(path[i].z - npc.position.y);
-                if (pdx <= attackDist && pdz <= attackDist) {
+                const pf = npc.distToFootprint(path[i].x, path[i].z);
+                if (Math.abs(pf.dx) <= attackDist && Math.abs(pf.dz) <= attackDist) {
                   cutIdx = i + 1;
                   break;
                 }
               }
               player.setMoveQueue(path.slice(0, cutIdx));
-            } else {
-              player.setMoveQueue(path);
             }
           }
         }

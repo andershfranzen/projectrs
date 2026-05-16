@@ -21,6 +21,11 @@ export class Npc3DEntity {
   private _rotationY: number = 0;
   private targetRotationY: number = 0;
   private modelScale: number = 1;
+  /** SW-anchor → geometric-center offset for the NPC's NxN footprint.
+   *  0 for size 1 / 3 / 5..., 0.5 for size 2 / 4..., applied to both X and Z.
+   *  Server positions arrive as SW anchors; we render at the footprint center
+   *  so the mesh sits visually centered instead of leaning into +X+Z. */
+  private renderOffset: number = 0;
 
   // Animations keyed by role (idle, walk, attack, death)
   private animGroups: Map<string, AnimationGroup> = new Map();
@@ -47,9 +52,11 @@ export class Npc3DEntity {
     animMap: { idle: string; walk?: string; attack?: string; death?: string },
     label?: string,
     materialColors?: Record<string, [number, number, number]>,
+    tileSize: number = 1,
   ) {
     this.scene = scene;
     this.modelScale = scale;
+    this.renderOffset = (Math.max(1, Math.round(tileSize)) % 2 === 0) ? 0.5 : 0;
     this.load(file, animMap, label, materialColors);
   }
 
@@ -135,7 +142,7 @@ export class Npc3DEntity {
       }
 
       this.playAnim('idle', true);
-      this.root.position.set(this._position.x, this._position.y, this._position.z);
+      this.root.position.set(this._position.x + this.renderOffset, this._position.y, this._position.z + this.renderOffset);
       this._ready = true;
       // Force enable all meshes
       for (const mesh of this.meshes) {
@@ -163,13 +170,13 @@ export class Npc3DEntity {
 
   setPositionXYZ(x: number, y: number, z: number): void {
     this._position.set(x, y, z);
-    if (this.root) this.root.position.set(x, y, z);
+    if (this.root) this.root.position.set(x + this.renderOffset, y, z + this.renderOffset);
   }
 
   get position(): Vector3 { return this._position; }
   set position(pos: Vector3) {
     this._position = pos;
-    if (this.root) this.root.position.set(pos.x, pos.y, pos.z);
+    if (this.root) this.root.position.set(pos.x + this.renderOffset, pos.y, pos.z + this.renderOffset);
   }
 
   /** World-space point projectiles aim at: roughly chest-height above the NPC's base. */

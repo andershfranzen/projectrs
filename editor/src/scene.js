@@ -2327,7 +2327,7 @@ let paintBrushRadius = 1
     const hint = document.createElement('div')
     hint.className = 'hint'
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:4px;'
-    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: <code>openShop</code>, <code>openBank</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: add <code>"requires": { "questId": "...", "minStage": N, "maxStage": N, "notStarted": true }</code> to hide options unless quest state matches.`
+    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: add <code>"requires": { "questId": "...", "minStage": N, "maxStage": N, "notStarted": true }</code> to hide options unless quest state matches.`
     root.appendChild(hint)
 
     const ta = document.createElement('textarea')

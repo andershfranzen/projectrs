@@ -512,6 +512,7 @@
     "respawnTime": 25,
     "aggressive": false,
     "wanderRange": 4,
+    "size": 2,
     "lootTable": [
       {
         "itemId": 1,
@@ -533,7 +534,72 @@
     "wanderRange": 0,
     "bankAccess": true,
     "stationary": true,
-    "lootTable": []
+    "lootTable": [],
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "Good day. How may I help you?"
+          ],
+          "options": [
+            {
+              "label": "I'd like to access my bank account, please.",
+              "action": {
+                "type": "openBank"
+              }
+            },
+            {
+              "label": "What is this place?",
+              "next": "what"
+            },
+            {
+              "label": "Nothing, thanks."
+            }
+          ]
+        },
+        "what": {
+          "id": "what",
+          "lines": [
+            "This is a branch of the Bank. We have branches in many towns."
+          ],
+          "options": [
+            {
+              "label": "And what do you do?",
+              "next": "whatDo"
+            },
+            {
+              "label": "I'd like to access my bank account, please.",
+              "action": {
+                "type": "openBank"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        },
+        "whatDo": {
+          "id": "whatDo",
+          "lines": [
+            "We will look after your items and money for you.",
+            "Leave your valuables with us if you want to keep them safe."
+          ],
+          "options": [
+            {
+              "label": "I'd like to access my bank account, please.",
+              "action": {
+                "type": "openBank"
+              }
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
   },
   {
     "id": 17,
@@ -614,5 +680,42 @@
         "chance": 1
       }
     ]
+  },
+  {
+    "id": 21,
+    "name": "Bill the Stylist",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "stationary": true,
+    "lootTable": [],
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "Hello there! I'm the local stylist.",
+            "Looking to change your look?"
+          ],
+          "options": [
+            {
+              "label": "Yes, please change my appearance.",
+              "action": {
+                "type": "openAppearance"
+              }
+            },
+            {
+              "label": "Not right now."
+            }
+          ]
+        }
+      }
+    }
   }
 ]
