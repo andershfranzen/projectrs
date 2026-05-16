@@ -212,6 +212,7 @@ export class GameManager {
   // Combat follow (local player follows melee target)
   private combatTargetId: number = -1;
   private autoCastSpellIndex: number = -1;
+  private pendingSingleCastSpell: number = -1;
   private _combatPathTimer: number = 0;
 
   // While a COMBAT_HIT splat is delayed to its impact moment, hold off any
@@ -727,7 +728,7 @@ export class GameManager {
       this.clearPredictedPath();
       this.pendingSkill = null;
       this.pendingSmithing = null;
-      this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+      this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.localPlayer?.stopWalking();
@@ -1988,7 +1989,7 @@ export class GameManager {
       const entityId = v[0];
 
       if (entityId === this.combatTargetId) {
-        this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+        this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       }
 
       this.entities.cleanupCombatTargetsFor(entityId);
@@ -2123,6 +2124,13 @@ export class GameManager {
     const target = this.entities.resolveTargetable(targetId);
     if (!caster || !target) return;  // caster/target out of our chunk window
     this.playSpellEffect(caster, target, def);
+
+    if (casterId === this.localPlayerId && this.pendingSingleCastSpell >= 0) {
+      this.pendingSingleCastSpell = -1;
+      if (this.combatTargetId >= 0 && this.autoCastSpellIndex < 0) {
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+      }
+    }
   }
 
   private setupWorldObjectHandlers(): void {
@@ -2498,7 +2506,7 @@ export class GameManager {
       this.playerZ = newZ;
       this.clearPredictedPath();
       this.setTileFrom(newX, newZ);
-      this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+      this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.pendingSkill = null;
@@ -2651,7 +2659,7 @@ export class GameManager {
     this.playerZ = newZ;
     this.clearPredictedPath();
     if (this.localPlayer) this.localPlayer.stopWalking();
-    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+    this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
     this.isSkilling = false;
     this.skillingObjectId = -1;
 
@@ -3092,6 +3100,8 @@ export class GameManager {
 
     const targetingSpell = this.sidePanel?.getTargetingSpell() ?? -1;
     if (targetingSpell >= 0) {
+      this.pendingSingleCastSpell = targetingSpell;
+      this.combatTargetId = npcEntityId;
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, targetingSpell, npcEntityId));
       this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#a040ff');
       this.sidePanel!.clearTargetingSpell();
@@ -4315,7 +4325,7 @@ export class GameManager {
   private handleGroundClick(worldX: number, worldZ: number): void {
     if (performance.now() < this.castingUntil) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
-    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+    this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
     this.pendingSkill = null;
     this.pendingSmithing = null;
     this.clearPendingObjectInteractionRetry();

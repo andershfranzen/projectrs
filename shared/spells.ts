@@ -33,7 +33,7 @@ export interface ProjectileDef {
 
 export interface TrajectoryDef {
   type: TrajectoryType;
-  travelTimeMs: number;
+  speed: number;
   arcHeight: number;
   homingCurve: number;
 }

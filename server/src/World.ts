@@ -1274,6 +1274,7 @@ export class World {
     this.clearCombatTarget(playerId);
     player.attackTarget = null;
     player.pendingInteraction = null;
+    player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
     this.cancelSkilling(playerId);
     // Walking auto-closes any open modal interface (bank/trade) — mirrors
@@ -2345,7 +2346,13 @@ export class World {
     const player = this.players.get(playerId);
     if (!player || !player.alive) return;
     if (player.isBusy(this.currentTick)) return;
-    if (player.attackCooldown > 0) return;
+    if (player.attackCooldown > 0) {
+      if (this.playerCombatTargets.has(playerId)) {
+        player.pendingSpellCast = { spellIndex, targetEntityId };
+        this.clearCombatTarget(playerId);
+      }
+      return;
+    }
 
     const def = this.data.getSpellByIndex(spellIndex);
     if (!def) return;
@@ -2386,13 +2393,16 @@ export class World {
       : 0;
 
     // Total wall time before damage applies — matches client visual length.
-    const totalDelayMs = def.cast.durationMs + def.trajectory.travelTimeMs;
-    const totalDelayTicks = Math.max(1, Math.ceil(totalDelayMs / TICK_RATE));
+    const travelMs = def.trajectory.speed > 0 ? (dist / def.trajectory.speed) * 1000 : 600;
+    const totalDelayMs = def.cast.durationMs + travelMs;
+    const totalDelayTicks = Math.max(1, Math.round(totalDelayMs / TICK_RATE));
 
     // Lock other actions for the cast window; block recasts until impact.
+    // Recast cooldown is fixed (not distance-scaled) so pacing stays
+    // consistent regardless of how far the target is.
     const castTicks = Math.max(1, Math.ceil(def.cast.durationMs / TICK_RATE));
     player.setDelay(this.currentTick, castTicks + 1);
-    player.attackCooldown = totalDelayTicks * 2;
+    player.attackCooldown = 7;
     player.markInCombat(this.currentTick);
 
     this.broadcastNearby(
@@ -3143,6 +3153,7 @@ export class World {
     this.tickPlayerMovement();
     this.tickNpcAI();
     this.tickPlayerCooldowns();
+    this.tickQueuedSpellCasts();
     this.tickPlayerCombat();
     this.tickNpcCombat();
     this.tickPendingSpells();
@@ -3348,6 +3359,15 @@ export class World {
   private tickPlayerCooldowns(): void {
     for (const [, player] of this.players) {
       if (player.attackCooldown > 0) player.attackCooldown--;
+    }
+  }
+
+  private tickQueuedSpellCasts(): void {
+    for (const [playerId, player] of this.players) {
+      if (!player.pendingSpellCast || player.attackCooldown > 0) continue;
+      const { spellIndex, targetEntityId } = player.pendingSpellCast;
+      player.pendingSpellCast = null;
+      this.handlePlayerCastSpell(playerId, spellIndex, targetEntityId);
     }
   }
 
@@ -3928,6 +3948,7 @@ export class World {
     player.clearMoveQueue();
     player.attackTarget = null;
     player.pendingInteraction = null;
+    player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
     player.pendingPickup = -1;
     player.attackCooldown = 0;

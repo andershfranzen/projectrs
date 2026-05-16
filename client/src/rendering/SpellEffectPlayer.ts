@@ -259,7 +259,9 @@ function trajectoryPoint(t: number, from: Vector3, to: Vector3, def: SpellEffect
   const pos = Vector3.Lerp(from, to, t);
   const traj = def.trajectory;
   if (traj.type === 'arc') {
-    pos.y += traj.arcHeight * 4 * t * (1 - t);
+    const dist = Vector3.Distance(from, to);
+    const distScale = Math.min(1, dist / 6);
+    pos.y += traj.arcHeight * distScale * 4 * t * (1 - t);
   } else if (traj.type === 'homing') {
     return homingPoint(t, from, to, traj.homingCurve);
   }
@@ -345,6 +347,7 @@ class ActiveCast {
   private arcs: LinesMesh[] = [];
   private arcMats: StandardMaterial[] = [];
   private arcRegenCounter = 0;
+  private travelTimeMs = 0;
   private disposed = false;
 
   constructor(
@@ -412,6 +415,9 @@ class ActiveCast {
     if (this.opts.caster) {
       this.opts.from.copyFrom(this.opts.caster.getCastOrigin());
     }
+
+    const dist = Vector3.Distance(this.opts.from, this.opts.to);
+    this.travelTimeMs = def.trajectory.speed > 0 ? (dist / def.trajectory.speed) * 1000 : 600;
 
     this.buildProjectile(def.projectile.shape);
     if (this.projRoot) {
@@ -573,7 +579,7 @@ class ActiveCast {
         this.opts.groundY = this.opts.target.position.y;
       }
       const elapsed = now - this.phaseStart;
-      const travel = def.trajectory.travelTimeMs;
+      const travel = this.travelTimeMs;
       const t = Math.min(1, elapsed / travel);
       const pos = trajectoryPoint(t, this.opts.from, this.opts.to, def);
       this.projRoot?.position.copyFrom(pos);

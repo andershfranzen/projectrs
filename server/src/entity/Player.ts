@@ -143,6 +143,7 @@ export class Player extends Entity {
   // Combat
   attackTarget: Entity | null = null;
   attackCooldown: number = 0;
+  pendingSpellCast: { spellIndex: number; targetEntityId: number } | null = null;
 
   /** Tick on which the player is no longer busy. 0 = not busy.
    *  While busy, state-mutating packet handlers (eat, equip, drop, pickup,

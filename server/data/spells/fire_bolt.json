@@ -24,7 +24,7 @@
   },
   "trajectory": {
     "type": "arc",
-    "travelTimeMs": 900,
+    "speed": 5,
     "arcHeight": 1.5,
     "homingCurve": 1
   },
