@@ -58,6 +58,7 @@ import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVa
 // for the toggle, so the mismatch was previously a UX bug only.
 const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
+const MAX_FRAME_DT_SECONDS = 0.1;
 
 type InteractionOption = {
   label: string;
@@ -567,7 +568,7 @@ export class GameManager {
       }
 
       const now = performance.now();
-      const dt = (now - lastTime) / 1000;
+      const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_DT_SECONDS);
       lastTime = now;
       this.update(dt);
       this.scene.render();
@@ -2486,7 +2487,7 @@ export class GameManager {
       // Cut everything *after* it. If the player's already past that tile,
       // leave the path alone and let divergence-snap handle the rest.
       let cutIdx = -1;
-      for (let i = 0; i < this.path.length; i++) {
+      for (let i = this.pathIndex; i < this.path.length; i++) {
         const wp = this.path[i];
         if (Math.floor(wp.x) === tx && Math.floor(wp.z) === tz) {
           cutIdx = i + 1;
@@ -3149,16 +3150,20 @@ export class GameManager {
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     if (this.pathIndex < this.path.length && this.tileProgress > 0) {
       const currentTarget = this.path[this.pathIndex];
-      const tail = findPath(this.tileFrom.x, this.tileFrom.z, goalX, goalZ,
+      const tail = findPath(currentTarget.x, currentTarget.z, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath);
-      if (tail.length === 0) return { path: [], preserveCurrentStep: false };
-      // Same-direction continuation. Without this branch fast-rate clicks
-      // pin the player at tileProgress=0 because every reset starves the
-      // step accumulation.
-      const sameDir = this.sameTile(tail[0], currentTarget);
-      return { path: tail, preserveCurrentStep: sameDir };
+      if (tail.length === 0) {
+        const currentTileIsGoal = Math.floor(currentTarget.x) === Math.floor(goalX)
+          && Math.floor(currentTarget.z) === Math.floor(goalZ);
+        return { path: currentTileIsGoal ? [currentTarget] : [], preserveCurrentStep: currentTileIsGoal };
+      }
+      const startsAtCurrentTarget = this.sameTile(tail[0], currentTarget);
+      return {
+        path: startsAtCurrentTarget ? tail : [currentTarget, ...tail],
+        preserveCurrentStep: true,
+      };
     }
     return {
       path: findPath(this.playerX, this.playerZ, goalX, goalZ,
@@ -3379,22 +3384,17 @@ export class GameManager {
           candidates.sort((a, b) => a.dist - b.dist);
 
           let bestPath: { x: number; z: number }[] | null = null;
+          let bestPreserveCurrentStep = false;
           for (const { ax, az } of candidates) {
-            const path = findPath(this.playerX, this.playerZ, ax + 0.5, az + 0.5,
-              this.isTileBlocked,
-              this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 500,
-              this.isWallBlockedForPath);
+            const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
             if (path.length > 0) {
               bestPath = path;
+              bestPreserveCurrentStep = preserveCurrentStep;
               break;
             }
           }
           if (bestPath) {
-            this.path = bestPath;
-            this.pathIndex = 0;
-            this.tileProgress = 0;
-            this.setTileFrom(this.playerX, this.playerZ);
-            this.network.sendMove(bestPath);
+            this.startPredictedPath(bestPath, bestPreserveCurrentStep);
             this.pendingSmithing = { objectEntityId, def: objDef };
           }
         }
@@ -4489,7 +4489,7 @@ export class GameManager {
     this.updateDoorAnimations(dt);
 
     if (this.localPlayer) {
-      this._tempVec.set(this.playerX, this.localPlayer.position.y, this.playerZ);
+      this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
       this.camera.followTarget(this._tempVec);
     }
 
@@ -4597,7 +4597,7 @@ export class GameManager {
     const sTx = Math.floor(serverX);
     const sTz = Math.floor(serverZ);
     let foundIndex = -1;
-    for (let i = 0; i < this.path.length; i++) {
+    for (let i = this.pathIndex; i < this.path.length; i++) {
       const wp = this.path[i];
       if (Math.floor(wp.x) === sTx && Math.floor(wp.z) === sTz) {
         foundIndex = i;
