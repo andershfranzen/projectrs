@@ -125,6 +125,9 @@ export class GameManager {
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
   private pendingSmithing: { objectEntityId: number; def: WorldObjectDef } | null = null; // open smithing panel once walk to anvil finishes
+  private pendingObjectInteraction: { objectEntityId: number; actionIndex: number; seq: number } | null = null;
+  private pendingObjectInteractionSeq: number = 0;
+  private pendingObjectInteractionTimer: number | null = null;
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -2197,6 +2200,7 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SKILLING_START, (_op, v) => {
+      this.clearPendingObjectInteractionRetry();
       this.isSkilling = true;
       this.skillingObjectId = v[0];
       const toolItemId = v[1] ?? 0;
@@ -3150,6 +3154,57 @@ export class GameManager {
     this.network.sendMove(path);
   }
 
+  private clearPendingObjectInteractionRetry(): void {
+    this.pendingObjectInteraction = null;
+    if (this.pendingObjectInteractionTimer !== null) {
+      window.clearTimeout(this.pendingObjectInteractionTimer);
+      this.pendingObjectInteractionTimer = null;
+    }
+  }
+
+  private trackObjectInteractionRetry(objectEntityId: number, actionIndex: number): void {
+    if (this.pendingObjectInteractionTimer !== null) {
+      window.clearTimeout(this.pendingObjectInteractionTimer);
+      this.pendingObjectInteractionTimer = null;
+    }
+    this.pendingObjectInteraction = {
+      objectEntityId,
+      actionIndex,
+      seq: ++this.pendingObjectInteractionSeq,
+    };
+  }
+
+  private scheduleObjectInteractionArrivalRetry(): void {
+    const pending = this.pendingObjectInteraction;
+    if (!pending || this.isSkilling) return;
+    if (this.pendingObjectInteractionTimer !== null) {
+      window.clearTimeout(this.pendingObjectInteractionTimer);
+    }
+
+    this.pendingObjectInteractionTimer = window.setTimeout(() => {
+      this.pendingObjectInteractionTimer = null;
+      const current = this.pendingObjectInteraction;
+      if (!current || current.seq !== pending.seq || this.isSkilling || this.pathIndex < this.path.length) return;
+
+      const data = this.worldObjectDefs.get(current.objectEntityId);
+      const def = data ? this.objectDefsCache.get(data.defId) : null;
+      if (!data || !def || (data.depleted && def.category !== 'door')) {
+        this.clearPendingObjectInteractionRetry();
+        return;
+      }
+
+      const ptx = Math.floor(this.playerX);
+      const ptz = Math.floor(this.playerZ);
+      if (!isTileAdjacentToObject(ptx, ptz, data.x, data.z, def)) {
+        this.clearPendingObjectInteractionRetry();
+        return;
+      }
+
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, current.objectEntityId, current.actionIndex));
+      this.clearPendingObjectInteractionRetry();
+    }, 700);
+  }
+
   private pickupItem(groundItemId: number): void {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     const item = this.entities.groundItems.get(groundItemId);
@@ -3204,6 +3259,7 @@ export class GameManager {
   }
 
   private showSmithingUI(objectEntityId: number, def: WorldObjectDef): void {
+    this.clearPendingObjectInteractionRetry();
     if (!this.smithingPanel || !this.sidePanel) return;
     const inventory = this.sidePanel.getInventory();
     const smithingLevel = this.sidePanel.getSkillLevel('smithing');
@@ -3286,8 +3342,10 @@ export class GameManager {
 
     // Find a reachable adjacent tile and walk there
     const def = this.objectDefsCache.get(data.defId);
+    const shouldRetryOnArrival = !!def && def.category !== 'door' && !!((def.skill && def.harvestItemId) || (def.recipes && def.recipes.length > 0));
 
     if (def?.category === 'door') {
+      this.clearPendingObjectInteractionRetry();
       const doorEntry = this.doorPivots.get(objectEntityId);
       const rotY = doorEntry ? doorEntry.closedRotY : 0;
       const { tile: [dotx, dotz], edge } = doorEdgeFromPlacement(data.x, data.z, rotY);
@@ -3388,10 +3446,20 @@ export class GameManager {
         }
       }
       if (bestPath) {
+        if (shouldRetryOnArrival) this.trackObjectInteractionRetry(objectEntityId, actionIndex);
         const preserve = this.pathIndex < this.path.length && this.tileProgress > 0
           && this.sameTile(bestPath[0], this.path[this.pathIndex]);
         this.startPredictedPath(bestPath, preserve);
+      } else {
+        this.clearPendingObjectInteractionRetry();
       }
+    } else if (!alreadyAdj) {
+      this.clearPendingObjectInteractionRetry();
+    } else if (shouldRetryOnArrival) {
+      this.trackObjectInteractionRetry(objectEntityId, actionIndex);
+      this.scheduleObjectInteractionArrivalRetry();
+    } else {
+      this.clearPendingObjectInteractionRetry();
     }
 
     // Send interaction request — server validates distance
@@ -3981,6 +4049,9 @@ export class GameManager {
    *  skilling starts. */
   private prepareSkillingAtObject(objectId: number): void {
     this.clearPredictedPath();
+    this.slideOffsetX = 0;
+    this.slideOffsetZ = 0;
+    this.slideStartMs = 0;
     this.playerX = Math.round(this.playerX - 0.5) + 0.5;
     this.playerZ = Math.round(this.playerZ - 0.5) + 0.5;
     this.setTileFrom(this.playerX, this.playerZ);
@@ -4005,10 +4076,39 @@ export class GameManager {
     this.prepareSkillingAtObject(objectId);
   }
 
+  private finishPredictedPathArrival(): void {
+    this.tileProgress = 0;
+    if (this.destMarker) this.destMarker.isVisible = false;
+    this.minimap?.clearDestination();
+    this.localPlayer?.stopWalking();
+    if (this.pendingSkill) {
+      const { objectId, variant, stationary } = this.pendingSkill;
+      this.pendingSkill = null;
+      if (stationary) this.startSkillingStationary(objectId);
+      else this.startSkillingVisual(objectId, variant);
+    }
+    if (this.pendingSmithing) {
+      const { objectEntityId: smithObjId, def: smithDef } = this.pendingSmithing;
+      this.pendingSmithing = null;
+      this.showSmithingUI(smithObjId, smithDef);
+    }
+    // Face the NPC we were walking up to talk to / attack. Done after
+    // stopWalking so the rotation isn't immediately overwritten by movement
+    // direction logic. Lookup uses npcTargets, which tracks the latest
+    // server-broadcast position even if the NPC wandered while we walked.
+    if (this.pendingFaceTargetEntityId >= 0) {
+      const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
+      if (npcTarget) this.faceLocalPlayerToward(npcTarget.x, npcTarget.z);
+      this.pendingFaceTargetEntityId = -1;
+    }
+    this.scheduleObjectInteractionArrivalRetry();
+  }
+
   private handleGroundClick(worldX: number, worldZ: number): void {
     this.combatTargetId = -1;
     this.pendingSkill = null;
     this.pendingSmithing = null;
+    this.clearPendingObjectInteractionRetry();
     // Walking elsewhere cancels the queued face-NPC — we'd look weird
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;
@@ -4090,6 +4190,7 @@ export class GameManager {
       window.clearTimeout(this.reconnectSleepTimer);
       this.reconnectSleepTimer = null;
     }
+    this.clearPendingObjectInteractionRetry();
     this.hideReconnectOverlay();
     this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
@@ -4431,6 +4532,9 @@ export class GameManager {
       const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
       const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
       this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
+      if (this.pathIndex >= this.path.length) {
+        this.finishPredictedPathArrival();
+      }
       return;
     }
 
@@ -4548,31 +4652,7 @@ export class GameManager {
       }
 
       if (this.pathIndex >= this.path.length) {
-        this.tileProgress = 0;
-        if (this.destMarker) this.destMarker.isVisible = false;
-        this.minimap?.clearDestination();
-        this.localPlayer.stopWalking();
-        if (this.pendingSkill) {
-          const { objectId, variant, stationary } = this.pendingSkill;
-          this.pendingSkill = null;
-          if (stationary) this.startSkillingStationary(objectId);
-          else this.startSkillingVisual(objectId, variant);
-        }
-        if (this.pendingSmithing) {
-          const { objectEntityId: smithObjId, def: smithDef } = this.pendingSmithing;
-          this.pendingSmithing = null;
-          this.showSmithingUI(smithObjId, smithDef);
-        }
-        // Face the NPC we were walking up to talk to / attack. Done after
-        // stopWalking so the rotation isn't immediately overwritten by the
-        // movement-direction logic below. Lookup uses npcTargets which
-        // tracks the latest server-broadcast position even if the NPC has
-        // wandered slightly while we were walking.
-        if (this.pendingFaceTargetEntityId >= 0) {
-          const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
-          if (npcTarget) this.faceLocalPlayerToward(npcTarget.x, npcTarget.z);
-          this.pendingFaceTargetEntityId = -1;
-        }
+        this.finishPredictedPathArrival();
         break;
       }
     }
