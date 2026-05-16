@@ -604,13 +604,13 @@ export class ChunkManager {
 
   // --- Chunk update ---
 
-  updatePlayerPosition(playerX: number, playerZ: number): void {
-    if (!this.loaded) { return; }
+  updatePlayerPosition(playerX: number, playerZ: number): boolean {
+    if (!this.loaded) { return false; }
     const cx = Math.floor(playerX / CHUNK_SIZE);
     const cz = Math.floor(playerZ / CHUNK_SIZE);
     if (cx === this.lastChunkX && cz === this.lastChunkZ) {
       this.buildQueuedGameChunks(cx, cz);
-      return;
+      return false;
     }
     this.lastChunkX = cx;
     this.lastChunkZ = cz;
@@ -784,6 +784,7 @@ export class ChunkManager {
         this.queueChunkPlacedObjects(key);
       }
     }
+    return true;
   }
 
   // --- On-demand editor chunk loading ---

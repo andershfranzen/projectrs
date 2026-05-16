@@ -705,6 +705,10 @@ export class World {
     player.lastPositionPersistTick = this.currentTick;
   }
 
+  getTickForHeartbeat(): number {
+    return this.currentTick & 0x7fff;
+  }
+
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
@@ -777,6 +781,7 @@ export class World {
         if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name);
       }
       this.broadcastRemoteEquipment(player);
+      this.sendRemoteStance(player, player);
       this.broadcastRemoteStance(player);
       this.sendRemoteAnimation(player, player);
       console.log(`Player "${player.name}" reconnected`);
@@ -837,6 +842,7 @@ export class World {
     // PLAYER_SYNC will follow on the next tick; clients cache equipment until
     // the entity is created.
     this.broadcastRemoteEquipment(player);
+    this.sendRemoteStance(player, player);
     this.broadcastRemoteStance(player);
   }
 
@@ -2484,6 +2490,7 @@ export class World {
       return;
     }
     player.stance = stances[stanceIndex];
+    this.db.saveStance(player.accountId, player.stance);
     player.setDelay(this.currentTick, 1);
     // Self-echo lets the client correct its optimistic UI if anything ever
     // diverges; broadcast to neighbours so they pick the right swing anim.
@@ -4512,6 +4519,16 @@ export class World {
     // Phase 2: Viewer-first iteration — all sends to each viewer are consecutive
     for (const [, viewer] of this.players) {
       if (viewer.disconnected) continue;
+      this.sendToPlayer(
+        viewer,
+        ServerOpcode.PLAYER_SELF_SYNC,
+        qPos(viewer.position.x),
+        qPos(viewer.position.y),
+        viewer.health,
+        viewer.maxHealth,
+        this.currentTick & 0x7fff,
+        viewer.hasMoveQueue() ? 1 : 0,
+      );
       const cm = this.chunkManagers.get(viewer.currentMapLevel);
       if (!cm) continue;
 

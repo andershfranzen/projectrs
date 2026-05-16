@@ -1641,7 +1641,12 @@ const server = Bun.serve<SocketData>({
     },
     message(ws: import('bun').ServerWebSocket<SocketData>, message: string | Buffer) {
       if (ws.data.type === 'game') {
-        const buf = message instanceof ArrayBuffer ? message : (message as unknown as Buffer).buffer.slice(0) as ArrayBuffer;
+        const buf = message instanceof ArrayBuffer
+          ? message
+          : (message as unknown as Buffer).buffer.slice(
+              (message as unknown as Buffer).byteOffset,
+              (message as unknown as Buffer).byteOffset + (message as unknown as Buffer).byteLength,
+            ) as ArrayBuffer;
         handleGameSocketMessage(ws as import('bun').ServerWebSocket<GameSocketData>, buf, world);
       } else {
         handleChatSocketMessage(ws as import('bun').ServerWebSocket<ChatSocketData>, String(message), world);

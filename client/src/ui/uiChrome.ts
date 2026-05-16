@@ -38,7 +38,7 @@ export function installUiChromeStyles(): void {
 
     .eq-tab-button {
       flex: 1;
-      height: 44px;
+      height: var(--side-tab-size, 44px);
       padding: 2px 0;
       border-radius: 0;
       border-top: 1px solid #4b453b;
@@ -102,9 +102,9 @@ export function panelFrameCss(): string {
   return `
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--side-panel-gap, 8px);
     min-height: 100%;
-    padding: 6px 7px;
+    padding: var(--side-panel-padding, 6px 7px);
     color: ${UI_TEXT};
     font-family: Arial, Helvetica, sans-serif;
   `;

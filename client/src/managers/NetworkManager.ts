@@ -26,6 +26,9 @@ export type ChatHandler = (data: ChatMessage) => void;
 export type RawMessageHandler = (data: ArrayBuffer) => void;
 export type DisconnectHandler = (event: CloseEvent) => void;
 
+const GAME_HEARTBEAT_INTERVAL_MS = 5_000;
+const GAME_HEARTBEAT_TIMEOUT_MS = 12_000;
+
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
  *  instead of the int16-array layout. Handled exclusively by raw handlers;
  *  the int16 dispatcher must skip them so an even-length UTF-8 payload doesn't
@@ -51,6 +54,9 @@ export class NetworkManager {
   private openHandlers: (() => void)[] = [];
   private socketGeneration: number = 0;
   private intentionallyClosedSockets = new WeakSet<WebSocket>();
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private lastGameMessageAt: number = 0;
+  private heartbeatSeq: number = 0;
 
   private closeQuietly(socket: WebSocket | null): void {
     if (!socket) return;
@@ -58,10 +64,59 @@ export class NetworkManager {
     try { socket.close(); } catch {}
   }
 
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private markGameMessageReceived(): void {
+    this.lastGameMessageAt = performance.now();
+  }
+
+  private startHeartbeat(socket: WebSocket, generation: number): void {
+    this.stopHeartbeat();
+    this.lastGameMessageAt = performance.now();
+    this.heartbeatTimer = setInterval(() => {
+      if (generation !== this.socketGeneration || this.gameSocket !== socket) return;
+      if (socket.readyState !== WebSocket.OPEN) return;
+
+      const now = performance.now();
+      if (now - this.lastGameMessageAt > GAME_HEARTBEAT_TIMEOUT_MS) {
+        console.warn('[net] Game socket heartbeat timed out');
+        this.failGameSocket(socket, 4000, 'heartbeat timeout');
+        return;
+      }
+
+      this.heartbeatSeq = (this.heartbeatSeq + 1) & 0x7fff;
+      try {
+        socket.send(encodePacket(ClientOpcode.CLIENT_PING, this.heartbeatSeq) as BufferSource);
+      } catch {
+        this.failGameSocket(socket, 4001, 'send failed');
+      }
+    }, GAME_HEARTBEAT_INTERVAL_MS);
+  }
+
+  private failGameSocket(socket: WebSocket | null, code: number, reason: string): void {
+    if (socket && this.gameSocket !== socket) return;
+    this.stopHeartbeat();
+    this.socketGeneration++;
+    this.connected = false;
+    if (socket && this.gameSocket === socket) this.gameSocket = null;
+    try { socket?.close(code, reason); } catch {}
+    this.disconnectHandler?.(new CloseEvent('close', {
+      code,
+      reason,
+      wasClean: false,
+    }));
+  }
+
   connect(token: string): void {
     this.socketGeneration++;
     const generation = this.socketGeneration;
     this.connected = false;
+    this.stopHeartbeat();
     this.closeQuietly(this.gameSocket);
     this.closeQuietly(this.chatSocket);
     this.gameSocket = null;
@@ -85,6 +140,7 @@ export class NetworkManager {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       console.log('[net] Game socket connected');
       this.connected = true;
+      this.startHeartbeat(gameSocket, generation);
       for (const handler of this.openHandlers) handler();
       this.openHandlers.length = 0;
     };
@@ -92,6 +148,7 @@ export class NetworkManager {
     gameSocket.onmessage = (event) => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       if (!(event.data instanceof ArrayBuffer)) return;
+      this.markGameMessageReceived();
       // Raw handlers consume string-layout packets (UTF-8 payload + trailing
       // int16s — different shape from the standard binary protocol).
       for (const handler of this.rawHandlers) {
@@ -111,6 +168,7 @@ export class NetworkManager {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       console.log('[net] Game socket disconnected');
       this.connected = false;
+      this.stopHeartbeat();
       this.gameSocket = null;
       if (!this.intentionallyClosedSockets.has(gameSocket)) {
         this.disconnectHandler?.(event);
@@ -184,8 +242,11 @@ export class NetworkManager {
     }
   }
 
-  sendMove(path: { x: number; z: number }[]): void {
-    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return;
+  sendMove(path: { x: number; z: number }[]): boolean {
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
+      this.failGameSocket(this.gameSocket, 4002, 'move send while disconnected');
+      return false;
+    }
 
     // Encode: [opcode, pathLength, x1*10, z1*10, x2*10, z2*10, ...]
     const maxSteps = Math.min(path.length, 50); // Cap path length
@@ -194,12 +255,27 @@ export class NetworkManager {
       values.push(Math.round(path[i].x * 10));
       values.push(Math.round(path[i].z * 10));
     }
-    this.gameSocket.send(encodePacket(ClientOpcode.PLAYER_MOVE, ...values) as BufferSource);
+    try {
+      this.gameSocket.send(encodePacket(ClientOpcode.PLAYER_MOVE, ...values) as BufferSource);
+      return true;
+    } catch {
+      this.failGameSocket(this.gameSocket, 4003, 'move send failed');
+      return false;
+    }
   }
 
-  sendRaw(data: Uint8Array): void {
-    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return;
-    this.gameSocket.send(data as BufferSource);
+  sendRaw(data: Uint8Array): boolean {
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
+      this.failGameSocket(this.gameSocket, 4004, 'packet send while disconnected');
+      return false;
+    }
+    try {
+      this.gameSocket.send(data as BufferSource);
+      return true;
+    } catch {
+      this.failGameSocket(this.gameSocket, 4005, 'packet send failed');
+      return false;
+    }
   }
 
   sendChat(message: string): void {
@@ -216,6 +292,7 @@ export class NetworkManager {
    *  back to the login screen. */
   close(): void {
     this.socketGeneration++;
+    this.stopHeartbeat();
     this.closeQuietly(this.gameSocket);
     this.closeQuietly(this.chatSocket);
     this.gameSocket = null;

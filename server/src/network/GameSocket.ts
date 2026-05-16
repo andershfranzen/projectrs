@@ -1,4 +1,4 @@
-import { ClientOpcode, decodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
+import { ClientOpcode, ServerOpcode, decodePacket, encodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
@@ -391,6 +391,13 @@ export function handleGameSocketMessage(
     }
     case ClientOpcode.TRADE_ACCEPT: {
       world.handleTradeAccept(playerId);
+      break;
+    }
+
+    case ClientOpcode.CLIENT_PING: {
+      try {
+        ws.sendBinary(encodePacket(ServerOpcode.SERVER_PONG, values[0] ?? 0, world.getTickForHeartbeat()));
+      } catch { /* connection closed */ }
       break;
     }
 

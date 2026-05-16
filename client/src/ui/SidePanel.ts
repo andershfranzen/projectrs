@@ -162,6 +162,79 @@ export class SidePanel {
           outline: 1px solid rgba(255,200,80,0.8);
           outline-offset: -1px;
         }
+
+        @media (max-height: 700px), (max-width: 1000px) {
+          #side-panel .side-resource-row {
+            padding-top: 2px !important;
+            padding-bottom: 2px !important;
+          }
+          #side-panel .side-resource-label {
+            font-size: 11px !important;
+            width: 42px !important;
+          }
+          #side-panel .side-resource-bar {
+            height: 14px !important;
+          }
+          #side-panel #side-player-info {
+            grid-template-columns: 26px minmax(0, 1fr) auto !important;
+            padding: 2px 7px !important;
+          }
+          #side-panel .side-combat-icon {
+            width: 26px !important;
+            height: 26px !important;
+            flex-basis: 26px !important;
+            transform: translateY(1px) !important;
+          }
+          #side-panel .side-tab-row {
+            padding-left: 1px !important;
+            padding-right: 1px !important;
+          }
+          #side-panel .side-content-area {
+            flex-basis: 360px !important;
+            max-height: none !important;
+            padding: 1px 2px !important;
+          }
+          #side-panel .side-brand-area {
+            min-height: 0 !important;
+            flex: 0 0 auto !important;
+            padding: 0 !important;
+          }
+          #side-panel .side-brand {
+            display: none !important;
+          }
+          #side-panel .side-logout {
+            width: 150px !important;
+            padding: 4px 0 !important;
+            margin-bottom: 4px !important;
+            font-size: 11px !important;
+          }
+          #side-panel .inv-grid {
+            grid-template-rows: repeat(6, minmax(38px, 1fr)) !important;
+            min-height: 244px !important;
+          }
+          #side-panel .inv-slot .item-icon img {
+            width: 34px !important;
+            height: 34px !important;
+          }
+        }
+
+        @media (max-height: 620px) {
+          #side-panel .side-content-area {
+            flex-basis: 330px !important;
+          }
+          #side-panel .inv-grid {
+            grid-template-rows: repeat(6, minmax(34px, 1fr)) !important;
+            min-height: 220px !important;
+          }
+          #side-panel .inv-slot .item-icon img {
+            width: 30px !important;
+            height: 30px !important;
+          }
+          #side-panel .stance-btn {
+            padding-top: 6px !important;
+            padding-bottom: 6px !important;
+          }
+        }
       `;
       document.head.appendChild(style);
     }
@@ -182,6 +255,7 @@ export class SidePanel {
 
     // HP bar below minimap
     const hpRow = document.createElement('div');
+    hpRow.className = 'side-resource-row';
     hpRow.style.cssText = `
       display: flex; align-items: center; gap: 6px;
       padding: 3px 10px;
@@ -189,11 +263,13 @@ export class SidePanel {
       border-top: 1px solid rgba(255,200,100,0.06);
     `;
     const hpIcon = document.createElement('div');
+    hpIcon.className = 'side-resource-label';
     hpIcon.textContent = 'Health';
     hpIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #d44; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
     hpRow.appendChild(hpIcon);
 
     const hpBarBg = document.createElement('div');
+    hpBarBg.className = 'side-resource-bar';
     hpBarBg.style.cssText = `
       flex: 1; height: 18px; background: #1a0808;
       border: 1px solid #4a2020; border-radius: 3px;
@@ -222,16 +298,19 @@ export class SidePanel {
 
     // Good Magic bar
     const goodMagicRow = document.createElement('div');
+    goodMagicRow.className = 'side-resource-row';
     goodMagicRow.style.cssText = `
       display: flex; align-items: center; gap: 6px;
       padding: 5px 10px 3px;
     `;
     const goodMagicIcon = document.createElement('div');
+    goodMagicIcon.className = 'side-resource-label';
     goodMagicIcon.textContent = 'Good';
     goodMagicIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #4ac; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
     goodMagicRow.appendChild(goodMagicIcon);
 
     const goodMagicBarBg = document.createElement('div');
+    goodMagicBarBg.className = 'side-resource-bar';
     goodMagicBarBg.style.cssText = `
       flex: 1; height: 18px; background: #080818;
       border: 1px solid #1a2a4a; border-radius: 3px;
@@ -260,17 +339,20 @@ export class SidePanel {
 
     // Evil Magic bar
     const evilMagicRow = document.createElement('div');
+    evilMagicRow.className = 'side-resource-row';
     evilMagicRow.style.cssText = `
       display: flex; align-items: center; gap: 6px;
       padding: 3px 10px 7px;
       border-bottom: 1px solid rgba(0,0,0,0.25);
     `;
     const evilMagicIcon = document.createElement('div');
+    evilMagicIcon.className = 'side-resource-label';
     evilMagicIcon.textContent = 'Evil';
     evilMagicIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #c4a; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
     evilMagicRow.appendChild(evilMagicIcon);
 
     const evilMagicBarBg = document.createElement('div');
+    evilMagicBarBg.className = 'side-resource-bar';
     evilMagicBarBg.style.cssText = `
       flex: 1; height: 18px; background: #180818;
       border: 1px solid #4a1a3a; border-radius: 3px;
@@ -308,6 +390,7 @@ export class SidePanel {
       border-bottom: 1px solid rgba(0,0,0,0.4);
     `;
     const combatIcon = document.createElement('img');
+    combatIcon.className = 'side-combat-icon';
     combatIcon.src = '/ui/combat.png';
     combatIcon.style.cssText = `
       width: 34px; height: 34px;
@@ -330,10 +413,12 @@ export class SidePanel {
 
     // Top tab row — 4 tabs above content
     const topTabs = document.createElement('div');
+    topTabs.className = 'side-tab-row';
     topTabs.style.cssText = `display: flex; gap: 1px; padding: 2px 2px 0;`;
 
     // Bottom tab row — 4 tabs below content (added after contentArea)
     const bottomTabs = document.createElement('div');
+    bottomTabs.className = 'side-tab-row';
     bottomTabs.style.cssText = `display: flex; gap: 1px; padding: 0 2px 2px;`;
 
     const tabs: { key: string; label: string; icon?: string; iconScale?: number; pos: 'top' | 'bottom' }[] = [
@@ -366,6 +451,7 @@ export class SidePanel {
 
     // Tab contents
     const contentArea = document.createElement('div');
+    contentArea.className = 'side-content-area';
     // flex:1 lets the area shrink at small viewports; max-height caps it at
     // the inventory grid's natural max (6 rows + chrome) so at
     // fullscreen the tab body uses the extra vertical room freed by the smaller
@@ -455,6 +541,7 @@ export class SidePanel {
     panel.appendChild(bottomTabs);
 
     const brandArea = document.createElement('div');
+    brandArea.className = 'side-brand-area';
     brandArea.style.cssText = `
       flex: 1 1 0;
       min-height: 44px;
@@ -463,6 +550,7 @@ export class SidePanel {
     `;
 
     const brand = document.createElement('div');
+    brand.className = 'side-brand';
     brand.textContent = 'EvilQuest';
     brand.style.cssText = `
       text-align: center;
@@ -480,7 +568,7 @@ export class SidePanel {
     // Logout button at the bottom of the side column.
     const logoutBtn = document.createElement('button');
     logoutBtn.type = 'button';
-    logoutBtn.className = 'eq-action-button';
+    logoutBtn.className = 'eq-action-button side-logout';
     logoutBtn.textContent = 'Logout';
     logoutBtn.style.cssText = `
       align-self: center;
@@ -821,11 +909,12 @@ export class SidePanel {
 
   private buildInventoryContent(): HTMLDivElement {
 	    const grid = document.createElement('div');
+      grid.className = 'inv-grid';
 	    grid.style.cssText = `
 	      display: grid; grid-template-columns: repeat(5, 1fr);
-	      grid-template-rows: repeat(6, 1fr);
+	      grid-template-rows: repeat(6, minmax(44px, 1fr));
 	      flex: 1 1 auto;
-	      gap: 0; min-height: 0; margin: 0;
+	      gap: 0; min-height: 284px; margin: 0;
 	      position: relative;
 	      overflow: hidden;
       background:
