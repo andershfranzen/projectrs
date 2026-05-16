@@ -2528,6 +2528,14 @@ export class GameManager {
       }
       if (cutIdx >= 0 && cutIdx < this.path.length) {
         this.path = this.path.slice(0, cutIdx);
+      } else if (cutIdx < 0) {
+        const segmentIdx = this.findPathSegmentContainingTile(tx, tz);
+        if (segmentIdx >= 0) {
+          this.path = [
+            ...this.path.slice(0, segmentIdx),
+            { x: lastX, z: lastZ },
+          ];
+        }
       }
     });
 
@@ -3164,6 +3172,31 @@ export class GameManager {
 
   private sameTile(a: { x: number; z: number }, b: { x: number; z: number }): boolean {
     return Math.floor(a.x) === Math.floor(b.x) && Math.floor(a.z) === Math.floor(b.z);
+  }
+
+  private tileOnCompressedSegment(start: { x: number; z: number }, end: { x: number; z: number }, tx: number, tz: number): boolean {
+    const sx = Math.floor(start.x);
+    const sz = Math.floor(start.z);
+    const ex = Math.floor(end.x);
+    const ez = Math.floor(end.z);
+    const dx = Math.sign(ex - sx);
+    const dz = Math.sign(ez - sz);
+    if (tx === sx && tz === sz) return true;
+    if (dx === 0 && dz === 0) return tx === ex && tz === ez;
+    if (dx === 0 && tx !== sx) return false;
+    if (dz === 0 && tz !== sz) return false;
+    if (dx !== 0 && Math.sign(tx - sx) !== dx) return false;
+    if (dz !== 0 && Math.sign(tz - sz) !== dz) return false;
+    if (dx !== 0 && dz !== 0 && Math.abs(tx - sx) !== Math.abs(tz - sz)) return false;
+    return Math.abs(tx - sx) <= Math.abs(ex - sx) && Math.abs(tz - sz) <= Math.abs(ez - sz);
+  }
+
+  private findPathSegmentContainingTile(tx: number, tz: number): number {
+    for (let i = this.pathIndex; i < this.path.length; i++) {
+      const start = i === this.pathIndex ? this.tileFrom : this.path[i - 1];
+      if (this.tileOnCompressedSegment(start, this.path[i], tx, tz)) return i;
+    }
+    return -1;
   }
 
   private setTileFrom(x: number, z: number): void {
@@ -4669,6 +4702,21 @@ export class GameManager {
       return;
     }
 
+    const segmentIdx = this.findPathSegmentContainingTile(sTx, sTz);
+    if (segmentIdx >= 0) {
+      // The server can be on an intermediate unit tile inside one compressed
+      // client segment. Keep the same waypoint target and re-anchor the
+      // segment at the authoritative tile instead of treating this as a
+      // wrong-path snap.
+      this.pathIndex = segmentIdx;
+      this.tileProgress = 0;
+      this.setTileFrom(serverX, serverZ);
+      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
+      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
+      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
+      return;
+    }
+
     // Server is not on the path the client is currently predicting. During
     // visible play, keep the server queue authoritative and slide the local
     // visual onto it. After a hidden-tab return, preserve the older hard reset
@@ -4784,7 +4832,9 @@ export class GameManager {
 
       if (this.pathIndex >= this.path.length) {
         this.finishPredictedPathArrival();
-        break;
+        this.renderLocalPlayerWithSlide();
+        this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
+        return;
       }
     }
 
