@@ -243,7 +243,8 @@ export class NetworkManager {
   }
 
   sendMove(path: { x: number; z: number }[]): boolean {
-    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
+    if (!this.gameSocket) return false;
+    if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
       this.failGameSocket(this.gameSocket, 4002, 'move send while disconnected');
       return false;
     }
@@ -265,7 +266,8 @@ export class NetworkManager {
   }
 
   sendRaw(data: Uint8Array): boolean {
-    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
+    if (!this.gameSocket) return false;
+    if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
       this.failGameSocket(this.gameSocket, 4004, 'packet send while disconnected');
       return false;
     }

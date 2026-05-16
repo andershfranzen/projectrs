@@ -5208,6 +5208,7 @@ export class GameManager {
   private _ySendCooldown: number = 0;
   private reportYToServer(): void {
     if (!this.localPlayer) return;
+    if (!this._loginSettled || !this.network.isConnected()) return;
     this._ySendCooldown -= 1;
     if (this._ySendCooldown > 0) return;
     const y = this.localPlayer.position.y;
