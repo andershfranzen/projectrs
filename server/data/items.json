@@ -2120,5 +2120,21 @@
     "healAmount": 2,
     "value": 8,
     "icon": "Cooked_Rice_231.png"
+  },
+  {
+    "id": 232,
+    "name": "Staff",
+    "description": "A basic wooden staff.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "weapon",
+    "attackSpeed": 5,
+    "weaponStyle": "crush",
+    "crushAttack": 5,
+    "meleeStrength": 4,
+    "magicAccuracy": 10,
+    "value": 50,
+    "icon": "staff_100.png",
+    "model": "/assets/equipment/weapon/Staff.glb"
   }
 ]
