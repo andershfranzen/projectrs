@@ -88,6 +88,8 @@ export class GameManager {
   private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
   private static readonly AUTHORITY_STALE_MS = 2_500;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
+  private static readonly PRELOAD_STEP_TIMEOUT_MS = 12_000;
+  private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
 
   // Auth
   private token: string;
@@ -620,14 +622,43 @@ export class GameManager {
       onProgress?.(completed / 3, `${status} (${completed}/3)`);
     };
 
-    const characterReady = (this.localPlayer?.whenReady() ?? Promise.resolve())
-      .then(() => step('Loaded character models'));
-    const objectsReady = this._objectModelsReady
-      .then(() => step('Loaded scenery models'));
-    const chunksReady = this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ)
-      .then(() => step('Loaded map area'));
+    const characterReady = this.waitWithTimeout(
+      this.localPlayer?.whenReady() ?? Promise.resolve(),
+      GameManager.PRELOAD_STEP_TIMEOUT_MS,
+      'character preload',
+    ).then(() => step('Loaded character models'));
+    const objectsReady = this.waitWithTimeout(
+      this._objectModelsReady,
+      GameManager.PRELOAD_STEP_TIMEOUT_MS,
+      'scenery preload',
+    ).then(() => step('Loaded scenery models'));
+    const chunksReady = this.waitWithTimeout(
+      this.chunkManager.whenSpawnChunksReady(this.playerX, this.playerZ),
+      GameManager.PRELOAD_STEP_TIMEOUT_MS,
+      'map preload',
+    ).then(() => step('Loaded map area'));
 
     return Promise.all([characterReady, objectsReady, chunksReady]).then(() => {});
+  }
+
+  private async waitWithTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T | undefined> {
+    let timer: number | null = null;
+    try {
+      return await Promise.race<T | undefined>([
+        promise,
+        new Promise<undefined>((resolve) => {
+          timer = window.setTimeout(() => {
+            console.warn(`[loading] ${label} timed out after ${timeoutMs}ms; continuing`);
+            resolve(undefined);
+          }, timeoutMs);
+        }),
+      ]);
+    } catch (err) {
+      console.warn(`[loading] ${label} failed; continuing`, err);
+      return undefined;
+    } finally {
+      if (timer !== null) window.clearTimeout(timer);
+    }
   }
 
   private noteLoginBootstrapPacket(kind: 'skills' | 'inventory' | 'equipment'): void {
@@ -659,7 +690,9 @@ export class GameManager {
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
 
     this._loginProgress?.(0.72, 'Loading character');
-    if (this.localPlayer) await this.localPlayer.whenReady();
+    if (this.localPlayer) {
+      await this.waitWithTimeout(this.localPlayer.whenReady(), GameManager.LOGIN_READY_TIMEOUT_MS, 'login character ready');
+    }
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
 
     this._loginProgress?.(0.78, 'Loading saved location');
@@ -677,7 +710,7 @@ export class GameManager {
     if (this._pendingLoginGearLoads.length > 0) {
       this._loginProgress?.(0.94, 'Loading equipped gear');
       const gearLoads = this._pendingLoginGearLoads.splice(0);
-      await Promise.allSettled(gearLoads);
+      await this.waitWithTimeout(Promise.allSettled(gearLoads).then(() => {}), GameManager.LOGIN_READY_TIMEOUT_MS, 'login gear ready');
     }
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
     if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
