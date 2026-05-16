@@ -48,6 +48,7 @@ import { TradePanel } from '../ui/TradePanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { LoadingScreen } from '../ui/LoadingScreen';
 import { SmithingPanel } from '../ui/SmithingPanel';
+import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
@@ -273,6 +274,7 @@ export class GameManager {
   private spellEffectPlayer: SpellEffectPlayer | null = null;
   private spellsById: Map<string, SpellEffectDef> | null = null;
   private spellsByIndex: SpellEffectDef[] = [];
+  private spellbookPanel: SpellbookPanel | null = null;
 
   // Combat hit splats (HTML overlay)
   private hitSplats: { worldPos: Vector3; el: HTMLDivElement; timer: number; startY: number }[] = [];
@@ -414,6 +416,12 @@ export class GameManager {
     // HUD
     this.createHUD();
     this.sidePanel = new SidePanel(this.network, this.token);
+    // Cast button on each spellbook icon — same target rule as /cast: nearest NPC.
+    this.sidePanel.setSpellCastCallback((spellIndex) => this.castSpellAtNearest(spellIndex));
+    // Eager-load the spell catalogue so the spellbook tabs render locked
+    // icons (and the question marks) immediately — without this, the tabs
+    // stay empty until the player happens to fire /spell or /cast.
+    void this.ensureSpellsLoaded().then(() => this.sidePanel?.setSpellCatalogue(this.spellsByIndex));
     this.chatPanel = new ChatPanel();
     this.chatPanel.setSendHandler((msg) => {
       if (!this.handleChatCommand(msg)) {
@@ -3427,15 +3435,53 @@ export class GameManager {
       this.chatPanel?.addSystemMessage(`Animations: ${names.join(', ') || '(none loaded)'}`);
       return true;
     }
-    if (msg.startsWith('/spell')) {
+    // /spellbook must precede /spell so it doesn't get parsed as "/spell book".
+    // /spell and /cast require a space (or exact match) for the same reason —
+    // a bare `startsWith('/spell')` swallows any /spell* command.
+    if (msg === '/spellbook') {
+      this.toggleSpellbook();
+      return true;
+    }
+    if (msg === '/spell' || msg === '/spell ?' || msg.startsWith('/spell ')) {
       this.runSpellCommand(msg.slice(6).trim());
       return true;
     }
-    if (msg.startsWith('/cast')) {
+    if (msg === '/cast' || msg === '/cast ?' || msg.startsWith('/cast ')) {
       this.runCastCommand(msg.slice(5).trim());
       return true;
     }
     return false;
+  }
+
+  /**
+   * Open or close the spellbook. Lazy-creates the panel on first call and
+   * refreshes its contents from /api/spells each time it opens so any spells
+   * added since the last open show up.
+   */
+  private async toggleSpellbook(): Promise<void> {
+    if (this.spellbookPanel?.isVisible) { this.spellbookPanel.hide(); return; }
+    if (!this.spellbookPanel) {
+      this.spellbookPanel = new SpellbookPanel();
+      this.spellbookPanel.setCastCallback((spellIndex) => this.castSpellAtNearest(spellIndex));
+    }
+    await this.ensureSpellsLoaded();
+    this.spellbookPanel.show(this.spellsByIndex);
+  }
+
+  /**
+   * Fire PLAYER_CAST_SPELL targeting the nearest NPC. Used by the spellbook
+   * button and could be reused by hotkeys / right-click "Cast" actions later.
+   */
+  private castSpellAtNearest(spellIndex: number): void {
+    if (!this.localPlayer) return;
+    const def = this.spellsByIndex[spellIndex];
+    if (!def) return;
+    const nearest = this.entities.findNearestNpc(this.localPlayer.position);
+    if (!nearest) {
+      this.chatPanel?.addSystemMessage(`${def.name}: no target in sight.`);
+      return;
+    }
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, nearest.entityId));
   }
 
   private openCharacterCreatorWhenReady(): void {

@@ -2,7 +2,9 @@
   "id": "fire_bolt",
   "name": "Fire Bolt",
   "element": "fire",
+  "school": "evil",
   "tier": 2,
+  "levelRequired": 10,
   "projectile": {
     "shape": "blast",
     "size": 0.95,

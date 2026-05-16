@@ -1,6 +1,14 @@
 export type SpellElement = 'fire' | 'water' | 'earth' | 'air' | 'dark' | 'holy';
 export type SpellTier = 1 | 2 | 3 | 4 | 5;
 
+/**
+ * Which magic skill a spell trains and rolls its accuracy from. The split is
+ * EvilQuest's twist on RuneScape's single Magic skill — destructive / unholy
+ * spells are 'evil', restorative / radiant ones are 'good'. Drives XP routing
+ * in tickPendingSpells and the level fed into the magic-attack roll.
+ */
+export type SpellSchool = 'good' | 'evil';
+
 export type ProjectileShape = 'blast' | 'skull' | 'ankh';
 export type ProjectileTexture = 'none' | 'fire' | 'ice' | 'earth' | 'wind' | 'dark' | 'holy';
 export type TrajectoryType = 'straight' | 'arc' | 'homing';
@@ -89,6 +97,12 @@ export interface SpellEffectDef {
   name: string;
   element: SpellElement;
   tier: SpellTier;
+  /** Which magic school the spell trains. Omitted → 'evil' (the default in the
+   *  editor's preset list and what most existing spells are). */
+  school?: SpellSchool;
+  /** Minimum level in the spell's school required to cast / see the unlocked
+   *  icon in the spellbook. Omitted → 1 (always available). */
+  levelRequired?: number;
   projectile: ProjectileDef;
   trajectory: TrajectoryDef;
   trail: TrailDef;
@@ -96,4 +110,11 @@ export interface SpellEffectDef {
   impact: ImpactEffectDef;
   aoe: boolean;
   aoeTargetCount: number;
+}
+
+/** Resolve a spell's school, applying the 'evil' default for older JSONs that
+ *  predate the field. Returns the canonical `SkillId` so callers can index
+ *  directly into the player's skill block. */
+export function spellSchoolSkill(def: SpellEffectDef): 'goodmagic' | 'evilmagic' {
+  return (def.school ?? 'evil') === 'good' ? 'goodmagic' : 'evilmagic';
 }

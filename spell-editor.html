@@ -1464,11 +1464,17 @@
         function v(id) { const el = document.getElementById(id); return el.type === 'checkbox' ? el.checked : parseFloat(el.value); }
         function sv(id) { return document.getElementById(id).value; }
 
+        // Preserve the spell's school across edits even though the editor
+        // doesn't expose a control for it yet. Set from applyDef on import,
+        // defaults to 'evil' for fresh sessions (matches SpellEffectDef default).
+        let currentSpellSchool = 'evil';
+
         function collectDef() {
             return {
                 id: sv('spellName').toLowerCase().replace(/\s+/g, '_'),
                 name: sv('spellName'),
                 element: 'fire',
+                school: currentSpellSchool,
                 tier: parseInt(document.getElementById('tier').value),
                 projectile: { shape: sv('projShape'), size: v('projSize'), primaryColor: { r: v('projR'), g: v('projG'), b: v('projB') }, secondaryColor: { r: v('projR2'), g: v('projG2'), b: v('projB2') }, glowIntensity: v('projGlow'), rotationSpeed: v('projRot'), texture: sv('projTex') },
                 trajectory: { type: sv('trajType'), travelTimeMs: v('trajTime'), arcHeight: v('trajArc'), homingCurve: v('trajHoming') },
@@ -1487,6 +1493,7 @@
 
         function applyDef(def) {
             setVal('spellName', def.name || 'Untitled');
+            currentSpellSchool = def.school === 'good' ? 'good' : 'evil';
             setVal('tier', def.tier || 2);
             const p = def.projectile || {};
             setVal('projShape', p.shape || 'blast'); setVal('projSize', p.size || 0.5);

@@ -2,7 +2,7 @@ import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RA
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
-import { addXp, levelFromXp, statRandom, npcCombatLevel } from '@projectrs/shared';
+import { addXp, levelFromXp, statRandom, npcCombatLevel, magicMaxHit, rollHit, ACC_BASE, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -173,6 +173,9 @@ export class World {
     targetId: number;
     damage: number;
     spellId: string;
+    /** Skill to credit XP to on hit. Captured at cast time so a mid-flight
+     *  spell def reload couldn't reroute XP to a different school. */
+    xpSkill: SkillId;
     mapLevel: string;
   }[] = [];
 
@@ -2350,10 +2353,27 @@ export class World {
     this.cancelSkilling(playerId);
     this.clearCombatTarget(playerId);                          // cancel auto-attack
 
-    // Placeholder formula — Phase 5 will replace this with a magic-level +
-    // stat-roll computation. For now: uniform [0..tier*2] so tier scales.
-    const maxHit = def.tier * 2;
-    const damage = Math.floor(Math.random() * (maxHit + 1));
+    // Magic combat roll. Mirrors the OSRS pattern in processPlayerCombat /
+    // processPlayerRangedCombat: dual roll (attacker vs defender), miss → 0
+    // damage, hit → uniform [0..maxHit]. Equipment's magicAccuracy bonus feeds
+    // the attack roll. NPC magic defence falls back to base defence — NpcDef
+    // doesn't carry a magicDefence stat (yet).
+    const xpSkill: SkillId = spellSchoolSkill(def);
+
+    // Level gate. Server-authoritative — the UI hides locked spells but a
+    // crafted packet could still try to cast them, so we re-check here.
+    // `.level` (not `.currentLevel`) so temporary stat drains don't lock you out.
+    const requiredLevel = def.levelRequired ?? 1;
+    if (player.skills[xpSkill].level < requiredLevel) return;
+
+    const magicLevel = player.skills[xpSkill].currentLevel;
+    const effMagic = magicLevel + 8;
+    const bonuses = player.computeBonuses(this.data.itemDefs);
+    const attackRoll = effMagic * (bonuses.magicAccuracy + ACC_BASE);
+    const defRoll = (npc.def.defence + 8) * ACC_BASE;
+    const damage = rollHit(attackRoll, defRoll)
+      ? Math.floor(Math.random() * (magicMaxHit(magicLevel, def.tier) + 1))
+      : 0;
 
     // Total wall time before damage applies — matches client visual length.
     const totalDelayMs = def.cast.durationMs + def.trajectory.travelTimeMs;
@@ -2376,6 +2396,7 @@ export class World {
       targetId: npc.id,
       damage,
       spellId: def.id,
+      xpSkill,
       mapLevel: player.currentMapLevel,
     });
   }
@@ -2407,6 +2428,32 @@ export class World {
   // The interface lock (player.openInterface = 'bank') gates every
   // state-mutating handler, so a click leaking from the inventory panel can't
   // dupe via deposit-while-trading or similar.
+
+  /**
+   * Award XP to a single skill on a player. Handles the full payload the
+   * combat / skilling paths emit: XP_GAIN packet, optional LEVEL_UP, full
+   * skill resync, plus the auto-HP-level-up for combat skills (addXp routes
+   * 1/3 of combat XP to hitpoints, so HP can level up too).
+   *
+   * Used by admin chat commands (`/xp`) and any future scripted reward path.
+   */
+  grantXp(player: Player, skillId: SkillId, amount: number): void {
+    if (amount <= 0) return;
+    const oldHpLevel = player.skills.hitpoints.level;
+    const r = addXp(player.skills, skillId, amount);
+    const skillIdx = ALL_SKILLS.indexOf(skillId);
+    if (skillIdx >= 0) {
+      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amount));
+      if (r.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, r.newLevel);
+      this.sendSingleSkill(player, skillIdx);
+    }
+    const hpIdx = ALL_SKILLS.indexOf('hitpoints');
+    if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
+      this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
+      this.sendSingleSkill(player, hpIdx);
+      player.syncHealthFromSkills();
+    }
+  }
 
   /** Server-side entry point: open the bank for a player. Called from the
    *  banker NPC interaction path AND from the /bank admin chat command. */
@@ -3472,12 +3519,13 @@ export class World {
 
       const actual = npc.takeDamage(imp.damage);
 
-      // Placeholder XP: 4 per damage to goodmagic. Phase 5 will route by spell school.
+      // XP: 4 per damage to the spell's school (locked in at cast time).
+      // Same rate as melee/ranged so a magic-only player isn't penalised.
       if (actual > 0) {
         const oldHpLevel = player.skills.hitpoints.level;
         const amt = actual * 4;
-        const r = addXp(player.skills, 'goodmagic', amt);
-        const skillIdx = ALL_SKILLS.indexOf('goodmagic');
+        const r = addXp(player.skills, imp.xpSkill, amt);
+        const skillIdx = ALL_SKILLS.indexOf(imp.xpSkill);
         if (skillIdx >= 0) {
           this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amt));
           if (r.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, r.newLevel);
