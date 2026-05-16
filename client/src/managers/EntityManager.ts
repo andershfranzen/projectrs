@@ -305,7 +305,7 @@ export class EntityManager {
     }
   }
 
-  interpolateRemotePlayers(dt: number, camPos: Vector3 | null): void {
+  interpolateRemotePlayers(dt: number, camPos: Vector3 | null, isRemoteSkilling: (entityId: number) => boolean = () => false): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
       const target = this.remoteTargets.get(entityId);
@@ -314,6 +314,12 @@ export class EntityManager {
       const dx = target.x - c.x;
       const dz = target.z - c.z;
       const dist = Math.hypot(dx, dz);
+      if (isRemoteSkilling(entityId)) {
+        if (dist > 0.05) {
+          sprite.setPositionXYZ(target.x, this.getHeight(target.x, target.z, sprite.position.y), target.z);
+        }
+        continue;
+      }
       // Grace window so a remote player doesn't flicker to idle between
       // arriving at tile N and receiving the sync for N+1.
       const serverWalking = (this.remoteWalkUntil.get(entityId) ?? 0) > now;

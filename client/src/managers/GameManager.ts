@@ -4610,7 +4610,8 @@ export class GameManager {
       }
     }
 
-    this.entities.interpolateRemotePlayers(dt, camPos);
+    this.entities.interpolateRemotePlayers(dt, camPos, (entityId) =>
+      this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill);
     this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
 
     this.updateIndoorDetection();
