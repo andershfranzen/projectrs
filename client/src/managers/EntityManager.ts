@@ -97,6 +97,7 @@ export class EntityManager {
         { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
         { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
         { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
+        { name: 'stab',                    path: `${CHARACTER_ANIM_DIR}/stab.glb` },
         { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
         { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],

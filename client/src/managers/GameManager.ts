@@ -972,16 +972,18 @@ export class GameManager {
     attack_2h_smash:         0.5,
     attack_punch:            0.4,
     kick:                    0.5,
+    stab:                    0.5,
     bow_attack:              0.6,
   };
 
   /**
    * Choose the correct attack animation name based on stance and weapon.
-   * - 1H weapon (any stance)     → 'attack_slash' (hand-authored OSRS-style slash)
-   * - 2H weapon + aggressive     → 'attack_2h_smash'
-   * - 2H weapon + other stance   → 'attack_2h_slash'
-   * - No weapon + aggressive     → 'kick'
-   * - No weapon + other stance   → 'attack_punch'
+   * - Any sword/scimitar (1H or 2H) → 'stab'
+   * - Other 1H weapon              → 'attack_slash'
+   * - Other 2H + aggressive        → 'attack_2h_smash'
+   * - Other 2H + other stance      → 'attack_2h_slash'
+   * - No weapon + aggressive       → 'kick'
+   * - No weapon + other stance     → 'attack_punch'
    * Remote players' weapon + stance come from PLAYER_REMOTE_EQUIPMENT and
    * PLAYER_REMOTE_STANCE caches; missing cache entries fall back to unarmed.
    */
@@ -1004,6 +1006,10 @@ export class GameManager {
       const weaponDef = this.itemDefsCache.get(weaponId);
       const style = weaponDef?.weaponStyle;
       if (style === 'bow' || style === 'crossbow') return 'bow_attack';
+      // All swords (1H or 2H, slash or stab style — Short/Long/2H Sword + Scimitar)
+      // use the new stab animation for now. Axes/maces still use the slash variants.
+      const name = weaponDef?.name ?? '';
+      if (/sword|scimitar/i.test(name)) return 'stab';
       if (weaponDef?.twoHanded) return stance === 'aggressive' ? 'attack_2h_smash' : 'attack_2h_slash';
       return 'attack_slash';
     }
@@ -1517,6 +1523,7 @@ export class GameManager {
         { name: 'attack_2h_smash',         path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
         { name: 'attack_punch',            path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
         { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
+        { name: 'stab',                    path: `${CHARACTER_ANIM_DIR}/stab.glb` },
         { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
         { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
       ],
