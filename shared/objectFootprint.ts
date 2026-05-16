@@ -8,27 +8,15 @@ export interface TileCoord {
   z: number;
 }
 
+/** OSRS-style: interaction is allowed from the 4 cardinal neighbours of an
+ *  object's footprint only. Diagonals are NOT adjacent — standing in the
+ *  corner of a 2×2 around an object should require taking one more step. */
 const CARDINAL_DIRS: readonly TileCoord[] = [
   { x: 0, z: -1 },
   { x: 0, z: 1 },
   { x: -1, z: 0 },
   { x: 1, z: 0 },
 ];
-
-const ALL_ADJACENT_DIRS: readonly TileCoord[] = [
-  { x: -1, z: -1 },
-  { x: -1, z: 0 },
-  { x: -1, z: 1 },
-  { x: 0, z: -1 },
-  { x: 0, z: 1 },
-  { x: 1, z: -1 },
-  { x: 1, z: 0 },
-  { x: 1, z: 1 },
-];
-
-export function isHarvestableObject(def: ObjectFootprintDef | null | undefined): boolean {
-  return def?.category === 'rock' || def?.category === 'tree';
-}
 
 export function getObjectFootprintTiles(x: number, z: number, def: ObjectFootprintDef): TileCoord[] {
   const centerTileX = Math.floor(x);
@@ -46,10 +34,6 @@ export function getObjectFootprintTiles(x: number, z: number, def: ObjectFootpri
   return tiles;
 }
 
-export function getObjectInteractionDirs(def: ObjectFootprintDef): readonly TileCoord[] {
-  return isHarvestableObject(def) ? CARDINAL_DIRS : ALL_ADJACENT_DIRS;
-}
-
 export function getObjectInteractionTiles(x: number, z: number, def: ObjectFootprintDef): TileCoord[] {
   const footprint = getObjectFootprintTiles(x, z, def);
   const footprintKeys = new Set(footprint.map(tileKey));
@@ -57,7 +41,7 @@ export function getObjectInteractionTiles(x: number, z: number, def: ObjectFootp
   const tiles: TileCoord[] = [];
 
   for (const tile of footprint) {
-    for (const dir of getObjectInteractionDirs(def)) {
+    for (const dir of CARDINAL_DIRS) {
       const candidate = { x: tile.x + dir.x, z: tile.z + dir.z };
       const key = tileKey(candidate);
       if (footprintKeys.has(key) || seen.has(key)) continue;
