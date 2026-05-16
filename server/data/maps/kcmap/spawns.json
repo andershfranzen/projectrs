@@ -237,6 +237,70 @@
         "hairStyle": 5
       },
       "name": "Farmer"
+    },
+    {
+      "id": 38,
+      "npcId": 6,
+      "x": 250.5,
+      "z": 157.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 39,
+      "npcId": 6,
+      "x": 247.5,
+      "z": 157.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 40,
+      "npcId": 6,
+      "x": 248.5,
+      "z": 154.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 41,
+      "npcId": 6,
+      "x": 244.5,
+      "z": 154.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 42,
+      "npcId": 6,
+      "x": 244.5,
+      "z": 152.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 43,
+      "npcId": 6,
+      "x": 254.5,
+      "z": 160.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 44,
+      "npcId": 6,
+      "x": 249.5,
+      "z": 152.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 45,
+      "npcId": 15,
+      "x": 141.5,
+      "z": 158.5,
+      "wanderRange": 3,
+      "aggressive": false
     }
   ],
   "objects": [],
