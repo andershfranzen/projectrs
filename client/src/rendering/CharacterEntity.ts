@@ -1601,8 +1601,8 @@ export class CharacterEntity {
     if (existing) {
       existing.node.dispose();
       this.gearAttachments.delete(slot);
-      if (slot === 'head') this.setHeadVisible(true);
     }
+    if (slot === 'head' && this.getGearItemId('head') === -1) this.setHeadVisible(true);
   }
 
   /**
@@ -1640,11 +1640,12 @@ export class CharacterEntity {
 
   detachSkinnedArmor(slot: string): void {
     const meshes = this.skinnedArmorMeshes.get(slot);
-    if (!meshes) return; // Nothing was attached — skip the visibility toggles.
-    for (const mesh of meshes) mesh.dispose();
-    this.skinnedArmorMeshes.delete(slot);
-    this.skinnedArmorItemIds.delete(slot);
-    if (slot === 'head') this.setHeadVisible(true);
+    if (meshes) {
+      for (const mesh of meshes) mesh.dispose();
+      this.skinnedArmorMeshes.delete(slot);
+      this.skinnedArmorItemIds.delete(slot);
+    }
+    if (slot === 'head' && this.getGearItemId('head') === -1) this.setHeadVisible(true);
     if (slot === 'body') this.setBodyVisible(true);
     if (slot === 'legs') this.setLegsVisible(true);
   }

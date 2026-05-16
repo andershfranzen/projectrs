@@ -674,6 +674,7 @@ export class GameManager {
       await Promise.allSettled(gearLoads);
     }
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
+    if (this.localAppearance && this.localPlayer) this.localPlayer.applyAppearance(this.localAppearance);
 
     // Let Babylon commit any meshes/materials applied by packet handlers
     // before the canvas is revealed.
