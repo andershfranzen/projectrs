@@ -86,7 +86,7 @@ export class GameManager {
   private static readonly RECONNECT_MAX_MS = 22_000;
   private static readonly RECONNECT_DELAY_MS = 1_600;
   private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
-  private static readonly AUTHORITY_STALE_MS = 2_500;
+  private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 12_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
@@ -791,6 +791,7 @@ export class GameManager {
       this._loginSettled = false;
       this._initialMapReadySent = false;
       this.lastSelfAuthorityAt = 0;
+      this.selfAuthorityGraceUntil = 0;
       this.lastSelfServerTick = -1;
       this._loginReadySeq++;
       onProgress?.(0.02, 'Connecting to server');
@@ -900,6 +901,7 @@ export class GameManager {
       this._loginSettled = false;
       this._initialMapReadySent = false;
       this.lastSelfAuthorityAt = 0;
+      this.selfAuthorityGraceUntil = 0;
       this.lastSelfServerTick = -1;
       this._loginReadySeq++;
       this.network.connect(this.token);
