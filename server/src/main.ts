@@ -753,6 +753,18 @@ const server = Bun.serve<SocketData>({
       return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
     }
 
+    if (url.pathname === '/api/client-log' && req.method === 'POST') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, 8 * 1024)) return tooLarge();
+      try {
+        const body = await req.json() as { event?: string; username?: string; details?: unknown; at?: number };
+        console.warn(`[client-log] ${body.event ?? 'unknown'} user=${body.username ?? 'unknown'} details=${JSON.stringify(body.details ?? {})}`);
+      } catch {
+        console.warn('[client-log] invalid payload');
+      }
+      return jsonResponse({ ok: true });
+    }
+
     if (url.pathname === '/api/hiscores' && req.method === 'GET') {
       return jsonResponse(db.getHiscores(url.searchParams.get('category') ?? 'overall', Number(url.searchParams.get('limit') ?? 100)));
     }

@@ -802,7 +802,37 @@ export class GameManager {
   private handleConnectionLost(event: CloseEvent): void {
     if (this.destroyed || this.reconnecting) return;
     console.warn(`[net] Connection lost (code=${event.code}, clean=${event.wasClean}, reason=${event.reason || 'none'})`);
+    this.reportClientLog('game_connection_lost', {
+      code: event.code,
+      clean: event.wasClean,
+      reason: event.reason || '',
+      loginSettled: this._loginSettled,
+      hasAuthority: this.lastSelfAuthorityAt !== 0,
+      sinceAuthorityMs: this.lastSelfAuthorityAt === 0 ? -1 : Math.round(performance.now() - this.lastSelfAuthorityAt),
+      connected: this.network.isConnected(),
+    });
     void this.reconnectOrLogout();
+  }
+
+  private reportClientLog(event: string, details: Record<string, unknown>): void {
+    try {
+      const payload = JSON.stringify({
+        event,
+        username: this.username,
+        details,
+        at: Date.now(),
+      });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/client-log', new Blob([payload], { type: 'application/json' }));
+        return;
+      }
+      void fetch('/api/client-log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      });
+    } catch { /* best-effort diagnostics only */ }
   }
 
   private setConnectionFrozen(frozen: boolean): void {
