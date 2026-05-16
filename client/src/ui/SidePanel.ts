@@ -82,6 +82,9 @@ export class SidePanel {
   private spellCastCallback: ((spellIndex: number) => void) | null = null;
   private goodMagicGridEl: HTMLDivElement | null = null;
   private evilMagicGridEl: HTMLDivElement | null = null;
+  private autocastSpellIndex: number = -1;
+  private targetingSpellIndex: number = -1;
+  private targetingBanner: HTMLDivElement | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
     this.network = network;
@@ -622,6 +625,47 @@ export class SidePanel {
     this.spellCastCallback = cb;
   }
 
+  setAutocastSpell(spellIndex: number): void {
+    this.autocastSpellIndex = this.autocastSpellIndex === spellIndex ? -1 : spellIndex;
+    this.renderSpellbook('good');
+    this.renderSpellbook('evil');
+  }
+
+  getAutocastSpell(): number { return this.autocastSpellIndex; }
+  clearAutocastSpell(): void { this.autocastSpellIndex = -1; }
+
+  setTargetingSpell(spellIndex: number): void {
+    this.targetingSpellIndex = spellIndex;
+    this.showTargetingBanner();
+  }
+
+  getTargetingSpell(): number { return this.targetingSpellIndex; }
+
+  clearTargetingSpell(): void {
+    this.targetingSpellIndex = -1;
+    this.hideTargetingBanner();
+  }
+
+  private showTargetingBanner(): void {
+    this.hideTargetingBanner();
+    const name = this.spellCatalogue[this.targetingSpellIndex]?.name ?? 'Spell';
+    const banner = document.createElement('div');
+    banner.style.cssText = `
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
+      padding: 8px 18px; background: rgba(30,10,50,0.92); border: 1px solid #a040ff;
+      border-radius: 4px; color: #dbc0ff; font-size: 13px; z-index: 9999;
+      pointer-events: none; font-family: inherit;
+    `;
+    banner.textContent = `Cast ${name} on... (Esc to cancel)`;
+    document.body.appendChild(banner);
+    this.targetingBanner = banner;
+  }
+
+  private hideTargetingBanner(): void {
+    this.targetingBanner?.remove();
+    this.targetingBanner = null;
+  }
+
   /** Build the static frame for a spellbook tab — header + grid container.
    *  Returns the root view; the grid inside is repopulated by renderSpellbook. */
   private buildSpellbookView(school: SpellSchool, title: string, color: string): HTMLDivElement {
@@ -682,17 +726,20 @@ export class SidePanel {
   ): HTMLDivElement {
     const required = def.levelRequired ?? 1;
     const unlocked = playerLevel >= required;
+    const isAutocast = this.autocastSpellIndex === spellIndex;
+    const defaultBorder = isAutocast ? '#f4d97a' : '#3a2a18';
+    const borderWidth = isAutocast ? '2px' : '1px';
 
     const cell = document.createElement('div');
     cell.style.cssText = `
       width: 40px; height: 40px;
-      display: flex; align-items: center; justify-content: center;
-      background: #1a120a; border: 1px solid #3a2a18; border-radius: 3px;
+      display: flex; align-items: center; justify-content: center; flex-direction: column;
+      background: ${isAutocast ? '#2a2010' : '#1a120a'}; border: ${borderWidth} solid ${defaultBorder}; border-radius: 3px;
       ${unlocked ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.55;'}
       transition: border-color 0.1s, transform 0.05s;
     `;
     cell.title = unlocked
-      ? def.name
+      ? `${def.name}${isAutocast ? ' (auto-cast)' : ''}\nLeft-click: cast on target\nRight-click: toggle auto-cast`
       : `??? — requires level ${required} ${SKILL_NAMES[(spellSchoolSkill(def)) as SkillId]}`;
 
     if (unlocked) {
@@ -701,10 +748,13 @@ export class SidePanel {
       img.alt = def.name;
       img.draggable = false;
       img.style.cssText = 'width: 32px; height: 32px; image-rendering: pixelated;';
-      // Hover affordance
       cell.addEventListener('mouseenter', () => { cell.style.borderColor = '#c44'; });
-      cell.addEventListener('mouseleave', () => { cell.style.borderColor = '#3a2a18'; });
+      cell.addEventListener('mouseleave', () => { cell.style.borderColor = defaultBorder; });
       cell.addEventListener('click', () => this.spellCastCallback?.(spellIndex));
+      cell.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        this.setAutocastSpell(spellIndex);
+      });
       cell.appendChild(img);
     } else {
       const q = document.createElement('div');

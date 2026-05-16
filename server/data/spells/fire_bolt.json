@@ -41,7 +41,7 @@
     "motion": "straight"
   },
   "cast": {
-    "durationMs": 100,
+    "durationMs": 600,
     "burstParticle": "ember",
     "burstCount": 5,
     "burstColor": {

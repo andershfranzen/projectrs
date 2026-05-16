@@ -12,6 +12,7 @@ import { Particle } from '@babylonjs/core/Particles/particle';
 import { FresnelParameters } from '@babylonjs/core/Materials/fresnelParameters';
 import { Observer } from '@babylonjs/core/Misc/observable';
 import type { SpellEffectDef, Color3Def, ProjectileShape, CastParticle, ImpactDecal } from '@projectrs/shared';
+import type { Targetable } from './Targetable';
 
 // Side-effect imports for mesh builders (Babylon tree-shaking requires these).
 import '@babylonjs/core/Meshes/Builders/sphereBuilder';
@@ -276,6 +277,18 @@ export interface SpellPlayOptions {
   /** Snapshot world position of target chest (impact location). */
   to: Vector3;
   /**
+   * Live target entity. When provided, the projectile re-reads the target's
+   * anchor position each frame during the travel phase so it tracks a moving
+   * target instead of flying to a stale snapshot.
+   */
+  target?: Targetable;
+  /**
+   * Live caster reference. When provided, `from` is re-read from
+   * `caster.getCastOrigin()` at the moment the projectile launches so the
+   * origin matches the raised-hand pose rather than the idle snapshot.
+   */
+  caster?: { getCastOrigin(): Vector3 };
+  /**
    * World Y where the impact decal disc should sit. If omitted, the disc sits
    * at `to.y` — which works for ground-level impacts but looks wrong for chest-
    * height hits unless the caller knows the terrain height under the target.
@@ -395,6 +408,10 @@ class ActiveCast {
     this.phase = 'travel';
     this.phaseStart = performance.now();
     const def = this.opts.def;
+
+    if (this.opts.caster) {
+      this.opts.from.copyFrom(this.opts.caster.getCastOrigin());
+    }
 
     this.buildProjectile(def.projectile.shape);
     if (this.projRoot) {
@@ -551,6 +568,10 @@ class ActiveCast {
     }
 
     if (this.phase === 'travel') {
+      if (this.opts.target) {
+        this.opts.to.copyFrom(this.opts.target.getTargetAnchor());
+        this.opts.groundY = this.opts.target.position.y;
+      }
       const elapsed = now - this.phaseStart;
       const travel = def.trajectory.travelTimeMs;
       const t = Math.min(1, elapsed / travel);
@@ -884,11 +905,11 @@ class ActiveCast {
     if (this.observer) this.scene.onBeforeRenderObservable.remove(this.observer);
     this.observer = null;
 
-    this.castPS?.dispose();
-    this.trailPS?.dispose();
-    this.impactPS?.dispose();
-    this.lingerPS?.dispose();
-    this.projAura?.dispose();
+    this.castPS?.dispose(false);
+    this.trailPS?.dispose(false);
+    this.impactPS?.dispose(false);
+    this.lingerPS?.dispose(false);
+    this.projAura?.dispose(false);
     for (const p of this.projParts) p.dispose();
     this.projParts = [];
     this.projRoot?.dispose();

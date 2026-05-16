@@ -210,6 +210,7 @@ export class GameManager {
 
   // Combat follow (local player follows melee target)
   private combatTargetId: number = -1;
+  private autoCastSpellIndex: number = -1;
   private _combatPathTimer: number = 0;
 
   // While a COMBAT_HIT splat is delayed to its impact moment, hold off any
@@ -294,6 +295,7 @@ export class GameManager {
   private spellsById: Map<string, SpellEffectDef> | null = null;
   private spellsByIndex: SpellEffectDef[] = [];
   private spellbookPanel: SpellbookPanel | null = null;
+  private castingUntil = 0;
 
   // Combat hit splats (HTML overlay)
   private hitSplats: { worldPos: Vector3; el: HTMLDivElement; timer: number; startY: number }[] = [];
@@ -425,8 +427,7 @@ export class GameManager {
     // HUD
     this.createHUD();
     this.sidePanel = new SidePanel(this.network, this.token);
-    // Cast button on each spellbook icon — same target rule as /cast: nearest NPC.
-    this.sidePanel.setSpellCastCallback((spellIndex) => this.castSpellAtNearest(spellIndex));
+    this.sidePanel.setSpellCastCallback((spellIndex) => this.sidePanel!.setTargetingSpell(spellIndex));
     // Eager-load the spell catalogue so the spellbook tabs render locked
     // icons (and the question marks) immediately — without this, the tabs
     // stay empty until the player happens to fire /spell or /cast.
@@ -721,7 +722,7 @@ export class GameManager {
       this.clearPredictedPath();
       this.pendingSkill = null;
       this.pendingSmithing = null;
-      this.combatTargetId = -1;
+      this.combatTargetId = -1; this.autoCastSpellIndex = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.localPlayer?.stopWalking();
@@ -1258,6 +1259,11 @@ export class GameManager {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
       if (e.key === 'Escape' && this.sidePanel?.getUsing()) {
         this.sidePanel.clearUsingInvItem();
+        e.preventDefault();
+        return;
+      }
+      if (e.key === 'Escape' && (this.sidePanel?.getTargetingSpell() ?? -1) >= 0) {
+        this.sidePanel!.clearTargetingSpell();
         e.preventDefault();
         return;
       }
@@ -1955,7 +1961,7 @@ export class GameManager {
       const entityId = v[0];
 
       if (entityId === this.combatTargetId) {
-        this.combatTargetId = -1;
+        this.combatTargetId = -1; this.autoCastSpellIndex = -1;
       }
 
       this.entities.cleanupCombatTargetsFor(entityId);
@@ -1969,6 +1975,14 @@ export class GameManager {
   private setupCombatHandlers(): void {
     this.network.on(ServerOpcode.COMBAT_HIT, (_op, v) => {
       const [attackerId, targetId, damage, targetHp, targetMaxHp] = v;
+
+      if (targetId === -1) {
+        this.entities.npcCombatTargets.delete(attackerId);
+        const sprite = this.entities.npcSprites.get(attackerId);
+        if (sprite instanceof CharacterEntity) sprite.clearFaceLock();
+        return;
+      }
+
       const targetSprite = this.entities.npcSprites.get(targetId) || this.entities.remotePlayers.get(targetId);
 
       if (this.entities.npcSprites.has(attackerId)) {
@@ -2442,7 +2456,7 @@ export class GameManager {
       this.playerZ = newZ;
       this.clearPredictedPath();
       this.setTileFrom(newX, newZ);
-      this.combatTargetId = -1;
+      this.combatTargetId = -1; this.autoCastSpellIndex = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.pendingSkill = null;
@@ -2587,7 +2601,7 @@ export class GameManager {
     this.playerZ = newZ;
     this.clearPredictedPath();
     if (this.localPlayer) this.localPlayer.stopWalking();
-    this.combatTargetId = -1;
+    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
     this.isSkilling = false;
     this.skillingObjectId = -1;
 
@@ -3023,29 +3037,29 @@ export class GameManager {
   }
 
   private attackNpc(npcEntityId: number): void {
+    if (performance.now() < this.castingUntil) return;
     if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
+
+    const targetingSpell = this.sidePanel?.getTargetingSpell() ?? -1;
+    if (targetingSpell >= 0) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, targetingSpell, npcEntityId));
+      this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#a040ff');
+      this.sidePanel!.clearTargetingSpell();
+      return;
+    }
+
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.combatTargetId = npcEntityId;
-    // Face the NPC on arrival (2004scape Player.faceEntity). Combat code
-    // also handles facing once engaged, but this guarantees the player is
-    // already facing the right way as the first swing begins.
+    this.autoCastSpellIndex = this.sidePanel?.getAutocastSpell() ?? -1;
     this.pendingFaceTargetEntityId = npcEntityId;
     const t = this.entities.npcTargets.get(npcEntityId);
     if (t) this.faceLocalPlayerToward(t.x, t.z);
-    // Arm the chase-repath cooldown so updateCombatFollow doesn't re-pathfind
-    // on the very next frame and re-send a near-identical sendMove(). The
-    // 600 ms window matches the throttle elsewhere in updateCombatFollow —
-    // one server tick instead of half, halving moveQueue churn during chase.
     this._combatPathTimer = 0.6;
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
       const pathResult = this.findPathFromMovementAnchor(target.x, target.z);
       const path = pathResult.path;
-      // The NPC's own tile is blocking — drop it from the path so the player
-      // stops on the adjacent tile. Without this, a single-step path (`length
-      // === 1`) was sent verbatim with the NPC tile included; server rejects
-      // the step onto blocked terrain and the player stands still.
       if (path.length > 0) {
         const last = path[path.length - 1];
         if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
@@ -3056,18 +3070,17 @@ export class GameManager {
         this.startPredictedPath(path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
-        // Send the path BEFORE the attack packet so the server walks the same
-        // tiles. Otherwise the server's handlePlayerAttackNpc independently
-        // recomputes a path from its authoritative position — that path
-        // diverges from this local one, the server tick advances on its own
-        // queue, and the >1.5-tile divergence guard snaps the local visual
-        // to the server position (visible as a teleport).
       }
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    if (this.autoCastSpellIndex >= 0) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, npcEntityId));
+    } else {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    }
   }
 
   private talkToNpc(npcEntityId: number): void {
+    if (performance.now() < this.castingUntil) return;
     if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.resumeTalkToNpc(npcEntityId);
@@ -3283,6 +3296,7 @@ export class GameManager {
   }
 
   private handleObjectClick(objectEntityId: number): void {
+    if (performance.now() < this.castingUntil) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     // Cooldown after cancelling a skill — prevent spam-restarting
     if (performance.now() - this.skillCancelTime < 600) return;
@@ -3339,7 +3353,7 @@ export class GameManager {
   private interactObject(objectEntityId: number, actionIndex: number): void {
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
-    this.combatTargetId = -1;
+    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
 
     // Intercept anvil/tool-based crafting: show recipe UI instead of auto-crafting.
     // Walk to the anvil first if not adjacent — the panel only opens once we're
@@ -3778,13 +3792,20 @@ export class GameManager {
     onImpact?: () => void,
   ): void {
     if (!this.spellEffectPlayer) this.spellEffectPlayer = new SpellEffectPlayer(this.scene);
+    caster.faceToward(target.position);
     caster.playNamedOneShot('spell_cast_2h');
+    if (caster === this.localPlayer) {
+      this.castingUntil = performance.now() + def.cast.durationMs;
+      this.clearPredictedPath();
+      this.localPlayer.stopWalking();
+      this.network.sendMove([]);
+    }
     const from = caster.getCastOrigin();
     const to = target.getTargetAnchor();
     // Ground decals sit at the target's foot height; falling back to to.y
     // would float them at chest level.
     const groundY = target.position.y;
-    this.spellEffectPlayer.play({ def, from, to, groundY, onImpact })
+    this.spellEffectPlayer.play({ def, from, to, target, caster, groundY, onImpact })
       .catch(err => console.error('[spell]', err));
   }
 
@@ -4168,7 +4189,9 @@ export class GameManager {
   }
 
   private handleGroundClick(worldX: number, worldZ: number): void {
-    this.combatTargetId = -1;
+    if (performance.now() < this.castingUntil) return;
+    if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
+    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
     this.pendingSkill = null;
     this.pendingSmithing = null;
     this.clearPendingObjectInteractionRetry();
@@ -4498,14 +4521,20 @@ export class GameManager {
     const dx = npcTarget.x - this.playerX;
     const dz = npcTarget.z - this.playerZ;
     const dist = Math.hypot(dx, dz);
-    if (dist <= 1.5) return;
-    if ((this.pathIndex < this.path.length && dist <= 3) || this._combatPathTimer > 0) return;
+    const isSpellCombat = this.autoCastSpellIndex >= 0;
+    const inRange = isSpellCombat ? dist <= 9.5 : dist <= 1.5;
+    if (inRange && !isSpellCombat) return;
+    if (inRange && isSpellCombat) {
+      if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
+      this._combatPathTimer = 0.6;
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.combatTargetId));
+      return;
+    }
+    const closeEnough = isSpellCombat ? dist <= 10 : dist <= 3;
+    if ((this.pathIndex < this.path.length && closeEnough) || this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
     const pathResult = this.findPathFromMovementAnchor(npcTarget.x, npcTarget.z);
     const newPath = pathResult.path;
-    // Drop the NPC's own tile (blocking) regardless of path length; a one-step
-    // chase repath that lands on the mob's tile would otherwise ship a single
-    // blocked tile to the server and stall.
     if (newPath.length > 0) {
       const last = newPath[newPath.length - 1];
       if (Math.floor(last.x) === Math.floor(npcTarget.x) && Math.floor(last.z) === Math.floor(npcTarget.z)) {
@@ -4516,16 +4545,10 @@ export class GameManager {
       this.startPredictedPath(newPath, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
-      // Send the re-path to the server so its moveQueue adopts the same
-      // tiles. Without this, the local visual switches to the new path
-      // mid-walk while the server keeps walking the previous one — they
-      // diverge by a tile within ~1s and the snap guard at line 1229 hauls
-      // the visual onto the server position (the "teleport").
-      // handlePlayerMove on the server clears the combat target on every
-      // PLAYER_MOVE packet (it's the canonical "I want to walk somewhere
-      // else" signal). Re-arm combat immediately so the swing fires when
-      // we arrive — otherwise the player walks to the mob and just stands
-      // there because the server forgot we were attacking.
+    }
+    if (isSpellCombat) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.combatTargetId));
+    } else {
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
     }
   }

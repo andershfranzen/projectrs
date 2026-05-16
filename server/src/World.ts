@@ -2370,7 +2370,7 @@ export class World {
     // Lock other actions for the cast window; block recasts until impact.
     const castTicks = Math.max(1, Math.ceil(def.cast.durationMs / TICK_RATE));
     player.setDelay(this.currentTick, castTicks + 1);
-    player.attackCooldown = totalDelayTicks;
+    player.attackCooldown = totalDelayTicks * 2;
     player.markInCombat(this.currentTick);
 
     this.broadcastNearby(
@@ -3296,6 +3296,7 @@ export class World {
       // overrides the NPC_FACING rotation. Cheap O(1) gate via the def flags
       // before the O(players) audience scan; combat-only NPCs skip both.
       const canHaveAudience = npc.hasDialogue || npc.hasShop || npc.hasBank;
+      const hadCombatTarget = npc.combatTarget != null;
       if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
         npc.pathQueue.length = 0;
       } else {
@@ -3305,6 +3306,10 @@ export class World {
         const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
           map.findPathForNpc(sx, sz, gx, gz, npcBlocked);
         npc.processAI(npcBlocked, map.isWallBlockedCb, npcFindPath);
+      }
+      if (hadCombatTarget && npc.combatTarget == null) {
+        this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y,
+          ServerOpcode.COMBAT_HIT, npc.id, -1, 0, npc.health, npc.maxHealth);
       }
 
       const cm = this.chunkManagers.get(npc.currentMapLevel);
@@ -3485,6 +3490,14 @@ export class World {
       if (npc.currentMapLevel !== imp.mapLevel) continue;
 
       const actual = npc.takeDamage(imp.damage);
+
+      if (npc.alive) {
+        const wasInCombat = npc.combatTarget != null;
+        npc.combatTarget = player;
+        if (!wasInCombat) {
+          npc.attackCooldown = Math.floor(npc.def.attackSpeed / 2);
+        }
+      }
 
       // XP: 4 per damage to the spell's school (locked in at cast time).
       // Same rate as melee/ranged so a magic-only player isn't penalised.
