@@ -847,6 +847,17 @@ export class World {
     }
   }
 
+  /** Interrupt the player's active or queued world action before another
+   *  deliberate action mutates state. Movement has its own path because it is
+   *  itself the cancel signal; this covers inventory/equipment/item actions
+   *  that can happen while standing still or while walking toward an object. */
+  private interruptPlayerAction(playerId: number, player: Player): void {
+    player.pendingInteraction = null;
+    player.pendingPickup = -1;
+    player.actionDelay = 0;
+    this.cancelSkilling(playerId);
+  }
+
   removePlayer(playerId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
@@ -1665,6 +1676,7 @@ export class World {
       return;
     }
 
+    this.interruptPlayerAction(playerId, player);
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
@@ -1710,6 +1722,7 @@ export class World {
       return;
     }
 
+    this.interruptPlayerAction(playerId, player);
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
@@ -1740,6 +1753,7 @@ export class World {
     }
 
     if (player.addItem(item.itemId, item.quantity, this.data.itemDefs).completed > 0) {
+      this.interruptPlayerAction(playerId, player);
       this.groundItems.delete(groundItemId);
       this.despawningItemIds.delete(groundItemId);
       const itemCm = this.chunkManagers.get(item.mapLevel);
@@ -1773,6 +1787,7 @@ export class World {
 
     const removed = player.removeItem(slotIndex, slot.quantity);
     if (removed.completed === 0) return;
+    this.interruptPlayerAction(playerId, player);
 
     const groundItem: GroundItem = {
       id: nextGroundItemId++,
@@ -1945,12 +1960,13 @@ export class World {
     }
 
     if (obj.def.recipes && obj.def.recipes.length > 0) {
-      this.handleCraftingInteraction(player, obj, recipeIndex);
+      this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
       return;
     }
   }
 
   private handleTeleportInteraction(player: Player, obj: WorldObject): void {
+    this.interruptPlayerAction(player.id, player);
     if (obj.trigger?.type === 'teleport' && obj.trigger.destChunk) {
       this.handleMapTransition(player, {
         targetMap: obj.trigger.destChunk,
@@ -2022,7 +2038,7 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id, toolItemId ?? 0);
   }
 
-  private handleCraftingInteraction(player: Player, obj: WorldObject, recipeIndex: number): void {
+  private handleCraftingInteraction(playerId: number, player: Player, obj: WorldObject, recipeIndex: number): void {
     const recipes = obj.def.recipes!;
     const recipesToTry = (recipeIndex >= 0 && recipeIndex < recipes.length)
       ? [recipes[recipeIndex]]
@@ -2039,6 +2055,7 @@ export class World {
         );
         if (!hasTool) continue;
       }
+      this.interruptPlayerAction(playerId, player);
 
       // removeItemById aggregates across slots, so unstackable multi-unit
       // inputs (e.g. 3 bars in 3 slots) consume correctly.
@@ -2130,6 +2147,8 @@ export class World {
       }
     }
 
+    this.interruptPlayerAction(playerId, player);
+
     // Source slot: receives displaced equipment if any, else cleared.
     if (currentEquipped !== undefined) {
       player.inventory[slotIndex] = { itemId: currentEquipped, quantity: 1 };
@@ -2167,6 +2186,7 @@ export class World {
     if (itemId === undefined) return;
 
     if (player.addItem(itemId, 1, this.data.itemDefs).completed > 0) {
+      this.interruptPlayerAction(playerId, player);
       player.equipment.delete(slotName);
       player.setDelay(this.currentTick, 1);
       this.sendInventory(player);
@@ -2191,6 +2211,7 @@ export class World {
     if (!itemDef || !itemDef.healAmount) return;
 
     if (player.health >= player.maxHealth) return;
+    this.interruptPlayerAction(playerId, player);
 
     player.heal(itemDef.healAmount);
     player.skills.hitpoints.currentLevel = player.health;
@@ -2227,6 +2248,7 @@ export class World {
     const player = this.validateInvUse(playerId, fromSlot, fromItemId);
     if (!player) return;
     if (player.inventory[toSlot]?.itemId !== toItemId) return;
+    this.interruptPlayerAction(playerId, player);
     // No recipes wired yet — surface a generic reply so the protocol is exercised.
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
@@ -2246,6 +2268,7 @@ export class World {
       this.sendChatSystem(player, "I can't reach that.");
       return;
     }
+    this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
@@ -2260,6 +2283,7 @@ export class World {
     const player = this.validateInvUse(playerId, invSlot, itemId);
     if (!player) return;
     if (npc.currentMapLevel !== player.currentMapLevel) return;
+    this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 

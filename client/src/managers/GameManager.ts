@@ -2259,6 +2259,7 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PLAYER_INVENTORY, (_op, v) => {
+      this.clearPendingObjectInteractionRetry();
       const [slotIndex, itemId, quantity] = v;
       if (this.sidePanel) this.sidePanel.updateInvSlot(slotIndex, itemId, quantity);
       if (this.bankPanel) this.bankPanel.updateInventorySlot(slotIndex, itemId, quantity);
@@ -2351,6 +2352,8 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PLAYER_EQUIPMENT, (_op, v) => {
+      this.clearPendingObjectInteractionRetry();
+      if (this.isSkilling) this.endLocalSkilling();
       const [slotIndex, itemId] = v;
       this.localEquipment.set(slotIndex, itemId);
       if (this.sidePanel) {
