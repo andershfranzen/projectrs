@@ -111,6 +111,7 @@ const TILE_DEFAULTS: Record<string, any> = {
   textureIdB: null,
   textureRotationB: 0,
   textureScaleB: 1,
+  textureCutAngle: (3 * Math.PI) / 4,
   waterPainted: false,
   waterSurface: false,
 };
@@ -898,6 +899,47 @@ const server = Bun.serve<SocketData>({
         }
         writeFileSync(outPath, pngBytes);
         return jsonResponse({ ok: true, bytes: pngBytes.length });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
+    // Per-asset thumbnail rotation override. Editor's rotation modal POSTs
+    // {path, alpha, beta, distanceMult} to tune how an asset is framed in the
+    // asset grid. Persists into `_thumbnail_assets[path]` in
+    // server/data/thumbnail-overrides.json (the underscore prefix is ignored
+    // by the item-icon loader). Empty body (all undefined) deletes the entry.
+    if (url.pathname === '/api/dev/thumbnail-asset-rotation' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { path?: unknown; alpha?: unknown; beta?: unknown; distanceMult?: unknown };
+        const path = typeof body.path === 'string' ? body.path : '';
+        if (!path || path.length > 512 || path.includes('..')) {
+          return jsonResponse({ ok: false, error: 'Invalid path' }, 400);
+        }
+        const filePath = resolve(DATA_DIR, 'thumbnail-overrides.json');
+        let data: any = {};
+        try {
+          data = JSON.parse(readFileSync(filePath, 'utf8'));
+        } catch { data = {}; }
+        if (!data._thumbnail_assets || typeof data._thumbnail_assets !== 'object') {
+          data._thumbnail_assets = {};
+        }
+        const entry: any = {};
+        const a = body.alpha, b = body.beta, d = body.distanceMult;
+        if (typeof a === 'number' && Number.isFinite(a)) entry.alpha = a;
+        if (typeof b === 'number' && Number.isFinite(b)) entry.beta = b;
+        if (typeof d === 'number' && Number.isFinite(d) && d > 0) entry.distanceMult = d;
+        if (Object.keys(entry).length === 0) {
+          delete data._thumbnail_assets[path];
+        } else {
+          data._thumbnail_assets[path] = entry;
+        }
+        const tmpPath = filePath + '.tmp';
+        writeFileSync(tmpPath, JSON.stringify(data, null, 2));
+        renameSync(tmpPath, filePath);
+        return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
       }

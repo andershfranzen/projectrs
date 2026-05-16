@@ -109,10 +109,15 @@ export class World {
   /** True if there's an active session from `deviceId` belonging to a
    *  DIFFERENT account than `excludeAccountId`. Used by /api/login to enforce
    *  the one-account-per-browser rule. Per-browser, not per-IP — friends
-   *  sharing a household / dorm / cafe each have their own localStorage. */
+   *  sharing a household / dorm / cafe each have their own localStorage.
+   *  Disconnected players (within the reconnect grace window) don't count —
+   *  the user has clearly moved on if they're logging in with a different
+   *  account from the same browser, and the grace period exists for the
+   *  same account to reconnect, not to block other accounts. */
   hasOtherActiveAccountFromDevice(deviceId: string, excludeAccountId: number): boolean {
     if (!deviceId) return false;
     for (const [, p] of this.players) {
+      if (p.disconnected || p.requestIdleLogout) continue;
       if (p.deviceId === deviceId && p.accountId !== excludeAccountId) return true;
     }
     return false;
@@ -819,6 +824,8 @@ export class World {
       qPos(spawnY),
       PROTOCOL_VERSION,
     );
+
+    this.sendToPlayer(player, ServerOpcode.ADMIN_FLAGS, player.isAdmin ? 1 : 0);
 
     // Send MAP_CHANGE so client loads the correct map (handles underground, dungeons, etc.)
     this.sendMapChange(player, player.currentMapLevel);
@@ -2042,43 +2049,16 @@ export class World {
         if (!hasTool) continue;
       }
 
-      let inputSlot = -1;
-      for (let i = 0; i < player.inventory.length; i++) {
-        const slot = player.inventory[i];
-        if (slot && slot.itemId === recipe.inputItemId && slot.quantity >= recipe.inputQuantity) {
-          inputSlot = i;
-          break;
-        }
-      }
-      if (inputSlot < 0) continue;
+      // removeItemById aggregates across slots, so unstackable multi-unit
+      // inputs (e.g. 3 bars in 3 slots) consume correctly.
+      const inputRemoval = player.removeItemById(recipe.inputItemId, recipe.inputQuantity);
+      if (inputRemoval.completed === 0) continue;
 
-      let secondInputSlot = -1;
+      let secondRemoval: ReturnType<typeof player.removeItemById> | null = null;
       if (recipe.secondInputItemId !== undefined) {
         const needed = recipe.secondInputQuantity ?? 1;
-        for (let i = 0; i < player.inventory.length; i++) {
-          if (i === inputSlot) continue;
-          const slot = player.inventory[i];
-          if (slot && slot.itemId === recipe.secondInputItemId && slot.quantity >= needed) {
-            secondInputSlot = i;
-            break;
-          }
-        }
-        if (secondInputSlot < 0) continue;
-      }
-
-      // Transaction: remove inputs, then add output. If add fails (inventory
-      // full), revert the input removals so materials aren't silently destroyed.
-      const inputRemoval = player.removeItem(inputSlot, recipe.inputQuantity);
-      if (inputRemoval.completed < recipe.inputQuantity) {
-        player.revertRemove(inputRemoval);
-        continue;
-      }
-
-      let secondRemoval: ReturnType<typeof player.removeItem> | null = null;
-      if (secondInputSlot >= 0 && recipe.secondInputQuantity) {
-        secondRemoval = player.removeItem(secondInputSlot, recipe.secondInputQuantity);
-        if (secondRemoval.completed < recipe.secondInputQuantity) {
-          player.revertRemove(secondRemoval);
+        secondRemoval = player.removeItemById(recipe.secondInputItemId, needed);
+        if (secondRemoval.completed === 0) {
           player.revertRemove(inputRemoval);
           continue;
         }

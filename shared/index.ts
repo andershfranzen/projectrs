@@ -11,3 +11,4 @@ export * from './doorEdge.js';
 export * from './character.js';
 export * from './objectFootprint.js';
 export * from './spells.js';
+export * from './tileCut.js';

@@ -61,6 +61,23 @@ export async function putCachedThumb(path: string, dataUrl: string, version: num
   }
 }
 
+/** Evict a single thumbnail from cache. Used after a rotation override saves
+ *  so the next render produces the new pose. */
+export async function clearCachedThumb(path: string): Promise<void> {
+  try {
+    const db = await openDb()
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).delete(path)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+      tx.onabort = () => resolve()
+    })
+  } catch {
+    // ignore
+  }
+}
+
 export async function clearThumbCache(): Promise<void> {
   try {
     const db = await openDb()

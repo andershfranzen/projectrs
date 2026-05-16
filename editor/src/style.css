@@ -379,12 +379,86 @@ canvas {
   padding: 4px;
   cursor: pointer;
   gap: 3px;
+  position: relative;
 }
 
 .asset-card:hover {
   background: rgba(255,255,255,0.1);
   border-color: rgba(255,255,255,0.2);
 }
+
+.asset-rotate-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  background: rgba(0,0,0,0.65);
+  color: rgba(255,255,255,0.85);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+  border: 1px solid rgba(255,255,255,0.15);
+  user-select: none;
+}
+.asset-card:hover .asset-rotate-btn { opacity: 1; }
+.asset-rotate-btn:hover { background: rgba(80,140,255,0.75); }
+
+.asset-rotate-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.asset-rotate-modal-inner {
+  background: #1d1f24;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 320px;
+  color: #eee;
+  font-size: 12px;
+}
+.asset-rotate-modal-canvas {
+  width: 320px;
+  height: 320px;
+  background: #111;
+  border-radius: 4px;
+  cursor: grab;
+  display: block;
+}
+.asset-rotate-modal-canvas:active { cursor: grabbing; }
+.asset-rotate-modal-row {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+}
+.asset-rotate-modal-btn {
+  background: rgba(80,140,255,0.25);
+  border: 1px solid rgba(80,140,255,0.5);
+  color: #eee;
+  padding: 5px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.asset-rotate-modal-btn:hover { background: rgba(80,140,255,0.45); }
+.asset-rotate-modal-btn.secondary {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.15);
+}
+.asset-rotate-modal-btn.secondary:hover { background: rgba(255,255,255,0.12); }
 
 .asset-card.selected {
   background: rgba(80,140,255,0.2);

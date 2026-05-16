@@ -547,8 +547,16 @@
     "aggressive": true,
     "wanderRange": 4,
     "lootTable": [
-      { "itemId": 1, "quantity": 1, "chance": 1 },
-      { "itemId": 20, "quantity": 1, "chance": 0.6 }
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 20,
+        "quantity": 1,
+        "chance": 0.6
+      }
     ]
   }
 ]

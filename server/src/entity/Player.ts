@@ -38,6 +38,7 @@ export interface InventoryRemoveResult {
 export class Player extends Entity {
   ws: ServerWebSocket<{ type: string; playerId?: number }>;
   accountId: number;
+  isAdmin: boolean = false;
   inventory: (InventorySlot | null)[];
   equipment: Map<EquipSlot, number> = new Map(); // slot -> itemId
   skills: SkillBlock;
@@ -428,6 +429,42 @@ export class Player extends Entity {
     }
     result.completed = 0;
     result.placed.length = 0;
+  }
+
+  /**
+   * Remove `quantity` of `itemId` aggregated across the inventory. Atomic:
+   * either the full amount is removed (possibly spanning multiple slots),
+   * or nothing is removed and `completed` is 0. The returned result is
+   * compatible with revertRemove() so callers can roll back as part of a
+   * larger transaction.
+   *
+   * This is what recipe-style consumers want, since unstackable inputs
+   * (e.g. bars, hides) occupy one slot per unit but a recipe needs N.
+   */
+  removeItemById(itemId: number, quantity: number): InventoryRemoveResult {
+    const result: InventoryRemoveResult = { requested: quantity, completed: 0, itemId, removed: [] };
+    if (quantity <= 0) return result;
+
+    let available = 0;
+    for (const s of this.inventory) {
+      if (s && s.itemId === itemId) available += s.quantity;
+      if (available >= quantity) break;
+    }
+    if (available < quantity) return result;
+
+    let remaining = quantity;
+    for (let i = 0; i < this.inventory.length && remaining > 0; i++) {
+      const s = this.inventory[i];
+      if (!s || s.itemId !== itemId) continue;
+      const take = Math.min(s.quantity, remaining);
+      const willEmpty = take >= s.quantity;
+      result.removed.push({ slot: i, itemId, quantity: take, emptied: willEmpty });
+      if (willEmpty) this.inventory[i] = null;
+      else s.quantity -= take;
+      remaining -= take;
+    }
+    result.completed = quantity;
+    return result;
   }
 
   /**

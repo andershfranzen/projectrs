@@ -422,6 +422,14 @@ export interface KCTile {
   textureIdB: string | null;
   textureRotationB: number;
   textureScaleB: number;
+  /**
+   * Angle of the cut LINE (radians, in [0, π) — the line is undirected) used
+   * to split this tile's texture overlay into two halves when textureHalfMode
+   * is true. 0 = horizontal cut, π/4 = TL-BR diagonal, π/2 = vertical cut,
+   * 3π/4 = BL-TR diagonal. Independent of tile.split (which only affects
+   * terrain triangulation).
+   */
+  textureCutAngle: number;
   waterPainted: boolean;
   waterSurface: boolean;
 }
@@ -492,6 +500,7 @@ export function defaultKCTile(ground: GroundType = 'grass'): KCTile {
     textureIdB: null,
     textureRotationB: 0,
     textureScaleB: 1,
+    textureCutAngle: (3 * Math.PI) / 4,
     waterPainted: false,
     waterSurface: false,
   };

@@ -10,6 +10,12 @@ export interface Tile {
   textureIdB: string | null
   textureRotationB: number
   textureScaleB: number
+  /**
+   * Cut-line angle (radians, [0, π) — undirected) for the texture overlay's
+   * half-paint. Independent of `split`. 0=horizontal, π/4=TL-BR diag,
+   * π/2=vertical, 3π/4=BL-TR diag.
+   */
+  textureCutAngle: number
   waterPainted: boolean
   waterSurface: boolean
 }
@@ -69,6 +75,7 @@ function createDefaultTile(): Tile {
     textureIdB: null,
     textureRotationB: 0,
     textureScaleB: 1,
+    textureCutAngle: (3 * Math.PI) / 4,
     waterPainted: false,
     waterSurface: false
   }
@@ -345,6 +352,15 @@ export class MapData {
     tile.textureHalfMode = true
   }
 
+  /** Set the half-paint cut-line angle (radians). Normalizes to [0, π). */
+  setTextureCutAngle(x: number, z: number, angle: number): void {
+    const tile = this.getTile(x, z)
+    if (!tile) return
+    let a = angle % Math.PI
+    if (a < 0) a += Math.PI
+    tile.textureCutAngle = a
+  }
+
   clearTextureTile(x: number, z: number): void {
     const tile = this.getTile(x, z)
     if (!tile) return
@@ -365,6 +381,9 @@ export class MapData {
     tile.textureId = null
     tile.textureRotation = 0
     tile.textureScale = 1
+    // If the other half is also empty, drop half-mode entirely so the tile
+    // returns to a clean state (no stale cut angle, ready for full paint).
+    if (!tile.textureIdB) tile.textureHalfMode = false
   }
 
   clearTextureTileSecond(x: number, z: number): void {
@@ -374,6 +393,7 @@ export class MapData {
     tile.textureIdB = null
     tile.textureRotationB = 0
     tile.textureScaleB = 1
+    if (!tile.textureId) tile.textureHalfMode = false
   }
 
   flipTileSplit(x: number, z: number): void {
@@ -513,6 +533,14 @@ export class MapData {
           const src = data.tiles?.[z]?.[x]
           if (!src) continue
 
+          // Legacy migration: tiles painted before the arbitrary-angle cut
+          // existed only had `split`. Map forward→3π/4 (BL-TR line),
+          // back→π/4 (TL-BR line) so old half-painted maps render identically.
+          const legacyAngle = src.split === 'back' ? Math.PI / 4 : (3 * Math.PI) / 4
+          const cutAngle = typeof (src as any).textureCutAngle === 'number'
+            ? (src as any).textureCutAngle
+            : legacyAngle
+
           map.tiles[z][x] = {
             ground: src.ground || 'grass',
             groundB: src.groundB || null,
@@ -525,6 +553,7 @@ export class MapData {
             textureIdB: src.textureIdB || null,
             textureRotationB: src.textureRotationB || 0,
             textureScaleB: src.textureScaleB || 1,
+            textureCutAngle: cutAngle,
             waterPainted: !!src.waterPainted || src.ground === 'water',
             waterSurface: !!src.waterSurface
           }

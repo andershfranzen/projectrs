@@ -46,6 +46,7 @@ import { CharacterEntity } from '@client/rendering/CharacterEntity'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
 import { loadAssetModel, cloneAssetModelSync, warmAssetCache, makeGhostMaterial, initAssetLoader } from './assets-system/AssetLoader'
 import { getThumbnail } from './assets-system/ThumbnailRenderer'
+import { openThumbnailRotationEditor } from './assets-system/ThumbnailRotationEditor'
 import { loadTextureRegistry } from './assets-system/TextureRegistry'
 import {
   buildTerrainMeshes,
@@ -253,15 +254,31 @@ function tuneModelLighting(model) {
   let selectedNpcSpawn = null
   const npcSpawnGroup = new TransformNode('npcSpawnGroup', scene)
 
-  function addNpcSpawn(npcId, x, z, wanderRange, id, aggressive, appearance, equipment, shop, dialogue, name) {
-    const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: aggressive ?? null }
-    // Optional per-spawn overrides — only set if provided so a fresh spawn
-    // doesn't carry empty {} that would falsely flag the override toggles.
-    if (appearance) spawn.appearance = appearance
-    if (equipment) spawn.equipment = equipment
-    if (shop) spawn.shop = shop
-    if (dialogue) spawn.dialogue = dialogue
-    if (name) spawn.name = name
+  // Per-spawn override fields and the predicates that decide whether they get
+  // emitted on save. Single source of truth for both addNpcSpawn and
+  // serializeNpcSpawns — adding a new override here is the ONLY change needed
+  // for it to round-trip through load → in-memory → save. Matches the
+  // SpawnEntry shape in shared/types.ts.
+  const NPC_SPAWN_OVERRIDE_FIELDS = {
+    aggressive: v => v === true || v === false,
+    appearance: v => !!v,
+    equipment:  v => Array.isArray(v) && v.length === 10,
+    shop:       v => !!v,
+    dialogue:   v => !!v,
+    name:       v => !!v,
+  }
+
+  function addNpcSpawn(input) {
+    const { npcId, x, z, wanderRange, id } = input
+    // `aggressive` is always present on the in-memory spawn (possibly null)
+    // because some UI code reads it without a `in spawn` guard.
+    const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: input.aggressive ?? null }
+    // Other override fields: only set if truthy so a fresh spawn doesn't carry
+    // empty values that would falsely flag the override toggles.
+    for (const field of Object.keys(NPC_SPAWN_OVERRIDE_FIELDS)) {
+      if (field === 'aggressive') continue
+      if (input[field]) spawn[field] = input[field]
+    }
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
     return spawn
@@ -384,15 +401,10 @@ function tuneModelLighting(model) {
 
   function serializeNpcSpawns() {
     return npcSpawns.map(s => {
-      // Only emit overrides that are actually set — null/undefined means
-      // "use the NpcDef default" and shouldn't bloat the save file.
       const out = { id: s.id, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange }
-      if (s.aggressive === true || s.aggressive === false) out.aggressive = s.aggressive
-      if (s.appearance) out.appearance = s.appearance
-      if (Array.isArray(s.equipment) && s.equipment.length === 10) out.equipment = s.equipment
-      if (s.shop) out.shop = s.shop
-      if (s.dialogue) out.dialogue = s.dialogue
-      if (s.name) out.name = s.name
+      for (const [field, accept] of Object.entries(NPC_SPAWN_OVERRIDE_FIELDS)) {
+        if (accept(s[field])) out[field] = s[field]
+      }
       return out
     })
   }
@@ -406,15 +418,10 @@ function tuneModelLighting(model) {
     _npcSpawnNextId = 1
     selectedNpcSpawn = null
     for (const s of data || []) {
-      addNpcSpawn(
-        s.npcId, s.x, s.z, s.wanderRange ?? 3, s.id,
-        s.aggressive ?? null,
-        s.appearance,
-        s.equipment,
-        s.shop,
-        s.dialogue,
-        s.name,
-      )
+      // Spread is intentional — any new field in SpawnEntry / on disk flows
+      // straight through to the in-memory spawn without code changes here.
+      // addNpcSpawn applies the override-field whitelist.
+      addNpcSpawn({ ...s, wanderRange: s.wanderRange ?? 3 })
     }
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
@@ -3311,9 +3318,10 @@ let paintBrushRadius = 1
     }
     reportMissingAssets(_importMissing, 'import chunk')
 
-    // Import NPC spawns shifted by offset
+    // Import NPC spawns shifted by offset. Drop the source id so chunks
+    // imported into an existing map don't collide with its id sequence.
     for (const s of data.npcSpawns || []) {
-      addNpcSpawn(s.npcId, s.x + offsetX, s.z + offsetZ, s.wanderRange ?? 3, undefined, s.aggressive ?? null)
+      addNpcSpawn({ ...s, id: undefined, x: s.x + offsetX, z: s.z + offsetZ, wanderRange: s.wanderRange ?? 3 })
     }
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
@@ -5267,8 +5275,22 @@ function applyToolAtTile(tile, eventLike = null) {
       label.className = 'asset-label'
       label.textContent = asset.name
 
+      const rotateBtn = document.createElement('div')
+      rotateBtn.className = 'asset-rotate-btn'
+      rotateBtn.textContent = '↻'
+      rotateBtn.title = 'Edit thumbnail rotation'
+      rotateBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation()
+        const path = asset.path
+        openThumbnailRotationEditor(path, () => {
+          // Re-render the asset thumbnail now that the override changed.
+          getThumbnail(path).then((url) => { if (url) img.src = url }).catch(() => {})
+        })
+      })
+
       card.appendChild(img)
       card.appendChild(label)
+      card.appendChild(rotateBtn)
       assetGrid.appendChild(card)
 
       card.addEventListener('click', async () => {
@@ -6200,7 +6222,12 @@ function applyToolAtTile(tile, eventLike = null) {
         placedObjects: mapData.placedObjects || [],
         layers: mapData.layers || [{ id: 'layer_0', name: 'Layer 1', visible: true }],
         activeLayerId: mapData.activeLayerId || 'layer_0',
-        npcSpawns: (spawns.npcs || []).map((s, i) => ({ id: i + 1, npcId: s.npcId, x: s.x, z: s.z, wanderRange: s.wanderRange ?? 3, aggressive: s.aggressive ?? null })),
+        // Pass spawns through with full fidelity — loadNpcSpawns reads every
+        // override (appearance, name, equipment, shop, dialogue) directly off
+        // these objects. Mirror of the save-side fix: a prior inline mapper
+        // here was projecting onto a 6-field shape and silently wiping
+        // per-spawn overrides on every server-load → save round trip.
+        npcSpawns: spawns.npcs ?? [],
         itemSpawns: (spawns.items || []).map((s, i) => ({ id: i + 1, itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity ?? 1 })),
         collisionData: walls,
         biomesData: biomes
@@ -7310,7 +7337,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       // inherits the def's flag.
       const aggressive = aggCb ? aggCb.checked : null
       pushUndoState('spawns')
-      const spawn = addNpcSpawn(npcId, tile.x + 0.5, tile.z + 0.5, wanderRange, undefined, aggressive)
+      const spawn = addNpcSpawn({ npcId, x: tile.x + 0.5, z: tile.z + 0.5, wanderRange, aggressive })
       selectedNpcSpawn = spawn
       if (typeof renderNpcInspector === 'function') renderNpcInspector()
       rebuildNpcSpawnMeshes()

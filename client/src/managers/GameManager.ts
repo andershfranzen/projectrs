@@ -102,6 +102,12 @@ export class GameManager {
   private _sendMapReadyOnConnect: boolean = false;
   /** Settles when WorldObjectModels finishes its initial bulk load. */
   private _objectModelsReady: Promise<void> = Promise.resolve();
+  /** Settles when objectDefs / itemDefs / npcDefs / etc. finish loading. We
+   *  gate MAP_READY on this so the server never pushes WORLD_OBJECT_SYNC
+   *  before the client can recognize door-vs-non-door entities — without
+   *  defs, linkPlacedNodeToEntity falls into the non-door branch and
+   *  doors get stuck at their authored closed pose with no pivot. */
+  private _defsReady: Promise<void> = Promise.resolve();
   /** Resolves on the first LOGIN_OK packet so connectAndAuth can await full
    *  authentication completion (player position applied, spawn chunks
    *  guaranteed loaded, input enabled). */
@@ -510,6 +516,7 @@ export class GameManager {
     this.chunkManager.loadMap('kcmap').then(async () => {
       await this.loadBiomes('kcmap');
       this.applyFog();
+      await this._defsReady;
       if (this.network.isConnected()) {
         this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
       } else {
@@ -517,7 +524,7 @@ export class GameManager {
       }
       this.repositionWorldObjects();
     });
-    this.loadObjectDefs();
+    this._defsReady = this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this._objectModelsReady = this.objectModels.loadAll();
     this.entities = new EntityManager(this.scene, (x, z, cy) => this.getHeightAt(x, z, cy), this.itemDefsCache);
@@ -628,7 +635,9 @@ export class GameManager {
         this._sendMapReadyOnConnect = false;
         // network.connect is async (WS open). Send once the socket is open.
         this.network.onOpen(() => {
-          this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+          void this._defsReady.then(() => {
+            this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+          });
         });
       }
     });
@@ -1610,6 +1619,11 @@ export class GameManager {
     this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
       this.openCharacterCreatorWhenReady();
     });
+
+    this.network.on(ServerOpcode.ADMIN_FLAGS, (_op, v) => {
+      const isAdmin = (v[0] & 1) === 1;
+      this.camera.setLockedMode(!isAdmin);
+    });
   }
 
   private setupEntitySyncHandlers(): void {
@@ -2496,6 +2510,7 @@ export class GameManager {
     this.minimap?.invalidateTileCache();
     this._lastMinimapUpdateMs = 0;
     // Tell server we're ready to receive entity data — SYNCs will link trees via the handler
+    await this._defsReady;
     this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
 
     // Update player position

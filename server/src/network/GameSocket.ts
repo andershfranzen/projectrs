@@ -49,6 +49,7 @@ export function handleGameSocketOpen(
   console.log(`[GameSocket] Player "${username}" acct=${accountId} saved=${!!saved} savedPos=(${saved?.x}, ${saved?.z}) defaultSpawn=(${defaultSpawn.x}, ${defaultSpawn.z}) final=(${spawnX}, ${spawnZ})${needsForcedRespawn ? ' [respawn-version migration]' : ''}`);
 
   const player = new Player(username, spawnX, spawnZ, ws, accountId);
+  player.isAdmin = ws.data.isAdmin;
 
   // Apply saved state
   if (saved) {

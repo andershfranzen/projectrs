@@ -227,6 +227,12 @@ export enum ServerOpcode {
    *  completes. Client uses this to drive the chat notification and the
    *  quest-log re-render. */
   QUEST_STAGE_ADVANCED = 111,
+
+  /** Per-session permission flags. Sent once, immediately after LOGIN_OK.
+   *  Payload: [flags] — bit 0 = isAdmin. Client uses this to gate things
+   *  like the free-camera mode (non-admins are locked to a 2004scape-style
+   *  fixed-pitch / fixed-zoom view). */
+  ADMIN_FLAGS = 120,
 }
 
 export enum PlayerAnimationKind {

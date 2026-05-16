@@ -41,6 +41,15 @@ export function handleChatSocketOpen(
   world: World
 ): void {
   chatSockets.add(ws);
+  // Backfill: the game socket and chat socket race at login, so addPlayer's
+  // broadcastPlayerInfo loop can fire before this socket is in chatSockets.
+  // Without this catch-up, the joiner shows existing remotes as "Player"
+  // forever (player_info never re-sends for already-online players).
+  for (const [, p] of world.players) {
+    try {
+      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name }));
+    } catch { /* ignore */ }
+  }
 }
 
 export function handleChatSocketMessage(

@@ -21,12 +21,11 @@ export class Npc extends Entity {
   attackCooldown: number = 0;
   returning: boolean = false;
 
-  // A* path following
+  // A* path following — used for wander + returning to spawn only. Chase
+  // uses naiveChaseStep (2004scape-style direct stepping) so NPCs get
+  // visibly stuck on walls / closed doors / placed objects instead of
+  // routing around them.
   pathQueue: { x: number; z: number }[] = [];
-  private pathTargetX: number = 0;
-  private pathTargetZ: number = 0;
-  private pathAge: number = 0;
-  private pathFailCount: number = 0;
 
   // Death / respawn
   dead: boolean = false;
@@ -42,9 +41,7 @@ export class Npc extends Entity {
   static readonly RETREAT_MAX_RANGE = 7;
   static readonly RETREAT_INTERACTION_RANGE = 18;
   static readonly NPC_MAX_PATH_LENGTH = 20;
-  private static readonly PATH_RECOMPUTE_THRESHOLD = 3;
-  private static readonly PATH_STALE_TICKS = 5;
-  private static readonly CHASE_GIVE_UP_FAILURES = 5;
+  static readonly MELEE_RANGE = 1.5;
   private static readonly WANDER_PATH_MAX = 8;
 
   readonly wanderRangeOverride?: number;
@@ -116,6 +113,16 @@ export class Npc extends Entity {
     return this.wanderRangeOverride ?? this.def.wanderRange;
   }
 
+  /** True if (x, z) is within this NPC's wander box around spawn. The 0.5
+   *  fudge covers half-integer tile centers — both spawnX and the queried
+   *  point live at `floor(...)+0.5`, so abs differences are integers and the
+   *  fudge just guards float comparisons. */
+  private inWanderRange(x: number, z: number): boolean {
+    const wr = this.wanderRange;
+    return Math.abs(x - this.spawnX) <= wr + 0.5 &&
+           Math.abs(z - this.spawnZ) <= wr + 0.5;
+  }
+
   private followPath(
     isBlocked: (x: number, z: number) => boolean,
     isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
@@ -132,29 +139,56 @@ export class Npc extends Entity {
     return true;
   }
 
-  private findBestAdjacentTile(
+  /** One-tile direct step toward (targetX, targetZ). Tries diagonal first,
+   *  then the cardinal that closes the larger axis. Returns false (no step)
+   *  if every option is blocked — that's how NPCs end up stuck behind
+   *  walls / closed doors / placed objects. Mirrors 2004scape's NAIVE
+   *  move strategy (Engine-TS PathingEntity.naivePathToTarget). */
+  private naiveChaseStep(
     targetX: number, targetZ: number,
     isBlocked: (x: number, z: number) => boolean,
-  ): { x: number; z: number } | null {
-    const tx = Math.floor(targetX);
-    const tz = Math.floor(targetZ);
-    const px = this.position.x;
-    const pz = this.position.y;
-    let best: { x: number; z: number } | null = null;
-    let bestDist = Infinity;
-    for (let dx = -1; dx <= 1; dx++) {
-      for (let dz = -1; dz <= 1; dz++) {
-        if (dx === 0 && dz === 0) continue;
-        const ax = tx + dx + 0.5;
-        const az = tz + dz + 0.5;
-        if (isBlocked(ax, az)) continue;
-        if (Math.abs(ax - this.spawnX) > Npc.RETREAT_MAX_RANGE) continue;
-        if (Math.abs(az - this.spawnZ) > Npc.RETREAT_MAX_RANGE) continue;
-        const dist = Math.max(Math.abs(ax - px), Math.abs(az - pz));
-        if (dist < bestDist) { bestDist = dist; best = { x: ax, z: az }; }
-      }
+    isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+  ): boolean {
+    const px = Math.floor(this.position.x);
+    const pz = Math.floor(this.position.y);
+    const fromX = px + 0.5;
+    const fromZ = pz + 0.5;
+    const sx = Math.sign(Math.floor(targetX) - px);
+    const sz = Math.sign(Math.floor(targetZ) - pz);
+    if (sx === 0 && sz === 0) return false;
+
+    const tryStep = (dx: number, dz: number): boolean => {
+      if (dx === 0 && dz === 0) return false;
+      const nx = px + dx + 0.5;
+      const nz = pz + dz + 0.5;
+      if (isBlocked(nx, nz)) return false;
+      if (isWallBlocked && isWallBlocked(fromX, fromZ, nx, nz)) return false;
+      this.position.x = nx;
+      this.position.y = nz;
+      return true;
+    };
+
+    // Prefer diagonal when both axes need to close; otherwise fall back to
+    // the cardinal that still has distance to cover. If the diagonal is
+    // blocked but a cardinal isn't, take the cardinal — that's what makes
+    // NPCs slide along walls until they hit a real dead-end.
+    if (sx !== 0 && sz !== 0 && tryStep(sx, sz)) return true;
+    const adx = Math.abs(targetX - this.position.x);
+    const adz = Math.abs(targetZ - this.position.y);
+    if (adx >= adz) {
+      if (sx !== 0 && tryStep(sx, 0)) return true;
+      if (sz !== 0 && tryStep(0, sz)) return true;
+    } else {
+      if (sz !== 0 && tryStep(0, sz)) return true;
+      if (sx !== 0 && tryStep(sx, 0)) return true;
     }
-    return best;
+    return false;
+  }
+
+  private disengageAndReturnHome(): void {
+    this.combatTarget = null;
+    this.returning = true;
+    this.pathQueue.length = 0;
   }
 
   processAI(
@@ -165,25 +199,37 @@ export class Npc extends Entity {
     if (this.dead) return;
 
     // --- Returning to spawn ---
+    // Re-aggro mid-return: abandon the walk-home path and fall through to
+    // chase. Without this the NPC marches all the way back to spawn before
+    // it can react to the player re-entering range, which reads as the
+    // NPC ignoring you for a full retreat path.
+    if (this.returning && this.combatTarget) {
+      this.returning = false;
+      this.pathQueue.length = 0;
+    }
     if (this.returning) {
-      const dx = this.spawnX - this.position.x;
-      const dz = this.spawnZ - this.position.y;
-      if (Math.abs(dx) < 0.5 && Math.abs(dz) < 0.5) {
-        this.position.x = this.spawnX;
-        this.position.y = this.spawnZ;
+      // Already inside the wander box — drop returning and let normal AI
+      // (wander) take it from here so the NPC drifts naturally instead of
+      // marching to the exact spawn tile. wanderRange 0 collapses the box
+      // to the spawn point, so stationary NPCs still return precisely.
+      if (this.inWanderRange(this.position.x, this.position.y)) {
         this.returning = false;
         this.pathQueue.length = 0;
         return;
       }
       if (this.pathQueue.length === 0 && findPath) {
-        const path = findPath(this.position.x, this.position.y, this.spawnX, this.spawnZ);
+        // Aim for the nearest tile inside the wander box. findPath floors
+        // the goal, so unoffset bounds are correct for tile centers.
+        const wr = this.wanderRange;
+        const goalX = Math.max(this.spawnX - wr, Math.min(this.spawnX + wr, this.position.x));
+        const goalZ = Math.max(this.spawnZ - wr, Math.min(this.spawnZ + wr, this.position.y));
+        const path = findPath(this.position.x, this.position.y, goalX, goalZ);
         if (path.length > 0) {
           this.pathQueue = path.slice(0, Npc.NPC_MAX_PATH_LENGTH);
         } else {
-          this.position.x = this.spawnX;
-          this.position.y = this.spawnZ;
+          // Path blocked — drop the returning state so the NPC tries normal
+          // wander next tick instead of teleporting. No silent snap-to-spawn.
           this.returning = false;
-          this.pathQueue.length = 0;
           return;
         }
       }
@@ -201,80 +247,35 @@ export class Npc extends Entity {
       const dz = targetZ - this.position.y;
       const dist = Math.max(Math.abs(dx), Math.abs(dz));
 
-      if (!this.aggressive) {
-        if (dist > 1.5) {
-          this.combatTarget = null;
-          this.returning = true;
-          this.pathQueue.length = 0;
-        }
+      // Steady state during a fight: adjacent and swinging. Check before
+      // the leash math so the common case skips the abs/compare work.
+      // Aggressive/non-aggressive both route through here — the def flag
+      // gates proactive aggro acquisition (World.ts), not chase persistence
+      // once engaged. A non-aggressive NPC that's been hit retaliates and
+      // chases under the same spawn-anchored leash below.
+      if (dist <= Npc.MELEE_RANGE) {
+        this.pathQueue.length = 0;
         return;
       }
 
+      // Hard leash on target: target fled past 2004scape's 25-tile cap
+      // (measured from spawn). Soft leash on NPC: chase can't pull us
+      // more than RETREAT_MAX_RANGE from spawn.
       const dxSpawn = Math.abs(targetX - this.spawnX);
       const dzSpawn = Math.abs(targetZ - this.spawnZ);
       if (dxSpawn > Npc.RETREAT_INTERACTION_RANGE || dzSpawn > Npc.RETREAT_INTERACTION_RANGE) {
-        this.combatTarget = null;
-        this.returning = true;
-        this.pathQueue.length = 0;
+        this.disengageAndReturnHome();
         return;
       }
-
       const npcDxSpawn = Math.abs(this.position.x - this.spawnX);
       const npcDzSpawn = Math.abs(this.position.y - this.spawnZ);
       if (npcDxSpawn > Npc.RETREAT_MAX_RANGE || npcDzSpawn > Npc.RETREAT_MAX_RANGE) {
-        this.combatTarget = null;
-        this.returning = true;
-        this.pathQueue.length = 0;
+        this.disengageAndReturnHome();
         return;
       }
 
-      if (dist <= 1.5) {
-        this.pathQueue.length = 0;
-        return;
-      }
-
-      // Recompute path if needed
-      this.pathAge++;
-      const targetMoved = Math.abs(targetX - this.pathTargetX) + Math.abs(targetZ - this.pathTargetZ) > Npc.PATH_RECOMPUTE_THRESHOLD;
-      if (targetMoved || this.pathAge > Npc.PATH_STALE_TICKS || this.pathQueue.length === 0) {
-        if (findPath) {
-          const goal = this.findBestAdjacentTile(targetX, targetZ, isBlocked);
-          if (goal) {
-            const path = findPath(this.position.x, this.position.y, goal.x, goal.z);
-            if (path.length > 0) {
-              this.pathQueue = path.slice(0, Npc.NPC_MAX_PATH_LENGTH);
-              this.pathTargetX = targetX;
-              this.pathTargetZ = targetZ;
-              this.pathAge = 0;
-              this.pathFailCount = 0;
-            } else {
-              this.pathFailCount++;
-            }
-          } else {
-            this.pathFailCount++;
-          }
-        }
-        if (this.pathFailCount >= Npc.CHASE_GIVE_UP_FAILURES) {
-          this.combatTarget = null;
-          this.returning = true;
-          this.pathQueue.length = 0;
-          this.pathFailCount = 0;
-          return;
-        }
-      }
-
-      // Validate next step stays within leash
-      if (this.pathQueue.length > 0) {
-        const next = this.pathQueue[0];
-        if (Math.abs(next.x - this.spawnX) > Npc.RETREAT_MAX_RANGE ||
-            Math.abs(next.z - this.spawnZ) > Npc.RETREAT_MAX_RANGE) {
-          this.combatTarget = null;
-          this.returning = true;
-          this.pathQueue.length = 0;
-          return;
-        }
-        this.followPath(isBlocked, isWallBlocked);
-      }
+      this.pathQueue.length = 0;
+      this.naiveChaseStep(targetX, targetZ, isBlocked, isWallBlocked);
       return;
     }
 
@@ -298,8 +299,7 @@ export class Npc extends Entity {
           const tz = this.spawnZ + Math.round(Math.sin(angle) * dist);
           const gx = Math.floor(tx) + 0.5;
           const gz = Math.floor(tz) + 0.5;
-          if (Math.abs(gx - this.spawnX) > this.wanderRange + 0.5) continue;
-          if (Math.abs(gz - this.spawnZ) > this.wanderRange + 0.5) continue;
+          if (!this.inWanderRange(gx, gz)) continue;
           if (isBlocked(gx, gz)) continue;
           if (gx === this.position.x && gz === this.position.y) continue;
           const path = findPath(this.position.x, this.position.y, gx, gz);
@@ -307,8 +307,7 @@ export class Npc extends Entity {
           // Trim path to stay within wander range of spawn
           const trimmed: { x: number; z: number }[] = [];
           for (const wp of path) {
-            if (Math.abs(wp.x - this.spawnX) > this.wanderRange + 0.5 ||
-                Math.abs(wp.z - this.spawnZ) > this.wanderRange + 0.5) break;
+            if (!this.inWanderRange(wp.x, wp.z)) break;
             trimmed.push(wp);
           }
           if (trimmed.length > 0) {
@@ -340,8 +339,6 @@ export class Npc extends Entity {
     this.wanderCooldown = Math.floor(Math.random() * 15);
     this.returning = false;
     this.pathQueue.length = 0;
-    this.pathAge = 0;
-    this.pathFailCount = 0;
     this.heroPoints.clear();
     this.lastCombatTick = 0;
     this.lastAttackerId = -1;

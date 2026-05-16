@@ -1,62 +1,6 @@
 {
   "npcs": [
     {
-      "id": 1,
-      "npcId": 10,
-      "x": 115.5,
-      "z": 181.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 2,
-      "npcId": 10,
-      "x": 114.5,
-      "z": 175.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 3,
-      "npcId": 10,
-      "x": 114.5,
-      "z": 166.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 4,
-      "npcId": 10,
-      "x": 120.5,
-      "z": 170.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 5,
-      "npcId": 10,
-      "x": 126.5,
-      "z": 172.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 6,
-      "npcId": 10,
-      "x": 127.5,
-      "z": 179.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 7,
-      "npcId": 10,
-      "x": 121.5,
-      "z": 177.5,
-      "wanderRange": 3
-    },
-    {
-      "id": 8,
-      "npcId": 10,
-      "x": 130.5,
-      "z": 175.5,
-      "wanderRange": 3
-    },
-    {
       "id": 9,
       "npcId": 5,
       "x": 137.5,
@@ -194,6 +138,70 @@
       "z": 203.5,
       "wanderRange": 4,
       "aggressive": true
+    },
+    {
+      "id": 27,
+      "npcId": 10,
+      "x": 117.5,
+      "z": 171.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 28,
+      "npcId": 10,
+      "x": 124.5,
+      "z": 169.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 29,
+      "npcId": 10,
+      "x": 117.5,
+      "z": 165.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 30,
+      "npcId": 10,
+      "x": 116.5,
+      "z": 176.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 31,
+      "npcId": 10,
+      "x": 124.5,
+      "z": 179.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 32,
+      "npcId": 10,
+      "x": 129.5,
+      "z": 177.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 33,
+      "npcId": 10,
+      "x": 124.5,
+      "z": 172.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 34,
+      "npcId": 10,
+      "x": 121.5,
+      "z": 177.5,
+      "wanderRange": 6,
+      "aggressive": false
     }
   ],
   "objects": [],
