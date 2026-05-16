@@ -85,7 +85,7 @@ export class GameManager {
   private reconnectSleepTimer: number | null = null;
   private static readonly RECONNECT_MAX_MS = 22_000;
   private static readonly RECONNECT_DELAY_MS = 1_600;
-  private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 4_500;
+  private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
   private static readonly AUTHORITY_STALE_MS = 2_500;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
 
@@ -116,7 +116,7 @@ export class GameManager {
   private _loginProgress: LoadingProgressCallback | null = null;
   private _loginMapReady: Promise<void> = Promise.resolve();
   private _resolveLoginMapReady: (() => void) | null = null;
-  private _loginBootstrapPending: Set<'skills' | 'inventory' | 'equipment' | 'appearance'> | null = null;
+  private _loginBootstrapPending: Set<'skills' | 'inventory' | 'equipment'> | null = null;
   private _pendingLoginGearLoads: Promise<void>[] = [];
   private _loginReadySeq: number = 0;
   private _loginSettled: boolean = true;
@@ -630,13 +630,13 @@ export class GameManager {
     return Promise.all([characterReady, objectsReady, chunksReady]).then(() => {});
   }
 
-  private noteLoginBootstrapPacket(kind: 'skills' | 'inventory' | 'equipment' | 'appearance'): void {
+  private noteLoginBootstrapPacket(kind: 'skills' | 'inventory' | 'equipment'): void {
     const pending = this._loginBootstrapPending;
     if (!pending) return;
     pending.delete(kind);
-    const total = 4;
+    const total = 3;
     const done = total - pending.size;
-    this._loginProgress?.(0.82 + done * 0.03, `Loading character state (${done}/${total})`);
+    this._loginProgress?.(0.82 + done * 0.04, `Loading character state (${done}/${total})`);
     if (pending.size === 0) void this.tryResolveLoginReady(this._loginReadySeq);
   }
 
@@ -748,7 +748,7 @@ export class GameManager {
     return new Promise<void>((resolve) => {
       this._loginOkResolver = resolve;
       this._loginProgress = onProgress ?? null;
-      this._loginBootstrapPending = new Set(['skills', 'inventory', 'equipment', 'appearance']);
+      this._loginBootstrapPending = new Set(['skills', 'inventory', 'equipment']);
       this._pendingLoginGearLoads = [];
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
@@ -857,7 +857,7 @@ export class GameManager {
 
       this._loginOkResolver = onLoginOk;
       this._loginProgress = null;
-      this._loginBootstrapPending = new Set(['skills', 'inventory', 'equipment', 'appearance']);
+      this._loginBootstrapPending = new Set(['skills', 'inventory', 'equipment']);
       this._pendingLoginGearLoads = [];
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
@@ -1817,7 +1817,6 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
-      this.noteLoginBootstrapPacket('appearance');
       if (this.resendCachedAppearance()) return;
       this.openCharacterCreatorWhenReady();
     });
@@ -1871,7 +1870,6 @@ export class GameManager {
           this.cacheLocalAppearance(syncAppearance);
           if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
         }
-        this.noteLoginBootstrapPacket('appearance');
         return;
       }
 
