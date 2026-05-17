@@ -75,8 +75,7 @@
     "crushAttack": 14,
     "slashAttack": 8,
     "meleeStrength": 16,
-    "value": 100,
-    "model": "/assets/equipment/weapon/IronBattleaxe.glb"
+    "value": 100
   },
   {
     "id": 7,
@@ -970,8 +969,7 @@
     "attackSpeed": 6,
     "slashAttack": 9,
     "crushAttack": 18,
-    "meleeStrength": 21,
-    "model": "/assets/equipment/weapon/IronBattleaxe.glb"
+    "meleeStrength": 21
   },
   {
     "id": 78,
