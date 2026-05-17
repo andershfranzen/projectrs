@@ -50,12 +50,14 @@ import {
   localSidesToWorldSides,
   localAdjacentTilesOrdered,
   ASSET_TO_OBJECT_DEF,
+  NPC_COMBAT_ANIMATIONS,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
 // exactly what we need for the editor's per-spawn preview. The GLB + idle anim
 // are served from editor/public/Character models (symlinked to client's copy).
-import { CharacterEntity } from '@client/rendering/CharacterEntity'
+import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
+import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
 import { loadAssetModel, cloneAssetModelSync, warmAssetCache, makeGhostMaterial, initAssetLoader } from './assets-system/AssetLoader'
 import { getThumbnail } from './assets-system/ThumbnailRenderer'
@@ -274,12 +276,21 @@ function tuneModelLighting(model) {
   // for it to round-trip through load → in-memory → save. Matches the
   // SpawnEntry shape in shared/types.ts.
   const NPC_SPAWN_OVERRIDE_FIELDS = {
-    aggressive: v => v === true || v === false,
-    appearance: v => !!v,
-    equipment:  v => Array.isArray(v) && v.length === 10,
-    shop:       v => !!v,
-    dialogue:   v => !!v,
-    name:       v => !!v,
+    aggressive:   v => v === true || v === false,
+    appearance:   v => !!v,
+    equipment:    v => Array.isArray(v) && v.length === 10,
+    shop:         v => !!v,
+    dialogue:     v => !!v,
+    name:         v => !!v,
+    // Per-spawn stat overrides: object with optional numeric fields. Save
+    // when at least one field is set (an empty {} would still round-trip but
+    // bloats the JSON for nothing).
+    stats:        v => v && typeof v === 'object' && Object.keys(v).length > 0,
+    // Per-slot raw RGB overrides; same shape: keep non-empty objects.
+    customColors: v => v && typeof v === 'object' && Object.keys(v).length > 0,
+    // Forced attack animation name (e.g. 'attack_2h_smash'). Bypasses the
+    // weapon-driven picker on the client when set.
+    attackAnim:   v => typeof v === 'string' && v.length > 0,
   }
 
   function addNpcSpawn(input) {
@@ -356,6 +367,127 @@ function tuneModelLighting(model) {
     window._editorNpcPreviews = npcPreviews
   }
 
+  /** Lazy-loaded global gear rigging overrides (server/data/gear-overrides.json).
+   *  Maps itemId → { boneName?, localPosition?, localRotation?, scale?, file? }.
+   *  Mirrors GameManager.gearOverrides — same JSON file, same shape: an OBJECT
+   *  keyed by stringified item id (NOT an array). Loading it as an array
+   *  silently produced an empty Map, so `/geardebug` rigging never applied
+   *  to the editor preview. */
+  let editorGearOverrides = null
+  let editorGearOverridesPromise = null
+  function ensureGearOverrides() {
+    if (editorGearOverrides) return Promise.resolve(editorGearOverrides)
+    if (editorGearOverridesPromise) return editorGearOverridesPromise
+    editorGearOverridesPromise = fetch('/data/gear-overrides.json')
+      .then(r => r.ok ? r.json() : {})
+      .then(obj => {
+        const map = new Map()
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          for (const [id, ov] of Object.entries(obj)) map.set(Number(id), ov)
+        }
+        editorGearOverrides = map
+        return map
+      })
+      .catch(() => (editorGearOverrides = new Map()))
+    return editorGearOverridesPromise
+  }
+
+  /** Invalidate the cached overrides + every preview's gear so the next
+   *  ensureGearOverrides() refetches from disk. Exposed on window in dev
+   *  for the "re-rig and reload" workflow: edit in /geardebug → save →
+   *  call editorReloadGearOverrides() in devtools → preview picks up
+   *  the new positions without a page refresh. */
+  function reloadGearOverrides() {
+    editorGearOverrides = null
+    editorGearOverridesPromise = null
+    for (const [id, entry] of npcPreviews) {
+      const spawn = npcSpawns.find(s => s.id === id)
+      if (!spawn) continue
+      // Force detach so applyEquipmentToPreview re-attaches with new offsets
+      // (its short-circuit "already wearing this item" check would otherwise
+      // skip the reload).
+      for (const slot of EDITOR_EQUIP_SLOT_ORDER) entry.entity.detachGear(slot)
+      void applyEquipmentToPreview(spawn, entry)
+    }
+  }
+  if (import.meta.env.DEV) window.editorReloadGearOverrides = reloadGearOverrides
+
+  /** Build the same GearDef shape GameManager builds, given an item def and
+   *  a slot name. Mirrors applyGearToCharacter.buildDef so the preview rigs
+   *  gear the same way the live game does. */
+  function buildGearDef(slotName, itemId) {
+    const boneConfig = EQUIP_SLOT_BONES[slotName]
+    if (!boneConfig) return null
+    const override = editorGearOverrides?.get(itemId)
+    const itemDef = itemDefs.find(d => d.id === itemId)
+    let gearFile
+    if (override?.file) {
+      gearFile = override.file
+    } else if (itemDef?.model) {
+      gearFile = itemDef.model.startsWith('/')
+        ? itemDef.model
+        : `/assets/equipment/${slotName}/${itemDef.model}`
+    } else {
+      gearFile = `/assets/equipment/${slotName}/${itemId}.glb`
+    }
+    return {
+      itemId,
+      file: gearFile,
+      boneName: override?.boneName ?? boneConfig.boneName,
+      localPosition: override?.localPosition ?? boneConfig.localPosition,
+      localRotation: override?.localRotation ?? boneConfig.localRotation,
+      scale: override?.scale ?? boneConfig.scale,
+      centerOrigin: override?.centerOrigin ?? false,
+    }
+  }
+
+  /** PLAYER_REMOTE_EQUIPMENT index order — matches both
+   *  EQUIP_SLOT_NAMES (client) and the spawn.equipment array stored on disk. */
+  const EDITOR_EQUIP_SLOT_ORDER = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape']
+
+  /** Apply (or re-apply) the spawn's equipment array to its preview entity.
+   *  Bone-attached gear (weapons, helmets, shields, accessories) attaches
+   *  via the standard attachGear path. Skinned armor (body/legs/etc.) is
+   *  skipped here — its retargeting pipeline lives in GameManager and isn't
+   *  available standalone yet. The Gear-tab hint notes this so it's not
+   *  surprising. */
+  async function applyEquipmentToPreview(spawn, entry) {
+    if (!Array.isArray(spawn.equipment)) {
+      // No equipment array — detach anything currently shown.
+      for (const slot of EDITOR_EQUIP_SLOT_ORDER) entry.entity.detachGear(slot)
+      return
+    }
+    await ensureGearOverrides()
+    if (!editorGearOverrides) return // network failed silently; nothing to apply
+    // Fetch item defs if the user opened Gear tab before they were loaded.
+    if (itemDefs.length === 0) await fetchItemDefsOnce()
+    if (npcPreviews.get(spawn.id) !== entry) return  // stale callback
+
+    for (let i = 0; i < EDITOR_EQUIP_SLOT_ORDER.length; i++) {
+      const slot = EDITOR_EQUIP_SLOT_ORDER[i]
+      const itemId = spawn.equipment[i] ?? 0
+      if (itemId <= 0) {
+        entry.entity.detachGear(slot)
+        continue
+      }
+      // Already wearing this exact item? Skip re-load (loadGearTemplate
+      // is ~50ms per GLB).
+      if (entry.entity.getGearItemId(slot) === itemId) continue
+      const def = buildGearDef(slot, itemId)
+      if (!def) continue
+      try {
+        const tmpl = await loadGearTemplate(scene, def)
+        if (!tmpl) continue
+        if (npcPreviews.get(spawn.id) !== entry) return
+        entry.entity.attachGear(slot, itemId, tmpl)
+      } catch (e) {
+        // Skinned armor (body GLBs with a skeleton) fails here — log quietly
+        // so a flooded console doesn't drown out actual issues.
+        console.warn(`[editor-gear] couldn't preview ${slot}/${itemId}: ${e?.message ?? e}`)
+      }
+    }
+  }
+
   function ensureNpcPreview(spawn) {
     if (!spawn || !spawn.appearance) {
       disposeNpcPreview(spawn)
@@ -379,10 +511,13 @@ function tuneModelLighting(model) {
     maskPlacedObjectsForPreview(spawn, entry)
     // applyAppearance idempotently re-derives material colors + hair mesh
     // visibility from the appearance struct; safe to call on every edit.
+    // Per-spawn raw RGB overrides (spawn.customColors) take precedence over
+    // palette indices — pass them through so the preview matches the live game.
     entry.entity.whenReady().then(() => {
-      if (npcPreviews.get(spawn.id) === entry) {
-        entry.entity.applyAppearance(spawn.appearance)
-      }
+      if (npcPreviews.get(spawn.id) !== entry) return
+      entry.entity.applyAppearance(spawn.appearance, spawn.customColors ?? null)
+      // Now load gear. Fire-and-forget — errors handled inside.
+      void applyEquipmentToPreview(spawn, entry)
     })
   }
 
@@ -1819,6 +1954,42 @@ let paintBrushRadius = 1
     }
   }
 
+  /** Friendly labels for the attack-anim dropdown. Only animation names whose
+   *  GLB is actually loaded for combat NPCs (NPC_COMBAT_ANIMATIONS) belong
+   *  here — other names would just silently fail to play. */
+  const ATTACK_ANIM_LABELS = {
+    attack_punch:    'Punch',
+    attack_slash:    'Slash',
+    attack_1h_slash: '1H slash',
+    attack_2h_slash: '2H slash',
+    attack_2h_smash: '2H smash',
+    stab:            'Stab',
+    kick:            'Kick',
+  }
+  const ATTACK_ANIM_NAMES = NPC_COMBAT_ANIMATIONS
+    .map(a => a.name)
+    .filter(n => n !== 'idle' && n !== 'walk')
+
+  /** Clone the selected spawn, place it one tile east, select the copy.
+   *  structuredClone deep-copies override fields (stats, customColors,
+   *  appearance, equipment, shop, dialogue) so edits to the duplicate
+   *  don't leak back to the original. */
+  function duplicateSelectedNpcSpawn() {
+    if (!selectedNpcSpawn) return
+    pushUndoState('spawns')
+    const src = selectedNpcSpawn
+    const copy = structuredClone(src)
+    // structuredClone preserves `id`; strip it so addNpcSpawn assigns a fresh one.
+    delete copy.id
+    copy.x = src.x + 1
+    copy.z = src.z
+    const created = addNpcSpawn(copy)
+    selectedNpcSpawn = created
+    rebuildNpcSpawnMeshes()
+    refreshNpcSpawnList()
+    renderNpcInspector()
+  }
+
   function renderSpawnTab(root) {
     const spawn = selectedNpcSpawn
     const def = findSelectedDef()
@@ -1829,19 +2000,43 @@ let paintBrushRadius = 1
       : !!def?.aggressive
     const nameValue = spawn?.name ?? ''
     const defName = def?.name ?? ''
+    const curAnim = spawn?.attackAnim ?? ''
+    const animOptions = ATTACK_ANIM_NAMES
+      .map(n => `<option value="${n}" ${n === curAnim ? 'selected' : ''}>${ATTACK_ANIM_LABELS[n] ?? n}</option>`)
+      .join('')
+    const posX = spawn?.x ?? 0
+    const posZ = spawn?.z ?? 0
     root.innerHTML = `
       <label style="font-size:11px;color:rgba(255,255,255,0.45);">Name (override)</label>
       <input id="spawnNameInput" type="text" value="${nameValue.replace(/"/g, '&quot;')}" placeholder="${defName.replace(/"/g, '&quot;') || 'defaults to NPC type name'}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'} />
       <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Per-spawn name. Leave blank to inherit "${defName}".</div>
+      <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Position</label>
+      <div style="display:flex;gap:5px;margin-top:3px;">
+        <div style="flex:1;">
+          <div style="font-size:10px;color:rgba(255,255,255,0.45);">X</div>
+          <input id="spawnXInput" type="number" step="0.5" value="${posX.toFixed(1)}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:10px;color:rgba(255,255,255,0.45);">Z</div>
+          <input id="spawnZInput" type="number" step="0.5" value="${posZ.toFixed(1)}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
+        </div>
+      </div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">${wander}</span></label>
       <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="${wander}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
       <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);display:flex;align-items:center;gap:6px;cursor:pointer;">
         <input id="aggressiveCheckbox" type="checkbox" ${aggressiveEffective ? 'checked' : ''} ${spawn ? '' : 'disabled'} />
         Aggressive (per-spawn override)
       </label>
+      <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Attack animation</label>
+      <select id="spawnAttackAnimSelect" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'}>
+        <option value="" ${curAnim ? '' : 'selected'}>(weapon-driven)</option>
+        ${animOptions}
+      </select>
+      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Forces a swing animation regardless of equipped weapon. Combat NPCs only.</div>
+      <button id="duplicateSpawnBtn" style="width:100%;margin-top:10px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" ${spawn ? '' : 'disabled'}>Duplicate spawn (Shift+D)</button>
       <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">
-        ${spawn ? 'Editing the selected spawn.' : 'Click a placed NPC to edit its spawn.'}
-        Click empty tile to place · Shift+click to remove.
+        ${spawn ? 'Editing the selected spawn.' : 'Click a placed NPC to edit its spawn.'}<br>
+        Click empty tile to place · Shift+click to remove · Ctrl+click to move selected.
       </div>
     `
     root.querySelector('#spawnNameInput')?.addEventListener('input', (e) => {
@@ -1868,13 +2063,94 @@ let paintBrushRadius = 1
         refreshNpcSpawnList()
       }
     })
+    root.querySelector('#spawnAttackAnimSelect')?.addEventListener('change', (e) => {
+      if (selectedNpcSpawn) {
+        const v = e.target.value
+        if (v) selectedNpcSpawn.attackAnim = v
+        else delete selectedNpcSpawn.attackAnim
+      }
+    })
+    // Position inputs — `change` (not `input`) fires on blur/Enter only, so the
+    // expensive rebuildNpcSpawnMeshes runs once per edit instead of every keystroke.
+    const updatePosition = (axis, raw) => {
+      if (!selectedNpcSpawn) return
+      const v = parseFloat(raw)
+      if (!Number.isFinite(v)) return
+      selectedNpcSpawn[axis] = v
+      rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+    }
+    root.querySelector('#spawnXInput')?.addEventListener('change', (e) => updatePosition('x', e.target.value))
+    root.querySelector('#spawnZInput')?.addEventListener('change', (e) => updatePosition('z', e.target.value))
+    root.querySelector('#duplicateSpawnBtn')?.addEventListener('click', duplicateSelectedNpcSpawn)
   }
 
+  /** Combat-stat keys eligible for per-spawn override. Matches the
+   *  NpcStatOverrides shape in shared/types.ts. wanderRange is intentionally
+   *  out — it already has its own per-spawn field on the Spawn tab. */
+  const SPAWN_STAT_KEYS = ['health', 'attack', 'strength', 'defence', 'attackSpeed', 'respawnTime']
+
   function renderStatsTab(root, def) {
+    root.innerHTML = ''
+    const spawn = selectedNpcSpawn
     if (!def) {
-      root.innerHTML = `<div class="hint">Select an NPC spawn (or pick a type) to edit shared stats.</div>`
+      root.innerHTML = `<div class="hint">Select an NPC spawn (or pick a type) to edit stats.</div>`
       return
     }
+    // Mode toggle: edit the def (affects every spawn) or this spawn's stats
+    // override (one placement only). Mirrors the Shop / Dialogue tabs.
+    const overrideActive = !!(spawn && spawn.stats && Object.keys(spawn.stats).length > 0)
+    appendOverrideModeToggle(root, {
+      overrideActive,
+      hasSpawn: !!spawn,
+      onSelectDef: () => {
+        if (spawn) delete spawn.stats
+        renderStatsTab(root, def)
+        refreshNpcSpawnList()
+      },
+      onSelectOverride: () => {
+        if (spawn && !spawn.stats) spawn.stats = {}
+        renderStatsTab(root, def)
+        refreshNpcSpawnList()
+      },
+    })
+
+    if (overrideActive) {
+      // Per-spawn override editor. Each row: label, the override input (blank
+      // = inherit from def), and a small "× clear" button.
+      const banner = document.createElement('div')
+      banner.style.cssText = 'font-size:10px;color:#44ccff;margin-bottom:6px;'
+      banner.textContent = `Override for this spawn — leave a field blank to inherit "${def.name}".`
+      root.appendChild(banner)
+      for (const key of SPAWN_STAT_KEYS) {
+        const row = document.createElement('div')
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;'
+        const cur = spawn.stats[key]
+        const placeholder = def[key] ?? 0
+        row.innerHTML = `
+          <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${key}</span>
+          <input type="number" min="0" step="1" value="${cur ?? ''}" placeholder="${placeholder}"
+                 style="width:70px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+          <button title="Inherit from def" style="font-size:10px;padding:2px 6px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">×</button>
+        `
+        const input = row.querySelector('input')
+        input.addEventListener('input', () => {
+          const v = input.value.trim()
+          if (v === '') delete spawn.stats[key]
+          else spawn.stats[key] = parseFloat(v) || 0
+          refreshNpcSpawnList()
+        })
+        row.querySelector('button').addEventListener('click', () => {
+          delete spawn.stats[key]
+          input.value = ''
+          refreshNpcSpawnList()
+        })
+        root.appendChild(row)
+      }
+      return
+    }
+
+    // Shared-def editor (original behavior).
     const numField = (key, label, step = 1, min = 0) => `
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${label}</span>
@@ -1882,7 +2158,8 @@ let paintBrushRadius = 1
                style="width:70px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
       </div>
     `
-    root.innerHTML = `
+    const shared = document.createElement('div')
+    shared.innerHTML = `
       <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${def.name}".</div>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
@@ -1908,7 +2185,8 @@ let paintBrushRadius = 1
         Stationary (skip walk anim loading)
       </label>
     `
-    for (const input of root.querySelectorAll('[data-def-key]')) {
+    root.appendChild(shared)
+    for (const input of shared.querySelectorAll('[data-def-key]')) {
       // 'input' fires every keystroke; 'change' only fires on blur for
       // number/text. Using 'input' makes the Save NPC defs button light up
       // the moment the user starts typing so it's obvious there are unsaved
@@ -1962,6 +2240,60 @@ let paintBrushRadius = 1
     return wrap
   }
 
+  /** Build a "Custom RGB" picker row paired with a palette swatch row.
+   *  When spawn.customColors[slot] is set, it takes precedence over the
+   *  palette index in CharacterEntity.applyAppearance. `slot` is an
+   *  AppearanceColorSlot key (e.g. 'shirtColor') — same indexer as the
+   *  appearance struct itself. */
+  function customRgbRow(spawn, slot) {
+    const wrap = document.createElement('div')
+    wrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin:-2px 0 6px 0;'
+    const cur = spawn.customColors?.[slot]
+    const hex = cur
+      ? `#${[cur[0], cur[1], cur[2]].map(v => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0')).join('')}`
+      : '#888888'
+    const cb = document.createElement('input')
+    cb.type = 'checkbox'
+    cb.checked = !!cur
+    cb.title = 'Custom RGB overrides the palette pick'
+    const picker = document.createElement('input')
+    picker.type = 'color'
+    picker.value = hex
+    picker.disabled = !cb.checked
+    picker.style.cssText = 'width:32px;height:18px;padding:0;border:1px solid #444;background:transparent;cursor:pointer;'
+    const lbl = document.createElement('span')
+    lbl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.55);'
+    lbl.textContent = 'Custom RGB'
+    wrap.appendChild(cb)
+    wrap.appendChild(picker)
+    wrap.appendChild(lbl)
+
+    const writeFromPicker = () => {
+      const h = picker.value.replace('#', '')
+      const r = parseInt(h.slice(0, 2), 16) / 255
+      const g = parseInt(h.slice(2, 4), 16) / 255
+      const b = parseInt(h.slice(4, 6), 16) / 255
+      if (!spawn.customColors) spawn.customColors = {}
+      spawn.customColors[slot] = [r, g, b]
+      ensureNpcPreview(spawn)
+    }
+    cb.addEventListener('change', () => {
+      picker.disabled = !cb.checked
+      if (cb.checked) {
+        writeFromPicker()
+      } else if (spawn.customColors) {
+        delete spawn.customColors[slot]
+        // Strip empty objects so they don't bloat the saved JSON.
+        if (Object.keys(spawn.customColors).length === 0) delete spawn.customColors
+        ensureNpcPreview(spawn)
+      }
+    })
+    picker.addEventListener('input', () => {
+      if (cb.checked) writeFromPicker()
+    })
+    return wrap
+  }
+
   function renderAppearanceTab(root) {
     root.innerHTML = ''
     const spawn = selectedNpcSpawn
@@ -1983,6 +2315,9 @@ let paintBrushRadius = 1
         ensureNpcPreview(spawn)
       } else {
         spawn.appearance = undefined
+        // Custom RGB only makes sense alongside the palette appearance; drop
+        // it so we don't leak a colors object onto a spawn with no rig override.
+        delete spawn.customColors
         disposeNpcPreview(spawn)
       }
       // Swap the cylinder marker ↔ ground disc so the preview character isn't
@@ -2006,12 +2341,20 @@ let paintBrushRadius = 1
       renderAppearanceTab(root)
       refreshNpcSpawnList()
     }
+    // Each row: palette swatches + a Custom RGB row beneath. Custom RGB,
+    // when toggled on, wins over the palette pick in CharacterEntity.applyAppearance.
     root.appendChild(appearanceSwatchRow('Skin', SKIN_COLORS, spawn.appearance.skinColor, v => setField('skinColor', v)))
+    root.appendChild(customRgbRow(spawn, 'skinColor'))
     root.appendChild(appearanceSwatchRow('Shirt', SHIRT_COLORS, spawn.appearance.shirtColor, v => setField('shirtColor', v)))
+    root.appendChild(customRgbRow(spawn, 'shirtColor'))
     root.appendChild(appearanceSwatchRow('Pants', PANTS_COLORS, spawn.appearance.pantsColor, v => setField('pantsColor', v)))
+    root.appendChild(customRgbRow(spawn, 'pantsColor'))
     root.appendChild(appearanceSwatchRow('Shoes', SHOES_COLORS, spawn.appearance.shoesColor, v => setField('shoesColor', v)))
+    root.appendChild(customRgbRow(spawn, 'shoesColor'))
     root.appendChild(appearanceSwatchRow('Belt', BELT_COLORS, spawn.appearance.beltColor, v => setField('beltColor', v)))
+    root.appendChild(customRgbRow(spawn, 'beltColor'))
     root.appendChild(appearanceSwatchRow('Hair color', HAIR_COLORS, spawn.appearance.hairColor, v => setField('hairColor', v)))
+    root.appendChild(customRgbRow(spawn, 'hairColor'))
     // Hair style is just an index 0..HAIR_STYLE_COUNT — no palette, use a slider.
     const hairWrap = document.createElement('div')
     hairWrap.style.cssText = 'margin-bottom:6px;'
@@ -2027,6 +2370,61 @@ let paintBrushRadius = 1
     root.appendChild(hairWrap)
   }
 
+  /** PLAYER_REMOTE_EQUIPMENT layout (index → equipSlot). Grouped for visual
+   *  hierarchy in the Gear tab. `groupLabel` collapses adjacent rows with the
+   *  same group into a single section header. */
+  const EQUIP_SLOTS = [
+    { label: 'Weapon', slot: 'weapon', group: 'Weapons' },
+    { label: 'Shield', slot: 'shield', group: 'Weapons' },
+    { label: 'Head',   slot: 'head',   group: 'Armor'   },
+    { label: 'Body',   slot: 'body',   group: 'Armor'   },
+    { label: 'Legs',   slot: 'legs',   group: 'Armor'   },
+    { label: 'Hands',  slot: 'hands',  group: 'Armor'   },
+    { label: 'Feet',   slot: 'feet',   group: 'Armor'   },
+    { label: 'Neck',   slot: 'neck',   group: 'Accessories' },
+    { label: 'Ring',   slot: 'ring',   group: 'Accessories' },
+    { label: 'Cape',   slot: 'cape',   group: 'Accessories' },
+  ]
+
+  /** Build (or rebuild if stale) a per-slot datalist filtered to items whose
+   *  ItemDef.equipSlot matches. Reuses the same pattern as
+   *  `ensureShopItemDatalist` but ten datalists instead of one — so each
+   *  slot's typeahead only suggests items the slot can actually wear.
+   *  Idempotent: skips work when the count matches. */
+  function ensureEquipItemDatalists() {
+    for (const { slot } of EQUIP_SLOTS) {
+      const id = `equipItemDatalist_${slot}`
+      const matches = itemDefs.filter(d => d.equipSlot === slot)
+      let dl = document.getElementById(id)
+      if (dl && dl.childElementCount === matches.length) continue
+      if (!dl) {
+        dl = document.createElement('datalist')
+        dl.id = id
+        document.body.appendChild(dl)
+      }
+      dl.innerHTML = ''
+      const sorted = [...matches].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      for (const d of sorted) {
+        const opt = document.createElement('option')
+        opt.value = `${d.name} (${d.id})`
+        dl.appendChild(opt)
+      }
+    }
+  }
+
+  /** Refresh the editor preview's gear after the user edits a slot. Only
+   *  re-applies gear if the preview entity already exists (i.e. the spawn
+   *  has an appearance override). Without an appearance the spawn renders
+   *  as a cylinder marker, which can't wear anything. */
+  function refreshNpcPreviewGear(spawn) {
+    const entry = npcPreviews.get(spawn?.id)
+    if (!entry) return
+    entry.entity.whenReady().then(() => {
+      if (npcPreviews.get(spawn.id) !== entry) return
+      void applyEquipmentToPreview(spawn, entry)
+    })
+  }
+
   function renderEquipmentTab(root) {
     root.innerHTML = ''
     const spawn = selectedNpcSpawn
@@ -2034,44 +2432,87 @@ let paintBrushRadius = 1
       root.innerHTML = `<div class="hint">Click an NPC spawn to edit equipment.</div>`
       return
     }
-    const toggle = document.createElement('label')
-    toggle.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.85);display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:6px;'
-    const cb = document.createElement('input')
-    cb.type = 'checkbox'
-    cb.checked = Array.isArray(spawn.equipment) && spawn.equipment.length === 10
-    toggle.appendChild(cb)
-    toggle.appendChild(document.createTextNode('Override equipment for this spawn'))
-    root.appendChild(toggle)
-    cb.addEventListener('change', () => {
-      spawn.equipment = cb.checked ? [0,0,0,0,0,0,0,0,0,0] : undefined
-      renderEquipmentTab(root)
-    })
-    if (!Array.isArray(spawn.equipment)) {
-      const hint = document.createElement('div')
-      hint.className = 'hint'
-      hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.35);'
-      hint.textContent = 'Equipment overrides require Appearance override too (gear renders only on 3D-character NPCs).'
-      root.appendChild(hint)
-      return
+    // Lazy-load item defs. CRITICAL: only schedule a re-render if defs
+    // weren't loaded yet — otherwise the Promise resolves immediately, the
+    // callback re-enters renderEquipmentTab, schedules another microtask,
+    // and the tab is in a tight infinite render loop that freezes Chrome.
+    if (itemDefs.length === 0) {
+      fetchItemDefsOnce().then(() => {
+        if (selectedNpcSpawn !== spawn) return
+        ensureEquipItemDatalists()
+        const activeTab = sidebar.querySelector('.npc-tab.active-tool')?.dataset?.tab
+        if (activeTab === 'equipment') renderEquipmentTab(root)
+      })
+    } else {
+      ensureEquipItemDatalists()
     }
-    const SLOT_LABELS = ['Weapon','Shield','Head','Body','Legs','Neck','Ring','Hands','Feet','Cape']
-    for (let i = 0; i < 10; i++) {
-      const row = document.createElement('div')
-      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:3px;'
-      row.innerHTML = `
-        <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${SLOT_LABELS[i]}</span>
-        <input type="number" min="0" value="${spawn.equipment[i] ?? 0}" style="width:80px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
-      `
+    // Auto-init the equipment array on first visit — no more "tick this
+    // confusing override box first" friction. An array of zeros gets stripped
+    // by serializeNpcSpawns (override predicate requires a non-empty array
+    // with at least one non-zero, see NPC_SPAWN_OVERRIDE_FIELDS).
+    if (!Array.isArray(spawn.equipment) || spawn.equipment.length !== 10) {
+      spawn.equipment = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    }
+
+    // Header line — anchors what the user is editing.
+    const header = document.createElement('div')
+    header.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.6);margin-bottom:8px;line-height:1.4;'
+    header.innerHTML = 'Pick items to equip on this spawn. Type to filter — only items that fit each slot appear in the dropdown. Live preview updates on commit.'
+    root.appendChild(header)
+
+    // Slot rows, grouped. Visual separator + group header before each new group.
+    let lastGroup = null
+    for (let i = 0; i < EQUIP_SLOTS.length; i++) {
+      const { label, slot, group } = EQUIP_SLOTS[i]
+      if (group !== lastGroup) {
+        const groupHeader = document.createElement('div')
+        groupHeader.style.cssText = 'font-size:10px;color:#88aaff;text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 4px 0;padding-bottom:2px;border-bottom:1px solid #2a3a55;'
+        groupHeader.textContent = group
+        root.appendChild(groupHeader)
+        lastGroup = group
+      }
       const slotIdx = i
-      row.querySelector('input').addEventListener('change', (e) => {
-        spawn.equipment[slotIdx] = parseInt(e.target.value) || 0
+      const curId = spawn.equipment[slotIdx] ?? 0
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;'
+      row.innerHTML = `
+        <span style="flex:0 0 50px;font-size:11px;color:rgba(255,255,255,0.75);">${label}</span>
+        <input list="equipItemDatalist_${slot}" type="text" value="${curId > 0 ? formatItemDisplay(curId).replace(/"/g, '&quot;') : ''}"
+               placeholder="(empty — type to search)"
+               style="flex:1;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 6px;font-size:11px;min-width:0;" />
+        <button title="Clear slot" style="font-size:12px;padding:2px 8px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">×</button>
+      `
+      const input = row.querySelector('input')
+      const clearBtn = row.querySelector('button')
+      const commit = () => {
+        const id = parseItemIdFromDisplay(input.value)
+        spawn.equipment[slotIdx] = id
+        // Snap to canonical "Name (ID)" form on resolve so the user sees the
+        // matched item. Blank stays blank.
+        input.value = id > 0 ? formatItemDisplay(id) : ''
+        const ok = id === 0 || itemDefs.some(d => d.id === id)
+        input.style.borderColor = ok ? '#444' : '#a55'
+        refreshNpcPreviewGear(spawn)
+      }
+      input.addEventListener('change', commit)
+      clearBtn.addEventListener('click', () => {
+        spawn.equipment[slotIdx] = 0
+        input.value = ''
+        input.style.borderColor = '#444'
+        refreshNpcPreviewGear(spawn)
       })
       root.appendChild(row)
     }
+
     const hint = document.createElement('div')
     hint.className = 'hint'
-    hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;'
-    hint.textContent = 'Item IDs — see server/data/items.json. 0 = empty slot.'
+    hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-top:10px;line-height:1.4;padding-top:8px;border-top:1px solid #333;'
+    hint.innerHTML = `
+      <b>Preview:</b> ${spawn.appearance
+        ? 'weapons, shields, helmets, and accessories show on the editor character above.'
+        : 'enable an <i>appearance</i> override (Look tab) to see the gear preview.'}<br>
+      Body/legs/hands/feet plate armor uses skinned rigging and only renders in-game.
+    `
     root.appendChild(hint)
   }
 
@@ -7613,6 +8054,24 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         }
         return
       }
+      // Ctrl+click an empty tile = move the currently selected spawn here.
+      // We dispose+re-create the 3D character preview at the new tile so the
+      // GLB doesn't have to be reloaded from disk.
+      if (event.ctrlKey && selectedNpcSpawn) {
+        const picked = pickNpcSpawn(event)
+        // If Ctrl+click lands ON a spawn, treat it as a normal select instead
+        // of moving onto the clicked one.
+        if (!picked) {
+          pushUndoState('spawns')
+          selectedNpcSpawn.x = tile.x + 0.5
+          selectedNpcSpawn.z = tile.z + 0.5
+          rebuildNpcSpawnMeshes()
+          refreshNpcSpawnList()
+          if (typeof renderNpcInspector === 'function') renderNpcInspector()
+          updateToolUI()
+          return
+        }
+      }
       // Normal click: check if clicking existing spawn first
       const picked = pickNpcSpawn(event)
       if (picked) {
@@ -8219,6 +8678,17 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
     if ((event.ctrlKey && key === 'y') || (event.ctrlKey && event.shiftKey && key === 'z')) {
       event.preventDefault()
       await redo()
+      return
+    }
+
+    // Shift+D on an NPC spawn clones it (mirrors the placed-object duplicate
+    // pattern). Object/plane duplication on plain D fires below — we only
+    // intercept when the NPC spawn tool is active and a spawn is selected,
+    // so the other tools' Shift+D (right-clone for objects) is unaffected.
+    if (key === 'd' && event.shiftKey && !event.ctrlKey && !event.altKey
+        && state.tool === ToolMode.NPC_SPAWN && selectedNpcSpawn) {
+      event.preventDefault()
+      duplicateSelectedNpcSpawn()
       return
     }
 

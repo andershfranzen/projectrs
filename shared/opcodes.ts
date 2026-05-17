@@ -180,6 +180,21 @@ export enum ServerOpcode {
    *  the NPC should face a target (talker / attacker) — 2004scape
    *  NPC.faceEntity equivalent. */
   NPC_FACING = 85,
+  /** Per-spawn raw RGB color overrides for a customizable NPC.
+   *  Layout: [npcEntityId,
+   *     skinR, skinG, skinB,    shirtR, shirtG, shirtB,
+   *     pantsR, pantsG, pantsB, shoesR, shoesG, shoesB,
+   *     beltR, beltG, beltB,    hairR, hairG, hairB ].
+   *  Each component is quantized as round(value * 1000), 0..1000. A value of
+   *  -1 in the R channel means "no override for this slot" (use the palette
+   *  index from NPC_APPEARANCE). Broadcast on chunk-entry only — siblings of
+   *  NPC_APPEARANCE/NPC_EQUIPMENT. */
+  NPC_CUSTOM_COLORS = 86,
+  /** Per-spawn attack-animation override. String packet — animation name
+   *  (e.g. `attack_2h_smash`) followed by [npcEntityId]. When present,
+   *  `getPlayerAttackAnimName` returns this string directly instead of
+   *  deriving from the NPC's weapon. Absent → default weapon-driven pick. */
+  NPC_ATTACK_ANIM = 87,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].

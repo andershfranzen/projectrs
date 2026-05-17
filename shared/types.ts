@@ -368,7 +368,52 @@ export interface SpawnEntry {
   shop?: ShopDef;
   /** Per-spawn dialogue override. When set, fully replaces NpcDef.dialogue. */
   dialogue?: DialogueTree;
+  /** Per-spawn combat stat overrides. Any field set here wins over the
+   *  NpcDef's value (HP, attack, defence, strength, attackSpeed, respawnTime).
+   *  Missing fields fall through to the def. Lets a single "Guard" def spawn
+   *  as a weak militia in one place and an elite captain in another. */
+  stats?: NpcStatOverrides;
+  /** Per-spawn raw RGB color overrides. Each slot, when set, replaces the
+   *  palette-index lookup in CharacterEntity.applyAppearance. Only consulted
+   *  when `appearance` is set (gear/colors only apply to CharacterEntity-rendered
+   *  NPCs). Values are linear 0..1 RGB triplets. */
+  customColors?: CustomColors;
+  /** Per-spawn attack animation override. When set, this NPC's swing uses
+   *  this animation name (e.g. `attack_2h_smash`, `kick`, `stab`) regardless
+   *  of the weapon equipped. Useful for unarmed bruisers, scripted bosses,
+   *  or any NPC whose visual flair shouldn't be derived from inventory.
+   *  Must match a name loaded by EntityManager — the NPC_COMBAT_ANIMATIONS
+   *  list in shared/character.ts. CharacterEntity-rendered NPCs only. */
+  attackAnim?: string;
 }
+
+export interface NpcStatOverrides {
+  health?: number;
+  attack?: number;
+  defence?: number;
+  strength?: number;
+  attackSpeed?: number;
+  respawnTime?: number;
+}
+
+/** Per-slot raw RGB. Keys mirror `AppearanceColorSlot` so callers can index
+ *  directly with the same slot string used everywhere else (`appearance[slot]`,
+ *  `APPEARANCE_MATERIAL_MAP[slot]`, …) — no mapping function needed. */
+export interface CustomColors {
+  skinColor?:  [number, number, number];
+  shirtColor?: [number, number, number];
+  pantsColor?: [number, number, number];
+  shoesColor?: [number, number, number];
+  beltColor?:  [number, number, number];
+  hairColor?:  [number, number, number];
+}
+
+/** Canonical wire order for `NPC_CUSTOM_COLORS`. Single source of truth shared
+ *  by the server encoder and the client decoder, so adding a new slot is one
+ *  edit instead of three. */
+export const CUSTOM_COLOR_SLOTS: readonly (keyof CustomColors)[] = [
+  'skinColor', 'shirtColor', 'pantsColor', 'shoesColor', 'beltColor', 'hairColor',
+] as const;
 
 export interface ObjectSpawnEntry {
   objectId: number;

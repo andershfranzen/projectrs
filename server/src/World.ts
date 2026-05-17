@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -342,7 +342,9 @@ export class World {
       const effDialogue = spawn.dialogue ?? npcDef.dialogue ?? null;
       const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange,
         spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null,
-        effShop, effDialogue, spawn.name ?? null);
+        effShop, effDialogue, spawn.name ?? null,
+        spawn.stats ?? null, spawn.customColors ?? null,
+        spawn.attackAnim ?? null);
       npc.currentMapLevel = mapId;
       this.npcs.set(npc.id, npc);
       cm.addEntity(npc.id, spawn.x, spawn.z);
@@ -556,6 +558,9 @@ export class World {
           effShop,
           effDialogue,
           spawn.name ?? null,
+          spawn.stats ?? null,
+          spawn.customColors ?? null,
+          spawn.attackAnim ?? null,
         );
         npc.currentMapLevel = mapId;
         this.npcs.set(npc.id, npc);
@@ -2570,7 +2575,7 @@ export class World {
     const effMagic = magicLevel + 8;
     const bonuses = player.computeBonuses(this.data.itemDefs);
     const attackRoll = effMagic * (bonuses.magicAccuracy + ACC_BASE);
-    const defRoll = (npc.def.defence + 8) * ACC_BASE;
+    const defRoll = (npc.defence + 8) * ACC_BASE;
     const damage = rollHit(attackRoll, defRoll)
       ? Math.floor(Math.random() * (magicMaxHit(magicLevel, def.tier) + 1))
       : 0;
@@ -3766,7 +3771,7 @@ export class World {
         const wasInCombat = npc.combatTarget != null;
         npc.combatTarget = player;
         if (!wasInCombat) {
-          npc.attackCooldown = Math.floor(npc.def.attackSpeed / 2);
+          npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
         }
       }
 
@@ -4696,6 +4701,25 @@ export class World {
         eq[5], eq[6], eq[7], eq[8], eq[9],
       );
     }
+    const cc = npc.customColors;
+    if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
+      // Quantize each component to int16 (×1000). A slot with no override
+      // writes -1 in its R channel; client decoder treats that as "use palette".
+      const payload: number[] = [npc.id];
+      for (const slot of CUSTOM_COLOR_SLOTS) {
+        const c = cc[slot];
+        if (c) {
+          payload.push(
+            Math.max(0, Math.min(1000, Math.round(c[0] * 1000))),
+            Math.max(0, Math.min(1000, Math.round(c[1] * 1000))),
+            Math.max(0, Math.min(1000, Math.round(c[2] * 1000))),
+          );
+        } else {
+          payload.push(-1, 0, 0);
+        }
+      }
+      this.sendToPlayer(viewer, ServerOpcode.NPC_CUSTOM_COLORS, ...payload);
+    }
     // Tell the client which non-combat actions this NPC supports, so its
     // right-click menu can offer Talk-to / Trade / Bank without the client
     // needing to mirror npcs.json. Skip when there are none — the bit field
@@ -4708,6 +4732,11 @@ export class World {
     // packet so we're not spamming the wire with default names.
     if (npc.nameOverride) {
       const packet = encodeStringPacket(ServerOpcode.NPC_NAME, npc.nameOverride, npc.id);
+      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+    }
+    // Forced-swing animation override. Same string-packet shape as NPC_NAME.
+    if (npc.attackAnimOverride) {
+      const packet = encodeStringPacket(ServerOpcode.NPC_ATTACK_ANIM, npc.attackAnimOverride, npc.id);
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     }
   }

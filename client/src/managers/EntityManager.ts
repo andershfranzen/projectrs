@@ -6,7 +6,7 @@ import { CharacterEntity } from '../rendering/CharacterEntity';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, type ItemDef, type PlayerAppearance } from '@projectrs/shared';
+import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, type ItemDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -57,6 +57,14 @@ export class EntityManager {
   readonly npcAppearances: Map<number, PlayerAppearance> = new Map();
   /** Per-spawn equipment, same layout as PLAYER_REMOTE_EQUIPMENT. */
   readonly npcEquipment: Map<number, number[]> = new Map();
+  /** Per-spawn raw RGB color overrides keyed by entityId. Cached on
+   *  NPC_CUSTOM_COLORS; applied once the CharacterEntity rig is ready,
+   *  alongside the palette-index appearance. */
+  readonly npcCustomColors: Map<number, CustomColors> = new Map();
+  /** Per-spawn forced attack animation name. When set, GameManager's
+   *  `getPlayerAttackAnimName` returns this string verbatim instead of
+   *  deriving from the NPC's equipped weapon. */
+  readonly npcAttackAnimOverrides: Map<number, string> = new Map();
   /** Bitfield of non-combat interactions this NPC supports. Set from
    *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
    *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank. */
@@ -140,16 +148,20 @@ export class EntityManager {
     // walk anim to play. Per-spawn wanderRange isn't known at this call
     // site (it lives server-side), so loading both anims for every
     // customizable NPC is the simplest correct policy.
+    //
+    // Combat NPCs pull NPC_COMBAT_ANIMATIONS — curated subset of PLAYER_ANIMATIONS
+    // covering every branch of the weapon-driven attack-anim picker in
+    // getPlayerAttackAnimName. Loading the full PLAYER_ANIMATIONS set would
+    // ImportMeshAsync ~15 GLBs per NPC for skill/strafe/turn anims the NPC
+    // state machine never plays — see shared/character.ts for why.
     const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
     const combat = profile?.combat ?? false;
-    const anims: { name: string; path: string }[] = [
-      { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
-      { name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` },
-    ];
-    if (combat) {
-      // Punch anim pending re-authoring; CharacterEntity falls back to
-      // attack/attack_slash when 'attack_punch' isn't loaded.
-    }
+    const anims: { name: string; path: string }[] = combat
+      ? [...NPC_COMBAT_ANIMATIONS]
+      : [
+          { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+          { name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` },
+        ];
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,
       modelPath: CHARACTER_MODEL_PATH,

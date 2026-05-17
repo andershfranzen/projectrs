@@ -717,5 +717,18 @@
         }
       }
     }
+  },
+  {
+    "id": 100,
+    "name": "Vampire",
+    "health": 25,
+    "attack": 10,
+    "defence": 10,
+    "strength": 7,
+    "attackSpeed": 5,
+    "respawnTime": 40,
+    "aggressive": true,
+    "wanderRange": 5,
+    "lootTable": []
   }
 ]

@@ -24,11 +24,18 @@ export class SmithingPanel {
   private cachedSmithingLevel: number = 0;
   private cachedHasHammer: boolean = false;
   private cachedItemDefs: Map<number, ItemDef> = new Map();
+  // Station-specific labels. Default = "Anvil" / "bars" / requires a hammer
+  // (the original anvil-only flow). Furnace passes "Furnace" / "ore" / no
+  // hammer warning so the copy reads correctly. Single source of truth so
+  // each render path doesn't need to special-case the station type.
+  private stationLabel: string = 'Anvil';
+  private inputNoun: string = 'bars';
+  private requiresTool: boolean = true;
 
   constructor() {
     const modal = createModalPanel({
       id: 'smithing-panel',
-      title: 'Anvil — What would you like to smith?',
+      title: 'Smithing',
       geometry: { kind: 'canvas', widthFrac: 0.3 },
       chrome: 'stone',
       onClose: () => this.hide(),
@@ -52,6 +59,7 @@ export class SmithingPanel {
     hasHammer: boolean,
     itemDefs: Map<number, ItemDef>,
     onSmith: SmithCallback,
+    opts?: { stationLabel?: string; inputNoun?: string; requiresTool?: boolean },
   ): void {
     closeActiveContextMenu();
     this.onSmith = onSmith;
@@ -60,6 +68,9 @@ export class SmithingPanel {
     this.cachedSmithingLevel = smithingLevel;
     this.cachedHasHammer = hasHammer;
     this.cachedItemDefs = itemDefs;
+    this.stationLabel = opts?.stationLabel ?? 'Anvil';
+    this.inputNoun = opts?.inputNoun ?? 'bars';
+    this.requiresTool = opts?.requiresTool ?? true;
 
     // Which bar types does the player actually hold?
     const itemCounts = this.countInventory(inventory);
@@ -93,7 +104,7 @@ export class SmithingPanel {
   }
 
   private renderBarPicker(availableBarIds: Set<number>): void {
-    this.titleEl.textContent = 'Anvil — Which bar would you like to smith?';
+    this.titleEl.textContent = `${this.stationLabel} — Choose your input`;
     this.gridEl.innerHTML = '';
     const itemCounts = this.countInventory(this.allInventory);
 
@@ -139,7 +150,7 @@ export class SmithingPanel {
     const itemCounts = this.countInventory(this.allInventory);
     const barCount = itemCounts.get(barId) ?? 0;
 
-    this.titleEl.textContent = `Anvil — ${barName}`;
+    this.titleEl.textContent = `${this.stationLabel} — ${barName}`;
     this.gridEl.innerHTML = '';
 
     // Back button if we came from the picker (i.e. player has multiple bar types)
@@ -150,7 +161,12 @@ export class SmithingPanel {
     ).size;
     if (availableBarCount > 1) {
       const backBtn = document.createElement('button');
-      backBtn.textContent = '← Choose a different bar';
+      // Generic copy avoids a brittle pluralization rule for `inputNoun` and
+      // reads naturally for both anvil ("bars" → "← Back to bars") and
+      // furnace ("ore" → "← Back to ore"). Naming the station in the button
+      // also helps when the panel was opened via right-click from somewhere
+      // the player isn't physically next to the station.
+      backBtn.textContent = `← Back to ${this.inputNoun}`;
       backBtn.style.cssText = `
         background: linear-gradient(180deg, #3a2518 0%, #2a1810 100%);
         border: 1px solid #5a4a35; color: #d8372b; cursor: pointer;
@@ -182,6 +198,11 @@ export class SmithingPanel {
       grid-template-columns: repeat(auto-fill, minmax(82px, 1fr));
     `;
 
+    // Tool check is constant across every recipe in this view — lift it out
+    // of the per-tile loop. Furnaces (requiresTool === false) short-circuit
+    // to true; anvils require the hammer to be in inventory.
+    const toolOk = !this.requiresTool || this.cachedHasHammer;
+
     this.allRecipes.forEach((recipe, index) => {
       if (recipe.inputItemId !== barId) return;
 
@@ -189,7 +210,14 @@ export class SmithingPanel {
       const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
       const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
       const hasBars = barCount >= recipe.inputQuantity;
-      const canSmith = hasLevel && hasBars && this.cachedHasHammer;
+      // Furnace recipes also have a secondInputItemId (coal, etc.). Without
+      // it the auto-pick path would fall to a downstream recipe (e.g. coal-less
+      // iron at 50%) — surface that in the picker by greying steel/mithril
+      // tiles when coal isn't present, so the player understands why a
+      // tile they "could" click might not produce what they expect.
+      const hasSecondInput = recipe.secondInputItemId === undefined
+        || (itemCounts.get(recipe.secondInputItemId) ?? 0) >= (recipe.secondInputQuantity ?? 1);
+      const canSmith = hasLevel && hasBars && hasSecondInput && toolOk;
 
       const tile = document.createElement('div');
       tile.style.cssText = `
@@ -251,7 +279,7 @@ export class SmithingPanel {
 
     this.gridEl.appendChild(grid);
 
-    if (!this.cachedHasHammer) {
+    if (this.requiresTool && !this.cachedHasHammer) {
       const warn = document.createElement('div');
       warn.style.cssText = 'padding: 8px 12px; font-size: 12px; color: #c44; text-align: center; margin-top: 8px;';
       warn.textContent = 'You need a hammer in your inventory to smith.';
@@ -260,13 +288,13 @@ export class SmithingPanel {
   }
 
   private renderEmptyState(hasHammer: boolean): void {
-    this.titleEl.textContent = 'Anvil';
+    this.titleEl.textContent = this.stationLabel;
     this.gridEl.innerHTML = '';
     const msg = document.createElement('div');
     msg.style.cssText = 'padding: 24px 12px; font-size: 13px; color: #aaa; text-align: center;';
-    msg.textContent = 'You have no bars to smith.';
+    msg.textContent = `You have no ${this.inputNoun} to use here.`;
     this.gridEl.appendChild(msg);
-    if (!hasHammer) {
+    if (this.requiresTool && !hasHammer) {
       const warn = document.createElement('div');
       warn.style.cssText = 'padding: 8px 12px; font-size: 12px; color: #c44; text-align: center;';
       warn.textContent = 'You also need a hammer to smith.';

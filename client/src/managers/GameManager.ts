@@ -51,7 +51,7 @@ import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -1219,8 +1219,21 @@ export class GameManager {
       const eq = this.entities.remoteEquipment.get(attackerId);
       weaponId = eq?.[0] ?? 0;
       stance = this.entities.remoteStances.get(attackerId) ?? 'accurate';
+    } else if (this.entities.npcSprites.get(attackerId) instanceof CharacterEntity) {
+      // Forced per-spawn anim wins over the weapon picker — editor lets map
+      // authors give a Custom Humanoid a specific swing regardless of gear.
+      const forced = this.entities.npcAttackAnimOverrides.get(attackerId);
+      if (forced) return forced;
+      // Customizable NPC rendered as CharacterEntity. Slot 0 = weapon, same
+      // layout as PLAYER_REMOTE_EQUIPMENT. NPCs don't carry a stance, so the
+      // weapon-style picker runs against the default 'accurate' branch.
+      const eq = this.entities.npcEquipment.get(attackerId);
+      weaponId = eq?.[0] ?? 0;
     } else {
-      // NPC or unknown attacker — default unarmed punch.
+      // Sprite/3D-mob NPC or unknown attacker — sprite NPCs play their own
+      // attack track via Npc3DEntity.playAttackAnimation. The string we
+      // return here is only consumed by CharacterEntity, so the value for
+      // these branches is moot — keep the unarmed punch default.
       return 'attack_punch';
     }
     if (weaponId > 0) {
@@ -2094,7 +2107,10 @@ export class GameManager {
           void character.whenReady().then(() => {
             if (this.entities.npcSprites.get(entityId) !== character) return;
             const appearance = this.entities.npcAppearances.get(entityId);
-            if (appearance) character.applyAppearance(appearance);
+            if (appearance) {
+              const custom = this.entities.npcCustomColors.get(entityId);
+              character.applyAppearance(appearance, custom ?? null);
+            }
             const eq = this.entities.npcEquipment.get(entityId);
             if (eq) this.applyRemoteEquipmentArray(character, eq);
           });
@@ -2130,7 +2146,28 @@ export class GameManager {
       // Live-apply for an already-rendered customizable NPC (admin /npcedit).
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
-        sprite.applyAppearance(appearance);
+        const custom = this.entities.npcCustomColors.get(entityId);
+        sprite.applyAppearance(appearance, custom ?? null);
+      }
+    });
+
+    this.network.on(ServerOpcode.NPC_CUSTOM_COLORS, (_op, v) => {
+      // Wire layout = [entityId, ...3 ints per slot] in CUSTOM_COLOR_SLOTS
+      // order. R = -1 means "no override for this slot" (use the palette pick
+      // from NPC_APPEARANCE). Each R/G/B is quantized 0..1000.
+      const entityId = v[0];
+      const custom: CustomColors = {};
+      for (let i = 0; i < CUSTOM_COLOR_SLOTS.length; i++) {
+        const base = 1 + i * 3;
+        const r = v[base];
+        if (r < 0) continue;
+        custom[CUSTOM_COLOR_SLOTS[i]] = [r / 1000, v[base + 1] / 1000, v[base + 2] / 1000];
+      }
+      this.entities.npcCustomColors.set(entityId, custom);
+      const sprite = this.entities.npcSprites.get(entityId);
+      if (sprite instanceof CharacterEntity && sprite.isReady) {
+        const appearance = this.entities.npcAppearances.get(entityId);
+        if (appearance) sprite.applyAppearance(appearance, custom);
       }
     });
 
@@ -2215,7 +2252,12 @@ export class GameManager {
       const attackerEntity = isLocalAttacker
         ? this.localPlayer
         : (this.entities.remotePlayers.get(attackerId) ?? this.entities.npcSprites.get(attackerId));
-      const animName = isPlayerAttacker
+      // CharacterEntity-rendered NPCs share the player rig + animation set,
+      // so weapon-driven attack-anim picking (1H slash, 2H smash, stab, etc.)
+      // applies to them too. Sprite/3D-mob NPCs go through their own
+      // playAttackAnimation() with no variant.
+      const npcAsCharacter = !isPlayerAttacker && attackerEntity instanceof CharacterEntity;
+      const animName = isPlayerAttacker || npcAsCharacter
         ? this.getPlayerAttackAnimName(attackerId)
         : 'attack_punch';
 
@@ -2223,7 +2265,11 @@ export class GameManager {
       // PLAYER_ANIMATION so swings broadcast even when there is no visible
       // damage packet in a given viewer's area.
       if (!isPlayerAttacker && attackerEntity) {
-        (attackerEntity as any).playAttackAnimation();
+        if (npcAsCharacter) {
+          (attackerEntity as CharacterEntity).playAttackAnimation(animName);
+        } else {
+          (attackerEntity as any).playAttackAnimation();
+        }
       }
 
       // Schedule the hitsplat at the impact moment of the attacker's animation
@@ -2787,6 +2833,13 @@ export class GameManager {
         const entityId = values[0];
         if (str.length > 0) this.entities.npcOverrideNames.set(entityId, str);
         else this.entities.npcOverrideNames.delete(entityId);
+      } else if (opcode === ServerOpcode.NPC_ATTACK_ANIM) {
+        // [npcEntityId] follows the anim-name string. Consulted first by
+        // getPlayerAttackAnimName; empty string clears the override.
+        const { str, values } = decodeStringPacket(data);
+        const entityId = values[0];
+        if (str.length > 0) this.entities.npcAttackAnimOverrides.set(entityId, str);
+        else this.entities.npcAttackAnimOverrides.delete(entityId);
       } else if (opcode === ServerOpcode.QUEST_STATE_SYNC) {
         // Full snapshot on login. JSON record {questId: {stage, triggerProgress}}.
         const { str } = decodeStringPacket(data);
@@ -3694,13 +3747,26 @@ export class GameManager {
     const inventory = this.sidePanel.getInventory();
     const smithingLevel = this.sidePanel.getSkillLevel('smithing');
     const itemDefs = this.sidePanel.getItemDefs();
+    // requiresTool comes from the first recipe; furnaces have no tool req,
+    // anvils have 'hammer'. hasTool is moot when requiresTool is undefined,
+    // so default to true to skip the cosmetic hammer warning in that case.
     const toolType = def.recipes?.[0]?.requiresTool;
-    const hasTool = inventory.some((slot: InventorySlot | null) => slot && itemDefs.get(slot.itemId)?.toolType === toolType);
+    const requiresTool = !!toolType;
+    const hasTool = !requiresTool
+      || inventory.some((slot: InventorySlot | null) => slot && itemDefs.get(slot.itemId)?.toolType === toolType);
+    // Vocabulary differs per station: anvils smith bars into weapons, furnaces
+    // smelt ore into bars. Title + empty-state + back-button copy all read off
+    // these strings.
+    // WorldObjectDef.name is always populated; `?? 'Smithing'` only guards
+    // against future shapes where it might be optional. inputNoun shapes the
+    // back-button + empty-state copy in SmithingPanel.
+    const stationLabel = def.name ?? 'Smithing';
+    const inputNoun = def.category === 'furnace' ? 'ore' : 'bars';
 
     this.smithingPanel.show(def.recipes ?? [], inventory, smithingLevel, hasTool, itemDefs, (recipeIndex) => {
       // Walk to the anvil and send the crafting request with the specific recipe index
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex));
-    });
+    }, { stationLabel, inputNoun, requiresTool });
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
@@ -3835,13 +3901,30 @@ export class GameManager {
       // If we're not already on the front tile, pathfind there
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
-      if (ptx !== frontX || ptz !== frontZ) {
+      const alreadyAtFront = ptx === frontX && ptz === frontZ;
+      if (!alreadyAtFront) {
         if (!this.isTileBlocked(frontX, frontZ)) {
           const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(frontX + 0.5, frontZ + 0.5, 500);
           if (path.length > 0) {
             this.startPredictedPath(path, preserveCurrentStep);
           }
         }
+      }
+      // Multi-recipe furnaces (bronze, iron±coal, steel, mithril, ...) used
+      // to auto-pick the first matching recipe — which meant steel was
+      // unreachable while carrying iron ore + coal because iron+coal matches
+      // first. Now we open the SmithingPanel for any furnace with > 1 recipe
+      // so the player can pick. Single-recipe furnaces (if any future ones
+      // exist) keep the auto-fire path.
+      const recipes = def.recipes ?? [];
+      if (recipes.length > 1) {
+        this.pendingSmithing = null;
+        if (alreadyAtFront) {
+          this.showSmithingUI(objectEntityId, def);
+        } else {
+          this.pendingSmithing = { objectEntityId, def };
+        }
+        return;
       }
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
       return;
@@ -5313,10 +5396,15 @@ export class GameManager {
     const floor = this.currentFloor;
     const py = this.localPlayer?.position.y ?? 0;
     const ceilingY = this.chunkManager.getCeilingHeight(this.playerX, this.playerZ, py);
-    const hideAboveY = ceilingY < Infinity ? ceilingY - 0.1 : py + 1.5;
+    // Never hide nodes within head-clearance of the player — without the
+    // `py + 1.5` floor, the upper-floor plane the player is climbing toward
+    // stays culled until they're literally on it, because the plane itself
+    // IS the lowest ceiling and (ceilingY - 0.1) lands just below it.
+    const headClearY = py + 1.5;
+    const hideAboveY = ceilingY < Infinity ? Math.max(ceilingY - 0.1, headClearY) : headClearY;
 
     const newSet = new Set<TransformNode>();
-    for (const n of this.chunkManager.getRoofNodesNear(this.playerX, this.playerZ, 8, py + 0.5, floor)) newSet.add(n);
+    for (const n of this.chunkManager.getRoofNodesNear(this.playerX, this.playerZ, 8, headClearY, floor)) newSet.add(n);
     for (const n of this.chunkManager.getNodesAboveHeight(this.playerX, this.playerZ, 8, hideAboveY)) newSet.add(n);
 
     // Re-enable nodes that LEFT the hidden set

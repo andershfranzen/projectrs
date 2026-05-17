@@ -17,7 +17,7 @@ import { MorphTargetManager } from '@babylonjs/core/Morph/morphTargetManager';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
+import { type PlayerAppearance, type AppearanceColorSlot, type CustomColors, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, WALK_VARIANT_NAMES, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { remapSkinningToSkeleton } from './skinnedArmor';
@@ -346,6 +346,10 @@ export class CharacterEntity {
 
   // Last applied appearance — used to restore correct hair/face after helmet unequip
   private lastAppearance: PlayerAppearance | null = null;
+  /** Per-slot raw RGB overrides (NPC-only) cached so a later applyAppearance
+   *  call (e.g. after gear changes invalidate materials) keeps the custom
+   *  colors instead of snapping back to palette picks. Mirrors lastAppearance. */
+  private lastCustomColors: CustomColors | null = null;
 
   // Health bar (HTML overlay — same pattern as SpriteEntity)
   private healthBarEl: HTMLDivElement | null = null;
@@ -2352,36 +2356,62 @@ export class CharacterEntity {
   /**
    * Apply a PlayerAppearance by recoloring the GLB's materials.
    * Material names are matched case-insensitively, with .001/.002 suffixes stripped.
+   * If `customColors` is supplied, each slot listed there overrides the
+   * palette-index pick from `appearance` (NPC-only — players never set this).
    */
-  applyAppearance(appearance: PlayerAppearance): void {
+  applyAppearance(appearance: PlayerAppearance, customColors?: CustomColors | null): void {
     this.lastAppearance = appearance;
-    // Color-based recoloring (per-material name matching)
+    if (customColors !== undefined) this.lastCustomColors = customColors;
+    const cc = this.lastCustomColors;
+
+    // Pre-pass: resolve each slot to its (diffuse, emissive) Color3 once.
+    // Without this, the mesh loop below would re-resolve + re-allocate Color3s
+    // per (mesh × material-alias) — wasteful when applyAppearance is called on
+    // every editor color-picker tick. Each entry is shared across meshes by
+    // reference; safe because nothing mutates these Color3s in place.
+    type SlotEntry = { lcAliases: string[]; diffuse: Color3; emissive: Color3 };
+    const slots: SlotEntry[] = [];
+    for (const [slot, matNames] of Object.entries(APPEARANCE_MATERIAL_MAP)) {
+      const slotKey = slot as AppearanceColorSlot;
+      let rgb: [number, number, number] | undefined = cc?.[slotKey];
+      if (!rgb) {
+        let colorIdx = appearance[slotKey];
+        let palette = getPalette(slotKey);
+        if (slotKey === 'beltColor' && colorIdx === BELT_NO_BELT) {
+          // "No belt" inherits shirt — prefer custom shirt RGB, else shirt palette.
+          if (cc?.shirtColor) {
+            rgb = cc.shirtColor;
+          } else {
+            colorIdx = appearance.shirtColor;
+            palette = SHIRT_COLORS;
+          }
+        }
+        if (!rgb) {
+          if (colorIdx < 0 || colorIdx >= palette.length) continue;
+          rgb = palette[colorIdx];
+        }
+      }
+      const diffuse = new Color3(
+        Math.min(1, rgb[0] * 1.3),
+        Math.min(1, rgb[1] * 1.3),
+        Math.min(1, rgb[2] * 1.3),
+      );
+      const emissive = new Color3(diffuse.r * 0.55, diffuse.g * 0.55, diffuse.b * 0.55);
+      // Pre-lowercase target names so the mesh loop's compare is a single
+      // string equality, not two toLowerCase() calls per alias per mesh.
+      slots.push({ lcAliases: matNames.map(n => n.toLowerCase()), diffuse, emissive });
+    }
+
+    // Apply to materials. Per mesh: lowercase the base name once, then test
+    // membership against the pre-lowercased alias list.
     for (const mesh of this.meshes) {
       const mat = mesh.material;
       if (!mat) continue;
-      const baseName = mat.name.replace(/_flat$/, '').replace(/\.\d+$/, '');
-
-      for (const [slot, matNames] of Object.entries(APPEARANCE_MATERIAL_MAP)) {
-        let colorIdx = appearance[slot as AppearanceColorSlot];
-        let palette = getPalette(slot as AppearanceColorSlot);
-        if (slot === 'beltColor' && colorIdx === BELT_NO_BELT) {
-          colorIdx = appearance.shirtColor;
-          palette = SHIRT_COLORS;
-        }
-        if (colorIdx < 0 || colorIdx >= palette.length) continue;
-
-        for (const target of matNames) {
-          if (baseName.toLowerCase() === target.toLowerCase()) {
-            const rgb = palette[colorIdx];
-            const c = new Color3(
-              Math.min(1, rgb[0] * 1.3),
-              Math.min(1, rgb[1] * 1.3),
-              Math.min(1, rgb[2] * 1.3),
-            );
-            (mat as StandardMaterial).diffuseColor = c;
-            (mat as StandardMaterial).emissiveColor = new Color3(c.r * 0.55, c.g * 0.55, c.b * 0.55);
-          }
-        }
+      const baseLc = mat.name.replace(/_flat$/, '').replace(/\.\d+$/, '').toLowerCase();
+      for (const s of slots) {
+        if (!s.lcAliases.includes(baseLc)) continue;
+        (mat as StandardMaterial).diffuseColor = s.diffuse;
+        (mat as StandardMaterial).emissiveColor = s.emissive;
       }
     }
 

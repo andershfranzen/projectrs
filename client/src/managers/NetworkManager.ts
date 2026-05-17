@@ -37,6 +37,7 @@ const STRING_PACKET_OPCODES = new Set<number>([
   ServerOpcode.MAP_CHANGE,
   ServerOpcode.DIALOGUE_OPEN,
   ServerOpcode.NPC_NAME,
+  ServerOpcode.NPC_ATTACK_ANIM,
   ServerOpcode.QUEST_STATE_SYNC,
   ServerOpcode.QUEST_STAGE_ADVANCED,
 ]);

@@ -51,3 +51,25 @@ export const PLAYER_ANIMATIONS: readonly { name: string; path: string }[] = [
   // (SPELL_CAST broadcasts + the spellbook tab's click handler).
   { name: 'spell_cast_2h',           path: `${CHARACTER_ANIM_DIR}/twohand_spell_cast.glb` },
 ];
+
+/** Curated subset for combat-only NPCs (Custom Humanoid, Guard, Goblin, etc.).
+ *  Loading all PLAYER_ANIMATIONS per NPC would ImportMeshAsync ~15 GLBs each
+ *  — bandwidth + Babylon parse cost adds up fast with several visible NPCs.
+ *  Skips player-only tracks: chop/mine/spell_cast (skill anims), sidesteps +
+ *  turn-in-place (player-only state machine), one_handed_slash is folded in
+ *  via the weapon picker. Idle + walk + the seven attack variants is enough
+ *  for the weapon-driven picker to resolve every melee branch.
+ *
+ *  NPCs that need extra anims (ranged, magic) can extend this list rather
+ *  than fall back to PLAYER_ANIMATIONS — keep this the cheap default. */
+export const NPC_COMBAT_ANIMATIONS: readonly { name: string; path: string }[] = [
+  { name: 'idle',             path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+  { name: 'walk',             path: `${CHARACTER_ANIM_DIR}/walk.glb` },
+  { name: 'attack_slash',     path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
+  { name: 'attack_1h_slash',  path: `${CHARACTER_ANIM_DIR}/one handed slash.glb` },
+  { name: 'attack_2h_slash',  path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },
+  { name: 'attack_2h_smash',  path: `${CHARACTER_ANIM_DIR}/2h smash.glb` },
+  { name: 'attack_punch',     path: `${CHARACTER_ANIM_DIR}/Punch.glb` },
+  { name: 'kick',             path: `${CHARACTER_ANIM_DIR}/kick.glb` },
+  { name: 'stab',             path: `${CHARACTER_ANIM_DIR}/stab.glb` },
+];

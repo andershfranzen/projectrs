@@ -4,6 +4,7 @@ export const NPC_NAMES: Record<number, string> = {
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   17: 'Snow Wolf', 18: 'Rat',
+  100: 'Custom Humanoid',
 };
 
 export interface Npc3DModelEntry {
@@ -52,4 +53,8 @@ export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; com
   13: { stationary: true },                 // Leg Armorer
   14: { stationary: true },                 // Shield Smith
   16: { stationary: true },                 // Banker
+  // Editor-spawned customizable humanoid. `combat: true` pulls the full
+  // PLAYER_ANIMATIONS set so weapon-driven attack-anim picking resolves
+  // 1H/2H/stab/punch/kick on the spawn's equipped weapon.
+  100: { stationary: false, combat: true }, // Custom Humanoid
 };

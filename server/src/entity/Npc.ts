@@ -1,6 +1,6 @@
 import { Entity } from './Entity';
 import { getObjectInteractionTiles } from '@projectrs/shared';
-import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord } from '@projectrs/shared';
+import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
 
 export class Npc extends Entity {
   readonly npcId: number; // Definition ID
@@ -15,6 +15,17 @@ export class Npc extends Entity {
   /** 10-slot equipment array, PLAYER_REMOTE_EQUIPMENT layout. Only consulted
    *  when `appearance` is also set (gear pipeline runs on CharacterEntity only). */
   equipment: number[] | null = null;
+  /** Raw per-slot RGB overrides. Sent to the client via NPC_CUSTOM_COLORS so
+   *  CharacterEntity.applyAppearance picks the raw value instead of the palette
+   *  index. Only meaningful when `appearance` is also set. */
+  customColors: CustomColors | null = null;
+  /** Per-spawn stat overrides. Any field set wins over def. Read via the
+   *  attack/defence/strength/attackSpeed/respawnTime getters below. */
+  readonly statsOverride: NpcStatOverrides | null;
+  /** Animation name to play on swing (e.g. `attack_2h_smash`). When null,
+   *  the client falls back to the weapon-driven picker in
+   *  GameManager.getPlayerAttackAnimName. */
+  readonly attackAnimOverride: string | null;
 
   // AI — initial cooldown randomized so NPCs don't all move in lockstep
   wanderCooldown: number = Math.floor(Math.random() * 15);
@@ -71,8 +82,17 @@ export class Npc extends Entity {
     effectiveShop?: ShopDef | null,
     effectiveDialogue?: DialogueTree | null,
     nameOverride?: string | null,
+    statsOverride?: NpcStatOverrides | null,
+    customColors?: CustomColors | null,
+    attackAnimOverride?: string | null,
   ) {
-    super(nameOverride || def.name, x, z, def.health);
+    // Health override applies at construction so the Entity's maxHealth picks
+    // it up. Stats override is positive integers; ignore non-finite or ≤0.
+    const overrideHealth = statsOverride?.health;
+    const effHealth = (typeof overrideHealth === 'number' && overrideHealth > 0)
+      ? Math.floor(overrideHealth)
+      : def.health;
+    super(nameOverride || def.name, x, z, effHealth);
     this.npcId = def.id;
     this.nameOverride = nameOverride && nameOverride.length > 0 ? nameOverride : null;
     this.def = def;
@@ -81,10 +101,24 @@ export class Npc extends Entity {
     this.wanderRangeOverride = wanderRange;
     this.appearance = appearance ?? null;
     this.equipment = equipment ?? null;
+    this.customColors = customColors ?? null;
     this.aggressiveOverride = aggressive ?? null;
     this.effectiveShop = effectiveShop ?? null;
     this.effectiveDialogue = effectiveDialogue ?? null;
+    this.statsOverride = statsOverride ?? null;
+    this.attackAnimOverride = (attackAnimOverride && attackAnimOverride.length > 0)
+      ? attackAnimOverride
+      : null;
   }
+
+  /** Effective combat stats. Spawn override wins over NpcDef. Combat code
+   *  reads these instead of `npc.def.<stat>` so per-spawn customization
+   *  flows through transparently. */
+  get attack(): number { return this.statsOverride?.attack ?? this.def.attack; }
+  get defence(): number { return this.statsOverride?.defence ?? this.def.defence; }
+  get strength(): number { return this.statsOverride?.strength ?? this.def.strength; }
+  get attackSpeed(): number { return this.statsOverride?.attackSpeed ?? this.def.attackSpeed; }
+  get respawnTime(): number { return this.statsOverride?.respawnTime ?? this.def.respawnTime; }
 
   /** Per-spawn name override if set, otherwise the def's name. */
   get displayName(): string {
@@ -367,7 +401,7 @@ export class Npc extends Entity {
     this.dead = true;
     this.health = 0;
     this.combatTarget = null;
-    this.respawnTimer = this.def.respawnTime;
+    this.respawnTimer = this.respawnTime;
   }
 
   respawn(): void {

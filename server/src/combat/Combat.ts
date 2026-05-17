@@ -71,7 +71,7 @@ export function processPlayerCombat(
   const attackRoll = effAcc * (attackBonus + ACC_BASE);
 
   // NPC defence roll (NPCs use flat defence stat, no equipment)
-  const npcDefLevel = npc.def.defence + 8;
+  const npcDefLevel = npc.defence + 8;
   const npcDefRoll = npcDefLevel * ACC_BASE;
 
   // Max hit = floor((effStr * (strBonus + 64) + 320) / 640)
@@ -92,7 +92,7 @@ export function processPlayerCombat(
     npc.combatTarget = player;
     if (!wasInCombat) {
       // Flinch: first retaliation at half attack speed
-      npc.attackCooldown = Math.floor(npc.def.attackSpeed / 2);
+      npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
     }
   }
 
@@ -184,7 +184,7 @@ export function processPlayerRangedCombat(
   const attackRoll = effRanged * (bonuses.rangedAccuracy + ACC_BASE);
 
   // NPC defence roll
-  const npcDefLevel = npc.def.defence + 8;
+  const npcDefLevel = npc.defence + 8;
   const npcDefRoll = npcDefLevel * ACC_BASE;
 
   // Max hit — bow rangedStrength + arrow rangedStrength
@@ -203,7 +203,7 @@ export function processPlayerRangedCombat(
     const wasInCombat = npc.combatTarget != null;
     npc.combatTarget = player;
     if (!wasInCombat) {
-      npc.attackCooldown = Math.floor(npc.def.attackSpeed / 2);
+      npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
     }
   }
 
@@ -264,10 +264,10 @@ export function processNpcCombat(
   // Check cooldown
   npc.attackCooldown--;
   if (npc.attackCooldown > 0) return null;
-  npc.attackCooldown = npc.def.attackSpeed;
+  npc.attackCooldown = npc.attackSpeed;
 
   // NPC attack roll
-  const npcEffAcc = npc.def.attack + 8;
+  const npcEffAcc = npc.attack + 8;
   const npcAttackRoll = npcEffAcc * ACC_BASE;
 
   // Player defence roll
@@ -280,7 +280,7 @@ export function processNpcCombat(
   const playerDefRoll = effDef * (avgDef + ACC_BASE);
 
   // NPC max hit
-  const npcMaxHit = osrsMeleeMaxHit(npc.def.strength + 8, 0);
+  const npcMaxHit = osrsMeleeMaxHit(npc.strength + 8, 0);
 
   // 2004Scape hit check
   let damage = 0;
