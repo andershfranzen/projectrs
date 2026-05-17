@@ -103,6 +103,8 @@ export class Player extends Entity {
    *  the tick loop once moveQueue drains and Chebyshev distance is within
    *  NPC_INTERACTION_RANGE. Cleared on movement redirect, death, disconnect. */
   pendingTalkNpcId: number = -1;
+  /** Player entity id this player is following, or -1 when not following. */
+  followTargetPlayerId: number = -1;
   /** Per-quest state. Key = quest id from quests.json. Value tracks the
    *  current stage and progress toward that stage's trigger threshold
    *  (kill count, item count, etc). `stage: -1` = completed. Persisted in

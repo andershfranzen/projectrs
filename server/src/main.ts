@@ -1600,6 +1600,11 @@ const server = Bun.serve<SocketData>({
         return new Response('Forbidden', { status: 403 });
       }
       try {
+        if (/^[-\w]+\/objects\/chunk_-?\d+_-?\d+\.json$/.test(mapPath) && !existsSync(filePath)) {
+          return new Response('[]', {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          });
+        }
         // For map.json requests, reassemble placedObjects from chunk files
         if (mapPath.endsWith('/map.json')) {
           const mapDir = resolve(filePath, '..');

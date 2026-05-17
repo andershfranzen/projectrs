@@ -164,7 +164,8 @@ export class Npc3DEntity {
         quantizeAnimationGroup(group, `npc_${role}`);
       }
 
-      this.playAnim('idle', true);
+      if (this._walking && this.animGroups.has('walk')) this.playAnim('walk', true);
+      else this.playAnim('idle', true);
       this.root.position.set(this._position.x + this.renderOffset, this._position.y, this._position.z + this.renderOffset);
       this._ready = true;
       // Force enable all meshes
@@ -216,6 +217,8 @@ export class Npc3DEntity {
   startWalking(): void {
     if (this._walking) return;
     this._walking = true;
+    if (!this._ready) return;
+    if (!this.animGroups.has('walk')) return;
     this.playAnim('walk', true);
   }
 
@@ -228,6 +231,7 @@ export class Npc3DEntity {
   isWalking(): boolean { return this._walking; }
 
   playAttackAnimation(_variant?: string): void {
+    if (!this.animGroups.has('attack')) return;
     if (this.currentAnim === 'attack') return;
     this.playAnim('attack', false);
     const group = this.animGroups.get('attack');

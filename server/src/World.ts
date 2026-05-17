@@ -44,9 +44,13 @@ function qPos(coord: number): number { return Math.round(coord * POSITION_SCALE)
 /** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
  *  At 600ms/tick this is ~2 minutes. */
 const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
-/** Despawn timer (ticks) applied to most ground items — NPC kill loot and
- *  player-dropped items. ~2 minutes at 600ms/tick. */
+/** Despawn timer (ticks) applied to player-dropped items.
+ *  ~2 minutes at 600ms/tick. */
 const GROUND_ITEM_DESPAWN_TICKS = 200;
+/** NPC loot is private to the top damager for ~1 minute, then visible to
+ *  everyone nearby before despawning around the classic 3-minute mark. */
+const NPC_LOOT_PRIVATE_TICKS = 100;
+const NPC_LOOT_DESPAWN_TICKS = 300;
 /** Longer despawn for items dropped on player death so a corpse run actually
  *  reaches the pile. ~3 minutes at 600ms/tick. */
 const DEATH_DROP_DESPAWN_TICKS = 300;
@@ -71,6 +75,8 @@ export interface GroundItem {
   z: number;
   mapLevel: string;
   despawnTimer: number;
+  ownerPlayerId?: number;
+  privateTicks?: number;
 }
 
 /** One side of a trade session — owner's id, current offer (28 slots), and
@@ -386,7 +392,13 @@ export class World {
 
     // Re-spawn ground items for this map
     for (const [id, item] of this.groundItems) {
-      if (item.mapLevel === mapId) this.groundItems.delete(id);
+      if (item.mapLevel !== mapId) continue;
+      this.groundItems.delete(id);
+      this.despawningItemIds.delete(id);
+      cm.removeEntity(id);
+      for (const [, player] of this.players) {
+        player.visibleEntityIds.delete(id);
+      }
     }
     for (const item of spawns.items ?? []) {
       const groundItem: GroundItem = {
@@ -937,8 +949,18 @@ export class World {
   private interruptPlayerAction(playerId: number, player: Player): void {
     player.pendingInteraction = null;
     player.pendingPickup = -1;
+    player.followTargetPlayerId = -1;
     player.actionDelay = 0;
     this.cancelSkilling(playerId);
+  }
+
+  private releasePrivateGroundItemsForPlayer(playerId: number): void {
+    for (const [, item] of this.groundItems) {
+      if (item.ownerPlayerId !== playerId) continue;
+      item.ownerPlayerId = undefined;
+      item.privateTicks = 0;
+      this.forEachPlayerNear(item.mapLevel, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
+    }
   }
 
   removePlayer(playerId: number): void {
@@ -960,6 +982,7 @@ export class World {
 
     this.players.delete(playerId);
     this.skillingActions.delete(playerId);
+    this.releasePrivateGroundItemsForPlayer(playerId);
     // Defensive sweep: catch any trade sessions whose other side already left.
     this.sweepOrphanTradeSessions();
     console.log(`Player "${player.name}" left`);
@@ -1272,6 +1295,10 @@ export class World {
     let set = this.npcTargetedBy.get(npcId);
     if (!set) { set = new Set(); this.npcTargetedBy.set(npcId, set); }
     set.add(playerId);
+    const player = this.players.get(playerId);
+    if (player) {
+      this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, npcId);
+    }
   }
 
   private clearCombatTarget(playerId: number): void {
@@ -1283,6 +1310,37 @@ export class World {
         if (set.size === 0) this.npcTargetedBy.delete(oldNpc);
       }
       this.playerCombatTargets.delete(playerId);
+      const player = this.players.get(playerId);
+      if (player) {
+        this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
+      }
+    }
+  }
+
+  private handleNpcDeath(npc: Npc): void {
+    const targeters = this.npcTargetedBy.get(npc.id);
+    if (targeters) {
+      for (const playerId of [...targeters]) this.clearCombatTarget(playerId);
+    }
+
+    this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
+
+    const cm = this.chunkManagers.get(npc.currentMapLevel);
+    if (cm) cm.removeEntity(npc.id);
+    for (const [, player] of this.players) {
+      player.visibleEntityIds.delete(npc.id);
+    }
+  }
+
+  private handleNpcRespawn(npc: Npc): void {
+    const cm = this.chunkManagers.get(npc.currentMapLevel);
+    if (cm) cm.addEntity(npc.id, npc.position.x, npc.position.y);
+    npc.lastSyncX = -9999;
+    npc.lastSyncZ = -9999;
+    npc.lastSyncHealth = -1;
+    npc.syncDirty = true;
+    for (const [, player] of this.players) {
+      player.visibleEntityIds.delete(npc.id);
     }
   }
 
@@ -1296,6 +1354,7 @@ export class World {
       player.attackTarget = null;
       player.pendingInteraction = null;
       player.pendingTalkNpcId = -1;
+      player.followTargetPlayerId = -1;
     }
     for (const [, npc] of this.npcs) {
       if (npc.combatTarget && (npc.combatTarget as any).id === playerId) {
@@ -1311,6 +1370,12 @@ export class World {
     this.pendingTradeRequests.delete(playerId);
     for (const [requester, target] of this.pendingTradeRequests) {
       if (target === playerId) this.pendingTradeRequests.delete(requester);
+    }
+    for (const [, other] of this.players) {
+      if (other.followTargetPlayerId === playerId) {
+        other.followTargetPlayerId = -1;
+        other.clearMoveQueue();
+      }
     }
     if (this.tradeSessions.has(playerId)) {
       this.abortTrade(playerId, 2);
@@ -1357,6 +1422,7 @@ export class World {
     if (!player) return;
     if (path.length === 0) {
       player.clearMoveQueue();
+      player.followTargetPlayerId = -1;
       return;
     }
 
@@ -1365,6 +1431,7 @@ export class World {
     player.pendingInteraction = null;
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
+    player.followTargetPlayerId = -1;
     this.cancelSkilling(playerId);
     // Walking auto-closes any open modal interface (bank/trade) — mirrors
     // RS2 behavior where moving aborts the current dialog.
@@ -1463,6 +1530,75 @@ export class World {
     if (truncated && validPath.length < requestedTileCount && requestedTileCount > 0) {
       const last = validPath.length > 0 ? validPath[validPath.length - 1] : { x: player.position.x, z: player.position.y };
       this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
+    }
+  }
+
+  handlePlayerFollow(playerId: number, targetPlayerId: number): void {
+    const player = this.players.get(playerId);
+    const target = this.players.get(targetPlayerId);
+    if (!player || !target) return;
+    if (player.id === target.id) return;
+    if (player.disconnected || target.disconnected) return;
+    if (player.currentMapLevel !== target.currentMapLevel || player.currentFloor !== target.currentFloor) return;
+    if (player.isInterfaceOpen()) return;
+
+    this.interruptPlayerAction(playerId, player);
+    this.clearCombatTarget(playerId);
+    player.clearMoveQueue();
+    player.attackTarget = null;
+    player.pendingInteraction = null;
+    player.pendingSpellCast = null;
+    player.pendingTalkNpcId = -1;
+    player.followTargetPlayerId = target.id;
+    if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
+    player.openShopNpcId = null;
+    if (player.openDialogueState) this.sendDialogueClose(player);
+    this.updatePlayerFollow(player, target);
+  }
+
+  private updatePlayerFollow(player: Player, target: Player): void {
+    if (player.id === target.id || target.disconnected || player.currentMapLevel !== target.currentMapLevel || player.currentFloor !== target.currentFloor) {
+      player.followTargetPlayerId = -1;
+      player.clearMoveQueue();
+      return;
+    }
+
+    const dx = target.position.x - player.position.x;
+    const dz = target.position.y - player.position.y;
+    if (Math.max(Math.abs(dx), Math.abs(dz)) <= 1.5) {
+      if (!target.hasMoveQueue()) player.clearMoveQueue();
+      return;
+    }
+
+    if (player.hasMoveQueue()) return;
+
+    const map = this.getPlayerMap(player);
+    const targetTileX = Math.floor(target.position.x);
+    const targetTileZ = Math.floor(target.position.y);
+    const candidates: { x: number; z: number }[] = [];
+    for (let oz = -1; oz <= 1; oz++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        if (ox === 0 && oz === 0) continue;
+        const tx = targetTileX + ox;
+        const tz = targetTileZ + oz;
+        const blocked = player.currentFloor === 0
+          ? map.isBlocked(tx, tz) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tx, tz))
+          : map.isTileBlockedOnFloor(tx, tz, player.currentFloor);
+        if (!blocked) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
+      }
+    }
+    candidates.sort((a, b) => {
+      const da = Math.hypot(a.x - player.position.x, a.z - player.position.y);
+      const db = Math.hypot(b.x - player.position.x, b.z - player.position.y);
+      return da - db;
+    });
+
+    for (const dest of candidates) {
+      const path = map.findPathOnFloor(player.position.x, player.position.y, dest.x, dest.z, player.currentFloor);
+      if (path.length > 0) {
+        player.setMoveQueue(path);
+        return;
+      }
     }
   }
 
@@ -1865,6 +2001,7 @@ export class World {
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
     if (item.mapLevel !== player.currentMapLevel) return;
+    if (!this.isGroundItemVisibleTo(player, item)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
 
     // Walk to item if not in range
@@ -2422,6 +2559,7 @@ export class World {
     this.sendInventory(player);
     this.sendEquipment(player);
     this.broadcastRemoteEquipment(player);
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
   }
 
   handlePlayerUnequip(playerId: number, equipSlotIndex: number): void {
@@ -2443,6 +2581,7 @@ export class World {
       this.sendInventory(player);
       this.sendEquipment(player);
       this.broadcastRemoteEquipment(player);
+      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
     }
   }
 
@@ -3376,6 +3515,39 @@ export class World {
       this.sendGroundItemUpdate(p, groundItem));
   }
 
+  private spawnNpcLoot(npc: Npc, ownerPlayerId: number | null): void {
+    const loot = rollLoot(npc);
+    if (loot.length === 0) return;
+    const owner = ownerPlayerId != null ? this.players.get(ownerPlayerId) : null;
+    const effectiveOwnerId = owner && owner.currentMapLevel === npc.currentMapLevel ? owner.id : null;
+    const deathX = npc.position.x;
+    const deathZ = npc.position.y;
+    for (const drop of loot) {
+      const groundItem: GroundItem = {
+        id: nextGroundItemId++,
+        itemId: drop.itemId,
+        quantity: drop.quantity,
+        x: deathX,
+        z: deathZ,
+        mapLevel: npc.currentMapLevel,
+        despawnTimer: NPC_LOOT_DESPAWN_TICKS,
+        ownerPlayerId: effectiveOwnerId ?? undefined,
+        privateTicks: effectiveOwnerId != null ? NPC_LOOT_PRIVATE_TICKS : 0,
+      };
+      this.groundItems.set(groundItem.id, groundItem);
+      this.despawningItemIds.add(groundItem.id);
+      const lootCm = this.chunkManagers.get(groundItem.mapLevel);
+      if (lootCm) lootCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+
+      if (effectiveOwnerId != null && owner) {
+        this.sendGroundItemUpdate(owner, groundItem);
+      } else {
+        this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p =>
+          this.sendGroundItemUpdate(p, groundItem));
+      }
+    }
+  }
+
   private awardHarvestItem(player: Player, itemId: number, quantity: number): { added: number; dropped: number } {
     const added = player.addItem(itemId, quantity, this.data.itemDefs, { assureFullInsertion: false }).completed;
     const dropped = quantity - added;
@@ -3449,6 +3621,16 @@ export class World {
 
   private tickPlayerMovement(): void {
     for (const [playerId, player] of this.players) {
+      if (player.followTargetPlayerId >= 0) {
+        const target = this.players.get(player.followTargetPlayerId);
+        if (!target) {
+          player.followTargetPlayerId = -1;
+          player.clearMoveQueue();
+        } else {
+          this.updatePlayerFollow(player, target);
+        }
+      }
+
       if (player.hasMoveQueue()) player.movementCredit += 1;
 
       while (player.hasMoveQueue() && player.movementCredit >= 1) {
@@ -3554,10 +3736,7 @@ export class World {
     for (const [, npc] of this.npcs) {
       if (npc.dead) {
         if (npc.tickRespawn()) {
-          this.forEachPlayerNear(npc.currentMapLevel, npc.position.x, npc.position.y, p => {
-            this.sendNpcStaticData(p, npc);
-            this.sendNpcUpdate(p, npc);
-          });
+          this.handleNpcRespawn(npc);
         }
         continue;
       }
@@ -3733,7 +3912,7 @@ export class World {
         result = processPlayerCombat(player, npc, itemDefs);
       }
       if (result) {
-        this.broadcastPlayerAnimationEvent(player, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, npc.id, true);
+        this.setPlayerAnimation(player, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, npc.id, true);
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
         player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
@@ -3771,31 +3950,11 @@ export class World {
           // stage of any active quest whose trigger matches this npc def.
           this.quests.notifyQuestEvent(player, { type: 'npcKill', npcDefId: npc.def.id });
 
-          this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
+          this.handleNpcDeath(npc);
 
-          const loot = rollLoot(npc);
-          // Drop where the NPC actually died, not at its spawn tile —
-          // aggressive mobs that chase players multiple tiles before dying
-          // were dumping loot back at the spawn point, far from the player.
-          // Historical naming: position.y is world Z.
-          const deathX = npc.position.x;
-          const deathZ = npc.position.y;
-          for (const drop of loot) {
-            const groundItem: GroundItem = {
-              id: nextGroundItemId++,
-              itemId: drop.itemId,
-              quantity: drop.quantity,
-              x: deathX,
-              z: deathZ,
-              mapLevel: npc.currentMapLevel,
-              despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
-            };
-            this.groundItems.set(groundItem.id, groundItem);
-            this.despawningItemIds.add(groundItem.id);
-            const lootCm = this.chunkManagers.get(groundItem.mapLevel);
-            if (lootCm) lootCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
-            this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
-          }
+          // Drop where the NPC actually died, not at its spawn tile. Loot is
+          // private to the highest damager first, then becomes public.
+          this.spawnNpcLoot(npc, npc.getTopDamager());
         }
       }
     }
@@ -3853,27 +4012,9 @@ export class World {
       if (!npc.alive) {
         npc.die();
         this.clearCombatTarget(imp.attackerId);
-        this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
+        this.handleNpcDeath(npc);
 
-        const loot = rollLoot(npc);
-        const deathX = npc.position.x;
-        const deathZ = npc.position.y;
-        for (const drop of loot) {
-          const groundItem: GroundItem = {
-            id: nextGroundItemId++,
-            itemId: drop.itemId,
-            quantity: drop.quantity,
-            x: deathX,
-            z: deathZ,
-            mapLevel: npc.currentMapLevel,
-            despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
-          };
-          this.groundItems.set(groundItem.id, groundItem);
-          this.despawningItemIds.add(groundItem.id);
-          const lootCm = this.chunkManagers.get(groundItem.mapLevel);
-          if (lootCm) lootCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
-          this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
-        }
+        this.spawnNpcLoot(npc, npc.getTopDamager());
       }
     }
     this.pendingSpellImpacts = remaining;
@@ -4151,6 +4292,14 @@ export class World {
       const item = this.groundItems.get(id);
       if (!item) { this.despawningItemIds.delete(id); continue; }
       item.despawnTimer--;
+      if (item.privateTicks && item.privateTicks > 0) {
+        item.privateTicks--;
+        if (item.privateTicks <= 0) {
+          item.ownerPlayerId = undefined;
+          item.privateTicks = 0;
+          this.forEachPlayerNear(item.mapLevel, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
+        }
+      }
       if (item.despawnTimer <= 0) {
         this.despawningItemIds.delete(id);
         this.groundItems.delete(id);
@@ -4340,6 +4489,7 @@ export class World {
     this.sendSkills(player);
     this.sendInventory(player);
     this.sendEquipment(player);
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
     const droppedCount = dropped.length;
     if (droppedCount > 0) {
       this.sendChatSystem(player, `Oh dear, you are dead. You dropped ${droppedCount} item${droppedCount === 1 ? '' : 's'}.`);
@@ -4445,18 +4595,6 @@ export class World {
     // own map for a tick or two before tickNpcCombat noticed the mismatch.
     this.clearCombatReferencesTo(player.id);
 
-    // Clear all cross-entity combat / trade references BEFORE we mutate the
-    // player's map. The helper looks up the player by id, so call it while the
-    // entity still exists in this.players — but it doesn't need the old map
-    // string itself, only the player.id, so the precise ordering vs. the
-    // chunk-manager swap below is irrelevant for correctness. Doing it here
-    // (before the chunk-manager removal + save) means any in-flight NPC chase
-    // is dropped before the new MAP_CHANGE packet ships. Without this an NPC
-    // on `kcmap` with combatTarget pointing at this player would keep
-    // pathfinding toward the player's new (sultans_mine) coordinates on its
-    // own map for a tick or two before tickNpcCombat noticed the mismatch.
-    this.clearCombatReferencesTo(player.id);
-
     // Save player state
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
 
@@ -4486,10 +4624,11 @@ export class World {
     player.currentMapLevel = newMap;
     player.position.x = transition.targetX;
     player.position.y = transition.targetZ;
+    player.currentFloor = 0;
+    player.lastFloorChangeTile = -1;
     // Re-derive the authoritative collision elevation for the new map — the
-    // old map's effectiveY is meaningless here. Transition destinations are
-    // editor-authored ground spawn tiles, so an ungated resolve is correct;
-    // the per-tile refresh self-heals once the player walks.
+    // old map's effectiveY is meaningless here. Cross-map transitions land
+    // on floor 0 unless a future transition type explicitly carries floor.
     player.effectiveY = targetMapObj.getEffectiveHeightOnFloor(
       player.position.x, player.position.y, player.currentFloor);
     player.clearMoveQueue();
@@ -4509,30 +4648,8 @@ export class World {
 
     // Send MAP_CHANGE packet
     this.sendMapChange(player, newMap);
-
-    // Send nearby entities on new map using chunk manager (all entity types registered)
-    if (newCm) {
-      const nearbyIds = newCm.getEntitiesNear(player.position.x, player.position.y);
-      for (const eid of nearbyIds) {
-        if (eid === player.id) continue;
-        const other = this.players.get(eid);
-        if (other) {
-          this.sendPlayerUpdate(player, other);
-          this.sendPlayerUpdate(other, player);
-          continue;
-        }
-        const npc = this.npcs.get(eid);
-        if (npc && !npc.dead) {
-          this.sendNpcStaticData(player, npc);
-          this.sendNpcUpdate(player, npc);
-          continue;
-        }
-        const obj = this.worldObjects.get(eid);
-        if (obj) { this.sendWorldObjectUpdate(player, obj); continue; }
-        const item = this.groundItems.get(eid);
-        if (item) { this.sendGroundItemUpdate(player, item); continue; }
-      }
-    }
+    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+    player.syncDirty = true;
 
     console.log(`Player "${player.name}" transitioned from ${oldMap} to ${newMap}`);
   }
@@ -4575,6 +4692,7 @@ export class World {
           a ? a.shirtColor : -1, a ? a.pantsColor : -1, a ? a.shoesColor : -1,
           a ? a.hairColor  : -1, a ? a.beltColor  : -1, a ? a.skinColor  : -1,
           a ? a.hairStyle  : -1,
+          player.combatLevel,
         ));
       }
     }
@@ -4612,7 +4730,10 @@ export class World {
       try {
         const nextVisible = new Set<number>();
         cm.forEachEntityNearChunk(viewer.currentChunkX, viewer.currentChunkZ, (eid) => {
-          if (eid !== viewer.id) nextVisible.add(eid);
+          if (eid === viewer.id) return;
+          const item = this.groundItems.get(eid);
+          if (item && !this.isGroundItemVisibleTo(viewer, item)) return;
+          nextVisible.add(eid);
         });
 
         for (const eid of viewer.visibleEntityIds) {
@@ -4718,6 +4839,7 @@ export class World {
       a ? a.beltColor  : -1,
       a ? a.skinColor  : -1,
       a ? a.hairStyle  : -1,
+      subject.combatLevel,
     );
   }
 
@@ -4805,7 +4927,13 @@ export class World {
     );
   }
 
+  private isGroundItemVisibleTo(viewer: Player, item: GroundItem): boolean {
+    return !item.ownerPlayerId || item.ownerPlayerId === viewer.id || (item.privateTicks ?? 0) <= 0;
+  }
+
   private sendGroundItemUpdate(viewer: Player, item: GroundItem): void {
+    if (!this.isGroundItemVisibleTo(viewer, item)) return;
+    viewer.visibleEntityIds.add(item.id);
     this.sendToPlayer(viewer, ServerOpcode.GROUND_ITEM_SYNC,
       item.id,
       item.itemId,

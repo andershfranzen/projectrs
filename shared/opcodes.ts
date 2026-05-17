@@ -4,6 +4,8 @@ export enum ClientOpcode {
   PLAYER_MOVE = 10,
   PLAYER_ATTACK_NPC = 20,
   PLAYER_TALK_NPC = 21,
+  /** Follow another player. Payload: [targetPlayerEntityId]. */
+  PLAYER_FOLLOW = 23,
   PLAYER_PICKUP_ITEM = 30,
   PLAYER_DROP_ITEM = 31,
   PLAYER_EQUIP_ITEM = 32,

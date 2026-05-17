@@ -194,6 +194,12 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_FOLLOW: {
+      if (!hasValues(values, 1)) return;
+      world.handlePlayerFollow(playerId, values[0]);
+      break;
+    }
+
     case ClientOpcode.PLAYER_PICKUP_ITEM: {
       if (!hasValues(values, 1)) return;
       const groundItemId = values[0];

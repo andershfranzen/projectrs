@@ -139,7 +139,7 @@ export class NetworkManager {
 
     gameSocket.onopen = () => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
-      console.log('[net] Game socket connected');
+      if (import.meta.env.DEV) console.log('[net] Game socket connected');
       this.connected = true;
       this.startHeartbeat(gameSocket, generation);
       for (const handler of this.openHandlers) handler();
@@ -167,7 +167,7 @@ export class NetworkManager {
 
     gameSocket.onclose = (event) => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
-      console.log('[net] Game socket disconnected');
+      if (import.meta.env.DEV) console.log('[net] Game socket disconnected');
       this.connected = false;
       this.stopHeartbeat();
       this.gameSocket = null;
@@ -182,7 +182,7 @@ export class NetworkManager {
 
     chatSocket.onopen = () => {
       if (generation !== this.socketGeneration || this.chatSocket !== chatSocket) return;
-      console.log('[net] Chat socket connected');
+      if (import.meta.env.DEV) console.log('[net] Chat socket connected');
       if (this.localPlayerId >= 0) {
         chatSocket.send(JSON.stringify({ type: 'identify', playerId: this.localPlayerId }));
       }

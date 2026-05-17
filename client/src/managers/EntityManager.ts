@@ -37,6 +37,7 @@ export class EntityManager {
   readonly playerNames: Map<number, string> = new Map();
   readonly nameToEntityId: Map<string, number> = new Map();
   readonly remoteAppearances: Map<number, PlayerAppearance> = new Map();
+  readonly remoteCombatLevels: Map<number, number> = new Map();
   /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape]. */
   readonly remoteEquipment: Map<number, number[]> = new Map();
   /** Combat stance per remote entityId. Used by GameManager.getPlayerAttackAnimName
@@ -98,6 +99,7 @@ export class EntityManager {
       labelColor: '#ffffff',
       additionalAnimations: [...PLAYER_ANIMATIONS],
     });
+    character.setEntityIdMetadata(entityId, 'player');
     // Spawn at terrain height — pass currentY=0 so the elevation gate
     // doesn't snap a remote player up to a roof above their actual tile.
     character.setPositionXYZ(x, this.getHeight(x, z, 0), z);
@@ -247,6 +249,7 @@ export class EntityManager {
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
       this.remoteAppearances.delete(entityId);
+      this.remoteCombatLevels.delete(entityId);
       this.remoteEquipment.delete(entityId);
       this.remoteStances.delete(entityId);
       const name = this.playerNames.get(entityId);
@@ -255,19 +258,26 @@ export class EntityManager {
     }
   }
 
-  removeNpc(entityId: number): void {
+  disposeNpcSprite(entityId: number): void {
     const sprite = this.npcSprites.get(entityId);
     if (sprite) {
       if (sprite instanceof CharacterEntity) this.npc3dCount = Math.max(0, this.npc3dCount - 1);
       sprite.dispose();
       this.npcSprites.delete(entityId);
-      this.npcTargets.delete(entityId);
-      this.npcDefs.delete(entityId);
-      this.npcAppearances.delete(entityId);
-      this.npcEquipment.delete(entityId);
-      this.npcInteractions.delete(entityId);
-      this.npcOverrideNames.delete(entityId);
     }
+  }
+
+  removeNpc(entityId: number): void {
+    this.disposeNpcSprite(entityId);
+    this.npcTargets.delete(entityId);
+    this.npcDefs.delete(entityId);
+    this.npcAppearances.delete(entityId);
+    this.npcEquipment.delete(entityId);
+    this.npcCustomColors.delete(entityId);
+    this.npcAttackAnimOverrides.delete(entityId);
+    this.npcInteractions.delete(entityId);
+    this.npcOverrideNames.delete(entityId);
+    this.npcCombatTargets.delete(entityId);
   }
 
   removeGroundItem(groundItemId: number): void {
@@ -478,6 +488,8 @@ export class EntityManager {
     this.npcDefs.clear();
     this.npcAppearances.clear();
     this.npcEquipment.clear();
+    this.npcCustomColors.clear();
+    this.npcAttackAnimOverrides.clear();
     this.npcInteractions.clear();
     this.npcOverrideNames.clear();
     this.npc3dCount = 0;

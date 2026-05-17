@@ -501,14 +501,14 @@ export class ChunkManager {
         }
       }
     }
-    if (derivedTotal > 0) {
+    if (import.meta.env.DEV && derivedTotal > 0) {
       console.log(`[ChunkManager] Derived ${derivedTotal} upper-floor walkable tiles across ${derivedFloors.size} floor(s) from texture planes`);
     }
 
     this.loaded = true;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
-    console.log(`[ChunkManager] Loaded map '${mapId}': ${this.mapWidth}x${this.mapHeight}, tiles: ${this.mapData?.tiles?.length}, heights: ${this.mapData?.heights?.length}, waterLevel: ${this.mapData?.waterLevel}`);
+    if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded map '${mapId}': ${this.mapWidth}x${this.mapHeight}, tiles: ${this.mapData?.tiles?.length}, heights: ${this.mapData?.heights?.length}, waterLevel: ${this.mapData?.waterLevel}`);
   }
 
   // --- KC data accessors ---
@@ -2485,7 +2485,7 @@ export class ChunkManager {
       else this.noRoofPlaneTiles.add(idx);
       count++;
     }
-    if (count > 0) {
+    if (import.meta.env.DEV && count > 0) {
       console.log(`[ChunkManager] Registered ${count} tiles as walkable from texture plane bridges`);
     }
   }
@@ -2578,7 +2578,7 @@ export class ChunkManager {
       for (const asset of data.assets || []) {
         this.assetRegistry.set(asset.id, { path: asset.path });
       }
-      console.log(`[ChunkManager] Loaded ${this.assetRegistry.size} asset definitions`);
+      if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded ${this.assetRegistry.size} asset definitions`);
     } catch (e) {
       console.warn('[ChunkManager] Failed to load asset registry:', e);
     }
@@ -2588,7 +2588,7 @@ export class ChunkManager {
       for (const tex of data) {
         this.textureRegistry.set(tex.id, { path: tex.path });
       }
-      console.log(`[ChunkManager] Loaded ${this.textureRegistry.size} texture definitions`);
+      if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded ${this.textureRegistry.size} texture definitions`);
     } catch (e) {
       console.warn('[ChunkManager] Failed to load texture registry:', e);
     }
@@ -3352,12 +3352,15 @@ export class ChunkManager {
     }
 
     this.shadowInf = inf;
-    console.log(`[ChunkManager] Built shadow influences for ${count} objects`);
+    if (import.meta.env.DEV) console.log(`[ChunkManager] Built shadow influences for ${count} objects`);
   }
 
   /** Add shadow contribution from a set of placed objects (used in chunked mode) */
   private addShadowsForObjects(objects: PlacedObject[]): void {
-    if (!this.shadowInf || !this.mapWidth) { console.log(`[ChunkManager] addShadowsForObjects: no shadowInf or mapWidth`); return; }
+    if (!this.shadowInf || !this.mapWidth) {
+      if (import.meta.env.DEV) console.log(`[ChunkManager] addShadowsForObjects: no shadowInf or mapWidth`);
+      return;
+    }
     const w = this.mapWidth + 1;
     for (const obj of objects) {
       const cx = obj.position.x;
@@ -3611,7 +3614,7 @@ export class ChunkManager {
 
   private loadTexturePlanes(planes: TexturePlane[]): void {
     if (planes.length === 0) return;
-    console.log(`[ChunkManager] Loading ${planes.length} texture planes...`);
+    if (import.meta.env.DEV) console.log(`[ChunkManager] Loading ${planes.length} texture planes...`);
 
     this.buildMinimapTexturePlaneColors(planes);
 
@@ -3747,7 +3750,7 @@ export class ChunkManager {
 
       mergedCount++;
     }
-    console.log(`[ChunkManager] Merged ${planes.length} texture planes into ${mergedCount} batched meshes (${this.texturePlanesByChunk.size} chunks)`);
+    if (import.meta.env.DEV) console.log(`[ChunkManager] Merged ${planes.length} texture planes into ${mergedCount} batched meshes (${this.texturePlanesByChunk.size} chunks)`);
   }
 
   disposeAll(): void {

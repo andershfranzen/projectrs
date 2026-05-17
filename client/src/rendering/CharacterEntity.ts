@@ -655,8 +655,9 @@ export class CharacterEntity {
       this.hasWalkL = this.animGroups.has(this.walkanim_l);
       this.hasWalkR = this.animGroups.has(this.walkanim_r);
 
-      // Start idle by default
-      this.playAnimByState(AnimState.Idle);
+      // Start idle by default, unless movement was requested while the
+      // character + external animation GLBs were still loading.
+      this.playAnimByState(this.queuedState === AnimState.Walk ? AnimState.Walk : AnimState.Idle);
 
       // Apply initial position (with feet offset)
       this.root.position.set(this._position.x, this._position.y + this.feetOffsetY, this._position.z);
@@ -964,19 +965,19 @@ export class CharacterEntity {
    *  this stamp every banker would be indistinguishable from every smith
    *  when the scene picker walks the mesh tree.
    *  Defers to whenReady so callers can stamp before load finishes. */
-  setEntityIdMetadata(entityId: number): void {
+  setEntityIdMetadata(entityId: number, kind: 'npc' | 'player' = 'npc'): void {
     const stamp = () => {
       if (this.root) {
-        this.root.metadata = { ...(this.root.metadata ?? {}), entityId, kind: 'npc' };
+        this.root.metadata = { ...(this.root.metadata ?? {}), entityId, kind };
       }
       for (const mesh of this.meshes) {
-        mesh.metadata = { ...(mesh.metadata ?? {}), entityId, kind: 'npc' };
+        mesh.metadata = { ...(mesh.metadata ?? {}), entityId, kind };
       }
       // The pick proxy is the primary hit target — without metadata on it
       // the pick-walk-parents logic can't resolve the NPC entity from a
       // ray that hits the proxy first.
       if (this.pickProxy) {
-        this.pickProxy.metadata = { ...(this.pickProxy.metadata ?? {}), entityId, kind: 'npc' };
+        this.pickProxy.metadata = { ...(this.pickProxy.metadata ?? {}), entityId, kind };
       }
     };
     if (this._ready) stamp();
@@ -1190,6 +1191,11 @@ export class CharacterEntity {
 
   /** Start walking animation. */
   startWalking(): void {
+    if (!this._ready) {
+      this.queuedState = AnimState.Walk;
+      this.queuedAnimName = '';
+      return;
+    }
     // Layered-attack in progress: re-attach the active walk variant's
     // _lower behind the still-running attack_upper. Called every frame
     // while a path is active, so the steady-state path (lower already
@@ -1443,8 +1449,15 @@ export class CharacterEntity {
   }
 
   clearFaceLock(): void {
-    if (!this.faceLocked) return;
     this.faceLocked = false;
+    if (
+      this.currentState === AnimState.Walk
+      && !this.attackIsLayered
+      && isWalkVariant(this.currentAnimName)
+      && this.currentAnimName !== this.walkanim
+    ) {
+      this.swapWalkSeqPreservingPhase(isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
+    }
   }
 
   updateMovementDirection(dx: number, dz: number, _cameraPos?: Vector3): void {
@@ -1701,6 +1714,7 @@ export class CharacterEntity {
     importedMeshes: AbstractMesh[],
     itemId: number = -1,
     bodyHideStyle: 'plate' | 'chain' = 'plate',
+    shouldAttach?: () => boolean,
   ): Promise<boolean> {
     if (!this.skeleton || !this.armatureNode) {
       console.warn('[ManualSkin] No character skeleton/armature; skipping');
@@ -1708,6 +1722,7 @@ export class CharacterEntity {
     }
     try {
       const buf = await (await fetch(fileUrl)).arrayBuffer();
+      if (shouldAttach && !shouldAttach()) return false;
       const view = new DataView(buf);
       // GLB: magic(4) "glTF", version(4) = 2, length(4)
       if (view.getUint32(0, true) !== 0x46546c67) throw new Error('Not a GLB');
@@ -1806,6 +1821,7 @@ export class CharacterEntity {
         kept.push(mesh);
       }
 
+      if (shouldAttach && !shouldAttach()) return false;
       this.detachSkinnedArmor(slot);
       this.skinnedArmorMeshes.set(slot, kept);
       this.skinnedArmorItemIds.set(slot, itemId);

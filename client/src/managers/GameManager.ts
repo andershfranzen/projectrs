@@ -51,7 +51,7 @@ import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -59,6 +59,8 @@ import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVa
 const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
+const NPC_MATERIALIZATION_RETRY_MS = 500;
+const NPC_LOD_HYSTERESIS_TILES = 4;
 
 type InteractionOption = {
   label: string;
@@ -66,6 +68,7 @@ type InteractionOption = {
 };
 
 type LoadingProgressCallback = (pct: number, status: string) => void;
+type GearApplyGuard = () => boolean;
 
 export class GameManager {
   private engine: Engine;
@@ -88,6 +91,7 @@ export class GameManager {
   private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
   private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
+  private static readonly STOPPED_SELF_SYNC_RECONCILE_DIST = 0.35;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
@@ -147,6 +151,8 @@ export class GameManager {
   /** Talk-to deferred while mid-tile. Re-pathing from a fractional
    *  playerX/Z would desync from the server's tile-aligned position. */
   private pendingTalkEntityId: number = -1;
+  private followTargetPlayerId: number = -1;
+  private followPathTimer: number = 0;
   private skillCancelTime: number = 0; // timestamp when skilling was last cancelled
   private skillingFacingAngle: number = 0; // locked facing angle while skilling
   private tileProgress: number = 0; // 0→1 progress through current tile step
@@ -205,6 +211,7 @@ export class GameManager {
   // Gear — cached templates so the same GLB isn't loaded twice
   private gearTemplateCache: Map<string, GearTemplate> = new Map();
   private gearLoadingPromises: Map<string, Promise<GearTemplate | null>> = new Map();
+  private gearApplySeq: WeakMap<CharacterEntity, Map<string, number>> = new WeakMap();
   private gearOverrides: Map<number, GearOverride> = new Map();
   /** Resolves when /data/gear-overrides.json has finished loading (or
    *  failed). All gear-attach paths await this before reading gearOverrides
@@ -227,6 +234,7 @@ export class GameManager {
   private lastSelfAuthorityAt: number = 0;
   private selfAuthorityGraceUntil: number = 0;
   private lastSelfServerTick: number = -1;
+  private lastNpcMaterializationRetryMs: number = 0;
 
   // Character creator
   private characterCreator: CharacterCreator | null = null;
@@ -1143,7 +1151,7 @@ export class GameManager {
         for (const [id, override] of Object.entries(overrides)) {
           this.gearOverrides.set(Number(id), override);
         }
-        console.log(`[Gear] Loaded ${this.gearOverrides.size} gear overrides`);
+        if (import.meta.env.DEV) console.log(`[Gear] Loaded ${this.gearOverrides.size} gear overrides`);
       } catch (e) {
         console.warn('Failed to parse gear overrides:', e);
       }
@@ -1266,13 +1274,22 @@ export class GameManager {
 
     if (kind === PlayerAnimationKind.Idle) {
       remote.stopSkillAnimation();
-      this.entities.remoteCombatTargets.delete(entityId);
       this.restoreSkillingTool(entityId, remote);
       // Idle + targetId is the "face this object without animating" primitive,
       // used for crops which pick instantly with no skill cycle.
       if (targetId > 0) {
         const objectData = this.worldObjectDefs.get(targetId);
-        if (objectData) remote.faceTowardXZ(objectData.x, objectData.z);
+        if (objectData) {
+          this.entities.remoteCombatTargets.delete(entityId);
+          remote.faceTowardXZ(objectData.x, objectData.z);
+        } else {
+          const target = this.entities.resolveTargetable(targetId);
+          if (target) remote.faceToward(target.position);
+          this.entities.remoteCombatTargets.set(entityId, targetId);
+        }
+      } else {
+        this.entities.remoteCombatTargets.delete(entityId);
+        remote.clearFaceLock();
       }
       return;
     }
@@ -1489,14 +1506,14 @@ export class GameManager {
   /** Apply an equipment-slot array (matches PLAYER_REMOTE_EQUIPMENT layout)
    *  to a CharacterEntity. Each slot is loaded asynchronously; ordering
    *  doesn't matter since slots don't depend on each other. */
-  private applyRemoteEquipmentArray(target: CharacterEntity, slots: number[]): void {
+  private applyRemoteEquipmentArray(target: CharacterEntity, slots: number[], entityId?: number): void {
     // Order matches EQUIP_SLOT_NAMES on the server-side encoder.
     const SLOT_ORDER: string[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
     for (let i = 0; i < SLOT_ORDER.length; i++) {
       const slotName = SLOT_ORDER[i];
       const itemId = slots[i] ?? 0;
       // Fire-and-forget — failures are logged inside loadGearSmart.
-      void this.applyGearToCharacter(target, slotName, itemId, /* isLocal */ false);
+      void this.applyGearToCharacter(target, slotName, itemId, /* isLocal */ false, entityId);
     }
   }
 
@@ -1509,7 +1526,23 @@ export class GameManager {
     if (!this.localPlayer) return;
     const slotName = EQUIP_SLOT_NAMES[slotIndex];
     if (!slotName) return;
-    await this.applyGearToCharacter(this.localPlayer, slotName, itemId, /* isLocal */ true);
+    await this.applyGearToCharacter(this.localPlayer, slotName, itemId, /* isLocal */ true, this.localPlayerId);
+  }
+
+  private nextGearApplyGuard(target: CharacterEntity, slotName: string, entityId?: number): GearApplyGuard {
+    let perTarget = this.gearApplySeq.get(target);
+    if (!perTarget) {
+      perTarget = new Map();
+      this.gearApplySeq.set(target, perTarget);
+    }
+    const seq = (perTarget.get(slotName) ?? 0) + 1;
+    perTarget.set(slotName, seq);
+    return () => {
+      if (perTarget!.get(slotName) !== seq) return false;
+      if (entityId === undefined) return true;
+      if (entityId === this.localPlayerId) return this.localPlayer === target;
+      return this.entities.remotePlayers.get(entityId) === target;
+    };
   }
 
   /**
@@ -1528,7 +1561,10 @@ export class GameManager {
     slotName: string,
     itemId: number,
     isLocal: boolean,
+    entityId?: number,
   ): Promise<void> {
+    const isCurrentApply = this.nextGearApplyGuard(target, slotName, entityId);
+
     // Unequip
     if (itemId <= 0) {
       target.detachGear(slotName);
@@ -1585,7 +1621,7 @@ export class GameManager {
     // through the cache below like any other bone-attached slot.
     const PER_TARGET_SLOTS = new Set(['body', 'legs', 'hands', 'feet', 'cape']);
     if (PER_TARGET_SLOTS.has(slotName)) {
-      await this.loadGearSmart(slotName, itemId, buildDef(), target);
+      await this.loadGearSmart(slotName, itemId, buildDef(), target, isCurrentApply);
       return;
     }
 
@@ -1608,7 +1644,7 @@ export class GameManager {
       }
       template = (await promise) ?? undefined;
     }
-    if (template) {
+    if (template && isCurrentApply()) {
       target.attachGear(slotName, itemId, template);
     }
   }
@@ -1624,7 +1660,7 @@ export class GameManager {
     if (toolItemId <= 0 || this.toolSwappedEntities.has(entityId)) return;
     if (character.getGearItemId('weapon') === toolItemId) return;
     this.toolSwappedEntities.add(entityId);
-    void this.applyGearToCharacter(character, 'weapon', toolItemId, /* isLocal */ false);
+    void this.applyGearToCharacter(character, 'weapon', toolItemId, /* isLocal */ false, entityId);
   }
 
   /** Restore the entity's real weapon after a skilling swap. Reads from
@@ -1636,7 +1672,7 @@ export class GameManager {
     const realWeapon = entityId === this.localPlayerId
       ? (this.localEquipment.get(0) ?? 0)
       : (this.entities.remoteEquipment.get(entityId)?.[0] ?? 0);
-    void this.applyGearToCharacter(character, 'weapon', realWeapon, /* isLocal */ false);
+    void this.applyGearToCharacter(character, 'weapon', realWeapon, /* isLocal */ false, entityId);
   }
 
   /**
@@ -1645,7 +1681,23 @@ export class GameManager {
    * GearTemplate for bone-parenting (which the caller is free to share
    * across multiple characters via attachGear).
    */
-  private async loadGearSmart(slotName: string, itemId: number, def: GearDef, target?: CharacterEntity | null): Promise<GearTemplate | null> {
+  private disposeImportedGearResult(result: {
+    meshes?: { dispose: () => void }[];
+    skeletons?: { dispose: () => void }[];
+    animationGroups?: { dispose: () => void }[];
+  }): void {
+    for (const group of result.animationGroups ?? []) group.dispose();
+    for (const skeleton of result.skeletons ?? []) skeleton.dispose();
+    for (const mesh of result.meshes ?? []) mesh.dispose();
+  }
+
+  private async loadGearSmart(
+    slotName: string,
+    itemId: number,
+    def: GearDef,
+    target?: CharacterEntity | null,
+    isCurrentApply?: GearApplyGuard,
+  ): Promise<GearTemplate | null> {
     const character = target ?? this.localPlayer;
     const isLocal = character === this.localPlayer;
     try {
@@ -1653,6 +1705,10 @@ export class GameManager {
       const dir = def.file.substring(0, lastSlash + 1);
       const file = def.file.substring(lastSlash + 1);
       const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+      if (isCurrentApply && !isCurrentApply()) {
+        this.disposeImportedGearResult(result);
+        return null;
+      }
 
       // Fallback: if Babylon's glTF loader didn't attach a skeleton (rare —
       // some Blender-exported GLBs trip the skin auto-detection), re-parse the
@@ -1667,7 +1723,11 @@ export class GameManager {
         SKINNED_SLOTS.has(slotName) &&
         character
       ) {
-        const ok = await character.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId, bodyHideStyle);
+        const ok = await character.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId, bodyHideStyle, isCurrentApply);
+        if (isCurrentApply && !isCurrentApply()) {
+          this.disposeImportedGearResult(result);
+          return null;
+        }
         if (ok) {
           const loaderRoot = result.meshes.find(m => m.name === '__root__');
           if (loaderRoot) loaderRoot.dispose();
@@ -1676,6 +1736,10 @@ export class GameManager {
       }
 
       if (result.skeletons.length > 0 && character) {
+        if (isCurrentApply && !isCurrentApply()) {
+          this.disposeImportedGearResult(result);
+          return null;
+        }
         // Convert PBR → flat for all skinned armor meshes
         for (const mesh of result.meshes) {
           const pbrMat = mesh.material as any;
@@ -1718,6 +1782,10 @@ export class GameManager {
           def.centerOrigin = true;
           // Shift mesh children so the head-height vertices sit at bone origin
           const tmpl = this.buildGearTemplateFromResult(result, def);
+          if (isCurrentApply && !isCurrentApply()) {
+            tmpl.template.dispose();
+            return null;
+          }
           for (const child of tmpl.template.getChildren()) {
             (child as TransformNode).position.y -= headBindY;
           }
@@ -1726,6 +1794,10 @@ export class GameManager {
 
         character.detachGear(slotName);
 
+        if (isCurrentApply && !isCurrentApply()) {
+          this.disposeImportedGearResult(result);
+          return null;
+        }
         character.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId, bodyHideStyle);
         const loaderRoot = result.meshes.find(m => m.name === '__root__');
         if (loaderRoot) loaderRoot.dispose();
@@ -1742,7 +1814,12 @@ export class GameManager {
       }
 
       // Non-skinned — build GearTemplate from the loaded result
-      return this.buildGearTemplateFromResult(result, def);
+      const tmpl = this.buildGearTemplateFromResult(result, def);
+      if (isCurrentApply && !isCurrentApply()) {
+        tmpl.template.dispose();
+        return null;
+      }
+      return tmpl;
     } catch (e) {
       console.warn(`[Gear] Failed to load '${def.file}':`, e);
       return null;
@@ -1900,7 +1977,7 @@ export class GameManager {
         this.localPlayer.setPositionXYZ(this.playerX, spawnY, this.playerZ);
       }
       this.inputManager.setPlayerY(spawnY);
-      console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
+      if (import.meta.env.DEV) console.log(`Logged in at (${this.playerX}, ${spawnY}, ${this.playerZ})`);
       void this.tryResolveLoginReady(loginSeq);
     });
 
@@ -1922,6 +1999,7 @@ export class GameManager {
       const z = z10 / 10;
 
       const hasAppearance = v.length >= 12 && v[5] >= 0;
+      const syncCombatLevel = v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
       const syncAppearance: PlayerAppearance | null = hasAppearance ? {
         shirtColor: v[5], pantsColor: v[6], shoesColor: v[7], hairColor: v[8], beltColor: v[9], skinColor: v[10],
         hairStyle: v[11],
@@ -1975,11 +2053,12 @@ export class GameManager {
           const appearance = this.entities.remoteAppearances.get(entityId);
           if (appearance) remote.applyAppearance(appearance);
           const eq = this.entities.remoteEquipment.get(entityId);
-          if (eq) this.applyRemoteEquipmentArray(remote, eq);
+          if (eq) this.applyRemoteEquipmentArray(remote, eq, entityId);
           const anim = this.remoteAnimationStates.get(entityId);
           if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId, anim.toolItemId);
         });
       }
+      if (syncCombatLevel > 0) this.entities.remoteCombatLevels.set(entityId, syncCombatLevel);
       if (syncAppearance) {
         const prev = this.entities.remoteAppearances.get(entityId);
         if (!appearanceEquals(prev ?? null, syncAppearance)) {
@@ -2036,7 +2115,10 @@ export class GameManager {
       const dx = serverX - this.playerX;
       const dz = serverZ - this.playerZ;
       const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
-      if (maxAxisDelta <= GameManager.SELF_SYNC_RECONCILE_DIST) return;
+      const reconcileDist = serverMoving
+        ? GameManager.SELF_SYNC_RECONCILE_DIST
+        : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
+      if (maxAxisDelta <= reconcileDist) return;
 
       const hiddenCatchup = this._hiddenSinceMs !== 0;
       this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup || !serverMoving);
@@ -2050,7 +2132,7 @@ export class GameManager {
       this.entities.remoteEquipment.set(entityId, slots);
       const remote = this.entities.remotePlayers.get(entityId);
       if (remote && remote.isReady) {
-        this.applyRemoteEquipmentArray(remote, slots);
+        this.applyRemoteEquipmentArray(remote, slots, entityId);
       }
     });
 
@@ -2094,27 +2176,7 @@ export class GameManager {
       this.entities.npcDefs.set(entityId, npcDefId);
 
       if (!this.entities.npcSprites.has(entityId)) {
-        // NPCs without a dedicated NPC_3D_MODELS entry render as CharacterEntity
-        // and are LOD/budget-gated — createNpc returns null when out of range,
-        // and we retry on the next NPC_SYNC tick once the player gets closer.
-        const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
-        const tileSize = this.npcDefsCache.get(npcDefId)?.size ?? 1;
-        const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D, tileSize);
-        if (created instanceof CharacterEntity) {
-          const character = created;
-          // Apply cached appearance + equipment once the GLB + animations
-          // finish loading. Mirrors the remote-player whenReady flush above.
-          void character.whenReady().then(() => {
-            if (this.entities.npcSprites.get(entityId) !== character) return;
-            const appearance = this.entities.npcAppearances.get(entityId);
-            if (appearance) {
-              const custom = this.entities.npcCustomColors.get(entityId);
-              character.applyAppearance(appearance, custom ?? null);
-            }
-            const eq = this.entities.npcEquipment.get(entityId);
-            if (eq) this.applyRemoteEquipmentArray(character, eq);
-          });
-        }
+        this.tryMaterializeNpc(entityId, npcDefId, x, z);
       }
 
       const prev = this.entities.npcTargets.get(entityId);
@@ -2778,6 +2840,8 @@ export class GameManager {
             ...this.path.slice(0, segmentIdx),
             { x: lastX, z: lastZ },
           ];
+        } else {
+          this.reconcileLocalPlayerToServer(lastX, lastZ, true);
         }
       }
     });
@@ -2785,7 +2849,7 @@ export class GameManager {
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
       const newFloor = values[0];
       this.currentFloor = newFloor;
-      console.log(`Floor changed to ${newFloor}`);
+      if (import.meta.env.DEV) console.log(`Floor changed to ${newFloor}`);
       this.chunkManager.setCurrentFloor(newFloor);
       // No Y snap here either — LOGIN_OK provided the spawn Y, and
       // legitimate floor changes (placed stairs) walk the player through
@@ -2883,7 +2947,7 @@ export class GameManager {
   }
 
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
-    console.log(`Map change to '${mapId}' at (${newX}, ${newZ})`);
+    if (import.meta.env.DEV) console.log(`Map change to '${mapId}' at (${newX}, ${newZ})`);
 
     const isInitialPlacement = !this.hasHandledInitialMapChange;
     const mapAlreadyLoaded = this.chunkManager.isLoaded() && this.chunkManager.getMapId() === mapId;
@@ -2891,6 +2955,8 @@ export class GameManager {
     this.playerX = newX;
     this.playerZ = newZ;
     this.clearPredictedPath();
+    this.currentFloor = 0;
+    this.chunkManager.setCurrentFloor(0);
     if (this.localPlayer) this.localPlayer.stopWalking();
     this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
     this.isSkilling = false;
@@ -2976,6 +3042,11 @@ export class GameManager {
     const meshName = pickResult.pickedMesh.name;
     const options: InteractionOption[] = [];
 
+    const pickedPlayerEntityId = this.pickPlayerAtPoint(point.x, point.y);
+    if (pickedPlayerEntityId != null) {
+      options.push(...this.getPlayerInteractionOptions(pickedPlayerEntityId));
+    }
+
     // Identify the picked NPC. 3D-modeled NPCs (e.g. cows) all share mesh
     // names from their source GLB, so name matching is ambiguous — every
     // cow click would route to whichever cow happened to be first in the
@@ -3001,6 +3072,13 @@ export class GameManager {
     }
 
     return options;
+  }
+
+  private getPlayerInteractionOptions(entityId: number): InteractionOption[] {
+    const name = this.entities.playerNames.get(entityId) ?? 'Player';
+    const lvl = this.entities.remoteCombatLevels.get(entityId) ?? 0;
+    const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
+    return [{ label: `Follow ${name}${labelLevel}`, action: () => this.followPlayer(entityId) }];
   }
 
   private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } | null {
@@ -3201,6 +3279,18 @@ export class GameManager {
     return null;
   }
 
+  private findPlayerEntityIdFromPick(pickedMesh: TransformNode): number | null {
+    let walk: TransformNode | null = pickedMesh;
+    while (walk) {
+      if (walk.metadata?.kind === 'player' && typeof walk.metadata?.entityId === 'number') {
+        const entityId = walk.metadata.entityId;
+        return entityId === this.localPlayerId ? null : entityId;
+      }
+      walk = walk.parent as TransformNode | null;
+    }
+    return null;
+  }
+
   /** Rotate the local player's facing toward a world (x, z). 2004scape
    *  Player.faceEntity primitive — used by talkToNpc / attackNpc so the
    *  player isn't standing sideways during the interaction. Uses the
@@ -3247,6 +3337,20 @@ export class GameManager {
       if (entityId != null && groundItemId != null) break;
     }
     return { entityId, groundItemId, closestMesh: closest };
+  }
+
+  private pickPlayerAtPoint(x: number, y: number): number | null {
+    if (this.destroyed || this.scene.isDisposed) return null;
+    const hits = this.scene.multiPick(x, y);
+    if (!hits || hits.length === 0) return null;
+    hits.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+    for (const hit of hits) {
+      const mesh = hit.pickedMesh;
+      if (!mesh) continue;
+      const entityId = this.findPlayerEntityIdFromPick(mesh as unknown as TransformNode);
+      if (entityId != null && this.entities.remotePlayers.has(entityId)) return entityId;
+    }
+    return null;
   }
 
   /** Combat level for the local player. Reads skill levels from the side
@@ -3306,9 +3410,16 @@ export class GameManager {
       // Same multiPick logic as the click handlers so the tooltip resolves
       // an NPC or a ground item even when scenery occludes it from the
       // closest-hit picker.
+      const playerEntityId = this.pickPlayerAtPoint(this.scene.pointerX, this.scene.pointerY);
       const { entityId, groundItemId } = this.pickAtCursor();
+      let playerLabel: string | null = null;
+      if (playerEntityId != null) {
+        const name = this.entities.playerNames.get(playerEntityId) ?? 'Player';
+        const lvl = this.entities.remoteCombatLevels.get(playerEntityId) ?? 0;
+        playerLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
+      }
       let npcLabel: string | null = null;
-      if (entityId != null) {
+      if (playerLabel == null && entityId != null) {
         const npcDefId = this.entities.npcDefs.get(entityId);
         const name = this.npcDisplayName(entityId, npcDefId);
         const flags = this.entities.npcInteractions.get(entityId) ?? 0;
@@ -3323,13 +3434,16 @@ export class GameManager {
       // wins, mirroring the click priority. Show the whole tile pile, not
       // just the picked sprite, since a kill drops several items per tile.
       let itemLines: string[] = [];
-      if (npcLabel == null && groundItemId != null) {
+      if (playerLabel == null && npcLabel == null && groundItemId != null) {
         itemLines = this.groundItemStackForTile(groundItemId).map((gi) => {
           const iName = this.itemDefsCache.get(gi.itemId)?.name ?? 'item';
           return gi.quantity > 1 ? `${iName} (${gi.quantity})` : iName;
         });
       }
-      if (npcLabel != null) {
+      if (playerLabel != null) {
+        el.style.color = '#ffffff';
+        el.textContent = playerLabel;
+      } else if (npcLabel != null) {
         el.style.color = '#d8372b';
         el.textContent = npcLabel;
       } else if (itemLines.length > 0) {
@@ -3340,7 +3454,7 @@ export class GameManager {
         el.style.color = '#c8b88a';
         el.innerHTML = itemLines.map(esc).join('<br>');
       }
-      if (npcLabel != null || itemLines.length > 0) {
+      if (playerLabel != null || npcLabel != null || itemLines.length > 0) {
         el.style.left = `${e.clientX + 14}px`;
         el.style.top = `${e.clientY + 14}px`;
         el.style.display = 'block';
@@ -3407,6 +3521,18 @@ export class GameManager {
     } else {
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
     }
+  }
+
+  private followPlayer(playerEntityId: number): void {
+    const target = this.entities.remotePlayers.get(playerEntityId);
+    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    this.combatTargetId = -1;
+    this.pendingSingleCastSpell = -1;
+    this._combatPathTimer = 0;
+    this.followTargetPlayerId = playerEntityId;
+    this.followPathTimer = 0;
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_FOLLOW, playerEntityId));
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffffff');
   }
 
   private talkToNpc(npcEntityId: number): void {
@@ -3610,7 +3736,13 @@ export class GameManager {
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
     if (path.length === 0) return;
+    this.followTargetPlayerId = -1;
     if (!this.network.sendMove(path)) return;
+    this.startLocalPredictedPath(path, preserveCurrentStep);
+  }
+
+  private startLocalPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
+    if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
     this.path = path;
     this.pathIndex = 0;
@@ -4739,6 +4871,56 @@ export class GameManager {
     document.querySelectorAll('.entity-health-bar').forEach(el => el.remove());
   }
 
+  private applyCachedNpcRigState(entityId: number, character: CharacterEntity): void {
+    const apply = () => {
+      if (this.entities.npcSprites.get(entityId) !== character) return;
+      const appearance = this.entities.npcAppearances.get(entityId);
+      if (appearance) {
+        const custom = this.entities.npcCustomColors.get(entityId);
+        character.applyAppearance(appearance, custom ?? null);
+      }
+      const eq = this.entities.npcEquipment.get(entityId);
+      if (eq) this.applyRemoteEquipmentArray(character, eq);
+    };
+
+    if (character.isReady) apply();
+    else void character.whenReady().then(apply);
+  }
+
+  private tryMaterializeNpc(entityId: number, npcDefId: number, x: number, z: number): void {
+    if (this.entities.npcSprites.has(entityId)) return;
+    const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
+    const tileSize = this.npcDefsCache.get(npcDefId)?.size ?? 1;
+    const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D, tileSize);
+    if (created instanceof CharacterEntity) {
+      this.applyCachedNpcRigState(entityId, created);
+    }
+  }
+
+  private maintainNpcMaterialization(now = performance.now()): void {
+    if (now - this.lastNpcMaterializationRetryMs < NPC_MATERIALIZATION_RETRY_MS) return;
+    this.lastNpcMaterializationRetryMs = now;
+
+    const dematerializeDistance = NPC_3D_LOD_DISTANCE + NPC_LOD_HYSTERESIS_TILES;
+    for (const [entityId, sprite] of this.entities.npcSprites) {
+      if (!(sprite instanceof CharacterEntity)) continue;
+      const target = this.entities.npcTargets.get(entityId);
+      if (!target) continue;
+      const dx = target.x - this.playerX;
+      const dz = target.z - this.playerZ;
+      if (Math.max(Math.abs(dx), Math.abs(dz)) > dematerializeDistance) {
+        this.entities.disposeNpcSprite(entityId);
+      }
+    }
+
+    for (const [entityId, target] of this.entities.npcTargets) {
+      if (this.entities.npcSprites.has(entityId)) continue;
+      const npcDefId = this.entities.npcDefs.get(entityId);
+      if (npcDefId === undefined) continue;
+      this.tryMaterializeNpc(entityId, npcDefId, target.x, target.z);
+    }
+  }
+
   private static readonly IDENTITY = Matrix.Identity();
 
   private static readonly MAX_OVERLAY_DIST_SQ = 45 * 45;
@@ -4960,6 +5142,7 @@ export class GameManager {
     this.chunkManager.updateAnimations();
     this.updateFog(dt);
 
+    this.updatePlayerFollowPrediction(dt);
     this.updateCombatFollow(dt);
     this.updateLocalPlayerMovement(dt, camPos);
     // If a slide is in flight but there's no active path, updateLocalPlayerMovement
@@ -4982,6 +5165,7 @@ export class GameManager {
 
     this.entities.interpolateRemotePlayers(dt, camPos, (entityId) =>
       this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill);
+    this.maintainNpcMaterialization();
     this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
 
     this.updateIndoorDetection();
@@ -5049,6 +5233,40 @@ export class GameManager {
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.combatTargetId));
     } else {
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+    }
+  }
+
+  private updatePlayerFollowPrediction(dt: number): void {
+    if (this.followTargetPlayerId < 0 || !this.localPlayer) return;
+    const target = this.entities.remotePlayers.get(this.followTargetPlayerId);
+    if (!target) {
+      this.followTargetPlayerId = -1;
+      return;
+    }
+
+    this.followPathTimer = Math.max(0, this.followPathTimer - dt);
+    const dx = target.position.x - this.playerX;
+    const dz = target.position.z - this.playerZ;
+    const dist = Math.max(Math.abs(dx), Math.abs(dz));
+    if (dist <= 1.5) {
+      this.localPlayer.lockFaceTowardXZ(target.position.x, target.position.z);
+      return;
+    }
+    if (this.followPathTimer > 0 || this.pathIndex < this.path.length) return;
+    this.followPathTimer = 0.6;
+
+    const pathResult = this.findPathFromMovementAnchor(target.position.x, target.position.z);
+    const path = pathResult.path;
+    if (path.length > 0) {
+      const last = path[path.length - 1];
+      if (Math.floor(last.x) === Math.floor(target.position.x) && Math.floor(last.z) === Math.floor(target.position.z)) {
+        path.pop();
+      }
+    }
+    if (path.length > 0) {
+      this.startLocalPredictedPath(path, pathResult.preserveCurrentStep);
+      if (this.destMarker) this.destMarker.isVisible = false;
+      this.minimap?.clearDestination();
     }
   }
 

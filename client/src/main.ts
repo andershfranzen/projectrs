@@ -4,6 +4,11 @@ import { BackgroundParticles } from './ui/BackgroundParticles';
 import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import type { GameManager as GameManagerType } from './managers/GameManager';
+import { Logger } from '@babylonjs/core/Misc/logger';
+
+if (!import.meta.env.DEV) {
+  Logger.LogLevels = Logger.ErrorLogLevel;
+}
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
