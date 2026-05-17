@@ -181,7 +181,7 @@ export class GameManager {
   private static readonly SLIDE_DURATION_MS = 200;
   private static readonly HIDDEN_RECONCILE_DIST = 2.5;
   private static readonly VISIBLE_RECONCILE_DIST = 2.25;
-  private static readonly MINIMAP_UPDATE_INTERVAL_MS = 50;
+  private static readonly MINIMAP_LIST_REFRESH_INTERVAL_MS = 50;
   // Tracks when the tab last became hidden. Non-zero means we recently
   // returned to a visible tab and the divergence-snap is armed for ~2 ticks
   // to catch the throttled-prediction backlog. Reset to 0 otherwise so
@@ -192,7 +192,7 @@ export class GameManager {
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
   private _minimapObjects: { x: number; z: number; category: string }[] = [];
-  private _lastMinimapUpdateMs: number = 0;
+  private _lastMinimapListRefreshMs: number = 0;
   // NOTE: do NOT reuse a single Vector3 for entity positions — the setter stores the reference
   private _overlayVp = new Viewport(0, 0, 1, 1);
   private _overlayTransform = Matrix.Identity();
@@ -2991,7 +2991,7 @@ export class GameManager {
       await this.loadBiomes(mapId);
       this.applyFog();
       this.minimap?.invalidateTileCache();
-      this._lastMinimapUpdateMs = 0;
+      this._lastMinimapListRefreshMs = 0;
     } else {
       this._loginProgress?.(0.58, 'Using preloaded map');
     }
@@ -5818,29 +5818,29 @@ export class GameManager {
     }
   }
 
-  private updateMinimap(_dt: number): void {
+  private updateMinimap(dt: number): void {
     if (!this.minimap || !this.chunkManager.isLoaded()) return;
     const now = performance.now();
-    const elapsedMs = this._lastMinimapUpdateMs === 0
-      ? GameManager.MINIMAP_UPDATE_INTERVAL_MS
-      : now - this._lastMinimapUpdateMs;
-    if (elapsedMs < GameManager.MINIMAP_UPDATE_INTERVAL_MS) return;
-    this._lastMinimapUpdateMs = now;
+    const shouldRefreshLists = this._lastMinimapListRefreshMs === 0
+      || now - this._lastMinimapListRefreshMs >= GameManager.MINIMAP_LIST_REFRESH_INTERVAL_MS;
+    if (shouldRefreshLists) {
+      this._lastMinimapListRefreshMs = now;
 
-    this._minimapRemotes.length = 0;
-    for (const [, target] of this.entities.remoteTargets) {
-      this._minimapRemotes.push(target);
-    }
-    this._minimapNpcs.length = 0;
-    for (const [, target] of this.entities.npcTargets) {
-      this._minimapNpcs.push(target);
-    }
-    this._minimapObjects.length = 0;
-    for (const [, data] of this.worldObjectDefs) {
-      if (data.depleted) continue;
-      const def = this.objectDefsCache.get(data.defId);
-      if (!def) continue;
-      this._minimapObjects.push({ x: data.x, z: data.z, category: def.category });
+      this._minimapRemotes.length = 0;
+      for (const [, target] of this.entities.remoteTargets) {
+        this._minimapRemotes.push(target);
+      }
+      this._minimapNpcs.length = 0;
+      for (const [, target] of this.entities.npcTargets) {
+        this._minimapNpcs.push(target);
+      }
+      this._minimapObjects.length = 0;
+      for (const [, data] of this.worldObjectDefs) {
+        if (data.depleted) continue;
+        const def = this.objectDefsCache.get(data.defId);
+        if (!def) continue;
+        this._minimapObjects.push({ x: data.x, z: data.z, category: def.category });
+      }
     }
     const camAlpha = this.camera.getCamera().alpha;
     this.minimap.update(
@@ -5849,7 +5849,7 @@ export class GameManager {
       this.chunkManager,
       camAlpha,
       this._minimapObjects,
-      Math.min(elapsedMs / 1000, 0.25),
+      dt,
     );
   }
 }

@@ -72,6 +72,7 @@ export class Minimap {
   private cachedStartZ: number = 0;
 
   private tileColorBuf: Uint8Array;
+  private heightBuf: Float32Array;
   private readonly tileSize: number;
 
   constructor(displaySize: number = RENDER_SIZE) {
@@ -110,6 +111,7 @@ export class Minimap {
     this.offCtx = this.offCanvas.getContext('2d')!;
     this.imageData = this.offCtx.createImageData(RENDER_SIZE, RENDER_SIZE);
     this.tileColorBuf = new Uint8Array(this.tileSize * this.tileSize * 4);
+    this.heightBuf = new Float32Array((this.tileSize + 1) * (this.tileSize + 1));
 
     this.canvas.addEventListener('click', (e) => this.handleClick(e));
   }
@@ -203,7 +205,7 @@ export class Minimap {
 
       // Pre-fetch vertex heights into a grid for per-pixel hillshading
       const hGridW = tileSize + 1;
-      const heights = new Float32Array(hGridW * hGridW);
+      const heights = this.heightBuf;
       for (let vz = 0; vz < hGridW; vz++) {
         for (let vx = 0; vx < hGridW; vx++) {
           heights[vz * hGridW + vx] = chunkManager.getVertexHeight(startX + vx, startZ + vz);
