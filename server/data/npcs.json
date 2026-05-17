@@ -736,7 +736,7 @@
       { "itemId": 79, "quantity": 1, "chance": 0.10 },
       { "itemId": 18, "quantity": 1, "chance": 0.08 },
       { "itemId": 74, "quantity": 1, "chance": 0.06 },
-      { "itemId": 16, "quantity": 1, "chance": 0.05 },
+      { "itemId": 83, "quantity": 1, "chance": 0.05 },
       { "itemId": 54, "quantity": 1, "chance": 0.0005 }
     ]
   },

@@ -1199,7 +1199,8 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 28,
-    "meleeStrength": 32
+    "meleeStrength": 32,
+    "model": "/assets/equipment/weapon/Steel2hsword.glb"
   },
   {
     "id": 93,
@@ -1212,7 +1213,8 @@
     "icon": "Medium_Steel_Helmet_105.png",
     "stabDefence": 6,
     "slashDefence": 8,
-    "crushDefence": 4
+    "crushDefence": 4,
+    "model": "/assets/equipment/head/SteelMedHelm.glb"
   },
   {
     "id": 94,
@@ -1225,7 +1227,8 @@
     "icon": "Large_Steel_Helmet_109.png",
     "stabDefence": 10,
     "slashDefence": 12,
-    "crushDefence": 8
+    "crushDefence": 8,
+    "model": "/assets/equipment/head/SteelFullHelm.glb"
   },
   {
     "id": 95,
@@ -1255,7 +1258,8 @@
     "slashDefence": 20,
     "crushDefence": 12,
     "rangedDefence": 16,
-    "bodyHideStyle": "chain"
+    "bodyHideStyle": "chain",
+    "model": "/assets/equipment/body/SteelCuirass.glb"
   },
   {
     "id": 97,
@@ -1284,7 +1288,8 @@
     "stabDefence": 12,
     "slashDefence": 14,
     "crushDefence": 10,
-    "rangedDefence": 10
+    "rangedDefence": 10,
+    "model": "/assets/equipment/legs/SteelPlatelegs.glb"
   },
   {
     "id": 99,
@@ -1298,7 +1303,8 @@
     "stabDefence": 28,
     "slashDefence": 32,
     "crushDefence": 24,
-    "rangedDefence": 28
+    "rangedDefence": 28,
+    "model": "/assets/equipment/body/SteelPlatebody.glb"
   },
   {
     "id": 100,
