@@ -1378,10 +1378,25 @@ export class SidePanel {
     this.skills.set(id, { level, currentLevel, xp });
     this.renderSkill(id);
     this.updateCombatLevel();
-    // Repaint the matching spellbook so newly-unlocked spells reveal at
-    // the moment of level-up. Cheap — small grid, no images re-fetch.
-    if (id === 'goodmagic') this.renderSpellbook('good');
-    else if (id === 'evilmagic') this.renderSpellbook('evil');
+    if (id === 'goodmagic') {
+      this.updateBar('side-magic-fill', 'side-magic-text', currentLevel, level);
+      this.renderSpellbook('good');
+    } else if (id === 'evilmagic') {
+      this.updateBar('side-evilmagic-fill', 'side-evilmagic-text', currentLevel, level);
+      this.renderSpellbook('evil');
+    }
+  }
+
+  /** Update a resource bar's fill width and text. Returns the clamped ratio
+   *  so callers can layer extra styling (e.g. HP color tiers). */
+  private updateBar(fillId: string, textId: string, current: number, max: number): number {
+    const fill = document.getElementById(fillId);
+    const text = document.getElementById(textId);
+    const ratio = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+    if (!fill || !text) return ratio;
+    fill.style.width = `${ratio * 100}%`;
+    text.textContent = `${current}/${max}`;
+    return ratio;
   }
 
   private renderSkill(id: SkillId): void {
@@ -1479,11 +1494,9 @@ export class SidePanel {
 
   /** Update the HP bar below the minimap */
   updateHP(current: number, max: number): void {
+    const ratio = this.updateBar('side-hp-fill', 'side-hp-text', current, max);
     const fill = document.getElementById('side-hp-fill');
-    const text = document.getElementById('side-hp-text');
-    if (!fill || !text) return;
-    const ratio = Math.max(0, current / max);
-    fill.style.width = `${ratio * 100}%`;
+    if (!fill) return;
     if (ratio > 0.5) {
       fill.style.background = 'linear-gradient(180deg, #1a8a1a 0%, #0a6a0a 100%)';
     } else if (ratio > 0.25) {
@@ -1491,7 +1504,6 @@ export class SidePanel {
     } else {
       fill.style.background = 'linear-gradient(180deg, #8a1a1a 0%, #6a0a0a 100%)';
     }
-    text.textContent = `${current}/${max}`;
   }
 
   // === Equipment methods ===
