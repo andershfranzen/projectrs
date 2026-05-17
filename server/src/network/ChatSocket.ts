@@ -306,12 +306,11 @@ function handleCommand(
 
     case '/unstuck': {
       // Frees a player from interface locks / combat / pending actions and
-      // teleports them to the current map's spawn. Defaults to self when no
-      // target is given. Admin-only — players can get genuinely wedged but
-      // exposing this to everyone makes it a free escape from PvP / risky
-      // areas, which is the inverse of what death drops are designed for.
-      if (denyIfNotAdmin(ws, from)) return;
-      const targetName = parts[1] ?? from;
+      // teleports them to the current map's spawn. Open to everyone during
+      // alpha — re-gate to admin (or add a cooldown) once death drops /
+      // PvP zones make a free escape exploitable.
+      // Non-admins can only unstuck themselves.
+      const targetName = (ws.data.isAdmin ? parts[1] : null) ?? from;
       const player = findPlayerByUsername(targetName, world);
       if (!player) {
         ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
