@@ -133,7 +133,7 @@ function revealGame(afterMs: number = 0): void {
 function showLoginScreen() {
   gameFrame.style.visibility = 'hidden';
   gameFrame.style.display = 'none';
-  backgroundParticles?.setVisible(true);
+  backgroundParticles?.setVisible(false);
   loginScreen?.destroy();
   loginScreen = new LoginScreen(async (token, username) => {
     backgroundParticles?.setVisible(false);
@@ -147,7 +147,7 @@ function showLoginScreen() {
       revealGame();
     } catch (err) {
       console.error('[startGame] connect failed:', err);
-      backgroundParticles?.setVisible(true);
+      backgroundParticles?.setVisible(false);
       throw err;
     }
   });

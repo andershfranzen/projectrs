@@ -9,6 +9,8 @@ export class LoginScreen {
   private activeMode: 'login' | 'signup' = 'login';
   private errorEl: HTMLDivElement | null = null;
   private submitBtn: HTMLButtonElement | null = null;
+  private rememberUsernameRow: HTMLLabelElement | null = null;
+  private rememberUsernameInput: HTMLInputElement | null = null;
 
   constructor(onLogin: LoginCallback) {
     this.onLogin = onLogin;
@@ -32,6 +34,9 @@ export class LoginScreen {
     subtitle.textContent = 'A Browser MMORPG Adventure';
     subtitle.className = 'eq-preauth-subtitle';
     overlay.appendChild(subtitle);
+
+    const vignette = this.createVignette();
+    overlay.appendChild(vignette);
 
     // Old-school login slab: square edges, dark fill, simple grey frame.
     const card = document.createElement('div');
@@ -65,6 +70,7 @@ export class LoginScreen {
     form.appendChild(usernameInput);
     form.appendChild(passwordInput);
     form.appendChild(confirmInput);
+    form.appendChild(this.createRememberUsernameRow());
 
     const submitBtn = document.createElement('button');
     submitBtn.id = 'login-submit';
@@ -84,10 +90,49 @@ export class LoginScreen {
 
     // Focus username on show
     setTimeout(() => {
-      (this.container.querySelector('#login-username') as HTMLInputElement | null)?.focus();
+      const input = this.container.querySelector('#login-username') as HTMLInputElement | null;
+      const savedUsername = this.getSavedUsername();
+      if (input && savedUsername) {
+        input.value = savedUsername;
+        (this.container.querySelector('#login-password') as HTMLInputElement | null)?.focus();
+        return;
+      }
+      input?.focus();
     }, 100);
 
     return overlay;
+  }
+
+  private createVignette(): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'eq-login-vignette';
+    wrap.setAttribute('aria-hidden', 'true');
+
+    const img = document.createElement('img');
+    img.className = 'eq-login-vignette-image';
+    img.alt = '';
+    img.draggable = false;
+    wrap.appendChild(img);
+
+    void this.loadVignetteImage(img);
+    return wrap;
+  }
+
+  private async loadVignetteImage(img: HTMLImageElement): Promise<void> {
+    try {
+      const { getThumbnail } = await import('../rendering/ThumbnailRenderer');
+      const dataUrl = await getThumbnail('/assets/bought-assets/Medieval_Dracula/Gargoyle_Var_1.gltf', {
+        camera: {
+          alpha: -Math.PI / 4,
+          beta: Math.PI / 2.7,
+          distanceMult: 0.7,
+        },
+        rotationY: Math.PI * 0.12,
+      });
+      if (dataUrl && this.container.isConnected) img.src = dataUrl;
+    } catch (err) {
+      console.warn('[LoginScreen] Failed to load login vignette asset:', err);
+    }
   }
 
   private createTab(label: string, mode: 'login' | 'signup'): HTMLDivElement {
@@ -118,6 +163,40 @@ export class LoginScreen {
     return wrap;
   }
 
+  private createRememberUsernameRow(): HTMLLabelElement {
+    const label = document.createElement('label');
+    label.className = 'eq-login-remember';
+    this.rememberUsernameRow = label;
+
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = Boolean(this.getSavedUsername());
+    this.rememberUsernameInput = input;
+
+    const box = document.createElement('span');
+    box.className = 'eq-login-checkbox-box';
+
+    const text = document.createElement('span');
+    text.textContent = 'Remember username on this device';
+
+    label.appendChild(input);
+    label.appendChild(box);
+    label.appendChild(text);
+    return label;
+  }
+
+  private getSavedUsername(): string {
+    return localStorage.getItem('evilquest_saved_username') || '';
+  }
+
+  private syncRememberedUsername(username: string): void {
+    if (this.rememberUsernameInput?.checked) {
+      localStorage.setItem('evilquest_saved_username', username);
+      return;
+    }
+    localStorage.removeItem('evilquest_saved_username');
+  }
+
   private switchMode(mode: 'login' | 'signup'): void {
     this.activeMode = mode;
     this.hideError();
@@ -138,6 +217,9 @@ export class LoginScreen {
     // Update submit button
     const btn = this.submitBtn;
     if (btn) btn.textContent = mode === 'login' ? 'Login' : 'Sign Up';
+    if (this.rememberUsernameRow) {
+      this.rememberUsernameRow.style.display = mode === 'login' ? 'flex' : 'none';
+    }
   }
 
   private async handleSubmit(): Promise<void> {
@@ -187,6 +269,7 @@ export class LoginScreen {
       const data = await res.json();
 
       if (data.ok) {
+        this.syncRememberedUsername(data.username || username);
         localStorage.setItem('projectrs_token', data.token);
         localStorage.setItem('projectrs_username', data.username || username);
         if (btn) btn.textContent = 'Entering world...';

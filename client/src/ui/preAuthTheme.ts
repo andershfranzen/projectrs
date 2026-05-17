@@ -18,11 +18,30 @@ export function ensurePreAuthTheme(): void {
       position: fixed;
       inset: 0;
       background: #050505;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .eq-preauth-overlay::before {
+      content: "";
+      position: absolute;
+      inset: -50vmax;
+      z-index: 0;
+      background:
+        linear-gradient(rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0.86)),
+        url('/ui/stone-bg.png') repeat;
+      transform: rotate(90deg);
+      transform-origin: center;
+      pointer-events: none;
+    }
+
+    .eq-preauth-overlay > * {
+      position: relative;
+      z-index: 1;
     }
 
     .eq-preauth-brand {
@@ -140,6 +159,38 @@ export function ensurePreAuthTheme(): void {
       box-shadow: inset 0 0 0 1px #151515;
     }
 
+    .eq-login-vignette {
+      position: absolute;
+      left: calc(50% + 160px);
+      top: 226px;
+      width: 280px;
+      height: 420px;
+      z-index: 1;
+      opacity: 0.86;
+      pointer-events: none;
+      filter: saturate(0.86) contrast(1.18) brightness(1.18)
+        drop-shadow(0 24px 28px rgba(0, 0, 0, 0.78));
+      mask-image: radial-gradient(ellipse at center, #000 42%, rgba(0,0,0,0.84) 62%, rgba(0,0,0,0) 84%);
+    }
+
+    .eq-login-vignette::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse at 50% 78%, rgba(144, 38, 28, 0.16), rgba(0,0,0,0) 46%),
+        linear-gradient(90deg, rgba(0,0,0,0.88), rgba(0,0,0,0) 36%, rgba(0,0,0,0.42));
+      pointer-events: none;
+    }
+
+    .eq-login-vignette-image {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+      image-rendering: auto;
+    }
+
     .eq-login-tabs {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -213,6 +264,49 @@ export function ensurePreAuthTheme(): void {
       box-shadow: inset 0 0 0 1px #1b0c0a;
     }
 
+    .eq-login-remember {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 2px 0 9px;
+      color: #a79f90;
+      font-size: 11px;
+      font-weight: bold;
+      line-height: 1.2;
+      cursor: pointer;
+      user-select: none;
+      text-shadow: 1px 1px 0 #000;
+    }
+
+    .eq-login-remember input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .eq-login-checkbox-box {
+      width: 14px;
+      height: 14px;
+      flex: 0 0 14px;
+      background: #020202;
+      border: 2px solid #2a2a2a;
+      outline: 1px solid #000;
+      box-shadow: inset 0 0 0 1px #101010;
+    }
+
+    .eq-login-remember input:checked + .eq-login-checkbox-box {
+      background:
+        linear-gradient(135deg, transparent 0 36%, #d7c7a8 36% 52%, transparent 52%),
+        linear-gradient(45deg, transparent 0 44%, #d7c7a8 44% 60%, transparent 60%),
+        #3a100d;
+      border-color: #6b2a22;
+      box-shadow: inset 0 0 0 1px #1b0c0a;
+    }
+
+    .eq-login-remember:hover {
+      color: #d7d0c2;
+    }
+
     .eq-login-submit {
       width: 100%;
       padding: 8px;
@@ -236,6 +330,13 @@ export function ensurePreAuthTheme(): void {
       cursor: default;
       opacity: 0.72;
     }
+
+    @media (max-width: 820px) {
+      .eq-login-vignette {
+        display: none;
+      }
+    }
+
   `;
   document.head.appendChild(style);
 }
