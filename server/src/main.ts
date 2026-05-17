@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validatePassword, validateUsername } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -806,27 +806,10 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/api/signup' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
-      const ip = requestClientIp(req, server);
-      try {
-        const body = await req.json() as { username?: string; password?: string; deviceId?: string };
-        const username = body.username || '';
-        const password = body.password || '';
-        const usernameError = validateUsername(username);
-        if (usernameError) return jsonResponse({ ok: false, error: usernameError }, 400);
-        const passwordError = validatePassword(password);
-        if (passwordError) return jsonResponse({ ok: false, error: passwordError }, 400);
-        if (!checkRate(signupAttempts, ip, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
-          return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
-        }
-        const deviceId = sanitizeDeviceId(body.deviceId);
-        const result = await db.createAccount(username, password, deviceId);
-        if (result.ok) {
-          return jsonResponse({ ok: true, token: result.token, username });
-        }
-        return jsonResponse({ ok: false, error: result.error }, 400);
-      } catch {
-        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
-      }
+      return jsonResponse({
+        ok: false,
+        error: 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.',
+      }, 403);
     }
 
     if (url.pathname === '/api/login' && req.method === 'POST') {

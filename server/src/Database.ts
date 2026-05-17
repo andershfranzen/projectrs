@@ -6,6 +6,8 @@ import { ALL_SKILLS, SKILL_NAMES, combatLevel, initSkills, xpForLevel, normalize
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
+const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
 
 export interface SessionInfo {
   accountId: number;
@@ -430,6 +432,8 @@ export class GameDatabase {
   }
 
   async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
+    if (!PUBLIC_SIGNUPS_ENABLED) return { ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE };
+
     const usernameError = validateUsername(username);
     if (usernameError) return { ok: false, error: usernameError };
     const passwordError = validatePassword(password);

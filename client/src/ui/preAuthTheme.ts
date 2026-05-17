@@ -307,6 +307,38 @@ export function ensurePreAuthTheme(): void {
       color: #d7d0c2;
     }
 
+    .eq-login-signup-closed {
+      padding: 12px 10px;
+      margin-top: 2px;
+      background: #080202;
+      border: 1px solid #672019;
+      box-shadow: inset 0 0 0 1px #1b0806;
+      color: #d7d0c2;
+      font-size: 12px;
+      line-height: 1.45;
+      text-align: center;
+      text-shadow: 1px 1px 0 #000;
+    }
+
+    .eq-login-signup-closed p {
+      margin: 0 0 8px;
+    }
+
+    .eq-login-signup-closed p:last-child {
+      margin-bottom: 0;
+    }
+
+    .eq-login-signup-closed a {
+      color: #c85a4d;
+      font-weight: bold;
+      text-decoration: none;
+    }
+
+    .eq-login-signup-closed a:hover {
+      color: #e07163;
+      text-decoration: underline;
+    }
+
     .eq-login-submit {
       width: 100%;
       padding: 8px;
