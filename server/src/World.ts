@@ -2021,7 +2021,10 @@ export class World {
         player.setMoveQueue(path);
       }
       if (player.hasMoveQueue()) {
-        player.pendingInteraction = { objectEntityId, actionIndex };
+        // Stash recipeIndex too — without it, the deferred arrival fire
+        // would drop the player's specific picker choice (e.g. Steel Bar)
+        // and the server would auto-pick the first matching recipe (iron).
+        player.pendingInteraction = { objectEntityId, actionIndex, recipeIndex };
       } else {
         this.sendChatSystem(player, "I can't reach that.");
       }
@@ -3457,7 +3460,7 @@ export class World {
         this.handlePlayerPickup(playerId, pickupId);
       }
       if (player.pendingInteraction && !player.hasMoveQueue()) {
-        const { objectEntityId, actionIndex, swingSign } = player.pendingInteraction;
+        const { objectEntityId, actionIndex, swingSign, recipeIndex } = player.pendingInteraction;
         const obj = this.worldObjects.get(objectEntityId);
         // Doors fire instantly on arrival — toggling is visually
         // self-evident (the door swings) and the client already
@@ -3476,7 +3479,10 @@ export class World {
             if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
               this.toggleDoor(obj, swingSign ?? 0);
             } else if (action) {
-              this.handlePlayerInteractObject(playerId, objectEntityId, actionIndex);
+              // Forward the stashed recipeIndex so a deferred furnace craft
+              // honours the player's picker choice instead of auto-picking
+              // (which would fire the first matching recipe — iron, not steel).
+              this.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex ?? -1);
             }
           }
         }

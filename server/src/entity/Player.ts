@@ -67,7 +67,7 @@ export class Player extends Entity {
   moveSpeed: number = 1;
   movementCredit: number = 0;
   pendingPickup: number = -1;
-  pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number } | null = null;
+  pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number; recipeIndex?: number } | null = null;
   animationKind: PlayerAnimationKind = PlayerAnimationKind.Idle;
   animationVariant: PlayerSkillAnimationVariant = PlayerSkillAnimationVariant.None;
   animationTargetId: number = 0;
