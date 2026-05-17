@@ -1695,5 +1695,56 @@
         "xpReward": 5
       }
     ]
+  },
+  {
+    "id": 25,
+    "name": "Silver Rock",
+    "category": "rock",
+    "actions": [
+      "Mine",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 0.9,
+    "height": 0.8,
+    "color": [
+      200,
+      200,
+      220
+    ],
+    "skill": "mining",
+    "levelRequired": 45,
+    "xpReward": 65,
+    "harvestItemId": 142,
+    "harvestQuantity": 1,
+    "harvestTime": 7,
+    "depletionChance": 1.0,
+    "respawnTime": 333,
+    "successChances": {
+      "33": [
+        12,
+        100
+      ],
+      "53": [
+        12,
+        100
+      ],
+      "54": [
+        12,
+        100
+      ],
+      "55": [
+        12,
+        100
+      ],
+      "56": [
+        12,
+        100
+      ],
+      "57": [
+        12,
+        100
+      ]
+    }
   }
 ]
