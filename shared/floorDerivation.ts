@@ -302,10 +302,14 @@ export function deriveElevatedFloorTiles(
         if (py <= terrainH) continue;
 
         const wasBlocking = isTileBlocking ? isTileBlocking(idx) : false;
-        // Bridge: over blocking terrain OR within 2 units of terrain
-        // (walkways/ramps the player can step onto naturally without a
-        // height gate). Anything higher is a roof — gate it on player Y.
-        const isBridge = wasBlocking || py < terrainH + 2.0;
+        // Bridge: over blocking terrain OR low walkway-height above terrain
+        // (curbs, ramps the player can step onto naturally without a height
+        // gate). The threshold has to stay BELOW a typical building-floor
+        // elevation (~2 units) — otherwise a building's elevated ground
+        // floor plane auto-bridges, and walking under the overhang
+        // teleports the player straight up to the upper floor. 1.0 covers
+        // genuine walkways while excluding upper floors.
+        const isBridge = wasBlocking || py < terrainH + 1.0;
 
         const isNoRoof = !!plane.noRoof;
         const existing = result.get(idx);

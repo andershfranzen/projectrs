@@ -130,10 +130,20 @@ export class InputManager {
       }
       return false;
     };
+    // A merged flat texture plane whose surface sits well above the player's
+    // head is a ceiling from where they're standing — clicks must pierce
+    // through to the ground tile underneath, otherwise you can't click into
+    // the bottom floor of an overhanging building.
+    const playerY = this.playerY;
+    const isCeilingPlane = (m: any): boolean => {
+      const md = m.metadata;
+      if (!md?.isTexPlane || !md?.isFlat) return false;
+      return md.minY > playerY + 0.6;
+    };
     const pick = this.scene.pick(
       this.scene.pointerX,
       this.scene.pointerY,
-      (mesh) => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && !isClickThroughAsset(mesh),
+      (mesh) => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && !isClickThroughAsset(mesh) && !isCeilingPlane(mesh),
       false,
       this.scene.activeCamera
     );

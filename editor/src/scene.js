@@ -2090,6 +2090,42 @@ let paintBrushRadius = 1
    *  out — it already has its own per-spawn field on the Spawn tab. */
   const SPAWN_STAT_KEYS = ['health', 'attack', 'strength', 'defence', 'attackSpeed', 'respawnTime']
 
+  /** Fork the given NpcDef into a brand-new id and swap the selected spawn
+   *  to it. Mutating the original def directly is the easy way to lose a
+   *  baseline (e.g. renaming "Custom Humanoid" to "Vampire" wipes the
+   *  template). This button lets users branch first, customize after.
+   *
+   *  Picks the next unused integer id ≥ 100 so user-authored mobs don't
+   *  collide with the hand-curated ids in the 1..21 range.
+   */
+  function duplicateNpcDef(srcDef) {
+    if (!srcDef) return null
+    let nextId = 100
+    const taken = new Set(npcDefs.map(d => d.id))
+    while (taken.has(nextId)) nextId++
+    const clone = structuredClone(srcDef)
+    clone.id = nextId
+    clone.name = `${srcDef.name} copy`
+    npcDefs.push(clone)
+    // Refresh the type dropdown so the new id shows up immediately.
+    const sel = sidebar.querySelector('#npcTypeSelect')
+    if (sel) {
+      const opt = document.createElement('option')
+      opt.value = clone.id
+      opt.textContent = `${clone.name} (ID ${clone.id}) — HP ${clone.health}`
+      sel.appendChild(opt)
+    }
+    // Switch the selected spawn to the new def so the inspector retargets.
+    if (selectedNpcSpawn) {
+      selectedNpcSpawn.npcId = clone.id
+      if (sel) sel.value = clone.id
+      rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+    }
+    markDefsDirty()
+    return clone
+  }
+
   function renderStatsTab(root, def) {
     root.innerHTML = ''
     const spawn = selectedNpcSpawn
@@ -2161,6 +2197,7 @@ let paintBrushRadius = 1
     const shared = document.createElement('div')
     shared.innerHTML = `
       <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${def.name}".</div>
+      <button id="duplicateNpcDefBtn" style="width:100%;margin-bottom:8px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" title="Fork this NPC type into a fresh id before customizing — keeps the baseline template intact.">Duplicate NPC type (fork before editing)</button>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
         <input data-def-key="name" type="text" value="${def.name ?? ''}" style="width:140px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
@@ -2186,6 +2223,10 @@ let paintBrushRadius = 1
       </label>
     `
     root.appendChild(shared)
+    shared.querySelector('#duplicateNpcDefBtn')?.addEventListener('click', () => {
+      const newDef = duplicateNpcDef(def)
+      if (newDef) renderNpcInspector()
+    })
     for (const input of shared.querySelectorAll('[data-def-key]')) {
       // 'input' fires every keystroke; 'change' only fires on blur for
       // number/text. Using 'input' makes the Save NPC defs button light up

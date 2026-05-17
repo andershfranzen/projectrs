@@ -75,7 +75,8 @@
     "crushAttack": 14,
     "slashAttack": 8,
     "meleeStrength": 16,
-    "value": 100
+    "value": 100,
+    "model": "/assets/equipment/weapon/IronBattleaxe.glb"
   },
   {
     "id": 7,
@@ -612,7 +613,7 @@
     "toolLevel": 30,
     "toolBonus": 2,
     "icon": "Steel_Pickaxe_1259.png",
-    "model": "/assets/equipment/Tools/Pickaxe.glb"
+    "model": "/assets/equipment/Tools/SteelPickaxe.glb"
   },
   {
     "id": 55,
@@ -630,7 +631,7 @@
     "toolLevel": 55,
     "toolBonus": 3,
     "icon": "Mithril_Pickaxe_1260.png",
-    "model": "/assets/equipment/Tools/Pickaxe.glb"
+    "model": "/assets/equipment/Tools/MithrilPickaxe.glb"
   },
   {
     "id": 56,
@@ -969,7 +970,8 @@
     "attackSpeed": 6,
     "slashAttack": 9,
     "crushAttack": 18,
-    "meleeStrength": 21
+    "meleeStrength": 21,
+    "model": "/assets/equipment/weapon/IronBattleaxe.glb"
   },
   {
     "id": 78,
@@ -984,7 +986,8 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 21,
-    "meleeStrength": 24
+    "meleeStrength": 24,
+    "model": "/assets/equipment/weapon/Iron2hSword.glb"
   },
   {
     "id": 79,
@@ -1099,7 +1102,7 @@
     "equipSlot": "weapon",
     "value": 90,
     "icon": "Steel_dagger_63.png",
-    "model": "/assets/equipment/weapon/Dagger.glb",
+    "model": "/assets/equipment/weapon/SteelDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
     "stabAttack": 10,
@@ -1119,7 +1122,8 @@
     "attackSpeed": 4,
     "stabAttack": 4,
     "slashAttack": 14,
-    "meleeStrength": 10
+    "meleeStrength": 10,
+    "model": "/assets/equipment/weapon/SteelSword.glb"
   },
   {
     "id": 88,
@@ -1133,7 +1137,8 @@
     "weaponStyle": "crush",
     "attackSpeed": 4,
     "crushAttack": 12,
-    "meleeStrength": 10
+    "meleeStrength": 10,
+    "model": "/assets/equipment/weapon/SteelMace.glb"
   },
   {
     "id": 89,
@@ -1144,7 +1149,7 @@
     "equipSlot": "weapon",
     "value": 180,
     "icon": "Steel_Scimitar_84.png",
-    "model": "/assets/equipment/weapon/Scimitar.glb",
+    "model": "/assets/equipment/weapon/SteelScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 18,
@@ -1163,7 +1168,8 @@
     "attackSpeed": 5,
     "stabAttack": 8,
     "slashAttack": 20,
-    "meleeStrength": 16
+    "meleeStrength": 16,
+    "model": "/assets/equipment/weapon/SteelSword.glb"
   },
   {
     "id": 91,
@@ -1233,7 +1239,8 @@
     "stabDefence": 8,
     "slashDefence": 10,
     "crushDefence": 8,
-    "rangedDefence": 6
+    "rangedDefence": 6,
+    "model": "/assets/equipment/shield/SteelSquareShield.glb"
   },
   {
     "id": 96,
@@ -1262,7 +1269,8 @@
     "stabDefence": 14,
     "slashDefence": 16,
     "crushDefence": 14,
-    "rangedDefence": 10
+    "rangedDefence": 10,
+    "model": "/assets/equipment/shield/SteelKiteshield.glb"
   },
   {
     "id": 98,
@@ -1301,7 +1309,7 @@
     "equipSlot": "weapon",
     "value": 180,
     "icon": "Mithril_dagger_64.png",
-    "model": "/assets/equipment/weapon/Dagger.glb",
+    "model": "/assets/equipment/weapon/MithrilDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
     "stabAttack": 15,
@@ -1321,7 +1329,8 @@
     "attackSpeed": 4,
     "stabAttack": 6,
     "slashAttack": 21,
-    "meleeStrength": 15
+    "meleeStrength": 15,
+    "model": "/assets/equipment/weapon/MithrilSword.glb"
   },
   {
     "id": 102,
@@ -1335,7 +1344,8 @@
     "weaponStyle": "crush",
     "attackSpeed": 4,
     "crushAttack": 18,
-    "meleeStrength": 15
+    "meleeStrength": 15,
+    "model": "/assets/equipment/weapon/MithrilMace.glb"
   },
   {
     "id": 103,
@@ -1346,7 +1356,7 @@
     "equipSlot": "weapon",
     "value": 360,
     "icon": "Mithril_Scimitar_85.png",
-    "model": "/assets/equipment/weapon/Scimitar.glb",
+    "model": "/assets/equipment/weapon/MithrilScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 27,
@@ -1365,7 +1375,8 @@
     "attackSpeed": 5,
     "stabAttack": 12,
     "slashAttack": 30,
-    "meleeStrength": 24
+    "meleeStrength": 24,
+    "model": "/assets/equipment/weapon/MithrilSword.glb"
   },
   {
     "id": 105,
@@ -1435,7 +1446,8 @@
     "stabDefence": 12,
     "slashDefence": 15,
     "crushDefence": 12,
-    "rangedDefence": 9
+    "rangedDefence": 9,
+    "model": "/assets/equipment/shield/MithrilSquareShield.glb"
   },
   {
     "id": 110,
@@ -1464,7 +1476,8 @@
     "stabDefence": 21,
     "slashDefence": 24,
     "crushDefence": 21,
-    "rangedDefence": 15
+    "rangedDefence": 15,
+    "model": "/assets/equipment/shield/MithrilKiteshield.glb"
   },
   {
     "id": 112,

@@ -647,16 +647,29 @@ export class GameMap {
     const floorH = this.floorHeights.get(idx)
       ?? this.elevatedFloorHeights.get(idx)
       ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
-    // Open-door bypass: only applies if the player is at the door's
-    // elevation. Otherwise a basement player (Y=0) could walk through an
-    // open door at Y=2.7 and skip up onto the upper floor.
+    // Open-door bypass: the door is on a wall whose base is either floor 0
+    // (terrain) or an upper floor (elev). The player must be at one of
+    // those levels — covers both a ground-floor door entered from outside
+    // AND an upper-floor door used from the elevated walkway. Using a
+    // single `floorH` with the elev fallback (as it used to) made ground-
+    // floor doors fail when the tile ALSO had an upper-floor plane,
+    // because the bypass then demanded upper-floor Y.
     const isOpenDoor = ((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0;
-    const atDoorLevel = playerY == null || (playerY >= floorH - 0.5 && playerY < floorH + wallH);
-    if (isOpenDoor && atDoorLevel) return false;
+    const groundBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+    const upperBaseH = this.elevatedFloorHeights.get(idx);
+    const atGroundDoor = playerY == null || (playerY >= groundBaseH - 0.5 && playerY < groundBaseH + wallH);
+    const atUpperDoor = playerY == null || (upperBaseH !== undefined && playerY >= upperBaseH - 0.5 && playerY < upperBaseH + wallH);
+    if (isOpenDoor && (atGroundDoor || atUpperDoor)) return false;
 
     if ((this.getWall(x, z) & edge) !== 0) {
       if (playerY == null) return true;
-      if (playerY < floorH + wallH) return true;
+      // Raw walls are floor-0 walls — their base is terrain (or a bridge-
+      // upgraded floor 0), NOT the upper-floor texture plane. Using floorH
+      // here would lift the wall up to `elev + wallH` on tiles that also
+      // carry an upper floor, blocking upper-floor players from crossing a
+      // wall that actually ends below their feet.
+      const wallBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+      if (playerY < wallBaseH + wallH) return true;
     }
     if (this.floorLayers.size === 0) return false;
     if (playerY == null) {

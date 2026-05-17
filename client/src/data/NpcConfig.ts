@@ -4,7 +4,14 @@ export const NPC_NAMES: Record<number, string> = {
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   17: 'Snow Wolf', 18: 'Rat',
-  100: 'Custom Humanoid',
+  // 100 was the Custom Humanoid template; it is now reused for in-editor
+  // mob authoring (the first session edited it into Vampire). 101 is the
+  // permanent blank baseline. To avoid the "lost my template" issue going
+  // forward, the editor's Stats tab has a "Duplicate NPC type" button that
+  // forks the def to a new id before customization.
+  100: 'Vampire',
+  101: 'Elder Vampire',
+  102: 'Custom Humanoid',
 };
 
 export interface Npc3DModelEntry {
@@ -56,5 +63,7 @@ export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; com
   // Editor-spawned customizable humanoid. `combat: true` pulls the full
   // PLAYER_ANIMATIONS set so weapon-driven attack-anim picking resolves
   // 1H/2H/stab/punch/kick on the spawn's equipped weapon.
-  100: { stationary: false, combat: true }, // Custom Humanoid
+  100: { stationary: false, combat: true }, // Vampire
+  101: { stationary: false, combat: true }, // Elder Vampire
+  102: { stationary: false, combat: true }, // Custom Humanoid (fresh template)
 };

@@ -391,7 +391,8 @@
           0.5333333333333333,
           0.5333333333333333
         ]
-      }
+      },
+      "attackAnim": "attack_1h_slash"
     },
     {
       "id": 52,
@@ -421,7 +422,8 @@
           0.5333333333333333,
           0.5333333333333333
         ]
-      }
+      },
+      "attackAnim": "attack_1h_slash"
     },
     {
       "id": 53,
@@ -451,7 +453,8 @@
           0.5333333333333333,
           0.5333333333333333
         ]
-      }
+      },
+      "attackAnim": "attack_1h_slash"
     },
     {
       "id": 54,
@@ -481,7 +484,8 @@
           0.5333333333333333,
           0.5333333333333333
         ]
-      }
+      },
+      "attackAnim": "attack_1h_slash"
     },
     {
       "id": 55,
@@ -511,7 +515,8 @@
           0.5333333333333333,
           0.5333333333333333
         ]
-      }
+      },
+      "attackAnim": "attack_1h_slash"
     },
     {
       "id": 56,
@@ -605,6 +610,85 @@
           0.5333333333333333
         ],
         "hairColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shoesColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ]
+      },
+      "attackAnim": "attack_1h_slash"
+    },
+    {
+      "id": 58,
+      "npcId": 100,
+      "x": 263.5,
+      "z": 134.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 15,
+        "pantsColor": 4,
+        "shoesColor": 6,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 0,
+        "hairStyle": 0
+      },
+      "name": "Vampire",
+      "customColors": {
+        "skinColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shirtColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ]
+      },
+      "attackAnim": "attack_1h_slash"
+    },
+    {
+      "id": 62,
+      "npcId": 101,
+      "x": 246.5,
+      "z": 136.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 0,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 9,
+        "skinColor": 0,
+        "hairStyle": 0
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "name": "Elder Vampire",
+      "customColors": {
+        "skinColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shirtColor": [
           0.5333333333333333,
           0.5333333333333333,
           0.5333333333333333

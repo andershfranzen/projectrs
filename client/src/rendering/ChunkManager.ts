@@ -1767,7 +1767,16 @@ export class ChunkManager {
         const wallH = layer.wallHeights.get(tileIdx) ?? DEFAULT_WALL_HEIGHT;
         // Fall back to derived tile heights so walls on auto-derived upper
         // floors get the right base instead of defaulting to ground (y=0).
-        const floorH = layer.floors.get(tileIdx) ?? layer.tiles.get(tileIdx) ?? 0;
+        // The final `elevatedFloorHeights` fallback mirrors the collision-
+        // side base in wallEdgeBlocksAtHeight — without it, a layer wall on
+        // a kcmap building (no explicit floors/tiles in walls.json, just a
+        // texture-plane upper floor) renders at Y=0 stacked on the ground
+        // wall while collision blocks at Y=elev, so the player walks into
+        // an invisible wall upstairs and sees double walls downstairs.
+        const floorH = layer.floors.get(tileIdx)
+          ?? layer.tiles.get(tileIdx)
+          ?? this.elevatedFloorHeights.get(tileIdx)
+          ?? 0;
         const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE, z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
         const baseY = floorH;
         if (mask & WallEdge.N) {
@@ -1990,9 +1999,16 @@ export class ChunkManager {
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return 0;
     const tileIdx = tz * this.mapWidth + tx;
     if (activeFloor === 0) {
-      // Check placed stair ramps (proximity-based, works regardless of which tile you're on)
+      // Check placed stair ramps (proximity-based, works regardless of which tile you're on).
+      // When ramps stack vertically (e.g. a 0→1 ramp directly under a 1→2
+      // ramp at the same XZ footprint), more than one will match the
+      // proximity test. Picking the first hit would snap a descending
+      // player onto the upper ramp and push them up a whole floor instead
+      // of letting them descend. Tie-break by closeness to currentY so the
+      // ramp the player is actually on wins.
+      let rampY: number | undefined = undefined;
+      let rampDist = Infinity;
       for (const ramp of this.placedStairRamps) {
-        // Project player position onto the ramp axis
         let along: number, across: number;
         if (ramp.direction === 'N' || ramp.direction === 'S') {
           across = Math.abs(x - ramp.cx);
@@ -2001,12 +2017,14 @@ export class ChunkManager {
           across = Math.abs(z - ramp.cz);
           along = (ramp.direction === 'W') ? (x - ramp.cx) : (ramp.cx - x);
         }
-        // Check if player is within the ramp's width (±1 tile) and length
         if (across < 1.0 && along >= -ramp.halfLength && along <= ramp.halfLength) {
           const t = (along + ramp.halfLength) / (ramp.halfLength * 2); // 0 at base, 1 at top
-          return ramp.baseY + t * (ramp.topY - ramp.baseY);
+          const y = ramp.baseY + t * (ramp.topY - ramp.baseY);
+          const dist = currentY !== undefined ? Math.abs(y - currentY) : 0;
+          if (dist < rampDist) { rampDist = dist; rampY = y; }
         }
       }
+      if (rampY !== undefined) return rampY;
 
       const stair = this.stairData.get(tileIdx);
       if (stair) {
@@ -2256,16 +2274,29 @@ export class ChunkManager {
     const floorH = this.floorHeights.get(idx)
       ?? this.elevatedFloorHeights.get(idx)
       ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
-    // Open-door bypass: only applies if the player is actually AT the door's
-    // elevation. Without this, a basement player (Y=0) could walk through an
-    // open door whose floor is at Y=2.7 and snap up onto the upper floor.
+    // Open-door bypass: the door is on a wall whose base is either floor 0
+    // (terrain) or an upper floor (elev). The player must be at one of those
+    // levels — covers both a ground-floor door entered from outside AND an
+    // upper-floor door used from the elevated walkway. Using a single
+    // `floorH` with the elev fallback (as it used to) made ground-floor
+    // doors fail when the tile ALSO had an upper-floor plane, because the
+    // bypass then demanded upper-floor Y.
     const isOpenDoor = ((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0;
-    const atDoorLevel = playerY == null || (playerY >= floorH - 0.5 && playerY < floorH + wallH);
-    if (isOpenDoor && atDoorLevel) return false;
+    const groundBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+    const upperBaseH = this.elevatedFloorHeights.get(idx);
+    const atGroundDoor = playerY == null || (playerY >= groundBaseH - 0.5 && playerY < groundBaseH + wallH);
+    const atUpperDoor = playerY == null || (upperBaseH !== undefined && playerY >= upperBaseH - 0.5 && playerY < upperBaseH + wallH);
+    if (isOpenDoor && (atGroundDoor || atUpperDoor)) return false;
 
     if ((this.getWallRaw(x, z) & edge) !== 0) {
       if (playerY == null) return true;
-      if (playerY < floorH + wallH) return true;
+      // Raw walls are floor-0 walls — their base is terrain (or a bridge-
+      // upgraded floor 0), NOT the upper-floor texture plane. Using floorH
+      // here would lift the wall up to `elev + wallH` on tiles that also
+      // carry an upper floor, blocking upper-floor players from crossing a
+      // wall that actually ends below their feet.
+      const wallBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+      if (playerY < wallBaseH + wallH) return true;
     }
     if (this.floorLayerData.size === 0) return false;
     if (playerY == null) {
@@ -2512,7 +2543,11 @@ export class ChunkManager {
             if (existing === undefined || py < existing) {
               this.elevatedFloorHeights.set(idx, py);
             }
-            if (wasBlocking || py < terrainH + 2.0) {
+            // Bridge threshold mirrors deriveElevatedFloorTiles — must stay
+            // below typical building-floor elevation (~2 units) or every
+            // building's ground-floor plane auto-bridges and walking under
+            // the overhang teleports the player to the upper floor.
+            if (wasBlocking || py < terrainH + 1.0) {
               this.bridgeFloorTiles.add(idx);
             }
             this.texturePlaneFloorTiles.add(idx);
@@ -3155,30 +3190,25 @@ export class ChunkManager {
       if (elev !== undefined && Math.abs(playerY - elev) < 1.0 && this.nonNoRoofElevatedTiles.has(tileIdx)) return true;
     }
 
-    // Indoor signal B: 1×1 roof slab cover. Player's tile has a roof entry
-    // above them (single-storey building case — a roof, no upper floor).
-    // Multi-layer suppression handles "under the building" (floor + roof
-    // above the player ⇒ basement, not indoor).
+    // Indoor signal B: roof/upper-floor cover. Player's tile has any roof
+    // entry above their head. Stamps are tight (center-inside-AABB gate at
+    // the placed-object and texture-plane stamp sites), so an entry here
+    // really means the player is under it — multiple layers (e.g. upper
+    // floor + building roof on the ground floor of a 2-storey building)
+    // all count as indoor.
     //
     // Veto: a flat noRoof texture plane covering this tile means the author
     // declared this column outdoor (balconies, terraces, open structures).
-    // Without the veto, a roof-like placed object's bbox-stamped roofObject-
-    // Grid entry over the same tile would misfire indoor mode under it.
     if (tx >= 0 && tx < this.mapWidth && tz >= 0 && tz < this.mapHeight) {
       const tileIdx = tz * this.mapWidth + tx;
       if (this.noRoofPlaneTiles.has(tileIdx)) return false;
     }
     const here = this.roofObjectGrid.get(`${tx},${tz}`);
     if (!here) return false;
-    let minAbove = Infinity, maxAbove = -Infinity;
     for (const e of here) {
-      if (e.y <= playerY + 0.5) continue;
-      if (e.y < minAbove) minAbove = e.y;
-      if (e.y > maxAbove) maxAbove = e.y;
+      if (e.y > playerY + 0.5) return true;
     }
-    if (minAbove === Infinity) return false;
-    if (maxAbove > minAbove + 2.0) return false;
-    return true;
+    return false;
   }
 
 
