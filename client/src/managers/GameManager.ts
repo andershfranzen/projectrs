@@ -141,7 +141,10 @@ export class GameManager {
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
   private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
   private pendingSmithing: { objectEntityId: number; def: WorldObjectDef } | null = null; // open smithing panel once walk to anvil finishes
-  private pendingObjectInteraction: { objectEntityId: number; actionIndex: number; seq: number } | null = null;
+  // When `useItem` is set, the retry fires PLAYER_USE_ITEM_ON_OBJECT and
+  // `actionIndex` is unused (callers pass 0). Otherwise it fires the regular
+  // PLAYER_INTERACT_OBJECT with `actionIndex` as the chosen right-click slot.
+  private pendingObjectInteraction: { objectEntityId: number; actionIndex: number; seq: number; useItem?: { slot: number; itemId: number } } | null = null;
   private pendingObjectInteractionSeq: number = 0;
   private pendingObjectInteractionTimer: number | null = null;
   /** NPC entityId to face when the current path completes. 2004scape
@@ -3465,16 +3468,44 @@ export class GameManager {
   }
 
   /** Redirect an NPC/object click to a use-on-target packet if the inventory
-   *  has a Use slot armed. Returns true if the click was consumed. */
+   *  has a Use slot armed. Returns true if the click was consumed. For
+   *  objects, walks via the same pendingObjectInteraction retry the normal
+   *  interactObject path uses, then sends PLAYER_USE_ITEM_ON_OBJECT on
+   *  arrival — the server requires adjacency for use-item. */
   private tryUseInventoryItemOn(kind: 'npc' | 'object', entityId: number): boolean {
     const using = this.sidePanel?.getUsing();
     if (!using) return false;
-    const opcode = kind === 'npc'
-      ? ClientOpcode.PLAYER_USE_ITEM_ON_NPC
-      : ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT;
-    this.network.sendRaw(encodePacket(opcode, using.slot, using.itemId, entityId));
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffd060');
     this.sidePanel!.clearUsingInvItem();
+
+    if (kind === 'npc') {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_NPC, using.slot, using.itemId, entityId));
+      return true;
+    }
+
+    const data = this.worldObjectDefs.get(entityId);
+    const def = data ? this.objectDefsCache.get(data.defId) : null;
+    if (!data || !def) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
+      return true;
+    }
+
+    const ptx = Math.floor(this.playerX);
+    const ptz = Math.floor(this.playerZ);
+    const alreadyAdj = isTileAdjacentToObject(ptx, ptz, data.x, data.z, def);
+    if (alreadyAdj) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
+      return true;
+    }
+
+    if (this.walkToAdjacentTileOf(data, def)) {
+      this.trackObjectInteractionRetry(entityId, 0, { slot: using.slot, itemId: using.itemId });
+      this.scheduleObjectInteractionArrivalRetry();
+      return true;
+    }
+
+    // No reachable adjacent tile — let the server send the reach error.
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
     return true;
   }
 
@@ -3766,7 +3797,30 @@ export class GameManager {
     }
   }
 
-  private trackObjectInteractionRetry(objectEntityId: number, actionIndex: number): void {
+  /** Find the closest reachable adjacent tile of an object and start the
+   *  predicted walk toward it. Returns true if a walk was started, false
+   *  if no reachable adjacent tile exists. Caller arms any pending state
+   *  (trackObjectInteractionRetry / pendingSmithing / etc). */
+  private walkToAdjacentTileOf(data: { x: number; z: number }, def: WorldObjectDef): boolean {
+    const candidates = getObjectInteractionTiles(data.x, data.z, def)
+      .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+      .map(tile => ({
+        ax: tile.x,
+        az: tile.z,
+        dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
+      }));
+    candidates.sort((a, b) => a.dist - b.dist);
+    for (const { ax, az } of candidates) {
+      const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
+      if (path.length > 0) {
+        this.startPredictedPath(path, preserveCurrentStep);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private trackObjectInteractionRetry(objectEntityId: number, actionIndex: number, useItem?: { slot: number; itemId: number }): void {
     if (this.pendingObjectInteractionTimer !== null) {
       window.clearTimeout(this.pendingObjectInteractionTimer);
       this.pendingObjectInteractionTimer = null;
@@ -3775,6 +3829,7 @@ export class GameManager {
       objectEntityId,
       actionIndex,
       seq: ++this.pendingObjectInteractionSeq,
+      useItem,
     };
   }
 
@@ -3804,7 +3859,16 @@ export class GameManager {
         return;
       }
 
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, current.objectEntityId, current.actionIndex));
+      if (current.useItem) {
+        this.network.sendRaw(encodePacket(
+          ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT,
+          current.useItem.slot,
+          current.useItem.itemId,
+          current.objectEntityId,
+        ));
+      } else {
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, current.objectEntityId, current.actionIndex));
+      }
       this.clearPendingObjectInteractionRetry();
     }, 700);
   }
@@ -3927,30 +3991,8 @@ export class GameManager {
         this.pendingSmithing = null;
         if (alreadyAdj) {
           this.showSmithingUI(objectEntityId, objDef);
-        } else {
-          const candidates = getObjectInteractionTiles(objData.x, objData.z, objDef)
-            .filter(tile => !this.isTileBlocked(tile.x, tile.z))
-            .map(tile => ({
-              ax: tile.x,
-              az: tile.z,
-              dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
-            }));
-          candidates.sort((a, b) => a.dist - b.dist);
-
-          let bestPath: { x: number; z: number }[] | null = null;
-          let bestPreserveCurrentStep = false;
-          for (const { ax, az } of candidates) {
-            const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
-            if (path.length > 0) {
-              bestPath = path;
-              bestPreserveCurrentStep = preserveCurrentStep;
-              break;
-            }
-          }
-          if (bestPath) {
-            this.startPredictedPath(bestPath, bestPreserveCurrentStep);
-            this.pendingSmithing = { objectEntityId, def: objDef };
-          }
+        } else if (this.walkToAdjacentTileOf(objData, objDef)) {
+          this.pendingSmithing = { objectEntityId, def: objDef };
         }
         return;
       }
@@ -4072,28 +4114,8 @@ export class GameManager {
     const alreadyAdj = def ? isTileAdjacentToObject(ptx, ptz, data.x, data.z, def) : dist <= 1.5;
 
     if (!alreadyAdj && def) {
-      const candidates = getObjectInteractionTiles(data.x, data.z, def)
-        .filter(tile => !this.isTileBlocked(tile.x, tile.z))
-        .map(tile => ({
-          ax: tile.x,
-          az: tile.z,
-          dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
-        }));
-      candidates.sort((a, b) => a.dist - b.dist);
-
-      let bestPath: { x: number; z: number }[] | null = null;
-      let bestPreserveCurrentStep = false;
-      for (const { ax, az } of candidates) {
-        const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
-        if (path.length > 0) {
-          bestPath = path;
-          bestPreserveCurrentStep = preserveCurrentStep;
-          break;
-        }
-      }
-      if (bestPath) {
+      if (this.walkToAdjacentTileOf(data, def)) {
         if (shouldRetryOnArrival) this.trackObjectInteractionRetry(objectEntityId, actionIndex);
-        this.startPredictedPath(bestPath, bestPreserveCurrentStep);
       } else {
         this.clearPendingObjectInteractionRetry();
       }
