@@ -3052,6 +3052,8 @@ let paintBrushRadius = 1
     }
   }
 
+  const WALL_DETECT_KEYWORDS = ['wall', 'fence', 'gate']
+
   function autoDetectWallsInRegion(region) {
     let count = 0
     // Determine the expected Y range for the current collision floor
@@ -3063,7 +3065,8 @@ let paintBrushRadius = 1
       const assetId = obj.userData?.assetId
       if (!assetId) continue
       const asset = assetRegistry.find(a => a.id === assetId)
-      if (!asset?.name?.toLowerCase().includes('wall')) continue
+      const assetName = asset?.name?.toLowerCase() || ''
+      if (!WALL_DETECT_KEYWORDS.some(k => assetName.includes(k))) continue
 
       let min, max
       try {
