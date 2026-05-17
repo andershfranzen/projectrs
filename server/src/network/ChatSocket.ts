@@ -4,12 +4,16 @@ import type { ServerWebSocket } from 'bun';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
 
+function sendSystem(ws: ServerWebSocket<ChatSocketData>, message: string): void {
+  ws.send(JSON.stringify({ type: 'system', message }));
+}
+
 /** Reject a command from a non-admin and notify them. Returns true if blocked.
  *  Admin status is bound at WS upgrade time from the DB (accounts.is_admin),
  *  so this is just a flag check — no per-message DB hit. */
 function denyIfNotAdmin(ws: ServerWebSocket<ChatSocketData>, _from: string): boolean {
   if (ws.data.isAdmin) return false;
-  ws.send(JSON.stringify({ type: 'system', message: 'You do not have permission to use this command.' }));
+  sendSystem(ws, 'You do not have permission to use this command.');
   return true;
 }
 
@@ -146,10 +150,7 @@ function handleCommand(
     case '/players': {
       const count = world.players.size;
       const names = Array.from(world.players.values()).map(p => p.name).join(', ');
-      ws.send(JSON.stringify({
-        type: 'system',
-        message: `${count} player(s) online: ${names}`,
-      }));
+      sendSystem(ws, `${count} player(s) online: ${names}`);
       break;
     }
 
@@ -157,7 +158,7 @@ function handleCommand(
       const targetName = parts[1];
       const msg = parts.slice(2).join(' ');
       if (!targetName || !msg) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /msg <player> <message>' }));
+        sendSystem(ws, 'Usage: /msg <player> <message>');
         return;
       }
 
@@ -171,7 +172,7 @@ function handleCommand(
       }
 
       if (!targetPlayer) {
-        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not found.` }));
+        sendSystem(ws, `Player "${targetName}" not found.`);
         return;
       }
 
@@ -193,7 +194,7 @@ function handleCommand(
       const x = parseFloat(parts[1]);
       const z = parseFloat(parts[2]);
       if (!isFinite(x) || !isFinite(z)) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /tp <x> <z>' }));
+        sendSystem(ws, 'Usage: /tp <x> <z>');
         return;
       }
       const player = findPlayerByUsername(from, world);
@@ -207,14 +208,14 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const mapId = parts[1];
       if (!mapId) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /tpmap <mapId>' }));
+        sendSystem(ws, 'Usage: /tpmap <mapId>');
         return;
       }
       const player = findPlayerByUsername(from, world);
       if (player) {
         const targetMap = world.getMap(mapId);
         if (!targetMap) {
-          ws.send(JSON.stringify({ type: 'system', message: `Map "${mapId}" not found` }));
+          sendSystem(ws, `Map "${mapId}" not found`);
           return;
         }
         world.handleMapTransition(player, {
@@ -222,7 +223,7 @@ function handleCommand(
           targetX: targetMap.meta.spawnPoint.x,
           targetZ: targetMap.meta.spawnPoint.z,
         });
-        ws.send(JSON.stringify({ type: 'system', message: `Teleported to map "${mapId}"` }));
+        sendSystem(ws, `Teleported to map "${mapId}"`);
       }
       break;
     }
@@ -234,7 +235,7 @@ function handleCommand(
         const map = world.getMap(player.currentMapLevel);
         if (map) {
           world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z);
-          ws.send(JSON.stringify({ type: 'system', message: 'Teleported to spawn' }));
+          sendSystem(ws, 'Teleported to spawn');
         }
       }
       break;
@@ -250,16 +251,16 @@ function handleCommand(
       const MAX_STACK = 0x7FFFFFFF;
       const quantity = (!isFinite(rawQty) || rawQty < 1) ? 1 : Math.min(rawQty, MAX_STACK);
       if (!isFinite(itemId)) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /give <itemId> [quantity]' }));
+        sendSystem(ws, 'Usage: /give <itemId> [quantity]');
         return;
       }
       const player = findPlayerByUsername(from, world);
       if (player) {
         if (player.addItem(itemId, quantity, world.data.itemDefs).completed > 0) {
           world.sendInventory(player);
-          ws.send(JSON.stringify({ type: 'system', message: `Gave ${quantity}x item ${itemId}` }));
+          sendSystem(ws, `Gave ${quantity}x item ${itemId}`);
         } else {
-          ws.send(JSON.stringify({ type: 'system', message: 'Inventory full' }));
+          sendSystem(ws, 'Inventory full');
         }
       }
       break;
@@ -273,7 +274,7 @@ function handleCommand(
           player.inventory[i] = null;
         }
         world.sendInventory(player);
-        ws.send(JSON.stringify({ type: 'system', message: 'Inventory cleared' }));
+        sendSystem(ws, 'Inventory cleared');
       }
       break;
     }
@@ -283,16 +284,13 @@ function handleCommand(
       const skillName = (parts[1] ?? '').toLowerCase();
       const amount = parseInt(parts[2]);
       if (!ALL_SKILLS.includes(skillName as SkillId) || !isFinite(amount) || amount <= 0) {
-        ws.send(JSON.stringify({
-          type: 'system',
-          message: `Usage: /xp <skill> <amount>. Skills: ${ALL_SKILLS.join(', ')}`,
-        }));
+        sendSystem(ws, `Usage: /xp <skill> <amount>. Skills: ${ALL_SKILLS.join(', ')}`);
         return;
       }
       const player = findPlayerByUsername(from, world);
       if (player) {
         world.grantXp(player, skillName as SkillId, amount);
-        ws.send(JSON.stringify({ type: 'system', message: `Granted ${amount} ${skillName} XP` }));
+        sendSystem(ws, `Granted ${amount} ${skillName} XP`);
       }
       break;
     }
@@ -302,7 +300,7 @@ function handleCommand(
       const player = findPlayerByUsername(from, world);
       if (player) {
         world.openCharacterCreatorFor(player);
-        ws.send(JSON.stringify({ type: 'system', message: 'Opening character editor...' }));
+        sendSystem(ws, 'Opening character editor...');
       }
       break;
     }
@@ -314,21 +312,18 @@ function handleCommand(
       const player = findPlayerByUsername(from, world);
       if (player) {
         world.openBankFor(player);
-        ws.send(JSON.stringify({ type: 'system', message: 'Bank opened.' }));
+        sendSystem(ws, 'Bank opened.');
       }
       break;
     }
 
     case '/unstuck': {
-      // Frees a player from interface locks / combat / pending actions and
-      // teleports them to the current map's spawn. Open to everyone during
-      // alpha — re-gate to admin (or add a cooldown) once death drops /
-      // PvP zones make a free escape exploitable.
-      // Non-admins can only unstuck themselves.
+      // Open to everyone during alpha — re-gate to admin (or add a cooldown)
+      // once death drops / PvP zones make a free escape exploitable.
       const targetName = (ws.data.isAdmin ? parts[1] : null) ?? from;
       const player = findPlayerByUsername(targetName, world);
       if (!player) {
-        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
+        sendSystem(ws, `Player "${targetName}" not online.`);
         return;
       }
       if (!ws.data.isAdmin) {
@@ -356,7 +351,7 @@ function handleCommand(
       // teleportPlayer clears moveQueue + attackTarget + combat target.
       const map = world.getMap(player.currentMapLevel);
       world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z);
-      ws.send(JSON.stringify({ type: 'system', message: `Unstuck ${player.name}.` }));
+      sendSystem(ws, `Unstuck ${player.name}.`);
       if (player.name.toLowerCase() !== from.toLowerCase()) {
         sendSystemMessageToUser(player.name, 'An admin has unstuck you.');
       }
@@ -367,16 +362,16 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const targetName = parts[1];
       if (!targetName) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /kick <player>' }));
+        sendSystem(ws, 'Usage: /kick <player>');
         return;
       }
       const target = findPlayerByUsername(targetName, world);
       if (!target) {
-        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
+        sendSystem(ws, `Player "${targetName}" not online.`);
         return;
       }
       world.kickAccountIfOnline(target.accountId);
-      ws.send(JSON.stringify({ type: 'system', message: `Kicked ${target.name}.` }));
+      sendSystem(ws, `Kicked ${target.name}.`);
       break;
     }
 
@@ -384,7 +379,7 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const targetName = parts[1];
       if (!targetName) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /ban <player> [reason]' }));
+        sendSystem(ws, 'Usage: /ban <player> [reason]');
         return;
       }
       const reason = parts.slice(2).join(' ').slice(0, 200);
@@ -392,13 +387,13 @@ function handleCommand(
       // offline accounts too.
       const accountId = world.db.getAccountIdByUsername(targetName);
       if (accountId == null) {
-        ws.send(JSON.stringify({ type: 'system', message: `Account "${targetName}" not found.` }));
+        sendSystem(ws, `Account "${targetName}" not found.`);
         return;
       }
       world.db.banAccount(accountId, reason, from);
       // Kick if currently online so the ban takes effect immediately.
       world.kickAccountIfOnline(accountId);
-      ws.send(JSON.stringify({ type: 'system', message: `Banned ${targetName}${reason ? ` — ${reason}` : ''}.` }));
+      sendSystem(ws, `Banned ${targetName}${reason ? ` — ${reason}` : ''}.`);
       break;
     }
 
@@ -406,16 +401,16 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const targetName = parts[1];
       if (!targetName) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /unban <player>' }));
+        sendSystem(ws, 'Usage: /unban <player>');
         return;
       }
       const accountId = world.db.getAccountIdByUsername(targetName);
       if (accountId == null) {
-        ws.send(JSON.stringify({ type: 'system', message: `Account "${targetName}" not found.` }));
+        sendSystem(ws, `Account "${targetName}" not found.`);
         return;
       }
       const removed = world.db.unbanAccount(accountId);
-      ws.send(JSON.stringify({ type: 'system', message: removed ? `Unbanned ${targetName}.` : `${targetName} was not banned.` }));
+      sendSystem(ws, removed ? `Unbanned ${targetName}.` : `${targetName} was not banned.`);
       break;
     }
 
@@ -423,15 +418,12 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const arg = parts[1];
       if (!arg) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /ipban <player|ip> [reason]' }));
+        sendSystem(ws, 'Usage: /ipban <player|ip> [reason]');
         return;
       }
       const reason = parts.slice(2).join(' ').slice(0, 200);
-      // Accept either a literal IP (v4/v6 — anything with a dot or colon and
-      // no spaces) or a username we resolve via login_history. The regex is
-      // permissive on purpose: stricter parsing would reject IPv6 with zone
-      // IDs, IPv4-mapped IPv6, etc., and the IP just has to match what the
-      // upgrade-time check sees.
+      // IP-shaped: hex/digits with a dot (v4) or colon (v6). Permissive so
+      // it matches whatever the WS-upgrade check sees (zone IDs, mapped v6).
       let ip: string | null = null;
       let label = arg;
       if (/^[0-9a-fA-F:.]+$/.test(arg) && (arg.includes('.') || arg.includes(':'))) {
@@ -439,22 +431,20 @@ function handleCommand(
       } else {
         const accountId = world.db.getAccountIdByUsername(arg);
         if (accountId == null) {
-          ws.send(JSON.stringify({ type: 'system', message: `Account "${arg}" not found and "${arg}" is not a valid IP.` }));
+          sendSystem(ws, `Account "${arg}" not found and "${arg}" is not a valid IP.`);
           return;
         }
         ip = world.db.getLatestIpForAccount(accountId);
         if (!ip) {
-          ws.send(JSON.stringify({ type: 'system', message: `No login history for "${arg}" — nothing to ban.` }));
+          sendSystem(ws, `No login history for "${arg}" — nothing to ban.`);
           return;
         }
         label = `${arg} (${ip})`;
-        // Also kick the account immediately if online — ipban without account
-        // ban won't disconnect them otherwise (they're already past the
-        // upgrade check).
+        // ipban alone doesn't disconnect them (they're past the upgrade check).
         world.kickAccountIfOnline(accountId);
       }
       world.db.banIp(ip, reason, from);
-      ws.send(JSON.stringify({ type: 'system', message: `IP-banned ${label}${reason ? ` — ${reason}` : ''}.` }));
+      sendSystem(ws, `IP-banned ${label}${reason ? ` — ${reason}` : ''}.`);
       break;
     }
 
@@ -462,28 +452,31 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const ip = parts[1];
       if (!ip) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /unipban <ip>' }));
+        sendSystem(ws, 'Usage: /unipban <ip>');
         return;
       }
       const removed = world.db.unbanIp(ip);
-      ws.send(JSON.stringify({ type: 'system', message: removed ? `IP ${ip} unbanned.` : `${ip} was not banned.` }));
+      sendSystem(ws, removed ? `IP ${ip} unbanned.` : `${ip} was not banned.`);
       break;
     }
 
     case '/banlist': {
       if (denyIfNotAdmin(ws, from)) return;
+      const MAX = 50;
       const accountBans = world.db.listAccountBans();
       const ipBans = world.db.listIpBans();
       const lines: string[] = [];
       lines.push(`Account bans (${accountBans.length}):`);
-      for (const b of accountBans) {
+      for (const b of accountBans.slice(0, MAX)) {
         lines.push(`  ${b.username} — ${b.reason || '(no reason)'} [by ${b.bannedBy || '?'}]`);
       }
+      if (accountBans.length > MAX) lines.push(`  ... and ${accountBans.length - MAX} more`);
       lines.push(`IP bans (${ipBans.length}):`);
-      for (const b of ipBans) {
+      for (const b of ipBans.slice(0, MAX)) {
         lines.push(`  ${b.ip} — ${b.reason || '(no reason)'} [by ${b.bannedBy || '?'}]`);
       }
-      ws.send(JSON.stringify({ type: 'system', message: lines.join('\n') }));
+      if (ipBans.length > MAX) lines.push(`  ... and ${ipBans.length - MAX} more`);
+      sendSystem(ws, lines.join('\n'));
       break;
     }
 
@@ -493,14 +486,14 @@ function handleCommand(
       // adjacency, interface-locks, and all the trade FSM rules.
       const targetName = parts[1];
       if (!targetName) {
-        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /trade <player>' }));
+        sendSystem(ws, 'Usage: /trade <player>');
         return;
       }
       const requester = findPlayerByUsername(from, world);
       const target = findPlayerByUsername(targetName, world);
       if (!requester) return;
       if (!target) {
-        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
+        sendSystem(ws, `Player "${targetName}" not online.`);
         return;
       }
       world.handleTradeRequest(requester.id, target.id);
@@ -508,7 +501,7 @@ function handleCommand(
     }
 
     default: {
-      ws.send(JSON.stringify({ type: 'system', message: `Unknown command: ${cmd}` }));
+      sendSystem(ws, `Unknown command: ${cmd}`);
     }
   }
 }

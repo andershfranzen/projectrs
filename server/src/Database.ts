@@ -94,6 +94,20 @@ export interface HiscoreResponse {
   totalPages: number;
 }
 
+export interface BanInfo {
+  reason: string;
+  bannedAt: number;
+}
+export interface AccountBanRecord extends BanInfo {
+  accountId: number;
+  username: string;
+  bannedBy: string;
+}
+export interface IpBanRecord extends BanInfo {
+  ip: string;
+  bannedBy: string;
+}
+
 export class GameDatabase {
   private db: SQLiteDB;
   private lastHiscoreSnapshotPruneAt = 0;
@@ -976,49 +990,48 @@ export class GameDatabase {
     return row?.id ?? null;
   }
 
-  banAccount(accountId: number, reason: string, bannedBy: string): void {
+  /** Shared upsert for the two ban tables. Table/keyCol come from string
+   *  literals at the call site (not user input) so the template-literal SQL
+   *  is safe. */
+  private upsertBan(table: 'account_bans' | 'ip_bans', keyCol: 'account_id' | 'ip_address', key: number | string, reason: string, bannedBy: string): void {
     this.db.query(`
-      INSERT INTO account_bans (account_id, reason, banned_by)
-      VALUES (?, ?, ?)
-      ON CONFLICT(account_id) DO UPDATE SET
+      INSERT INTO ${table} (${keyCol}, reason, banned_by) VALUES (?, ?, ?)
+      ON CONFLICT(${keyCol}) DO UPDATE SET
         reason = excluded.reason,
         banned_by = excluded.banned_by,
         banned_at = unixepoch()
-    `).run(accountId, reason, bannedBy);
+    `).run(key, reason, bannedBy);
+  }
+
+  private readBan(table: 'account_bans' | 'ip_bans', keyCol: 'account_id' | 'ip_address', key: number | string): BanInfo | null {
+    const row = this.db.query(`SELECT reason, banned_at FROM ${table} WHERE ${keyCol} = ?`)
+      .get(key) as { reason: string; banned_at: number } | null;
+    return row ? { reason: row.reason, bannedAt: row.banned_at } : null;
+  }
+
+  banAccount(accountId: number, reason: string, bannedBy: string): void {
+    this.upsertBan('account_bans', 'account_id', accountId, reason, bannedBy);
   }
 
   unbanAccount(accountId: number): boolean {
-    const result = this.db.query('DELETE FROM account_bans WHERE account_id = ?').run(accountId);
-    return result.changes > 0;
+    return this.db.query('DELETE FROM account_bans WHERE account_id = ?').run(accountId).changes > 0;
   }
 
-  isAccountBanned(accountId: number): { reason: string; bannedAt: number } | null {
-    const row = this.db.query('SELECT reason, banned_at FROM account_bans WHERE account_id = ?')
-      .get(accountId) as { reason: string; banned_at: number } | null;
-    return row ? { reason: row.reason, bannedAt: row.banned_at } : null;
+  isAccountBanned(accountId: number): BanInfo | null {
+    return this.readBan('account_bans', 'account_id', accountId);
   }
 
   banIp(ip: string, reason: string, bannedBy: string): void {
-    this.db.query(`
-      INSERT INTO ip_bans (ip_address, reason, banned_by)
-      VALUES (?, ?, ?)
-      ON CONFLICT(ip_address) DO UPDATE SET
-        reason = excluded.reason,
-        banned_by = excluded.banned_by,
-        banned_at = unixepoch()
-    `).run(ip, reason, bannedBy);
+    this.upsertBan('ip_bans', 'ip_address', ip, reason, bannedBy);
   }
 
   unbanIp(ip: string): boolean {
-    const result = this.db.query('DELETE FROM ip_bans WHERE ip_address = ?').run(ip);
-    return result.changes > 0;
+    return this.db.query('DELETE FROM ip_bans WHERE ip_address = ?').run(ip).changes > 0;
   }
 
-  isIpBanned(ip: string): { reason: string; bannedAt: number } | null {
+  isIpBanned(ip: string): BanInfo | null {
     if (!ip) return null;
-    const row = this.db.query('SELECT reason, banned_at FROM ip_bans WHERE ip_address = ?')
-      .get(ip) as { reason: string; banned_at: number } | null;
-    return row ? { reason: row.reason, bannedAt: row.banned_at } : null;
+    return this.readBan('ip_bans', 'ip_address', ip);
   }
 
   /** Most-recent IP recorded for an account in login_history. Used by /ipban
@@ -1030,7 +1043,7 @@ export class GameDatabase {
     return row?.ip_address ?? null;
   }
 
-  listAccountBans(): Array<{ accountId: number; username: string; reason: string; bannedAt: number; bannedBy: string }> {
+  listAccountBans(): Array<AccountBanRecord> {
     return this.db.query(`
       SELECT ab.account_id, a.username, ab.reason, ab.banned_at, ab.banned_by
       FROM account_bans ab JOIN accounts a ON a.id = ab.account_id
@@ -1041,7 +1054,7 @@ export class GameDatabase {
     });
   }
 
-  listIpBans(): Array<{ ip: string; reason: string; bannedAt: number; bannedBy: string }> {
+  listIpBans(): Array<IpBanRecord> {
     return this.db.query('SELECT ip_address, reason, banned_at, banned_by FROM ip_bans ORDER BY banned_at DESC')
       .all().map((r) => {
         const row = r as { ip_address: string; reason: string; banned_at: number; banned_by: string };

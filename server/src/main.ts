@@ -725,6 +725,16 @@ function extractWsToken(req: Request, url: URL): string | null {
   return url.searchParams.get('token');
 }
 
+/** Returns a 403 Response if the (account, ip) is banned, else null. Tokens
+ *  persist 24h so a ban issued after token creation must also block the
+ *  WS upgrade — checked on every connection (including refreshes). */
+function banGateResponse(accountId: number, ip: string): Response | null {
+  if (db.isAccountBanned(accountId) || db.isIpBanned(ip)) {
+    return new Response('Banned', { status: 403 });
+  }
+  return null;
+}
+
 /** Echo the chosen subprotocol back so the client's handshake completes. The
  *  browser closes the socket if the server upgrades without echoing one of
  *  the offered subprotocols. */
@@ -927,12 +937,8 @@ const server = Bun.serve<SocketData>({
       // gold-farmer correlation tolerates shared-IP noise (residential
       // CGNAT, university dorms) because flag-level review is manual.
       const wsIp = server.requestIP(req)?.address ?? 'unknown';
-      // Ban gate. Same check runs at /api/login but tokens persist 24h, so a
-      // ban issued after a player already has a valid token must also block
-      // the upgrade. Bans are enforced on every reconnect.
-      if (db.isAccountBanned(session.accountId) || db.isIpBanned(wsIp)) {
-        return new Response('Banned', { status: 403 });
-      }
+      const banned = banGateResponse(session.accountId, wsIp);
+      if (banned) return banned;
       const upgraded = server.upgrade(req, {
         data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, ip: wsIp, deviceId: session.deviceId } as GameSocketData,
         headers: wsAcceptHeaders(req),
@@ -949,9 +955,8 @@ const server = Bun.serve<SocketData>({
         return new Response('Unauthorized', { status: 401 });
       }
       const wsIp = server.requestIP(req)?.address ?? 'unknown';
-      if (db.isAccountBanned(session.accountId) || db.isIpBanned(wsIp)) {
-        return new Response('Banned', { status: 403 });
-      }
+      const banned = banGateResponse(session.accountId, wsIp);
+      if (banned) return banned;
       const upgraded = server.upgrade(req, {
         data: { type: 'chat', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin } as ChatSocketData,
         headers: wsAcceptHeaders(req),
