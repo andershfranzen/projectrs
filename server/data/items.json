@@ -2180,5 +2180,14 @@
     "equippable": false,
     "value": 1,
     "icon": "Evil token (tier 1).png"
+  },
+  {
+    "id": 235,
+    "name": "Willow Logs",
+    "description": "Logs cut from a willow tree.",
+    "stackable": false,
+    "equippable": false,
+    "value": 15,
+    "icon": "Willow_Logs_633.png"
   }
 ]

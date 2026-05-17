@@ -406,7 +406,7 @@
     "skill": "woodcut",
     "levelRequired": 30,
     "xpReward": 68,
-    "harvestItemId": 23,
+    "harvestItemId": 235,
     "harvestQuantity": 1,
     "harvestTime": 4,
     "depletionChance": 0.125,
