@@ -812,8 +812,21 @@ const server = Bun.serve<SocketData>({
         if (!checkRate(loginAttempts, key, LOGIN_LIMIT, LOGIN_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many login attempts. Try again in a minute.' }, 429);
         }
+        // IP-ban gate runs before password verification so a banned IP can't
+        // be used to mine for valid credentials via timing/rate signals.
+        const ipBan = db.isIpBanned(ip);
+        if (ipBan) {
+          return jsonResponse({ ok: false, error: `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}` }, 403);
+        }
         const result = await db.login(body.username || '', body.password || '', deviceId);
         if (result.ok) {
+          // Account-ban gate runs AFTER successful auth so we don't reveal
+          // ban status to someone who can't even produce the password.
+          const acctBan = db.isAccountBanned(result.accountId);
+          if (acctBan) {
+            db.logout(result.token);
+            return jsonResponse({ ok: false, error: `Banned${acctBan.reason ? `: ${acctBan.reason}` : ''}` }, 403);
+          }
           // One-account-per-browser rule. A different account already in the
           // world with the same device_id is refused entry. Per-browser, not
           // per-IP — housemates / cafes / dorms are unaffected. Deterrent,
@@ -892,6 +905,12 @@ const server = Bun.serve<SocketData>({
       // gold-farmer correlation tolerates shared-IP noise (residential
       // CGNAT, university dorms) because flag-level review is manual.
       const wsIp = server.requestIP(req)?.address ?? 'unknown';
+      // Ban gate. Same check runs at /api/login but tokens persist 24h, so a
+      // ban issued after a player already has a valid token must also block
+      // the upgrade. Bans are enforced on every reconnect.
+      if (db.isAccountBanned(session.accountId) || db.isIpBanned(wsIp)) {
+        return new Response('Banned', { status: 403 });
+      }
       const upgraded = server.upgrade(req, {
         data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, ip: wsIp, deviceId: session.deviceId } as GameSocketData,
         headers: wsAcceptHeaders(req),
@@ -906,6 +925,10 @@ const server = Bun.serve<SocketData>({
       const session = token ? db.getSession(token) : null;
       if (!session) {
         return new Response('Unauthorized', { status: 401 });
+      }
+      const wsIp = server.requestIP(req)?.address ?? 'unknown';
+      if (db.isAccountBanned(session.accountId) || db.isIpBanned(wsIp)) {
+        return new Response('Banned', { status: 403 });
       }
       const upgraded = server.upgrade(req, {
         data: { type: 'chat', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin } as ChatSocketData,

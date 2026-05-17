@@ -304,6 +304,160 @@ function handleCommand(
       break;
     }
 
+    case '/unstuck': {
+      // Frees a player from interface locks / combat / pending actions and
+      // teleports them to the current map's spawn. Defaults to self when no
+      // target is given. Admin-only — players can get genuinely wedged but
+      // exposing this to everyone makes it a free escape from PvP / risky
+      // areas, which is the inverse of what death drops are designed for.
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts[1] ?? from;
+      const player = findPlayerByUsername(targetName, world);
+      if (!player) {
+        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
+        return;
+      }
+      // Abort trade first so staged items refund into inventory before any
+      // teleport — matches the kickAccountIfOnline ordering.
+      if (player.openInterface === 'trade') world.abortTrade(player.id, 2);
+      player.openInterface = null;
+      player.openShopNpcId = null;
+      player.openDialogueState = null;
+      player.pendingInteraction = null;
+      // teleportPlayer clears moveQueue + attackTarget + combat target.
+      const map = world.getMap(player.currentMapLevel);
+      world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z);
+      ws.send(JSON.stringify({ type: 'system', message: `Unstuck ${player.name}.` }));
+      if (player.name.toLowerCase() !== from.toLowerCase()) {
+        sendSystemMessageToUser(player.name, 'An admin has unstuck you.');
+      }
+      break;
+    }
+
+    case '/kick': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts[1];
+      if (!targetName) {
+        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /kick <player>' }));
+        return;
+      }
+      const target = findPlayerByUsername(targetName, world);
+      if (!target) {
+        ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
+        return;
+      }
+      world.kickAccountIfOnline(target.accountId);
+      ws.send(JSON.stringify({ type: 'system', message: `Kicked ${target.name}.` }));
+      break;
+    }
+
+    case '/ban': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts[1];
+      if (!targetName) {
+        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /ban <player> [reason]' }));
+        return;
+      }
+      const reason = parts.slice(2).join(' ').slice(0, 200);
+      // Resolve via DB rather than the online player list so we can ban
+      // offline accounts too.
+      const accountId = world.db.getAccountIdByUsername(targetName);
+      if (accountId == null) {
+        ws.send(JSON.stringify({ type: 'system', message: `Account "${targetName}" not found.` }));
+        return;
+      }
+      world.db.banAccount(accountId, reason, from);
+      // Kick if currently online so the ban takes effect immediately.
+      world.kickAccountIfOnline(accountId);
+      ws.send(JSON.stringify({ type: 'system', message: `Banned ${targetName}${reason ? ` — ${reason}` : ''}.` }));
+      break;
+    }
+
+    case '/unban': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts[1];
+      if (!targetName) {
+        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /unban <player>' }));
+        return;
+      }
+      const accountId = world.db.getAccountIdByUsername(targetName);
+      if (accountId == null) {
+        ws.send(JSON.stringify({ type: 'system', message: `Account "${targetName}" not found.` }));
+        return;
+      }
+      const removed = world.db.unbanAccount(accountId);
+      ws.send(JSON.stringify({ type: 'system', message: removed ? `Unbanned ${targetName}.` : `${targetName} was not banned.` }));
+      break;
+    }
+
+    case '/ipban': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const arg = parts[1];
+      if (!arg) {
+        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /ipban <player|ip> [reason]' }));
+        return;
+      }
+      const reason = parts.slice(2).join(' ').slice(0, 200);
+      // Accept either a literal IP (v4/v6 — anything with a dot or colon and
+      // no spaces) or a username we resolve via login_history. The regex is
+      // permissive on purpose: stricter parsing would reject IPv6 with zone
+      // IDs, IPv4-mapped IPv6, etc., and the IP just has to match what the
+      // upgrade-time check sees.
+      let ip: string | null = null;
+      let label = arg;
+      if (/^[0-9a-fA-F:.]+$/.test(arg) && (arg.includes('.') || arg.includes(':'))) {
+        ip = arg;
+      } else {
+        const accountId = world.db.getAccountIdByUsername(arg);
+        if (accountId == null) {
+          ws.send(JSON.stringify({ type: 'system', message: `Account "${arg}" not found and "${arg}" is not a valid IP.` }));
+          return;
+        }
+        ip = world.db.getLatestIpForAccount(accountId);
+        if (!ip) {
+          ws.send(JSON.stringify({ type: 'system', message: `No login history for "${arg}" — nothing to ban.` }));
+          return;
+        }
+        label = `${arg} (${ip})`;
+        // Also kick the account immediately if online — ipban without account
+        // ban won't disconnect them otherwise (they're already past the
+        // upgrade check).
+        world.kickAccountIfOnline(accountId);
+      }
+      world.db.banIp(ip, reason, from);
+      ws.send(JSON.stringify({ type: 'system', message: `IP-banned ${label}${reason ? ` — ${reason}` : ''}.` }));
+      break;
+    }
+
+    case '/unipban': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const ip = parts[1];
+      if (!ip) {
+        ws.send(JSON.stringify({ type: 'system', message: 'Usage: /unipban <ip>' }));
+        return;
+      }
+      const removed = world.db.unbanIp(ip);
+      ws.send(JSON.stringify({ type: 'system', message: removed ? `IP ${ip} unbanned.` : `${ip} was not banned.` }));
+      break;
+    }
+
+    case '/banlist': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const accountBans = world.db.listAccountBans();
+      const ipBans = world.db.listIpBans();
+      const lines: string[] = [];
+      lines.push(`Account bans (${accountBans.length}):`);
+      for (const b of accountBans) {
+        lines.push(`  ${b.username} — ${b.reason || '(no reason)'} [by ${b.bannedBy || '?'}]`);
+      }
+      lines.push(`IP bans (${ipBans.length}):`);
+      for (const b of ipBans) {
+        lines.push(`  ${b.ip} — ${b.reason || '(no reason)'} [by ${b.bannedBy || '?'}]`);
+      }
+      ws.send(JSON.stringify({ type: 'system', message: lines.join('\n') }));
+      break;
+    }
+
     case '/trade': {
       // Available to all players: send a trade request by username while we
       // don't yet have a right-click-on-player UI. Server still enforces

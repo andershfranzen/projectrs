@@ -232,6 +232,26 @@ export class GameDatabase {
     } catch { /* column already exists */ }
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_login_history_device ON login_history(device_id)`);
 
+    // Account + IP bans. Two tables instead of a single unified `bans` table so
+    // each enforcement point (login API, WS upgrade) hits exactly one indexed
+    // PK lookup. `banned_by` is a free-text admin username rather than a FK
+    // because the admin who issued a ban may be deleted later and we don't
+    // want to lose audit info.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS account_bans (
+        account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+        reason TEXT NOT NULL DEFAULT '',
+        banned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        banned_by TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE IF NOT EXISTS ip_bans (
+        ip_address TEXT PRIMARY KEY,
+        reason TEXT NOT NULL DEFAULT '',
+        banned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        banned_by TEXT NOT NULL DEFAULT ''
+      );
+    `);
+
     // Door state persistence. One row per open (or otherwise non-default) door
     // — closed doors don't need a row (the in-memory default is closed). On
     // restart, World re-applies these to keep building interiors continuous
@@ -858,6 +878,89 @@ export class GameDatabase {
   cleanExpiredSessions(): void {
     const now = Math.floor(Date.now() / 1000);
     this.db.query('DELETE FROM sessions WHERE expires_at <= ?').run(now);
+  }
+
+  // -- Bans -----------------------------------------------------------------
+
+  /** Look up an account id by username (case-insensitive — matches the
+   *  accounts.username COLLATE NOCASE constraint). Returns null when no
+   *  account exists with that name. */
+  getAccountIdByUsername(username: string): number | null {
+    const row = this.db.query('SELECT id FROM accounts WHERE username = ?').get(username) as { id: number } | null;
+    return row?.id ?? null;
+  }
+
+  banAccount(accountId: number, reason: string, bannedBy: string): void {
+    this.db.query(`
+      INSERT INTO account_bans (account_id, reason, banned_by)
+      VALUES (?, ?, ?)
+      ON CONFLICT(account_id) DO UPDATE SET
+        reason = excluded.reason,
+        banned_by = excluded.banned_by,
+        banned_at = unixepoch()
+    `).run(accountId, reason, bannedBy);
+  }
+
+  unbanAccount(accountId: number): boolean {
+    const result = this.db.query('DELETE FROM account_bans WHERE account_id = ?').run(accountId);
+    return result.changes > 0;
+  }
+
+  isAccountBanned(accountId: number): { reason: string; bannedAt: number } | null {
+    const row = this.db.query('SELECT reason, banned_at FROM account_bans WHERE account_id = ?')
+      .get(accountId) as { reason: string; banned_at: number } | null;
+    return row ? { reason: row.reason, bannedAt: row.banned_at } : null;
+  }
+
+  banIp(ip: string, reason: string, bannedBy: string): void {
+    this.db.query(`
+      INSERT INTO ip_bans (ip_address, reason, banned_by)
+      VALUES (?, ?, ?)
+      ON CONFLICT(ip_address) DO UPDATE SET
+        reason = excluded.reason,
+        banned_by = excluded.banned_by,
+        banned_at = unixepoch()
+    `).run(ip, reason, bannedBy);
+  }
+
+  unbanIp(ip: string): boolean {
+    const result = this.db.query('DELETE FROM ip_bans WHERE ip_address = ?').run(ip);
+    return result.changes > 0;
+  }
+
+  isIpBanned(ip: string): { reason: string; bannedAt: number } | null {
+    if (!ip) return null;
+    const row = this.db.query('SELECT reason, banned_at FROM ip_bans WHERE ip_address = ?')
+      .get(ip) as { reason: string; banned_at: number } | null;
+    return row ? { reason: row.reason, bannedAt: row.banned_at } : null;
+  }
+
+  /** Most-recent IP recorded for an account in login_history. Used by /ipban
+   *  to resolve a username → IP without forcing the admin to look it up. */
+  getLatestIpForAccount(accountId: number): string | null {
+    const row = this.db.query(
+      'SELECT ip_address FROM login_history WHERE account_id = ? ORDER BY login_ts DESC LIMIT 1'
+    ).get(accountId) as { ip_address: string } | null;
+    return row?.ip_address ?? null;
+  }
+
+  listAccountBans(): Array<{ accountId: number; username: string; reason: string; bannedAt: number; bannedBy: string }> {
+    return this.db.query(`
+      SELECT ab.account_id, a.username, ab.reason, ab.banned_at, ab.banned_by
+      FROM account_bans ab JOIN accounts a ON a.id = ab.account_id
+      ORDER BY ab.banned_at DESC
+    `).all().map((r) => {
+      const row = r as { account_id: number; username: string; reason: string; banned_at: number; banned_by: string };
+      return { accountId: row.account_id, username: row.username, reason: row.reason, bannedAt: row.banned_at, bannedBy: row.banned_by };
+    });
+  }
+
+  listIpBans(): Array<{ ip: string; reason: string; bannedAt: number; bannedBy: string }> {
+    return this.db.query('SELECT ip_address, reason, banned_at, banned_by FROM ip_bans ORDER BY banned_at DESC')
+      .all().map((r) => {
+        const row = r as { ip_address: string; reason: string; banned_at: number; banned_by: string };
+        return { ip: row.ip_address, reason: row.reason, bannedAt: row.banned_at, bannedBy: row.banned_by };
+      });
   }
 
   close(): void {
