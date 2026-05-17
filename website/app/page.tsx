@@ -49,7 +49,7 @@ const secureServices = [
     title: 'Discord',
     body: 'Follow our development!',
     cta: 'Join',
-    href: '#',
+    href: 'https://discord.gg/SSXyYY8Vx9',
   },
 ] as const;
 
@@ -99,15 +99,23 @@ function FeatureCard({ item }: { item: (typeof mainFeatures)[number] }) {
 }
 
 function DirectoryTile({ item }: { item: (typeof secureServices | typeof otherFeatures)[number] }) {
+  const isActive = item.href !== '#';
+
   return (
-    <article className="tile inactive-tile">
-      <span className="button disabled-button" aria-disabled="true">
-        {item.title}
-      </span>
+    <article className={isActive ? 'tile' : 'tile inactive-tile'}>
+      {isActive ? (
+        <a className="button" href={item.href}>
+          {item.title}
+        </a>
+      ) : (
+        <span className="button disabled-button" aria-disabled="true">
+          {item.title}
+        </span>
+      )}
       <p>
         {item.body}
         <br />
-        <span className="disabled-link">{item.cta}</span>
+        {isActive ? <a href={item.href}>{item.cta}</a> : <span className="disabled-link">{item.cta}</span>}
       </p>
     </article>
   );
@@ -162,6 +170,10 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      <footer className="site-footer">
+        Copyright © {new Date().getFullYear()} EvilQuest. All rights reserved.
+      </footer>
     </main>
   );
 }

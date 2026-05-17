@@ -784,7 +784,11 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/hiscores' && req.method === 'GET') {
-      return jsonResponse(db.getHiscores(url.searchParams.get('category') ?? 'overall', Number(url.searchParams.get('limit') ?? 100)));
+      return jsonResponse(db.getHiscores(
+        url.searchParams.get('category') ?? 'overall',
+        Number(url.searchParams.get('limit') ?? 25),
+        Number(url.searchParams.get('page') ?? 1),
+      ));
     }
 
     // --- REST Auth Endpoints ---

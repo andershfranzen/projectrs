@@ -81,16 +81,22 @@ export interface HiscoreRow {
   username: string;
   level: number;
   xp: number;
+  dailyXp: number;
 }
 
 export interface HiscoreResponse {
   category: HiscoreCategory;
   categories: HiscoreCategory[];
   rows: HiscoreRow[];
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
 }
 
 export class GameDatabase {
   private db: SQLiteDB;
+  private lastHiscoreSnapshotPruneAt = 0;
 
   constructor(dbPath: string = 'projectrs.db') {
     this.db = new SQLiteDB(dbPath);
@@ -307,6 +313,19 @@ export class GameDatabase {
         respawn_at_unix_ms INTEGER NOT NULL,
         PRIMARY KEY (map_level, def_id, tile_x, tile_z)
       );
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS hiscore_snapshots (
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        category TEXT NOT NULL,
+        bucket_start INTEGER NOT NULL,
+        level INTEGER NOT NULL,
+        xp INTEGER NOT NULL,
+        PRIMARY KEY (account_id, category, bucket_start)
+      );
+      CREATE INDEX IF NOT EXISTS idx_hiscore_snapshots_category_bucket
+        ON hiscore_snapshots(category, bucket_start);
     `);
   }
 
@@ -529,6 +548,7 @@ export class GameDatabase {
       JSON.stringify(player.quests),
       accountId,
     );
+    this.saveHiscoreSnapshots(accountId, player.skills);
   }
 
   savePlayerState(accountId: number, player: Player, effectiveY: number): void {
@@ -731,21 +751,87 @@ export class GameDatabase {
       .run(stance, accountId);
   }
 
-  getHiscores(categoryId: string = 'overall', limit: number = 100): HiscoreResponse {
+  private hiscoreCategoryValue(categoryId: string, skills: SkillBlock): { level: number; xp: number } {
+    if (categoryId === 'combat') {
+      return {
+        level: combatLevel(skills),
+        xp: ALL_SKILLS.reduce((sum, id) => sum + skills[id].xp, 0),
+      };
+    }
+    if (categoryId === 'overall') {
+      return {
+        level: ALL_SKILLS.reduce((sum, id) => sum + skills[id].level, 0),
+        xp: ALL_SKILLS.reduce((sum, id) => sum + skills[id].xp, 0),
+      };
+    }
+    const skillId = categoryId as SkillId;
+    return {
+      level: skills[skillId].level,
+      xp: skills[skillId].xp,
+    };
+  }
+
+  private saveHiscoreSnapshots(accountId: number, skills: SkillBlock): void {
+    const now = Math.floor(Date.now() / 1000);
+    const bucketStart = Math.floor(now / 3600) * 3600;
+    const categories = ['overall', 'combat', ...ALL_SKILLS];
+    const stmt = this.db.query(`
+      INSERT INTO hiscore_snapshots (account_id, category, bucket_start, level, xp)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(account_id, category, bucket_start) DO UPDATE SET
+        level = excluded.level,
+        xp = excluded.xp
+    `);
+    for (const categoryId of categories) {
+      const value = this.hiscoreCategoryValue(categoryId, skills);
+      stmt.run(accountId, categoryId, bucketStart, value.level, value.xp);
+    }
+
+    // Keep roughly eight days of hourly history. This is enough for daily
+    // gains plus a little deploy/restart slack without letting the table grow
+    // forever during a playtest.
+    if (now - this.lastHiscoreSnapshotPruneAt > 6 * 3600) {
+      this.lastHiscoreSnapshotPruneAt = now;
+      this.db.query('DELETE FROM hiscore_snapshots WHERE bucket_start < ?').run(now - 8 * 24 * 3600);
+    }
+  }
+
+  getHiscores(
+    categoryId: string = 'overall',
+    limit: number = 25,
+    page: number = 1,
+  ): HiscoreResponse {
     const categories: HiscoreCategory[] = [
       { id: 'overall', name: 'Overall' },
       { id: 'combat', name: 'Combat' },
       ...ALL_SKILLS.map((id) => ({ id, name: SKILL_NAMES[id] })),
     ];
     const category = categories.find((c) => c.id === categoryId) ?? categories[0];
-    const cappedLimit = Math.max(1, Math.min(500, Math.floor(limit) || 100));
+    const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
+    const currentPage = Math.max(1, Math.floor(page) || 1);
+    const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
+    const baselineRows = this.db.query(`
+      SELECT hs.account_id, hs.xp
+      FROM hiscore_snapshots hs
+      JOIN (
+        SELECT account_id, MAX(bucket_start) AS bucket_start
+        FROM hiscore_snapshots
+        WHERE category = ? AND bucket_start <= ?
+        GROUP BY account_id
+      ) latest
+        ON latest.account_id = hs.account_id
+       AND latest.bucket_start = hs.bucket_start
+      WHERE hs.category = ?
+    `).all(category.id, cutoff, category.id) as Array<{ account_id: number; xp: number }>;
+    const dailyBaselineXp = new Map<number, number>();
+    for (const row of baselineRows) dailyBaselineXp.set(row.account_id, row.xp);
     const rows = this.db.query(`
-      SELECT a.username, ps.skills
+      SELECT ps.account_id, a.username, ps.skills
       FROM player_state ps
       JOIN accounts a ON a.id = ps.account_id
-    `).all() as Array<{ username: string; skills: string }>;
+    `).all() as Array<{ account_id: number; username: string; skills: string }>;
 
-    const ranked = rows.map((row) => {
+    const mapped = rows.map((row) => {
       const skills = initSkills();
       try {
         const saved = JSON.parse(row.skills) as Partial<Record<SkillId, Partial<SkillBlock[SkillId]>>>;
@@ -763,33 +849,33 @@ export class GameDatabase {
         // Keep default level-1/10hp skills for corrupted or legacy rows.
       }
 
-      if (category.id === 'combat') {
-        return {
-          username: row.username,
-          level: combatLevel(skills),
-          xp: ALL_SKILLS.reduce((sum, id) => sum + skills[id].xp, 0),
-        };
-      }
-      if (category.id === 'overall') {
-        return {
-          username: row.username,
-          level: ALL_SKILLS.reduce((sum, id) => sum + skills[id].level, 0),
-          xp: ALL_SKILLS.reduce((sum, id) => sum + skills[id].xp, 0),
-        };
-      }
-
-      const skillId = category.id as SkillId;
+      const value = this.hiscoreCategoryValue(category.id, skills);
+      const baselineXp = dailyBaselineXp.get(row.account_id);
       return {
         username: row.username,
-        level: skills[skillId].level,
-        xp: skills[skillId].xp,
+        level: value.level,
+        xp: value.xp,
+        dailyXp: baselineXp == null ? 0 : Math.max(0, value.xp - baselineXp),
       };
-    }).sort((a, b) => b.xp - a.xp || b.level - a.level || a.username.localeCompare(b.username));
+    });
+
+    const ranked = mapped
+      .sort((a, b) => b.level - a.level || b.xp - a.xp || a.username.localeCompare(b.username))
+      .map((row, idx) => ({ rank: idx + 1, ...row }));
+
+    const totalRows = ranked.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / cappedLimit));
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * cappedLimit;
 
     return {
       category,
       categories,
-      rows: ranked.slice(0, cappedLimit).map((row, idx) => ({ rank: idx + 1, ...row })),
+      rows: ranked.slice(start, start + cappedLimit),
+      page: safePage,
+      pageSize: cappedLimit,
+      totalRows,
+      totalPages,
     };
   }
 
