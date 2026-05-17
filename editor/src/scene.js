@@ -1027,22 +1027,91 @@ function tuneModelLighting(model) {
 
     const layer = getCollisionLayer()
 
-    // Wall edge lines
-    const wallLines = []
+    // Wall edges — render as 3D rectangle outlines at the actual wallHeights.
+    // Top edge is color-coded: yellow = default 1.8, orange = custom-height
+    // entry. Lets the author see at a glance whether collision walls match
+    // the placed GLB wall meshes.
+    //
+    // Layer-wall base height: mirrors the runtime collision lookup —
+    //   layer.floors → layer.tiles → texture-plane elev → terrain.
+    // Without the elev fallback, upper-floor walls would visualise at Y=0
+    // even though collision blocks at Y=elev (same bug the game client had).
+    const elevByTile = new Map()
+    if (collisionFloor !== 0 && map.texturePlanes) {
+      for (const plane of map.texturePlanes) {
+        const rx = plane.rotation?.x ?? 0
+        const isFlat = Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1
+        if (!isFlat) continue
+        const px = plane.position?.x ?? 0
+        const py = plane.position?.y ?? 0
+        const pz = plane.position?.z ?? 0
+        const hw = ((plane.width ?? 1) * (plane.scale?.x ?? 1)) / 2
+        const hd = ((plane.height ?? 1) * (plane.scale?.y ?? 1)) / 2
+        const ry = plane.rotation?.y ?? 0
+        const cosR = Math.cos(ry), sinR = Math.sin(ry)
+        const tx0 = Math.floor(px - Math.abs(cosR * hw) - Math.abs(sinR * hd))
+        const tx1 = Math.floor(px + Math.abs(cosR * hw) + Math.abs(sinR * hd))
+        const tz0 = Math.floor(pz - Math.abs(sinR * hw) - Math.abs(cosR * hd))
+        const tz1 = Math.floor(pz + Math.abs(sinR * hw) + Math.abs(cosR * hd))
+        for (let tz = tz0; tz <= tz1; tz++) {
+          for (let tx = tx0; tx <= tx1; tx++) {
+            const tcx = tx + 0.5, tcz = tz + 0.5
+            const lx = (tcx - px) * cosR + (tcz - pz) * sinR
+            const lz = -(tcx - px) * sinR + (tcz - pz) * cosR
+            if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue
+            const k = `${tx},${tz}`
+            const existing = elevByTile.get(k)
+            if (existing === undefined || py < existing) elevByTile.set(k, py)
+          }
+        }
+      }
+    }
+
+    const wallBaseAt = (x, z) => {
+      const k = `${x},${z}`
+      if (collisionFloor === 0) return getCollisionDisplayHeight(x, z)
+      if (layer.floors?.[k] != null) return layer.floors[k]
+      if (layer.tiles?.[k] != null) return layer.tiles[k]
+      if (elevByTile.has(k)) return elevByTile.get(k)
+      return getCollisionDisplayHeight(x, z)
+    }
+
+    const DEFAULT_WALL_H = 1.8
+    const baseLines = []
+    const sideLines = []
+    const topLinesDefault = []
+    const topLinesCustom = []
     for (const [key, bitmask] of Object.entries(layer.walls)) {
       const [x, z] = key.split(',').map(Number)
-      const h = getCollisionDisplayHeight(x, z) + 0.15
-      if (bitmask & 1) wallLines.push([new Vector3(x, h, z), new Vector3(x + 1, h, z)])           // N
-      if (bitmask & 2) wallLines.push([new Vector3(x + 1, h, z), new Vector3(x + 1, h, z + 1)])   // E
-      if (bitmask & 4) wallLines.push([new Vector3(x, h, z + 1), new Vector3(x + 1, h, z + 1)])   // S
-      if (bitmask & 8) wallLines.push([new Vector3(x, h, z), new Vector3(x, h, z + 1)])           // W
+      const baseY = wallBaseAt(x, z) + 0.02
+      const customH = layer.wallHeights?.[key]
+      const wallH = customH != null ? customH : DEFAULT_WALL_H
+      const topY = baseY + wallH
+      const edges = []
+      if (bitmask & 1) edges.push([[x, z], [x + 1, z]])                 // N
+      if (bitmask & 2) edges.push([[x + 1, z], [x + 1, z + 1]])         // E
+      if (bitmask & 4) edges.push([[x, z + 1], [x + 1, z + 1]])         // S
+      if (bitmask & 8) edges.push([[x, z], [x, z + 1]])                 // W
+      for (const [[ax, az], [bx, bz]] of edges) {
+        baseLines.push([new Vector3(ax, baseY, az), new Vector3(bx, baseY, bz)])
+        sideLines.push([new Vector3(ax, baseY, az), new Vector3(ax, topY, az)])
+        sideLines.push([new Vector3(bx, baseY, bz), new Vector3(bx, topY, bz)])
+        const topLine = [new Vector3(ax, topY, az), new Vector3(bx, topY, bz)]
+        if (customH != null) topLinesCustom.push(topLine)
+        else topLinesDefault.push(topLine)
+      }
     }
-    if (wallLines.length > 0) {
-      const lines = MeshBuilder.CreateLineSystem('collWalls', { lines: wallLines }, scene)
-      lines.color = new Color3(1, 0.2, 0.2)
-      lines.renderingGroupId = 3  // render on top of everything
-      lines.parent = collisionGroup
+    const makeLines = (name, lines, color) => {
+      if (!lines.length) return
+      const m = MeshBuilder.CreateLineSystem(name, { lines }, scene)
+      m.color = color
+      m.renderingGroupId = 3
+      m.parent = collisionGroup
     }
+    makeLines('collWallBases', baseLines, new Color3(1, 0.2, 0.2))         // red bottoms
+    makeLines('collWallSides', sideLines, new Color3(1, 0.4, 0.4))         // pink verticals
+    makeLines('collWallTopsDefault', topLinesDefault, new Color3(1, 1, 0.2))   // yellow = default 1.8
+    makeLines('collWallTopsCustom', topLinesCustom, new Color3(1, 0.6, 0.1))   // orange = per-tile override
 
     // Floor tiles — flat quads
     for (const [key, height] of Object.entries(layer.floors || {})) {

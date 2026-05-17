@@ -35,3 +35,6 @@ server/data/gear-overrides.*.bak
 server/data/backups/
 references/
 assets-sources/
+
+# GLB texture-optimizer backups — large local-only archives
+tools/glb-backups-*.tar.gz
