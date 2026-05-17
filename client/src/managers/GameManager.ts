@@ -466,7 +466,11 @@ export class GameManager {
     this.shopPanel.setOnClose(() => {
       this.sidePanel?.setSellCallback(null);
     });
-    this.dialoguePanel = new DialoguePanel(this.network);
+    this.dialoguePanel = new DialoguePanel(this.network, {
+      showNpcBubble: (npcEntityId, message) => this.showNpcDialogueBubble(npcEntityId, message),
+      hideNpcBubble: (npcEntityId) => this.hideNpcDialogueBubble(npcEntityId),
+      showPlayerBubble: (message) => this.showLocalDialogueBubble(message),
+    });
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network);
     this.tradePanel = new TradePanel(this.network);
@@ -2883,6 +2887,7 @@ export class GameManager {
         try {
           const node = JSON.parse(str) as DialogueNodePayload;
           const npcEntityId = values[0];
+          if (typeof node.sessionId !== 'number') node.sessionId = values[1] ?? 0;
           // Mid-conversation node transitions just call show() again with the
           // new node; DialoguePanel.show resets the line index so a multi-line
           // node restarts from line 0.
@@ -2891,7 +2896,8 @@ export class GameManager {
           console.warn('[dialogue] failed to parse node payload', e);
         }
       } else if (opcode === ServerOpcode.DIALOGUE_CLOSE) {
-        this.dialoguePanel?.hide();
+        const sessionId = data.byteLength >= 3 ? view.getInt16(1) : 0;
+        this.dialoguePanel?.closeSession(sessionId);
       } else if (opcode === ServerOpcode.NPC_NAME) {
         // [npcEntityId] follows the string payload. Override is cached for
         // the right-click menu, hover tooltip, and shop title — no floating
@@ -4511,6 +4517,26 @@ export class GameManager {
       if (sprite) {
         sprite.showChatBubble(message);
       }
+    }
+  }
+
+  private showNpcDialogueBubble(npcEntityId: number, message: string): void {
+    const npc = this.entities.npcSprites.get(npcEntityId);
+    if (npc) {
+      npc.showChatBubble(message, 6000, 'dialogue');
+    }
+  }
+
+  private hideNpcDialogueBubble(npcEntityId: number): void {
+    const npc = this.entities.npcSprites.get(npcEntityId);
+    if (npc) {
+      npc.hideChatBubble();
+    }
+  }
+
+  private showLocalDialogueBubble(message: string): void {
+    if (this.localPlayer) {
+      this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
   }
 

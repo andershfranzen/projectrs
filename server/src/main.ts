@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -547,6 +547,9 @@ const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MS = 60_000;
 const SIGNUP_LIMIT = 20;
 const SIGNUP_WINDOW_MS = 10 * 60_000;
+const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
+const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
+const DEVICE_COOKIE = 'eq_device_id';
 // Hard cap on entries so an attacker rotating usernames (or IPs, behind a
 // proxy) can't fill the map between sweeps. When the cap is hit, the oldest
 // entry is evicted — Map preserves insertion order, so `keys().next()` is O(1).
@@ -581,6 +584,43 @@ function requestClientIp(req: Request, srv: { requestIP: (r: Request) => { addre
     if (cfIp) return cfIp;
   }
   return directIp || 'unknown';
+}
+
+function parseCookie(req: Request, name: string): string {
+  const cookie = req.headers.get('cookie') ?? '';
+  for (const part of cookie.split(';')) {
+    const [rawKey, ...rawValue] = part.trim().split('=');
+    if (rawKey === name) return decodeURIComponent(rawValue.join('=') || '');
+  }
+  return '';
+}
+
+function newDeviceId(): string {
+  return crypto.randomUUID();
+}
+
+function deviceCookieHeader(deviceId: string, req: Request): string {
+  const secure = new URL(req.url).protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
+  return `${DEVICE_COOKIE}=${encodeURIComponent(deviceId)}; Path=/; Max-Age=31536000; SameSite=Strict; HttpOnly${secure ? '; Secure' : ''}`;
+}
+
+function getOrCreateDeviceId(req: Request): { deviceId: string; setCookie?: string } {
+  const existing = parseCookie(req, DEVICE_COOKIE);
+  if (!validateDeviceId(existing)) return { deviceId: existing };
+  const deviceId = newDeviceId();
+  return { deviceId, setCookie: deviceCookieHeader(deviceId, req) };
+}
+
+function validateSignupDevice(req: Request, rawDeviceId: unknown): { ok: true; deviceId: string } | { ok: false; error: string } {
+  if (typeof rawDeviceId !== 'string') return { ok: false, error: 'Missing or invalid device identifier' };
+  const deviceId = rawDeviceId.trim();
+  const deviceError = validateDeviceId(deviceId);
+  if (deviceError) return { ok: false, error: deviceError };
+  const cookieDeviceId = parseCookie(req, DEVICE_COOKIE);
+  if (cookieDeviceId !== deviceId) {
+    return { ok: false, error: 'Missing or invalid device identifier' };
+  }
+  return { ok: true, deviceId };
 }
 
 setInterval(() => {
@@ -641,10 +681,8 @@ function tooLarge(): Response {
  *  weird browser environments (private mode, sandboxed iframes). */
 function sanitizeDeviceId(raw: unknown): string {
   if (typeof raw !== 'string') return '';
-  if (raw.length < 8 || raw.length > 64) return '';
-  // Permissive: alphanumeric + dash + colon (UUIDs, hashed IDs, etc.)
-  if (!/^[a-zA-Z0-9:_-]+$/.test(raw)) return '';
-  return raw;
+  const deviceId = raw.trim();
+  return validateDeviceId(deviceId) ? '' : deviceId;
 }
 
 function bodyWithinLimit(req: Request, maxBytes: number): boolean {
@@ -781,6 +819,14 @@ const server = Bun.serve<SocketData>({
       return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
     }
 
+    if (url.pathname === '/api/device-id' && req.method === 'GET') {
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      const device = getOrCreateDeviceId(req);
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (device.setCookie) headers['Set-Cookie'] = device.setCookie;
+      return new Response(JSON.stringify({ ok: true, deviceId: device.deviceId }), { status: 200, headers });
+    }
+
     if (url.pathname === '/api/client-log' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, 8 * 1024)) return tooLarge();
@@ -806,10 +852,32 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/api/signup' && req.method === 'POST') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
-      return jsonResponse({
-        ok: false,
-        error: 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.',
-      }, 403);
+      if (!PUBLIC_SIGNUPS_ENABLED) {
+        return jsonResponse({ ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE }, 403);
+      }
+      const ip = requestClientIp(req, server);
+      try {
+        const body = await req.json() as { username?: string; password?: string; deviceId?: string };
+        const device = validateSignupDevice(req, body.deviceId);
+        if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
+        const username = (body.username || '').toLowerCase();
+        const key = `${ip}:${device.deviceId}`;
+        if (!checkRate(signupAttempts, key, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
+          return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
+        }
+        const ipBan = db.isIpBanned(ip);
+        if (ipBan) {
+          return jsonResponse({ ok: false, error: `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}` }, 403);
+        }
+        const result = await db.createAccount(username, body.password || '', device.deviceId);
+        if (result.ok) {
+          signupAttempts.delete(key);
+          return jsonResponse({ ok: true, token: result.token, username });
+        }
+        return jsonResponse({ ok: false, error: result.error }, 400);
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
     }
 
     if (url.pathname === '/api/login' && req.method === 'POST') {

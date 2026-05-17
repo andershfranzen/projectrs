@@ -1,15 +1,15 @@
 /**
- * Browser-scoped device identifier. Generated on first visit, persisted in
- * localStorage. Used by the server's one-account-per-device enforcement to
- * refuse a second account login from the same browser while the first is
- * still active — a deterrent paired with the ToS rule.
+ * Browser-scoped device identifier. Issued by the server and mirrored in
+ * localStorage. The server also sets an HttpOnly cookie and requires signup
+ * requests to echo the matching ID, so hand-written signup requests cannot
+ * omit the device identifier or invent arbitrary values.
  *
  * Threat model: deterrent, not a security boundary.
  * - Clearing localStorage gives a fresh ID → bypass. Same effect as cookies.
  * - Incognito tab starts with empty localStorage → effective new device.
  * - Different browser → different ID.
- * - Malicious client can omit the field entirely; the server treats missing
- *   IDs as "no enforcement" rather than refusing connection.
+ * - A malicious same-origin script can still request a fresh server-issued ID,
+ *   but arbitrary/missing IDs are rejected server-side.
  *
  * The point is friction for casual rule-breakers and a visible "you can't do
  * that" message that pairs with the ToS — anyone who works around it has
@@ -39,15 +39,15 @@ function genUuid(): string {
 let cached: string | null = null;
 
 /** Get this browser's device ID. Generates + persists one if missing. */
-export function getDeviceId(): string {
+export async function getDeviceId(): Promise<string> {
   if (cached) return cached;
   try {
     const existing = localStorage.getItem(STORAGE_KEY);
     if (existing && existing.length >= 8 && existing.length <= 64) {
       cached = existing;
-      return existing;
+      return await ensureServerDevice(existing);
     }
-    const fresh = genUuid();
+    const fresh = await fetchServerDeviceId() ?? genUuid();
     localStorage.setItem(STORAGE_KEY, fresh);
     cached = fresh;
     return fresh;
@@ -59,4 +59,33 @@ export function getDeviceId(): string {
     if (!cached) cached = genUuid();
     return cached;
   }
+}
+
+async function ensureServerDevice(existing: string): Promise<string> {
+  const serverDevice = await fetchServerDeviceId();
+  if (!serverDevice) return existing;
+  if (serverDevice !== existing) {
+    localStorage.setItem(STORAGE_KEY, serverDevice);
+    cached = serverDevice;
+    return serverDevice;
+  }
+  return existing;
+}
+
+async function fetchServerDeviceId(): Promise<string | null> {
+  try {
+    const res = await fetch('/api/device-id', {
+      method: 'GET',
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { ok?: boolean; deviceId?: string };
+    if (data.ok && typeof data.deviceId === 'string' && data.deviceId.length >= 8 && data.deviceId.length <= 64) {
+      return data.deviceId;
+    }
+  } catch {
+    // Fall back below.
+  }
+  return null;
 }

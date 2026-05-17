@@ -62,6 +62,9 @@ const REFUND_SPILL_DESPAWN_TICKS = 100;
 /** How long to keep a dropped socket's player in-world for client reconnect.
  *  38 ticks at 600ms is just under 23s, matching the client's retry window. */
 const RECONNECT_GRACE_TICKS = 38;
+const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
+const BANKER_BANK_OPEN_DELAY_TICKS = 4;
+const DIALOGUE_SESSION_MAX = 0x7fff;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -78,6 +81,22 @@ export interface GroundItem {
   ownerPlayerId?: number;
   privateTicks?: number;
 }
+
+type DialogueScheduledStep =
+  | {
+      type: 'openShop';
+      runAtTick: number;
+      playerId: number;
+      npcEntityId: number;
+      sessionId: number;
+    }
+  | {
+      type: 'openBank';
+      runAtTick: number;
+      playerId: number;
+      npcEntityId: number;
+      sessionId: number;
+    };
 
 /** One side of a trade session — owner's id, current offer (28 slots), and
  *  current accept stage. Stages: 0 = editing, 1 = locked, 2 = final-accept. */
@@ -150,6 +169,8 @@ export class World {
   private currentTick: number = 0;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private saveTimer: ReturnType<typeof setInterval> | null = null;
+  private nextDialogueSessionId: number = 1;
+  private dialogueScheduledSteps: DialogueScheduledStep[] = [];
 
   // Player combat targets (playerId -> npcId)
   private playerCombatTargets: Map<number, number> = new Map();
@@ -744,7 +765,7 @@ export class World {
         if (player.openInterface === 'trade') this.abortTrade(id, 2);
         if (player.openInterface === 'bank') player.openInterface = null;
         player.openShopNpcId = null;
-        player.openDialogueState = null;
+        this.closeDialogueForPlayer(player, false);
         this.finalizePlayerLogoutSession(player);
 
         // Save BEFORE removing — otherwise a refresh races the WS-close
@@ -1010,7 +1031,7 @@ export class World {
     // will be saved by the call below.
     if (player.openInterface === 'bank') player.openInterface = null;
     player.openShopNpcId = null;
-    player.openDialogueState = null;
+    this.closeDialogueForPlayer(player, false);
     player.clearMoveQueue();
     player.pendingPickup = -1;
     player.pendingInteraction = null;
@@ -1712,7 +1733,7 @@ export class World {
     // shop or bank via DialogueAction, so authoring a dialogue-wrapped
     // shopkeeper is the supported way to combine the two.
     if (npc.hasDialogue) {
-      this.openDialogueAt(player, npc, npc.effectiveDialogue!.root);
+      this.openDialogueAt(player, npc, npc.effectiveDialogue!.root, true);
       return;
     }
 
@@ -1752,17 +1773,42 @@ export class World {
     return false;
   }
 
+  private allocateDialogueSessionId(): number {
+    const id = this.nextDialogueSessionId;
+    this.nextDialogueSessionId = this.nextDialogueSessionId >= DIALOGUE_SESSION_MAX ? 1 : this.nextDialogueSessionId + 1;
+    return id;
+  }
+
+  private setDialogueState(
+    player: Player,
+    npcEntityId: number,
+    nodeId: string,
+    visibleOptionIndices: number[],
+    sessionId: number = player.openDialogueState?.sessionId ?? this.allocateDialogueSessionId(),
+  ): number {
+    player.openDialogueState = { sessionId, npcEntityId, nodeId, visibleOptionIndices };
+    return sessionId;
+  }
+
+  closeDialogueForPlayer(player: Player, notifyClient: boolean = true): void {
+    const sessionId = player.openDialogueState?.sessionId ?? 0;
+    if (player.openDialogueState === null) return;
+    player.openDialogueState = null;
+    this.dialogueScheduledSteps = this.dialogueScheduledSteps.filter(step => step.playerId !== player.id || step.sessionId !== sessionId);
+    if (notifyClient) this.sendToPlayer(player, ServerOpcode.DIALOGUE_CLOSE, sessionId);
+  }
+
   /** Push the current dialogue node to the client and update server-side
    *  state. Sends DIALOGUE_OPEN with a JSON-encoded node payload (lines,
    *  speaker, options) so the client doesn't need to know the whole tree. */
-  private openDialogueAt(player: Player, npc: Npc, nodeId: string): void {
+  private openDialogueAt(player: Player, npc: Npc, nodeId: string, newSession: boolean = false): void {
     const tree = npc.effectiveDialogue;
     if (!tree) return;
     const node = tree.nodes[nodeId];
     if (!node) {
       // Author error — node referenced doesn't exist. Close gracefully so we
       // don't trap the client in a dead conversation.
-      this.sendDialogueClose(player);
+      this.closeDialogueForPlayer(player);
       return;
     }
     // Strip layout (editor-only metadata) from the wire payload.
@@ -1776,27 +1822,33 @@ export class World {
         visibleOptions.push(wireNode.options[i]);
       }
     }
-    player.openDialogueState = { npcEntityId: npc.id, nodeId, visibleOptionIndices: visibleIndices };
+    const sessionId = this.setDialogueState(
+      player,
+      npc.id,
+      nodeId,
+      visibleIndices,
+      newSession ? this.allocateDialogueSessionId() : undefined,
+    );
     const payload = JSON.stringify({
+      sessionId,
       speaker: wireNode.speaker ?? npc.displayName,
       lines: wireNode.lines,
       options: visibleOptions.map(o => ({ label: o.label })),
     });
-    const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id);
+    const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id, sessionId);
     try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
   }
 
   private sendDialogueClose(player: Player): void {
-    if (player.openDialogueState === null) return;
-    player.openDialogueState = null;
-    this.sendToPlayer(player, ServerOpcode.DIALOGUE_CLOSE);
+    this.closeDialogueForPlayer(player);
   }
 
-  handleDialogueChoose(playerId: number, npcEntityId: number, optionIndex: number): void {
+  handleDialogueChoose(playerId: number, npcEntityId: number, sessionId: number, optionIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
     const state = player.openDialogueState;
     if (!state || state.npcEntityId !== npcEntityId) return;
+    if (sessionId !== -1 && state.sessionId !== sessionId) return;
     const npc = this.npcs.get(npcEntityId);
     if (!npc || npc.dead) { this.sendDialogueClose(player); return; }
     const tree = npc.effectiveDialogue;
@@ -1815,6 +1867,15 @@ export class World {
     // panel with the shop — the order here is the visible UX order.
     if (option.action) {
       this.runDialogueAction(player, npc, option.action);
+      const afterActionState = player.openDialogueState;
+      if (
+        !afterActionState ||
+        afterActionState.sessionId !== state.sessionId ||
+        afterActionState.npcEntityId !== state.npcEntityId ||
+        afterActionState.nodeId !== state.nodeId
+      ) {
+        return;
+      }
     }
     // If the action was openShop/openBank, those took ownership of the UI;
     // sendDialogueClose already fired inside runDialogueAction. Otherwise
@@ -1836,12 +1897,12 @@ export class World {
         this.sendDialogueClose(player);
         return;
       case 'openShop':
-        this.sendDialogueClose(player);
-        if (npc.hasShop) this.openShopFor(player, npc);
+        if (npc.hasShop) this.openShopWithAcknowledgement(player, npc);
+        else this.sendDialogueClose(player);
         return;
       case 'openBank':
-        this.sendDialogueClose(player);
-        if (npc.hasBank) this.openBankFor(player);
+        if (npc.hasBank) this.openBankWithAcknowledgement(player, npc);
+        else this.sendDialogueClose(player);
         return;
       case 'openAppearance':
         this.sendDialogueClose(player);
@@ -1885,6 +1946,48 @@ export class World {
    *  per-list) so the caller can also record the original index. */
   private dialogueOptionVisible(player: Player, opt: import('@projectrs/shared').DialogueOption): boolean {
     return this.quests.dialogueOptionVisible(player, opt);
+  }
+
+  private openBankWithAcknowledgement(player: Player, npc: Npc): void {
+    const sessionId = this.setDialogueState(player, npc.id, '__bank_ack__', []);
+    const payload = JSON.stringify({
+      sessionId,
+      speaker: npc.displayName,
+      lines: [BANKER_ACKNOWLEDGE_LINE],
+      options: [],
+      autoClose: true,
+    });
+    const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id, sessionId);
+    try { player.ws.sendBinary(packet); } catch { return; }
+
+    this.dialogueScheduledSteps.push({
+      type: 'openBank',
+      runAtTick: this.currentTick + BANKER_BANK_OPEN_DELAY_TICKS,
+      playerId: player.id,
+      npcEntityId: npc.id,
+      sessionId,
+    });
+  }
+
+  private openShopWithAcknowledgement(player: Player, npc: Npc): void {
+    const sessionId = this.setDialogueState(player, npc.id, '__shop_ack__', []);
+    const payload = JSON.stringify({
+      sessionId,
+      speaker: npc.displayName,
+      lines: [BANKER_ACKNOWLEDGE_LINE],
+      options: [],
+      autoClose: true,
+    });
+    const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id, sessionId);
+    try { player.ws.sendBinary(packet); } catch { return; }
+
+    this.dialogueScheduledSteps.push({
+      type: 'openShop',
+      runAtTick: this.currentTick + BANKER_BANK_OPEN_DELAY_TICKS,
+      playerId: player.id,
+      npcEntityId: npc.id,
+      sessionId,
+    });
   }
 
   handlePlayerBuyItem(playerId: number, itemId: number, quantity: number): void {
@@ -3591,6 +3694,7 @@ export class World {
     this.tickSkillingActions();
     this.tickObjectRespawns();
     this.tickItemDespawns();
+    this.tickDialogueScheduledSteps();
     this.tickTransitions();
     this.tickDeferredLogouts();
     this.broadcastSync();
@@ -4318,6 +4422,32 @@ export class World {
     }
   }
 
+  private tickDialogueScheduledSteps(): void {
+    if (this.dialogueScheduledSteps.length === 0) return;
+    const remaining: DialogueScheduledStep[] = [];
+    for (const step of this.dialogueScheduledSteps) {
+      if (step.runAtTick > this.currentTick) {
+        remaining.push(step);
+        continue;
+      }
+
+      const player = this.players.get(step.playerId);
+      if (!player) continue;
+      const state = player.openDialogueState;
+      const expectedNodeId = step.type === 'openBank' ? '__bank_ack__' : '__shop_ack__';
+      if (!state || state.sessionId !== step.sessionId || state.npcEntityId !== step.npcEntityId || state.nodeId !== expectedNodeId) continue;
+      const npc = this.npcs.get(step.npcEntityId);
+      this.closeDialogueForPlayer(player);
+      if (!npc || npc.dead) continue;
+      if (step.type === 'openBank') {
+        if (npc.hasBank) this.openBankFor(player);
+      } else if (npc.hasShop) {
+        this.openShopFor(player, npc);
+      }
+    }
+    this.dialogueScheduledSteps = remaining;
+  }
+
   private tickTransitions(): void {
     for (const [, player] of this.players) {
       const map = this.getPlayerMap(player);
@@ -4410,7 +4540,7 @@ export class World {
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
     player.openShopNpcId = null;
-    player.openDialogueState = null;
+    this.closeDialogueForPlayer(player);
 
     // OSRS-style death drop: keep the 3 most valuable items (sorted by
     // per-unit value × quantity), drop everything else as ground items at
@@ -4581,7 +4711,7 @@ export class World {
     // pick it back up on the other map and double-deposit.
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
-    player.openDialogueState = null;
+    this.closeDialogueForPlayer(player);
 
     // Clear all cross-entity combat / trade references BEFORE we mutate the
     // player's map. The helper looks up the player by id, so call it while the

@@ -18,9 +18,11 @@ export enum ClientOpcode {
    *  Server validates expectedItemId matches inventory[fromSlot] (stale-click guard) and
    *  refuses if a modal interface is open. Just swaps the two slots — no merge for stackables. */
   PLAYER_MOVE_INV_ITEM = 38,
-  /** Choose an option in the currently open dialogue. Values: [npcEntityId, optionIndex].
-   *  Server validates the player has dialogue open with this NPC at the current
-   *  node, runs the option's action, then advances to option.next or closes. */
+  /** Choose an option in the currently open dialogue.
+   *  Values: [npcEntityId, sessionId, optionIndex].
+   *  Server validates the player has dialogue open with this NPC/session at
+   *  the current node, runs the option's action, then advances to option.next
+   *  or closes. */
   DIALOGUE_CHOOSE = 22,
   PLAYER_INTERACT_OBJECT = 40,
   /** Use inventory item on another inventory slot.
@@ -153,12 +155,13 @@ export enum ServerOpcode {
    *  2H weapon + aggressive → smash anim). */
   PLAYER_REMOTE_STANCE = 75,
   /** Open or update the dialogue UI. String packet — JSON-encoded
-   *  DialogueNode (lines, speaker, options) — followed by [npcEntityId].
+   *  DialogueNode (sessionId, lines, speaker, options) — followed by
+   *  [npcEntityId, sessionId].
    *  Sent on initial talk-to and after each DIALOGUE_CHOOSE that advances
    *  to a new node. */
   DIALOGUE_OPEN = 76,
-  /** Close the dialogue UI. Values: none. Sent when the player walks away,
-   *  the dialogue tree ends, or an action like openShop transitions out. */
+  /** Close the dialogue UI. Values: [sessionId]. Sent when the player walks
+   *  away, the dialogue tree ends, or an action like openShop transitions out. */
   DIALOGUE_CLOSE = 77,
   /** Per-NPC interaction flags. Layout: [npcEntityId, flagBits].
    *  flagBits: bit 0 = hasDialogue, bit 1 = hasShop, bit 2 = hasBank.

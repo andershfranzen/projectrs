@@ -2230,18 +2230,28 @@ export class CharacterEntity {
   // Chat bubble (same HTML overlay pattern as SpriteEntity)
   // ---------------------------------------------------------------------------
 
-  showChatBubble(message: string, duration: number = 5000): void {
+  showChatBubble(message: string, duration: number = 5000, variant: 'chat' | 'dialogue' = 'chat'): void {
     this.hideChatBubble();
     const text = message.length > 80 ? message.substring(0, 77) + '...' : message;
     const el = document.createElement('div');
-    el.className = 'chat-bubble-overlay';
+    el.className = variant === 'dialogue' ? 'chat-bubble-overlay dialogue-bubble-overlay' : 'chat-bubble-overlay';
     el.textContent = text;
+    const palette = variant === 'dialogue'
+      ? `
+        background: rgba(43, 10, 8, 0.92); color: #f4ded5;
+        border: 1px solid #9a332b;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,190,150,0.08);
+      `
+      : `
+        background: rgba(0, 0, 0, 0.8); color: #fff;
+        border: 1px solid #5a4a35;
+      `;
     el.style.cssText = `
       position: fixed; pointer-events: none; z-index: 200;
-      background: rgba(0, 0, 0, 0.8); color: #fff;
+      ${palette}
       font-family: Arial, Helvetica, sans-serif; font-size: 13px;
       padding: 4px 10px; border-radius: 6px;
-      border: 1px solid #5a4a35; white-space: nowrap;
+      white-space: nowrap;
       transform: translate(-50%, -100%);
       text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
     `;

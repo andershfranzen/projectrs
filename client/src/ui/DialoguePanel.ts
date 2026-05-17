@@ -4,108 +4,124 @@ import type { NetworkManager } from '../managers/NetworkManager';
 /** Wire-format dialogue node received via DIALOGUE_OPEN. The server strips
  *  layout + action types — the client only sees what it needs to render. */
 export interface DialogueNodePayload {
+  sessionId: number;
   speaker: string;
   lines: string[];
   /** Just the labels — the server validates the chosen index against its
    *  own copy of the node, so the client doesn't need actions or next ids. */
   options: { label: string }[];
+  /** Transient server-owned line, e.g. banker acknowledgement before opening UI. */
+  autoClose?: boolean;
+}
+
+export interface DialoguePanelHooks {
+  showNpcBubble: (npcEntityId: number, message: string) => void;
+  hideNpcBubble: (npcEntityId: number) => void;
+  showPlayerBubble: (message: string) => void;
 }
 
 /**
- * RPG-style dialogue overlay anchored to the bottom of the viewport.
+ * Dialogue controller.
  *
- * Lines are shown one at a time; clicking the body advances. Once the last
- * line is reached, options appear as buttons. Selecting an option fires a
- * DIALOGUE_CHOOSE — the server then either pushes a new DIALOGUE_OPEN (next
- * node), DIALOGUE_CLOSE (end), or hands off to another panel (e.g. shop).
+ * NPC lines render through the same overhead bubble system as player chat.
+ * This panel only owns response buttons + keyboard shortcuts for choosing an
+ * option, so dialogue no longer appears as a custom bottom overlay.
  */
 export class DialoguePanel {
   private container: HTMLDivElement;
-  private speakerEl: HTMLDivElement;
-  private lineEl: HTMLDivElement;
   private optionsEl: HTMLDivElement;
-  private continueHintEl: HTMLDivElement;
   private network: NetworkManager;
+  private hooks: DialoguePanelHooks;
   private visible: boolean = false;
+  private hiddenChatPanel: HTMLElement | null = null;
   private npcEntityId: number = -1;
+  private sessionId: number = 0;
   private currentNode: DialogueNodePayload | null = null;
   private lineIndex: number = 0;
+  private keyHandler: (event: KeyboardEvent) => void;
+  private npcBubbleTimer: number | null = null;
+  private npcReplyDelayTimer: number | null = null;
+  private waitingForNpcReply: boolean = false;
 
-  constructor(network: NetworkManager) {
+  constructor(network: NetworkManager, hooks: DialoguePanelHooks) {
     this.network = network;
+    this.hooks = hooks;
+    this.keyHandler = (event) => this.handleKeyDown(event);
 
     this.container = document.createElement('div');
     this.container.style.cssText = `
-      position: fixed;
-      left: 50%;
-      bottom: 24px;
-      transform: translateX(-50%);
-      width: min(640px, 80vw);
-      background: #1a140e;
-      border: 2px solid #aa8844;
-      border-radius: 8px;
-      padding: 12px 16px 14px 16px;
-      font-family: monospace;
-      color: #f0e6d2;
-      box-shadow: 0 4px 18px rgba(0,0,0,0.6);
+      width: 100%;
+      height: 100%;
+      margin: 3px 8px;
+      padding: 8px 10px;
+      box-sizing: border-box;
       display: none;
-      flex-direction: column;
-      gap: 8px;
-      z-index: 600;
+      align-items: stretch;
+      justify-content: center;
+      overflow: hidden;
       user-select: none;
-      cursor: pointer;
-    `;
-
-    this.speakerEl = document.createElement('div');
-    this.speakerEl.style.cssText = `
-      font-size: 13px; color: #ffcc44; font-weight: bold;
-      letter-spacing: 0.5px; text-transform: uppercase;
-    `;
-
-    this.lineEl = document.createElement('div');
-    this.lineEl.style.cssText = `
-      font-size: 15px; color: #f0e6d2; line-height: 1.45;
-      min-height: 1.45em;
     `;
 
     this.optionsEl = document.createElement('div');
     this.optionsEl.style.cssText = `
-      display: flex; flex-direction: column; gap: 4px; margin-top: 4px;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      overflow-y: auto;
     `;
 
-    this.continueHintEl = document.createElement('div');
-    this.continueHintEl.style.cssText = `
-      font-size: 11px; color: #8a7a5c; text-align: right;
-      font-style: italic;
-    `;
-    this.continueHintEl.textContent = 'click to continue ▸';
-
-    this.container.appendChild(this.speakerEl);
-    this.container.appendChild(this.lineEl);
     this.container.appendChild(this.optionsEl);
-    this.container.appendChild(this.continueHintEl);
+    window.addEventListener('keydown', this.keyHandler);
 
-    // Clicking the panel body advances to the next line. Option buttons
-    // stop propagation so they don't double-fire as both choice + advance.
-    this.container.addEventListener('click', () => this.advance());
-
-    document.body.appendChild(this.container);
+    const mount = document.getElementById('ui-chat-inner');
+    (mount ?? document.body).appendChild(this.container);
   }
 
   show(npcEntityId: number, node: DialogueNodePayload): void {
+    if (this.npcReplyDelayTimer !== null) {
+      window.clearTimeout(this.npcReplyDelayTimer);
+      this.npcReplyDelayTimer = null;
+    }
     this.npcEntityId = npcEntityId;
+    this.sessionId = node.sessionId;
     this.currentNode = node;
     this.lineIndex = 0;
     this.visible = true;
-    this.container.style.display = 'flex';
-    this.render();
+    if (this.waitingForNpcReply) {
+      this.waitingForNpcReply = false;
+      this.setOptionsVisible(false);
+      this.npcReplyDelayTimer = window.setTimeout(() => {
+        this.npcReplyDelayTimer = null;
+        if (this.visible && this.currentNode === node && this.npcEntityId === npcEntityId) {
+          this.render();
+        }
+      }, 1000);
+    } else {
+      this.render();
+    }
   }
 
   hide(): void {
     this.visible = false;
-    this.container.style.display = 'none';
+    this.waitingForNpcReply = false;
+    if (this.npcReplyDelayTimer !== null) {
+      window.clearTimeout(this.npcReplyDelayTimer);
+      this.npcReplyDelayTimer = null;
+    }
+    this.clearNpcBubble();
+    this.setOptionsVisible(false);
+    this.optionsEl.innerHTML = '';
     this.npcEntityId = -1;
+    this.sessionId = 0;
     this.currentNode = null;
+  }
+
+  closeSession(sessionId: number): void {
+    if (sessionId !== 0 && this.sessionId !== sessionId) return;
+    this.hide();
   }
 
   isVisible(): boolean {
@@ -114,65 +130,163 @@ export class DialoguePanel {
 
   private advance(): void {
     if (!this.currentNode) return;
-    // Only advance lines while there's still text to show. Once the last line
-    // is on screen, options are visible — clicking the panel body should
-    // do nothing (the user must pick an option or walk away).
     if (this.lineIndex < this.currentNode.lines.length - 1) {
       this.lineIndex++;
       this.render();
     }
   }
 
+  private handleKeyDown(event: KeyboardEvent): void {
+    if (!this.visible || !this.currentNode) return;
+    if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+
+    const active = document.activeElement as HTMLElement | null;
+    if (active && active !== document.body) {
+      const tag = active.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || active.isContentEditable) return;
+    }
+
+    const onLastLine = this.lineIndex >= this.currentNode.lines.length - 1;
+    if (!onLastLine) {
+      if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.advance();
+      }
+      return;
+    }
+
+    const options = this.currentNode.options.length > 0 ? this.currentNode.options : [{ label: 'Continue' }];
+    const optionIndex = this.optionIndexFromKey(event.key);
+    if (optionIndex < 0 || optionIndex >= options.length) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.chooseOption(optionIndex);
+  }
+
+  private optionIndexFromKey(key: string): number {
+    if (/^[1-9]$/.test(key)) return Number(key) - 1;
+    if (key === '0') return 9;
+    return -1;
+  }
+
+  private chooseOption(optionIndex: number): void {
+    if (!this.currentNode) return;
+    const option = this.currentNode.options[optionIndex];
+    if (!option) {
+      this.hide();
+      return;
+    }
+
+    this.hooks.showPlayerBubble(option.label);
+    this.clearNpcBubble();
+    this.setOptionsVisible(false);
+    this.waitingForNpcReply = true;
+    this.network.sendRaw(encodePacket(
+      ClientOpcode.DIALOGUE_CHOOSE,
+      this.npcEntityId,
+      this.sessionId,
+      optionIndex,
+    ));
+  }
+
   private render(): void {
     if (!this.currentNode) return;
-    this.speakerEl.textContent = this.currentNode.speaker;
+
     const line = this.currentNode.lines[this.lineIndex] ?? '';
-    this.lineEl.textContent = line;
+    if (line) {
+      this.clearNpcBubble();
+      this.hooks.showNpcBubble(this.npcEntityId, line);
+      const npcEntityId = this.npcEntityId;
+      this.npcBubbleTimer = window.setTimeout(() => {
+        if (this.npcEntityId === npcEntityId) this.clearNpcBubble();
+      }, 6000);
+    }
 
     const onLastLine = this.lineIndex >= this.currentNode.lines.length - 1;
     this.optionsEl.innerHTML = '';
-    if (onLastLine) {
-      // No options at all (e.g. an "end of conversation" node) → show a
-      // single "Continue" that closes the panel, otherwise the user has no
-      // way to dismiss without walking away.
-      const opts = this.currentNode.options.length > 0
-        ? this.currentNode.options
-        : [{ label: 'Continue' }];
-      for (let i = 0; i < opts.length; i++) {
-        const optionIndex = i;
-        const btn = document.createElement('button');
-        btn.textContent = opts[i].label;
-        btn.style.cssText = `
-          background: #2a1f15; border: 1px solid #5a4a35;
-          color: #ffe6a8; padding: 6px 10px; border-radius: 4px;
-          font-family: monospace; font-size: 13px; cursor: pointer;
-          text-align: left;
-        `;
-        btn.onmouseenter = () => { btn.style.background = '#3a2f25'; };
-        btn.onmouseleave = () => { btn.style.background = '#2a1f15'; };
-        btn.onclick = (ev) => {
-          ev.stopPropagation();
-          // For an empty-options node we synthesized a "Continue" — index 0
-          // can't be sent to the server (no real option to choose). Just close.
-          if (this.currentNode!.options.length === 0) {
-            this.hide();
-            return;
-          }
-          this.network.sendRaw(encodePacket(
-            ClientOpcode.DIALOGUE_CHOOSE,
-            this.npcEntityId,
-            optionIndex,
-          ));
-        };
-        this.optionsEl.appendChild(btn);
+    if (this.currentNode.autoClose) {
+      this.setOptionsVisible(false);
+      return;
+    }
+    if (!onLastLine) {
+      this.setOptionsVisible(true);
+      this.appendOptionButton('Continue', () => this.advance(), 'Space / Enter');
+      return;
+    }
+
+    const options = this.currentNode.options.length > 0
+      ? this.currentNode.options
+      : [{ label: 'Continue' }];
+
+    this.setOptionsVisible(true);
+    for (let i = 0; i < options.length; i++) {
+      const optionIndex = i;
+      const shortcut = i < 9 ? `${i + 1}` : (i === 9 ? '0' : '');
+      this.appendOptionButton(options[i].label, () => this.chooseOption(optionIndex), shortcut);
+    }
+  }
+
+  private appendOptionButton(label: string, action: () => void, shortcut: string): void {
+    const btn = document.createElement('button');
+    btn.textContent = shortcut ? `${shortcut}. ${label}` : label;
+    btn.style.cssText = `
+        width: 100%;
+        min-height: 30px;
+        padding: 6px 10px;
+        box-sizing: border-box;
+        background: rgba(43, 10, 8, 0.9);
+        border: 1px solid #9a332b;
+        color: #f4ded5;
+        border-radius: 2px;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 13px;
+        font-weight: bold;
+        cursor: pointer;
+        text-align: left;
+        text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+        box-shadow: inset 0 0 0 1px rgba(255,190,150,0.08);
+      `;
+    btn.onmouseenter = () => { btn.style.background = 'rgba(78, 18, 14, 0.95)'; };
+    btn.onmouseleave = () => { btn.style.background = 'rgba(43, 10, 8, 0.9)'; };
+    btn.onclick = (ev) => {
+      ev.stopPropagation();
+      action();
+    };
+    this.optionsEl.appendChild(btn);
+  }
+
+  private setOptionsVisible(visible: boolean): void {
+    this.container.style.display = visible ? 'flex' : 'none';
+    const chatPanel = document.getElementById('chat-panel');
+    if (visible) {
+      if (chatPanel && chatPanel !== this.hiddenChatPanel) {
+        this.hiddenChatPanel = chatPanel;
+        chatPanel.style.display = 'none';
       }
-      this.continueHintEl.style.display = 'none';
-    } else {
-      this.continueHintEl.style.display = 'block';
+    } else if (this.hiddenChatPanel) {
+      this.hiddenChatPanel.style.display = 'flex';
+      this.hiddenChatPanel = null;
+    }
+  }
+
+  private clearNpcBubble(): void {
+    if (this.npcBubbleTimer !== null) {
+      window.clearTimeout(this.npcBubbleTimer);
+      this.npcBubbleTimer = null;
+    }
+    if (this.npcEntityId >= 0) {
+      this.hooks.hideNpcBubble(this.npcEntityId);
     }
   }
 
   dispose(): void {
+    window.removeEventListener('keydown', this.keyHandler);
+    if (this.npcReplyDelayTimer !== null) {
+      window.clearTimeout(this.npcReplyDelayTimer);
+      this.npcReplyDelayTimer = null;
+    }
+    this.clearNpcBubble();
     this.container.remove();
   }
 }

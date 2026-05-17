@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, combatLevel, initSkills, xpForLevel, normalizeAppearance, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, combatLevel, initSkills, xpForLevel, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -438,6 +438,8 @@ export class GameDatabase {
     if (usernameError) return { ok: false, error: usernameError };
     const passwordError = validatePassword(password);
     if (passwordError) return { ok: false, error: passwordError };
+    const deviceError = validateDeviceId(deviceId);
+    if (deviceError) return { ok: false, error: deviceError };
 
     // Check if username exists
     const existing = this.db.query('SELECT id FROM accounts WHERE username = ?').get(username);

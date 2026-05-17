@@ -300,8 +300,9 @@ export function handleGameSocketMessage(
     case ClientOpcode.DIALOGUE_CHOOSE: {
       if (!hasValues(values, 2)) return;
       const npcEntityId = values[0];
-      const optionIndex = values[1];
-      world.handleDialogueChoose(playerId, npcEntityId, optionIndex);
+      const sessionId = values.length >= 3 ? values[1] : -1;
+      const optionIndex = values.length >= 3 ? values[2] : values[1];
+      world.handleDialogueChoose(playerId, npcEntityId, sessionId, optionIndex);
       break;
     }
 

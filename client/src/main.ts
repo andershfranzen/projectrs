@@ -125,7 +125,10 @@ function handleDisconnect() {
  *  completed, so no transparent overlay exposes the canvas briefly. */
 function revealGame(afterMs: number = 0): void {
   setTimeout(() => {
+    gameFrame.style.display = 'grid';
     gameFrame.style.visibility = 'visible';
+    void canvas.offsetWidth;
+    window.dispatchEvent(new Event('resize'));
     backgroundParticles?.setVisible(false);
   }, afterMs);
 }
@@ -139,6 +142,13 @@ function showLoginScreen() {
     backgroundParticles?.setVisible(false);
     try {
       const preparedGame = await prepareGame();
+      // The login form hides the game frame after preload. Put it back into
+      // layout before auth finalization so Babylon has real canvas dimensions
+      // while map/entity packets settle, then reveal it after the form is gone.
+      gameFrame.style.display = 'grid';
+      gameFrame.style.visibility = 'hidden';
+      void canvas.offsetWidth;
+      window.dispatchEvent(new Event('resize'));
       await preparedGame.connectAndAuth(token, username);
       if (loginScreen) {
         loginScreen.destroy();

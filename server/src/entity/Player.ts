@@ -90,15 +90,16 @@ export class Player extends Entity {
    *  on distance). */
   openShopNpcId: number | null = null;
   /** Currently open dialogue, or null. Tracks which NPC entity the player is
-   *  talking to, which node they're parked on, AND the indices of the options
-   *  the client was actually shown (after the `requires` filter). Caching
-   *  the filtered indices closes a race: between DIALOGUE_OPEN and
-   *  DIALOGUE_CHOOSE the player's quest state could change, shifting which
-   *  options pass the filter — without the cache, the option-index the
-   *  client clicked would resolve to a different entry on the server.
+   *  talking to, which server-issued session is active, which node they're
+   *  parked on, AND the indices of the options the client was actually shown
+   *  (after the `requires` filter). Session ids reject stale choices from
+   *  previous conversations; caching the filtered indices closes a race:
+   *  between DIALOGUE_OPEN and DIALOGUE_CHOOSE the player's quest state could
+   *  change, shifting which options pass the filter — without the cache, the
+   *  option-index the client clicked would resolve to a different entry.
    *  Cleared in the same lifecycle hooks as openShopNpcId (movement,
    *  transition, death, disconnect). */
-  openDialogueState: { npcEntityId: number; nodeId: string; visibleOptionIndices: number[] } | null = null;
+  openDialogueState: { sessionId: number; npcEntityId: number; nodeId: string; visibleOptionIndices: number[] } | null = null;
   /** Talk-to-NPC intent held while the player walks into range. Fires from
    *  the tick loop once moveQueue drains and Chebyshev distance is within
    *  NPC_INTERACTION_RANGE. Cleared on movement redirect, death, disconnect. */

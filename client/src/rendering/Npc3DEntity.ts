@@ -61,6 +61,8 @@ export class Npc3DEntity {
   private healthBarTextEl: HTMLDivElement | null = null;
   private healthBarVisible: boolean = false;
   private yOffset: number = 0.5;
+  private chatBubbleEl: HTMLDivElement | null = null;
+  private chatBubbleTimer: number | null = null;
 
   private _ready = false;
   /** Entity ID stamped on every loaded mesh's metadata. Set via
@@ -312,12 +314,62 @@ export class Npc3DEntity {
 
   hasHealthBar(): boolean { return this.healthBarVisible && this.healthBarEl !== null; }
 
-  // Chat bubble stubs
-  showChatBubble(_msg: string, _dur?: number): void { }
-  hideChatBubble(): void { }
-  getChatBubbleWorldPos(_out?: Vector3): Vector3 | null { return null; }
-  updateChatBubbleScreenPos(_x: number, _y: number): void { }
-  hasChatBubble(): boolean { return false; }
+  showChatBubble(message: string, duration: number = 5000, variant: 'chat' | 'dialogue' = 'chat'): void {
+    this.hideChatBubble();
+    const text = message.length > 80 ? message.substring(0, 77) + '...' : message;
+    const el = document.createElement('div');
+    el.className = variant === 'dialogue' ? 'chat-bubble-overlay dialogue-bubble-overlay' : 'chat-bubble-overlay';
+    el.textContent = text;
+    const palette = variant === 'dialogue'
+      ? `
+        background: rgba(43, 10, 8, 0.92); color: #f4ded5;
+        border: 1px solid #9a332b;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.55), inset 0 0 0 1px rgba(255,190,150,0.08);
+      `
+      : `
+        background: rgba(0, 0, 0, 0.8); color: #fff;
+        border: 1px solid #5a4a35;
+      `;
+    el.style.cssText = `
+      position: fixed; pointer-events: none; z-index: 200;
+      ${palette}
+      font-family: Arial, Helvetica, sans-serif; font-size: 13px;
+      padding: 4px 10px; border-radius: 6px;
+      white-space: nowrap;
+      transform: translate(-50%, -100%);
+      text-shadow: 1px 1px 1px rgba(0,0,0,0.5);
+    `;
+    document.body.appendChild(el);
+    this.chatBubbleEl = el;
+    this.chatBubbleTimer = window.setTimeout(() => this.hideChatBubble(), duration);
+  }
+
+  hideChatBubble(): void {
+    if (this.chatBubbleTimer !== null) {
+      window.clearTimeout(this.chatBubbleTimer);
+      this.chatBubbleTimer = null;
+    }
+    if (this.chatBubbleEl) {
+      this.chatBubbleEl.remove();
+      this.chatBubbleEl = null;
+    }
+  }
+
+  getChatBubbleWorldPos(out?: Vector3): Vector3 | null {
+    if (!this.chatBubbleEl) return null;
+    const v = out ?? new Vector3();
+    v.set(this._position.x + this.renderOffset, this._position.y + this.yOffset * 2 + 0.6, this._position.z + this.renderOffset);
+    return v;
+  }
+
+  updateChatBubbleScreenPos(x: number, y: number): void {
+    if (this.chatBubbleEl) {
+      this.chatBubbleEl.style.left = `${x}px`;
+      this.chatBubbleEl.style.top = `${y}px`;
+    }
+  }
+
+  hasChatBubble(): boolean { return this.chatBubbleEl !== null; }
 
   // SpriteEntity compat stubs
   setAttackAnimation(_anim: any): void { }
@@ -348,6 +400,7 @@ export class Npc3DEntity {
   isAnimating(): boolean { return this.currentAnim === 'attack'; }
 
   dispose(): void {
+    this.hideChatBubble();
     this.hideHealthBar();
     for (const [, group] of this.animGroups) { group.stop(); group.dispose(); }
     this.animGroups.clear();
