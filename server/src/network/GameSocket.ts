@@ -6,6 +6,14 @@ import type { ServerWebSocket } from 'bun';
 
 export type GameSocketData = { type: 'game'; playerId?: number; accountId: number; username: string; isAdmin: boolean; ip: string; deviceId: string };
 
+function hasValues(values: number[], count: number): boolean {
+  if (values.length < count) return false;
+  for (let i = 0; i < count; i++) {
+    if (!Number.isFinite(values[i])) return false;
+  }
+  return true;
+}
+
 export function handleGameSocketOpen(
   ws: ServerWebSocket<GameSocketData>,
   world: World
@@ -166,6 +174,8 @@ export function handleGameSocketMessage(
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE: {
       const pathLength = values[0];
+      if (!Number.isInteger(pathLength) || pathLength < 0 || pathLength > 50) return;
+      if (values.length < 1 + pathLength * 2) return;
       const path: { x: number; z: number }[] = [];
       for (let i = 0; i < pathLength && (1 + i * 2 + 1) < values.length; i++) {
         path.push({
@@ -178,18 +188,21 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_ATTACK_NPC: {
+      if (!hasValues(values, 1)) return;
       const npcEntityId = values[0];
       world.handlePlayerAttackNpc(playerId, npcEntityId);
       break;
     }
 
     case ClientOpcode.PLAYER_PICKUP_ITEM: {
+      if (!hasValues(values, 1)) return;
       const groundItemId = values[0];
       world.handlePlayerPickup(playerId, groundItemId);
       break;
     }
 
     case ClientOpcode.PLAYER_DROP_ITEM: {
+      if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
       world.handlePlayerDrop(playerId, slot, expectedItemId);
@@ -197,6 +210,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_EQUIP_ITEM: {
+      if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
       world.handlePlayerEquip(playerId, slot, expectedItemId);
@@ -204,12 +218,14 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_UNEQUIP_ITEM: {
+      if (!hasValues(values, 1)) return;
       const equipSlot = values[0];
       world.handlePlayerUnequip(playerId, equipSlot);
       break;
     }
 
     case ClientOpcode.PLAYER_EAT_ITEM: {
+      if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
       world.handlePlayerEat(playerId, slot, expectedItemId);
@@ -217,12 +233,14 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_SET_STANCE: {
+      if (!hasValues(values, 1)) return;
       const stanceIdx = values[0];
       world.handlePlayerSetStance(playerId, stanceIdx);
       break;
     }
 
     case ClientOpcode.PLAYER_CAST_SPELL: {
+      if (!hasValues(values, 2)) return;
       const spellIndex = values[0];
       const targetEntityId = values[1];
       world.handlePlayerCastSpell(playerId, spellIndex, targetEntityId);
@@ -230,6 +248,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_INTERACT_OBJECT: {
+      if (!hasValues(values, 1)) return;
       const objectEntityId = values[0];
       const actionIndex = values[1] ?? 0;
       const recipeIndex = values[2] ?? -1;
@@ -238,6 +257,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM: {
+      if (!hasValues(values, 4)) return;
       const fromSlot = values[0];
       const fromItemId = values[1];
       const toSlot = values[2];
@@ -247,6 +267,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT: {
+      if (!hasValues(values, 3)) return;
       const invSlot = values[0];
       const itemId = values[1];
       const objectEntityId = values[2];
@@ -255,6 +276,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_USE_ITEM_ON_NPC: {
+      if (!hasValues(values, 3)) return;
       const invSlot = values[0];
       const itemId = values[1];
       const npcEntityId = values[2];
@@ -263,12 +285,14 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_TALK_NPC: {
+      if (!hasValues(values, 1)) return;
       const npcEntityId = values[0];
       world.handlePlayerTalkNpc(playerId, npcEntityId);
       break;
     }
 
     case ClientOpcode.DIALOGUE_CHOOSE: {
+      if (!hasValues(values, 2)) return;
       const npcEntityId = values[0];
       const optionIndex = values[1];
       world.handleDialogueChoose(playerId, npcEntityId, optionIndex);
@@ -276,6 +300,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_BUY_ITEM: {
+      if (!hasValues(values, 1)) return;
       const itemId = values[0];
       const quantity = values[1] ?? 1;
       world.handlePlayerBuyItem(playerId, itemId, quantity);
@@ -283,6 +308,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_SELL_ITEM: {
+      if (!hasValues(values, 2)) return;
       const slot = values[0];
       const quantity = values[1] ?? 1;
       const expectedItemId = values[2];
@@ -291,6 +317,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.PLAYER_MOVE_INV_ITEM: {
+      if (!hasValues(values, 3)) return;
       const fromSlot = values[0];
       const toSlot = values[1];
       const expectedItemId = values[2];
@@ -306,6 +333,7 @@ export function handleGameSocketMessage(
     // (GameMap.ts) mirrors the top tile across both connecting floors.
 
     case ClientOpcode.CLIENT_POSITION_Y: {
+      if (!hasValues(values, 1)) return;
       // Pure metadata. Stored for persistence so an elevated-tile spawn
       // restores at the right height. Y has no game-logic effect, but clamp
       // to a plausible range so a malicious client can't stash absurd values
@@ -325,6 +353,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.SET_APPEARANCE: {
+      if (!hasValues(values, 7)) return;
       const appearance: PlayerAppearance = {
         shirtColor: values[0] ?? 0,
         pantsColor: values[1] ?? 0,
@@ -343,6 +372,7 @@ export function handleGameSocketMessage(
       break;
     }
     case ClientOpcode.BANK_DEPOSIT: {
+      if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
       const quantity = values[2] ?? 1;
@@ -350,6 +380,7 @@ export function handleGameSocketMessage(
       break;
     }
     case ClientOpcode.BANK_WITHDRAW: {
+      if (!hasValues(values, 2)) return;
       const bankSlot = values[0];
       const expectedItemId = values[1];
       const quantity = values[2] ?? 1;
@@ -362,11 +393,13 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.TRADE_REQUEST: {
+      if (!hasValues(values, 1)) return;
       const targetEntityId = values[0];
       world.handleTradeRequest(playerId, targetEntityId);
       break;
     }
     case ClientOpcode.TRADE_ACCEPT_REQUEST: {
+      if (!hasValues(values, 1)) return;
       const requesterEntityId = values[0];
       world.handleTradeAcceptRequest(playerId, requesterEntityId);
       break;
@@ -376,6 +409,7 @@ export function handleGameSocketMessage(
       break;
     }
     case ClientOpcode.TRADE_OFFER_ITEM: {
+      if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
       const quantity = values[2] ?? 1;
@@ -383,6 +417,7 @@ export function handleGameSocketMessage(
       break;
     }
     case ClientOpcode.TRADE_REMOVE_OFFERED: {
+      if (!hasValues(values, 2)) return;
       const offerSlot = values[0];
       const expectedItemId = values[1];
       const quantity = values[2] ?? 1;

@@ -38,6 +38,28 @@ function keepCloseCameraDetailVisible(mesh: AbstractMesh): void {
   mesh.cullingStrategy = AbstractMesh.CULLINGSTRATEGY_OPTIMISTIC_INCLUSION_THEN_BSPHERE_ONLY;
 }
 
+async function importMeshWithTimeout(
+  scene: Scene,
+  dir: string,
+  file: string,
+  timeoutMs: number = 20_000,
+): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
+  let timer: number | null = null;
+  try {
+    return await Promise.race([
+      SceneLoader.ImportMeshAsync('', dir, file, scene),
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(
+          () => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
+  }
+}
+
 /**
  * Smooth a mesh's vertex normals by averaging across vertices that share a
  * world-space position. Unlike `forceSharedVertices()`, this preserves the
@@ -285,6 +307,7 @@ export class CharacterEntity {
   private activeWalkLowerName: string = 'walk_lower';
   private activeWalkLowerGroup: AnimationGroup | null = null;
   private attackStartMs: number = 0;
+  private missingAnimationWarnings = new Set<string>();
 
   // One-shot animations (attack/death) call back when done
   private oneShotCallback: (() => void) | null = null;
@@ -411,7 +434,7 @@ export class CharacterEntity {
       const dir = options.modelPath.substring(0, lastSlash + 1);
       const file = devCacheBust(options.modelPath.substring(lastSlash + 1));
 
-      const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+      const result = await importMeshWithTimeout(this.scene, dir, file);
 
       // Apply nearest-neighbor filtering to character textures
       for (const mesh of result.meshes) {
@@ -745,7 +768,7 @@ export class CharacterEntity {
           const lastSlash = animPath.lastIndexOf('/');
           const dir = animPath.substring(0, lastSlash + 1);
           const file = devCacheBust(animPath.substring(lastSlash + 1));
-          const imported = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+          const imported = await importMeshWithTimeout(this.scene, dir, file);
 
           // Capture source bone rest rotations from TransformNodes
           // (animation GLBs have no Skeleton — bones are just TransformNodes)
@@ -1061,7 +1084,11 @@ export class CharacterEntity {
       }
     }
     // No animation found for this state — stay in current
-    console.warn(`[CharacterEntity] No animation found for state ${AnimState[state]}, tried: ${names.join(', ')}`);
+    const key = `${AnimState[state]}:${names.join('|')}`;
+    if (!this.missingAnimationWarnings.has(key)) {
+      this.missingAnimationWarnings.add(key);
+      console.warn(`[CharacterEntity] No animation found for state ${AnimState[state]}, tried: ${names.join(', ')}`);
+    }
   }
 
   /** Lower-body bones in our Mixamo 57-bone rig. Hips is treated as
@@ -1124,7 +1151,13 @@ export class CharacterEntity {
 
     const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
     const group = this.animGroups.get(name);
-    if (!group) return;
+    if (!group) {
+      if (!this.missingAnimationWarnings.has(name)) {
+        this.missingAnimationWarnings.add(name);
+        console.warn(`[CharacterEntity] Missing animation '${name}'`);
+      }
+      return;
+    }
 
     if (oldGroup) oldGroup.stop();
     const speed = this.getAnimationSpeed(name);

@@ -44,6 +44,10 @@ export class Player extends Entity {
   skills: SkillBlock;
   stance: MeleeStance = 'accurate';
   appearance: PlayerAppearance | null = null;
+  /** True only after the server explicitly opens the character creator.
+   *  SET_APPEARANCE packets outside this window are ignored so a crafted
+   *  client can't rewrite appearance arbitrarily during normal play. */
+  appearanceEditorOpen: boolean = false;
   /** Bot-detection telemetry. Populated on login (load from DB or fresh),
    *  flushed periodically + on logout. See BotStats.ts. */
   botStats: import('../BotStats').BotStats | null = null;

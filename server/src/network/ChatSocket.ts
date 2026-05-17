@@ -24,6 +24,20 @@ const chatSockets: Set<ServerWebSocket<ChatSocketData>> = new Set();
 const CHAT_RL_MAX = 5;
 const CHAT_RL_WINDOW_MS = 3000;
 const chatRateState = new WeakMap<ServerWebSocket<ChatSocketData>, { count: number; windowStart: number }>();
+const COMMAND_COOLDOWN_MS = 1000;
+const UNSTUCK_COOLDOWN_MS = 10 * 60 * 1000;
+const commandCooldowns = new Map<string, number>();
+const unstuckCooldowns = new Map<number, number>();
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, last] of commandCooldowns) {
+    if (now - last > COMMAND_COOLDOWN_MS * 10) commandCooldowns.delete(key);
+  }
+  for (const [accountId, last] of unstuckCooldowns) {
+    if (now - last > UNSTUCK_COOLDOWN_MS * 2) unstuckCooldowns.delete(accountId);
+  }
+}, 5 * 60_000);
 
 function checkChatRate(ws: ServerWebSocket<ChatSocketData>): boolean {
   const now = Date.now();
@@ -126,6 +140,7 @@ function handleCommand(
 ): void {
   const parts = command.split(' ');
   const cmd = parts[0].toLowerCase();
+  if (!checkCommandCooldown(ws, cmd)) return;
 
   switch (cmd) {
     case '/players': {
@@ -316,6 +331,21 @@ function handleCommand(
         ws.send(JSON.stringify({ type: 'system', message: `Player "${targetName}" not online.` }));
         return;
       }
+      if (!ws.data.isAdmin) {
+        const combatTicksLeft = Math.max(0, player.logoutBlockedUntilTick - world.getCurrentTick());
+        if (combatTicksLeft > 0) {
+          ws.send(JSON.stringify({ type: 'system', message: 'You cannot use /unstuck during or immediately after combat.' }));
+          return;
+        }
+        const last = unstuckCooldowns.get(player.accountId) ?? 0;
+        const now = Date.now();
+        const remaining = UNSTUCK_COOLDOWN_MS - (now - last);
+        if (remaining > 0) {
+          ws.send(JSON.stringify({ type: 'system', message: `You can use /unstuck again in ${formatCooldown(remaining)}.` }));
+          return;
+        }
+        unstuckCooldowns.set(player.accountId, now);
+      }
       // Abort trade first so staged items refund into inventory before any
       // teleport — matches the kickAccountIfOnline ordering.
       if (player.openInterface === 'trade') world.abortTrade(player.id, 2);
@@ -481,6 +511,29 @@ function handleCommand(
       ws.send(JSON.stringify({ type: 'system', message: `Unknown command: ${cmd}` }));
     }
   }
+}
+
+function checkCommandCooldown(ws: ServerWebSocket<ChatSocketData>, cmd: string): boolean {
+  if (ws.data.isAdmin) return true;
+  const now = Date.now();
+  const key = `${ws.data.accountId}:${cmd}`;
+  const last = commandCooldowns.get(key) ?? 0;
+  const remaining = COMMAND_COOLDOWN_MS - (now - last);
+  if (remaining > 0) {
+    ws.send(JSON.stringify({ type: 'system', message: `Slow down. Try again in ${Math.ceil(remaining / 1000)}s.` }));
+    return false;
+  }
+  commandCooldowns.set(key, now);
+  return true;
+}
+
+function formatCooldown(ms: number): string {
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes <= 0) return `${seconds}s`;
+  if (seconds === 0) return `${minutes}m`;
+  return `${minutes}m ${seconds}s`;
 }
 
 function findPlayerByUsername(username: string, world: World) {

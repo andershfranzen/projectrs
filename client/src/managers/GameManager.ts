@@ -88,7 +88,7 @@ export class GameManager {
   private static readonly RECONNECT_LOGIN_TIMEOUT_MS = 8_000;
   private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
-  private static readonly PRELOAD_STEP_TIMEOUT_MS = 12_000;
+  private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
 
@@ -2969,6 +2969,7 @@ export class GameManager {
 
   private getWorldInteractionOptionsAt(clientX: number, clientY: number): InteractionOption[] {
     const point = this.canvasPointFromClient(clientX, clientY);
+    if (!point) return [];
     const pickResult = this.scene.pick(point.x, point.y);
     if (!pickResult?.hit || !pickResult.pickedMesh) return [];
 
@@ -3002,8 +3003,10 @@ export class GameManager {
     return options;
   }
 
-  private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } {
-    const rect = this.engine.getRenderingCanvas()!.getBoundingClientRect();
+  private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } | null {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas || this.engine.isDisposed || this.scene.isDisposed) return null;
+    const rect = canvas.getBoundingClientRect();
     const scaleX = this.engine.getRenderWidth() / Math.max(1, rect.width);
     const scaleY = this.engine.getRenderHeight() / Math.max(1, rect.height);
     return {
@@ -3221,6 +3224,7 @@ export class GameManager {
   }
 
   private pickNpcAtPoint(x: number, y: number): { entityId: number | null; groundItemId: number | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+    if (this.destroyed || this.scene.isDisposed) return { entityId: null, groundItemId: null, closestMesh: null };
     const hits = this.scene.multiPick(x, y);
     if (!hits || hits.length === 0) return { entityId: null, groundItemId: null, closestMesh: null };
     // multiPick returns hits unsorted; sort by distance ascending.

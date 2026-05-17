@@ -714,6 +714,10 @@ export class World {
     return this.currentTick & 0x7fff;
   }
 
+  getCurrentTick(): number {
+    return this.currentTick;
+  }
+
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
@@ -1351,6 +1355,10 @@ export class World {
   handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (path.length === 0) {
+      player.clearMoveQueue();
+      return;
+    }
 
     this.clearCombatTarget(playerId);
     player.attackTarget = null;
@@ -1391,7 +1399,8 @@ export class World {
     // Per-segment cap: legitimate compressed corners can be far apart on a
     // long straight, but never longer than the map's diagonal. 256 covers
     // any practical map while bounding worst-case work per packet.
-    const MAX_SEGMENT_TILES = 256;
+    const MAX_SEGMENT_TILES = 64;
+    const MAX_REQUESTED_TILES = 200;
     // Work in tile-index space (integers) for blocking/wall checks but emit
     // tile-CENTER coordinates (.5 offsets) into validPath so the server's
     // authoritative positions match what the client predicts. Without the
@@ -1417,6 +1426,7 @@ export class World {
       const isDiagonal = stepDX !== 0 && stepDZ !== 0;
       if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) { truncated = true; break; }
       requestedTileCount += distance;
+      if (requestedTileCount > MAX_REQUESTED_TILES) { truncated = true; break; }
       let curTileX = startTileX;
       let curTileZ = startTileZ;
       for (let i = 0; i < distance; i++) {
@@ -1467,9 +1477,7 @@ export class World {
     if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
     this.cancelSkilling(playerId);
     if (npc.currentMapLevel !== player.currentMapLevel) return;
-
-    player.attackTarget = npc;
-    this.setCombatTarget(playerId, npcId);
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
 
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
@@ -1484,6 +1492,10 @@ export class World {
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
+    if (dist > Math.max(attackDist, 24)) return;
+
+    player.attackTarget = npc;
+    this.setCombatTarget(playerId, npcId);
 
     if (dist > attackDist) {
       // Prefer the client-sent path. The client sends sendMove(path) right
@@ -1527,6 +1539,7 @@ export class World {
     if (!player || !npc || npc.dead) return;
     if (player.isInterfaceOpen()) return;
     if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
 
     // Chebyshev (max-of-axes) matches the rest of the interaction surface —
     // pickup, combat, harvest are all Chebyshev. Euclidean here would let a
@@ -1589,6 +1602,18 @@ export class World {
       values.push(si.itemId, si.price, si.stock);
     }
     this.sendToPlayer(player, ServerOpcode.SHOP_OPEN, ...values);
+  }
+
+  private playerStillNearShop(player: Player): boolean {
+    const shopNpcId = player.openShopNpcId;
+    if (shopNpcId === null) return false;
+    for (const [, npc] of this.npcs) {
+      if (npc.npcId !== shopNpcId || npc.dead) continue;
+      if (npc.currentMapLevel !== player.currentMapLevel) continue;
+      const fp = npc.distToFootprint(player.position.x, player.position.y);
+      if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= NPC_INTERACTION_RANGE) return true;
+    }
+    return false;
   }
 
   /** Push the current dialogue node to the client and update server-side
@@ -1738,6 +1763,10 @@ export class World {
     if (player.openShopNpcId === null) return;
     const shop = this.data.getShop(player.openShopNpcId);
     if (!shop) return;
+    if (!this.playerStillNearShop(player)) {
+      player.openShopNpcId = null;
+      return;
+    }
     const shopItem = shop.items.find(s => s.itemId === itemId);
     if (!shopItem) return; // this shop doesn't sell this item
 
@@ -1791,6 +1820,10 @@ export class World {
     // makes the "you must travel to find a vendor" loop matter for authenticity.
     if (player.openShopNpcId === null) return;
     if (!this.data.getShop(player.openShopNpcId)) return;
+    if (!this.playerStillNearShop(player)) {
+      player.openShopNpcId = null;
+      return;
+    }
 
     const invItem = player.inventory[slot];
     if (!invItem) return;
@@ -1832,6 +1865,7 @@ export class World {
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
     if (item.mapLevel !== player.currentMapLevel) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
 
     // Walk to item if not in range
     const dx = Math.abs(player.position.x - item.x);
@@ -1937,6 +1971,7 @@ export class World {
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') {
       // Chests give explicit feedback so the player knows the click was
@@ -2321,6 +2356,7 @@ export class World {
     if (!player) return;
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
     if (player.inventory[slotIndex]?.itemId !== expectedItemId) return;
 
     const slot = player.inventory[slotIndex];
@@ -2461,6 +2497,7 @@ export class World {
     if (fromSlot === toSlot) return;
     const player = this.validateInvUse(playerId, fromSlot, fromItemId);
     if (!player) return;
+    if (toSlot < 0 || toSlot >= player.inventory.length) return;
     if (player.inventory[toSlot]?.itemId !== toItemId) return;
     this.interruptPlayerAction(playerId, player);
     // No recipes wired yet — surface a generic reply so the protocol is exercised.
@@ -2478,6 +2515,7 @@ export class World {
     const player = this.validateInvUse(playerId, invSlot, itemId);
     if (!player) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     if (!this.isAdjacentToObject(player, obj)) {
       this.sendChatSystem(player, "I can't reach that.");
       return;
@@ -2497,6 +2535,9 @@ export class World {
     const player = this.validateInvUse(playerId, invSlot, itemId);
     if (!player) return;
     if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > NPC_INTERACTION_RANGE) return;
     this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
@@ -2553,6 +2594,7 @@ export class World {
     if (!npc || npc.dead) return;
     if (this.data.getShop(npc.npcId)) return;                 // shopkeepers immune
     if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(targetEntityId)) return;
 
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
@@ -2615,9 +2657,11 @@ export class World {
   handleSetAppearance(playerId: number, appearance: PlayerAppearance): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (!player.appearanceEditorOpen && player.appearance !== null) return;
     if (!isValidAppearance(appearance)) return;
 
     player.appearance = appearance;
+    player.appearanceEditorOpen = false;
     this.db.saveAppearance(player.accountId, appearance);
     console.log(`[World] Player "${player.name}" set appearance: shirt=${appearance.shirtColor} pants=${appearance.pantsColor} shoes=${appearance.shoesColor} hair=${appearance.hairColor}`);
 
@@ -2670,6 +2714,7 @@ export class World {
    *  from the login path (no appearance set yet), the openAppearance dialogue
    *  action, and the /appearance admin chat command. */
   openCharacterCreatorFor(player: Player): void {
+    player.appearanceEditorOpen = true;
     this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, 0);
   }
 
@@ -2741,6 +2786,7 @@ export class World {
   handleBankDeposit(playerId: number, slotIndex: number, expectedItemId: number, quantity: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
     if (player.openInterface !== 'bank') return;
     if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
     const invSlot = player.inventory[slotIndex];
@@ -2822,6 +2868,7 @@ export class World {
   handleBankWithdraw(playerId: number, bankSlot: number, expectedItemId: number, quantity: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
     if (player.openInterface !== 'bank') return;
     if (bankSlot < 0 || bankSlot >= player.bank.length) return;
     const slot = player.bank[bankSlot];

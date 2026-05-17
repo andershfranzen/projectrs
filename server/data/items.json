@@ -114,7 +114,8 @@
     "stabDefence": 3,
     "slashDefence": 4,
     "crushDefence": 2,
-    "value": 15
+    "value": 15,
+    "model": "/assets/equipment/head/BronzeFullHelm.glb"
   },
   {
     "id": 10,
@@ -215,7 +216,8 @@
     "slashDefence": 6,
     "crushDefence": 4,
     "magicDefence": -1,
-    "value": 35
+    "value": 35,
+    "model": "/assets/equipment/head/IronFullHelm.glb"
   },
   {
     "id": 19,
@@ -1514,7 +1516,7 @@
     "equipSlot": "weapon",
     "value": 360,
     "icon": "Black Bronze_dagger_65.png",
-    "model": "/assets/equipment/weapon/Dagger.glb",
+    "model": "/assets/equipment/weapon/MithrilDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
     "stabAttack": 20,
@@ -1559,7 +1561,7 @@
     "equipSlot": "weapon",
     "value": 720,
     "icon": "Black Bronze_Scimitar_86.png",
-    "model": "/assets/equipment/weapon/Scimitar.glb",
+    "model": "/assets/equipment/weapon/MithrilScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 36,

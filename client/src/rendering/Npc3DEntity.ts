@@ -9,6 +9,28 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 
+async function importMeshWithTimeout(
+  scene: Scene,
+  dir: string,
+  file: string,
+  timeoutMs: number = 20_000,
+): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
+  let timer: number | null = null;
+  try {
+    return await Promise.race([
+      SceneLoader.ImportMeshAsync('', dir, file, scene),
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(
+          () => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== null) window.clearTimeout(timer);
+  }
+}
+
 /**
  * 3D NPC entity — loads a GLB with embedded animations.
  * Exposes the same public interface as SpriteEntity so it can be used interchangeably.
@@ -30,6 +52,7 @@ export class Npc3DEntity {
   // Animations keyed by role (idle, walk, attack, death)
   private animGroups: Map<string, AnimationGroup> = new Map();
   private currentAnim: string = '';
+  private missingAnimationWarnings = new Set<string>();
   private _walking: boolean = false;
 
   // Health bar (HTML overlay — same as SpriteEntity)
@@ -70,7 +93,7 @@ export class Npc3DEntity {
       const lastSlash = file.lastIndexOf('/');
       const dir = file.substring(0, lastSlash + 1);
       const fname = file.substring(lastSlash + 1);
-      const result = await SceneLoader.ImportMeshAsync('', dir, fname, this.scene);
+      const result = await importMeshWithTimeout(this.scene, dir, fname);
 
       // Clone every material before touching it — Babylon's glTF loader
       // shares material instances across multiple ImportMeshAsync() of the
@@ -161,7 +184,13 @@ export class Npc3DEntity {
       cur?.stop();
     }
     const group = this.animGroups.get(name);
-    if (!group) return;
+    if (!group) {
+      if (!this.missingAnimationWarnings.has(name)) {
+        this.missingAnimationWarnings.add(name);
+        console.warn(`[Npc3DEntity] Missing animation '${name}'`);
+      }
+      return;
+    }
     this.currentAnim = name;
     group.start(loop, 1.0, group.from, group.to, false);
   }

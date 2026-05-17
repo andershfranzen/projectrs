@@ -900,11 +900,12 @@ export class ChunkManager {
       // Populate tiles — fill entire chunk region with defaults, then overlay sparse data
       const endX = Math.min(startX + ECHUNK, this.mapWidth);
       const endZ = Math.min(startZ + ECHUNK, this.mapHeight);
+      if (!this.mapData || !this.tileTypes) return;
       for (let gz = startZ; gz < endZ; gz++) {
-        if (!this.mapData!.tiles[gz]) this.mapData!.tiles[gz] = [];
+        if (!this.mapData.tiles[gz]) this.mapData.tiles[gz] = [];
         for (let gx = startX; gx < endX; gx++) {
-          if (!this.mapData!.tiles[gz][gx]) {
-            this.mapData!.tiles[gz][gx] = this.expandTile({});
+          if (!this.mapData.tiles[gz][gx]) {
+            this.mapData.tiles[gz][gx] = this.expandTile({});
           }
         }
       }
@@ -914,7 +915,7 @@ export class ChunkManager {
           const [lz, lx] = k.split(',').map(Number);
           const gx = startX + lx, gz = startZ + lz;
           if (gx < this.mapWidth && gz < this.mapHeight) {
-            this.mapData!.tiles[gz][gx] = this.expandTile(partial);
+            this.mapData.tiles[gz][gx] = this.expandTile(partial);
           }
         }
       }
@@ -923,14 +924,14 @@ export class ChunkManager {
       for (let z = startZ; z < endZ; z++) {
         for (let x = startX; x < endX; x++) {
           if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / 64)},${Math.floor(z / 64)}`)) {
-            this.tileTypes![z * this.mapWidth + x] = TileType.WALL;
+            this.tileTypes[z * this.mapWidth + x] = TileType.WALL;
             continue;
           }
           const tile = this.getTileRaw(x, z);
-          if (!tile) { this.tileTypes![z * this.mapWidth + x] = TileType.GRASS; continue; }
+          if (!tile) { this.tileTypes[z * this.mapWidth + x] = TileType.GRASS; continue; }
           const corners = this.getTileCornerHeights(x, z);
           const wl = this.getChunkWaterLevel(x, z);
-          this.tileTypes![z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
+          this.tileTypes[z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
         }
       }
 
@@ -2609,7 +2610,7 @@ export class ChunkManager {
       const lastSlash = encodedPath.lastIndexOf('/');
       const dir = encodedPath.substring(0, lastSlash + 1);
       const file = encodedPath.substring(lastSlash + 1);
-      const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+      const result = await this.importMeshWithTimeout(dir, file);
 
       // Apply nearest-neighbor filtering to all GLB textures
       for (const mesh of result.meshes) {
@@ -2660,6 +2661,20 @@ export class ChunkManager {
       console.warn(`[ChunkManager] Failed to load model ${assetId}:`, e);
       this.loadedModelCache.set(assetId, null);
       return null;
+    }
+  }
+
+  private async importMeshWithTimeout(dir: string, file: string, timeoutMs: number = 20_000): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
+    let timer: number | null = null;
+    try {
+      return await Promise.race([
+        SceneLoader.ImportMeshAsync('', dir, file, this.scene),
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== null) window.clearTimeout(timer);
     }
   }
 

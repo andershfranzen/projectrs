@@ -1,5 +1,5 @@
 import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validatePassword, validateUsername } from '@projectrs/shared';
-import { resolve, dirname, sep } from 'path';
+import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
 import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile } from '@projectrs/shared';
@@ -430,6 +430,17 @@ function resolveWithinBase(base: string, child: string): string | null {
   }
 }
 
+function resolvePossiblyMissingWithinBase(base: string, child: string): string | null {
+  const candidate = resolve(base, child);
+  const rel = relative(base, candidate);
+  if (rel === '' || (!rel.startsWith('..') && !rel.startsWith('/') && !rel.startsWith(`..${sep}`))) return candidate;
+  return null;
+}
+
+function isSafeMapId(mapId: unknown): mapId is string {
+  return typeof mapId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(mapId);
+}
+
 // MIME type lookup
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -595,7 +606,14 @@ const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): boolean {
   const ip = srv.requestIP(req)?.address ?? '';
-  if (LOOPBACK_IPS.has(ip)) return true;
+  if (LOOPBACK_IPS.has(ip)) {
+    const host = (req.headers.get('host') || '').toLowerCase().split(':')[0];
+    const explicitLoopbackAdmin = process.env.ALLOW_LOOPBACK_ADMIN === '1';
+    // Behind a reverse proxy the app often sees public traffic as 127.0.0.1.
+    // Only treat loopback as admin for actual localhost hosts, or when an
+    // operator explicitly opts in for an SSH-tunneled maintenance session.
+    if (explicitLoopbackAdmin || host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+  }
   const auth = req.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   if (!m) return false;
@@ -1189,11 +1207,11 @@ const server = Bun.serve<SocketData>({
           biomes?: BiomesFile;
         };
         const { mapId, meta, spawns, mapData, walls, biomes } = body;
-        if (!mapId || !meta || !mapData) {
+        if (!isSafeMapId(mapId) || !meta || !mapData) {
           return jsonResponse({ ok: false, error: 'Missing fields' }, 400);
         }
-        const mapDir = resolve(MAPS_DIR, mapId);
-        if (!mapDir.startsWith(MAPS_DIR)) {
+        const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
+        if (!mapDir) {
           return new Response('Forbidden', { status: 403 });
         }
 
@@ -1375,14 +1393,14 @@ const server = Bun.serve<SocketData>({
       try {
         const body = await req.json() as { mapId: string; name: string; width: number; height: number; dungeon?: boolean };
         const { mapId, name, width, height } = body;
-        if (!mapId || !name || !width || !height) {
+        if (!isSafeMapId(mapId) || !name || !width || !height) {
           return jsonResponse({ ok: false, error: 'Missing fields' }, 400);
         }
         if (width < 32 || width > 2048 || height < 32 || height > 2048) {
           return jsonResponse({ ok: false, error: 'Dimensions must be 32-2048' }, 400);
         }
-        const mapDir = resolve(MAPS_DIR, mapId);
-        if (!mapDir.startsWith(MAPS_DIR)) {
+        const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
+        if (!mapDir) {
           return new Response('Forbidden', { status: 403 });
         }
         try { statSync(mapDir); return jsonResponse({ ok: false, error: 'Map already exists' }, 400); } catch {}
@@ -1438,9 +1456,9 @@ const server = Bun.serve<SocketData>({
       try {
         const body = await req.json() as { mapId: string };
         const { mapId } = body;
-        if (!mapId) return jsonResponse({ ok: false, error: 'Missing mapId' }, 400);
-        const mapDir = resolve(MAPS_DIR, mapId);
-        if (!mapDir.startsWith(MAPS_DIR)) return new Response('Forbidden', { status: 403 });
+        if (!isSafeMapId(mapId)) return jsonResponse({ ok: false, error: 'Missing mapId' }, 400);
+        const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
+        if (!mapDir) return new Response('Forbidden', { status: 403 });
 
         // Reload the map in the world (re-read JSON from disk)
         try {
@@ -1457,9 +1475,9 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/api/editor/export-map' && req.method === 'GET') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       const mapId = url.searchParams.get('mapId');
-      if (!mapId) return jsonResponse({ ok: false, error: 'Missing mapId' }, 400);
-      const mapDir = resolve(MAPS_DIR, mapId);
-      if (!mapDir.startsWith(MAPS_DIR)) return new Response('Forbidden', { status: 403 });
+      if (!isSafeMapId(mapId)) return jsonResponse({ ok: false, error: 'Missing mapId' }, 400);
+      const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
+      if (!mapDir) return new Response('Forbidden', { status: 403 });
 
       try {
         // Reassemble all chunked data for export (objects, tiles, heights)
@@ -1504,10 +1522,10 @@ const server = Bun.serve<SocketData>({
         const text = await file.text();
         const data = JSON.parse(text);
         const mapId = data.mapId;
-        if (!mapId || !data.files) return jsonResponse({ ok: false, error: 'Invalid format' }, 400);
+        if (!isSafeMapId(mapId) || !data.files) return jsonResponse({ ok: false, error: 'Invalid format' }, 400);
 
-        const mapDir = resolve(MAPS_DIR, mapId);
-        if (!mapDir.startsWith(MAPS_DIR)) return new Response('Forbidden', { status: 403 });
+        const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
+        if (!mapDir) return new Response('Forbidden', { status: 403 });
         await fsp.mkdir(mapDir, { recursive: true });
 
         // Parse imported map.json once; split tiles/heights/objects into chunks.
@@ -1554,9 +1572,9 @@ const server = Bun.serve<SocketData>({
       try {
         const body = await req.json() as { mapId: string };
         const mapId = body.mapId;
-        if (!mapId) return jsonResponse({ ok: false, error: 'mapId required' }, 400);
-        const mapDir = resolve(MAPS_DIR, mapId);
-        if (!mapDir.startsWith(MAPS_DIR)) return new Response('Forbidden', { status: 403 });
+        if (!isSafeMapId(mapId)) return jsonResponse({ ok: false, error: 'mapId required' }, 400);
+        const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
+        if (!mapDir) return new Response('Forbidden', { status: 403 });
         if (!existsSync(mapDir)) return jsonResponse({ ok: false, error: 'Map not found' }, 404);
         rmSync(mapDir, { recursive: true, force: true });
         return jsonResponse({ ok: true });
@@ -1577,7 +1595,7 @@ const server = Bun.serve<SocketData>({
         return new Response('Forbidden', { status: 403 });
       }
       // Symlink-safe path resolution
-      const filePath = resolveWithinBase(MAPS_DIR, mapPath);
+      const filePath = resolvePossiblyMissingWithinBase(MAPS_DIR, mapPath);
       if (!filePath) {
         return new Response('Forbidden', { status: 403 });
       }
@@ -1615,8 +1633,8 @@ const server = Bun.serve<SocketData>({
       const decodedPath = decodeURIComponent(url.pathname);
       const publicAssetsDir = resolve(import.meta.dir, '../../client/public');
       for (const baseDir of [CLIENT_DIST, publicAssetsDir]) {
-        const filePath = resolve(baseDir, decodedPath.slice(1));
-        if (!filePath.startsWith(baseDir)) continue;
+        const filePath = resolvePossiblyMissingWithinBase(baseDir, decodedPath.slice(1));
+        if (!filePath) continue;
         try {
           const content = readFileSync(filePath);
           // Vite emits hashed filenames into client/dist/assets/ — those JS
