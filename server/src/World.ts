@@ -323,7 +323,8 @@ export class World {
           this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
           continue;
         }
-        const ticksRemaining = Math.max(1, Math.ceil(msRemaining / TICK_RATE));
+        const maxRespawnTicks = Math.max(1, obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS);
+        const ticksRemaining = Math.min(maxRespawnTicks, Math.max(1, Math.ceil(msRemaining / TICK_RATE)));
         obj.depleted = true;
         obj.respawnTimer = ticksRemaining;
         this.depletedObjectIds.add(obj.id);
@@ -1285,7 +1286,7 @@ export class World {
       this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), true, this.currentTick + obj.respawnTimer);
     }
 
-    this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
+    this.broadcastWorldObjectStateChange(obj, swingSign);
   }
 
   private findBestTool(player: Player, toolType: string, playerSkillLevel: number): ItemDef | null {
@@ -1341,6 +1342,21 @@ export class World {
       if (p && !p.disconnected) {
         try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
       }
+    });
+  }
+
+  private broadcastWorldObjectStateChange(obj: WorldObject, swingSign: number = 0): void {
+    const cm = this.chunkManagers.get(obj.mapLevel);
+    if (!cm) return;
+    const eventPacket = encodePacket(ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
+    const syncPacket = this.encodeWorldObjectUpdate(obj);
+    cm.forEachPlayerNear(obj.x, obj.z, (pid) => {
+      const player = this.players.get(pid);
+      if (!player || player.disconnected || player.currentMapLevel !== obj.mapLevel) return;
+      try {
+        player.ws.sendBinary(eventPacket);
+        player.ws.sendBinary(syncPacket);
+      } catch { /* connection closed */ }
     });
   }
 
@@ -2308,6 +2324,7 @@ export class World {
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') {
+      this.sendWorldObjectUpdate(player, obj);
       // Chests give explicit feedback so the player knows the click was
       // received but the chest is still on cooldown; trees/rocks etc. stay
       // silent (their depleted variant is visually obvious).
@@ -2483,7 +2500,7 @@ export class World {
       this.depletedObjectIds.add(obj.id);
       this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
     }
-    this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1, 0);
+    this.broadcastWorldObjectStateChange(obj);
   }
 
   private queueObjectSaySequence(player: Player, sequence: NonNullable<WorldObject['interactions']>[number]['saySequence']): void {
@@ -4567,7 +4584,7 @@ export class World {
         }
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
-        this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 0, 0);
+        this.broadcastWorldObjectStateChange(obj);
       }
     }
   }
@@ -5243,10 +5260,15 @@ export class World {
   }
 
   private sendWorldObjectUpdate(viewer: Player, obj: WorldObject): void {
+    const packet = this.encodeWorldObjectUpdate(obj);
+    try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
+  private encodeWorldObjectUpdate(obj: WorldObject): Uint8Array {
     const explicitTiles = this.explicitObjectInteractionTiles(obj).slice(0, 16);
     const tileValues = explicitTiles.flatMap(tile => [tile.x, tile.z]);
     // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, explicitTileCount, ...tileX,tileZ]
-    this.sendToPlayer(viewer, ServerOpcode.WORLD_OBJECT_SYNC,
+    return encodePacket(ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
       qPos(obj.x),
@@ -5432,10 +5454,11 @@ export class World {
    *  nearby clients to swap to the depleted visual. Depleted rocks + tree
    *  stumps stay blocking — walking through a stump looks broken. */
   private persistAndBroadcastDepletion(obj: WorldObject): void {
+    if (obj.depleted) return;
     obj.deplete();
     this.depletedObjectIds.add(obj.id);
     this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
-    this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1);
+    this.broadcastWorldObjectStateChange(obj);
   }
 
   private sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void {
