@@ -2122,13 +2122,15 @@ export class GameManager {
       const dx = serverX - this.playerX;
       const dz = serverZ - this.playerZ;
       const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
-      const reconcileDist = serverMoving
+      const serverTileOnActiveStep = this.isTileOnActivePredictedStep(Math.floor(serverX), Math.floor(serverZ));
+      const reconcileDist = serverMoving || serverTileOnActiveStep
         ? GameManager.SELF_SYNC_RECONCILE_DIST
         : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
       if (maxAxisDelta <= reconcileDist) return;
 
       const hiddenCatchup = this._hiddenSinceMs !== 0;
-      this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup || !serverMoving);
+      const hardStoppedCorrection = !serverMoving && !serverTileOnActiveStep;
+      this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup || hardStoppedCorrection);
     });
 
     this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
@@ -3653,6 +3655,12 @@ export class GameManager {
       if (this.tileOnCompressedSegment(start, this.path[i], tx, tz)) return i;
     }
     return -1;
+  }
+
+  private isTileOnActivePredictedStep(tx: number, tz: number): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    if (Math.floor(this.tileFrom.x) === tx && Math.floor(this.tileFrom.z) === tz) return false;
+    return this.tileOnCompressedSegment(this.tileFrom, this.path[this.pathIndex], tx, tz);
   }
 
   private setTileFrom(x: number, z: number): void {
