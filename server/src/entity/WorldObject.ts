@@ -26,8 +26,10 @@ export class WorldObject {
   interactions?: PlacedObjectInteraction[];
   /** Per-instance transition override from editor trigger data */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
-  /** Local-frame side bitmask of valid interaction tiles (F=1,R=2,B=4,L=8).
-   *  0 / undefined = all 4 cardinal sides allowed (legacy behavior). */
+  /** Exact local tile offsets valid for using this object. Overrides side mask. */
+  interactionTiles?: { x: number; z: number }[];
+  /** Local-frame perimeter bitmask of valid interaction tiles.
+   *  0 / undefined = any adjacent interaction tile. */
   interactionSides?: number;
 
   constructor(def: WorldObjectDef, x: number, z: number, mapLevel: string) {

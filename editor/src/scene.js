@@ -46,8 +46,6 @@ import {
   fullTileRingForSplit,
   CUT_SNAP_ANGLES,
   CUT_SNAP_TOLERANCE_RAD,
-  getObjectInteractionTiles,
-  localSidesToWorldSides,
   localAdjacentTilesOrdered,
   ASSET_TO_OBJECT_DEF,
   NPC_COMBAT_ANIMATIONS,
@@ -246,6 +244,7 @@ function tuneModelLighting(model) {
 
   let isDragSelecting = false
   let dragSelectStart = null
+  let dragSelectBox = null
 
   let transformMode = null
   let transformAxis = 'all'
@@ -712,6 +711,8 @@ function tuneModelLighting(model) {
   let itemSpawns = []         // { id, itemId, x, z, quantity }
   let _itemSpawnNextId = 1
   let itemDefs = []            // loaded from server
+  let editorObjectDefs = []     // loaded from server; used by select-object UI
+  let editorObjectDefById = new Map()
   const itemSpawnGroup = new TransformNode('itemSpawnGroup', scene)
 
   async function loadItemDefs() {
@@ -727,6 +728,20 @@ function tuneModelLighting(model) {
     }
   }
   loadItemDefs()
+
+  async function loadEditorObjectDefs() {
+    try {
+      const res = await fetch('/data/objects.json')
+      const data = await res.json()
+      editorObjectDefs = Array.isArray(data) ? data : []
+      editorObjectDefById = new Map(editorObjectDefs.map(def => [def.id, def]))
+    } catch (e) {
+      console.warn('Failed to load object definitions:', e)
+      editorObjectDefs = []
+      editorObjectDefById = new Map()
+    }
+  }
+  loadEditorObjectDefs()
 
   function addItemSpawn(itemId, x, z, quantity = 1, id) {
     const spawn = { id: id || _itemSpawnNextId++, itemId, x, z, quantity }
@@ -1540,6 +1555,7 @@ let paintBrushRadius = 1
         Shift+A stack upward<br>
         Delete / Backspace remove selected
       </div>
+      <button id="clearSelectionBtn" style="width:100%;margin-top:8px;">Clear Selection</button>
       <div id="layerAssignRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
         <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Layer</div>
         <div style="display:flex;gap:5px;align-items:center;">
@@ -1583,7 +1599,10 @@ let paintBrushRadius = 1
         <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Interaction effect</div>
         <input id="objectEffectAction" type="text" placeholder="Action label, e.g. Examine" style="width:100%;box-sizing:border-box;font-size:11px;margin-bottom:5px;" />
-        <textarea id="objectEffectSay" placeholder="Player overhead lines. Use: 0 | First line&#10;3 | Second line" style="width:100%;height:74px;box-sizing:border-box;font-size:11px;resize:vertical;margin-bottom:5px;"></textarea>
+        <div style="font-size:10px;color:#888;margin:3px 0 4px;">Player overhead sequence</div>
+        <textarea id="objectEffectSay" style="display:none;"></textarea>
+        <div id="objectEffectSayRows" style="display:flex;flex-direction:column;gap:5px;margin-bottom:5px;"></div>
+        <button id="objectEffectAddSayLine" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Add player chat line (+3s)</button>
         <textarea id="objectEffectMessage" placeholder="Private chat-panel message (optional)" style="width:100%;height:44px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
       </div>
       <div id="triggerRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
@@ -1606,13 +1625,15 @@ let paintBrushRadius = 1
         </div>
       </div>
       <div id="interactionSidesRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
-        <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Interaction tiles (player must approach from)</div>
-        <div style="font-size:10px;color:#777;margin-bottom:6px;">Click a green cell to toggle. All off = any cardinal-adjacent tile. ↑ marks local +Z (forward).</div>
+        <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Required use tiles</div>
+        <div style="font-size:10px;color:#777;margin-bottom:6px;">Green tiles are valid interaction destinations. Select one tile to force exact pathing. All off = any adjacent tile. ↑ marks local +Z/front.</div>
         <div id="interactionTilesGrid" style="display:inline-block;"></div>
-        <div style="margin-top:6px;display:flex;gap:6px;">
-          <button id="interactSidesAll" style="font-size:10px;padding:3px 6px;">All</button>
-          <button id="interactSidesNone" style="font-size:10px;padding:3px 6px;">None</button>
-          <button id="interactSidesFront" style="font-size:10px;padding:3px 6px;">Front only</button>
+        <div id="interactionTilesSummary" style="font-size:10px;color:#999;margin-top:4px;"></div>
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+          <button id="interactSidesNone" style="font-size:10px;padding:3px 6px;">Any adjacent</button>
+          <button id="interactSidesFrontCenter" style="font-size:10px;padding:3px 6px;">Front center</button>
+          <button id="interactSidesFront" style="font-size:10px;padding:3px 6px;">Front row</button>
+          <button id="interactSidesAll" style="font-size:10px;padding:3px 6px;">All perimeter</button>
         </div>
       </div>
       <div id="planeRotationRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
@@ -3241,6 +3262,7 @@ let paintBrushRadius = 1
     else delete selectedPlacedObject.userData.examineText
 
     const action = sidebar.querySelector('#objectEffectAction')?.value.trim() || ''
+    syncObjectSayRowsToTextarea()
     const sayRaw = sidebar.querySelector('#objectEffectSay')?.value.trim() || ''
     const saySequence = parseObjectSaySequence(sayRaw)
     const message = sidebar.querySelector('#objectEffectMessage')?.value.trim() || ''
@@ -3262,6 +3284,78 @@ let paintBrushRadius = 1
       })
       .filter(line => line && line.text)
   }
+  function getNextObjectSayDelay(raw) {
+    const sequence = parseObjectSaySequence(raw)
+    if (sequence.length === 0) return 0
+    return Math.min(30, Math.max(...sequence.map(line => line.delaySeconds ?? 0)) + 3)
+  }
+  function syncObjectSayRowsToTextarea() {
+    const rows = sidebar.querySelector('#objectEffectSayRows')
+    const textarea = sidebar.querySelector('#objectEffectSay')
+    if (!rows || !textarea) return
+    const lines = [...rows.querySelectorAll('.object-say-row')]
+      .map(row => {
+        const delay = Math.min(30, Math.max(0, parseFloat(row.querySelector('.object-say-delay')?.value) || 0))
+        const text = row.querySelector('.object-say-text')?.value.trim() || ''
+        return text ? `${delay} | ${text}` : ''
+      })
+      .filter(Boolean)
+    textarea.value = lines.join('\n')
+  }
+  function renderObjectSayRows(sequence) {
+    const rows = sidebar.querySelector('#objectEffectSayRows')
+    const textarea = sidebar.querySelector('#objectEffectSay')
+    if (!rows || !textarea) return
+    rows.innerHTML = ''
+    for (const line of sequence) addObjectSayRow(line.delaySeconds ?? 0, line.text || '', { skipSave: true })
+    syncObjectSayRowsToTextarea()
+  }
+  function addObjectSayRow(delaySeconds = 0, text = '', opts = {}) {
+    const rows = sidebar.querySelector('#objectEffectSayRows')
+    if (!rows) return
+    const row = document.createElement('div')
+    row.className = 'object-say-row'
+    row.style.cssText = 'display:grid;grid-template-columns:44px 1fr 24px;gap:4px;align-items:center;'
+
+    const delay = document.createElement('input')
+    delay.className = 'object-say-delay'
+    delay.type = 'number'
+    delay.min = '0'
+    delay.max = '30'
+    delay.step = '0.5'
+    delay.value = `${delaySeconds}`
+    delay.title = 'Delay in seconds'
+    delay.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+    const message = document.createElement('input')
+    message.className = 'object-say-text'
+    message.type = 'text'
+    message.placeholder = 'Player chat text'
+    message.value = text
+    message.style.cssText = 'width:100%;box-sizing:border-box;font-size:11px;'
+
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.textContent = 'x'
+    remove.title = 'Remove line'
+    remove.style.cssText = 'width:24px;height:22px;padding:0;font-size:11px;'
+
+    const onChange = () => {
+      syncObjectSayRowsToTextarea()
+      saveObjectQuestFieldsFromUI()
+    }
+    delay.addEventListener('input', onChange)
+    message.addEventListener('input', onChange)
+    remove.addEventListener('click', () => {
+      row.remove()
+      onChange()
+    })
+
+    row.append(delay, message, remove)
+    rows.appendChild(row)
+    if (!opts.skipSave) onChange()
+    return row
+  }
   function formatObjectSaySequence(effect) {
     if (!effect) return ''
     if (Array.isArray(effect.saySequence)) {
@@ -3272,9 +3366,18 @@ let paintBrushRadius = 1
     }
     return effect.say || ''
   }
+  let objectSayRowsRenderKey = ''
+  let interactionTilesRenderKey = ''
   for (const id of ['#objectExamineText', '#objectEffectAction', '#objectEffectSay', '#objectEffectMessage']) {
     sidebar.querySelector(id)?.addEventListener('input', saveObjectQuestFieldsFromUI)
   }
+  sidebar.querySelector('#objectEffectAddSayLine')?.addEventListener('click', () => {
+    syncObjectSayRowsToTextarea()
+    const say = sidebar.querySelector('#objectEffectSay')
+    const delay = getNextObjectSayDelay(say?.value || '')
+    const row = addObjectSayRow(delay, '')
+    row?.querySelector('.object-say-text')?.focus()
+  })
 
   // Trigger metadata handlers
   function saveTriggerFromUI() {
@@ -3303,19 +3406,41 @@ let paintBrushRadius = 1
     sidebar.querySelector(id).addEventListener('change', saveTriggerFromUI)
   }
 
-  // Per-tile interaction bitmask in local frame: 4*W bits enumerating
-  // cardinal-adjacent tiles in canonical CW order (see shared/objectFootprint).
-  // For width=1 the 4 bits coincide with the legacy F/R/B/L layout.
   function placedObjectWidth(obj) {
     const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
     if (defId == null) return 1
-    const def = objectDefs.find(d => d.id === defId)
+    const def = editorObjectDefById.get(defId)
     return Math.max(1, Math.round(def?.width ?? 1))
   }
-  function setInteractionMask(mask, opts = {}) {
+  function normalizeInteractionTiles(tiles) {
+    const seen = new Set()
+    const out = []
+    for (const tile of Array.isArray(tiles) ? tiles : []) {
+      const x = Math.round(Number(tile?.x))
+      const z = Math.round(Number(tile?.z))
+      if (!Number.isFinite(x) || !Number.isFinite(z)) continue
+      const key = `${x},${z}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ x, z })
+    }
+    return out
+  }
+  function currentInteractionTiles(obj) {
+    const explicit = normalizeInteractionTiles(obj?.userData?.interactionTiles)
+    if (explicit.length) return explicit
+    const W = placedObjectWidth(obj)
+    const mask = obj?.userData?.interactionSides | 0
+    if (!mask) return []
+    return localAdjacentTilesOrdered(W).filter((_, bit) => (mask & (1 << bit)) !== 0)
+  }
+  function setInteractionTiles(tiles, opts = {}) {
     if (!selectedPlacedObject) return
-    if (mask === 0) delete selectedPlacedObject.userData.interactionSides
-    else selectedPlacedObject.userData.interactionSides = mask | 0
+    const normalized = normalizeInteractionTiles(tiles)
+    delete selectedPlacedObject.userData.interactionSides
+    if (normalized.length) selectedPlacedObject.userData.interactionTiles = normalized
+    else delete selectedPlacedObject.userData.interactionTiles
+    interactionTilesRenderKey = ''
     if (opts.rerender !== false) renderInteractionTilesGrid()
     updateSelectionHelper()
   }
@@ -3323,69 +3448,84 @@ let paintBrushRadius = 1
     const container = sidebar.querySelector('#interactionTilesGrid')
     if (!container || !selectedPlacedObject) return
     const W = placedObjectWidth(selectedPlacedObject)
-    const mask = selectedPlacedObject.userData.interactionSides | 0
+    const selectedTiles = currentInteractionTiles(selectedPlacedObject)
+    const renderKey = `${selectedPlacedObject.uniqueId ?? selectedPlacedObject.id ?? selectedPlacedObject.name}|${W}|${JSON.stringify(selectedTiles)}`
+    if (renderKey === interactionTilesRenderKey) return
+    interactionTilesRenderKey = renderKey
+    const selectedKeys = new Set(selectedTiles.map(t => `${t.x},${t.z}`))
+    const summary = sidebar.querySelector('#interactionTilesSummary')
+    const selectedCount = selectedTiles.length
+    if (summary) {
+      summary.textContent = selectedCount === 0
+        ? 'Any adjacent perimeter tile is valid.'
+        : `${selectedCount} required tile${selectedCount === 1 ? '' : 's'} selected.`
+    }
     const cell = 24
     const gap = 2
-    container.innerHTML = ''
-    container.style.cssText = `display:grid;gap:${gap}px;grid-template-columns:repeat(${W + 2},${cell}px);grid-template-rows:repeat(${W + 2},${cell}px);`
-    // Build the bit-index lookup from grid (row, col) → bit. Reuse the canonical
-    // local order so what the user clicks here is exactly what the runtime checks.
-    const local = localAdjacentTilesOrdered(W)
+    const pad = 2
+    const gridSize = W + pad * 2
     const startOff = -Math.floor((W - 1) / 2)
-    const cellBit = new Map() // 'r,c' -> bitIndex
-    for (let bit = 0; bit < local.length; bit++) {
-      const { x: lx, z: lz } = local[bit]
-      const col = (lx - startOff) + 1
-      const row = W + 1 - (lz - startOff) // +Z up means row 0 = top
-      cellBit.set(`${row},${col}`, bit)
-    }
-    for (let row = 0; row < W + 2; row++) {
-      for (let col = 0; col < W + 2; col++) {
+    const footMin = startOff
+    const footMax = startOff + W - 1
+    const gridMin = footMin - pad
+    const gridMax = footMax + pad
+    container.innerHTML = ''
+    container.style.cssText = `display:grid;gap:${gap}px;grid-template-columns:repeat(${gridSize},${cell}px);grid-template-rows:repeat(${gridSize},${cell}px);`
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        const lx = gridMin + col
+        const lz = gridMax - row
         const div = document.createElement('div')
         div.style.cssText = `width:${cell}px;height:${cell}px;box-sizing:border-box;font-size:9px;display:flex;align-items:center;justify-content:center;`
-        const isFootprint = row >= 1 && row <= W && col >= 1 && col <= W
-        const isCorner = (row === 0 || row === W + 1) && (col === 0 || col === W + 1)
-        const bitIdx = cellBit.get(`${row},${col}`)
+        const isFootprint = lx >= footMin && lx <= footMax && lz >= footMin && lz <= footMax
         if (isFootprint) {
           div.style.background = '#444'
           div.style.border = '1px solid #222'
-          // Arrow on the front-center footprint cell so rotation is unambiguous.
-          if (row === 1 && col === Math.ceil((W + 1) / 2)) {
+          if (lz === footMax && lx === Math.floor((footMin + footMax) / 2)) {
             div.textContent = '↑'
             div.style.color = '#aaa'
           }
-        } else if (isCorner) {
-          div.style.visibility = 'hidden'
-        } else if (bitIdx !== undefined) {
-          const on = (mask & (1 << bitIdx)) !== 0
+        } else {
+          const key = `${lx},${lz}`
+          const on = selectedKeys.has(key)
           div.style.background = on ? '#0a7' : '#1a1a1a'
           div.style.border = on ? '1px solid #0fa' : '1px solid #444'
           div.style.cursor = 'pointer'
-          div.title = `Bit ${bitIdx}`
-          div.addEventListener('click', () => setInteractionMask(mask ^ (1 << bitIdx)))
+          div.title = on ? 'Required use tile' : 'Click to require this use tile'
+          div.addEventListener('click', () => {
+            const next = selectedTiles.filter(t => !(t.x === lx && t.z === lz))
+            if (!on) next.push({ x: lx, z: lz })
+            setInteractionTiles(next)
+          })
         }
         container.appendChild(div)
       }
     }
   }
-  // Quick-set buttons. "Front only" is the common case for furnaces / ranges.
+  // Quick-set buttons. "Front center" is the common case for furnaces / ranges.
   sidebar.querySelector('#interactSidesAll')?.addEventListener('click', () => {
     if (!selectedPlacedObject) return
     const W = placedObjectWidth(selectedPlacedObject)
-    const full = (1 << (4 * W)) - 1
-    setInteractionMask(full)
+    setInteractionTiles(localAdjacentTilesOrdered(W))
   })
-  sidebar.querySelector('#interactSidesNone')?.addEventListener('click', () => setInteractionMask(0))
+  sidebar.querySelector('#interactSidesNone')?.addEventListener('click', () => setInteractionTiles([]))
+  sidebar.querySelector('#interactSidesFrontCenter')?.addEventListener('click', () => {
+    if (!selectedPlacedObject) return
+    const W = placedObjectWidth(selectedPlacedObject)
+    const startOff = -Math.floor((W - 1) / 2)
+    setInteractionTiles([{ x: startOff + Math.floor(W / 2), z: startOff + W }])
+  })
   sidebar.querySelector('#interactSidesFront')?.addEventListener('click', () => {
     if (!selectedPlacedObject) return
     const W = placedObjectWidth(selectedPlacedObject)
-    setInteractionMask((1 << W) - 1) // bits 0..W-1 = front row
+    setInteractionTiles(localAdjacentTilesOrdered(W).slice(0, W))
   })
 
   const replaceBtnEl = sidebar.querySelector('#replaceBtn')
   const replacePanel = sidebar.querySelector('#replacePanel')
   const replaceSearchEl = sidebar.querySelector('#replaceSearch')
   const replaceGridEl = sidebar.querySelector('#replaceGrid')
+  sidebar.querySelector('#clearSelectionBtn')?.addEventListener('click', clearSelection)
 
   function buildReplaceGrid() {
     const q = replaceSearchEl.value.trim().toLowerCase()
@@ -3661,12 +3801,24 @@ let paintBrushRadius = 1
       const examine = sidebar.querySelector('#objectExamineText')
       const action = sidebar.querySelector('#objectEffectAction')
       const say = sidebar.querySelector('#objectEffectSay')
+      const sayRows = sidebar.querySelector('#objectEffectSayRows')
+      const addSayLine = sidebar.querySelector('#objectEffectAddSayLine')
       const message = sidebar.querySelector('#objectEffectMessage')
       const effect = selectedPlacedObject?.userData?.interactions?.[0] || null
       if (showObjectName && examine && document.activeElement !== examine) examine.value = selectedPlacedObject.userData.examineText || ''
       if (showObjectName && action && document.activeElement !== action) action.value = effect?.action || 'Examine'
-      if (showObjectName && say && document.activeElement !== say) say.value = formatObjectSaySequence(effect)
+      if (showObjectName && say && sayRows && !sayRows.contains(document.activeElement)) {
+        const nextSay = formatObjectSaySequence(effect)
+        const renderKey = `${selectedPlacedObject.uniqueId ?? selectedPlacedObject.id ?? selectedPlacedObject.name}|${nextSay}`
+        if (renderKey !== objectSayRowsRenderKey) {
+          objectSayRowsRenderKey = renderKey
+          say.value = nextSay
+          renderObjectSayRows(parseObjectSaySequence(nextSay))
+        }
+      }
+      if (addSayLine) addSayLine.disabled = !showObjectName
       if (showObjectName && message && document.activeElement !== message) message.value = effect?.message || ''
+      if (!showObjectName) objectSayRowsRenderKey = ''
     }
     const triggerRow = sidebar.querySelector('#triggerRow')
     if (triggerRow) {
@@ -3690,6 +3842,7 @@ let paintBrushRadius = 1
       const showSides = state.tool === ToolMode.SELECT && selectedPlacedObject
       interactionSidesRow.style.display = showSides ? 'block' : 'none'
       if (showSides) renderInteractionTilesGrid()
+      else interactionTilesRenderKey = ''
     }
     const planeRotationRow = sidebar.querySelector('#planeRotationRow')
     if (planeRotationRow) {
@@ -3839,6 +3992,8 @@ let paintBrushRadius = 1
       ]
       const linesMesh = MeshBuilder.CreateLineSystem('selBox', { lines }, scene)
       linesMesh.color = color
+      linesMesh.isPickable = false
+      linesMesh.metadata = { ...(linesMesh.metadata || {}), editorHelper: true }
       return linesMesh
     } catch { return null }
   }
@@ -3859,17 +4014,24 @@ let paintBrushRadius = 1
   }
 
   function createInteractionSideMarkers(obj) {
-    const localMask = obj?.userData?.interactionSides | 0
-    if (!localMask) return []
+    const explicitTiles = currentInteractionTiles(obj)
+    if (!explicitTiles.length) return []
     let rotY = obj.rotation?.y || 0
     if (obj.rotationQuaternion) {
       const e = obj.rotationQuaternion.toEulerAngles()
       rotY = e.y
     }
-    const width = placedObjectWidth(obj)
-    const worldMask = localSidesToWorldSides(localMask, rotY, width)
-    if (!worldMask) return []
-    const tiles = getObjectInteractionTiles(obj.position.x, obj.position.z, { width }, { allowedWorldSides: worldMask })
+    const q = (((Math.round(rotY / (Math.PI / 2)) % 4) + 4) % 4)
+    const rotate = (tile) => {
+      if (q === 1) return { x: tile.z, z: -tile.x }
+      if (q === 2) return { x: -tile.x, z: -tile.z }
+      if (q === 3) return { x: -tile.z, z: tile.x }
+      return tile
+    }
+    const tiles = explicitTiles.map(tile => {
+      const r = rotate(tile)
+      return { x: Math.floor(obj.position.x) + r.x, z: Math.floor(obj.position.z) + r.z }
+    })
     const mat = getInteractionSideMaterial()
     const yBase = (obj.position.y || 0) + 0.02 // hair above ground to avoid z-fighting
     const meshes = []
@@ -3879,6 +4041,7 @@ let paintBrushRadius = 1
       marker.position.set(t.x + 0.5, yBase, t.z + 0.5)
       marker.material = mat
       marker.isPickable = false
+      marker.metadata = { ...(marker.metadata || {}), editorHelper: true, interactionTileMarker: true }
       marker.doNotSyncBoundingInfo = true
       marker.renderingGroupId = 1 // draw above default scene to stay visible
       meshes.push(marker)
@@ -3893,6 +4056,14 @@ let paintBrushRadius = 1
       selectionHelper.dispose()
     }
     selectionHelper = null
+  }
+
+  function cleanupStaleSelectionHelperMeshes() {
+    for (const mesh of [...scene.meshes]) {
+      if (mesh.metadata?.editorHelper || mesh.name === 'selBox' || mesh.name?.startsWith('interactSide_')) {
+        mesh.dispose()
+      }
+    }
   }
 
   function updateSelectionHelper() {
@@ -3940,6 +4111,12 @@ let paintBrushRadius = 1
     selectedPlacedObjects = []
     selectedTexturePlane = null
     selectedTexturePlanes = []
+    isDragSelecting = false
+    dragSelectStart = null
+    if (dragSelectBox) dragSelectBox.style.display = 'none'
+    cleanupStaleSelectionHelperMeshes()
+    objectSayRowsRenderKey = ''
+    interactionTilesRenderKey = ''
     transformMode = null
     transformStart = null
     transformLift = 0
@@ -3968,6 +4145,7 @@ let paintBrushRadius = 1
       if (obj.userData.examineText) out.examineText = obj.userData.examineText
       if (obj.userData.interactions?.length) out.interactions = JSON.parse(JSON.stringify(obj.userData.interactions))
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
+      if (obj.userData.interactionTiles?.length) out.interactionTiles = JSON.parse(JSON.stringify(obj.userData.interactionTiles))
       if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
       return out
     })
@@ -4013,6 +4191,7 @@ let paintBrushRadius = 1
       if (placed.examineText) model.userData.examineText = placed.examineText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+      if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const layer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(layer ? layer.visible : true)
@@ -4186,6 +4365,7 @@ let paintBrushRadius = 1
       if (placed.examineText) model.userData.examineText = placed.examineText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+      if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const _layer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(_layer ? _layer.visible : true)
@@ -4873,6 +5053,7 @@ let paintBrushRadius = 1
     if (placed.examineText) model.userData.examineText = placed.examineText
     if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
     if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+    if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
     if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
     const _importLayer = layers.find((l) => l.id === model.userData.layerId)
     model.setEnabled(_importLayer ? _importLayer.visible : true)
@@ -8507,7 +8688,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
 }
   })
 
-  const dragSelectBox = document.createElement('div')
+  dragSelectBox = document.createElement('div')
   dragSelectBox.style.cssText = 'position:fixed;border:1px solid rgba(102,204,255,0.9);background:rgba(102,204,255,0.07);pointer-events:none;display:none;z-index:9999;'
   document.body.appendChild(dragSelectBox)
 
@@ -8516,6 +8697,15 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
     dragSelectBox.style.top = Math.min(y1, y2) + 'px'
     dragSelectBox.style.width = Math.abs(x2 - x1) + 'px'
     dragSelectBox.style.height = Math.abs(y2 - y1) + 'px'
+  }
+
+  function beginDragSelect(event) {
+    isDragSelecting = true
+    dragSelectStart = { x: event.clientX, y: event.clientY }
+    if (dragSelectBox) {
+      dragSelectBox.style.display = 'none'
+      updateDragSelectBox(event.clientX, event.clientY, event.clientX, event.clientY)
+    }
   }
 
   function worldToScreen(worldPos) {
@@ -8541,6 +8731,11 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       if (picked?.type === 'plane') {
         const plane = picked.object.metadata?.texturePlane
         if (plane) {
+          if (!event.shiftKey && (selectedPlacedObjects.length > 0 || selectedTexturePlanes.includes(plane))) {
+            clearSelection()
+            beginDragSelect(event)
+            return
+          }
           if (event.shiftKey) {
             const idx = selectedTexturePlanes.indexOf(plane)
             if (idx >= 0) {
@@ -8584,10 +8779,10 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         return
       }
 
-      // No object hit — deselect immediately; show drag box only if mouse moves
+      // No object hit: deselect immediately. A rectangle appears only if the
+      // mouse moves past the drag threshold before mouseup.
       if (!event.shiftKey) clearSelection()
-      isDragSelecting = true
-      dragSelectStart = { x: event.clientX, y: event.clientY }
+      beginDragSelect(event)
       return
     }
 
@@ -9304,10 +9499,24 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
   })
 
   window.addEventListener('keydown', async (event) => {
+    const key = event.key.toLowerCase()
+    if (key === 'escape') {
+      event.preventDefault()
+      if (diagFloorStart) {
+        cancelDiagFloor()
+        updateToolUI()
+      } else if (transformMode) {
+        cancelTransform()
+      } else {
+        document.activeElement?.blur?.()
+        clearSelection()
+      }
+      return
+    }
+
     const tag = document.activeElement?.tagName
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 
-    const key = event.key.toLowerCase()
     const { x, z } = state.hovered
 
     if (event.ctrlKey && key === 'z' && !event.shiftKey) {
@@ -9364,16 +9573,6 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         updateToolUI()
         return
       }
-    }
-
-    if (key === 'escape') {
-      if (diagFloorStart) {
-        cancelDiagFloor()
-        updateToolUI()
-        return
-      }
-      cancelTransform()
-      return
     }
 
     if (key === 'l') {

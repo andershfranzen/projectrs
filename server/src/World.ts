@@ -92,6 +92,7 @@ interface RuntimeObjectSpawn {
   examineText?: string;
   interactions?: WorldObject['interactions'];
   trigger?: WorldObject['trigger'];
+  interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
 }
 
@@ -536,18 +537,50 @@ export class World {
   }
 
   private usesCornerObjectInteraction(obj: WorldObject): boolean {
-    return usesCornerInteractionTiles(obj.def, !!obj.interactionSides);
+    return usesCornerInteractionTiles(obj.def, !!obj.interactionSides || !!obj.interactionTiles?.length);
+  }
+
+  private rotateLocalInteractionTile(tile: { x: number; z: number }, rotY: number): { x: number; z: number } {
+    const q = (((Math.round(rotY / (Math.PI / 2)) % 4) + 4) % 4);
+    if (q === 1) return { x: tile.z, z: -tile.x };
+    if (q === 2) return { x: -tile.x, z: -tile.z };
+    if (q === 3) return { x: -tile.z, z: tile.x };
+    return { x: tile.x, z: tile.z };
+  }
+
+  private explicitObjectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
+    if (!obj.interactionTiles?.length) return [];
+    const baseX = Math.floor(obj.x);
+    const baseZ = Math.floor(obj.z);
+    const seen = new Set<string>();
+    const out: { x: number; z: number }[] = [];
+    for (const local of obj.interactionTiles) {
+      if (!Number.isFinite(local.x) || !Number.isFinite(local.z)) continue;
+      const rotated = this.rotateLocalInteractionTile({ x: Math.round(local.x), z: Math.round(local.z) }, obj.rotationY);
+      const tile = { x: baseX + rotated.x, z: baseZ + rotated.z };
+      const key = `${tile.x},${tile.z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(tile);
+    }
+    return out;
+  }
+
+  private objectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
+    const explicit = this.explicitObjectInteractionTiles(obj);
+    if (explicit.length > 0) return explicit;
+    const allowedWorldSides = obj.interactionSides
+      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
+      : undefined;
+    return getObjectInteractionTiles(obj.x, obj.z, obj.def, {
+      allowedWorldSides,
+      includeCorners: this.usesCornerObjectInteraction(obj),
+    });
   }
 
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
-    const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
-      : undefined;
-    const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def, {
-      allowedWorldSides,
-      includeCorners: this.usesCornerObjectInteraction(obj),
-    })
+    const candidates = this.objectInteractionTiles(obj)
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
       .sort((a, b) => {
         const ad = Math.abs(player.position.x - (a.x + 0.5)) + Math.abs(player.position.y - (a.z + 0.5));
@@ -689,6 +722,7 @@ export class World {
           examineText: placed.examineText,
           interactions: placed.interactions,
           trigger: placed.trigger,
+          interactionTiles: placed.interactionTiles,
           interactionSides: placed.interactionSides,
         });
         continue;
@@ -711,6 +745,7 @@ export class World {
     if (spawn.examineText) obj.examineText = spawn.examineText;
     if (spawn.interactions) obj.interactions = spawn.interactions;
     if (spawn.trigger) obj.trigger = spawn.trigger;
+    if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
     if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
     return obj;
   }
@@ -1469,11 +1504,12 @@ export class World {
     if (obj.def.category === 'door') {
       return (ptx === otx && ptz === otz) || (Math.abs(ptx - otx) + Math.abs(ptz - otz) === 1);
     }
-    const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
-      : undefined;
+    const explicit = this.explicitObjectInteractionTiles(obj);
+    if (explicit.length > 0) return explicit.some(tile => tile.x === ptx && tile.z === ptz);
     return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def, {
-      allowedWorldSides,
+      allowedWorldSides: obj.interactionSides
+        ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
+        : undefined,
       includeCorners: this.usesCornerObjectInteraction(obj),
     });
   }
@@ -2527,13 +2563,9 @@ export class World {
   ): { up?: { x: number; z: number; y: number }; down?: { x: number; z: number; y: number } } {
     const map = this.getPlayerMap(player);
     const playerY = Math.max(player.effectiveY, player.reportedY);
-    const allowedWorldSides = obj.interactionSides
-      ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
-      : undefined;
     const positions = [
       { x: Math.floor(obj.x) + 0.5, z: Math.floor(obj.z) + 0.5 },
-      ...getObjectInteractionTiles(obj.x, obj.z, obj.def, { allowedWorldSides })
-        .map(tile => ({ x: tile.x + 0.5, z: tile.z + 0.5 })),
+      ...this.objectInteractionTiles(obj).map(tile => ({ x: tile.x + 0.5, z: tile.z + 0.5 })),
     ];
     const candidates: { x: number; z: number; y: number }[] = [];
     const add = (candidate: { x: number; z: number; y: number }): void => {
@@ -5209,13 +5241,19 @@ export class World {
   }
 
   private sendWorldObjectUpdate(viewer: Player, obj: WorldObject): void {
-    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1)]
+    const explicitTiles = this.explicitObjectInteractionTiles(obj).slice(0, 16);
+    const tileValues = explicitTiles.flatMap(tile => [tile.x, tile.z]);
+    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, explicitTileCount, ...tileX,tileZ]
     this.sendToPlayer(viewer, ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
       qPos(obj.x),
       qPos(obj.z),
-      obj.depleted ? 1 : 0
+      obj.depleted ? 1 : 0,
+      obj.interactionSides ?? 0,
+      Math.round(obj.rotationY * 1000),
+      explicitTiles.length,
+      ...tileValues,
     );
   }
 

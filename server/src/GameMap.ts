@@ -122,6 +122,7 @@ export class GameMap {
       rotation: o.rotation,
       scale: o.scale,
       trigger: o.trigger,
+      interactionTiles: Array.isArray((o as any).interactionTiles) ? (o as any).interactionTiles : undefined,
       interactionSides: (o as any).interactionSides,
     }));
 

@@ -546,8 +546,12 @@ export interface PlacedObject {
   scale: { x: number; y: number; z: number };
   /** Per-instance trigger override (e.g. teleport doors authored in the editor) */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
-  /** Bitmask of allowed interaction sides in OBJECT-LOCAL frame
-   *  (F=1, R=2, B=4, L=8). Forward = +Z when rotY=0. 0 / undefined = all sides. */
+  /** Exact local tile offsets the player may stand on to use this object.
+   *  When present, these override interactionSides and normal adjacency. */
+  interactionTiles?: { x: number; z: number }[];
+  /** Bitmask of allowed interaction tiles in OBJECT-LOCAL frame.
+   *  For width W this is a 4*W-bit perimeter mask around the footprint;
+   *  bit 0 starts at local +Z/front-left. 0 / undefined = any adjacent tile. */
   interactionSides?: number;
 }
 

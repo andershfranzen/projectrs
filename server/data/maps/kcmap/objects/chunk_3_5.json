@@ -1675,7 +1675,16 @@
     "interactions": [
       {
         "action": "Look at",
-        "say": "Wait... thats me!! is that what the lady was screaming about?"
+        "saySequence": [
+          {
+            "delaySeconds": 0,
+            "text": "Wait... thats me!! is that what the lady was screaming about?"
+          },
+          {
+            "delaySeconds": 3,
+            "text": "I need to get rid of this sketch, maybe i can throw it in a well or something."
+          }
+        ]
       }
     ],
     "interactionSides": 1

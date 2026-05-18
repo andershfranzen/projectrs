@@ -52,7 +52,7 @@ import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -255,7 +255,7 @@ export class GameManager {
 
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
-  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; depleted: boolean }> = new Map();
+  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; depleted: boolean; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }> = new Map();
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
@@ -2474,10 +2474,17 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.WORLD_OBJECT_SYNC, (_op, v) => {
-      const [objectEntityId, objectDefId, x10, z10, depleted] = v;
+      const [objectEntityId, objectDefId, x10, z10, depleted, interactionSides = 0, rotY1000 = 0, explicitTileCount = 0] = v;
       const x = x10 / 10;
       const z = z10 / 10;
       const isDepleted = depleted === 1;
+      const interactionTiles: { x: number; z: number }[] = [];
+      const count = Math.max(0, Math.min(16, explicitTileCount | 0));
+      for (let i = 0; i < count; i++) {
+        const ix = v[8 + i * 2];
+        const iz = v[9 + i * 2];
+        if (Number.isFinite(ix) && Number.isFinite(iz)) interactionTiles.push({ x: ix, z: iz });
+      }
 
       // Detect a state transition on a door we already know about. This fires
       // on chunk re-entry: we left range, the door state changed (someone
@@ -2492,7 +2499,15 @@ export class GameManager {
         prev.depleted !== isDepleted &&
         this.objectDefsCache.get(objectDefId)?.category === 'door';
 
-      this.worldObjectDefs.set(objectEntityId, { defId: objectDefId, x, z, depleted: isDepleted });
+      this.worldObjectDefs.set(objectEntityId, {
+        defId: objectDefId,
+        x,
+        z,
+        depleted: isDepleted,
+        interactionSides: interactionSides || undefined,
+        rotY: rotY1000 / 1000,
+        interactionTiles: interactionTiles.length ? interactionTiles : undefined,
+      });
 
       const def = this.objectDefsCache.get(objectDefId);
 
@@ -3510,7 +3525,7 @@ export class GameManager {
 
     const ptx = Math.floor(this.playerX);
     const ptz = Math.floor(this.playerZ);
-    const alreadyAdj = isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) });
+    const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, data, def);
     if (alreadyAdj) {
       this.stopLocalWalkForImmediateObjectInteraction(data);
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
@@ -3934,16 +3949,47 @@ export class GameManager {
     }
   }
 
-  private usesCornerObjectInteraction(def: WorldObjectDef): boolean {
-    return usesCornerInteractionTiles(def);
+  private usesCornerObjectInteraction(def: WorldObjectDef, hasInteractionMask: boolean = false): boolean {
+    return usesCornerInteractionTiles(def, hasInteractionMask);
+  }
+
+  private objectInteractionTileOptions(
+    data: { interactionSides?: number; rotY?: number },
+    def: WorldObjectDef,
+  ): { allowedWorldSides?: number; includeCorners: boolean } {
+    const allowedWorldSides = data.interactionSides
+      ? localSidesToWorldSides(data.interactionSides, data.rotY ?? 0, def.width)
+      : undefined;
+    return {
+      allowedWorldSides,
+      includeCorners: this.usesCornerObjectInteraction(def, !!allowedWorldSides),
+    };
+  }
+
+  private objectInteractionTiles(
+    data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
+    def: WorldObjectDef,
+  ): { x: number; z: number }[] {
+    if (data.interactionTiles?.length) return data.interactionTiles;
+    return getObjectInteractionTiles(data.x, data.z, def, this.objectInteractionTileOptions(data, def));
+  }
+
+  private isOnObjectInteractionTile(
+    ptx: number,
+    ptz: number,
+    data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
+    def: WorldObjectDef,
+  ): boolean {
+    if (data.interactionTiles?.length) return data.interactionTiles.some(tile => tile.x === ptx && tile.z === ptz);
+    return isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, this.objectInteractionTileOptions(data, def));
   }
 
   /** Find the closest reachable adjacent tile of an object and start the
    *  predicted walk toward it. Returns true if a walk was started, false
    *  if no reachable adjacent tile exists. Caller arms any pending state
    *  (trackObjectInteractionRetry / pendingSmithing / etc). */
-  private walkToAdjacentTileOf(data: { x: number; z: number }, def: WorldObjectDef): boolean {
-    const candidates = getObjectInteractionTiles(data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) })
+  private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number }, def: WorldObjectDef): boolean {
+    const candidates = this.objectInteractionTiles(data, def)
       .filter(tile => !this.isTileBlocked(tile.x, tile.z))
       .map(tile => ({
         ax: tile.x,
@@ -3995,7 +4041,7 @@ export class GameManager {
 
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
-      if (!isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) })) {
+      if (!this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
         this.clearPendingObjectInteractionRetry();
         return;
       }
@@ -4068,7 +4114,7 @@ export class GameManager {
       if (def.category === 'crop') {
         const ptx = Math.floor(this.playerX);
         const ptz = Math.floor(this.playerZ);
-        if (isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) })) {
+        if (this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
           this.faceLocalPlayerToward(data.x, data.z);
         } else {
           // Reuse the stationary-skill arrival path — prepareSkillingAtObject
@@ -4128,7 +4174,7 @@ export class GameManager {
       if (objDef?.recipes && objDef.recipes.length > 0 && objDef.recipes[0].requiresTool) {
         const ptx = Math.floor(this.playerX);
         const ptz = Math.floor(this.playerZ);
-        const alreadyAdj = isTileAdjacentToObject(ptx, ptz, objData.x, objData.z, objDef, { includeCorners: this.usesCornerObjectInteraction(objDef) });
+        const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, objData, objDef);
         this.pendingSmithing = null;
         if (alreadyAdj) {
           this.showSmithingUI(objectEntityId, objDef);
@@ -4183,52 +4229,13 @@ export class GameManager {
       return;
     }
 
-    // Furnace: path to the tile directly in front of the red opening, not any
-    // arbitrary adjacent tile. Derive the "front" direction from the model's Y
-    // rotation. Assumes the unrotated forge GLB faces -Z.
+    // Furnace: path to authored interaction tiles when present. This lets large
+    // stations force a specific use tile instead of accepting any adjacent tile.
     if (def?.category === 'furnace') {
-      const model = this.worldObjectModels.get(objectEntityId);
-      // Extract Y rotation — world objects use rotationQuaternion (set by placeNode),
-      // so reading `.rotation.y` directly gives 0. Derive from the quaternion when
-      // present; fall back to euler otherwise.
-      let rotY = 0;
-      if (model?.rotationQuaternion) {
-        const q = model.rotationQuaternion;
-        // Y-axis angle from quaternion (atan2 form handles any orientation)
-        rotY = Math.atan2(
-          2 * (q.w * q.y + q.x * q.z),
-          1 - 2 * (q.y * q.y + q.x * q.x),
-        );
-      } else if (model) {
-        rotY = model.rotation.y;
-      }
-      // Snap to nearest cardinal: choose the dir closest to (+sinθ, +cosθ)
-      // (the forge GLB's unrotated front faces +Z)
-      const fx = Math.sin(rotY);
-      const fz = Math.cos(rotY);
-      let bestDir: [number, number] = [0, -1];
-      let bestDot = -Infinity;
-      for (const d of [[0, -1], [0, 1], [-1, 0], [1, 0]] as const) {
-        const dot = d[0] * fx + d[1] * fz;
-        if (dot > bestDot) { bestDot = dot; bestDir = [d[0], d[1]]; }
-      }
-      const otx = Math.floor(data.x);
-      const otz = Math.floor(data.z);
-      const frontX = otx + bestDir[0];
-      const frontZ = otz + bestDir[1];
-
-      // If we're not already on the front tile, pathfind there
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
-      const alreadyAtFront = ptx === frontX && ptz === frontZ;
-      if (!alreadyAtFront) {
-        if (!this.isTileBlocked(frontX, frontZ)) {
-          const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(frontX + 0.5, frontZ + 0.5, 500);
-          if (path.length > 0) {
-            this.startPredictedPath(path, preserveCurrentStep);
-          }
-        }
-      }
+      const alreadyAtUseTile = this.isOnObjectInteractionTile(ptx, ptz, data, def);
+      if (!alreadyAtUseTile) this.walkToAdjacentTileOf(data, def);
       // Multi-recipe furnaces (bronze, iron±coal, steel, mithril, ...) used
       // to auto-pick the first matching recipe — which meant steel was
       // unreachable while carrying iron ore + coal because iron+coal matches
@@ -4238,7 +4245,7 @@ export class GameManager {
       const recipes = def.recipes ?? [];
       if (recipes.length > 1) {
         this.pendingSmithing = null;
-        if (alreadyAtFront) {
+        if (alreadyAtUseTile) {
           this.showSmithingUI(objectEntityId, def);
         } else {
           this.pendingSmithing = { objectEntityId, def };
@@ -4252,7 +4259,7 @@ export class GameManager {
     // Check if already on a valid adjacent tile
     const ptx = Math.floor(this.playerX);
     const ptz = Math.floor(this.playerZ);
-    const alreadyAdj = def ? isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) }) : dist <= 1.5;
+    const alreadyAdj = def ? this.isOnObjectInteractionTile(ptx, ptz, data, def) : dist <= 1.5;
 
     if (!alreadyAdj && def) {
       if (this.walkToAdjacentTileOf(data, def)) {
