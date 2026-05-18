@@ -493,6 +493,7 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
 
   for (let z = 0; z < map.height; z++) {
     for (let x = 0; x < map.width; x++) {
+      if (!map.isTileInActiveChunk(x, z)) continue
       if (!shouldRenderWater(map, x, z)) continue
       const wY = map.getTileWaterLevel(x, z) + 0.02
       const WATER_UV_SCALE = 5

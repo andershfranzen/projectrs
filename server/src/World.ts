@@ -184,7 +184,7 @@ export class World {
   /** World objects currently depleted and awaiting respawn */
   private depletedObjectIds: Set<number> = new Set();
 
-  /** Reusable set for health regen — avoids allocation every 10 ticks */
+  /** Reusable set for health regen — avoids allocation every regen tick */
   private _playersUnderNpcAttack: Set<number> = new Set();
 
   // Skilling: player -> { objectId, action, cycleTime, toolItemId, toolBonus }
@@ -1864,6 +1864,14 @@ export class World {
     const rawIndex = state.visibleOptionIndices[optionIndex];
     if (rawIndex < 0 || rawIndex >= node.options.length) return;
     const option = node.options[rawIndex];
+    this.quests.notifyQuestEvent(player, {
+      type: 'dialogue',
+      npcDefId: npc.def.id,
+      npcEntityId: npc.id,
+      nodeId: node.id,
+      optionLabel: option.label,
+    });
+
     // Run the action FIRST so an `openShop` action can replace the dialogue
     // panel with the shop — the order here is the visible UX order.
     if (option.action) {
@@ -2125,7 +2133,8 @@ export class World {
       return;
     }
 
-    if (player.addItem(item.itemId, item.quantity, this.data.itemDefs).completed > 0) {
+    const added = player.addItem(item.itemId, item.quantity, this.data.itemDefs);
+    if (added.completed > 0) {
       this.interruptPlayerAction(playerId, player);
       this.groundItems.delete(groundItemId);
       this.despawningItemIds.delete(groundItemId);
@@ -2139,6 +2148,12 @@ export class World {
         try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
       }
       this.sendInventory(player);
+      this.quests.notifyQuestEvent(player, {
+        type: 'itemPickup',
+        itemId: item.itemId,
+        quantity: added.completed,
+        source: 'ground',
+      });
     }
   }
 
@@ -2449,7 +2464,7 @@ export class World {
       const { added, dropped } = this.awardHarvestItem(player, itemId, qty);
       if (added > 0) {
         this.sendInventory(player);
-        this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: added });
+        this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: added, source: 'harvest' });
       }
       if (dropped > 0) this.sendChatSystem(player, "Your inventory is full, so the harvest falls to the ground.");
       if (obj.def.depletionChance && Math.random() < obj.def.depletionChance) {
@@ -2888,6 +2903,17 @@ export class World {
 
     player.setDelay(this.currentTick, castTicks + 1);
     player.attackCooldown = 7;
+
+    // SPELL_CAST carries the projectile/effect definition. Also send the
+    // generic animation event so character cast animation survives cases where
+    // the client cannot resolve the spell catalogue or target in time.
+    this.broadcastPlayerAnimationEvent(
+      player,
+      PlayerAnimationKind.Skill,
+      PlayerSkillAnimationVariant.Magic,
+      npc.id,
+      true,
+    );
 
     this.broadcastNearby(
       player.currentMapLevel, player.position.x, player.position.y,
@@ -3699,7 +3725,7 @@ export class World {
     this.tickPlayerCombat();
     this.tickNpcCombat();
     this.tickPendingSpells();
-    if (this.currentTick % 10 === 0) this.tickHealthRegen();
+    if (this.currentTick % 40 === 0) this.tickHealthRegen();
     this.tickSkillingActions();
     this.tickObjectRespawns();
     this.tickItemDespawns();
@@ -4266,7 +4292,7 @@ export class World {
         if (isChest && addedToInv) foundForChest.push({ itemId, quantity: primary.added });
         if (addedToInv) {
           inventoryChanged = true;
-          this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primary.added });
+          this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primary.added, source: isChest ? 'chest' : 'harvest' });
         }
         if (primary.dropped > 0) this.sendChatSystem(player, "Your inventory is full, so the harvest falls to the ground.");
 
@@ -4294,7 +4320,7 @@ export class World {
                 const name = itemDef?.name ?? `item ${drop.itemId}`;
                 this.sendChatSystem(player, `You find a ${name}!`);
               }
-              this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: got.completed });
+              this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: got.completed, source: isChest ? 'chest' : 'harvest' });
             }
           }
         }

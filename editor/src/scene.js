@@ -4367,34 +4367,46 @@ let paintBrushRadius = 1
     group.dispose()
   }
 
+  function replaceTerrainWaterMeshes() {
+    if (!terrainGroup) return
+    const wg = buildWaterMeshes(map, waterTexture, scene)
+    const newWaterChildren = [...wg.getChildren()]
+    for (const child of newWaterChildren) {
+      child.setEnabled(false)
+      child.parent = terrainGroup
+    }
+    wg.dispose(true)
+
+    for (const child of [...terrainGroup.getChildMeshes()]) {
+      if ((child.name === 'terrain-water' || child.name === 'terrain-surface-water') && !newWaterChildren.includes(child)) {
+        child.dispose()
+      }
+    }
+
+    for (const child of newWaterChildren) child.setEnabled(true)
+  }
+
   function rebuildTerrain({ skipTexturePlanes = false, skipShadows = false, skipTextureOverlays = false, _heightsOnlyRegion = null } = {}) {
     // Fast path: only heights changed in a known tile region — update land mesh in-place.
     if (_heightsOnlyRegion) {
       const shadowInf = _shadowInfluencesCache ?? buildObjectShadowInfluences()
       _shadowInfluencesCache = shadowInf
       if (updateTerrainLandHeights(map, shadowInf, _heightsOnlyRegion.x1, _heightsOnlyRegion.z1, _heightsOnlyRegion.x2, _heightsOnlyRegion.z2)) {
-        // Build new meshes (created hidden by build functions)
-        const newCliffs = buildCliffMeshes(map, scene)
-        const wg = terrainGroup ? buildWaterMeshes(map, waterTexture, scene) : null
-        const newWaterChildren = wg ? [...wg.getChildren()] : []
-        if (wg) {
-          for (const child of newWaterChildren) { child.setEnabled(false); child.parent = terrainGroup }
-          wg.dispose()
+        replaceTerrainWaterMeshes()
+
+        if (state.isPainting && state.tool === ToolMode.TERRAIN) {
+          applyLayerVisibility()
+          return
         }
 
-        // Dispose old cliffs and water
+        // Build new meshes (created hidden by build functions)
+        const newCliffs = buildCliffMeshes(map, scene)
+
+        // Dispose old cliffs
         disposeGroup(cliffs)
-        if (terrainGroup) {
-          for (const child of [...terrainGroup.getChildMeshes()]) {
-            if ((child.name === 'terrain-water' || child.name === 'terrain-surface-water') && !newWaterChildren.includes(child)) {
-              child.dispose()
-            }
-          }
-        }
 
         // Enable new meshes
         if (newCliffs) newCliffs.setEnabled(true)
-        for (const child of newWaterChildren) child.setEnabled(true)
         cliffs = newCliffs
 
         if (state.showSplitLines) {
@@ -6680,11 +6692,12 @@ function applyToolAtTile(tile, eventLike = null) {
         startTypeRow.appendChild(lbl)
         const sel = document.createElement('select')
         sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;'
-        for (const opt of [
-          ['', '(none — manual)'],
-          ['npcKill', 'npcKill — kill an NPC'],
-          ['itemPickup', 'itemPickup — gain an item'],
-          ['chestOpen', 'chestOpen — open a chest'],
+	        for (const opt of [
+	          ['', '(none — manual)'],
+	          ['dialogue', 'dialogue — talk to an NPC'],
+	          ['npcKill', 'npcKill — kill an NPC'],
+	          ['itemPickup', 'itemPickup — gain an item'],
+	          ['chestOpen', 'chestOpen — open a chest'],
         ]) {
           const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
         }
@@ -6761,18 +6774,18 @@ function applyToolAtTile(tile, eventLike = null) {
         trigBody.innerHTML = ''
         const sel = document.createElement('select')
         sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;margin-bottom:6px;'
-        for (const opt of [
-          ['dialogue', 'dialogue — wait for dialogue action'],
-          ['npcKill', 'npcKill — kill an NPC'],
-          ['itemPickup', 'itemPickup — gain an item'],
-          ['chestOpen', 'chestOpen — open a chest'],
+	        for (const opt of [
+	          ['dialogue', 'dialogue — talk to an NPC'],
+	          ['npcKill', 'npcKill — kill an NPC'],
+	          ['itemPickup', 'itemPickup — gain an item'],
+	          ['chestOpen', 'chestOpen — open a chest'],
         ]) {
           const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
         }
         sel.value = stage.trigger?.type || 'dialogue'
         sel.addEventListener('change', () => { stage.trigger = makeBlankTrigger(sel.value); renderTrig() })
         trigBody.appendChild(sel)
-        if (stage.trigger && stage.trigger.type !== 'dialogue') trigBody.appendChild(renderTriggerFields(stage.trigger, false))
+	        if (stage.trigger) trigBody.appendChild(renderTriggerFields(stage.trigger, false))
       }
       renderTrig()
       wrap.appendChild(trigWrap)
@@ -6782,19 +6795,25 @@ function applyToolAtTile(tile, eventLike = null) {
     function renderTriggerFields(trigger, includeChance) {
       const wrap = document.createElement('div')
       wrap.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:6px 8px;display:flex;flex-direction:column;gap:6px;'
-      if (trigger.type === 'npcKill') {
-        wrap.appendChild(field('NPC', npcSelect(trigger.npcDefId ?? 0, v => { trigger.npcDefId = v })))
-        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
-      } else if (trigger.type === 'itemPickup') {
-        wrap.appendChild(field('Item', itemPicker(trigger.itemId ?? 0, v => { trigger.itemId = v })))
-        wrap.appendChild(field('Quantity needed', numberInput(trigger.quantity ?? 1, 1, v => { if (v <= 1) delete trigger.quantity; else trigger.quantity = v })))
-      } else if (trigger.type === 'chestOpen') {
+	      if (trigger.type === 'dialogue') {
+	        wrap.appendChild(field('NPC (optional — leave blank for any NPC)', npcSelect(trigger.npcDefId ?? 0, v => { if (v > 0) trigger.npcDefId = v; else delete trigger.npcDefId })))
+	        wrap.appendChild(field('Dialogue node ID (optional)', textInput(trigger.nodeId || '', v => { const s = v.trim(); if (s) trigger.nodeId = s; else delete trigger.nodeId }, { font: 'monospace' })))
+	        wrap.appendChild(field('Option label (optional, exact match)', textInput(trigger.optionLabel || '', v => { const s = v.trim(); if (s) trigger.optionLabel = s; else delete trigger.optionLabel })))
+	        wrap.appendChild(field('Times needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+	      } else if (trigger.type === 'npcKill') {
+	        wrap.appendChild(field('NPC', npcSelect(trigger.npcDefId ?? 0, v => { trigger.npcDefId = v })))
+	        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+	      } else if (trigger.type === 'itemPickup') {
+	        wrap.appendChild(field('Item', itemPicker(trigger.itemId ?? 0, v => { trigger.itemId = v })))
+	        wrap.appendChild(field('Quantity needed', numberInput(trigger.quantity ?? 1, 1, v => { if (v <= 1) delete trigger.quantity; else trigger.quantity = v })))
+	        wrap.appendChild(field('Source', sourceSelect(trigger.source || 'any', v => { if (v === 'any') delete trigger.source; else trigger.source = v })))
+	      } else if (trigger.type === 'chestOpen') {
         wrap.appendChild(field('Specific chest type (optional — leave blank for any chest)', chestSelect(trigger.chestDefId, v => { if (v == null) delete trigger.chestDefId; else trigger.chestDefId = v })))
         wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
       }
-      if (includeChance && trigger.type !== 'dialogue') {
-        wrap.appendChild(field('Chance (0–1, leave 1 for always)', numberInput(trigger.chance ?? 1, 0, v => { if (v >= 1 || v <= 0) delete trigger.chance; else trigger.chance = v }, { step: '0.01', max: 1 })))
-      }
+	      if (includeChance) {
+	        wrap.appendChild(field('Chance (0–1, leave 1 for always)', numberInput(trigger.chance ?? 1, 0, v => { if (v >= 1 || v <= 0) delete trigger.chance; else trigger.chance = v }, { step: '0.01', max: 1 })))
+	      }
       return wrap
     }
 
@@ -6971,9 +6990,9 @@ function applyToolAtTile(tile, eventLike = null) {
       sel.addEventListener('change', () => { onChange(sel.value === '' ? null : parseInt(sel.value)) })
       return sel
     }
-    function itemPicker(value, onChange) {
-      const input = document.createElement('input')
-      input.type = 'text'
+	    function itemPicker(value, onChange) {
+	      const input = document.createElement('input')
+	      input.type = 'text'
       input.setAttribute('list', 'shopItemDatalist')
       input.placeholder = 'Search item name or ID'
       input.value = formatItemDisplay(value)
@@ -6982,15 +7001,29 @@ function applyToolAtTile(tile, eventLike = null) {
         const id = parseItemIdFromDisplay(input.value)
         onChange(id)
         input.value = formatItemDisplay(id)
-      })
-      return input
-    }
-    function makeBlankTrigger(type) {
-      if (type === 'npcKill') return { type, npcDefId: 0 }
-      if (type === 'itemPickup') return { type, itemId: 0 }
-      if (type === 'chestOpen') return { type }
-      return { type: 'dialogue' }
-    }
+	      })
+	      return input
+	    }
+	    function sourceSelect(value, onChange) {
+	      const sel = document.createElement('select')
+	      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+	      for (const opt of [
+	        ['any', 'Any item grant'],
+	        ['ground', 'Ground pickup only'],
+	      ]) {
+	        const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
+	      }
+	      sel.value = value
+	      sel.addEventListener('change', () => onChange(sel.value))
+	      return sel
+	    }
+	    function makeBlankTrigger(type) {
+	      if (type === 'dialogue') return { type }
+	      if (type === 'npcKill') return { type, npcDefId: 0 }
+	      if (type === 'itemPickup') return { type, itemId: 0 }
+	      if (type === 'chestOpen') return { type }
+	      return { type: 'dialogue' }
+	    }
     function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
   }
 

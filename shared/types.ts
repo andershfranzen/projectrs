@@ -626,11 +626,12 @@ export function shouldTileRenderWater(
 /** Per-event trigger that either starts a quest (via QuestDef.startTrigger)
  *  or advances the current stage (via QuestStageDef.trigger).
  *
- *  - `dialogue`: never auto-fires; only the explicit `setQuestStage` /
- *    `completeQuest` dialogue actions advance this stage. Use this for
- *    "talk to NPC X" beats.
+ *  - `dialogue`: fires when the player chooses dialogue on an NPC. Set
+ *    `npcDefId` to require a specific NPC definition, and optionally
+ *    `nodeId` / `optionLabel` to require a specific dialogue beat.
  *  - `itemPickup`: fires when the player's running tally of `itemId` reaches
- *    `quantity` (default 1). Server checks at every successful addItem.
+ *    `quantity` (default 1). By default any server-granted item counts; set
+ *    `source: 'ground'` to require picking up an item from the ground.
  *  - `npcKill`: fires when the player kills `npcDefId` (the def id from
  *    npcs.json) `count` times (default 1). Counted in player.quests[id]
  *    .triggerProgress.
@@ -640,8 +641,8 @@ export function shouldTileRenderWater(
  *  `chance` (0–1) gates the trigger probabilistically — useful for rare
  *  quest hand-outs like "5% chance to find a clue on a cow". */
 export type QuestTrigger =
-  | { type: 'dialogue' }
-  | { type: 'itemPickup'; itemId: number; quantity?: number; chance?: number }
+  | { type: 'dialogue'; npcDefId?: number; nodeId?: string; optionLabel?: string; count?: number; chance?: number }
+  | { type: 'itemPickup'; itemId: number; quantity?: number; source?: 'any' | 'ground'; chance?: number }
   | { type: 'npcKill'; npcDefId: number; count?: number; chance?: number }
   | { type: 'chestOpen'; chestDefId?: number; count?: number; chance?: number };
 

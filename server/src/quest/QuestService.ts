@@ -13,7 +13,8 @@ import type { DataLoader } from '../data/DataLoader';
 import type { Player } from '../entity/Player';
 
 export type QuestEventDescriptor =
-  | { type: 'itemPickup'; itemId: number; quantity: number }
+  | { type: 'dialogue'; npcDefId: number; npcEntityId: number; nodeId: string; optionLabel: string }
+  | { type: 'itemPickup'; itemId: number; quantity: number; source?: 'ground' | 'harvest' | 'chest' | 'dialogue' }
   | { type: 'npcKill'; npcDefId: number }
   | { type: 'chestOpen'; chestDefId: number };
 
@@ -144,7 +145,7 @@ export class QuestService {
       if (!stageDef?.trigger) continue;
       if (!this.triggerMatchesEvent(stageDef.trigger, event)) continue;
       if (!this.rollTriggerChance(stageDef.trigger)) continue;
-      const count = state.triggerProgress + 1;
+      const count = state.triggerProgress + this.eventProgressAmount(stageDef.trigger, event);
       const threshold = this.triggerThreshold(stageDef.trigger);
       if (count >= threshold) {
         const nextStage = state.stage + 1;
@@ -196,10 +197,16 @@ export class QuestService {
   }
 
   private triggerMatchesEvent(trigger: QuestTrigger, event: QuestEventDescriptor): boolean {
-    if (trigger.type === 'dialogue') return false;
     if (trigger.type !== event.type) return false;
+    if (trigger.type === 'dialogue' && event.type === 'dialogue') {
+      if (trigger.npcDefId !== undefined && trigger.npcDefId !== event.npcDefId) return false;
+      if (trigger.nodeId !== undefined && trigger.nodeId !== event.nodeId) return false;
+      if (trigger.optionLabel !== undefined && trigger.optionLabel !== event.optionLabel) return false;
+      return true;
+    }
     if (trigger.type === 'itemPickup' && event.type === 'itemPickup') {
-      return trigger.itemId === event.itemId;
+      if (trigger.itemId !== event.itemId) return false;
+      return trigger.source === undefined || trigger.source === 'any' || trigger.source === event.source;
     }
     if (trigger.type === 'npcKill' && event.type === 'npcKill') {
       return trigger.npcDefId === event.npcDefId;
@@ -211,6 +218,7 @@ export class QuestService {
   }
 
   private triggerThreshold(trigger: QuestTrigger): number {
+    if (trigger.type === 'dialogue') return trigger.count ?? 1;
     if (trigger.type === 'itemPickup') return trigger.quantity ?? 1;
     if (trigger.type === 'npcKill') return trigger.count ?? 1;
     if (trigger.type === 'chestOpen') return trigger.count ?? 1;
@@ -218,7 +226,13 @@ export class QuestService {
   }
 
   private rollTriggerChance(trigger: QuestTrigger): boolean {
-    if (trigger.type === 'dialogue') return true;
     return trigger.chance === undefined || Math.random() < trigger.chance;
+  }
+
+  private eventProgressAmount(trigger: QuestTrigger, event: QuestEventDescriptor): number {
+    if (trigger.type === 'itemPickup' && event.type === 'itemPickup') {
+      return Math.max(1, Math.floor(event.quantity));
+    }
+    return 1;
   }
 }

@@ -1,8 +1,8 @@
 [
   {
-    "id": "Bobs Burial",
-    "name": "Bobs Burial",
-    "blurb": "Bob spends his days grazing in the cow pen bear Castle Mud.",
+    "id": "Bob's Burial",
+    "name": "Bob's Burial",
+    "blurb": "Bob spends his days grazing in the cow pen near Castle Mud.",
     "startTrigger": {
       "type": "npcKill",
       "npcDefId": 10,
