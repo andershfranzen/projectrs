@@ -85,42 +85,59 @@ export interface AssetThumbnailOverride {
   alpha?: number       // camera yaw (radians)
   beta?: number        // camera pitch (radians)
   distanceMult?: number // multiplier on auto-fit radius
+  rotationY?: number    // model yaw (radians), before bbox fit
 }
 
-let _overridesPromise: Promise<Record<string, AssetThumbnailOverride>> | null = null
+interface ThumbnailOverrideDocument {
+  _thumbnail_assets?: Record<string, AssetThumbnailOverride>
+  [key: string]: unknown
+}
 
-async function loadOverrides(): Promise<Record<string, AssetThumbnailOverride>> {
-  if (_overridesPromise) return _overridesPromise
-  _overridesPromise = (async () => {
+let _overrideDocPromise: Promise<ThumbnailOverrideDocument> | null = null
+
+async function loadOverrideDocument(): Promise<ThumbnailOverrideDocument> {
+  if (_overrideDocPromise) return _overrideDocPromise
+  _overrideDocPromise = (async () => {
     try {
       const res = await fetch('/data/thumbnail-overrides.json')
       if (!res.ok) return {}
       const data = await res.json()
-      const map = data?._thumbnail_assets
-      if (!map || typeof map !== 'object') return {}
-      const out: Record<string, AssetThumbnailOverride> = {}
-      for (const [k, v] of Object.entries(map)) {
-        if (v && typeof v === 'object') out[k] = v as AssetThumbnailOverride
-      }
-      return out
+      return data && typeof data === 'object' ? data as ThumbnailOverrideDocument : {}
     } catch {
       return {}
     }
   })()
-  return _overridesPromise
+  return _overrideDocPromise
+}
+
+async function loadAssetOverrides(): Promise<Record<string, AssetThumbnailOverride>> {
+  const data = await loadOverrideDocument()
+  const map = data?._thumbnail_assets
+  if (!map || typeof map !== 'object') return {}
+  const out: Record<string, AssetThumbnailOverride> = {}
+  for (const [k, v] of Object.entries(map)) {
+    if (v && typeof v === 'object') out[k] = v as AssetThumbnailOverride
+  }
+  return out
 }
 
 /** Force a re-fetch of overrides on next thumbnail render. Call after the
  *  rotation editor saves so subsequent renders see the new values. */
 export function invalidateOverridesCache(): void {
-  _overridesPromise = null
+  _overrideDocPromise = null
 }
 
 /** Read the current override for a path (after the cache is warm). Used by
  *  the rotation editor to seed initial alpha/beta/distance. */
 export async function getAssetOverride(path: string): Promise<AssetThumbnailOverride> {
-  const all = await loadOverrides()
+  const all = await loadAssetOverrides()
   return all[path] ?? {}
+}
+
+export async function getItemOverride(itemId: number): Promise<AssetThumbnailOverride> {
+  const data = await loadOverrideDocument()
+  const value = data?.[String(itemId)]
+  return value && typeof value === 'object' ? value as AssetThumbnailOverride : {}
 }
 
 let _engine: Engine | null = null
@@ -143,15 +160,16 @@ function ensureEngine(): void {
 
 interface QueueItem {
   path: string
+  override?: AssetThumbnailOverride
   resolve: (value: string | null) => void
 }
 
 const queue: QueueItem[] = []
 let processing = false
 
-function enqueue(path: string): Promise<string | null> {
+function enqueue(path: string, override?: AssetThumbnailOverride): Promise<string | null> {
   return new Promise((resolve) => {
-    queue.push({ path, resolve })
+    queue.push({ path, override, resolve })
     if (!processing) processQueue()
   })
 }
@@ -159,9 +177,9 @@ function enqueue(path: string): Promise<string | null> {
 async function processQueue(): Promise<void> {
   processing = true
   while (queue.length > 0) {
-    const { path, resolve } = queue.shift()!
+    const { path, override, resolve } = queue.shift()!
     try {
-      const url = await withTimeout(renderOne(path), RENDER_TIMEOUT_MS)
+      const url = await withTimeout(renderOne(path, override), RENDER_TIMEOUT_MS)
       resolve(url)
     } catch (err) {
       console.warn('[ThumbnailRenderer] render failed for', path, err)
@@ -181,17 +199,18 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   })
 }
 
-async function renderOne(path: string): Promise<string | null> {
+async function renderOne(path: string, explicitOverride?: AssetThumbnailOverride): Promise<string | null> {
   ensureEngine()
   const { dir, file } = splitEncodedGlbUrl(path)
   const result: ISceneLoaderAsyncResult = await SceneLoader.ImportMeshAsync('', dir, file, _scene!)
   for (const ag of result.animationGroups || []) ag.stop()
 
   let dataUrl: string | null = null
+  const overrides = explicitOverride ? null : await loadAssetOverrides()
+  const ov = explicitOverride ?? overrides?.[path] ?? {}
+  applyModelRotation(result, ov.rotationY)
   const fit = computeFitTarget(result, _camera!.fov)
   if (fit) {
-    const overrides = await loadOverrides()
-    const ov = overrides[path] ?? {}
     _camera!.alpha = ov.alpha ?? DEFAULT_THUMB_ALPHA
     _camera!.beta = ov.beta ?? DEFAULT_THUMB_BETA
     _camera!.setTarget(fit.center)
@@ -204,6 +223,20 @@ async function renderOne(path: string): Promise<string | null> {
   }
   disposeImportResult(result)
   return dataUrl
+}
+
+function applyModelRotation(result: ISceneLoaderAsyncResult, rotationY?: number): void {
+  if (!rotationY) return
+  const root = result.meshes.find((m) => m.name === '__root__') ?? result.meshes.find((m) => !m.parent)
+  if (!root) return
+  if (root.rotationQuaternion) root.rotationQuaternion = null
+  root.rotation.y += rotationY
+  root.computeWorldMatrix(true)
+  for (const mesh of result.meshes) mesh.computeWorldMatrix(true)
+}
+
+export async function renderThumbnailPreview(path: string, override: AssetThumbnailOverride): Promise<string | null> {
+  return enqueue(path, override)
 }
 
 export function disposeImportResult(result: ISceneLoaderAsyncResult): void {

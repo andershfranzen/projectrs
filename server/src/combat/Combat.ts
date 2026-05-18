@@ -26,6 +26,26 @@ export interface XpDrop {
   amount: number;
 }
 
+function addCombatHitpointsXp(
+  player: Player,
+  actualDamage: number,
+  oldHpXp: number,
+  oldHpLevel: number,
+  xpDrops: XpDrop[],
+  levelUps: { skill: string; level: number }[]
+): void {
+  const expectedHpXp = Math.floor((actualDamage * 4) / 3);
+  const autoHpXp = player.skills.hitpoints.xp - oldHpXp;
+  const missingHpXp = expectedHpXp - autoHpXp;
+  if (missingHpXp > 0) addXp(player.skills, 'hitpoints', missingHpXp);
+
+  const gainedHpXp = player.skills.hitpoints.xp - oldHpXp;
+  if (gainedHpXp > 0) xpDrops.push({ skill: 'hitpoints', amount: gainedHpXp });
+  if (player.skills.hitpoints.level > oldHpLevel) {
+    levelUps.push({ skill: 'hitpoints', level: player.skills.hitpoints.level });
+  }
+}
+
 /**
  * 2004Scape-style melee combat: player attacks NPC.
  * - Dual random roll hit check (not percentage)
@@ -105,6 +125,7 @@ export function processPlayerCombat(
     // combat skills, so the level may bump during these calls. Capturing
     // after would always read the post-mutation level and never detect
     // level-up.
+    const oldHpXp = player.skills.hitpoints.xp;
     const oldHpLevel = player.skills.hitpoints.level;
     const stanceXp = STANCE_XP[player.stance];
     if (stanceXp.accuracy > 0) {
@@ -125,9 +146,7 @@ export function processPlayerCombat(
       xpDrops.push({ skill: 'defence', amount: Math.floor(amt) });
       if (r.leveled) levelUps.push({ skill: 'defence', level: r.newLevel });
     }
-    if (player.skills.hitpoints.level > oldHpLevel) {
-      levelUps.push({ skill: 'hitpoints', level: player.skills.hitpoints.level });
-    }
+    addCombatHitpointsXp(player, actual, oldHpXp, oldHpLevel, xpDrops, levelUps);
 
     // Track hero points for kill credit
     npc.addHeroPoints(player.id, actual);
@@ -214,14 +233,13 @@ export function processPlayerRangedCombat(
   if (actual > 0) {
     // Snapshot HP level BEFORE addXp — addXp auto-awards 1/3 HP XP for combat
     // skills, so capturing after would never detect a level-up.
+    const oldHpXp = player.skills.hitpoints.xp;
     const oldHpLevel = player.skills.hitpoints.level;
     const amt = actual * 4;
     const r = addXp(player.skills, 'archery', amt);
     xpDrops.push({ skill: 'archery', amount: Math.floor(amt) });
     if (r.leveled) levelUps.push({ skill: 'archery', level: r.newLevel });
-    if (player.skills.hitpoints.level > oldHpLevel) {
-      levelUps.push({ skill: 'hitpoints', level: player.skills.hitpoints.level });
-    }
+    addCombatHitpointsXp(player, actual, oldHpXp, oldHpLevel, xpDrops, levelUps);
 
     npc.addHeroPoints(player.id, actual);
     player.syncHealthFromSkills();

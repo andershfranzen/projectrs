@@ -177,6 +177,14 @@ export class DataLoader {
     this.loadShops();
   }
 
+  /** Hot-reload items.json after editor stat changes. Existing inventories and
+   *  equipment store only item ids, so combat/equip/shop lookups immediately
+   *  see the new definitions through this map. */
+  reloadItems(): void {
+    this.items.clear();
+    this.loadItems();
+  }
+
   getShopPrice(itemId: number): number | undefined {
     return this.shopItemPrices.get(itemId);
   }

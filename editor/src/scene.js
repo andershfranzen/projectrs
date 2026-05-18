@@ -60,6 +60,8 @@ import { loadAssetRegistry } from './assets-system/AssetRegistry'
 import { loadAssetModel, cloneAssetModelSync, warmAssetCache, makeGhostMaterial, initAssetLoader } from './assets-system/AssetLoader'
 import { getThumbnail } from './assets-system/ThumbnailRenderer'
 import { openThumbnailRotationEditor } from './assets-system/ThumbnailRotationEditor'
+import { openItemThumbnailBrowser } from './assets-system/ItemThumbnailBrowser'
+import { openItemStatsEditor } from './item-stats/ItemStatsEditor'
 import { loadTextureRegistry } from './assets-system/TextureRegistry'
 import {
   buildTerrainMeshes,
@@ -729,6 +731,17 @@ function tuneModelLighting(model) {
     }
   }
   loadItemDefs()
+
+  function resolveItemThumbnailModelPath(def) {
+    if (!def) return null
+    if (def.model) {
+      if (def.model.startsWith('/')) return def.model
+      if (!def.equipSlot) return null
+      return `/assets/equipment/${def.equipSlot}/${def.model}`
+    }
+    if (def.equipSlot) return `/assets/equipment/${def.equipSlot}/${def.id}.glb`
+    return null
+  }
 
   async function loadEditorObjectDefs() {
     try {
@@ -1424,6 +1437,7 @@ let paintBrushRadius = 1
     <button id="serverReloadBtn" title="Hot-reload map in running game">Reload Game</button>
     <button id="newDungeonBtn" title="Create a new dungeon map">+ Dungeon</button>
     <button id="questsBtn" title="Edit quests.json (storyline definitions)">Quests</button>
+    <button id="itemsBtn" title="Edit item stats and compare weapon DPS">Items</button>
     <span class="top-sep"></span>
     <span class="top-label" id="mapSizeLabel">192 x 64</span>
     <button id="chunkGridBtn" title="Add/remove chunks">Chunks</button>
@@ -1537,7 +1551,10 @@ let paintBrushRadius = 1
         <button class="asset-tab" id="tabBought">Bought</button>
       </div>
       <select id="assetGroupSelect" style="display:none"></select>
-      <input id="assetSearch" type="text" placeholder="Search assets..." />
+      <div style="display:flex;gap:5px;align-items:center;margin-bottom:5px;">
+        <input id="assetSearch" type="text" placeholder="Search assets..." style="flex:1;min-width:0;" />
+        <button id="itemThumbsBtn" title="Edit inventory item thumbnails" style="width:32px;padding:5px 0;">▦</button>
+      </div>
       <div id="assetGrid" class="asset-grid"></div>
       <div style="margin-top:5px;">
         <label style="font-size:11px;color:rgba(255,255,255,0.45);">Scale <span id="placeScaleLabel">1.0</span></label>
@@ -3251,6 +3268,7 @@ let paintBrushRadius = 1
   const tabBought = sidebar.querySelector('#tabBought')
   const assetGroupSelect = sidebar.querySelector('#assetGroupSelect')
   const assetSearch = sidebar.querySelector('#assetSearch')
+  const itemThumbsBtn = sidebar.querySelector('#itemThumbsBtn')
   const assetGrid = sidebar.querySelector('#assetGrid')
   const refreshPreviewBtn = sidebar.querySelector('#refreshPreviewBtn')
   const placeScaleSlider = sidebar.querySelector('#placeScaleSlider')
@@ -6742,6 +6760,15 @@ function applyToolAtTile(tile, eventLike = null) {
   })
 
   assetSearch.addEventListener('input', refreshAssetList)
+  itemThumbsBtn?.addEventListener('click', () => {
+    openItemThumbnailBrowser({
+      loadItems: async () => {
+        if (!itemDefs.length) await loadItemDefs()
+        return itemDefs
+      },
+      resolveModelPath: resolveItemThumbnailModelPath,
+    })
+  })
 
   refreshPreviewBtn.addEventListener('click', async () => {
     await updatePreviewObject()
@@ -6874,6 +6901,7 @@ function applyToolAtTile(tile, eventLike = null) {
   const serverSaveBtn = topBar.querySelector('#serverSaveBtn')
   const serverReloadBtn = topBar.querySelector('#serverReloadBtn')
   const questsBtn = topBar.querySelector('#questsBtn')
+  const itemsBtn = topBar.querySelector('#itemsBtn')
 
   async function saveNpcDefsToServer() {
     const r = await fetch('/api/editor/npcs', {
@@ -6937,6 +6965,20 @@ function applyToolAtTile(tile, eventLike = null) {
   // Reuses the existing item-picker datalist and npcDefs cache so authors
   // pick by name rather than typing IDs.
   questsBtn?.addEventListener('click', () => openQuestsEditor())
+  itemsBtn?.addEventListener('click', () => openItemStatsEditor({
+    onSaved(savedItems) {
+      itemDefs = savedItems
+      const sel = sidebar.querySelector('#itemTypeSelect')
+      if (sel) {
+        const previous = sel.value
+        sel.innerHTML = itemDefs.map(d => `<option value="${d.id}">${d.name} (${d.id})</option>`).join('')
+        if ([...sel.options].some(o => o.value === previous)) sel.value = previous
+      }
+      const dl = document.getElementById('shopItemDatalist')
+      if (dl) dl.dataset.signature = ''
+      ensureShopItemDatalist()
+    }
+  }))
 
   async function openQuestsEditor() {
     const existing = document.getElementById('questsModal')

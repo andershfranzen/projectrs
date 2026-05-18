@@ -1,5 +1,5 @@
 {
-  "_doc": "Thumbnail tuning. Top-level numeric keys are item IDs ({ alpha, beta, distanceMult, rotationY } in radians/multipliers) consumed by client/src/rendering/ItemIcon.ts. The _thumbnail_assets object is keyed by asset path ({ alpha, beta, distanceMult }) and consumed by editor/src/assets-system/ThumbnailRenderer.ts. Underscore-prefixed top-level keys are ignored by the item loader.",
+  "_doc": "Thumbnail tuning. Top-level numeric keys are item IDs ({ alpha, beta, distanceMult, rotationY } in radians/multipliers) consumed by client/src/rendering/ItemIcon.ts. The _thumbnail_assets object is keyed by asset path ({ alpha, beta, distanceMult, rotationY }) and consumed by editor/src/assets-system/ThumbnailRenderer.ts. Underscore-prefixed top-level keys are ignored by the item loader.",
   "_example_31": { "alpha": -0.8, "beta": 1.1, "distanceMult": 0.9, "rotationY": 1.5707963 },
   "_thumbnail_assets": {}
 }

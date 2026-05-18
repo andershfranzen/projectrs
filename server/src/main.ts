@@ -2,7 +2,7 @@ import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE,
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
-import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile } from '@projectrs/shared';
+import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { defaultKCTile } from '@projectrs/shared';
 import { World } from './World';
 
@@ -117,6 +117,44 @@ async function saveJsonWithBackup(opts: {
     fsp.writeFile(tmpPath, JSON.stringify(data, null, 2)),
   ]);
   await fsp.rename(tmpPath, path);
+}
+
+const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape']);
+const EQUIP_SKILLS = new Set(['accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
+const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
+const TOOL_TYPES = new Set(['axe', 'pickaxe']);
+
+function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok: false; error: string } {
+  if (!Array.isArray(items)) return { ok: false, error: 'Body must be { items: ItemDef[] }' };
+  const seen = new Set<number>();
+  const finiteNumberFields = [
+    'value', 'attackSpeed', 'stabAttack', 'slashAttack', 'crushAttack',
+    'stabDefence', 'slashDefence', 'crushDefence', 'rangedDefence',
+    'magicDefence', 'magicAccuracy', 'meleeStrength', 'rangedAccuracy',
+    'rangedStrength', 'healAmount', 'toolLevel', 'toolBonus', 'levelRequired',
+  ];
+  for (const raw of items) {
+    if (!raw || typeof raw !== 'object') return { ok: false, error: 'Every item must be an object' };
+    const item = raw as Record<string, unknown>;
+    if (!Number.isInteger(item.id) || (item.id as number) <= 0) return { ok: false, error: `Invalid item id: ${String(item.id)}` };
+    if (seen.has(item.id as number)) return { ok: false, error: `Duplicate item id: ${item.id}` };
+    seen.add(item.id as number);
+    if (typeof item.name !== 'string' || item.name.trim().length === 0) return { ok: false, error: `Item ${item.id} is missing a name` };
+    if (typeof item.description !== 'string') return { ok: false, error: `Item ${item.id} is missing a description` };
+    if (typeof item.stackable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid stackable` };
+    if (typeof item.equippable !== 'boolean') return { ok: false, error: `Item ${item.id} has invalid equippable` };
+    if (item.equipSlot !== undefined && !EQUIP_SLOTS.has(String(item.equipSlot))) return { ok: false, error: `Item ${item.id} has invalid equipSlot` };
+    if (item.equipSkill !== undefined && !EQUIP_SKILLS.has(String(item.equipSkill))) return { ok: false, error: `Item ${item.id} has invalid equipSkill` };
+    if (item.weaponStyle !== undefined && !WEAPON_STYLES.has(String(item.weaponStyle))) return { ok: false, error: `Item ${item.id} has invalid weaponStyle` };
+    if (item.toolType !== undefined && !TOOL_TYPES.has(String(item.toolType))) return { ok: false, error: `Item ${item.id} has invalid toolType` };
+    for (const field of finiteNumberFields) {
+      const value = item[field];
+      if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+        return { ok: false, error: `Item ${item.id} has invalid ${field}` };
+      }
+    }
+  }
+  return { ok: true, items: items as ItemDef[] };
 }
 
 // --- Backup helper ---
@@ -1127,19 +1165,48 @@ const server = Bun.serve<SocketData>({
       }
     }
 
-    // Per-asset thumbnail rotation override. Editor's rotation modal POSTs
-    // {path, alpha, beta, distanceMult} to tune how an asset is framed in the
-    // asset grid. Persists into `_thumbnail_assets[path]` in
-    // server/data/thumbnail-overrides.json (the underscore prefix is ignored
-    // by the item-icon loader). Empty body (all undefined) deletes the entry.
-    if (url.pathname === '/api/dev/thumbnail-asset-rotation' && req.method === 'POST') {
+    // Thumbnail pose override. The editor POSTs asset targets into
+    // `_thumbnail_assets[path]` and item targets into top-level numeric item
+    // keys. The game client only reads the existing small JSON file when an
+    // item icon is requested, so this editor tooling does not add work to
+    // normal gameplay.
+    if ((url.pathname === '/api/dev/thumbnail-asset-rotation' || url.pathname === '/api/dev/thumbnail-override') && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
-        const body = await req.json() as { path?: unknown; alpha?: unknown; beta?: unknown; distanceMult?: unknown };
-        const path = typeof body.path === 'string' ? body.path : '';
-        if (!path || path.length > 512 || path.includes('..')) {
-          return jsonResponse({ ok: false, error: 'Invalid path' }, 400);
+        const body = await req.json() as {
+          type?: unknown;
+          key?: unknown;
+          path?: unknown;
+          alpha?: unknown;
+          beta?: unknown;
+          distanceMult?: unknown;
+          rotationY?: unknown;
+        };
+        const isLegacyAssetEndpoint = url.pathname === '/api/dev/thumbnail-asset-rotation';
+        const type = isLegacyAssetEndpoint ? 'asset' : body.type;
+        let target: any = null;
+        let targetKey = '';
+        if (type === 'asset') {
+          const path = typeof body.path === 'string'
+            ? body.path
+            : typeof body.key === 'string'
+              ? body.key
+              : '';
+          if (!path || path.length > 512 || path.includes('..')) {
+            return jsonResponse({ ok: false, error: 'Invalid asset path' }, 400);
+          }
+          target = '_thumbnail_assets';
+          targetKey = path;
+        } else if (type === 'item') {
+          const itemId = typeof body.key === 'number' ? body.key : Number(body.key);
+          if (!Number.isInteger(itemId) || itemId <= 0 || itemId > 1000000) {
+            return jsonResponse({ ok: false, error: 'Invalid item id' }, 400);
+          }
+          target = null;
+          targetKey = String(itemId);
+        } else {
+          return jsonResponse({ ok: false, error: 'Invalid thumbnail target type' }, 400);
         }
         const filePath = resolve(DATA_DIR, 'thumbnail-overrides.json');
         let data: any = {};
@@ -1150,14 +1217,17 @@ const server = Bun.serve<SocketData>({
           data._thumbnail_assets = {};
         }
         const entry: any = {};
-        const a = body.alpha, b = body.beta, d = body.distanceMult;
+        const a = body.alpha, b = body.beta, d = body.distanceMult, r = body.rotationY;
         if (typeof a === 'number' && Number.isFinite(a)) entry.alpha = a;
         if (typeof b === 'number' && Number.isFinite(b)) entry.beta = b;
         if (typeof d === 'number' && Number.isFinite(d) && d > 0) entry.distanceMult = d;
+        if (typeof r === 'number' && Number.isFinite(r)) entry.rotationY = r;
         if (Object.keys(entry).length === 0) {
-          delete data._thumbnail_assets[path];
+          if (target === '_thumbnail_assets') delete data._thumbnail_assets[targetKey];
+          else delete data[targetKey];
         } else {
-          data._thumbnail_assets[path] = entry;
+          if (target === '_thumbnail_assets') data._thumbnail_assets[targetKey] = entry;
+          else data[targetKey] = entry;
         }
         const tmpPath = filePath + '.tmp';
         writeFileSync(tmpPath, JSON.stringify(data, null, 2));
@@ -1371,6 +1441,49 @@ const server = Bun.serve<SocketData>({
         // (including game ticks) are serviced.
         void createMapBackup(mapDir);
 
+        return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/editor/items' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      try {
+        const itemsPath = resolve(DATA_DIR, 'items.json');
+        const items = await loadJsonOrNull<ItemDef[]>(itemsPath);
+        return jsonResponse({ ok: true, items: Array.isArray(items) ? items : [] });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Failed to load items' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/editor/items' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { items?: unknown };
+        const validation = validateItemDefs(body?.items);
+        if (!validation.ok) return jsonResponse({ ok: false, error: validation.error }, 400);
+
+        const itemsPath = resolve(DATA_DIR, 'items.json');
+        const existingItems = await loadJsonOrNull<ItemDef[]>(itemsPath);
+        if (Array.isArray(existingItems) && existingItems.length >= 10 && validation.items.length * 2 < existingItems.length) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing save: would shrink ${existingItems.length} → ${validation.items.length} items (>50% drop)`,
+          }, 400);
+        }
+
+        await saveJsonWithBackup({
+          path: itemsPath,
+          data: validation.items,
+          backupDir: resolve(DATA_DIR, 'backups', 'items'),
+          backupPrefix: 'items',
+          backupExt: 'json',
+          maxKeep: 20,
+        });
+        world.data.reloadItems();
         return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);

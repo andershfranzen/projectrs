@@ -20,6 +20,7 @@ interface Tier {
   smeltLevel: number;     // Level to smelt into bar
   smeltXp: number;        // XP per bar smelted
   smithBaseLevel: number; // Base smithing level for this tier's items
+  equipLevel: number;     // Level to equip gear in this tier
   statMultiplier: number; // Multiplied against base weapon/armor stats
   barValue: number;       // Gold value of one bar
   respawnTime: number;    // Rock respawn in seconds
@@ -31,12 +32,12 @@ interface Tier {
 }
 
 const TIERS: Tier[] = [
-  { name: "Bronze",     miningLevel: 1,  miningXp: 18,  smeltLevel: 1,  smeltXp: 6,  smithBaseLevel: 1,  statMultiplier: 1.0, barValue: 15,  respawnTime: 10,  depletionChance: 0.40, rockColor: [140, 90,  50]  },
-  { name: "Iron",       miningLevel: 15, miningXp: 35,  smeltLevel: 15, smeltXp: 13, smithBaseLevel: 15, statMultiplier: 1.5, barValue: 30,  respawnTime: 18,  depletionChance: 0.35, rockColor: [100, 70,  60]  },
-  { name: "Steel",      miningLevel: 30, miningXp: 50,  smeltLevel: 30, smeltXp: 18, smithBaseLevel: 30, statMultiplier: 2.0, barValue: 60,  respawnTime: 20,  depletionChance: 0.30, rockColor: [ 40, 40,  40]  },
-  { name: "Mithril",    miningLevel: 55, miningXp: 80,  smeltLevel: 50, smeltXp: 30, smithBaseLevel: 50, statMultiplier: 3.0, barValue: 120, respawnTime: 120, depletionChance: 0.25, rockColor: [ 70, 70, 120]  },
-  { name: "Adamantite", miningLevel: 70, miningXp: 95,  smeltLevel: 70, smeltXp: 38, smithBaseLevel: 70, statMultiplier: 4.0, barValue: 240, respawnTime: 240, depletionChance: 0.20, rockColor: [ 50, 100, 60]  },
-  { name: "Runite",     miningLevel: 85, miningXp: 125, smeltLevel: 85, smeltXp: 50, smithBaseLevel: 85, statMultiplier: 5.5, barValue: 480, respawnTime: 720, depletionChance: 0.15, rockColor: [ 60, 180, 180] },
+  { name: "Bronze",     miningLevel: 1,  miningXp: 18,  smeltLevel: 1,  smeltXp: 6,  smithBaseLevel: 1,  equipLevel: 1,  statMultiplier: 1.0, barValue: 15,  respawnTime: 10,  depletionChance: 0.40, rockColor: [140, 90,  50]  },
+  { name: "Iron",       miningLevel: 15, miningXp: 35,  smeltLevel: 15, smeltXp: 13, smithBaseLevel: 15, equipLevel: 6,  statMultiplier: 1.5, barValue: 30,  respawnTime: 18,  depletionChance: 0.35, rockColor: [100, 70,  60]  },
+  { name: "Steel",      miningLevel: 30, miningXp: 50,  smeltLevel: 30, smeltXp: 18, smithBaseLevel: 30, equipLevel: 15, statMultiplier: 2.0, barValue: 60,  respawnTime: 20,  depletionChance: 0.30, rockColor: [ 40, 40,  40]  },
+  { name: "Mithril",    miningLevel: 55, miningXp: 80,  smeltLevel: 50, smeltXp: 30, smithBaseLevel: 50, equipLevel: 25, statMultiplier: 3.0, barValue: 120, respawnTime: 120, depletionChance: 0.25, rockColor: [ 70, 70, 120]  },
+  { name: "Adamantite", miningLevel: 70, miningXp: 95,  smeltLevel: 70, smeltXp: 38, smithBaseLevel: 70, equipLevel: 35, statMultiplier: 4.0, barValue: 240, respawnTime: 240, depletionChance: 0.20, rockColor: [ 50, 100, 60]  },
+  { name: "Runite",     miningLevel: 85, miningXp: 125, smeltLevel: 85, smeltXp: 50, smithBaseLevel: 85, equipLevel: 42, statMultiplier: 5.5, barValue: 480, respawnTime: 720, depletionChance: 0.15, rockColor: [ 60, 180, 180] },
 ];
 
 // Fix Bronze — it needs copper ore + tin ore
@@ -84,7 +85,7 @@ const SMITHABLE_TYPES: SmithableType[] = [
   { type: "Scimitar",         bars: 2, levelOffset: 4,  equipSlot: "weapon", weaponStyle: "slash", attackSpeed: 4, baseSlash: 9, baseStr: 7 },
   { type: "Long Sword",       bars: 2, levelOffset: 6,  equipSlot: "weapon", weaponStyle: "slash", attackSpeed: 5, baseStab: 4, baseSlash: 10, baseStr: 8 },
   { type: "Battle Axe",       bars: 3, levelOffset: 10, equipSlot: "weapon", weaponStyle: "crush", attackSpeed: 6, baseCrush: 12, baseSlash: 6, baseStr: 14 },
-  { type: "2-handed Sword",   bars: 3, levelOffset: 14, equipSlot: "weapon", weaponStyle: "slash", attackSpeed: 7, baseSlash: 14, baseStr: 16, twoHanded: true },
+  { type: "2-handed Sword",   bars: 3, levelOffset: 14, equipSlot: "weapon", weaponStyle: "slash", attackSpeed: 7, baseSlash: 14, baseStr: 24, twoHanded: true },
   // Armor
   { type: "Medium Helmet",    bars: 1, levelOffset: 3,  equipSlot: "head",   baseStabDef: 3, baseSlashDef: 4, baseCrushDef: 2 },
   { type: "Full Helmet",      bars: 2, levelOffset: 7,  equipSlot: "head",   baseStabDef: 5, baseSlashDef: 6, baseCrushDef: 4 },
@@ -270,6 +271,8 @@ for (const tier of TIERS) {
       description: `${tier.name} ${st.type.toLowerCase()}.`,
       stackable: false, equippable: true,
       equipSlot: st.equipSlot,
+      equipSkill: st.equipSlot === "weapon" ? "accuracy" : "defence",
+      levelRequired: tier.equipLevel,
       value: Math.round(tier.barValue * st.bars * 1.5),
       icon: ICON_MAP[tier.name]?.[st.type],
     };

@@ -61,7 +61,9 @@
     "crushAttack": 14,
     "slashAttack": 8,
     "meleeStrength": 16,
-    "value": 100
+    "value": 100,
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 7,
@@ -172,7 +174,9 @@
     "crushDefence": 7,
     "rangedDefence": 5,
     "magicDefence": -2,
-    "value": 50
+    "value": 50,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 17,
@@ -203,7 +207,9 @@
     "crushDefence": 4,
     "magicDefence": -1,
     "value": 35,
-    "model": "/assets/equipment/head/IronFullHelm.glb"
+    "model": "/assets/equipment/head/IronFullHelm.glb",
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 19,
@@ -236,7 +242,9 @@
     "crushDefence": 5,
     "rangedDefence": 5,
     "magicDefence": -3,
-    "value": 50
+    "value": 50,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 22,
@@ -411,7 +419,7 @@
     "meleeStrength": 9,
     "value": 120,
     "toolType": "axe",
-    "toolLevel": 21,
+    "toolLevel": 15,
     "toolBonus": 2,
     "sprite": "axe base.png",
     "model": "/assets/equipment/Tools/Bronze axe.glb"
@@ -429,7 +437,7 @@
     "meleeStrength": 12,
     "value": 260,
     "toolType": "axe",
-    "toolLevel": 31,
+    "toolLevel": 25,
     "toolBonus": 3,
     "sprite": "axe base.png",
     "model": "/assets/equipment/Tools/Bronze axe.glb"
@@ -447,7 +455,7 @@
     "meleeStrength": 15,
     "value": 500,
     "toolType": "axe",
-    "toolLevel": 41,
+    "toolLevel": 35,
     "toolBonus": 4,
     "sprite": "axe base.png",
     "model": "/assets/equipment/Tools/Bronze axe.glb"
@@ -579,7 +587,7 @@
     "meleeStrength": 5,
     "value": 60,
     "toolType": "pickaxe",
-    "toolLevel": 15,
+    "toolLevel": 6,
     "toolBonus": 1,
     "icon": "Iron_Pickaxe_1258.png",
     "model": "/assets/equipment/Tools/IronPickaxe.glb"
@@ -597,7 +605,7 @@
     "meleeStrength": 6,
     "value": 120,
     "toolType": "pickaxe",
-    "toolLevel": 30,
+    "toolLevel": 15,
     "toolBonus": 2,
     "icon": "Steel_Pickaxe_1259.png",
     "model": "/assets/equipment/Tools/SteelPickaxe.glb"
@@ -615,7 +623,7 @@
     "meleeStrength": 9,
     "value": 240,
     "toolType": "pickaxe",
-    "toolLevel": 55,
+    "toolLevel": 25,
     "toolBonus": 3,
     "icon": "Mithril_Pickaxe_1260.png",
     "model": "/assets/equipment/Tools/MithrilPickaxe.glb"
@@ -633,7 +641,7 @@
     "meleeStrength": 12,
     "value": 480,
     "toolType": "pickaxe",
-    "toolLevel": 70,
+    "toolLevel": 35,
     "toolBonus": 4,
     "icon": "Black Bronze_Pickaxe_1261.png",
     "model": "/assets/equipment/Tools/Pickaxe.glb"
@@ -651,7 +659,7 @@
     "meleeStrength": 17,
     "value": 960,
     "toolType": "pickaxe",
-    "toolLevel": 85,
+    "toolLevel": 42,
     "toolBonus": 5,
     "icon": "Rune_Pickaxe_1262.png",
     "model": "/assets/equipment/Tools/Pickaxe.glb"
@@ -670,7 +678,9 @@
     "attackSpeed": 3,
     "stabAttack": 5,
     "slashAttack": 2,
-    "meleeStrength": 3
+    "meleeStrength": 3,
+    "equipSkill": "accuracy",
+    "levelRequired": 1
   },
   {
     "id": 59,
@@ -686,7 +696,9 @@
     "attackSpeed": 4,
     "stabAttack": 2,
     "slashAttack": 7,
-    "meleeStrength": 5
+    "meleeStrength": 5,
+    "equipSkill": "accuracy",
+    "levelRequired": 1
   },
   {
     "id": 60,
@@ -701,7 +713,9 @@
     "weaponStyle": "crush",
     "attackSpeed": 4,
     "crushAttack": 6,
-    "meleeStrength": 5
+    "meleeStrength": 5,
+    "equipSkill": "accuracy",
+    "levelRequired": 1
   },
   {
     "id": 61,
@@ -716,7 +730,9 @@
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 9,
-    "meleeStrength": 7
+    "meleeStrength": 7,
+    "equipSkill": "accuracy",
+    "levelRequired": 1
   },
   {
     "id": 63,
@@ -731,7 +747,9 @@
     "attackSpeed": 6,
     "slashAttack": 6,
     "crushAttack": 12,
-    "meleeStrength": 14
+    "meleeStrength": 14,
+    "equipSkill": "accuracy",
+    "levelRequired": 1
   },
   {
     "id": 64,
@@ -746,8 +764,10 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 14,
-    "meleeStrength": 16,
-    "model": "bronze_2h.glb"
+    "meleeStrength": 24,
+    "model": "bronze_2h.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 1
   },
   {
     "id": 65,
@@ -760,7 +780,9 @@
     "icon": "Medium_Bronze_Helmet_104.png",
     "stabDefence": 3,
     "slashDefence": 4,
-    "crushDefence": 2
+    "crushDefence": 2,
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 66,
@@ -774,7 +796,9 @@
     "model": "/assets/equipment/head/BronzeFullHelm.glb",
     "stabDefence": 5,
     "slashDefence": 6,
-    "crushDefence": 4
+    "crushDefence": 4,
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 67,
@@ -789,7 +813,9 @@
     "stabDefence": 4,
     "slashDefence": 5,
     "crushDefence": 4,
-    "rangedDefence": 3
+    "rangedDefence": 3,
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 68,
@@ -805,7 +831,9 @@
     "slashDefence": 10,
     "crushDefence": 6,
     "rangedDefence": 8,
-    "bodyHideStyle": "chain"
+    "bodyHideStyle": "chain",
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 69,
@@ -820,7 +848,9 @@
     "stabDefence": 7,
     "slashDefence": 8,
     "crushDefence": 7,
-    "rangedDefence": 5
+    "rangedDefence": 5,
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 70,
@@ -834,7 +864,9 @@
     "stabDefence": 6,
     "slashDefence": 7,
     "crushDefence": 5,
-    "rangedDefence": 5
+    "rangedDefence": 5,
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 71,
@@ -848,7 +880,9 @@
     "stabDefence": 14,
     "slashDefence": 16,
     "crushDefence": 12,
-    "rangedDefence": 14
+    "rangedDefence": 14,
+    "equipSkill": "defence",
+    "levelRequired": 1
   },
   {
     "id": 72,
@@ -864,7 +898,9 @@
     "attackSpeed": 3,
     "stabAttack": 8,
     "slashAttack": 3,
-    "meleeStrength": 5
+    "meleeStrength": 5,
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 73,
@@ -880,7 +916,9 @@
     "attackSpeed": 4,
     "stabAttack": 3,
     "slashAttack": 11,
-    "meleeStrength": 8
+    "meleeStrength": 8,
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 74,
@@ -895,7 +933,9 @@
     "weaponStyle": "crush",
     "attackSpeed": 4,
     "crushAttack": 9,
-    "meleeStrength": 8
+    "meleeStrength": 8,
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 75,
@@ -910,7 +950,9 @@
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 14,
-    "meleeStrength": 11
+    "meleeStrength": 11,
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 77,
@@ -925,7 +967,9 @@
     "attackSpeed": 6,
     "slashAttack": 9,
     "crushAttack": 18,
-    "meleeStrength": 21
+    "meleeStrength": 21,
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 78,
@@ -940,8 +984,10 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 21,
-    "meleeStrength": 24,
-    "model": "/assets/equipment/weapon/Iron2hSword.glb"
+    "meleeStrength": 36,
+    "model": "/assets/equipment/weapon/Iron2hSword.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 6
   },
   {
     "id": 79,
@@ -955,7 +1001,9 @@
     "model": "/assets/equipment/head/IronMedHelm.glb",
     "stabDefence": 5,
     "slashDefence": 6,
-    "crushDefence": 3
+    "crushDefence": 3,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 80,
@@ -969,7 +1017,9 @@
     "model": "/assets/equipment/head/IronFullHelm.glb",
     "stabDefence": 8,
     "slashDefence": 9,
-    "crushDefence": 6
+    "crushDefence": 6,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 81,
@@ -984,7 +1034,9 @@
     "stabDefence": 6,
     "slashDefence": 8,
     "crushDefence": 6,
-    "rangedDefence": 5
+    "rangedDefence": 5,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 82,
@@ -1000,7 +1052,9 @@
     "slashDefence": 15,
     "crushDefence": 9,
     "rangedDefence": 12,
-    "bodyHideStyle": "chain"
+    "bodyHideStyle": "chain",
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 83,
@@ -1015,7 +1069,9 @@
     "stabDefence": 11,
     "slashDefence": 12,
     "crushDefence": 11,
-    "rangedDefence": 8
+    "rangedDefence": 8,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 84,
@@ -1030,7 +1086,9 @@
     "stabDefence": 9,
     "slashDefence": 11,
     "crushDefence": 8,
-    "rangedDefence": 8
+    "rangedDefence": 8,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 85,
@@ -1045,7 +1103,9 @@
     "stabDefence": 21,
     "slashDefence": 24,
     "crushDefence": 18,
-    "rangedDefence": 21
+    "rangedDefence": 21,
+    "equipSkill": "defence",
+    "levelRequired": 6
   },
   {
     "id": 86,
@@ -1061,7 +1121,9 @@
     "attackSpeed": 3,
     "stabAttack": 10,
     "slashAttack": 4,
-    "meleeStrength": 6
+    "meleeStrength": 6,
+    "equipSkill": "accuracy",
+    "levelRequired": 15
   },
   {
     "id": 87,
@@ -1077,7 +1139,9 @@
     "stabAttack": 4,
     "slashAttack": 14,
     "meleeStrength": 10,
-    "model": "/assets/equipment/weapon/SteelSword.glb"
+    "model": "/assets/equipment/weapon/SteelSword.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 15
   },
   {
     "id": 88,
@@ -1092,7 +1156,9 @@
     "attackSpeed": 4,
     "crushAttack": 12,
     "meleeStrength": 10,
-    "model": "/assets/equipment/weapon/SteelMace.glb"
+    "model": "/assets/equipment/weapon/SteelMace.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 15
   },
   {
     "id": 89,
@@ -1107,7 +1173,9 @@
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 18,
-    "meleeStrength": 14
+    "meleeStrength": 14,
+    "equipSkill": "accuracy",
+    "levelRequired": 15
   },
   {
     "id": 91,
@@ -1122,7 +1190,9 @@
     "attackSpeed": 6,
     "slashAttack": 12,
     "crushAttack": 24,
-    "meleeStrength": 28
+    "meleeStrength": 28,
+    "equipSkill": "accuracy",
+    "levelRequired": 15
   },
   {
     "id": 92,
@@ -1137,8 +1207,10 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 28,
-    "meleeStrength": 32,
-    "model": "/assets/equipment/weapon/Steel2hsword.glb"
+    "meleeStrength": 48,
+    "model": "/assets/equipment/weapon/Steel2hsword.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 15
   },
   {
     "id": 93,
@@ -1152,7 +1224,9 @@
     "stabDefence": 6,
     "slashDefence": 8,
     "crushDefence": 4,
-    "model": "/assets/equipment/head/SteelMedHelm.glb"
+    "model": "/assets/equipment/head/SteelMedHelm.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 94,
@@ -1166,7 +1240,9 @@
     "stabDefence": 10,
     "slashDefence": 12,
     "crushDefence": 8,
-    "model": "/assets/equipment/head/SteelFullHelm.glb"
+    "model": "/assets/equipment/head/SteelFullHelm.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 95,
@@ -1181,7 +1257,9 @@
     "slashDefence": 10,
     "crushDefence": 8,
     "rangedDefence": 6,
-    "model": "/assets/equipment/shield/SteelSquareShield.glb"
+    "model": "/assets/equipment/shield/SteelSquareShield.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 96,
@@ -1197,7 +1275,9 @@
     "crushDefence": 12,
     "rangedDefence": 16,
     "bodyHideStyle": "chain",
-    "model": "/assets/equipment/body/SteelCuirass.glb"
+    "model": "/assets/equipment/body/SteelCuirass.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 97,
@@ -1212,7 +1292,9 @@
     "slashDefence": 16,
     "crushDefence": 14,
     "rangedDefence": 10,
-    "model": "/assets/equipment/shield/SteelKiteshield.glb"
+    "model": "/assets/equipment/shield/SteelKiteshield.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 98,
@@ -1227,7 +1309,9 @@
     "slashDefence": 14,
     "crushDefence": 10,
     "rangedDefence": 10,
-    "model": "/assets/equipment/legs/SteelPlatelegs.glb"
+    "model": "/assets/equipment/legs/SteelPlatelegs.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 99,
@@ -1242,7 +1326,9 @@
     "slashDefence": 32,
     "crushDefence": 24,
     "rangedDefence": 28,
-    "model": "/assets/equipment/body/SteelPlatebody.glb"
+    "model": "/assets/equipment/body/SteelPlatebody.glb",
+    "equipSkill": "defence",
+    "levelRequired": 15
   },
   {
     "id": 100,
@@ -1258,7 +1344,9 @@
     "attackSpeed": 3,
     "stabAttack": 15,
     "slashAttack": 6,
-    "meleeStrength": 9
+    "meleeStrength": 9,
+    "equipSkill": "accuracy",
+    "levelRequired": 25
   },
   {
     "id": 101,
@@ -1274,7 +1362,9 @@
     "stabAttack": 6,
     "slashAttack": 21,
     "meleeStrength": 15,
-    "model": "/assets/equipment/weapon/MithrilSword.glb"
+    "model": "/assets/equipment/weapon/MithrilSword.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 25
   },
   {
     "id": 102,
@@ -1289,7 +1379,9 @@
     "attackSpeed": 4,
     "crushAttack": 18,
     "meleeStrength": 15,
-    "model": "/assets/equipment/weapon/MithrilMace.glb"
+    "model": "/assets/equipment/weapon/MithrilMace.glb",
+    "equipSkill": "accuracy",
+    "levelRequired": 25
   },
   {
     "id": 103,
@@ -1304,7 +1396,9 @@
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 27,
-    "meleeStrength": 21
+    "meleeStrength": 21,
+    "equipSkill": "accuracy",
+    "levelRequired": 25
   },
   {
     "id": 105,
@@ -1319,7 +1413,9 @@
     "attackSpeed": 6,
     "slashAttack": 18,
     "crushAttack": 36,
-    "meleeStrength": 42
+    "meleeStrength": 42,
+    "equipSkill": "accuracy",
+    "levelRequired": 25
   },
   {
     "id": 106,
@@ -1334,7 +1430,9 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 42,
-    "meleeStrength": 48
+    "meleeStrength": 72,
+    "equipSkill": "accuracy",
+    "levelRequired": 25
   },
   {
     "id": 107,
@@ -1347,7 +1445,9 @@
     "icon": "Medium_Mithril_Helmet_106.png",
     "stabDefence": 9,
     "slashDefence": 12,
-    "crushDefence": 6
+    "crushDefence": 6,
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 108,
@@ -1360,7 +1460,9 @@
     "icon": "Large_Mithril_Helmet_110.png",
     "stabDefence": 15,
     "slashDefence": 18,
-    "crushDefence": 12
+    "crushDefence": 12,
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 109,
@@ -1375,7 +1477,9 @@
     "slashDefence": 15,
     "crushDefence": 12,
     "rangedDefence": 9,
-    "model": "/assets/equipment/shield/MithrilSquareShield.glb"
+    "model": "/assets/equipment/shield/MithrilSquareShield.glb",
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 110,
@@ -1390,7 +1494,9 @@
     "slashDefence": 30,
     "crushDefence": 18,
     "rangedDefence": 24,
-    "bodyHideStyle": "chain"
+    "bodyHideStyle": "chain",
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 111,
@@ -1405,7 +1511,9 @@
     "slashDefence": 24,
     "crushDefence": 21,
     "rangedDefence": 15,
-    "model": "/assets/equipment/shield/MithrilKiteshield.glb"
+    "model": "/assets/equipment/shield/MithrilKiteshield.glb",
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 112,
@@ -1419,7 +1527,9 @@
     "stabDefence": 18,
     "slashDefence": 21,
     "crushDefence": 15,
-    "rangedDefence": 15
+    "rangedDefence": 15,
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 113,
@@ -1433,7 +1543,9 @@
     "stabDefence": 42,
     "slashDefence": 48,
     "crushDefence": 36,
-    "rangedDefence": 42
+    "rangedDefence": 42,
+    "equipSkill": "defence",
+    "levelRequired": 25
   },
   {
     "id": 114,
@@ -1449,7 +1561,9 @@
     "attackSpeed": 3,
     "stabAttack": 20,
     "slashAttack": 8,
-    "meleeStrength": 12
+    "meleeStrength": 12,
+    "equipSkill": "accuracy",
+    "levelRequired": 35
   },
   {
     "id": 115,
@@ -1464,7 +1578,9 @@
     "attackSpeed": 4,
     "stabAttack": 8,
     "slashAttack": 28,
-    "meleeStrength": 20
+    "meleeStrength": 20,
+    "equipSkill": "accuracy",
+    "levelRequired": 35
   },
   {
     "id": 116,
@@ -1478,7 +1594,9 @@
     "weaponStyle": "crush",
     "attackSpeed": 4,
     "crushAttack": 24,
-    "meleeStrength": 20
+    "meleeStrength": 20,
+    "equipSkill": "accuracy",
+    "levelRequired": 35
   },
   {
     "id": 117,
@@ -1493,7 +1611,9 @@
     "weaponStyle": "slash",
     "attackSpeed": 4,
     "slashAttack": 36,
-    "meleeStrength": 28
+    "meleeStrength": 28,
+    "equipSkill": "accuracy",
+    "levelRequired": 35
   },
   {
     "id": 119,
@@ -1508,7 +1628,9 @@
     "attackSpeed": 6,
     "slashAttack": 24,
     "crushAttack": 48,
-    "meleeStrength": 56
+    "meleeStrength": 56,
+    "equipSkill": "accuracy",
+    "levelRequired": 35
   },
   {
     "id": 120,
@@ -1523,7 +1645,9 @@
     "attackSpeed": 7,
     "twoHanded": true,
     "slashAttack": 56,
-    "meleeStrength": 64
+    "meleeStrength": 96,
+    "equipSkill": "accuracy",
+    "levelRequired": 35
   },
   {
     "id": 121,
@@ -1536,7 +1660,9 @@
     "icon": "Medium_Black Bronze_Helmet_107.png",
     "stabDefence": 12,
     "slashDefence": 16,
-    "crushDefence": 8
+    "crushDefence": 8,
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 122,
@@ -1549,7 +1675,9 @@
     "icon": "Large_Black Bronze_Helmet_111.png",
     "stabDefence": 20,
     "slashDefence": 24,
-    "crushDefence": 16
+    "crushDefence": 16,
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 123,
@@ -1563,7 +1691,9 @@
     "stabDefence": 16,
     "slashDefence": 20,
     "crushDefence": 16,
-    "rangedDefence": 12
+    "rangedDefence": 12,
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 124,
@@ -1578,7 +1708,9 @@
     "slashDefence": 40,
     "crushDefence": 24,
     "rangedDefence": 32,
-    "bodyHideStyle": "chain"
+    "bodyHideStyle": "chain",
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 125,
@@ -1592,7 +1724,9 @@
     "stabDefence": 28,
     "slashDefence": 32,
     "crushDefence": 28,
-    "rangedDefence": 20
+    "rangedDefence": 20,
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 126,
@@ -1606,7 +1740,9 @@
     "stabDefence": 24,
     "slashDefence": 28,
     "crushDefence": 20,
-    "rangedDefence": 20
+    "rangedDefence": 20,
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 127,
@@ -1620,7 +1756,9 @@
     "stabDefence": 56,
     "slashDefence": 64,
     "crushDefence": 48,
-    "rangedDefence": 56
+    "rangedDefence": 56,
+    "equipSkill": "defence",
+    "levelRequired": 35
   },
   {
     "id": 142,

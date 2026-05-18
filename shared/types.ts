@@ -66,6 +66,9 @@ export interface ItemDef {
   magicDefence?: number;
   // Food
   healAmount?: number;
+  // Equipment requirements
+  equipSkill?: SkillId;
+  levelRequired?: number;
   // Tool properties (axes, pickaxes)
   toolType?: 'axe' | 'pickaxe';
   toolLevel?: number;

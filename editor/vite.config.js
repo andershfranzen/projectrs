@@ -15,6 +15,7 @@ export default defineConfig({
       '/api': 'http://localhost:4000',
       '/data': 'http://localhost:4000',
       '/assets': 'http://localhost:4000',
+      '/items': 'http://localhost:4000',
       '/worldsave': 'http://localhost:4000',
       // Character GLB + Mixamo animations live in client/public; proxy to the
       // client's vite dev server (:5173) so the editor's appearance preview

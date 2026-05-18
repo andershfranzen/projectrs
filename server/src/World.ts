@@ -2775,6 +2775,13 @@ export class World {
     if (!itemDef || !itemDef.equippable || !itemDef.equipSlot) return;
 
     const equipSlot = itemDef.equipSlot as EquipSlot;
+    const requiredLevel = itemDef.levelRequired ?? 1;
+    const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'accuracy' : 'defence');
+    if (requiredLevel > 1 && (player.skills[requiredSkill]?.level ?? 1) < requiredLevel) {
+      this.sendChatSystem(player, `You need level ${requiredLevel} ${SKILL_NAMES[requiredSkill] ?? 'skill'} to equip ${itemDef.name}.`);
+      return;
+    }
+
     const currentEquipped = player.equipment.get(equipSlot);
 
     // Pre-flight: figure out if any side-unequips (2H↔shield) will displace
