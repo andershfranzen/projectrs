@@ -522,7 +522,7 @@
       {
         "itemId": 237,
         "quantity": 1,
-        "chance": 0.01
+        "chance": 0.001
       }
     ]
   },
