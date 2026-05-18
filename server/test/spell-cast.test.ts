@@ -86,8 +86,11 @@ function makeWorld(player: Player, npc: Npc, spell: SpellEffectDef | undefined):
   world.players = new Map([[player.id, player]]);
   world.npcs = new Map([[npc.id, npc]]);
   world.playerCombatTargets = new Map();
+  world.npcTargetedBy = new Map();
+  world.pendingSpellImpacts = [];
   world.currentTick = 0;
   world.data = {
+    itemDefs: new Map(),
     getSpellByIndex: () => spell,
     getShop: () => null,
   };
@@ -95,6 +98,10 @@ function makeWorld(player: Player, npc: Npc, spell: SpellEffectDef | undefined):
     p.setMoveQueue([{ x: 10.5, z: 10.5 }]);
     return true;
   };
+  world.cancelSkilling = () => {};
+  world.broadcastPlayerAnimationEvent = () => {};
+  world.broadcastNearby = () => {};
+  world.sendInventory = () => {};
   return world;
 }
 
@@ -124,5 +131,22 @@ describe('server-authoritative spell casting', () => {
 
     expect(player.hasMoveQueue()).toBe(true);
     expect(player.pendingSpellCast).toEqual({ spellIndex: 0, targetEntityId: npc.id });
+  });
+
+  test('active autocast is executed by the server combat tick and keeps the target', () => {
+    const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 3.5, 1.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const world = makeWorld(player, npc, spellDef);
+
+    world.handlePlayerSetAutocast(player.id, 0);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.tickPlayerCombat();
+
+    expect(player.autocastSpellIndex).toBe(0);
+    expect(player.attackCooldown).toBe(7);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(world.pendingSpellImpacts).toHaveLength(1);
   });
 });

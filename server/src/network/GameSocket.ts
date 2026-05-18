@@ -254,6 +254,12 @@ export function handleGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_SET_AUTOCAST: {
+      if (!hasValues(values, 1)) return;
+      world.handlePlayerSetAutocast(playerId, values[0]);
+      break;
+    }
+
     case ClientOpcode.PLAYER_INTERACT_OBJECT: {
       if (!hasValues(values, 1)) return;
       const objectEntityId = values[0];

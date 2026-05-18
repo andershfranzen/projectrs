@@ -44,6 +44,10 @@ export enum ClientOpcode {
    * DataLoader sorts by spell.id at load time.
    */
   PLAYER_CAST_SPELL = 44,
+  /** Set active autocast spell. Values: [spellIndex], or -1 to disable.
+   *  Server owns repeated autocast execution while an NPC combat target is
+   *  active; client keeps local state only for UI/prediction. */
+  PLAYER_SET_AUTOCAST = 45,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Client tells server which floor the player is visually on. Sent when

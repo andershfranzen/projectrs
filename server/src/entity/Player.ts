@@ -103,9 +103,11 @@ export class Player extends Entity {
    *  transition, death, disconnect). */
   openDialogueState: { sessionId: number; npcEntityId: number; nodeId: string; visibleOptionIndices: number[] } | null = null;
   /** Talk-to-NPC intent held while the player walks into range. Fires from
-   *  the tick loop once moveQueue drains and Chebyshev distance is within
-   *  NPC_INTERACTION_RANGE. Cleared on movement redirect, death, disconnect. */
+   *  the tick loop once the player reaches a valid NPC interaction tile.
+   *  Repolls briefly if the NPC walks away just before arrival. Cleared on
+   *  movement redirect, death, disconnect. */
   pendingTalkNpcId: number = -1;
+  pendingTalkRepathTicks: number = 0;
   /** Player entity id this player is following, or -1 when not following. */
   followTargetPlayerId: number = -1;
   /** Per-quest state. Key = quest id from quests.json. Value tracks the
@@ -165,6 +167,7 @@ export class Player extends Entity {
   // Combat
   attackTarget: Entity | null = null;
   attackCooldown: number = 0;
+  autocastSpellIndex: number = -1;
   pendingSpellCast: { spellIndex: number; targetEntityId: number } | null = null;
 
   /** Tick on which the player is no longer busy. 0 = not busy.

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -495,18 +495,15 @@ export class World {
     return this.getMap(player.currentMapLevel);
   }
 
-  /** Path from the player to the NPC's interaction surface.
-   *  - Size-1: path to the anchor tile; melee callers strip the trailing tile.
-   *  - Size-N: target the cardinal-adjacent tile closest to the player and
-   *    pathfind there directly. The returned queue stops adjacent to the
-   *    footprint, so melee callers do NOT slice(0, -1) in this case. */
+  /** Path from the player to the NPC's interaction surface. Targets the
+   *  closest reachable cardinal-adjacent interaction tile directly, avoiding
+   *  post-path trimming that breaks compressed corner paths. */
   private findPlayerPathToNpc(player: Player, npc: Npc): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
     const ps = player.position;
-    if (npc.size <= 1) {
-      return map.findPathOnFloor(ps.x, ps.y, npc.position.x, npc.position.y, player.currentFloor);
-    }
-    const candidates = npc.interactionTiles();
+    const footprint = getObjectFootprintTiles(npc.position.x, npc.position.y, { width: npc.size });
+    const candidates = npc.interactionTiles()
+      .filter(tile => this.npcInteractionTileHasLineOfWalk(player, map, footprint, tile.x, tile.z));
     // Sort in place by Chebyshev to the player so the closest candidate is
     // tried first — for the common case (player already standing next to the
     // mob) this returns after a single findPathOnFloor call.
@@ -540,10 +537,7 @@ export class World {
     return false;
   }
 
-  private isPlayerNpcInteractionReachable(player: Player, npc: Npc, maxRange: number = NPC_INTERACTION_RANGE): boolean {
-    const fp = npc.distToFootprint(player.position.x, player.position.y);
-    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > maxRange) return false;
-
+  private isPlayerNpcInteractionReachable(player: Player, npc: Npc): boolean {
     const map = this.getPlayerMap(player);
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
@@ -551,18 +545,14 @@ export class World {
     for (const tile of npc.interactionTiles()) {
       if (!this.npcInteractionTileHasLineOfWalk(player, map, footprint, tile.x, tile.z)) continue;
       if (ptx === tile.x && ptz === tile.z) return true;
-      if (Math.max(Math.abs(ptx - tile.x), Math.abs(ptz - tile.z)) > maxRange) continue;
-      const path = map.findPathOnFloor(player.position.x, player.position.y, tile.x + 0.5, tile.z + 0.5, player.currentFloor);
-      if (path.length > 0 && path.length <= maxRange) return true;
     }
     return false;
   }
 
   private queuePlayerPathToNpcInteraction(player: Player, npc: Npc): boolean {
     const path = this.findPlayerPathToNpc(player, npc);
-    const queue = (npc.size <= 1 && path.length > 0) ? path.slice(0, -1) : path;
-    if (queue.length === 0) return false;
-    player.setMoveQueue(queue);
+    if (path.length === 0) return false;
+    player.setMoveQueue(path);
     return true;
   }
 
@@ -1569,6 +1559,7 @@ export class World {
       player.attackTarget = null;
       this.clearPendingObjectIntents(player);
       player.pendingTalkNpcId = -1;
+      player.pendingTalkRepathTicks = 0;
       player.followTargetPlayerId = -1;
     }
     for (const [, npc] of this.npcs) {
@@ -1651,6 +1642,7 @@ export class World {
     this.clearPendingObjectIntents(player);
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
     player.followTargetPlayerId = -1;
     this.cancelSkilling(playerId);
     // Walking auto-closes any open modal interface (bank/trade) — mirrors
@@ -1784,6 +1776,7 @@ export class World {
     this.clearPendingObjectIntents(player);
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
     player.followTargetPlayerId = target.id;
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
@@ -1863,7 +1856,8 @@ export class World {
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
-    const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
+    const isMagicAutocast = player.autocastSpellIndex >= 0;
+    const attackDist = isMagicAutocast ? SPELL_CAST_DISTANCE : (isRanged ? RANGED_ATTACK_DISTANCE : 1.5);
     if (dist > Math.max(attackDist, 24)) return;
 
     player.attackTarget = npc;
@@ -1880,14 +1874,13 @@ export class World {
       // chase still happens. tickPlayerCombat re-pathfinds every tick once
       // engaged, so any subsequent NPC movement is handled there.
       if (!player.hasMoveQueue()) {
-        const path = this.findPlayerPathToNpc(player, npc);
-        if (!isRanged) {
-          // Size-1: the path ends on the NPC's anchor (blocking) — strip it
-          // so a single-step path doesn't queue a walk onto the mob.
-          // Sized NPCs: findPlayerPathToNpc already lands adjacent.
-          const queue = (npc.size <= 1 && path.length > 0) ? path.slice(0, -1) : path;
-          player.setMoveQueue(queue);
+        if (isMagicAutocast) {
+          this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
+        } else if (!isRanged) {
+          const path = this.findPlayerPathToNpc(player, npc);
+          player.setMoveQueue(path);
         } else {
+          const path = this.findPlayerPathToNpc(player, npc);
           // Ranged: walk until within range of the nearest footprint tile.
           let cutIdx = path.length;
           for (let i = 0; i < path.length; i++) {
@@ -1924,16 +1917,19 @@ export class World {
     const dz = npc.position.y - player.position.y;
     // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
     // queue pendingTalkNpcId; the player tick loop fires it once the player
-    // walks within NPC_INTERACTION_RANGE.
+    // reaches a valid interaction tile.
     if (!this.isPlayerNpcInteractionReachable(player, npc)) {
       player.pendingTalkNpcId = npcEntityId;
+      player.pendingTalkRepathTicks = 8;
       if (!player.hasMoveQueue() && !this.queuePlayerPathToNpcInteraction(player, npc)) {
         this.sendChatSystem(player, "I can't reach that.");
         player.pendingTalkNpcId = -1;
+        player.pendingTalkRepathTicks = 0;
       }
       return;
     }
     player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
 
     // Turn the NPC to face the player on interaction (2004scape NPC.faceEntity
     // semantics). Direction goes from NPC → player so atan2 produces the yaw
@@ -3145,6 +3141,17 @@ export class World {
     this.broadcastRemoteStance(player);
   }
 
+  handlePlayerSetAutocast(playerId: number, spellIndex: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (spellIndex < 0) {
+      player.autocastSpellIndex = -1;
+      return;
+    }
+    if (!this.data.getSpellByIndex(spellIndex)) return;
+    player.autocastSpellIndex = spellIndex;
+  }
+
   /**
    * Cast a spell at an NPC. Damage rolls now, applies on the impact tick
    * (cast duration + projectile travel time) so the hit splat lands when the
@@ -3154,7 +3161,7 @@ export class World {
    * PvP is intentionally off — only NPC targets accepted for now.
    * Combat formula is a placeholder; Phase 5 will swap in magic level + tier.
    */
-  handlePlayerCastSpell(playerId: number, spellIndex: number, targetEntityId: number): void {
+  handlePlayerCastSpell(playerId: number, spellIndex: number, targetEntityId: number, keepCombatTarget: boolean = false): void {
     const player = this.players.get(playerId);
     if (!player || !player.alive) return;
     if (player.isBusy(this.currentTick)) return;
@@ -3171,7 +3178,7 @@ export class World {
     player.clearMoveQueue();
     player.followTargetPlayerId = -1;
     if (player.attackCooldown > 0) {
-      if (this.playerCombatTargets.has(playerId)) {
+      if (!keepCombatTarget && this.playerCombatTargets.has(playerId)) {
         player.pendingSpellCast = { spellIndex, targetEntityId };
         this.clearCombatTarget(playerId);
       }
@@ -3187,7 +3194,7 @@ export class World {
     }
 
     this.cancelSkilling(playerId);
-    this.clearCombatTarget(playerId);                          // cancel auto-attack
+    if (!keepCombatTarget) this.clearCombatTarget(playerId);   // single-cast cancels auto-attack
 
     // Magic combat roll. Mirrors the OSRS pattern in processPlayerCombat /
     // processPlayerRangedCombat: dual roll (attacker vs defender), miss → 0
@@ -4215,16 +4222,30 @@ export class World {
       }
       // Deferred Talk-to fires once the walk has drained. Mid-walk firing
       // would open the dialogue while the character is still striding;
-      // waiting matches RS2. If the path drained without reaching range
-      // (blocked, NPC wandered), drop the intent — user re-clicks.
+      // waiting matches RS2. If the NPC wandered just before arrival, allow
+      // a small bounded repath before dropping the intent.
       if (player.pendingTalkNpcId >= 0 && !player.hasMoveQueue()) {
         const id = player.pendingTalkNpcId;
-        player.pendingTalkNpcId = -1;
         const targetNpc = this.npcs.get(id);
         const inRange = targetNpc && !targetNpc.dead
           && targetNpc.currentMapLevel === player.currentMapLevel
           && this.isPlayerNpcInteractionReachable(player, targetNpc);
-        if (inRange) this.handlePlayerTalkNpc(playerId, id);
+        if (inRange) {
+          player.pendingTalkNpcId = -1;
+          player.pendingTalkRepathTicks = 0;
+          this.handlePlayerTalkNpc(playerId, id);
+        } else if (
+          targetNpc
+          && !targetNpc.dead
+          && targetNpc.currentMapLevel === player.currentMapLevel
+          && player.pendingTalkRepathTicks > 0
+          && this.queuePlayerPathToNpcInteraction(player, targetNpc)
+        ) {
+          player.pendingTalkRepathTicks--;
+        } else {
+          player.pendingTalkNpcId = -1;
+          player.pendingTalkRepathTicks = 0;
+        }
       }
     }
   }
@@ -4345,7 +4366,23 @@ export class World {
         continue;
       }
 
-      const map = this.getPlayerMap(player);
+      if (player.autocastSpellIndex >= 0) {
+        const def = this.data.getSpellByIndex(player.autocastSpellIndex);
+        if (!def) {
+          player.autocastSpellIndex = -1;
+          continue;
+        }
+        const fp = npc.distToFootprint(player.position.x, player.position.y);
+        const dist = Math.hypot(fp.dx, fp.dz);
+        if (dist > SPELL_CAST_DISTANCE) {
+          if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
+          continue;
+        }
+        if (player.attackCooldown <= 0) {
+          this.handlePlayerCastSpell(playerId, player.autocastSpellIndex, npcId, true);
+        }
+        continue;
+      }
 
       const isRanged = player.isRangedWeapon(itemDefs);
       const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
@@ -4366,11 +4403,7 @@ export class World {
           const path = this.findPlayerPathToNpc(player, npc);
           if (path.length > 0) {
             if (!isRanged) {
-              // Size-1: strip the trailing anchor tile so the player stops
-              // adjacent. Sized NPCs: findPlayerPathToNpc already lands
-              // adjacent, so the queue is used as-is.
-              const queue = (npc.size <= 1 && path.length > 1) ? path.slice(0, -1) : path;
-              player.setMoveQueue(queue);
+              player.setMoveQueue(path);
             } else {
               // Ranged: walk only as far as needed to be in attack distance.
               let cutIdx = path.length;
@@ -4944,6 +4977,7 @@ export class World {
     this.clearPendingObjectIntents(player);
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
     player.pendingPickup = -1;
     player.attackCooldown = 0;
     player.delayedUntilTick = 0;
@@ -5070,6 +5104,7 @@ export class World {
     player.pendingPickup = -1;
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
     player.followTargetPlayerId = -1;
     player.actionDelay = 0;
     this.cancelSkilling(player.id);

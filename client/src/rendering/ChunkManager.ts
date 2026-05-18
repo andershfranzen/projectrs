@@ -190,6 +190,9 @@ export class ChunkManager {
   private queuedObjectChunks: Set<string> = new Set();
   private objectChunkQueueScheduled: boolean = false;
   private readonly objectChunkFrameBudgetMs: number = 6;
+  private pendingShadowGroundRebuildChunks: Set<string> = new Set();
+  private shadowGroundRebuildScheduled: boolean = false;
+  private readonly shadowGroundRebuildFrameBudgetMs: number = 4;
   /** Chunks the server has confirmed have no placed objects (404 from per-chunk
    *  fetch). Persists across chunk eviction so we never re-fetch a known-empty
    *  chunk in the same session. */
@@ -754,6 +757,7 @@ export class ChunkManager {
           floorSet.stairs?.dispose();
         }
         this.chunks.delete(key);
+        this.pendingShadowGroundRebuildChunks.delete(key);
       }
     }
 
@@ -3179,7 +3183,7 @@ export class ChunkManager {
 
     if (objects && objects.length > 0) {
       this.addShadowsForObjects(objects);
-      this.rebuildGroundChunksForObjects(objects);
+      this.queueGroundShadowRebuildsForObjects(objects);
     }
 
     this.onChunkObjectsLoaded?.(chunkKey);
@@ -3522,9 +3526,8 @@ export class ChunkManager {
     }
   }
 
-  /** Rebuild ground meshes for chunks affected by newly loaded placed objects (for shadow updates) */
-  private rebuildGroundChunksForObjects(objects: PlacedObject[]): void {
-    const affectedChunks = new Set<string>();
+  /** Queue ground mesh rebuilds for chunks affected by newly loaded object shadows. */
+  private queueGroundShadowRebuildsForObjects(objects: PlacedObject[]): void {
     for (const obj of objects) {
       const name = obj.assetId.toLowerCase();
       const isShadowCaster = name.includes('tree') || name.includes('bush') || name.includes('modular') || name.includes('wall') || name.includes('house') || name.includes('rock');
@@ -3536,23 +3539,60 @@ export class ChunkManager {
       const cz1 = Math.floor((obj.position.z + shadowR) / CHUNK_SIZE);
       for (let cx = cx0; cx <= cx1; cx++) {
         for (let cz = cz0; cz <= cz1; cz++) {
-          affectedChunks.add(`${cx},${cz}`);
+          const key = `${cx},${cz}`;
+          if (this.chunks.has(key)) this.pendingShadowGroundRebuildChunks.add(key);
         }
       }
     }
-    let rebuilt = 0;
-    for (const key of affectedChunks) {
-      const existing = this.chunks.get(key);
-      if (!existing) continue;
-      const [cx, cz] = key.split(',').map(Number);
-      const startX = cx * CHUNK_SIZE, startZ = cz * CHUNK_SIZE;
-      const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
-      const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
-      // Rebuild just the ground mesh with updated shadows
-      existing.ground.dispose();
-      existing.ground = this.buildGroundMesh(cx, cz, startX, startZ, endX, endZ);
-      rebuilt++;
+    this.scheduleShadowGroundRebuilds();
+  }
+
+  private scheduleShadowGroundRebuilds(): void {
+    if (this.shadowGroundRebuildScheduled || this.pendingShadowGroundRebuildChunks.size === 0) return;
+    this.shadowGroundRebuildScheduled = true;
+    const schedule = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : (cb: FrameRequestCallback) => window.setTimeout(() => cb(performance.now()), 16);
+    schedule(() => this.processShadowGroundRebuilds());
+  }
+
+  private processShadowGroundRebuilds(): void {
+    this.shadowGroundRebuildScheduled = false;
+    const start = performance.now();
+
+    while (this.pendingShadowGroundRebuildChunks.size > 0) {
+      let bestKey: string | null = null;
+      let bestDist = Infinity;
+      for (const key of this.pendingShadowGroundRebuildChunks) {
+        const [cx, cz] = key.split(',').map(Number);
+        const dist = Math.max(Math.abs(cx - this.lastChunkX), Math.abs(cz - this.lastChunkZ));
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestKey = key;
+        }
+      }
+      if (!bestKey) break;
+      this.pendingShadowGroundRebuildChunks.delete(bestKey);
+      this.rebuildGroundChunkForShadows(bestKey);
+      if (performance.now() - start >= this.shadowGroundRebuildFrameBudgetMs) break;
     }
+
+    this.scheduleShadowGroundRebuilds();
+  }
+
+  private rebuildGroundChunkForShadows(key: string): void {
+    const existing = this.chunks.get(key);
+    if (!existing) return;
+    const [cx, cz] = key.split(',').map(Number);
+    const startX = cx * CHUNK_SIZE, startZ = cz * CHUNK_SIZE;
+    const endX = Math.min(startX + CHUNK_SIZE, this.mapWidth);
+    const endZ = Math.min(startZ + CHUNK_SIZE, this.mapHeight);
+    const wasEnabled = existing.ground.isEnabled();
+    existing.ground.dispose();
+    existing.ground = this.buildGroundMesh(cx, cz, startX, startZ, endX, endZ);
+    existing.ground.freezeWorldMatrix();
+    existing.ground.doNotSyncBoundingInfo = true;
+    existing.ground.setEnabled(wasEnabled);
   }
 
   private getShadowAt(vx: number, vz: number): number {
@@ -3929,6 +3969,8 @@ export class ChunkManager {
     this.objectChunkQueue = [];
     this.queuedObjectChunks.clear();
     this.objectChunkQueueScheduled = false;
+    this.pendingShadowGroundRebuildChunks.clear();
+    this.shadowGroundRebuildScheduled = false;
     this.templateBaseMatrices.clear();
     this.loadingObjectChunks.clear();
     this.roofObjectGrid.clear();

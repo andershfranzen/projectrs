@@ -3615,14 +3615,13 @@ export class GameManager {
     this.autoCastSpellIndex = this.sidePanel?.getAutocastSpell() ?? -1;
     this.pendingFaceTargetEntityId = npcEntityId;
     const target = this.entities.npcTargets.get(npcEntityId);
-    if (target) this.faceLocalPlayerToward(target.x, target.z);
     this._combatPathTimer = 0.6;
 
     if (this.autoCastSpellIndex >= 0) {
       this.combatTargetId = -1;
       this.magicTargetId = npcEntityId;
       this.predictSpellCastMovementToNpc(npcEntityId);
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, npcEntityId));
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
       return;
     }
 
@@ -3633,6 +3632,8 @@ export class GameManager {
         this.startPredictedPath(path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
+      } else {
+        this.faceLocalPlayerToward(target.x, target.z);
       }
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
@@ -3641,6 +3642,7 @@ export class GameManager {
   private handleAutocastChange(spellIndex: number): void {
     this.autoCastSpellIndex = spellIndex;
     const targetId = this.magicTargetId >= 0 ? this.magicTargetId : this.combatTargetId;
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_AUTOCAST, spellIndex));
     if (targetId < 0) return;
 
     this._combatPathTimer = 0;
@@ -3648,13 +3650,14 @@ export class GameManager {
       this.combatTargetId = -1;
       this.magicTargetId = targetId;
       this.predictSpellCastMovementToNpc(targetId);
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId));
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, targetId));
       return;
     }
 
     this.magicTargetId = -1;
-    if (this.combatTargetId >= 0 && performance.now() >= this.castingUntil) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+    this.combatTargetId = targetId;
+    if (performance.now() >= this.castingUntil) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, targetId));
     }
   }
 
@@ -3695,30 +3698,10 @@ export class GameManager {
   private resumeTalkToNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (!target) return;
-    // Mid-tile click: re-pathing from a fractional playerX/Z desyncs from
-    // the server (tile-aligned only). Truncate the active path to the
-    // in-progress step, then send TALK_NPC immediately. The server already
-    // owns deferred talk execution and will fire it after that move drains.
-    if (this.tileProgress > 0 && this.pathIndex < this.path.length) {
-      const activeStep = this.getActiveUnitStep();
-      const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
-      this.path = [currentTarget];
-      this.pathIndex = 0;
-      if (activeStep) {
-        this.tileProgress = activeStep.progress;
-        this.setTileFrom(activeStep.from.x, activeStep.from.z);
-      }
-      this.network.sendMove([currentTarget]);
-      if (this.destMarker) this.destMarker.isVisible = false;
-      this.minimap?.clearDestination();
-      this.pendingFaceTargetEntityId = npcEntityId;
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
-      return;
-    }
     this.pendingFaceTargetEntityId = npcEntityId;
 
     // sendMove BEFORE TALK_NPC so the server walks the same tiles.
-    if (!this.isPlayerInNpcInteractionRange(npcEntityId, target, NPC_INTERACTION_RANGE)) {
+    if (!this.isPlayerOnNpcInteractionTile(npcEntityId, target)) {
       const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
       const path = pathResult.path;
       if (path.length > 0) {
@@ -3918,26 +3901,35 @@ export class GameManager {
     const fp = this.distToNpcFootprint(npcEntityId, target, this.playerX, this.playerZ);
     if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > range) return false;
 
-    const size = this.getNpcTileSize(npcEntityId);
     const ptx = Math.floor(this.playerX);
     const ptz = Math.floor(this.playerZ);
-    const candidates = getObjectInteractionTiles(target.x, target.z, { width: size });
+    for (const tile of this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)) {
+      if (ptx === tile.x && ptz === tile.z) return true;
+      const { path } = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
+      if (path.length > 0 && path.length <= range) return true;
+    }
+    return false;
+  }
+
+  private isPlayerOnNpcInteractionTile(npcEntityId: number, target: { x: number; z: number }): boolean {
+    const ptx = Math.floor(this.playerX);
+    const ptz = Math.floor(this.playerZ);
+    return this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
+      .some(tile => ptx === tile.x && ptz === tile.z);
+  }
+
+  private getNpcInteractionTilesWithLineOfWalk(npcEntityId: number, target: { x: number; z: number }): { x: number; z: number }[] {
+    const size = this.getNpcTileSize(npcEntityId);
     const footprint = getObjectFootprintTiles(target.x, target.z, { width: size });
-    const hasLineOfWalk = (tileX: number, tileZ: number): boolean => {
+    const hasLineOfWalk = (tileX: number, tileZ: number) => {
       for (const foot of footprint) {
         if (Math.abs(foot.x - tileX) + Math.abs(foot.z - tileZ) !== 1) continue;
         if (!this.isWallBlockedForPath(tileX, tileZ, foot.x, foot.z)) return true;
       }
       return false;
     };
-
-    for (const tile of candidates) {
-      if (!hasLineOfWalk(tile.x, tile.z)) continue;
-      if (ptx === tile.x && ptz === tile.z) return true;
-      const { path } = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
-      if (path.length > 0 && path.length <= range) return true;
-    }
-    return false;
+    return getObjectInteractionTiles(target.x, target.z, { width: size })
+      .filter(tile => !this.isTileBlocked(tile.x, tile.z) && hasLineOfWalk(tile.x, tile.z));
   }
 
   private isPointInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, x: number, z: number, range: number): boolean {
@@ -3946,20 +3938,7 @@ export class GameManager {
   }
 
   private findPathToNpcInteraction(npcEntityId: number, target: { x: number; z: number }, requiredRange: number = NPC_INTERACTION_RANGE): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
-    const size = this.getNpcTileSize(npcEntityId);
-    if (size <= 1) {
-      const result = this.findPathFromMovementAnchor(target.x, target.z);
-      if (result.path.length > 0) {
-        const last = result.path[result.path.length - 1];
-        if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
-          result.path.pop();
-        }
-      }
-      return result;
-    }
-
-    const candidates = getObjectInteractionTiles(target.x, target.z, { width: size })
-      .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+    const candidates = this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
       .map(tile => ({
         x: tile.x,
         z: tile.z,
@@ -3974,54 +3953,20 @@ export class GameManager {
       const result = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
       if (result.path.length > 0) {
         const last = result.path[result.path.length - 1];
+        const reachesInteractionTile = Math.floor(last.x) === tile.x && Math.floor(last.z) === tile.z;
+        if (requiredRange <= NPC_INTERACTION_RANGE && reachesInteractionTile) {
+          return result;
+        }
         // findPath() falls back to a closest-approach tile when the exact
         // adjacent tile is unreachable. For large NPCs, accepting that here
         // can walk the player near the body but still outside attack/talk
         // range, so keep trying other sides unless the terminal tile works.
-        if (this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange)) {
+        if (requiredRange > NPC_INTERACTION_RANGE && this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange)) {
           return result;
         }
       }
     }
     return { path: [], preserveCurrentStep: false };
-  }
-
-  /** Pathfind so the path ends one unit-tile short of (targetX, targetZ).
-   *  Pathfinding to the target and popping the last waypoint outright is
-   *  broken under corner compression: a straight-line walk compresses to
-   *  [firstStep, lastStep], and the pop leaves just [firstStep] — one tile
-   *  from the player, far from the target. Instead we trim the last
-   *  waypoint by stepping back one unit-tile along the final segment
-   *  direction; the compressed segment between the second-last and the
-   *  trimmed last is server-expanded into unit tiles unchanged, preserving
-   *  the full walk distance. */
-  private findPathAdjacentToTarget(targetX: number, targetZ: number): { x: number; z: number }[] {
-    const path = findPath(this.playerX, this.playerZ, targetX, targetZ,
-      this.isTileBlocked,
-      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), 200,
-      this.isWallBlockedForPath);
-    if (path.length === 0) return path;
-
-    const ntx = Math.floor(targetX);
-    const ntz = Math.floor(targetZ);
-    const last = path[path.length - 1];
-    const lastTx = Math.floor(last.x);
-    const lastTz = Math.floor(last.z);
-    // findPath fell back to closest-approach (target unreachable) — the path
-    // already ends on a non-target tile, so no trim needed.
-    if (lastTx !== ntx || lastTz !== ntz) return path;
-
-    const prev = path.length >= 2 ? path[path.length - 2] : { x: this.playerX, z: this.playerZ };
-    const prevTx = Math.floor(prev.x);
-    const prevTz = Math.floor(prev.z);
-    const newTx = lastTx - Math.sign(lastTx - prevTx);
-    const newTz = lastTz - Math.sign(lastTz - prevTz);
-    if (path.length >= 2 && prevTx === newTx && prevTz === newTz) {
-      path.pop();
-    } else {
-      path[path.length - 1] = { x: newTx + 0.5, z: newTz + 0.5 };
-    }
-    return path;
   }
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
@@ -4034,6 +3979,8 @@ export class GameManager {
   private startLocalPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
     if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
+    this.localPlayer?.clearFaceLock();
+    if (this.localPlayer?.isAnimating()) this.localPlayer.resetTransientAnimation();
     this.path = path;
     this.pathIndex = 0;
     if (preserveCurrentStep && activeStep && this.sameTile(path[0], activeStep.target)) {
@@ -5418,8 +5365,16 @@ export class GameManager {
       const npcTarget = this.entities.npcTargets.get(this.magicTargetId);
       if (!npcTarget) return;
       if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
+      const fp = this.distToNpcFootprint(this.magicTargetId, npcTarget, this.playerX, this.playerZ);
+      if (Math.hypot(fp.dx, fp.dz) <= SPELL_CAST_DISTANCE) return;
       this._combatPathTimer = 0.6;
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.magicTargetId));
+      const pathResult = this.findPathToNpcInteraction(this.magicTargetId, npcTarget, SPELL_CAST_DISTANCE);
+      if (pathResult.path.length > 0) {
+        this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+        if (this.destMarker) this.destMarker.isVisible = false;
+        this.minimap?.clearDestination();
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.magicTargetId));
+      }
       return;
     }
 
@@ -5699,15 +5654,10 @@ export class GameManager {
         this.localPlayer.updateMovementDirection(dx, dz, camPos);
       }
 
-      // Per-tick faceEntity refresh — combat takes precedence over a
-      // pending talk-to. Both clear on a ground click.
-      const lockId = this.combatTargetId >= 0
-        ? this.combatTargetId
-        : (this.magicTargetId >= 0 ? this.magicTargetId : this.pendingFaceTargetEntityId);
-      if (lockId >= 0) {
-        const npcTarget = this.entities.npcTargets.get(lockId);
-        if (npcTarget) this.localPlayer.lockFaceTowardXZ(npcTarget.x, npcTarget.z);
-      }
+      // Do not face-lock to NPCs while pathing. Keeping the body aimed at a
+      // far target makes the walk animation turn into strafing/backpedaling,
+      // which reads as sliding. Arrival handling faces the NPC once movement
+      // has actually finished.
     }
 
     // Apply the visual slide offset (zero when no slide is active, so this
