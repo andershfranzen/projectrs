@@ -8,6 +8,9 @@ import type { EquipSlot } from './entity/Player';
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
+const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
+const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
+const SUSPECT_SKETCH_ITEM_ID = 236;
 
 export interface SessionInfo {
   accountId: number;
@@ -111,6 +114,37 @@ export interface IpBanRecord extends BanInfo {
   bannedBy: string;
 }
 
+function removeQuestFromSavedState(rawJson: string | null, questId: string): { json: string; changed: boolean } {
+  try {
+    const parsed = rawJson ? JSON.parse(rawJson) as Record<string, unknown> : {};
+    if (!parsed || typeof parsed !== 'object' || !Object.prototype.hasOwnProperty.call(parsed, questId)) {
+      return { json: rawJson || '{}', changed: false };
+    }
+    delete parsed[questId];
+    return { json: JSON.stringify(parsed), changed: true };
+  } catch {
+    return { json: rawJson || '{}', changed: false };
+  }
+}
+
+function removeItemFromSavedSlots(rawJson: string | null, fallbackSize: number, itemId: number): { json: string; changed: boolean } {
+  try {
+    const parsed = rawJson ? JSON.parse(rawJson) as unknown : [];
+    const slots = Array.isArray(parsed) ? parsed : new Array(fallbackSize).fill(null);
+    let changed = false;
+    const cleaned = slots.map(slot => {
+      if (!slot || typeof slot !== 'object') return slot;
+      const maybeSlot = slot as { itemId?: unknown };
+      if (maybeSlot.itemId !== itemId) return slot;
+      changed = true;
+      return null;
+    });
+    return { json: changed ? JSON.stringify(cleaned) : (rawJson || JSON.stringify(slots)), changed };
+  } catch {
+    return { json: rawJson || JSON.stringify(new Array(fallbackSize).fill(null)), changed: false };
+  }
+}
+
 export class GameDatabase {
   private db: SQLiteDB;
   private lastHiscoreSnapshotPruneAt = 0;
@@ -154,6 +188,13 @@ export class GameDatabase {
       );
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS server_migrations (
+        id TEXT PRIMARY KEY,
+        applied_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+    `);
+
     // Migration: add appearance column if missing (existing databases)
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN appearance TEXT DEFAULT NULL`);
@@ -194,6 +235,7 @@ export class GameDatabase {
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN renown INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
+    this.runOneTimeDataMigrations();
 
     // Bot detection telemetry. One row per account, updated on session flush
     // (every 5 min during play + at logout). Survives restarts so an account
@@ -349,6 +391,45 @@ export class GameDatabase {
       CREATE INDEX IF NOT EXISTS idx_hiscore_snapshots_category_bucket
         ON hiscore_snapshots(category, bucket_start);
     `);
+  }
+
+  private runOneTimeDataMigrations(): void {
+    const alreadyResetBob = this.db.query('SELECT 1 FROM server_migrations WHERE id = ?')
+      .get(RESET_BOBS_BURIAL_MIGRATION_ID);
+    if (alreadyResetBob) return;
+
+    const changed = this.resetBobBurialSavedState();
+    this.db.query('INSERT INTO server_migrations (id) VALUES (?)').run(RESET_BOBS_BURIAL_MIGRATION_ID);
+    console.log(`[migration] Reset Bob's Burial quest state for ${changed} saved player(s).`);
+  }
+
+  private resetBobBurialSavedState(): number {
+    const rows = this.db.query('SELECT account_id, inventory, bank, quests FROM player_state')
+      .all() as Array<{ account_id: number; inventory: string | null; bank: string | null; quests: string | null }>;
+    const updates: Array<{ accountId: number; inventory: string; bank: string; quests: string }> = [];
+
+    for (const row of rows) {
+      const inventory = removeItemFromSavedSlots(row.inventory, 28, SUSPECT_SKETCH_ITEM_ID);
+      const bank = removeItemFromSavedSlots(row.bank, 0, SUSPECT_SKETCH_ITEM_ID);
+      const quests = removeQuestFromSavedState(row.quests, BOBS_BURIAL_QUEST_ID);
+      if (!inventory.changed && !bank.changed && !quests.changed) continue;
+      updates.push({
+        accountId: row.account_id,
+        inventory: inventory.json,
+        bank: bank.json,
+        quests: quests.json,
+      });
+    }
+
+    if (updates.length === 0) return 0;
+    const tx = this.db.transaction((rowsToUpdate: typeof updates) => {
+      const stmt = this.db.query('UPDATE player_state SET inventory = ?, bank = ?, quests = ?, updated_at = unixepoch() WHERE account_id = ?');
+      for (const update of rowsToUpdate) {
+        stmt.run(update.inventory, update.bank, update.quests, update.accountId);
+      }
+    });
+    tx(updates);
+    return updates.length;
   }
 
   // -- Door state -----------------------------------------------------------

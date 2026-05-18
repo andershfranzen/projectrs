@@ -1703,6 +1703,15 @@
         "depleteRespawnTicks": 0
       }
     ],
-    "interactionSides": 1
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": 1
+      },
+      {
+        "x": 1,
+        "z": 0
+      }
+    ]
   }
 ]

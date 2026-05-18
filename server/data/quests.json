@@ -15,7 +15,9 @@
         "trigger": {
           "type": "dialogue",
           "npcDefId": 8,
-          "npcName": "Robert"
+          "npcName": "Robert",
+          "nodeId": "greet",
+          "optionLabel": "About Bob"
         }
       },
       {
@@ -33,14 +35,15 @@
     ],
     "rewards": {
       "xp": {
-        "roguery": 500
+        "roguery": 850
       },
       "items": [
         {
           "itemId": 10,
           "quantity": 250
         }
-      ]
+      ],
+      "renown": 1
     }
   }
 ]

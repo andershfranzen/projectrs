@@ -89,6 +89,16 @@
               },
               {
                 "label": "Goodbye."
+              },
+              {
+                "label": "About Bob",
+                "next": "Bob_s_Burial_stage_0_reply",
+                "condition": {
+                  "type": "questStage",
+                  "questId": "Bob's Burial",
+                  "minStage": 0,
+                  "maxStage": 0
+                }
               }
             ]
           },
@@ -108,6 +118,18 @@
               {
                 "label": "Back.",
                 "next": "greet"
+              }
+            ]
+          },
+          "Bob_s_Burial_stage_0_reply": {
+            "id": "Bob_s_Burial_stage_0_reply",
+            "lines": [
+              "Oh its horrible, apparently some insane person walked into the cow pen and just slew ol' Bob.",
+              "Heard the farmer down south west saw it all happen, hopefully he can describe the killer so Bob can get justice!"
+            ],
+            "options": [
+              {
+                "label": "Continue."
               }
             ]
           }

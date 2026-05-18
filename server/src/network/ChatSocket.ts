@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ALL_SKILLS, type SkillId } from '@projectrs/shared';
+import { ALL_SKILLS, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
@@ -55,7 +55,7 @@ function checkChatRate(ws: ServerWebSocket<ChatSocketData>): boolean {
 }
 
 export function broadcastLocalMessage(from: string, message: string): void {
-  const msg = message.substring(0, 200);
+  const msg = message.substring(0, 1000);
   if (!from || msg.length === 0) return;
   const payload = JSON.stringify({ type: 'local', from, message: msg });
   for (const sock of chatSockets) {
@@ -317,6 +317,50 @@ function handleCommand(
       break;
     }
 
+    case '/queststart':
+    case '/qstart': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const parsed = parseQuestAdminCommand(parts, from, world);
+      if (!parsed) {
+        sendSystem(ws, 'Usage: /queststart <quest id or name> [player]');
+        return;
+      }
+      const target = findPlayerByUsername(parsed.targetName, world);
+      if (!target) {
+        sendSystem(ws, `Player "${parsed.targetName}" not online.`);
+        return;
+      }
+      if (!world.startQuestForAdmin(target, parsed.quest.id)) {
+        sendSystem(ws, `Could not start quest "${parsed.quest.name}".`);
+        return;
+      }
+      sendSystem(ws, `Started "${parsed.quest.name}" for ${target.name}.`);
+      sendSystemMessageToUser(target.name, `Admin started quest: ${parsed.quest.name}.`);
+      break;
+    }
+
+    case '/questreset':
+    case '/qreset': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const parsed = parseQuestAdminCommand(parts, from, world);
+      if (!parsed) {
+        sendSystem(ws, 'Usage: /questreset <quest id or name> [player]');
+        return;
+      }
+      const target = findPlayerByUsername(parsed.targetName, world);
+      if (!target) {
+        sendSystem(ws, `Player "${parsed.targetName}" not online.`);
+        return;
+      }
+      if (!world.resetQuestForAdmin(target, parsed.quest.id)) {
+        sendSystem(ws, `Could not reset quest "${parsed.quest.name}".`);
+        return;
+      }
+      sendSystem(ws, `Reset "${parsed.quest.name}" for ${target.name}.`);
+      sendSystemMessageToUser(target.name, `Admin reset quest: ${parsed.quest.name}.`);
+      break;
+    }
+
     case '/unstuck': {
       // Open to everyone during alpha — re-gate to admin (or add a cooldown)
       // once death drops / PvP zones make a free escape exploitable.
@@ -504,6 +548,24 @@ function handleCommand(
       sendSystem(ws, `Unknown command: ${cmd}`);
     }
   }
+}
+
+function parseQuestAdminCommand(
+  parts: string[],
+  defaultTargetName: string,
+  world: World,
+): { quest: QuestDef; targetName: string } | null {
+  const args = parts.slice(1).filter(Boolean);
+  if (args.length === 0) return null;
+  const quests = world.data.getAllQuests();
+  for (let len = args.length; len >= 1; len--) {
+    const query = args.slice(0, len).join(' ').toLowerCase();
+    const quest = quests.find(q => q.id.toLowerCase() === query || q.name.toLowerCase() === query);
+    if (!quest) continue;
+    const targetName = args.slice(len).join(' ') || defaultTargetName;
+    return { quest, targetName };
+  }
+  return null;
 }
 
 function checkCommandCooldown(ws: ServerWebSocket<ChatSocketData>, cmd: string): boolean {

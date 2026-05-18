@@ -2464,7 +2464,7 @@ export class World {
         this.queueObjectSaySequence(player, effect.saySequence);
       } else if (typeof effect.say === 'string') {
         const say = effect.say.trim();
-        if (say) broadcastLocalMessage(player.name, say.slice(0, 200));
+        if (say) broadcastLocalMessage(player.name, say.slice(0, 1000));
       }
       const message = typeof effect.message === 'string' ? effect.message.trim() : '';
       if (message) this.sendChatSystem(player, message.slice(0, 300));
@@ -2490,7 +2490,7 @@ export class World {
     if (!sequence) return;
     for (const line of sequence) {
       if (!line || typeof line.text !== 'string') continue;
-      const message = line.text.trim().slice(0, 200);
+      const message = line.text.trim().slice(0, 1000);
       if (!message) continue;
       const delaySeconds = typeof line.delaySeconds === 'number' && Number.isFinite(line.delaySeconds)
         ? Math.max(0, Math.min(30, line.delaySeconds))
@@ -3121,6 +3121,14 @@ export class World {
       this.sendSingleSkill(player, hpIdx);
       player.syncHealthFromSkills();
     }
+  }
+
+  startQuestForAdmin(player: Player, questId: string): boolean {
+    return this.quests.setPlayerQuestStage(player, questId, 0);
+  }
+
+  resetQuestForAdmin(player: Player, questId: string): boolean {
+    return this.quests.resetPlayerQuest(player, questId);
   }
 
   /** Server-side entry point: open the character creator for a player. Called

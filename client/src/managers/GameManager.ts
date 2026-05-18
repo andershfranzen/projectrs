@@ -514,9 +514,11 @@ export class GameManager {
         case 'private_sent':
           if (this.chatPanel) this.chatPanel.addMessage(`[PM] To ${data.to}`, data.message, '#c0f');
           break;
-        case 'system':
-          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, '#ff0');
+        case 'system': {
+          const color = data.message.startsWith('Quest complete:') ? '#4aa3ff' : '#ff0';
+          if (this.chatPanel) this.chatPanel.addSystemMessage(data.message, color);
           break;
+        }
       }
     });
 
@@ -527,8 +529,8 @@ export class GameManager {
     // walks to a new tile. Resetting the indoor tile cursor makes the next
     // frame recompute the hidden set.
     this.chunkManager.setOnChunkObjectsLoaded(() => {
-      this.linkPlacedObjectsToWorldObjects();
       this.cleanupDisposedWorldObjects();
+      this.linkPlacedObjectsToWorldObjects();
       // Force the next frame to recompute hiddenRoofNodes — covers a roof's
       // chunk loading after the player has already settled on a tile.
       this._lastIndoorTileX = -9999;
@@ -2965,7 +2967,7 @@ export class GameManager {
           const def = this.questDefsCache.get(questId);
           if (def) {
             if (stage === QUEST_STAGE_COMPLETED) {
-              this.chatPanel?.addSystemMessage(`Quest complete: ${def.name}.`, '#ff0');
+              // Server sends the reward-rich completion line via chat.
             } else if (!prev) {
               this.chatPanel?.addSystemMessage(`New quest: ${def.name}. ${def.stages[stage]?.description ?? ''}`, '#ff0');
             } else {
@@ -4676,6 +4678,8 @@ export class GameManager {
     if (npc) {
       npc.showChatBubble(message, 6000, 'dialogue');
     }
+    const npcName = this.npcDisplayName(npcEntityId, this.entities.npcDefs.get(npcEntityId));
+    this.chatPanel?.addMessage(npcName, message, '#f4ded5');
   }
 
   private hideNpcDialogueBubble(npcEntityId: number): void {
@@ -4689,6 +4693,7 @@ export class GameManager {
     if (this.localPlayer) {
       this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
+    this.chatPanel?.addMessage(this.username || 'You', message, '#f4ded5');
   }
 
   /** Spawn a simple arrow projectile that flies from→to over 300ms */
@@ -5336,6 +5341,8 @@ export class GameManager {
     const camPos = this.scene.activeCamera?.position ?? null;
 
     if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
+      this.cleanupDisposedWorldObjects();
+      this.linkPlacedObjectsToWorldObjects();
       this.reapplyWorldObjectVisualStates();
     }
     this.chunkManager.updateAnimations();

@@ -7313,7 +7313,7 @@ function applyToolAtTile(tile, eventLike = null) {
       const next = idx + 1
       const complete = idx >= (q.stages?.length || 0) - 1
       wrap.textContent = complete
-        ? 'Manual step. Finish it from dialogue with completeQuest, or add another step and setQuestStage to that step.'
+        ? 'Manual step. Finish it from dialogue or an object interaction with completeQuest, or add another step and setQuestStage to that step.'
         : `Manual step. In dialogue, use setQuestStage with stage ${next} to move to step ${next + 1}.`
       return wrap
     }
@@ -7964,9 +7964,10 @@ function applyToolAtTile(tile, eventLike = null) {
         validateTrigger(q.startTrigger, q.id, `${qid}.startTrigger`, true)
         for (let i = 0; i < (q.stages || []).length; i++) {
           const stage = q.stages[i]
+          const isFinalStage = i === (q.stages || []).length - 1
           if (stage.id !== i) issue('warning', q.id, `${qid}.stages[${i}].id`, 'Stage ID will be normalized to its array index.')
           if (!stage.description) issue('warning', q.id, `${qid}.stages[${i}].description`, 'Stage journal entry is empty.')
-          validateTrigger(stage.trigger, q.id, `${qid}.stages[${i}].trigger`, false)
+          validateTrigger(stage.trigger, q.id, `${qid}.stages[${i}].trigger`, false, isFinalStage && questHasCompletionAction(q.id))
         }
         if (q.rewards?.xp) {
           for (const [skill, amount] of Object.entries(q.rewards.xp)) {
@@ -7994,9 +7995,9 @@ function applyToolAtTile(tile, eventLike = null) {
       validationResult = { errors, warnings }
       return validationResult
 
-      function validateTrigger(trigger, questId, path, allowMissing) {
+      function validateTrigger(trigger, questId, path, allowMissing, suppressMissingWarning) {
         if (!trigger) {
-          if (!allowMissing) issue('warning', questId, path, 'No trigger; this stage must be advanced by dialogue action or completion.')
+          if (!allowMissing && !suppressMissingWarning) issue('warning', questId, path, 'No trigger; this stage must be advanced by dialogue action or completion.')
           return
         }
         if (trigger.type === 'dialogue') {
@@ -8059,6 +8060,42 @@ function applyToolAtTile(tile, eventLike = null) {
         } else if (action.type === 'completeQuest') validateQuestRef(action.questId, questId, `${path}.questId`, issue)
         else if (action.type === 'giveItem' || action.type === 'takeItem') validateItemRef(action.itemId, questId, `${path}.itemId`, issue)
         else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
+      }
+
+      function questHasCompletionAction(questId) {
+        for (const def of npcDefs) {
+          if (dialogueTreeCompletesQuest(def.dialogue, questId)) return true
+        }
+        for (const spawn of npcSpawns) {
+          if (dialogueTreeCompletesQuest(spawn.dialogue, questId)) return true
+        }
+        if (placedGroup) {
+          for (const obj of placedGroup.getChildren()) {
+            for (const interaction of obj.userData?.interactions || []) {
+              if (actionsCompleteQuest(interaction.effects, questId)) return true
+            }
+          }
+        }
+        return false
+      }
+
+      function dialogueTreeCompletesQuest(tree, questId) {
+        if (!tree?.nodes) return false
+        for (const node of Object.values(tree.nodes)) {
+          for (const opt of node.options || []) {
+            if (actionCompletesQuest(opt.action, questId)) return true
+            if (actionsCompleteQuest(opt.actions, questId)) return true
+          }
+        }
+        return false
+      }
+
+      function actionsCompleteQuest(actions, questId) {
+        return Array.isArray(actions) && actions.some(action => actionCompletesQuest(action, questId))
+      }
+
+      function actionCompletesQuest(action, questId) {
+        return action?.type === 'completeQuest' && action.questId === questId
       }
 
       function validateCondition(condition, questId, path) {

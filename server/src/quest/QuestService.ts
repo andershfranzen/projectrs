@@ -2,10 +2,12 @@ import {
   ALL_SKILLS,
   MAX_STACK,
   QUEST_STAGE_COMPLETED,
+  SKILL_NAMES,
   ServerOpcode,
   type DialogueAction,
   type DialogueOption,
   type QuestCondition,
+  type QuestReward,
   type QuestTrigger,
   type SkillId,
 } from '@projectrs/shared';
@@ -103,6 +105,15 @@ export class QuestService {
     return true;
   }
 
+  resetPlayerQuest(player: Player, questId: string): boolean {
+    const def = this.data.getQuest(questId);
+    if (!def) return false;
+    if (!player.quests[questId]) return true;
+    delete player.quests[questId];
+    this.sendQuestStateSync(player);
+    return true;
+  }
+
   completePlayerQuest(player: Player, questId: string): boolean {
     const def = this.data.getQuest(questId);
     if (!def) return false;
@@ -148,13 +159,15 @@ export class QuestService {
       if (renown > 0) {
         player.renown = Math.max(0, Math.floor(player.renown || 0)) + renown;
         this.senders.sendToPlayer(player, ServerOpcode.RENOWN_SYNC, player.renown);
-        this.senders.sendChatSystem(player, `You gain ${renown} renown.`);
       }
     }
 
     player.quests[questId] = { stage: def.repeatable ? 0 : QUEST_STAGE_COMPLETED, triggerProgress: 0 };
     this.sendQuestDelta(player, questId);
-    this.senders.sendChatSystem(player, `Quest complete: ${def.name}.`);
+    const rewardSummary = this.questRewardSummary(def.rewards);
+    this.senders.sendChatSystem(player, rewardSummary
+      ? `Quest complete: ${def.name}! Rewards: ${rewardSummary}.`
+      : `Quest complete: ${def.name}!`);
     return true;
   }
 
@@ -321,6 +334,25 @@ export class QuestService {
     }
 
     return true;
+  }
+
+  private questRewardSummary(rewards: QuestReward | undefined): string {
+    if (!rewards) return '';
+    const parts: string[] = [];
+    const renown = normalizeQuestRenown(rewards.renown);
+    if (renown > 0) parts.push(`${renown} renown`);
+    for (const [skillKey, amount] of Object.entries(rewards.xp || {})) {
+      if (typeof amount !== 'number' || amount <= 0) continue;
+      const skillIdx = ALL_SKILLS.indexOf(skillKey as SkillId);
+      if (skillIdx < 0) continue;
+      parts.push(`${Math.floor(amount)} ${SKILL_NAMES[skillKey as SkillId] ?? skillKey} XP`);
+    }
+    for (const drop of rewards.items || []) {
+      if (!Number.isInteger(drop.itemId) || !Number.isInteger(drop.quantity) || drop.quantity <= 0) continue;
+      const itemName = this.data.getItem(drop.itemId)?.name ?? `item ${drop.itemId}`;
+      parts.push(`${drop.quantity}x ${itemName}`);
+    }
+    return parts.join(', ');
   }
 
   private legacyDialogueRequiresVisible(player: Player, req: NonNullable<DialogueOption['requires']>): boolean {
