@@ -9,6 +9,13 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 
+export interface Npc3DEntityOptions {
+  label?: string;
+  materialColors?: Record<string, [number, number, number]>;
+  tileSize?: number;
+  originMode?: 'authored' | 'boundsCenter';
+}
+
 async function importMeshWithTimeout(
   scene: Scene,
   dir: string,
@@ -43,6 +50,7 @@ export class Npc3DEntity {
   private _rotationY: number = 0;
   private targetRotationY: number = 0;
   private modelScale: number = 1;
+  private originMode: Npc3DEntityOptions['originMode'] = 'authored';
   /** SW-anchor → geometric-center offset for the NPC's NxN footprint.
    *  0 for size 1 / 3 / 5..., 0.5 for size 2 / 4..., applied to both X and Z.
    *  Server positions arrive as SW anchors; we render at the footprint center
@@ -77,14 +85,14 @@ export class Npc3DEntity {
     file: string,
     scale: number,
     animMap: { idle: string; walk?: string; attack?: string; death?: string },
-    label?: string,
-    materialColors?: Record<string, [number, number, number]>,
-    tileSize: number = 1,
+    options: Npc3DEntityOptions = {},
   ) {
     this.scene = scene;
     this.modelScale = scale;
+    this.originMode = options.originMode ?? 'authored';
+    const tileSize = options.tileSize ?? 1;
     this.renderOffset = (Math.max(1, Math.round(tileSize)) % 2 === 0) ? 0.5 : 0;
-    this.load(file, animMap, label, materialColors);
+    this.load(file, animMap, options.label, options.materialColors);
   }
 
   private async load(
@@ -136,13 +144,24 @@ export class Npc3DEntity {
 
       this.meshes = result.meshes.filter(m => m.getTotalVertices() > 0);
 
-      // Compute bounds and offset so feet are at Y=0
-      let minY = Infinity, maxY = -Infinity;
+      // Compute bounds and offset so feet are at Y=0. Some authored GLBs
+      // also need X/Z recentering so their visual center lands on the NPC
+      // render origin after the footprint offset is applied.
+      let minX = Infinity, minY = Infinity, minZ = Infinity;
+      let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
       for (const mesh of this.meshes) {
         mesh.computeWorldMatrix(true);
         const bb = mesh.getBoundingInfo().boundingBox;
+        if (bb.minimumWorld.x < minX) minX = bb.minimumWorld.x;
         if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
+        if (bb.minimumWorld.z < minZ) minZ = bb.minimumWorld.z;
+        if (bb.maximumWorld.x > maxX) maxX = bb.maximumWorld.x;
         if (bb.maximumWorld.y > maxY) maxY = bb.maximumWorld.y;
+        if (bb.maximumWorld.z > maxZ) maxZ = bb.maximumWorld.z;
+      }
+      if (this.originMode === 'boundsCenter') {
+        glbRoot.position.x -= (minX + maxX) / 2;
+        glbRoot.position.z -= (minZ + maxZ) / 2;
       }
       glbRoot.position.y -= minY;
 
@@ -235,7 +254,7 @@ export class Npc3DEntity {
 
   /** World-space point projectiles aim at: roughly chest-height above the NPC's base. */
   getTargetAnchor(): Vector3 {
-    return new Vector3(this._position.x, this._position.y + 0.7, this._position.z);
+    return new Vector3(this._position.x + this.renderOffset, this._position.y + 0.7, this._position.z + this.renderOffset);
   }
 
   startWalking(): void {
@@ -289,8 +308,8 @@ export class Npc3DEntity {
   }
 
   faceToward(target: Vector3, _cameraPos?: Vector3): void {
-    const dx = target.x - this._position.x;
-    const dz = target.z - this._position.z;
+    const dx = target.x - (this._position.x + this.renderOffset);
+    const dz = target.z - (this._position.z + this.renderOffset);
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     this.targetRotationY = Math.atan2(dx, dz);
   }
@@ -326,7 +345,7 @@ export class Npc3DEntity {
   getHealthBarWorldPos(out?: Vector3): Vector3 | null {
     if (!this.healthBarVisible) return null;
     const v = out ?? new Vector3();
-    v.set(this._position.x, this._position.y + this.yOffset * 2 + 0.3, this._position.z);
+    v.set(this._position.x + this.renderOffset, this._position.y + this.yOffset * 2 + 0.3, this._position.z + this.renderOffset);
     return v;
   }
 

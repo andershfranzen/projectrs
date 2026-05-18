@@ -18,6 +18,10 @@ export interface Npc3DModelEntry {
   file: string;
   scale: number;
   anims: { idle: string; walk?: string; attack?: string; death?: string };
+  /** How the imported GLB should be aligned to the NPC render origin.
+   *  `boundsCenter` is for models whose authored origin is not at their
+   *  visual X/Z center. */
+  originMode?: 'authored' | 'boundsCenter';
   /** Optional per-material albedo overrides applied in Npc3DEntity.load().
    *  Keys match the GLB's material names; values are normalized RGB. Used to
    *  produce visual variants from a shared GLB (e.g. Snow Wolf reuses wolf.glb). */
@@ -30,7 +34,7 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   6:  { file: '/models/npcs/spider.glb', scale: 0.2, anims: { idle: 'SpiderArmature|SpiderArmature|Spider_Idle', walk: 'SpiderArmature|SpiderArmature|Spider_Walk', attack: 'SpiderArmature|SpiderArmature|Spider_Attack', death: 'SpiderArmature|SpiderArmature|Spider_Death' } },
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', death: 'Armature|Armature|Death' } },
   // Camel.glb only ships with idle/walk/eat — no attack or death tracks.
-  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk' } },
+  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk' }, originMode: 'boundsCenter' },
   18: { file: '/models/npcs/rat_small.glb', scale: 0.15, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   17: {
     file: '/models/npcs/wolf.glb',

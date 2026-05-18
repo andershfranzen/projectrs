@@ -130,7 +130,12 @@ export class EntityManager {
     // available — these have purpose-built animations.
     const modelCfg = NPC_3D_MODELS[defId];
     if (modelCfg) {
-      const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, name, modelCfg.materialColors, tileSize);
+      const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, {
+        label: name,
+        materialColors: modelCfg.materialColors,
+        tileSize,
+        originMode: modelCfg.originMode,
+      });
       npc3d.position = new Vector3(x, this.getHeight(x, z, 0), z);
       // Stamp entityId on every mesh's metadata so picking can disambiguate
       // multiple instances of the same GLB (every cow shares mesh names).
