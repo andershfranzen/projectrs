@@ -3562,7 +3562,7 @@ export class GameManager {
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
-      const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
+      const pathResult = this.findPathToNpcInteraction(npcEntityId, target, 1.5);
       const path = pathResult.path;
       if (path.length > 0) {
         this.startPredictedPath(path, pathResult.preserveCurrentStep);
@@ -3818,7 +3818,12 @@ export class GameManager {
     return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
   }
 
-  private findPathToNpcInteraction(npcEntityId: number, target: { x: number; z: number }): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+  private isPointInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, x: number, z: number, range: number): boolean {
+    const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
+    return Math.hypot(fp.dx, fp.dz) <= range;
+  }
+
+  private findPathToNpcInteraction(npcEntityId: number, target: { x: number; z: number }, requiredRange: number = NPC_INTERACTION_RANGE): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const size = this.getNpcTileSize(npcEntityId);
     if (size <= 1) {
       const result = this.findPathFromMovementAnchor(target.x, target.z);
@@ -3845,7 +3850,16 @@ export class GameManager {
         return { path: [], preserveCurrentStep: false };
       }
       const result = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
-      if (result.path.length > 0) return result;
+      if (result.path.length > 0) {
+        const last = result.path[result.path.length - 1];
+        // findPath() falls back to a closest-approach tile when the exact
+        // adjacent tile is unreachable. For large NPCs, accepting that here
+        // can walk the player near the body but still outside attack/talk
+        // range, so keep trying other sides unless the terminal tile works.
+        if (this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange)) {
+          return result;
+        }
+      }
     }
     return { path: [], preserveCurrentStep: false };
   }
@@ -5394,7 +5408,7 @@ export class GameManager {
     const closeEnough = dist <= 3;
     if ((this.pathIndex < this.path.length && closeEnough) || this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
-    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget);
+    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, 1.5);
     const newPath = pathResult.path;
     if (newPath.length > 0) {
       this.startPredictedPath(newPath, pathResult.preserveCurrentStep);
