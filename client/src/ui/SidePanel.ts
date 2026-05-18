@@ -62,6 +62,7 @@ export class SidePanel {
   // Quest journal state — driven by GameManager's quest cache + state record.
   private questDefs: Map<string, QuestDef> = new Map();
   private questState: Record<string, { stage: number; triggerProgress: number }> = {};
+  private renown: number = 0;
   private questsContent: HTMLDivElement | null = null;
   /** RS2-style journal popup. Mounted lazily on the first quest click so
    *  players who never open it pay zero startup cost. */
@@ -633,6 +634,11 @@ export class SidePanel {
     this.questJournalPopup?.refresh();
   }
 
+  setRenown(value: number): void {
+    this.renown = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+    this.renderQuestJournal();
+  }
+
   /** Re-render the Quests tab body. List of status-colored quest names —
    *  click one to open the RS2-style journal popup with the cumulative
    *  story text. Mirrors 2004scape's quest log: list here, story popup
@@ -646,6 +652,11 @@ export class SidePanel {
     header.textContent = 'Quest Journal';
     header.style.cssText = panelHeaderCss(UI_RED);
     root.appendChild(header);
+
+    const renownRow = document.createElement('div');
+    renownRow.textContent = `Renown: ${this.renown}`;
+    renownRow.style.cssText = 'padding:4px 8px 6px;font:700 11px Arial,Helvetica,sans-serif;color:#d6b16a;text-shadow:1px 1px 0 #000;border-bottom:1px solid rgba(170,136,68,0.25);margin-bottom:4px;';
+    root.appendChild(renownRow);
 
     const defs = [...this.questDefs.values()];
     if (defs.length === 0) {

@@ -2689,6 +2689,10 @@ export class GameManager {
       this.applyLocalHealth(v[0], v[1], { clearPendingImpact: v[0] >= v[1] });
     });
 
+    this.network.on(ServerOpcode.RENOWN_SYNC, (_op, v) => {
+      this.sidePanel?.setRenown(v[0] ?? 0);
+    });
+
     // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
     this.network.on(ServerOpcode.PLAYER_INVENTORY_BATCH, (_op, v) => {
       // Inventory changed means the last interaction landed — cancel any

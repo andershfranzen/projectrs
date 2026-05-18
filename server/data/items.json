@@ -2097,5 +2097,14 @@
     "equippable": false,
     "value": 15,
     "icon": "Willow_Logs_633.png"
+  },
+  {
+    "id": 236,
+    "name": "Suspect sketch",
+    "description": "A rough sketch of Bob's killer.",
+    "stackable": false,
+    "equippable": false,
+    "value": 0,
+    "icon": "Scroll_224.png"
   }
 ]

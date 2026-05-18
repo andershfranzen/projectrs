@@ -3,6 +3,7 @@ import {
   MAX_STACK,
   QUEST_STAGE_COMPLETED,
   ServerOpcode,
+  type DialogueAction,
   type DialogueOption,
   type QuestCondition,
   type QuestTrigger,
@@ -11,11 +12,11 @@ import {
 import { addXp } from '@projectrs/shared';
 import { encodeStringPacket } from '@projectrs/shared';
 import type { DataLoader } from '../data/DataLoader';
-import type { Player } from '../entity/Player';
+import type { InventoryAddResult, InventoryRemoveResult, Player } from '../entity/Player';
 
 export type QuestEventDescriptor =
   | { type: 'dialogue'; npcDefId: number; npcEntityId: number; npcName: string; nodeId: string; optionLabel: string }
-  | { type: 'itemPickup'; itemId: number; quantity: number; source?: 'ground' | 'harvest' | 'chest' | 'dialogue' }
+  | { type: 'itemPickup'; itemId: number; quantity: number; source?: 'ground' | 'harvest' | 'chest' | 'dialogue' | 'object' }
   | { type: 'npcKill'; npcDefId: number }
   | { type: 'chestOpen'; chestDefId: number }
   | { type: 'objectInteract'; objectDefId: number; objectEntityId: number; objectName: string; action: string };
@@ -86,33 +87,34 @@ export class QuestService {
     }
   }
 
-  setPlayerQuestStage(player: Player, questId: string, stage: number): void {
+  setPlayerQuestStage(player: Player, questId: string, stage: number): boolean {
     const def = this.data.getQuest(questId);
-    if (!def) return;
-    if (!Number.isInteger(stage)) return;
-    if (stage === QUEST_STAGE_COMPLETED) return;
+    if (!def) return false;
+    if (!Number.isInteger(stage)) return false;
+    if (stage === QUEST_STAGE_COMPLETED) return false;
     if (stage < 0 || stage >= def.stages.length) {
       console.warn(`[quest] Ignoring invalid stage ${stage} for quest "${questId}" on player "${player.name}"`);
-      return;
+      return false;
     }
     const current = player.quests[questId];
-    if (current && current.stage === stage) return;
+    if (current && current.stage === stage) return true;
     player.quests[questId] = { stage, triggerProgress: 0 };
     this.sendQuestDelta(player, questId);
+    return true;
   }
 
-  completePlayerQuest(player: Player, questId: string): void {
+  completePlayerQuest(player: Player, questId: string): boolean {
     const def = this.data.getQuest(questId);
-    if (!def) return;
+    if (!def) return false;
     const current = player.quests[questId];
-    if (current && current.stage === QUEST_STAGE_COMPLETED && !def.repeatable) return;
+    if (current && current.stage === QUEST_STAGE_COMPLETED && !def.repeatable) return true;
 
     const itemRewards = def.rewards?.items?.filter(drop =>
       Number.isInteger(drop.itemId) && Number.isInteger(drop.quantity) && drop.quantity > 0
     ) ?? [];
     if (itemRewards.length > 0 && !this.canFitItemRewards(player, itemRewards)) {
       this.senders.sendChatSystem(player, 'You need more inventory space before completing this quest.');
-      return;
+      return false;
     }
 
     if (def.rewards) {
@@ -136,17 +138,99 @@ export class QuestService {
           if (got.completed !== drop.quantity) {
             if (got.completed > 0) player.revertAdd(got);
             this.senders.sendChatSystem(player, 'You need more inventory space before completing this quest.');
-            return;
+            return false;
           }
           mutated = true;
         }
         if (mutated) this.senders.sendInventory(player);
+      }
+      const renown = normalizeQuestRenown(def.rewards.renown);
+      if (renown > 0) {
+        player.renown = Math.max(0, Math.floor(player.renown || 0)) + renown;
+        this.senders.sendToPlayer(player, ServerOpcode.RENOWN_SYNC, player.renown);
+        this.senders.sendChatSystem(player, `You gain ${renown} renown.`);
       }
     }
 
     player.quests[questId] = { stage: def.repeatable ? 0 : QUEST_STAGE_COMPLETED, triggerProgress: 0 };
     this.sendQuestDelta(player, questId);
     this.senders.sendChatSystem(player, `Quest complete: ${def.name}.`);
+    return true;
+  }
+
+  runQuestAction(player: Player, action: DialogueAction, itemPickupSource: 'dialogue' | 'object' = 'dialogue'): boolean {
+    return this.runQuestActions(player, [action], itemPickupSource);
+  }
+
+  runQuestActions(player: Player, actions: DialogueAction[], itemPickupSource: 'dialogue' | 'object' = 'dialogue'): boolean {
+    const addRollbacks: InventoryAddResult[] = [];
+    const removeRollbacks: InventoryRemoveResult[] = [];
+    const pickupEvents: Array<{ itemId: number; quantity: number }> = [];
+    let inventoryTouched = false;
+
+    const rollbackInventory = () => {
+      for (let i = addRollbacks.length - 1; i >= 0; i--) player.revertAdd(addRollbacks[i]);
+      for (let i = removeRollbacks.length - 1; i >= 0; i--) player.revertRemove(removeRollbacks[i]);
+      if (inventoryTouched) this.senders.sendInventory(player);
+    };
+
+    for (const action of actions) {
+      switch (action.type) {
+        case 'giveItem': {
+          if (action.itemId <= 0 || action.qty <= 0) break;
+          const result = player.addItem(action.itemId, action.qty, this.data.itemDefs);
+          if (result.completed !== action.qty) {
+            if (result.completed > 0) player.revertAdd(result);
+            rollbackInventory();
+            this.senders.sendChatSystem(player, "You can't carry any more.");
+            return false;
+          }
+          addRollbacks.push(result);
+          pickupEvents.push({ itemId: action.itemId, quantity: result.completed });
+          inventoryTouched = true;
+          break;
+        }
+        case 'takeItem': {
+          if (action.itemId <= 0 || action.qty <= 0) break;
+          const removed = player.removeItemById(action.itemId, action.qty);
+          if (removed.completed !== action.qty) {
+            rollbackInventory();
+            return false;
+          }
+          removeRollbacks.push(removed);
+          inventoryTouched = true;
+          break;
+        }
+        case 'setQuestStage':
+          if (!this.setPlayerQuestStage(player, action.questId, action.stage)) {
+            rollbackInventory();
+            return false;
+          }
+          break;
+        case 'completeQuest':
+          if (!this.completePlayerQuest(player, action.questId)) {
+            rollbackInventory();
+            return false;
+          }
+          break;
+        case 'closeDialogue':
+        case 'openAppearance':
+        case 'openBank':
+        case 'openShop':
+          break;
+      }
+    }
+
+    if (inventoryTouched) this.senders.sendInventory(player);
+    for (const pickup of pickupEvents) {
+      this.notifyQuestEvent(player, {
+        type: 'itemPickup',
+        itemId: pickup.itemId,
+        quantity: pickup.quantity,
+        source: itemPickupSource,
+      });
+    }
+    return true;
   }
 
   sendQuestDelta(player: Player, questId: string): void {
@@ -308,4 +392,9 @@ export class QuestService {
     }
     return 1;
   }
+}
+
+function normalizeQuestRenown(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(10, Math.floor(value)));
 }

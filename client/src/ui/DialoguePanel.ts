@@ -178,7 +178,7 @@ export class DialoguePanel {
       return;
     }
 
-    this.hooks.showPlayerBubble(option.label);
+    if (!/^continue\.?$/i.test(option.label.trim())) this.hooks.showPlayerBubble(option.label);
     this.clearNpcBubble();
     this.setOptionsVisible(false);
     this.waitingForNpcReply = true;
@@ -196,11 +196,15 @@ export class DialoguePanel {
     const line = this.currentNode.lines[this.lineIndex] ?? '';
     if (line) {
       this.clearNpcBubble();
-      this.hooks.showNpcBubble(this.npcEntityId, line);
-      const npcEntityId = this.npcEntityId;
-      this.npcBubbleTimer = window.setTimeout(() => {
-        if (this.npcEntityId === npcEntityId) this.clearNpcBubble();
-      }, 6000);
+      if (this.currentNode.speaker === 'You') {
+        this.hooks.showPlayerBubble(line);
+      } else {
+        this.hooks.showNpcBubble(this.npcEntityId, line);
+        const npcEntityId = this.npcEntityId;
+        this.npcBubbleTimer = window.setTimeout(() => {
+          if (this.npcEntityId === npcEntityId) this.clearNpcBubble();
+        }, 6000);
+      }
     }
 
     const onLastLine = this.lineIndex >= this.currentNode.lines.length - 1;

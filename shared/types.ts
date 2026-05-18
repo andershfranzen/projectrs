@@ -558,12 +558,22 @@ export interface PlacedObject {
 export interface PlacedObjectInteraction {
   /** Existing object action label to hook, e.g. "Examine", "Open", "Search". */
   action: string;
+  /** Optional gate. If false, this interaction entry is skipped. */
+  condition?: QuestCondition;
+  /** Optional gates. All must pass for this interaction entry to run. */
+  conditions?: QuestCondition[];
+  /** Server-side effects to run when the object action is used. */
+  effects?: DialogueAction[];
   /** Legacy single local overhead bubble from the player. */
   say?: string;
   /** Timed local overhead bubble sequence from the player. */
   saySequence?: PlacedObjectSayLine[];
   /** Private system/chat-panel message to the interacting player. */
   message?: string;
+  /** Hide/deplete the object after this interaction runs. */
+  depleteObject?: boolean;
+  /** Optional respawn delay for depleteObject. 0 means no respawn until server restart. */
+  depleteRespawnTicks?: number;
 }
 
 export interface PlacedObjectSayLine {
@@ -678,7 +688,7 @@ export function shouldTileRenderWater(
  *    `nodeId` / `optionLabel` to require a specific dialogue beat.
  *  - `itemPickup`: fires when the player's running tally of `itemId` reaches
  *    `quantity` (default 1). By default any server-granted item counts; set
- *    `source: 'ground'` to require picking up an item from the ground.
+ *    `source` to require a specific acquisition path.
  *  - `npcKill`: fires when the player kills `npcDefId` (the def id from
  *    npcs.json) `count` times (default 1). Counted in player.quests[id]
  *    .triggerProgress.
@@ -693,7 +703,7 @@ export function shouldTileRenderWater(
  *  quest hand-outs like "5% chance to find a clue on a cow". */
 export type QuestTrigger =
   | { type: 'dialogue'; npcDefId?: number; npcName?: string; nodeId?: string; optionLabel?: string; count?: number; chance?: number }
-  | { type: 'itemPickup'; itemId: number; quantity?: number; source?: 'any' | 'ground'; chance?: number }
+  | { type: 'itemPickup'; itemId: number; quantity?: number; source?: 'any' | 'ground' | 'harvest' | 'chest' | 'dialogue' | 'object'; chance?: number }
   | { type: 'npcKill'; npcDefId: number; count?: number; chance?: number }
   | { type: 'chestOpen'; chestDefId?: number; count?: number; chance?: number }
   | { type: 'objectInteract'; objectDefId?: number; objectName?: string; action?: string; count?: number; chance?: number };
@@ -713,6 +723,8 @@ export interface QuestReward {
   xp?: Partial<Record<string, number>>;
   /** Items added to inventory on completeQuest. Completion is refused if they cannot all fit. */
   items?: Array<{ itemId: number; quantity: number }>;
+  /** Renown awarded on completeQuest. Editor-authored values are 1-10. */
+  renown?: number;
 }
 
 export interface QuestDef {

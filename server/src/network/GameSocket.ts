@@ -71,6 +71,7 @@ export function handleGameSocketOpen(
     while (bank.length < player.bank.length) bank.push(null);
     player.bank = bank.slice(0, player.bank.length);
     player.quests = saved.quests;
+    player.renown = saved.renown;
     player.currentMapLevel = mapLevel; // use validated mapLevel, not raw saved value
     // Clamp floor to the supported range. A corrupted DB row could carry a
     // floor of 99 or NaN — both would defeat the floor recovery loop below

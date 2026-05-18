@@ -48,6 +48,10 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'rice': 22, // Rice Plant
   // Evil magic altar
   'Obelisk': 24, // Obelisk — offer bones for evilmagic xp + evil tokens
+  // Quest/scenery interactions
+  'Paper': 26,
+  'well': 27,
+  'desert well': 27,
 };
 
 /**

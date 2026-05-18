@@ -13,22 +13,22 @@
         "id": 0,
         "description": "While butchering a cow you hear a scream from the village nearby. A woman screaming hysterically about a lunatic that killed the village's beloved cow bob!",
         "trigger": {
-          "type": "dialogue"
+          "type": "dialogue",
+          "npcDefId": 8,
+          "npcName": "Robert"
         }
       },
       {
         "id": 1,
-        "description": "Robert says the trinket is a lockmaker's mark from a guild that fell two centuries ago. He thinks more relics might be tucked away in old chests scattered through the countryside. Bring him three relics of any kind.",
+        "description": "Robert told me a farmer in the south west saw bob's killing happen. And apparently made a sketch of the killer.",
         "trigger": {
-          "type": "dialogue"
+          "type": "itemPickup",
+          "itemId": 236
         }
       },
       {
         "id": 2,
-        "description": "",
-        "trigger": {
-          "type": "dialogue"
-        }
+        "description": "I have the suspect sketch. I should throw it into a well before anyone sees it."
       }
     ],
     "rewards": {

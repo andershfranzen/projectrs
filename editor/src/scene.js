@@ -711,6 +711,7 @@ function tuneModelLighting(model) {
   let itemSpawns = []         // { id, itemId, x, z, quantity }
   let _itemSpawnNextId = 1
   let itemDefs = []            // loaded from server
+  let questObjectDefs = []      // loaded for quest authoring item/object pickers
   let editorObjectDefs = []     // loaded from server; used by select-object UI
   let editorObjectDefById = new Map()
   const itemSpawnGroup = new TransformNode('itemSpawnGroup', scene)
@@ -1927,12 +1928,18 @@ let paintBrushRadius = 1
     return loadItemDefs().then(() => itemDefs).catch(() => [])
   }
 
-  /** Shared datalist used by every shop-row item picker. One node appended to
-   *  the body — referenced via `list="shopItemDatalist"` on each input. Built
-   *  once when itemDefs first loads; rebuilt only if the def set changes. */
+  /** Shared datalist used by every item picker. One node appended to the body —
+   *  referenced via `list="shopItemDatalist"` on each input. In quest authoring
+   *  it also includes named placed objects that produce items, so authors can
+   *  search by the quest object name while still saving the underlying itemId. */
   function ensureShopItemDatalist() {
     let dl = document.getElementById('shopItemDatalist')
-    if (dl && dl.childElementCount === itemDefs.length) return  // already in sync
+    const questObjectItems = questObjectItemChoices()
+    const signature = JSON.stringify({
+      itemCount: itemDefs.length,
+      questObjectItems: questObjectItems.map(c => `${c.name}:${c.itemId}:${c.source}`),
+    })
+    if (dl && dl.dataset.signature === signature) return  // already in sync
     if (!dl) {
       dl = document.createElement('datalist')
       dl.id = 'shopItemDatalist'
@@ -1947,6 +1954,36 @@ let paintBrushRadius = 1
       opt.value = `${d.name} (${d.id})`
       dl.appendChild(opt)
     }
+    for (const choice of questObjectItems) {
+      const opt = document.createElement('option')
+      opt.value = `${choice.name}: ${formatItemDisplay(choice.itemId)}`
+      opt.label = `${choice.source} quest object`
+      dl.appendChild(opt)
+    }
+    dl.dataset.signature = signature
+  }
+
+  function questObjectItemChoices() {
+    if (!placedGroup || !questObjectDefs.length) return []
+    const choices = []
+    const seen = new Set()
+    for (const obj of placedGroup.getChildren()) {
+      const name = obj.userData?.name
+      const objectDefId = ASSET_TO_OBJECT_DEF[obj.userData?.assetId]
+      if (!name || objectDefId == null) continue
+      const def = questObjectDefs.find(d => d.id === objectDefId)
+      if (!def) continue
+      const add = (itemId, source) => {
+        if (!Number.isInteger(itemId) || itemId <= 0) return
+        const key = `${name}:${itemId}:${source}`
+        if (seen.has(key)) return
+        seen.add(key)
+        choices.push({ name, itemId, source })
+      }
+      add(def.harvestItemId, def.name || 'Object')
+      for (const drop of def.extraLoot || []) add(drop.itemId, def.name || 'Object')
+    }
+    return choices.sort((a, b) => `${a.name} ${formatItemDisplay(a.itemId)}`.localeCompare(`${b.name} ${formatItemDisplay(b.itemId)}`))
   }
 
   /** Parse the displayed value back to an item id. Accepts the canonical
@@ -3254,6 +3291,7 @@ let paintBrushRadius = 1
     const name = objectNameInput.value.trim()
     if (name) selectedPlacedObject.userData.name = name
     else delete selectedPlacedObject.userData.name
+    ensureShopItemDatalist()
   })
   function saveObjectQuestFieldsFromUI() {
     if (!selectedPlacedObject) return
@@ -3266,8 +3304,15 @@ let paintBrushRadius = 1
     const sayRaw = sidebar.querySelector('#objectEffectSay')?.value.trim() || ''
     const saySequence = parseObjectSaySequence(sayRaw)
     const message = sidebar.querySelector('#objectEffectMessage')?.value.trim() || ''
-    if (action && (saySequence.length > 0 || message)) {
-      selectedPlacedObject.userData.interactions = [{ action, ...(saySequence.length ? { saySequence } : {}), ...(message ? { message } : {}) }]
+    const existing = selectedPlacedObject.userData.interactions?.[0] || {}
+    const hasServerEffects = !!(existing.effects?.length || existing.condition || existing.conditions?.length || existing.depleteObject)
+    if (action && (saySequence.length > 0 || message || hasServerEffects)) {
+      const next = { ...existing, action }
+      if (saySequence.length) next.saySequence = saySequence
+      else delete next.saySequence
+      if (message) next.message = message
+      else delete next.message
+      selectedPlacedObject.userData.interactions = [next]
     } else {
       delete selectedPlacedObject.userData.interactions
     }
@@ -6830,6 +6875,61 @@ function applyToolAtTile(tile, eventLike = null) {
   const serverReloadBtn = topBar.querySelector('#serverReloadBtn')
   const questsBtn = topBar.querySelector('#questsBtn')
 
+  async function saveNpcDefsToServer() {
+    const r = await fetch('/api/editor/npcs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ npcs: npcDefs }),
+    })
+    const body = await r.json().catch(() => ({}))
+    if (!r.ok || !body.ok) throw new Error(body.error || 'unknown')
+    clearDefsDirty('NPC defs saved ✓')
+  }
+
+  function buildCurrentMapServerPayload(mapId) {
+    const saveData = buildSaveData()
+    const meta = {
+      id: mapId,
+      name: mapId.charAt(0).toUpperCase() + mapId.slice(1),
+      width: map.width,
+      height: map.height,
+      waterLevel: map.waterLevel,
+      spawnPoint: { x: Math.floor(map.width / 2) + 0.5, z: Math.floor(map.height / 2) + 0.5 },
+      fogColor: map.mapType === 'dungeon' ? [0.05, 0.02, 0.1] : [0.4, 0.6, 0.9],
+      fogStart: map.mapType === 'dungeon' ? 5 : 30,
+      fogEnd: map.mapType === 'dungeon' ? 25 : 50,
+      transitions: []
+    }
+    return {
+      mapId,
+      meta,
+      spawns: {
+        npcs: serializeNpcSpawns(),
+        objects: [],
+        items: itemSpawns.map(s => ({ itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity }))
+      },
+      mapData: {
+        map: saveData.map,
+        placedObjects: saveData.placedObjects,
+        layers: saveData.layers,
+        activeLayerId: saveData.activeLayerId
+      },
+      walls: serializeCollisionData(),
+      biomes: serializeBiomesData()
+    }
+  }
+
+  async function saveCurrentMapToServer(mapId) {
+    const res = await fetch(`${SERVER_API}/save-map`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildCurrentMapServerPayload(mapId))
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.ok) throw new Error(data.error || 'unknown')
+    refreshServerMapList(true)
+  }
+
   // Quests editor — structured form. Two-pane modal: list of quests on the
   // left (with new/delete), per-quest editor on the right with all fields
   // exposed as proper inputs (no JSON). Save POSTs the entire array to
@@ -6849,8 +6949,10 @@ function applyToolAtTile(tile, eventLike = null) {
 
     let quests = []
     let objectDefs = []
+    let knownNpcSpawns = []
     let selectedQuestId = null
     let validationResult = null
+    let questDialogueTouchedCurrentMap = false
 
     const overlay = document.createElement('div')
     overlay.id = 'questsModal'
@@ -6860,7 +6962,7 @@ function applyToolAtTile(tile, eventLike = null) {
         <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #333;">
           <div style="font-size:14px;font-weight:700;color:#eee;flex:1;">Quests Editor</div>
           <button id="qValidate" style="background:#4a4a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:12px;cursor:pointer;">Validate</button>
-          <button id="qSaveAll" style="background:#3a6c3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:12px;cursor:pointer;">Save All</button>
+          <button id="qSaveAll" style="background:#3a6c3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:12px;cursor:pointer;">Save Quest + Dialogue</button>
           <span id="qStatus" style="font-size:11px;color:#888;min-width:120px;text-align:right;"></span>
           <button id="qClose" style="background:#3a3a3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 10px;font-size:12px;cursor:pointer;">Close</button>
         </div>
@@ -6885,7 +6987,7 @@ function applyToolAtTile(tile, eventLike = null) {
     overlay.querySelector('#qClose').addEventListener('click', () => { overlay.style.display = 'none' })
     overlay.querySelector('#qNew').addEventListener('click', () => {
       const id = 'quest_' + Math.random().toString(36).slice(2, 7)
-      quests.push({ id, name: 'New quest', blurb: '', stages: [{ id: 0, description: '', trigger: { type: 'dialogue' } }], rewards: {} })
+      quests.push({ id, name: 'New quest', blurb: '', stages: [{ id: 0, description: '' }], rewards: {} })
       selectedQuestId = id
       renderList(); renderEditor()
     })
@@ -6909,14 +7011,39 @@ function applyToolAtTile(tile, eventLike = null) {
     })
     overlay.querySelector('#qSaveAll').addEventListener('click', async () => {
       try {
+        const savedParts = []
+        const needsNpcDefsSave = npcDefsDirty
+        const needsMapDialogueSave = questDialogueTouchedCurrentMap || currentMapQuestDialogueNeedsSave()
+
+        if (needsNpcDefsSave) {
+          await saveNpcDefsToServer()
+          savedParts.push('NPC defs')
+        }
+
+        if (needsMapDialogueSave) {
+          const mapId = serverMapSelect.value
+          if (!mapId) {
+            setStatus('Map dialogue needs a loaded map before it can be saved.', '#e44')
+            return
+          }
+          await saveCurrentMapToServer(mapId)
+          questDialogueTouchedCurrentMap = false
+          savedParts.push(`${mapId} map dialogue`)
+        }
+
         const r = await fetch('/api/editor/quests', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ quests }),
         })
         const body = await r.json().catch(() => ({}))
-        if (r.ok && body.ok) setStatus(`Saved ${quests.length} quest(s) ✓`, '#6e6')
-        else setStatus(`Save failed: ${body.error || 'unknown'}`, '#e44')
+        if (!r.ok || !body.ok) {
+          setStatus(`Quest save failed: ${body.error || 'unknown'}`, '#e44')
+          return
+        }
+        savedParts.push(`${quests.length} quest(s)`)
+
+        setStatus(`Saved ${savedParts.join(', ')} ✓`, '#6e6')
       } catch (e) { setStatus(`Network error: ${e.message}`, '#e44') }
     })
 
@@ -6924,7 +7051,8 @@ function applyToolAtTile(tile, eventLike = null) {
     // shared shop datalist helper.
     await Promise.all([
       fetch('/data/quests.json').then(r => r.json()).then(d => { quests = Array.isArray(d) ? d : [] }).catch(() => { quests = [] }),
-      fetch('/data/objects.json').then(r => r.json()).then(d => { objectDefs = Array.isArray(d) ? d : [] }).catch(() => { objectDefs = [] }),
+      fetch('/data/objects.json').then(r => r.json()).then(d => { objectDefs = Array.isArray(d) ? d : []; questObjectDefs = objectDefs }).catch(() => { objectDefs = []; questObjectDefs = [] }),
+      loadKnownNpcSpawns(),
       fetchItemDefsOnce().then(() => ensureShopItemDatalist()),
     ])
     if (quests.length > 0 && !selectedQuestId) selectedQuestId = quests[0].id
@@ -6949,6 +7077,47 @@ function applyToolAtTile(tile, eventLike = null) {
       }
     }
 
+    async function loadKnownNpcSpawns() {
+      const mapIds = new Set(['kcmap'])
+      try {
+        const res = await fetch(`${SERVER_API}/maps`)
+        const body = await res.json()
+        if (body?.ok && Array.isArray(body.maps)) {
+          for (const mapInfo of body.maps) {
+            if (mapInfo?.id) mapIds.add(mapInfo.id)
+          }
+        }
+      } catch {}
+
+      const loaded = []
+      await Promise.all([...mapIds].map(async mapId => {
+        try {
+          const res = await fetch(`/data/maps/${encodeURIComponent(mapId)}/spawns.json`)
+          if (!res.ok) return
+          const body = await res.json()
+          const rows = Array.isArray(body) ? body : (Array.isArray(body?.npcs) ? body.npcs : [])
+          for (const spawn of rows) loaded.push({ ...spawn, mapId })
+        } catch {}
+      }))
+      knownNpcSpawns = loaded
+    }
+
+    function currentMapQuestDialogueNeedsSave() {
+      for (const q of quests) {
+        const triggers = []
+        if (q.startTrigger) triggers.push(q.startTrigger)
+        for (const stage of q.stages || []) {
+          if (stage?.trigger) triggers.push(stage.trigger)
+        }
+        for (const trigger of triggers) {
+          if (trigger.type !== 'dialogue' || !trigger.npcDefId || !trigger.npcName) continue
+          const spawn = npcSpawns.find(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)
+          if (spawn?.dialogue) return true
+        }
+      }
+      return false
+    }
+
     function renderEditor() {
       editorEl.innerHTML = ''
       const q = quests.find(x => x.id === selectedQuestId)
@@ -6958,15 +7127,15 @@ function applyToolAtTile(tile, eventLike = null) {
       }
 
       // Top: name + id + blurb + repeatable
+      editorEl.appendChild(renderQuestFlowCard(q))
       editorEl.appendChild(renderValidationPanel(q.id))
-      editorEl.appendChild(renderAuthoringHelpers())
-      editorEl.appendChild(field('Name', textInput(q.name || '', v => { q.name = v; renderList() })))
+      editorEl.appendChild(field('Quest name', textInput(q.name || '', v => { q.name = v; renderList() })))
       editorEl.appendChild(field('Quest ID (do not change after players have started)', textInput(q.id, v => { const nv = v.trim() || q.id; if (nv !== q.id && quests.some(qq => qq.id === nv)) { setStatus('ID already exists', '#e44'); return } q.id = nv; selectedQuestId = nv; renderList() }, { font: 'monospace', color: '#cfc' })))
-      editorEl.appendChild(field('Blurb (shown when not started, italic)', textArea(q.blurb || '', v => { q.blurb = v }, 50)))
+      editorEl.appendChild(field('Not-started journal text', textArea(q.blurb || '', v => { q.blurb = v }, 50)))
       editorEl.appendChild(checkboxRow('Repeatable (quest can be re-acquired after completion)', !!q.repeatable, v => { q.repeatable = v }))
 
       // Start trigger
-      const startTrigSection = sectionWrap('Start trigger', 'Fires when the player does the matching event AND the chance roll passes. Leave as "(none — manual)" to require a setQuestStage dialogue action to start the quest.')
+      const startTrigSection = sectionWrap('How the quest starts', 'Most quests should start from dialogue: leave this as manual and use a dialogue action that sets the quest to stage 0. Use an automatic start only when any matching world event should begin the quest.')
       const startTrigContent = document.createElement('div')
       startTrigSection.appendChild(startTrigContent)
       const renderStartTrig = () => {
@@ -6980,7 +7149,7 @@ function applyToolAtTile(tile, eventLike = null) {
         const sel = document.createElement('select')
         sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;'
         for (const opt of [
-          ['', '(none — manual)'],
+          ['', 'Manual: started by dialogue/action'],
           ...questTriggerOptions(),
         ]) {
           const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
@@ -6993,13 +7162,13 @@ function applyToolAtTile(tile, eventLike = null) {
         })
         startTypeRow.appendChild(sel)
         startTrigContent.appendChild(startTypeRow)
-        if (q.startTrigger) startTrigContent.appendChild(renderTriggerFields(q.startTrigger, true))
+        if (q.startTrigger) startTrigContent.appendChild(renderTriggerFields(q.startTrigger, true, renderStartTrig, { q, stageIndex: null }))
       }
       renderStartTrig()
       editorEl.appendChild(startTrigSection)
 
       // Stages
-      const stagesSection = sectionWrap('Stages', 'Story progression. Stage 0 is where the player starts when the quest begins. Each stage has a journal entry (description) and an optional auto-advance trigger.')
+      const stagesSection = sectionWrap('Player steps', 'Each step is a journal entry plus the event that moves the player to the next step. Leave the event as manual when dialogue should decide what happens next.')
       const stagesContent = document.createElement('div')
       stagesSection.appendChild(stagesContent)
       const renderStages = () => {
@@ -7012,7 +7181,7 @@ function applyToolAtTile(tile, eventLike = null) {
         addBtn.textContent = '+ Add stage'
         addBtn.style.cssText = 'background:#2a4a6c;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:11px;cursor:pointer;margin-top:6px;'
         addBtn.addEventListener('click', () => {
-          q.stages.push({ id: q.stages.length, description: '', trigger: { type: 'dialogue' } })
+          q.stages.push({ id: q.stages.length, description: '' })
           renderStages()
         })
         stagesContent.appendChild(addBtn)
@@ -7021,9 +7190,10 @@ function applyToolAtTile(tile, eventLike = null) {
       editorEl.appendChild(stagesSection)
 
       // Rewards
-      const rewardsSection = sectionWrap('Rewards', 'Granted on completeQuest action.')
+      const rewardsSection = sectionWrap('Completion rewards', 'Granted when a dialogue option or quest event completes the quest.')
       rewardsSection.appendChild(renderRewardsBlock(q))
       editorEl.appendChild(rewardsSection)
+      editorEl.appendChild(renderAuthoringHelpers(q))
     }
 
     function renderStageBlock(q, idx, rerender) {
@@ -7034,22 +7204,26 @@ function applyToolAtTile(tile, eventLike = null) {
       const head = document.createElement('div')
       head.style.cssText = 'display:flex;align-items:center;gap:5px;margin-bottom:6px;'
       const t = document.createElement('div')
-      t.textContent = `Stage ${idx}`
+      t.textContent = idx === 0 ? 'Step 1: quest begins' : `Step ${idx + 1}`
       t.style.cssText = 'flex:1;font-size:12px;font-weight:bold;color:#ffcc44;'
       head.appendChild(t)
+      const summary = document.createElement('div')
+      summary.textContent = triggerSummary(stage.trigger, idx === q.stages.length - 1 ? 'Complete the quest or set another stage from dialogue.' : `Moves to step ${idx + 2}.`)
+      summary.style.cssText = 'font-size:10px;color:#aaa;margin:0 8px 0 0;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+      head.appendChild(summary)
       const upBtn = iconBtn('▲', 'Move up', () => { if (idx === 0) return; const tmp = q.stages[idx - 1]; q.stages[idx - 1] = q.stages[idx]; q.stages[idx] = tmp; rerender() })
       const dnBtn = iconBtn('▼', 'Move down', () => { if (idx === q.stages.length - 1) return; const tmp = q.stages[idx + 1]; q.stages[idx + 1] = q.stages[idx]; q.stages[idx] = tmp; rerender() })
       const rmBtn = iconBtn('✕', 'Delete stage', () => { if (!confirm(`Delete stage ${idx}?`)) return; q.stages.splice(idx, 1); rerender() })
       rmBtn.style.background = '#6c2a2a'
       head.appendChild(upBtn); head.appendChild(dnBtn); head.appendChild(rmBtn)
       wrap.appendChild(head)
-      wrap.appendChild(field('Journal entry (shown in the quest popup at this stage)', textArea(stage.description || '', v => { stage.description = v }, 70)))
+      wrap.appendChild(field('What the quest journal tells the player', textArea(stage.description || '', v => { stage.description = v }, 70)))
 
       // Trigger sub-form
       const trigWrap = document.createElement('div')
       trigWrap.style.cssText = 'margin-top:6px;'
       const trigLabel = document.createElement('label')
-      trigLabel.textContent = 'Auto-advance trigger:'
+      trigLabel.textContent = 'What moves the player forward:'
       trigLabel.style.cssText = 'font-size:11px;color:#aaa;display:block;margin-bottom:4px;'
       trigWrap.appendChild(trigLabel)
       const trigBody = document.createElement('div')
@@ -7058,26 +7232,485 @@ function applyToolAtTile(tile, eventLike = null) {
         trigBody.innerHTML = ''
         const sel = document.createElement('select')
         sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;margin-bottom:6px;'
-        for (const opt of questTriggerOptions()) {
+        for (const opt of [
+          ['', 'Manual: dialogue/action decides'],
+          ...questTriggerOptions(),
+        ]) {
           const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
         }
-        sel.value = stage.trigger?.type || 'dialogue'
-        sel.addEventListener('change', () => { stage.trigger = makeBlankTrigger(sel.value); renderTrig() })
+        sel.value = stage.trigger?.type || ''
+        sel.addEventListener('change', () => {
+          if (!sel.value) delete stage.trigger
+          else stage.trigger = makeBlankTrigger(sel.value)
+          renderTrig()
+          rerender()
+        })
         trigBody.appendChild(sel)
-        if (stage.trigger) trigBody.appendChild(renderTriggerFields(stage.trigger, false))
+        if (stage.trigger) trigBody.appendChild(renderTriggerFields(stage.trigger, false, renderTrig, { q, stageIndex: idx }))
+        else trigBody.appendChild(manualAdvanceHelp(q, idx))
       }
       renderTrig()
       wrap.appendChild(trigWrap)
+      if (idx === q.stages.length - 1) wrap.appendChild(renderFinalStageRewards(q))
       return wrap
     }
 
-    function renderTriggerFields(trigger, includeChance) {
+    function setQuestRenownReward(q, value) {
+      if (!q.rewards) q.rewards = {}
+      const renown = Math.floor(Number(value) || 0)
+      if (renown <= 0) delete q.rewards.renown
+      else q.rewards.renown = Math.max(1, Math.min(10, renown))
+    }
+
+    function renderFinalStageRewards(q) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'margin-top:8px;background:#141414;border:1px solid #333;border-radius:3px;padding:7px 8px;'
+      const label = document.createElement('div')
+      label.textContent = 'Quest completion reward'
+      label.style.cssText = 'font-size:11px;font-weight:bold;color:#d6b16a;margin-bottom:5px;'
+      wrap.appendChild(label)
+      wrap.appendChild(field('Renown when this final step completes (1-10)', numberInput(q.rewards?.renown || 0, 0, v => {
+        setQuestRenownReward(q, v)
+      }, { width: '80px', max: 10 })))
+      return wrap
+    }
+
+    function renderQuestFlowCard(q) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#101826;border:1px solid #315070;border-radius:4px;padding:10px 12px;margin-bottom:12px;'
+      const title = document.createElement('div')
+      title.textContent = 'Quest flow'
+      title.style.cssText = 'font-size:13px;font-weight:bold;color:#d7ecff;margin-bottom:8px;'
+      wrap.appendChild(title)
+
+      const rows = []
+      rows.push(['Start', q.startTrigger ? triggerSummary(q.startTrigger) : 'Manual: a dialogue/action starts the quest at step 1.'])
+      for (let i = 0; i < (q.stages || []).length; i++) {
+        const stage = q.stages[i]
+        const journal = (stage.description || '').trim().replace(/\s+/g, ' ')
+        rows.push([`Step ${i + 1}`, journal || '(empty journal entry)'])
+        rows.push(['Advance', triggerSummary(stage.trigger, i === (q.stages || []).length - 1 ? 'Complete the quest or set another stage from dialogue.' : `Moves to step ${i + 2}.`)])
+      }
+      rows.push(['Reward', rewardSummary(q.rewards)])
+
+      for (const [label, text] of rows) {
+        const row = document.createElement('div')
+        row.style.cssText = 'display:grid;grid-template-columns:82px 1fr;gap:10px;align-items:start;margin:4px 0;'
+        const l = document.createElement('div')
+        l.textContent = label
+        l.style.cssText = 'font-size:10px;color:#8bb8df;text-transform:uppercase;letter-spacing:0.04em;'
+        const v = document.createElement('div')
+        v.textContent = text
+        v.style.cssText = 'font-size:11px;color:#e8f3ff;line-height:1.35;'
+        row.appendChild(l); row.appendChild(v); wrap.appendChild(row)
+      }
+      return wrap
+    }
+
+    function manualAdvanceHelp(q, idx) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:7px 8px;color:#aaa;font-size:11px;line-height:1.35;'
+      const next = idx + 1
+      const complete = idx >= (q.stages?.length || 0) - 1
+      wrap.textContent = complete
+        ? 'Manual step. Finish it from dialogue with completeQuest, or add another step and setQuestStage to that step.'
+        : `Manual step. In dialogue, use setQuestStage with stage ${next} to move to step ${next + 1}.`
+      return wrap
+    }
+
+    function triggerSummary(trigger, fallback) {
+      if (!trigger) return fallback || 'Manual: dialogue/action decides.'
+      const times = trigger.count && trigger.count > 1 ? `${trigger.count} times` : 'once'
+      const chance = trigger.chance && trigger.chance < 1 ? ` (${Math.round(trigger.chance * 100)}% chance)` : ''
+      if (trigger.type === 'dialogue') {
+        const npc = trigger.npcName || npcDefs.find(d => d.id === trigger.npcDefId)?.name || (trigger.npcDefId ? `NPC ${trigger.npcDefId}` : 'any NPC')
+        const option = trigger.optionLabel ? `, option "${trigger.optionLabel}"` : ''
+        return `Talk to ${npc}${option} ${times}${chance}.`
+      }
+      if (trigger.type === 'npcKill') {
+        const npc = npcDefs.find(d => d.id === trigger.npcDefId)?.name || `NPC ${trigger.npcDefId || '?'}`
+        return `Kill ${npc} ${times}${chance}.`
+      }
+      if (trigger.type === 'itemPickup') {
+        const item = formatItemDisplay(trigger.itemId || 0)
+        const qty = trigger.quantity && trigger.quantity > 1 ? `${trigger.quantity}x ` : ''
+        return `Get ${qty}${item}${trigger.source === 'ground' ? ' from the ground' : ''}${chance}.`
+      }
+      if (trigger.type === 'chestOpen') {
+        const chest = objectDefs.find(d => d.id === trigger.chestDefId)?.name || (trigger.chestDefId ? `chest ${trigger.chestDefId}` : 'any chest')
+        return `Open ${chest} ${times}${chance}.`
+      }
+      if (trigger.type === 'objectInteract') {
+        const obj = trigger.objectName || objectDefs.find(d => d.id === trigger.objectDefId)?.name || (trigger.objectDefId ? `object ${trigger.objectDefId}` : 'any object')
+        return `Use ${obj}${trigger.action ? ` with "${trigger.action}"` : ''} ${times}${chance}.`
+      }
+      return `Unknown trigger "${trigger.type}".`
+    }
+
+    function rewardSummary(rewards) {
+      const parts = []
+      const xp = Object.entries(rewards?.xp || {}).filter(([, amount]) => amount > 0)
+      if (xp.length) parts.push(xp.map(([skill, amount]) => `${amount} ${skill} XP`).join(', '))
+      const items = (rewards?.items || []).filter(item => item.itemId)
+      if (items.length) parts.push(items.map(item => `${item.quantity || 1}x ${formatItemDisplay(item.itemId)}`).join(', '))
+      const renown = rewards?.renown
+      if (Number.isInteger(renown) && renown > 0) parts.push(`${renown} renown`)
+      return parts.length ? parts.join('; ') : 'No rewards set.'
+    }
+
+    function renderDialogueBeatPicker(trigger, rerender) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#151515;border:1px solid #2a2a2a;border-radius:3px;padding:7px 8px;'
+
+      const beats = dialogueBeatsForTrigger(trigger)
+      if (beats.length > 0) {
+        const label = document.createElement('label')
+        label.textContent = 'Dialogue moment that advances this'
+        label.style.cssText = 'display:block;font-size:11px;color:#aaa;margin-bottom:3px;'
+        wrap.appendChild(label)
+
+        const sel = document.createElement('select')
+        sel.style.cssText = 'width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+        const any = document.createElement('option')
+        any.value = ''
+        any.textContent = 'Any dialogue option on this NPC'
+        sel.appendChild(any)
+        for (const beat of beats) {
+          const o = document.createElement('option')
+          o.value = `${beat.nodeId}\n${beat.optionLabel}`
+          o.textContent = `${beat.npcSays} -> player chooses "${beat.optionLabel}"`
+          sel.appendChild(o)
+        }
+        sel.value = trigger.nodeId && trigger.optionLabel ? `${trigger.nodeId}\n${trigger.optionLabel}` : ''
+        sel.addEventListener('change', () => {
+          if (!sel.value) {
+            delete trigger.nodeId
+            delete trigger.optionLabel
+          } else {
+            const [nodeId, optionLabel] = sel.value.split('\n')
+            trigger.nodeId = nodeId
+            trigger.optionLabel = optionLabel
+          }
+          rerender?.()
+        })
+        wrap.appendChild(sel)
+
+        const selected = beats.find(beat => beat.nodeId === trigger.nodeId && beat.optionLabel === trigger.optionLabel)
+        const preview = document.createElement('div')
+        preview.style.cssText = 'font-size:11px;color:#aaa;line-height:1.35;margin-top:6px;'
+        preview.textContent = selected
+          ? `NPC says: ${selected.fullLines.join(' ')}`
+          : 'Pick a specific NPC line and player response when only one dialogue choice should advance the quest.'
+        wrap.appendChild(preview)
+      } else {
+        const empty = document.createElement('div')
+        empty.style.cssText = 'font-size:11px;color:#aaa;line-height:1.35;margin-bottom:7px;'
+        empty.textContent = trigger.npcDefId
+          ? 'This NPC has no dialogue tree loaded in the editor. You can still match by raw node id and option label.'
+          : 'Choose an NPC to pick from its actual dialogue lines, or use raw matching fields below.'
+        wrap.appendChild(empty)
+      }
+
+      const advanced = document.createElement('details')
+      advanced.style.cssText = 'margin-top:7px;'
+      advanced.open = beats.length === 0
+      const summary = document.createElement('summary')
+      summary.textContent = 'Advanced matching'
+      summary.style.cssText = 'font-size:11px;color:#8bb8df;cursor:pointer;'
+      advanced.appendChild(summary)
+      const body = document.createElement('div')
+      body.style.cssText = 'margin-top:7px;'
+      body.appendChild(field('Dialogue node ID', textInput(trigger.nodeId || '', v => { const s = v.trim(); if (s) trigger.nodeId = s; else delete trigger.nodeId }, { font: 'monospace' })))
+      body.appendChild(field('Player option label', textInput(trigger.optionLabel || '', v => { const s = v.trim(); if (s) trigger.optionLabel = s; else delete trigger.optionLabel })))
+      advanced.appendChild(body)
+      wrap.appendChild(advanced)
+      return wrap
+    }
+
+    function dialogueBeatsForTrigger(trigger) {
+      const trees = dialogueTreesForTrigger(trigger)
+      const beats = []
+      const seen = new Set()
+      for (const { tree } of trees) {
+        if (!tree?.nodes || typeof tree.nodes !== 'object') continue
+        for (const [nodeKey, node] of Object.entries(tree.nodes)) {
+          if (!node || !Array.isArray(node.options)) continue
+          const nodeId = node.id || nodeKey
+          const lines = Array.isArray(node.lines) ? node.lines.filter(Boolean).map(String) : []
+          const npcSays = summarizeDialogueLines(lines, nodeId)
+          for (const opt of node.options) {
+            if (!opt?.label) continue
+            const key = `${nodeId}\n${opt.label}`
+            if (seen.has(key)) continue
+            seen.add(key)
+            beats.push({ nodeId, optionLabel: opt.label, npcSays, fullLines: lines.length ? lines : [`Node ${nodeId}`] })
+          }
+        }
+      }
+      return beats.sort((a, b) => `${a.npcSays} ${a.optionLabel}`.localeCompare(`${b.npcSays} ${b.optionLabel}`))
+    }
+
+    function dialogueTreesForTrigger(trigger) {
+      const trees = []
+      const allSpawns = allQuestNpcSpawns()
+      if (trigger.npcName) {
+        for (const spawn of allSpawns.filter(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)) {
+          const def = npcDefs.find(d => d.id === spawn.npcId)
+          const tree = spawn.dialogue ?? def?.dialogue
+          if (tree) trees.push({ label: spawn.name, tree })
+        }
+      } else if (trigger.npcDefId) {
+        const def = npcDefs.find(d => d.id === trigger.npcDefId)
+        if (def?.dialogue) trees.push({ label: def.name, tree: def.dialogue })
+        for (const spawn of allSpawns.filter(s => s.npcId === trigger.npcDefId && s.dialogue)) {
+          trees.push({ label: spawn.name || def?.name || `NPC ${trigger.npcDefId}`, tree: spawn.dialogue })
+        }
+      }
+      return trees
+    }
+
+    function allQuestNpcSpawns() {
+      const byKey = new Map()
+      for (const spawn of [...knownNpcSpawns, ...npcSpawns]) {
+        const key = `${spawn.mapId || 'current'}:${spawn.id ?? ''}:${spawn.npcId}:${spawn.name || ''}:${spawn.x ?? ''}:${spawn.z ?? ''}`
+        byKey.set(key, spawn)
+      }
+      return [...byKey.values()]
+    }
+
+    function summarizeDialogueLines(lines, fallbackId) {
+      const text = (lines || []).join(' ').replace(/\s+/g, ' ').trim()
+      if (!text) return `Node ${fallbackId}`
+      return text.length > 92 ? `${text.slice(0, 89)}...` : text
+    }
+
+    function renderAddDialogueOptionBlock(trigger, context, rerender) {
+      const wrap = document.createElement('div')
+      wrap.style.cssText = 'background:#151515;border:1px solid #315070;border-radius:3px;padding:8px;'
+      const head = document.createElement('div')
+      head.textContent = 'Add the dialogue option to this NPC'
+      head.style.cssText = 'font-size:11px;color:#d7ecff;font-weight:bold;margin-bottom:6px;'
+      wrap.appendChild(head)
+
+      if (!trigger.npcDefId) {
+        const msg = document.createElement('div')
+        msg.textContent = 'Choose an NPC first, then add the player option and NPC reply here.'
+        msg.style.cssText = 'font-size:11px;color:#aaa;line-height:1.35;'
+        wrap.appendChild(msg)
+        return wrap
+      }
+
+      const tree = editableDialogueTreePreview(trigger)
+      const nodeEntries = Object.entries(tree.nodes || {})
+      const values = {
+        parentNodeId: tree.root || nodeEntries[0]?.[0] || 'start',
+        optionLabel: context?.stageIndex == null ? 'Start the quest.' : 'Ask about the quest.',
+        npcReply: context?.stageIndex == null ? 'Let me tell you what I need.' : 'Here is what you need to know.',
+        extraTurns: [],
+      }
+
+      const parentSelect = document.createElement('select')
+      parentSelect.style.cssText = 'width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      for (const [nodeId, node] of nodeEntries.length ? nodeEntries : [['start', { id: 'start', lines: ['Hello!'], options: [] }]]) {
+        const o = document.createElement('option')
+        o.value = nodeId
+        o.textContent = `${nodeId}: ${summarizeDialogueLines(node.lines || [], nodeId)}`
+        parentSelect.appendChild(o)
+      }
+      parentSelect.value = values.parentNodeId
+      parentSelect.addEventListener('change', () => { values.parentNodeId = parentSelect.value })
+
+      wrap.appendChild(field('Add the option under NPC line', parentSelect))
+      wrap.appendChild(field('Player option text', textInput(values.optionLabel, v => { values.optionLabel = v })))
+      wrap.appendChild(field('NPC reply after the player chooses it', textArea(values.npcReply, v => { values.npcReply = v }, 55)))
+
+      const extraTurnsWrap = document.createElement('div')
+      extraTurnsWrap.style.cssText = 'margin-top:4px;'
+      const renderExtraTurns = () => {
+        extraTurnsWrap.innerHTML = ''
+        for (let i = 0; i < values.extraTurns.length; i++) {
+          const idx = i
+          const item = values.extraTurns[idx]
+          const row = document.createElement('div')
+          row.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:7px 8px;margin-bottom:6px;'
+          const rowHead = document.createElement('div')
+          rowHead.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;'
+          const rowTitle = document.createElement('div')
+          rowTitle.textContent = item.kind === 'npc'
+            ? `NPC continues ${idx + 1}`
+            : `Player/NPC exchange ${idx + 1}`
+          rowTitle.style.cssText = 'flex:1;font-size:11px;color:#ddd;font-weight:bold;'
+          const rm = iconBtn('✕', 'Remove this entry', () => {
+            values.extraTurns.splice(idx, 1)
+            renderExtraTurns()
+          })
+          rm.style.background = '#6c2a2a'
+          rowHead.appendChild(rowTitle)
+          rowHead.appendChild(rm)
+          row.appendChild(rowHead)
+          if (item.kind === 'npc') {
+            row.appendChild(field('NPC says next', textArea(item.npcLine, v => { item.npcLine = v }, 50)))
+          } else {
+            row.appendChild(field('Player says', textArea(item.playerLine, v => { item.playerLine = v }, 42)))
+            row.appendChild(field('NPC replies', textArea(item.npcLine, v => { item.npcLine = v }, 50)))
+          }
+          extraTurnsWrap.appendChild(row)
+        }
+        const actions = document.createElement('div')
+        actions.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;'
+        const addNpc = document.createElement('button')
+        addNpc.textContent = '+ NPC continues'
+        addNpc.style.cssText = 'background:#26384d;color:#fff;border:1px solid #4c6580;border-radius:3px;padding:5px 10px;font-size:11px;cursor:pointer;'
+        addNpc.addEventListener('click', () => {
+          values.extraTurns.push({ kind: 'npc', npcLine: 'Here is more.' })
+          renderExtraTurns()
+        })
+        const addExchange = document.createElement('button')
+        addExchange.textContent = '+ Player/NPC exchange'
+        addExchange.style.cssText = 'background:#26384d;color:#fff;border:1px solid #4c6580;border-radius:3px;padding:5px 10px;font-size:11px;cursor:pointer;'
+        addExchange.addEventListener('click', () => {
+          values.extraTurns.push({ kind: 'exchange', playerLine: 'I have another question.', npcLine: 'Here is more.' })
+          renderExtraTurns()
+        })
+        actions.appendChild(addNpc)
+        actions.appendChild(addExchange)
+        extraTurnsWrap.appendChild(actions)
+      }
+      renderExtraTurns()
+      wrap.appendChild(extraTurnsWrap)
+
+      const applyBtn = document.createElement('button')
+      applyBtn.textContent = 'Add option and wire quest advance'
+      applyBtn.style.cssText = 'background:#2a4a6c;color:#fff;border:1px solid #5d86b0;border-radius:3px;padding:6px 10px;font-size:11px;cursor:pointer;margin-top:2px;'
+      applyBtn.addEventListener('click', () => {
+        const target = ensureEditableDialogueTree(trigger)
+        if (!target) {
+          setStatus(trigger.npcName ? 'Load the map containing this named NPC before adding its quest dialogue.' : 'Choose a valid NPC first', '#e44')
+          return
+        }
+        const tree = target.tree
+        if (!tree.root) tree.root = 'start'
+        if (!tree.nodes || typeof tree.nodes !== 'object') tree.nodes = {}
+        if (!tree.nodes[values.parentNodeId]) {
+          tree.nodes[values.parentNodeId] = { id: values.parentNodeId, lines: ['Hello!'], options: [] }
+          if (!tree.root) tree.root = values.parentNodeId
+        }
+        const parent = tree.nodes[values.parentNodeId]
+        if (!Array.isArray(parent.lines)) parent.lines = []
+        if (!Array.isArray(parent.options)) parent.options = []
+
+        const optionLabel = (values.optionLabel || '').trim() || 'Ask about the quest.'
+        const nodeBase = `${context?.q?.id || 'quest'}_${context?.stageIndex == null ? 'start' : `stage_${context.stageIndex}`}_reply`
+        const replyNodeId = uniqueDialogueNodeId(tree, nodeBase)
+        const condition = context?.stageIndex == null
+          ? { type: 'questNotStarted', questId: context?.q?.id || '' }
+          : { type: 'questStage', questId: context?.q?.id || '', minStage: context.stageIndex, maxStage: context.stageIndex }
+
+        parent.options.push({ label: optionLabel, next: replyNodeId, condition })
+        const firstReply = {
+          id: replyNodeId,
+          lines: dialogueLinesFromText(values.npcReply, 'Here is what you need to know.'),
+          options: [],
+        }
+        tree.nodes[replyNodeId] = firstReply
+
+        let currentNode = firstReply
+        for (let i = 0; i < values.extraTurns.length; i++) {
+          const turn = values.extraTurns[i]
+          if (turn.kind === 'npc') {
+            currentNode.lines.push(...dialogueLinesFromText(turn.npcLine, 'Here is more.'))
+            continue
+          }
+          const playerNodeId = uniqueDialogueNodeId(tree, `${nodeBase}_player_${i + 1}`)
+          const npcNodeId = uniqueDialogueNodeId(tree, `${nodeBase}_npc_${i + 1}`)
+          currentNode.options.push({ label: 'Continue.', next: playerNodeId })
+          tree.nodes[playerNodeId] = {
+            id: playerNodeId,
+            speaker: 'You',
+            lines: dialogueLinesFromText(turn.playerLine, 'I have another question.'),
+            options: [{ label: 'Continue.', next: npcNodeId }],
+          }
+          currentNode = {
+            id: npcNodeId,
+            lines: dialogueLinesFromText(turn.npcLine, 'Here is more.'),
+            options: [],
+          }
+          tree.nodes[npcNodeId] = currentNode
+        }
+        currentNode.options.push({ label: 'Continue.' })
+
+        trigger.nodeId = values.parentNodeId
+        trigger.optionLabel = optionLabel
+        if (target.kind === 'def') markDefsDirty()
+        if (target.kind === 'spawn') questDialogueTouchedCurrentMap = true
+        setStatus(target.kind === 'spawn' ? 'Added option. Use Save Quest + Dialogue to persist it.' : 'Added option. Use Save Quest + Dialogue to persist it.', '#6e6')
+        rerender?.()
+      })
+      wrap.appendChild(applyBtn)
+      return wrap
+    }
+
+    function editableDialogueTreePreview(trigger) {
+      const target = findDialogueEditTarget(trigger)
+      return target?.tree || { root: 'start', nodes: { start: { id: 'start', lines: ['Hello!'], options: [] } } }
+    }
+
+    function ensureEditableDialogueTree(trigger) {
+      const target = findDialogueEditTarget(trigger)
+      if (!target) return null
+      if (!target.tree) {
+        target.tree = { root: 'start', nodes: { start: { id: 'start', lines: ['Hello!'], options: [] } } }
+        if (target.kind === 'spawn') target.owner.dialogue = target.tree
+        else target.owner.dialogue = target.tree
+      }
+      return target
+    }
+
+    function findDialogueEditTarget(trigger) {
+      if (!trigger.npcDefId) return null
+      const currentSpawn = trigger.npcName
+        ? npcSpawns.find(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)
+        : null
+      if (trigger.npcName && !currentSpawn) return null
+      if (currentSpawn) {
+        if (!currentSpawn.dialogue) {
+          const def = npcDefs.find(d => d.id === currentSpawn.npcId)
+          currentSpawn.dialogue = def?.dialogue
+            ? JSON.parse(JSON.stringify(def.dialogue))
+            : { root: 'start', nodes: { start: { id: 'start', lines: ['Hello!'], options: [] } } }
+        }
+        return { kind: 'spawn', owner: currentSpawn, tree: currentSpawn.dialogue }
+      }
+      const def = npcDefs.find(d => d.id === trigger.npcDefId)
+      if (!def) return null
+      return { kind: 'def', owner: def, tree: def.dialogue }
+    }
+
+    function uniqueDialogueNodeId(tree, base) {
+      const clean = String(base || 'quest_reply').replace(/[^\w-]+/g, '_')
+      let id = clean
+      let i = 2
+      while (tree.nodes?.[id]) {
+        id = `${clean}_${i++}`
+      }
+      return id
+    }
+
+    function dialogueLinesFromText(text, fallback) {
+      const lines = String(text || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+      return lines.length ? lines : [fallback]
+    }
+
+    function renderTriggerFields(trigger, includeChance, rerender, context) {
       const wrap = document.createElement('div')
       wrap.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:6px 8px;display:flex;flex-direction:column;gap:6px;'
       if (trigger.type === 'dialogue') {
-        wrap.appendChild(field('NPC (optional — leave blank for any NPC)', dialogueNpcSelect(trigger, () => {})))
-        wrap.appendChild(field('Dialogue node ID (optional)', textInput(trigger.nodeId || '', v => { const s = v.trim(); if (s) trigger.nodeId = s; else delete trigger.nodeId }, { font: 'monospace' })))
-        wrap.appendChild(field('Option label (optional, exact match)', textInput(trigger.optionLabel || '', v => { const s = v.trim(); if (s) trigger.optionLabel = s; else delete trigger.optionLabel })))
+        wrap.appendChild(field('NPC (optional — leave blank for any NPC)', dialogueNpcSelect(trigger, () => { rerender?.() })))
+        wrap.appendChild(renderAddDialogueOptionBlock(trigger, context, rerender))
+        wrap.appendChild(renderDialogueBeatPicker(trigger, rerender))
         wrap.appendChild(field('Times needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
       } else if (trigger.type === 'npcKill') {
         wrap.appendChild(field('NPC', npcSelect(trigger.npcDefId ?? 0, v => { trigger.npcDefId = v })))
@@ -7202,8 +7835,8 @@ function applyToolAtTile(tile, eventLike = null) {
       return wrap
     }
 
-    function renderAuthoringHelpers() {
-      const section = sectionWrap('JSON builders', 'Create dialogue action and condition snippets for NPC dialogue JSON. These are helpers only; paste the generated JSON into an option action/actions or condition/conditions field.')
+    function renderAuthoringHelpers(q) {
+      const section = sectionWrap('Dialogue helpers', 'Use these when an NPC option needs to start, advance, complete, or gate a quest. The generated snippet is for the dialogue option fields.')
       const body = document.createElement('div')
       body.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;'
       const actionBox = helperBox('Action builder')
@@ -7341,6 +7974,11 @@ function applyToolAtTile(tile, eventLike = null) {
             if (typeof amount !== 'number' || amount <= 0) issue('warning', q.id, `${qid}.rewards.xp.${skill}`, 'XP reward should be positive.')
           }
         }
+        if (q.rewards?.renown !== undefined) {
+          if (!Number.isInteger(q.rewards.renown) || q.rewards.renown < 1 || q.rewards.renown > 10) {
+            issue('error', q.id, `${qid}.rewards.renown`, 'Renown reward must be a whole number from 1 to 10.')
+          }
+        }
         for (let i = 0; i < (q.rewards?.items || []).length; i++) {
           validateItemRef(q.rewards.items[i].itemId, q.id, `${qid}.rewards.items[${i}].itemId`, issue)
         }
@@ -7363,8 +8001,8 @@ function applyToolAtTile(tile, eventLike = null) {
         }
         if (trigger.type === 'dialogue') {
           if (trigger.npcDefId !== undefined) validateNpcRef(trigger.npcDefId, questId, `${path}.npcDefId`, issue)
-          if (trigger.npcName && !npcSpawns.some(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)) {
-            issue('warning', questId, `${path}.npcName`, 'No currently loaded map spawn has this NPC name.')
+          if (trigger.npcName && !allQuestNpcSpawns().some(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)) {
+            issue('warning', questId, `${path}.npcName`, 'No loaded map data has this named NPC spawn.')
           }
         } else if (trigger.type === 'itemPickup') {
           validateItemRef(trigger.itemId, questId, `${path}.itemId`, issue)
@@ -7561,43 +8199,115 @@ function applyToolAtTile(tile, eventLike = null) {
       return sel
     }
     function dialogueNpcSelect(trigger, onChange) {
-      const sel = document.createElement('select')
-      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
-      const empty = document.createElement('option'); empty.value = ''; empty.textContent = '(any NPC)'; sel.appendChild(empty)
+      const input = document.createElement('input')
+      input.type = 'text'
+      input.setAttribute('list', 'questNpcDatalist')
+      input.placeholder = 'Search NPC name, spawn name, or ID'
+      input.value = formatQuestNpcDisplay(trigger)
+      input.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
 
-      const namedSpawns = npcSpawns
-        .filter(spawn => spawn.name && npcDefs.some(def => def.id === spawn.npcId))
-        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
-      for (const spawn of namedSpawns) {
-        const def = npcDefs.find(d => d.id === spawn.npcId)
-        const o = document.createElement('option')
-        o.value = `spawn:${spawn.npcId}:${spawn.name}`
-        o.textContent = `${spawn.name} (${def?.name || 'NPC'} ID ${spawn.npcId})`
-        sel.appendChild(o)
-      }
-
-      for (const def of [...npcDefs].sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
-        const o = document.createElement('option'); o.value = `def:${def.id}`; o.textContent = `${def.name} (${def.id})`; sel.appendChild(o)
-      }
-
-      sel.value = trigger.npcName
-        ? `spawn:${trigger.npcDefId ?? 0}:${trigger.npcName}`
-        : (trigger.npcDefId ? `def:${trigger.npcDefId}` : '')
-      sel.addEventListener('change', () => {
-        if (!sel.value) {
+      const sync = () => {
+        const picked = parseQuestNpcDisplay(input.value)
+        if (!picked) {
           delete trigger.npcDefId
           delete trigger.npcName
-        } else if (sel.value.startsWith('spawn:')) {
-          const [, rawId, ...nameParts] = sel.value.split(':')
-          trigger.npcDefId = parseInt(rawId)
-          trigger.npcName = nameParts.join(':')
+        } else if (picked.kind === 'spawn') {
+          trigger.npcDefId = picked.npcDefId
+          trigger.npcName = picked.name
         } else {
-          trigger.npcDefId = parseInt(sel.value.slice('def:'.length))
+          trigger.npcDefId = picked.npcDefId
           delete trigger.npcName
         }
+        input.value = formatQuestNpcDisplay(trigger)
         onChange()
+      }
+      input.addEventListener('change', sync)
+      input.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          sync()
+        }
       })
-      return sel
+      ensureQuestNpcDatalist()
+      return input
+    }
+    function ensureQuestNpcDatalist() {
+      let dl = document.getElementById('questNpcDatalist')
+      if (!dl) {
+        dl = document.createElement('datalist')
+        dl.id = 'questNpcDatalist'
+        document.body.appendChild(dl)
+      }
+      dl.innerHTML = ''
+      const empty = document.createElement('option')
+      empty.value = ''
+      empty.label = 'Any NPC'
+      dl.appendChild(empty)
+      for (const choice of questNpcChoices()) {
+        const o = document.createElement('option')
+        o.value = choice.display
+        o.label = choice.search
+        dl.appendChild(o)
+      }
+    }
+    function questNpcChoices() {
+      const choices = []
+      const seenSpawns = new Set()
+      for (const spawn of allQuestNpcSpawns()) {
+        if (!spawn.name || !npcDefs.some(def => def.id === spawn.npcId)) continue
+        const key = `${spawn.npcId}:${spawn.name}`
+        if (seenSpawns.has(key)) continue
+        seenSpawns.add(key)
+        const def = npcDefs.find(d => d.id === spawn.npcId)
+        const where = spawn.mapId ? `, ${spawn.mapId}` : ', current map'
+        choices.push({
+          kind: 'spawn',
+          npcDefId: spawn.npcId,
+          name: spawn.name,
+          display: `${spawn.name} - ${def?.name || 'NPC'} (${spawn.npcId}${where})`,
+          search: `${spawn.name} ${def?.name || ''} ${spawn.npcId} ${spawn.mapId || ''}`,
+        })
+      }
+      for (const def of npcDefs) {
+        choices.push({
+          kind: 'def',
+          npcDefId: def.id,
+          display: `${def.name} (${def.id})`,
+          search: `${def.name} ${def.id}`,
+        })
+      }
+      return choices.sort((a, b) => a.display.localeCompare(b.display))
+    }
+    function parseQuestNpcDisplay(value) {
+      const text = String(value || '').trim()
+      if (!text) return null
+      const exact = questNpcChoices().find(choice => choice.display === text)
+      if (exact) return exact
+      const idMatch = text.match(/\((\d+)(?:,|\))/)
+      if (idMatch) {
+        const id = parseInt(idMatch[1])
+        const spawnName = text.split(' - ')[0]?.trim()
+        const spawn = questNpcChoices().find(choice => choice.kind === 'spawn' && choice.npcDefId === id && choice.name === spawnName)
+        if (spawn) return spawn
+        if (npcDefs.some(def => def.id === id)) return { kind: 'def', npcDefId: id }
+      }
+      const lower = text.toLowerCase()
+      const fuzzy = questNpcChoices().find(choice => choice.display.toLowerCase().includes(lower) || choice.search.toLowerCase().includes(lower))
+      return fuzzy || null
+    }
+    function formatQuestNpcDisplay(trigger) {
+      if (trigger.npcName) {
+        const found = questNpcChoices().find(choice => choice.kind === 'spawn' && choice.npcDefId === trigger.npcDefId && choice.name === trigger.npcName)
+        if (found) return found.display
+        const def = npcDefs.find(d => d.id === trigger.npcDefId)
+        return `${trigger.npcName} - ${def?.name || 'NPC'} (${trigger.npcDefId || '?'})`
+      }
+      if (trigger.npcDefId) {
+        const found = questNpcChoices().find(choice => choice.kind === 'def' && choice.npcDefId === trigger.npcDefId)
+        if (found) return found.display
+        return `NPC ${trigger.npcDefId}`
+      }
+      return ''
     }
     function chestSelect(value, onChange) {
       const sel = document.createElement('select')
@@ -7657,6 +8367,7 @@ function applyToolAtTile(tile, eventLike = null) {
       return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
     }
     function itemPicker(value, onChange) {
+      ensureShopItemDatalist()
       const input = document.createElement('input')
       input.type = 'text'
       input.setAttribute('list', 'shopItemDatalist')
@@ -7676,6 +8387,10 @@ function applyToolAtTile(tile, eventLike = null) {
       for (const opt of [
         ['any', 'Any item grant'],
         ['ground', 'Ground pickup only'],
+        ['object', 'Object interaction only'],
+        ['dialogue', 'Dialogue reward only'],
+        ['harvest', 'Harvest only'],
+        ['chest', 'Chest loot only'],
       ]) {
         const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
       }
@@ -7685,11 +8400,11 @@ function applyToolAtTile(tile, eventLike = null) {
     }
     function questTriggerOptions() {
       return [
-        ['dialogue', 'dialogue — talk to an NPC'],
-        ['npcKill', 'npcKill — kill an NPC'],
-        ['itemPickup', 'itemPickup — gain an item'],
-        ['chestOpen', 'chestOpen — open a chest'],
-        ['objectInteract', 'objectInteract — use an object'],
+        ['dialogue', 'Player talks to an NPC'],
+        ['npcKill', 'Player kills an NPC'],
+        ['itemPickup', 'Player gets an item'],
+        ['chestOpen', 'Player opens a chest'],
+        ['objectInteract', 'Player uses an object'],
       ]
     }
     function makeBlankTrigger(type) {
@@ -7814,72 +8529,16 @@ function applyToolAtTile(tile, eventLike = null) {
     if (npcDefsDirty) {
       statusText.textContent = 'Saving NPC defs…'
       try {
-        const r = await fetch('/api/editor/npcs', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ npcs: npcDefs }),
-        })
-        const body = await r.json().catch(() => ({}))
-        if (r.ok && body.ok) {
-          clearDefsDirty('NPC defs saved ✓')
-        } else {
-          // Abort — proceeding would land a half-save where the map was
-          // written but the defs weren't, leaving the editor and live world
-          // inconsistent.
-          statusText.textContent = `NPC defs save failed: ${body.error || 'unknown'}`
-          return
-        }
+        await saveNpcDefsToServer()
       } catch (err) {
-        statusText.textContent = `NPC defs save network error: ${err.message}`
+        statusText.textContent = `NPC defs save failed: ${err.message}`
         return
       }
     }
 
-    const saveData = buildSaveData()
-    const meta = {
-      id: mapId,
-      name: mapId.charAt(0).toUpperCase() + mapId.slice(1),
-      width: map.width,
-      height: map.height,
-      waterLevel: map.waterLevel,
-      spawnPoint: { x: Math.floor(map.width / 2) + 0.5, z: Math.floor(map.height / 2) + 0.5 },
-      fogColor: map.mapType === 'dungeon' ? [0.05, 0.02, 0.1] : [0.4, 0.6, 0.9],
-      fogStart: map.mapType === 'dungeon' ? 5 : 30,
-      fogEnd: map.mapType === 'dungeon' ? 25 : 50,
-      transitions: []
-    }
-
-    // Build spawns via the shared serializer so per-spawn overrides
-    // (appearance, equipment, shop, dialogue) round-trip — the previous
-    // inline mapper was silently dropping every override field besides
-    // wanderRange + aggressive.
-    const spawns = {
-      npcs: serializeNpcSpawns(),
-      objects: [],
-      items: itemSpawns.map(s => ({ itemId: s.itemId, x: s.x, z: s.z, quantity: s.quantity }))
-    }
-
-    // Build KCMapFile
-    const mapFile = {
-      map: saveData.map,
-      placedObjects: saveData.placedObjects,
-      layers: saveData.layers,
-      activeLayerId: saveData.activeLayerId
-    }
-
     try {
-      const res = await fetch(`${SERVER_API}/save-map`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mapId, meta, spawns, mapData: mapFile, walls: serializeCollisionData(), biomes: serializeBiomesData() })
-      })
-      const data = await res.json()
-      if (data.ok) {
-        statusText.textContent = `Saved "${mapId}" to server`
-        refreshServerMapList(true)
-      } else {
-        statusText.textContent = `Save failed: ${data.error}`
-      }
+      await saveCurrentMapToServer(mapId)
+      statusText.textContent = `Saved "${mapId}" to server`
     } catch (e) {
       statusText.textContent = `Server error: ${e.message}`
     }

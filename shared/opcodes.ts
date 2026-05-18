@@ -200,6 +200,9 @@ export enum ServerOpcode {
    *  `getPlayerAttackAnimName` returns this string directly instead of
    *  deriving from the NPC's weapon. Absent → default weapon-driven pick. */
   NPC_ATTACK_ANIM = 87,
+  /** Current total player renown. Values: [renown]. Sent on login and when
+   *  quest completion grants renown. */
+  RENOWN_SYNC = 88,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].

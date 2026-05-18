@@ -111,6 +111,9 @@ export class Player extends Entity {
    *  (kill count, item count, etc). `stage: -1` = completed. Persisted in
    *  player_state.quests. */
   quests: Record<string, { stage: number; triggerProgress: number }> = {};
+  /** Account-wide reputation earned from quest completions. Persisted in
+   *  player_state.renown and synced to the quest journal. */
+  renown: number = 0;
   /** World tick on which this player last consumed a movement waypoint. Used
    *  to defer adjacency-triggered actions (interact/pickup) by one tick when
    *  the player just arrived — gives the client's smooth visual interpolation

@@ -1696,5 +1696,40 @@
         100
       ]
     }
+  },
+  {
+    "id": 26,
+    "name": "Paper",
+    "category": "scenery",
+    "actions": [
+      "Pick up",
+      "Look at",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 1,
+    "height": 1,
+    "color": [
+      235,
+      225,
+      190
+    ]
+  },
+  {
+    "id": 27,
+    "name": "Well",
+    "category": "scenery",
+    "actions": [
+      "Use",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      80,
+      80,
+      90
+    ]
   }
 ]

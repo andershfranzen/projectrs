@@ -1022,6 +1022,7 @@ export class World {
     // log when the record is {}. Subsequent stage advances arrive as
     // QUEST_STAGE_ADVANCED deltas.
     this.quests.sendQuestStateSync(player);
+    this.sendToPlayer(player, ServerOpcode.RENOWN_SYNC, player.renown);
   }
 
   private cancelSkilling(playerId: number): void {
@@ -2018,35 +2019,11 @@ export class World {
         this.sendDialogueClose(player);
         this.openCharacterCreatorFor(player);
         return;
-      case 'giveItem': {
-        // Best-effort: silently no-op if inventory is full. Authors can chain a
-        // "you don't have room" branch with a hasInventoryRoom check in future.
-        if (action.itemId > 0 && action.qty > 0) {
-          const result = player.addItem(action.itemId, action.qty, this.data.itemDefs);
-          if (result.completed > 0) {
-            this.sendInventory(player);
-            this.quests.notifyQuestEvent(player, {
-              type: 'itemPickup',
-              itemId: action.itemId,
-              quantity: result.completed,
-              source: 'dialogue',
-            });
-          }
-        }
-        return;
-      }
-      case 'takeItem': {
-        if (action.itemId > 0 && action.qty > 0) {
-          const removed = player.removeItemById(action.itemId, action.qty);
-          if (removed.completed > 0) this.sendInventory(player);
-        }
-        return;
-      }
+      case 'giveItem':
+      case 'takeItem':
       case 'setQuestStage':
-        this.quests.setPlayerQuestStage(player, action.questId, action.stage);
-        return;
       case 'completeQuest':
-        this.quests.completePlayerQuest(player, action.questId);
+        this.quests.runQuestAction(player, action, 'dialogue');
         return;
     }
   }
@@ -2481,6 +2458,8 @@ export class World {
   private runObjectInteractionEffects(player: Player, obj: WorldObject, action: string): void {
     const effects = obj.interactions?.filter(effect => effect.action === action) ?? [];
     for (const effect of effects) {
+      if (effect.condition && !this.quests.questConditionMet(player, effect.condition)) continue;
+      if (effect.conditions?.some(condition => !this.quests.questConditionMet(player, condition))) continue;
       if (Array.isArray(effect.saySequence) && effect.saySequence.length > 0) {
         this.queueObjectSaySequence(player, effect.saySequence);
       } else if (typeof effect.say === 'string') {
@@ -2489,7 +2468,22 @@ export class World {
       }
       const message = typeof effect.message === 'string' ? effect.message.trim() : '';
       if (message) this.sendChatSystem(player, message.slice(0, 300));
+      const actionsSucceeded = this.quests.runQuestActions(player, effect.effects || [], 'object');
+      if (effect.depleteObject && actionsSucceeded) {
+        this.depleteObjectFromInteractionEffect(obj, effect.depleteRespawnTicks);
+      }
     }
+  }
+
+  private depleteObjectFromInteractionEffect(obj: WorldObject, respawnTicks?: number): void {
+    if (obj.depleted || obj.def.category === 'door') return;
+    obj.depleted = true;
+    obj.respawnTimer = Math.max(0, Math.floor(respawnTicks ?? obj.def.respawnTime ?? 0));
+    if (obj.respawnTimer > 0) {
+      this.depletedObjectIds.add(obj.id);
+      this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
+    }
+    this.broadcastNearby(obj.mapLevel, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, 1, 0);
   }
 
   private queueObjectSaySequence(player: Player, sequence: NonNullable<WorldObject['interactions']>[number]['saySequence']): void {

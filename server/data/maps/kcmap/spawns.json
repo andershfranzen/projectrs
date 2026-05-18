@@ -67,6 +67,52 @@
         "skinColor": 3,
         "hairStyle": 1
       },
+      "dialogue": {
+        "root": "greet",
+        "nodes": {
+          "greet": {
+            "id": "greet",
+            "lines": [
+              "Welcome to my shop, traveler!",
+              "What can I do for you today?"
+            ],
+            "options": [
+              {
+                "label": "Show me what you've got.",
+                "action": {
+                  "type": "openShop"
+                }
+              },
+              {
+                "label": "Tell me about this place.",
+                "next": "lore"
+              },
+              {
+                "label": "Goodbye."
+              }
+            ]
+          },
+          "lore": {
+            "id": "lore",
+            "lines": [
+              "This little shop has been in my family for three generations.",
+              "A lot of inexperienced travelers tend to come around these parts. I keep a lot of stuff people would consider basic."
+            ],
+            "options": [
+              {
+                "label": "Show me your wares.",
+                "action": {
+                  "type": "openShop"
+                }
+              },
+              {
+                "label": "Back.",
+                "next": "greet"
+              }
+            ]
+          }
+        }
+      },
       "name": "Robert"
     },
     {

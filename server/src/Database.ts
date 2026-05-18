@@ -71,6 +71,7 @@ export interface SavedPlayerState {
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
   quests: Record<string, { stage: number; triggerProgress: number }>;
+  renown: number;
 }
 
 export interface HiscoreCategory {
@@ -148,6 +149,7 @@ export class GameDatabase {
         equipment TEXT DEFAULT '{}',
         stance TEXT DEFAULT 'accurate',
         appearance TEXT DEFAULT NULL,
+        renown INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER DEFAULT (unixepoch())
       );
     `);
@@ -187,6 +189,10 @@ export class GameDatabase {
     // stage: -1 = completed. Missing entries = not started.
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN quests TEXT NOT NULL DEFAULT '{}'`);
+    } catch { /* column already exists */ }
+    // Migration: player renown earned from quest completions.
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN renown INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
 
     // Bot detection telemetry. One row per account, updated on session flush
@@ -581,7 +587,7 @@ export class GameDatabase {
         x = ?, z = ?, y = ?, floor = ?,
         map_level = ?,
         skills = ?, inventory = ?, equipment = ?,
-        stance = ?, appearance = COALESCE(?, appearance), bank = ?, quests = ?, updated_at = unixepoch()
+        stance = ?, appearance = COALESCE(?, appearance), bank = ?, quests = ?, renown = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
       player.position.x, player.position.y, effectiveY, player.currentFloor,
@@ -593,6 +599,7 @@ export class GameDatabase {
       player.appearance ? JSON.stringify(player.appearance) : null,
       JSON.stringify(player.bank),
       JSON.stringify(player.quests),
+      Math.max(0, Math.floor(player.renown || 0)),
       accountId,
     );
     this.saveHiscoreSnapshots(accountId, player.skills);
@@ -652,8 +659,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank, respawn_version, quests FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
 
     if (!row) return null;
 
@@ -765,6 +772,7 @@ export class GameDatabase {
       bank,
       respawnVersion: row.respawn_version ?? 0,
       quests,
+      renown: Math.max(0, Math.floor(row.renown ?? 0)),
     };
   }
 

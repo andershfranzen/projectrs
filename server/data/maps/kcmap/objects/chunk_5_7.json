@@ -966,7 +966,43 @@
       "x": 0.8499999999999999,
       "y": 0.8499999999999999,
       "z": 0.8499999999999999
-    }
+    },
+    "name": "Desert well",
+    "interactions": [
+      {
+        "action": "Use",
+        "condition": {
+          "type": "hasItem",
+          "itemId": 236,
+          "quantity": 1
+        },
+        "say": "No one can know about this.",
+        "message": "You throw the suspect sketch into the well.",
+        "effects": [
+          {
+            "type": "takeItem",
+            "itemId": 236,
+            "qty": 1
+          },
+          {
+            "type": "completeQuest",
+            "questId": "Bob's Burial"
+          }
+        ]
+      },
+      {
+        "action": "Use",
+        "condition": {
+          "type": "not",
+          "condition": {
+            "type": "hasItem",
+            "itemId": 236,
+            "quantity": 1
+          }
+        },
+        "message": "You have nothing suspicious to throw into the well."
+      }
+    ]
   },
   {
     "assetId": "limestone doorframe",

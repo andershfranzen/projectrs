@@ -1674,7 +1674,13 @@
     "examineText": "This must be the sketch robert talked about.",
     "interactions": [
       {
-        "action": "Look at",
+        "action": "Pick up",
+        "condition": {
+          "type": "questStage",
+          "questId": "Bob's Burial",
+          "minStage": 1,
+          "maxStage": 1
+        },
         "saySequence": [
           {
             "delaySeconds": 0,
@@ -1684,7 +1690,17 @@
             "delaySeconds": 3,
             "text": "I need to get rid of this sketch, maybe i can throw it in a well or something."
           }
-        ]
+        ],
+        "effects": [
+          {
+            "type": "giveItem",
+            "itemId": 236,
+            "qty": 1
+          }
+        ],
+        "message": "You pick up the suspect sketch.",
+        "depleteObject": true,
+        "depleteRespawnTicks": 0
       }
     ],
     "interactionSides": 1
