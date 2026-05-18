@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, STAIR_DESCENT_SEARCH_RADIUS, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -1033,19 +1033,13 @@ export class World {
     // Send login confirmation — entity data will be sent when client responds with MAP_READY
     // The 4th value is the effective walking Y so the client can spawn at
     // the right elevation (e.g. on top of a texture-plane bridge interior).
-    let spawnY = this.computeEffectiveY(player);
-    // Auto-correct: if the saved Y is suspiciously low AND the saved tile
-    // has elevation data, snap up to the elevation. Players occasionally
-    // walk off the upper floor edge between auto-saves and get persisted
-    // at terrain; without this, they'd respawn stuck at the wrong height
-    // forever (the height-gate in getEffectiveHeight needs currentY to be
-    // high to reveal elevation, creating a feedback loop).
-    const map = this.getPlayerMap(player);
-    const elevAtTile = map.getElevatedFloorHeight?.(player.position.x, player.position.y);
-    if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && spawnY < elevAtTile - 1.0) {
-      spawnY = elevAtTile;
-      player.reportedY = elevAtTile; // re-anchor so the next save persists the correct value
-    }
+    const spawnY = this.computeEffectiveY(player);
+    // Do not auto-snap low saved Y up to an elevated texture plane. Multi-story
+    // buildings can have a valid floor-0 walkable tile directly under an upper
+    // floor, so the persisted Y is the only reliable signal for which plane
+    // the player logged out on. If the player actually logged out upstairs,
+    // saved/reportedY is already high enough for getEffectiveHeightOnFloor's
+    // gate to return the elevated surface.
     // Seed the server-authoritative collision elevation from the resolved
     // spawn height so the first move after (re)login gates wall edges on the
     // correct Y. Covers both fresh login and grace-period reconnect — both
@@ -1098,7 +1092,7 @@ export class World {
    *  itself the cancel signal; this covers inventory/equipment/item actions
    *  that can happen while standing still or while walking toward an object. */
   private interruptPlayerAction(playerId: number, player: Player, keepNpcUiContext: boolean = false): void {
-    player.pendingInteraction = null;
+    this.clearPendingObjectIntents(player);
     player.pendingPickup = -1;
     player.followTargetPlayerId = -1;
     player.actionDelay = 0;
@@ -1106,6 +1100,12 @@ export class World {
       this.closeNpcUiContext(player);
     }
     this.cancelSkilling(playerId);
+  }
+
+  private clearPendingObjectIntents(player: Player): void {
+    player.pendingInteraction = null;
+    player.pendingUseItemOnObject = null;
+    player.pendingUseItemOnNpc = null;
   }
 
   private closeNpcUiContext(player: Player): void {
@@ -1137,7 +1137,10 @@ export class World {
 
     // Remove from chunk manager
     const cm = this.chunkManagers.get(player.currentMapLevel);
-    if (cm) cm.removeEntity(player.id);
+    if (cm) {
+      cm.unregisterPlayer(player.id);
+      cm.removeEntity(player.id);
+    }
 
     this.players.delete(playerId);
     this.skillingActions.delete(playerId);
@@ -1172,7 +1175,7 @@ export class World {
     this.closeDialogueForPlayer(player, false);
     player.clearMoveQueue();
     player.pendingPickup = -1;
-    player.pendingInteraction = null;
+    this.clearPendingObjectIntents(player);
     player.delayedUntilTick = 0;
     this.cancelSkilling(playerId);
     this.clearCombatTarget(playerId);
@@ -1544,7 +1547,7 @@ export class World {
     this.clearCombatTarget(playerId);
     if (player) {
       player.attackTarget = null;
-      player.pendingInteraction = null;
+      this.clearPendingObjectIntents(player);
       player.pendingTalkNpcId = -1;
       player.followTargetPlayerId = -1;
     }
@@ -1619,12 +1622,13 @@ export class World {
     if (path.length === 0) {
       player.clearMoveQueue();
       player.followTargetPlayerId = -1;
+      this.clearPendingObjectIntents(player);
       return;
     }
 
     this.clearCombatTarget(playerId);
     player.attackTarget = null;
-    player.pendingInteraction = null;
+    this.clearPendingObjectIntents(player);
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
     player.followTargetPlayerId = -1;
@@ -1638,6 +1642,20 @@ export class World {
     if (player.openDialogueState) this.sendDialogueClose(player);
 
     const map = this.getPlayerMap(player);
+    const requestedGoal = path[path.length - 1];
+    const requestedGoalIsOnCurrentFloor = requestedGoal
+      ? !map.isTileBlockedOnFloor(Math.floor(requestedGoal.x), Math.floor(requestedGoal.z), player.currentFloor)
+      : true;
+    if (
+      player.currentFloor > 0
+      && !requestedGoalIsOnCurrentFloor
+      && this.isNearGroundStair(map, Math.floor(player.position.x), Math.floor(player.position.y))
+    ) {
+      player.currentFloor = 0;
+      player.lastFloorChangeTile = -1;
+      this.refreshPlayerEffectiveY(player);
+      this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+    }
     // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
     // larger is a malicious client. The previous 200-cap × 256 unit-tiles per
     // segment let a single packet queue ~50K tiles into moveQueue.
@@ -1743,7 +1761,7 @@ export class World {
     this.clearCombatTarget(playerId);
     player.clearMoveQueue();
     player.attackTarget = null;
-    player.pendingInteraction = null;
+    this.clearPendingObjectIntents(player);
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
     player.followTargetPlayerId = target.id;
@@ -2423,6 +2441,7 @@ export class World {
       }
       return;
     }
+    this.clearPendingObjectIntents(player);
 
     if (player.isBusy(this.currentTick)) {
       const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
@@ -2484,12 +2503,10 @@ export class World {
         // click — there is no useful action we can queue for them.
         return;
       }
-      // Anvil-style stations (recipes requiring a held tool) demand strict
-      // adjacency. The client walks the player to the anvil before opening
-      // the recipe picker; auto-walking on a craft packet here would let a
-      // stale/open SmithingPanel craft from anywhere. Harvest/door stay on
-      // the walk-then-act path.
-      if (obj.def.recipes?.[0]?.requiresTool) {
+      const opensRecipePicker = this.shouldOpenRecipePicker(obj);
+      // Specific recipe craft packets demand strict adjacency. The initial
+      // picker-open intent may walk, then the server opens the UI on arrival.
+      if (opensRecipePicker && recipeIndex >= 0) {
         this.sendChatSystem(player, `I need to stand next to the ${obj.def.name.toLowerCase()}.`);
         return;
       }
@@ -2498,9 +2515,6 @@ export class World {
         player.setMoveQueue(path);
       }
       if (player.hasMoveQueue()) {
-        // Stash recipeIndex too — without it, the deferred arrival fire
-        // would drop the player's specific picker choice (e.g. Steel Bar)
-        // and the server would auto-pick the first matching recipe (iron).
         player.pendingInteraction = { objectEntityId, actionIndex, recipeIndex };
       } else {
         this.sendChatSystem(player, "I can't reach that.");
@@ -2517,6 +2531,11 @@ export class World {
       ? this.ladderActionsForPlayer(player, obj)[actionIndex]
       : obj.currentActions[actionIndex];
     if (!action) return;
+
+    if (action !== 'Examine' && recipeIndex < 0 && this.shouldOpenRecipePicker(obj)) {
+      this.sendToPlayer(player, ServerOpcode.SMITHING_OPEN, obj.id);
+      return;
+    }
 
     this.runObjectInteractionEffects(player, obj, action);
     this.quests.notifyQuestEvent(player, {
@@ -2561,6 +2580,13 @@ export class World {
       this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
       return;
     }
+  }
+
+  private shouldOpenRecipePicker(obj: WorldObject): boolean {
+    const recipes = obj.def.recipes ?? [];
+    if (recipes.length === 0) return false;
+    if (recipes[0]?.requiresTool) return true;
+    return obj.def.category === 'furnace' && recipes.length > 1;
   }
 
   private runObjectInteractionEffects(player: Player, obj: WorldObject, action: string): void {
@@ -2645,8 +2671,9 @@ export class World {
     }
 
     this.interruptPlayerAction(player.id, player);
-    player.currentFloor = 0;
-    player.lastFloorChangeTile = -1;
+    player.currentFloor = target.floor;
+    player.lastFloorChangeTile = Math.floor(target.z) * this.getPlayerMap(player).width + Math.floor(target.x);
+    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
     this.teleportPlayer(player, target.x, target.z, target.y);
   }
 
@@ -2662,27 +2689,36 @@ export class World {
   private getLadderStep(
     player: Player,
     obj: WorldObject,
-  ): { up?: { x: number; z: number; y: number }; down?: { x: number; z: number; y: number } } {
+  ): { up?: { x: number; z: number; y: number; floor: number }; down?: { x: number; z: number; y: number; floor: number } } {
     const map = this.getPlayerMap(player);
-    const playerY = Math.max(player.effectiveY, player.reportedY);
+    const playerY = player.effectiveY;
+    const seenPositions = new Set<string>();
+    const addPosition = (x: number, z: number): { x: number; z: number } | null => {
+      const pos = { x: Math.floor(x) + 0.5, z: Math.floor(z) + 0.5 };
+      const key = `${pos.x},${pos.z}`;
+      if (seenPositions.has(key)) return null;
+      seenPositions.add(key);
+      return pos;
+    };
     const positions = [
-      { x: Math.floor(obj.x) + 0.5, z: Math.floor(obj.z) + 0.5 },
-      ...this.objectInteractionTiles(obj).map(tile => ({ x: tile.x + 0.5, z: tile.z + 0.5 })),
-    ];
-    const candidates: { x: number; z: number; y: number }[] = [];
-    const add = (candidate: { x: number; z: number; y: number }): void => {
+      addPosition(player.position.x, player.position.y),
+      ...this.objectInteractionTiles(obj).map(tile => addPosition(tile.x, tile.z)),
+    ].filter((pos): pos is { x: number; z: number } => pos !== null);
+    const candidates: { x: number; z: number; y: number; floor: number }[] = [];
+    const add = (candidate: { x: number; z: number; y: number; floor: number }): void => {
       if (!Number.isFinite(candidate.y)) return;
       if (!candidates.some(existing =>
         Math.abs(existing.x - candidate.x) < 0.01
         && Math.abs(existing.z - candidate.z) < 0.01
+        && existing.floor === candidate.floor
         && Math.abs(existing.y - candidate.y) < 0.1)) {
         candidates.push(candidate);
       }
     };
 
     for (const pos of positions) {
-      for (const y of map.getWalkableHeightsAt(pos.x, pos.z)) {
-        add({ ...pos, y });
+      for (const target of map.getWalkableFloorTargetsAt(pos.x, pos.z)) {
+        add({ ...pos, y: target.y, floor: target.floor });
       }
     }
 
@@ -3025,8 +3061,17 @@ export class World {
     if (!player) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
+    this.clearPendingObjectIntents(player);
     if (!this.isAdjacentToObject(player, obj)) {
-      this.sendChatSystem(player, "I can't reach that.");
+      const path = this.findPathToObjectInteraction(player, obj);
+      if (!player.hasMoveQueue() && path.length > 0) {
+        player.setMoveQueue(path);
+      }
+      if (player.hasMoveQueue()) {
+        player.pendingUseItemOnObject = { invSlot, itemId, objectEntityId };
+      } else {
+        this.sendChatSystem(player, "I can't reach that.");
+      }
       return;
     }
     this.interruptPlayerAction(playerId, player);
@@ -3045,7 +3090,14 @@ export class World {
     if (!player) return;
     if (npc.currentMapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
-    if (!this.isPlayerNpcInteractionReachable(player, npc)) return;
+    this.clearPendingObjectIntents(player);
+    if (!this.isPlayerNpcInteractionReachable(player, npc)) {
+      if (!player.hasMoveQueue() && !this.queuePlayerPathToNpcInteraction(player, npc)) return;
+      if (player.hasMoveQueue()) {
+        player.pendingUseItemOnNpc = { invSlot, itemId, npcEntityId };
+      }
+      return;
+    }
     this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
@@ -4017,6 +4069,15 @@ export class World {
     }
   }
 
+  private isNearGroundStair(map: GameMap, tileX: number, tileZ: number): boolean {
+    for (let dz = -STAIR_DESCENT_SEARCH_RADIUS; dz <= STAIR_DESCENT_SEARCH_RADIUS; dz++) {
+      for (let dx = -STAIR_DESCENT_SEARCH_RADIUS; dx <= STAIR_DESCENT_SEARCH_RADIUS; dx++) {
+        if (map.getStair(tileX + dx, tileZ + dz)) return true;
+      }
+    }
+    return false;
+  }
+
   private tickPlayerMovement(): void {
     for (const [playerId, player] of this.players) {
       if (player.followTargetPlayerId >= 0) {
@@ -4048,7 +4109,7 @@ export class World {
           this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
           this.sendNearbyDoorUpdates(player);
           player.clearMoveQueue();
-          player.pendingInteraction = null;
+          this.clearPendingObjectIntents(player);
           player.movementCredit = 0;
           break;
         }
@@ -4097,7 +4158,7 @@ export class World {
         // animations don't register while the character is mid-step.
         const isDoorInteraction = obj?.def.category === 'door';
         if (!isDoorInteraction && justArrived) continue;
-        player.pendingInteraction = null;
+        this.clearPendingObjectIntents(player);
         if (obj && obj.mapLevel === player.currentMapLevel) {
           if (this.isAdjacentToObject(player, obj)) {
             player.clearMoveQueue();
@@ -4115,6 +4176,18 @@ export class World {
             }
           }
         }
+      }
+      if (player.pendingUseItemOnObject && !player.hasMoveQueue()) {
+        if (justArrived) continue;
+        const { invSlot, itemId, objectEntityId } = player.pendingUseItemOnObject;
+        player.pendingUseItemOnObject = null;
+        this.handlePlayerUseItemOnObject(playerId, invSlot, itemId, objectEntityId);
+      }
+      if (player.pendingUseItemOnNpc && !player.hasMoveQueue()) {
+        if (justArrived) continue;
+        const { invSlot, itemId, npcEntityId } = player.pendingUseItemOnNpc;
+        player.pendingUseItemOnNpc = null;
+        this.handlePlayerUseItemOnNpc(playerId, invSlot, itemId, npcEntityId);
       }
       // Deferred Talk-to fires once the walk has drained. Mid-walk firing
       // would open the dialogue while the character is still striding;
@@ -4843,7 +4916,7 @@ export class World {
     this.cancelSkilling(player.id);
     player.clearMoveQueue();
     player.attackTarget = null;
-    player.pendingInteraction = null;
+    this.clearPendingObjectIntents(player);
     player.pendingSpellCast = null;
     player.pendingTalkNpcId = -1;
     player.pendingPickup = -1;
@@ -4921,10 +4994,10 @@ export class World {
     // their current map. Future: per-account home tile (set via altar, etc.).
     const map = this.getMap(oldMapId);
     const spawn = map.findSpawnPoint();
-    this.teleportPlayer(player, spawn.x, spawn.z);
+    this.teleportPlayer(player, spawn.x, spawn.z, undefined, 0);
 
     // Push the restored HP + skill panel + cleared inventory/equipment to
-    // the player. teleportPlayer sends PLAYER_TELEPORT (position) but not
+    // the player. teleportPlayer sends PLAYER_TELEPORT (position/floor) but not
     // stats. The client otherwise wouldn't know its inventory just lost
     // most of its contents.
     this.sendToPlayer(player, ServerOpcode.PLAYER_STATS, player.health, player.maxHealth);
@@ -4956,28 +5029,38 @@ export class World {
    *  PLAYER_TELEPORT packet so the client snaps position without reloading
    *  the map / chunks / entities. Only used for in-map jumps; cross-map
    *  transitions still go through MAP_CHANGE (handleMapTransition). */
-  teleportPlayer(player: Player, x: number, z: number, forcedY?: number): void {
+  teleportPlayer(player: Player, x: number, z: number, forcedY?: number, forcedFloor?: number): void {
     const mapId = player.currentMapLevel;
-    console.log(`[TP] teleportPlayer: ${player.name} on map="${mapId}" to (${x.toFixed(1)}, ${z.toFixed(1)})`);
     const cm = this.chunkManagers.get(mapId);
     if (cm) cm.removeEntity(player.id);
+    if (forcedFloor !== undefined) {
+      player.currentFloor = Math.max(0, Math.floor(forcedFloor));
+      player.lastFloorChangeTile = -1;
+    }
     player.position.x = x;
     player.position.y = z;
     player.clearMoveQueue();
     player.attackTarget = null;
+    this.clearPendingObjectIntents(player);
+    player.pendingPickup = -1;
+    player.pendingSpellCast = null;
+    player.pendingTalkNpcId = -1;
+    player.followTargetPlayerId = -1;
+    player.actionDelay = 0;
+    this.cancelSkilling(player.id);
     this.clearCombatTarget(player.id);
     player.currentChunkX = Math.floor(x / CHUNK_SIZE);
     player.currentChunkZ = Math.floor(z / CHUNK_SIZE);
     if (cm) cm.addEntity(player.id, x, z);
-    // Compute server-authoritative Y at the destination + apply the same
-    // login auto-correct (snap up to elevated floor when the gate would
-    // otherwise return terrain). Reset reportedY so the next save persists
-    // the new height.
+    // Compute server-authoritative Y at the destination. Forced floor changes
+    // deliberately bypass the elevated-plane auto-snap so commands like
+    // /spawn can put a player back on the ground under a two-story building.
     const map = this.getPlayerMap(player);
     let teleportY = forcedY;
     if (teleportY == null) {
-      teleportY = map.getEffectiveHeightOnFloor(x, z, player.currentFloor, player.reportedY);
-      const elevAtTile = map.getElevatedFloorHeight(x, z);
+      const heightGateY = forcedFloor === 0 ? undefined : player.reportedY;
+      teleportY = map.getEffectiveHeightOnFloor(x, z, player.currentFloor, heightGateY);
+      const elevAtTile = forcedFloor === undefined ? map.getElevatedFloorHeight(x, z) : undefined;
       if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && teleportY < elevAtTile - 1.0) {
         teleportY = elevAtTile;
       }
@@ -4989,6 +5072,7 @@ export class World {
       qPos(x),
       qPos(z),
       qPos(teleportY),
+      player.currentFloor,
     );
     try { player.ws.sendBinary(packet); } catch {}
   }
@@ -5045,6 +5129,7 @@ export class World {
     let oldNearbyIds: Set<number> | undefined;
     if (oldCm) {
       oldNearbyIds = oldCm.getEntitiesNear(player.position.x, player.position.y);
+      oldCm.unregisterPlayer(player.id);
       oldCm.removeEntity(player.id);
     }
 

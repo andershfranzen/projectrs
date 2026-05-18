@@ -194,12 +194,17 @@ function handleCommand(
       const x = parseFloat(parts[1]);
       const z = parseFloat(parts[2]);
       if (!isFinite(x) || !isFinite(z)) {
-        sendSystem(ws, 'Usage: /tp <x> <z>');
+        sendSystem(ws, 'Usage: /tp <x> <z> [floor]');
         return;
       }
       const player = findPlayerByUsername(from, world);
       if (player) {
-        world.teleportPlayer(player, x, z);
+        const floor = parts[3] !== undefined ? parseInt(parts[3], 10) : 0;
+        if (!Number.isFinite(floor) || floor < 0) {
+          sendSystem(ws, 'Usage: /tp <x> <z> [floor]');
+          return;
+        }
+        world.teleportPlayer(player, x, z, undefined, floor);
       }
       break;
     }
@@ -234,7 +239,7 @@ function handleCommand(
       if (player) {
         const map = world.getMap(player.currentMapLevel);
         if (map) {
-          world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z);
+          world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z, undefined, 0);
           sendSystem(ws, 'Teleported to spawn');
         }
       }
@@ -394,7 +399,7 @@ function handleCommand(
       player.pendingInteraction = null;
       // teleportPlayer clears moveQueue + attackTarget + combat target.
       const map = world.getMap(player.currentMapLevel);
-      world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z);
+      world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z, undefined, 0);
       sendSystem(ws, `Unstuck ${player.name}.`);
       if (player.name.toLowerCase() !== from.toLowerCase()) {
         sendSystemMessageToUser(player.name, 'An admin has unstuck you.');

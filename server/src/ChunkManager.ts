@@ -59,7 +59,6 @@ export class ServerChunkManager {
       }
       this.entityChunks.delete(entityId);
     }
-    this.playerIds.delete(entityId);
   }
 
   updateEntity(entityId: number, worldX: number, worldZ: number): void {

@@ -6,6 +6,7 @@ import { Plane } from '@babylonjs/core/Maths/math.plane';
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
 import '@babylonjs/core/Culling/ray';
 import type { ChunkManager } from '../rendering/ChunkManager';
+import { SAME_PLANE_PICK_Y_TOLERANCE } from '../rendering/pickingConstants';
 
 export type GroundClickCallback = (worldX: number, worldZ: number) => void;
 export type TeleportClickCallback = (worldX: number, worldZ: number) => void;
@@ -145,7 +146,7 @@ export class InputManager {
       if (hit.pickedMesh && isTexturePlane(hit.pickedMesh)) {
         const walkableHeights = this.chunkManager.getWalkableHeightsAt(p.x, p.z);
         const matchesWalkableHeight = walkableHeights.some(height => Math.abs(p.y - height) <= 0.35);
-        const matchesPlayerPlane = Math.abs(p.y - this.playerY) <= 2.5;
+        const matchesPlayerPlane = Math.abs(p.y - this.playerY) <= SAME_PLANE_PICK_Y_TOLERANCE;
         if (!matchesWalkableHeight || !matchesPlayerPlane) return null;
         return {
           x: Math.floor(p.x) + 0.5,
@@ -196,6 +197,20 @@ export class InputManager {
         if (hit.pickedMesh && isTexturePlane(hit.pickedMesh)) continue;
         const result = validHit(hit);
         if (result) return result;
+      }
+      // No same-plane hit was available. Allow a lower walkable surface as a
+      // target so players standing on an elevated floor can click the ground
+      // at the bottom of a stair slope. Path validation still decides whether
+      // a real route exists.
+      for (const hit of hits) {
+        const p = hit.pickedPoint;
+        if (!p || p.y >= this.playerY - SAME_PLANE_PICK_Y_TOLERANCE) continue;
+        const walkableHeights = this.chunkManager.getWalkableHeightsAt(p.x, p.z);
+        if (!walkableHeights.some(height => Math.abs(p.y - height) <= 0.35)) continue;
+        return {
+          x: Math.floor(p.x) + 0.5,
+          z: Math.floor(p.z) + 0.5,
+        };
       }
     }
 

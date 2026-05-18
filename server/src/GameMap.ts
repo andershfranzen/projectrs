@@ -594,6 +594,42 @@ export class GameMap {
     return heights.sort((a, b) => a - b);
   }
 
+  getWalkableFloorTargetsAt(x: number, z: number): { floor: number; y: number }[] {
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    if (tx < 0 || tx >= this.width || tz < 0 || tz >= this.height) return [];
+    const targets: { floor: number; y: number }[] = [];
+    const add = (floor: number, y: number | undefined | null): void => {
+      if (y == null || !Number.isFinite(y)) return;
+      const targetY = y;
+      if (!targets.some(existing => existing.floor === floor && Math.abs(existing.y - targetY) < 0.1)) {
+        targets.push({ floor, y: targetY });
+      }
+    };
+
+    const idx = tz * this.width + tx;
+    if (!this.holes.has(idx) && !BLOCKING_TILES.has(this.tileTypes[idx] as TileType)) {
+      add(0, this.getInterpolatedHeight(x, z));
+    }
+    add(0, this.floorHeights.get(idx));
+    if (this.bridgeFloorTiles.has(idx)) {
+      add(0, this.elevatedFloorHeights.get(idx));
+    }
+    const stair = this.stairs.get(idx);
+    if (stair) {
+      add(0, stair.baseHeight);
+      add(0, stair.topHeight);
+      add(0, this.getEffectiveHeightOnFloor(x, z, 0, Number.POSITIVE_INFINITY));
+    }
+    for (const floor of this.floorLayers.keys()) {
+      if (!this.isTileBlockedOnFloor(tx, tz, floor)) {
+        add(floor, this.getEffectiveHeightOnFloor(x, z, floor, Number.POSITIVE_INFINITY));
+      }
+    }
+
+    return targets.sort((a, b) => (a.y - b.y) || (a.floor - b.floor));
+  }
+
   /** Get effective walking height at a position, accounting for floors and stairs */
   getEffectiveHeight(x: number, z: number): number {
     return this.getEffectiveHeightOnFloor(x, z, 0);
@@ -640,7 +676,7 @@ export class GameMap {
     const layer = this.floorLayers.get(floor);
     if (layer) {
       const idx = tz * this.width + tx;
-      const floorH = layer.floors.get(idx);
+      const floorH = layer.floors.get(idx) ?? layer.tiles.get(idx);
       if (floorH !== undefined) return floorH;
     }
 
@@ -649,8 +685,9 @@ export class GameMap {
 
   /** Check if a wall at tile (x,z) actually blocks at the given player height.
    *  Each layer's walls are gated against that layer's floor band — a wall
-   *  above the player's head must not block them. With no playerY supplied
-   *  (NPC pathing) we keep the conservative "any wall blocks" behaviour. */
+   *  above the player's head must not block them. With no playerY supplied,
+   *  only floor-0 walls are considered; upper-floor callers use
+   *  isWallBlockedOnFloor so layer walls don't bleed into ground pathing. */
   private wallBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.width + x;
     const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
@@ -681,14 +718,7 @@ export class GameMap {
       const wallBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
       if (playerY < wallBaseH + wallH) return true;
     }
-    if (this.floorLayers.size === 0) return false;
-    if (playerY == null) {
-      for (const layer of this.floorLayers.values()) {
-        const bits = layer.walls.get(idx);
-        if (bits != null && (bits & edge) !== 0) return true;
-      }
-      return false;
-    }
+    if (this.floorLayers.size === 0 || playerY == null) return false;
     // Boundary walls are commonly authored on the tile that sits OUTSIDE the
     // upper-floor footprint, so the layer's floor/tile elevation lives on
     // the neighbour rather than this tile.

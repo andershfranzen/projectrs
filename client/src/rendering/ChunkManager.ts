@@ -13,12 +13,13 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
-import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
+import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
+import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
 
@@ -62,6 +63,16 @@ interface FloorLayerClientData {
    *  Y height (used by walls for base height). Texture planes provide the
    *  visual surface so we don't render brown floor planes for these tiles. */
   tiles: Map<number, number>;
+}
+
+interface PlacedStairRamp {
+  chunkKey: string;
+  cx: number;
+  cz: number;
+  baseY: number;
+  topY: number;
+  direction: 'N' | 'S' | 'E' | 'W';
+  halfLength: number;
 }
 
 export interface MinimapTileSnapshot {
@@ -197,7 +208,7 @@ export class ChunkManager {
    *  same tile would otherwise misfire indoor mode under a balcony/terrace. */
   private noRoofPlaneTiles: Set<number> = new Set();
   /** Placed stair ramp zones for proximity-based height interpolation */
-  private placedStairRamps: { cx: number; cz: number; baseY: number; topY: number; direction: 'N' | 'S' | 'E' | 'W'; halfLength: number }[] = [];
+  private placedStairRamps: PlacedStairRamp[] = [];
   /** Spatial index of roof objects: "tileX,tileZ" → roof entries with floor tag + Y height */
   private roofObjectGrid: Map<string, { node: TransformNode; floor: number; y: number }[]> = new Map();
   /** Callback fired when a chunk's placed objects finish loading */
@@ -832,6 +843,12 @@ export class ChunkManager {
       }
     }
     return true;
+  }
+
+  forceRefreshPlayerPosition(playerX: number, playerZ: number): boolean {
+    this.lastChunkX = -999;
+    this.lastChunkZ = -999;
+    return this.updatePlayerPosition(playerX, playerZ);
   }
 
   // --- On-demand editor chunk loading ---
@@ -2158,6 +2175,21 @@ export class ChunkManager {
     return this.stairData.get(tz * this.mapWidth + tx);
   }
 
+  hasGroundStairNear(x: number, z: number, radius: number = STAIR_DESCENT_SEARCH_RADIUS): boolean {
+    const tileX = Math.floor(x);
+    const tileZ = Math.floor(z);
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (this.getStairAt(tileX + dx, tileZ + dz)) return true;
+      }
+    }
+    for (const ramp of this.placedStairRamps) {
+      const reach = radius + ramp.halfLength + 1;
+      if (Math.abs(x - ramp.cx) <= reach && Math.abs(z - ramp.cz) <= reach) return true;
+    }
+    return false;
+  }
+
   private getTileTypeRaw(x: number, z: number): TileType {
     if (!this.tileTypes) return TileType.WALL;
     if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return TileType.WALL;
@@ -2351,14 +2383,7 @@ export class ChunkManager {
       const wallBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
       if (playerY < wallBaseH + wallH) return true;
     }
-    if (this.floorLayerData.size === 0) return false;
-    if (playerY == null) {
-      for (const layer of this.floorLayerData.values()) {
-        const bits = layer.walls.get(idx);
-        if (bits != null && (bits & edge) !== 0) return true;
-      }
-      return false;
-    }
+    if (this.floorLayerData.size === 0 || playerY == null) return false;
     // Boundary walls are commonly authored on the tile that sits OUTSIDE the
     // upper-floor footprint, so the layer's floor/tile elevation lives on
     // the neighbour rather than this tile.
@@ -2519,7 +2544,7 @@ export class ChunkManager {
       const walkableHeights = this.getWalkableHeightsAt(wx, wz);
       const matchesWalkableHeight = walkableHeights.some(height => Math.abs(wy - height) <= 0.4);
       if (!matchesWalkableHeight) continue;
-      if (Math.abs(wy - playerY) > 3.0) continue;
+      if (Math.abs(wy - playerY) > SAME_PLANE_PICK_Y_TOLERANCE) continue;
 
       const distance = Math.hypot(wx - rayOrigin.x, wy - rayOrigin.y, wz - rayOrigin.z);
       if (!best || distance < best.distance) {
@@ -3137,6 +3162,7 @@ export class ChunkManager {
         const totalGain = stairCfg.heightGain * Math.abs(obj.scale?.y ?? 1);
         const halfLen = stairCfg.tilesLong / 2;
         this.placedStairRamps.push({
+          chunkKey,
           cx: obj.position.x, cz: obj.position.z,
           baseY: obj.position.y, topY: obj.position.y + totalGain,
           direction: dir, halfLength: halfLen,
@@ -3204,6 +3230,7 @@ export class ChunkManager {
       }
       this.chunkPlacedNodes.delete(chunkKey);
     }
+    this.placedStairRamps = this.placedStairRamps.filter(ramp => ramp.chunkKey !== chunkKey);
     this.chunkPlacedEnabled.delete(chunkKey);
     const anims = this.chunkAnimGroups.get(chunkKey);
     if (anims) {

@@ -19,7 +19,7 @@ export const MAX_STACK = 0x7FFFFFFF;
  *  disconnects on mismatch with a "please refresh" prompt. Without this
  *  guard, a tab from yesterday's build silently misinterprets new opcodes
  *  and corrupts state — exactly what dupe surfaces are made of. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 4;
 export const SERVER_PORT = 4000;
 export const GAME_WS_PATH = '/ws/game';
 export const CHAT_WS_PATH = '/ws/chat';
@@ -38,3 +38,8 @@ export const MAX_3D_NPCS_VISIBLE = 8;
  *  defer for an extra tick. The deferred-talk drain on the server uses the
  *  same range. */
 export const NPC_INTERACTION_RANGE = 2;
+
+/** Radius around a ground-floor stair where an upper-floor click may resolve
+ *  as a descent onto floor 0. Kept shared so client prediction and server
+ *  validation agree on when slope descent is allowed. */
+export const STAIR_DESCENT_SEARCH_RADIUS = 2;

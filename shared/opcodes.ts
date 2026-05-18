@@ -125,12 +125,15 @@ export enum ServerOpcode {
   WORLD_OBJECT_DEPLETED = 56,
   SKILLING_START = 57,
   SKILLING_STOP = 58,
+  /** Open smithing/crafting recipe picker after server validates station
+   *  visibility, map/floor, and adjacency. Values: [objectEntityId]. */
+  SMITHING_OPEN = 59,
   MAP_CHANGE = 60,
   FLOOR_CHANGE = 61,
   SHOW_CHARACTER_CREATOR = 70,
-  /** Same-map teleport: snap the local player to (x, y, z) without reloading
-   *  chunks/entities/map data. Used by admin shift-click and any future
-   *  in-map TP (spell, debug). For cross-map jumps use MAP_CHANGE. */
+  /** Same-map teleport: snap the local player to (x, y, z, floor) without
+   *  reloading chunks/entities/map data. Used by admin shift-click and any
+   *  future in-map TP (spell, debug). For cross-map jumps use MAP_CHANGE. */
   PLAYER_TELEPORT = 71,
   /** Equipment of a remote player (not the receiver). Layout:
    *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape].

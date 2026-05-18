@@ -1,0 +1,1 @@
+export const SAME_PLANE_PICK_Y_TOLERANCE = 0.85;

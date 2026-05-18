@@ -1275,8 +1275,16 @@ export class CharacterEntity {
    *  layered over walk's lower-body so the legs keep cycling — the silhouette
    *  walks AND swings. stopWalking swaps walk_lower for attack_lower mid-swing
    *  so the legs finish the attack pose. */
-  playAttackAnimation(variant?: string): void {
-    if (this.currentState === AnimState.Attack) return;
+  playAttackAnimation(variant?: string, restart: boolean = false): void {
+    if (this.currentState === AnimState.Attack) {
+      if (!restart) return;
+      this.clearLayeredAttack();
+      this.oneShotCallback = null;
+      const current = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
+      current?.stop();
+      this.currentState = AnimState.Idle;
+      this.currentAnimName = '';
+    }
     this.queuedState = this.currentState >= AnimState.Walk ? AnimState.Walk : AnimState.Idle;
     this.queuedAnimName = '';
 
@@ -1380,6 +1388,15 @@ export class CharacterEntity {
     if (this.queuedState === AnimState.Skill) {
       this.queuedState = AnimState.Idle;
     }
+  }
+
+  /** Cancel transient local-only animation state after authoritative snaps. */
+  resetTransientAnimation(): void {
+    this.clearLayeredAttack();
+    this.oneShotCallback = null;
+    this.queuedState = AnimState.Idle;
+    this.queuedAnimName = '';
+    this.playAnimByState(AnimState.Idle);
   }
 
   /** Whether any one-shot animation is playing (attack/death). */

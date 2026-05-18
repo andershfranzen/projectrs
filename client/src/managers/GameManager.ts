@@ -130,6 +130,7 @@ export class GameManager {
   private _loginSettled: boolean = true;
   private _initialMapReadySent: boolean = false;
   private currentFloor: number = 0;
+  private localTeleportHeightOverride: { tileX: number; tileZ: number; floor: number; y: number; expiresAt: number } | null = null;
   private playerX: number = 512;
   private playerZ: number = 512;
   private playerHealth: number = 10;
@@ -140,14 +141,6 @@ export class GameManager {
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
-  private pendingSkill: { objectId: number; variant?: string; stationary?: boolean } | null = null; // deferred skilling until walk finishes
-  private pendingSmithing: { objectEntityId: number; def: WorldObjectDef } | null = null; // open smithing panel once walk to anvil finishes
-  // When `useItem` is set, the retry fires PLAYER_USE_ITEM_ON_OBJECT and
-  // `actionIndex` is unused (callers pass 0). Otherwise it fires the regular
-  // PLAYER_INTERACT_OBJECT with `actionIndex` as the chosen right-click slot.
-  private pendingObjectInteraction: { objectEntityId: number; actionIndex: number; seq: number; useItem?: { slot: number; itemId: number } } | null = null;
-  private pendingObjectInteractionSeq: number = 0;
-  private pendingObjectInteractionTimer: number | null = null;
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -863,8 +856,6 @@ export class GameManager {
       closeActiveContextMenu();
       this.hideContextMenu();
       this.clearPredictedPath();
-      this.pendingSkill = null;
-      this.pendingSmithing = null;
       this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -1006,15 +997,29 @@ export class GameManager {
 
   /** Height query for the local player. Uses local player Y as gate input. */
   private getHeight(x: number, z: number): number {
-    return this.chunkManager.getEffectiveHeight(x, z, undefined, this.localPlayer?.position.y);
+    const computed = this.chunkManager.getEffectiveHeight(x, z, undefined, this.localPlayer?.position.y);
+    const override = this.localTeleportHeightOverride;
+    if (!override) return computed;
+
+    const tileX = Math.floor(x);
+    const tileZ = Math.floor(z);
+    if (tileX !== override.tileX || tileZ !== override.tileZ || performance.now() > override.expiresAt) {
+      this.localTeleportHeightOverride = null;
+      return computed;
+    }
+
+    if (Math.abs(computed - override.y) <= 0.75) {
+      this.localTeleportHeightOverride = null;
+      return computed;
+    }
+    return override.y;
   }
 
-  /** Height query for arbitrary entities (NPCs, remote players, ground items).
-   *  Each caller passes its OWN current Y as the gate input — without this,
-   *  the local-player Y leaks into other entities and a rat in the basement
-   *  gets snapped up to the floor above when the player walks up there. */
+  /** Height query for floor-0 entities (NPCs, remote players, ground items).
+   *  Keep it pinned to the ground floor so the local player's active building
+   *  floor cannot lift unrelated entities onto an upper floor. */
   private getHeightAt(x: number, z: number, currentY?: number): number {
-    return this.chunkManager.getEffectiveHeight(x, z, undefined, currentY);
+    return this.chunkManager.getEffectiveHeight(x, z, 0, currentY);
   }
 
   private applyFog(): void {
@@ -1443,6 +1448,15 @@ export class GameManager {
         this.setWorldObjectPickTarget(objectEntityId, false, depleted);
       }
     }
+  }
+
+  private refreshWorldAfterSameMapTeleport(): void {
+    if (this.chunkManager.forceRefreshPlayerPosition(this.playerX, this.playerZ)) {
+      this.cleanupDisposedWorldObjects();
+      this.linkPlacedObjectsToWorldObjects();
+      this.reapplyWorldObjectVisualStates();
+    }
+    this.recomputeHiddenRoofs();
   }
 
   /** Link a placed GLB node to a world object entity, tagging for picking and handling depletion */
@@ -2188,9 +2202,11 @@ export class GameManager {
 
       if (entityId === this.localPlayerId) {
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
-          this.localPlayer.playAttackAnimation(this.getPlayerAttackAnimName(entityId));
+          this.localPlayer.playAttackAnimation(this.getPlayerAttackAnimName(entityId), true);
         } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
           this.localPlayer.playNamedOneShot('spell_cast_2h');
+        } else if (kind === PlayerAnimationKind.Idle && this.localPlayer) {
+          this.localPlayer.resetTransientAnimation();
         }
         return;
       }
@@ -2648,7 +2664,6 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SKILLING_START, (_op, v) => {
-      this.clearPendingObjectInteractionRetry();
       this.isSkilling = true;
       this.skillingObjectId = v[0];
       const toolItemId = v[1] ?? 0;
@@ -2673,10 +2688,7 @@ export class GameManager {
         this.applySkillingTool(this.localPlayerId, this.localPlayer, toolItemId);
       }
 
-      const stillWalking = this.pathIndex < this.path.length;
-      if (stillWalking) {
-        this.pendingSkill = { objectId: v[0], variant, stationary: skipAnim };
-      } else if (skipAnim) {
+      if (skipAnim) {
         this.startSkillingStationary(v[0]);
       } else {
         this.startSkillingVisual(v[0], variant);
@@ -2685,6 +2697,14 @@ export class GameManager {
 
     this.network.on(ServerOpcode.SKILLING_STOP, (_op, _v) => {
       this.endLocalSkilling();
+    });
+
+    this.network.on(ServerOpcode.SMITHING_OPEN, (_op, v) => {
+      const objectEntityId = v[0];
+      const data = this.worldObjectDefs.get(objectEntityId);
+      const def = data ? this.objectDefsCache.get(data.defId) : null;
+      if (!def?.recipes || def.recipes.length === 0) return;
+      this.showSmithingUI(objectEntityId, def);
     });
   }
 
@@ -2710,10 +2730,6 @@ export class GameManager {
 
     // Batch inventory: [slot0_itemId, slot0_qty, slot1_itemId, slot1_qty, ...]
     this.network.on(ServerOpcode.PLAYER_INVENTORY_BATCH, (_op, v) => {
-      // Inventory changed means the last interaction landed — cancel any
-      // pending arrival retry so recipe-based stations (obelisk, furnace,
-      // range) don't fire a second packet 700ms later and double-consume.
-      this.clearPendingObjectInteractionRetry();
       for (let i = 0; i < v.length; i += 2) {
         const slot = i / 2;
         if (this.sidePanel) this.sidePanel.updateInvSlot(slot, v[i], v[i + 1]);
@@ -2796,7 +2812,6 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PLAYER_EQUIPMENT, (_op, v) => {
-      this.clearPendingObjectInteractionRetry();
       if (this.isSkilling) this.endLocalSkilling();
       const [slotIndex, itemId] = v;
       this.localEquipment.set(slotIndex, itemId);
@@ -2843,6 +2858,18 @@ export class GameManager {
       const newX = (values[0] ?? 0) / 10;
       const newZ = (values[1] ?? 0) / 10;
       const newY = (values[2] ?? 0) / 10;
+      const newFloor = values[3];
+      if (newFloor !== undefined && newFloor !== this.currentFloor) {
+        this.currentFloor = newFloor;
+        this.chunkManager.setCurrentFloor(newFloor);
+      }
+      this.localTeleportHeightOverride = {
+        tileX: Math.floor(newX),
+        tileZ: Math.floor(newZ),
+        floor: this.currentFloor,
+        y: newY,
+        expiresAt: performance.now() + 3000,
+      };
       this.playerX = newX;
       this.playerZ = newZ;
       this.clearPredictedPath();
@@ -2850,9 +2877,8 @@ export class GameManager {
       this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
-      this.pendingSkill = null;
-      this.pendingSmithing = null;
       if (this.localPlayer) {
+        this.localPlayer.resetTransientAnimation();
         this.localPlayer.stopWalking();
         this.localPlayer.setPositionXYZ(newX, newY, newZ);
       }
@@ -2860,6 +2886,7 @@ export class GameManager {
       if (this.destMarker) this.destMarker.isVisible = false;
       if (this.interactMarker) this.interactMarker.isVisible = false;
       this.minimap?.clearDestination();
+      this.refreshWorldAfterSameMapTeleport();
       // Camera will follow naturally via its target on the next tick.
     });
 
@@ -2902,8 +2929,10 @@ export class GameManager {
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
       const newFloor = values[0];
       this.currentFloor = newFloor;
+      if (this.localTeleportHeightOverride?.floor !== newFloor) this.localTeleportHeightOverride = null;
       if (import.meta.env.DEV) console.log(`Floor changed to ${newFloor}`);
       this.chunkManager.setCurrentFloor(newFloor);
+      this.refreshWorldAfterSameMapTeleport();
       // No Y snap here either — LOGIN_OK provided the spawn Y, and
       // legitimate floor changes (placed stairs) walk the player through
       // the ramp tile-by-tile so getHeight is already correct via the
@@ -3522,10 +3551,8 @@ export class GameManager {
   }
 
   /** Redirect an NPC/object click to a use-on-target packet if the inventory
-   *  has a Use slot armed. Returns true if the click was consumed. For
-   *  objects, walks via the same pendingObjectInteraction retry the normal
-   *  interactObject path uses, then sends PLAYER_USE_ITEM_ON_OBJECT on
-   *  arrival — the server requires adjacency for use-item. */
+   *  has a Use slot armed. Returns true if the click was consumed. Object
+   *  use is sent once; the server owns any walk-then-use deferral. */
   private tryUseInventoryItemOn(kind: 'npc' | 'object', entityId: number): boolean {
     const using = this.sidePanel?.getUsing();
     if (!using) return false;
@@ -3554,8 +3581,7 @@ export class GameManager {
     }
 
     if (this.walkToAdjacentTileOf(data, def)) {
-      this.trackObjectInteractionRetry(entityId, 0, { slot: using.slot, itemId: using.itemId });
-      this.scheduleObjectInteractionArrivalRetry();
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
       return true;
     }
 
@@ -3795,12 +3821,26 @@ export class GameManager {
   }
 
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+    const canTryGroundDescent = this.currentFloor > 0 && this.chunkManager.hasGroundStairNear(this.playerX, this.playerZ);
     const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
     if (activeStep) {
       const tail = findPath(activeStep.target.x, activeStep.target.z, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath);
+      if (canTryGroundDescent && !this.pathReachesGoal(tail, goalX, goalZ)) {
+        const groundTail = findPath(activeStep.target.x, activeStep.target.z, goalX, goalZ,
+          this.isGroundTileBlocked,
+          this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
+          this.isGroundWallBlockedForPath);
+        if (this.pathReachesGoal(groundTail, goalX, goalZ)) {
+          const startsAtCurrentTarget = this.sameTile(groundTail[0], activeStep.target);
+          return {
+            path: startsAtCurrentTarget ? groundTail : [activeStep.target, ...groundTail],
+            preserveCurrentStep: true,
+          };
+        }
+      }
       if (tail.length === 0) {
         const currentTileIsGoal = Math.floor(activeStep.target.x) === Math.floor(goalX)
           && Math.floor(activeStep.target.z) === Math.floor(goalZ);
@@ -3812,13 +3852,24 @@ export class GameManager {
         preserveCurrentStep: true,
       };
     }
-    return {
+    const result = {
       path: findPath(this.playerX, this.playerZ, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath),
       preserveCurrentStep: false,
     };
+    if (!canTryGroundDescent || this.pathReachesGoal(result.path, goalX, goalZ)) return result;
+    const groundPath = findPath(this.playerX, this.playerZ, goalX, goalZ,
+      this.isGroundTileBlocked,
+      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
+      this.isGroundWallBlockedForPath);
+    return this.pathReachesGoal(groundPath, goalX, goalZ) ? { path: groundPath, preserveCurrentStep: false } : result;
+  }
+
+  private pathReachesGoal(path: { x: number; z: number }[], goalX: number, goalZ: number): boolean {
+    const last = path[path.length - 1];
+    return !!last && Math.floor(last.x) === Math.floor(goalX) && Math.floor(last.z) === Math.floor(goalZ);
   }
 
   /** Chebyshev-1 adjacency between the player's tile and (targetX, targetZ). */
@@ -3983,14 +4034,6 @@ export class GameManager {
     this.pendingPath = null;
   }
 
-  private clearPendingObjectInteractionRetry(): void {
-    this.pendingObjectInteraction = null;
-    if (this.pendingObjectInteractionTimer !== null) {
-      window.clearTimeout(this.pendingObjectInteractionTimer);
-      this.pendingObjectInteractionTimer = null;
-    }
-  }
-
   private usesCornerObjectInteraction(def: WorldObjectDef, hasInteractionMask: boolean = false): boolean {
     return usesCornerInteractionTiles(def, hasInteractionMask);
   }
@@ -4028,8 +4071,7 @@ export class GameManager {
 
   /** Find the closest reachable adjacent tile of an object and start the
    *  predicted walk toward it. Returns true if a walk was started, false
-   *  if no reachable adjacent tile exists. Caller arms any pending state
-   *  (trackObjectInteractionRetry / pendingSmithing / etc). */
+   *  if no reachable adjacent tile exists. */
   private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number }, def: WorldObjectDef): boolean {
     const candidates = this.objectInteractionTiles(data, def)
       .filter(tile => !this.isTileBlocked(tile.x, tile.z))
@@ -4047,59 +4089,6 @@ export class GameManager {
       }
     }
     return false;
-  }
-
-  private trackObjectInteractionRetry(objectEntityId: number, actionIndex: number, useItem?: { slot: number; itemId: number }): void {
-    if (this.pendingObjectInteractionTimer !== null) {
-      window.clearTimeout(this.pendingObjectInteractionTimer);
-      this.pendingObjectInteractionTimer = null;
-    }
-    this.pendingObjectInteraction = {
-      objectEntityId,
-      actionIndex,
-      seq: ++this.pendingObjectInteractionSeq,
-      useItem,
-    };
-  }
-
-  private scheduleObjectInteractionArrivalRetry(): void {
-    const pending = this.pendingObjectInteraction;
-    if (!pending || this.isSkilling) return;
-    if (this.pendingObjectInteractionTimer !== null) {
-      window.clearTimeout(this.pendingObjectInteractionTimer);
-    }
-
-    this.pendingObjectInteractionTimer = window.setTimeout(() => {
-      this.pendingObjectInteractionTimer = null;
-      const current = this.pendingObjectInteraction;
-      if (!current || current.seq !== pending.seq || this.isSkilling || this.pathIndex < this.path.length) return;
-
-      const data = this.worldObjectDefs.get(current.objectEntityId);
-      const def = data ? this.objectDefsCache.get(data.defId) : null;
-      if (!data || !def || (data.depleted && def.category !== 'door')) {
-        this.clearPendingObjectInteractionRetry();
-        return;
-      }
-
-      const ptx = Math.floor(this.playerX);
-      const ptz = Math.floor(this.playerZ);
-      if (!this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
-        this.clearPendingObjectInteractionRetry();
-        return;
-      }
-
-      if (current.useItem) {
-        this.network.sendRaw(encodePacket(
-          ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT,
-          current.useItem.slot,
-          current.useItem.itemId,
-          current.objectEntityId,
-        ));
-      } else {
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, current.objectEntityId, current.actionIndex));
-      }
-      this.clearPendingObjectInteractionRetry();
-    }, 700);
   }
 
   private pickupItem(groundItemId: number): void {
@@ -4159,10 +4148,7 @@ export class GameManager {
         if (this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
           this.faceLocalPlayerToward(data.x, data.z);
         } else {
-          // Reuse the stationary-skill arrival path — prepareSkillingAtObject
-          // faces the target on arrival without triggering a skill animation
-          // (server intentionally skips SKILLING_START for crops).
-          this.pendingSkill = { objectId: objectEntityId, stationary: true };
+          // Server owns deferred object execution; no local arrival cache.
         }
       }
 
@@ -4171,7 +4157,6 @@ export class GameManager {
   }
 
   private showSmithingUI(objectEntityId: number, def: WorldObjectDef): void {
-    this.clearPendingObjectInteractionRetry();
     if (!this.smithingPanel || !this.sidePanel) return;
     const inventory = this.sidePanel.getInventory();
     const smithingLevel = this.sidePanel.getSkillLevel('smithing');
@@ -4207,9 +4192,8 @@ export class GameManager {
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
 
-    // Intercept anvil/tool-based crafting: show recipe UI instead of auto-crafting.
-    // Walk to the anvil first if not adjacent — the panel only opens once we're
-    // next to it. Server also refuses crafts when out of range as a backstop.
+    // Smithing/crafting pickers are opened by the server after adjacency
+    // validation. The client only predicts the walk for responsiveness.
     const objData = this.worldObjectDefs.get(objectEntityId);
     if (objData) {
       const objDef = this.objectDefsCache.get(objData.defId);
@@ -4217,12 +4201,9 @@ export class GameManager {
         const ptx = Math.floor(this.playerX);
         const ptz = Math.floor(this.playerZ);
         const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, objData, objDef);
-        this.pendingSmithing = null;
-        if (alreadyAdj) {
-          this.showSmithingUI(objectEntityId, objDef);
-        } else if (this.walkToAdjacentTileOf(objData, objDef)) {
-          this.pendingSmithing = { objectEntityId, def: objDef };
-        }
+        if (!alreadyAdj) this.walkToAdjacentTileOf(objData, objDef);
+        else this.stopLocalWalkForImmediateObjectInteraction(objData);
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
         return;
       }
     }
@@ -4231,7 +4212,6 @@ export class GameManager {
     if (this.isSkilling && this.skillingObjectId !== objectEntityId) {
       this.isSkilling = false;
       this.skillingObjectId = -1;
-      this.pendingSkill = null;
       this.localPlayer?.stopSkillAnimation();
     }
 
@@ -4240,10 +4220,7 @@ export class GameManager {
     const dist = Math.hypot(dx, dz);
 
     // Find a reachable adjacent tile and walk there
-    const shouldRetryOnArrival = !!def && def.category !== 'door' && !!((def.skill && def.harvestItemId) || def.category === 'ladder' || (def.recipes && def.recipes.length > 0));
-
     if (def?.category === 'door') {
-      this.clearPendingObjectInteractionRetry();
       const doorEntry = this.doorPivots.get(objectEntityId);
       const rotY = doorEntry ? doorEntry.closedRotY : 0;
       const { tile: [dotx, dotz], edge } = doorEdgeFromPlacement(data.x, data.z, rotY);
@@ -4286,12 +4263,7 @@ export class GameManager {
       // exist) keep the auto-fire path.
       const recipes = def.recipes ?? [];
       if (recipes.length > 1) {
-        this.pendingSmithing = null;
-        if (alreadyAtUseTile) {
-          this.showSmithingUI(objectEntityId, def);
-        } else {
-          this.pendingSmithing = { objectEntityId, def };
-        }
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
         return;
       }
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
@@ -4304,20 +4276,11 @@ export class GameManager {
     const alreadyAdj = def ? this.isOnObjectInteractionTile(ptx, ptz, data, def) : dist <= 1.5;
 
     if (!alreadyAdj && def) {
-      if (this.walkToAdjacentTileOf(data, def)) {
-        if (shouldRetryOnArrival) this.trackObjectInteractionRetry(objectEntityId, actionIndex);
-      } else {
-        this.clearPendingObjectInteractionRetry();
-      }
+      this.walkToAdjacentTileOf(data, def);
     } else if (!alreadyAdj) {
-      this.clearPendingObjectInteractionRetry();
-    } else if (shouldRetryOnArrival) {
-      this.stopLocalWalkForImmediateObjectInteraction(data);
-      this.trackObjectInteractionRetry(objectEntityId, actionIndex);
-      this.scheduleObjectInteractionArrivalRetry();
+      // Let the server reject unreachable stale/malformed object packets.
     } else {
       this.stopLocalWalkForImmediateObjectInteraction(data);
-      this.clearPendingObjectInteractionRetry();
     }
 
     // Send interaction request — server validates distance
@@ -4927,11 +4890,20 @@ export class GameManager {
     return this.chunkManager.isBlockedOnFloor(x, z, this.currentFloor);
   };
 
+  private isGroundTileBlocked = (x: number, z: number): boolean => {
+    return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(`${x},${z}`);
+  };
+
   private isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
     if (this.currentFloor !== 0) {
       return this.chunkManager.isWallBlockedOnFloor(fx, fz, tx, tz, this.currentFloor);
     }
     // Pass player height so walls below the player don't block
+    const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
+    return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
+  };
+
+  private isGroundWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
     const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
@@ -4973,17 +4945,6 @@ export class GameManager {
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
     this.localPlayer?.stopWalking();
-    if (this.pendingSkill) {
-      const { objectId, variant, stationary } = this.pendingSkill;
-      this.pendingSkill = null;
-      if (stationary) this.startSkillingStationary(objectId);
-      else this.startSkillingVisual(objectId, variant);
-    }
-    if (this.pendingSmithing) {
-      const { objectEntityId: smithObjId, def: smithDef } = this.pendingSmithing;
-      this.pendingSmithing = null;
-      this.showSmithingUI(smithObjId, smithDef);
-    }
     // Face the NPC we were walking up to talk to / attack. Done after
     // stopWalking so the rotation isn't immediately overwritten by movement
     // direction logic. Lookup uses npcTargets, which tracks the latest
@@ -4993,16 +4954,12 @@ export class GameManager {
       if (npcTarget) this.faceLocalPlayerToward(npcTarget.x, npcTarget.z);
       this.pendingFaceTargetEntityId = -1;
     }
-    this.scheduleObjectInteractionArrivalRetry();
   }
 
   private handleGroundClick(worldX: number, worldZ: number): void {
     if (performance.now() < this.castingUntil) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
     this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
-    this.pendingSkill = null;
-    this.pendingSmithing = null;
-    this.clearPendingObjectInteractionRetry();
     // Walking elsewhere cancels the queued face-NPC — we'd look weird
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;
@@ -5089,7 +5046,6 @@ export class GameManager {
       window.clearTimeout(this.reconnectSleepTimer);
       this.reconnectSleepTimer = null;
     }
-    this.clearPendingObjectInteractionRetry();
     this.hideReconnectOverlay();
     this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
@@ -5610,7 +5566,7 @@ export class GameManager {
       this.slideOffsetZ = 0;
       this.slideStartMs = 0;
       if (this.localPlayer) {
-        this.localPlayer.setPositionXYZ(serverX, this.getHeightAt(serverX, serverZ, this.localPlayer.position.y), serverZ);
+        this.localPlayer.setPositionXYZ(serverX, this.getHeight(serverX, serverZ), serverZ);
         this.localPlayer.stopWalking();
       }
       this.network.sendMove([]);
