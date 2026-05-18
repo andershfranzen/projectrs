@@ -1,4 +1,4 @@
-import type { SpellEffectDef } from '@projectrs/shared';
+import { spellReagentSummary, type SpellEffectDef } from '@projectrs/shared';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
 
@@ -100,6 +100,7 @@ export class SpellbookPanel {
         <span style="color: ${elementColor(def.element)};">${def.element}</span> •
         <span style="color: ${schoolColor};">${school === 'good' ? 'Good Magic' : 'Evil Magic'}</span>
       </div>
+      <div style="color: #c8b88a; font-size: 11px;">${escapeHtml(spellReagentText(def))}</div>
     `;
 
     const button = document.createElement('button');
@@ -115,6 +116,11 @@ export class SpellbookPanel {
     row.appendChild(button);
     return row;
   }
+}
+
+function spellReagentText(def: SpellEffectDef): string {
+  const text = spellReagentSummary(def);
+  return text ? `Requires ${text}` : 'No reagents';
 }
 
 function escapeHtml(s: string): string {

@@ -226,6 +226,7 @@ export class GameManager {
 
   // Combat follow (local player follows melee target)
   private combatTargetId: number = -1;
+  private magicTargetId: number = -1;
   private autoCastSpellIndex: number = -1;
   private pendingSingleCastSpell: number = -1;
   private _combatPathTimer: number = 0;
@@ -452,6 +453,7 @@ export class GameManager {
     this.createHUD();
     this.sidePanel = new SidePanel(this.network, this.token);
     this.sidePanel.setSpellCastCallback((spellIndex) => this.sidePanel!.setTargetingSpell(spellIndex));
+    this.sidePanel.setAutocastChangeCallback((spellIndex) => this.handleAutocastChange(spellIndex));
     // Eager-load the spell catalogue so the spellbook tabs render locked
     // icons (and the question marks) immediately — without this, the tabs
     // stay empty until the player happens to fire /spell or /cast.
@@ -859,7 +861,7 @@ export class GameManager {
       this.clearPredictedPath();
       this.pendingSkill = null;
       this.pendingSmithing = null;
-      this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.localPlayer?.stopWalking();
@@ -2286,8 +2288,8 @@ export class GameManager {
     this.network.on(ServerOpcode.ENTITY_DEATH, (_op, v) => {
       const entityId = v[0];
 
-      if (entityId === this.combatTargetId) {
-        this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      if (entityId === this.combatTargetId || entityId === this.magicTargetId) {
+        this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       }
 
       this.entities.cleanupCombatTargetsFor(entityId);
@@ -2434,9 +2436,7 @@ export class GameManager {
 
     if (casterId === this.localPlayerId && this.pendingSingleCastSpell >= 0) {
       this.pendingSingleCastSpell = -1;
-      if (this.combatTargetId >= 0 && this.autoCastSpellIndex < 0) {
-        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
-      }
+      if (this.autoCastSpellIndex < 0) this.magicTargetId = -1;
     }
   }
 
@@ -2803,7 +2803,7 @@ export class GameManager {
       this.playerZ = newZ;
       this.clearPredictedPath();
       this.setTileFrom(newX, newZ);
-      this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.pendingSkill = null;
@@ -2969,7 +2969,7 @@ export class GameManager {
     this.currentFloor = 0;
     this.chunkManager.setCurrentFloor(0);
     if (this.localPlayer) this.localPlayer.stopWalking();
-    this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+    this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
     this.isSkilling = false;
     this.skillingObjectId = -1;
 
@@ -3524,7 +3524,9 @@ export class GameManager {
     const targetingSpell = this.sidePanel?.getTargetingSpell() ?? -1;
     if (targetingSpell >= 0) {
       this.pendingSingleCastSpell = targetingSpell;
-      this.combatTargetId = npcEntityId;
+      this.combatTargetId = -1;
+      this.magicTargetId = npcEntityId;
+      this.rootLocalPlayerForSpellCast();
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, targetingSpell, npcEntityId));
       this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#a040ff');
       this.sidePanel!.clearTargetingSpell();
@@ -3538,6 +3540,14 @@ export class GameManager {
     const t = this.entities.npcTargets.get(npcEntityId);
     if (t) this.faceLocalPlayerToward(t.x, t.z);
     this._combatPathTimer = 0.6;
+
+    if (this.autoCastSpellIndex >= 0) {
+      this.combatTargetId = -1;
+      this.magicTargetId = npcEntityId;
+      this.rootLocalPlayerForSpellCast();
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, npcEntityId));
+      return;
+    }
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
@@ -3555,10 +3565,26 @@ export class GameManager {
         this.minimap?.clearDestination();
       }
     }
-    if (this.autoCastSpellIndex >= 0) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, npcEntityId));
-    } else {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
+  }
+
+  private handleAutocastChange(spellIndex: number): void {
+    this.autoCastSpellIndex = spellIndex;
+    const targetId = this.magicTargetId >= 0 ? this.magicTargetId : this.combatTargetId;
+    if (targetId < 0) return;
+
+    this._combatPathTimer = 0;
+    if (spellIndex >= 0) {
+      this.combatTargetId = -1;
+      this.magicTargetId = targetId;
+      this.rootLocalPlayerForSpellCast();
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId));
+      return;
+    }
+
+    this.magicTargetId = -1;
+    if (this.combatTargetId >= 0 && performance.now() >= this.castingUntil) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
     }
   }
 
@@ -3566,6 +3592,7 @@ export class GameManager {
     const target = this.entities.remotePlayers.get(playerEntityId);
     if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
     this.combatTargetId = -1;
+    this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
     this._combatPathTimer = 0;
     this.followTargetPlayerId = playerEntityId;
@@ -3674,6 +3701,18 @@ export class GameManager {
     this.tileProgress = 0;
     this.pendingPath = null;
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
+  }
+
+  private rootLocalPlayerForSpellCast(): void {
+    this.clearPredictedPath(true);
+    this.slideOffsetX = 0;
+    this.slideOffsetZ = 0;
+    this.slideStartMs = 0;
+    this.localPlayer?.stopWalking();
+    if (this.localPlayer) {
+      this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
+    }
+    this.network.sendMove([]);
   }
 
   private getActiveUnitStep(): { from: { x: number; z: number }; target: { x: number; z: number }; progress: number } | null {
@@ -3984,7 +4023,7 @@ export class GameManager {
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
-    this.combatTargetId = -1; this.autoCastSpellIndex = -1;
+    this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1;
     const data = this.worldObjectDefs.get(objectEntityId);
     if (!data) return;
     const def = this.objectDefsCache.get(data.defId);
@@ -4399,9 +4438,7 @@ export class GameManager {
     caster.playNamedOneShot('spell_cast_2h');
     if (caster === this.localPlayer) {
       this.castingUntil = performance.now() + def.cast.durationMs;
-      this.clearPredictedPath();
-      this.localPlayer.stopWalking();
-      this.network.sendMove([]);
+      this.rootLocalPlayerForSpellCast();
     }
     const from = caster.getCastOrigin();
     const to = target.getTargetAnchor();
@@ -4815,7 +4852,7 @@ export class GameManager {
   private handleGroundClick(worldX: number, worldZ: number): void {
     if (performance.now() < this.castingUntil) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
-    this.combatTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+    this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
     this.pendingSkill = null;
     this.pendingSmithing = null;
     this.clearPendingObjectInteractionRetry();
@@ -5254,22 +5291,25 @@ export class GameManager {
 
   private updateCombatFollow(dt: number): void {
     this._combatPathTimer -= dt;
-    if (this.combatTargetId < 0 || !this.localPlayer) return;
+    if (!this.localPlayer) return;
+    if (this.autoCastSpellIndex >= 0 && this.magicTargetId >= 0) {
+      const npcTarget = this.entities.npcTargets.get(this.magicTargetId);
+      if (!npcTarget) return;
+      if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
+      this._combatPathTimer = 0.6;
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.magicTargetId));
+      return;
+    }
+
+    if (this.combatTargetId < 0) return;
     const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
     if (!npcTarget) return;
     const dx = npcTarget.x - this.playerX;
     const dz = npcTarget.z - this.playerZ;
     const dist = Math.hypot(dx, dz);
-    const isSpellCombat = this.autoCastSpellIndex >= 0;
-    const inRange = isSpellCombat ? dist <= 9.5 : dist <= 1.5;
-    if (inRange && !isSpellCombat) return;
-    if (inRange && isSpellCombat) {
-      if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
-      this._combatPathTimer = 0.6;
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.combatTargetId));
-      return;
-    }
-    const closeEnough = isSpellCombat ? dist <= 10 : dist <= 3;
+    const inRange = dist <= 1.5;
+    if (inRange) return;
+    const closeEnough = dist <= 3;
     if ((this.pathIndex < this.path.length && closeEnough) || this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
     const pathResult = this.findPathFromMovementAnchor(npcTarget.x, npcTarget.z);
@@ -5285,11 +5325,7 @@ export class GameManager {
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
     }
-    if (isSpellCombat) {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, this.combatTargetId));
-    } else {
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
-    }
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
   }
 
   private updatePlayerFollowPrediction(dt: number): void {
@@ -5554,7 +5590,9 @@ export class GameManager {
 
       // Per-tick faceEntity refresh — combat takes precedence over a
       // pending talk-to. Both clear on a ground click.
-      const lockId = this.combatTargetId >= 0 ? this.combatTargetId : this.pendingFaceTargetEntityId;
+      const lockId = this.combatTargetId >= 0
+        ? this.combatTargetId
+        : (this.magicTargetId >= 0 ? this.magicTargetId : this.pendingFaceTargetEntityId);
       if (lockId >= 0) {
         const npcTarget = this.entities.npcTargets.get(lockId);
         if (npcTarget) this.localPlayer.lockFaceTowardXZ(npcTarget.x, npcTarget.z);

@@ -13,6 +13,7 @@ import { processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollL
 import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
+import { consumeSpellCosts } from './magic/SpellCosts';
 import { readdirSync } from 'fs';
 import type { ServerWebSocket } from 'bun';
 
@@ -2821,6 +2822,8 @@ export class World {
     const player = this.players.get(playerId);
     if (!player || !player.alive) return;
     if (player.isBusy(this.currentTick)) return;
+    player.clearMoveQueue();
+    player.followTargetPlayerId = -1;
     if (player.attackCooldown > 0) {
       if (this.playerCombatTargets.has(playerId)) {
         player.pendingSpellCast = { spellIndex, targetEntityId };
@@ -2876,9 +2879,15 @@ export class World {
     // Recast cooldown is fixed (not distance-scaled) so pacing stays
     // consistent regardless of how far the target is.
     const castTicks = Math.max(1, Math.ceil(def.cast.durationMs / TICK_RATE));
+    const costResult = consumeSpellCosts(player, def, this.data.itemDefs);
+    if (!costResult.ok) {
+      if (costResult.message) this.sendChatSystem(player, costResult.message);
+      return;
+    }
+    if (costResult.inventoryChanged) this.sendInventory(player);
+
     player.setDelay(this.currentTick, castTicks + 1);
     player.attackCooldown = 7;
-    player.markInCombat(this.currentTick);
 
     this.broadcastNearby(
       player.currentMapLevel, player.position.x, player.position.y,

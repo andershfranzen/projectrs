@@ -2,7 +2,7 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   QUEST_STAGE_COMPLETED,
-  spellSchoolSkill,
+  spellReagentSummary, spellSchoolSkill,
   type SkillId, type MeleeStance, type ItemDef, type QuestDef,
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
@@ -80,6 +80,7 @@ export class SidePanel {
   // school skill level changes.
   private spellCatalogue: SpellEffectDef[] = [];
   private spellCastCallback: ((spellIndex: number) => void) | null = null;
+  private autocastChangeCallback: ((spellIndex: number) => void) | null = null;
   private goodMagicGridEl: HTMLDivElement | null = null;
   private evilMagicGridEl: HTMLDivElement | null = null;
   private autocastSpellIndex: number = -1;
@@ -713,14 +714,25 @@ export class SidePanel {
     this.spellCastCallback = cb;
   }
 
+  setAutocastChangeCallback(cb: (spellIndex: number) => void): void {
+    this.autocastChangeCallback = cb;
+  }
+
   setAutocastSpell(spellIndex: number): void {
     this.autocastSpellIndex = this.autocastSpellIndex === spellIndex ? -1 : spellIndex;
     this.renderSpellbook('good');
     this.renderSpellbook('evil');
+    this.autocastChangeCallback?.(this.autocastSpellIndex);
   }
 
   getAutocastSpell(): number { return this.autocastSpellIndex; }
-  clearAutocastSpell(): void { this.autocastSpellIndex = -1; }
+  clearAutocastSpell(): void {
+    if (this.autocastSpellIndex < 0) return;
+    this.autocastSpellIndex = -1;
+    this.renderSpellbook('good');
+    this.renderSpellbook('evil');
+    this.autocastChangeCallback?.(-1);
+  }
 
   setTargetingSpell(spellIndex: number): void {
     this.targetingSpellIndex = spellIndex;
@@ -827,7 +839,7 @@ export class SidePanel {
       transition: border-color 0.1s, transform 0.05s;
     `;
     cell.title = unlocked
-      ? `${def.name}${isAutocast ? ' (auto-cast)' : ''}\nLeft-click: cast on target\nRight-click: toggle auto-cast`
+      ? `${def.name}${isAutocast ? ' (auto-cast)' : ''}${spellReagentText(def)}\nLeft-click: cast on target\nRight-click: toggle auto-cast`
       : `??? — requires level ${required} ${SKILL_NAMES[(spellSchoolSkill(def)) as SkillId]}`;
 
     if (unlocked) {
@@ -1549,4 +1561,10 @@ export class SidePanel {
     if (!this.equipment.has(slotIndex)) return;
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_UNEQUIP_ITEM, slotIndex));
   }
+}
+
+function spellReagentText(def: SpellEffectDef): string {
+  const text = spellReagentSummary(def);
+  if (!text) return '';
+  return `\nRequires: ${text}`;
 }

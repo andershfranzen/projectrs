@@ -5,6 +5,13 @@
   "school": "evil",
   "tier": 2,
   "levelRequired": 10,
+  "reagents": [
+    {
+      "itemId": 234,
+      "quantity": 1,
+      "name": "Evil token (tier 1)"
+    }
+  ],
   "projectile": {
     "shape": "blast",
     "size": 0.95,

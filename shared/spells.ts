@@ -92,6 +92,14 @@ export interface ImpactEffectDef {
   screenShakeDurationMs?: number;
 }
 
+export interface SpellReagentDef {
+  itemId: number;
+  quantity: number;
+  /** Optional display name for client tooltips. The server always resolves the
+   *  authoritative item name from items.json. */
+  name?: string;
+}
+
 export interface SpellEffectDef {
   id: string;
   name: string;
@@ -103,6 +111,10 @@ export interface SpellEffectDef {
   /** Minimum level in the spell's school required to cast / see the unlocked
    *  icon in the spellbook. Omitted → 1 (always available). */
   levelRequired?: number;
+  /** Items consumed when the spell is cast. Mirrors the old rune-requirement
+   *  model: validate before casting, consume before projectile/impact, and
+   *  spend the reagent even if the spell splashes. */
+  reagents?: SpellReagentDef[];
   projectile: ProjectileDef;
   trajectory: TrajectoryDef;
   trail: TrailDef;
@@ -117,4 +129,22 @@ export interface SpellEffectDef {
  *  directly into the player's skill block. */
 export function spellSchoolSkill(def: SpellEffectDef): 'goodmagic' | 'evilmagic' {
   return (def.school ?? 'evil') === 'good' ? 'goodmagic' : 'evilmagic';
+}
+
+export function spellReagentSummary(def: SpellEffectDef): string {
+  const byItemId = new Map<number, { quantity: number; name?: string }>();
+  for (const reagent of def.reagents ?? []) {
+    if (reagent.quantity <= 0) continue;
+    const existing = byItemId.get(reagent.itemId);
+    if (existing) {
+      existing.quantity += reagent.quantity;
+      existing.name ??= reagent.name;
+    } else {
+      byItemId.set(reagent.itemId, { quantity: reagent.quantity, name: reagent.name });
+    }
+  }
+
+  return [...byItemId.entries()]
+    .map(([itemId, reagent]) => `${reagent.quantity} ${reagent.name ?? `item ${itemId}`}`)
+    .join(', ');
 }
