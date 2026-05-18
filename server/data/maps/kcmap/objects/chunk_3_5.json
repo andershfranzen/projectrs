@@ -1700,7 +1700,7 @@
         ],
         "message": "You pick up the suspect sketch.",
         "depleteObject": true,
-        "depleteRespawnTicks": 0
+        "depleteRespawnTicks": 10
       }
     ],
     "interactionTiles": [
