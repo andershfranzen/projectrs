@@ -119,7 +119,7 @@ export class QuestService {
     if (!def) return false;
     const current = player.quests[questId];
     if (!current) return false;
-    if (current.stage === QUEST_STAGE_COMPLETED) return true;
+    if (current.stage === QUEST_STAGE_COMPLETED) return false;
 
     const itemRewards = def.rewards?.items?.filter(drop =>
       Number.isInteger(drop.itemId) && Number.isInteger(drop.quantity) && drop.quantity > 0
@@ -268,10 +268,7 @@ export class QuestService {
 
     for (const def of this.data.getQuestsByStartTriggerType(event.type)) {
       if (!def.startTrigger) continue;
-      const existing = player.quests[def.id];
-      if (existing) {
-        continue;
-      }
+      if (player.quests[def.id]) continue;
       if (!this.triggerMatchesEvent(def.startTrigger, event)) continue;
       if (!this.rollTriggerChance(def.startTrigger)) continue;
       this.setPlayerQuestStage(player, def.id, 0);
