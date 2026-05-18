@@ -52,6 +52,8 @@ export class Npc3DEntity {
   // Animations keyed by role (idle, walk, attack, death)
   private animGroups: Map<string, AnimationGroup> = new Map();
   private currentAnim: string = '';
+  private currentAnimLoop: boolean = true;
+  private animationEnabled: boolean = true;
   private missingAnimationWarnings = new Set<string>();
   private _walking: boolean = false;
 
@@ -195,7 +197,27 @@ export class Npc3DEntity {
       return;
     }
     this.currentAnim = name;
-    group.start(loop, 1.0, group.from, group.to, false);
+    this.currentAnimLoop = loop;
+    if (this.animationEnabled) {
+      group.start(loop, 1.0, group.from, group.to, false);
+    }
+  }
+
+  setAnimationEnabled(enabled: boolean): void {
+    if (this.animationEnabled === enabled) return;
+    if (!enabled && !this.currentAnimLoop) return;
+    this.animationEnabled = enabled;
+    const group = this.currentAnim ? this.animGroups.get(this.currentAnim) : null;
+    if (!group) return;
+    if (enabled) {
+      group.start(this.currentAnimLoop, 1.0, group.from, group.to, false);
+    } else {
+      group.stop();
+    }
+  }
+
+  isAnimationEnabled(): boolean {
+    return this.animationEnabled;
   }
 
   // --- Public API matching SpriteEntity ---

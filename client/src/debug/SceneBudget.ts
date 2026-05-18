@@ -1,0 +1,103 @@
+import type { Scene } from '@babylonjs/core/scene';
+import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+
+type MeshInternals = AbstractMesh & { _isWorldMatrixFrozen?: boolean };
+type AnimationGroupInternals = {
+  name: string;
+  isPlaying: boolean;
+  targetedAnimations: unknown[];
+  _animatables?: unknown[];
+};
+
+function bucketName(name: string | undefined): string {
+  return (name || '<unnamed>')
+    .replace(/_[0-9]+_[0-9]+.*/, '_*')
+    .replace(/_[0-9]+$/, '_*')
+    .slice(0, 56);
+}
+
+function grouped(meshes: readonly AbstractMesh[], limit = 30): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const mesh of meshes) {
+    const key = bucketName(mesh.name);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return Array.from(counts, ([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+function groupedPlacedChunks(meshes: readonly AbstractMesh[], limit = 30): Array<{ chunk: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const mesh of meshes) {
+    const match = /^(?:placed|thin)_(-?\d+,-?\d+)_/.exec(mesh.name);
+    if (!match) continue;
+    const chunk = match[1];
+    counts.set(chunk, (counts.get(chunk) ?? 0) + 1);
+  }
+  return Array.from(counts, ([chunk, count]) => ({ chunk, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
+export function buildSceneBudget(scene: Scene) {
+  const meshes = scene.meshes;
+  const activeMeshes = scene.getActiveMeshes().data.filter(Boolean) as AbstractMesh[];
+  const enabledMeshes = meshes.filter(mesh => mesh.isEnabled());
+  const disabledMeshes = meshes.filter(mesh => !mesh.isEnabled());
+  const pickableMeshes = meshes.filter(mesh => mesh.isPickable);
+  const activePickableMeshes = activeMeshes.filter(mesh => mesh.isPickable);
+
+  return {
+    summary: {
+      meshes: meshes.length,
+      activeMeshes: activeMeshes.length,
+      enabledMeshes: enabledMeshes.length,
+      pickableMeshes: pickableMeshes.length,
+      activePickableMeshes: activePickableMeshes.length,
+      frozenWorldMatrices: meshes.filter(mesh => (mesh as MeshInternals)._isWorldMatrixFrozen).length,
+      doNotSyncBoundingInfo: meshes.filter(mesh => mesh.doNotSyncBoundingInfo).length,
+      transformNodes: scene.transformNodes.length,
+      materials: scene.materials.length,
+      textures: scene.textures.length,
+      skeletons: scene.skeletons.length,
+      animationGroups: scene.animationGroups.length,
+      activeAnimatables: scene._activeAnimatables?.length ?? 0,
+      playingAnimationGroups: scene.animationGroups.filter(group => group.isPlaying).length,
+      particleSystems: scene.particleSystems.length,
+    },
+    activeByName: grouped(activeMeshes),
+    enabledByName: grouped(enabledMeshes),
+    disabledByName: grouped(disabledMeshes),
+    enabledNotFrozenByName: grouped(enabledMeshes.filter(mesh => !(mesh as MeshInternals)._isWorldMatrixFrozen)),
+    enabledPlacedByChunk: groupedPlacedChunks(enabledMeshes),
+    activePlacedByChunk: groupedPlacedChunks(activeMeshes),
+    pickableByName: grouped(pickableMeshes),
+    activePickableByName: grouped(activePickableMeshes),
+    playingAnimationGroups: scene.animationGroups
+      .filter(group => group.isPlaying)
+      .map(group => {
+        const g = group as unknown as AnimationGroupInternals;
+        return {
+          name: g.name,
+          targetedAnimations: g.targetedAnimations.length,
+          animatables: g._animatables?.length ?? 0,
+        };
+      })
+      .sort((a, b) => b.animatables - a.animatables || b.targetedAnimations - a.targetedAnimations)
+      .slice(0, 30),
+  };
+}
+
+export function logSceneBudget(scene: Scene): void {
+  const budget = buildSceneBudget(scene);
+  console.groupCollapsed('[SceneBudget]', budget.summary);
+  console.table(budget.enabledByName);
+  console.table(budget.enabledPlacedByChunk);
+  console.table(budget.activeByName);
+  console.table(budget.activePlacedByChunk);
+  console.table(budget.enabledNotFrozenByName);
+  console.table(budget.pickableByName);
+  console.table(budget.playingAnimationGroups);
+  console.groupEnd();
+}

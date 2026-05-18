@@ -38,3 +38,6 @@ assets-sources/
 
 # GLB texture-optimizer backups — large local-only archives
 tools/glb-backups-*.tar.gz
+
+# Browser/CPU profiler captures
+tools/profiler-runs/

@@ -377,12 +377,23 @@ export class EntityManager {
 
   private static readonly SERVER_TICK_MS = 600;
   private static readonly NPC_TILES_PER_SEC = 1000 / EntityManager.SERVER_TICK_MS;
+  private static readonly NPC_ANIMATION_LOD_ENABLE_DISTANCE = NPC_3D_LOD_DISTANCE + 2;
+  private static readonly NPC_ANIMATION_LOD_DISABLE_DISTANCE = NPC_3D_LOD_DISTANCE + 4;
 
   interpolateNpcs(dt: number, camPos: Vector3 | null, localPlayerId: number, localPlayerPos: Vector3 | null): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.npcSprites) {
       const target = this.npcTargets.get(entityId);
       if (!target) continue;
+      if (sprite instanceof Npc3DEntity && localPlayerPos) {
+        const playerDx = target.x - localPlayerPos.x;
+        const playerDz = target.z - localPlayerPos.z;
+        const dist = Math.max(Math.abs(playerDx), Math.abs(playerDz));
+        const threshold = sprite.isAnimationEnabled()
+          ? EntityManager.NPC_ANIMATION_LOD_DISABLE_DISTANCE
+          : EntityManager.NPC_ANIMATION_LOD_ENABLE_DISTANCE;
+        sprite.setAnimationEnabled(dist <= threshold);
+      }
 
       const velX = target.x - target.prevX;
       const velZ = target.z - target.prevZ;

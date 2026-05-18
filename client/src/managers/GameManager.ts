@@ -49,6 +49,7 @@ import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
+import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
 import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
@@ -4275,6 +4276,11 @@ export class GameManager {
       else this.camera.exitDebugZoom();
       return true;
     }
+    if (msg === '/scenebudget') {
+      logSceneBudget(this.scene);
+      this.chatPanel?.addMessage('System', 'Scene budget written to the browser console.');
+      return true;
+    }
     if (msg === '/bonedebug') {
       if (!this.boneDebugPanel) {
         this.boneDebugPanel = new BoneDebugPanel();
@@ -5800,6 +5806,9 @@ export class GameManager {
     if (!target) return;
 
     const apply = (node: TransformNode): void => {
+      if ('isPickable' in node) {
+        (node as TransformNode & { isPickable: boolean }).isPickable = interactive;
+      }
       if (interactive) {
         node.metadata = { ...node.metadata, objectEntityId };
       } else if (node.metadata && node.metadata.objectEntityId === objectEntityId) {
