@@ -45,6 +45,12 @@ interface ChunkMeshes {
   upperFloors: Map<number, FloorMeshSet>;
 }
 
+interface FlatTexturePickPlane {
+  invWorld: Matrix;
+  halfWidth: number;
+  halfHeight: number;
+}
+
 interface FloorLayerClientData {
   walls: Map<number, number>;
   wallHeights: Map<number, number>;
@@ -197,6 +203,7 @@ export class ChunkManager {
   /** Callback fired when a chunk's placed objects finish loading */
   private onChunkObjectsLoaded: ((chunkKey: string) => void) | null = null;
   private texturePlaneMeshes: Mesh[] = [];
+  private flatTexturePickPlanes: FlatTexturePickPlane[] = [];
   private texturePlanesByChunk: Map<string, Mesh[]> = new Map();
   private textureOverlayMeshesByChunk: Map<string, Mesh[]> = new Map();
   private assetRegistry: Map<string, { path: string }> = new Map();
@@ -2487,6 +2494,42 @@ export class ChunkManager {
     return meshes;
   }
 
+  pickAuthoredFlatTexturePlane(
+    rayOrigin: Vector3,
+    rayDirection: Vector3,
+    playerY: number,
+  ): { x: number; z: number; y: number; distance: number } | null {
+    let best: { x: number; z: number; y: number; distance: number } | null = null;
+
+    for (const plane of this.flatTexturePickPlanes) {
+      const localOrigin = Vector3.TransformCoordinates(rayOrigin, plane.invWorld);
+      const localDir = Vector3.TransformNormal(rayDirection, plane.invWorld);
+      if (Math.abs(localDir.z) < 1e-6) continue;
+
+      const t = -localOrigin.z / localDir.z;
+      if (t <= 0) continue;
+
+      const lx = localOrigin.x + localDir.x * t;
+      const ly = localOrigin.y + localDir.y * t;
+      if (Math.abs(lx) > plane.halfWidth || Math.abs(ly) > plane.halfHeight) continue;
+
+      const wx = rayOrigin.x + rayDirection.x * t;
+      const wy = rayOrigin.y + rayDirection.y * t;
+      const wz = rayOrigin.z + rayDirection.z * t;
+      const walkableHeights = this.getWalkableHeightsAt(wx, wz);
+      const matchesWalkableHeight = walkableHeights.some(height => Math.abs(wy - height) <= 0.4);
+      if (!matchesWalkableHeight) continue;
+      if (Math.abs(wy - playerY) > 3.0) continue;
+
+      const distance = Math.hypot(wx - rayOrigin.x, wy - rayOrigin.y, wz - rayOrigin.z);
+      if (!best || distance < best.distance) {
+        best = { x: wx, z: wz, y: wy, distance };
+      }
+    }
+
+    return best;
+  }
+
   setCurrentFloor(floor: number): void {
     if (floor === this.currentFloor) return;
     this.currentFloor = floor;
@@ -3671,7 +3714,29 @@ export class ChunkManager {
     return { positions, normals, uvs, indices };
   }
 
+  private rebuildFlatTexturePickPlanes(planes: TexturePlane[]): void {
+    this.flatTexturePickPlanes = [];
+    for (const plane of planes) {
+      if (!isFlatPlane(plane)) continue;
+
+      const { x: rx, y: ry, z: rz } = plane.rotation;
+      const quat = Quaternion.RotationAxis(new Vector3(1, 0, 0), rx)
+        .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), ry))
+        .multiply(Quaternion.RotationAxis(new Vector3(0, 0, 1), rz));
+      const scale = new Vector3(plane.scale.x, plane.scale.y, plane.scale.z);
+      const pos = new Vector3(plane.position.x, plane.position.y, plane.position.z);
+      const invWorld = Matrix.Compose(scale, quat, pos);
+      invWorld.invert();
+      this.flatTexturePickPlanes.push({
+        invWorld,
+        halfWidth: plane.width / 2,
+        halfHeight: plane.height / 2,
+      });
+    }
+  }
+
   private loadTexturePlanes(planes: TexturePlane[]): void {
+    this.rebuildFlatTexturePickPlanes(planes);
     if (planes.length === 0) return;
     if (import.meta.env.DEV) console.log(`[ChunkManager] Loading ${planes.length} texture planes...`);
 
@@ -3847,6 +3912,7 @@ export class ChunkManager {
     this.noRoofPlaneTiles.clear();
     for (const m of this.texturePlaneMeshes) m.dispose();
     this.texturePlaneMeshes = [];
+    this.flatTexturePickPlanes = [];
     this.texturePlanesByChunk.clear();
     this.tilePaintedEntries.clear();
     this.flatPlanesByTexture.clear();

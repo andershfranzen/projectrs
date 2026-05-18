@@ -260,6 +260,7 @@ export class GameManager {
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
   private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number }> = new Map();
+  private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
   /** Tiles blocked by non-depleted world objects (key = `${tileX},${tileZ}`) */
   private blockedObjectTiles: Set<string> = new Set();
@@ -1376,6 +1377,11 @@ export class GameManager {
           doorEntry.pivot.dispose();
           this.doorPivots.delete(entityId);
         }
+        const doorProxy = this.doorPickProxies.get(entityId);
+        if (doorProxy) {
+          doorProxy.dispose();
+          this.doorPickProxies.delete(entityId);
+        }
       }
     }
   }
@@ -1450,6 +1456,7 @@ export class GameManager {
     const def = this.objectDefsCache.get(data.defId);
     this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), placedNode);
     if (def?.category === 'door') {
+      this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
       const modelRotY = this.modelRotY(placedNode);
       const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
       this.doorTiles.set(objectEntityId, [tx, tz]);
@@ -1468,6 +1475,7 @@ export class GameManager {
         if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, true);
       }
       this.setupDoorPivot(objectEntityId);
+      this.createDoorPickProxy(objectEntityId, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
       // Doors stay visible regardless of depleted state
     } else {
       if (data.depleted) placedNode.setEnabled(false);
@@ -2553,10 +2561,15 @@ export class GameManager {
         if (def?.category === 'door') {
           // Doors stay visible — animate rotation instead
           model.setEnabled(true);
+          this.setWorldObjectPickTarget(objectEntityId, false, model);
+          if (!this.doorPickProxies.has(objectEntityId)) {
+            const rotY = this.doorPivots.get(objectEntityId)?.closedRotY ?? (rotY1000 / 1000);
+            this.createDoorPickProxy(objectEntityId, x, z, rotY, model.getAbsolutePosition().y);
+          }
         } else {
           this.setPlacedWorldObjectEnabled(model, !isDepleted);
+          this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
         }
-        this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted), model);
         const hasDepleteModel = def?.category === 'tree' || def?.category === 'rock' || def?.category === 'chest';
         let depletedModel = this.objectModels.getStump(objectEntityId);
         if (!depletedModel && hasDepleteModel && isDepleted) {
@@ -3023,6 +3036,8 @@ export class GameManager {
       this.objectModels.disposeStumps();
       this.worldObjectDefs.clear();
       this.blockedObjectTiles.clear();
+      for (const [, proxy] of this.doorPickProxies) proxy.dispose();
+      this.doorPickProxies.clear();
       for (const [, entry] of this.doorPivots) entry.pivot.dispose();
       this.doorPivots.clear();
 
@@ -5066,6 +5081,10 @@ export class GameManager {
     this.chunkManager.disposeAll();
     for (const [, model] of this.worldObjectModels) model.dispose();
     this.worldObjectModels.clear();
+    for (const [, proxy] of this.doorPickProxies) proxy.dispose();
+    this.doorPickProxies.clear();
+    for (const [, entry] of this.doorPivots) entry.pivot.dispose();
+    this.doorPivots.clear();
     this.objectModels.dispose();
     document.getElementById('chat-panel')?.remove();
     document.getElementById('side-panel')?.remove();
@@ -5922,6 +5941,32 @@ export class GameManager {
     apply(target);
     for (const child of target.getChildMeshes(false)) apply(child);
     for (const child of target.getChildTransformNodes(false)) apply(child);
+  }
+
+  private createDoorPickProxy(objectEntityId: number, x: number, z: number, rotY: number, baseY: number): void {
+    this.doorPickProxies.get(objectEntityId)?.dispose();
+    const { tile: [tx, tz], edge, axis } = doorEdgeFromPlacement(x, z, rotY);
+    const proxy = MeshBuilder.CreateBox(`door_pickProxy_${objectEntityId}`, {
+      width: axis === 'NS' ? 0.9 : 0.18,
+      depth: axis === 'NS' ? 0.18 : 0.9,
+      height: 1.8,
+    }, this.scene);
+
+    proxy.position.x = tx + 0.5;
+    proxy.position.z = tz + 0.5;
+    if (edge === WallEdge.N) proxy.position.z = tz + 0.08;
+    else if (edge === WallEdge.S) proxy.position.z = tz + 0.92;
+    else if (edge === WallEdge.E) proxy.position.x = tx + 0.92;
+    else if (edge === WallEdge.W) proxy.position.x = tx + 0.08;
+    proxy.position.y = baseY + 0.9;
+    proxy.isVisible = true;
+    proxy.visibility = 0;
+    proxy.isPickable = true;
+    proxy.layerMask = 0;
+    proxy.metadata = { kind: 'worldObject', objectEntityId };
+    proxy.freezeWorldMatrix();
+
+    this.doorPickProxies.set(objectEntityId, proxy);
   }
 
   private setupDoorPivot(objectEntityId: number): void {

@@ -1,6 +1,6 @@
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
-import { Mesh } from '@babylonjs/core/Meshes/mesh';
+import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { Node } from '@babylonjs/core/node';
 import { Plane } from '@babylonjs/core/Maths/math.plane';
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
@@ -123,33 +123,35 @@ export class InputManager {
           if (lower.includes('wall')) return true;
           if (lower.includes('doorframe') || lower.includes('doorway')) return true;
           if (lower.includes('roof')) return true;
-          // Slabs ARE walkable surfaces — keep pickable.
-          if (lower.includes('truedoor')) return false;
+          if (lower.includes('truedoor')) return true;
         }
         n = n.parent;
       }
       return false;
     };
-    // A merged flat texture plane whose surface sits well above the player's
-    // head is a ceiling from where they're standing — clicks must pierce
-    // through to the ground tile underneath, otherwise you can't click into
-    // the bottom floor of an overhanging building.
-    const playerY = this.playerY;
-    const isCeilingPlane = (m: any): boolean => {
-      const md = m.metadata;
-      if (!md?.isTexPlane || !md?.isFlat) return false;
-      return md.minY > playerY + 0.6;
+    const pickPredicate = (mesh: AbstractMesh) =>
+      mesh.isEnabled() && mesh.isVisible && mesh.isPickable && !isClickThroughAsset(mesh);
+    const isTexturePlane = (m: any): boolean => {
+      let n = m;
+      while (n) {
+        if (n.metadata?.isTexPlane && n.metadata?.isFlat) return true;
+        n = n.parent;
+      }
+      return false;
     };
-    const pick = this.scene.pick(
-      this.scene.pointerX,
-      this.scene.pointerY,
-      (mesh) => mesh.isEnabled() && mesh.isVisible && mesh.isPickable && !isClickThroughAsset(mesh) && !isCeilingPlane(mesh),
-      false,
-      this.scene.activeCamera
-    );
-
-    if (pick?.hit && pick.pickedPoint) {
-      const p = pick.pickedPoint;
+    const validHit = (hit: { pickedPoint?: Vector3 | null; pickedMesh?: AbstractMesh | null }): { x: number; z: number } | null => {
+      const p = hit.pickedPoint;
+      if (!p) return null;
+      if (hit.pickedMesh && isTexturePlane(hit.pickedMesh)) {
+        const walkableHeights = this.chunkManager.getWalkableHeightsAt(p.x, p.z);
+        const matchesWalkableHeight = walkableHeights.some(height => Math.abs(p.y - height) <= 0.35);
+        const matchesPlayerPlane = Math.abs(p.y - this.playerY) <= 2.5;
+        if (!matchesWalkableHeight || !matchesPlayerPlane) return null;
+        return {
+          x: Math.floor(p.x) + 0.5,
+          z: Math.floor(p.z) + 0.5,
+        };
+      }
       const floor = this.chunkManager.getCurrentFloor();
       const expectedY = this.chunkManager.getEffectiveHeight(p.x, p.z, floor, this.playerY);
       // Reject the click if the picked point is not on the player's current
@@ -161,15 +163,52 @@ export class InputManager {
         x: Math.floor(p.x) + 0.5,
         z: Math.floor(p.z) + 0.5,
       };
-    }
-
-    // Fallback: project onto horizontal plane at player height
+    };
     const ray = this.scene.createPickingRay(
       this.scene.pointerX,
       this.scene.pointerY,
       null,
       this.scene.activeCamera
     );
+    const authoredPlaneHit = this.chunkManager.pickAuthoredFlatTexturePlane(ray.origin, ray.direction, this.playerY);
+    if (authoredPlaneHit) {
+      return {
+        x: Math.floor(authoredPlaneHit.x) + 0.5,
+        z: Math.floor(authoredPlaneHit.z) + 0.5,
+      };
+    }
+
+    const hits = this.scene.multiPick(
+      this.scene.pointerX,
+      this.scene.pointerY,
+      pickPredicate,
+      this.scene.activeCamera
+    );
+
+    if (hits?.length) {
+      hits.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+      const textureHits = hits.filter(hit => hit.pickedMesh && isTexturePlane(hit.pickedMesh));
+      for (const hit of textureHits) {
+        const result = validHit(hit);
+        if (result) return result;
+      }
+      for (const hit of hits) {
+        if (hit.pickedMesh && isTexturePlane(hit.pickedMesh)) continue;
+        const result = validHit(hit);
+        if (result) return result;
+      }
+    }
+
+    const pick = this.scene.pick(
+      this.scene.pointerX,
+      this.scene.pointerY,
+      pickPredicate,
+      false,
+      this.scene.activeCamera
+    );
+
+    const singlePickResult = pick?.hit ? validHit(pick) : null;
+    if (singlePickResult) return singlePickResult;
 
     if (ray.direction.y === 0) return null;
 
