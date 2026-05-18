@@ -1640,7 +1640,7 @@ export class GameManager {
     // the head path returns a sharable template (mesh offsets are computed
     // against the armor GLB's own bones, not the character's), so it routes
     // through the cache below like any other bone-attached slot.
-    const PER_TARGET_SLOTS = new Set(['body', 'legs', 'hands', 'feet', 'cape']);
+    const PER_TARGET_SLOTS = new Set(['body', 'legs', 'hands', 'feet']);
     if (PER_TARGET_SLOTS.has(slotName)) {
       await this.loadGearSmart(slotName, itemId, buildDef(), target, isCurrentApply);
       return;
@@ -1736,7 +1736,7 @@ export class GameManager {
       // GLB ourselves and graft the JOINTS_0/WEIGHTS_0 attributes onto the
       // imported meshes for slots that need skinning. attachSkinnedArmor's
       // name-based bone remap then handles the bind to our character skeleton.
-      const SKINNED_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet', 'cape']);
+      const SKINNED_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet']);
       const bodyHideStyle: 'plate' | 'chain' =
         this.itemDefsCache.get(itemId)?.bodyHideStyle === 'chain' ? 'chain' : 'plate';
       if (
