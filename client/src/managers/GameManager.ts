@@ -4267,7 +4267,7 @@ export class GameManager {
         this.clearPredictedPath();
         this.localPlayer?.stopWalking();
       }
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex, -1, data.depleted ? 1 : 0));
       return;
     }
 

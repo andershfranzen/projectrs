@@ -184,6 +184,7 @@ export class World {
   readonly npcs: Map<number, Npc> = new Map();
   readonly groundItems: Map<number, GroundItem> = new Map();
   readonly worldObjects: Map<number, WorldObject> = new Map();
+  private doorObjectsByMap: Map<string, Set<WorldObject>> = new Map();
   /** Tiles blocked by non-depleted world objects, encoded as numeric key */
   private blockedObjectTiles: Set<number> = new Set();
 
@@ -369,6 +370,7 @@ export class World {
     this.maps.set(mapId, gameMap);
     const cm = new ServerChunkManager(gameMap.width, gameMap.height);
     this.chunkManagers.set(mapId, cm);
+    this.doorObjectsByMap.delete(mapId);
 
     // Remove old NPCs and world objects for this map
     for (const [id, npc] of this.npcs) {
@@ -409,6 +411,7 @@ export class World {
       if (objDef.category === 'door') {
         this.initDoorEdge(obj);
         this.setDoorWallEdges(obj, gameMap);
+        this.registerDoorObject(obj);
       }
       cm.addEntity(obj.id, spawn.x, spawn.z);
     }
@@ -717,6 +720,7 @@ export class World {
         if (objDef.category === 'door') {
           this.initDoorEdge(obj);
           this.setDoorWallEdges(obj, gameMap);
+          this.registerDoorObject(obj);
         }
         const cm = this.chunkManagers.get(mapId);
         if (cm) cm.addEntity(obj.id, spawn.x, spawn.z);
@@ -792,6 +796,15 @@ export class World {
     if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
     if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
     return obj;
+  }
+
+  private registerDoorObject(obj: WorldObject): void {
+    let doors = this.doorObjectsByMap.get(obj.mapLevel);
+    if (!doors) {
+      doors = new Set();
+      this.doorObjectsByMap.set(obj.mapLevel, doors);
+    }
+    doors.add(obj);
   }
 
   start(): void {
@@ -1411,6 +1424,24 @@ export class World {
     });
   }
 
+  private sendNearbyDoorUpdates(player: Player, radius: number = 8): void {
+    const px = Math.floor(player.position.x);
+    const pz = Math.floor(player.position.y);
+    const doors = this.doorObjectsByMap.get(player.currentMapLevel);
+    if (!doors) return;
+    for (const obj of doors) {
+      if (Math.max(Math.abs(Math.floor(obj.x) - px), Math.abs(Math.floor(obj.z) - pz)) > radius) continue;
+      this.sendWorldObjectUpdate(player, obj);
+    }
+  }
+
+  private rejectStaleDoorInteraction(player: Player, obj: WorldObject, expectedDoorOpen: boolean | null): boolean {
+    if (obj.def.category !== 'door' || expectedDoorOpen === null || obj.doorOpen === expectedDoorOpen) return false;
+    this.sendWorldObjectUpdate(player, obj);
+    this.sendNearbyDoorUpdates(player);
+    return true;
+  }
+
   /** True when any player currently has a dialogue or shop open with this
    *  NPC. Used by tickNpcAI to freeze wandering — without this, walk-anim
    *  movement on the client overrides the NPC_FACING rotation we set on
@@ -1695,6 +1726,7 @@ export class World {
     if (truncated && validPath.length < requestedTileCount && requestedTileCount > 0) {
       const last = validPath.length > 0 ? validPath[validPath.length - 1] : { x: player.position.x, z: player.position.y };
       this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
+      this.sendNearbyDoorUpdates(player);
     }
   }
 
@@ -2372,12 +2404,14 @@ export class World {
     // No setDelay — reordering is a UI affordance, not a tick-consuming action.
   }
 
-  handlePlayerInteractObject(playerId: number, objectEntityId: number, actionIndex: number, recipeIndex: number = -1): void {
+  handlePlayerInteractObject(playerId: number, objectEntityId: number, actionIndex: number, recipeIndex: number = -1, expectedDoorOpen: boolean | null = null): void {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
     if (obj.mapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
+    if (obj.def.category !== 'door') expectedDoorOpen = null;
+    if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen)) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') {
       this.sendWorldObjectUpdate(player, obj);
@@ -2393,7 +2427,7 @@ export class World {
     if (player.isBusy(this.currentTick)) {
       const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
       if (isQueuedObjectAction) {
-        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0 };
+        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen };
       }
       return;
     }
@@ -2443,7 +2477,7 @@ export class World {
           player.setMoveQueue(path);
         }
         if (player.hasMoveQueue()) {
-          player.pendingInteraction = { objectEntityId, actionIndex, swingSign };
+          player.pendingInteraction = { objectEntityId, actionIndex, swingSign, expectedDoorOpen };
         }
         // Empty path = unreachable (closed door is the only gap in the wall
         // and player is on the wrong side, OR maxSteps exhausted). Drop the
@@ -4012,6 +4046,7 @@ export class World {
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
         if (wallBlocked) {
           this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
+          this.sendNearbyDoorUpdates(player);
           player.clearMoveQueue();
           player.pendingInteraction = null;
           player.movementCredit = 0;
@@ -4053,7 +4088,7 @@ export class World {
         this.handlePlayerPickup(playerId, pickupId);
       }
       if (player.pendingInteraction && !player.hasMoveQueue()) {
-        const { objectEntityId, actionIndex, swingSign, recipeIndex } = player.pendingInteraction;
+        const { objectEntityId, actionIndex, swingSign, recipeIndex, expectedDoorOpen } = player.pendingInteraction;
         const obj = this.worldObjects.get(objectEntityId);
         // Doors fire instantly on arrival — toggling is visually
         // self-evident (the door swings) and the client already
@@ -4068,6 +4103,7 @@ export class World {
             player.clearMoveQueue();
             player.attackTarget = null;
             this.clearCombatTarget(playerId);
+            if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen ?? null)) continue;
             const action = obj.currentActions[actionIndex];
             if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
               this.toggleDoor(obj, swingSign ?? 0);

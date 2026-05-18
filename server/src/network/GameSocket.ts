@@ -259,7 +259,8 @@ export function handleGameSocketMessage(
       const objectEntityId = values[0];
       const actionIndex = values[1] ?? 0;
       const recipeIndex = values[2] ?? -1;
-      world.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex);
+      const expectedDoorOpen = values[3] === 0 || values[3] === 1 ? values[3] === 1 : null;
+      world.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex, expectedDoorOpen);
       break;
     }
 
