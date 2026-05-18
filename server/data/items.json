@@ -50,20 +50,6 @@
     "value": 20
   },
   {
-    "id": 5,
-    "name": "Iron Sword",
-    "description": "A sturdy iron sword.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "attackSpeed": 4,
-    "weaponStyle": "slash",
-    "stabAttack": 4,
-    "slashAttack": 12,
-    "meleeStrength": 9,
-    "value": 60
-  },
-  {
     "id": 6,
     "name": "Iron Battleaxe",
     "description": "A heavy iron battleaxe.",
@@ -688,8 +674,8 @@
   },
   {
     "id": 59,
-    "name": "Bronze Short Sword",
-    "description": "Bronze short sword.",
+    "name": "Bronze Sword",
+    "description": "Bronze sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -731,22 +717,6 @@
     "attackSpeed": 4,
     "slashAttack": 9,
     "meleeStrength": 7
-  },
-  {
-    "id": 62,
-    "name": "Bronze Long Sword",
-    "description": "Bronze long sword.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "value": 45,
-    "icon": "Bronze_Long_Sword_70.png",
-    "model": "/assets/equipment/weapon/BronzeSword.glb",
-    "weaponStyle": "slash",
-    "attackSpeed": 5,
-    "stabAttack": 4,
-    "slashAttack": 10,
-    "meleeStrength": 8
   },
   {
     "id": 63,
@@ -898,8 +868,8 @@
   },
   {
     "id": 73,
-    "name": "Iron Short Sword",
-    "description": "Iron short sword.",
+    "name": "Iron Sword",
+    "description": "Iron sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -941,22 +911,6 @@
     "attackSpeed": 4,
     "slashAttack": 14,
     "meleeStrength": 11
-  },
-  {
-    "id": 76,
-    "name": "Iron Long Sword",
-    "description": "Iron long sword.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "value": 90,
-    "icon": "Iron_Long_Sword_71.png",
-    "model": "/assets/equipment/weapon/IronSword.glb",
-    "weaponStyle": "slash",
-    "attackSpeed": 5,
-    "stabAttack": 6,
-    "slashAttack": 15,
-    "meleeStrength": 12
   },
   {
     "id": 77,
@@ -1111,8 +1065,8 @@
   },
   {
     "id": 87,
-    "name": "Steel Short Sword",
-    "description": "Steel short sword.",
+    "name": "Steel Sword",
+    "description": "Steel sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -1154,22 +1108,6 @@
     "attackSpeed": 4,
     "slashAttack": 18,
     "meleeStrength": 14
-  },
-  {
-    "id": 90,
-    "name": "Steel Long Sword",
-    "description": "Steel long sword.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "value": 180,
-    "icon": "Steel_Long_Sword_72.png",
-    "weaponStyle": "slash",
-    "attackSpeed": 5,
-    "stabAttack": 8,
-    "slashAttack": 20,
-    "meleeStrength": 16,
-    "model": "/assets/equipment/weapon/SteelSword.glb"
   },
   {
     "id": 91,
@@ -1324,8 +1262,8 @@
   },
   {
     "id": 101,
-    "name": "Mithril Short Sword",
-    "description": "Mithril short sword.",
+    "name": "Mithril Sword",
+    "description": "Mithril sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -1367,22 +1305,6 @@
     "attackSpeed": 4,
     "slashAttack": 27,
     "meleeStrength": 21
-  },
-  {
-    "id": 104,
-    "name": "Mithril Long Sword",
-    "description": "Mithril long sword.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "value": 360,
-    "icon": "Mithril_Long_Sword_73.png",
-    "weaponStyle": "slash",
-    "attackSpeed": 5,
-    "stabAttack": 12,
-    "slashAttack": 30,
-    "meleeStrength": 24,
-    "model": "/assets/equipment/weapon/MithrilSword.glb"
   },
   {
     "id": 105,
@@ -1531,8 +1453,8 @@
   },
   {
     "id": 115,
-    "name": "Black Bronze Short Sword",
-    "description": "Black Bronze short sword.",
+    "name": "Black Bronze Sword",
+    "description": "Black Bronze sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -1572,21 +1494,6 @@
     "attackSpeed": 4,
     "slashAttack": 36,
     "meleeStrength": 28
-  },
-  {
-    "id": 118,
-    "name": "Black Bronze Long Sword",
-    "description": "Black Bronze long sword.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "value": 720,
-    "icon": "Black Bronze_Long_Sword_74.png",
-    "weaponStyle": "slash",
-    "attackSpeed": 5,
-    "stabAttack": 16,
-    "slashAttack": 40,
-    "meleeStrength": 32
   },
   {
     "id": 119,

@@ -162,7 +162,7 @@
         "chance": 0.7
       },
       {
-        "itemId": 5,
+        "itemId": 73,
         "quantity": 1,
         "chance": 0.08
       },
@@ -385,7 +385,7 @@
           "stock": 5
         },
         {
-          "itemId": 5,
+          "itemId": 73,
           "price": 75,
           "stock": 3
         },

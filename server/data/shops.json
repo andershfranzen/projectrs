@@ -15,7 +15,7 @@
     "items": [
       { "itemId": 2, "price": 20, "stock": 5 },
       { "itemId": 3, "price": 30, "stock": 5 },
-      { "itemId": 5, "price": 75, "stock": 3 },
+      { "itemId": 73, "price": 75, "stock": 3 },
       { "itemId": 6, "price": 120, "stock": 2 },
       { "itemId": 31, "price": 20, "stock": 5 },
       { "itemId": 32, "price": 65, "stock": 3 }

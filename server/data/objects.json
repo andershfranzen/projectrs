@@ -882,16 +882,6 @@
       },
       {
         "inputItemId": 29,
-        "inputQuantity": 2,
-        "outputItemId": 62,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 6,
-        "xpReward": 10,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 29,
         "inputQuantity": 3,
         "outputItemId": 63,
         "outputQuantity": 1,
@@ -1017,16 +1007,6 @@
         "outputQuantity": 1,
         "skill": "smithing",
         "levelRequired": 15,
-        "xpReward": 21,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 30,
-        "inputQuantity": 2,
-        "outputItemId": 76,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 16,
         "xpReward": 21,
         "requiresTool": "hammer"
       },
@@ -1162,16 +1142,6 @@
       },
       {
         "inputItemId": 48,
-        "inputQuantity": 2,
-        "outputItemId": 90,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 26,
-        "xpReward": 29,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 48,
         "inputQuantity": 3,
         "outputItemId": 91,
         "outputQuantity": 1,
@@ -1302,16 +1272,6 @@
       },
       {
         "inputItemId": 49,
-        "inputQuantity": 2,
-        "outputItemId": 104,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 34,
-        "xpReward": 48,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
         "inputQuantity": 3,
         "outputItemId": 105,
         "outputQuantity": 1,
@@ -1437,16 +1397,6 @@
         "outputQuantity": 1,
         "skill": "smithing",
         "levelRequired": 41,
-        "xpReward": 61,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 50,
-        "inputQuantity": 2,
-        "outputItemId": 118,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 42,
         "xpReward": 61,
         "requiresTool": "hammer"
       },
