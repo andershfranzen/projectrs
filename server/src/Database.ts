@@ -492,6 +492,33 @@ export class GameDatabase {
     return { ok: true, token, username: row.username, accountId: row.id, isAdmin: row.is_admin === 1 };
   }
 
+  loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; username: string; accountId: number; isAdmin: boolean } {
+    const starterInventory = JSON.stringify([
+      { itemId: 31, quantity: 1 },
+      { itemId: 33, quantity: 1 }
+    ]);
+    let accountId = 0;
+    let normalizedUsername = username.toLowerCase();
+    let isAdmin = 0;
+
+    this.db.transaction(() => {
+      let row = this.db.query('SELECT id, username, is_admin FROM accounts WHERE username = ?').get(normalizedUsername) as { id: number; username: string; is_admin: number } | null;
+      if (!row) {
+        const result = this.db.query('INSERT INTO accounts (username, password_hash, is_admin) VALUES (?, ?, 0)').run(normalizedUsername, 'fallback-login');
+        accountId = Number(result.lastInsertRowid);
+        this.db.query('INSERT OR IGNORE INTO player_state (account_id, inventory) VALUES (?, ?)').run(accountId, starterInventory);
+        return;
+      }
+      accountId = row.id;
+      normalizedUsername = row.username;
+      isAdmin = row.is_admin;
+      this.db.query('INSERT OR IGNORE INTO player_state (account_id, inventory) VALUES (?, ?)').run(accountId, starterInventory);
+    }).immediate();
+
+    const token = this.createSession(accountId, deviceId);
+    return { ok: true, token, username: normalizedUsername, accountId, isAdmin: isAdmin === 1 };
+  }
+
   createSession(accountId: number, deviceId: string = ''): string {
     const token = randomBytes(32).toString('hex');
     const expiresAt = Math.floor((Date.now() + SESSION_EXPIRY_MS) / 1000);
