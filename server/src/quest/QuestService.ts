@@ -4,6 +4,7 @@ import {
   QUEST_STAGE_COMPLETED,
   ServerOpcode,
   type DialogueOption,
+  type QuestCondition,
   type QuestTrigger,
   type SkillId,
 } from '@projectrs/shared';
@@ -13,10 +14,11 @@ import type { DataLoader } from '../data/DataLoader';
 import type { Player } from '../entity/Player';
 
 export type QuestEventDescriptor =
-  | { type: 'dialogue'; npcDefId: number; npcEntityId: number; nodeId: string; optionLabel: string }
+  | { type: 'dialogue'; npcDefId: number; npcEntityId: number; npcName: string; nodeId: string; optionLabel: string }
   | { type: 'itemPickup'; itemId: number; quantity: number; source?: 'ground' | 'harvest' | 'chest' | 'dialogue' }
   | { type: 'npcKill'; npcDefId: number }
-  | { type: 'chestOpen'; chestDefId: number };
+  | { type: 'chestOpen'; chestDefId: number }
+  | { type: 'objectInteract'; objectDefId: number; objectEntityId: number; objectName: string; action: string };
 
 interface QuestServiceSenders {
   sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void;
@@ -33,14 +35,55 @@ export class QuestService {
 
   dialogueOptionVisible(player: Player, opt: DialogueOption): boolean {
     const req = opt.requires;
-    if (!req) return true;
-    const state = player.quests[req.questId];
-    if (req.notStarted) return !state || state.stage === QUEST_STAGE_COMPLETED;
-    if (!state) return false;
-    if (state.stage === QUEST_STAGE_COMPLETED) return false;
-    if (req.minStage !== undefined && state.stage < req.minStage) return false;
-    if (req.maxStage !== undefined && state.stage > req.maxStage) return false;
+    if (req && !this.legacyDialogueRequiresVisible(player, req)) return false;
+    if (opt.condition && !this.questConditionMet(player, opt.condition)) return false;
+    if (opt.conditions?.some(condition => !this.questConditionMet(player, condition))) return false;
     return true;
+  }
+
+  questConditionMet(player: Player, condition: QuestCondition): boolean {
+    if (!condition || typeof condition !== 'object') return false;
+    switch (condition.type) {
+      case 'all':
+        if (!Array.isArray(condition.conditions)) return false;
+        return condition.conditions.every(child => this.questConditionMet(player, child));
+      case 'any':
+        if (!Array.isArray(condition.conditions)) return false;
+        return condition.conditions.some(child => this.questConditionMet(player, child));
+      case 'not':
+        if (!condition.condition) return false;
+        return !this.questConditionMet(player, condition.condition);
+      case 'questStage': {
+        const state = player.quests[condition.questId];
+        if (!state || state.stage === QUEST_STAGE_COMPLETED) return false;
+        if (condition.minStage !== undefined && state.stage < condition.minStage) return false;
+        if (condition.maxStage !== undefined && state.stage > condition.maxStage) return false;
+        return true;
+      }
+      case 'questStarted': {
+        const state = player.quests[condition.questId];
+        return !!state && state.stage !== QUEST_STAGE_COMPLETED;
+      }
+      case 'questNotStarted': {
+        const state = player.quests[condition.questId];
+        return !state || state.stage === QUEST_STAGE_COMPLETED;
+      }
+      case 'questCompleted':
+        return player.quests[condition.questId]?.stage === QUEST_STAGE_COMPLETED;
+      case 'hasItem':
+        return this.playerHasItem(player, condition.itemId, condition.quantity ?? 1);
+      case 'hasEquippedItem':
+        for (const [, itemId] of player.equipment) {
+          if (itemId === condition.itemId) return true;
+        }
+        return false;
+      case 'skillLevel': {
+        const skill = player.skills[condition.skill];
+        return !!skill && skill.level >= condition.level;
+      }
+      case 'combatLevel':
+        return player.combatLevel >= condition.level;
+    }
   }
 
   setPlayerQuestStage(player: Player, questId: string, stage: number): void {
@@ -196,10 +239,33 @@ export class QuestService {
     return true;
   }
 
+  private legacyDialogueRequiresVisible(player: Player, req: NonNullable<DialogueOption['requires']>): boolean {
+    const state = player.quests[req.questId];
+    if (req.notStarted) return !state || state.stage === QUEST_STAGE_COMPLETED;
+    if (!state) return false;
+    if (state.stage === QUEST_STAGE_COMPLETED) return false;
+    if (req.minStage !== undefined && state.stage < req.minStage) return false;
+    if (req.maxStage !== undefined && state.stage > req.maxStage) return false;
+    return true;
+  }
+
+  private playerHasItem(player: Player, itemId: number, quantity: number): boolean {
+    if (!Number.isInteger(itemId) || itemId <= 0) return false;
+    if (!Number.isFinite(quantity) || quantity <= 0) return false;
+    let remaining = Math.floor(quantity);
+    for (const slot of player.inventory) {
+      if (!slot || slot.itemId !== itemId) continue;
+      remaining -= slot.quantity;
+      if (remaining <= 0) return true;
+    }
+    return false;
+  }
+
   private triggerMatchesEvent(trigger: QuestTrigger, event: QuestEventDescriptor): boolean {
     if (trigger.type !== event.type) return false;
     if (trigger.type === 'dialogue' && event.type === 'dialogue') {
       if (trigger.npcDefId !== undefined && trigger.npcDefId !== event.npcDefId) return false;
+      if (trigger.npcName !== undefined && trigger.npcName !== event.npcName) return false;
       if (trigger.nodeId !== undefined && trigger.nodeId !== event.nodeId) return false;
       if (trigger.optionLabel !== undefined && trigger.optionLabel !== event.optionLabel) return false;
       return true;
@@ -214,6 +280,12 @@ export class QuestService {
     if (trigger.type === 'chestOpen' && event.type === 'chestOpen') {
       return trigger.chestDefId === undefined || trigger.chestDefId === event.chestDefId;
     }
+    if (trigger.type === 'objectInteract' && event.type === 'objectInteract') {
+      if (trigger.objectDefId !== undefined && trigger.objectDefId !== event.objectDefId) return false;
+      if (trigger.objectName !== undefined && trigger.objectName !== event.objectName) return false;
+      if (trigger.action !== undefined && trigger.action !== event.action) return false;
+      return true;
+    }
     return false;
   }
 
@@ -222,6 +294,7 @@ export class QuestService {
     if (trigger.type === 'itemPickup') return trigger.quantity ?? 1;
     if (trigger.type === 'npcKill') return trigger.count ?? 1;
     if (trigger.type === 'chestOpen') return trigger.count ?? 1;
+    if (trigger.type === 'objectInteract') return trigger.count ?? 1;
     return 1;
   }
 

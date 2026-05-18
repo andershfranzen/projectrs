@@ -96,6 +96,13 @@ export interface InteractionTileOptions {
    *  allowed. Use `localSidesToWorldSides(mask, rotY, width)` to convert a
    *  local-frame mask first. */
   allowedWorldSides?: number;
+  /** Include the four diagonal corner tiles around the footprint. Ignored
+   *  when allowedWorldSides is set because side masks have no corner bits. */
+  includeCorners?: boolean;
+}
+
+export function usesCornerInteractionTiles(def: ObjectFootprintDef, hasInteractionSides: boolean = false): boolean {
+  return !hasInteractionSides && def.category === 'tree';
 }
 
 /** Map a (dx, dz) cardinal offset from a footprint tile at (ftX, ftZ) to a
@@ -158,6 +165,12 @@ export function getObjectInteractionTiles(
       tiles.push({ x: minX - 1, z: minZ + i });
     }
   }
+  if (allowed === undefined && opts?.includeCorners) {
+    tiles.push({ x: minX - 1, z: maxZ + 1 });
+    tiles.push({ x: maxX + 1, z: maxZ + 1 });
+    tiles.push({ x: maxX + 1, z: minZ - 1 });
+    tiles.push({ x: minX - 1, z: minZ - 1 });
+  }
   return tiles;
 }
 
@@ -185,8 +198,13 @@ export function isTileAdjacentToObject(
 
   // Classify cardinal side + per-side index, then check the matching bit.
   const bit = adjacentBitIndex(tileX, tileZ, 0, 0, minX, maxX, minZ, maxZ, W);
-  if (bit < 0) return false; // diagonal or further — not cardinal-adjacent
-
   const allowed = opts?.allowedWorldSides;
-  return allowed === undefined || (allowed & (1 << bit)) !== 0;
+  if (bit >= 0) return allowed === undefined || (allowed & (1 << bit)) !== 0;
+
+  if (allowed === undefined && opts?.includeCorners) {
+    const cornerX = tileX === minX - 1 || tileX === maxX + 1;
+    const cornerZ = tileZ === minZ - 1 || tileZ === maxZ + 1;
+    return cornerX && cornerZ;
+  }
+  return false;
 }

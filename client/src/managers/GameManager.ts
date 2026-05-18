@@ -52,7 +52,7 @@ import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -1212,15 +1212,27 @@ export class GameManager {
     bow_attack:              0.6,
   };
 
+  private static readonly TWO_HANDED_WEAPON_RE = /\b(?:2h|2-handed|two-handed)\b/i;
+
+  private getWeaponAnimationFamily(weaponDef: ItemDef | undefined): 'ranged' | 'twoHanded' | 'scimitar' | 'sword' | 'dagger' | 'other' {
+    const style = weaponDef?.weaponStyle;
+    if (style === 'bow' || style === 'crossbow') return 'ranged';
+    const name = weaponDef?.name ?? '';
+    if (weaponDef?.twoHanded || GameManager.TWO_HANDED_WEAPON_RE.test(name)) return 'twoHanded';
+    if (/scimitar/i.test(name)) return 'scimitar';
+    if (/dagger/i.test(name)) return 'dagger';
+    if (/sword/i.test(name)) return 'sword';
+    return 'other';
+  }
+
   /**
    * Choose the correct attack animation name based on stance and weapon.
    * - Scimitar (any stance)        → 'attack_1h_slash'
+   * - 2H weapon                    → stance-specific 2H slash/smash
    * - Sword + aggressive           → 'attack_1h_slash'
    * - Sword + other stance         → 'stab'
    * - Dagger (any stance)          → 'stab'
    * - Other 1H weapon              → 'attack_slash'
-   * - Other 2H + aggressive        → 'attack_2h_smash'
-   * - Other 2H + other stance      → 'attack_2h_slash'
    * - No weapon + aggressive       → 'kick'
    * - No weapon + other stance     → 'attack_punch'
    * Remote players' weapon + stance come from PLAYER_REMOTE_EQUIPMENT and
@@ -1256,17 +1268,14 @@ export class GameManager {
     }
     if (weaponId > 0) {
       const weaponDef = this.itemDefsCache.get(weaponId);
-      const style = weaponDef?.weaponStyle;
-      if (style === 'bow' || style === 'crossbow') return 'bow_attack';
-      const name = weaponDef?.name ?? '';
-      // Scimitars always swing the 1H slash. Swords default to stab but
-      // commit to a full 1H slash on aggressive stance. Daggers stay on stab
-      // regardless of stance — short blade, fast jab fits all styles.
-      if (/scimitar/i.test(name)) return 'attack_1h_slash';
-      if (/sword/i.test(name)) return stance === 'aggressive' ? 'attack_1h_slash' : 'stab';
-      if (/dagger/i.test(name)) return 'stab';
-      if (weaponDef?.twoHanded) return stance === 'aggressive' ? 'attack_2h_smash' : 'attack_2h_slash';
-      return 'attack_slash';
+      switch (this.getWeaponAnimationFamily(weaponDef)) {
+        case 'ranged': return 'bow_attack';
+        case 'twoHanded': return stance === 'aggressive' ? 'attack_2h_smash' : 'attack_2h_slash';
+        case 'scimitar': return 'attack_1h_slash';
+        case 'sword': return stance === 'aggressive' ? 'attack_1h_slash' : 'stab';
+        case 'dagger': return 'stab';
+        case 'other': return 'attack_slash';
+      }
     }
     if (stance === 'aggressive') return 'kick';
     return 'attack_punch';
@@ -3501,8 +3510,9 @@ export class GameManager {
 
     const ptx = Math.floor(this.playerX);
     const ptz = Math.floor(this.playerZ);
-    const alreadyAdj = isTileAdjacentToObject(ptx, ptz, data.x, data.z, def);
+    const alreadyAdj = isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) });
     if (alreadyAdj) {
+      this.stopLocalWalkForImmediateObjectInteraction(data);
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
       return true;
     }
@@ -3552,14 +3562,8 @@ export class GameManager {
 
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
-      const pathResult = this.findPathFromMovementAnchor(target.x, target.z);
+      const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
       const path = pathResult.path;
-      if (path.length > 0) {
-        const last = path[path.length - 1];
-        if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
-          path.pop();
-        }
-      }
       if (path.length > 0) {
         this.startPredictedPath(path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
@@ -3638,10 +3642,11 @@ export class GameManager {
     this.pendingFaceTargetEntityId = npcEntityId;
 
     // sendMove BEFORE TALK_NPC so the server walks the same tiles.
-    if (!this.isPlayerAdjacentToTile(target.x, target.z)) {
-      const path = this.findPathAdjacentToTarget(target.x, target.z);
+    if (!this.isPlayerInNpcInteractionRange(npcEntityId, target, NPC_INTERACTION_RANGE)) {
+      const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
+      const path = pathResult.path;
       if (path.length > 0) {
-        this.startPredictedPath(path);
+        this.startPredictedPath(path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
         this.minimap?.clearDestination();
       }
@@ -3702,6 +3707,13 @@ export class GameManager {
     this.tileProgress = 0;
     this.pendingPath = null;
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
+  }
+
+  private stopLocalWalkForImmediateObjectInteraction(data: { x: number; z: number }): void {
+    this.clearPredictedPath(true);
+    this.minimap?.clearDestination();
+    this.localPlayer?.stopWalking();
+    this.faceLocalPlayerToward(data.x, data.z);
   }
 
   private rootLocalPlayerForSpellCast(): void {
@@ -3781,6 +3793,63 @@ export class GameManager {
     ) <= 1;
   }
 
+  private getNpcTileSize(npcEntityId: number): number {
+    const defId = this.entities.npcDefs.get(npcEntityId);
+    return Math.max(1, Math.round(this.npcDefsCache.get(defId ?? -1)?.size ?? 1));
+  }
+
+  private distToNpcFootprint(npcEntityId: number, target: { x: number; z: number }, x: number, z: number): { dx: number; dz: number } {
+    const size = this.getNpcTileSize(npcEntityId);
+    if (size <= 1) return { dx: x - target.x, dz: z - target.z };
+    const sx = Math.floor(target.x);
+    const sz = Math.floor(target.z);
+    const startOffset = -Math.floor((size - 1) / 2);
+    const minX = sx + startOffset + 0.5;
+    const maxX = sx + startOffset + size - 0.5;
+    const minZ = sz + startOffset + 0.5;
+    const maxZ = sz + startOffset + size - 0.5;
+    const nearestX = x < minX ? minX : (x > maxX ? maxX : x);
+    const nearestZ = z < minZ ? minZ : (z > maxZ ? maxZ : z);
+    return { dx: x - nearestX, dz: z - nearestZ };
+  }
+
+  private isPlayerInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, range: number): boolean {
+    const fp = this.distToNpcFootprint(npcEntityId, target, this.playerX, this.playerZ);
+    return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
+  }
+
+  private findPathToNpcInteraction(npcEntityId: number, target: { x: number; z: number }): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+    const size = this.getNpcTileSize(npcEntityId);
+    if (size <= 1) {
+      const result = this.findPathFromMovementAnchor(target.x, target.z);
+      if (result.path.length > 0) {
+        const last = result.path[result.path.length - 1];
+        if (Math.floor(last.x) === Math.floor(target.x) && Math.floor(last.z) === Math.floor(target.z)) {
+          result.path.pop();
+        }
+      }
+      return result;
+    }
+
+    const candidates = getObjectInteractionTiles(target.x, target.z, { width: size })
+      .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+      .map(tile => ({
+        x: tile.x,
+        z: tile.z,
+        dist: Math.max(Math.abs((tile.x + 0.5) - this.playerX), Math.abs((tile.z + 0.5) - this.playerZ)),
+      }));
+    candidates.sort((a, b) => a.dist - b.dist);
+
+    for (const tile of candidates) {
+      if (Math.floor(this.playerX) === tile.x && Math.floor(this.playerZ) === tile.z) {
+        return { path: [], preserveCurrentStep: false };
+      }
+      const result = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
+      if (result.path.length > 0) return result;
+    }
+    return { path: [], preserveCurrentStep: false };
+  }
+
   /** Pathfind so the path ends one unit-tile short of (targetX, targetZ).
    *  Pathfinding to the target and popping the last waypoint outright is
    *  broken under corner compression: a straight-line walk compresses to
@@ -3851,12 +3920,16 @@ export class GameManager {
     }
   }
 
+  private usesCornerObjectInteraction(def: WorldObjectDef): boolean {
+    return usesCornerInteractionTiles(def);
+  }
+
   /** Find the closest reachable adjacent tile of an object and start the
    *  predicted walk toward it. Returns true if a walk was started, false
    *  if no reachable adjacent tile exists. Caller arms any pending state
    *  (trackObjectInteractionRetry / pendingSmithing / etc). */
   private walkToAdjacentTileOf(data: { x: number; z: number }, def: WorldObjectDef): boolean {
-    const candidates = getObjectInteractionTiles(data.x, data.z, def)
+    const candidates = getObjectInteractionTiles(data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) })
       .filter(tile => !this.isTileBlocked(tile.x, tile.z))
       .map(tile => ({
         ax: tile.x,
@@ -3908,7 +3981,7 @@ export class GameManager {
 
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
-      if (!isTileAdjacentToObject(ptx, ptz, data.x, data.z, def)) {
+      if (!isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) })) {
         this.clearPendingObjectInteractionRetry();
         return;
       }
@@ -3981,7 +4054,7 @@ export class GameManager {
       if (def.category === 'crop') {
         const ptx = Math.floor(this.playerX);
         const ptz = Math.floor(this.playerZ);
-        if (isTileAdjacentToObject(ptx, ptz, data.x, data.z, def)) {
+        if (isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) })) {
           this.faceLocalPlayerToward(data.x, data.z);
         } else {
           // Reuse the stationary-skill arrival path — prepareSkillingAtObject
@@ -4041,7 +4114,7 @@ export class GameManager {
       if (objDef?.recipes && objDef.recipes.length > 0 && objDef.recipes[0].requiresTool) {
         const ptx = Math.floor(this.playerX);
         const ptz = Math.floor(this.playerZ);
-        const alreadyAdj = isTileAdjacentToObject(ptx, ptz, objData.x, objData.z, objDef);
+        const alreadyAdj = isTileAdjacentToObject(ptx, ptz, objData.x, objData.z, objDef, { includeCorners: this.usesCornerObjectInteraction(objDef) });
         this.pendingSmithing = null;
         if (alreadyAdj) {
           this.showSmithingUI(objectEntityId, objDef);
@@ -4165,7 +4238,7 @@ export class GameManager {
     // Check if already on a valid adjacent tile
     const ptx = Math.floor(this.playerX);
     const ptz = Math.floor(this.playerZ);
-    const alreadyAdj = def ? isTileAdjacentToObject(ptx, ptz, data.x, data.z, def) : dist <= 1.5;
+    const alreadyAdj = def ? isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, { includeCorners: this.usesCornerObjectInteraction(def) }) : dist <= 1.5;
 
     if (!alreadyAdj && def) {
       if (this.walkToAdjacentTileOf(data, def)) {
@@ -4176,9 +4249,11 @@ export class GameManager {
     } else if (!alreadyAdj) {
       this.clearPendingObjectInteractionRetry();
     } else if (shouldRetryOnArrival) {
+      this.stopLocalWalkForImmediateObjectInteraction(data);
       this.trackObjectInteractionRetry(objectEntityId, actionIndex);
       this.scheduleObjectInteractionArrivalRetry();
     } else {
+      this.stopLocalWalkForImmediateObjectInteraction(data);
       this.clearPendingObjectInteractionRetry();
     }
 
@@ -5310,22 +5385,17 @@ export class GameManager {
     if (this.combatTargetId < 0) return;
     const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
     if (!npcTarget) return;
-    const dx = npcTarget.x - this.playerX;
-    const dz = npcTarget.z - this.playerZ;
+    const fp = this.distToNpcFootprint(this.combatTargetId, npcTarget, this.playerX, this.playerZ);
+    const dx = fp.dx;
+    const dz = fp.dz;
     const dist = Math.hypot(dx, dz);
     const inRange = dist <= 1.5;
     if (inRange) return;
     const closeEnough = dist <= 3;
     if ((this.pathIndex < this.path.length && closeEnough) || this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
-    const pathResult = this.findPathFromMovementAnchor(npcTarget.x, npcTarget.z);
+    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget);
     const newPath = pathResult.path;
-    if (newPath.length > 0) {
-      const last = newPath[newPath.length - 1];
-      if (Math.floor(last.x) === Math.floor(npcTarget.x) && Math.floor(last.z) === Math.floor(npcTarget.z)) {
-        newPath.pop();
-      }
-    }
     if (newPath.length > 0) {
       this.startPredictedPath(newPath, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
@@ -5516,7 +5586,8 @@ export class GameManager {
     if (this.combatTargetId >= 0) {
       const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
       if (npcTarget) {
-        const toDist = Math.hypot(npcTarget.x - this.playerX, npcTarget.z - this.playerZ);
+        const fp = this.distToNpcFootprint(this.combatTargetId, npcTarget, this.playerX, this.playerZ);
+        const toDist = Math.hypot(fp.dx, fp.dz);
         if (toDist <= 1.5) {
           // In melee range — halt the path. Don't snap to tile center: a
           // mid-tile fractional position is fine, and snapping is the visible

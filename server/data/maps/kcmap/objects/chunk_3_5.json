@@ -1594,5 +1594,90 @@
       "y": 2.1999999999999993,
       "z": 2.1999999999999993
     }
+  },
+  {
+    "assetId": "table1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 100.5,
+      "y": -8.881784197001252e-16,
+      "z": 171.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.5499999999999999,
+      "y": 0.85,
+      "z": 0.5499999999999999
+    }
+  },
+  {
+    "assetId": "OnePersonBed1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 103.89433709185356,
+      "y": 0,
+      "z": 172.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.570796326794897,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "chair",
+    "layerId": "layer_0",
+    "position": {
+      "x": 100.5,
+      "y": 8.881784197001252e-16,
+      "z": 172.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.308996938995747,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.15,
+      "y": 1.15,
+      "z": 1.15
+    }
+  },
+  {
+    "assetId": "Paper",
+    "layerId": "layer_0",
+    "position": {
+      "x": 100.5,
+      "y": 0.9663710126844194,
+      "z": 171.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.2,
+      "y": 0.2,
+      "z": 0.2
+    },
+    "name": "Suspect sketch",
+    "examineText": "This must be the sketch robert talked about.",
+    "interactions": [
+      {
+        "action": "Look at",
+        "say": "Wait... thats me!! is that what the lady was screaming about?"
+      }
+    ],
+    "interactionSides": 1
   }
 ]

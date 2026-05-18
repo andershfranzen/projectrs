@@ -1721,7 +1721,8 @@
     "description": "A piece of silver ore.",
     "stackable": false,
     "equippable": false,
-    "value": 25
+    "value": 25,
+    "icon": "Silver ore.png"
   },
   {
     "id": 143,

@@ -1,4 +1,5 @@
 import type { PlayerAppearance } from './appearance.js';
+import type { SkillId } from './skills.js';
 import { DEFAULT_CUT_ANGLE } from './tileCut.js';
 
 export interface Position {
@@ -140,6 +141,19 @@ export type DialogueAction =
   | { type: 'setQuestStage'; questId: string; stage: number }
   | { type: 'completeQuest'; questId: string };
 
+export type QuestCondition =
+  | { type: 'all'; conditions: QuestCondition[] }
+  | { type: 'any'; conditions: QuestCondition[] }
+  | { type: 'not'; condition: QuestCondition }
+  | { type: 'questStage'; questId: string; minStage?: number; maxStage?: number }
+  | { type: 'questStarted'; questId: string }
+  | { type: 'questNotStarted'; questId: string }
+  | { type: 'questCompleted'; questId: string }
+  | { type: 'hasItem'; itemId: number; quantity?: number }
+  | { type: 'hasEquippedItem'; itemId: number }
+  | { type: 'skillLevel'; skill: SkillId; level: number }
+  | { type: 'combatLevel'; level: number };
+
 /** Gating condition on a dialogue option. When `requires` is set, the
  *  server only emits the option to the client if the player satisfies it.
  *  `minStage` defaults to the smallest stage; `maxStage` defaults to one
@@ -156,10 +170,16 @@ export interface DialogueOption {
   label: string;
   /** ID of the next node, or omitted to end dialogue. */
   next?: string;
-  /** Server-side effect to run when this option is chosen. */
+  /** Server-side effect to run when this option is chosen. Legacy shorthand
+   *  for one entry in `actions`; both can be present and run in order. */
   action?: DialogueAction;
+  /** Server-side effects to run when this option is chosen. */
+  actions?: DialogueAction[];
   /** Hide this option unless the player's quest state matches. */
   requires?: DialogueOptionRequires;
+  /** Generic authoring predicates. `conditions` is an implicit all(). */
+  condition?: QuestCondition;
+  conditions?: QuestCondition[];
 }
 
 export interface DialogueNode {
@@ -515,6 +535,12 @@ export interface TexturePlane {
 export interface PlacedObject {
   assetId: string;
   layerId: string;
+  /** Optional per-instance name used by quest authoring/triggers. */
+  name?: string;
+  /** Optional per-instance examine text. Falls back to object definition text. */
+  examineText?: string;
+  /** Optional per-action effects for this specific placed object. */
+  interactions?: PlacedObjectInteraction[];
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   scale: { x: number; y: number; z: number };
@@ -523,6 +549,23 @@ export interface PlacedObject {
   /** Bitmask of allowed interaction sides in OBJECT-LOCAL frame
    *  (F=1, R=2, B=4, L=8). Forward = +Z when rotY=0. 0 / undefined = all sides. */
   interactionSides?: number;
+}
+
+export interface PlacedObjectInteraction {
+  /** Existing object action label to hook, e.g. "Examine", "Open", "Search". */
+  action: string;
+  /** Legacy single local overhead bubble from the player. */
+  say?: string;
+  /** Timed local overhead bubble sequence from the player. */
+  saySequence?: PlacedObjectSayLine[];
+  /** Private system/chat-panel message to the interacting player. */
+  message?: string;
+}
+
+export interface PlacedObjectSayLine {
+  text: string;
+  /** Delay after interaction in seconds. Defaults to 0. */
+  delaySeconds?: number;
 }
 
 export interface EditorLayer {
@@ -637,14 +680,19 @@ export function shouldTileRenderWater(
  *    .triggerProgress.
  *  - `chestOpen`: fires when the player loots a chest. If `chestDefId` is
  *    set, only that specific chest type counts. Counted similarly.
+ *  - `objectInteract`: fires when the player uses an object. Set
+ *    `objectDefId` for the object definition, optionally `objectName` for a
+ *    named placed object instance, and optionally `action` for an exact action
+ *    label such as "Search" or "Examine".
  *
  *  `chance` (0–1) gates the trigger probabilistically — useful for rare
  *  quest hand-outs like "5% chance to find a clue on a cow". */
 export type QuestTrigger =
-  | { type: 'dialogue'; npcDefId?: number; nodeId?: string; optionLabel?: string; count?: number; chance?: number }
+  | { type: 'dialogue'; npcDefId?: number; npcName?: string; nodeId?: string; optionLabel?: string; count?: number; chance?: number }
   | { type: 'itemPickup'; itemId: number; quantity?: number; source?: 'any' | 'ground'; chance?: number }
   | { type: 'npcKill'; npcDefId: number; count?: number; chance?: number }
-  | { type: 'chestOpen'; chestDefId?: number; count?: number; chance?: number };
+  | { type: 'chestOpen'; chestDefId?: number; count?: number; chance?: number }
+  | { type: 'objectInteract'; objectDefId?: number; objectName?: string; action?: string; count?: number; chance?: number };
 
 export interface QuestStageDef {
   /** 0-indexed stage. Stage 0 is the initial state when the quest starts. */

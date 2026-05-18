@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
-import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType } from '@projectrs/shared';
+import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 
@@ -18,7 +18,7 @@ export class GameMap {
   private mapData: KCMapData;
 
   /** Placed objects from the editor (for deriving world object spawns) */
-  readonly placedObjects: { assetId: string; position: { x: number; y: number; z: number }; rotation?: { x: number; y: number; z: number }; scale?: { x: number; y: number; z: number }; trigger?: any; interactionSides?: number }[] = [];
+  readonly placedObjects: PlacedObject[] = [];
 
   /** Active editor chunks (64x64) — tiles outside active chunks are treated as impassable void */
   private activeChunks: Set<string> | null = null;
@@ -113,7 +113,16 @@ export class GameMap {
       if (chunked.length > 0) rawObjects = chunked;
     }
     this.placedObjects = rawObjects.map(o => ({
-      assetId: o.assetId, position: o.position, rotation: o.rotation, scale: o.scale, trigger: o.trigger, interactionSides: (o as any).interactionSides
+      assetId: o.assetId,
+      layerId: o.layerId || 'layer_0',
+      name: (o as any).name,
+      examineText: (o as any).examineText,
+      interactions: Array.isArray((o as any).interactions) ? (o as any).interactions : undefined,
+      position: o.position,
+      rotation: o.rotation,
+      scale: o.scale,
+      trigger: o.trigger,
+      interactionSides: (o as any).interactionSides,
     }));
 
     // Load active chunks from editor data

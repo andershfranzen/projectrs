@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -10,7 +10,7 @@ import { WorldObject } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { GameDatabase } from './Database';
 import { processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, RANGED_ATTACK_DISTANCE } from './combat/Combat';
-import { broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
+import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
@@ -83,6 +83,18 @@ export interface GroundItem {
   privateTicks?: number;
 }
 
+interface RuntimeObjectSpawn {
+  objectId: number;
+  x: number;
+  z: number;
+  rotY?: number;
+  name?: string;
+  examineText?: string;
+  interactions?: WorldObject['interactions'];
+  trigger?: WorldObject['trigger'];
+  interactionSides?: number;
+}
+
 type DialogueScheduledStep =
   | {
       type: 'openShop';
@@ -98,6 +110,13 @@ type DialogueScheduledStep =
       npcEntityId: number;
       sessionId: number;
     };
+
+interface ObjectSayScheduledLine {
+  runAtTick: number;
+  playerId: number;
+  playerName: string;
+  message: string;
+}
 
 /** One side of a trade session — owner's id, current offer (28 slots), and
  *  current accept stage. Stages: 0 = editing, 1 = locked, 2 = final-accept. */
@@ -172,6 +191,7 @@ export class World {
   private saveTimer: ReturnType<typeof setInterval> | null = null;
   private nextDialogueSessionId: number = 1;
   private dialogueScheduledSteps: DialogueScheduledStep[] = [];
+  private objectSayScheduledLines: ObjectSayScheduledLine[] = [];
 
   // Player combat targets (playerId -> npcId)
   private playerCombatTargets: Map<number, number> = new Map();
@@ -377,32 +397,11 @@ export class World {
       this.npcs.set(npc.id, npc);
       cm.addEntity(npc.id, spawn.x, spawn.z);
     }
-    // Derive world objects from placed objects in map.json (single source of truth)
-    const objectSpawns: { objectId: number; x: number; z: number; rotY?: number; trigger?: any; interactionSides?: number }[] = [];
-    for (const placed of gameMap.placedObjects) {
-      const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
-      if (defId != null) {
-        objectSpawns.push({ objectId: defId, x: placed.position.x, z: placed.position.z, rotY: placed.rotation?.y, trigger: placed.trigger, interactionSides: placed.interactionSides });
-        continue;
-      }
-      // Thin-instanced decor stays a tile blocker only — no WorldObject entity.
-      if (BLOCKING_DECOR_ASSETS.has(placed.assetId)) {
-        const tx = Math.floor(placed.position.x);
-        const tz = Math.floor(placed.position.z);
-        this.blockedObjectTiles.add(this.blockedKeyFor(mapId, tx, tz));
-      }
-    }
-    // Fallback: sprite-only objects from spawns.json
-    for (const obj of spawns.objects ?? []) {
-      objectSpawns.push(obj);
-    }
+    const objectSpawns = this.collectObjectSpawns(mapId, gameMap, spawns.objects ?? []);
     for (const spawn of objectSpawns) {
       const objDef = this.data.getObject(spawn.objectId);
       if (!objDef) continue;
-      const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId);
-      if (spawn.rotY != null) obj.rotationY = spawn.rotY;
-      if (spawn.trigger) obj.trigger = spawn.trigger;
-      if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
+      const obj = this.createWorldObject(objDef, spawn, mapId);
       this.worldObjects.set(obj.id, obj);
       this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
       if (objDef.category === 'door') {
@@ -536,12 +535,19 @@ export class World {
     return map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ));
   }
 
+  private usesCornerObjectInteraction(obj: WorldObject): boolean {
+    return usesCornerInteractionTiles(obj.def, !!obj.interactionSides);
+  }
+
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
     const allowedWorldSides = obj.interactionSides
       ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
       : undefined;
-    const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def, { allowedWorldSides })
+    const candidates = getObjectInteractionTiles(obj.x, obj.z, obj.def, {
+      allowedWorldSides,
+      includeCorners: this.usesCornerObjectInteraction(obj),
+    })
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
       .sort((a, b) => {
         const ad = Math.abs(player.position.x - (a.x + 0.5)) + Math.abs(player.position.y - (a.z + 0.5));
@@ -619,21 +625,8 @@ export class World {
   private spawnWorldObjects(): void {
     for (const [mapId] of this.maps) {
       const spawns = this.data.loadSpawns(mapId);
-
-      // Derive world objects from placed objects in map.json (single source of truth)
       const gameMap = this.maps.get(mapId)!;
-      const objectSpawns: { objectId: number; x: number; z: number; rotY?: number }[] = [];
-      for (const placed of gameMap.placedObjects ?? []) {
-        const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
-        if (defId != null) {
-          objectSpawns.push({ objectId: defId, x: placed.position.x, z: placed.position.z, rotY: placed.rotation?.y });
-        }
-      }
-
-      // Fallback: sprite-only objects from spawns.json (fishing spots, altars, etc. without GLBs)
-      for (const obj of spawns.objects ?? []) {
-        objectSpawns.push(obj);
-      }
+      const objectSpawns = this.collectObjectSpawns(mapId, gameMap, spawns.objects ?? []);
 
       for (const spawn of objectSpawns) {
         const objDef = this.data.getObject(spawn.objectId);
@@ -641,8 +634,7 @@ export class World {
           console.warn(`Unknown object id ${spawn.objectId} in ${mapId}/spawns.json`);
           continue;
         }
-        const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId);
-        if (spawn.rotY != null) obj.rotationY = spawn.rotY;
+        const obj = this.createWorldObject(objDef, spawn, mapId);
         this.worldObjects.set(obj.id, obj);
         this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
         if (objDef.category === 'door') {
@@ -677,6 +669,50 @@ export class World {
       }
     }
     if (itemCount > 0) console.log(`Spawned ${itemCount} ground items from spawns`);
+  }
+
+  private collectObjectSpawns(
+    mapId: string,
+    gameMap: GameMap,
+    fallbackObjects: ReadonlyArray<{ objectId: number; x: number; z: number; rotY?: number }>,
+  ): RuntimeObjectSpawn[] {
+    const objectSpawns: RuntimeObjectSpawn[] = [];
+    for (const placed of gameMap.placedObjects ?? []) {
+      const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
+      if (defId != null) {
+        objectSpawns.push({
+          objectId: defId,
+          x: placed.position.x,
+          z: placed.position.z,
+          rotY: placed.rotation?.y,
+          name: placed.name,
+          examineText: placed.examineText,
+          interactions: placed.interactions,
+          trigger: placed.trigger,
+          interactionSides: placed.interactionSides,
+        });
+        continue;
+      }
+      // Thin-instanced decor stays a tile blocker only — no WorldObject entity.
+      if (BLOCKING_DECOR_ASSETS.has(placed.assetId)) {
+        const tx = Math.floor(placed.position.x);
+        const tz = Math.floor(placed.position.z);
+        this.blockedObjectTiles.add(this.blockedKeyFor(mapId, tx, tz));
+      }
+    }
+    for (const obj of fallbackObjects) objectSpawns.push(obj);
+    return objectSpawns;
+  }
+
+  private createWorldObject(objDef: WorldObjectDef, spawn: RuntimeObjectSpawn, mapId: string): WorldObject {
+    const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId);
+    if (spawn.rotY != null) obj.rotationY = spawn.rotY;
+    if (spawn.name) obj.name = spawn.name;
+    if (spawn.examineText) obj.examineText = spawn.examineText;
+    if (spawn.interactions) obj.interactions = spawn.interactions;
+    if (spawn.trigger) obj.trigger = spawn.trigger;
+    if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
+    return obj;
   }
 
   start(): void {
@@ -1423,7 +1459,7 @@ export class World {
     return blockedKey(getMapIdx(mapId), Math.floor(x), Math.floor(z));
   }
 
-  /** Check if player is on a tile adjacent to the object (orthogonal only for harvestable). */
+  /** Check if player is on a valid interaction tile for the object. */
   private isAdjacentToObject(player: Player, obj: WorldObject): boolean {
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
@@ -1436,7 +1472,10 @@ export class World {
     const allowedWorldSides = obj.interactionSides
       ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
       : undefined;
-    return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def, { allowedWorldSides });
+    return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def, {
+      allowedWorldSides,
+      includeCorners: this.usesCornerObjectInteraction(obj),
+    });
   }
 
   handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {
@@ -1868,14 +1907,19 @@ export class World {
       type: 'dialogue',
       npcDefId: npc.def.id,
       npcEntityId: npc.id,
+      npcName: npc.displayName,
       nodeId: node.id,
       optionLabel: option.label,
     });
 
     // Run the action FIRST so an `openShop` action can replace the dialogue
     // panel with the shop — the order here is the visible UX order.
-    if (option.action) {
-      this.runDialogueAction(player, npc, option.action);
+    const actions = [
+      ...(option.action ? [option.action] : []),
+      ...(option.actions ?? []),
+    ];
+    if (actions.length > 0) {
+      this.runDialogueActions(player, npc, actions);
       const afterActionState = player.openDialogueState;
       if (
         !afterActionState ||
@@ -1893,6 +1937,27 @@ export class World {
       this.openDialogueAt(player, npc, option.next);
     } else if (player.openDialogueState && !option.next) {
       this.sendDialogueClose(player);
+    }
+  }
+
+  private runDialogueActions(
+    player: Player,
+    npc: Npc,
+    actions: import('@projectrs/shared').DialogueAction[],
+  ): void {
+    const initialState = player.openDialogueState;
+    for (const action of actions) {
+      this.runDialogueAction(player, npc, action);
+      const state = player.openDialogueState;
+      if (
+        !initialState ||
+        !state ||
+        state.sessionId !== initialState.sessionId ||
+        state.npcEntityId !== initialState.npcEntityId ||
+        state.nodeId !== initialState.nodeId
+      ) {
+        return;
+      }
     }
   }
 
@@ -1922,22 +1987,22 @@ export class World {
         // "you don't have room" branch with a hasInventoryRoom check in future.
         if (action.itemId > 0 && action.qty > 0) {
           const result = player.addItem(action.itemId, action.qty, this.data.itemDefs);
-          if (result.completed > 0) this.sendInventory(player);
+          if (result.completed > 0) {
+            this.sendInventory(player);
+            this.quests.notifyQuestEvent(player, {
+              type: 'itemPickup',
+              itemId: action.itemId,
+              quantity: result.completed,
+              source: 'dialogue',
+            });
+          }
         }
         return;
       }
       case 'takeItem': {
         if (action.itemId > 0 && action.qty > 0) {
-          let remaining = action.qty;
-          let mutated = false;
-          for (let i = 0; i < player.inventory.length && remaining > 0; i++) {
-            const slot = player.inventory[i];
-            if (!slot || slot.itemId !== action.itemId) continue;
-            const removed = player.removeItem(i, remaining);
-            remaining -= removed.completed;
-            if (removed.completed > 0) mutated = true;
-          }
-          if (mutated) this.sendInventory(player);
+          const removed = player.removeItemById(action.itemId, action.qty);
+          if (removed.completed > 0) this.sendInventory(player);
         }
         return;
       }
@@ -2332,9 +2397,17 @@ export class World {
       : obj.currentActions[actionIndex];
     if (!action) return;
 
+    this.runObjectInteractionEffects(player, obj, action);
+    this.quests.notifyQuestEvent(player, {
+      type: 'objectInteract',
+      objectDefId: obj.defId,
+      objectEntityId,
+      objectName: obj.displayName,
+      action,
+    });
+
     if (action === 'Examine') {
-      // Just send a chat message
-      this.sendToPlayer(player, ServerOpcode.CHAT_SYSTEM, 0); // Will use chat socket instead
+      this.sendChatSystem(player, obj.examineText || `It's ${obj.displayName}.`);
       return;
     }
 
@@ -2366,6 +2439,43 @@ export class World {
     if (obj.def.recipes && obj.def.recipes.length > 0) {
       this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
       return;
+    }
+  }
+
+  private runObjectInteractionEffects(player: Player, obj: WorldObject, action: string): void {
+    const effects = obj.interactions?.filter(effect => effect.action === action) ?? [];
+    for (const effect of effects) {
+      if (Array.isArray(effect.saySequence) && effect.saySequence.length > 0) {
+        this.queueObjectSaySequence(player, effect.saySequence);
+      } else if (typeof effect.say === 'string') {
+        const say = effect.say.trim();
+        if (say) broadcastLocalMessage(player.name, say.slice(0, 200));
+      }
+      const message = typeof effect.message === 'string' ? effect.message.trim() : '';
+      if (message) this.sendChatSystem(player, message.slice(0, 300));
+    }
+  }
+
+  private queueObjectSaySequence(player: Player, sequence: NonNullable<WorldObject['interactions']>[number]['saySequence']): void {
+    if (!sequence) return;
+    for (const line of sequence) {
+      if (!line || typeof line.text !== 'string') continue;
+      const message = line.text.trim().slice(0, 200);
+      if (!message) continue;
+      const delaySeconds = typeof line.delaySeconds === 'number' && Number.isFinite(line.delaySeconds)
+        ? Math.max(0, Math.min(30, line.delaySeconds))
+        : 0;
+      const delayTicks = Math.round((delaySeconds * 1000) / TICK_RATE);
+      if (delayTicks <= 0) {
+        broadcastLocalMessage(player.name, message);
+        continue;
+      }
+      this.objectSayScheduledLines.push({
+        runAtTick: this.currentTick + delayTicks,
+        playerId: player.id,
+        playerName: player.name,
+        message,
+      });
     }
   }
 
@@ -3730,6 +3840,7 @@ export class World {
     this.tickObjectRespawns();
     this.tickItemDespawns();
     this.tickDialogueScheduledSteps();
+    this.tickObjectSayScheduledLines();
     this.tickTransitions();
     this.tickDeferredLogouts();
     this.broadcastSync();
@@ -3863,9 +3974,10 @@ export class World {
         const id = player.pendingTalkNpcId;
         player.pendingTalkNpcId = -1;
         const targetNpc = this.npcs.get(id);
-        const inRange = targetNpc && !targetNpc.dead
+        const fp = targetNpc?.distToFootprint(player.position.x, player.position.y);
+        const inRange = targetNpc && fp && !targetNpc.dead
           && targetNpc.currentMapLevel === player.currentMapLevel
-          && Math.max(Math.abs(targetNpc.position.x - player.position.x), Math.abs(targetNpc.position.y - player.position.y)) <= NPC_INTERACTION_RANGE;
+          && Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= NPC_INTERACTION_RANGE;
         if (inRange) this.handlePlayerTalkNpc(playerId, id);
       }
     }
@@ -4481,6 +4593,21 @@ export class World {
       }
     }
     this.dialogueScheduledSteps = remaining;
+  }
+
+  private tickObjectSayScheduledLines(): void {
+    if (this.objectSayScheduledLines.length === 0) return;
+    const remaining: ObjectSayScheduledLine[] = [];
+    for (const line of this.objectSayScheduledLines) {
+      if (line.runAtTick > this.currentTick) {
+        remaining.push(line);
+        continue;
+      }
+      const player = this.players.get(line.playerId);
+      if (!player || player.disconnected || player.requestIdleLogout) continue;
+      broadcastLocalMessage(line.playerName, line.message);
+    }
+    this.objectSayScheduledLines = remaining;
   }
 
   private tickTransitions(): void {

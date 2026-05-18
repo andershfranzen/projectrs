@@ -1576,6 +1576,16 @@ let paintBrushRadius = 1
           <button id="applyCustomTileSize">Apply</button>
         </div>
       </div>
+      <div id="objectNameRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
+        <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Quest object name</div>
+        <input id="objectNameInput" type="text" placeholder="Optional named quest object" style="width:100%;box-sizing:border-box;font-size:11px;" />
+        <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Examine text</div>
+        <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
+        <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Interaction effect</div>
+        <input id="objectEffectAction" type="text" placeholder="Action label, e.g. Examine" style="width:100%;box-sizing:border-box;font-size:11px;margin-bottom:5px;" />
+        <textarea id="objectEffectSay" placeholder="Player overhead lines. Use: 0 | First line&#10;3 | Second line" style="width:100%;height:74px;box-sizing:border-box;font-size:11px;resize:vertical;margin-bottom:5px;"></textarea>
+        <textarea id="objectEffectMessage" placeholder="Private chat-panel message (optional)" style="width:100%;height:44px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
+      </div>
       <div id="triggerRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
         <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Trigger</div>
         <div style="display:flex;gap:5px;align-items:center;margin-bottom:5px;">
@@ -2880,7 +2890,7 @@ let paintBrushRadius = 1
     const hint = document.createElement('div')
     hint.className = 'hint'
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:4px;'
-    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: add <code>"requires": { "questId": "...", "minStage": N, "maxStage": N, "notStarted": true }</code> to hide options unless quest state matches.`
+    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: use <code>action</code> for one effect or <code>actions</code> for a list. Supported: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: legacy <code>requires</code>, or generic <code>condition</code>/<code>conditions</code>. Conditions: <code>questStage</code>, <code>questStarted</code>, <code>questNotStarted</code>, <code>questCompleted</code>, <code>hasItem</code>, <code>hasEquippedItem</code>, <code>skillLevel</code>, <code>combatLevel</code>, <code>all</code>, <code>any</code>, <code>not</code>.`
     root.appendChild(hint)
 
     const ta = document.createElement('textarea')
@@ -3216,6 +3226,55 @@ let paintBrushRadius = 1
     updateSelectionHelper()
     invalidateShadowCache()
   })
+
+  const objectNameInput = sidebar.querySelector('#objectNameInput')
+  objectNameInput?.addEventListener('input', () => {
+    if (!selectedPlacedObject) return
+    const name = objectNameInput.value.trim()
+    if (name) selectedPlacedObject.userData.name = name
+    else delete selectedPlacedObject.userData.name
+  })
+  function saveObjectQuestFieldsFromUI() {
+    if (!selectedPlacedObject) return
+    const examineText = sidebar.querySelector('#objectExamineText')?.value.trim() || ''
+    if (examineText) selectedPlacedObject.userData.examineText = examineText
+    else delete selectedPlacedObject.userData.examineText
+
+    const action = sidebar.querySelector('#objectEffectAction')?.value.trim() || ''
+    const sayRaw = sidebar.querySelector('#objectEffectSay')?.value.trim() || ''
+    const saySequence = parseObjectSaySequence(sayRaw)
+    const message = sidebar.querySelector('#objectEffectMessage')?.value.trim() || ''
+    if (action && (saySequence.length > 0 || message)) {
+      selectedPlacedObject.userData.interactions = [{ action, ...(saySequence.length ? { saySequence } : {}), ...(message ? { message } : {}) }]
+    } else {
+      delete selectedPlacedObject.userData.interactions
+    }
+  }
+  function parseObjectSaySequence(raw) {
+    return String(raw || '')
+      .split(/\r?\n/)
+      .map((line, idx) => {
+        const text = line.trim()
+        if (!text) return null
+        const match = text.match(/^(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)?\s*[|:]\s*(.+)$/i)
+        if (match) return { delaySeconds: Math.min(30, parseFloat(match[1]) || 0), text: match[2].trim() }
+        return { delaySeconds: idx * 3, text }
+      })
+      .filter(line => line && line.text)
+  }
+  function formatObjectSaySequence(effect) {
+    if (!effect) return ''
+    if (Array.isArray(effect.saySequence)) {
+      return effect.saySequence
+        .filter(line => line && typeof line.text === 'string')
+        .map(line => `${line.delaySeconds ?? 0} | ${line.text}`)
+        .join('\n')
+    }
+    return effect.say || ''
+  }
+  for (const id of ['#objectExamineText', '#objectEffectAction', '#objectEffectSay', '#objectEffectMessage']) {
+    sidebar.querySelector(id)?.addEventListener('input', saveObjectQuestFieldsFromUI)
+  }
 
   // Trigger metadata handlers
   function saveTriggerFromUI() {
@@ -3591,6 +3650,24 @@ let paintBrushRadius = 1
     if (tileSizeRow) {
       tileSizeRow.style.display = (state.tool === ToolMode.SELECT && selectedPlacedObject) ? 'block' : 'none'
     }
+    const objectNameRow = sidebar.querySelector('#objectNameRow')
+    if (objectNameRow) {
+      const showObjectName = state.tool === ToolMode.SELECT && selectedPlacedObject
+      objectNameRow.style.display = showObjectName ? 'block' : 'none'
+      const input = sidebar.querySelector('#objectNameInput')
+      if (showObjectName && input && document.activeElement !== input) {
+        input.value = selectedPlacedObject.userData.name || ''
+      }
+      const examine = sidebar.querySelector('#objectExamineText')
+      const action = sidebar.querySelector('#objectEffectAction')
+      const say = sidebar.querySelector('#objectEffectSay')
+      const message = sidebar.querySelector('#objectEffectMessage')
+      const effect = selectedPlacedObject?.userData?.interactions?.[0] || null
+      if (showObjectName && examine && document.activeElement !== examine) examine.value = selectedPlacedObject.userData.examineText || ''
+      if (showObjectName && action && document.activeElement !== action) action.value = effect?.action || 'Examine'
+      if (showObjectName && say && document.activeElement !== say) say.value = formatObjectSaySequence(effect)
+      if (showObjectName && message && document.activeElement !== message) message.value = effect?.message || ''
+    }
     const triggerRow = sidebar.querySelector('#triggerRow')
     if (triggerRow) {
       const showTrigger = state.tool === ToolMode.SELECT && selectedPlacedObject
@@ -3887,6 +3964,9 @@ let paintBrushRadius = 1
         rotation: { x: rx, y: ry, z: rz },
         scale: { x: obj.scale.x, y: obj.scale.y, z: obj.scale.z }
       }
+      if (obj.userData.name) out.name = obj.userData.name
+      if (obj.userData.examineText) out.examineText = obj.userData.examineText
+      if (obj.userData.interactions?.length) out.interactions = JSON.parse(JSON.stringify(obj.userData.interactions))
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
       if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
       return out
@@ -3929,6 +4009,9 @@ let paintBrushRadius = 1
       model.userData.assetId = asset.id
       model.userData.type = 'asset'
       model.userData.layerId = placed.layerId || 'layer_0'
+      if (placed.name) model.userData.name = placed.name
+      if (placed.examineText) model.userData.examineText = placed.examineText
+      if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const layer = layers.find((l) => l.id === model.userData.layerId)
@@ -4099,6 +4182,9 @@ let paintBrushRadius = 1
       model.userData.assetId = asset.id
       model.userData.type = 'asset'
       model.userData.layerId = placed.layerId || activeLayerId
+      if (placed.name) model.userData.name = placed.name
+      if (placed.examineText) model.userData.examineText = placed.examineText
+      if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const _layer = layers.find((l) => l.id === model.userData.layerId)
@@ -4783,6 +4869,11 @@ let paintBrushRadius = 1
     model.userData.assetId = asset.id
     model.userData.type = 'asset'
     model.userData.layerId = placed.layerId || activeLayerId
+    if (placed.name) model.userData.name = placed.name
+    if (placed.examineText) model.userData.examineText = placed.examineText
+    if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
+    if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+    if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
     const _importLayer = layers.find((l) => l.id === model.userData.layerId)
     model.setEnabled(_importLayer ? _importLayer.visible : true)
     addPlacedModel(model)
@@ -6578,6 +6669,7 @@ function applyToolAtTile(tile, eventLike = null) {
     let quests = []
     let objectDefs = []
     let selectedQuestId = null
+    let validationResult = null
 
     const overlay = document.createElement('div')
     overlay.id = 'questsModal'
@@ -6586,6 +6678,7 @@ function applyToolAtTile(tile, eventLike = null) {
       <div style="background:#1a1a1a;border:1px solid #555;border-radius:6px;width:min(960px,95vw);max-height:88vh;display:flex;flex-direction:column;">
         <div style="display:flex;align-items:center;gap:8px;padding:12px 16px;border-bottom:1px solid #333;">
           <div style="font-size:14px;font-weight:700;color:#eee;flex:1;">Quests Editor</div>
+          <button id="qValidate" style="background:#4a4a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:12px;cursor:pointer;">Validate</button>
           <button id="qSaveAll" style="background:#3a6c3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 12px;font-size:12px;cursor:pointer;">Save All</button>
           <span id="qStatus" style="font-size:11px;color:#888;min-width:120px;text-align:right;"></span>
           <button id="qClose" style="background:#3a3a3a;color:#fff;border:1px solid #555;border-radius:3px;padding:5px 10px;font-size:12px;cursor:pointer;">Close</button>
@@ -6621,6 +6714,17 @@ function applyToolAtTile(tile, eventLike = null) {
       quests = quests.filter(q => q.id !== selectedQuestId)
       selectedQuestId = quests[0]?.id ?? null
       renderList(); renderEditor()
+    })
+    overlay.querySelector('#qValidate').addEventListener('click', () => {
+      const result = validateQuestAuthoring()
+      const total = result.errors.length + result.warnings.length
+      if (result.errors.length > 0) setStatus(`${result.errors.length} error(s), ${result.warnings.length} warning(s)`, '#e44')
+      else if (result.warnings.length > 0) setStatus(`${result.warnings.length} warning(s)`, '#fc6')
+      else setStatus('No validation issues ✓', '#6e6')
+      renderEditor()
+      if (total > 0) {
+        setTimeout(() => overlay.querySelector('#qValidationPanel')?.scrollIntoView({ block: 'nearest' }), 0)
+      }
     })
     overlay.querySelector('#qSaveAll').addEventListener('click', async () => {
       try {
@@ -6673,6 +6777,8 @@ function applyToolAtTile(tile, eventLike = null) {
       }
 
       // Top: name + id + blurb + repeatable
+      editorEl.appendChild(renderValidationPanel(q.id))
+      editorEl.appendChild(renderAuthoringHelpers())
       editorEl.appendChild(field('Name', textInput(q.name || '', v => { q.name = v; renderList() })))
       editorEl.appendChild(field('Quest ID (do not change after players have started)', textInput(q.id, v => { const nv = v.trim() || q.id; if (nv !== q.id && quests.some(qq => qq.id === nv)) { setStatus('ID already exists', '#e44'); return } q.id = nv; selectedQuestId = nv; renderList() }, { font: 'monospace', color: '#cfc' })))
       editorEl.appendChild(field('Blurb (shown when not started, italic)', textArea(q.blurb || '', v => { q.blurb = v }, 50)))
@@ -6692,12 +6798,9 @@ function applyToolAtTile(tile, eventLike = null) {
         startTypeRow.appendChild(lbl)
         const sel = document.createElement('select')
         sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;'
-	        for (const opt of [
-	          ['', '(none — manual)'],
-	          ['dialogue', 'dialogue — talk to an NPC'],
-	          ['npcKill', 'npcKill — kill an NPC'],
-	          ['itemPickup', 'itemPickup — gain an item'],
-	          ['chestOpen', 'chestOpen — open a chest'],
+        for (const opt of [
+          ['', '(none — manual)'],
+          ...questTriggerOptions(),
         ]) {
           const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
         }
@@ -6774,18 +6877,13 @@ function applyToolAtTile(tile, eventLike = null) {
         trigBody.innerHTML = ''
         const sel = document.createElement('select')
         sel.style.cssText = 'background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;padding:4px 6px;font-size:11px;margin-bottom:6px;'
-	        for (const opt of [
-	          ['dialogue', 'dialogue — talk to an NPC'],
-	          ['npcKill', 'npcKill — kill an NPC'],
-	          ['itemPickup', 'itemPickup — gain an item'],
-	          ['chestOpen', 'chestOpen — open a chest'],
-        ]) {
+        for (const opt of questTriggerOptions()) {
           const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
         }
         sel.value = stage.trigger?.type || 'dialogue'
         sel.addEventListener('change', () => { stage.trigger = makeBlankTrigger(sel.value); renderTrig() })
         trigBody.appendChild(sel)
-	        if (stage.trigger) trigBody.appendChild(renderTriggerFields(stage.trigger, false))
+        if (stage.trigger) trigBody.appendChild(renderTriggerFields(stage.trigger, false))
       }
       renderTrig()
       wrap.appendChild(trigWrap)
@@ -6795,25 +6893,29 @@ function applyToolAtTile(tile, eventLike = null) {
     function renderTriggerFields(trigger, includeChance) {
       const wrap = document.createElement('div')
       wrap.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:6px 8px;display:flex;flex-direction:column;gap:6px;'
-	      if (trigger.type === 'dialogue') {
-	        wrap.appendChild(field('NPC (optional — leave blank for any NPC)', npcSelect(trigger.npcDefId ?? 0, v => { if (v > 0) trigger.npcDefId = v; else delete trigger.npcDefId })))
-	        wrap.appendChild(field('Dialogue node ID (optional)', textInput(trigger.nodeId || '', v => { const s = v.trim(); if (s) trigger.nodeId = s; else delete trigger.nodeId }, { font: 'monospace' })))
-	        wrap.appendChild(field('Option label (optional, exact match)', textInput(trigger.optionLabel || '', v => { const s = v.trim(); if (s) trigger.optionLabel = s; else delete trigger.optionLabel })))
-	        wrap.appendChild(field('Times needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
-	      } else if (trigger.type === 'npcKill') {
-	        wrap.appendChild(field('NPC', npcSelect(trigger.npcDefId ?? 0, v => { trigger.npcDefId = v })))
-	        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
-	      } else if (trigger.type === 'itemPickup') {
-	        wrap.appendChild(field('Item', itemPicker(trigger.itemId ?? 0, v => { trigger.itemId = v })))
-	        wrap.appendChild(field('Quantity needed', numberInput(trigger.quantity ?? 1, 1, v => { if (v <= 1) delete trigger.quantity; else trigger.quantity = v })))
-	        wrap.appendChild(field('Source', sourceSelect(trigger.source || 'any', v => { if (v === 'any') delete trigger.source; else trigger.source = v })))
-	      } else if (trigger.type === 'chestOpen') {
+      if (trigger.type === 'dialogue') {
+        wrap.appendChild(field('NPC (optional — leave blank for any NPC)', dialogueNpcSelect(trigger, () => {})))
+        wrap.appendChild(field('Dialogue node ID (optional)', textInput(trigger.nodeId || '', v => { const s = v.trim(); if (s) trigger.nodeId = s; else delete trigger.nodeId }, { font: 'monospace' })))
+        wrap.appendChild(field('Option label (optional, exact match)', textInput(trigger.optionLabel || '', v => { const s = v.trim(); if (s) trigger.optionLabel = s; else delete trigger.optionLabel })))
+        wrap.appendChild(field('Times needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+      } else if (trigger.type === 'npcKill') {
+        wrap.appendChild(field('NPC', npcSelect(trigger.npcDefId ?? 0, v => { trigger.npcDefId = v })))
+        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+      } else if (trigger.type === 'itemPickup') {
+        wrap.appendChild(field('Item', itemPicker(trigger.itemId ?? 0, v => { trigger.itemId = v })))
+        wrap.appendChild(field('Quantity needed', numberInput(trigger.quantity ?? 1, 1, v => { if (v <= 1) delete trigger.quantity; else trigger.quantity = v })))
+        wrap.appendChild(field('Source', sourceSelect(trigger.source || 'any', v => { if (v === 'any') delete trigger.source; else trigger.source = v })))
+      } else if (trigger.type === 'chestOpen') {
         wrap.appendChild(field('Specific chest type (optional — leave blank for any chest)', chestSelect(trigger.chestDefId, v => { if (v == null) delete trigger.chestDefId; else trigger.chestDefId = v })))
         wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
+      } else if (trigger.type === 'objectInteract') {
+        wrap.appendChild(field('Object (optional — leave blank for any object)', objectTriggerSelect(trigger, () => {})))
+        wrap.appendChild(field('Action label (optional, exact match)', textInput(trigger.action || '', v => { const s = v.trim(); if (s) trigger.action = s; else delete trigger.action })))
+        wrap.appendChild(field('Count needed', numberInput(trigger.count ?? 1, 1, v => { if (v <= 1) delete trigger.count; else trigger.count = v })))
       }
-	      if (includeChance) {
-	        wrap.appendChild(field('Chance (0–1, leave 1 for always)', numberInput(trigger.chance ?? 1, 0, v => { if (v >= 1 || v <= 0) delete trigger.chance; else trigger.chance = v }, { step: '0.01', max: 1 })))
-	      }
+      if (includeChance) {
+        wrap.appendChild(field('Chance (0–1, leave 1 for always)', numberInput(trigger.chance ?? 1, 0, v => { if (v >= 1 || v <= 0) delete trigger.chance; else trigger.chance = v }, { step: '0.01', max: 1 })))
+      }
       return wrap
     }
 
@@ -6888,6 +6990,284 @@ function applyToolAtTile(tile, eventLike = null) {
       renderItems()
       wrap.appendChild(itemList)
       return wrap
+    }
+
+    function renderValidationPanel(questId) {
+      const wrap = document.createElement('div')
+      wrap.id = 'qValidationPanel'
+      const messages = validationResult
+        ? [...validationResult.errors, ...validationResult.warnings].filter(m => !questId || !m.questId || m.questId === questId)
+        : []
+      const hasErrors = validationResult?.errors?.some(m => !questId || !m.questId || m.questId === questId)
+      wrap.style.cssText = `background:${messages.length ? '#201616' : '#142016'};border:1px solid ${messages.length ? (hasErrors ? '#804444' : '#806b35') : '#2d6638'};border-radius:4px;padding:8px 10px;margin-bottom:12px;`
+      const head = document.createElement('div')
+      head.style.cssText = `font-size:12px;font-weight:bold;color:${messages.length ? (hasErrors ? '#f88' : '#fc6') : '#8e8'};margin-bottom:${messages.length ? '6px' : '0'};`
+      head.textContent = validationResult
+        ? (messages.length ? `Validation issues (${messages.length})` : 'Validation clean')
+        : 'Validation has not been run'
+      wrap.appendChild(head)
+      for (const msg of messages.slice(0, 12)) {
+        const row = document.createElement('div')
+        row.style.cssText = `font-size:11px;line-height:1.35;color:${msg.level === 'error' ? '#f99' : '#fc6'};margin:2px 0;`
+        row.textContent = `${msg.level.toUpperCase()}: ${msg.path} — ${msg.message}`
+        wrap.appendChild(row)
+      }
+      if (messages.length > 12) {
+        const more = document.createElement('div')
+        more.style.cssText = 'font-size:11px;color:#aaa;margin-top:4px;'
+        more.textContent = `+ ${messages.length - 12} more issue(s)`
+        wrap.appendChild(more)
+      }
+      return wrap
+    }
+
+    function renderAuthoringHelpers() {
+      const section = sectionWrap('JSON builders', 'Create dialogue action and condition snippets for NPC dialogue JSON. These are helpers only; paste the generated JSON into an option action/actions or condition/conditions field.')
+      const body = document.createElement('div')
+      body.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;'
+      const actionBox = helperBox('Action builder')
+      const conditionBox = helperBox('Condition builder')
+      body.appendChild(actionBox)
+      body.appendChild(conditionBox)
+      section.appendChild(body)
+      return section
+
+      function helperBox(title) {
+        const box = document.createElement('div')
+        box.style.cssText = 'background:#101010;border:1px solid #2a2a2a;border-radius:3px;padding:8px;min-width:0;'
+        const label = document.createElement('div')
+        label.textContent = title
+        label.style.cssText = 'font-size:11px;color:#aaa;font-weight:bold;margin-bottom:6px;'
+        box.appendChild(label)
+        const typeSel = document.createElement('select')
+        typeSel.style.cssText = 'width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;margin-bottom:8px;'
+        const options = title.startsWith('Action')
+          ? [
+              ['setQuestStage', 'Set quest stage'],
+              ['completeQuest', 'Complete quest'],
+              ['giveItem', 'Give item'],
+              ['takeItem', 'Take item'],
+              ['openShop', 'Open shop'],
+              ['openBank', 'Open bank'],
+              ['openAppearance', 'Open appearance'],
+              ['closeDialogue', 'Close dialogue'],
+            ]
+          : [
+              ['questStage', 'Quest stage'],
+              ['questStarted', 'Quest started'],
+              ['questNotStarted', 'Quest not started'],
+              ['questCompleted', 'Quest completed'],
+              ['hasItem', 'Has item'],
+              ['hasEquippedItem', 'Has equipped item'],
+              ['skillLevel', 'Skill level'],
+              ['combatLevel', 'Combat level'],
+              ['all', 'All of'],
+              ['any', 'Any of'],
+              ['not', 'Not'],
+            ]
+        for (const [value, text] of options) {
+          const o = document.createElement('option'); o.value = value; o.textContent = text; typeSel.appendChild(o)
+        }
+        box.appendChild(typeSel)
+        const form = document.createElement('div')
+        const out = document.createElement('textarea')
+        out.readOnly = true
+        out.style.cssText = 'width:100%;height:86px;background:#080808;color:#cfc;border:1px solid #333;border-radius:3px;padding:6px;font-family:monospace;font-size:10px;box-sizing:border-box;resize:vertical;'
+        box.appendChild(form)
+        box.appendChild(out)
+        const render = () => {
+          form.innerHTML = ''
+          const values = {}
+          const update = () => { out.value = JSON.stringify(buildSnippet(typeSel.value, title.startsWith('Action'), values), null, 2) }
+          const addQuest = () => form.appendChild(field('Quest', questSelect(values.questId || selectedQuestId || quests[0]?.id || '', v => { values.questId = v; update() })))
+          const addItemQty = () => {
+            form.appendChild(field('Item', itemPicker(values.itemId || 0, v => { values.itemId = v; update() })))
+            form.appendChild(field('Quantity', numberInput(values.qty || values.quantity || 1, 1, v => { values.qty = v; values.quantity = v; update() }, { width: '100%' })))
+          }
+          if (title.startsWith('Action')) {
+            if (typeSel.value === 'setQuestStage') {
+              addQuest()
+              form.appendChild(field('Stage', numberInput(values.stage ?? 0, 0, v => { values.stage = v; update() }, { width: '100%' })))
+            } else if (typeSel.value === 'completeQuest') addQuest()
+            else if (typeSel.value === 'giveItem' || typeSel.value === 'takeItem') addItemQty()
+          } else {
+            if (['questStage', 'questStarted', 'questNotStarted', 'questCompleted'].includes(typeSel.value)) addQuest()
+            if (typeSel.value === 'questStage') {
+              form.appendChild(field('Min stage', numberInput(values.minStage ?? 0, 0, v => { values.minStage = v; update() }, { width: '100%' })))
+              form.appendChild(field('Max stage', numberInput(values.maxStage ?? 0, 0, v => { values.maxStage = v; update() }, { width: '100%' })))
+            } else if (typeSel.value === 'hasItem') addItemQty()
+            else if (typeSel.value === 'hasEquippedItem') form.appendChild(field('Item', itemPicker(values.itemId || 0, v => { values.itemId = v; update() })))
+            else if (typeSel.value === 'skillLevel') {
+              form.appendChild(field('Skill', skillSelect(values.skill || ALL_QUEST_SKILLS[0], v => { values.skill = v; update() })))
+              form.appendChild(field('Level', numberInput(values.level || 1, 1, v => { values.level = v; update() }, { width: '100%' })))
+            } else if (typeSel.value === 'combatLevel') {
+              form.appendChild(field('Level', numberInput(values.level || 1, 1, v => { values.level = v; update() }, { width: '100%' })))
+            }
+          }
+          update()
+        }
+        typeSel.addEventListener('change', render)
+        render()
+        return box
+      }
+    }
+
+    function buildSnippet(type, isAction, values) {
+      if (isAction) {
+        if (type === 'setQuestStage') return { type, questId: values.questId || selectedQuestId || '', stage: values.stage ?? 0 }
+        if (type === 'completeQuest') return { type, questId: values.questId || selectedQuestId || '' }
+        if (type === 'giveItem' || type === 'takeItem') return { type, itemId: values.itemId || 0, qty: values.qty || 1 }
+        return { type }
+      }
+      if (type === 'questStage') return { type, questId: values.questId || selectedQuestId || '', minStage: values.minStage ?? 0, maxStage: values.maxStage ?? 0 }
+      if (type === 'questStarted' || type === 'questNotStarted' || type === 'questCompleted') return { type, questId: values.questId || selectedQuestId || '' }
+      if (type === 'hasItem') return { type, itemId: values.itemId || 0, quantity: values.quantity || 1 }
+      if (type === 'hasEquippedItem') return { type, itemId: values.itemId || 0 }
+      if (type === 'skillLevel') return { type, skill: values.skill || ALL_QUEST_SKILLS[0], level: values.level || 1 }
+      if (type === 'combatLevel') return { type, level: values.level || 1 }
+      if (type === 'all' || type === 'any') return { type, conditions: [] }
+      if (type === 'not') return { type, condition: { type: 'questStarted', questId: selectedQuestId || '' } }
+      return { type }
+    }
+
+    function validateQuestAuthoring() {
+      const errors = []
+      const warnings = []
+      const issue = (level, questId, path, message) => (level === 'error' ? errors : warnings).push({ level, questId, path, message })
+      const questIds = new Set()
+      const duplicateIds = new Set()
+      for (const q of quests) {
+        if (!q.id || typeof q.id !== 'string') issue('error', q.id, 'quest.id', 'Quest ID is required.')
+        else if (questIds.has(q.id)) duplicateIds.add(q.id)
+        else questIds.add(q.id)
+      }
+      for (const id of duplicateIds) issue('error', id, `quest "${id}"`, 'Duplicate quest ID.')
+
+      for (const q of quests) {
+        const qid = q.id || '(missing id)'
+        if (!q.name) issue('warning', q.id, `${qid}.name`, 'Quest has no display name.')
+        if (!Array.isArray(q.stages) || q.stages.length === 0) issue('error', q.id, `${qid}.stages`, 'Quest needs at least one stage.')
+        validateTrigger(q.startTrigger, q.id, `${qid}.startTrigger`, true)
+        for (let i = 0; i < (q.stages || []).length; i++) {
+          const stage = q.stages[i]
+          if (stage.id !== i) issue('warning', q.id, `${qid}.stages[${i}].id`, 'Stage ID will be normalized to its array index.')
+          if (!stage.description) issue('warning', q.id, `${qid}.stages[${i}].description`, 'Stage journal entry is empty.')
+          validateTrigger(stage.trigger, q.id, `${qid}.stages[${i}].trigger`, false)
+        }
+        if (q.rewards?.xp) {
+          for (const [skill, amount] of Object.entries(q.rewards.xp)) {
+            if (!ALL_QUEST_SKILLS.includes(skill)) issue('error', q.id, `${qid}.rewards.xp.${skill}`, 'Unknown skill.')
+            if (typeof amount !== 'number' || amount <= 0) issue('warning', q.id, `${qid}.rewards.xp.${skill}`, 'XP reward should be positive.')
+          }
+        }
+        for (let i = 0; i < (q.rewards?.items || []).length; i++) {
+          validateItemRef(q.rewards.items[i].itemId, q.id, `${qid}.rewards.items[${i}].itemId`, issue)
+        }
+      }
+
+      for (const def of npcDefs) {
+        if (def.dialogue) validateDialogueTree(def.dialogue, `NPC ${def.name} (${def.id})`, null)
+      }
+      for (const spawn of npcSpawns) {
+        if (spawn.dialogue) validateDialogueTree(spawn.dialogue, `NPC spawn ${spawn.name || spawn.npcId} (${spawn.id})`, null)
+      }
+
+      validationResult = { errors, warnings }
+      return validationResult
+
+      function validateTrigger(trigger, questId, path, allowMissing) {
+        if (!trigger) {
+          if (!allowMissing) issue('warning', questId, path, 'No trigger; this stage must be advanced by dialogue action or completion.')
+          return
+        }
+        if (trigger.type === 'dialogue') {
+          if (trigger.npcDefId !== undefined) validateNpcRef(trigger.npcDefId, questId, `${path}.npcDefId`, issue)
+          if (trigger.npcName && !npcSpawns.some(s => s.npcId === trigger.npcDefId && s.name === trigger.npcName)) {
+            issue('warning', questId, `${path}.npcName`, 'No currently loaded map spawn has this NPC name.')
+          }
+        } else if (trigger.type === 'itemPickup') {
+          validateItemRef(trigger.itemId, questId, `${path}.itemId`, issue)
+        } else if (trigger.type === 'npcKill') {
+          validateNpcRef(trigger.npcDefId, questId, `${path}.npcDefId`, issue)
+        } else if (trigger.type === 'chestOpen') {
+          if (trigger.chestDefId !== undefined && !objectDefs.some(d => d.id === trigger.chestDefId && d.category === 'chest')) {
+            issue('error', questId, `${path}.chestDefId`, 'Chest object ID does not exist or is not a chest.')
+          }
+        } else if (trigger.type === 'objectInteract') {
+          if (trigger.objectDefId !== undefined && !objectDefs.some(d => d.id === trigger.objectDefId)) {
+            issue('error', questId, `${path}.objectDefId`, 'Object ID does not exist.')
+          }
+          if (trigger.objectName && !namedPlacedObjects().some(o => o.objectDefId === trigger.objectDefId && o.name === trigger.objectName)) {
+            issue('warning', questId, `${path}.objectName`, 'No currently loaded placed object has this object name.')
+          }
+        } else {
+          issue('error', questId, path, `Unknown trigger type "${trigger.type}".`)
+        }
+        if (trigger.chance !== undefined && (typeof trigger.chance !== 'number' || trigger.chance <= 0 || trigger.chance > 1)) {
+          issue('error', questId, `${path}.chance`, 'Chance must be > 0 and <= 1.')
+        }
+      }
+
+      function validateDialogueTree(tree, label, questId) {
+        if (!tree || typeof tree.root !== 'string' || !tree.nodes || typeof tree.nodes !== 'object') {
+          issue('error', questId, label, 'Dialogue tree must have root and nodes.')
+          return
+        }
+        if (!tree.nodes[tree.root]) issue('error', questId, `${label}.root`, `Root node "${tree.root}" is missing.`)
+        for (const [nodeId, node] of Object.entries(tree.nodes)) {
+          if (!Array.isArray(node.lines)) issue('error', questId, `${label}.${nodeId}.lines`, 'Node lines must be an array.')
+          if (!Array.isArray(node.options)) issue('error', questId, `${label}.${nodeId}.options`, 'Node options must be an array.')
+          for (let i = 0; i < (node.options || []).length; i++) {
+            const opt = node.options[i]
+            const path = `${label}.${nodeId}.options[${i}]`
+            if (!opt.label) issue('warning', questId, `${path}.label`, 'Option has no label.')
+            if (opt.next && !tree.nodes[opt.next]) issue('error', questId, `${path}.next`, `Next node "${opt.next}" is missing.`)
+            if (opt.action) validateAction(opt.action, questId, `${path}.action`)
+            for (let j = 0; j < (opt.actions || []).length; j++) validateAction(opt.actions[j], questId, `${path}.actions[${j}]`)
+            if (opt.requires?.questId && !questIds.has(opt.requires.questId)) issue('error', opt.requires.questId, `${path}.requires.questId`, 'Referenced quest ID does not exist.')
+            if (opt.condition) validateCondition(opt.condition, questId, `${path}.condition`)
+            for (let j = 0; j < (opt.conditions || []).length; j++) validateCondition(opt.conditions[j], questId, `${path}.conditions[${j}]`)
+          }
+        }
+      }
+
+      function validateAction(action, questId, path) {
+        if (!action?.type) return issue('error', questId, path, 'Action is missing type.')
+        if (action.type === 'setQuestStage') {
+          validateQuestRef(action.questId, questId, `${path}.questId`, issue)
+          const def = quests.find(q => q.id === action.questId)
+          if (def && (!Number.isInteger(action.stage) || action.stage < 0 || action.stage >= (def.stages?.length || 0))) issue('error', questId, `${path}.stage`, 'Stage is outside the target quest stage range.')
+        } else if (action.type === 'completeQuest') validateQuestRef(action.questId, questId, `${path}.questId`, issue)
+        else if (action.type === 'giveItem' || action.type === 'takeItem') validateItemRef(action.itemId, questId, `${path}.itemId`, issue)
+        else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
+      }
+
+      function validateCondition(condition, questId, path) {
+        if (!condition?.type) return issue('error', questId, path, 'Condition is missing type.')
+        if (condition.type === 'all' || condition.type === 'any') {
+          if (!Array.isArray(condition.conditions)) issue('error', questId, `${path}.conditions`, 'Composite condition needs a conditions array.')
+          else condition.conditions.forEach((c, i) => validateCondition(c, questId, `${path}.conditions[${i}]`))
+        } else if (condition.type === 'not') {
+          if (!condition.condition) issue('error', questId, `${path}.condition`, 'not condition needs a child condition.')
+          else validateCondition(condition.condition, questId, `${path}.condition`)
+        } else if (['questStage', 'questStarted', 'questNotStarted', 'questCompleted'].includes(condition.type)) validateQuestRef(condition.questId, questId, `${path}.questId`, issue)
+        else if (condition.type === 'hasItem' || condition.type === 'hasEquippedItem') validateItemRef(condition.itemId, questId, `${path}.itemId`, issue)
+        else if (condition.type === 'skillLevel') {
+          if (!ALL_QUEST_SKILLS.includes(condition.skill)) issue('error', questId, `${path}.skill`, 'Unknown skill.')
+        } else if (condition.type !== 'combatLevel') issue('error', questId, path, `Unknown condition type "${condition.type}".`)
+      }
+    }
+
+    function validateQuestRef(id, questId, path, issue) {
+      if (!id || !quests.some(q => q.id === id)) issue('error', questId, path, 'Quest ID does not exist.')
+    }
+
+    function validateNpcRef(id, questId, path, issue) {
+      if (!Number.isInteger(id) || !npcDefs.some(d => d.id === id)) issue('error', questId, path, 'NPC ID does not exist.')
+    }
+
+    function validateItemRef(id, questId, path, issue) {
+      if (!Number.isInteger(id) || !itemDefs.some(d => d.id === id)) issue('error', questId, path, 'Item ID does not exist.')
     }
 
     // ---- field widget helpers ----
@@ -6979,6 +7359,65 @@ function applyToolAtTile(tile, eventLike = null) {
       sel.addEventListener('change', () => onChange(parseInt(sel.value)))
       return sel
     }
+    function questSelect(value, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      for (const q of [...quests].sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+        const o = document.createElement('option'); o.value = q.id; o.textContent = `${q.name || q.id} (${q.id})`; sel.appendChild(o)
+      }
+      sel.value = value
+      sel.addEventListener('change', () => onChange(sel.value))
+      return sel
+    }
+    function skillSelect(value, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      for (const skill of ALL_QUEST_SKILLS) {
+        const o = document.createElement('option'); o.value = skill; o.textContent = skill; sel.appendChild(o)
+      }
+      sel.value = value
+      sel.addEventListener('change', () => onChange(sel.value))
+      return sel
+    }
+    function dialogueNpcSelect(trigger, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = '(any NPC)'; sel.appendChild(empty)
+
+      const namedSpawns = npcSpawns
+        .filter(spawn => spawn.name && npcDefs.some(def => def.id === spawn.npcId))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+      for (const spawn of namedSpawns) {
+        const def = npcDefs.find(d => d.id === spawn.npcId)
+        const o = document.createElement('option')
+        o.value = `spawn:${spawn.npcId}:${spawn.name}`
+        o.textContent = `${spawn.name} (${def?.name || 'NPC'} ID ${spawn.npcId})`
+        sel.appendChild(o)
+      }
+
+      for (const def of [...npcDefs].sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+        const o = document.createElement('option'); o.value = `def:${def.id}`; o.textContent = `${def.name} (${def.id})`; sel.appendChild(o)
+      }
+
+      sel.value = trigger.npcName
+        ? `spawn:${trigger.npcDefId ?? 0}:${trigger.npcName}`
+        : (trigger.npcDefId ? `def:${trigger.npcDefId}` : '')
+      sel.addEventListener('change', () => {
+        if (!sel.value) {
+          delete trigger.npcDefId
+          delete trigger.npcName
+        } else if (sel.value.startsWith('spawn:')) {
+          const [, rawId, ...nameParts] = sel.value.split(':')
+          trigger.npcDefId = parseInt(rawId)
+          trigger.npcName = nameParts.join(':')
+        } else {
+          trigger.npcDefId = parseInt(sel.value.slice('def:'.length))
+          delete trigger.npcName
+        }
+        onChange()
+      })
+      return sel
+    }
     function chestSelect(value, onChange) {
       const sel = document.createElement('select')
       sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
@@ -6990,9 +7429,55 @@ function applyToolAtTile(tile, eventLike = null) {
       sel.addEventListener('change', () => { onChange(sel.value === '' ? null : parseInt(sel.value)) })
       return sel
     }
-	    function itemPicker(value, onChange) {
-	      const input = document.createElement('input')
-	      input.type = 'text'
+    function objectTriggerSelect(trigger, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      const empty = document.createElement('option'); empty.value = ''; empty.textContent = '(any object)'; sel.appendChild(empty)
+
+      for (const placed of namedPlacedObjects()) {
+        const def = objectDefs.find(d => d.id === placed.objectDefId)
+        const o = document.createElement('option')
+        o.value = `placed:${placed.objectDefId}:${placed.name}`
+        o.textContent = `${placed.name} (${def?.name || 'Object'} ID ${placed.objectDefId})`
+        sel.appendChild(o)
+      }
+
+      for (const def of [...objectDefs].sort((a, b) => a.name.localeCompare(b.name))) {
+        const o = document.createElement('option'); o.value = `def:${def.id}`; o.textContent = `${def.name} (${def.id})`; sel.appendChild(o)
+      }
+
+      sel.value = trigger.objectName
+        ? `placed:${trigger.objectDefId ?? 0}:${trigger.objectName}`
+        : (trigger.objectDefId ? `def:${trigger.objectDefId}` : '')
+      sel.addEventListener('change', () => {
+        if (!sel.value) {
+          delete trigger.objectDefId
+          delete trigger.objectName
+        } else if (sel.value.startsWith('placed:')) {
+          const [, rawId, ...nameParts] = sel.value.split(':')
+          trigger.objectDefId = parseInt(rawId)
+          trigger.objectName = nameParts.join(':')
+        } else {
+          trigger.objectDefId = parseInt(sel.value.slice('def:'.length))
+          delete trigger.objectName
+        }
+        onChange()
+      })
+      return sel
+    }
+    function namedPlacedObjects() {
+      const byKey = new Map()
+      for (const obj of placedGroup.getChildren()) {
+        const name = obj.userData?.name
+        const objectDefId = ASSET_TO_OBJECT_DEF[obj.userData?.assetId]
+        if (!name || objectDefId == null) continue
+        byKey.set(`${objectDefId}:${name}`, { objectDefId, name })
+      }
+      return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
+    }
+    function itemPicker(value, onChange) {
+      const input = document.createElement('input')
+      input.type = 'text'
       input.setAttribute('list', 'shopItemDatalist')
       input.placeholder = 'Search item name or ID'
       input.value = formatItemDisplay(value)
@@ -7001,29 +7486,39 @@ function applyToolAtTile(tile, eventLike = null) {
         const id = parseItemIdFromDisplay(input.value)
         onChange(id)
         input.value = formatItemDisplay(id)
-	      })
-	      return input
-	    }
-	    function sourceSelect(value, onChange) {
-	      const sel = document.createElement('select')
-	      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
-	      for (const opt of [
-	        ['any', 'Any item grant'],
-	        ['ground', 'Ground pickup only'],
-	      ]) {
-	        const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
-	      }
-	      sel.value = value
-	      sel.addEventListener('change', () => onChange(sel.value))
-	      return sel
-	    }
-	    function makeBlankTrigger(type) {
-	      if (type === 'dialogue') return { type }
-	      if (type === 'npcKill') return { type, npcDefId: 0 }
-	      if (type === 'itemPickup') return { type, itemId: 0 }
-	      if (type === 'chestOpen') return { type }
-	      return { type: 'dialogue' }
-	    }
+      })
+      return input
+    }
+    function sourceSelect(value, onChange) {
+      const sel = document.createElement('select')
+      sel.style.cssText = 'flex:1;width:100%;background:#0d0d0d;color:#fff;border:1px solid #444;border-radius:3px;padding:5px 6px;font-size:12px;box-sizing:border-box;'
+      for (const opt of [
+        ['any', 'Any item grant'],
+        ['ground', 'Ground pickup only'],
+      ]) {
+        const o = document.createElement('option'); o.value = opt[0]; o.textContent = opt[1]; sel.appendChild(o)
+      }
+      sel.value = value
+      sel.addEventListener('change', () => onChange(sel.value))
+      return sel
+    }
+    function questTriggerOptions() {
+      return [
+        ['dialogue', 'dialogue — talk to an NPC'],
+        ['npcKill', 'npcKill — kill an NPC'],
+        ['itemPickup', 'itemPickup — gain an item'],
+        ['chestOpen', 'chestOpen — open a chest'],
+        ['objectInteract', 'objectInteract — use an object'],
+      ]
+    }
+    function makeBlankTrigger(type) {
+      if (type === 'dialogue') return { type }
+      if (type === 'npcKill') return { type, npcDefId: 0 }
+      if (type === 'itemPickup') return { type, itemId: 0 }
+      if (type === 'chestOpen') return { type }
+      if (type === 'objectInteract') return { type }
+      return { type: 'dialogue' }
+    }
     function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])) }
   }
 

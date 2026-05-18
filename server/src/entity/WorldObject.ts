@@ -1,4 +1,4 @@
-import type { WorldObjectDef } from '@projectrs/shared';
+import type { PlacedObjectInteraction, WorldObjectDef } from '@projectrs/shared';
 
 let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
 
@@ -18,6 +18,12 @@ export class WorldObject {
   rotationY: number = 0;
   doorOpen: boolean = false;
   closedEdge: number = 0;
+  /** Optional per-instance name from an editor placed object. */
+  name?: string;
+  /** Optional per-instance examine text from an editor placed object. */
+  examineText?: string;
+  /** Optional per-action effects from an editor placed object. */
+  interactions?: PlacedObjectInteraction[];
   /** Per-instance transition override from editor trigger data */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
   /** Local-frame side bitmask of valid interaction tiles (F=1,R=2,B=4,L=8).
@@ -42,6 +48,10 @@ export class WorldObject {
       return this.doorOpen ? DOOR_ACTIONS_OPEN : DOOR_ACTIONS_CLOSED;
     }
     return this.def.actions;
+  }
+
+  get displayName(): string {
+    return this.name || this.def.name;
   }
 
   /** Tick respawn. Returns true when object respawns. */

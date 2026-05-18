@@ -54,6 +54,17 @@ function checkChatRate(ws: ServerWebSocket<ChatSocketData>): boolean {
   return state.count <= CHAT_RL_MAX;
 }
 
+export function broadcastLocalMessage(from: string, message: string): void {
+  const msg = message.substring(0, 200);
+  if (!from || msg.length === 0) return;
+  const payload = JSON.stringify({ type: 'local', from, message: msg });
+  for (const sock of chatSockets) {
+    try {
+      sock.send(payload);
+    } catch { /* ignore closed */ }
+  }
+}
+
 export function handleChatSocketOpen(
   ws: ServerWebSocket<ChatSocketData>,
   world: World
@@ -119,18 +130,7 @@ export function handleChatSocketMessage(
       const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
       speaker?.botStats?.recordChat();
 
-      // Broadcast to all connected chat sockets
-      const payload = JSON.stringify({
-        type: 'local',
-        from,
-        message: msg,
-      });
-
-      for (const sock of chatSockets) {
-        try {
-          sock.send(payload);
-        } catch { /* ignore closed */ }
-      }
+      broadcastLocalMessage(from, msg);
       break;
     }
   }
