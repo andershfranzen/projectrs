@@ -523,6 +523,49 @@ export class World {
     return [];
   }
 
+  private npcInteractionTileHasLineOfWalk(
+    player: Player,
+    map: GameMap,
+    footprint: { x: number; z: number }[],
+    tileX: number,
+    tileZ: number,
+  ): boolean {
+    for (const foot of footprint) {
+      if (Math.abs(foot.x - tileX) + Math.abs(foot.z - tileZ) !== 1) continue;
+      const blocked = player.currentFloor === 0
+        ? map.isWallBlocked(tileX, tileZ, foot.x, foot.z, player.effectiveY)
+        : map.isWallBlockedOnFloor(tileX, tileZ, foot.x, foot.z, player.currentFloor);
+      if (!blocked) return true;
+    }
+    return false;
+  }
+
+  private isPlayerNpcInteractionReachable(player: Player, npc: Npc, maxRange: number = NPC_INTERACTION_RANGE): boolean {
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > maxRange) return false;
+
+    const map = this.getPlayerMap(player);
+    const ptx = Math.floor(player.position.x);
+    const ptz = Math.floor(player.position.y);
+    const footprint = getObjectFootprintTiles(npc.position.x, npc.position.y, { width: npc.size });
+    for (const tile of npc.interactionTiles()) {
+      if (!this.npcInteractionTileHasLineOfWalk(player, map, footprint, tile.x, tile.z)) continue;
+      if (ptx === tile.x && ptz === tile.z) return true;
+      if (Math.max(Math.abs(ptx - tile.x), Math.abs(ptz - tile.z)) > maxRange) continue;
+      const path = map.findPathOnFloor(player.position.x, player.position.y, tile.x + 0.5, tile.z + 0.5, player.currentFloor);
+      if (path.length > 0 && path.length <= maxRange) return true;
+    }
+    return false;
+  }
+
+  private queuePlayerPathToNpcInteraction(player: Player, npc: Npc): boolean {
+    const path = this.findPlayerPathToNpc(player, npc);
+    const queue = (npc.size <= 1 && path.length > 0) ? path.slice(0, -1) : path;
+    if (queue.length === 0) return false;
+    player.setMoveQueue(queue);
+    return true;
+  }
+
   private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean): void {
     if (!def.blocking || def.category === 'door') return;
     for (const tile of getObjectFootprintTiles(x, z, def)) {
@@ -1041,12 +1084,20 @@ export class World {
    *  deliberate action mutates state. Movement has its own path because it is
    *  itself the cancel signal; this covers inventory/equipment/item actions
    *  that can happen while standing still or while walking toward an object. */
-  private interruptPlayerAction(playerId: number, player: Player): void {
+  private interruptPlayerAction(playerId: number, player: Player, keepNpcUiContext: boolean = false): void {
     player.pendingInteraction = null;
     player.pendingPickup = -1;
     player.followTargetPlayerId = -1;
     player.actionDelay = 0;
+    if (!keepNpcUiContext) {
+      this.closeNpcUiContext(player);
+    }
     this.cancelSkilling(playerId);
+  }
+
+  private closeNpcUiContext(player: Player): void {
+    player.openShopNpcId = null;
+    if (player.openDialogueState) this.sendDialogueClose(player);
   }
 
   private releasePrivateGroundItemsForPlayer(playerId: number): void {
@@ -1728,6 +1779,7 @@ export class World {
     this.cancelSkilling(playerId);
     if (npc.currentMapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
+    this.closeNpcUiContext(player);
 
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
@@ -1803,8 +1855,12 @@ export class World {
     // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
     // queue pendingTalkNpcId; the player tick loop fires it once the player
     // walks within NPC_INTERACTION_RANGE.
-    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > NPC_INTERACTION_RANGE) {
+    if (!this.isPlayerNpcInteractionReachable(player, npc)) {
       player.pendingTalkNpcId = npcEntityId;
+      if (!player.hasMoveQueue() && !this.queuePlayerPathToNpcInteraction(player, npc)) {
+        this.sendChatSystem(player, "I can't reach that.");
+        player.pendingTalkNpcId = -1;
+      }
       return;
     }
     player.pendingTalkNpcId = -1;
@@ -1860,8 +1916,7 @@ export class World {
     for (const [, npc] of this.npcs) {
       if (npc.npcId !== shopNpcId || npc.dead) continue;
       if (npc.currentMapLevel !== player.currentMapLevel) continue;
-      const fp = npc.distToFootprint(player.position.x, player.position.y);
-      if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= NPC_INTERACTION_RANGE) return true;
+      if (this.isPlayerNpcInteractionReachable(player, npc)) return true;
     }
     return false;
   }
@@ -2145,7 +2200,7 @@ export class World {
       return;
     }
 
-    this.interruptPlayerAction(playerId, player);
+    this.interruptPlayerAction(playerId, player, true);
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
@@ -2195,7 +2250,7 @@ export class World {
       return;
     }
 
-    this.interruptPlayerAction(playerId, player);
+    this.interruptPlayerAction(playerId, player, true);
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
@@ -2209,6 +2264,7 @@ export class World {
     if (item.mapLevel !== player.currentMapLevel) return;
     if (!this.isGroundItemVisibleTo(player, item)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
+    this.closeNpcUiContext(player);
 
     // Walk to item if not in range
     const dx = Math.abs(player.position.x - item.x);
@@ -2345,6 +2401,7 @@ export class World {
     // outright — no door deferral. Closing the interface is a deliberate user
     // action; we won't queue clicks behind it.
     if (player.isInterfaceOpen()) return;
+    this.closeNpcUiContext(player);
 
     // Check adjacency — player must be on a tile next to the object
     if (!this.isAdjacentToObject(player, obj)) {
@@ -2954,8 +3011,7 @@ export class World {
     if (!player) return;
     if (npc.currentMapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
-    const fp = npc.distToFootprint(player.position.x, player.position.y);
-    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > NPC_INTERACTION_RANGE) return;
+    if (!this.isPlayerNpcInteractionReachable(player, npc)) return;
     this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
@@ -4032,10 +4088,9 @@ export class World {
         const id = player.pendingTalkNpcId;
         player.pendingTalkNpcId = -1;
         const targetNpc = this.npcs.get(id);
-        const fp = targetNpc?.distToFootprint(player.position.x, player.position.y);
-        const inRange = targetNpc && fp && !targetNpc.dead
+        const inRange = targetNpc && !targetNpc.dead
           && targetNpc.currentMapLevel === player.currentMapLevel
-          && Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= NPC_INTERACTION_RANGE;
+          && this.isPlayerNpcInteractionReachable(player, targetNpc);
         if (inRange) this.handlePlayerTalkNpc(playerId, id);
       }
     }
@@ -4644,6 +4699,7 @@ export class World {
       const npc = this.npcs.get(step.npcEntityId);
       this.closeDialogueForPlayer(player);
       if (!npc || npc.dead) continue;
+      if (npc.currentMapLevel !== player.currentMapLevel || !this.isPlayerNpcInteractionReachable(player, npc)) continue;
       if (step.type === 'openBank') {
         if (npc.hasBank) this.openBankFor(player);
       } else if (npc.hasShop) {

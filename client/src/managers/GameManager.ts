@@ -3851,7 +3851,28 @@ export class GameManager {
 
   private isPlayerInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, range: number): boolean {
     const fp = this.distToNpcFootprint(npcEntityId, target, this.playerX, this.playerZ);
-    return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
+    if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > range) return false;
+
+    const size = this.getNpcTileSize(npcEntityId);
+    const ptx = Math.floor(this.playerX);
+    const ptz = Math.floor(this.playerZ);
+    const candidates = getObjectInteractionTiles(target.x, target.z, { width: size });
+    const footprint = getObjectFootprintTiles(target.x, target.z, { width: size });
+    const hasLineOfWalk = (tileX: number, tileZ: number): boolean => {
+      for (const foot of footprint) {
+        if (Math.abs(foot.x - tileX) + Math.abs(foot.z - tileZ) !== 1) continue;
+        if (!this.isWallBlockedForPath(tileX, tileZ, foot.x, foot.z)) return true;
+      }
+      return false;
+    };
+
+    for (const tile of candidates) {
+      if (!hasLineOfWalk(tile.x, tile.z)) continue;
+      if (ptx === tile.x && ptz === tile.z) return true;
+      const { path } = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
+      if (path.length > 0 && path.length <= range) return true;
+    }
+    return false;
   }
 
   private isPointInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, x: number, z: number, range: number): boolean {
