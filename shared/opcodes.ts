@@ -129,6 +129,9 @@ export enum ServerOpcode {
    *  visibility, map/floor, and adjacency. Values: [objectEntityId]. */
   SMITHING_OPEN = 59,
   MAP_CHANGE = 60,
+  /** Active building floor changed. Values: [floor, y*10]. The Y value is
+   *  server-authoritative so the client does not have to infer transition
+   *  height from streamed chunk cache. */
   FLOOR_CHANGE = 61,
   SHOW_CHARACTER_CREATOR = 70,
   /** Same-map teleport: snap the local player to (x, y, z, floor) without

@@ -9,8 +9,8 @@ const fakeWs = {
   send() {},
 } as any;
 
-function makeHarness(map: GameMap, player: Player): { world: any; floorChanges: number[] } {
-  const floorChanges: number[] = [];
+function makeHarness(map: GameMap, player: Player): { world: any; floorChanges: Array<{ floor: number; y: number | undefined }> } {
+  const floorChanges: Array<{ floor: number; y: number | undefined }> = [];
   const world = Object.create(World.prototype) as any;
   world.players = new Map([[player.id, player]]);
   world.maps = new Map([[player.currentMapLevel, map]]);
@@ -26,7 +26,7 @@ function makeHarness(map: GameMap, player: Player): { world: any; floorChanges: 
     p.effectiveY = map.getEffectiveHeightOnFloor(p.position.x, p.position.y, p.currentFloor, p.effectiveY);
   };
   world.sendToPlayer = (_p: Player, opcode: ServerOpcode, ...values: number[]) => {
-    if (opcode === ServerOpcode.FLOOR_CHANGE) floorChanges.push(values[0]);
+    if (opcode === ServerOpcode.FLOOR_CHANGE) floorChanges.push({ floor: values[0], y: values[1] });
   };
   return { world, floorChanges };
 }
@@ -57,7 +57,7 @@ describe('placed stair descent', () => {
     world.handlePlayerMove(player.id, [{ x: 160.5, z: 156.5 }]);
 
     expect(player.currentFloor).toBe(0);
-    expect(floorChanges).toEqual([0]);
+    expect(floorChanges).toEqual([{ floor: 0, y: 5 }]);
     expect(player.hasMoveQueue()).toBe(true);
   });
 

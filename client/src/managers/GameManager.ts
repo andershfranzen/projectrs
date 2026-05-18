@@ -2928,17 +2928,24 @@ export class GameManager {
 
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
       const newFloor = values[0];
+      const authoritativeY = values[1];
       this.currentFloor = newFloor;
       if (this.localTeleportHeightOverride?.floor !== newFloor) this.localTeleportHeightOverride = null;
       if (import.meta.env.DEV) console.log(`Floor changed to ${newFloor}`);
       this.chunkManager.setCurrentFloor(newFloor);
+      if (authoritativeY !== undefined) {
+        const newY = authoritativeY / 10;
+        this.localTeleportHeightOverride = {
+          tileX: Math.floor(this.playerX),
+          tileZ: Math.floor(this.playerZ),
+          floor: newFloor,
+          y: newY,
+          expiresAt: performance.now() + 2000,
+        };
+        if (this.localPlayer) this.localPlayer.setPositionXYZ(this.playerX, newY, this.playerZ);
+        this.inputManager.setPlayerY(newY);
+      }
       this.refreshWorldAfterSameMapTeleport();
-      // No Y snap here either — LOGIN_OK provided the spawn Y, and
-      // legitimate floor changes (placed stairs) walk the player through
-      // the ramp tile-by-tile so getHeight is already correct via the
-      // per-frame movement update. TODO: server should send new Y in
-      // FLOOR_CHANGE for the rare case where the floor change isn't
-      // accompanied by a stair walkthrough.
     });
 
     this.network.onRawMessage((data: ArrayBuffer) => {

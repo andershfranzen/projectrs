@@ -867,6 +867,10 @@ export class World {
     );
   }
 
+  private sendFloorChange(player: Player): void {
+    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor, qPos(player.effectiveY));
+  }
+
   private checkpointPlayerPosition(player: Player): void {
     this.db.savePlayerPosition(player.accountId, player, this.computeEffectiveY(player));
     player.lastPositionPersistTick = this.currentTick;
@@ -1062,7 +1066,7 @@ export class World {
     this.sendMapChange(player, player.currentMapLevel);
 
     if (player.currentFloor !== 0) {
-      this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+      this.sendFloorChange(player);
     }
 
     if (!player.appearance) {
@@ -1654,7 +1658,7 @@ export class World {
       player.currentFloor = 0;
       player.lastFloorChangeTile = -1;
       this.refreshPlayerEffectiveY(player);
-      this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+      this.sendFloorChange(player);
     }
     // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
     // larger is a malicious client. The previous 200-cap × 256 unit-tiles per
@@ -2673,7 +2677,6 @@ export class World {
     this.interruptPlayerAction(player.id, player);
     player.currentFloor = target.floor;
     player.lastFloorChangeTile = Math.floor(target.z) * this.getPlayerMap(player).width + Math.floor(target.x);
-    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
     this.teleportPlayer(player, target.x, target.z, target.y);
   }
 
@@ -4877,7 +4880,7 @@ export class World {
         // The floor index just changed — re-resolve the walking elevation
         // against the new floor's layer before the next move validates.
         this.refreshPlayerEffectiveY(player);
-        this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+        this.sendFloorChange(player);
       }
     }
   }
@@ -5175,7 +5178,7 @@ export class World {
 
     // Send MAP_CHANGE packet
     this.sendMapChange(player, newMap);
-    this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor);
+    this.sendFloorChange(player);
     player.syncDirty = true;
 
     console.log(`Player "${player.name}" transitioned from ${oldMap} to ${newMap}`);
