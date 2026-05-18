@@ -518,6 +518,11 @@
         "itemId": 1,
         "quantity": 1,
         "chance": 1
+      },
+      {
+        "itemId": 237,
+        "quantity": 1,
+        "chance": 0.01
       }
     ]
   },
