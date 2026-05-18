@@ -52,7 +52,7 @@ import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -3606,7 +3606,7 @@ export class GameManager {
       this.pendingSingleCastSpell = targetingSpell;
       this.combatTargetId = -1;
       this.magicTargetId = npcEntityId;
-      this.rootLocalPlayerForSpellCast();
+      this.predictSpellCastMovementToNpc(npcEntityId);
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, targetingSpell, npcEntityId));
       this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#a040ff');
       this.sidePanel!.clearTargetingSpell();
@@ -3617,19 +3617,18 @@ export class GameManager {
     this.combatTargetId = npcEntityId;
     this.autoCastSpellIndex = this.sidePanel?.getAutocastSpell() ?? -1;
     this.pendingFaceTargetEntityId = npcEntityId;
-    const t = this.entities.npcTargets.get(npcEntityId);
-    if (t) this.faceLocalPlayerToward(t.x, t.z);
+    const target = this.entities.npcTargets.get(npcEntityId);
+    if (target) this.faceLocalPlayerToward(target.x, target.z);
     this._combatPathTimer = 0.6;
 
     if (this.autoCastSpellIndex >= 0) {
       this.combatTargetId = -1;
       this.magicTargetId = npcEntityId;
-      this.rootLocalPlayerForSpellCast();
+      this.predictSpellCastMovementToNpc(npcEntityId);
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, this.autoCastSpellIndex, npcEntityId));
       return;
     }
 
-    const target = this.entities.npcTargets.get(npcEntityId);
     if (target) {
       const pathResult = this.findPathToNpcInteraction(npcEntityId, target, 1.5);
       const path = pathResult.path;
@@ -3651,7 +3650,7 @@ export class GameManager {
     if (spellIndex >= 0) {
       this.combatTargetId = -1;
       this.magicTargetId = targetId;
-      this.rootLocalPlayerForSpellCast();
+      this.predictSpellCastMovementToNpc(targetId);
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId));
       return;
     }
@@ -3660,6 +3659,20 @@ export class GameManager {
     if (this.combatTargetId >= 0 && performance.now() >= this.castingUntil) {
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
     }
+  }
+
+  private predictSpellCastMovementToNpc(npcEntityId: number): void {
+    const target = this.entities.npcTargets.get(npcEntityId);
+    if (target && !this.isPlayerInNpcInteractionRange(npcEntityId, target, SPELL_CAST_DISTANCE)) {
+      const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE);
+      if (pathResult.path.length > 0) {
+        this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+        if (this.destMarker) this.destMarker.isVisible = false;
+        this.minimap?.clearDestination();
+        return;
+      }
+    }
+    this.rootLocalPlayerForSpellCast();
   }
 
   private followPlayer(playerEntityId: number): void {

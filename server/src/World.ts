@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, STAIR_DESCENT_SEARCH_RADIUS, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, NPC_INTERACTION_RANGE, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -132,9 +132,6 @@ interface TradeSession {
 }
 
 let nextGroundItemId = 1;
-
-/** Max distance in tiles a player can cast a spell from. Generous for testing — refine in Phase 5. */
-const SPELL_CAST_DISTANCE = 10;
 
 export class World {
   readonly maps: Map<string, GameMap> = new Map();
@@ -564,6 +561,25 @@ export class World {
   private queuePlayerPathToNpcInteraction(player: Player, npc: Npc): boolean {
     const path = this.findPlayerPathToNpc(player, npc);
     const queue = (npc.size <= 1 && path.length > 0) ? path.slice(0, -1) : path;
+    if (queue.length === 0) return false;
+    player.setMoveQueue(queue);
+    return true;
+  }
+
+  private queuePlayerPathToNpcRange(player: Player, npc: Npc, range: number): boolean {
+    const path = this.findPlayerPathToNpc(player, npc);
+    if (path.length === 0) return false;
+
+    let cutIdx = path.length;
+    for (let i = 0; i < path.length; i++) {
+      const fp = npc.distToFootprint(path[i].x, path[i].z);
+      if (Math.hypot(fp.dx, fp.dz) <= range) {
+        cutIdx = i + 1;
+        break;
+      }
+    }
+
+    const queue = path.slice(0, cutIdx);
     if (queue.length === 0) return false;
     player.setMoveQueue(queue);
     return true;
@@ -3163,7 +3179,11 @@ export class World {
 
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
-    if (dist > SPELL_CAST_DISTANCE) return;
+    if (dist > SPELL_CAST_DISTANCE) {
+      if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
+      if (player.hasMoveQueue()) player.pendingSpellCast = { spellIndex, targetEntityId };
+      return;
+    }
 
     this.cancelSkilling(playerId);
     this.clearCombatTarget(playerId);                          // cancel auto-attack
@@ -4306,6 +4326,7 @@ export class World {
   private tickQueuedSpellCasts(): void {
     for (const [playerId, player] of this.players) {
       if (!player.pendingSpellCast || player.attackCooldown > 0) continue;
+      if (player.hasMoveQueue()) continue;
       const { spellIndex, targetEntityId } = player.pendingSpellCast;
       player.pendingSpellCast = null;
       this.handlePlayerCastSpell(playerId, spellIndex, targetEntityId);

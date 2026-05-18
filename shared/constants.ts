@@ -39,6 +39,10 @@ export const MAX_3D_NPCS_VISIBLE = 8;
  *  same range. */
 export const NPC_INTERACTION_RANGE = 2;
 
+/** Max distance in tiles a player can cast a targeted spell from. Shared so
+ *  client prediction and server validation use the same range. */
+export const SPELL_CAST_DISTANCE = 10;
+
 /** Radius around a ground-floor stair where an upper-floor click may resolve
  *  as a descent onto floor 0. Kept shared so client prediction and server
  *  validation agree on when slope descent is allowed. */
