@@ -738,7 +738,8 @@ export interface QuestDef {
   /** Auto-start condition. When omitted, the quest can only start via a
    *  dialogue `setQuestStage` action. */
   startTrigger?: QuestTrigger;
-  /** If true, the quest can be re-acquired after completion. Default false. */
+  /** Reserved for future quest loops. Completion rewards are currently one-time
+   *  and completed quests do not auto-restart. */
   repeatable?: boolean;
   /** Rewards granted on completion. */
   rewards?: QuestReward;

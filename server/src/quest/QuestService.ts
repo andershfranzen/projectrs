@@ -118,7 +118,8 @@ export class QuestService {
     const def = this.data.getQuest(questId);
     if (!def) return false;
     const current = player.quests[questId];
-    if (current && current.stage === QUEST_STAGE_COMPLETED && !def.repeatable) return true;
+    if (!current) return false;
+    if (current.stage === QUEST_STAGE_COMPLETED) return true;
 
     const itemRewards = def.rewards?.items?.filter(drop =>
       Number.isInteger(drop.itemId) && Number.isInteger(drop.quantity) && drop.quantity > 0
@@ -162,7 +163,7 @@ export class QuestService {
       }
     }
 
-    player.quests[questId] = { stage: def.repeatable ? 0 : QUEST_STAGE_COMPLETED, triggerProgress: 0 };
+    player.quests[questId] = { stage: QUEST_STAGE_COMPLETED, triggerProgress: 0 };
     this.sendQuestDelta(player, questId);
     const rewardSummary = this.questRewardSummary(def.rewards);
     this.senders.sendChatSystem(player, rewardSummary
@@ -269,8 +270,7 @@ export class QuestService {
       if (!def.startTrigger) continue;
       const existing = player.quests[def.id];
       if (existing) {
-        if (existing.stage === QUEST_STAGE_COMPLETED && !def.repeatable) continue;
-        if (existing.stage !== QUEST_STAGE_COMPLETED) continue;
+        continue;
       }
       if (!this.triggerMatchesEvent(def.startTrigger, event)) continue;
       if (!this.rollTriggerChance(def.startTrigger)) continue;

@@ -1067,9 +1067,20 @@
       {
         "action": "Use",
         "condition": {
-          "type": "hasItem",
-          "itemId": 236,
-          "quantity": 1
+          "type": "all",
+          "conditions": [
+            {
+              "type": "questStage",
+              "questId": "Bob's Burial",
+              "minStage": 2,
+              "maxStage": 2
+            },
+            {
+              "type": "hasItem",
+              "itemId": 236,
+              "quantity": 1
+            }
+          ]
         },
         "say": "No one can know about this.",
         "message": "You throw the suspect sketch into the well.",
@@ -1090,9 +1101,20 @@
         "condition": {
           "type": "not",
           "condition": {
-            "type": "hasItem",
-            "itemId": 236,
-            "quantity": 1
+            "type": "all",
+            "conditions": [
+              {
+                "type": "questStage",
+                "questId": "Bob's Burial",
+                "minStage": 2,
+                "maxStage": 2
+              },
+              {
+                "type": "hasItem",
+                "itemId": 236,
+                "quantity": 1
+              }
+            ]
           }
         },
         "message": "You have nothing suspicious to throw into the well."
