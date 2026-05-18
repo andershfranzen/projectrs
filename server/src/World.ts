@@ -3158,15 +3158,6 @@ export class World {
     const player = this.players.get(playerId);
     if (!player || !player.alive) return;
     if (player.isBusy(this.currentTick)) return;
-    player.clearMoveQueue();
-    player.followTargetPlayerId = -1;
-    if (player.attackCooldown > 0) {
-      if (this.playerCombatTargets.has(playerId)) {
-        player.pendingSpellCast = { spellIndex, targetEntityId };
-        this.clearCombatTarget(playerId);
-      }
-      return;
-    }
 
     const def = this.data.getSpellByIndex(spellIndex);
     if (!def) return;
@@ -3176,6 +3167,16 @@ export class World {
     if (this.data.getShop(npc.npcId)) return;                 // shopkeepers immune
     if (npc.currentMapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(targetEntityId)) return;
+
+    player.clearMoveQueue();
+    player.followTargetPlayerId = -1;
+    if (player.attackCooldown > 0) {
+      if (this.playerCombatTargets.has(playerId)) {
+        player.pendingSpellCast = { spellIndex, targetEntityId };
+        this.clearCombatTarget(playerId);
+      }
+      return;
+    }
 
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);

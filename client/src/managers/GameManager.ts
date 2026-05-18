@@ -145,9 +145,6 @@ export class GameManager {
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
   private pendingFaceTargetEntityId: number = -1;
-  /** Talk-to deferred while mid-tile. Re-pathing from a fractional
-   *  playerX/Z would desync from the server's tile-aligned position. */
-  private pendingTalkEntityId: number = -1;
   private followTargetPlayerId: number = -1;
   private followPathTimer: number = 0;
   private skillCancelTime: number = 0; // timestamp when skilling was last cancelled
@@ -3695,17 +3692,13 @@ export class GameManager {
     this.resumeTalkToNpc(npcEntityId);
   }
 
-  /** Body of talkToNpc without the cursor ping. Called directly by the
-   *  mid-tile drain so a deferred talk doesn't double-fire the visual
-   *  effect at the original click position. */
   private resumeTalkToNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (!target) return;
-    // Mid-tile defer: re-pathing from a fractional playerX/Z desyncs from
+    // Mid-tile click: re-pathing from a fractional playerX/Z desyncs from
     // the server (tile-aligned only). Truncate the active path to the
-    // in-progress step so the player doesn't walk out the rest of the old
-    // route before turning toward the NPC, then queue the talk for the
-    // step-completion drain.
+    // in-progress step, then send TALK_NPC immediately. The server already
+    // owns deferred talk execution and will fire it after that move drains.
     if (this.tileProgress > 0 && this.pathIndex < this.path.length) {
       const activeStep = this.getActiveUnitStep();
       const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
@@ -3718,7 +3711,8 @@ export class GameManager {
       this.network.sendMove([currentTarget]);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
-      this.pendingTalkEntityId = npcEntityId;
+      this.pendingFaceTargetEntityId = npcEntityId;
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
       return;
     }
     this.pendingFaceTargetEntityId = npcEntityId;
@@ -4983,7 +4977,6 @@ export class GameManager {
     // Walking elsewhere cancels the queued face-NPC — we'd look weird
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;
-    this.pendingTalkEntityId = -1;
     // Release any face-lock so the body re-aims along the new travel
     // direction rather than continuing to strafe toward the previous target.
     this.localPlayer?.clearFaceLock();
@@ -5672,13 +5665,6 @@ export class GameManager {
       this.playerZ = stepTarget.z;
       this.setTileFrom(stepTarget.x, stepTarget.z);
       this.pathIndex++;
-
-      // Deferred talk-to fires now that playerX/Z are tile-aligned.
-      if (this.pendingTalkEntityId >= 0) {
-        const id = this.pendingTalkEntityId;
-        this.pendingTalkEntityId = -1;
-        this.resumeTalkToNpc(id);
-      }
 
       if (this.pendingPath) {
         this.path = this.pendingPath;
