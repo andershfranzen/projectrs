@@ -12,6 +12,8 @@ export class LoginScreen {
   private signupClosedNotice: HTMLDivElement | null = null;
   private rememberUsernameRow: HTMLLabelElement | null = null;
   private rememberUsernameInput: HTMLInputElement | null = null;
+  private vignetteIdleCallback: number | null = null;
+  private vignetteTimeout: ReturnType<typeof setTimeout> | null = null;
 
   constructor(onLogin: LoginCallback) {
     this.onLogin = onLogin;
@@ -116,8 +118,24 @@ export class LoginScreen {
     img.draggable = false;
     wrap.appendChild(img);
 
-    void this.loadVignetteImage(img);
+    this.deferVignetteLoad(img);
     return wrap;
+  }
+
+  private deferVignetteLoad(img: HTMLImageElement): void {
+    const load = () => {
+      this.vignetteIdleCallback = null;
+      this.vignetteTimeout = null;
+      if (!this.container.isConnected) return;
+      void this.loadVignetteImage(img);
+    };
+
+    if ('requestIdleCallback' in window) {
+      this.vignetteIdleCallback = window.requestIdleCallback(load, { timeout: 2500 });
+      return;
+    }
+
+    this.vignetteTimeout = setTimeout(load, 1500);
   }
 
   private async loadVignetteImage(img: HTMLImageElement): Promise<void> {
@@ -321,6 +339,14 @@ export class LoginScreen {
   }
 
   destroy(): void {
+    if (this.vignetteIdleCallback !== null && 'cancelIdleCallback' in window) {
+      window.cancelIdleCallback(this.vignetteIdleCallback);
+      this.vignetteIdleCallback = null;
+    }
+    if (this.vignetteTimeout !== null) {
+      clearTimeout(this.vignetteTimeout);
+      this.vignetteTimeout = null;
+    }
     this.container.remove();
   }
 }

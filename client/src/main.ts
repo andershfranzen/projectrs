@@ -3,16 +3,13 @@ import { LoadingScreen } from './ui/LoadingScreen';
 import { BackgroundParticles } from './ui/BackgroundParticles';
 import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
+import { startupTrace } from './debug/StartupTrace';
 import type { GameManager as GameManagerType } from './managers/GameManager';
-import { Logger } from '@babylonjs/core/Misc/logger';
-
-if (!import.meta.env.DEV) {
-  Logger.LogLevels = Logger.ErrorLogLevel;
-}
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
 installGlobalScrollbars();
+startupTrace.mark('entry');
 
 let game: GameManagerType | null = null;
 let loginScreen: LoginScreen | null = null;
@@ -41,9 +38,9 @@ document.addEventListener('dragstart', (event) => {
 }, true);
 
 /**
- * Lazy-loaded GameManager module. Kicked off in bootstrap() in parallel
- * with the asset preload, so by the time the user has signed in the
- * (large) Babylon-dependent bundle is already on disk.
+ * Lazy-loaded GameManager module. It is pulled only after saved-token
+ * validation or a successful manual login, keeping the anonymous login path
+ * free of Babylon/map/model work.
  *
  * Type comes from the static `import type` above, which Vite erases at
  * build time — the runtime cost is just the dynamic import().
@@ -71,6 +68,7 @@ function prepareGame(): Promise<GameManagerType> {
   if (gamePrepPromise) return gamePrepPromise;
 
   gamePrepPromise = (async () => {
+    startupTrace.mark('game_prepare_start');
     reportPrepProgress(0, 'Loading game code');
 
     // Warm lightweight JSON/static cache entries in the background. The real
@@ -82,7 +80,13 @@ function prepareGame(): Promise<GameManagerType> {
       console.warn('[bootstrap] asset cache warm failed:', err);
     });
 
+    if (!import.meta.env.DEV) {
+      const { Logger } = await import('@babylonjs/core/Misc/logger');
+      Logger.LogLevels = Logger.ErrorLogLevel;
+    }
+
     const { GameManager } = await loadGameModule();
+    startupTrace.mark('game_module_loaded');
     reportPrepProgress(0.18, 'Preparing game engine');
 
     // Lay out the hidden game frame so Babylon reads real canvas dimensions,
@@ -92,9 +96,12 @@ function prepareGame(): Promise<GameManagerType> {
     void canvas.offsetWidth;
 
     game = new GameManager(canvas, '', '', handleDisconnect);
+    startupTrace.mark('game_manager_created');
     await game.whenPreloaded((pct, status) => {
       reportPrepProgress(0.18 + pct * 0.82, status);
     });
+    startupTrace.mark('game_preloaded');
+    startupTrace.measure('game_prepare_total', 'game_prepare_start', 'game_preloaded');
     reportPrepProgress(1, 'Game ready');
     return game;
   })().catch((err) => {
@@ -134,14 +141,25 @@ function revealGame(afterMs: number = 0): void {
 }
 
 function showLoginScreen() {
+  startupTrace.mark('login_screen_show');
   gameFrame.style.visibility = 'hidden';
   gameFrame.style.display = 'none';
   backgroundParticles?.setVisible(false);
   loginScreen?.destroy();
   loginScreen = new LoginScreen(async (token, username) => {
+    startupTrace.mark('manual_login_ok');
     backgroundParticles?.setVisible(false);
+    const loadingScreen = new LoadingScreen();
+    loadingScreen.show();
+    const unwatch = watchPrepProgress((p) => {
+      loadingScreen.setProgress(p.pct);
+      loadingScreen.setStatus(p.status);
+    });
     try {
       const preparedGame = await prepareGame();
+      unwatch();
+      loadingScreen.resetProgress();
+      loadingScreen.setStatus('Connecting to server');
       // The login form hides the game frame after preload. Put it back into
       // layout before auth finalization so Babylon has real canvas dimensions
       // while map/entity packets settle, then reveal it after the form is gone.
@@ -149,14 +167,21 @@ function showLoginScreen() {
       gameFrame.style.visibility = 'hidden';
       void canvas.offsetWidth;
       window.dispatchEvent(new Event('resize'));
-      await preparedGame.connectAndAuth(token, username);
+      await preparedGame.connectAndAuth(token, username, (pct, status) => {
+        loadingScreen.setProgress(pct);
+        loadingScreen.setStatus(status);
+      });
+      startupTrace.mark('manual_game_connected');
       if (loginScreen) {
         loginScreen.destroy();
         loginScreen = null;
       }
-      revealGame();
+      loadingScreen.hide();
+      revealGame(340);
     } catch (err) {
       console.error('[startGame] connect failed:', err);
+      unwatch();
+      loadingScreen.hide();
       backgroundParticles?.setVisible(false);
       throw err;
     }
@@ -164,9 +189,13 @@ function showLoginScreen() {
 }
 
 async function validateSavedToken(): Promise<{ token: string; username: string } | null> {
+  startupTrace.mark('token_validate_start');
   const savedToken = localStorage.getItem('projectrs_token');
   const savedUsername = localStorage.getItem('projectrs_username');
-  if (!savedToken || !savedUsername) return null;
+  if (!savedToken || !savedUsername) {
+    startupTrace.mark('token_missing');
+    return null;
+  }
   try {
     const res = await fetch('/api/validate', {
       method: 'POST',
@@ -174,7 +203,10 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
       body: JSON.stringify({ token: savedToken }),
     });
     const data = await res.json();
-    if (data.ok) return { token: savedToken, username: savedUsername };
+    if (data.ok) {
+      startupTrace.mark('token_valid');
+      return { token: savedToken, username: savedUsername };
+    }
   } catch {
     // Server unreachable — treat as invalid; bootstrap() will fall through
     // to the login screen, where the user can retry once the server is
@@ -182,23 +214,21 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
   }
   localStorage.removeItem('projectrs_token');
   localStorage.removeItem('projectrs_username');
+  startupTrace.mark('token_invalid');
   return null;
 }
 
 /**
  * Boot sequence:
  *   1. Show a single LoadingScreen immediately.
- *   2. Start game preparation in the background: download the dynamic
- *      GameManager bundle, construct the hidden scene, parse character
- *      assets, and load the default map area.
- *   3. Validate any saved token in parallel.
- *   4. If there is no saved token, keep the LoadingScreen up until game
- *      preparation is complete, then show the login form. The login screen
- *      should never mask hidden model/map loading.
- *   5. If there is a saved token, keep the LoadingScreen up until the
- *      prepared scene connects and becomes playable.
+ *   2. Validate any saved token before pulling in the game bundle.
+ *   3. If there is no saved token, show the login form immediately and defer
+ *      Babylon/map/model work until login succeeds.
+ *   4. If there is a saved token, prepare the hidden scene, connect, then
+ *      reveal the playable canvas.
  */
 async function bootstrap() {
+  startupTrace.mark('bootstrap_start');
   // Fire field belongs to the login screen only. Keep it hidden while the
   // OSRS-style loading screen is doing real preload work.
   backgroundParticles = new BackgroundParticles();
@@ -206,6 +236,13 @@ async function bootstrap() {
 
   const loadingScreen = new LoadingScreen();
   loadingScreen.show();
+
+  const tokenResult = await validateSavedToken();
+  if (!tokenResult) {
+    loadingScreen.hide();
+    setTimeout(() => showLoginScreen(), 260);
+    return;
+  }
 
   const unwatch = watchPrepProgress((p) => {
     loadingScreen.setProgress(p.pct);
@@ -215,38 +252,23 @@ async function bootstrap() {
   void prepPromise.catch((err) => {
     console.error('[bootstrap] background game preparation failed:', err);
   });
-  const tokenResult = await validateSavedToken();
-
-  if (tokenResult) {
+  try {
+    const preparedGame = await prepPromise;
     unwatch();
     loadingScreen.resetProgress();
     loadingScreen.setStatus('Connecting to server');
-    try {
-      const preparedGame = await prepPromise;
-      await preparedGame.connectAndAuth(tokenResult.token, tokenResult.username, (pct, status) => {
-        loadingScreen.setProgress(pct);
-        loadingScreen.setStatus(status);
-      });
-      loadingScreen.hide();
-      revealGame(340);
-    } catch (err) {
-      console.error('[bootstrap] auto-login failed:', err);
-      loadingScreen.hide();
-      showLoginScreen();
-    }
-  } else {
-    try {
-      await prepPromise;
-      unwatch();
-      loadingScreen.hide();
-      // Match LoadingScreen fade-out before revealing login chrome; otherwise
-      // the login panel appears underneath the fading overlay.
-      setTimeout(() => showLoginScreen(), 260);
-    } catch (err) {
-      console.error('[bootstrap] game preparation failed:', err);
-      unwatch();
-      loadingScreen.setStatus('Failed to load. Please reload the page.');
-    }
+    await preparedGame.connectAndAuth(tokenResult.token, tokenResult.username, (pct, status) => {
+      loadingScreen.setProgress(pct);
+      loadingScreen.setStatus(status);
+    });
+    startupTrace.mark('auto_game_connected');
+    loadingScreen.hide();
+    revealGame(340);
+  } catch (err) {
+    console.error('[bootstrap] auto-login failed:', err);
+    unwatch();
+    loadingScreen.hide();
+    showLoginScreen();
   }
 }
 

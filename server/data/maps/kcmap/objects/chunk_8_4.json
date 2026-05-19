@@ -1482,25 +1482,6 @@
     }
   },
   {
-    "assetId": "mid_grass_08",
-    "layerId": "layer_0",
-    "position": {
-      "x": 287.5,
-      "y": -1.0352805195233423,
-      "z": 128.5
-    },
-    "rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "scale": {
-      "x": 1,
-      "y": 1,
-      "z": 1
-    }
-  },
-  {
     "assetId": "closed chest",
     "layerId": "layer_0",
     "position": {
