@@ -21,6 +21,13 @@ pickaxeminingset_sourcefiles/
 # Backup glbs kept locally
 client/public/Character models/*backup*.glb
 
+# Source/import assets that should not ship from client/public
+client/public/assets/forced-textures/
+client/public/assets/models/Bought packs/
+client/public/assets/models/*.blend
+client/public/assets/mobs/**/*.fbx
+client/public/assets/bought-assets/sylora_bloomsacape_stylized_lowpoly_grass_pack/
+
 # Editor assets served via proxy to server (symlink removed for Windows compat)
 editor/public/assets
 # Editor character GLB + animations served via proxy to client dev server

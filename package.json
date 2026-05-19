@@ -17,6 +17,7 @@
     "build:website": "cd website && bunx next build",
     "build": "bun run build:client && bun run build:editor && bun run build:website",
     "start": "bun server/src/main.ts",
+    "audit:assets": "bun scripts/audit-assets.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },
