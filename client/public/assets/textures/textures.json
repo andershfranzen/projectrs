@@ -519,19 +519,19 @@
   {
     "id": "tex87",
     "name": "Texture 87",
-    "path": "/assets/textures/87.tif",
+    "path": "/assets/textures/87.png",
     "defaultScale": 4
   },
   {
     "id": "tex88",
     "name": "Texture 88",
-    "path": "/assets/textures/88.tif",
+    "path": "/assets/textures/88.png",
     "defaultScale": 4
   },
   {
     "id": "tex89",
     "name": "Texture 89",
-    "path": "/assets/textures/89.tif",
+    "path": "/assets/textures/89.png",
     "defaultScale": 4
   },
   {
@@ -555,7 +555,7 @@
   {
     "id": "tex93",
     "name": "Texture 93",
-    "path": "/assets/textures/93.tif",
+    "path": "/assets/textures/93.png",
     "defaultScale": 4
   },
   {
@@ -596,7 +596,7 @@
   {
     "id": "tex-stretched-88",
     "name": "Stretched 88",
-    "path": "/assets/stretched-textures/88.tif"
+    "path": "/assets/stretched-textures/88.png"
   },
   {
     "id": "tex-stretched-90",
@@ -606,7 +606,7 @@
   {
     "id": "tex-stretched-93",
     "name": "Stretched 93",
-    "path": "/assets/stretched-textures/93.tif"
+    "path": "/assets/stretched-textures/93.png"
   },
   {
     "id": "tex87",
