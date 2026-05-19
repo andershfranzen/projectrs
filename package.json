@@ -18,6 +18,7 @@
     "build": "bun run build:client && bun run build:editor && bun run build:website",
     "start": "bun server/src/main.ts",
     "audit:assets": "bun scripts/audit-assets.ts",
+    "audit:rsc-pngs": "bun tools/audit-rsc-pngs.ts",
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit -p tsconfig.json"
   },

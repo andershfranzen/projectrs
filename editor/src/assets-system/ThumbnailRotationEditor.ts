@@ -7,6 +7,7 @@ import '@babylonjs/loaders/glTF'
 import {
   DEFAULT_THUMB_ALPHA,
   DEFAULT_THUMB_BETA,
+  DEFAULT_THUMB_DISTANCE_MULT,
   computeFitTarget,
   createThumbnailCamera,
   disposeImportResult,
@@ -20,6 +21,14 @@ import {
 import { clearCachedThumb } from './ThumbnailCache'
 
 const MODAL_SIZE = 320
+const RAD_TO_DEG = 180 / Math.PI
+const DEG_TO_RAD = Math.PI / 180
+const MIN_TILT_DEG = 1
+const MAX_TILT_DEG = 179
+const MIN_ICON_SCALE = 0.1
+const MAX_ICON_SCALE = 1.5
+const MIN_DISTANCE_MULT = 0.1
+const MAX_DISTANCE_MULT = 12
 
 export interface ThumbnailPoseEditorOptions {
   targetType: 'asset' | 'item'
@@ -28,6 +37,8 @@ export interface ThumbnailPoseEditorOptions {
   title: string
   subtitle?: string
   bakedWarning?: string
+  initialOverride?: AssetThumbnailOverride
+  renderOutputPreview?: (entry: AssetThumbnailOverride) => Promise<string | null>
   onSaved: () => void
 }
 
@@ -53,10 +64,12 @@ export async function openThumbnailRotationEditor(
 export async function openThumbnailPoseEditor(
   options: ThumbnailPoseEditorOptions,
 ): Promise<void> {
+  const runtimePreviewMode = !!options.renderOutputPreview
   const backdrop = document.createElement('div')
   backdrop.className = 'asset-rotate-modal'
   const inner = document.createElement('div')
   inner.className = 'asset-rotate-modal-inner'
+  if (runtimePreviewMode) inner.classList.add('runtime-preview-mode')
   backdrop.appendChild(inner)
 
   const title = document.createElement('div')
@@ -81,26 +94,178 @@ export async function openThumbnailPoseEditor(
   canvas.height = MODAL_SIZE
   inner.appendChild(canvas)
 
+  let outputImg: HTMLImageElement | null = null
+  if (runtimePreviewMode) {
+    const outputWrap = document.createElement('div')
+    outputWrap.className = 'asset-rotate-output-wrap'
+    const outputLabel = document.createElement('div')
+    outputLabel.className = 'asset-rotate-output-label'
+    outputLabel.textContent = 'Runtime thumbnail preview'
+    outputImg = document.createElement('img')
+    outputImg.className = 'asset-rotate-output-img'
+    outputWrap.appendChild(outputLabel)
+    outputWrap.appendChild(outputImg)
+    inner.appendChild(outputWrap)
+  }
+
   const hint = document.createElement('div')
-  hint.textContent = 'Drag camera · scroll zoom · adjust model yaw if the export faces the wrong way'
+  hint.textContent = runtimePreviewMode
+    ? 'This preview is the saved/copied thumbnail · drag angle/tilt · lower Item size makes it smaller'
+    : 'Drag view angle · scroll zoom · use model yaw only for bad exports'
   hint.style.opacity = '0.5'
   inner.appendChild(hint)
+
+  const sideRow = document.createElement('div')
+  sideRow.className = 'asset-rotate-side-row'
+  const sidePresets = [
+    { label: 'Front', alpha: -Math.PI / 2, beta: DEFAULT_THUMB_BETA },
+    { label: 'Right', alpha: 0, beta: DEFAULT_THUMB_BETA },
+    { label: 'Back', alpha: Math.PI / 2, beta: DEFAULT_THUMB_BETA },
+    { label: 'Left', alpha: Math.PI, beta: DEFAULT_THUMB_BETA },
+    { label: '3/4', alpha: DEFAULT_THUMB_ALPHA, beta: DEFAULT_THUMB_BETA },
+    { label: 'Top', alpha: DEFAULT_THUMB_ALPHA, beta: 12 * DEG_TO_RAD },
+    { label: 'High', alpha: DEFAULT_THUMB_ALPHA, beta: 35 * DEG_TO_RAD },
+    { label: 'Low', alpha: DEFAULT_THUMB_ALPHA, beta: 120 * DEG_TO_RAD },
+    { label: 'Front High', alpha: -Math.PI / 2, beta: 35 * DEG_TO_RAD },
+    { label: 'Right High', alpha: 0, beta: 35 * DEG_TO_RAD },
+  ]
+  for (const preset of sidePresets) {
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.className = 'asset-rotate-side-btn'
+    btn.textContent = preset.label
+    btn.addEventListener('click', () => {
+      cam.alpha = preset.alpha
+      cam.beta = preset.beta
+      syncControls()
+      scheduleOutputPreview()
+    })
+    sideRow.appendChild(btn)
+  }
+  inner.appendChild(sideRow)
 
   const yawRow = document.createElement('div')
   yawRow.className = 'asset-rotate-modal-control'
   const yawLabel = document.createElement('label')
-  yawLabel.textContent = 'Model yaw'
+  yawLabel.textContent = 'View angle'
   const yawSlider = document.createElement('input')
   yawSlider.type = 'range'
-  yawSlider.min = String(-Math.PI)
-  yawSlider.max = String(Math.PI)
-  yawSlider.step = '0.01'
-  const yawValue = document.createElement('span')
-  yawValue.className = 'asset-rotate-modal-value'
+  yawSlider.min = '-180'
+  yawSlider.max = '180'
+  yawSlider.step = '0.5'
+  const yawValue = document.createElement('input')
+  yawValue.type = 'number'
+  yawValue.min = '-180'
+  yawValue.max = '180'
+  yawValue.step = '0.5'
+  yawValue.className = 'asset-rotate-modal-number'
   yawRow.appendChild(yawLabel)
   yawRow.appendChild(yawSlider)
   yawRow.appendChild(yawValue)
   inner.appendChild(yawRow)
+
+  const tiltRow = document.createElement('div')
+  tiltRow.className = 'asset-rotate-modal-control'
+  const tiltLabel = document.createElement('label')
+  tiltLabel.textContent = 'Tilt'
+  const tiltSlider = document.createElement('input')
+  tiltSlider.type = 'range'
+  tiltSlider.min = String(MIN_TILT_DEG)
+  tiltSlider.max = String(MAX_TILT_DEG)
+  tiltSlider.step = '0.5'
+  const tiltValue = document.createElement('input')
+  tiltValue.type = 'number'
+  tiltValue.min = String(MIN_TILT_DEG)
+  tiltValue.max = String(MAX_TILT_DEG)
+  tiltValue.step = '0.5'
+  tiltValue.className = 'asset-rotate-modal-number'
+  tiltRow.appendChild(tiltLabel)
+  tiltRow.appendChild(tiltSlider)
+  tiltRow.appendChild(tiltValue)
+  inner.appendChild(tiltRow)
+
+  const zoomRow = document.createElement('div')
+  zoomRow.className = 'asset-rotate-modal-control'
+  const zoomLabel = document.createElement('label')
+  zoomLabel.textContent = runtimePreviewMode ? 'Item size' : 'Zoom'
+  const zoomSlider = document.createElement('input')
+  zoomSlider.type = 'range'
+  zoomSlider.min = String(runtimePreviewMode ? MIN_ICON_SCALE : MIN_DISTANCE_MULT)
+  zoomSlider.max = String(runtimePreviewMode ? MAX_ICON_SCALE : MAX_DISTANCE_MULT)
+  zoomSlider.step = '0.05'
+  const zoomValue = document.createElement('input')
+  zoomValue.type = 'number'
+  zoomValue.min = String(runtimePreviewMode ? MIN_ICON_SCALE : MIN_DISTANCE_MULT)
+  zoomValue.max = String(runtimePreviewMode ? MAX_ICON_SCALE : MAX_DISTANCE_MULT)
+  zoomValue.step = '0.05'
+  zoomValue.className = 'asset-rotate-modal-number'
+  zoomValue.title = runtimePreviewMode
+    ? 'Lower values make the item appear smaller without reducing render quality.'
+    : 'Higher values zoom the camera out.'
+  zoomRow.appendChild(zoomLabel)
+  zoomRow.appendChild(zoomSlider)
+  zoomRow.appendChild(zoomValue)
+  inner.appendChild(zoomRow)
+
+  const modelYawRow = document.createElement('div')
+  modelYawRow.className = 'asset-rotate-modal-control'
+  const modelYawLabel = document.createElement('label')
+  modelYawLabel.textContent = 'Model yaw'
+  const modelYawSlider = document.createElement('input')
+  modelYawSlider.type = 'range'
+  modelYawSlider.min = '-180'
+  modelYawSlider.max = '180'
+  modelYawSlider.step = '0.5'
+  const modelYawValue = document.createElement('input')
+  modelYawValue.type = 'number'
+  modelYawValue.min = '-180'
+  modelYawValue.max = '180'
+  modelYawValue.step = '0.5'
+  modelYawValue.className = 'asset-rotate-modal-number'
+  modelYawRow.appendChild(modelYawLabel)
+  modelYawRow.appendChild(modelYawSlider)
+  modelYawRow.appendChild(modelYawValue)
+  inner.appendChild(modelYawRow)
+
+  const modelPitchRow = document.createElement('div')
+  modelPitchRow.className = 'asset-rotate-modal-control'
+  const modelPitchLabel = document.createElement('label')
+  modelPitchLabel.textContent = 'Model pitch'
+  const modelPitchSlider = document.createElement('input')
+  modelPitchSlider.type = 'range'
+  modelPitchSlider.min = '-180'
+  modelPitchSlider.max = '180'
+  modelPitchSlider.step = '0.5'
+  const modelPitchValue = document.createElement('input')
+  modelPitchValue.type = 'number'
+  modelPitchValue.min = '-180'
+  modelPitchValue.max = '180'
+  modelPitchValue.step = '0.5'
+  modelPitchValue.className = 'asset-rotate-modal-number'
+  modelPitchRow.appendChild(modelPitchLabel)
+  modelPitchRow.appendChild(modelPitchSlider)
+  modelPitchRow.appendChild(modelPitchValue)
+  inner.appendChild(modelPitchRow)
+
+  const modelRollRow = document.createElement('div')
+  modelRollRow.className = 'asset-rotate-modal-control'
+  const modelRollLabel = document.createElement('label')
+  modelRollLabel.textContent = 'Model roll'
+  const modelRollSlider = document.createElement('input')
+  modelRollSlider.type = 'range'
+  modelRollSlider.min = '-180'
+  modelRollSlider.max = '180'
+  modelRollSlider.step = '0.5'
+  const modelRollValue = document.createElement('input')
+  modelRollValue.type = 'number'
+  modelRollValue.min = '-180'
+  modelRollValue.max = '180'
+  modelRollValue.step = '0.5'
+  modelRollValue.className = 'asset-rotate-modal-number'
+  modelRollRow.appendChild(modelRollLabel)
+  modelRollRow.appendChild(modelRollSlider)
+  modelRollRow.appendChild(modelRollValue)
+  inner.appendChild(modelRollRow)
 
   const buttons = document.createElement('div')
   buttons.className = 'asset-rotate-modal-row'
@@ -124,12 +289,28 @@ export async function openThumbnailPoseEditor(
 
   document.body.appendChild(backdrop)
 
-  const engine = new Engine(canvas, true, { preserveDrawingBuffer: true, antialias: true })
-  const scene = new Scene(engine)
-  scene.useRightHandedSystem = true
-  scene.clearColor = new Color4(0.07, 0.08, 0.09, 1)
-  setupThumbnailLights(scene, 'rot')
-  const cam = createThumbnailCamera(scene, 'rot-cam')
+  let engine: Engine | null = null
+  let scene: Scene | null = null
+  let cam: {
+    alpha: number
+    beta: number
+    radius: number
+    fov: number
+    setTarget: (target: any) => void
+  } = {
+    alpha: DEFAULT_THUMB_ALPHA,
+    beta: DEFAULT_THUMB_BETA,
+    radius: 10,
+    fov: 0.8,
+    setTarget: () => {},
+  }
+  if (!runtimePreviewMode) {
+    engine = new Engine(canvas, true, { preserveDrawingBuffer: true, antialias: true })
+    scene = new Scene(engine)
+    scene.clearColor = new Color4(0.07, 0.08, 0.09, 1)
+    setupThumbnailLights(scene, 'rot')
+    cam = createThumbnailCamera(scene, 'rot-cam')
+  }
 
   // Closed-flag is the race guard: if the user cancels DURING the async
   // ImportMeshAsync await below, close() runs and disposes the scene before
@@ -139,8 +320,15 @@ export async function openThumbnailPoseEditor(
   let importResult: ISceneLoaderAsyncResult | null = null
   let fitRadius = 10
   let modelRoot: any = null
-  let baseRootYaw = 0
+  let baseRootRotation = { x: 0, y: 0, z: 0 }
+  let rotationX = 0
   let rotationY = 0
+  let rotationZ = 0
+  let iconScale = 1
+  let outputPreviewTimer: number | null = null
+  let outputPreviewSeq = 0
+  let outputPreviewRunning = false
+  let outputPreviewQueued = false
 
   const onKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') close()
@@ -150,31 +338,38 @@ export async function openThumbnailPoseEditor(
   const close = (): void => {
     if (closed) return
     closed = true
+    if (outputPreviewTimer !== null) window.clearTimeout(outputPreviewTimer)
     document.removeEventListener('keydown', onKeyDown)
-    engine.stopRenderLoop()
+    if (engine) engine.stopRenderLoop()
     if (importResult) disposeImportResult(importResult)
-    try { scene.dispose() } catch { /* ignore */ }
-    try { engine.dispose() } catch { /* ignore */ }
+    try { scene?.dispose() } catch { /* ignore */ }
+    try { engine?.dispose() } catch { /* ignore */ }
     try { document.body.removeChild(backdrop) } catch { /* ignore */ }
   }
 
   try {
-    const { dir, file } = splitEncodedGlbUrl(options.modelPath)
-    importResult = await SceneLoader.ImportMeshAsync('', dir, file, scene)
-    if (closed) {
-      disposeImportResult(importResult)
-      return
-    }
-    for (const ag of importResult.animationGroups || []) ag.stop()
-    modelRoot = importResult.meshes.find((m) => m.name === '__root__') ?? importResult.meshes.find((m) => !m.parent)
-    if (modelRoot) {
-      if (modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = null
-      baseRootYaw = modelRoot.rotation.y || 0
-    }
-    const fit = computeFitTarget(importResult, cam.fov)
-    if (fit) {
-      cam.setTarget(fit.center)
-      fitRadius = fit.fitRadius
+    if (!runtimePreviewMode && scene) {
+      const { dir, file } = splitEncodedGlbUrl(options.modelPath)
+      importResult = await SceneLoader.ImportMeshAsync('', dir, file, scene)
+      if (closed) {
+        disposeImportResult(importResult)
+        return
+      }
+      for (const ag of importResult.animationGroups || []) ag.stop()
+      modelRoot = importResult.meshes.find((m) => m.name === '__root__') ?? importResult.meshes.find((m) => !m.parent)
+      if (modelRoot) {
+        if (modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = null
+        baseRootRotation = {
+          x: modelRoot.rotation.x || 0,
+          y: modelRoot.rotation.y || 0,
+          z: modelRoot.rotation.z || 0,
+        }
+      }
+      const fit = computeFitTarget(importResult, cam.fov)
+      if (fit) {
+        cam.setTarget(fit.center)
+        fitRadius = fit.fitRadius
+      }
     }
   } catch (err) {
     console.warn('[ThumbnailRotationEditor] load failed for', options.modelPath, err)
@@ -182,22 +377,86 @@ export async function openThumbnailPoseEditor(
   }
 
   const initial = options.targetType === 'item'
-    ? await getItemOverride(Number(options.key))
+    ? options.initialOverride ?? await getItemOverride(Number(options.key))
     : await getAssetOverride(String(options.key))
   if (closed) return
-  let distMult = initial.distanceMult ?? 1
+  let distMult = initial.distanceMult ?? DEFAULT_THUMB_DISTANCE_MULT
+  iconScale = initial.iconScale ?? 1
   cam.alpha = initial.alpha ?? DEFAULT_THUMB_ALPHA
   cam.beta = initial.beta ?? DEFAULT_THUMB_BETA
+  rotationX = initial.rotationX ?? 0
   rotationY = initial.rotationY ?? 0
-  yawSlider.value = String(rotationY)
+  rotationZ = initial.rotationZ ?? 0
+  yawSlider.value = String(roundControl(cam.alpha * RAD_TO_DEG))
+  tiltSlider.value = String(roundControl(cam.beta * RAD_TO_DEG))
+  zoomSlider.value = String(roundControl(runtimePreviewMode ? iconScale : distMult, 2))
+  modelYawSlider.value = String(roundControl(rotationY * RAD_TO_DEG))
+  modelPitchSlider.value = String(roundControl(rotationX * RAD_TO_DEG))
+  modelRollSlider.value = String(roundControl(rotationZ * RAD_TO_DEG))
   cam.radius = fitRadius * distMult
 
-  const updateYawLabel = (): void => {
-    yawValue.textContent = `${Math.round(rotationY * 180 / Math.PI)}°`
+  const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
+  function roundControl(value: number, decimals = 1): number {
+    const mult = 10 ** decimals
+    return Math.round(value * mult) / mult
+  }
+  const syncControls = (): void => {
+    yawSlider.value = String(roundControl(cam.alpha * RAD_TO_DEG))
+    yawValue.value = yawSlider.value
+    tiltSlider.value = String(roundControl(cam.beta * RAD_TO_DEG))
+    tiltValue.value = tiltSlider.value
+    zoomSlider.value = String(roundControl(runtimePreviewMode ? iconScale : distMult, 2))
+    zoomValue.value = zoomSlider.value
+    modelYawSlider.value = String(roundControl(rotationY * RAD_TO_DEG))
+    modelYawValue.value = modelYawSlider.value
+    modelPitchSlider.value = String(roundControl(rotationX * RAD_TO_DEG))
+    modelPitchValue.value = modelPitchSlider.value
+    modelRollSlider.value = String(roundControl(rotationZ * RAD_TO_DEG))
+    modelRollValue.value = modelRollSlider.value
+  }
+  const clampTilt = (value: number): number => {
+    return clamp(value, MIN_TILT_DEG * DEG_TO_RAD, MAX_TILT_DEG * DEG_TO_RAD)
+  }
+  const scheduleOutputPreview = (): void => {
+    if (!options.renderOutputPreview || !outputImg) return
+    if (outputPreviewTimer !== null) window.clearTimeout(outputPreviewTimer)
+    const delayMs = outputPreviewRunning ? 0 : 100
+    outputPreviewTimer = window.setTimeout(() => {
+      outputPreviewTimer = null
+      void renderLatestOutputPreview()
+    }, delayMs)
+  }
+  const renderLatestOutputPreview = async (): Promise<void> => {
+    if (!options.renderOutputPreview || !outputImg || closed) return
+    if (outputPreviewRunning) {
+      outputPreviewQueued = true
+      return
+    }
+    outputPreviewRunning = true
+    outputPreviewQueued = false
+    const seq = ++outputPreviewSeq
+    const entry = {
+      alpha: cam.alpha,
+      beta: cam.beta,
+      distanceMult: distMult,
+      rotationX,
+      rotationY,
+      rotationZ,
+      iconScale,
+    }
+    outputImg.style.opacity = '0.72'
+    const url = await options.renderOutputPreview(entry).catch(() => null)
+    outputPreviewRunning = false
+    if (closed || seq !== outputPreviewSeq) return
+    if (url) outputImg.src = url
+    outputImg.style.opacity = '1'
+    if (outputPreviewQueued) void renderLatestOutputPreview()
   }
   const applyYaw = (): void => {
     if (!modelRoot) return
-    modelRoot.rotation.y = baseRootYaw + rotationY
+    modelRoot.rotation.x = baseRootRotation.x + rotationX
+    modelRoot.rotation.y = baseRootRotation.y + rotationY
+    modelRoot.rotation.z = baseRootRotation.z + rotationZ
     modelRoot.computeWorldMatrix(true)
     if (importResult) {
       for (const mesh of importResult.meshes) mesh.computeWorldMatrix(true)
@@ -213,54 +472,151 @@ export async function openThumbnailPoseEditor(
   }
   applyYaw()
   refitCamera()
-  updateYawLabel()
+  syncControls()
+  scheduleOutputPreview()
 
-  engine.runRenderLoop(() => scene.render())
+  if (engine && scene) engine.runRenderLoop(() => scene!.render())
+
+  const wrapRadians = (value: number): number => {
+    let out = value
+    while (out > Math.PI) out -= Math.PI * 2
+    while (out < -Math.PI) out += Math.PI * 2
+    return out
+  }
 
   let dragging = false
   let lastX = 0, lastY = 0
-  canvas.addEventListener('pointerdown', (e) => {
+  const dragTarget = (outputImg ?? canvas) as HTMLElement
+  dragTarget.addEventListener('pointerdown', (e: PointerEvent) => {
     dragging = true
     lastX = e.clientX
     lastY = e.clientY
-    canvas.setPointerCapture(e.pointerId)
+    dragTarget.setPointerCapture(e.pointerId)
   })
-  canvas.addEventListener('pointermove', (e) => {
+  dragTarget.addEventListener('pointermove', (e: PointerEvent) => {
     if (!dragging) return
     const dx = e.clientX - lastX
     const dy = e.clientY - lastY
     lastX = e.clientX
     lastY = e.clientY
-    cam.alpha -= dx * 0.01
-    cam.beta = Math.min(Math.PI - 0.05, Math.max(0.05, cam.beta - dy * 0.01))
+    cam.alpha = wrapRadians(cam.alpha - dx * 0.015)
+    cam.beta = clampTilt(cam.beta - dy * 0.01)
+    syncControls()
+    scheduleOutputPreview()
   })
-  canvas.addEventListener('pointerup', (e) => {
+  dragTarget.addEventListener('pointerup', (e: PointerEvent) => {
     dragging = false
-    try { canvas.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
+    try { dragTarget.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
   })
-  canvas.addEventListener('wheel', (e) => {
+  dragTarget.addEventListener('wheel', (e: WheelEvent) => {
     e.preventDefault()
-    const factor = e.deltaY > 0 ? 1.08 : 1 / 1.08
-    distMult = Math.min(5, Math.max(0.1, distMult * factor))
-    cam.radius = fitRadius * distMult
+    if (runtimePreviewMode) {
+      const factor = e.deltaY > 0 ? 1 / 1.08 : 1.08
+      iconScale = clamp(iconScale * factor, MIN_ICON_SCALE, MAX_ICON_SCALE)
+    } else {
+      const factor = e.deltaY > 0 ? 1.08 : 1 / 1.08
+      distMult = clamp(distMult * factor, MIN_DISTANCE_MULT, MAX_DISTANCE_MULT)
+      cam.radius = fitRadius * distMult
+    }
+    syncControls()
+    scheduleOutputPreview()
   }, { passive: false })
 
   yawSlider.addEventListener('input', () => {
-    rotationY = Number(yawSlider.value) || 0
+    cam.alpha = wrapRadians((Number(yawSlider.value) || 0) * DEG_TO_RAD)
+    syncControls()
+    scheduleOutputPreview()
+  })
+  yawValue.addEventListener('change', () => {
+    cam.alpha = wrapRadians((Number(yawValue.value) || 0) * DEG_TO_RAD)
+    syncControls()
+    scheduleOutputPreview()
+  })
+  tiltSlider.addEventListener('input', () => {
+    cam.beta = clampTilt((Number(tiltSlider.value) || 0) * DEG_TO_RAD)
+    syncControls()
+    scheduleOutputPreview()
+  })
+  tiltValue.addEventListener('change', () => {
+    cam.beta = clampTilt((Number(tiltValue.value) || MIN_TILT_DEG) * DEG_TO_RAD)
+    syncControls()
+    scheduleOutputPreview()
+  })
+  zoomSlider.addEventListener('input', () => {
+    if (runtimePreviewMode) {
+      iconScale = clamp(Number(zoomSlider.value) || 1, MIN_ICON_SCALE, MAX_ICON_SCALE)
+    } else {
+      distMult = clamp(Number(zoomSlider.value) || DEFAULT_THUMB_DISTANCE_MULT, MIN_DISTANCE_MULT, MAX_DISTANCE_MULT)
+      cam.radius = fitRadius * distMult
+    }
+    syncControls()
+    scheduleOutputPreview()
+  })
+  zoomValue.addEventListener('change', () => {
+    if (runtimePreviewMode) {
+      iconScale = clamp(Number(zoomValue.value) || 1, MIN_ICON_SCALE, MAX_ICON_SCALE)
+    } else {
+      distMult = clamp(Number(zoomValue.value) || DEFAULT_THUMB_DISTANCE_MULT, MIN_DISTANCE_MULT, MAX_DISTANCE_MULT)
+      cam.radius = fitRadius * distMult
+    }
+    syncControls()
+    scheduleOutputPreview()
+  })
+  modelYawSlider.addEventListener('input', () => {
+    rotationY = wrapRadians((Number(modelYawSlider.value) || 0) * DEG_TO_RAD)
     applyYaw()
     refitCamera()
-    updateYawLabel()
+    syncControls()
+    scheduleOutputPreview()
+  })
+  modelYawValue.addEventListener('change', () => {
+    rotationY = wrapRadians((Number(modelYawValue.value) || 0) * DEG_TO_RAD)
+    applyYaw()
+    refitCamera()
+    syncControls()
+    scheduleOutputPreview()
+  })
+  modelPitchSlider.addEventListener('input', () => {
+    rotationX = wrapRadians((Number(modelPitchSlider.value) || 0) * DEG_TO_RAD)
+    applyYaw()
+    refitCamera()
+    syncControls()
+    scheduleOutputPreview()
+  })
+  modelPitchValue.addEventListener('change', () => {
+    rotationX = wrapRadians((Number(modelPitchValue.value) || 0) * DEG_TO_RAD)
+    applyYaw()
+    refitCamera()
+    syncControls()
+    scheduleOutputPreview()
+  })
+  modelRollSlider.addEventListener('input', () => {
+    rotationZ = wrapRadians((Number(modelRollSlider.value) || 0) * DEG_TO_RAD)
+    applyYaw()
+    refitCamera()
+    syncControls()
+    scheduleOutputPreview()
+  })
+  modelRollValue.addEventListener('change', () => {
+    rotationZ = wrapRadians((Number(modelRollValue.value) || 0) * DEG_TO_RAD)
+    applyYaw()
+    refitCamera()
+    syncControls()
+    scheduleOutputPreview()
   })
   resetBtn.addEventListener('click', () => {
     cam.alpha = DEFAULT_THUMB_ALPHA
     cam.beta = DEFAULT_THUMB_BETA
-    distMult = 1
+    distMult = DEFAULT_THUMB_DISTANCE_MULT
+    iconScale = 1
+    rotationX = 0
     rotationY = 0
-    yawSlider.value = '0'
+    rotationZ = 0
     cam.radius = fitRadius
     applyYaw()
     refitCamera()
-    updateYawLabel()
+    syncControls()
+    scheduleOutputPreview()
   })
   cancelBtn.addEventListener('click', close)
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
@@ -279,7 +635,10 @@ export async function openThumbnailPoseEditor(
           alpha: entry.alpha,
           beta: entry.beta,
           distanceMult: entry.distanceMult,
+          rotationX: entry.rotationX,
           rotationY: entry.rotationY,
+          rotationZ: entry.rotationZ,
+          iconScale: entry.iconScale,
         }),
       })
       if (!res.ok) {
@@ -290,8 +649,8 @@ export async function openThumbnailPoseEditor(
         return
       }
       invalidateOverridesCache()
-      await clearCachedThumb(options.modelPath)
-      options.onSaved()
+      if (options.targetType === 'asset') await clearCachedThumb(options.modelPath)
+      await options.onSaved()
       close()
     } catch (err) {
       console.warn('[ThumbnailRotationEditor] save error', err)
@@ -305,6 +664,14 @@ export async function openThumbnailPoseEditor(
   })
 
   saveBtn.addEventListener('click', async () => {
-    await saveOverride({ alpha: cam.alpha, beta: cam.beta, distanceMult: distMult, rotationY })
+    await saveOverride({
+      alpha: cam.alpha,
+      beta: cam.beta,
+      distanceMult: distMult,
+      rotationX,
+      rotationY,
+      rotationZ,
+      ...(options.targetType === 'item' ? { iconScale } : {}),
+    })
   })
 }

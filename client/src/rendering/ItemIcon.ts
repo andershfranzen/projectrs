@@ -1,19 +1,54 @@
 import type { ItemDef } from '@projectrs/shared';
-import { TOOL_TIER_METAL_COLOR } from '../data/EquipmentConfig';
+import { METAL_TIER_THUMBNAIL_COLOR, TOOL_TIER_METAL_COLOR } from '../data/EquipmentConfig';
 import { getThumbnail, type ThumbnailCamera, type ThumbnailOptions } from './ThumbnailRenderer';
 
 /**
  * Central icon resolver for items. Precedence:
  *   1. Pre-baked PNG at `/items/3d/{id}.png` (zero runtime cost).
  *   2. Runtime 3D render of `def.model` (IDB-cached across reloads).
- *   3. `def.sprite` (legacy 2D).
- *   4. `def.icon` (legacy 2D).
+ *   3. `def.sprite` (legacy 2D, only for items without a 3D model).
+ *   4. `def.icon` (legacy 2D, only for items without a 3D model).
  *   5. null (caller renders a placeholder).
  *
  * The baked-PNG manifest is fetched once on first call.
  */
 
 let _manifestPromise: Promise<Set<number>> | null = null;
+let _itemCatalog: ItemDef[] = [];
+let _itemFamilyIndex = new Map<string, ItemDef[]>();
+
+export const ITEM_THUMBNAIL_TIERS = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze'];
+
+export function itemThumbnailTier(item: ItemDef): string {
+  return ITEM_THUMBNAIL_TIERS.find((tier) => item.name === tier || item.name?.startsWith(`${tier} `)) || '';
+}
+
+export function itemThumbnailFamily(item: ItemDef): string {
+  const tier = itemThumbnailTier(item);
+  return tier ? (item.name || '').slice(tier.length).trim() : item.name || '';
+}
+
+export function itemThumbnailTierIndex(item: ItemDef): number {
+  const tier = itemThumbnailTier(item);
+  return tier ? ITEM_THUMBNAIL_TIERS.indexOf(tier) : Number.MAX_SAFE_INTEGER;
+}
+
+export function setThumbnailItemCatalog(defs: Iterable<ItemDef>): void {
+  _itemCatalog = Array.from(defs);
+  _itemFamilyIndex = new Map<string, ItemDef[]>();
+  for (const item of _itemCatalog) {
+    if (!item.equipSlot) continue;
+    const family = itemThumbnailFamily(item);
+    if (!family) continue;
+    const key = `${item.equipSlot}\0${family}`;
+    const arr = _itemFamilyIndex.get(key);
+    if (arr) arr.push(item);
+    else _itemFamilyIndex.set(key, [item]);
+  }
+  for (const arr of _itemFamilyIndex.values()) {
+    arr.sort((a, b) => itemThumbnailTierIndex(a) - itemThumbnailTierIndex(b) || a.id - b.id);
+  }
+}
 
 function loadManifest(): Promise<Set<number>> {
   if (_manifestPromise) return _manifestPromise;
@@ -34,7 +69,10 @@ function loadManifest(): Promise<Set<number>> {
 /** Per-item override: camera axes + optional model rotation. Loaded once from
  *  `/data/thumbnail-overrides.json`. Override merges over the slot default. */
 export interface ThumbnailOverride extends ThumbnailCamera {
+  rotationX?: number;
   rotationY?: number;
+  rotationZ?: number;
+  iconScale?: number;
 }
 
 /** Per-slot defaults — the average best framing for a slot. Tune here once
@@ -58,6 +96,23 @@ export const SLOT_THUMBNAIL_CAMERAS: Record<string, ThumbnailCamera> = {
 
 let _overridesPromise: Promise<Record<number, ThumbnailOverride>> | null = null;
 
+const SHIELD_THUMBNAIL_TINT: Record<number, [number, number, number]> = {
+  // Square shields
+  67: METAL_TIER_THUMBNAIL_COLOR.bronze,
+  81: METAL_TIER_THUMBNAIL_COLOR.iron,
+  95: METAL_TIER_THUMBNAIL_COLOR.steel,
+  109: METAL_TIER_THUMBNAIL_COLOR.mithril,
+  123: METAL_TIER_THUMBNAIL_COLOR.blackBronze,
+  // Kite shields
+  69: METAL_TIER_THUMBNAIL_COLOR.bronze,
+  83: METAL_TIER_THUMBNAIL_COLOR.iron,
+  97: METAL_TIER_THUMBNAIL_COLOR.steel,
+  111: METAL_TIER_THUMBNAIL_COLOR.mithril,
+  125: METAL_TIER_THUMBNAIL_COLOR.blackBronze,
+};
+
+const SHIELD_DOMINANT_BROWN: [number, number, number] = [0.119, 0.044, 0.007];
+
 function loadOverrides(): Promise<Record<number, ThumbnailOverride>> {
   if (_overridesPromise) return _overridesPromise;
   _overridesPromise = (async () => {
@@ -79,37 +134,89 @@ function loadOverrides(): Promise<Record<number, ThumbnailOverride>> {
   return _overridesPromise;
 }
 
-/** Build the camera + rotation options for an item. Merges slot default with
- *  per-item override. Exposed so the bake script can use the same settings. */
-export async function buildThumbnailOptionsForItem(def: ItemDef): Promise<ThumbnailOptions> {
+export function invalidateThumbnailOverrides(): void {
+  _overridesPromise = null;
+}
+
+export function findThumbnailOverrideForItem(
+  def: ItemDef,
+  overrides: Record<number, ThumbnailOverride>,
+  itemDefs: readonly ItemDef[] = _itemCatalog,
+): ThumbnailOverride | undefined {
+  const direct = overrides[def.id];
+  if (direct) return direct;
+  if (!def.equipSlot || itemDefs.length === 0) return undefined;
+
+  const family = itemThumbnailFamily(def);
+  if (!family) return undefined;
+
+  const targetTierIndex = itemThumbnailTierIndex(def);
+  const indexed = itemDefs === _itemCatalog ? _itemFamilyIndex.get(`${def.equipSlot}\0${family}`) : undefined;
+  const candidates = indexed ?? itemDefs.filter((item) =>
+    item.equipSlot === def.equipSlot &&
+    itemThumbnailFamily(item) === family
+  );
+
+  let best: ItemDef | undefined;
+  let bestDelta = Number.POSITIVE_INFINITY;
+  for (const item of candidates) {
+    if (item.id === def.id || !overrides[item.id]) continue;
+    const delta = Math.abs(itemThumbnailTierIndex(item) - targetTierIndex);
+    if (!best || delta < bestDelta || (delta === bestDelta && item.id < best.id)) {
+      best = item;
+      bestDelta = delta;
+    }
+  }
+
+  return best ? overrides[best.id] : undefined;
+}
+
+/** Build thumbnail options for a specific item and override. Used by both the
+ *  game client and editor previews so saved editor poses match runtime icons. */
+export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride): ThumbnailOptions {
   const opts: ThumbnailOptions = {};
   const tint = TOOL_TIER_METAL_COLOR[def.id];
   if (tint) opts.tint = tint;
-  const slotCam = def.equipSlot ? SLOT_THUMBNAIL_CAMERAS[def.equipSlot] : undefined;
-  const overrides = await loadOverrides();
-  const itemOverride = overrides[def.id];
-  if (slotCam || itemOverride) {
-    const { rotationY, ...itemCam } = itemOverride ?? {};
-    opts.camera = { ...slotCam, ...itemCam };
-    if (rotationY) opts.rotationY = rotationY;
+  const shieldTint = SHIELD_THUMBNAIL_TINT[def.id];
+  if (shieldTint) {
+    opts.tint = shieldTint;
+    opts.tintBaseColorMatch = SHIELD_DOMINANT_BROWN;
   }
+  const slotCam = def.equipSlot ? SLOT_THUMBNAIL_CAMERAS[def.equipSlot] : undefined;
+  if (slotCam || itemOverride) {
+    const { rotationX, rotationY, rotationZ, iconScale, ...itemCam } = itemOverride ?? {};
+    opts.camera = { ...slotCam, ...itemCam };
+    if (rotationX) opts.rotationX = rotationX;
+    if (rotationY) opts.rotationY = rotationY;
+    if (rotationZ) opts.rotationZ = rotationZ;
+    if (typeof iconScale === 'number' && Number.isFinite(iconScale) && iconScale > 0) opts.iconScale = iconScale;
+  }
+  if (def.equipSlot === 'body' && def.bodyHideStyle !== 'chain') opts.skinnedPose = 'idle';
   return opts;
 }
 
+/** Build the camera + rotation options for an item. Merges slot default with
+ *  per-item override. Exposed so the bake script can use the same settings. */
+export async function buildThumbnailOptionsForItem(def: ItemDef): Promise<ThumbnailOptions> {
+  const overrides = await loadOverrides();
+  return buildThumbnailOptionsFromOverride(def, findThumbnailOverrideForItem(def, overrides));
+}
+
 /** Resolve the GLB path from an ItemDef. Mirrors `loadGearSmart`'s fallback
- *  chain (see GameManager `buildDef`) so any item that renders 3D gear
- *  in-world also renders a 3D thumb. Items without an equip slot or model
- *  return null. The implicit-name fallback may resolve to a non-existent
- *  file — `getThumbnail` handles the 404 and `getItemIconUrl` falls through
- *  to sprite/icon. */
+ *  chain (see GameManager `buildDef`) for items that actually have a known
+ *  model. Items without a known model return null so they can still use
+ *  legacy 2D art. */
 export function resolveItemModelPath(def: ItemDef): string | null {
   if (def.model) {
     if (def.model.startsWith('/')) return def.model;
     if (!def.equipSlot) return null;
     return `/assets/equipment/${def.equipSlot}/${def.model}`;
   }
-  if (def.equipSlot) return `/assets/equipment/${def.equipSlot}/${def.id}.glb`;
   return null;
+}
+
+function uses3DIcon(def: ItemDef): boolean {
+  return resolveItemModelPath(def) !== null;
 }
 
 /** Best-effort async lookup. Returns the highest-quality icon URL available. */
@@ -122,6 +229,7 @@ export async function getItemIconUrl(def: ItemDef): Promise<string | null> {
     const opts = await buildThumbnailOptionsForItem(def);
     const dataUrl = await getThumbnail(modelPath, opts);
     if (dataUrl) return dataUrl;
+    return null;
   }
 
   if (def.sprite) return `/sprites/items/${def.sprite}`;
@@ -130,8 +238,10 @@ export async function getItemIconUrl(def: ItemDef): Promise<string | null> {
 }
 
 /** Synchronous URL — never triggers a render. Used as the immediate placeholder
- *  while `getItemIconUrl` resolves. Returns null if the def has no 2D fallback. */
+ *  while `getItemIconUrl` resolves. Returns null for modeled items so legacy
+ *  2D art never flashes before the 3D thumbnail lands. */
 export function getItemIconSyncUrl(def: ItemDef): string | null {
+  if (uses3DIcon(def)) return null;
   if (def.sprite) return `/sprites/items/${def.sprite}`;
   if (def.icon) return `/items/${def.icon}`;
   return null;
@@ -169,7 +279,7 @@ function buildPlaceholderHtml(size: number): string {
 let _iconTokenSeq = 0;
 
 /**
- * Synchronous HTML for the icon. Wraps the immediate (sprite/icon) URL in a
+ * Synchronous HTML for the icon. Wraps the immediate URL or placeholder in a
  * `<span class="item-icon" data-item-id data-icon-token>`. The token lets
  * `upgradeItemIcons` ignore stale fetches when the slot has been re-rendered.
  */

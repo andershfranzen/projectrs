@@ -169,7 +169,16 @@
       "y": 1,
       "z": 1
     },
-    "interactionSides": 6
+    "interactionTiles": [
+      {
+        "x": 1,
+        "z": 0
+      },
+      {
+        "x": 1,
+        "z": 1
+      }
+    ]
   },
   {
     "assetId": "stone slab2",
@@ -2621,6 +2630,11 @@
       "y": 1.15,
       "z": 0.85
     },
-    "interactionSides": 8
+    "interactionTiles": [
+      {
+        "x": -1,
+        "z": 0
+      }
+    ]
   }
 ]

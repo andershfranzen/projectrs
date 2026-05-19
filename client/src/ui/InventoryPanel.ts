@@ -2,6 +2,7 @@ import { INVENTORY_SIZE, ClientOpcode, encodePacket } from '@projectrs/shared';
 import type { ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createContextMenu } from './popupStyle';
+import { renderItemSlot } from '../rendering/ItemIcon';
 
 export interface InventorySlotData {
   itemId: number;
@@ -121,20 +122,20 @@ export class InventoryPanel {
 
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || `Item ${slot.itemId}`;
-    const sprite = def?.sprite;
-    const icon = def?.icon;
-
-    const iconHtml = sprite
-      ? `<img src="/sprites/items/${sprite}" style="width:28px;height:28px;image-rendering:pixelated;object-fit:contain;" />`
-      : icon
-      ? `<img src="/items/${icon}" style="width:28px;height:28px;image-rendering:pixelated;object-fit:contain;" />`
-      : `<div style="width:24px;height:24px;background:#aaa;border-radius:3px;"></div>`;
 
     el.innerHTML = `
-      ${iconHtml}
+      <div class="inventory-panel-icon" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;"></div>
       <div style="font-size: 9px; color: #ccc; text-align: center; line-height: 1;">${name.length > 10 ? name.substring(0, 9) + '..' : name}</div>
-      ${slot.quantity > 1 ? `<div style="position: absolute; top: 1px; left: 3px; font-size: 9px; color: #fd0;">${slot.quantity}</div>` : ''}
     `;
+    const iconEl = el.querySelector<HTMLElement>('.inventory-panel-icon');
+    if (iconEl) {
+      renderItemSlot(iconEl, def, this.itemDefs, {
+        size: 28,
+        quantity: slot.quantity,
+        placeholderStyle: 'width:24px;height:24px;background:#aaa;border-radius:3px;',
+        badgeStyle: 'position:absolute;top:1px;left:3px;font-size:9px;color:#fd0;text-shadow:1px 1px 0 #000;',
+      });
+    }
     el.style.borderColor = '#5a4a35';
   }
 

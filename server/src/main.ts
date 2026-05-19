@@ -1181,7 +1181,10 @@ const server = Bun.serve<SocketData>({
           alpha?: unknown;
           beta?: unknown;
           distanceMult?: unknown;
+          rotationX?: unknown;
           rotationY?: unknown;
+          rotationZ?: unknown;
+          iconScale?: unknown;
         };
         const isLegacyAssetEndpoint = url.pathname === '/api/dev/thumbnail-asset-rotation';
         const type = isLegacyAssetEndpoint ? 'asset' : body.type;
@@ -1217,11 +1220,15 @@ const server = Bun.serve<SocketData>({
           data._thumbnail_assets = {};
         }
         const entry: any = {};
-        const a = body.alpha, b = body.beta, d = body.distanceMult, r = body.rotationY;
+        const a = body.alpha, b = body.beta, d = body.distanceMult;
+        const rx = body.rotationX, ry = body.rotationY, rz = body.rotationZ, s = body.iconScale;
         if (typeof a === 'number' && Number.isFinite(a)) entry.alpha = a;
         if (typeof b === 'number' && Number.isFinite(b)) entry.beta = b;
         if (typeof d === 'number' && Number.isFinite(d) && d > 0) entry.distanceMult = d;
-        if (typeof r === 'number' && Number.isFinite(r)) entry.rotationY = r;
+        if (typeof rx === 'number' && Number.isFinite(rx)) entry.rotationX = rx;
+        if (typeof ry === 'number' && Number.isFinite(ry)) entry.rotationY = ry;
+        if (typeof rz === 'number' && Number.isFinite(rz)) entry.rotationZ = rz;
+        if (typeof s === 'number' && Number.isFinite(s) && s > 0) entry.iconScale = s;
         if (Object.keys(entry).length === 0) {
           if (target === '_thumbnail_assets') delete data._thumbnail_assets[targetKey];
           else delete data[targetKey];
@@ -1229,10 +1236,67 @@ const server = Bun.serve<SocketData>({
           if (target === '_thumbnail_assets') data._thumbnail_assets[targetKey] = entry;
           else data[targetKey] = entry;
         }
-        const tmpPath = filePath + '.tmp';
-        writeFileSync(tmpPath, JSON.stringify(data, null, 2));
-        renameSync(tmpPath, filePath);
+        await saveJsonWithBackup({
+          path: filePath,
+          data,
+          backupDir: resolve(DATA_DIR, 'backups', 'thumbnail-overrides'),
+          backupPrefix: 'thumbnail-overrides',
+          backupExt: 'json',
+          maxKeep: 50,
+        });
         return jsonResponse({ ok: true });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/dev/thumbnail-overrides/batch' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { entries?: unknown };
+        if (!Array.isArray(body.entries)) {
+          return jsonResponse({ ok: false, error: 'entries must be an array' }, 400);
+        }
+        const filePath = resolve(DATA_DIR, 'thumbnail-overrides.json');
+        let data: any = {};
+        try {
+          data = JSON.parse(readFileSync(filePath, 'utf8'));
+        } catch { data = {}; }
+        if (!data._thumbnail_assets || typeof data._thumbnail_assets !== 'object') {
+          data._thumbnail_assets = {};
+        }
+
+        let saved = 0;
+        for (const raw of body.entries) {
+          if (!raw || typeof raw !== 'object') continue;
+          const entryBody = raw as Record<string, unknown>;
+          const itemId = typeof entryBody.key === 'number' ? entryBody.key : Number(entryBody.key);
+          if (!Number.isInteger(itemId) || itemId <= 0 || itemId > 1000000) continue;
+          const entry: any = {};
+          const a = entryBody.alpha, b = entryBody.beta, d = entryBody.distanceMult;
+          const rx = entryBody.rotationX, ry = entryBody.rotationY, rz = entryBody.rotationZ, s = entryBody.iconScale;
+          if (typeof a === 'number' && Number.isFinite(a)) entry.alpha = a;
+          if (typeof b === 'number' && Number.isFinite(b)) entry.beta = b;
+          if (typeof d === 'number' && Number.isFinite(d) && d > 0) entry.distanceMult = d;
+          if (typeof rx === 'number' && Number.isFinite(rx)) entry.rotationX = rx;
+          if (typeof ry === 'number' && Number.isFinite(ry)) entry.rotationY = ry;
+          if (typeof rz === 'number' && Number.isFinite(rz)) entry.rotationZ = rz;
+          if (typeof s === 'number' && Number.isFinite(s) && s > 0) entry.iconScale = s;
+          if (Object.keys(entry).length === 0) delete data[String(itemId)];
+          else data[String(itemId)] = entry;
+          saved++;
+        }
+
+        await saveJsonWithBackup({
+          path: filePath,
+          data,
+          backupDir: resolve(DATA_DIR, 'backups', 'thumbnail-overrides'),
+          backupPrefix: 'thumbnail-overrides',
+          backupExt: 'json',
+          maxKeep: 50,
+        });
+        return jsonResponse({ ok: true, saved });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
       }

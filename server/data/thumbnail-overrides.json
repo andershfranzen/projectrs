@@ -1,5 +1,542 @@
 {
+  "9": {
+    "alpha": 1.8634073464102099,
+    "beta": 1.3986433452497935,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": -0.431592653589793,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "18": {
+    "alpha": 1.8634073464102099,
+    "beta": 1.3986433452497935,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": -0.431592653589793,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "31": {
+    "alpha": -0.9512044423369096,
+    "beta": 0.29670597283903605,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "32": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.29670597283903605,
+    "distanceMult": 0.75,
+    "rotationY": 0
+  },
+  "33": {
+    "alpha": -0.9686577348568529,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0.5410520681182421,
+    "rotationY": -0.39269908169872414,
+    "rotationZ": -0.5148721293383273,
+    "iconScale": 1
+  },
+  "36": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.29670597283903605,
+    "distanceMult": 0.75,
+    "rotationY": 0
+  },
+  "37": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.29670597283903605,
+    "distanceMult": 0.75,
+    "rotationY": 0
+  },
+  "38": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.29670597283903605,
+    "distanceMult": 0.75,
+    "rotationY": 0
+  },
+  "53": {
+    "alpha": -0.9686577348568529,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0.5410520681182421,
+    "rotationY": -0.39269908169872414,
+    "rotationZ": -0.5148721293383273
+  },
+  "54": {
+    "alpha": -0.9686577348568529,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0.5410520681182421,
+    "rotationY": -0.39269908169872414,
+    "rotationZ": -0.5148721293383273
+  },
+  "55": {
+    "alpha": -0.9686577348568529,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0.5410520681182421,
+    "rotationY": -0.39269908169872414,
+    "rotationZ": -0.5148721293383273
+  },
+  "56": {
+    "alpha": -0.9686577348568529,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0.5410520681182421,
+    "rotationY": -0.39269908169872414,
+    "rotationZ": -0.5148721293383273
+  },
+  "57": {
+    "alpha": -0.9686577348568529,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0.5410520681182421,
+    "rotationY": -0.39269908169872414,
+    "rotationZ": -0.5148721293383273
+  },
+  "58": {
+    "alpha": 1.7278759594743862,
+    "beta": 1.1955505376161157,
+    "distanceMult": 0.8,
+    "rotationX": -0.8028514559173916,
+    "rotationY": -0.4886921905584123,
+    "rotationZ": -0.1832595714594046,
+    "iconScale": 0.85
+  },
+  "59": {
+    "alpha": -3.097959422289935,
+    "beta": 2.1205750411731104,
+    "distanceMult": 0.75,
+    "rotationX": -0.9686577348568529,
+    "rotationY": 0,
+    "rotationZ": -1.239183768915974,
+    "iconScale": 1
+  },
+  "60": {
+    "alpha": 0.061086523819801536,
+    "beta": 1.361356816555577,
+    "distanceMult": 0.75,
+    "rotationX": -0.5672320068981571,
+    "rotationY": -0.7330382858376184,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "61": {
+    "alpha": -0.5672320068981571,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "63": {
+    "alpha": -1.064650843716541,
+    "beta": 0.2792526803190927,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "64": {
+    "alpha": -1.239183768915974,
+    "beta": 1.0821041362364843,
+    "distanceMult": 0.75,
+    "rotationX": 2.2252947962927703,
+    "rotationY": 1.911135530933791,
+    "rotationZ": -1.0035643198967394,
+    "iconScale": 1
+  },
+  "65": {
+    "alpha": 1.9062289458939035,
+    "beta": 1.5149900478554355,
+    "distanceMult": 0.75,
+    "rotationX": 0.17453292519943295,
+    "rotationY": 0.17453292519943295,
+    "rotationZ": -0.026179938779914945,
+    "iconScale": 0.95
+  },
+  "66": {
+    "alpha": 1.8634073464102099,
+    "beta": 1.3986433452497935,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": -0.431592653589793,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "67": {
+    "alpha": 1.858775653373961,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "68": {
+    "alpha": -1.5707963267948966,
+    "beta": 1.117010721276371,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
+  "69": {
+    "alpha": 1.911135530933791,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "70": {
+    "alpha": -1.5707963267948966,
+    "beta": 0.5497787143782138,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "71": {
+    "alpha": 1.53588974175501,
+    "beta": 0.8813912722571364,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "72": {
+    "alpha": 1.7278759594743862,
+    "beta": 1.1955505376161157,
+    "distanceMult": 0.8,
+    "rotationX": -0.8028514559173916,
+    "rotationY": -0.4886921905584123,
+    "rotationZ": -0.1832595714594046,
+    "iconScale": 0.85
+  },
+  "73": {
+    "alpha": -3.115412714809878,
+    "beta": 2.1205750411731104,
+    "distanceMult": 0.75,
+    "rotationX": -0.9686577348568529,
+    "rotationY": 0,
+    "rotationZ": -1.239183768915974,
+    "iconScale": 1
+  },
+  "74": {
+    "alpha": 0.061086523819801536,
+    "beta": 1.361356816555577,
+    "distanceMult": 0.75,
+    "rotationX": -0.5672320068981571,
+    "rotationY": -0.7330382858376184,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "75": {
+    "alpha": -0.5672320068981571,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "78": {
+    "alpha": -1.239183768915974,
+    "beta": 1.0821041362364843,
+    "distanceMult": 0.75,
+    "rotationX": 2.2252947962927703,
+    "rotationY": 1.911135530933791,
+    "rotationZ": -1.0035643198967394,
+    "iconScale": 1
+  },
+  "80": {
+    "alpha": 1.8634073464102099,
+    "beta": 1.3986433452497935,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": -0.431592653589793,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "81": {
+    "alpha": 1.858775653373961,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "83": {
+    "alpha": 1.911135530933791,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "84": {
+    "alpha": -1.5707963267948966,
+    "beta": 0.5497787143782138,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "85": {
+    "alpha": 1.53588974175501,
+    "beta": 0.8813912722571364,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "86": {
+    "alpha": 1.7278759594743862,
+    "beta": 1.1955505376161157,
+    "distanceMult": 0.8,
+    "rotationX": -0.8028514559173916,
+    "rotationY": -0.4886921905584123,
+    "rotationZ": -0.1832595714594046,
+    "iconScale": 0.85
+  },
+  "87": {
+    "alpha": -3.115412714809878,
+    "beta": 2.1205750411731104,
+    "distanceMult": 0.75,
+    "rotationX": -0.9686577348568529,
+    "rotationY": 0,
+    "rotationZ": -1.239183768915974,
+    "iconScale": 1
+  },
+  "88": {
+    "alpha": 0.061086523819801536,
+    "beta": 1.361356816555577,
+    "distanceMult": 0.75,
+    "rotationX": -0.5672320068981571,
+    "rotationY": -0.7330382858376184,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "89": {
+    "alpha": -0.5672320068981571,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "92": {
+    "alpha": -1.239183768915974,
+    "beta": 1.0821041362364843,
+    "distanceMult": 0.75,
+    "rotationX": 2.2252947962927703,
+    "rotationY": 1.911135530933791,
+    "rotationZ": -1.0035643198967394,
+    "iconScale": 1
+  },
+  "94": {
+    "alpha": 1.8634073464102099,
+    "beta": 1.3986433452497935,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": -0.431592653589793,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "95": {
+    "alpha": 1.858775653373961,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "97": {
+    "alpha": 1.911135530933791,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "98": {
+    "alpha": -1.5707963267948966,
+    "beta": 0.5497787143782138,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "100": {
+    "alpha": 1.7278759594743862,
+    "beta": 1.1955505376161157,
+    "distanceMult": 0.8,
+    "rotationX": -0.8028514559173916,
+    "rotationY": -0.4886921905584123,
+    "rotationZ": -0.1832595714594046,
+    "iconScale": 0.85
+  },
+  "101": {
+    "alpha": -3.097959422289935,
+    "beta": 2.1205750411731104,
+    "distanceMult": 0.75,
+    "rotationX": -0.9686577348568529,
+    "rotationY": 0,
+    "rotationZ": -1.239183768915974,
+    "iconScale": 1
+  },
+  "102": {
+    "alpha": 0.061086523819801536,
+    "beta": 1.361356816555577,
+    "distanceMult": 0.75,
+    "rotationX": -0.5672320068981571,
+    "rotationY": -0.7330382858376184,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "103": {
+    "alpha": -0.5672320068981571,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "109": {
+    "alpha": 1.858775653373961,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "111": {
+    "alpha": 1.911135530933791,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "114": {
+    "alpha": 1.7278759594743862,
+    "beta": 1.1955505376161157,
+    "distanceMult": 0.8,
+    "rotationX": -0.8028514559173916,
+    "rotationY": -0.4886921905584123,
+    "rotationZ": -0.1832595714594046,
+    "iconScale": 0.85
+  },
+  "115": {
+    "alpha": -3.115412714809878,
+    "beta": 2.1205750411731104,
+    "distanceMult": 0.75,
+    "rotationX": -0.9686577348568529,
+    "rotationY": 0,
+    "rotationZ": -1.239183768915974,
+    "iconScale": 1
+  },
+  "116": {
+    "alpha": 0.061086523819801536,
+    "beta": 1.361356816555577,
+    "distanceMult": 0.75,
+    "rotationX": -0.5672320068981571,
+    "rotationY": -0.7330382858376184,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "117": {
+    "alpha": -0.5672320068981571,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "120": {
+    "alpha": -1.239183768915974,
+    "beta": 1.0821041362364843,
+    "distanceMult": 0.75,
+    "rotationX": 2.2252947962927703,
+    "rotationY": 1.911135530933791,
+    "rotationZ": -1.0035643198967394,
+    "iconScale": 1
+  },
+  "122": {
+    "alpha": 1.8634073464102099,
+    "beta": 1.3986433452497935,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": -0.431592653589793,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "123": {
+    "alpha": 1.858775653373961,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "125": {
+    "alpha": 1.911135530933791,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "126": {
+    "alpha": -1.5707963267948966,
+    "beta": 0.5497787143782138,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "237": {
+    "alpha": -1.888775653373959,
+    "beta": 0.675398163397448,
+    "distanceMult": 0.75,
+    "rotationX": -0.7330382858376184,
+    "rotationY": -2.260201381332657,
+    "rotationZ": -0.12217304763960307,
+    "iconScale": 1.1
+  },
   "_doc": "Thumbnail tuning. Top-level numeric keys are item IDs ({ alpha, beta, distanceMult, rotationY } in radians/multipliers) consumed by client/src/rendering/ItemIcon.ts. The _thumbnail_assets object is keyed by asset path ({ alpha, beta, distanceMult, rotationY }) and consumed by editor/src/assets-system/ThumbnailRenderer.ts. Underscore-prefixed top-level keys are ignored by the item loader.",
-  "_example_31": { "alpha": -0.8, "beta": 1.1, "distanceMult": 0.9, "rotationY": 1.5707963 },
+  "_example_31": {
+    "alpha": -0.8,
+    "beta": 1.1,
+    "distanceMult": 0.9,
+    "rotationY": 1.5707963
+  },
   "_thumbnail_assets": {}
 }

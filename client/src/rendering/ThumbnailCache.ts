@@ -61,6 +61,21 @@ export async function putCachedThumb(key: string, dataUrl: string, version: numb
   }
 }
 
+export async function clearCachedThumb(key: string): Promise<void> {
+  try {
+    const db = await openDb();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+      tx.onabort = () => resolve();
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function clearThumbCache(): Promise<void> {
   try {
     const db = await openDb();

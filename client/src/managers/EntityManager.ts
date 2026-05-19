@@ -1,6 +1,7 @@
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3, Color3 } from '@babylonjs/core/Maths/math';
 import { SpriteEntity } from '../rendering/SpriteEntity';
+import { GroundItemEntity, type GroundItemStackEntry } from '../rendering/GroundItemEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
@@ -81,6 +82,11 @@ export class EntityManager {
   // Ground items
   readonly groundItems: Map<number, GroundItemData> = new Map();
   readonly groundItemSprites: Map<number, SpriteEntity> = new Map();
+  readonly groundItemModels: Map<string, GroundItemEntity> = new Map();
+  private groundItemTileVersions: Map<string, number> = new Map();
+  private pendingGroundItemTileRefreshes: Set<string> = new Set();
+  private groundItemRefreshQueued = false;
+  private groundItemIdsByTile: Map<string, Set<number>> = new Map();
 
   constructor(scene: Scene, getHeight: (x: number, z: number, currentY?: number) => number, itemDefsCache: Map<number, ItemDef>) {
     this.scene = scene;
@@ -188,34 +194,139 @@ export class EntityManager {
     return character;
   }
 
-  createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number): SpriteEntity {
-    const itemDef = this.itemDefsCache.get(itemId);
-    // Sync placeholder so the sprite has something to draw immediately; async-upgrade
-    // to the best icon (baked PNG → IDB cache → runtime render) once it resolves.
-    const syncIcon = itemDef ? getItemIconSyncUrl(itemDef) : null;
-    // Icon-only — no floating label. Hover/right-click can surface the name later.
+  private groundItemTileKey(x: number, z: number): string {
+    return `${Math.floor(x)},${Math.floor(z)}`;
+  }
+
+  private sortGroundItemStackForDisplay(stack: GroundItemStackEntry[]): GroundItemStackEntry[] {
+    return stack.sort((a, b) => {
+      const av = (a.def.value ?? 0) * (a.def.stackable ? a.quantity + 1 : 1);
+      const bv = (b.def.value ?? 0) * (b.def.stackable ? b.quantity + 1 : 1);
+      if (bv !== av) return bv - av;
+      return b.id - a.id;
+    });
+  }
+
+  private collectGroundItemTileStack(tileKey: string): GroundItemStackEntry[] {
+    const stack: GroundItemStackEntry[] = [];
+    const ids = this.groundItemIdsByTile.get(tileKey);
+    if (!ids) return stack;
+    for (const groundItemId of ids) {
+      const item = this.groundItems.get(groundItemId);
+      if (!item) continue;
+      const def = this.itemDefsCache.get(item.itemId);
+      if (!def) continue;
+      stack.push({ ...item, def });
+    }
+    return this.sortGroundItemStackForDisplay(stack);
+  }
+
+  getGroundItemStackForItem(groundItemId: number): GroundItemData[] {
+    const item = this.groundItems.get(groundItemId);
+    if (!item) return [];
+    return this.collectGroundItemTileStack(this.groundItemTileKey(item.x, item.z)).map(({ def: _def, ...data }) => data);
+  }
+
+  private addGroundItemToTileIndex(groundItemId: number, tileKey: string): void {
+    let ids = this.groundItemIdsByTile.get(tileKey);
+    if (!ids) {
+      ids = new Set<number>();
+      this.groundItemIdsByTile.set(tileKey, ids);
+    }
+    ids.add(groundItemId);
+  }
+
+  private removeGroundItemFromTileIndex(groundItemId: number, tileKey: string): void {
+    const ids = this.groundItemIdsByTile.get(tileKey);
+    if (!ids) return;
+    ids.delete(groundItemId);
+    if (ids.size === 0) this.groundItemIdsByTile.delete(tileKey);
+  }
+
+  private disposeGroundItemTileRender(tileKey: string): void {
+    const model = this.groundItemModels.get(tileKey);
+    if (model) {
+      model.dispose();
+      this.groundItemModels.delete(tileKey);
+    }
+
+    for (const [groundItemId, sprite] of this.groundItemSprites) {
+      const item = this.groundItems.get(groundItemId);
+      if (!item || this.groundItemTileKey(item.x, item.z) === tileKey) {
+        sprite.dispose();
+        this.groundItemSprites.delete(groundItemId);
+      }
+    }
+  }
+
+  private createGroundItemFallbackSprite(top: GroundItemStackEntry, tileKey: string): void {
+    const syncIcon = getItemIconSyncUrl(top.def);
     const sprite = new SpriteEntity(this.scene, {
-      name: `gitem_${groundItemId}`,
+      name: `gitem_${top.id}`,
       color: new Color3(0.8, 0.7, 0.2),
       width: 0.85,
       height: 0.85,
       iconUrl: syncIcon ?? undefined,
     });
-    sprite.position = new Vector3(x, this.getHeight(x, z, 0), z);
-    sprite.getMesh().metadata = { kind: 'groundItem', groundItemId };
-    this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z });
-    this.groundItemSprites.set(groundItemId, sprite);
+    sprite.position = new Vector3(top.x, this.getHeight(top.x, top.z, 0), top.z);
+    sprite.getMesh().metadata = { kind: 'groundItem', groundItemId: top.id };
+    this.groundItemSprites.set(top.id, sprite);
 
-    if (itemDef) {
-      getItemIconUrl(itemDef).then((url) => {
-        if (!url) return;
-        // Sprite may have been disposed before the promise resolved.
-        if (!this.groundItemSprites.has(groundItemId)) return;
-        if (url === syncIcon) return;
-        sprite.setIconUrl(url);
-      });
+    getItemIconUrl(top.def).then((url) => {
+      if (!url) return;
+      if (this.groundItemTileKey(top.x, top.z) !== tileKey) return;
+      if (this.groundItemSprites.get(top.id) !== sprite) return;
+      if (url === syncIcon) return;
+      sprite.setIconUrl(url);
+    });
+  }
+
+  private refreshGroundItemTile(tileKey: string): void {
+    const version = (this.groundItemTileVersions.get(tileKey) ?? 0) + 1;
+    this.groundItemTileVersions.set(tileKey, version);
+    this.disposeGroundItemTileRender(tileKey);
+
+    const stack = this.collectGroundItemTileStack(tileKey);
+    const top = stack[0];
+    if (!top) return;
+
+    const y = this.getHeight(top.x, top.z, 0);
+    GroundItemEntity.create(this.scene, tileKey, stack, y).then((entity) => {
+      if ((this.groundItemTileVersions.get(tileKey) ?? 0) !== version) {
+        entity?.dispose();
+        return;
+      }
+      if (entity) {
+        this.groundItemModels.set(tileKey, entity);
+      } else {
+        this.createGroundItemFallbackSprite(top, tileKey);
+      }
+    });
+  }
+
+  private queueGroundItemTileRefresh(tileKey: string): void {
+    this.pendingGroundItemTileRefreshes.add(tileKey);
+    if (this.groundItemRefreshQueued) return;
+    this.groundItemRefreshQueued = true;
+    queueMicrotask(() => {
+      this.groundItemRefreshQueued = false;
+      const tileKeys = [...this.pendingGroundItemTileRefreshes];
+      this.pendingGroundItemTileRefreshes.clear();
+      for (const key of tileKeys) this.refreshGroundItemTile(key);
+    });
+  }
+
+  createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number): void {
+    const previous = this.groundItems.get(groundItemId);
+    const previousTileKey = previous ? this.groundItemTileKey(previous.x, previous.z) : null;
+    const nextTileKey = this.groundItemTileKey(x, z);
+    this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z });
+    if (previousTileKey && previousTileKey !== nextTileKey) {
+      this.removeGroundItemFromTileIndex(groundItemId, previousTileKey);
+      this.queueGroundItemTileRefresh(previousTileKey);
     }
-    return sprite;
+    if (!previousTileKey || previousTileKey !== nextTileKey) this.addGroundItemToTileIndex(groundItemId, nextTileKey);
+    this.queueGroundItemTileRefresh(nextTileKey);
   }
 
   // --- Target lookup ---
@@ -286,12 +397,13 @@ export class EntityManager {
   }
 
   removeGroundItem(groundItemId: number): void {
-    const sprite = this.groundItemSprites.get(groundItemId);
-    if (sprite) {
-      sprite.dispose();
-      this.groundItemSprites.delete(groundItemId);
-    }
+    const item = this.groundItems.get(groundItemId);
+    const tileKey = item ? this.groundItemTileKey(item.x, item.z) : null;
     this.groundItems.delete(groundItemId);
+    if (tileKey) {
+      this.removeGroundItemFromTileIndex(groundItemId, tileKey);
+      this.queueGroundItemTileRefresh(tileKey);
+    }
   }
 
   cleanupCombatTargetsFor(entityId: number): void {
@@ -482,6 +594,10 @@ export class EntityManager {
         sprite.position = new Vector3(item.x, this.getHeight(item.x, item.z, sprite.position.y), item.z);
       }
     }
+    for (const [tileKey, model] of this.groundItemModels) {
+      const top = this.collectGroundItemTileStack(tileKey)[0];
+      if (top) model.setPosition(top.x, this.getHeight(top.x, top.z, 0), top.z);
+    }
     // Local player intentionally NOT repositioned here. Its Y came from
     // LOGIN_OK (server-authoritative) and getHeight() without currentY
     // gates roof reveal off and drops elevated-tile spawns to terrain (0).
@@ -512,6 +628,12 @@ export class EntityManager {
 
     for (const [, sprite] of this.groundItemSprites) sprite.dispose();
     this.groundItemSprites.clear();
+    for (const [, model] of this.groundItemModels) model.dispose();
+    this.groundItemModels.clear();
+    this.groundItemTileVersions.clear();
+    this.pendingGroundItemTileRefreshes.clear();
+    this.groundItemRefreshQueued = false;
+    this.groundItemIdsByTile.clear();
     this.groundItems.clear();
 
     this.npcCombatTargets.clear();

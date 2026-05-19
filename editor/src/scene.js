@@ -56,6 +56,7 @@ import {
 // are served from editor/public/Character models (symlinked to client's copy).
 import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
 import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
+import { resolveItemModelPath as resolveRuntimeItemModelPath } from '@client/rendering/ItemIcon'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
 import { loadAssetModel, cloneAssetModelSync, warmAssetCache, makeGhostMaterial, initAssetLoader } from './assets-system/AssetLoader'
 import { getThumbnail } from './assets-system/ThumbnailRenderer'
@@ -733,14 +734,7 @@ function tuneModelLighting(model) {
   loadItemDefs()
 
   function resolveItemThumbnailModelPath(def) {
-    if (!def) return null
-    if (def.model) {
-      if (def.model.startsWith('/')) return def.model
-      if (!def.equipSlot) return null
-      return `/assets/equipment/${def.equipSlot}/${def.model}`
-    }
-    if (def.equipSlot) return `/assets/equipment/${def.equipSlot}/${def.id}.glb`
-    return null
+    return resolveRuntimeItemModelPath(def)
   }
 
   async function loadEditorObjectDefs() {
@@ -1438,6 +1432,7 @@ let paintBrushRadius = 1
     <button id="newDungeonBtn" title="Create a new dungeon map">+ Dungeon</button>
     <button id="questsBtn" title="Edit quests.json (storyline definitions)">Quests</button>
     <button id="itemsBtn" title="Edit item stats and compare weapon DPS">Items</button>
+    <button id="itemThumbsTopBtn" title="Choose render side for inventory and ground 3D item thumbnails">Item Thumbs</button>
     <span class="top-sep"></span>
     <span class="top-label" id="mapSizeLabel">192 x 64</span>
     <button id="chunkGridBtn" title="Add/remove chunks">Chunks</button>
@@ -1553,7 +1548,7 @@ let paintBrushRadius = 1
       <select id="assetGroupSelect" style="display:none"></select>
       <div style="display:flex;gap:5px;align-items:center;margin-bottom:5px;">
         <input id="assetSearch" type="text" placeholder="Search assets..." style="flex:1;min-width:0;" />
-        <button id="itemThumbsBtn" title="Edit inventory item thumbnails" style="width:32px;padding:5px 0;">▦</button>
+        <button id="itemThumbsBtn" title="Choose render side for inventory and ground 3D item thumbnails" style="width:auto;padding:5px 7px;font-size:11px;">Thumbs</button>
       </div>
       <div id="assetGrid" class="asset-grid"></div>
       <div style="margin-top:5px;">
@@ -3257,6 +3252,7 @@ let paintBrushRadius = 1
   const smoothModeBtn = sidebar.querySelector('#toggleSmoothMode')
   const levelModeBtn = sidebar.querySelector('#toggleLevelMode')
   const saveMapBtn = topBar.querySelector('#saveMapBtn')
+  const itemThumbsTopBtn = topBar.querySelector('#itemThumbsTopBtn')
   const mapSizeLabel = topBar.querySelector('#mapSizeLabel')
   const statusText = statusBar.querySelector('#statusText')
   const hoverText = statusBar.querySelector('#hoverText')
@@ -6760,7 +6756,7 @@ function applyToolAtTile(tile, eventLike = null) {
   })
 
   assetSearch.addEventListener('input', refreshAssetList)
-  itemThumbsBtn?.addEventListener('click', () => {
+  const openItemThumbnailEditor = () => {
     openItemThumbnailBrowser({
       loadItems: async () => {
         if (!itemDefs.length) await loadItemDefs()
@@ -6768,7 +6764,9 @@ function applyToolAtTile(tile, eventLike = null) {
       },
       resolveModelPath: resolveItemThumbnailModelPath,
     })
-  })
+  }
+  itemThumbsTopBtn?.addEventListener('click', openItemThumbnailEditor)
+  itemThumbsBtn?.addEventListener('click', openItemThumbnailEditor)
 
   refreshPreviewBtn.addEventListener('click', async () => {
     await updatePreviewObject()

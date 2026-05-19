@@ -118,6 +118,7 @@ export async function openItemStatsEditor(options = {}) {
   let search = ''
   let categoryFilter = 'All'
   let tierFilter = 'All'
+  let gearOverrides = {}
   let dirty = false
   let dpsSettings = {
     accuracy: 35,
@@ -198,6 +199,79 @@ export async function openItemStatsEditor(options = {}) {
     }
     markDirty()
     render()
+  }
+
+  function itemHasModel(item) {
+    return !!(item?.model || gearOverrides[String(item?.id)]?.file)
+  }
+
+  function poseFieldsFromOverride(override) {
+    if (!override || typeof override !== 'object') return null
+    const out = {}
+    if (override.boneName) out.boneName = override.boneName
+    if (override.localPosition) out.localPosition = clone(override.localPosition)
+    if (override.localRotation) out.localRotation = clone(override.localRotation)
+    if (typeof override.scale === 'number') out.scale = override.scale
+    if (typeof override.centerOrigin === 'boolean') out.centerOrigin = override.centerOrigin
+    return Object.keys(out).length ? out : null
+  }
+
+  function gearPoseTargets(source, scope) {
+    if (!source?.equipSlot) return []
+    return items.filter(item => {
+      if (item.id === source.id) return false
+      if (item.equipSlot !== source.equipSlot) return false
+      if (!itemHasModel(item)) return false
+      if (scope === 'family') return itemFamily(item) === itemFamily(source)
+      return true
+    }).sort(groupSort)
+  }
+
+  async function saveGearOverrides(next) {
+    const res = await fetch('/api/dev/gear-overrides', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(next),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`)
+  }
+
+  async function copyGearPose(scope) {
+    const source = selectedItem()
+    if (!source?.equipSlot) {
+      setStatus('select an equipped item first', '#e66')
+      return
+    }
+    const sourceOverride = gearOverrides[String(source.id)]
+    const pose = poseFieldsFromOverride(sourceOverride)
+    if (!pose) {
+      setStatus(`no saved pose for ${source.name}`, '#e66')
+      return
+    }
+    const targets = gearPoseTargets(source, scope)
+    if (!targets.length) {
+      setStatus('no matching modeled targets', '#aaa')
+      return
+    }
+    const label = scope === 'family' ? `same ${itemFamily(source)} family` : `same ${source.equipSlot} slot`
+    if (!confirm(`Copy ${source.name}'s saved pose to ${targets.length} item(s) in the ${label}?\n\nThis copies bone/position/rotation/scale only and keeps each target model file.`)) return
+
+    const next = clone(gearOverrides)
+    for (const target of targets) {
+      const id = String(target.id)
+      next[id] = { ...(next[id] || {}), ...clone(pose) }
+    }
+
+    try {
+      setStatus('saving gear poses...', '#fc6')
+      await saveGearOverrides(next)
+      gearOverrides = next
+      setStatus(`copied pose to ${targets.length} item(s)`, '#6e6')
+      renderEditor()
+    } catch (err) {
+      setStatus(`gear save failed: ${err.message}`, '#e66')
+    }
   }
 
   function numberInput(item, field, label, step = 1) {
@@ -313,6 +387,7 @@ export async function openItemStatsEditor(options = {}) {
         ${numberInput(item, 'toolLevel', 'Tool level')}
         ${numberInput(item, 'toolBonus', 'Tool bonus')}
       </div>
+      ${renderGearPoseTool(item)}
 
       <div class="item-stats-section-title">${isWeapon ? 'Weapon Bonuses' : isArmor ? 'Armor Bonuses' : isTool ? 'Tool / Combat Bonuses' : 'Stats'}</div>
       <div class="item-stats-grid">
@@ -339,6 +414,30 @@ export async function openItemStatsEditor(options = {}) {
         setField(item, field, type === 'checkbox' ? input.checked : input.value)
       })
     }
+    editorEl.querySelector('[data-gear-copy="slot"]')?.addEventListener('click', () => copyGearPose('slot'))
+    editorEl.querySelector('[data-gear-copy="family"]')?.addEventListener('click', () => copyGearPose('family'))
+  }
+
+  function renderGearPoseTool(item) {
+    if (!item?.equippable || !item.equipSlot) return ''
+    const override = gearOverrides[String(item.id)]
+    const pose = poseFieldsFromOverride(override)
+    const slotTargets = gearPoseTargets(item, 'slot')
+    const familyTargets = gearPoseTargets(item, 'family')
+    const family = itemFamily(item)
+    return `
+      <div class="item-stats-section-title">Gear Pose</div>
+      <div class="item-stats-gear-pose">
+        <div>
+          <b>${pose ? 'Saved pose found' : 'No saved pose'}</b>
+          <span>${pose ? 'from gear-overrides.json' : 'fit and save this item in /geardebug first'}</span>
+        </div>
+        <div class="item-stats-gear-pose-actions">
+          <button data-gear-copy="slot" ${pose && slotTargets.length ? '' : 'disabled'}>Copy to ${esc(item.equipSlot)} (${slotTargets.length})</button>
+          <button data-gear-copy="family" ${pose && familyTargets.length ? '' : 'disabled'}>Copy to ${esc(family || 'family')} (${familyTargets.length})</button>
+        </div>
+      </div>
+    `
   }
 
   function renderDps() {
@@ -581,6 +680,8 @@ export async function openItemStatsEditor(options = {}) {
     const res = await fetch('/api/editor/items')
     const body = await res.json()
     if (!res.ok || !body.ok || !Array.isArray(body.items)) throw new Error(body.error || 'Failed to load items')
+    const gearRes = await fetch('/data/gear-overrides.json')
+    gearOverrides = gearRes.ok ? await gearRes.json() : {}
     items = body.items
     original = clone(items)
     selectedId = items.find(i => i.equippable && i.equipSlot === 'weapon')?.id ?? items[0]?.id ?? null

@@ -7,6 +7,7 @@ type SlotGetter = (slot: string) => TransformNode | null;
 type BoneGetter = (slot: string) => string;
 type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: string } | null;
 type SaveCallback = (itemId: number, override: GearOverride) => Promise<void>;
+type BulkSaveCallback = (sourceItemId: number, slot: string, override: GearOverride) => Promise<number>;
 type LoadGlbCallback = (slot: string, path: string) => Promise<void>;
 type AnimCallback = (anim: string) => void;
 type UnequipCallback = (slot: string) => void;
@@ -72,6 +73,7 @@ export class GearDebugPanel {
   private getSlotBone: BoneGetter = () => '';
   private getItemInfo: ItemInfoGetter = () => null;
   private saveCallback: SaveCallback | null = null;
+  private bulkSaveCallback: BulkSaveCallback | null = null;
   private loadGlbCallback: LoadGlbCallback | null = null;
   private animCallback: AnimCallback | null = null;
   private unequipCallback: UnequipCallback | null = null;
@@ -99,6 +101,7 @@ export class GearDebugPanel {
   setSlotBoneGetter(getter: BoneGetter): void { this.getSlotBone = getter; }
   setItemInfoGetter(getter: ItemInfoGetter): void { this.getItemInfo = getter; }
   setSaveCallback(cb: SaveCallback): void { this.saveCallback = cb; }
+  setBulkSaveCallback(cb: BulkSaveCallback): void { this.bulkSaveCallback = cb; }
   setLoadGlbCallback(cb: LoadGlbCallback): void { this.loadGlbCallback = cb; }
   setAnimCallback(cb: AnimCallback): void { this.animCallback = cb; }
   setUnequipCallback(cb: UnequipCallback): void { this.unequipCallback = cb; }
@@ -296,19 +299,22 @@ export class GearDebugPanel {
 
     // Action buttons
     const btnRow = document.createElement('div');
-    btnRow.style.cssText = 'display:flex;gap:4px;margin-top:4px;';
+    btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;';
 
     const saveBtn = this.makeButton('Save', '#1a3a1a', '#4a4', () => this.saveOverride());
+    const applySlotBtn = this.makeButton('Apply Slot', '#1a2f3a', '#48a', () => this.applyToSlotClass());
     const copyBtn = this.makeButton('Copy', '#2a3a2a', '#484', () => this.copyCode());
     const resetBtn = this.makeButton('Reset', '#3a2a1a', '#a84', () => this.resetToDefaults());
     const zeroBtn = this.makeButton('Zero', '#4a2a2a', '#a44', () => this.resetAll());
     const unequipBtn = this.makeButton('Unequip', '#2a1a2a', '#a4a', () => this.unequipSlot());
     saveBtn.style.flex = '2';
+    applySlotBtn.style.flex = '2';
     copyBtn.style.flex = '1';
     resetBtn.style.flex = '1';
     zeroBtn.style.flex = '1';
     unequipBtn.style.flex = '1';
     btnRow.appendChild(saveBtn);
+    btnRow.appendChild(applySlotBtn);
     btnRow.appendChild(copyBtn);
     btnRow.appendChild(resetBtn);
     btnRow.appendChild(zeroBtn);
@@ -755,6 +761,25 @@ export class GearDebugPanel {
       return;
     }
 
+    const override = this.buildCurrentOverride(true);
+    if (!override) {
+      this.flashStatus('Could not build override');
+      return;
+    }
+
+    try {
+      await this.saveCallback(item.id, override);
+      this.updateOverrideStatus();
+      this.flashStatus(`Saved override for item ${item.id}`);
+    } catch (e: any) {
+      this.flashStatus(`Save failed: ${e.message || e}`);
+    }
+  }
+
+  private buildCurrentOverride(includeFile: boolean): GearOverride | null {
+    const item = this.getItemInfo(this.activeSlot);
+    if (!item) return null;
+
     const override: GearOverride = {
       localPosition: { x: this.getVal('pos.x'), y: this.getVal('pos.y'), z: this.getVal('pos.z') },
       localRotation: { x: this.getVal('rot.x'), y: this.getVal('rot.y'), z: this.getVal('rot.z') },
@@ -767,19 +792,47 @@ export class GearDebugPanel {
       override.boneName = currentBone;
     }
 
-    if (this.loadedGlbPath) {
+    if (includeFile && this.loadedGlbPath) {
       const defaultPath = `/assets/equipment/${this.activeSlot}/${item.id}.glb`;
       if (this.loadedGlbPath !== defaultPath) {
         override.file = this.loadedGlbPath;
       }
     }
 
+    return override;
+  }
+
+  private async applyToSlotClass(): Promise<void> {
+    const item = this.getItemInfo(this.activeSlot);
+    if (!item) {
+      this.flashStatus('No source item');
+      return;
+    }
+    if (!this.bulkSaveCallback) {
+      this.flashStatus('Bulk save not available');
+      return;
+    }
+
+    const override = this.buildCurrentOverride(false);
+    if (!override) {
+      this.flashStatus('Could not build override');
+      return;
+    }
+    const currentBone = this.getSlotBone(this.activeSlot);
+    if (currentBone) override.boneName = currentBone;
+
+    const ok = window.confirm(
+      `Apply ${item.name}'s pose to every modeled item in the ${this.activeSlot} slot?\n\n` +
+      'This copies position, rotation, scale, and bone only. It does not copy the GLB file.'
+    );
+    if (!ok) return;
+
     try {
-      await this.saveCallback(item.id, override);
+      const count = await this.bulkSaveCallback(item.id, this.activeSlot, override);
       this.updateOverrideStatus();
-      this.flashStatus(`Saved override for item ${item.id}`);
+      this.flashStatus(`Applied pose to ${count} ${this.activeSlot} item(s)`);
     } catch (e: any) {
-      this.flashStatus(`Save failed: ${e.message || e}`);
+      this.flashStatus(`Bulk save failed: ${e.message || e}`);
     }
   }
 

@@ -13,7 +13,7 @@
 
 import type { ItemDef } from '@projectrs/shared';
 import { getThumbnail } from '../rendering/ThumbnailRenderer';
-import { resolveItemModelPath, buildThumbnailOptionsForItem } from '../rendering/ItemIcon';
+import { resolveItemModelPath, buildThumbnailOptionsForItem, setThumbnailItemCatalog } from '../rendering/ItemIcon';
 
 interface BakeTarget {
   id: number;
@@ -115,6 +115,7 @@ export async function runBake(): Promise<void> {
     return;
   }
 
+  setThumbnailItemCatalog(defs);
   const targets = buildTargets(defs);
   if (targets.length === 0) {
     ui.setStatus('No items with GLB models. Nothing to bake.');

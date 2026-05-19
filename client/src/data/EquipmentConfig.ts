@@ -22,17 +22,25 @@ export const EQUIP_SLOT_BONES: Record<string, { boneName: string; localPosition:
 
 export const EQUIP_SLOT_NAMES = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
 
+export const METAL_TIER_THUMBNAIL_COLOR = {
+  bronze: [0.45, 0.28, 0.12],
+  iron: [0.48, 0.48, 0.50],
+  steel: [0.75, 0.78, 0.82],
+  mithril: [0.12, 0.22, 0.40],
+  blackBronze: [0.05, 0.05, 0.07],
+} satisfies Record<string, [number, number, number]>;
+
 export const TOOL_TIER_METAL_COLOR: Record<number, [number, number, number]> = {
   // Axes
-  31: [0.45, 0.28, 0.12], // Bronze Axe — warm chocolate brown
-  32: [0.48, 0.48, 0.50], // Iron Axe
-  36: [0.75, 0.78, 0.82], // Steel Axe
-  37: [0.12, 0.22, 0.40], // Mithril Axe — dark navy blue
-  38: [0.05, 0.05, 0.07], // Black Axe — near-black
+  31: METAL_TIER_THUMBNAIL_COLOR.bronze, // Bronze Axe
+  32: METAL_TIER_THUMBNAIL_COLOR.iron, // Iron Axe
+  36: METAL_TIER_THUMBNAIL_COLOR.steel, // Steel Axe
+  37: METAL_TIER_THUMBNAIL_COLOR.mithril, // Mithril Axe
+  38: METAL_TIER_THUMBNAIL_COLOR.blackBronze, // Black Axe
   // Pickaxes
-  33: [0.45, 0.28, 0.12], // Bronze Pickaxe
-  53: [0.48, 0.48, 0.50], // Iron Pickaxe
-  54: [0.75, 0.78, 0.82], // Steel Pickaxe
-  55: [0.12, 0.22, 0.40], // Mithril Pickaxe
-  56: [0.05, 0.05, 0.07], // Black Bronze Pickaxe
+  33: METAL_TIER_THUMBNAIL_COLOR.bronze, // Bronze Pickaxe
+  53: METAL_TIER_THUMBNAIL_COLOR.iron, // Iron Pickaxe
+  54: METAL_TIER_THUMBNAIL_COLOR.steel, // Steel Pickaxe
+  55: METAL_TIER_THUMBNAIL_COLOR.mithril, // Mithril Pickaxe
+  56: METAL_TIER_THUMBNAIL_COLOR.blackBronze, // Black Bronze Pickaxe
 };

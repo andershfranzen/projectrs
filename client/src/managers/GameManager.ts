@@ -52,6 +52,7 @@ import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
+import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
 import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
@@ -1135,6 +1136,7 @@ export class GameManager {
       try {
         const defs: ItemDef[] = await itemsRes.json();
         for (const def of defs) this.itemDefsCache.set(def.id, def);
+        setThumbnailItemCatalog(defs);
         if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
         if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
         if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
@@ -1559,7 +1561,7 @@ export class GameManager {
 
   /**
    * Equip or unequip a 3D gear piece on the local player.
-   * Loads /assets/equipment/{slotName}/{itemId}.glb on demand, caches the template.
+   * Loads explicitly configured 3D gear models on demand, caches the template.
    * itemId = 0 or -1 means unequip.
    */
   private async equipGear(slotIndex: number, itemId: number): Promise<void> {
@@ -1624,23 +1626,22 @@ export class GameManager {
     // defaults and cache the resulting (wrong) template.
     await this.gearOverridesReady;
 
-    const buildDef = (): GearDef => {
+    const buildDef = (): GearDef | null => {
       // gearOverrides is a global rigging file (server/data/gear-overrides.json)
       // — every client fetches the same data, so the override applies to BOTH
       // local and remote characters. Without this, remote viewers see your
       // rigged gear at the EQUIP_SLOT_BONES defaults (random bones).
       const override = this.gearOverrides.get(itemId);
       const itemDef = this.itemDefsCache.get(itemId);
-      let gearFile: string;
+      let gearFile: string | null = null;
       if (override?.file) {
         gearFile = override.file;
       } else if (itemDef?.model) {
         gearFile = itemDef.model.startsWith('/')
           ? itemDef.model
           : `/assets/equipment/${slotName}/${itemDef.model}`;
-      } else {
-        gearFile = `/assets/equipment/${slotName}/${itemId}.glb`;
       }
+      if (!gearFile) return null;
       return {
         itemId,
         file: gearFile,
@@ -1661,7 +1662,8 @@ export class GameManager {
     // through the cache below like any other bone-attached slot.
     const PER_TARGET_SLOTS = new Set(['body', 'legs', 'hands', 'feet']);
     if (PER_TARGET_SLOTS.has(slotName)) {
-      await this.loadGearSmart(slotName, itemId, buildDef(), target, isCurrentApply);
+      const def = buildDef();
+      if (def) await this.loadGearSmart(slotName, itemId, def, target, isCurrentApply);
       return;
     }
 
@@ -1673,7 +1675,8 @@ export class GameManager {
       let promise = this.gearLoadingPromises.get(cacheKey);
       if (!promise) {
         promise = (async () => {
-          const tmpl = await this.loadGearSmart(slotName, itemId, buildDef(), target);
+          const def = buildDef();
+          const tmpl = def ? await this.loadGearSmart(slotName, itemId, def, target) : null;
           if (tmpl) {
             this.gearTemplateCache.set(cacheKey, tmpl);
           }
@@ -2311,11 +2314,7 @@ export class GameManager {
 
       const x = x10 / 10;
       const z = z10 / 10;
-      this.entities.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z });
-
-      if (!this.entities.groundItemSprites.has(groundItemId)) {
-        this.entities.createGroundItem(groundItemId, itemId, quantity, x, z);
-      }
+      this.entities.createGroundItem(groundItemId, itemId, quantity, x, z);
     });
 
     this.network.on(ServerOpcode.ENTITY_DEATH, (_op, v) => {
@@ -3219,23 +3218,11 @@ export class GameManager {
     return null;
   }
 
-  /** All ground items sharing the tile of `groundItemId`, newest-first.
-   *  NPC loot tables drop 3+ items per kill (bones + coins + a rare) onto one
-   *  tile and the picked sprite hides the others under it — callers that care
-   *  about the whole pile (right-click menu, hover tooltip) gather the tile
-   *  rather than the single picked sprite. Newest-first matches the visible
-   *  stacking order and the left-click pickup target. */
+  /** All ground items sharing the tile of `groundItemId`, value-prioritized.
+   *  The ground renderer collapses each tile into one 2004scape-style stack and
+   *  shows the highest-value item on top, so menus/tooltips use the same order. */
   private groundItemStackForTile(groundItemId: number): GroundItemData[] {
-    const pickedItem = this.entities.groundItems.get(groundItemId);
-    if (!pickedItem) return [];
-    const tx = Math.floor(pickedItem.x);
-    const tz = Math.floor(pickedItem.z);
-    const stack: GroundItemData[] = [];
-    for (const [, gi] of this.entities.groundItems) {
-      if (Math.floor(gi.x) === tx && Math.floor(gi.z) === tz) stack.push(gi);
-    }
-    stack.sort((a, b) => b.id - a.id);
-    return stack;
+    return this.entities.getGroundItemStackForItem(groundItemId);
   }
 
   private getGroundItemInteractionOptions(groundItemId: number): InteractionOption[] {
@@ -4279,6 +4266,40 @@ export class GameManager {
           if (!res.ok) throw new Error('Server returned ' + res.status);
           const slotName = EQUIP_SLOT_NAMES.find(s => this.localPlayer?.getGearItemId(s) === itemId);
           if (slotName) this.gearTemplateCache.delete(`${slotName}/${itemId}`);
+        });
+        this.gearDebugPanel.setBulkSaveCallback(async (sourceItemId, slot, override) => {
+          const targets = [...this.itemDefsCache.values()]
+            .filter((def) => def.equipSlot === slot && (def.model || this.gearOverrides.get(def.id)?.file));
+          if (!targets.some((def) => def.id === sourceItemId)) {
+            const sourceDef = this.itemDefsCache.get(sourceItemId);
+            if (sourceDef?.equipSlot === slot) targets.push(sourceDef);
+          }
+
+          for (const def of targets) {
+            const existing = this.gearOverrides.get(def.id) ?? {};
+            this.gearOverrides.set(def.id, {
+              ...existing,
+              boneName: override.boneName,
+              localPosition: override.localPosition,
+              localRotation: override.localRotation,
+              scale: override.scale,
+            });
+            this.gearTemplateCache.delete(`${slot}/${def.id}`);
+          }
+
+          const all: Record<string, any> = {};
+          for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
+          const token = this.token || localStorage.getItem('projectrs_token') || '';
+          const res = await fetch('/api/dev/gear-overrides', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: JSON.stringify(all),
+          });
+          if (!res.ok) throw new Error('Server returned ' + res.status);
+          return targets.length;
         });
         this.gearDebugPanel.setLoadGlbCallback(async (slot, path) => {
           if (!this.localPlayer) throw new Error('No local player');

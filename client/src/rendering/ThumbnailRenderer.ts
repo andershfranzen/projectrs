@@ -3,14 +3,14 @@ import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
-import { CHARACTER_MODEL_PATH } from '@projectrs/shared';
+import { CHARACTER_IDLE_ANIM, CHARACTER_MODEL_PATH } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
-import { getCachedThumb, putCachedThumb } from './ThumbnailCache';
+import { clearCachedThumb, getCachedThumb, putCachedThumb } from './ThumbnailCache';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 
 /** Final output canvas size (px). */
@@ -24,8 +24,9 @@ const THUMB_INTERNAL_SIZE = 256;
 const THUMB_PADDING = 0.02;
 /** Alpha threshold below which a pixel is considered transparent. Trims AA halos. */
 const TRIM_ALPHA_MIN = 12;
-// Bump to invalidate every cached thumbnail across clients. v6: refreshed BronzeSword.glb.
-const THUMB_VERSION = 6;
+// Bump to invalidate every cached thumbnail across clients. v10: cache keys now
+// preserve editor slider precision so saved thumbnail poses don't collide.
+const THUMB_VERSION = 10;
 const RENDER_TIMEOUT_MS = 8000;
 
 // ArcRotateCamera defaults applied when options.camera doesn't specify an axis.
@@ -79,45 +80,111 @@ interface DonorSkeleton {
 }
 
 let _donorPromise: Promise<DonorSkeleton | null> | null = null;
+let _idleDonorPromise: Promise<DonorSkeleton | null> | null = null;
+
+async function applyIdlePoseToDonor(donor: DonorSkeleton): Promise<void> {
+  const lastSlash = CHARACTER_IDLE_ANIM.lastIndexOf('/');
+  const dir = CHARACTER_IDLE_ANIM.substring(0, lastSlash + 1);
+  const file = CHARACTER_IDLE_ANIM.substring(lastSlash + 1);
+  const result = await SceneLoader.ImportMeshAsync('', dir, file, _scene!);
+
+  try {
+    const group = result.animationGroups[0];
+    if (!group) return;
+    for (const ag of result.animationGroups || []) ag.stop();
+
+    const donorNodes = new Map<string, TransformNode>();
+    const donorRest = new Map<string, Quaternion>();
+    for (const bone of donor.skeleton.bones) {
+      const tn = bone.getTransformNode();
+      if (!tn) continue;
+      donorNodes.set(bone.name, tn);
+      donorNodes.set(tn.name, tn);
+      const rest = tn.rotationQuaternion?.clone() ?? Quaternion.Identity();
+      donorRest.set(bone.name, rest);
+      donorRest.set(tn.name, rest);
+    }
+
+    const sourceRest = new Map<string, Quaternion>();
+    for (const tn of result.transformNodes) {
+      if (tn.rotationQuaternion) sourceRest.set(tn.name, tn.rotationQuaternion.clone());
+    }
+
+    for (const ta of group.targetedAnimations) {
+      const sourceTarget = ta.target as TransformNode;
+      if (!sourceTarget?.name) continue;
+      const prop = ta.animation.targetProperty;
+      if (prop !== 'rotationQuaternion' && !prop.startsWith('rotationQuaternion')) continue;
+
+      const stripped = sourceTarget.name.replace(/\.\d+$/, '');
+      const target = donorNodes.get(sourceTarget.name) ?? donorNodes.get(stripped);
+      if (!target) continue;
+
+      const firstKey = ta.animation.getKeys()[0];
+      const keyRotation = firstKey?.value;
+      if (!keyRotation || keyRotation.w === undefined) continue;
+
+      const srcRest = sourceRest.get(sourceTarget.name) ?? sourceRest.get(stripped);
+      const dstRest = donorRest.get(target.name) ?? Quaternion.Identity();
+      const corrected = srcRest
+        ? dstRest.multiply(Quaternion.Inverse(srcRest).multiply(keyRotation))
+        : keyRotation;
+      target.rotationQuaternion = corrected.clone();
+    }
+
+    donor.skeleton.prepare();
+    _scene?.render();
+  } finally {
+    disposeLoadResult(result);
+  }
+}
+
+async function loadDonorSkeleton(applyIdle: boolean): Promise<DonorSkeleton | null> {
+  ensureEngine();
+  try {
+    const lastSlash = CHARACTER_MODEL_PATH.lastIndexOf('/');
+    const dir = CHARACTER_MODEL_PATH.substring(0, lastSlash + 1);
+    const file = CHARACTER_MODEL_PATH.substring(lastSlash + 1);
+    const result = await SceneLoader.ImportMeshAsync('', dir, file, _scene!);
+    // Stop bundled animations so bones settle in bind pose.
+    for (const ag of result.animationGroups || []) ag.stop();
+    // Hide donor visually but KEEP it in the active-mesh list — the skeleton
+    // is only evaluated when at least one mesh referencing it is active.
+    // setEnabled(false) takes it out of evaluation entirely, leaving the
+    // armor's skinning math with stale (zero) bone matrices and rendering
+    // it invisible. `visibility=0` makes draws fully transparent but the
+    // mesh stays active.
+    for (const mesh of result.meshes) {
+      mesh.visibility = 0;
+      mesh.isPickable = false;
+    }
+
+    const skeleton = result.skeletons[0];
+    if (!skeleton) return null;
+
+    let armatureNode: TransformNode | null = null;
+    for (const tn of result.transformNodes) {
+      if (/^Armature(\.\d+)?$/.test(tn.name)) { armatureNode = tn; break; }
+    }
+    if (!armatureNode) return null;
+
+    const donor = { skeleton, armatureNode };
+    if (applyIdle) await applyIdlePoseToDonor(donor);
+    return donor;
+  } catch (e) {
+    console.warn('[ThumbnailRenderer] donor skeleton load failed:', e);
+    return null;
+  }
+}
 
 function ensureDonor(): Promise<DonorSkeleton | null> {
-  if (_donorPromise) return _donorPromise;
-  _donorPromise = (async () => {
-    ensureEngine();
-    try {
-      const lastSlash = CHARACTER_MODEL_PATH.lastIndexOf('/');
-      const dir = CHARACTER_MODEL_PATH.substring(0, lastSlash + 1);
-      const file = CHARACTER_MODEL_PATH.substring(lastSlash + 1);
-      const result = await SceneLoader.ImportMeshAsync('', dir, file, _scene!);
-      // Stop bundled animations so bones settle in bind pose.
-      for (const ag of result.animationGroups || []) ag.stop();
-      // Hide donor visually but KEEP it in the active-mesh list — the skeleton
-      // is only evaluated when at least one mesh referencing it is active.
-      // setEnabled(false) takes it out of evaluation entirely, leaving the
-      // armor's skinning math with stale (zero) bone matrices and rendering
-      // it invisible. `visibility=0` makes draws fully transparent but the
-      // mesh stays active.
-      for (const mesh of result.meshes) {
-        mesh.visibility = 0;
-        mesh.isPickable = false;
-      }
-
-      const skeleton = result.skeletons[0];
-      if (!skeleton) return null;
-
-      let armatureNode: TransformNode | null = null;
-      for (const tn of result.transformNodes) {
-        if (/^Armature(\.\d+)?$/.test(tn.name)) { armatureNode = tn; break; }
-      }
-      if (!armatureNode) return null;
-
-      return { skeleton, armatureNode };
-    } catch (e) {
-      console.warn('[ThumbnailRenderer] donor skeleton load failed:', e);
-      return null;
-    }
-  })();
+  if (!_donorPromise) _donorPromise = loadDonorSkeleton(false);
   return _donorPromise;
+}
+
+function ensureIdleDonor(): Promise<DonorSkeleton | null> {
+  if (!_idleDonorPromise) _idleDonorPromise = loadDonorSkeleton(true);
+  return _idleDonorPromise;
 }
 
 /** Rebind an armor GLB's skinning to the donor skeleton so the bind pose
@@ -159,44 +226,73 @@ export interface ThumbnailOptions {
   tint?: [number, number, number];
   /** Substring matched against material name to decide what gets tinted. */
   tintMaterialMatch?: string;
+  /** Tint every untextured material. Use for GLBs whose exported material slots
+   *  do not consistently isolate the metal surface. */
+  tintAllMaterials?: boolean;
+  /** Match an untextured material by its authored base color instead of its
+   *  exporter-generated material name. Useful when related GLBs have unstable
+   *  material names but share the same source palette color. */
+  tintBaseColorMatch?: [number, number, number];
+  /** Per-channel tolerance for `tintBaseColorMatch`. Defaults to 0.015. */
+  tintBaseColorTolerance?: number;
   /** Override one or more camera axes for this render. */
   camera?: ThumbnailCamera;
-  /** Rotate the loaded model around Y (radians) before bbox calc + render.
-   *  Use to fix items that exported facing the wrong way. */
+  /** Rotate the loaded model before bbox calc + render.
+   *  Use to fix items that exported facing the wrong way or should lie flat. */
+  rotationX?: number;
   rotationY?: number;
+  rotationZ?: number;
+  /** Final post-trim icon scale. 1 fills the normal padded thumbnail box;
+   *  smaller values leave more empty space without lowering render quality. */
+  iconScale?: number;
+  /** Pose used by the donor skeleton for skinned armor thumbnails. Defaults
+   *  to bind pose so old fitted thumbnails keep their existing cache entry. */
+  skinnedPose?: 'idle';
 }
 
 interface QueueEntry {
   path: string;
   options: ThumbnailOptions;
-  cacheKey: string;
+  cacheKey?: string;
   resolve: (url: string | null) => void;
 }
 
 const queue: QueueEntry[] = [];
 let processing = false;
 // `null` is cached so a broken/missing GLB doesn't trigger a retry storm on
-// every slot re-render — callers fall back to sprite/icon. Reload clears it.
+// every slot re-render. Reload clears it.
 const memCache = new Map<string, string | null>();
 
 function buildCacheKey(path: string, options: ThumbnailOptions): string {
   const parts: string[] = [path];
+  const n = (value: number): string => value.toFixed(5);
   if (options.tint) {
     const [r, g, b] = options.tint;
-    parts.push(`tint:${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)}|m:${options.tintMaterialMatch ?? 'Material.002'}`);
+    const materialKey = options.tintAllMaterials ? '*' : (options.tintMaterialMatch ?? 'Material.002');
+    parts.push(`tint:${n(r)},${n(g)},${n(b)}|m:${materialKey}`);
+    if (options.tintBaseColorMatch) {
+      const [mr, mg, mb] = options.tintBaseColorMatch;
+      parts.push(`base:${n(mr)},${n(mg)},${n(mb)}|tol:${n(options.tintBaseColorTolerance ?? 0.015)}`);
+    }
   }
   if (options.camera) {
     const c = options.camera;
     const a = c.alpha ?? DEFAULT_ALPHA;
     const b = c.beta ?? DEFAULT_BETA;
     const d = c.distanceMult ?? DEFAULT_DISTANCE_MULT;
-    parts.push(`cam:${a.toFixed(2)},${b.toFixed(2)},${d.toFixed(2)}`);
+    parts.push(`cam:${n(a)},${n(b)},${n(d)}`);
   }
-  if (options.rotationY) parts.push(`roty:${options.rotationY.toFixed(2)}`);
+  if (options.rotationX) parts.push(`rotx:${n(options.rotationX)}`);
+  if (options.rotationY) parts.push(`roty:${n(options.rotationY)}`);
+  if (options.rotationZ) parts.push(`rotz:${n(options.rotationZ)}`);
+  if (typeof options.iconScale === 'number' && Number.isFinite(options.iconScale) && options.iconScale !== 1) {
+    parts.push(`scale:${n(options.iconScale)}`);
+  }
+  if (options.skinnedPose) parts.push(`pose:${options.skinnedPose}`);
   return parts.join('|');
 }
 
-function enqueue(path: string, options: ThumbnailOptions, cacheKey: string): Promise<string | null> {
+function enqueue(path: string, options: ThumbnailOptions, cacheKey?: string): Promise<string | null> {
   return new Promise((resolve) => {
     queue.push({ path, options, cacheKey, resolve });
     if (!processing) processQueue();
@@ -231,7 +327,7 @@ async function processQueue(): Promise<void> {
     const startMs = performance.now();
     try {
       const url = await withTimeout(renderOne(path, options), RENDER_TIMEOUT_MS);
-      if (url) putCachedThumb(cacheKey, url, THUMB_VERSION);
+      if (url && cacheKey) putCachedThumb(cacheKey, url, THUMB_VERSION);
       resolve(url);
     } catch (err) {
       console.warn('[ThumbnailRenderer] render failed for', path, err);
@@ -261,7 +357,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
  *  skeletons, off-center pivots, stray vertices). Returns null if the render
  *  is fully transparent — callers should fall back to sprite/icon rather
  *  than caching an empty image. */
-function trimAndResize(sourceUrl: string, outSize: number): Promise<string | null> {
+function trimAndResize(sourceUrl: string, outSize: number, iconScale = 1): Promise<string | null> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -290,7 +386,8 @@ function trimAndResize(sourceUrl: string, outSize: number): Promise<string | nul
 
       const cropW = maxX - minX + 1;
       const cropH = maxY - minY + 1;
-      const innerSize = outSize * (1 - 2 * THUMB_PADDING);
+      const safeIconScale = Number.isFinite(iconScale) ? Math.max(0.05, Math.min(2, iconScale)) : 1;
+      const innerSize = outSize * (1 - 2 * THUMB_PADDING) * safeIconScale;
       const scale = innerSize / Math.max(cropW, cropH);
       const outW = cropW * scale;
       const outH = cropH * scale;
@@ -347,18 +444,20 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
     // character GLB) so its bind pose drives the mesh. Donor loads once and
     // is reused for all subsequent skinned-armor renders.
     if (result.skeletons.length > 0) {
-      const donor = await ensureDonor();
+      const donor = options.skinnedPose === 'idle' ? await ensureIdleDonor() : await ensureDonor();
       if (donor) bindToDonor(result, donor);
     }
 
-    if (options.rotationY) {
+    if (options.rotationX || options.rotationY || options.rotationZ) {
       // Rotate the loader root so bbox + render reflect the new orientation.
       // Null out any baked quaternion so .rotation.y actually takes effect
       // (rotationQuaternion overrides euler when set).
       const root = result.meshes.find((m) => m.name === '__root__') ?? result.meshes.find((m) => !m.parent);
       if (root) {
         if (root.rotationQuaternion) root.rotationQuaternion = null;
-        root.rotation.y += options.rotationY;
+        root.rotation.x += options.rotationX ?? 0;
+        root.rotation.y += options.rotationY ?? 0;
+        root.rotation.z += options.rotationZ ?? 0;
       }
     }
 
@@ -366,9 +465,21 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
       const match = options.tintMaterialMatch ?? 'Material.002';
       const [r, g, b] = options.tint;
       const tintColor = new Color3(r, g, b);
+      const baseMatch = options.tintBaseColorMatch;
+      const baseTolerance = options.tintBaseColorTolerance ?? 0.015;
       for (const mesh of result.meshes) {
         const mat = mesh.material as any;
-        if (!mat || !mat.name || !mat.name.includes(match)) continue;
+        if (!mat) continue;
+        let shouldTint = options.tintAllMaterials;
+        if (!shouldTint && baseMatch) {
+          const base = mat.albedoColor ?? mat.diffuseColor;
+          shouldTint = !!base
+            && Math.abs(base.r - baseMatch[0]) <= baseTolerance
+            && Math.abs(base.g - baseMatch[1]) <= baseTolerance
+            && Math.abs(base.b - baseMatch[2]) <= baseTolerance;
+        }
+        if (!shouldTint && mat.name && mat.name.includes(match)) shouldTint = true;
+        if (!shouldTint) continue;
         const hasTexture = (mat.albedoTexture && mat.albedoTexture !== null) || (mat.diffuseTexture && mat.diffuseTexture !== null);
         if (hasTexture) continue;
         if ('albedoColor' in mat) mat.albedoColor = tintColor;
@@ -408,7 +519,7 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
     _scene!.render();
     _scene!.render();
     const rawUrl = _canvas!.toDataURL('image/png');
-    return await trimAndResize(rawUrl, THUMB_SIZE);
+    return await trimAndResize(rawUrl, THUMB_SIZE, options.iconScale ?? 1);
   } finally {
     disposeLoadResult(result);
   }
@@ -430,4 +541,16 @@ export async function getThumbnail(path: string, options: ThumbnailOptions = {})
   const rendered = await enqueue(path, options, cacheKey);
   memCache.set(cacheKey, rendered);
   return rendered;
+}
+
+export async function renderThumbnailPreview(path: string, options: ThumbnailOptions = {}): Promise<string | null> {
+  if (!path) return null;
+  return enqueue(path, options);
+}
+
+export async function invalidateThumbnail(path: string, options: ThumbnailOptions = {}): Promise<void> {
+  if (!path) return;
+  const cacheKey = buildCacheKey(path, options);
+  memCache.delete(cacheKey);
+  await clearCachedThumb(cacheKey);
 }

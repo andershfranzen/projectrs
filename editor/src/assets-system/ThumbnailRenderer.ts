@@ -13,6 +13,7 @@ import { getCachedThumb, putCachedThumb } from './ThumbnailCache'
 
 export const DEFAULT_THUMB_ALPHA = -Math.PI / 4
 export const DEFAULT_THUMB_BETA = Math.PI / 2.6
+export const DEFAULT_THUMB_DISTANCE_MULT = 0.75
 
 /** Shared scene setup for any thumbnail-style render (grid renderer +
  *  rotation editor). Creates the same 3-light rig and clear color so both
@@ -47,8 +48,9 @@ export function splitEncodedGlbUrl(path: string): { dir: string; file: string } 
   return { dir: encoded.substring(0, slash + 1), file: encoded.substring(slash + 1) }
 }
 
-/** Compute axis-aligned bounding-box center + a fit-radius for a Babylon
- *  ArcRotateCamera so the imported asset fills ~75% of the view. Returns
+/** Compute axis-aligned bounding-box center + the raw fit-radius for a Babylon
+ *  ArcRotateCamera. Distance multipliers are applied by callers so the editor
+ *  uses the same distance semantics as the runtime thumbnail renderer. Returns
  *  null for an empty/vertex-less import result. */
 export function computeFitTarget(
   result: ISceneLoaderAsyncResult,
@@ -72,7 +74,7 @@ export function computeFitTarget(
   if (!Number.isFinite(minX)) return null
   const center = new Vector3((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2)
   const sizeMax = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1
-  const fitRadius = (sizeMax / Math.tan(fov / 2)) * 0.75
+  const fitRadius = sizeMax / Math.tan(fov / 2)
   return { center, fitRadius }
 }
 
@@ -85,7 +87,10 @@ export interface AssetThumbnailOverride {
   alpha?: number       // camera yaw (radians)
   beta?: number        // camera pitch (radians)
   distanceMult?: number // multiplier on auto-fit radius
+  rotationX?: number    // model pitch (radians), before bbox fit
   rotationY?: number    // model yaw (radians), before bbox fit
+  rotationZ?: number    // model roll (radians), before bbox fit
+  iconScale?: number    // final post-trim runtime icon scale
 }
 
 interface ThumbnailOverrideDocument {
@@ -152,7 +157,6 @@ function ensureEngine(): void {
   _canvas.height = THUMB_SIZE
   _engine = new Engine(_canvas, true, { preserveDrawingBuffer: true, antialias: true })
   _scene = new Scene(_engine)
-  _scene.useRightHandedSystem = true
   _scene.clearColor = new Color4(0, 0, 0, 0)
   setupThumbnailLights(_scene, 'thumb')
   _camera = createThumbnailCamera(_scene, 'thumb-cam')
@@ -208,13 +212,13 @@ async function renderOne(path: string, explicitOverride?: AssetThumbnailOverride
   let dataUrl: string | null = null
   const overrides = explicitOverride ? null : await loadAssetOverrides()
   const ov = explicitOverride ?? overrides?.[path] ?? {}
-  applyModelRotation(result, ov.rotationY)
+  applyModelRotation(result, ov)
   const fit = computeFitTarget(result, _camera!.fov)
   if (fit) {
     _camera!.alpha = ov.alpha ?? DEFAULT_THUMB_ALPHA
     _camera!.beta = ov.beta ?? DEFAULT_THUMB_BETA
     _camera!.setTarget(fit.center)
-    _camera!.radius = fit.fitRadius * (ov.distanceMult ?? 1)
+    _camera!.radius = fit.fitRadius * (ov.distanceMult ?? DEFAULT_THUMB_DISTANCE_MULT)
     await _scene!.whenReadyAsync()
     // Two renders: first compiles shaders, second produces correct pixels.
     _scene!.render()
@@ -225,12 +229,14 @@ async function renderOne(path: string, explicitOverride?: AssetThumbnailOverride
   return dataUrl
 }
 
-function applyModelRotation(result: ISceneLoaderAsyncResult, rotationY?: number): void {
-  if (!rotationY) return
+function applyModelRotation(result: ISceneLoaderAsyncResult, rotation?: AssetThumbnailOverride): void {
+  if (!rotation?.rotationX && !rotation?.rotationY && !rotation?.rotationZ) return
   const root = result.meshes.find((m) => m.name === '__root__') ?? result.meshes.find((m) => !m.parent)
   if (!root) return
   if (root.rotationQuaternion) root.rotationQuaternion = null
-  root.rotation.y += rotationY
+  root.rotation.x += rotation.rotationX ?? 0
+  root.rotation.y += rotation.rotationY ?? 0
+  root.rotation.z += rotation.rotationZ ?? 0
   root.computeWorldMatrix(true)
   for (const mesh of result.meshes) mesh.computeWorldMatrix(true)
 }
