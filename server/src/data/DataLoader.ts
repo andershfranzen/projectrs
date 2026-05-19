@@ -177,6 +177,13 @@ export class DataLoader {
     this.loadShops();
   }
 
+  reloadSpells(): void {
+    this.spells.clear();
+    this.spellsByIndex = [];
+    this.spellIndexById.clear();
+    this.loadSpells();
+  }
+
   /** Hot-reload items.json after editor stat changes. Existing inventories and
    *  equipment store only item ids, so combat/equip/shop lookups immediately
    *  see the new definitions through this map. */

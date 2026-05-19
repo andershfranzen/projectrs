@@ -54,6 +54,30 @@
         .action-row { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; align-items: center; }
         .action-row label { font-size: 12px; }
         #info { position: absolute; bottom: 10px; left: 10px; color: #555; font-family: monospace; font-size: 12px; }
+        .btn-save { background: #c63; } .btn-save:hover { background: #d74; }
+        .btn-load { background: #579; } .btn-load:hover { background: #68a; }
+        .reagent-row { display: flex; align-items: center; gap: 4px; margin: 3px 0; }
+        .reagent-row input[type=number] {
+            width: 54px; background: #222; color: #ddd; border: 1px solid #555;
+            border-radius: 3px; padding: 3px 4px; font-size: 12px; font-family: inherit;
+        }
+        .reagent-row .reagent-name { flex: 1; font-size: 11px; color: #8cf; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .reagent-row button {
+            background: #633; color: #ddd; border: none; border-radius: 3px;
+            cursor: pointer; font-size: 11px; padding: 2px 6px;
+        }
+        .reagent-row button:hover { background: #844; }
+        #addReagentBtn {
+            background: #354; color: #adf; border: 1px dashed #567; border-radius: 3px;
+            cursor: pointer; font-size: 11px; padding: 3px 8px; margin-top: 4px;
+        }
+        #addReagentBtn:hover { background: #465; }
+        #iconPreview { max-width: 48px; max-height: 48px; border: 1px solid #555; border-radius: 3px; background: #222; display: none; }
+        .spell-load-list { max-height: 120px; overflow-y: auto; margin-top: 4px; }
+        .spell-load-item {
+            padding: 3px 6px; cursor: pointer; border-radius: 3px; font-size: 12px; margin: 1px 0;
+        }
+        .spell-load-item:hover { background: #335; }
     </style>
 </head>
 <body>
@@ -75,10 +99,81 @@
             <button class="preset-btn holy" onclick="applyPreset('holy')">Holy</button>
         </div>
 
-        <div class="ctrl-row" style="margin-bottom:6px">
-            <label>Tier</label>
-            <input type="range" id="tier" min="1" max="5" step="1" value="2">
-            <span class="val" id="tierVal">2</span>
+        <!-- Spell Properties -->
+        <div class="ctrl-group" id="grp-properties">
+            <h4>Spell Properties</h4>
+            <div class="ctrl-content">
+                <div class="ctrl-row">
+                    <label>Spell Type</label>
+                    <select id="spellType">
+                        <option value="projectile">Projectile</option>
+                        <option value="melee">Melee</option>
+                        <option value="aoe">AoE</option>
+                        <option value="self">Self-Cast</option>
+                    </select>
+                </div>
+                <div class="ctrl-row">
+                    <label>Spellbook</label>
+                    <select id="spellSchool">
+                        <option value="evil">Evil Magic</option>
+                        <option value="good">Good Magic</option>
+                    </select>
+                </div>
+                <div class="ctrl-row">
+                    <label>Skill</label>
+                    <span id="skillDisplay" style="flex:1;margin:0 8px;color:#8cf;font-size:12px;">evilmagic</span>
+                </div>
+                <div class="ctrl-row">
+                    <label>Element</label>
+                    <select id="spellElement">
+                        <option value="fire">Fire</option>
+                        <option value="water">Water</option>
+                        <option value="earth">Earth</option>
+                        <option value="air">Air</option>
+                        <option value="dark">Dark</option>
+                        <option value="holy">Holy</option>
+                    </select>
+                </div>
+                <div class="ctrl-row">
+                    <label>Tier</label>
+                    <input type="range" id="tier" min="1" max="5" step="1" value="2">
+                    <span class="val" id="tierVal">2</span>
+                </div>
+                <div class="ctrl-row">
+                    <label>Level Required</label>
+                    <input type="range" id="levelRequired" min="1" max="99" step="1" value="1">
+                    <span class="val" id="levelRequiredVal">1</span>
+                </div>
+                <div class="ctrl-row">
+                    <label>Animation</label>
+                    <select id="castAnimation">
+                        <option value="spell_cast_2h">Spell Cast (2H)</option>
+                        <option value="attack_slash">Attack Slash</option>
+                        <option value="attack_2h_slash">2H Slash</option>
+                        <option value="attack_2h_smash">2H Smash</option>
+                        <option value="attack_punch">Punch</option>
+                        <option value="kick">Kick</option>
+                        <option value="stab">Stab</option>
+                        <option value="attack_1h_slash">1H Slash</option>
+                    </select>
+                </div>
+                <div class="ctrl-row" style="align-items:flex-start">
+                    <label>Icon</label>
+                    <div style="flex:1;margin:0 8px;">
+                        <input type="file" id="iconFile" accept=".png" style="font-size:11px;max-width:160px;">
+                        <img id="iconPreview" alt="">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reagents -->
+        <div class="ctrl-group" id="grp-reagents">
+            <h4>Reagents (Spell Cost)</h4>
+            <div class="ctrl-content">
+                <div id="reagentList"></div>
+                <button id="addReagentBtn">+ Add Reagent</button>
+            </div>
         </div>
 
         <!-- Projectile -->
@@ -190,6 +285,12 @@
             <button class="action-btn btn-export" id="btnExport">Export JSON</button>
             <button class="action-btn btn-import" id="btnImport">Import JSON</button>
         </div>
+        <div class="action-row">
+            <button class="action-btn btn-save" id="btnSaveServer">Save to Server</button>
+            <button class="action-btn btn-load" id="btnLoadServer">Load from Server</button>
+        </div>
+        <div id="serverSpellList" class="spell-load-list" style="display:none;"></div>
+        <div id="statusMsg" style="font-size:11px;margin-top:4px;min-height:16px;"></div>
     </div>
     <div id="info">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
 
@@ -1462,23 +1563,135 @@
         };
 
         // ─────────────────────────────────────────────
+        // SPELL PROPERTIES WIRING
+        // ─────────────────────────────────────────────
+        const API_BASE = 'http://localhost:4000';
+        let itemDefsCache = null;
+
+        const schoolSelect = document.getElementById('spellSchool');
+        const skillDisplay = document.getElementById('skillDisplay');
+        const levelReqSlider = document.getElementById('levelRequired');
+        const levelReqVal = document.getElementById('levelRequiredVal');
+        levelReqSlider.addEventListener('input', () => { levelReqVal.textContent = levelReqSlider.value; });
+
+        schoolSelect.addEventListener('change', () => {
+            skillDisplay.textContent = schoolSelect.value === 'good' ? 'goodmagic' : 'evilmagic';
+        });
+
+        // Spell type → section visibility
+        const spellTypeSelect = document.getElementById('spellType');
+        const sectionVisibility = {
+            projectile: { 'grp-projectile': true, 'grp-trajectory': true, 'grp-trail': true, 'grp-impact': true },
+            melee:      { 'grp-projectile': false, 'grp-trajectory': false, 'grp-trail': false, 'grp-impact': true },
+            aoe:        { 'grp-projectile': false, 'grp-trajectory': false, 'grp-trail': false, 'grp-impact': true },
+            self:       { 'grp-projectile': false, 'grp-trajectory': false, 'grp-trail': false, 'grp-impact': false },
+        };
+        function updateSectionVisibility() {
+            const vis = sectionVisibility[spellTypeSelect.value] || sectionVisibility.projectile;
+            for (const [id, show] of Object.entries(vis)) {
+                const el = document.getElementById(id);
+                if (el) el.style.display = show ? '' : 'none';
+            }
+        }
+        spellTypeSelect.addEventListener('change', updateSectionVisibility);
+        updateSectionVisibility();
+
+        // Icon preview
+        const iconFileInput = document.getElementById('iconFile');
+        const iconPreview = document.getElementById('iconPreview');
+        let pendingIconFile = null;
+        iconFileInput.addEventListener('change', () => {
+            const file = iconFileInput.files[0];
+            if (!file) { iconPreview.style.display = 'none'; pendingIconFile = null; return; }
+            pendingIconFile = file;
+            const reader = new FileReader();
+            reader.onload = () => { iconPreview.src = reader.result; iconPreview.style.display = 'block'; };
+            reader.readAsDataURL(file);
+        });
+
+        // Reagent management
+        const reagentListEl = document.getElementById('reagentList');
+        let reagents = [];
+
+        async function fetchItemDefs() {
+            if (itemDefsCache) return itemDefsCache;
+            try {
+                const res = await fetch(API_BASE + '/api/editor/items');
+                const data = await res.json();
+                if (data.ok && Array.isArray(data.items)) { itemDefsCache = data.items; return data.items; }
+            } catch (e) { console.warn('Could not fetch items:', e); }
+            return [];
+        }
+
+        function getItemName(itemId) {
+            if (!itemDefsCache) return '';
+            const def = itemDefsCache.find(i => i.id === itemId);
+            return def ? def.name : '???';
+        }
+
+        function renderReagents() {
+            reagentListEl.innerHTML = '';
+            reagents.forEach((r, idx) => {
+                const row = document.createElement('div');
+                row.className = 'reagent-row';
+                row.innerHTML = `
+                    <input type="number" class="reagent-id" value="${r.itemId}" min="1" placeholder="Item ID" title="Item ID">
+                    <input type="number" class="reagent-qty" value="${r.quantity}" min="1" placeholder="Qty" title="Quantity" style="width:40px;">
+                    <span class="reagent-name">${r.name || getItemName(r.itemId) || ''}</span>
+                    <button title="Remove">&times;</button>
+                `;
+                const idInput = row.querySelector('.reagent-id');
+                const qtyInput = row.querySelector('.reagent-qty');
+                const nameSpan = row.querySelector('.reagent-name');
+                idInput.addEventListener('change', () => {
+                    reagents[idx].itemId = parseInt(idInput.value) || 0;
+                    reagents[idx].name = getItemName(reagents[idx].itemId);
+                    nameSpan.textContent = reagents[idx].name;
+                });
+                qtyInput.addEventListener('change', () => { reagents[idx].quantity = parseInt(qtyInput.value) || 1; });
+                row.querySelector('button').addEventListener('click', () => { reagents.splice(idx, 1); renderReagents(); });
+                reagentListEl.appendChild(row);
+            });
+        }
+
+        document.getElementById('addReagentBtn').addEventListener('click', () => {
+            reagents.push({ itemId: 0, quantity: 1, name: '' });
+            renderReagents();
+        });
+
+        // Fetch items on load for name resolution
+        fetchItemDefs().then(() => renderReagents());
+
+        // Status message helper
+        function showStatus(msg, isError) {
+            const el = document.getElementById('statusMsg');
+            el.textContent = msg;
+            el.style.color = isError ? '#f66' : '#6f6';
+            setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 4000);
+        }
+
+        // ─────────────────────────────────────────────
         // EXPORT / IMPORT
         // ─────────────────────────────────────────────
         function v(id) { const el = document.getElementById(id); return el.type === 'checkbox' ? el.checked : parseFloat(el.value); }
         function sv(id) { return document.getElementById(id).value; }
 
-        // Preserve the spell's school across edits even though the editor
-        // doesn't expose a control for it yet. Set from applyDef on import,
-        // defaults to 'evil' for fresh sessions (matches SpellEffectDef default).
-        let currentSpellSchool = 'evil';
-
         function collectDef() {
-            return {
+            const school = sv('spellSchool');
+            const def = {
                 id: sv('spellName').toLowerCase().replace(/\s+/g, '_'),
                 name: sv('spellName'),
-                element: 'fire',
-                school: currentSpellSchool,
+                element: sv('spellElement'),
+                spellType: sv('spellType'),
+                school: school,
                 tier: parseInt(document.getElementById('tier').value),
+                levelRequired: parseInt(levelReqSlider.value),
+                castAnimation: sv('castAnimation'),
+                reagents: reagents.filter(r => r.itemId > 0).map(r => ({
+                    itemId: r.itemId,
+                    quantity: r.quantity,
+                    name: r.name || getItemName(r.itemId) || undefined,
+                })),
                 projectile: { shape: sv('projShape'), size: v('projSize'), primaryColor: { r: v('projR'), g: v('projG'), b: v('projB') }, secondaryColor: { r: v('projR2'), g: v('projG2'), b: v('projB2') }, glowIntensity: v('projGlow'), rotationSpeed: v('projRot'), texture: sv('projTex') },
                 trajectory: { type: sv('trajType'), speed: v('trajSpeed'), arcHeight: v('trajArc'), homingCurve: v('trajHoming') },
                 trail: { particleType: sv('trailShape'), density: v('trailDensity'), width: v('trailWidth'), color: { r: v('trailR'), g: v('trailG'), b: v('trailB') }, fadeTime: v('trailFade'), motion: sv('trailMotion') },
@@ -1492,12 +1705,25 @@
                 aoe: v('prevAoe'),
                 aoeTargetCount: v('prevAoeCount'),
             };
+            return def;
         }
 
         function applyDef(def) {
             setVal('spellName', def.name || 'Untitled');
-            currentSpellSchool = def.school === 'good' ? 'good' : 'evil';
+            setVal('spellType', def.spellType || 'projectile');
+            updateSectionVisibility();
+            setVal('spellSchool', def.school === 'good' ? 'good' : 'evil');
+            schoolSelect.dispatchEvent(new Event('change'));
+            setVal('spellElement', def.element || 'fire');
             setVal('tier', def.tier || 2);
+            setVal('levelRequired', def.levelRequired || 1);
+            setVal('castAnimation', def.castAnimation || 'spell_cast_2h');
+            // Reagents
+            reagents = (def.reagents || []).map(r => ({ itemId: r.itemId, quantity: r.quantity, name: r.name || '' }));
+            fetchItemDefs().then(() => {
+                reagents.forEach(r => { if (!r.name) r.name = getItemName(r.itemId); });
+                renderReagents();
+            });
             const p = def.projectile || {};
             setVal('projShape', p.shape || 'blast'); setVal('projSize', p.size || 0.5);
             setVal('projR', p.primaryColor?.r ?? 1); setVal('projG', p.primaryColor?.g ?? 0.4); setVal('projB', p.primaryColor?.b ?? 0);
@@ -1529,13 +1755,21 @@
             setVal('lingerRate', im.lingerEmitRate || 20);
             setVal('lingerR', im.lingerColor?.r ?? 0.5); setVal('lingerG', im.lingerColor?.g ?? 0.2); setVal('lingerB', im.lingerColor?.b ?? 0);
             setVal('prevAoe', def.aoe ?? false); setVal('prevAoeCount', def.aoeTargetCount || 3);
-            // Refresh
+            // Refresh visuals
             document.getElementById('trajType').dispatchEvent(new Event('change'));
             createProjMesh(p.shape || 'blast');
             projTexType = p.texture || 'none';
             updateEntityPositions();
+            // Load icon preview if spell exists on server
+            const iconDir = def.school === 'good' ? 'good magic spellbook icons' : 'evil magic spellbook icons';
+            const iconUrl = `/${iconDir}/${def.id}.png`;
+            const testImg = new Image();
+            testImg.onload = () => { iconPreview.src = iconUrl; iconPreview.style.display = 'block'; };
+            testImg.onerror = () => { iconPreview.style.display = 'none'; };
+            testImg.src = iconUrl;
         }
 
+        // Export JSON (download)
         document.getElementById('btnExport').addEventListener('click', () => {
             const def = collectDef();
             const json = JSON.stringify(def, null, 2);
@@ -1544,13 +1778,75 @@
             a.download = `${def.id}.json`; a.click();
         });
 
+        // Import JSON (file)
         document.getElementById('btnImport').addEventListener('click', () => {
             const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
             input.onchange = async () => {
                 const text = await input.files[0].text();
-                try { applyDef(JSON.parse(text)); } catch (e) { console.error('Import failed:', e); }
+                try { applyDef(JSON.parse(text)); showStatus('Imported from file'); } catch (e) { console.error('Import failed:', e); showStatus('Import failed: ' + e.message, true); }
             };
             input.click();
+        });
+
+        // Save to Server
+        document.getElementById('btnSaveServer').addEventListener('click', async () => {
+            const def = collectDef();
+            if (!def.id || !def.name.trim()) { showStatus('Spell needs a name', true); return; }
+            try {
+                const res = await fetch(API_BASE + '/api/editor/spells', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(def),
+                });
+                const data = await res.json();
+                if (!data.ok) { showStatus('Save failed: ' + data.error, true); return; }
+                // Upload icon if one was selected
+                if (pendingIconFile) {
+                    const form = new FormData();
+                    form.append('school', def.school || 'evil');
+                    form.append('spellId', def.id);
+                    form.append('icon', pendingIconFile);
+                    const iconRes = await fetch(API_BASE + '/api/editor/spell-icon', { method: 'POST', body: form });
+                    const iconData = await iconRes.json();
+                    if (!iconData.ok) { showStatus('Spell saved, but icon upload failed: ' + iconData.error, true); return; }
+                    pendingIconFile = null;
+                }
+                showStatus('Saved ' + def.id + ' to server');
+            } catch (e) {
+                showStatus('Save failed: ' + e.message, true);
+            }
+        });
+
+        // Load from Server
+        const serverSpellListEl = document.getElementById('serverSpellList');
+        document.getElementById('btnLoadServer').addEventListener('click', async () => {
+            const visible = serverSpellListEl.style.display !== 'none';
+            if (visible) { serverSpellListEl.style.display = 'none'; return; }
+            try {
+                const res = await fetch(API_BASE + '/api/editor/spells');
+                const data = await res.json();
+                if (!data.ok || !Array.isArray(data.spells)) { showStatus('Failed to load spell list', true); return; }
+                serverSpellListEl.innerHTML = '';
+                if (data.spells.length === 0) {
+                    serverSpellListEl.innerHTML = '<div style="color:#888;font-size:11px;padding:4px;">No spells on server</div>';
+                } else {
+                    for (const spell of data.spells) {
+                        const item = document.createElement('div');
+                        item.className = 'spell-load-item';
+                        const schoolTag = (spell.school || 'evil') === 'good' ? 'Good' : 'Evil';
+                        item.textContent = `${spell.name} (${schoolTag}, Lv${spell.levelRequired || 1})`;
+                        item.addEventListener('click', () => {
+                            applyDef(spell);
+                            serverSpellListEl.style.display = 'none';
+                            showStatus('Loaded ' + spell.id);
+                        });
+                        serverSpellListEl.appendChild(item);
+                    }
+                }
+                serverSpellListEl.style.display = 'block';
+            } catch (e) {
+                showStatus('Failed to connect to server', true);
+            }
         });
 
     })();

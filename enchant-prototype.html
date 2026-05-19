@@ -241,6 +241,19 @@
         </div>
 
         <button id="toggleEnchant">Toggle Enchant On/Off</button>
+
+        <div class="ctrl-group">
+            <h4>Preset</h4>
+            <div class="ctrl-row">
+                <label>Name</label>
+                <input type="text" id="presetName" placeholder="my enchant" style="flex:1;margin:0 8px;background:#222;color:#ddd;border:1px solid #555;border-radius:3px;padding:3px 6px;font-size:12px;font-family:inherit;">
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+                <button id="exportBtn" style="flex:1;padding:6px;cursor:pointer;background:#4488cc;color:white;border:none;border-radius:4px;font-size:12px;font-weight:bold;">Export JSON</button>
+                <button id="importBtn" style="flex:1;padding:6px;cursor:pointer;background:#44aa66;color:white;border:none;border-radius:4px;font-size:12px;font-weight:bold;">Import JSON</button>
+            </div>
+            <input type="file" id="importFile" accept=".json" style="display:none;">
+        </div>
     </div>
     <div id="info">Drag to rotate | Scroll to zoom | Right-drag to pan</div>
 
@@ -1021,6 +1034,63 @@
             }
 
             scene.render();
+        });
+
+        // -- Export / Import --
+        const sliderIds = [
+            'glowIntensity','glowThreshold',
+            'emissivePower','scrollSpeed','noiseScale','pulseSpeed','pulseStrength',
+            'innerR','innerG','innerB',
+            'outerR','outerG','outerB','blendSharpness',
+            'particleRate','particleSize','particleLife','particleRise',
+            'partR','partG','partB',
+            'arcCount','arcFlicker','arcJagged','arcSpread','arcThick',
+            'arcR','arcG','arcB','arcCoverage','arcGlow'
+        ];
+        const selectIds = ['particleShape','particleMotion'];
+
+        document.getElementById('exportBtn').addEventListener('click', () => {
+            const config = { name: document.getElementById('presetName').value || 'untitled' };
+            for (const id of sliderIds) config[id] = parseFloat(document.getElementById(id).value);
+            for (const id of selectIds) config[id] = document.getElementById(id).value;
+            const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = (config.name.replace(/[^a-z0-9_-]/gi, '_') || 'enchant') + '.json';
+            a.click();
+            URL.revokeObjectURL(a.href);
+        });
+
+        const importFileInput = document.getElementById('importFile');
+        document.getElementById('importBtn').addEventListener('click', () => importFileInput.click());
+        importFileInput.addEventListener('change', () => {
+            const file = importFileInput.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const config = JSON.parse(reader.result);
+                    if (config.name) document.getElementById('presetName').value = config.name;
+                    for (const id of sliderIds) {
+                        if (config[id] !== undefined) {
+                            const el = document.getElementById(id);
+                            el.value = config[id];
+                            el.dispatchEvent(new Event('input'));
+                        }
+                    }
+                    for (const id of selectIds) {
+                        if (config[id] !== undefined) {
+                            const el = document.getElementById(id);
+                            el.value = config[id];
+                            el.dispatchEvent(new Event('change'));
+                        }
+                    }
+                } catch (e) {
+                    alert('Invalid enchant config: ' + e.message);
+                }
+            };
+            reader.readAsText(file);
+            importFileInput.value = '';
         });
 
         window.addEventListener('resize', () => engine.resize());

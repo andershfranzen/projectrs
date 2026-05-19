@@ -1569,6 +1569,65 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    // ── Spell editor endpoints ──
+
+    if (url.pathname === '/api/editor/spells' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      try {
+        const spells = world.data.getAllSpells();
+        return jsonResponse({ ok: true, spells });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Failed to load spells' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/editor/spells' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const spell = await req.json() as any;
+        if (!spell || typeof spell.id !== 'string' || !spell.id.trim()) {
+          return jsonResponse({ ok: false, error: 'Spell must have a non-empty string id' }, 400);
+        }
+        if (!/^[a-z0-9_]+$/.test(spell.id)) {
+          return jsonResponse({ ok: false, error: 'Spell id must be lowercase alphanumeric + underscores' }, 400);
+        }
+        const spellsDir = resolve(DATA_DIR, 'spells');
+        if (!existsSync(spellsDir)) mkdirSync(spellsDir, { recursive: true });
+        const spellPath = resolve(spellsDir, `${spell.id}.json`);
+        writeFileSync(spellPath, JSON.stringify(spell, null, 2), 'utf-8');
+        world.data.reloadSpells();
+        return jsonResponse({ ok: true, id: spell.id });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/editor/spell-icon' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      try {
+        const formData = await req.formData();
+        const school = (formData.get('school') as string) || 'evil';
+        const spellId = formData.get('spellId') as string;
+        const file = formData.get('icon') as File | null;
+        if (!spellId || !file) {
+          return jsonResponse({ ok: false, error: 'spellId and icon file are required' }, 400);
+        }
+        if (!/^[a-z0-9_]+$/.test(spellId)) {
+          return jsonResponse({ ok: false, error: 'Invalid spellId' }, 400);
+        }
+        const dirName = school === 'good' ? 'good magic spellbook icons' : 'evil magic spellbook icons';
+        const iconDir = resolve(import.meta.dir, '../../client/public', dirName);
+        if (!existsSync(iconDir)) mkdirSync(iconDir, { recursive: true });
+        const iconPath = resolve(iconDir, `${spellId}.png`);
+        const buf = Buffer.from(await file.arrayBuffer());
+        writeFileSync(iconPath, buf);
+        return jsonResponse({ ok: true, path: `/${dirName}/${spellId}.png` });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Icon upload failed' }, 500);
+      }
+    }
+
     if (url.pathname === '/api/editor/new-map' && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();

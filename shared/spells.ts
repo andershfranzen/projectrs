@@ -9,6 +9,15 @@ export type SpellTier = 1 | 2 | 3 | 4 | 5;
  */
 export type SpellSchool = 'good' | 'evil';
 
+/**
+ * Controls which visual phases play and which editor sections are relevant.
+ *  - projectile: ranged spell with projectile → trail → impact
+ *  - melee: touch-range magic, cast + impact, no projectile/trail
+ *  - aoe: area effect centered on target, cast + impact, no projectile/trail
+ *  - self: buff/heal/teleport on caster, cast effect only
+ */
+export type SpellType = 'projectile' | 'melee' | 'aoe' | 'self';
+
 export type ProjectileShape = 'blast' | 'skull' | 'ankh';
 export type ProjectileTexture = 'none' | 'fire' | 'ice' | 'earth' | 'wind' | 'dark' | 'holy';
 export type TrajectoryType = 'straight' | 'arc' | 'homing';
@@ -105,6 +114,8 @@ export interface SpellEffectDef {
   name: string;
   element: SpellElement;
   tier: SpellTier;
+  /** Omitted → 'projectile' (the default for existing spells). */
+  spellType?: SpellType;
   /** Which magic school the spell trains. Omitted → 'evil' (the default in the
    *  editor's preset list and what most existing spells are). */
   school?: SpellSchool;
@@ -115,6 +126,8 @@ export interface SpellEffectDef {
    *  model: validate before casting, consume before projectile/impact, and
    *  spend the reagent even if the spell splashes. */
   reagents?: SpellReagentDef[];
+  /** Animation key to play on the caster. Omitted → 'spell_cast_2h'. */
+  castAnimation?: string;
   projectile: ProjectileDef;
   trajectory: TrajectoryDef;
   trail: TrailDef;
