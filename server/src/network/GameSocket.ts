@@ -1,10 +1,39 @@
-import { ClientOpcode, ServerOpcode, decodePacket, encodePacket, isValidAppearance, type PlayerAppearance } from '@projectrs/shared';
+import {
+  BANK_SIZE,
+  ClientOpcode,
+  HAIR_STYLE_COUNT,
+  INVENTORY_SIZE,
+  ServerOpcode,
+  TRADE_OFFER_SIZE,
+  decodePacket,
+  encodePacket,
+  isValidAppearance,
+  type PlayerAppearance,
+} from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
+import { audit } from '../Audit';
 import type { ServerWebSocket } from 'bun';
 
 export type GameSocketData = { type: 'game'; playerId?: number; accountId: number; username: string; isAdmin: boolean; ip: string; deviceId: string };
+
+export interface OpcodeRateRule {
+  bucket: string;
+  maxMessages: number;
+  windowMs: number;
+}
+
+interface PacketValidationResult {
+  ok: boolean;
+  reason?: string;
+}
+
+const EQUIP_SLOT_COUNT = 10;
+const INVALID_PACKET_CLOSE_THRESHOLD = 50;
+const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
+
+const OK_PACKET: PacketValidationResult = { ok: true };
 
 function hasValues(values: number[], count: number): boolean {
   if (values.length < count) return false;
@@ -12,6 +41,353 @@ function hasValues(values: number[], count: number): boolean {
     if (!Number.isFinite(values[i])) return false;
   }
   return true;
+}
+
+function isSlot(slot: number, size: number): boolean {
+  return Number.isInteger(slot) && slot >= 0 && slot < size;
+}
+
+function invalid(reason: string): PacketValidationResult {
+  return { ok: false, reason };
+}
+
+export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_MOVE:
+      return { bucket: 'movement', maxMessages: 8, windowMs: 1000 };
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+    case ClientOpcode.PLAYER_CAST_SPELL:
+    case ClientOpcode.PLAYER_SET_AUTOCAST:
+      return { bucket: 'combat', maxMessages: 8, windowMs: 1000 };
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+    case ClientOpcode.PLAYER_TALK_NPC:
+      return { bucket: 'world-action', maxMessages: 6, windowMs: 1000 };
+    case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_EQUIP_ITEM:
+    case ClientOpcode.PLAYER_UNEQUIP_ITEM:
+    case ClientOpcode.PLAYER_EAT_ITEM:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM:
+    case ClientOpcode.PLAYER_BUY_ITEM:
+    case ClientOpcode.PLAYER_SELL_ITEM:
+    case ClientOpcode.PLAYER_MOVE_INV_ITEM:
+    case ClientOpcode.BANK_REQUEST_OPEN:
+    case ClientOpcode.BANK_DEPOSIT:
+    case ClientOpcode.BANK_WITHDRAW:
+    case ClientOpcode.BANK_CLOSE:
+    case ClientOpcode.TRADE_REQUEST:
+    case ClientOpcode.TRADE_ACCEPT_REQUEST:
+    case ClientOpcode.TRADE_DECLINE:
+    case ClientOpcode.TRADE_OFFER_ITEM:
+    case ClientOpcode.TRADE_REMOVE_OFFERED:
+    case ClientOpcode.TRADE_ACCEPT:
+      return { bucket: 'inventory-ui', maxMessages: 12, windowMs: 1000 };
+    case ClientOpcode.CLIENT_PING:
+      return { bucket: 'heartbeat', maxMessages: 4, windowMs: 10_000 };
+    case ClientOpcode.CLIENT_POSITION_Y:
+      return { bucket: 'metadata', maxMessages: 8, windowMs: 1000 };
+    default:
+      return { bucket: 'misc', maxMessages: 10, windowMs: 1000 };
+  }
+}
+
+function checkOpcodeRateLimit(
+  player: Player,
+  opcode: number,
+  ws: ServerWebSocket<GameSocketData>,
+  world: World,
+): boolean {
+  const rule = getOpcodeRateRule(opcode);
+  const allowed = player.checkActionRateLimit(rule.bucket, rule.maxMessages, rule.windowMs);
+  if (allowed) return true;
+  reportSuspiciousPacket(player, opcode, `rate-limit:${rule.bucket}`, [], ws, world);
+  return false;
+}
+
+function validateClientPacket(player: Player, opcode: number, values: number[], world: World): PacketValidationResult {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_MOVE: {
+      const pathLength = values[0];
+      if (!Number.isInteger(pathLength) || pathLength < 0 || pathLength > 50) return invalid('bad-move-path-length');
+      if (values.length < 1 + pathLength * 2) return invalid('truncated-move-path');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_ATTACK_NPC: {
+      if (!hasValues(values, 1)) return invalid('missing-npc-target');
+      const npc = world.npcs.get(values[0]);
+      if (!npc || npc.dead) return invalid('stale-npc-target');
+      if (npc.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-npc-target');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-npc-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_FOLLOW: {
+      if (!hasValues(values, 1)) return invalid('missing-follow-target');
+      const target = world.getPlayer(values[0]);
+      if (!target || target.id === player.id || target.disconnected) return invalid('bad-follow-target');
+      if (target.currentMapLevel !== player.currentMapLevel || target.currentFloor !== player.currentFloor) return invalid('unreachable-follow-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_PICKUP_ITEM: {
+      if (!hasValues(values, 1)) return invalid('missing-ground-item');
+      const item = world.groundItems.get(values[0]);
+      if (!item) return invalid('stale-ground-item');
+      if (item.mapLevel !== player.currentMapLevel) return invalid('cross-map-ground-item');
+      if (item.ownerPlayerId && item.ownerPlayerId !== player.id && (item.privateTicks ?? 0) > 0) return invalid('private-ground-item');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-ground-item');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_EQUIP_ITEM:
+    case ClientOpcode.PLAYER_EAT_ITEM: {
+      if (!hasValues(values, 2)) return invalid('missing-inventory-slot-item');
+      const slot = values[0];
+      const expectedItemId = values[1];
+      if (!isSlot(slot, INVENTORY_SIZE)) return invalid('bad-inventory-slot');
+      if (player.inventory[slot]?.itemId !== expectedItemId) return invalid('stale-inventory-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_UNEQUIP_ITEM: {
+      if (!hasValues(values, 1)) return invalid('missing-equip-slot');
+      if (!isSlot(values[0], EQUIP_SLOT_COUNT)) return invalid('bad-equip-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_SET_STANCE: {
+      if (!hasValues(values, 1)) return invalid('missing-stance');
+      if (!isSlot(values[0], 4)) return invalid('bad-stance');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_CAST_SPELL: {
+      if (!hasValues(values, 2)) return invalid('missing-spell-target');
+      if (!Number.isInteger(values[0]) || values[0] < 0) return invalid('bad-spell-index');
+      const target = world.npcs.get(values[1]);
+      if (!target || target.dead) return invalid('stale-spell-target');
+      if (target.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-spell-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_SET_AUTOCAST: {
+      if (!hasValues(values, 1)) return invalid('missing-autocast-spell');
+      if (!Number.isInteger(values[0]) || values[0] < -1) return invalid('bad-autocast-spell');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_INTERACT_OBJECT: {
+      if (!hasValues(values, 1)) return invalid('missing-object-target');
+      const obj = world.worldObjects.get(values[0]);
+      if (!obj) return invalid('stale-object-target');
+      if (obj.mapLevel !== player.currentMapLevel) return invalid('cross-map-object-target');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-object-target');
+      const actionIndex = values[1] ?? 0;
+      if (!Number.isInteger(actionIndex) || actionIndex < 0 || actionIndex > 20) return invalid('bad-object-action-index');
+      const recipeIndex = values[2] ?? -1;
+      if (!Number.isInteger(recipeIndex) || recipeIndex < -1 || recipeIndex > 1000) return invalid('bad-object-recipe-index');
+      const expectedDoorOpen = values[3];
+      if (expectedDoorOpen !== undefined && expectedDoorOpen !== 0 && expectedDoorOpen !== 1) return invalid('bad-door-state');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM: {
+      if (!hasValues(values, 4)) return invalid('missing-use-item-on-item-values');
+      const fromSlot = values[0];
+      const toSlot = values[2];
+      if (fromSlot === toSlot) return invalid('self-use-item');
+      if (!isSlot(fromSlot, INVENTORY_SIZE) || !isSlot(toSlot, INVENTORY_SIZE)) return invalid('bad-use-item-slot');
+      if (player.inventory[fromSlot]?.itemId !== values[1]) return invalid('stale-use-source-slot');
+      if (player.inventory[toSlot]?.itemId !== values[3]) return invalid('stale-use-target-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT: {
+      if (!hasValues(values, 3)) return invalid('missing-use-item-object-values');
+      if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-use-item-slot');
+      if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-use-item-slot');
+      const obj = world.worldObjects.get(values[2]);
+      if (!obj) return invalid('stale-use-object-target');
+      if (obj.mapLevel !== player.currentMapLevel) return invalid('cross-map-use-object');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[2])) return invalid('unseen-use-object-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC: {
+      if (!hasValues(values, 3)) return invalid('missing-use-item-npc-values');
+      if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-use-item-slot');
+      if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-use-item-slot');
+      const npc = world.npcs.get(values[2]);
+      if (!npc || npc.dead) return invalid('stale-use-npc-target');
+      if (npc.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-use-npc');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[2])) return invalid('unseen-use-npc-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_TALK_NPC: {
+      if (!hasValues(values, 1)) return invalid('missing-talk-npc');
+      const npc = world.npcs.get(values[0]);
+      if (!npc || npc.dead) return invalid('stale-talk-npc');
+      if (npc.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-talk-npc');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.DIALOGUE_CHOOSE: {
+      if (!hasValues(values, 2)) return invalid('missing-dialogue-choice');
+      const npcEntityId = values[0];
+      const sessionId = values.length >= 3 ? values[1] : -1;
+      const optionIndex = values.length >= 3 ? values[2] : values[1];
+      const state = player.openDialogueState;
+      if (!state || state.npcEntityId !== npcEntityId) return invalid('dialogue-not-open');
+      if (sessionId !== state.sessionId) return invalid('stale-dialogue-session');
+      if (!isSlot(optionIndex, state.visibleOptionIndices.length)) return invalid('bad-dialogue-option');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_BUY_ITEM: {
+      if (!hasValues(values, 1)) return invalid('missing-buy-item');
+      if (player.openShopNpcId === null) return invalid('shop-not-open');
+      const shop = world.data.getShop(player.openShopNpcId);
+      if (!shop) return invalid('shop-not-found');
+      if (!shop.items.some((item) => item.itemId === values[0])) return invalid('shop-does-not-sell-item');
+      const quantity = values[1] ?? 1;
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 1000) return invalid('bad-buy-quantity');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_SELL_ITEM: {
+      if (!hasValues(values, 3)) return invalid('missing-sell-values');
+      if (player.openShopNpcId === null) return invalid('shop-not-open');
+      if (!world.data.getShop(player.openShopNpcId)) return invalid('shop-not-found');
+      if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-sell-slot');
+      if (!Number.isInteger(values[1]) || values[1] <= 0 || values[1] > 1000) return invalid('bad-sell-quantity');
+      if (player.inventory[values[0]]?.itemId !== values[2]) return invalid('stale-sell-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_MOVE_INV_ITEM: {
+      if (!hasValues(values, 3)) return invalid('missing-move-inventory-values');
+      if (values[0] === values[1]) return invalid('self-move-inventory');
+      if (!isSlot(values[0], INVENTORY_SIZE) || !isSlot(values[1], INVENTORY_SIZE)) return invalid('bad-move-inventory-slot');
+      if (player.inventory[values[0]]?.itemId !== values[2]) return invalid('stale-move-inventory-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.CLIENT_POSITION_Y:
+      if (!hasValues(values, 1)) return invalid('missing-position-y');
+      return OK_PACKET;
+
+    case ClientOpcode.SET_APPEARANCE: {
+      if (!hasValues(values, 7)) return invalid('missing-appearance-values');
+      if (!player.appearanceEditorOpen && player.appearance !== null) return invalid('appearance-editor-not-open');
+      const appearance: PlayerAppearance = {
+        shirtColor: values[0] ?? 0,
+        pantsColor: values[1] ?? 0,
+        shoesColor: values[2] ?? 0,
+        hairColor: values[3] ?? 0,
+        beltColor: values[4] ?? 0,
+        skinColor: values[5] ?? 0,
+        hairStyle: values[6] ?? 1,
+      };
+      if (!isValidAppearance(appearance)) return invalid('bad-appearance');
+      if (appearance.hairStyle > HAIR_STYLE_COUNT) return invalid('bad-hair-style');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.BANK_REQUEST_OPEN:
+      return OK_PACKET;
+
+    case ClientOpcode.BANK_DEPOSIT: {
+      if (!hasValues(values, 2)) return invalid('missing-bank-deposit-values');
+      if (player.openInterface !== 'bank') return invalid('bank-not-open');
+      if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-bank-deposit-slot');
+      if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-bank-deposit-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.BANK_WITHDRAW: {
+      if (!hasValues(values, 2)) return invalid('missing-bank-withdraw-values');
+      if (player.openInterface !== 'bank') return invalid('bank-not-open');
+      if (!isSlot(values[0], BANK_SIZE)) return invalid('bad-bank-withdraw-slot');
+      if (player.bank[values[0]]?.itemId !== values[1]) return invalid('stale-bank-withdraw-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.BANK_CLOSE:
+      return OK_PACKET;
+
+    case ClientOpcode.TRADE_REQUEST: {
+      if (!hasValues(values, 1)) return invalid('missing-trade-target');
+      const target = world.getPlayer(values[0]);
+      if (!target || target.id === player.id || target.disconnected || target.requestIdleLogout) return invalid('bad-trade-target');
+      if (target.currentMapLevel !== player.currentMapLevel || target.currentFloor !== player.currentFloor) return invalid('unreachable-trade-target');
+      if (Math.max(Math.abs(target.position.x - player.position.x), Math.abs(target.position.y - player.position.y)) > 4) return invalid('distant-trade-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.TRADE_ACCEPT_REQUEST:
+      if (!hasValues(values, 1)) return invalid('missing-trade-requester');
+      if (!world.getPlayer(values[0])) return invalid('stale-trade-requester');
+      return OK_PACKET;
+
+    case ClientOpcode.TRADE_DECLINE:
+    case ClientOpcode.TRADE_ACCEPT:
+      return OK_PACKET;
+
+    case ClientOpcode.TRADE_OFFER_ITEM: {
+      if (!hasValues(values, 2)) return invalid('missing-trade-offer-values');
+      if (player.openInterface !== 'trade') return invalid('trade-not-open');
+      if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-trade-offer-slot');
+      if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-trade-offer-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.TRADE_REMOVE_OFFERED: {
+      if (!hasValues(values, 2)) return invalid('missing-trade-remove-values');
+      if (player.openInterface !== 'trade') return invalid('trade-not-open');
+      if (!isSlot(values[0], TRADE_OFFER_SIZE)) return invalid('bad-trade-offer-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.CLIENT_PING:
+    case ClientOpcode.MAP_READY:
+      return OK_PACKET;
+
+    default:
+      return invalid('unknown-opcode');
+  }
+}
+
+function reportSuspiciousPacket(
+  player: Player,
+  opcode: number,
+  reason: string,
+  values: number[],
+  ws: ServerWebSocket<GameSocketData>,
+  world: World,
+): void {
+  const count = player.recordSuspiciousPacket();
+  if (INVALID_PACKET_AUDIT_COUNTS.has(count)) {
+    audit({
+      type: 'player.suspicious_packet',
+      tick: world.getCurrentTick(),
+      accountId: player.accountId,
+      details: {
+        playerId: player.id,
+        opcode,
+        reason,
+        count,
+        values: values.slice(0, 8),
+      },
+    });
+  }
+  if (count >= INVALID_PACKET_CLOSE_THRESHOLD) {
+    try { ws.close(1008, 'too many invalid packets'); } catch { /* connection closed */ }
+  }
 }
 
 export function handleGameSocketOpen(
@@ -168,7 +544,15 @@ export function handleGameSocketMessage(
     ({ opcode, values } = decodePacket(message));
   } catch (e) {
     console.warn(`[ws] malformed packet from playerId=${ws.data.playerId ?? '?'}: ${e instanceof Error ? e.message : e}`);
+    reportSuspiciousPacket(player, -1, 'malformed-frame', [], ws, world);
     try { ws.close(1003, 'malformed packet'); } catch {}
+    return;
+  }
+
+  if (!checkOpcodeRateLimit(player, opcode, ws, world)) return;
+  const validation = validateClientPacket(player, opcode, values, world);
+  if (!validation.ok) {
+    reportSuspiciousPacket(player, opcode, validation.reason ?? 'invalid-packet', values, ws, world);
     return;
   }
 

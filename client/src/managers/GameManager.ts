@@ -304,6 +304,7 @@ export class GameManager {
   private smithingPanel: SmithingPanel | null = null;
   private bankPanel: BankPanel | null = null;
   private tradePanel: TradePanel | null = null;
+  private currentTradePartnerName: string = '';
 
   // Spell effect runtime. Catalogue is lazy-loaded from /api/spells on first /spell command.
   // spellsByIndex mirrors the server's alphabetical order so binary protocol
@@ -385,10 +386,12 @@ export class GameManager {
       this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
       this.handleGroundClick(worldX, worldZ);
     });
-    this.inputManager.setTeleportClickHandler((worldX, worldZ) => {
-      console.log(`[DEBUG] Shift+click teleport to ${worldX.toFixed(1)}, ${worldZ.toFixed(1)}`);
-      this.network.sendChat(`/tp ${worldX.toFixed(1)} ${worldZ.toFixed(1)}`);
-    });
+    if (import.meta.env.DEV) {
+      this.inputManager.setTeleportClickHandler((worldX, worldZ) => {
+        console.log(`[DEBUG] Shift+click teleport to ${worldX.toFixed(1)}, ${worldZ.toFixed(1)}`);
+        this.network.sendChat(`/tp ${worldX.toFixed(1)} ${worldZ.toFixed(1)}`);
+      });
+    }
     this.inputManager.setObjectClickHandler((objectEntityId) => {
       this.handleObjectClick(objectEntityId);
     });
@@ -468,7 +471,9 @@ export class GameManager {
     });
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network);
-    this.tradePanel = new TradePanel(this.network);
+    this.tradePanel = new TradePanel(this.network, {
+      onClose: () => this.sidePanel?.setTradeOfferCallback(null),
+    });
     // Quest journal is rendered inside SidePanel's existing Quests tab.
     // Push whatever defs already loaded; subsequent loads (and state deltas)
     // push from the raw-message dispatcher below.
@@ -2761,12 +2766,19 @@ export class GameManager {
     this.network.on(ServerOpcode.TRADE_REQUEST_RECEIVED, (_op, v) => {
       const requesterEntityId = v[0];
       const name = this.entities.playerNames.get(requesterEntityId) ?? `Player ${requesterEntityId}`;
-      this.tradePanel?.showIncomingRequest(requesterEntityId, name);
+      this.chatPanel?.addTradeRequestMessage(
+        name,
+        () => this.acceptTradeRequest(requesterEntityId, name),
+        () => this.requestTrade(requesterEntityId),
+      );
     });
     this.network.on(ServerOpcode.TRADE_OPEN, (_op, v) => {
       const otherEntityId = v[0];
       const name = this.entities.playerNames.get(otherEntityId) ?? `Player ${otherEntityId}`;
+      this.currentTradePartnerName = name;
       this.tradePanel?.openSession(otherEntityId, name);
+      this.enableTradeInventoryOffers();
+      this.chatPanel?.addSystemMessage(`Trade accepted. Trading with ${name}.`, '#ff0');
     });
     this.network.on(ServerOpcode.TRADE_OFFER_UPDATE, (_op, v) => {
       const [side, slot, itemId, qtyHi, qtyLo] = v;
@@ -2777,7 +2789,18 @@ export class GameManager {
       this.tradePanel?.updateAcceptState(v[0] ?? 0, v[1] ?? 0);
     });
     this.network.on(ServerOpcode.TRADE_CLOSE, (_op, v) => {
-      this.tradePanel?.close(v[0] ?? 2);
+      const reason = v[0] ?? 2;
+      const partnerName = this.currentTradePartnerName || 'player';
+      this.tradePanel?.close(reason);
+      this.sidePanel?.setTradeOfferCallback(null);
+      if (reason === 0) this.chatPanel?.addSystemMessage('Trade completed.', '#ff0');
+      else if (reason === 1) this.chatPanel?.addSystemMessage(`Trade with ${partnerName} declined.`, '#ff0');
+      else this.chatPanel?.addSystemMessage(`Trade with ${partnerName} ended.`, '#ff0');
+      this.currentTradePartnerName = '';
+    });
+    this.network.on(ServerOpcode.TRADE_TEST_OPEN, () => {
+      this.tradePanel?.openPreview('no-one');
+      this.enableTradeInventoryOffers();
     });
 
     this.network.on(ServerOpcode.PLAYER_SKILLS, (_op, v) => {
@@ -3167,7 +3190,10 @@ export class GameManager {
     const name = this.entities.playerNames.get(entityId) ?? 'Player';
     const lvl = this.entities.remoteCombatLevels.get(entityId) ?? 0;
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
-    return [{ label: `Follow ${name}${labelLevel}`, action: () => this.followPlayer(entityId) }];
+    return [
+      { label: `Follow ${name}${labelLevel}`, action: () => this.followPlayer(entityId) },
+      { label: `Trade with ${name}`, action: () => this.requestTrade(entityId) },
+    ];
   }
 
   private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } | null {
@@ -3673,6 +3699,31 @@ export class GameManager {
     this.followPathTimer = 0;
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_FOLLOW, playerEntityId));
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffffff');
+  }
+
+  private enableTradeInventoryOffers(): void {
+    this.sidePanel?.switchTab('inventory');
+    this.sidePanel?.setTradeOfferCallback((slot, _itemId, quantity) => {
+      this.tradePanel?.offerInventorySlot(slot, quantity);
+    });
+  }
+
+  private acceptTradeRequest(requesterEntityId: number, name: string): void {
+    this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT_REQUEST, requesterEntityId));
+    this.chatPanel?.addSystemMessage(`Accepting trade request from ${name}...`, '#ff0');
+  }
+
+  private requestTrade(playerEntityId: number): void {
+    const target = this.entities.remotePlayers.get(playerEntityId);
+    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    this.combatTargetId = -1;
+    this.magicTargetId = -1;
+    this.pendingSingleCastSpell = -1;
+    this._combatPathTimer = 0;
+    this.followTargetPlayerId = -1;
+    this.followPathTimer = 0;
+    this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REQUEST, playerEntityId));
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#d8b45a');
   }
 
   private talkToNpc(npcEntityId: number): void {
@@ -4236,6 +4287,12 @@ export class GameManager {
   }
 
   private handleChatCommand(msg: string): boolean {
+    if (msg === '/spellbook') {
+      this.toggleSpellbook();
+      return true;
+    }
+
+    if (import.meta.env.DEV) {
     if (msg === '/geardebug') {
       if (!this.gearDebugPanel) {
         this.gearDebugPanel = new GearDebugPanel();
@@ -4387,13 +4444,8 @@ export class GameManager {
       this.chatPanel?.addSystemMessage(`Animations: ${names.join(', ') || '(none loaded)'}`);
       return true;
     }
-    // /spellbook must precede /spell so it doesn't get parsed as "/spell book".
     // /spell and /cast require a space (or exact match) for the same reason —
     // a bare `startsWith('/spell')` swallows any /spell* command.
-    if (msg === '/spellbook') {
-      this.toggleSpellbook();
-      return true;
-    }
     if (msg === '/spell' || msg === '/spell ?' || msg.startsWith('/spell ')) {
       this.runSpellCommand(msg.slice(6).trim());
       return true;
@@ -4401,6 +4453,7 @@ export class GameManager {
     if (msg === '/cast' || msg === '/cast ?' || msg.startsWith('/cast ')) {
       this.runCastCommand(msg.slice(5).trim());
       return true;
+    }
     }
     return false;
   }

@@ -5,6 +5,8 @@ import { promises as fsp } from 'fs';
 import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { defaultKCTile } from '@projectrs/shared';
 import { World } from './World';
+import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
+import { extractWsToken, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, wsAcceptHeaders } from './network/WsSecurity';
 
 // --- Chunked object storage helpers ---
 
@@ -738,28 +740,13 @@ const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
 const BODY_LIMIT_EDITOR = 50 * 1024 * 1024; // 50 MB — full map import / save
 
-// --- Origin allow-list for WebSocket upgrades ---
-// Browsers always send the Origin header on WS handshakes. A CSRF-style attack
-// (logged-in user lured to evil.com → that page opens a WS to our server)
-// would carry Origin: https://evil.com — this list rejects it.
-//
-// Missing Origin is allowed because non-browser clients (bots, native launchers
-// if we ever ship one) don't send it and still must clear the auth-token gate.
-//
-// Add production hostnames here when deploying. CLIENT_ORIGINS env can override.
-const DEFAULT_ALLOWED_ORIGINS = [
-  'http://localhost:4000', 'http://127.0.0.1:4000',  // server-served client
-  'http://localhost:5173', 'http://127.0.0.1:5173',  // vite dev (client)
-  'http://localhost:5174', 'http://127.0.0.1:5174',  // vite dev (editor)
-];
-const ALLOWED_WS_ORIGINS = new Set(
-  (process.env.CLIENT_ORIGINS?.split(',').map(s => s.trim()).filter(Boolean) ?? DEFAULT_ALLOWED_ORIGINS)
-);
-
+// REST/API origin allow-list. Missing Origin stays allowed here because normal
+// same-origin browser GETs often omit it. WebSocket upgrades use stricter
+// browser-origin rules in WsSecurity.ts.
 function isAllowedOrigin(req: Request): boolean {
   const origin = req.headers.get('origin');
-  if (!origin) return true; // non-browser client; auth still applies
-  return ALLOWED_WS_ORIGINS.has(origin);
+  if (!origin) return true;
+  return parseAllowedOrigins(process.env.CLIENT_ORIGINS).has(origin);
 }
 
 // --- Per-account WS connection cap ---
@@ -784,26 +771,6 @@ function releaseWsSlot(accountId: number): void {
   else wsCountByAccount.set(accountId, cur - 1);
 }
 
-// --- WS auth-token extraction ---
-// Preferred: Sec-WebSocket-Protocol header (subprotocol). The browser sets this
-// from the WebSocket constructor's 2nd arg. Tokens in this header don't appear
-// in reverse-proxy access logs the way `?token=` URL params do.
-//
-// Convention: token is sent as a single subprotocol value of the form
-// `auth.<token>`. Multiple subprotocols are allowed (comma-separated); we pick
-// the first one that starts with `auth.`.
-function extractWsToken(req: Request, url: URL): string | null {
-  const proto = req.headers.get('sec-websocket-protocol');
-  if (proto) {
-    for (const raw of proto.split(',')) {
-      const v = raw.trim();
-      if (v.startsWith('auth.')) return v.slice(5);
-    }
-  }
-  // Legacy fallback: query param. Will eventually be removed.
-  return url.searchParams.get('token');
-}
-
 /** Returns a 403 Response if the (account, ip) is banned, else null. Tokens
  *  persist 24h so a ban issued after token creation must also block the
  *  WS upgrade — checked on every connection (including refreshes). */
@@ -812,19 +779,6 @@ function banGateResponse(accountId: number, ip: string): Response | null {
     return new Response('Banned', { status: 403 });
   }
   return null;
-}
-
-/** Echo the chosen subprotocol back so the client's handshake completes. The
- *  browser closes the socket if the server upgrades without echoing one of
- *  the offered subprotocols. */
-function wsAcceptHeaders(req: Request): Record<string, string> | undefined {
-  const proto = req.headers.get('sec-websocket-protocol');
-  if (!proto) return undefined;
-  for (const raw of proto.split(',')) {
-    const v = raw.trim();
-    if (v.startsWith('auth.')) return { 'Sec-WebSocket-Protocol': v };
-  }
-  return undefined;
 }
 
 // Clean expired sessions every 10 minutes
@@ -1019,10 +973,9 @@ const server = Bun.serve<SocketData>({
     // --- WebSocket Upgrades (with token auth) ---
 
     if (url.pathname === GAME_WS_PATH) {
-      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
-      // Accept token via Sec-WebSocket-Protocol (preferred — doesn't leak to
-      // proxy access logs) OR via ?token= query param (legacy). The query-
-      // param path can be removed once all clients are on the new build.
+      if (!isAllowedWsOrigin(req)) return new Response('Forbidden', { status: 403 });
+      // Accept token only via Sec-WebSocket-Protocol (`auth.<token>`). Query
+      // tokens leak into logs and are easy for bots to replay from a URL.
       const token = extractWsToken(req, url);
       const session = token ? db.getSession(token) : null;
       if (!session) {
@@ -1046,7 +999,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === CHAT_WS_PATH) {
-      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!isAllowedWsOrigin(req)) return new Response('Forbidden', { status: 403 });
       const token = extractWsToken(req, url);
       const session = token ? db.getSession(token) : null;
       if (!session) {
@@ -1070,12 +1023,18 @@ const server = Bun.serve<SocketData>({
       if (filename.includes('/') || filename.includes('..')) {
         return new Response('Forbidden', { status: 403 });
       }
+      if (isProductionLike() && !isPublicDataFile(filename)) {
+        return new Response('Not Found', { status: 404 });
+      }
       // Symlink-safe path resolution. Without realpath, a `server/data/evil ->
       // /etc/passwd` symlink would defeat the startsWith check.
       const filePath = resolveWithinBase(DATA_DIR, filename);
       if (!filePath) return new Response('Forbidden', { status: 403 });
       try {
-        const content = readFileSync(filePath);
+        const raw = readFileSync(filePath, 'utf-8');
+        const content = isProductionLike()
+          ? JSON.stringify(sanitizePublicData(filename, JSON.parse(raw)))
+          : raw;
         return new Response(content, {
           headers: {
             'Content-Type': 'application/json',

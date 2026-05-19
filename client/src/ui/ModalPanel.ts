@@ -11,9 +11,10 @@ import {
 type ModalGeometry =
   | ({ kind: 'viewport' } & ViewportPanelOpts)
   | ({ kind: 'canvas' } & PopupGeometryOpts)
+  | { kind: 'game-canvas'; width?: string; maxHeight?: string; zIndex?: number }
   | { kind: 'center'; width: string; maxHeight?: string; zIndex?: number };
 
-type ModalChrome = 'standard' | 'dark' | 'stone';
+type ModalChrome = 'standard' | 'dark' | 'stone' | 'dialogue';
 
 export interface ModalPanelParts {
   root: HTMLDivElement;
@@ -48,9 +49,47 @@ function centerPanelCss(opts: Extract<ModalGeometry, { kind: 'center' }>): strin
   `;
 }
 
+function gameCanvasPanelCss(opts: Extract<ModalGeometry, { kind: 'game-canvas' }>): string {
+  return `
+    position: absolute;
+    left: calc((100% - var(--right-rail-width, 300px)) / 2);
+    top: calc((100% - var(--chat-height, 220px)) / 2);
+    transform: translate(-50%, -50%);
+    width: ${opts.width ?? 'min(480px, calc(100% - var(--right-rail-width, 300px) - 24px))'};
+    max-width: calc(100% - var(--right-rail-width, 300px) - 16px);
+    max-height: ${opts.maxHeight ?? 'calc(100% - var(--chat-height, 220px) - 16px)'};
+    display: none; flex-direction: column;
+    z-index: ${opts.zIndex ?? 1001}; user-select: none; color: #ddd;
+    font-family: Arial, Helvetica, sans-serif;
+    overflow: hidden;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.62);
+  `;
+}
+
 function rootCss(geometry: ModalGeometry, chrome: ModalChrome): string {
   if (geometry.kind === 'viewport') {
     return viewportPanelCss(geometry);
+  }
+  if (geometry.kind === 'game-canvas') {
+    const theme = chrome === 'dialogue'
+      ? `
+        background:
+          linear-gradient(rgba(34, 12, 9, 0.92), rgba(18, 7, 5, 0.96)),
+          url('/ui/parchment.png') repeat;
+        border: 2px solid #7d2c25;
+        border-radius: 4px;
+        box-shadow:
+          inset 0 0 0 1px rgba(255,190,150,0.08),
+          0 4px 18px rgba(0,0,0,0.62);
+      `
+      : `
+        background: url('/ui/stone-dark.png') repeat;
+        border: 2px solid #5a4a35; border-radius: 4px;
+      `;
+    return `
+      ${gameCanvasPanelCss(geometry)}
+      ${theme}
+    `;
   }
   if (geometry.kind === 'canvas') {
     const theme = chrome === 'stone'
@@ -75,6 +114,15 @@ function rootCss(geometry: ModalGeometry, chrome: ModalChrome): string {
 }
 
 function headerCss(chrome: ModalChrome): string {
+  if (chrome === 'dialogue') {
+    return `
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 6px 9px;
+      background: rgba(43, 10, 8, 0.95);
+      border-bottom: 1px solid #9a332b;
+      box-shadow: inset 0 -1px 0 rgba(255,190,150,0.08);
+    `;
+  }
   if (chrome === 'stone') {
     return `
       display: flex; justify-content: space-between; align-items: center;
@@ -95,6 +143,20 @@ function headerCss(chrome: ModalChrome): string {
 }
 
 function closeCss(chrome: ModalChrome): string {
+  if (chrome === 'dialogue') {
+    return `
+      background: rgba(43, 10, 8, 0.9);
+      border: 1px solid #9a332b;
+      color: #f4ded5;
+      cursor: pointer;
+      padding: 1px 7px;
+      border-radius: 2px;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 12px;
+      font-weight: bold;
+      text-shadow: 1px 1px 0 #000;
+    `;
+  }
   if (chrome === 'stone') {
     return `
       background: linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%);
@@ -119,7 +181,9 @@ export function createModalPanel(opts: ModalPanelOpts): ModalPanelParts {
   title.textContent = opts.title;
   title.style.cssText = chrome === 'stone'
     ? 'font-size: 14px; color: #d8372b; font-weight: bold; text-shadow: 1px 1px 0 #000;'
-    : panelTitleCss;
+    : chrome === 'dialogue'
+      ? 'font-size: 14px; color: #f4ded5; font-weight: bold; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;'
+      : panelTitleCss;
   header.appendChild(title);
 
   let subtitle: HTMLSpanElement | undefined;

@@ -1,3 +1,4 @@
+import './debug/ClientConsoleGuard';
 import { LoginScreen } from './ui/LoginScreen';
 import { LoadingScreen } from './ui/LoadingScreen';
 import { BackgroundParticles } from './ui/BackgroundParticles';

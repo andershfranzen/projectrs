@@ -239,6 +239,8 @@ export enum ServerOpcode {
   TRADE_ACCEPT_STATE = 93,
   /** Trade session ended. Values: [reason]. 0 = success, 1 = declined, 2 = aborted. */
   TRADE_CLOSE = 94,
+  /** Admin-only UI test hook. Opens a local-only trade preview with no peer. */
+  TRADE_TEST_OPEN = 95,
 
   /** Server tells client its requested move path was validated short; abort
    *  local walk at the given last reachable tile center. Values: [x10, z10]

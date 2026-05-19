@@ -249,8 +249,12 @@ export class Player extends Entity {
   // Rate limiting: max messages per window
   private _rlCount: number = 0;
   private _rlWindowStart: number = 0;
+  private _actionRlBuckets: Map<string, { count: number; windowStart: number }> = new Map();
+  private _suspiciousPacketCount: number = 0;
+  private _suspiciousPacketWindowStart: number = 0;
   private static RL_MAX_MESSAGES = 30;   // max messages per window
   private static RL_WINDOW_MS = 1000;    // 1-second window
+  private static SUSPICIOUS_PACKET_WINDOW_MS = 60_000;
 
   /** Returns true if the message should be processed, false if rate-limited */
   checkRateLimit(): boolean {
@@ -261,6 +265,31 @@ export class Player extends Entity {
     }
     this._rlCount++;
     return this._rlCount <= Player.RL_MAX_MESSAGES;
+  }
+
+  /** Per-action bucket rate limit. This catches automation that stays under
+   *  the global socket flood cap but hammers one intent class, such as
+   *  inventory mutations or NPC attacks. */
+  checkActionRateLimit(bucket: string, maxMessages: number, windowMs: number = 1000, now: number = Date.now()): boolean {
+    let state = this._actionRlBuckets.get(bucket);
+    if (!state || now - state.windowStart > windowMs) {
+      state = { count: 0, windowStart: now };
+      this._actionRlBuckets.set(bucket, state);
+    }
+    state.count++;
+    return state.count <= maxMessages;
+  }
+
+  /** Rolling count of packets that were syntactically valid but invalid for
+   *  the player's authoritative state (stale entity ids, wrong inventory
+   *  slot/item pairing, UI action without the UI open, etc.). */
+  recordSuspiciousPacket(now: number = Date.now()): number {
+    if (now - this._suspiciousPacketWindowStart > Player.SUSPICIOUS_PACKET_WINDOW_MS) {
+      this._suspiciousPacketWindowStart = now;
+      this._suspiciousPacketCount = 0;
+    }
+    this._suspiciousPacketCount++;
+    return this._suspiciousPacketCount;
   }
 
   constructor(

@@ -70,6 +70,9 @@ export class SidePanel {
 
   // Optional sell callback (active when shop is open)
   private sellCallback: ((slot: number, itemId: number) => void) | null = null;
+  // Optional trade callback (active when a trade window is open). While set,
+  // inventory clicks offer items instead of performing equip/use/drop actions.
+  private tradeOfferCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
 
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
@@ -163,6 +166,12 @@ export class SidePanel {
           background: rgba(255,200,80,0.25);
           outline: 1px solid rgba(255,200,80,0.8);
           outline-offset: -1px;
+        }
+        #side-panel.trade-offer-active .inv-slot[data-filled="1"] {
+          box-shadow: inset 0 0 5px rgba(154,51,43,0.45);
+        }
+        #side-panel.trade-offer-active .inv-slot[data-filled="1"].hovered {
+          background: rgba(154,51,43,0.18);
         }
 
         @media (max-height: 700px), (max-width: 1000px) {
@@ -1270,6 +1279,13 @@ export class SidePanel {
   }
 
   private onInvSlotClick(index: number): void {
+    const tradeSlot = this.invSlots[index];
+    if (this.tradeOfferCallback && tradeSlot) {
+      if (this.using) this.clearUsingInvItem();
+      this.tradeOfferCallback(index, tradeSlot.itemId, 1);
+      return;
+    }
+
     const using = this.using;
     if (using) {
       if (index === using.slot) { this.clearUsingInvItem(); return; }
@@ -1312,6 +1328,26 @@ export class SidePanel {
     const def = this.itemDefs.get(slot.itemId);
     const name = def?.name || 'Item';
     const options: { label: string; action: () => void }[] = [];
+
+    if (this.tradeOfferCallback) {
+      options.push({
+        label: `Offer ${name}`,
+        action: () => this.tradeOfferCallback!(index, slot.itemId, 1),
+      });
+      options.push({
+        label: `Offer-5 ${name}`,
+        action: () => this.tradeOfferCallback!(index, slot.itemId, 5),
+      });
+      options.push({
+        label: `Offer-10 ${name}`,
+        action: () => this.tradeOfferCallback!(index, slot.itemId, 10),
+      });
+      options.push({
+        label: `Offer-All ${name}`,
+        action: () => this.tradeOfferCallback!(index, slot.itemId, -1),
+      });
+      return options;
+    }
 
     if (def?.equippable) {
       options.push({
@@ -1493,6 +1529,13 @@ export class SidePanel {
   /** Set a sell callback (when shop is open) or null to clear */
   setSellCallback(cb: ((slot: number, itemId: number) => void) | null): void {
     this.sellCallback = cb;
+  }
+
+  /** Set a trade-offer callback (when trade is open) or null to clear. */
+  setTradeOfferCallback(cb: ((slot: number, itemId: number, quantity: number) => void) | null): void {
+    this.tradeOfferCallback = cb;
+    this.container.classList.toggle('trade-offer-active', cb !== null);
+    if (cb && this.using) this.clearUsingInvItem();
   }
 
   /** Get the item ID in a given equipment slot (0 = empty) */

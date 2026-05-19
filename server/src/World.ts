@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -1843,6 +1843,7 @@ export class World {
     if (npc.currentMapLevel !== player.currentMapLevel) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
     this.closeNpcUiContext(player);
+    player.botStats?.recordActionSignature('attackNpc', npc.npcId, player.position.x, player.position.y);
 
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
@@ -1930,6 +1931,7 @@ export class World {
     }
     player.pendingTalkNpcId = -1;
     player.pendingTalkRepathTicks = 0;
+    player.botStats?.recordActionSignature('talkNpc', npc.npcId, player.position.x, player.position.y);
 
     // Turn the NPC to face the player on interaction (2004scape NPC.faceEntity
     // semantics). Direction goes from NPC → player so atan2 produces the yaw
@@ -2348,6 +2350,7 @@ export class World {
       if (player.hasMoveQueue()) player.pendingPickup = groundItemId;
       return;
     }
+    player.botStats?.recordActionSignature('pickup', item.itemId, player.position.x, player.position.y);
 
     const added = player.addItem(item.itemId, item.quantity, this.data.itemDefs);
     if (added.completed > 0) {
@@ -2547,6 +2550,7 @@ export class World {
       ? this.ladderActionsForPlayer(player, obj)[actionIndex]
       : obj.currentActions[actionIndex];
     if (!action) return;
+    player.botStats?.recordActionSignature('object', obj.defId, player.position.x, player.position.y, action);
 
     if (action !== 'Examine' && recipeIndex < 0 && this.shouldOpenRecipePicker(obj)) {
       this.sendToPlayer(player, ServerOpcode.SMITHING_OPEN, obj.id);
@@ -3089,6 +3093,7 @@ export class World {
       }
       return;
     }
+    player.botStats?.recordActionSignature('useItemObject', obj.defId, player.position.x, player.position.y, itemId);
     this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
@@ -3113,6 +3118,7 @@ export class World {
       }
       return;
     }
+    player.botStats?.recordActionSignature('useItemNpc', npc.npcId, player.position.x, player.position.y, itemId);
     this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
@@ -3344,6 +3350,12 @@ export class World {
     this.sendBankFull(player);
   }
 
+  /** Admin-only client UI preview. This deliberately does not set
+   *  openInterface or create a TradeSession, so it cannot move items. */
+  openTestTradeFor(player: Player): void {
+    this.sendToPlayer(player, ServerOpcode.TRADE_TEST_OPEN, 0);
+  }
+
   handleBankOpenRequest(playerId: number): void {
     // Currently unused — the client doesn't open the bank unilaterally; either
     // the banker NPC or /bank admin command opens it server-side. Kept for
@@ -3557,24 +3569,64 @@ export class World {
   /** Distance within which a trade request is allowed. Both players must remain
    *  in this range; anyone walking out aborts the trade. */
   private static readonly TRADE_REQUEST_RANGE = 4;
+  private static readonly TRADE_REQUEST_TTL_MS = 3000;
+
+  private isTradeablePlayer(player: Player): boolean {
+    return player.alive && !player.disconnected && !player.requestIdleLogout;
+  }
+
+  private canPlayersTrade(a: Player, b: Player): boolean {
+    if (a.id === b.id) return false;
+    if (!this.isTradeablePlayer(a) || !this.isTradeablePlayer(b)) return false;
+    if (a.currentMapLevel !== b.currentMapLevel) return false;
+    // Floor check is required even with same x,z map check — multi-floor
+    // buildings let two players overlap in 2D while being on different planes,
+    // and a through-floor trade lets gear teleport up/down a building.
+    if (a.currentFloor !== b.currentFloor) return false;
+    return this.tileChebyshev(a, b) <= World.TRADE_REQUEST_RANGE;
+  }
+
+  private clearTradeRequestsFor(playerId: number): void {
+    this.pendingTradeRequests.delete(playerId);
+    for (const [requester, target] of this.pendingTradeRequests) {
+      if (target === playerId) this.pendingTradeRequests.delete(requester);
+    }
+  }
+
+  private validateTradeSession(session: TradeSession): { aPlayer: Player; bPlayer: Player } | null {
+    const aPlayer = this.players.get(session.a.id);
+    const bPlayer = this.players.get(session.b.id);
+    if (
+      !aPlayer || !bPlayer
+      || aPlayer.openInterface !== 'trade'
+      || bPlayer.openInterface !== 'trade'
+      || !this.canPlayersTrade(aPlayer, bPlayer)
+    ) {
+      this.abortTrade(session.a.id, 2);
+      return null;
+    }
+    return { aPlayer, bPlayer };
+  }
+
+  private normalizeTradeQuantity(quantity: number, available: number): number | null {
+    if (!Number.isSafeInteger(available) || available <= 0) return null;
+    if (quantity === -1) return Math.min(available, MAX_STACK);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) return null;
+    return Math.min(quantity, available, MAX_STACK);
+  }
 
   handleTradeRequest(playerId: number, targetEntityId: number): void {
     const player = this.players.get(playerId);
     const target = this.players.get(targetEntityId);
     if (!player || !target || player.id === target.id) return;
     if (player.isInterfaceOpen() || target.isInterfaceOpen()) return;
-    if (player.currentMapLevel !== target.currentMapLevel) return;
-    // Floor check is required even with same x,z map check — multi-floor
-    // buildings let two players overlap in 2D while being on different planes,
-    // and a through-floor trade lets gear teleport up/down a building.
-    if (player.currentFloor !== target.currentFloor) return;
-    if (this.tileChebyshev(player, target) > World.TRADE_REQUEST_RANGE) return;
+    if (!this.canPlayersTrade(player, target)) return;
+    player.botStats?.recordActionSignature('tradeRequest', 'player', player.position.x, player.position.y);
 
     // If the target has already requested us, opening from either side commits
     // the session (same-tick mutual request).
     const reverse = this.pendingTradeRequests.get(target.id);
     if (reverse === player.id) {
-      this.pendingTradeRequests.delete(target.id);
       this.openTradeSession(player, target);
       return;
     }
@@ -3584,7 +3636,7 @@ export class World {
       if (this.pendingTradeRequests.get(player.id) === target.id) {
         this.pendingTradeRequests.delete(player.id);
       }
-    }, 3000);
+    }, World.TRADE_REQUEST_TTL_MS);
     // Notify the target so their client can show the popup.
     this.sendToPlayer(target, ServerOpcode.TRADE_REQUEST_RECEIVED, player.id);
     this.sendChatSystem(player, `Sending trade request to ${target.name}...`);
@@ -3599,17 +3651,17 @@ export class World {
     if (!player || !requester) return;
     if (player.isInterfaceOpen() || requester.isInterfaceOpen()) return;
     if (this.pendingTradeRequests.get(requester.id) !== player.id) return;
-    if (player.currentMapLevel !== requester.currentMapLevel) return;
-    if (player.currentFloor !== requester.currentFloor) return;
-    if (this.tileChebyshev(player, requester) > World.TRADE_REQUEST_RANGE) return;
-    this.pendingTradeRequests.delete(requester.id);
+    if (!this.canPlayersTrade(player, requester)) return;
     this.openTradeSession(requester, player);
   }
 
   private openTradeSession(a: Player, b: Player): void {
+    if (!this.canPlayersTrade(a, b)) return;
+    this.clearTradeRequestsFor(a.id);
+    this.clearTradeRequestsFor(b.id);
     const session: TradeSession = {
-      a: { id: a.id, offer: new Array(28).fill(null), stage: 0 },
-      b: { id: b.id, offer: new Array(28).fill(null), stage: 0 },
+      a: { id: a.id, offer: new Array(TRADE_OFFER_SIZE).fill(null), stage: 0 },
+      b: { id: b.id, offer: new Array(TRADE_OFFER_SIZE).fill(null), stage: 0 },
     };
     this.tradeSessions.set(a.id, session);
     this.tradeSessions.set(b.id, session);
@@ -3673,7 +3725,7 @@ export class World {
   }
 
   handleTradeDecline(playerId: number): void {
-    this.pendingTradeRequests.delete(playerId);
+    this.clearTradeRequestsFor(playerId);
     this.abortTrade(playerId, /*reason*/ 1);
   }
 
@@ -3684,6 +3736,8 @@ export class World {
     if (!session) return;
     this.tradeSessions.delete(session.a.id);
     this.tradeSessions.delete(session.b.id);
+    this.clearTradeRequestsFor(session.a.id);
+    this.clearTradeRequestsFor(session.b.id);
 
     // Return offered items to each side.
     for (const side of [session.a, session.b] as TradeSide[]) {
@@ -3713,9 +3767,12 @@ export class World {
     if (!player) return;
     const session = this.tradeSessions.get(playerId);
     if (!session) return;
+    if (!this.validateTradeSession(session)) return;
     const me = this.mySide(session, playerId);
     if (!me) return;
-    // No mutating offers after stage 1 — re-enter editing mode by removing/adding.
+    // Once this side accepts the first screen, its offer is locked until the
+    // trade completes or is declined. The non-accepted side can still mutate,
+    // which resets both stages and unlocks the first side.
     if (me.stage > 0) return;
     if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
     const invSlot = player.inventory[slotIndex];
@@ -3726,16 +3783,11 @@ export class World {
     if (!itemDef) return;
     const isStackable = itemDef.stackable === true;
 
-    const wantAll = quantity === -1;
-    let toOffer: number;
-    if (isStackable) {
-      toOffer = wantAll ? invSlot.quantity : Math.min(quantity, invSlot.quantity);
-    } else {
-      let total = 0;
-      for (const s of player.inventory) if (s?.itemId === itemId) total += 1;
-      toOffer = wantAll ? total : Math.min(quantity, total);
-    }
-    if (toOffer <= 0) return;
+    const available = isStackable
+      ? invSlot.quantity
+      : player.inventory.reduce((total, s) => total + (s?.itemId === itemId ? 1 : 0), 0);
+    const toOffer = this.normalizeTradeQuantity(quantity, available);
+    if (toOffer === null) return;
 
     // Find or create an offer slot for this item (collapsed by itemId — same
     // model as bank slots).
@@ -3745,22 +3797,20 @@ export class World {
       this.sendChatSystem(player, 'Trade offer is full.');
       return;
     }
+    const existing = me.offer[offerSlot];
+    if (existing && existing.quantity > MAX_STACK - toOffer) {
+      this.sendChatSystem(player, 'You cannot offer that many of one item.');
+      return;
+    }
 
     if (isStackable) {
       const removed = player.removeItem(slotIndex, toOffer);
       if (removed.completed !== toOffer) { player.revertRemove(removed); return; }
     } else {
-      let remaining = toOffer;
-      for (let i = 0; i < player.inventory.length && remaining > 0; i++) {
-        const s = player.inventory[i];
-        if (!s || s.itemId !== itemId) continue;
-        const r = player.removeItem(i, 1);
-        if (r.completed !== 1) return;
-        remaining--;
-      }
+      const removed = player.removeItemById(itemId, toOffer);
+      if (removed.completed !== toOffer) { player.revertRemove(removed); return; }
     }
 
-    const existing = me.offer[offerSlot];
     if (existing) existing.quantity += toOffer;
     else me.offer[offerSlot] = { itemId, quantity: toOffer };
 
@@ -3775,6 +3825,7 @@ export class World {
     if (!player) return;
     const session = this.tradeSessions.get(playerId);
     if (!session) return;
+    if (!this.validateTradeSession(session)) return;
     const me = this.mySide(session, playerId);
     if (!me) return;
     if (me.stage > 0) return;
@@ -3782,9 +3833,8 @@ export class World {
     const off = me.offer[offerSlot];
     if (!off || off.itemId !== expectedItemId) return;
 
-    const wantAll = quantity === -1;
-    const toReturn = wantAll ? off.quantity : Math.min(quantity, off.quantity);
-    if (toReturn <= 0) return;
+    const toReturn = this.normalizeTradeQuantity(quantity, off.quantity);
+    if (toReturn === null) return;
 
     // Capacity: returning to inventory must fit. If not, refuse — RS2 behavior.
     if (!player.canFit(off.itemId, toReturn, this.data.itemDefs)) {
@@ -3809,11 +3859,18 @@ export class World {
   handleTradeAccept(playerId: number): void {
     const session = this.tradeSessions.get(playerId);
     if (!session) return;
+    if (!this.validateTradeSession(session)) return;
     const me = this.mySide(session, playerId);
     const them = this.otherSide(session, playerId);
     if (!me || !them) return;
-    if (me.stage >= 2) return;
-    me.stage = (me.stage + 1) as 1 | 2;
+
+    if (me.stage === 0) {
+      me.stage = 1;
+    } else if (me.stage === 1 && them.stage >= 1) {
+      me.stage = 2;
+    } else {
+      return;
+    }
     this.sendTradeAcceptState(session);
 
     // Both sides at stage 2 → commit.
@@ -3826,12 +3883,9 @@ export class World {
    *  If either side can't fit the incoming items, the trade aborts and items
    *  are returned to the original owners (handled by abortTrade). */
   private commitTrade(session: TradeSession): void {
-    const aPlayer = this.players.get(session.a.id);
-    const bPlayer = this.players.get(session.b.id);
-    if (!aPlayer || !bPlayer) {
-      this.abortTrade(session.a.id, 2);
-      return;
-    }
+    const participants = this.validateTradeSession(session);
+    if (!participants) return;
+    const { aPlayer, bPlayer } = participants;
 
     // Pre-flight: can A fit B's offer AND can B fit A's offer?
     const aCanFitB = this.canFitOffer(aPlayer, session.b.offer);
@@ -3898,6 +3952,8 @@ export class World {
     // Items already removed from sender inventories at offer time. Commit done.
     this.tradeSessions.delete(session.a.id);
     this.tradeSessions.delete(session.b.id);
+    this.clearTradeRequestsFor(session.a.id);
+    this.clearTradeRequestsFor(session.b.id);
     aPlayer.openInterface = null;
     bPlayer.openInterface = null;
     this.sendInventory(aPlayer);
@@ -3925,7 +3981,6 @@ export class World {
    *  Without this guard, the commit-time rollback at line ~2124 fires every
    *  time, which works but is the wrong layer to catch a predictable failure. */
   private canFitOffer(player: Player, offer: ({ itemId: number; quantity: number } | null)[]): boolean {
-    const MAX_STACK = 0x7FFFFFFF;
     // Simulate sequentially using a clone of free-slot count. Cheap because
     // canFit only inspects existing items + free count.
     const used: Map<number, number> = new Map();
@@ -3933,6 +3988,7 @@ export class World {
     for (const s of player.inventory) if (s === null) freeSlots++;
     for (const off of offer) {
       if (!off) continue;
+      if (!Number.isSafeInteger(off.quantity) || off.quantity <= 0 || off.quantity > MAX_STACK) return false;
       const def = this.data.getItem(off.itemId);
       if (!def) return false;
       if (def.stackable) {

@@ -193,6 +193,47 @@ export class ChatPanel {
     this.appendMessage(el, 'game');
   }
 
+  addTradeRequestMessage(from: string, onAccept: () => void, onTradeBack: () => void): void {
+    const el = document.createElement('div');
+    const label = document.createElement('span');
+    label.textContent = `${from} sent you a trade request. `;
+    label.style.color = UI_RED;
+    el.appendChild(label);
+
+    const accept = this.makeInlineAction('Accept', () => {
+      onAccept();
+      accept.style.pointerEvents = 'none';
+      accept.style.opacity = '0.6';
+    });
+    el.appendChild(accept);
+
+    const divider = document.createElement('span');
+    divider.textContent = ' or ';
+    divider.style.color = UI_RED;
+    el.appendChild(divider);
+
+    el.appendChild(this.makeInlineAction('trade them back', onTradeBack));
+    this.appendMessage(el, 'game');
+  }
+
+  private makeInlineAction(label: string, action: () => void): HTMLSpanElement {
+    const el = document.createElement('span');
+    el.textContent = label;
+    el.style.cssText = `
+      color: #f4ded5;
+      text-decoration: underline;
+      cursor: pointer;
+    `;
+    el.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    });
+    el.addEventListener('mouseenter', () => { el.style.color = '#fff4d8'; });
+    el.addEventListener('mouseleave', () => { el.style.color = '#f4ded5'; });
+    return el;
+  }
+
   private appendMessage(el: HTMLDivElement, type: 'game' | 'public' | 'private'): void {
     if (this.activeTab !== 'all' && this.activeTab !== type) el.style.display = 'none';
     this.log.appendChild(el);

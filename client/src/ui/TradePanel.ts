@@ -6,6 +6,11 @@ import { renderItemSlot } from '../rendering/ItemIcon';
 
 interface OfferSlotData { itemId: number; quantity: number }
 
+const TRADE_TEXT_SHADOW = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000';
+const TRADE_BUTTON_BG = 'rgba(43, 10, 8, 0.9)';
+const TRADE_BUTTON_HOVER_BG = 'rgba(78, 18, 14, 0.95)';
+const TRADE_BUTTON_BORDER = '#9a332b';
+
 /** Trade UI — opens as a centered modal split into "My offer" / "Their offer"
  *  on top, "My inventory" on the bottom, with Accept / Decline buttons.
  *
@@ -22,6 +27,7 @@ interface OfferSlotData { itemId: number; quantity: number }
 export class TradePanel {
   private container: HTMLDivElement;
   private network: NetworkManager;
+  private onClose: (() => void) | null;
   private itemDefs: Map<number, ItemDef> = new Map();
   private visible = false;
   private myOffer: (OfferSlotData | null)[] = new Array(TRADE_OFFER_SIZE).fill(null);
@@ -29,20 +35,23 @@ export class TradePanel {
   private invSlots: (OfferSlotData | null)[] = new Array(INVENTORY_SIZE).fill(null);
   private myOfferEls: HTMLDivElement[] = [];
   private theirOfferEls: HTMLDivElement[] = [];
-  private invSlotEls: HTMLDivElement[] = [];
   private otherName: string = '';
   private acceptBtn!: HTMLButtonElement;
   private declineBtn!: HTMLButtonElement;
   private statusLabel!: HTMLDivElement;
   private titleEl!: HTMLSpanElement;
+  private previewMode = false;
+  private previewMyStage = 0;
+  private previewTheirStage = 0;
 
   // Incoming-request popup is a separate small floating element.
   private requestPopup: HTMLDivElement | null = null;
 
-  constructor(network: NetworkManager) {
+  constructor(network: NetworkManager, hooks: { onClose?: () => void } = {}) {
     this.network = network;
+    this.onClose = hooks.onClose ?? null;
     this.container = this.buildUI();
-    document.body.appendChild(this.container);
+    (document.getElementById('game-frame') ?? document.body).appendChild(this.container);
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && this.visible) this.sendDecline();
@@ -53,14 +62,12 @@ export class TradePanel {
     this.itemDefs = defs;
     for (let i = 0; i < this.myOffer.length; i++) this.renderOfferSlot('mine', i);
     for (let i = 0; i < this.theirOffer.length; i++) this.renderOfferSlot('theirs', i);
-    for (let i = 0; i < this.invSlots.length; i++) this.renderInvSlot(i);
   }
 
-  /** Mirror inventory state so the deposit-into-offer slots are accurate. */
+  /** Mirror inventory state so side-panel inventory clicks can offer items. */
   updateInventorySlot(slot: number, itemId: number, quantity: number): void {
     if (slot < 0 || slot >= this.invSlots.length) return;
     this.invSlots[slot] = itemId === 0 ? null : { itemId, quantity };
-    this.renderInvSlot(slot);
   }
 
   showIncomingRequest(requesterId: number, name: string): void {
@@ -68,8 +75,9 @@ export class TradePanel {
     this.requestPopup?.remove();
     const pop = document.createElement('div');
     pop.style.cssText = `
-      position: fixed; right: 16px; bottom: 80px; z-index: 600;
-      background: #1a1410; border: 2px solid #aa8844; border-radius: 6px;
+      position: absolute; right: calc(var(--right-rail-width, 300px) + 12px);
+      bottom: calc(var(--chat-height, 220px) + 12px); z-index: 600;
+      background: rgba(43, 10, 8, 0.95); border: 1px solid #9a332b; border-radius: 3px;
       padding: 12px; font-family: Arial, Helvetica, sans-serif; color: #ddd;
       box-shadow: 0 4px 12px rgba(0,0,0,0.5);
       min-width: 220px;
@@ -83,7 +91,9 @@ export class TradePanel {
     btnRow.style.cssText = `display: flex; gap: 8px;`;
     const accept = document.createElement('button');
     accept.textContent = 'Accept';
-    accept.style.cssText = `flex: 1; background: #3a6633; border: 1px solid #5a8855; color: #fff; padding: 6px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
+    accept.style.cssText = this.actionButtonCss();
+    accept.style.flex = '1';
+    this.installButtonHover(accept);
     accept.onclick = () => {
       this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT_REQUEST, requesterId));
       pop.remove();
@@ -91,7 +101,9 @@ export class TradePanel {
     };
     const decline = document.createElement('button');
     decline.textContent = 'Decline';
-    decline.style.cssText = `flex: 1; background: #663333; border: 1px solid #885555; color: #fff; padding: 6px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
+    decline.style.cssText = this.actionButtonCss();
+    decline.style.flex = '1';
+    this.installButtonHover(decline);
     decline.onclick = () => {
       this.network.sendRaw(encodePacket(ClientOpcode.TRADE_DECLINE));
       pop.remove();
@@ -100,19 +112,41 @@ export class TradePanel {
     btnRow.appendChild(accept); btnRow.appendChild(decline);
     pop.appendChild(btnRow);
 
-    document.body.appendChild(pop);
+    (document.getElementById('game-frame') ?? document.body).appendChild(pop);
     this.requestPopup = pop;
     // Auto-dismiss after 30s.
     setTimeout(() => { if (this.requestPopup === pop) { pop.remove(); this.requestPopup = null; } }, 30000);
   }
 
   openSession(otherEntityId: number, otherName: string): void {
+    void otherEntityId;
     closeActiveContextMenu();
     this.requestPopup?.remove();
     this.requestPopup = null;
+    this.previewMode = false;
+    this.previewMyStage = 0;
+    this.previewTheirStage = 0;
     this.otherName = otherName;
     this.titleEl.textContent = `Trade with ${otherName}`;
     this.myOffer.fill(null); this.theirOffer.fill(null);
+    for (let i = 0; i < this.myOffer.length; i++) this.renderOfferSlot('mine', i);
+    for (let i = 0; i < this.theirOffer.length; i++) this.renderOfferSlot('theirs', i);
+    this.updateAcceptState(0, 0);
+    this.visible = true;
+    this.container.style.display = 'flex';
+  }
+
+  openPreview(otherName: string = 'no-one'): void {
+    closeActiveContextMenu();
+    this.requestPopup?.remove();
+    this.requestPopup = null;
+    this.previewMode = true;
+    this.previewMyStage = 0;
+    this.previewTheirStage = 0;
+    this.otherName = otherName;
+    this.titleEl.textContent = `Trade with ${otherName}`;
+    this.myOffer.fill(null);
+    this.theirOffer.fill(null);
     for (let i = 0; i < this.myOffer.length; i++) this.renderOfferSlot('mine', i);
     for (let i = 0; i < this.theirOffer.length; i++) this.renderOfferSlot('theirs', i);
     this.updateAcceptState(0, 0);
@@ -130,7 +164,7 @@ export class TradePanel {
 
   updateAcceptState(myStage: number, theirStage: number): void {
     if (myStage === 0 && theirStage === 0) {
-      this.statusLabel.textContent = 'Drag items into your offer.';
+      this.statusLabel.textContent = this.previewMode ? 'Test preview. Use your inventory to add items.' : 'Click inventory items to offer.';
       this.statusLabel.style.color = '#aaa';
       this.acceptBtn.textContent = 'Accept';
       this.acceptBtn.disabled = false;
@@ -154,22 +188,38 @@ export class TradePanel {
       this.statusLabel.style.color = '#aaa';
       this.acceptBtn.textContent = 'Waiting...';
       this.acceptBtn.disabled = true;
+    } else if (myStage >= 2 && theirStage >= 2) {
+      this.statusLabel.textContent = this.previewMode ? 'Test trade confirmed. Decline closes preview.' : 'Trade confirmed.';
+      this.statusLabel.style.color = '#aaa';
+      this.acceptBtn.textContent = 'Confirmed';
+      this.acceptBtn.disabled = true;
     }
   }
 
   close(_reason: number): void {
+    const wasVisible = this.visible;
+    this.previewMode = false;
+    this.previewMyStage = 0;
+    this.previewTheirStage = 0;
     this.visible = false;
     this.container.style.display = 'none';
     this.myOffer.fill(null); this.theirOffer.fill(null);
     for (let i = 0; i < this.myOffer.length; i++) this.renderOfferSlot('mine', i);
     for (let i = 0; i < this.theirOffer.length; i++) this.renderOfferSlot('theirs', i);
+    if (wasVisible) this.onClose?.();
   }
 
   private buildUI(): HTMLDivElement {
     const modal = createModalPanel({
       id: 'trade-panel',
       title: 'Trade',
-      geometry: { kind: 'viewport' },
+      geometry: {
+        kind: 'game-canvas',
+        width: 'min(438px, calc(100% - var(--right-rail-width, 300px) - 18px))',
+        maxHeight: 'calc(100% - var(--chat-height, 220px) - 18px)',
+      },
+      chrome: 'dialogue',
+      closeButton: false,
       onClose: () => this.sendDecline(),
     });
     const root = modal.root;
@@ -177,17 +227,15 @@ export class TradePanel {
 
     // Two-pane offers
     const offersRow = document.createElement('div');
-    offersRow.style.cssText = `display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 12px;`;
+    offersRow.style.cssText = `display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 10px 5px;`;
 
     const myWrap = document.createElement('div');
     const myLabel = document.createElement('div');
     myLabel.textContent = 'My offer';
-    myLabel.style.cssText = `color: #d8372b; font-size: 12px; margin-bottom: 4px;`;
+    myLabel.style.cssText = this.labelCss();
     myWrap.appendChild(myLabel);
-    const myGrid = this.makeGrid(7, TRADE_OFFER_SIZE, (slot) => {
-      const s = this.myOffer[slot];
-      if (!s) return;
-      this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REMOVE_OFFERED, slot, s.itemId, 1));
+    const myGrid = this.makeGrid(5, TRADE_OFFER_SIZE, (slot) => {
+      this.removeOfferSlot(slot, 1);
     }, (slot, ev) => {
       const s = this.myOffer[slot];
       if (!s) return;
@@ -196,7 +244,7 @@ export class TradePanel {
         { label: 'Remove 5', n: 5 },
         { label: 'Remove 10', n: 10 },
         { label: 'Remove All', n: -1 },
-      ], (n) => this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REMOVE_OFFERED, slot, s.itemId, n)));
+      ], (n) => this.removeOfferSlot(slot, n));
     }, this.myOfferEls);
     myWrap.appendChild(myGrid);
     offersRow.appendChild(myWrap);
@@ -204,10 +252,10 @@ export class TradePanel {
     const theirWrap = document.createElement('div');
     const theirLabel = document.createElement('div');
     theirLabel.textContent = 'Their offer';
-    theirLabel.style.cssText = `color: #d8372b; font-size: 12px; margin-bottom: 4px;`;
+    theirLabel.style.cssText = this.labelCss();
     theirWrap.appendChild(theirLabel);
     // Their offer is read-only; clicks do nothing.
-    const theirGrid = this.makeGrid(7, TRADE_OFFER_SIZE, () => {}, () => {}, this.theirOfferEls);
+    const theirGrid = this.makeGrid(5, TRADE_OFFER_SIZE, () => {}, () => {}, this.theirOfferEls);
     theirWrap.appendChild(theirGrid);
     offersRow.appendChild(theirWrap);
 
@@ -215,43 +263,23 @@ export class TradePanel {
 
     // Accept/Decline row
     const ctrlRow = document.createElement('div');
-    ctrlRow.style.cssText = `display: flex; gap: 8px; padding: 0 12px 8px; align-items: center;`;
+    ctrlRow.style.cssText = `display: flex; gap: 6px; padding: 0 10px 6px; align-items: center;`;
     this.statusLabel = document.createElement('div');
-    this.statusLabel.style.cssText = `flex: 1; font-size: 12px; color: #aaa;`;
-    this.statusLabel.textContent = 'Drag items into your offer.';
+    this.statusLabel.style.cssText = `flex: 1; font-size: 12px; color: #f4ded5; min-width: 0; text-shadow: ${TRADE_TEXT_SHADOW};`;
+    this.statusLabel.textContent = 'Click inventory items to offer.';
     ctrlRow.appendChild(this.statusLabel);
     this.acceptBtn = document.createElement('button');
     this.acceptBtn.textContent = 'Accept';
-    this.acceptBtn.style.cssText = `background: #3a6633; border: 1px solid #5a8855; color: #fff; padding: 6px 14px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
-    this.acceptBtn.onclick = () => this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT));
+    this.acceptBtn.style.cssText = this.actionButtonCss();
+    this.installButtonHover(this.acceptBtn);
+    this.acceptBtn.onclick = () => this.sendAccept();
     this.declineBtn = document.createElement('button');
     this.declineBtn.textContent = 'Decline';
-    this.declineBtn.style.cssText = `background: #663333; border: 1px solid #885555; color: #fff; padding: 6px 14px; cursor: pointer; font-family: Arial, Helvetica, sans-serif;`;
+    this.declineBtn.style.cssText = this.actionButtonCss();
+    this.installButtonHover(this.declineBtn);
     this.declineBtn.onclick = () => this.sendDecline();
     ctrlRow.appendChild(this.acceptBtn); ctrlRow.appendChild(this.declineBtn);
     root.appendChild(ctrlRow);
-
-    // Inventory mirror
-    const invLabel = document.createElement('div');
-    invLabel.textContent = 'Click an inventory item to add it to your offer';
-    invLabel.style.cssText = `color: #aaa; font-size: 11px; padding: 4px 12px 0; text-align: center;`;
-    root.appendChild(invLabel);
-    const invGrid = this.makeGrid(5, INVENTORY_SIZE, (slot) => {
-      const s = this.invSlots[slot];
-      if (!s) return;
-      this.network.sendRaw(encodePacket(ClientOpcode.TRADE_OFFER_ITEM, slot, s.itemId, 1));
-    }, (slot, ev) => {
-      const s = this.invSlots[slot];
-      if (!s) return;
-      this.showQtyMenu(ev, [
-        { label: 'Offer 1', n: 1 },
-        { label: 'Offer 5', n: 5 },
-        { label: 'Offer 10', n: 10 },
-        { label: 'Offer All', n: -1 },
-      ], (n) => this.network.sendRaw(encodePacket(ClientOpcode.TRADE_OFFER_ITEM, slot, s.itemId, n)));
-    }, this.invSlotEls);
-    invGrid.style.margin = '4px 12px 12px';
-    root.appendChild(invGrid);
 
     return root;
   }
@@ -265,19 +293,49 @@ export class TradePanel {
   ): HTMLDivElement {
     const grid = document.createElement('div');
     grid.style.cssText = `
-      display: grid; grid-template-columns: repeat(${cols}, 1fr); gap: 2px;
-      background: rgba(0,0,0,0.4); padding: 4px; border: 1px inset #3a3025;
+      display: grid;
+      grid-template-columns: repeat(${cols}, minmax(0, 1fr));
+      gap: 0;
+      position: relative;
+      overflow: hidden;
+      background:
+        repeating-linear-gradient(0deg, rgba(196, 126, 70, 0.035) 0 1px, transparent 1px 4px),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 5px),
+        repeating-linear-gradient(45deg, rgba(138, 74, 42, 0.05) 0 2px, transparent 2px 10px),
+        linear-gradient(180deg, #2c180f 0%, #1f100a 50%, #120806 100%);
+      border-top: 2px solid #6f4227;
+      border-left: 2px solid #5c341f;
+      border-right: 2px solid #160b06;
+      border-bottom: 2px solid #120804;
+      border-radius: 2px;
+      box-shadow:
+        inset 2px 2px 0 rgba(160, 88, 48, 0.13),
+        inset -2px -2px 0 rgba(0,0,0,0.5),
+        2px 2px 0 rgba(0,0,0,0.45);
     `;
+    const stitch = document.createElement('div');
+    stitch.style.cssText = `
+      position: absolute; inset: 3px;
+      border: 1px dotted rgba(150, 82, 46, 0.38);
+      border-radius: 1px;
+      box-shadow: 0 0 0 1px rgba(35, 16, 9, 0.7);
+      pointer-events: none; z-index: 1;
+    `;
+    grid.appendChild(stitch);
     for (let i = 0; i < cells; i++) {
       const cell = document.createElement('div');
       cell.style.cssText = `
-        width: 100%; aspect-ratio: 1 / 1; min-height: 38px;
-        background: rgba(0,0,0,0.3); border: 1px solid #2a2218;
+        width: 100%;
+        aspect-ratio: 1 / 1;
+        min-height: 0;
+        background: transparent;
+        border: 0;
         display: flex; align-items: center; justify-content: center;
         cursor: pointer; position: relative; font-size: 9px;
+        z-index: 2;
       `;
-      cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(255,255,255,0.06)'; });
-      cell.addEventListener('mouseleave', () => { cell.style.background = 'rgba(0,0,0,0.3)'; });
+      cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(154,51,43,0.22)'; });
+      cell.addEventListener('mouseleave', () => { cell.style.background = 'transparent'; });
       cell.addEventListener('click', () => onClick(i));
       cell.addEventListener('contextmenu', (e) => { e.preventDefault(); onRight(i, e); });
       grid.appendChild(cell);
@@ -295,25 +353,118 @@ export class TradePanel {
     if (s) this.setSlotInner(el, s.itemId, s.quantity);
     else el.innerHTML = '';
   }
-  private renderInvSlot(i: number): void {
-    const el = this.invSlotEls[i];
-    if (!el) return;
-    const s = this.invSlots[i];
-    if (s) this.setSlotInner(el, s.itemId, s.quantity);
-    else el.innerHTML = '';
-  }
-
   private setSlotInner(el: HTMLElement, itemId: number, quantity: number): void {
     const def = this.itemDefs.get(itemId);
     renderItemSlot(el, def, this.itemDefs, {
-      size: 30,
-      extraStyle: 'max-width:30px;max-height:30px;width:100%;height:100%;',
+      size: 32,
+      extraStyle: 'max-width:32px;max-height:32px;width:100%;height:100%;',
       quantity,
-      placeholderSize: 22,
+      placeholderSize: 26,
     });
   }
 
+  private labelCss(): string {
+    return `color: #f4ded5; font-size: 12px; margin-bottom: 4px; font-weight: bold; text-shadow: ${TRADE_TEXT_SHADOW};`;
+  }
+
+  private actionButtonCss(): string {
+    return `
+      background: ${TRADE_BUTTON_BG};
+      border: 1px solid ${TRADE_BUTTON_BORDER};
+      color: #f4ded5;
+      padding: 5px 10px;
+      min-width: 70px;
+      border-radius: 2px;
+      cursor: pointer;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 12px;
+      font-weight: bold;
+      text-shadow: ${TRADE_TEXT_SHADOW};
+      box-shadow: inset 0 0 0 1px rgba(255,190,150,0.08);
+    `;
+  }
+
+  private installButtonHover(button: HTMLButtonElement): void {
+    button.addEventListener('mouseenter', () => { if (!button.disabled) button.style.background = TRADE_BUTTON_HOVER_BG; });
+    button.addEventListener('mouseleave', () => { button.style.background = TRADE_BUTTON_BG; });
+  }
+
+  offerInventorySlot(slot: number, quantity: number): void {
+    const s = this.invSlots[slot];
+    if (!s) return;
+    if (this.previewMode) {
+      this.addPreviewOfferFromInventory(slot, quantity);
+      return;
+    }
+    this.network.sendRaw(encodePacket(ClientOpcode.TRADE_OFFER_ITEM, slot, s.itemId, quantity));
+  }
+
+  private removeOfferSlot(slot: number, quantity: number): void {
+    const s = this.myOffer[slot];
+    if (!s) return;
+    if (this.previewMode) {
+      this.removePreviewOffer(slot, quantity);
+      return;
+    }
+    this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REMOVE_OFFERED, slot, s.itemId, quantity));
+  }
+
+  private addPreviewOfferFromInventory(slot: number, quantity: number): void {
+    const s = this.invSlots[slot];
+    if (!s) return;
+    const toOffer = quantity === -1 ? s.quantity : Math.min(Math.max(quantity, 1), s.quantity);
+    if (!Number.isSafeInteger(toOffer) || toOffer <= 0) return;
+
+    let offerSlot = this.myOffer.findIndex(o => o?.itemId === s.itemId);
+    if (offerSlot < 0) offerSlot = this.myOffer.findIndex(o => o === null);
+    if (offerSlot < 0) return;
+
+    const existing = this.myOffer[offerSlot];
+    if (existing) existing.quantity += toOffer;
+    else this.myOffer[offerSlot] = { itemId: s.itemId, quantity: toOffer };
+    this.renderOfferSlot('mine', offerSlot);
+    this.resetPreviewAcceptState();
+  }
+
+  private removePreviewOffer(slot: number, quantity: number): void {
+    const s = this.myOffer[slot];
+    if (!s) return;
+    const toRemove = quantity === -1 ? s.quantity : Math.min(Math.max(quantity, 1), s.quantity);
+    if (!Number.isSafeInteger(toRemove) || toRemove <= 0) return;
+
+    s.quantity -= toRemove;
+    if (s.quantity <= 0) this.myOffer[slot] = null;
+    this.renderOfferSlot('mine', slot);
+    this.resetPreviewAcceptState();
+  }
+
+  private resetPreviewAcceptState(): void {
+    if (!this.previewMode) return;
+    this.previewMyStage = 0;
+    this.previewTheirStage = 0;
+    this.updateAcceptState(this.previewMyStage, this.previewTheirStage);
+  }
+
+  private sendAccept(): void {
+    if (!this.previewMode) {
+      this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT));
+      return;
+    }
+    if (this.previewMyStage === 0) {
+      this.previewMyStage = 1;
+      this.previewTheirStage = 1;
+    } else if (this.previewMyStage === 1) {
+      this.previewMyStage = 2;
+      this.previewTheirStage = 2;
+    }
+    this.updateAcceptState(this.previewMyStage, this.previewTheirStage);
+  }
+
   private sendDecline(): void {
+    if (this.previewMode) {
+      this.close(0);
+      return;
+    }
     this.network.sendRaw(encodePacket(ClientOpcode.TRADE_DECLINE));
   }
 

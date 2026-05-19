@@ -31,6 +31,8 @@ import { TICK_RATE } from '@projectrs/shared';
 const MAX_TICK_ALIGN_SAMPLES = 100;
 const MAX_REACTION_SAMPLES = 50;
 const MAX_PATH_DESTINATIONS = 100;
+const MAX_ACTION_SIGNATURES = 100;
+const ACTION_ROUTE_MEMORY_MS = 10_000;
 
 /** Realistic max XP/hour per skill. Anything above flags. Calibrated for
  *  EvilQuest's tick rate + drop rates — adjust as content lands. These are
@@ -61,6 +63,7 @@ export interface SessionSummary {
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
   topPathRepetition: number | null;
+  topActionLoopRepetition: number | null;
   xpPerHour: Record<string, number>;
   flags: string[];
 }
@@ -91,6 +94,9 @@ export class BotStats {
   sessionCombatSwings: number = 0;
   sessionMovements: number = 0;
   sessionChats: number = 0;
+  actionSignatures: Map<string, number> = new Map();
+  private lastMovementDestinationKey: string | null = null;
+  private lastMovementTs: number | null = null;
   /** When the last NPC died near this player — feeds the next attack's
    *  reaction time delta if it lands within 5 seconds. */
   pendingReactionStart: number | null = null;
@@ -158,6 +164,9 @@ export class BotStats {
     this.sessionCombatSwings = 0;
     this.sessionMovements = 0;
     this.sessionChats = 0;
+    this.actionSignatures.clear();
+    this.lastMovementDestinationKey = null;
+    this.lastMovementTs = null;
     this.pendingReactionStart = null;
     this.xpBaseline.clear();
     for (const [skill, xp] of Object.entries(currentXp)) {
@@ -210,6 +219,8 @@ export class BotStats {
     this.sessionMovements++;
     this.lastActionTs = Math.floor(Date.now() / 1000);
     const key = `${Math.floor(destX)},${Math.floor(destZ)}`;
+    this.lastMovementDestinationKey = key;
+    this.lastMovementTs = Date.now();
     const existing = this.pathDestinations.get(key);
     if (existing !== undefined) {
       this.pathDestinations.set(key, existing + 1);
@@ -228,6 +239,30 @@ export class BotStats {
     this.pathDestinations.set(key, 1);
   }
 
+  /** Record a movement+action signature such as "walk to tree tile → chop".
+   *  Humans vary timing and targets; browser-command bots often replay the
+   *  same route/action loop exactly for long stretches. Session-only to keep
+   *  the persisted bot_stats row compact. */
+  recordActionSignature(
+    actionKind: string,
+    targetKey: string | number,
+    actorX?: number,
+    actorZ?: number,
+    actionDetail?: string | number,
+  ): void {
+    const now = Date.now();
+    const fallbackRoute = Number.isFinite(actorX) && Number.isFinite(actorZ)
+      ? `${Math.floor(actorX as number)},${Math.floor(actorZ as number)}`
+      : 'no-route';
+    const routeKey = this.lastMovementDestinationKey && this.lastMovementTs !== null && now - this.lastMovementTs <= ACTION_ROUTE_MEMORY_MS
+      ? this.lastMovementDestinationKey
+      : fallbackRoute;
+    const kind = sanitizeSignaturePart(actionKind, 32);
+    const target = sanitizeSignaturePart(String(targetKey), 40);
+    const detail = actionDetail === undefined ? '' : `:${sanitizeSignaturePart(String(actionDetail), 24)}`;
+    this.bumpCappedMap(this.actionSignatures, `${routeKey}>${kind}:${target}${detail}`, MAX_ACTION_SIGNATURES);
+  }
+
   recordChat(): void {
     this.totalChatMessages++;
     this.sessionChats++;
@@ -241,6 +276,7 @@ export class BotStats {
     const tickAlignStdDevMs = stdDev(this.tickAlignSamples);
     const reactionMedianMs = median(this.reactionSamples);
     const topPathRepetition = topRatio(this.pathDestinations);
+    const topActionLoopRepetition = topRatio(this.actionSignatures);
 
     // XP rate per skill = (current - baseline) / hours
     const hours = Math.max(1 / 60, sessionMinutes / 60);
@@ -264,6 +300,9 @@ export class BotStats {
     // pathRepetitive: top destination > 50% of moves (very narrow loop)
     if (this.sessionMovements >= 50 && topPathRepetition !== null && topPathRepetition > 0.5) {
       flags.push('pathRepetitive');
+    }
+    if (this.sessionMovements >= 20 && topActionLoopRepetition !== null && topActionLoopRepetition > 0.45) {
+      flags.push('routeActionLoop');
     }
     // marathonSession: > 8hr session
     if (sessionMinutes >= 480) {
@@ -290,6 +329,7 @@ export class BotStats {
       tickAlignStdDevMs,
       reactionMedianMs,
       topPathRepetition,
+      topActionLoopRepetition,
       xpPerHour,
       flags,
     };
@@ -324,6 +364,23 @@ export class BotStats {
     arr.push(value);
     if (arr.length > cap) arr.shift();
   }
+
+  private bumpCappedMap(map: Map<string, number>, key: string, cap: number): void {
+    const existing = map.get(key);
+    if (existing !== undefined) {
+      map.set(key, existing + 1);
+      return;
+    }
+    if (map.size >= cap) {
+      let minKey: string | null = null;
+      let minCount = Infinity;
+      for (const [k, v] of map) {
+        if (v < minCount) { minCount = v; minKey = k; }
+      }
+      if (minKey !== null) map.delete(minKey);
+    }
+    map.set(key, 1);
+  }
 }
 
 function stdDev(samples: number[]): number | null {
@@ -349,4 +406,8 @@ function topRatio(destinations: Map<string, number>): number | null {
     if (v > max) max = v;
   }
   return total > 0 ? max / total : null;
+}
+
+function sanitizeSignaturePart(value: string, maxLength: number): string {
+  return value.replace(/[^a-zA-Z0-9_.:-]/g, '?').slice(0, maxLength) || 'unknown';
 }

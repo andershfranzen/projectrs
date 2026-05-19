@@ -322,6 +322,18 @@ function handleCommand(
       break;
     }
 
+    case '/testtrade': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You must be logged in to test trade.');
+        return;
+      }
+      world.openTestTradeFor(player);
+      sendSystem(ws, 'Test trade opened.');
+      break;
+    }
+
     case '/queststart':
     case '/qstart': {
       if (denyIfNotAdmin(ws, from)) return;

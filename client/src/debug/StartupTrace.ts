@@ -42,6 +42,7 @@ class StartupTrace {
   }
 
   table(): void {
+    if (!import.meta.env.DEV) return;
     console.table(this.entries.map((entry) => ({
       name: entry.name,
       timeMs: Math.round(entry.timeMs),
@@ -52,6 +53,6 @@ class StartupTrace {
 
 export const startupTrace = new StartupTrace();
 
-if (typeof window !== 'undefined') {
+if (import.meta.env.DEV && typeof window !== 'undefined') {
   window.__evilQuestStartupTrace = startupTrace;
 }
