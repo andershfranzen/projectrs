@@ -31,11 +31,18 @@ interface SessionSummary {
   sessionCombatSwings: number;
   sessionMovements: number;
   sessionChats: number;
+  sessionSuspiciousPackets?: number;
+  totalSuspiciousPackets?: number;
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
+  pingIntervalStdDevMs?: number | null;
+  topActionLoopRepetition?: number | null;
   topPathRepetition: number | null;
   xpPerHour: Record<string, number>;
   flags: string[];
+  riskScore?: number;
+  riskLevel?: RiskLevel;
+  riskReasons?: string[];
 }
 
 interface AuditLine {
@@ -68,6 +75,17 @@ interface AccountInfo {
   totalSessionMinutes: number;
   totalFlagEvents: number;
   lastLoginTs: number | null;
+  riskScore: number;
+  riskLevel: RiskLevel;
+  riskReasons: string[];
+}
+
+type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+interface ReviewRisk {
+  score: number;
+  level: RiskLevel;
+  reasons: string[];
 }
 
 const AUDIT_PATH = resolve(import.meta.dir, '../server/data/audit.log');
@@ -80,6 +98,7 @@ function parseArgs(): {
   ip: string | null;
   sharedIpOnly: boolean;
   raw: boolean;
+  minRisk: RiskLevel | null;
 } {
   const args = process.argv.slice(2);
   let minFlags = 2;
@@ -88,6 +107,7 @@ function parseArgs(): {
   let ip: string | null = null;
   let sharedIpOnly = false;
   let raw = false;
+  let minRisk: RiskLevel | null = null;
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--min-flags': minFlags = parseInt(args[++i], 10); break;
@@ -96,6 +116,7 @@ function parseArgs(): {
       case '--ip': ip = args[++i]; break;
       case '--shared-ip-only': sharedIpOnly = true; break;
       case '--raw': raw = true; break;
+      case '--min-risk': minRisk = parseRiskLevel(args[++i]); break;
       case '--help':
       case '-h':
         console.log(`bot-review.ts — surface accounts with suspicious bot signal
@@ -106,12 +127,13 @@ Options:
   --account ID        full history for one account
   --ip ADDR           list all accounts ever seen on this IP
   --shared-ip-only    only show accounts that share an IP with another account
+  --min-risk LEVEL    only show accounts at/above low|medium|high|critical
   --raw               print raw JSONL of flagged sessions instead of summary
   -h, --help          this message`);
         process.exit(0);
     }
   }
-  return { minFlags, days, account, ip, sharedIpOnly, raw };
+  return { minFlags, days, account, ip, sharedIpOnly, raw, minRisk };
 }
 
 function loadAuditLog(): AuditLine[] {
@@ -135,26 +157,64 @@ function openDb(): SQLiteDB | null {
   catch (e) { console.error('[bot-review] DB open failed:', e instanceof Error ? e.message : e); return null; }
 }
 
+function botStatsHasRiskColumns(db: SQLiteDB): boolean {
+  try {
+    const cols = db.query('PRAGMA table_info(bot_stats)').all() as Array<{ name: string }>;
+    const names = new Set(cols.map((c) => c.name));
+    return names.has('risk_score') && names.has('risk_level') && names.has('risk_reasons');
+  } catch {
+    return false;
+  }
+}
+
 function loadAccountInfo(db: SQLiteDB, accountIds: Set<number>): Map<number, AccountInfo> {
   const map = new Map<number, AccountInfo>();
   const ids = [...accountIds];
   if (ids.length === 0) return map;
   const placeholders = ids.map(() => '?').join(',');
+  const hasRiskColumns = botStatsHasRiskColumns(db);
   const rows = db.query(`
-    SELECT a.id, a.username, b.total_session_minutes, b.total_flag_events, b.last_login_ts
+    SELECT a.id, a.username, b.total_session_minutes, b.total_flag_events, b.last_login_ts,
+           ${hasRiskColumns ? 'b.risk_score, b.risk_level, b.risk_reasons' : '0 as risk_score, \'low\' as risk_level, \'[]\' as risk_reasons'}
     FROM accounts a
     LEFT JOIN bot_stats b ON b.account_id = a.id
     WHERE a.id IN (${placeholders})
-  `).all(...ids) as Array<{ id: number; username: string; total_session_minutes: number | null; total_flag_events: number | null; last_login_ts: number | null }>;
+  `).all(...ids) as Array<{
+    id: number;
+    username: string;
+    total_session_minutes: number | null;
+    total_flag_events: number | null;
+    last_login_ts: number | null;
+    risk_score: number | null;
+    risk_level: string | null;
+    risk_reasons: string | null;
+  }>;
   for (const r of rows) {
+    let riskReasons: string[] = [];
+    try {
+      const parsed = JSON.parse(r.risk_reasons ?? '[]') as unknown;
+      if (Array.isArray(parsed)) riskReasons = parsed.filter((x): x is string => typeof x === 'string');
+    } catch { /* empty */ }
     map.set(r.id, {
       username: r.username,
       totalSessionMinutes: r.total_session_minutes ?? 0,
       totalFlagEvents: r.total_flag_events ?? 0,
       lastLoginTs: r.last_login_ts,
+      riskScore: r.risk_score ?? 0,
+      riskLevel: normalizeRiskLevel(r.risk_level),
+      riskReasons,
     });
   }
   return map;
+}
+
+function loadStoredRiskAccounts(db: SQLiteDB, cutoffUnixSec: number, minScore: number): number[] {
+  if (!botStatsHasRiskColumns(db)) return [];
+  const rows = db.query(`
+    SELECT account_id FROM bot_stats
+    WHERE risk_score >= ? AND COALESCE(last_login_ts, 0) >= ?
+  `).all(minScore, cutoffUnixSec) as Array<{ account_id: number }>;
+  return rows.map((r) => r.account_id);
 }
 
 /** Collapse an IP to its /24 (IPv4) or /64 (IPv6) network prefix. Used so
@@ -345,6 +405,95 @@ function fmtTs(unixSec: number | null): string {
   return unixSec != null ? new Date(unixSec * 1000).toISOString().replace('T', ' ').slice(0, 16) : '?';
 }
 
+function parseRiskLevel(raw: string | undefined): RiskLevel {
+  const normalized = normalizeRiskLevel(raw);
+  if (raw !== normalized) {
+    console.error(`Invalid --min-risk value "${raw}". Use low, medium, high, or critical.`);
+    process.exit(1);
+  }
+  return normalized;
+}
+
+function normalizeRiskLevel(raw: unknown): RiskLevel {
+  return raw === 'critical' || raw === 'high' || raw === 'medium' || raw === 'low'
+    ? raw
+    : 'low';
+}
+
+function riskScoreFloor(level: RiskLevel): number {
+  switch (level) {
+    case 'critical': return 85;
+    case 'high': return 60;
+    case 'medium': return 30;
+    case 'low': return 0;
+  }
+}
+
+function riskLevelForScore(score: number): RiskLevel {
+  if (score >= 85) return 'critical';
+  if (score >= 60) return 'high';
+  if (score >= 30) return 'medium';
+  return 'low';
+}
+
+function computeReviewRisk(
+  candidate: AccountBucket,
+  ctx: AccountInfo | undefined,
+  ips: Map<string, { logins: number; ptr: string | null }>,
+  sharedNetworkAlts: Array<{ ip: string; network: string; accountId: number; username: string; logins: number }>,
+  sharedDeviceAlts: Array<{ deviceId: string; accountId: number; username: string; logins: number }>,
+  suspiciousTrades: Array<{ trade: AuditLine; sharedNetworks: string[]; sharedDevices: string[] }>,
+): ReviewRisk {
+  let score = ctx?.riskScore ?? 0;
+  const reasons = [...(ctx?.riskReasons ?? [])];
+  const add = (points: number, reason: string) => {
+    score += points;
+    reasons.push(`${reason} (+${points})`);
+  };
+
+  const flags = candidate.uniqueFlags;
+  if (score === 0) {
+    if (flags.has('tickAligned')) add(24, 'tick-aligned action timing');
+    if (flags.has('pingRegular')) add(18, 'script-regular heartbeat timing');
+    if (flags.has('routeActionLoop')) add(22, 'repeated route/action loop');
+    if (flags.has('pathRepetitive')) add(16, 'repetitive movement destination');
+    if (flags.has('fastReaction')) add(22, 'fast NPC re-engage reaction');
+    if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
+    if (flags.has('suspiciousPackets')) add(14, 'invalid/stale gameplay packets');
+    if (flags.has('packetFuzzing')) add(20, 'heavy packet fuzzing pattern');
+    if (flags.has('xpVelocity')) add(28, 'impossible XP velocity');
+    if (flags.has('marathonSession')) add(10, 'marathon session');
+    if (flags.has('noChat')) add(8, 'long active session with no chat');
+  }
+
+  if (candidate.totalFlagFires >= 20) add(12, `${candidate.totalFlagFires} window flag-fires`);
+  else if (candidate.totalFlagFires >= 8) add(6, `${candidate.totalFlagFires} window flag-fires`);
+
+  const vpnHints = [...ips.values()].map((ip) => vpnHint(ip.ptr)).filter((hint): hint is string => !!hint);
+  if (vpnHints.length > 0) add(15, `VPN/datacenter PTR hint (${[...new Set(vpnHints)].join(', ')})`);
+
+  const uniqueSharedNetworks = new Set(sharedNetworkAlts.map((alt) => alt.network));
+  if (uniqueSharedNetworks.size >= 3) add(20, `${uniqueSharedNetworks.size} shared IP networks with other accounts`);
+  else if (uniqueSharedNetworks.size > 0) add(10, `${uniqueSharedNetworks.size} shared IP network(s) with other accounts`);
+
+  const uniqueSharedDeviceAlts = new Set(sharedDeviceAlts.map((alt) => alt.accountId));
+  if (uniqueSharedDeviceAlts.size > 0) add(30, `${uniqueSharedDeviceAlts.size} shared-device alt account(s)`);
+
+  const tradeHits = suspiciousTrades.filter((st) => {
+    const d = st.trade.details as { a?: { accountId?: number }; b?: { accountId?: number } } | undefined;
+    return d?.a?.accountId === candidate.accountId || d?.b?.accountId === candidate.accountId;
+  });
+  if (tradeHits.some((hit) => hit.sharedDevices.length > 0)) add(45, 'trade transfer involving shared device');
+  else if (tradeHits.length > 0) add(30, 'trade transfer involving shared IP/network');
+
+  const capped = Math.min(100, Math.round(score));
+  return {
+    score: capped,
+    level: riskLevelForScore(capped),
+    reasons: [...new Set(reasons)].slice(0, 12),
+  };
+}
+
 /** --ip path: list every account that's ever used the given IP. */
 function showIpReport(db: SQLiteDB, ip: string): void {
   const accounts = loadIpAccounts(db, ip);
@@ -375,6 +524,7 @@ function main(): void {
 
   const lines = loadAuditLog();
   const cutoff = Date.now() - opts.days * 86400_000;
+  const cutoffUnixSec = Math.floor(cutoff / 1000);
 
   const buckets: Map<number, AccountBucket> = new Map();
   for (const line of lines) {
@@ -400,11 +550,18 @@ function main(): void {
     }
   }
 
+  const storedRiskFloor = riskScoreFloor(opts.minRisk ?? 'medium');
+  for (const accountId of loadStoredRiskAccounts(db, cutoffUnixSec, storedRiskFloor)) {
+    if (opts.account != null && accountId !== opts.account) continue;
+    if (!buckets.has(accountId)) {
+      buckets.set(accountId, { accountId, sessions: [], uniqueFlags: new Set(), totalFlagFires: 0, totalMinutes: 0 });
+    }
+  }
+
   let candidates: AccountBucket[] = [];
   for (const b of buckets.values()) {
-    if (b.uniqueFlags.size >= opts.minFlags || opts.account != null) candidates.push(b);
+    if (b.uniqueFlags.size >= opts.minFlags || opts.account != null || b.sessions.length === 0) candidates.push(b);
   }
-  candidates.sort((a, b) => b.uniqueFlags.size - a.uniqueFlags.size || b.totalFlagFires - a.totalFlagFires);
 
   // Apply --shared-ip-only filter: keep only candidates with ≥1 alt.
   if (opts.sharedIpOnly) {
@@ -422,23 +579,49 @@ function main(): void {
   }
 
   if (candidates.length === 0) {
-    console.log(`No accounts flagged at min-flags=${opts.minFlags} in the last ${opts.days} days${opts.sharedIpOnly ? ' (shared-IP-only)' : ''}.`);
+    console.log(`No accounts flagged at min-flags=${opts.minFlags}${opts.minRisk ? `, min-risk=${opts.minRisk}` : ''} in the last ${opts.days} days${opts.sharedIpOnly ? ' (shared-IP-only)' : ''}.`);
     db.close();
     return;
   }
 
-  const acctInfo = loadAccountInfo(db, new Set(candidates.map(c => c.accountId)));
-
   // Suspicious-trade detection runs once for the whole window (not per-account)
   // since the data set is small and SQL handles dedup cleanly.
   const suspiciousTrades = findSuspiciousTrades(db, lines, cutoff);
+  const acctInfo = loadAccountInfo(db, new Set(candidates.map(c => c.accountId)));
+  const riskByAccount = new Map<number, ReviewRisk>();
+  const contextByAccount = new Map<number, {
+    ips: Map<string, { logins: number; ptr: string | null }>;
+    alts: Array<{ ip: string; network: string; accountId: number; username: string; logins: number }>;
+    deviceAlts: Array<{ deviceId: string; accountId: number; username: string; logins: number }>;
+  }>();
 
-  console.log(`Bot review — ${candidates.length} account(s) flagged (window: last ${opts.days} days, min flag types: ${opts.minFlags}${opts.sharedIpOnly ? ', shared-IP-only' : ''})\n`);
+  for (const c of candidates) {
+    const ips = loadAccountIps(db, c.accountId);
+    const alts = loadAltsForAccount(db, c.accountId);
+    const deviceAlts = loadAltsByDevice(db, c.accountId);
+    contextByAccount.set(c.accountId, { ips, alts, deviceAlts });
+    riskByAccount.set(c.accountId, computeReviewRisk(c, acctInfo.get(c.accountId), ips, alts, deviceAlts, suspiciousTrades));
+  }
+
+  if (opts.minRisk) {
+    const minScore = riskScoreFloor(opts.minRisk);
+    candidates = candidates.filter((c) => (riskByAccount.get(c.accountId)?.score ?? 0) >= minScore);
+  }
+  candidates.sort((a, b) =>
+    (riskByAccount.get(b.accountId)?.score ?? 0) - (riskByAccount.get(a.accountId)?.score ?? 0)
+    || b.uniqueFlags.size - a.uniqueFlags.size
+    || b.totalFlagFires - a.totalFlagFires
+  );
+
+  console.log(`Bot review — ${candidates.length} account(s) flagged (window: last ${opts.days} days, min flag types: ${opts.minFlags}${opts.minRisk ? `, min risk: ${opts.minRisk}` : ''}${opts.sharedIpOnly ? ', shared-IP-only' : ''})\n`);
 
   for (const c of candidates) {
     const ctx = acctInfo.get(c.accountId);
+    const risk = riskByAccount.get(c.accountId) ?? { score: 0, level: 'low' as const, reasons: [] };
+    const context = contextByAccount.get(c.accountId) ?? { ips: new Map(), alts: [], deviceAlts: [] };
     const name = ctx?.username ?? `account#${c.accountId}`;
     console.log(`━━━ ${name} (account ${c.accountId}) ━━━`);
+    console.log(`  risk:     ${risk.level.toUpperCase()} (${risk.score}/100)${risk.reasons.length > 0 ? ` — ${risk.reasons.slice(0, 3).join('; ')}` : ''}`);
     if (ctx) {
       console.log(`  lifetime: ${ctx.totalSessionMinutes} min played, ${ctx.totalFlagEvents} total flag-fires`);
     }
@@ -448,7 +631,7 @@ function main(): void {
     // IP correlation block. Surfaces reverse-DNS hints (VPN/datacenter PTRs)
     // alongside each IP — clean residential PTRs print as-is, suspicious ones
     // get a [vpn?:foo] tag.
-    const ips = loadAccountIps(db, c.accountId);
+    const ips = context.ips;
     if (ips.size > 0) {
       const top = [...ips.entries()].slice(0, 3).map(([ip, info]) => {
         const hint = vpnHint(info.ptr);
@@ -456,7 +639,7 @@ function main(): void {
       }).join(', ');
       console.log(`  IPs:        ${top}${ips.size > 3 ? ` …+${ips.size - 3} more` : ''}`);
     }
-    const alts = loadAltsForAccount(db, c.accountId);
+    const alts = context.alts;
     if (alts.length > 0) {
       // Group by alt account; each alt may have multiple shared networks.
       const altsByAcct = new Map<number, { username: string; networks: Set<string>; logins: number }>();
@@ -484,7 +667,7 @@ function main(): void {
       const top = [...devices.entries()].slice(0, 2).map(([d, n]) => `${d.slice(0, 8)}…(×${n})`).join(', ');
       console.log(`  devices:    ${top}${devices.size > 2 ? ` …+${devices.size - 2} more` : ''}`);
     }
-    const deviceAlts = loadAltsByDevice(db, c.accountId);
+    const deviceAlts = context.deviceAlts;
     if (deviceAlts.length > 0) {
       const altsByAcct = new Map<number, { username: string; devices: Set<string>; logins: number }>();
       for (const a of deviceAlts) {

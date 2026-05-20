@@ -605,6 +605,7 @@ export class SidePanel {
         await fetch('/api/logout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
           body: JSON.stringify({ token: this.token }),
         });
       } catch { /* ignore */ }

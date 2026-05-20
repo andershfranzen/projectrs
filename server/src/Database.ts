@@ -21,6 +21,15 @@ export interface SessionInfo {
    *  the Player so login_history can record it for cross-account device
    *  correlation. Empty string when the client didn't supply one. */
   deviceId: string;
+  /** HttpOnly cookie binding created with the session. WebSocket upgrades must
+   *  present this alongside the JS-visible token, so a copied token alone
+   *  cannot open raw game/chat sockets. */
+  wsSecret: string;
+}
+
+export interface CreatedSession {
+  token: string;
+  wsSecret: string;
 }
 
 /** Persisted row in the bot_stats table. Strings are JSON-encoded blobs
@@ -33,9 +42,14 @@ export interface BotStatsRow {
   total_chat_messages: number;
   total_session_minutes: number;
   total_flag_events: number;
+  total_suspicious_packets: number;
   last_chat_ts: number | null;
   last_action_ts: number | null;
   last_login_ts: number | null;
+  /** Persisted manual-review priority derived from the latest session summary. */
+  risk_score: number;
+  risk_level: string;
+  risk_reasons: string;
   /** JSON array of recent tick-align deltas (ms past tick boundary). Capped at 100. */
   tick_align_samples: string;
   /** JSON array of recent reaction times (ms after NPC death → next attack). Capped at 50. */
@@ -284,9 +298,13 @@ export class GameDatabase {
         total_chat_messages INTEGER NOT NULL DEFAULT 0,
         total_session_minutes INTEGER NOT NULL DEFAULT 0,
         total_flag_events INTEGER NOT NULL DEFAULT 0,
+        total_suspicious_packets INTEGER NOT NULL DEFAULT 0,
         last_chat_ts INTEGER,
         last_action_ts INTEGER,
         last_login_ts INTEGER,
+        risk_score INTEGER NOT NULL DEFAULT 0,
+        risk_level TEXT NOT NULL DEFAULT 'low',
+        risk_reasons TEXT NOT NULL DEFAULT '[]',
         tick_align_samples TEXT NOT NULL DEFAULT '[]',
         reaction_samples TEXT NOT NULL DEFAULT '[]',
         ping_interval_samples TEXT NOT NULL DEFAULT '[]',
@@ -302,6 +320,18 @@ export class GameDatabase {
     } catch { /* column already exists */ }
     try {
       this.db.exec(`ALTER TABLE bot_stats ADD COLUMN device_ids TEXT NOT NULL DEFAULT '{}'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN total_suspicious_packets INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN risk_score INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'low'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN risk_reasons TEXT NOT NULL DEFAULT '[]'`);
     } catch { /* column already exists */ }
 
     // Login history: one row per session. IP is captured at WS upgrade time.
@@ -339,9 +369,25 @@ export class GameDatabase {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
     try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN ws_secret TEXT NOT NULL DEFAULT ''`);
+    } catch { /* column already exists */ }
+    try {
       this.db.exec(`ALTER TABLE login_history ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_login_history_device ON login_history(device_id)`);
+
+    // Browser-held device signing keys. The private key stays in IndexedDB on
+    // the client; the server stores only the public JWK and requires it to sign
+    // each game-channel ECDH transcript before a player is spawned.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS account_device_keys (
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        device_id TEXT NOT NULL,
+        public_jwk TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (account_id, device_id)
+      );
+    `);
 
     // Account + IP bans. Two tables instead of a single unified `bans` table so
     // each enforcement point (login API, WS upgrade) hits exactly one indexed
@@ -559,7 +605,7 @@ export class GameDatabase {
     }
   }
 
-  async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
+  async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
     if (!PUBLIC_SIGNUPS_ENABLED) return { ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE };
 
     const usernameError = validateUsername(username);
@@ -601,11 +647,11 @@ export class GameDatabase {
     }).immediate();
 
     // Create session
-    const token = this.createSession(accountId, deviceId);
-    return { ok: true, token, accountId, isAdmin: isAdmin === 1 };
+    const session = this.createSession(accountId, deviceId);
+    return { ok: true, token: session.token, wsSecret: session.wsSecret, accountId, isAdmin: isAdmin === 1 };
   }
 
-  async login(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; username: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
+  async login(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
     const row = this.db.query('SELECT id, username, password_hash, is_admin FROM accounts WHERE username = ?').get(username) as { id: number; username: string; password_hash: string; is_admin: number } | null;
     if (!row) {
       return { ok: false, error: 'Invalid username or password' };
@@ -616,11 +662,11 @@ export class GameDatabase {
       return { ok: false, error: 'Invalid username or password' };
     }
 
-    const token = this.createSession(row.id, deviceId);
-    return { ok: true, token, username: row.username, accountId: row.id, isAdmin: row.is_admin === 1 };
+    const session = this.createSession(row.id, deviceId);
+    return { ok: true, token: session.token, wsSecret: session.wsSecret, username: row.username, accountId: row.id, isAdmin: row.is_admin === 1 };
   }
 
-  loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; username: string; accountId: number; isAdmin: boolean } {
+  loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean } {
     const starterInventory = JSON.stringify([
       { itemId: 31, quantity: 1 },
       { itemId: 33, quantity: 1 }
@@ -643,34 +689,80 @@ export class GameDatabase {
       this.db.query('INSERT OR IGNORE INTO player_state (account_id, inventory) VALUES (?, ?)').run(accountId, starterInventory);
     }).immediate();
 
-    const token = this.createSession(accountId, deviceId);
-    return { ok: true, token, username: normalizedUsername, accountId, isAdmin: isAdmin === 1 };
+    const session = this.createSession(accountId, deviceId);
+    return { ok: true, token: session.token, wsSecret: session.wsSecret, username: normalizedUsername, accountId, isAdmin: isAdmin === 1 };
   }
 
-  createSession(accountId: number, deviceId: string = ''): string {
+  createSession(accountId: number, deviceId: string = ''): CreatedSession {
     const token = randomBytes(32).toString('hex');
+    const wsSecret = randomBytes(32).toString('hex');
     const expiresAt = Math.floor((Date.now() + SESSION_EXPIRY_MS) / 1000);
     // Drop any prior sessions for this account before inserting the new one.
     // Matches the "single active session" model already enforced in-game by
     // World.kickAccountIfOnline and prevents the sessions table from growing
     // unbounded per device-login.
     this.db.query('DELETE FROM sessions WHERE account_id = ?').run(accountId);
-    this.db.query('INSERT INTO sessions (token, account_id, expires_at, device_id) VALUES (?, ?, ?, ?)').run(token, accountId, expiresAt, deviceId);
-    return token;
+    this.db.query('INSERT INTO sessions (token, account_id, expires_at, device_id, ws_secret) VALUES (?, ?, ?, ?, ?)')
+      .run(token, accountId, expiresAt, deviceId, wsSecret);
+    return { token, wsSecret };
   }
 
   getSession(token: string): SessionInfo | null {
     if (!token) return null;
     const now = Math.floor(Date.now() / 1000);
     const row = this.db.query(`
-      SELECT s.account_id, a.username, a.is_admin, s.device_id
+      SELECT s.account_id, a.username, a.is_admin, s.device_id, s.ws_secret
       FROM sessions s
       JOIN accounts a ON a.id = s.account_id
       WHERE s.token = ? AND s.expires_at > ?
-    `).get(token, now) as { account_id: number; username: string; is_admin: number; device_id: string | null } | null;
+    `).get(token, now) as { account_id: number; username: string; is_admin: number; device_id: string | null; ws_secret: string | null } | null;
 
     if (!row) return null;
-    return { accountId: row.account_id, username: row.username, isAdmin: row.is_admin === 1, deviceId: row.device_id ?? '' };
+    return {
+      accountId: row.account_id,
+      username: row.username,
+      isAdmin: row.is_admin === 1,
+      deviceId: row.device_id ?? '',
+      wsSecret: row.ws_secret ?? '',
+    };
+  }
+
+  ensureSessionWsSecret(token: string): string | null {
+    if (!token) return null;
+    const now = Math.floor(Date.now() / 1000);
+    const row = this.db.query('SELECT ws_secret FROM sessions WHERE token = ? AND expires_at > ?')
+      .get(token, now) as { ws_secret: string | null } | null;
+    if (!row) return null;
+    if (row.ws_secret) return row.ws_secret;
+    const wsSecret = randomBytes(32).toString('hex');
+    this.db.query('UPDATE sessions SET ws_secret = ? WHERE token = ?').run(wsSecret, token);
+    return wsSecret;
+  }
+
+  saveDeviceKey(accountId: number, deviceId: string, publicJwk: JsonWebKey): void {
+    if (!accountId || !deviceId) throw new Error('missing account or device id');
+    this.db.query(`
+      INSERT INTO account_device_keys (account_id, device_id, public_jwk, updated_at)
+      VALUES (?, ?, ?, unixepoch())
+      ON CONFLICT(account_id, device_id) DO UPDATE SET
+        public_jwk = excluded.public_jwk,
+        updated_at = excluded.updated_at
+    `).run(accountId, deviceId, JSON.stringify(publicJwk));
+  }
+
+  loadDeviceKey(accountId: number, deviceId: string): JsonWebKey | null {
+    if (!accountId || !deviceId) return null;
+    const row = this.db.query(`
+      SELECT public_jwk FROM account_device_keys
+      WHERE account_id = ? AND device_id = ?
+    `).get(accountId, deviceId) as { public_jwk: string } | null;
+    if (!row) return null;
+    try {
+      const parsed = JSON.parse(row.public_jwk) as JsonWebKey;
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 
   /** Lookup admin status by username. Used by chat socket where the username is
@@ -1129,7 +1221,9 @@ export class GameDatabase {
     const row = this.db.query(`
       SELECT total_skilling_actions, total_combat_swings, total_movements,
              total_chat_messages, total_session_minutes, total_flag_events,
+             total_suspicious_packets,
              last_chat_ts, last_action_ts, last_login_ts,
+             risk_score, risk_level, risk_reasons,
              tick_align_samples, reaction_samples, path_destinations,
              ping_interval_samples, device_ids, xp_baseline, last_session_summary
       FROM bot_stats WHERE account_id = ?
@@ -1164,11 +1258,11 @@ export class GameDatabase {
     this.db.query(`
       INSERT INTO bot_stats (
         account_id, total_skilling_actions, total_combat_swings, total_movements,
-        total_chat_messages, total_session_minutes, total_flag_events,
-        last_chat_ts, last_action_ts, last_login_ts,
+        total_chat_messages, total_session_minutes, total_flag_events, total_suspicious_packets,
+        last_chat_ts, last_action_ts, last_login_ts, risk_score, risk_level, risk_reasons,
         tick_align_samples, reaction_samples, path_destinations,
         ping_interval_samples, device_ids, xp_baseline, last_session_summary, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
       ON CONFLICT(account_id) DO UPDATE SET
         total_skilling_actions = excluded.total_skilling_actions,
         total_combat_swings = excluded.total_combat_swings,
@@ -1176,9 +1270,13 @@ export class GameDatabase {
         total_chat_messages = excluded.total_chat_messages,
         total_session_minutes = excluded.total_session_minutes,
         total_flag_events = excluded.total_flag_events,
+        total_suspicious_packets = excluded.total_suspicious_packets,
         last_chat_ts = excluded.last_chat_ts,
         last_action_ts = excluded.last_action_ts,
         last_login_ts = excluded.last_login_ts,
+        risk_score = excluded.risk_score,
+        risk_level = excluded.risk_level,
+        risk_reasons = excluded.risk_reasons,
         tick_align_samples = excluded.tick_align_samples,
         reaction_samples = excluded.reaction_samples,
         path_destinations = excluded.path_destinations,
@@ -1195,9 +1293,13 @@ export class GameDatabase {
       row.total_chat_messages,
       row.total_session_minutes,
       row.total_flag_events,
+      row.total_suspicious_packets,
       row.last_chat_ts ?? null,
       row.last_action_ts ?? null,
       row.last_login_ts ?? null,
+      row.risk_score,
+      row.risk_level,
+      row.risk_reasons,
       row.tick_align_samples,
       row.reaction_samples,
       row.path_destinations,

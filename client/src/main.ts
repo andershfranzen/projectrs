@@ -201,6 +201,7 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
     const res = await fetch('/api/validate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ token: savedToken }),
     });
     const data = await res.json();

@@ -1,47 +1,103 @@
 import { describe, expect, test } from 'bun:test';
-import { ENCRYPTED_GAME_FRAME } from '@projectrs/shared';
-import { enableGameSocketEncryption, installGameSocketEncryption, type GameSocketData } from '../src/network/GameSocket';
+import {
+  ENCRYPTED_GAME_FRAME_V2,
+  GAME_CRYPTO_VERSION,
+  PROTOCOL_VERSION,
+  buildGameHandshakeTranscript,
+  bytesToBase64Url,
+  decryptGamePacketV2,
+  deriveGameCipherKeysV2,
+  encodePacket,
+  encryptGamePacketV2,
+  exportGamePublicKey,
+  generateGameEcdhKeyPair,
+  importGameEcdhPublicKey,
+  randomBytesBrowser,
+  signGameHandshakeTranscript,
+  verifyGameHandshakeTranscript,
+} from '@projectrs/shared';
 
-function exactBytes(data: Bun.BufferSource): Uint8Array {
-  if (data instanceof Uint8Array) return new Uint8Array(data);
-  if (data instanceof ArrayBuffer) return new Uint8Array(data.slice(0));
-  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
-  return new Uint8Array(data as unknown as ArrayBuffer);
+function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const out = new Uint8Array(bytes.byteLength);
+  out.set(bytes);
+  return out.buffer;
 }
 
 describe('game socket encryption', () => {
-  test('keeps packets queued before encryption enablement in plaintext', async () => {
-    const sent: Uint8Array[] = [];
-    const data: GameSocketData = {
-      type: 'game',
-      accountId: 1,
-      username: 'alice',
-      isAdmin: false,
-      ip: '127.0.0.1',
-      deviceId: '',
-      token: 'test-session-token',
-    };
-    const ws = {
-      data: {
-        ...data,
-      } as GameSocketData,
-      sendBinary(data: Bun.BufferSource) {
-        sent.push(exactBytes(data));
-        return 0;
-      },
-      close() {},
-    };
+  test('requires signed ECDH transcript and derives matching directional keys', async () => {
+    const authToken = 'test-session-token';
+    const accountId = 42;
+    const deviceId = '11111111-1111-4111-8111-111111111111';
+    const connectionId = bytesToBase64Url(randomBytesBrowser(16));
+    const serverNonce = bytesToBase64Url(randomBytesBrowser(16));
+    const clientNonce = bytesToBase64Url(randomBytesBrowser(16));
 
-    installGameSocketEncryption(ws as any);
+    const serverEcdh = await generateGameEcdhKeyPair();
+    const clientEcdh = await generateGameEcdhKeyPair();
+    const serverPublicKey = await exportGamePublicKey(serverEcdh.publicKey);
+    const clientPublicKey = await exportGamePublicKey(clientEcdh.publicKey);
+    const deviceSigningKey = await crypto.subtle.generateKey(
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['sign', 'verify'],
+    ) as CryptoKeyPair;
+    const devicePublicKey = await crypto.subtle.exportKey('jwk', deviceSigningKey.publicKey);
 
-    ws.sendBinary(new Uint8Array([1, 2, 3]));
-    enableGameSocketEncryption(ws as any);
-    ws.sendBinary(new Uint8Array([4, 5, 6]));
+    const transcript = buildGameHandshakeTranscript({
+      protocolVersion: PROTOCOL_VERSION,
+      accountId,
+      deviceId,
+      connectionId,
+      serverNonce,
+      clientNonce,
+      serverPublicKey,
+      clientPublicKey,
+    });
+    const signature = await signGameHandshakeTranscript(deviceSigningKey.privateKey, transcript);
+    expect(await verifyGameHandshakeTranscript(devicePublicKey, transcript, signature)).toBe(true);
 
-    await ws.data.crypto?.sendQueue;
+    const tamperedTranscript = buildGameHandshakeTranscript({
+      protocolVersion: PROTOCOL_VERSION + 1,
+      accountId,
+      deviceId,
+      connectionId,
+      serverNonce,
+      clientNonce,
+      serverPublicKey,
+      clientPublicKey,
+    });
+    expect(await verifyGameHandshakeTranscript(devicePublicKey, tamperedTranscript, signature)).toBe(false);
 
-    expect(sent).toHaveLength(2);
-    expect([...sent[0]]).toEqual([1, 2, 3]);
-    expect(sent[1][0]).toBe(ENCRYPTED_GAME_FRAME);
+    const serverKeys = await deriveGameCipherKeysV2({
+      privateKey: serverEcdh.privateKey,
+      peerPublicKey: await importGameEcdhPublicKey(clientPublicKey),
+      authToken,
+      transcript,
+      serverNonce,
+      clientNonce,
+      connectionId,
+      accountId,
+    });
+    const clientKeys = await deriveGameCipherKeysV2({
+      privateKey: clientEcdh.privateKey,
+      peerPublicKey: await importGameEcdhPublicKey(serverPublicKey),
+      authToken,
+      transcript,
+      serverNonce,
+      clientNonce,
+      connectionId,
+      accountId,
+    });
+
+    const packet = encodePacket(10, 1, 2, 3);
+    const frame = await encryptGamePacketV2(clientKeys, 'client-to-server', 7, packet);
+    expect(frame[0]).toBe(ENCRYPTED_GAME_FRAME_V2);
+    expect(frame[1]).toBe(GAME_CRYPTO_VERSION);
+
+    const decrypted = await decryptGamePacketV2(serverKeys, 'client-to-server', exactArrayBuffer(frame));
+    expect(decrypted.counter).toBe(7);
+    expect([...new Uint8Array(decrypted.plaintext)]).toEqual([...packet]);
+
+    await expect(decryptGamePacketV2(serverKeys, 'server-to-client', exactArrayBuffer(frame))).rejects.toThrow();
   });
 });

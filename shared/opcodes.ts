@@ -1,6 +1,10 @@
 // Client → Server opcodes
 export enum ClientOpcode {
   LOGIN = 1,
+  /** v2 game-channel handshake response. String packet: JSON with
+   *  client ECDH public key, client nonce, and device-key signature. Must be
+   *  the first client game packet after the server CRYPTO_CHALLENGE. */
+  CRYPTO_RESPONSE = 2,
   PLAYER_MOVE = 10,
   PLAYER_ATTACK_NPC = 20,
   PLAYER_TALK_NPC = 21,
@@ -103,6 +107,13 @@ export enum ClientOpcode {
 // Server → Client opcodes
 export enum ServerOpcode {
   LOGIN_OK = 1,
+  /** v2 game-channel handshake challenge. String packet: JSON with server
+   *  ECDH public key, server nonce, connection id, account id, and device id. */
+  CRYPTO_CHALLENGE = 2,
+  /** Fixed encrypted pre-gameplay packet carrying this session's shuffled
+   *  logical↔wire opcode tables. All normal game packets after this use the
+   *  shuffled wire values instead of the enum constants below. */
+  OPCODE_MAPPING = 3,
   PLAYER_SYNC = 10,
   NPC_SYNC = 11,
   GROUND_ITEM_SYNC = 12,

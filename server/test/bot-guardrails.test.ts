@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ClientOpcode } from '@projectrs/shared';
 import { BotStats } from '../src/BotStats';
+import { GameDatabase } from '../src/Database';
 import { Player } from '../src/entity/Player';
 import { getOpcodeRateRule } from '../src/network/GameSocket';
 
@@ -46,5 +47,44 @@ describe('anti-bot guardrails', () => {
     const summary = stats.computeSummary({});
     expect(summary.topActionLoopRepetition).toBe(1);
     expect(summary.flags).toContain('routeActionLoop');
+  });
+
+  test('risk profile escalates when multiple bot signals stack', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 30; i++) {
+      stats.recordSkillingRoll(1000, 1000);
+      stats.recordMovement(42.5, 17.5);
+      stats.recordActionSignature('object', 123, 42.5, 17.5, 'Chop');
+    }
+    for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket();
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('tickAligned');
+    expect(summary.flags).toContain('routeActionLoop');
+    expect(summary.flags).toContain('suspiciousPackets');
+    expect(summary.riskLevel).toBe('high');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(60);
+    expect(summary.riskReasons.length).toBeGreaterThan(0);
+  });
+
+  test('risk profile persists in bot_stats rows', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('risk-tester', '11111111-1111-4111-8111-111111111111');
+      const stats = BotStats.empty();
+      stats.onLogin({});
+      for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket();
+      const summary = stats.finalize(db, session.accountId, {}, 1);
+      const row = db.loadBotStats(session.accountId);
+
+      expect(row?.risk_score).toBe(summary.riskScore);
+      expect(row?.risk_level).toBe(summary.riskLevel);
+      expect(JSON.parse(row?.risk_reasons ?? '[]')).toEqual(summary.riskReasons);
+      expect(row?.total_suspicious_packets).toBe(5);
+    } finally {
+      db.close();
+    }
   });
 });

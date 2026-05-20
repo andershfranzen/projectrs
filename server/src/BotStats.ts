@@ -61,6 +61,8 @@ export interface SessionSummary {
   sessionCombatSwings: number;
   sessionMovements: number;
   sessionChats: number;
+  sessionSuspiciousPackets: number;
+  totalSuspiciousPackets: number;
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
   pingIntervalStdDevMs: number | null;
@@ -71,6 +73,17 @@ export interface SessionSummary {
   deviceReuseRatio: number | null;
   xpPerHour: Record<string, number>;
   flags: string[];
+  riskScore: number;
+  riskLevel: BotRiskLevel;
+  riskReasons: string[];
+}
+
+export type BotRiskLevel = 'low' | 'medium' | 'high' | 'critical';
+
+export interface BotRiskProfile {
+  score: number;
+  level: BotRiskLevel;
+  reasons: string[];
 }
 
 export class BotStats {
@@ -81,9 +94,13 @@ export class BotStats {
   totalChatMessages: number = 0;
   totalSessionMinutes: number = 0;
   totalFlagEvents: number = 0;
+  totalSuspiciousPackets: number = 0;
   lastChatTs: number | null = null;
   lastActionTs: number | null = null;
   lastLoginTs: number | null = null;
+  riskScore: number = 0;
+  riskLevel: BotRiskLevel = 'low';
+  riskReasons: string[] = [];
 
   // Rolling samples (persisted, capped)
   tickAlignSamples: number[] = [];
@@ -101,6 +118,7 @@ export class BotStats {
   sessionCombatSwings: number = 0;
   sessionMovements: number = 0;
   sessionChats: number = 0;
+  sessionSuspiciousPackets: number = 0;
   actionSignatures: Map<string, number> = new Map();
   private lastMovementDestinationKey: string | null = null;
   private lastMovementTs: number | null = null;
@@ -125,9 +143,13 @@ export class BotStats {
     s.totalChatMessages = row.total_chat_messages;
     s.totalSessionMinutes = row.total_session_minutes;
     s.totalFlagEvents = row.total_flag_events;
+    s.totalSuspiciousPackets = row.total_suspicious_packets ?? 0;
     s.lastChatTs = row.last_chat_ts;
     s.lastActionTs = row.last_action_ts;
     s.lastLoginTs = row.last_login_ts;
+    s.riskScore = row.risk_score ?? 0;
+    s.riskLevel = normalizeRiskLevel(row.risk_level);
+    try { s.riskReasons = JSON.parse(row.risk_reasons ?? '[]'); } catch { s.riskReasons = []; }
     try { s.tickAlignSamples = JSON.parse(row.tick_align_samples); } catch { s.tickAlignSamples = []; }
     try { s.reactionSamples = JSON.parse(row.reaction_samples); } catch { s.reactionSamples = []; }
     try { s.pingIntervalSamples = JSON.parse(row.ping_interval_samples ?? '[]'); } catch { s.pingIntervalSamples = []; }
@@ -159,9 +181,13 @@ export class BotStats {
       total_chat_messages: this.totalChatMessages,
       total_session_minutes: this.totalSessionMinutes,
       total_flag_events: this.totalFlagEvents,
+      total_suspicious_packets: this.totalSuspiciousPackets,
       last_chat_ts: this.lastChatTs,
       last_action_ts: this.lastActionTs,
       last_login_ts: this.lastLoginTs,
+      risk_score: this.riskScore,
+      risk_level: this.riskLevel,
+      risk_reasons: JSON.stringify(this.riskReasons),
       tick_align_samples: JSON.stringify(this.tickAlignSamples),
       reaction_samples: JSON.stringify(this.reactionSamples),
       ping_interval_samples: JSON.stringify(this.pingIntervalSamples),
@@ -181,6 +207,7 @@ export class BotStats {
     this.sessionCombatSwings = 0;
     this.sessionMovements = 0;
     this.sessionChats = 0;
+    this.sessionSuspiciousPackets = 0;
     this.actionSignatures.clear();
     this.lastMovementDestinationKey = null;
     this.lastMovementTs = null;
@@ -292,6 +319,12 @@ export class BotStats {
     this.lastChatTs = Math.floor(Date.now() / 1000);
   }
 
+  recordSuspiciousPacket(): void {
+    this.totalSuspiciousPackets++;
+    this.sessionSuspiciousPackets++;
+    this.lastActionTs = Math.floor(Date.now() / 1000);
+  }
+
   /** Browser heartbeat timing. The official client sends every 5s via
    *  setInterval, but real browsers/network stacks add jitter. A raw script
    *  tends to produce near-perfect intervals and sequence monotonicity. */
@@ -345,6 +378,12 @@ export class BotStats {
     if (this.pingSeqResets >= 2) {
       flags.push('pingSeqReset');
     }
+    if (this.sessionSuspiciousPackets >= 5) {
+      flags.push('suspiciousPackets');
+    }
+    if (this.sessionSuspiciousPackets >= 25) {
+      flags.push('packetFuzzing');
+    }
     if (deviceLogins >= 5 && deviceIdsSeen >= 5 && deviceReuseRatio !== null && deviceReuseRatio <= 0.25) {
       flags.push('deviceRotating');
     }
@@ -376,12 +415,38 @@ export class BotStats {
       }
     }
 
+    const risk = computeBotRiskProfile({
+      flags,
+      sessionMinutes,
+      sessionChats: this.sessionChats,
+      sessionSkillingActions: this.sessionSkillingActions,
+      sessionCombatSwings: this.sessionCombatSwings,
+      sessionMovements: this.sessionMovements,
+      sessionSuspiciousPackets: this.sessionSuspiciousPackets,
+      totalSuspiciousPackets: this.totalSuspiciousPackets,
+      totalFlagEvents: this.totalFlagEvents,
+      tickAlignSamples: this.tickAlignSamples.length,
+      tickAlignStdDevMs,
+      pingIntervalSamples: this.pingIntervalSamples.length,
+      pingIntervalStdDevMs,
+      pingSeqResets: this.pingSeqResets,
+      reactionSamples: this.reactionSamples.length,
+      reactionMedianMs,
+      topPathRepetition,
+      topActionLoopRepetition,
+      deviceIdsSeen,
+      deviceReuseRatio,
+      xpPerHour,
+    });
+
     return {
       sessionMinutes,
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
       sessionChats: this.sessionChats,
+      sessionSuspiciousPackets: this.sessionSuspiciousPackets,
+      totalSuspiciousPackets: this.totalSuspiciousPackets,
       tickAlignStdDevMs,
       reactionMedianMs,
       pingIntervalStdDevMs,
@@ -392,6 +457,9 @@ export class BotStats {
       deviceReuseRatio,
       xpPerHour,
       flags,
+      riskScore: risk.score,
+      riskLevel: risk.level,
+      riskReasons: risk.reasons,
     };
   }
 
@@ -410,6 +478,9 @@ export class BotStats {
     const summary = this.computeSummary(currentXp);
     this.totalSessionMinutes += summary.sessionMinutes;
     this.totalFlagEvents += summary.flags.length;
+    this.riskScore = summary.riskScore;
+    this.riskLevel = summary.riskLevel;
+    this.riskReasons = summary.riskReasons;
     db.saveBotStats(accountId, this.toRow(summary));
     audit({
       type: 'player.session_summary',
@@ -466,6 +537,96 @@ function topRatio(destinations: Map<string, number>): number | null {
     if (v > max) max = v;
   }
   return total > 0 ? max / total : null;
+}
+
+interface BotRiskInput {
+  flags: string[];
+  sessionMinutes: number;
+  sessionChats: number;
+  sessionSkillingActions: number;
+  sessionCombatSwings: number;
+  sessionMovements: number;
+  sessionSuspiciousPackets: number;
+  totalSuspiciousPackets: number;
+  totalFlagEvents: number;
+  tickAlignSamples: number;
+  tickAlignStdDevMs: number | null;
+  pingIntervalSamples: number;
+  pingIntervalStdDevMs: number | null;
+  pingSeqResets: number;
+  reactionSamples: number;
+  reactionMedianMs: number | null;
+  topPathRepetition: number | null;
+  topActionLoopRepetition: number | null;
+  deviceIdsSeen: number;
+  deviceReuseRatio: number | null;
+  xpPerHour: Record<string, number>;
+}
+
+export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
+  let score = 0;
+  const reasons: string[] = [];
+  const add = (points: number, reason: string) => {
+    if (points <= 0) return;
+    score += points;
+    reasons.push(`${reason} (+${points})`);
+  };
+  const flagSet = new Set(input.flags.map((f) => f.includes(':') ? f.split(':')[0] : f));
+
+  if (flagSet.has('tickAligned')) add(24, `tick-aligned action timing (${input.tickAlignStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
+  if (flagSet.has('pingRegular')) add(18, `script-regular heartbeat timing (${input.pingIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
+  if (flagSet.has('pingSeqReset')) add(10, `heartbeat sequence resets (${input.pingSeqResets})`);
+  if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
+  if (flagSet.has('noChat')) add(8, 'long active session with no chat');
+  if (flagSet.has('pathRepetitive')) add(16, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
+  if (flagSet.has('routeActionLoop')) add(22, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
+  if (flagSet.has('marathonSession')) add(10, `marathon session (${input.sessionMinutes} minutes)`);
+  if (flagSet.has('fastReaction')) add(22, `fast NPC re-engage median (${input.reactionMedianMs?.toFixed(0) ?? '?'}ms)`);
+  if (flagSet.has('suspiciousPackets')) add(14, `invalid/stale gameplay packets (${input.sessionSuspiciousPackets} this session)`);
+  if (flagSet.has('packetFuzzing')) add(20, `heavy packet fuzzing pattern (${input.sessionSuspiciousPackets} this session)`);
+
+  const xpVelocitySkills = input.flags.filter((flag) => flag.startsWith('xpVelocity:')).map((flag) => flag.split(':')[1]).filter(Boolean);
+  if (xpVelocitySkills.length > 0) add(26 + Math.min(12, xpVelocitySkills.length * 3), `impossible XP velocity (${xpVelocitySkills.join(', ')})`);
+
+  if (input.totalFlagEvents >= 25) add(18, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  else if (input.totalFlagEvents >= 10) add(10, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  else if (input.totalFlagEvents >= 5) add(5, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+
+  if (input.totalSuspiciousPackets >= 100) add(18, `lifetime invalid packet volume (${input.totalSuspiciousPackets})`);
+  else if (input.totalSuspiciousPackets >= 25) add(9, `lifetime invalid packet volume (${input.totalSuspiciousPackets})`);
+
+  if (flagSet.has('tickAligned') && flagSet.has('routeActionLoop')) add(10, 'timing precision plus repeated route/action loop');
+  if (flagSet.has('tickAligned') && flagSet.has('pingRegular')) add(8, 'bot-like action and heartbeat timing together');
+  if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
+  if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
+
+  if (input.sessionMinutes >= 240 && input.sessionChats === 0 && input.sessionMovements >= 100) {
+    add(6, 'multi-hour silent movement-heavy session');
+  }
+
+  const capped = Math.min(100, Math.round(score));
+  return {
+    score: capped,
+    level: riskLevelForScore(capped),
+    reasons: reasons.slice(0, 12),
+  };
+}
+
+function riskLevelForScore(score: number): BotRiskLevel {
+  if (score >= 85) return 'critical';
+  if (score >= 60) return 'high';
+  if (score >= 30) return 'medium';
+  return 'low';
+}
+
+function normalizeRiskLevel(value: unknown): BotRiskLevel {
+  return value === 'critical' || value === 'high' || value === 'medium' || value === 'low'
+    ? value
+    : 'low';
+}
+
+function ratioLabel(value: number | null): string {
+  return value === null ? '?' : value.toFixed(2);
 }
 
 function sanitizeSignaturePart(value: string, maxLength: number): string {

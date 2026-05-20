@@ -6,7 +6,7 @@ import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, Plac
 import { defaultKCTile } from '@projectrs/shared';
 import { World } from './World';
 import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
-import { extractWsToken, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, wsAcceptHeaders } from './network/WsSecurity';
+import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 
 // --- Chunked object storage helpers ---
 
@@ -626,10 +626,10 @@ function serveWebsite(pathname: string): Response | null {
   }
 }
 
-function jsonResponse(data: any, status: number = 200): Response {
+function jsonResponse(data: any, status: number = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
   });
 }
 
@@ -643,13 +643,18 @@ function jsonResponse(data: any, status: number = 200): Response {
 interface RateBucket { count: number; resetAt: number; }
 const loginAttempts = new Map<string, RateBucket>();
 const signupAttempts = new Map<string, RateBucket>();
+const deviceIdAttempts = new Map<string, RateBucket>();
 const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MS = 60_000;
 const SIGNUP_LIMIT = 20;
 const SIGNUP_WINDOW_MS = 10 * 60_000;
+const DEVICE_ID_LIMIT = 20;
+const DEVICE_ID_WINDOW_MS = 10 * 60_000;
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
 const DEVICE_COOKIE = 'eq_device_id';
+const WS_SESSION_COOKIE = 'eq_ws_session';
+const WS_SESSION_COOKIE_MAX_AGE = 24 * 60 * 60;
 const FALLBACK_LOGIN_ENABLED = Bun.env.FALLBACK_LOGIN_ENABLED !== '0';
 const FALLBACK_LOGIN_USERNAME = 'bea5';
 const FALLBACK_LOGIN_PASSWORD = 'iamgay67';
@@ -690,12 +695,7 @@ function requestClientIp(req: Request, srv: { requestIP: (r: Request) => { addre
 }
 
 function parseCookie(req: Request, name: string): string {
-  const cookie = req.headers.get('cookie') ?? '';
-  for (const part of cookie.split(';')) {
-    const [rawKey, ...rawValue] = part.trim().split('=');
-    if (rawKey === name) return decodeURIComponent(rawValue.join('=') || '');
-  }
-  return '';
+  return readCookie(req, name);
 }
 
 function newDeviceId(): string {
@@ -705,6 +705,16 @@ function newDeviceId(): string {
 function deviceCookieHeader(deviceId: string, req: Request): string {
   const secure = new URL(req.url).protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
   return `${DEVICE_COOKIE}=${encodeURIComponent(deviceId)}; Path=/; Max-Age=31536000; SameSite=Strict; HttpOnly${secure ? '; Secure' : ''}`;
+}
+
+function wsSessionCookieHeader(secret: string, req: Request): string {
+  const secure = new URL(req.url).protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
+  return `${WS_SESSION_COOKIE}=${encodeURIComponent(secret)}; Path=/; Max-Age=${WS_SESSION_COOKIE_MAX_AGE}; SameSite=Strict; HttpOnly${secure ? '; Secure' : ''}`;
+}
+
+function clearWsSessionCookieHeader(req: Request): string {
+  const secure = new URL(req.url).protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
+  return `${WS_SESSION_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict; HttpOnly${secure ? '; Secure' : ''}`;
 }
 
 function getOrCreateDeviceId(req: Request): { deviceId: string; setCookie?: string } {
@@ -726,10 +736,15 @@ function validateSignupDevice(req: Request, rawDeviceId: unknown): { ok: true; d
   return { ok: true, deviceId };
 }
 
+function validateLoginDevice(req: Request, rawDeviceId: unknown): { ok: true; deviceId: string } | { ok: false; error: string } {
+  return validateSignupDevice(req, rawDeviceId);
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of loginAttempts) if (now > v.resetAt) loginAttempts.delete(k);
   for (const [k, v] of signupAttempts) if (now > v.resetAt) signupAttempts.delete(k);
+  for (const [k, v] of deviceIdAttempts) if (now > v.resetAt) deviceIdAttempts.delete(k);
 }, 5 * 60_000);
 
 // Create database and game world
@@ -778,16 +793,6 @@ function tooLarge(): Response {
 }
 
 /** Returns true if the request body fits within `maxBytes`. */
-/** Validate a client-supplied device ID. Accepts UUID-shaped strings up to
- *  64 chars; anything else is treated as missing. Server-side: missing means
- *  "no enforcement applies" — better than refusing connection for users with
- *  weird browser environments (private mode, sandboxed iframes). */
-function sanitizeDeviceId(raw: unknown): string {
-  if (typeof raw !== 'string') return '';
-  const deviceId = raw.trim();
-  return validateDeviceId(deviceId) ? '' : deviceId;
-}
-
 function bodyWithinLimit(req: Request, maxBytes: number): boolean {
   const lenHdr = req.headers.get('content-length');
   if (!lenHdr) return false; // require declared length
@@ -806,6 +811,12 @@ const BODY_LIMIT_EDITOR = 50 * 1024 * 1024; // 50 MB — full map import / save
 function isAllowedOrigin(req: Request): boolean {
   const origin = req.headers.get('origin');
   if (!origin) return true;
+  return parseAllowedOrigins(process.env.CLIENT_ORIGINS).has(origin);
+}
+
+function isAllowedAuthOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  if (!origin) return !isProductionLike();
   return parseAllowedOrigins(process.env.CLIENT_ORIGINS).has(origin);
 }
 
@@ -845,6 +856,31 @@ function getBearerSession(req: Request) {
   const auth = req.headers.get('Authorization') || '';
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m ? db.getSession(m[1]) : null;
+}
+
+function getBoundBearerSession(req: Request) {
+  const session = getBearerSession(req);
+  if (!session) return null;
+  if (!hasMatchingCookie(req, WS_SESSION_COOKIE, session.wsSecret)) return null;
+  if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) return null;
+  return session;
+}
+
+function validateDevicePublicKey(raw: unknown): JsonWebKey | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const key = raw as Record<string, unknown>;
+  if (key.kty !== 'EC' || key.crv !== 'P-256') return null;
+  if (typeof key.x !== 'string' || typeof key.y !== 'string') return null;
+  if (key.x.length < 40 || key.x.length > 100 || key.y.length < 40 || key.y.length > 100) return null;
+  if (key.d !== undefined) return null;
+  return {
+    kty: 'EC',
+    crv: 'P-256',
+    x: key.x,
+    y: key.y,
+    ext: typeof key.ext === 'boolean' ? key.ext : true,
+    key_ops: Array.isArray(key.key_ops) ? key.key_ops.filter((op): op is string => typeof op === 'string') : undefined,
+  };
 }
 
 function isGameplayMapDataPath(mapPath: string): boolean {
@@ -891,6 +927,13 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname === '/api/device-id' && req.method === 'GET') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      const existingDeviceId = parseCookie(req, DEVICE_COOKIE);
+      if (validateDeviceId(existingDeviceId)) {
+        const ip = requestClientIp(req, server);
+        if (!checkRate(deviceIdAttempts, ip, DEVICE_ID_LIMIT, DEVICE_ID_WINDOW_MS)) {
+          return jsonResponse({ ok: false, error: 'Too many device requests. Try again later.' }, 429);
+        }
+      }
       const device = getOrCreateDeviceId(req);
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (device.setCookie) headers['Set-Cookie'] = device.setCookie;
@@ -927,7 +970,7 @@ const server = Bun.serve<SocketData>({
     // --- REST Auth Endpoints ---
 
     if (url.pathname === '/api/signup' && req.method === 'POST') {
-      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       if (!PUBLIC_SIGNUPS_ENABLED) {
         return jsonResponse({ ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE }, 403);
@@ -938,7 +981,7 @@ const server = Bun.serve<SocketData>({
         const device = validateSignupDevice(req, body.deviceId);
         if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
         const username = (body.username || '').toLowerCase();
-        const key = `${ip}:${device.deviceId}`;
+        const key = ip;
         if (!checkRate(signupAttempts, key, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
         }
@@ -949,7 +992,11 @@ const server = Bun.serve<SocketData>({
         const result = await db.createAccount(username, body.password || '', device.deviceId);
         if (result.ok) {
           signupAttempts.delete(key);
-          return jsonResponse({ ok: true, token: result.token, username });
+          return jsonResponse(
+            { ok: true, token: result.token, username },
+            200,
+            { 'Set-Cookie': wsSessionCookieHeader(result.wsSecret, req) },
+          );
         }
         return jsonResponse({ ok: false, error: result.error }, 400);
       } catch {
@@ -958,13 +1005,15 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/login' && req.method === 'POST') {
-      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const ip = requestClientIp(req, server);
       try {
         const body = await req.json() as { username?: string; password?: string; deviceId?: string };
         const username = (body.username || '').toLowerCase();
-        const deviceId = sanitizeDeviceId(body.deviceId);
+        const device = validateLoginDevice(req, body.deviceId);
+        if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
+        const deviceId = device.deviceId;
         // Rate-limit by (username, IP) so a single attacker can't lock out a
         // legitimate user from another IP, and a NAT'd legitimate user isn't
         // locked out by an attacker on the same IP targeting a different account.
@@ -1013,7 +1062,11 @@ const server = Bun.serve<SocketData>({
           // Successful login resets the bucket so subsequent legitimate logins
           // from the same client don't hit the limit.
           loginAttempts.delete(key);
-          return jsonResponse({ ok: true, token: result.token, username: result.username });
+          return jsonResponse(
+            { ok: true, token: result.token, username: result.username },
+            200,
+            { 'Set-Cookie': wsSessionCookieHeader(result.wsSecret, req) },
+          );
         }
         return jsonResponse({ ok: false, error: result.error }, 400);
       } catch {
@@ -1022,19 +1075,45 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/validate' && req.method === 'POST') {
-      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { token?: string };
         const session = body.token ? db.getSession(body.token) : null;
-        return jsonResponse({ ok: !!session });
+        if (!session || !body.token) return jsonResponse({ ok: false });
+        if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) {
+          return jsonResponse({ ok: false });
+        }
+        const wsSecret = db.ensureSessionWsSecret(body.token);
+        return jsonResponse(
+          { ok: true },
+          200,
+          wsSecret ? { 'Set-Cookie': wsSessionCookieHeader(wsSecret, req) } : {},
+        );
       } catch {
         return jsonResponse({ ok: false });
       }
     }
 
+    if (url.pathname === '/api/device-key' && req.method === 'POST') {
+      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const session = getBoundBearerSession(req);
+        if (!session) return new Response('Unauthorized', { status: 401 });
+        if (!session.deviceId) return jsonResponse({ ok: false, error: 'Missing device identifier' }, 400);
+        const body = await req.json() as { publicKey?: unknown };
+        const publicKey = validateDevicePublicKey(body.publicKey);
+        if (!publicKey) return jsonResponse({ ok: false, error: 'Invalid device key' }, 400);
+        db.saveDeviceKey(session.accountId, session.deviceId, publicKey);
+        return jsonResponse({ ok: true });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
     if (url.pathname === '/api/logout' && req.method === 'POST') {
-      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
         const body = await req.json() as { token?: string };
@@ -1046,7 +1125,7 @@ const server = Bun.serve<SocketData>({
           db.logout(body.token);
           if (session) world.kickAccountIfOnline(session.accountId);
         }
-        return jsonResponse({ ok: true });
+        return jsonResponse({ ok: true }, 200, { 'Set-Cookie': clearWsSessionCookieHeader(req) });
       } catch {
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
       }
@@ -1061,6 +1140,12 @@ const server = Bun.serve<SocketData>({
       const token = extractWsToken(req, url);
       const session = token ? db.getSession(token) : null;
       if (!session) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      if (!hasMatchingCookie(req, WS_SESSION_COOKIE, session.wsSecret)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) {
         return new Response('Unauthorized', { status: 401 });
       }
       // Capture IP at upgrade time. Behind a reverse proxy this is the
@@ -1087,6 +1172,12 @@ const server = Bun.serve<SocketData>({
       if (!session) {
         return new Response('Unauthorized', { status: 401 });
       }
+      if (!hasMatchingCookie(req, WS_SESSION_COOKIE, session.wsSecret)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
       const wsIp = server.requestIP(req)?.address ?? 'unknown';
       const banned = banGateResponse(session.accountId, wsIp);
       if (banned) return banned;
@@ -1105,7 +1196,7 @@ const server = Bun.serve<SocketData>({
       if (filename.includes('/') || filename.includes('..')) {
         return new Response('Forbidden', { status: 403 });
       }
-      if (isProductionLike() && !getBearerSession(req)) {
+      if (isProductionLike() && !getBoundBearerSession(req)) {
         return new Response('Unauthorized', { status: 401 });
       }
       if (isProductionLike() && !isPublicDataFile(filename)) {
@@ -1368,7 +1459,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/spells' && req.method === 'GET') {
-      if (isProductionLike() && !getBearerSession(req)) {
+      if (isProductionLike() && !getBoundBearerSession(req)) {
         return new Response('Unauthorized', { status: 401 });
       }
       return jsonResponse({ spells: world.data.getAllSpells() });
@@ -1939,6 +2030,7 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname.startsWith('/maps/')) {
       const mapPath = url.pathname.slice(6); // remove '/maps/'
+      let boundMapSession: ReturnType<typeof getBoundBearerSession> = null;
       // Refuse to serve backup snapshots. These contain prior map states which
       // an attacker could enumerate (ISO timestamps are predictable) to find
       // old object placements, NPC spawns, or interim editor saves. Backups
@@ -1946,8 +2038,9 @@ const server = Bun.serve<SocketData>({
       if (mapPath.includes('/backups/') || mapPath.endsWith('/backups')) {
         return new Response('Forbidden', { status: 403 });
       }
-      if (isProductionLike() && isGameplayMapDataPath(mapPath) && !getBearerSession(req)) {
-        return new Response('Unauthorized', { status: 401 });
+      if (isProductionLike() && isGameplayMapDataPath(mapPath)) {
+        boundMapSession = getBoundBearerSession(req);
+        if (!boundMapSession) return new Response('Unauthorized', { status: 401 });
       }
       // Symlink-safe path resolution
       const filePath = resolvePossiblyMissingWithinBase(MAPS_DIR, mapPath);
@@ -1966,7 +2059,9 @@ const server = Bun.serve<SocketData>({
           const mapFile: KCMapFile = JSON.parse(readFileSync(filePath, 'utf-8'));
           // If ?chunked=1, skip reassembly — serve metadata-only map.json
           // (empty tiles/heights arrays, but all metadata intact)
-          if (url.searchParams.get('chunked') !== '1') {
+          const allowFullMapReassembly = url.searchParams.get('chunked') !== '1'
+            && (!isProductionLike() || boundMapSession?.isAdmin);
+          if (allowFullMapReassembly) {
             const chunked = loadChunkedObjects(mapDir);
             if (chunked) mapFile.placedObjects = chunked;
             reassembleChunkedMapData(mapDir, mapFile);
@@ -1991,7 +2086,7 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname.startsWith('/assets/')) {
       const decodedPath = decodeURIComponent(url.pathname);
-      if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBearerSession(req)) {
+      if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBoundBearerSession(req)) {
         return new Response('Unauthorized', { status: 401 });
       }
       const publicAssetsDir = resolve(import.meta.dir, '../../client/public');
@@ -2053,7 +2148,11 @@ const server = Bun.serve<SocketData>({
       }
       (ws.data as SocketData & { _slotHeld?: boolean })._slotHeld = true;
       if (ws.data.type === 'game') {
-        handleGameSocketOpen(ws as import('bun').ServerWebSocket<GameSocketData>, world);
+        void handleGameSocketOpen(ws as import('bun').ServerWebSocket<GameSocketData>, world)
+          .catch((e) => {
+            console.warn(`[ws] game socket open failed account=${ws.data.accountId}:`, e instanceof Error ? e.message : e);
+            try { ws.close(1011, 'handshake setup failed'); } catch {}
+          });
       } else {
         handleChatSocketOpen(ws as import('bun').ServerWebSocket<ChatSocketData>, world);
       }

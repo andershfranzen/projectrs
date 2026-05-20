@@ -1063,6 +1063,7 @@ export class GameManager {
       const token = this.token || localStorage.getItem('projectrs_token') || '';
       const res = await fetch(`/maps/${mapId}/biomes.json`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        credentials: 'same-origin',
       });
       if (!res.ok) return;
       const file: BiomesFile = await res.json();
@@ -1131,11 +1132,11 @@ export class GameManager {
     // up to ~200–400ms of dead time over the lifetime of the constructor.
     const authHeaders = this.authHeaders();
     const [objectsRes, itemsRes, npcsRes, gearRes, questsRes] = await Promise.all([
-      fetch('/data/objects.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
-      fetch('/data/items.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
-      fetch('/data/npcs.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
-      fetch('/data/gear-overrides.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
-      fetch('/data/quests.json', { headers: authHeaders }).catch(() => null),
+      fetch('/data/objects.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
+      fetch('/data/items.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
+      fetch('/data/npcs.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
+      fetch('/data/gear-overrides.json', { headers: authHeaders, credentials: 'same-origin' }).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+      fetch('/data/quests.json', { headers: authHeaders, credentials: 'same-origin' }).catch(() => null),
     ]);
 
     if (objectsRes) {
@@ -4655,7 +4656,7 @@ export class GameManager {
   private async ensureSpellsLoaded(): Promise<void> {
     if (this.spellsById) return;
     try {
-      const res = await fetch('/api/spells', { headers: this.authHeaders() });
+      const res = await fetch('/api/spells', { headers: this.authHeaders(), credentials: 'same-origin' });
       const data = await res.json();
       const list = (data.spells as SpellEffectDef[]) ?? [];
       this.spellsByIndex = list;

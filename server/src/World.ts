@@ -1055,8 +1055,7 @@ export class World {
     // correct Y. Covers both fresh login and grace-period reconnect — both
     // routes call sendLoginBootstrap.
     player.effectiveY = spawnY;
-    const sessionNonceWords = (player.ws.data as unknown as { crypto?: { sessionNonceWords?: number[] } }).crypto?.sessionNonceWords ?? [];
-    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion, ...sessionNonceWords].
+    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
     // Version added at the end so older client builds (which read only the
     // first 4 values) still parse without error — they just don't see the
     // mismatch warning. New clients read v[4] and disconnect on mismatch.
@@ -1065,10 +1064,7 @@ export class World {
       qPos(player.position.y),
       qPos(spawnY),
       PROTOCOL_VERSION,
-      ...sessionNonceWords,
     );
-    const cryptoState = (player.ws.data as unknown as { crypto?: { encryptEnabled: boolean } }).crypto;
-    if (cryptoState) cryptoState.encryptEnabled = true;
 
     this.sendToPlayer(player, ServerOpcode.ADMIN_FLAGS, player.isAdmin ? 1 : 0);
 

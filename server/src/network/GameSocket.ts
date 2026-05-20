@@ -5,14 +5,31 @@ import {
   INVENTORY_SIZE,
   ServerOpcode,
   TRADE_OFFER_SIZE,
+  PROTOCOL_VERSION,
   decodePacket,
   encodePacket,
-  ENCRYPTED_GAME_FRAME,
-  deriveGameCipherKey,
-  decryptGamePacket,
-  encryptGamePacket,
-  nonceBytesToWords,
+  decodeStringPacket,
+  encodeStringPacket,
+  ENCRYPTED_GAME_FRAME_V2,
+  GAME_CRYPTO_VERSION,
+  buildGameHandshakeTranscript,
+  bytesToBase64Url,
+  deriveGameCipherKeysV2,
+  decryptGamePacketV2,
+  encryptGamePacketV2,
+  exportGamePublicKey,
+  generateGameEcdhKeyPair,
+  importGameEcdhPublicKey,
+  verifyGameHandshakeTranscript,
   isValidAppearance,
+  createOpcodeMapping,
+  opcodeMappingToPayload,
+  rewriteArrayBufferOpcode,
+  rewritePacketOpcode,
+  type GameCipherKeysV2,
+  type GameCryptoChallenge,
+  type GameCryptoResponse,
+  type OpcodeMappingTables,
   type PlayerAppearance,
 } from '@projectrs/shared';
 import { World } from '../World';
@@ -23,10 +40,18 @@ import { randomBytes } from 'crypto';
 import type { ServerWebSocket } from 'bun';
 
 interface GameSocketCryptoState {
+  version: 2;
   token: string;
-  sessionNonce: Uint8Array;
-  sessionNonceWords: number[];
-  keyPromise: Promise<CryptoKey>;
+  connectionId: string;
+  accountId: number;
+  deviceId: string;
+  serverNonce: string;
+  serverKeyPair: CryptoKeyPair;
+  serverPublicKey: JsonWebKey;
+  keys?: GameCipherKeysV2;
+  handshakeComplete: boolean;
+  opcodeMapping: OpcodeMappingTables;
+  opcodeMappingEnabled: boolean;
   encryptEnabled: boolean;
   sendCounter: number;
   lastRecvCounter: number;
@@ -64,14 +89,34 @@ const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_
 
 const OK_PACKET: PacketValidationResult = { ok: true };
 
-export function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void {
+function toPacketBytes(data: Bun.BufferSource): Uint8Array {
+  return data instanceof Uint8Array
+    ? data
+    : data instanceof ArrayBuffer
+      ? new Uint8Array(data)
+      : ArrayBuffer.isView(data)
+        ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+        : new Uint8Array(data as unknown as ArrayBuffer);
+}
+
+export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): Promise<void> {
   if (ws.data.crypto) return;
-  const sessionNonce = new Uint8Array(randomBytes(8));
+  const serverKeyPair = await generateGameEcdhKeyPair();
+  const serverPublicKey = await exportGamePublicKey(serverKeyPair.publicKey);
+  const connectionId = bytesToBase64Url(new Uint8Array(randomBytes(16)));
+  const serverNonce = bytesToBase64Url(new Uint8Array(randomBytes(16)));
   const cryptoState: GameSocketCryptoState = {
+    version: 2,
     token: ws.data.token,
-    sessionNonce,
-    sessionNonceWords: nonceBytesToWords(sessionNonce),
-    keyPromise: deriveGameCipherKey(ws.data.token, sessionNonce),
+    connectionId,
+    accountId: ws.data.accountId,
+    deviceId: ws.data.deviceId,
+    serverNonce,
+    serverKeyPair,
+    serverPublicKey,
+    handshakeComplete: false,
+    opcodeMapping: createOpcodeMapping(),
+    opcodeMappingEnabled: false,
     encryptEnabled: false,
     sendCounter: 0,
     lastRecvCounter: -1,
@@ -82,26 +127,22 @@ export function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>)
   cryptoState.originalSendBinary = originalSendBinary;
   ws.data.crypto = cryptoState;
   ws.sendBinary = ((data: Bun.BufferSource) => {
-    const packet = data instanceof Uint8Array
-      ? data
-      : data instanceof ArrayBuffer
-        ? new Uint8Array(data)
-        : ArrayBuffer.isView(data)
-          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-          : new Uint8Array(data as unknown as ArrayBuffer);
-    const shouldEncrypt = cryptoState.encryptEnabled;
+    const packet = toPacketBytes(data);
+    const shouldEncrypt = cryptoState.encryptEnabled && !!cryptoState.keys;
+    const shouldRewriteOpcode = cryptoState.opcodeMappingEnabled;
     cryptoState.sendQueue = cryptoState.sendQueue.then(async () => {
-      if (!shouldEncrypt) {
-        originalSendBinary(packet);
+      const wirePacket = shouldRewriteOpcode
+        ? rewritePacketOpcode(packet, cryptoState.opcodeMapping.serverLogicalToWire, true)
+        : packet;
+      if (!shouldEncrypt || !cryptoState.keys) {
+        originalSendBinary(wirePacket);
         return;
       }
-      const key = await cryptoState.keyPromise;
-      const frame = await encryptGamePacket(
-        key,
-        cryptoState.sessionNonce,
+      const frame = await encryptGamePacketV2(
+        cryptoState.keys,
         'server-to-client',
         cryptoState.sendCounter++,
-        packet,
+        wirePacket,
       );
       originalSendBinary(frame);
     }).catch((e) => {
@@ -110,26 +151,38 @@ export function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>)
     });
     return 0;
   }) as typeof ws.sendBinary;
+
+  const challenge: GameCryptoChallenge = {
+    version: GAME_CRYPTO_VERSION,
+    connectionId,
+    accountId: ws.data.accountId,
+    deviceId: ws.data.deviceId,
+    serverNonce,
+    serverPublicKey,
+  };
+  originalSendBinary(encodeStringPacket(ServerOpcode.CRYPTO_CHALLENGE, JSON.stringify(challenge)));
 }
 
 async function decryptGameSocketMessage(ws: ServerWebSocket<GameSocketData>, message: ArrayBuffer): Promise<ArrayBuffer> {
   const view = new DataView(message);
   const cryptoState = ws.data.crypto;
   if (view.byteLength === 0) throw new RangeError('empty game frame');
-  if (view.getUint8(0) !== ENCRYPTED_GAME_FRAME) {
-    if (cryptoState?.encryptEnabled) throw new Error('plaintext packet after encryption enabled');
+  if (view.getUint8(0) !== ENCRYPTED_GAME_FRAME_V2) {
+    if (cryptoState?.handshakeComplete) throw new Error('plaintext packet after encryption enabled');
     return message;
   }
-  if (!cryptoState) throw new Error('encrypted frame without crypto state');
-  const key = await cryptoState.keyPromise;
-  const decrypted = await decryptGamePacket(key, cryptoState.sessionNonce, 'client-to-server', message);
+  if (!cryptoState?.keys || !cryptoState.handshakeComplete) throw new Error('encrypted frame before handshake complete');
+  const decrypted = await decryptGamePacketV2(cryptoState.keys, 'client-to-server', message);
   if (decrypted.counter <= cryptoState.lastRecvCounter) throw new Error('replayed encrypted frame');
   cryptoState.lastRecvCounter = decrypted.counter;
   return decrypted.plaintext;
 }
 
 export function enableGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void {
-  if (ws.data.crypto) ws.data.crypto.encryptEnabled = true;
+  if (ws.data.crypto?.keys) {
+    ws.data.crypto.handshakeComplete = true;
+    ws.data.crypto.encryptEnabled = true;
+  }
 }
 
 function hasValues(values: number[], count: number): boolean {
@@ -468,6 +521,7 @@ function reportSuspiciousPacket(
   world: World,
 ): void {
   const count = player.recordSuspiciousPacket();
+  player.botStats?.recordSuspiciousPacket();
   if (INVALID_PACKET_AUDIT_COUNTS.has(count)) {
     audit({
       type: 'player.suspicious_packet',
@@ -487,11 +541,81 @@ function reportSuspiciousPacket(
   }
 }
 
-export function handleGameSocketOpen(
+function isCryptoResponse(value: unknown): value is GameCryptoResponse {
+  if (!value || typeof value !== 'object') return false;
+  const res = value as Record<string, unknown>;
+  return res.version === GAME_CRYPTO_VERSION
+    && typeof res.clientNonce === 'string'
+    && typeof res.signature === 'string'
+    && !!res.clientPublicKey
+    && typeof res.clientPublicKey === 'object';
+}
+
+async function completeGameSocketHandshake(
+  ws: ServerWebSocket<GameSocketData>,
+  message: ArrayBuffer,
+  world: World,
+): Promise<void> {
+  const cryptoState = ws.data.crypto;
+  if (!cryptoState) throw new Error('missing crypto state');
+  const { opcode, str } = decodeStringPacket(message);
+  if (opcode !== ClientOpcode.CRYPTO_RESPONSE) throw new Error('expected crypto response');
+  const parsed = JSON.parse(str) as unknown;
+  if (!isCryptoResponse(parsed)) throw new Error('invalid crypto response');
+
+  const devicePublicKey = world.db.loadDeviceKey(ws.data.accountId, ws.data.deviceId);
+  if (!devicePublicKey) throw new Error('missing registered device key');
+
+  const clientPublicKey = await importGameEcdhPublicKey(parsed.clientPublicKey);
+  const transcript = buildGameHandshakeTranscript({
+    protocolVersion: PROTOCOL_VERSION,
+    accountId: ws.data.accountId,
+    deviceId: ws.data.deviceId,
+    connectionId: cryptoState.connectionId,
+    serverNonce: cryptoState.serverNonce,
+    clientNonce: parsed.clientNonce,
+    serverPublicKey: cryptoState.serverPublicKey,
+    clientPublicKey: parsed.clientPublicKey,
+  });
+
+  const verified = await verifyGameHandshakeTranscript(devicePublicKey, transcript, parsed.signature);
+  if (!verified) throw new Error('bad device-key signature');
+
+  cryptoState.keys = await deriveGameCipherKeysV2({
+    privateKey: cryptoState.serverKeyPair.privateKey,
+    peerPublicKey: clientPublicKey,
+    authToken: cryptoState.token,
+    transcript,
+    serverNonce: cryptoState.serverNonce,
+    clientNonce: parsed.clientNonce,
+    connectionId: cryptoState.connectionId,
+    accountId: ws.data.accountId,
+  });
+  cryptoState.handshakeComplete = true;
+  cryptoState.encryptEnabled = true;
+  cryptoState.sendCounter = 0;
+  cryptoState.lastRecvCounter = -1;
+
+  ws.sendBinary(encodeStringPacket(
+    ServerOpcode.OPCODE_MAPPING,
+    JSON.stringify(opcodeMappingToPayload(cryptoState.opcodeMapping)),
+  ));
+  cryptoState.opcodeMappingEnabled = true;
+
+  completeGameSocketLogin(ws, world);
+}
+
+export async function handleGameSocketOpen(
+  ws: ServerWebSocket<GameSocketData>,
+  world: World
+): Promise<void> {
+  await installGameSocketEncryption(ws);
+}
+
+function completeGameSocketLogin(
   ws: ServerWebSocket<GameSocketData>,
   world: World
 ): void {
-  installGameSocketEncryption(ws);
   const { accountId, username } = ws.data;
 
   const reconnected = world.reconnectPlayer(accountId, ws);
@@ -616,6 +740,15 @@ export function handleGameSocketOpen(
   world.addPlayer(player);
 }
 
+function applyClientOpcodeMapping(
+  ws: ServerWebSocket<GameSocketData>,
+  message: ArrayBuffer,
+): ArrayBuffer {
+  const cryptoState = ws.data.crypto;
+  if (!cryptoState?.opcodeMappingEnabled) return message;
+  return rewriteArrayBufferOpcode(message, cryptoState.opcodeMapping.clientWireToLogical, true);
+}
+
 export function handleGameSocketMessage(
   ws: ServerWebSocket<GameSocketData>,
   message: ArrayBuffer | string,
@@ -625,7 +758,14 @@ export function handleGameSocketMessage(
   const cryptoState = ws.data.crypto;
   if (cryptoState) {
     cryptoState.recvQueue = cryptoState.recvQueue
-      .then(async () => handleDecryptedGameSocketMessage(ws, await decryptGameSocketMessage(ws, message), world))
+      .then(async () => {
+        if (!cryptoState.handshakeComplete) {
+          await completeGameSocketHandshake(ws, message, world);
+          return;
+        }
+        const decrypted = await decryptGameSocketMessage(ws, message);
+        handleDecryptedGameSocketMessage(ws, applyClientOpcodeMapping(ws, decrypted), world);
+      })
       .catch((e) => {
         console.warn(`[ws] encrypted packet failed account=${ws.data.accountId}:`, e instanceof Error ? e.message : e);
         try { ws.close(1008, 'bad encrypted packet'); } catch {}

@@ -56,3 +56,19 @@ export function wsAcceptHeaders(req: Request): Record<string, string> | undefine
   }
   return undefined;
 }
+
+export function readCookie(req: Request, name: string): string {
+  const cookie = req.headers.get('cookie') ?? '';
+  for (const part of cookie.split(';')) {
+    const [rawKey, ...rawValue] = part.trim().split('=');
+    if (rawKey === name) {
+      const value = rawValue.join('=') || '';
+      try { return decodeURIComponent(value); } catch { return value; }
+    }
+  }
+  return '';
+}
+
+export function hasMatchingCookie(req: Request, name: string, expectedValue: string): boolean {
+  return expectedValue.length > 0 && readCookie(req, name) === expectedValue;
+}

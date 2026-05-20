@@ -120,6 +120,7 @@ function loadOverrides(): Promise<Record<number, ThumbnailOverride>> {
       const token = localStorage.getItem('projectrs_token') || '';
       const res = await fetch('/data/thumbnail-overrides.json', {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        credentials: 'same-origin',
       });
       if (!res.ok) return {};
       const data = await res.json();

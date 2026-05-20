@@ -82,6 +82,7 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
       try {
         const res = await fetch(url, {
           headers: { Authorization: `Bearer ${token}` },
+          credentials: 'same-origin',
         });
         // Drain the body so the response is fully cached. Without this,
         // some browsers keep the stream pending and `SceneLoader` may

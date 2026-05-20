@@ -1,5 +1,5 @@
-export const ENCRYPTED_GAME_FRAME = 255;
-export const SESSION_NONCE_WORDS = 4;
+export const ENCRYPTED_GAME_FRAME_V2 = 254;
+export const GAME_CRYPTO_VERSION = 2;
 
 export type GameCipherDirection = 'client-to-server' | 'server-to-client';
 
@@ -11,44 +11,36 @@ function subtle(): SubtleCrypto {
   return c;
 }
 
-export function nonceBytesToWords(nonce: Uint8Array): number[] {
-  if (nonce.length !== 8) throw new Error('session nonce must be 8 bytes');
-  const view = new DataView(nonce.buffer, nonce.byteOffset, nonce.byteLength);
-  const out: number[] = [];
-  for (let i = 0; i < SESSION_NONCE_WORDS; i++) {
-    const u = view.getUint16(i * 2);
-    out.push(u > 0x7fff ? u - 0x10000 : u);
-  }
+export function randomBytesBrowser(length: number): Uint8Array {
+  const out = new Uint8Array(length);
+  globalThis.crypto.getRandomValues(out);
   return out;
 }
 
-export function nonceWordsToBytes(words: number[]): Uint8Array {
-  if (words.length < SESSION_NONCE_WORDS) throw new Error('missing session nonce words');
-  const out = new Uint8Array(8);
-  const view = new DataView(out.buffer);
-  for (let i = 0; i < SESSION_NONCE_WORDS; i++) {
-    view.setUint16(i * 2, words[i] & 0xffff);
-  }
+export function bytesToBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function base64UrlToBytes(value: string): Uint8Array {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const binary = atob(padded);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
   return out;
 }
 
-export async function deriveGameCipherKey(token: string, sessionNonce: Uint8Array): Promise<CryptoKey> {
-  const tokenBytes = encoder.encode(token);
-  const material = new Uint8Array(tokenBytes.length + sessionNonce.length + 18);
-  material.set(encoder.encode('evilquest-game-v1:'), 0);
-  material.set(sessionNonce, 18);
-  material.set(tokenBytes, 18 + sessionNonce.length);
-  const digest = await subtle().digest('SHA-256', material);
-  return subtle().importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-function frameNonce(sessionNonce: Uint8Array, direction: GameCipherDirection, counter: number): Uint8Array {
-  const iv = new Uint8Array(12);
-  iv.set(sessionNonce.slice(0, 8), 0);
-  iv[7] ^= direction === 'client-to-server' ? 0xc3 : 0x3c;
-  const view = new DataView(iv.buffer);
-  view.setUint32(8, counter >>> 0);
-  return iv;
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
 }
 
 function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
@@ -57,38 +49,222 @@ function exactArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return out.buffer;
 }
 
-export async function encryptGamePacket(
-  key: CryptoKey,
-  sessionNonce: Uint8Array,
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+}
+
+export interface GameHandshakeTranscriptInput {
+  protocolVersion: number;
+  accountId: number;
+  deviceId: string;
+  connectionId: string;
+  serverNonce: string;
+  clientNonce: string;
+  serverPublicKey: JsonWebKey;
+  clientPublicKey: JsonWebKey;
+}
+
+export interface GameCryptoChallenge {
+  version: number;
+  connectionId: string;
+  accountId: number;
+  deviceId: string;
+  serverNonce: string;
+  serverPublicKey: JsonWebKey;
+}
+
+export interface GameCryptoResponse {
+  version: number;
+  clientNonce: string;
+  clientPublicKey: JsonWebKey;
+  signature: string;
+}
+
+export interface GameCipherKeysV2 {
+  clientToServerKey: CryptoKey;
+  serverToClientKey: CryptoKey;
+  clientToServerIvPrefix: Uint8Array;
+  serverToClientIvPrefix: Uint8Array;
+  connectionId: string;
+  accountId: number;
+}
+
+export function buildGameHandshakeTranscript(input: GameHandshakeTranscriptInput): Uint8Array {
+  return encoder.encode(stableStringify({
+    protocol: 'evilquest-game-v2',
+    protocolVersion: input.protocolVersion,
+    accountId: input.accountId,
+    deviceId: input.deviceId,
+    connectionId: input.connectionId,
+    serverNonce: input.serverNonce,
+    clientNonce: input.clientNonce,
+    serverPublicKey: input.serverPublicKey,
+    clientPublicKey: input.clientPublicKey,
+  }));
+}
+
+async function sha256(...parts: Uint8Array[]): Promise<Uint8Array> {
+  return new Uint8Array(await subtle().digest('SHA-256', exactArrayBuffer(concatBytes(...parts))));
+}
+
+export async function generateGameEcdhKeyPair(): Promise<CryptoKeyPair> {
+  return subtle().generateKey(
+    { name: 'ECDH', namedCurve: 'P-256' },
+    true,
+    ['deriveBits'],
+  ) as Promise<CryptoKeyPair>;
+}
+
+export async function exportGamePublicKey(key: CryptoKey): Promise<JsonWebKey> {
+  return subtle().exportKey('jwk', key);
+}
+
+export async function importGameEcdhPublicKey(jwk: JsonWebKey): Promise<CryptoKey> {
+  return subtle().importKey(
+    'jwk',
+    jwk,
+    { name: 'ECDH', namedCurve: 'P-256' },
+    false,
+    [],
+  );
+}
+
+export async function signGameHandshakeTranscript(privateKey: CryptoKey, transcript: Uint8Array): Promise<string> {
+  const sig = await subtle().sign({ name: 'ECDSA', hash: 'SHA-256' }, privateKey, exactArrayBuffer(transcript));
+  return bytesToBase64Url(new Uint8Array(sig));
+}
+
+export async function verifyGameHandshakeTranscript(publicKeyJwk: JsonWebKey, transcript: Uint8Array, signature: string): Promise<boolean> {
+  const publicKey = await subtle().importKey(
+    'jwk',
+    publicKeyJwk,
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    false,
+    ['verify'],
+  );
+  return subtle().verify(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    publicKey,
+    exactArrayBuffer(base64UrlToBytes(signature)),
+    exactArrayBuffer(transcript),
+  );
+}
+
+export async function deriveGameCipherKeysV2(opts: {
+  privateKey: CryptoKey;
+  peerPublicKey: CryptoKey;
+  authToken: string;
+  transcript: Uint8Array;
+  serverNonce: string;
+  clientNonce: string;
+  connectionId: string;
+  accountId: number;
+}): Promise<GameCipherKeysV2> {
+  const sharedBits = new Uint8Array(await subtle().deriveBits(
+    { name: 'ECDH', public: opts.peerPublicKey },
+    opts.privateKey,
+    256,
+  ));
+  const tokenHash = await sha256(encoder.encode(opts.authToken));
+  const transcriptHash = await sha256(opts.transcript);
+  const serverNonce = base64UrlToBytes(opts.serverNonce);
+  const clientNonce = base64UrlToBytes(opts.clientNonce);
+  const baseKey = await subtle().importKey(
+    'raw',
+    exactArrayBuffer(concatBytes(sharedBits, tokenHash, transcriptHash)),
+    'HKDF',
+    false,
+    ['deriveKey', 'deriveBits'],
+  );
+  const salt = await sha256(encoder.encode('evilquest-game-v2:salt'), serverNonce, clientNonce, tokenHash);
+  const deriveAes = (direction: GameCipherDirection) => subtle().deriveKey(
+    {
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: exactArrayBuffer(salt),
+      info: exactArrayBuffer(encoder.encode(`evilquest-game-v2:${direction}:${opts.connectionId}`)),
+    },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+  const clientToServerIvHash = await sha256(encoder.encode('evilquest-game-v2:iv:client-to-server'), transcriptHash);
+  const serverToClientIvHash = await sha256(encoder.encode('evilquest-game-v2:iv:server-to-client'), transcriptHash);
+  return {
+    clientToServerKey: await deriveAes('client-to-server'),
+    serverToClientKey: await deriveAes('server-to-client'),
+    clientToServerIvPrefix: clientToServerIvHash.slice(0, 4),
+    serverToClientIvPrefix: serverToClientIvHash.slice(0, 4),
+    connectionId: opts.connectionId,
+    accountId: opts.accountId,
+  };
+}
+
+function frameNonceV2(keys: GameCipherKeysV2, direction: GameCipherDirection, counter: number): Uint8Array {
+  const iv = new Uint8Array(12);
+  iv.set(direction === 'client-to-server' ? keys.clientToServerIvPrefix : keys.serverToClientIvPrefix, 0);
+  new DataView(iv.buffer).setBigUint64(4, BigInt(counter));
+  return iv;
+}
+
+function frameAadV2(keys: GameCipherKeysV2, direction: GameCipherDirection, counter: number): Uint8Array {
+  return encoder.encode(stableStringify({
+    frame: 'evilquest-game-v2',
+    version: GAME_CRYPTO_VERSION,
+    connectionId: keys.connectionId,
+    accountId: keys.accountId,
+    direction,
+    counter,
+  }));
+}
+
+export async function encryptGamePacketV2(
+  keys: GameCipherKeysV2,
   direction: GameCipherDirection,
   counter: number,
   plaintext: Uint8Array,
 ): Promise<Uint8Array> {
+  const key = direction === 'client-to-server' ? keys.clientToServerKey : keys.serverToClientKey;
   const ciphertext = new Uint8Array(await subtle().encrypt(
-    { name: 'AES-GCM', iv: exactArrayBuffer(frameNonce(sessionNonce, direction, counter)) },
+    {
+      name: 'AES-GCM',
+      iv: exactArrayBuffer(frameNonceV2(keys, direction, counter)),
+      additionalData: exactArrayBuffer(frameAadV2(keys, direction, counter)),
+    },
     key,
     exactArrayBuffer(plaintext),
   ));
-  const frame = new Uint8Array(1 + 4 + ciphertext.length);
-  frame[0] = ENCRYPTED_GAME_FRAME;
-  new DataView(frame.buffer).setUint32(1, counter >>> 0);
-  frame.set(ciphertext, 5);
+  const frame = new Uint8Array(1 + 1 + 8 + ciphertext.length);
+  frame[0] = ENCRYPTED_GAME_FRAME_V2;
+  frame[1] = GAME_CRYPTO_VERSION;
+  new DataView(frame.buffer).setBigUint64(2, BigInt(counter));
+  frame.set(ciphertext, 10);
   return frame;
 }
 
-export async function decryptGamePacket(
-  key: CryptoKey,
-  sessionNonce: Uint8Array,
+export async function decryptGamePacketV2(
+  keys: GameCipherKeysV2,
   direction: GameCipherDirection,
   frame: ArrayBuffer,
 ): Promise<{ counter: number; plaintext: ArrayBuffer }> {
-  if (frame.byteLength < 6) throw new RangeError('encrypted frame too short');
+  if (frame.byteLength < 11) throw new RangeError('encrypted v2 frame too short');
   const view = new DataView(frame);
-  if (view.getUint8(0) !== ENCRYPTED_GAME_FRAME) throw new RangeError('not an encrypted game frame');
-  const counter = view.getUint32(1);
-  const ciphertext = new Uint8Array(frame, 5);
+  if (view.getUint8(0) !== ENCRYPTED_GAME_FRAME_V2) throw new RangeError('not an encrypted v2 game frame');
+  if (view.getUint8(1) !== GAME_CRYPTO_VERSION) throw new RangeError('unsupported game crypto version');
+  const counter = Number(view.getBigUint64(2));
+  if (!Number.isSafeInteger(counter)) throw new RangeError('encrypted v2 counter too large');
+  const key = direction === 'client-to-server' ? keys.clientToServerKey : keys.serverToClientKey;
+  const ciphertext = new Uint8Array(frame, 10);
   const plaintext = await subtle().decrypt(
-    { name: 'AES-GCM', iv: exactArrayBuffer(frameNonce(sessionNonce, direction, counter)) },
+    {
+      name: 'AES-GCM',
+      iv: exactArrayBuffer(frameNonceV2(keys, direction, counter)),
+      additionalData: exactArrayBuffer(frameAadV2(keys, direction, counter)),
+    },
     key,
     exactArrayBuffer(ciphertext),
   );

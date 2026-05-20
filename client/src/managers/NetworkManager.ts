@@ -6,12 +6,30 @@ import {
   ClientOpcode,
   encodePacket,
   decodePacket,
-  ENCRYPTED_GAME_FRAME,
-  deriveGameCipherKey,
-  decryptGamePacket,
-  encryptGamePacket,
-  nonceWordsToBytes,
+  decodeStringPacket,
+  encodeStringPacket,
+  ENCRYPTED_GAME_FRAME_V2,
+  GAME_CRYPTO_VERSION,
+  PROTOCOL_VERSION,
+  buildGameHandshakeTranscript,
+  bytesToBase64Url,
+  deriveGameCipherKeysV2,
+  decryptGamePacketV2,
+  encryptGamePacketV2,
+  exportGamePublicKey,
+  generateGameEcdhKeyPair,
+  importGameEcdhPublicKey,
+  randomBytesBrowser,
+  signGameHandshakeTranscript,
+  parseOpcodeMappingPayload,
+  rewriteArrayBufferOpcode,
+  rewritePacketOpcode,
+  type GameCipherKeysV2,
+  type GameCryptoChallenge,
+  type GameCryptoResponse,
+  type OpcodeMappingTables,
 } from '@projectrs/shared';
+import { ensureDeviceKeyRegistered } from '../deviceKey';
 
 export interface PlayerSyncData {
   id: number;
@@ -32,6 +50,7 @@ export type RawMessageHandler = (data: ArrayBuffer) => void;
 export type DisconnectHandler = (event: CloseEvent) => void;
 
 const GAME_HEARTBEAT_INTERVAL_MS = 5_000;
+const GAME_HEARTBEAT_JITTER_MS = 1_200;
 const GAME_HEARTBEAT_TIMEOUT_MS = 60_000;
 
 /** Opcodes whose payload is `[strLen (2 bytes), utf8 bytes, trailing int16s]`
@@ -39,6 +58,8 @@ const GAME_HEARTBEAT_TIMEOUT_MS = 60_000;
  *  the int16 dispatcher must skip them so an even-length UTF-8 payload doesn't
  *  get re-parsed and re-dispatched with garbage values. */
 const STRING_PACKET_OPCODES = new Set<number>([
+  ServerOpcode.CRYPTO_CHALLENGE,
+  ServerOpcode.OPCODE_MAPPING,
   ServerOpcode.MAP_CHANGE,
   ServerOpcode.DIALOGUE_OPEN,
   ServerOpcode.NPC_NAME,
@@ -60,12 +81,15 @@ export class NetworkManager {
   private openHandlers: (() => void)[] = [];
   private socketGeneration: number = 0;
   private intentionallyClosedSockets = new WeakSet<WebSocket>();
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastGameMessageAt: number = 0;
   private heartbeatSeq: number = 0;
   private authToken: string = '';
-  private gameCipherKey: CryptoKey | null = null;
-  private gameCipherNonce: Uint8Array | null = null;
+  private deviceSigningKeyPair: CryptoKeyPair | null = null;
+  private devicePublicKey: JsonWebKey | null = null;
+  private gameCipherKeys: GameCipherKeysV2 | null = null;
+  private opcodeMapping: OpcodeMappingTables | null = null;
+  private opcodeMappingReady: boolean = false;
   private sendCipherCounter: number = 0;
   private lastRecvCipherCounter: number = -1;
   private sendCipherQueue: Promise<void> = Promise.resolve();
@@ -79,7 +103,7 @@ export class NetworkManager {
 
   private stopHeartbeat(): void {
     if (this.heartbeatTimer !== null) {
-      clearInterval(this.heartbeatTimer);
+      clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
   }
@@ -91,24 +115,31 @@ export class NetworkManager {
   private startHeartbeat(socket: WebSocket, generation: number): void {
     this.stopHeartbeat();
     this.lastGameMessageAt = performance.now();
-    this.heartbeatTimer = setInterval(() => {
-      if (generation !== this.socketGeneration || this.gameSocket !== socket) return;
-      if (socket.readyState !== WebSocket.OPEN) return;
+    const scheduleNext = () => {
+      const delay = GAME_HEARTBEAT_INTERVAL_MS + Math.floor(Math.random() * GAME_HEARTBEAT_JITTER_MS);
+      this.heartbeatTimer = setTimeout(() => {
+        this.heartbeatTimer = null;
+        if (generation !== this.socketGeneration || this.gameSocket !== socket) return;
+        if (socket.readyState !== WebSocket.OPEN) return;
 
-      const now = performance.now();
-      if (now - this.lastGameMessageAt > GAME_HEARTBEAT_TIMEOUT_MS) {
-        console.warn('[net] Game socket heartbeat timed out');
-        this.failGameSocket(socket, 4000, 'heartbeat timeout');
-        return;
-      }
+        const now = performance.now();
+        if (now - this.lastGameMessageAt > GAME_HEARTBEAT_TIMEOUT_MS) {
+          console.warn('[net] Game socket heartbeat timed out');
+          this.failGameSocket(socket, 4000, 'heartbeat timeout');
+          return;
+        }
 
-      this.heartbeatSeq = (this.heartbeatSeq + 1) & 0x7fff;
-      try {
-        void this.sendFrame(socket, encodePacket(ClientOpcode.CLIENT_PING, this.heartbeatSeq));
-      } catch {
-        this.failGameSocket(socket, 4001, 'send failed');
-      }
-    }, GAME_HEARTBEAT_INTERVAL_MS);
+        this.heartbeatSeq = (this.heartbeatSeq + 1) & 0x7fff;
+        try {
+          void this.sendFrame(socket, encodePacket(ClientOpcode.CLIENT_PING, this.heartbeatSeq));
+        } catch {
+          this.failGameSocket(socket, 4001, 'send failed');
+          return;
+        }
+        scheduleNext();
+      }, delay);
+    };
+    scheduleNext();
   }
 
   private failGameSocket(socket: WebSocket | null, code: number, reason: string): void {
@@ -116,6 +147,13 @@ export class NetworkManager {
     this.stopHeartbeat();
     this.socketGeneration++;
     this.connected = false;
+    this.gameCipherKeys = null;
+    this.opcodeMapping = null;
+    this.opcodeMappingReady = false;
+    this.deviceSigningKeyPair = null;
+    this.devicePublicKey = null;
+    this.sendCipherCounter = 0;
+    this.lastRecvCipherCounter = -1;
     if (socket && this.gameSocket === socket) this.gameSocket = null;
     try { socket?.close(code, reason); } catch {}
     this.disconnectHandler?.(new CloseEvent('close', {
@@ -135,13 +173,31 @@ export class NetworkManager {
     this.gameSocket = null;
     this.chatSocket = null;
     this.authToken = token;
-    this.gameCipherKey = null;
-    this.gameCipherNonce = null;
+    this.deviceSigningKeyPair = null;
+    this.devicePublicKey = null;
+    this.gameCipherKeys = null;
+    this.opcodeMapping = null;
+    this.opcodeMappingReady = false;
     this.sendCipherCounter = 0;
     this.lastRecvCipherCounter = -1;
     this.sendCipherQueue = Promise.resolve();
     this.recvCipherQueue = Promise.resolve();
 
+    void ensureDeviceKeyRegistered(token)
+      .then((identity) => {
+        if (generation !== this.socketGeneration) return;
+        this.deviceSigningKeyPair = identity.keyPair;
+        this.devicePublicKey = identity.publicJwk;
+        this.openSockets(token, generation);
+      })
+      .catch((e) => {
+        console.warn('[net] Device key setup failed:', e);
+        if (generation === this.socketGeneration) this.failGameSocket(null, 4008, 'device key setup failed');
+      });
+  }
+
+  private openSockets(token: string, generation: number): void {
+    if (generation !== this.socketGeneration) return;
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Vite's WS proxy doesn't reliably upgrade on Windows — connect directly to the server in dev.
     const wsOrigin = import.meta.env.DEV
@@ -159,10 +215,6 @@ export class NetworkManager {
     gameSocket.onopen = () => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       if (import.meta.env.DEV) console.log('[net] Game socket connected');
-      this.connected = true;
-      this.startHeartbeat(gameSocket, generation);
-      for (const handler of this.openHandlers) handler();
-      this.openHandlers.length = 0;
     };
 
     gameSocket.onmessage = (event) => {
@@ -200,6 +252,11 @@ export class NetworkManager {
       if (import.meta.env.DEV) console.log('[net] Game socket disconnected');
       this.connected = false;
       this.stopHeartbeat();
+      this.gameCipherKeys = null;
+      this.opcodeMapping = null;
+      this.opcodeMappingReady = false;
+      this.deviceSigningKeyPair = null;
+      this.devicePublicKey = null;
       this.gameSocket = null;
       if (!this.intentionallyClosedSockets.has(gameSocket)) {
         this.disconnectHandler?.(event);
@@ -236,35 +293,117 @@ export class NetworkManager {
 
   private handlePlainGameMessage: ((data: ArrayBuffer) => void) | null = null;
 
+  private markGameCryptoReady(socket: WebSocket, generation: number): void {
+    if (generation !== this.socketGeneration || this.gameSocket !== socket) return;
+    if (this.connected) return;
+    this.connected = true;
+    this.startHeartbeat(socket, generation);
+    for (const handler of this.openHandlers) handler();
+    this.openHandlers.length = 0;
+  }
+
+  private isCryptoChallenge(value: unknown): value is GameCryptoChallenge {
+    if (!value || typeof value !== 'object') return false;
+    const challenge = value as Record<string, unknown>;
+    return challenge.version === GAME_CRYPTO_VERSION
+      && typeof challenge.connectionId === 'string'
+      && typeof challenge.accountId === 'number'
+      && typeof challenge.deviceId === 'string'
+      && typeof challenge.serverNonce === 'string'
+      && !!challenge.serverPublicKey
+      && typeof challenge.serverPublicKey === 'object';
+  }
+
+  private async handleCryptoChallenge(socket: WebSocket, generation: number, data: ArrayBuffer): Promise<void> {
+    if (!this.deviceSigningKeyPair || !this.devicePublicKey) throw new Error('missing device signing key');
+    const { opcode, str } = decodeStringPacket(data);
+    if (opcode !== ServerOpcode.CRYPTO_CHALLENGE) throw new Error('unexpected crypto packet');
+    const challenge = JSON.parse(str) as unknown;
+    if (!this.isCryptoChallenge(challenge)) throw new Error('invalid crypto challenge');
+    if (challenge.version !== GAME_CRYPTO_VERSION) throw new Error('unsupported crypto version');
+
+    const clientEcdh = await generateGameEcdhKeyPair();
+    const clientPublicKey = await exportGamePublicKey(clientEcdh.publicKey);
+    const serverPublicKey = await importGameEcdhPublicKey(challenge.serverPublicKey);
+    const clientNonce = bytesToBase64Url(randomBytesBrowser(16));
+    const transcript = buildGameHandshakeTranscript({
+      protocolVersion: PROTOCOL_VERSION,
+      accountId: challenge.accountId,
+      deviceId: challenge.deviceId,
+      connectionId: challenge.connectionId,
+      serverNonce: challenge.serverNonce,
+      clientNonce,
+      serverPublicKey: challenge.serverPublicKey,
+      clientPublicKey,
+    });
+    const signature = await signGameHandshakeTranscript(this.deviceSigningKeyPair.privateKey, transcript);
+    const keys = await deriveGameCipherKeysV2({
+      privateKey: clientEcdh.privateKey,
+      peerPublicKey: serverPublicKey,
+      authToken: this.authToken,
+      transcript,
+      serverNonce: challenge.serverNonce,
+      clientNonce,
+      connectionId: challenge.connectionId,
+      accountId: challenge.accountId,
+    });
+    if (generation !== this.socketGeneration || this.gameSocket !== socket || socket.readyState !== WebSocket.OPEN) return;
+
+    const response: GameCryptoResponse = {
+      version: GAME_CRYPTO_VERSION,
+      clientNonce,
+      clientPublicKey,
+      signature,
+    };
+    socket.send(encodeStringPacket(ClientOpcode.CRYPTO_RESPONSE, JSON.stringify(response)) as BufferSource);
+    this.gameCipherKeys = keys;
+    this.sendCipherCounter = 0;
+    this.lastRecvCipherCounter = -1;
+  }
+
+  private handleOpcodeMapping(socket: WebSocket, generation: number, data: ArrayBuffer): void {
+    const { opcode, str } = decodeStringPacket(data);
+    if (opcode !== ServerOpcode.OPCODE_MAPPING) throw new Error('expected opcode mapping');
+    this.opcodeMapping = parseOpcodeMappingPayload(JSON.parse(str));
+    this.opcodeMappingReady = true;
+    this.markGameCryptoReady(socket, generation);
+  }
+
   private async handleGameMessage(socket: WebSocket, generation: number, data: ArrayBuffer): Promise<void> {
     if (generation !== this.socketGeneration || this.gameSocket !== socket) return;
     let plain = data;
-    if (new DataView(data).getUint8(0) === ENCRYPTED_GAME_FRAME) {
-      if (!this.gameCipherKey || !this.gameCipherNonce) throw new Error('encrypted frame before session key');
-      const decrypted = await decryptGamePacket(this.gameCipherKey, this.gameCipherNonce, 'server-to-client', data);
+    const firstByte = new DataView(data).getUint8(0);
+    if (firstByte === ServerOpcode.CRYPTO_CHALLENGE && !this.gameCipherKeys) {
+      await this.handleCryptoChallenge(socket, generation, data);
+      return;
+    }
+    if (firstByte === ENCRYPTED_GAME_FRAME_V2) {
+      if (!this.gameCipherKeys) throw new Error('encrypted frame before session key');
+      const decrypted = await decryptGamePacketV2(this.gameCipherKeys, 'server-to-client', data);
       if (decrypted.counter <= this.lastRecvCipherCounter) throw new Error('replayed encrypted frame');
       this.lastRecvCipherCounter = decrypted.counter;
       plain = decrypted.plaintext;
+    } else {
+      throw new Error(this.gameCipherKeys ? 'plaintext game packet after crypto handshake' : 'plaintext game packet before crypto handshake');
     }
 
-    const opcode = new DataView(plain).getUint8(0);
-    if (opcode === ServerOpcode.LOGIN_OK) {
-      const { values } = decodePacket(plain);
-      if (values.length >= 9 && !this.gameCipherKey) {
-        this.gameCipherNonce = nonceWordsToBytes(values.slice(5, 9));
-        this.gameCipherKey = await deriveGameCipherKey(this.authToken, this.gameCipherNonce);
-      }
+    if (!this.opcodeMappingReady) {
+      const opcode = new DataView(plain).getUint8(0);
+      if (opcode !== ServerOpcode.OPCODE_MAPPING) throw new Error('expected opcode mapping before gameplay');
+      this.handleOpcodeMapping(socket, generation, plain);
+      return;
     }
-
-    this.handlePlainGameMessage?.(plain);
+    if (!this.opcodeMapping) throw new Error('missing opcode mapping');
+    this.handlePlainGameMessage?.(rewriteArrayBufferOpcode(plain, this.opcodeMapping.serverWireToLogical, true));
   }
 
   private sendFrame(socket: WebSocket, packet: Uint8Array): Promise<void> {
     this.sendCipherQueue = this.sendCipherQueue.then(async () => {
       if (this.gameSocket !== socket || socket.readyState !== WebSocket.OPEN) return;
-      const frame = this.gameCipherKey && this.gameCipherNonce
-        ? await encryptGamePacket(this.gameCipherKey, this.gameCipherNonce, 'client-to-server', this.sendCipherCounter++, packet)
-        : packet;
+      if (!this.gameCipherKeys) throw new Error('crypto handshake not ready');
+      if (!this.opcodeMappingReady || !this.opcodeMapping) throw new Error('opcode mapping not ready');
+      const wirePacket = rewritePacketOpcode(packet, this.opcodeMapping.clientLogicalToWire, true);
+      const frame = await encryptGamePacketV2(this.gameCipherKeys, 'client-to-server', this.sendCipherCounter++, wirePacket);
       socket.send(frame as BufferSource);
     }).catch((e) => {
       console.warn('[net] Failed to send encrypted game packet:', e);
@@ -370,6 +509,15 @@ export class NetworkManager {
     this.gameSocket = null;
     this.chatSocket = null;
     this.connected = false;
+    this.gameCipherKeys = null;
+    this.opcodeMapping = null;
+    this.opcodeMappingReady = false;
+    this.deviceSigningKeyPair = null;
+    this.devicePublicKey = null;
+    this.sendCipherCounter = 0;
+    this.lastRecvCipherCounter = -1;
+    this.sendCipherQueue = Promise.resolve();
+    this.recvCipherQueue = Promise.resolve();
     this.openHandlers.length = 0;
   }
 

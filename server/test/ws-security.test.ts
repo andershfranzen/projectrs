@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { extractWsToken, isAllowedWsOrigin, parseAllowedOrigins } from '../src/network/WsSecurity';
+import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, parseAllowedOrigins, readCookie } from '../src/network/WsSecurity';
 
 describe('WebSocket security helpers', () => {
   test('allows only configured browser origins', () => {
@@ -32,5 +32,16 @@ describe('WebSocket security helpers', () => {
     expect(extractWsToken(req, url)).toBe('header-token');
     expect(extractWsToken(queryOnly, url)).toBe(null);
     expect(extractWsToken(queryOnly, url, { allowQueryToken: true })).toBe('query-token');
+  });
+
+  test('reads and validates session-binding cookies', () => {
+    const req = new Request('https://evilquest.net/ws/game', {
+      headers: { cookie: 'eq_device_id=device-1; eq_ws_session=secret%2042; theme=dark' },
+    });
+
+    expect(readCookie(req, 'eq_ws_session')).toBe('secret 42');
+    expect(hasMatchingCookie(req, 'eq_ws_session', 'secret 42')).toBe(true);
+    expect(hasMatchingCookie(req, 'eq_ws_session', 'other')).toBe(false);
+    expect(hasMatchingCookie(req, 'missing', 'secret 42')).toBe(false);
   });
 });
