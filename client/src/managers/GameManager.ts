@@ -1455,7 +1455,10 @@ export class GameManager {
     const data = this.worldObjectDefs.get(objectEntityId);
     if (!data) return true;
     const def = this.objectDefsCache.get(data.defId);
-    if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return false;
+    // Floor isolation is an interaction rule, not a scenery-visibility rule.
+    // Placed models are part of the map and may be visible from another floor
+    // or after a transient floor-sync/HMR state; keep the mesh rendered while
+    // right-click/use paths remain gated by isWorldObjectOnCurrentInteractionFloor.
     return !data.depleted || def?.category === 'door';
   }
 

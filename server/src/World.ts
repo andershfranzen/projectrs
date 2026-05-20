@@ -988,16 +988,15 @@ export class World {
   }
 
   /** Effective walking Y at the player's current (x, z, floor). Server is
-   *  now authoritative — both server and client run the same shared
-   *  derivation (deriveElevatedFloorTiles), so getEffectiveHeightOnFloor
-   *  here returns the same Y the client renders. We pass the player's last
-   *  known Y (reportedY for now, will become player.y in Step 2) as the
-   *  gate input so roof tiles reveal correctly. */
+   *  authoritative for gameplay saves: use the server's own last resolved
+   *  elevation as the roof/elevated-floor gate. The client's reported Y is
+   *  only a login recovery hint for older rows that predate reliable floor
+   *  persistence. */
   private computeEffectiveY(player: Player): number {
     const map = this.getPlayerMap(player);
     return map.getEffectiveHeightOnFloor(
       player.position.x, player.position.y, player.currentFloor,
-      player.reportedY,
+      player.effectiveY,
     );
   }
 
@@ -1249,28 +1248,32 @@ export class World {
     // Send login confirmation — entity data will be sent when client responds with MAP_READY
     // The 4th value is the effective walking Y so the client can spawn at
     // the right elevation (e.g. on top of a texture-plane bridge interior).
-    let spawnY = this.computeEffectiveY(player);
     const playerMap = this.getPlayerMap(player);
-    if (
-      player.currentFloor > 0
-      || this.isNearGroundStair(playerMap, Math.floor(player.position.x), Math.floor(player.position.y))
-    ) {
-      const spawnFloor = this.inferFloorFromEffectiveY(
-        playerMap,
+    // Login is the one place where the persisted visual Y is useful: it lets
+    // us recover old/bad rows where the player was saved on an upper walking
+    // plane with floor=0. After this bootstrap, gameplay and persistence use
+    // player.effectiveY so CLIENT_POSITION_Y cannot spoof floor changes.
+    let spawnY = playerMap.getEffectiveHeightOnFloor(
+      player.position.x,
+      player.position.y,
+      player.currentFloor,
+      player.reportedY,
+    );
+    const spawnFloor = this.inferFloorFromEffectiveY(
+      playerMap,
+      player.position.x,
+      player.position.y,
+      spawnY,
+      player.currentFloor,
+    );
+    if (spawnFloor !== player.currentFloor) {
+      player.currentFloor = spawnFloor;
+      spawnY = playerMap.getEffectiveHeightOnFloor(
         player.position.x,
         player.position.y,
-        spawnY,
         player.currentFloor,
+        spawnY,
       );
-      if (spawnFloor !== player.currentFloor) {
-        player.currentFloor = spawnFloor;
-        spawnY = playerMap.getEffectiveHeightOnFloor(
-          player.position.x,
-          player.position.y,
-          player.currentFloor,
-          spawnY,
-        );
-      }
     }
     // Do not auto-snap low saved Y up to an elevated texture plane. Multi-story
     // buildings can have a valid floor-0 walkable tile directly under an upper
@@ -1283,6 +1286,7 @@ export class World {
     // correct Y. Covers both fresh login and grace-period reconnect — both
     // routes call sendLoginBootstrap.
     player.effectiveY = spawnY;
+    player.reportedY = spawnY;
     // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
     // Version added at the end so older client builds (which read only the
     // first 4 values) still parse without error — they just don't see the
@@ -6084,6 +6088,7 @@ export class World {
       // so they're a no-op. The per-tile lock prevents oscillation: once we
       // transition AT a tile, we won't re-transition there until the player
       // walks elsewhere.
+      const onPlacedGroundStair = !!map.getStairOnFloor(tx, tz, 0);
       const stairCurrent = map.getStairOnFloor(tx, tz, player.currentFloor);
       if (stairCurrent && player.lastFloorChangeTile !== tileIdx) {
         const stairAbove = map.getStairOnFloor(tx, tz, player.currentFloor + 1);
@@ -6096,7 +6101,7 @@ export class World {
           player.lastFloorChangeTile = tileIdx;
         }
       }
-      if (player.currentFloor === oldFloor) {
+      if (player.currentFloor === oldFloor && !onPlacedGroundStair) {
         player.currentFloor = this.inferFloorFromEffectiveY(
           map,
           player.position.x,

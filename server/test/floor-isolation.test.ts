@@ -97,6 +97,7 @@ function makeWorld(): any {
     getSpellByIndex: () => null,
   };
   world.quests = {
+    sendQuestStateSync() {},
     notifyQuestEvent() {},
     questConditionMet: () => true,
     runQuestActions: () => true,
@@ -389,6 +390,53 @@ describe('floor isolation', () => {
     expect(player.currentFloor).toBe(1);
     expect(player.effectiveY).toBe(2.73);
     expect(packets.get(player.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.FLOOR_CHANGE && p.values[0] === 1)).toBe(true);
+  });
+
+  test('login bootstrap recovers a floor-0 save whose persisted height matches an upper walking plane', () => {
+    const { world, packets } = makeWorld();
+    const player = makePlayer('upper_save', 1, 0);
+    player.position.x = 158.5;
+    player.position.y = 156.5;
+    player.reportedY = 2.73;
+    player.effectiveY = 0.52;
+    player.appearance = {} as any;
+    world.players.set(player.id, player);
+    world.maps.set('kcmap', {
+      width: 64,
+      getWalkableFloorTargetsAt: () => [
+        { floor: 0, y: 0.52 },
+        { floor: 1, y: 2.73 },
+      ],
+      getEffectiveHeightOnFloor: (_x: number, _z: number, floor: number, currentY?: number) => {
+        if (floor === 1) return 2.73;
+        return currentY !== undefined && currentY > 1.23 ? 2.73 : 0.52;
+      },
+    });
+
+    world.sendLoginBootstrap(player);
+
+    expect(player.currentFloor).toBe(1);
+    expect(player.effectiveY).toBe(2.73);
+    expect(player.reportedY).toBe(2.73);
+    expect(packets.get(player.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.FLOOR_CHANGE && p.values[0] === 1)).toBe(true);
+  });
+
+  test('position persistence uses server effective height rather than a client-reported upper Y', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('spoof_y', 1, 0);
+    player.position.x = 158.5;
+    player.position.y = 156.5;
+    player.reportedY = 2.73;
+    player.effectiveY = 0.52;
+    world.maps.set('kcmap', {
+      width: 64,
+      getEffectiveHeightOnFloor: (_x: number, _z: number, floor: number, currentY?: number) => {
+        if (floor === 1) return 2.73;
+        return currentY !== undefined && currentY > 1.23 ? 2.73 : 0.52;
+      },
+    });
+
+    expect(world.computeEffectiveY(player)).toBe(0.52);
   });
 
   test('height-based floor inference keeps floor 0 when a bridge target ties the upper-floor height', () => {

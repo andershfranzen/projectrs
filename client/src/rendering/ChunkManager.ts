@@ -14,7 +14,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -2111,7 +2111,7 @@ export class ChunkManager {
           along = (ramp.direction === 'S') ? (z - ramp.cz) : (ramp.cz - z);
         } else {
           across = Math.abs(z - ramp.cz);
-          along = (ramp.direction === 'W') ? (x - ramp.cx) : (ramp.cx - x);
+          along = (ramp.direction === 'E') ? (x - ramp.cx) : (ramp.cx - x);
         }
         if (across < 1.0 && along >= -ramp.halfLength && along <= ramp.halfLength) {
           const t = (along + ramp.halfLength) / (ramp.halfLength * 2); // 0 at base, 1 at top
@@ -2199,6 +2199,29 @@ export class ChunkManager {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return undefined;
     return this.stairData.get(tz * this.mapWidth + tx);
+  }
+
+  private resolvePlacedStairDirection(
+    tx: number,
+    tz: number,
+    baseY: number,
+    totalGain: number,
+    tilesLong: number,
+    authoredDir: 'N' | 'S' | 'E' | 'W',
+  ): 'N' | 'S' | 'E' | 'W' {
+    const opposite = oppositeStairDirection(authoredDir);
+    const topY = baseY + totalGain;
+    const half = Math.floor(tilesLong / 2);
+    const scoreSide = (dir: 'N' | 'S' | 'E' | 'W'): number => {
+      const { dx, dz } = stairDirectionVector(dir);
+      const x = tx + dx * (half + 1) + 0.5;
+      const z = tz + dz * (half + 1) + 0.5;
+      return this.getWalkableHeightsAt(x, z)
+        .filter(height => height > baseY + 0.75 && Math.abs(height - topY) <= 1.0)
+        .length;
+    };
+
+    return scoreSide(opposite) > scoreSide(authoredDir) ? opposite : authoredDir;
   }
 
   hasGroundStairNear(x: number, z: number, radius: number = STAIR_DESCENT_SEARCH_RADIUS): boolean {
@@ -3216,8 +3239,15 @@ export class ChunkManager {
       if (STAIR_ASSET_CONFIG[obj.assetId]) {
         const stairCfg = STAIR_ASSET_CONFIG[obj.assetId];
         const rotY = obj.rotation?.y ?? 0;
-        const dir = rotateStairDirection(stairCfg.baseDirection, rotY);
         const totalGain = stairCfg.heightGain * Math.abs(obj.scale?.y ?? 1);
+        const dir = this.resolvePlacedStairDirection(
+          Math.floor(obj.position.x),
+          Math.floor(obj.position.z),
+          obj.position.y,
+          totalGain,
+          stairCfg.tilesLong,
+          rotateStairDirection(stairCfg.baseDirection, rotY),
+        );
         const halfLen = stairCfg.tilesLong / 2;
         this.placedStairRamps.push({
           chunkKey,
@@ -3459,9 +3489,13 @@ export class ChunkManager {
     for (const [, nodes] of this.chunkPlacedNodes) {
       for (const node of nodes) {
         if (seen.has(node)) continue;
-        // Doors get reparented under a pivot in setupDoorPivot, so their
-        // local `position` is relative to the pivot (≈0) — not the world Y.
-        // Use absolute position so we cull doors above the player too.
+        // Door panels remain visible while roofs/floor slabs are culled; only
+        // their interaction options are floor-gated by GameManager.
+        const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
+        if (assetId.includes('door')) continue;
+
+        // Door/non-door placed objects can be reparented under pivots, so use
+        // absolute position rather than local transform when deciding height.
         const ap = node.getAbsolutePosition();
         if (ap.y <= minY) continue;
         const dx = Math.floor(ap.x) - tx;

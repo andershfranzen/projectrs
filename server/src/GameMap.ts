@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles } from '@projectrs/shared';
+import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, type StairAssetConfig } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
@@ -278,10 +278,17 @@ export class GameMap {
       const stairCfg = STAIR_ASSET_CONFIG[placed.assetId];
       if (!stairCfg) continue;
       const rotY = placed.rotation?.y ?? 0;
-      const dir = rotateStairDirection(stairCfg.baseDirection, rotY);
       const tx = Math.floor(placed.position.x);
       const tz = Math.floor(placed.position.z);
       const totalGain = stairCfg.heightGain * Math.abs(placed.scale?.y ?? 1);
+      const dir = this.resolvePlacedStairDirection(
+        tx,
+        tz,
+        placed.position.y,
+        totalGain,
+        stairCfg,
+        rotateStairDirection(stairCfg.baseDirection, rotY),
+      );
       const baseH = placed.position.y;
       const half = Math.floor(stairCfg.tilesLong / 2);
       for (let i = 0; i < stairCfg.tilesLong; i++) {
@@ -307,6 +314,29 @@ export class GameMap {
     this.isWallBlockedCb = (fx: number, fz: number, tx: number, tz: number) => this.isWallBlocked(fx, fz, tx, tz);
 
     console.log(`Loaded map '${mapId}': ${this.width}x${this.height} tiles, waterLevel=${this.mapData.waterLevel}, ${this.floorLayers.size} upper floors`);
+  }
+
+  private resolvePlacedStairDirection(
+    tx: number,
+    tz: number,
+    baseY: number,
+    totalGain: number,
+    stairCfg: StairAssetConfig,
+    authoredDir: 'N' | 'S' | 'E' | 'W',
+  ): 'N' | 'S' | 'E' | 'W' {
+    const opposite = oppositeStairDirection(authoredDir);
+    const topY = baseY + totalGain;
+    const half = Math.floor(stairCfg.tilesLong / 2);
+    const scoreSide = (dir: 'N' | 'S' | 'E' | 'W'): number => {
+      const { dx, dz } = stairDirectionVector(dir);
+      const x = tx + dx * (half + 1) + 0.5;
+      const z = tz + dz * (half + 1) + 0.5;
+      return this.getWalkableFloorTargetsAt(x, z)
+        .filter(target => target.floor > 0 && Math.abs(target.y - topY) <= 1.0)
+        .length;
+    };
+
+    return scoreSide(opposite) > scoreSide(authoredDir) ? opposite : authoredDir;
   }
 
   /** Detect horizontal texture planes and register them as walkable bridges

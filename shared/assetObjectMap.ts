@@ -94,3 +94,21 @@ export function rotateStairDirection(baseDir: 'N' | 'S' | 'E' | 'W', rotY: numbe
   const steps = Math.round((rotY * 180 / Math.PI) / 90) % 4;
   return dirs[(baseIdx + steps + 4) % 4];
 }
+
+export function oppositeStairDirection(dir: 'N' | 'S' | 'E' | 'W'): 'N' | 'S' | 'E' | 'W' {
+  switch (dir) {
+    case 'N': return 'S';
+    case 'S': return 'N';
+    case 'E': return 'W';
+    case 'W': return 'E';
+  }
+}
+
+export function stairDirectionVector(dir: 'N' | 'S' | 'E' | 'W'): { dx: number; dz: number } {
+  switch (dir) {
+    case 'N': return { dx: 0, dz: -1 };
+    case 'S': return { dx: 0, dz: 1 };
+    case 'E': return { dx: 1, dz: 0 };
+    case 'W': return { dx: -1, dz: 0 };
+  }
+}

@@ -13,11 +13,15 @@ function makeHarness(map: GameMap, player: Player): { world: any; floorChanges: 
   const floorChanges: Array<{ floor: number; y: number | undefined }> = [];
   const world = Object.create(World.prototype) as any;
   world.players = new Map([[player.id, player]]);
+  world.npcs = new Map();
+  world.playerCombatTargets = new Map();
+  world.npcTargetedBy = new Map();
   world.maps = new Map([[player.currentMapLevel, map]]);
   world.blockedObjectTiles = new Set();
   world.currentTick = 0;
   world.getPlayerMap = () => map;
   world.clearCombatTarget = () => {};
+  world.clearCombatReferencesTo = () => {};
   world.cancelSkilling = () => {};
   world.closeOpenInterface = () => {};
   world.sendDialogueClose = () => {};
@@ -49,6 +53,36 @@ describe('placed stair descent', () => {
     expect(map.getStair(157, 156)).not.toBeNull();
   });
 
+  test('castle exterior stair rises toward the authored upper floor plane', () => {
+    const map = new GameMap('kcmap');
+
+    const lower = map.getEffectiveHeightOnFloor(155.5, 156.5, 0, 0);
+    const middle = map.getEffectiveHeightOnFloor(156.5, 156.5, 0, lower);
+    const upper = map.getEffectiveHeightOnFloor(157.5, 156.5, 0, middle);
+
+    expect(lower).toBeLessThan(middle);
+    expect(middle).toBeLessThan(upper);
+    expect(map.getWalkableFloorTargetsAt(158.5, 156.5).some(target => target.floor === 1)).toBe(true);
+  });
+
+  test('height inference waits until the player steps off a placed stair ramp', () => {
+    const map = new GameMap('kcmap');
+    const player = makePlayer(157.5, 156.5, 0, 2.5);
+    const { world, floorChanges } = makeHarness(map, player);
+
+    world.tickTransitions();
+    expect(player.currentFloor).toBe(0);
+    expect(floorChanges).toEqual([]);
+
+    player.position.x = 158.5;
+    player.position.y = 156.5;
+    player.effectiveY = map.getEffectiveHeightOnFloor(player.position.x, player.position.y, 0, 2.5);
+
+    world.tickTransitions();
+    expect(player.currentFloor).toBe(1);
+    expect(floorChanges).toEqual([{ floor: 1, y: 27 }]);
+  });
+
   test('upper-floor move to a ground target near a placed stair demotes before path validation', () => {
     const map = new GameMap('kcmap');
     const player = makePlayer(157.5, 156.5, 1, 2.5);
@@ -57,7 +91,7 @@ describe('placed stair descent', () => {
     world.handlePlayerMove(player.id, [{ x: 160.5, z: 156.5 }]);
 
     expect(player.currentFloor).toBe(0);
-    expect(floorChanges).toEqual([{ floor: 0, y: 5 }]);
+    expect(floorChanges).toEqual([{ floor: 0, y: 25 }]);
     expect(player.hasMoveQueue()).toBe(true);
   });
 
