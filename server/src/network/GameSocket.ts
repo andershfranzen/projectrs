@@ -5,6 +5,7 @@ import {
   INVENTORY_SIZE,
   ServerOpcode,
   TRADE_OFFER_SIZE,
+  DUEL_STAKE_SIZE,
   PROTOCOL_VERSION,
   decodePacket,
   encodePacket,
@@ -201,6 +202,12 @@ function invalid(reason: string): PacketValidationResult {
   return { ok: false, reason };
 }
 
+function opcodeCountsAsActivity(opcode: number): boolean {
+  return opcode !== ClientOpcode.CLIENT_PING
+    && opcode !== ClientOpcode.CLIENT_POSITION_Y
+    && opcode !== ClientOpcode.MAP_READY;
+}
+
 export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE:
@@ -233,9 +240,17 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.TRADE_OFFER_ITEM:
     case ClientOpcode.TRADE_REMOVE_OFFERED:
     case ClientOpcode.TRADE_ACCEPT:
+    case ClientOpcode.DUEL_REQUEST:
+    case ClientOpcode.DUEL_ACCEPT_REQUEST:
+    case ClientOpcode.DUEL_DECLINE:
+    case ClientOpcode.DUEL_STAKE_ITEM:
+    case ClientOpcode.DUEL_REMOVE_STAKE:
+    case ClientOpcode.DUEL_ACCEPT:
       return { bucket: 'inventory-ui', maxMessages: 12, windowMs: 1000 };
     case ClientOpcode.CLIENT_PING:
       return { bucket: 'heartbeat', maxMessages: 4, windowMs: 10_000 };
+    case ClientOpcode.CLIENT_ACTIVITY:
+      return { bucket: 'activity', maxMessages: 12, windowMs: 60_000 };
     case ClientOpcode.CLIENT_POSITION_Y:
       return { bucket: 'metadata', maxMessages: 8, windowMs: 1000 };
     default:
@@ -503,7 +518,40 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       return OK_PACKET;
     }
 
+    case ClientOpcode.DUEL_REQUEST: {
+      if (!hasValues(values, 1)) return invalid('missing-duel-target');
+      const target = world.getPlayer(values[0]);
+      if (!target || target.id === player.id || target.disconnected || target.requestIdleLogout) return invalid('bad-duel-target');
+      if (target.currentMapLevel !== player.currentMapLevel || target.currentFloor !== player.currentFloor) return invalid('unreachable-duel-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.DUEL_ACCEPT_REQUEST:
+      if (!hasValues(values, 1)) return invalid('missing-duel-requester');
+      if (!world.getPlayer(values[0])) return invalid('stale-duel-requester');
+      return OK_PACKET;
+
+    case ClientOpcode.DUEL_DECLINE:
+    case ClientOpcode.DUEL_ACCEPT:
+      return OK_PACKET;
+
+    case ClientOpcode.DUEL_STAKE_ITEM: {
+      if (!hasValues(values, 2)) return invalid('missing-duel-stake-values');
+      if (player.openInterface !== 'duel') return invalid('duel-not-open');
+      if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-duel-stake-slot');
+      if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-duel-stake-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.DUEL_REMOVE_STAKE: {
+      if (!hasValues(values, 2)) return invalid('missing-duel-remove-values');
+      if (player.openInterface !== 'duel') return invalid('duel-not-open');
+      if (!isSlot(values[0], DUEL_STAKE_SIZE)) return invalid('bad-duel-stake-slot');
+      return OK_PACKET;
+    }
+
     case ClientOpcode.CLIENT_PING:
+    case ClientOpcode.CLIENT_ACTIVITY:
     case ClientOpcode.MAP_READY:
       return OK_PACKET;
 
@@ -621,8 +669,13 @@ function completeGameSocketLogin(
   const reconnected = world.reconnectPlayer(accountId, ws);
   if (reconnected) return;
 
-  // Kick existing session for same account (prevent duplicate logins)
-  world.kickAccountIfOnline(accountId);
+  // Replace an existing session for this account only when it is actually
+  // allowed to log out. Otherwise a second tab would become a combat-logout
+  // bypass.
+  if (!world.requestAccountLogout(accountId)) {
+    try { ws.close(4009, 'Account is still in combat'); } catch {}
+    return;
+  }
 
   // Load saved state or use defaults
   const saved = world.db.loadPlayerState(accountId);
@@ -811,6 +864,7 @@ function handleDecryptedGameSocketMessage(
     reportSuspiciousPacket(player, opcode, validation.reason ?? 'invalid-packet', values, ws, world);
     return;
   }
+  if (opcodeCountsAsActivity(opcode)) world.recordPlayerActivity(playerId);
 
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE: {
@@ -1084,11 +1138,50 @@ function handleDecryptedGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.DUEL_REQUEST: {
+      if (!hasValues(values, 1)) return;
+      world.handleDuelRequest(playerId, values[0]);
+      break;
+    }
+    case ClientOpcode.DUEL_ACCEPT_REQUEST: {
+      if (!hasValues(values, 1)) return;
+      world.handleDuelAcceptRequest(playerId, values[0]);
+      break;
+    }
+    case ClientOpcode.DUEL_DECLINE: {
+      world.handleDuelDecline(playerId);
+      break;
+    }
+    case ClientOpcode.DUEL_STAKE_ITEM: {
+      if (!hasValues(values, 2)) return;
+      const slot = values[0];
+      const expectedItemId = values[1];
+      const quantity = values[2] ?? 1;
+      world.handleDuelStakeItem(playerId, slot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.DUEL_REMOVE_STAKE: {
+      if (!hasValues(values, 2)) return;
+      const stakeSlot = values[0];
+      const expectedItemId = values[1];
+      const quantity = values[2] ?? 1;
+      world.handleDuelRemoveStake(playerId, stakeSlot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.DUEL_ACCEPT: {
+      world.handleDuelAccept(playerId);
+      break;
+    }
+
     case ClientOpcode.CLIENT_PING: {
       player.botStats?.recordHeartbeat(values[0] ?? 0);
       try {
         ws.sendBinary(encodePacket(ServerOpcode.SERVER_PONG, values[0] ?? 0, world.getTickForHeartbeat()));
       } catch { /* connection closed */ }
+      break;
+    }
+
+    case ClientOpcode.CLIENT_ACTIVITY: {
       break;
     }
 

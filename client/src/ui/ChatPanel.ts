@@ -216,6 +216,29 @@ export class ChatPanel {
     this.appendMessage(el, 'game');
   }
 
+  addDuelRequestMessage(from: string, onAccept: () => void, onDuelBack: () => void): void {
+    const el = document.createElement('div');
+    const label = document.createElement('span');
+    label.textContent = `${from} sent you a duel request. `;
+    label.style.color = UI_RED;
+    el.appendChild(label);
+
+    const accept = this.makeInlineAction('Accept', () => {
+      onAccept();
+      accept.style.pointerEvents = 'none';
+      accept.style.opacity = '0.6';
+    });
+    el.appendChild(accept);
+
+    const divider = document.createElement('span');
+    divider.textContent = ' or ';
+    divider.style.color = UI_RED;
+    el.appendChild(divider);
+
+    el.appendChild(this.makeInlineAction('duel them back', onDuelBack));
+    this.appendMessage(el, 'game');
+  }
+
   private makeInlineAction(label: string, action: () => void): HTMLSpanElement {
     const el = document.createElement('span');
     el.textContent = label;

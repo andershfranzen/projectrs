@@ -1118,12 +1118,14 @@ const server = Bun.serve<SocketData>({
       try {
         const body = await req.json() as { token?: string };
         if (body.token) {
-          // Resolve account before deleting the session so we can kick any
-          // active WebSockets — otherwise the player keeps playing on a
-          // logged-out token until they refresh.
+          // Resolve account before deleting the session. Combat-locked players
+          // cannot log out yet, and we must not delete their token unless the
+          // world actually accepted the logout.
           const session = db.getSession(body.token);
+          if (session && !world.requestAccountLogout(session.accountId)) {
+            return jsonResponse({ ok: false, error: 'combat_logout_blocked' }, 409);
+          }
           db.logout(body.token);
-          if (session) world.kickAccountIfOnline(session.accountId);
         }
         return jsonResponse({ ok: true }, 200, { 'Set-Cookie': clearWsSessionCookieHeader(req) });
       } catch {

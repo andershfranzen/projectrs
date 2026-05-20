@@ -601,14 +601,21 @@ export class SidePanel {
       logoutBtn.style.borderColor = 'rgba(180,80,60,0.4)';
     });
     logoutBtn.addEventListener('click', async () => {
+      let ok = false;
       try {
-        await fetch('/api/logout', {
+        const res = await fetch('/api/logout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
           body: JSON.stringify({ token: this.token }),
         });
+        ok = res.ok;
       } catch { /* ignore */ }
+      if (!ok) {
+        logoutBtn.textContent = 'Logout blocked';
+        window.setTimeout(() => { logoutBtn.textContent = 'Logout'; }, 1800);
+        return;
+      }
       localStorage.removeItem('projectrs_token');
       localStorage.removeItem('projectrs_username');
       location.reload();

@@ -11,6 +11,9 @@ import type { ServerWebSocket } from 'bun';
 
 export const EQUIP_SLOTS = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'] as const;
 export type EquipSlot = typeof EQUIP_SLOTS[number];
+/** 17 ticks at 600ms is 10.2s, so the combat logout block is never shorter
+ *  than the requested 10 seconds. */
+export const COMBAT_LOGOUT_BLOCK_TICKS = 17;
 
 export interface EquippedItem {
   itemId: number;
@@ -186,10 +189,14 @@ export class Player extends Entity {
   actionDelay: number = 0;
 
   /** Tick before which logout is blocked (e.g. recent combat). Mirrors RS2's
-   *  `p_preventlogout` (16 ticks ≈ 9.6s after a combat hit). When the socket
+   *  `p_preventlogout`, rounded up to at least 10s. When the socket
    *  closes during this window, the Player stays in the world and remains
    *  attackable until the lockout expires. */
   logoutBlockedUntilTick: number = 0;
+  /** Last server tick with an explicit player action. Heartbeats do not count.
+   *  Used for the 4-minute warning and 5-minute AFK logout. */
+  lastActivityTick: number = 0;
+  idleWarningSent: boolean = false;
 
   /** True after the socket has closed but the Player is still being processed
    *  (lockout active). The world tick removes them once unblocked or the
@@ -206,17 +213,18 @@ export class Player extends Entity {
   bank: (InventorySlot | null)[] = new Array(BANK_SIZE).fill(null);
 
   /** Which modal "interface" the player currently has open. While set:
-   *   - bank/trade: drop/equip/unequip/eat/buy/sell/attack/interact handlers
+   *   - bank/trade/duel: drop/equip/unequip/eat/buy/sell/attack/interact handlers
    *     refuse so a click leaking from another panel can't dupe items;
    *   - any movement aborts the interface (auto-close bank, auto-decline trade);
    *   - logout is blocked (mirrors logoutBlockedUntilTick semantics) so the
    *     classic "disconnect mid-trade" dupe is impossible.
    *  Mirrors 2004scape's `interaction` / `weakQueue` modal state. */
-  openInterface: 'bank' | 'trade' | null = null;
+  openInterface: 'bank' | 'trade' | 'duel' | null = null;
 
   /** True while a trade session is in flight. Convenience accessor; the
    *  authoritative session state lives on World.tradeSessions. */
   get inTrade(): boolean { return this.openInterface === 'trade'; }
+  get inDuel(): boolean { return this.openInterface === 'duel'; }
 
   isBusy(currentTick: number): boolean {
     return currentTick < this.delayedUntilTick;
@@ -240,8 +248,8 @@ export class Player extends Entity {
     return currentTick < this.logoutBlockedUntilTick;
   }
 
-  /** Arm the post-combat logout block. RS2 uses 16 ticks (~9.6s). */
-  markInCombat(currentTick: number, ticks: number = 16): void {
+  /** Arm the post-combat logout block. */
+  markInCombat(currentTick: number, ticks: number = COMBAT_LOGOUT_BLOCK_TICKS): void {
     const until = currentTick + ticks;
     if (until > this.logoutBlockedUntilTick) this.logoutBlockedUntilTick = until;
   }

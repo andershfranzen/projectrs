@@ -94,6 +94,7 @@ export class NetworkManager {
   private lastRecvCipherCounter: number = -1;
   private sendCipherQueue: Promise<void> = Promise.resolve();
   private recvCipherQueue: Promise<void> = Promise.resolve();
+  private lastActivitySentAt: number = -Infinity;
 
   private closeQuietly(socket: WebSocket | null): void {
     if (!socket) return;
@@ -487,6 +488,14 @@ export class NetworkManager {
       this.failGameSocket(this.gameSocket, 4005, 'packet send failed');
       return false;
     }
+  }
+
+  sendActivity(): boolean {
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return false;
+    const now = performance.now();
+    if (now - this.lastActivitySentAt < 5_000) return true;
+    this.lastActivitySentAt = now;
+    return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY));
   }
 
   sendChat(message: string): void {

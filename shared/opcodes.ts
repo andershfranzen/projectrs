@@ -98,10 +98,28 @@ export enum ClientOpcode {
   /** Press the Accept button at stage 1 (offer locked) or stage 2 (final commit).
    *  Server tracks the stage; client just sends "I accept". */
   TRADE_ACCEPT = 95,
+  // --- Duel ---
+  /** Send a duel request to another player. Values: [targetEntityId]. */
+  DUEL_REQUEST = 100,
+  /** Accept an incoming duel request from another player. Values: [requesterEntityId]. */
+  DUEL_ACCEPT_REQUEST = 101,
+  /** Decline an incoming request or close an in-progress duel stake screen. */
+  DUEL_DECLINE = 102,
+  /** Move items inventory -> my stake side. Values: [invSlot, expectedItemId, quantity].
+   *  quantity = -1 -> whole stack. */
+  DUEL_STAKE_ITEM = 103,
+  /** Move items my-stake -> inventory. Values: [stakeSlot, expectedItemId, quantity]. */
+  DUEL_REMOVE_STAKE = 104,
+  /** Press Accept at stage 1 or final confirm. Server tracks the stage. */
+  DUEL_ACCEPT = 105,
   /** Browser WebSockets do not expose protocol-level ping/pong, so the game
    *  socket uses this tiny app-level heartbeat to detect half-open connections
    *  before the client keeps simulating into a silent desync. Values: [seq]. */
   CLIENT_PING = 120,
+  /** Explicit user activity marker. Sent by the client for UI interactions
+   *  that do not otherwise produce a gameplay packet; unlike CLIENT_PING,
+   *  this resets the server-side AFK timer. */
+  CLIENT_ACTIVITY = 121,
 }
 
 // Server → Client opcodes
@@ -252,6 +270,24 @@ export enum ServerOpcode {
   TRADE_CLOSE = 94,
   /** Admin-only UI test hook. Opens a local-only trade preview with no peer. */
   TRADE_TEST_OPEN = 95,
+
+  // --- Duel ---
+  /** Server tells the client another player wants to duel. Values: [requesterEntityId]. */
+  DUEL_REQUEST_RECEIVED = 96,
+  /** Duel stake session opened. Values: [otherEntityId]. */
+  DUEL_OPEN = 97,
+  /** Update one slot of a stake. Values: [side, slot, itemId, qtyHigh, qtyLow].
+   *  side: 0 = mine, 1 = theirs. itemId=0 -> slot cleared. */
+  DUEL_STAKE_UPDATE = 98,
+  /** Either side's accept-stage changed. Values: [myStage, theirStage]. */
+  DUEL_ACCEPT_STATE = 99,
+  /** Duel stake session ended before combat. Values: [reason]. 1=declined, 2=aborted. */
+  DUEL_CLOSE = 101,
+  /** Duel combat started. Values: [otherEntityId]. */
+  DUEL_START = 102,
+  /** Duel combat finished. Values: [winnerEntityId, loserEntityId, reason].
+   *  winnerEntityId=0 means no winner; reason 0=defeat, 1=forfeit, 2=timeout/abort. */
+  DUEL_FINISH = 103,
 
   /** Server tells client its requested move path was validated short; abort
    *  local walk at the given last reachable tile center. Values: [x10, z10]

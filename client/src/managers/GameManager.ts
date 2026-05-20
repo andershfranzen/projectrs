@@ -45,6 +45,7 @@ import { ShopPanel, type ShopItem } from '../ui/ShopPanel';
 import { DialoguePanel, type DialogueNodePayload } from '../ui/DialoguePanel';
 import { BankPanel } from '../ui/BankPanel';
 import { TradePanel } from '../ui/TradePanel';
+import { DuelPanel } from '../ui/DuelPanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
@@ -180,6 +181,7 @@ export class GameManager {
   // steady-state play doesn't teleport on transient packet jitter.
   private _hiddenSinceMs: number = 0;
   private _visibilityHandler: (() => void) | null = null;
+  private _activityHandler: (() => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
@@ -306,6 +308,9 @@ export class GameManager {
   private bankPanel: BankPanel | null = null;
   private tradePanel: TradePanel | null = null;
   private currentTradePartnerName: string = '';
+  private duelPanel: DuelPanel | null = null;
+  private currentDuelPartnerName: string = '';
+  private duelActive = false;
 
   // Spell effect runtime. Catalogue is lazy-loaded from /api/spells on first /spell command.
   // spellsByIndex mirrors the server's alphabetical order so binary protocol
@@ -410,7 +415,7 @@ export class GameManager {
       this.lastClickX = e.clientX;
       this.lastClickY = e.clientY;
 
-      if (!this.inputManager.isEnabled() || e.shiftKey) return;
+      if (!this.inputManager.isEnabled() || this.duelActive || e.shiftKey) return;
       const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
       if (options.length > 0) {
         this.runInteractionOption(options[0], e.clientX, e.clientY);
@@ -433,6 +438,7 @@ export class GameManager {
 
     // Visibility-change tracking for divergence-snap gating
     this.setupVisibilityHandler();
+    this.setupActivityTracking();
 
     // Network. Construction + handler registration always run pre-auth so
     // the socket is ready to receive messages the moment we connect.
@@ -473,6 +479,9 @@ export class GameManager {
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network);
     this.tradePanel = new TradePanel(this.network, {
+      onClose: () => this.sidePanel?.setTradeOfferCallback(null),
+    });
+    this.duelPanel = new DuelPanel(this.network, {
       onClose: () => this.sidePanel?.setTradeOfferCallback(null),
     });
     // Quest journal is rendered inside SidePanel's existing Quests tab.
@@ -865,6 +874,7 @@ export class GameManager {
       this.hideContextMenu();
       this.clearPredictedPath();
       this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      this.duelActive = false;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.localPlayer?.stopWalking();
@@ -1156,6 +1166,7 @@ export class GameManager {
         if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
         if (this.bankPanel) this.bankPanel.setItemDefs(this.itemDefsCache);
         if (this.tradePanel) this.tradePanel.setItemDefs(this.itemDefsCache);
+        if (this.duelPanel) this.duelPanel.setItemDefs(this.itemDefsCache);
       } catch (e) {
         console.warn('Failed to parse item definitions:', e);
       }
@@ -2747,6 +2758,7 @@ export class GameManager {
         if (this.sidePanel) this.sidePanel.updateInvSlot(slot, v[i], v[i + 1]);
         if (this.bankPanel) this.bankPanel.updateInventorySlot(slot, v[i], v[i + 1]);
         if (this.tradePanel) this.tradePanel.updateInventorySlot(slot, v[i], v[i + 1]);
+        if (this.duelPanel) this.duelPanel.updateInventorySlot(slot, v[i], v[i + 1]);
       }
       this.noteLoginBootstrapPacket('inventory');
     });
@@ -2812,6 +2824,71 @@ export class GameManager {
     this.network.on(ServerOpcode.TRADE_TEST_OPEN, () => {
       this.tradePanel?.openPreview('no-one');
       this.enableTradeInventoryOffers();
+    });
+
+    // --- Duel ---
+    this.network.on(ServerOpcode.DUEL_REQUEST_RECEIVED, (_op, v) => {
+      const requesterEntityId = v[0];
+      const name = this.entities.playerNames.get(requesterEntityId) ?? `Player ${requesterEntityId}`;
+      this.chatPanel?.addDuelRequestMessage(
+        name,
+        () => this.acceptDuelRequest(requesterEntityId, name),
+        () => this.requestDuel(requesterEntityId),
+      );
+    });
+    this.network.on(ServerOpcode.DUEL_OPEN, (_op, v) => {
+      const otherEntityId = v[0];
+      const name = this.entities.playerNames.get(otherEntityId) ?? `Player ${otherEntityId}`;
+      this.currentDuelPartnerName = name;
+      this.duelActive = false;
+      this.duelPanel?.openSession(otherEntityId, name);
+      this.enableDuelInventoryStakes();
+      this.chatPanel?.addSystemMessage(`Duel accepted. Staking with ${name}.`, '#ff0');
+    });
+    this.network.on(ServerOpcode.DUEL_STAKE_UPDATE, (_op, v) => {
+      const [side, slot, itemId, qtyHi, qtyLo] = v;
+      const qty = (qtyHi << 16) | (qtyLo & 0xFFFF);
+      this.duelPanel?.updateStake(side, slot, itemId, qty);
+    });
+    this.network.on(ServerOpcode.DUEL_ACCEPT_STATE, (_op, v) => {
+      this.duelPanel?.updateAcceptState(v[0] ?? 0, v[1] ?? 0);
+    });
+    this.network.on(ServerOpcode.DUEL_CLOSE, (_op, v) => {
+      const reason = v[0] ?? 2;
+      const partnerName = this.currentDuelPartnerName || 'player';
+      this.duelPanel?.close(reason);
+      this.sidePanel?.setTradeOfferCallback(null);
+      if (reason === 1) this.chatPanel?.addSystemMessage(`Duel with ${partnerName} declined.`, '#ff0');
+      else this.chatPanel?.addSystemMessage(`Duel with ${partnerName} ended.`, '#ff0');
+      this.currentDuelPartnerName = '';
+      this.duelActive = false;
+    });
+    this.network.on(ServerOpcode.DUEL_START, (_op, v) => {
+      const otherEntityId = v[0];
+      const name = this.entities.playerNames.get(otherEntityId) ?? (this.currentDuelPartnerName || `Player ${otherEntityId}`);
+      this.currentDuelPartnerName = name;
+      this.duelPanel?.close(0);
+      this.sidePanel?.setTradeOfferCallback(null);
+      this.duelActive = true;
+      this.clearPredictedPath(true);
+      this.localPlayer?.stopWalking();
+      this.minimap?.clearDestination();
+      this.chatPanel?.addSystemMessage(`Duel started with ${name}.`, '#ff0');
+    });
+    this.network.on(ServerOpcode.DUEL_FINISH, (_op, v) => {
+      const [winnerId, loserId, reason] = v;
+      this.duelActive = false;
+      const partnerName = this.currentDuelPartnerName || 'player';
+      if (winnerId === this.localPlayerId) {
+        this.chatPanel?.addSystemMessage(`You defeated ${partnerName}.`, '#ff0');
+      } else if (loserId === this.localPlayerId) {
+        this.chatPanel?.addSystemMessage(`You lost the duel with ${partnerName}.`, '#ff0');
+      } else if (reason === 2) {
+        this.chatPanel?.addSystemMessage('Duel ended with no winner.', '#ff0');
+      } else {
+        this.chatPanel?.addSystemMessage(`Duel with ${partnerName} ended.`, '#ff0');
+      }
+      this.currentDuelPartnerName = '';
     });
 
     this.network.on(ServerOpcode.PLAYER_SKILLS, (_op, v) => {
@@ -3150,7 +3227,7 @@ export class GameManager {
       this.hideContextMenu();
       // Same gate as left-click: don't surface interaction options against a
       // half-streamed world.
-      if (!this.inputManager.isEnabled()) return;
+      if (!this.inputManager.isEnabled() || this.duelActive) return;
 
       const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
       if (options.length > 0) {
@@ -3207,6 +3284,7 @@ export class GameManager {
     return [
       { label: `Follow ${name}${labelLevel}`, action: () => this.followPlayer(entityId) },
       { label: `Trade with ${name}`, action: () => this.requestTrade(entityId) },
+      { label: `Duel with ${name}`, action: () => this.requestDuel(entityId) },
     ];
   }
 
@@ -3722,6 +3800,13 @@ export class GameManager {
     });
   }
 
+  private enableDuelInventoryStakes(): void {
+    this.sidePanel?.switchTab('inventory');
+    this.sidePanel?.setTradeOfferCallback((slot, _itemId, quantity) => {
+      this.duelPanel?.offerInventorySlot(slot, quantity);
+    });
+  }
+
   private acceptTradeRequest(requesterEntityId: number, name: string): void {
     this.network.sendRaw(encodePacket(ClientOpcode.TRADE_ACCEPT_REQUEST, requesterEntityId));
     this.chatPanel?.addSystemMessage(`Accepting trade request from ${name}...`, '#ff0');
@@ -3738,6 +3823,24 @@ export class GameManager {
     this.followPathTimer = 0;
     this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REQUEST, playerEntityId));
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#d8b45a');
+  }
+
+  private acceptDuelRequest(requesterEntityId: number, name: string): void {
+    this.network.sendRaw(encodePacket(ClientOpcode.DUEL_ACCEPT_REQUEST, requesterEntityId));
+    this.chatPanel?.addSystemMessage(`Accepting duel request from ${name}...`, '#ff0');
+  }
+
+  private requestDuel(playerEntityId: number): void {
+    const target = this.entities.remotePlayers.get(playerEntityId);
+    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    this.combatTargetId = -1;
+    this.magicTargetId = -1;
+    this.pendingSingleCastSpell = -1;
+    this._combatPathTimer = 0;
+    this.followTargetPlayerId = -1;
+    this.followPathTimer = 0;
+    this.network.sendRaw(encodePacket(ClientOpcode.DUEL_REQUEST, playerEntityId));
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#d8372b');
   }
 
   private talkToNpc(npcEntityId: number): void {
@@ -5011,6 +5114,7 @@ export class GameManager {
   }
 
   private handleGroundClick(worldX: number, worldZ: number): void {
+    if (this.duelActive) return;
     if (performance.now() < this.castingUntil) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
     this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
@@ -5106,6 +5210,12 @@ export class GameManager {
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
     if (this.onWindowResize) { window.removeEventListener('resize', this.onWindowResize); this.onWindowResize = null; }
     if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
+    if (this._activityHandler) {
+      window.removeEventListener('pointerdown', this._activityHandler, true);
+      window.removeEventListener('keydown', this._activityHandler, true);
+      window.removeEventListener('touchstart', this._activityHandler, true);
+      this._activityHandler = null;
+    }
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();
@@ -5565,6 +5675,16 @@ export class GameManager {
     };
     document.addEventListener('visibilitychange', handler);
     this._visibilityHandler = handler;
+  }
+
+  private setupActivityTracking(): void {
+    const handler = () => {
+      this.network.sendActivity();
+    };
+    window.addEventListener('pointerdown', handler, true);
+    window.addEventListener('keydown', handler, true);
+    window.addEventListener('touchstart', handler, true);
+    this._activityHandler = handler;
   }
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean): void {

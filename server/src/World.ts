@@ -1,8 +1,8 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
-import { addXp, levelFromXp, statRandom, npcCombatLevel, magicMaxHit, rollHit, ACC_BASE, spellSchoolSkill } from '@projectrs/shared';
+import { addXp, levelFromXp, statRandom, npcCombatLevel, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -63,6 +63,11 @@ const REFUND_SPILL_DESPAWN_TICKS = 100;
 /** How long to keep a dropped socket's player in-world for client reconnect.
  *  38 ticks at 600ms is just under 23s, matching the client's retry window. */
 const RECONNECT_GRACE_TICKS = 38;
+/** OSRS-inspired x-log safety cap: force-close disconnected combat logouts
+ *  after 60s even if NPC combat keeps re-arming the 10s combat timer. */
+const DISCONNECTED_COMBAT_LOGOUT_TICKS = Math.ceil(60_000 / TICK_RATE);
+const IDLE_WARNING_TICKS = Math.ceil(4 * 60_000 / TICK_RATE);
+const IDLE_LOGOUT_TICKS = Math.ceil(5 * 60_000 / TICK_RATE);
 const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
 const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
@@ -129,6 +134,30 @@ interface TradeSide {
 interface TradeSession {
   a: TradeSide;
   b: TradeSide;
+}
+
+type StakeSlot = { itemId: number; quantity: number } | null;
+
+interface DuelStakeSide {
+  id: number;
+  stake: StakeSlot[];
+  stage: 0 | 1 | 2;
+}
+interface DuelStakeSession {
+  a: DuelStakeSide;
+  b: DuelStakeSide;
+}
+interface ActiveDuelSide {
+  id: number;
+  stake: StakeSlot[];
+  startHealth: number;
+}
+interface ActiveDuel {
+  a: ActiveDuelSide;
+  b: ActiveDuelSide;
+  mapLevel: string;
+  floor: number;
+  startedTick: number;
 }
 
 let nextGroundItemId = 1;
@@ -830,12 +859,14 @@ export class World {
       clearInterval(this.saveTimer);
       this.saveTimer = null;
     }
+    this.abortAllDuelCustody(2);
     this.saveAllPlayers();
   }
 
   private saveAllPlayers(): void {
     const saves: Array<{ accountId: number; player: Player; effectiveY: number }> = [];
     for (const [, player] of this.players) {
+      if (this.hasCustodiedItems(player.id)) continue;
       saves.push({
         accountId: player.accountId,
         player,
@@ -890,33 +921,68 @@ export class World {
     return this.currentTick;
   }
 
+  recordPlayerActivity(playerId: number): void {
+    const player = this.players.get(playerId);
+    if (!player || player.disconnected || player.requestIdleLogout) return;
+    player.lastActivityTick = this.currentTick;
+    player.idleWarningSent = false;
+  }
+
+  private closePlayerLogoutState(player: Player, closeReason: string): void {
+    const id = player.id;
+    // Refund any items staged in an active trade/duel BEFORE saving so they
+    // come back to inventory and get persisted. removePlayer() also calls
+    // cleanup helpers, but that runs AFTER the save below.
+    if (this.tradeSessions.has(id)) this.abortTrade(id, 2);
+    if (this.duelStakeSessions?.has(id)) this.abortDuelStake(id, 2);
+    if (this.activeDuels?.has(id)) this.finishDuelByForfeit(id);
+    if (player.openInterface === 'trade') this.abortTrade(id, 2);
+    if (player.openInterface === 'duel') this.abortDuelStake(id, 2);
+    if (player.openInterface === 'bank') player.openInterface = null;
+    player.openShopNpcId = null;
+    player.requestIdleLogout = false;
+    player.disconnected = false;
+    player.reconnectDeadlineTick = 0;
+    player.logoutDeadlineTick = 0;
+    this.closeDialogueForPlayer(player, false);
+    this.finalizePlayerLogoutSession(player);
+
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    try {
+      player.ws.close(1000, closeReason);
+    } catch { /* ignore */ }
+    this.removePlayer(id);
+  }
+
+  private isPlayerLogoutCombatLocked(player: Player): boolean {
+    if (this.activeDuels?.has(player.id)) return false; // active duels forfeit instead of blocking logout
+    return player.isLogoutBlocked(this.currentTick)
+      || this.playerCombatTargets.has(player.id)
+      || this.isPlayerUnderNpcAttack(player.id)
+      || this.hasPendingSpellImpact(player.id);
+  }
+
+  private sendLogoutBlockedMessage(player: Player): void {
+    this.sendChatSystem(player, 'You cannot log out until 10 seconds after combat.');
+  }
+
+  requestAccountLogout(accountId: number): boolean {
+    for (const [, player] of this.players) {
+      if (player.accountId !== accountId) continue;
+      if (this.isPlayerLogoutCombatLocked(player)) {
+        this.sendLogoutBlockedMessage(player);
+        return false;
+      }
+      this.closePlayerLogoutState(player, 'Logged out');
+      return true;
+    }
+    return true;
+  }
+
   kickAccountIfOnline(accountId: number): void {
     for (const [id, player] of this.players) {
       if (player.accountId === accountId) {
-        // Refund any items staged in an active trade BEFORE saving so they
-        // come back to inventory and get persisted. removePlayer() also
-        // calls abortTrade via clearCombatReferencesTo, but that runs
-        // AFTER the save below — without this pre-emptive abort, kicking
-        // a player mid-trade silently destroys their offered items on
-        // next login. Reaches via /api/logout and second-tab login on the
-        // same account.
-        if (this.tradeSessions.has(id)) this.abortTrade(id, 2);
-        if (player.openInterface === 'trade') this.abortTrade(id, 2);
-        if (player.openInterface === 'bank') player.openInterface = null;
-        player.openShopNpcId = null;
-        this.closeDialogueForPlayer(player, false);
-        this.finalizePlayerLogoutSession(player);
-
-        // Save BEFORE removing — otherwise a refresh races the WS-close
-        // handler, the new session's kick runs first, removePlayer drops
-        // the entity, and the close handler's save no-ops because the
-        // player is already gone. Result: any state since the last
-        // auto-save (60s) is lost — including the latest reportedY.
-        this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
-        try {
-          player.ws.close(1000, 'Logged in from another session');
-        } catch { /* ignore */ }
-        this.removePlayer(id);
+        this.closePlayerLogoutState(player, 'Logged in from another session');
         break;
       }
     }
@@ -935,8 +1001,11 @@ export class World {
       ws.data.playerId = player.id;
       player.disconnected = false;
       player.reconnectDeadlineTick = 0;
+      player.logoutDeadlineTick = 0;
+      player.requestIdleLogout = false;
       player.ip = ws.data.ip ?? player.ip;
       player.deviceId = ws.data.deviceId ?? player.deviceId;
+      this.recordPlayerActivity(player.id);
       player.lastBroadcastChunkX = -9999;
       player.lastBroadcastChunkZ = -9999;
       player.visibleEntityIds.clear();
@@ -973,6 +1042,8 @@ export class World {
 
   addPlayer(player: Player): void {
     this.players.set(player.id, player);
+    player.lastActivityTick = this.currentTick;
+    player.idleWarningSent = false;
     console.log(`Player "${player.name}" (id=${player.id}) joined on ${player.currentMapLevel}`);
 
     // Bot-detection telemetry: load lifetime row from DB (or start fresh)
@@ -1157,6 +1228,7 @@ export class World {
     this.releasePrivateGroundItemsForPlayer(playerId);
     // Defensive sweep: catch any trade sessions whose other side already left.
     this.sweepOrphanTradeSessions();
+    this.sweepOrphanDuelSessions();
     console.log(`Player "${player.name}" left`);
 
     // Notify nearby players
@@ -1174,10 +1246,14 @@ export class World {
     if (!player) return;
     if (ws && player.ws !== ws) return;
     if (player.disconnected) return;
+    const combatLogout = this.isPlayerLogoutCombatLocked(player);
+    if (combatLogout) player.markInCombat(this.currentTick);
     // Trade-during-disconnect dupe guard: if we leave the session live, the
     // partner could still accept and trigger commits against an offline player
     // whose inventory might mutate (e.g. on save round-trip). Abort cleanly.
     if (player.openInterface === 'trade') this.abortTrade(playerId, /*reason*/ 2);
+    if (player.openInterface === 'duel' && this.duelStakeSessions?.has(playerId)) this.abortDuelStake(playerId, /*reason*/ 2);
+    if (this.activeDuels?.has(playerId)) this.finishDuelByForfeit(playerId);
     // Bank just gets closed — its contents are already in player.bank and
     // will be saved by the call below.
     if (player.openInterface === 'bank') player.openInterface = null;
@@ -1191,9 +1267,15 @@ export class World {
     this.clearCombatTarget(playerId);
     this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
     player.disconnected = true;
-    player.reconnectDeadlineTick = this.currentTick + RECONNECT_GRACE_TICKS;
+    if (combatLogout) {
+      player.reconnectDeadlineTick = this.currentTick + DISCONNECTED_COMBAT_LOGOUT_TICKS;
+      player.logoutDeadlineTick = player.reconnectDeadlineTick;
+    } else {
+      player.reconnectDeadlineTick = this.currentTick + RECONNECT_GRACE_TICKS;
+      player.logoutDeadlineTick = 0;
+    }
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
-    console.log(`Player "${player.name}" disconnected — holding session for reconnect`);
+    console.log(`Player "${player.name}" disconnected — holding session for ${combatLogout ? 'combat logout' : 'reconnect'}`);
   }
 
   private finalizePlayerLogoutSession(player: Player): void {
@@ -1225,16 +1307,15 @@ export class World {
   }
 
   private finishDisconnectedLogout(player: Player): void {
-    this.finalizePlayerLogoutSession(player);
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
-    if (player.isLogoutBlocked(this.currentTick)) {
+    const deadline = player.logoutDeadlineTick;
+    if (player.isLogoutBlocked(this.currentTick) && (deadline <= 0 || this.currentTick < deadline)) {
       player.requestIdleLogout = true;
-      player.logoutDeadlineTick = this.currentTick + 50; // ~30s safety cap
+      player.logoutDeadlineTick = deadline > 0 ? deadline : this.currentTick + DISCONNECTED_COMBAT_LOGOUT_TICKS;
       console.log(`Player "${player.name}" logged out under attack — deferring removal`);
       return;
     }
 
-    this.removePlayer(player.id);
+    this.closePlayerLogoutState(player, 'Disconnected');
   }
 
   /** Process players whose ws closed during a combat lockout. Once the lockout
@@ -1243,9 +1324,15 @@ export class World {
     let toRemove: number[] | null = null;
     let expiredReconnects: Player[] | null = null;
     for (const [, player] of this.players) {
-      if (player.disconnected && !player.requestIdleLogout && this.currentTick >= player.reconnectDeadlineTick) {
-        if (!expiredReconnects) expiredReconnects = [];
-        expiredReconnects.push(player);
+      if (player.disconnected && !player.requestIdleLogout) {
+        const combatDeadline = player.logoutDeadlineTick > 0;
+        const expired = combatDeadline
+          ? (!player.isLogoutBlocked(this.currentTick) || this.currentTick >= player.logoutDeadlineTick)
+          : this.currentTick >= player.reconnectDeadlineTick;
+        if (expired) {
+          if (!expiredReconnects) expiredReconnects = [];
+          expiredReconnects.push(player);
+        }
         continue;
       }
       if (!player.requestIdleLogout) continue;
@@ -1263,8 +1350,53 @@ export class World {
     if (!toRemove) return;
     for (const id of toRemove) {
       const player = this.players.get(id);
-      if (player) this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
-      this.removePlayer(id);
+      if (player) this.closePlayerLogoutState(player, 'Logged out');
+    }
+  }
+
+  private beginIdleLogout(player: Player): void {
+    this.sendChatSystem(player, 'You have been signed out for inactivity.');
+    if (!this.isPlayerLogoutCombatLocked(player)) {
+      this.closePlayerLogoutState(player, 'Idle timeout');
+      return;
+    }
+
+    player.markInCombat(this.currentTick);
+    player.clearMoveQueue();
+    player.pendingPickup = -1;
+    this.clearPendingObjectIntents(player);
+    player.delayedUntilTick = 0;
+    this.cancelSkilling(player.id);
+    this.clearCombatTarget(player.id);
+    this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
+    player.disconnected = true;
+    player.requestIdleLogout = true;
+    player.reconnectDeadlineTick = 0;
+    player.logoutDeadlineTick = this.currentTick + DISCONNECTED_COMBAT_LOGOUT_TICKS;
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    try {
+      player.ws.close(1000, 'Idle timeout');
+    } catch { /* ignore */ }
+  }
+
+  private tickIdleLogouts(): void {
+    let toLogout: Player[] | null = null;
+    for (const [, player] of this.players) {
+      if (player.disconnected || player.requestIdleLogout) continue;
+      const idleTicks = this.currentTick - player.lastActivityTick;
+      if (idleTicks >= IDLE_LOGOUT_TICKS) {
+        if (!toLogout) toLogout = [];
+        toLogout.push(player);
+        continue;
+      }
+      if (!player.idleWarningSent && idleTicks >= IDLE_WARNING_TICKS) {
+        player.idleWarningSent = true;
+        this.sendChatSystem(player, 'You have been inactive for 4 minutes and will be signed out in 1 minute.');
+      }
+    }
+    if (!toLogout) return;
+    for (const player of toLogout) {
+      if (this.players.has(player.id)) this.beginIdleLogout(player);
     }
   }
 
@@ -1577,6 +1709,10 @@ export class World {
     for (const [requester, target] of this.pendingTradeRequests) {
       if (target === playerId) this.pendingTradeRequests.delete(requester);
     }
+    this.pendingDuelRequests?.delete(playerId);
+    for (const [requester, target] of this.pendingDuelRequests ?? []) {
+      if (target === playerId) this.pendingDuelRequests?.delete(requester);
+    }
     for (const [, other] of this.players) {
       if (other.followTargetPlayerId === playerId) {
         other.followTargetPlayerId = -1;
@@ -1585,6 +1721,12 @@ export class World {
     }
     if (this.tradeSessions.has(playerId)) {
       this.abortTrade(playerId, 2);
+    }
+    if (this.duelStakeSessions?.has(playerId)) {
+      this.abortDuelStake(playerId, 2);
+    }
+    if (this.activeDuels?.has(playerId)) {
+      this.finishDuelByForfeit(playerId);
     }
   }
 
@@ -1630,6 +1772,11 @@ export class World {
   handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (this.activeDuels?.has(playerId)) {
+      player.clearMoveQueue();
+      player.followTargetPlayerId = -1;
+      return;
+    }
     if (path.length === 0) {
       player.clearMoveQueue();
       player.followTargetPlayerId = -1;
@@ -3150,6 +3297,7 @@ export class World {
   handlePlayerSetAutocast(playerId: number, spellIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
+    if (player.isInterfaceOpen()) return;
     if (spellIndex < 0) {
       player.autocastSpellIndex = -1;
       return;
@@ -3170,6 +3318,7 @@ export class World {
   handlePlayerCastSpell(playerId: number, spellIndex: number, targetEntityId: number, keepCombatTarget: boolean = false): void {
     const player = this.players.get(playerId);
     if (!player || !player.alive) return;
+    if (player.isInterfaceOpen()) return;
     if (player.isBusy(this.currentTick)) return;
 
     const def = this.data.getSpellByIndex(spellIndex);
@@ -4011,6 +4160,735 @@ export class World {
     return true;
   }
 
+  // ---------------------------------------------------------------------------
+  // Duel system
+  // ---------------------------------------------------------------------------
+
+  private duelStakeSessions: Map<number, DuelStakeSession> = new Map();
+  private activeDuels: Map<number, ActiveDuel> = new Map();
+  /** Pending one-sided duel requests: requester -> target. */
+  private pendingDuelRequests: Map<number, number> = new Map();
+  private static readonly DUEL_REQUEST_TTL_MS = 10_000;
+  private static readonly DUEL_TIMEOUT_TICKS = 500;
+
+  private hasCustodiedItems(playerId: number): boolean {
+    return (this.tradeSessions?.has(playerId) ?? false)
+      || (this.duelStakeSessions?.has(playerId) ?? false)
+      || (this.activeDuels?.has(playerId) ?? false);
+  }
+
+  private clearDuelRequestsFor(playerId: number): void {
+    this.pendingDuelRequests?.delete(playerId);
+    for (const [requester, target] of this.pendingDuelRequests ?? []) {
+      if (target === playerId) this.pendingDuelRequests?.delete(requester);
+    }
+  }
+
+  private isDuelablePlayer(player: Player): boolean {
+    return player.alive && !player.disconnected && !player.requestIdleLogout;
+  }
+
+  private isPlayerUnderNpcAttack(playerId: number): boolean {
+    for (const [, npc] of this.npcs) {
+      if (npc.combatTarget && (npc.combatTarget as any).id === playerId) return true;
+    }
+    return false;
+  }
+
+  private hasPendingSpellImpact(playerId: number): boolean {
+    return this.pendingSpellImpacts?.some(impact => impact.attackerId === playerId) ?? false;
+  }
+
+  private clearPendingSpellImpactsFor(playerId: number): void {
+    if (!this.pendingSpellImpacts || this.pendingSpellImpacts.length === 0) return;
+    this.pendingSpellImpacts = this.pendingSpellImpacts.filter(impact => impact.attackerId !== playerId);
+  }
+
+  private isPlayerInCombatForDuel(player: Player): boolean {
+    return (this.activeDuels?.has(player.id) ?? false)
+      || this.playerCombatTargets.has(player.id)
+      || this.isPlayerUnderNpcAttack(player.id)
+      || player.isLogoutBlocked(this.currentTick)
+      || player.isBusy(this.currentTick)
+      || this.hasPendingSpellImpact(player.id);
+  }
+
+  private canPlayersDuelRequest(a: Player, b: Player, reporter?: Player): boolean {
+    if (a.id === b.id) return false;
+    if (!this.isDuelablePlayer(a) || !this.isDuelablePlayer(b)) return false;
+    if (a.openInterface !== null || b.openInterface !== null) {
+      if (reporter === a) this.sendChatSystem(a, 'That player is busy.');
+      return false;
+    }
+    if (a.currentMapLevel !== b.currentMapLevel || a.currentFloor !== b.currentFloor) {
+      if (reporter === a) this.sendChatSystem(a, 'You need to stand next to them to duel.');
+      return false;
+    }
+    if (a.visibleEntityIds.size > 0 && !a.visibleEntityIds.has(b.id)) return false;
+    if (b.visibleEntityIds.size > 0 && !b.visibleEntityIds.has(a.id)) return false;
+    if (this.tileChebyshev(a, b) > 1) {
+      if (reporter === a) this.sendChatSystem(a, 'You need to stand next to them to duel.');
+      return false;
+    }
+    if (this.isPlayerInCombatForDuel(a)) {
+      if (reporter === a) this.sendChatSystem(a, 'You are already in combat.');
+      return false;
+    }
+    if (this.isPlayerInCombatForDuel(b)) {
+      if (reporter === a) this.sendChatSystem(a, 'They are already in combat');
+      return false;
+    }
+    return true;
+  }
+
+  private canPlayersStartDuel(a: Player, b: Player): boolean {
+    if (a.id === b.id) return false;
+    if (!this.isDuelablePlayer(a) || !this.isDuelablePlayer(b)) return false;
+    if (a.openInterface !== 'duel' || b.openInterface !== 'duel') return false;
+    if (this.activeDuels?.has(a.id) || this.activeDuels?.has(b.id)) return false;
+    if (a.currentMapLevel !== b.currentMapLevel || a.currentFloor !== b.currentFloor) return false;
+    if (this.tileChebyshev(a, b) > 1) return false;
+    if (this.playerCombatTargets.has(a.id) || this.playerCombatTargets.has(b.id)) return false;
+    if (this.isPlayerUnderNpcAttack(a.id) || this.isPlayerUnderNpcAttack(b.id)) return false;
+    if (a.isLogoutBlocked(this.currentTick) || b.isLogoutBlocked(this.currentTick)) return false;
+    return true;
+  }
+
+  handleDuelRequest(playerId: number, targetEntityId: number): void {
+    const player = this.players.get(playerId);
+    const target = this.players.get(targetEntityId);
+    if (!player || !target || player.id === target.id) return;
+    if (!this.canPlayersDuelRequest(player, target, player)) return;
+    player.botStats?.recordActionSignature('duelRequest', 'player', player.position.x, player.position.y);
+
+    const pendingDuelRequests = this.pendingDuelRequests ?? (this.pendingDuelRequests = new Map());
+    const reverse = pendingDuelRequests.get(target.id);
+    if (reverse === player.id) {
+      this.openDuelStakeSession(player, target);
+      return;
+    }
+
+    pendingDuelRequests.set(player.id, target.id);
+    setTimeout(() => {
+      if (this.pendingDuelRequests?.get(player.id) === target.id) {
+        this.pendingDuelRequests.delete(player.id);
+      }
+    }, World.DUEL_REQUEST_TTL_MS);
+    this.sendToPlayer(target, ServerOpcode.DUEL_REQUEST_RECEIVED, player.id);
+    this.sendChatSystem(player, `Sending duel request to ${target.name}...`);
+  }
+
+  handleDuelAcceptRequest(playerId: number, requesterEntityId: number): void {
+    const player = this.players.get(playerId);
+    const requester = this.players.get(requesterEntityId);
+    if (!player || !requester) return;
+    if (this.pendingDuelRequests?.get(requester.id) !== player.id) return;
+    if (!this.canPlayersDuelRequest(requester, player, player)) return;
+    this.openDuelStakeSession(requester, player);
+  }
+
+  private openDuelStakeSession(a: Player, b: Player): void {
+    if (!this.canPlayersDuelRequest(a, b)) return;
+    this.clearDuelRequestsFor(a.id);
+    this.clearDuelRequestsFor(b.id);
+    this.clearTradeRequestsFor(a.id);
+    this.clearTradeRequestsFor(b.id);
+    this.clearDuelSetupState(a);
+    this.clearDuelSetupState(b);
+    const session: DuelStakeSession = {
+      a: { id: a.id, stake: new Array(DUEL_STAKE_SIZE).fill(null), stage: 0 },
+      b: { id: b.id, stake: new Array(DUEL_STAKE_SIZE).fill(null), stage: 0 },
+    };
+    this.duelStakeSessions.set(a.id, session);
+    this.duelStakeSessions.set(b.id, session);
+    a.openInterface = 'duel';
+    b.openInterface = 'duel';
+    a.openShopNpcId = null;
+    b.openShopNpcId = null;
+    if (a.openDialogueState) this.sendDialogueClose(a);
+    if (b.openDialogueState) this.sendDialogueClose(b);
+    this.sendToPlayer(a, ServerOpcode.DUEL_OPEN, b.id);
+    this.sendToPlayer(b, ServerOpcode.DUEL_OPEN, a.id);
+    this.sendDuelAcceptState(session);
+  }
+
+  private myDuelStakeSide(session: DuelStakeSession, playerId: number): DuelStakeSide | null {
+    if (session.a.id === playerId) return session.a;
+    if (session.b.id === playerId) return session.b;
+    return null;
+  }
+
+  private otherDuelStakeSide(session: DuelStakeSession, playerId: number): DuelStakeSide | null {
+    if (session.a.id === playerId) return session.b;
+    if (session.b.id === playerId) return session.a;
+    return null;
+  }
+
+  private validateDuelStakeSession(session: DuelStakeSession): { aPlayer: Player; bPlayer: Player } | null {
+    const aPlayer = this.players.get(session.a.id);
+    const bPlayer = this.players.get(session.b.id);
+    if (!aPlayer || !bPlayer || !this.canPlayersStartDuel(aPlayer, bPlayer)) {
+      this.abortDuelStake(session.a.id, 2);
+      return null;
+    }
+    return { aPlayer, bPlayer };
+  }
+
+  private resetDuelStages(session: DuelStakeSession): void {
+    session.a.stage = 0;
+    session.b.stage = 0;
+    this.sendDuelAcceptState(session);
+  }
+
+  private sendDuelAcceptState(session: DuelStakeSession): void {
+    const a = this.players.get(session.a.id);
+    const b = this.players.get(session.b.id);
+    if (a) this.sendToPlayer(a, ServerOpcode.DUEL_ACCEPT_STATE, session.a.stage, session.b.stage);
+    if (b) this.sendToPlayer(b, ServerOpcode.DUEL_ACCEPT_STATE, session.b.stage, session.a.stage);
+  }
+
+  private sendDuelStakeUpdate(session: DuelStakeSession, mutatedSide: 'a' | 'b', slot: number): void {
+    const side = mutatedSide === 'a' ? session.a : session.b;
+    const s = side.stake[slot];
+    const itemId = s?.itemId ?? 0;
+    const qty = s?.quantity ?? 0;
+    const a = this.players.get(session.a.id);
+    const b = this.players.get(session.b.id);
+    if (a) {
+      const sideFlag = mutatedSide === 'a' ? 0 : 1;
+      this.sendToPlayer(a, ServerOpcode.DUEL_STAKE_UPDATE, sideFlag, slot, itemId, (qty >>> 16) & 0xFFFF, qty & 0xFFFF);
+    }
+    if (b) {
+      const sideFlag = mutatedSide === 'b' ? 0 : 1;
+      this.sendToPlayer(b, ServerOpcode.DUEL_STAKE_UPDATE, sideFlag, slot, itemId, (qty >>> 16) & 0xFFFF, qty & 0xFFFF);
+    }
+  }
+
+  handleDuelDecline(playerId: number): void {
+    this.clearDuelRequestsFor(playerId);
+    this.abortDuelStake(playerId, 1);
+  }
+
+  abortDuelStake(playerId: number, reason: number = 2): void {
+    const session = this.duelStakeSessions.get(playerId);
+    if (!session) return;
+    this.duelStakeSessions.delete(session.a.id);
+    this.duelStakeSessions.delete(session.b.id);
+    this.clearDuelRequestsFor(session.a.id);
+    this.clearDuelRequestsFor(session.b.id);
+
+    for (const side of [session.a, session.b] as DuelStakeSide[]) {
+      const owner = this.players.get(side.id);
+      if (!owner) continue;
+      this.returnStakeToOwner(owner, side.stake);
+      owner.openInterface = null;
+      this.sendInventory(owner);
+      this.sendToPlayer(owner, ServerOpcode.DUEL_CLOSE, reason);
+      this.db.savePlayerState(owner.accountId, owner, this.computeEffectiveY(owner));
+    }
+    audit({
+      type: 'duel.stake_abort',
+      tick: this.currentTick,
+      accountId: this.players.get(playerId)?.accountId ?? 0,
+      details: { reason, a: session.a.id, b: session.b.id },
+    });
+  }
+
+  private returnStakeToOwner(owner: Player, stake: StakeSlot[]): void {
+    for (const off of stake) {
+      if (!off) continue;
+      const result = owner.addItem(off.itemId, off.quantity, this.data.itemDefs, { assureFullInsertion: false });
+      if (result.completed < off.quantity) {
+        this.spawnGroundItem(owner, off.itemId, off.quantity - result.completed, REFUND_SPILL_DESPAWN_TICKS);
+      }
+    }
+  }
+
+  handleDuelStakeItem(playerId: number, slotIndex: number, expectedItemId: number, quantity: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const session = this.duelStakeSessions.get(playerId);
+    if (!session) return;
+    if (!this.validateDuelStakeSession(session)) return;
+    const me = this.myDuelStakeSide(session, playerId);
+    if (!me) return;
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
+    const invSlot = player.inventory[slotIndex];
+    if (!invSlot || invSlot.itemId !== expectedItemId) return;
+
+    const itemId = invSlot.itemId;
+    const itemDef = this.data.getItem(itemId);
+    if (!itemDef) return;
+    const isStackable = itemDef.stackable === true;
+    const available = isStackable
+      ? invSlot.quantity
+      : player.inventory.reduce((total, s) => total + (s?.itemId === itemId ? 1 : 0), 0);
+    const toStake = this.normalizeTradeQuantity(quantity, available);
+    if (toStake === null) return;
+
+    let stakeSlot = me.stake.findIndex(o => o?.itemId === itemId);
+    if (stakeSlot < 0) stakeSlot = me.stake.findIndex(o => o === null);
+    if (stakeSlot < 0) {
+      this.sendChatSystem(player, 'Duel stake is full.');
+      return;
+    }
+    const existing = me.stake[stakeSlot];
+    if (existing && existing.quantity > MAX_STACK - toStake) {
+      this.sendChatSystem(player, 'You cannot stake that many of one item.');
+      return;
+    }
+
+    if (isStackable) {
+      const removed = player.removeItem(slotIndex, toStake);
+      if (removed.completed !== toStake) { player.revertRemove(removed); return; }
+    } else {
+      const removed = player.removeItemById(itemId, toStake);
+      if (removed.completed !== toStake) { player.revertRemove(removed); return; }
+    }
+
+    if (existing) existing.quantity += toStake;
+    else me.stake[stakeSlot] = { itemId, quantity: toStake };
+
+    this.sendInventory(player);
+    this.sendDuelStakeUpdate(session, session.a.id === playerId ? 'a' : 'b', stakeSlot);
+    this.resetDuelStages(session);
+  }
+
+  handleDuelRemoveStake(playerId: number, stakeSlot: number, expectedItemId: number, quantity: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const session = this.duelStakeSessions.get(playerId);
+    if (!session) return;
+    if (!this.validateDuelStakeSession(session)) return;
+    const me = this.myDuelStakeSide(session, playerId);
+    if (!me) return;
+    if (stakeSlot < 0 || stakeSlot >= me.stake.length) return;
+    const off = me.stake[stakeSlot];
+    if (!off || off.itemId !== expectedItemId) return;
+    const toReturn = this.normalizeTradeQuantity(quantity, off.quantity);
+    if (toReturn === null) return;
+    if (!player.canFit(off.itemId, toReturn, this.data.itemDefs)) {
+      this.sendChatSystem(player, 'Not enough inventory space.');
+      return;
+    }
+    const result = player.addItem(off.itemId, toReturn, this.data.itemDefs);
+    if (result.completed !== toReturn) {
+      player.revertAdd(result);
+      return;
+    }
+    off.quantity -= toReturn;
+    if (off.quantity <= 0) me.stake[stakeSlot] = null;
+    this.sendInventory(player);
+    this.sendDuelStakeUpdate(session, session.a.id === playerId ? 'a' : 'b', stakeSlot);
+    this.resetDuelStages(session);
+  }
+
+  handleDuelAccept(playerId: number): void {
+    const session = this.duelStakeSessions.get(playerId);
+    if (!session) return;
+    if (!this.validateDuelStakeSession(session)) return;
+    const me = this.myDuelStakeSide(session, playerId);
+    const them = this.otherDuelStakeSide(session, playerId);
+    if (!me || !them) return;
+
+    if (me.stage === 0) {
+      me.stage = 1;
+    } else if (me.stage === 1 && them.stage >= 1) {
+      me.stage = 2;
+    } else {
+      return;
+    }
+    this.sendDuelAcceptState(session);
+
+    if (me.stage === 2 && them.stage === 2) {
+      this.startDuelCombat(session);
+    }
+  }
+
+  private startDuelCombat(session: DuelStakeSession): void {
+    const participants = this.validateDuelStakeSession(session);
+    if (!participants) return;
+    const { aPlayer, bPlayer } = participants;
+    const pot = [...session.a.stake, ...session.b.stake];
+    if (!this.canFitOffer(aPlayer, pot) || !this.canFitOffer(bPlayer, pot)) {
+      this.sendChatSystem(aPlayer, 'Not enough inventory space to start the duel.');
+      this.sendChatSystem(bPlayer, 'Not enough inventory space to start the duel.');
+      this.abortDuelStake(session.a.id, 2);
+      return;
+    }
+
+    this.duelStakeSessions.delete(session.a.id);
+    this.duelStakeSessions.delete(session.b.id);
+    this.clearDuelRequestsFor(session.a.id);
+    this.clearDuelRequestsFor(session.b.id);
+    this.clearDuelSetupState(aPlayer);
+    this.clearDuelSetupState(bPlayer);
+    aPlayer.openInterface = 'duel';
+    bPlayer.openInterface = 'duel';
+    aPlayer.attackCooldown = 0;
+    bPlayer.attackCooldown = 0;
+
+    const duel: ActiveDuel = {
+      a: { id: session.a.id, stake: session.a.stake, startHealth: aPlayer.health },
+      b: { id: session.b.id, stake: session.b.stake, startHealth: bPlayer.health },
+      mapLevel: aPlayer.currentMapLevel,
+      floor: aPlayer.currentFloor,
+      startedTick: this.currentTick,
+    };
+    this.activeDuels.set(session.a.id, duel);
+    this.activeDuels.set(session.b.id, duel);
+
+    this.sendToPlayer(aPlayer, ServerOpcode.DUEL_START, bPlayer.id);
+    this.sendToPlayer(bPlayer, ServerOpcode.DUEL_START, aPlayer.id);
+    this.sendChatSystem(aPlayer, `Duel with ${bPlayer.name} started.`);
+    this.sendChatSystem(bPlayer, `Duel with ${aPlayer.name} started.`);
+    audit({
+      type: 'duel.start',
+      tick: this.currentTick,
+      accountId: aPlayer.accountId,
+      details: {
+        a: { accountId: aPlayer.accountId, name: aPlayer.name, stake: session.a.stake.filter(o => o !== null) },
+        b: { accountId: bPlayer.accountId, name: bPlayer.name, stake: session.b.stake.filter(o => o !== null) },
+      },
+    });
+  }
+
+  private clearDuelSetupState(player: Player): void {
+    this.clearCombatTarget(player.id);
+    this.clearPendingSpellImpactsFor(player.id);
+    for (const [, npc] of this.npcs) {
+      if (npc.combatTarget && (npc.combatTarget as any).id === player.id) {
+        npc.combatTarget = null;
+        npc.pathQueue.length = 0;
+      }
+    }
+    player.attackTarget = null;
+    player.clearMoveQueue();
+    player.followTargetPlayerId = -1;
+    player.pendingPickup = -1;
+    player.pendingSpellCast = null;
+    player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
+    this.clearPendingObjectIntents(player);
+    this.cancelSkilling(player.id);
+    player.openShopNpcId = null;
+    this.closeDialogueForPlayer(player);
+  }
+
+  private otherActiveDuelSide(duel: ActiveDuel, playerId: number): ActiveDuelSide | null {
+    if (duel.a.id === playerId) return duel.b;
+    if (duel.b.id === playerId) return duel.a;
+    return null;
+  }
+
+  private activeDuelSide(duel: ActiveDuel, playerId: number): ActiveDuelSide | null {
+    if (duel.a.id === playerId) return duel.a;
+    if (duel.b.id === playerId) return duel.b;
+    return null;
+  }
+
+  private tickActiveDuels(): void {
+    const seen = new Set<ActiveDuel>();
+    for (const [, duel] of this.activeDuels) {
+      if (seen.has(duel)) continue;
+      seen.add(duel);
+      const aPlayer = this.players.get(duel.a.id);
+      const bPlayer = this.players.get(duel.b.id);
+      if (!aPlayer || !bPlayer) {
+        const survivor = aPlayer ?? bPlayer;
+        if (survivor) this.finishDuelByForfeit(survivor.id === duel.a.id ? duel.b.id : duel.a.id);
+        else this.finishDuel(duel, null, null, 2);
+        continue;
+      }
+      if (aPlayer.disconnected || aPlayer.requestIdleLogout) { this.finishDuelByForfeit(aPlayer.id); continue; }
+      if (bPlayer.disconnected || bPlayer.requestIdleLogout) { this.finishDuelByForfeit(bPlayer.id); continue; }
+      if (this.currentTick - duel.startedTick >= World.DUEL_TIMEOUT_TICKS) {
+        this.finishDuel(duel, null, null, 2);
+        continue;
+      }
+      if (!this.isActiveDuelPositionValid(duel, aPlayer, bPlayer)) {
+        this.finishDuel(duel, null, null, 2);
+        continue;
+      }
+
+      this.processDuelAttack(duel, aPlayer, bPlayer);
+      if (!bPlayer.alive) { this.finishDuel(duel, aPlayer.id, bPlayer.id, 0); continue; }
+      this.processDuelAttack(duel, bPlayer, aPlayer);
+      if (!aPlayer.alive) { this.finishDuel(duel, bPlayer.id, aPlayer.id, 0); continue; }
+    }
+  }
+
+  private isActiveDuelPositionValid(duel: ActiveDuel, a: Player, b: Player): boolean {
+    if (a.currentMapLevel !== duel.mapLevel || b.currentMapLevel !== duel.mapLevel) return false;
+    if (a.currentFloor !== duel.floor || b.currentFloor !== duel.floor) return false;
+    return this.tileChebyshev(a, b) <= 1;
+  }
+
+  private processDuelAttack(duel: ActiveDuel, attacker: Player, defender: Player): void {
+    if (!attacker.alive || !defender.alive || attacker.attackCooldown > 0) return;
+    if (attacker.autocastSpellIndex >= 0) {
+      const hit = this.processDuelMagicAttack(attacker, defender);
+      if (hit !== null) this.applyDuelHit(duel, attacker, defender, hit, true);
+      return;
+    }
+    if (attacker.isRangedWeapon(this.data.itemDefs)) {
+      const ammo = attacker.findAmmo(this.data.itemDefs);
+      if (!ammo) {
+        attacker.attackCooldown = Math.max(1, attacker.getAttackSpeed(this.data.itemDefs));
+        this.sendChatSystem(attacker, 'You have no arrows left.');
+        return;
+      }
+      const hit = this.rollDuelRangedHit(attacker, defender, ammo.itemDef.rangedStrength ?? 0);
+      attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
+      attacker.removeItemFromSlot(ammo.slotIndex, 1);
+      this.sendInventory(attacker);
+      this.broadcastProjectile(attacker.id, defender.id, 1, attacker.currentMapLevel, attacker.position.x, attacker.position.y);
+      this.applyDuelHit(duel, attacker, defender, hit, false);
+      return;
+    }
+    const hit = this.rollDuelMeleeHit(attacker, defender);
+    attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
+    this.applyDuelHit(duel, attacker, defender, hit, false);
+  }
+
+  private rollDuelMeleeHit(attacker: Player, defender: Player): number {
+    const itemDefs = this.data.itemDefs;
+    const attackBonuses = attacker.computeBonuses(itemDefs);
+    const defenceBonuses = defender.computeBonuses(itemDefs);
+    const attackStance = STANCE_BONUSES[attacker.stance];
+    const defenceStance = STANCE_BONUSES[defender.stance];
+    const effAcc = attacker.skills.accuracy.currentLevel + attackStance.accuracy + 8;
+    const effStr = attacker.skills.strength.currentLevel + attackStance.strength + 8;
+    const weaponStyle = attacker.getWeaponStyle(itemDefs);
+    let attackBonus = attackBonuses.crushAttack;
+    let defenceBonus = defenceBonuses.crushDefence;
+    if (weaponStyle === 'stab') {
+      attackBonus = attackBonuses.stabAttack;
+      defenceBonus = defenceBonuses.stabDefence;
+    } else if (weaponStyle === 'slash') {
+      attackBonus = attackBonuses.slashAttack;
+      defenceBonus = defenceBonuses.slashDefence;
+    }
+    const attackRoll = effAcc * (attackBonus + ACC_BASE);
+    const defRoll = (defender.skills.defence.currentLevel + defenceStance.defence + 8) * (defenceBonus + ACC_BASE);
+    const maxHit = osrsMeleeMaxHit(effStr, attackBonuses.meleeStrength);
+    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
+  }
+
+  private rollDuelRangedHit(attacker: Player, defender: Player, arrowStrength: number): number {
+    const itemDefs = this.data.itemDefs;
+    const attackBonuses = attacker.computeBonuses(itemDefs);
+    const defenceBonuses = defender.computeBonuses(itemDefs);
+    const defenceStance = STANCE_BONUSES[defender.stance];
+    const effRanged = attacker.skills.archery.currentLevel + 8;
+    const attackRoll = effRanged * (attackBonuses.rangedAccuracy + ACC_BASE);
+    const defRoll = (defender.skills.defence.currentLevel + defenceStance.defence + 8) * (defenceBonuses.rangedDefence + ACC_BASE);
+    const maxHit = osrsMeleeMaxHit(effRanged, attackBonuses.rangedStrength + arrowStrength);
+    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
+  }
+
+  private processDuelMagicAttack(attacker: Player, defender: Player): number | null {
+    const spellIndex = attacker.autocastSpellIndex;
+    const def = this.data.getSpellByIndex(spellIndex);
+    if (!def) {
+      attacker.autocastSpellIndex = -1;
+      return null;
+    }
+    const xpSkill: SkillId = spellSchoolSkill(def);
+    if (attacker.skills[xpSkill].level < (def.levelRequired ?? 1)) {
+      attacker.autocastSpellIndex = -1;
+      return null;
+    }
+    const costResult = consumeSpellCosts(attacker, def, this.data.itemDefs);
+    if (!costResult.ok) {
+      attacker.attackCooldown = 4;
+      if (costResult.message) this.sendChatSystem(attacker, costResult.message);
+      return null;
+    }
+    if (costResult.inventoryChanged) this.sendInventory(attacker);
+    const magicLevel = attacker.skills[xpSkill].currentLevel;
+    const attackBonuses = attacker.computeBonuses(this.data.itemDefs);
+    const defenceBonuses = defender.computeBonuses(this.data.itemDefs);
+    const attackRoll = (magicLevel + 8) * (attackBonuses.magicAccuracy + ACC_BASE);
+    const defRoll = (defender.skills.defence.currentLevel + 8) * (defenceBonuses.magicDefence + ACC_BASE);
+    const hit = rollHit(attackRoll, defRoll)
+      ? Math.floor(Math.random() * (magicMaxHit(magicLevel, def.tier) + 1))
+      : 0;
+    attacker.attackCooldown = 7;
+    this.broadcastPlayerAnimationEvent(
+      attacker,
+      PlayerAnimationKind.Skill,
+      PlayerSkillAnimationVariant.Magic,
+      defender.id,
+      true,
+    );
+    this.broadcastNearby(
+      attacker.currentMapLevel, attacker.position.x, attacker.position.y,
+      ServerOpcode.SPELL_CAST, attacker.id, defender.id, spellIndex,
+    );
+    return hit;
+  }
+
+  private applyDuelHit(duel: ActiveDuel, attacker: Player, defender: Player, damage: number, magic: boolean): void {
+    const actual = defender.takeDamage(damage);
+    defender.skills.hitpoints.currentLevel = defender.health;
+    attacker.markInCombat(this.currentTick);
+    defender.markInCombat(this.currentTick);
+    if (!magic) {
+      this.setPlayerAnimation(attacker, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, defender.id, true);
+    }
+    attacker.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
+    this.broadcastCombatHit(attacker.id, defender.id, actual, defender.health, defender.maxHealth, duel.mapLevel, defender.position.x, defender.position.y);
+    this.sendToPlayer(defender, ServerOpcode.PLAYER_STATS, defender.health, defender.maxHealth);
+    this.sendSingleSkill(defender, HITPOINTS_SKILL_INDEX);
+  }
+
+  private finishDuelByForfeit(loserId: number): void {
+    const duel = this.activeDuels.get(loserId);
+    if (!duel) return;
+    const winner = this.otherActiveDuelSide(duel, loserId);
+    if (!winner) {
+      this.finishDuel(duel, null, null, 2);
+      return;
+    }
+    this.finishDuel(duel, winner.id, loserId, 1);
+  }
+
+  private finishDuel(duel: ActiveDuel, winnerId: number | null, loserId: number | null, reason: number): void {
+    this.activeDuels.delete(duel.a.id);
+    this.activeDuels.delete(duel.b.id);
+    const aPlayer = this.players.get(duel.a.id);
+    const bPlayer = this.players.get(duel.b.id);
+    const winner = winnerId != null ? this.players.get(winnerId) : null;
+    let awardOk = true;
+    if (winner) {
+      awardOk = this.awardDuelPot(winner, [...duel.a.stake, ...duel.b.stake], duel);
+    }
+    if (!winner || !awardOk) {
+      if (!awardOk) {
+        audit({
+          type: 'duel.award_failed',
+          tick: this.currentTick,
+          accountId: winner?.accountId ?? 0,
+          details: { winnerId, loserId, reason },
+        });
+      }
+      if (aPlayer) this.returnStakeToOwner(aPlayer, duel.a.stake);
+      if (bPlayer) this.returnStakeToOwner(bPlayer, duel.b.stake);
+    }
+    const finalWinnerId = awardOk ? winnerId : null;
+    const finalLoserId = awardOk ? loserId : null;
+
+    for (const side of [duel.a, duel.b] as ActiveDuelSide[]) {
+      const player = this.players.get(side.id);
+      if (!player) continue;
+      this.restoreDuelPlayer(player, side.startHealth);
+      this.sendInventory(player);
+      this.sendToPlayer(player, ServerOpcode.DUEL_FINISH, finalWinnerId ?? 0, finalLoserId ?? 0, reason);
+      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    }
+
+    const aName = aPlayer?.name ?? String(duel.a.id);
+    const bName = bPlayer?.name ?? String(duel.b.id);
+    if (winner && awardOk) {
+      const loser = loserId != null ? this.players.get(loserId) : null;
+      this.sendChatSystem(winner, 'You won the duel.');
+      if (loser) this.sendChatSystem(loser, 'You lost the duel.');
+    } else {
+      if (aPlayer) this.sendChatSystem(aPlayer, 'Duel ended with no winner. Stakes returned.');
+      if (bPlayer) this.sendChatSystem(bPlayer, 'Duel ended with no winner. Stakes returned.');
+    }
+    audit({
+      type: 'duel.finish',
+      tick: this.currentTick,
+      accountId: winner?.accountId ?? aPlayer?.accountId ?? bPlayer?.accountId ?? 0,
+      details: { winnerId: finalWinnerId, loserId: finalLoserId, reason, awardOk, a: aName, b: bName },
+    });
+  }
+
+  private awardDuelPot(winner: Player, pot: StakeSlot[], duel: ActiveDuel): boolean {
+    if (!this.canFitOffer(winner, pot)) return false;
+    const rollbacks: import('./entity/Player').InventoryAddResult[] = [];
+    for (const off of pot) {
+      if (!off) continue;
+      const r = winner.addItem(off.itemId, off.quantity, this.data.itemDefs);
+      if (r.completed !== off.quantity) {
+        for (const rb of rollbacks) winner.revertAdd(rb);
+        return false;
+      }
+      rollbacks.push(r);
+    }
+    audit({
+      type: 'duel.award',
+      tick: this.currentTick,
+      accountId: winner.accountId,
+      details: {
+        winner: { accountId: winner.accountId, name: winner.name },
+        aStake: duel.a.stake.filter(o => o !== null),
+        bStake: duel.b.stake.filter(o => o !== null),
+      },
+    });
+    return true;
+  }
+
+  private restoreDuelPlayer(player: Player, startHealth: number): void {
+    player.openInterface = null;
+    player.clearMoveQueue();
+    player.followTargetPlayerId = -1;
+    player.attackTarget = null;
+    this.clearCombatTarget(player.id);
+    player.pendingSpellCast = null;
+    player.pendingPickup = -1;
+    this.clearPendingObjectIntents(player);
+    player.delayedUntilTick = 0;
+    player.logoutBlockedUntilTick = 0;
+    player.actionDelay = 0;
+    player.attackCooldown = 0;
+    player.openShopNpcId = null;
+    const restored = Math.max(1, Math.min(player.maxHealth, Math.floor(startHealth)));
+    player.health = restored;
+    player.skills.hitpoints.currentLevel = restored;
+    player.syncDirty = true;
+    this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
+    this.sendToPlayer(player, ServerOpcode.PLAYER_STATS, player.health, player.maxHealth);
+    this.sendSingleSkill(player, HITPOINTS_SKILL_INDEX);
+  }
+
+  private abortAllDuelCustody(reason: number): void {
+    const stakeSessions = new Set(this.duelStakeSessions.values());
+    for (const session of stakeSessions) this.abortDuelStake(session.a.id, reason);
+    const duels = new Set(this.activeDuels.values());
+    for (const duel of duels) this.finishDuel(duel, null, null, reason);
+  }
+
+  private sweepOrphanDuelSessions(): void {
+    const stakeSeen = new Set<DuelStakeSession>();
+    for (const [, session] of this.duelStakeSessions) {
+      if (stakeSeen.has(session)) continue;
+      stakeSeen.add(session);
+      const aGone = !this.players.has(session.a.id);
+      const bGone = !this.players.has(session.b.id);
+      if (aGone || bGone) {
+        const surviving = aGone ? session.b.id : session.a.id;
+        this.abortDuelStake(surviving, 2);
+      }
+    }
+    const duelSeen = new Set<ActiveDuel>();
+    for (const [, duel] of this.activeDuels) {
+      if (duelSeen.has(duel)) continue;
+      duelSeen.add(duel);
+      const aGone = !this.players.has(duel.a.id);
+      const bGone = !this.players.has(duel.b.id);
+      if (aGone || bGone) {
+        if (aGone && bGone) this.finishDuel(duel, null, null, 2);
+        else {
+          const loserId = aGone ? duel.a.id : duel.b.id;
+          this.finishDuelByForfeit(loserId);
+        }
+      }
+    }
+  }
+
   /** Close whichever modal interface is open. For trade, decline (with item
    *  return). For bank, just clear the flag and notify. */
   private closeOpenInterface(player: Player, declineTrade: boolean): void {
@@ -4019,6 +4897,10 @@ export class World {
       this.sendToPlayer(player, ServerOpcode.BANK_CLOSE, 0);
     } else if (player.openInterface === 'trade' && declineTrade) {
       this.abortTrade(player.id, 2);
+    } else if (player.openInterface === 'duel') {
+      if (this.duelStakeSessions?.has(player.id)) this.abortDuelStake(player.id, 2);
+      else if (this.activeDuels?.has(player.id)) this.finishDuelByForfeit(player.id);
+      else player.openInterface = null;
     }
   }
 
@@ -4118,6 +5000,7 @@ export class World {
     this.tickNpcAI();
     this.tickPlayerCooldowns();
     this.tickQueuedSpellCasts();
+    this.tickActiveDuels();
     this.tickPlayerCombat();
     this.tickNpcCombat();
     this.tickPendingSpells();
@@ -4128,6 +5011,7 @@ export class World {
     this.tickDialogueScheduledSteps();
     this.tickObjectSayScheduledLines();
     this.tickTransitions();
+    this.tickIdleLogouts();
     this.tickDeferredLogouts();
     this.broadcastSync();
 
@@ -4166,6 +5050,12 @@ export class World {
 
   private tickPlayerMovement(): void {
     for (const [playerId, player] of this.players) {
+      if (this.activeDuels?.has(playerId)) {
+        player.clearMoveQueue();
+        player.followTargetPlayerId = -1;
+        this.updateEntityChunk(player);
+        continue;
+      }
       if (player.followTargetPlayerId >= 0) {
         const target = this.players.get(player.followTargetPlayerId);
         if (!target) {
@@ -4333,6 +5223,7 @@ export class World {
             if (npc.combatTarget) return;
             const player = this.players.get(pid);
             if (!player) return;
+            if (player.openInterface !== null || this.activeDuels?.has(player.id)) return;
             if (player.combatLevel > dropoffLvl) return;
             const fp = npc.distToFootprint(player.position.x, player.position.y);
             if (Math.abs(fp.dx) <= 3 && Math.abs(fp.dz) <= 3) {
@@ -4416,6 +5307,10 @@ export class World {
     for (const [playerId, npcId] of this.playerCombatTargets) {
       const player = this.players.get(playerId);
       const npc = this.npcs.get(npcId);
+      if (this.activeDuels?.has(playerId) || player?.openInterface === 'duel') {
+        this.clearCombatTarget(playerId);
+        continue;
+      }
       if (!player || !npc || npc.dead || npc.currentMapLevel !== player.currentMapLevel) {
         this.clearCombatTarget(playerId);
         continue;
@@ -4561,6 +5456,7 @@ export class World {
       const player = this.players.get(imp.attackerId);
       const npc = this.npcs.get(imp.targetId);
       if (!player || !npc || npc.dead) continue;
+      if (player.openInterface === 'duel' || this.activeDuels?.has(player.id)) continue;
       if (npc.currentMapLevel !== imp.mapLevel) continue;
 
       const actual = npc.takeDamage(imp.damage);
@@ -4616,6 +5512,11 @@ export class World {
         npc.combatTarget = null;
         continue;
       }
+      if (this.activeDuels?.has(target.id) || target.openInterface === 'duel') {
+        npc.combatTarget = null;
+        npc.pathQueue.length = 0;
+        continue;
+      }
 
       const hit = processNpcCombat(npc, target, itemDefs);
       if (hit) {
@@ -4652,6 +5553,7 @@ export class World {
     }
     for (const [playerId, player] of this.players) {
       if (!player.alive || player.health >= player.maxHealth) continue;
+      if (player.openInterface === 'duel' || this.activeDuels?.has(playerId)) continue;
       if (this.playerCombatTargets.has(playerId)) continue;
       if (this._playersUnderNpcAttack.has(playerId)) continue;
       player.heal(1);

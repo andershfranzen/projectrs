@@ -117,6 +117,7 @@ export function handleChatSocketMessage(
       const from = ws.data.username || 'Unknown';
       const msg = d.message.substring(0, 200); // Cap length
       if (msg.length === 0) return;
+      if (ws.data.playerId != null) world.recordPlayerActivity(ws.data.playerId);
 
       // Handle commands
       if (msg.startsWith('/')) {
