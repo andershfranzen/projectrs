@@ -18,8 +18,8 @@ const creditSections = [
     Icon: FaCubes,
   },
   {
-    title: 'Community Managers',
-    names: ['Tony', 'Crapula', 'Jiklim'],
+    title: 'Community Manager',
+    names: ['Tony'],
     Icon: FaUsers,
   },
   {
