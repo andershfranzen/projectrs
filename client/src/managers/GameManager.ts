@@ -240,6 +240,7 @@ export class GameManager {
    *  first map load is not player-facing travel, so don't spam chat with
    *  "Entered Kcmap." on sign-in. Later transitions can still announce. */
   private hasHandledInitialMapChange: boolean = false;
+  private suppressNextMapEntryMessage: boolean = false;
 
   // Entity management (remote players, NPCs, ground items, sprites)
   private entities!: EntityManager;
@@ -810,6 +811,7 @@ export class GameManager {
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
       this._initialMapReadySent = false;
+      this.suppressNextMapEntryMessage = false;
       this.lastSelfAuthorityAt = 0;
       this.selfAuthorityGraceUntil = 0;
       this.lastSelfServerTick = -1;
@@ -948,6 +950,7 @@ export class GameManager {
       this._loginMapReady = new Promise<void>((mapResolve) => { this._resolveLoginMapReady = mapResolve; });
       this._loginSettled = false;
       this._initialMapReadySent = false;
+      this.suppressNextMapEntryMessage = true;
       this.lastSelfAuthorityAt = 0;
       this.selfAuthorityGraceUntil = 0;
       this.lastSelfServerTick = -1;
@@ -3132,6 +3135,9 @@ export class GameManager {
 
     if (!this.hasHandledInitialMapChange) {
       this.hasHandledInitialMapChange = true;
+      this.suppressNextMapEntryMessage = false;
+    } else if (this.suppressNextMapEntryMessage) {
+      this.suppressNextMapEntryMessage = false;
     } else if (this.chatPanel) {
       this.chatPanel.addSystemMessage(`Entered ${this.chunkManager.getMeta()?.name || mapId}.`, '#0f0');
     }
