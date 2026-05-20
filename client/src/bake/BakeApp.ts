@@ -106,7 +106,10 @@ export async function runBake(): Promise<void> {
 
   let defs: ItemDef[];
   try {
-    const res = await fetch('/data/items.json');
+    const token = localStorage.getItem('projectrs_token') || '';
+    const res = await fetch('/data/items.json', {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     defs = await res.json();
   } catch (e) {

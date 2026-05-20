@@ -548,12 +548,15 @@ export class GameManager {
     // not send MAP_READY: the server's authoritative placement arrives after
     // LOGIN_OK via MAP_CHANGE, and only that final placement should trigger
     // entity bootstrap packets.
-    this.chunkManager.loadMap('kcmap').then(async () => {
-      await this.loadBiomes('kcmap');
-      this.applyFog();
-      await this._defsReady;
-      this.repositionWorldObjects();
-    });
+    const warmStartToken = this.token || localStorage.getItem('projectrs_token') || '';
+    if (warmStartToken) {
+      this.chunkManager.loadMap('kcmap').then(async () => {
+        await this.loadBiomes('kcmap');
+        this.applyFog();
+        await this._defsReady;
+        this.repositionWorldObjects();
+      });
+    }
     this._defsReady = this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this._objectModelsReady = this.objectModels.loadAll();
@@ -1054,7 +1057,10 @@ export class GameManager {
     this._lastBiomeCZ = -9999;
     this._lastBiomeDef = undefined;
     try {
-      const res = await fetch(`/maps/${mapId}/biomes.json`);
+      const token = this.token || localStorage.getItem('projectrs_token') || '';
+      const res = await fetch(`/maps/${mapId}/biomes.json`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!res.ok) return;
       const file: BiomesFile = await res.json();
       this.biomesFile = file;
@@ -1120,12 +1126,13 @@ export class GameManager {
     // All four def files are independent — fetch them in parallel.
     // Previously these were four serial awaits, which on a cold start added
     // up to ~200–400ms of dead time over the lifetime of the constructor.
+    const authHeaders = this.authHeaders();
     const [objectsRes, itemsRes, npcsRes, gearRes, questsRes] = await Promise.all([
-      fetch('/data/objects.json').catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
-      fetch('/data/items.json').catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
-      fetch('/data/npcs.json').catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
-      fetch('/data/gear-overrides.json').catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
-      fetch('/data/quests.json').catch(() => null),
+      fetch('/data/objects.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load object definitions:', e); return null; }),
+      fetch('/data/items.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load item definitions:', e); return null; }),
+      fetch('/data/npcs.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load NPC definitions:', e); return null; }),
+      fetch('/data/gear-overrides.json', { headers: authHeaders }).catch((e) => { console.warn('Failed to load gear overrides:', e); return null; }),
+      fetch('/data/quests.json', { headers: authHeaders }).catch(() => null),
     ]);
 
     if (objectsRes) {
@@ -4642,7 +4649,7 @@ export class GameManager {
   private async ensureSpellsLoaded(): Promise<void> {
     if (this.spellsById) return;
     try {
-      const res = await fetch('/api/spells');
+      const res = await fetch('/api/spells', { headers: this.authHeaders() });
       const data = await res.json();
       const list = (data.spells as SpellEffectDef[]) ?? [];
       this.spellsByIndex = list;
@@ -4654,6 +4661,11 @@ export class GameManager {
       this.spellsById = new Map();
       this.spellsByIndex = [];
     }
+  }
+
+  private authHeaders(): HeadersInit | undefined {
+    const token = this.token || localStorage.getItem('projectrs_token') || '';
+    return token ? { Authorization: `Bearer ${token}` } : undefined;
   }
 
   private openCharacterCreator(): void {

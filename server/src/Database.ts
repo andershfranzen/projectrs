@@ -39,8 +39,12 @@ export interface BotStatsRow {
   tick_align_samples: string;
   /** JSON array of recent reaction times (ms after NPC death → next attack). Capped at 50. */
   reaction_samples: string;
+  /** JSON array of recent client heartbeat intervals in ms. Capped at 100. */
+  ping_interval_samples: string;
   /** JSON map of "x,z" tile → visit count. Capped at 100 entries. */
   path_destinations: string;
+  /** JSON map of deviceId → login count. Used to catch fresh-ID-per-login bots. */
+  device_ids: string;
   /** JSON map of skill → xp at session start. Used to compute session-rate. */
   xp_baseline: string;
   /** JSON blob of the last computed session summary (flags + stats). */
@@ -256,12 +260,20 @@ export class GameDatabase {
         last_login_ts INTEGER,
         tick_align_samples TEXT NOT NULL DEFAULT '[]',
         reaction_samples TEXT NOT NULL DEFAULT '[]',
+        ping_interval_samples TEXT NOT NULL DEFAULT '[]',
         path_destinations TEXT NOT NULL DEFAULT '{}',
+        device_ids TEXT NOT NULL DEFAULT '{}',
         xp_baseline TEXT NOT NULL DEFAULT '{}',
         last_session_summary TEXT,
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
     `);
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN ping_interval_samples TEXT NOT NULL DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN device_ids TEXT NOT NULL DEFAULT '{}'`);
+    } catch { /* column already exists */ }
 
     // Login history: one row per session. IP is captured at WS upgrade time.
     // Indexed by ip + account_id + login_ts so the bot-review CLI can cheaply
@@ -1024,7 +1036,7 @@ export class GameDatabase {
              total_chat_messages, total_session_minutes, total_flag_events,
              last_chat_ts, last_action_ts, last_login_ts,
              tick_align_samples, reaction_samples, path_destinations,
-             xp_baseline, last_session_summary
+             ping_interval_samples, device_ids, xp_baseline, last_session_summary
       FROM bot_stats WHERE account_id = ?
     `).get(accountId) as BotStatsRow | null;
     return row;
@@ -1060,8 +1072,8 @@ export class GameDatabase {
         total_chat_messages, total_session_minutes, total_flag_events,
         last_chat_ts, last_action_ts, last_login_ts,
         tick_align_samples, reaction_samples, path_destinations,
-        xp_baseline, last_session_summary, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+        ping_interval_samples, device_ids, xp_baseline, last_session_summary, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
       ON CONFLICT(account_id) DO UPDATE SET
         total_skilling_actions = excluded.total_skilling_actions,
         total_combat_swings = excluded.total_combat_swings,
@@ -1075,6 +1087,8 @@ export class GameDatabase {
         tick_align_samples = excluded.tick_align_samples,
         reaction_samples = excluded.reaction_samples,
         path_destinations = excluded.path_destinations,
+        ping_interval_samples = excluded.ping_interval_samples,
+        device_ids = excluded.device_ids,
         xp_baseline = excluded.xp_baseline,
         last_session_summary = excluded.last_session_summary,
         updated_at = unixepoch()
@@ -1092,6 +1106,8 @@ export class GameDatabase {
       row.tick_align_samples,
       row.reaction_samples,
       row.path_destinations,
+      row.ping_interval_samples,
+      row.device_ids,
       row.xp_baseline,
       row.last_session_summary ?? null,
     );

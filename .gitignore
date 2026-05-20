@@ -18,6 +18,10 @@ pickaxeminingset_sourcefiles/
 # Local MCP server config (points at user's home dir)
 .mcp.json
 
+# Local agent/review tool state and generated worktrees
+.claude/
+.clawpatch/
+
 # Backup glbs kept locally
 client/public/Character models/*backup*.glb
 

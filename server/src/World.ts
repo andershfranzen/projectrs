@@ -981,7 +981,7 @@ export class World {
     player.botStats = row ? BotStats.fromRow(row) : BotStats.empty();
     const xpBaseline: Record<string, number> = {};
     for (const skill of ALL_SKILLS) xpBaseline[skill] = player.skills[skill].xp;
-    player.botStats.onLogin(xpBaseline);
+    player.botStats.onLogin(xpBaseline, player.deviceId);
 
     // Record this session in login_history (used by bot-review for IP
     // correlation). The IP was captured at WS upgrade and stamped onto
@@ -1055,7 +1055,8 @@ export class World {
     // correct Y. Covers both fresh login and grace-period reconnect — both
     // routes call sendLoginBootstrap.
     player.effectiveY = spawnY;
-    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
+    const sessionNonceWords = (player.ws.data as unknown as { crypto?: { sessionNonceWords?: number[] } }).crypto?.sessionNonceWords ?? [];
+    // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion, ...sessionNonceWords].
     // Version added at the end so older client builds (which read only the
     // first 4 values) still parse without error — they just don't see the
     // mismatch warning. New clients read v[4] and disconnect on mismatch.
@@ -1064,7 +1065,10 @@ export class World {
       qPos(player.position.y),
       qPos(spawnY),
       PROTOCOL_VERSION,
+      ...sessionNonceWords,
     );
+    const cryptoState = (player.ws.data as unknown as { crypto?: { encryptEnabled: boolean } }).crypto;
+    if (cryptoState) cryptoState.encryptEnabled = true;
 
     this.sendToPlayer(player, ServerOpcode.ADMIN_FLAGS, player.isAdmin ? 1 : 0);
 
@@ -3770,10 +3774,8 @@ export class World {
     if (!this.validateTradeSession(session)) return;
     const me = this.mySide(session, playerId);
     if (!me) return;
-    // Once this side accepts the first screen, its offer is locked until the
-    // trade completes or is declined. The non-accepted side can still mutate,
-    // which resets both stages and unlocks the first side.
-    if (me.stage > 0) return;
+    // Offer edits are allowed after either accept stage, but every successful
+    // edit resets both sides back to stage 0 before another confirm can happen.
     if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
     const invSlot = player.inventory[slotIndex];
     if (!invSlot || invSlot.itemId !== expectedItemId) return;
@@ -3828,7 +3830,8 @@ export class World {
     if (!this.validateTradeSession(session)) return;
     const me = this.mySide(session, playerId);
     if (!me) return;
-    if (me.stage > 0) return;
+    // Removing from an accepted offer is safe because offered items are already
+    // server-custodied and the successful mutation resets both accept stages.
     if (offerSlot < 0 || offerSlot >= me.offer.length) return;
     const off = me.offer[offerSlot];
     if (!off || off.itemId !== expectedItemId) return;

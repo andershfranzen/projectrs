@@ -7,6 +7,11 @@ import {
   TRADE_OFFER_SIZE,
   decodePacket,
   encodePacket,
+  ENCRYPTED_GAME_FRAME,
+  deriveGameCipherKey,
+  decryptGamePacket,
+  encryptGamePacket,
+  nonceBytesToWords,
   isValidAppearance,
   type PlayerAppearance,
 } from '@projectrs/shared';
@@ -14,9 +19,33 @@ import { World } from '../World';
 import { Player } from '../entity/Player';
 import { WORLD_RESPAWN_VERSION } from '../Database';
 import { audit } from '../Audit';
+import { randomBytes } from 'crypto';
 import type { ServerWebSocket } from 'bun';
 
-export type GameSocketData = { type: 'game'; playerId?: number; accountId: number; username: string; isAdmin: boolean; ip: string; deviceId: string };
+interface GameSocketCryptoState {
+  token: string;
+  sessionNonce: Uint8Array;
+  sessionNonceWords: number[];
+  keyPromise: Promise<CryptoKey>;
+  encryptEnabled: boolean;
+  sendCounter: number;
+  lastRecvCounter: number;
+  sendQueue: Promise<void>;
+  recvQueue: Promise<void>;
+  originalSendBinary?: (data: Bun.BufferSource) => number;
+}
+
+export type GameSocketData = {
+  type: 'game';
+  playerId?: number;
+  accountId: number;
+  username: string;
+  isAdmin: boolean;
+  ip: string;
+  deviceId: string;
+  token: string;
+  crypto?: GameSocketCryptoState;
+};
 
 export interface OpcodeRateRule {
   bucket: string;
@@ -34,6 +63,73 @@ const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
 
 const OK_PACKET: PacketValidationResult = { ok: true };
+
+function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void {
+  if (ws.data.crypto) return;
+  const sessionNonce = new Uint8Array(randomBytes(8));
+  const cryptoState: GameSocketCryptoState = {
+    token: ws.data.token,
+    sessionNonce,
+    sessionNonceWords: nonceBytesToWords(sessionNonce),
+    keyPromise: deriveGameCipherKey(ws.data.token, sessionNonce),
+    encryptEnabled: false,
+    sendCounter: 0,
+    lastRecvCounter: -1,
+    sendQueue: Promise.resolve(),
+    recvQueue: Promise.resolve(),
+  };
+  const originalSendBinary = ws.sendBinary.bind(ws);
+  cryptoState.originalSendBinary = originalSendBinary;
+  ws.data.crypto = cryptoState;
+  ws.sendBinary = ((data: Bun.BufferSource) => {
+    const packet = data instanceof Uint8Array
+      ? data
+      : data instanceof ArrayBuffer
+        ? new Uint8Array(data)
+        : ArrayBuffer.isView(data)
+          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          : new Uint8Array(data as unknown as ArrayBuffer);
+    cryptoState.sendQueue = cryptoState.sendQueue.then(async () => {
+      if (!cryptoState.encryptEnabled) {
+        originalSendBinary(packet);
+        return;
+      }
+      const key = await cryptoState.keyPromise;
+      const frame = await encryptGamePacket(
+        key,
+        cryptoState.sessionNonce,
+        'server-to-client',
+        cryptoState.sendCounter++,
+        packet,
+      );
+      originalSendBinary(frame);
+    }).catch((e) => {
+      console.warn('[ws] encryption send failed:', e instanceof Error ? e.message : e);
+      try { ws.close(1011, 'encryption failed'); } catch {}
+    });
+    return 0;
+  }) as typeof ws.sendBinary;
+}
+
+async function decryptGameSocketMessage(ws: ServerWebSocket<GameSocketData>, message: ArrayBuffer): Promise<ArrayBuffer> {
+  const view = new DataView(message);
+  const cryptoState = ws.data.crypto;
+  if (view.byteLength === 0) throw new RangeError('empty game frame');
+  if (view.getUint8(0) !== ENCRYPTED_GAME_FRAME) {
+    if (cryptoState?.encryptEnabled) throw new Error('plaintext packet after encryption enabled');
+    return message;
+  }
+  if (!cryptoState) throw new Error('encrypted frame without crypto state');
+  const key = await cryptoState.keyPromise;
+  const decrypted = await decryptGamePacket(key, cryptoState.sessionNonce, 'client-to-server', message);
+  if (decrypted.counter <= cryptoState.lastRecvCounter) throw new Error('replayed encrypted frame');
+  cryptoState.lastRecvCounter = decrypted.counter;
+  return decrypted.plaintext;
+}
+
+export function enableGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void {
+  if (ws.data.crypto) ws.data.crypto.encryptEnabled = true;
+}
 
 function hasValues(values: number[], count: number): boolean {
   if (values.length < count) return false;
@@ -394,6 +490,7 @@ export function handleGameSocketOpen(
   ws: ServerWebSocket<GameSocketData>,
   world: World
 ): void {
+  installGameSocketEncryption(ws);
   const { accountId, username } = ws.data;
 
   const reconnected = world.reconnectPlayer(accountId, ws);
@@ -524,6 +621,24 @@ export function handleGameSocketMessage(
   world: World
 ): void {
   if (typeof message === 'string') return;
+  const cryptoState = ws.data.crypto;
+  if (cryptoState) {
+    cryptoState.recvQueue = cryptoState.recvQueue
+      .then(async () => handleDecryptedGameSocketMessage(ws, await decryptGameSocketMessage(ws, message), world))
+      .catch((e) => {
+        console.warn(`[ws] encrypted packet failed account=${ws.data.accountId}:`, e instanceof Error ? e.message : e);
+        try { ws.close(1008, 'bad encrypted packet'); } catch {}
+      });
+    return;
+  }
+  handleDecryptedGameSocketMessage(ws, message, world);
+}
+
+function handleDecryptedGameSocketMessage(
+  ws: ServerWebSocket<GameSocketData>,
+  message: ArrayBuffer,
+  world: World
+): void {
 
   // Rate limit BEFORE parsing so a malformed-packet flood costs the attacker
   // their rate budget. Without this, garbage frames are caught by the try/catch
@@ -829,6 +944,7 @@ export function handleGameSocketMessage(
     }
 
     case ClientOpcode.CLIENT_PING: {
+      player.botStats?.recordHeartbeat(values[0] ?? 0);
       try {
         ws.sendBinary(encodePacket(ServerOpcode.SERVER_PONG, values[0] ?? 0, world.getTickForHeartbeat()));
       } catch { /* connection closed */ }

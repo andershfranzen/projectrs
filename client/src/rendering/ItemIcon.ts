@@ -117,7 +117,10 @@ function loadOverrides(): Promise<Record<number, ThumbnailOverride>> {
   if (_overridesPromise) return _overridesPromise;
   _overridesPromise = (async () => {
     try {
-      const res = await fetch('/data/thumbnail-overrides.json');
+      const token = localStorage.getItem('projectrs_token') || '';
+      const res = await fetch('/data/thumbnail-overrides.json', {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
       if (!res.ok) return {};
       const data = await res.json();
       if (!data || typeof data !== 'object') return {};

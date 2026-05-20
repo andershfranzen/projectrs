@@ -30,6 +30,7 @@ import { TICK_RATE } from '@projectrs/shared';
 
 const MAX_TICK_ALIGN_SAMPLES = 100;
 const MAX_REACTION_SAMPLES = 50;
+const MAX_PING_INTERVAL_SAMPLES = 100;
 const MAX_PATH_DESTINATIONS = 100;
 const MAX_ACTION_SIGNATURES = 100;
 const ACTION_ROUTE_MEMORY_MS = 10_000;
@@ -62,8 +63,12 @@ export interface SessionSummary {
   sessionChats: number;
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
+  pingIntervalStdDevMs: number | null;
+  pingIntervalMedianMs: number | null;
   topPathRepetition: number | null;
   topActionLoopRepetition: number | null;
+  deviceIdsSeen: number;
+  deviceReuseRatio: number | null;
   xpPerHour: Record<string, number>;
   flags: string[];
 }
@@ -83,7 +88,9 @@ export class BotStats {
   // Rolling samples (persisted, capped)
   tickAlignSamples: number[] = [];
   reactionSamples: number[] = [];
+  pingIntervalSamples: number[] = [];
   pathDestinations: Map<string, number> = new Map();
+  deviceIds: Map<string, number> = new Map();
 
   // Per-skill XP at session start (used to compute session XP/hour rate)
   xpBaseline: Map<string, number> = new Map();
@@ -97,6 +104,9 @@ export class BotStats {
   actionSignatures: Map<string, number> = new Map();
   private lastMovementDestinationKey: string | null = null;
   private lastMovementTs: number | null = null;
+  private lastPingAt: number | null = null;
+  private lastPingSeq: number | null = null;
+  private pingSeqResets: number = 0;
   /** When the last NPC died near this player — feeds the next attack's
    *  reaction time delta if it lands within 5 seconds. */
   pendingReactionStart: number | null = null;
@@ -120,9 +130,14 @@ export class BotStats {
     s.lastLoginTs = row.last_login_ts;
     try { s.tickAlignSamples = JSON.parse(row.tick_align_samples); } catch { s.tickAlignSamples = []; }
     try { s.reactionSamples = JSON.parse(row.reaction_samples); } catch { s.reactionSamples = []; }
+    try { s.pingIntervalSamples = JSON.parse(row.ping_interval_samples ?? '[]'); } catch { s.pingIntervalSamples = []; }
     try {
       const obj: Record<string, number> = JSON.parse(row.path_destinations);
       for (const [k, v] of Object.entries(obj)) s.pathDestinations.set(k, v);
+    } catch { /* empty */ }
+    try {
+      const obj: Record<string, number> = JSON.parse(row.device_ids ?? '{}');
+      for (const [k, v] of Object.entries(obj)) s.deviceIds.set(k, v);
     } catch { /* empty */ }
     try {
       const obj: Record<string, number> = JSON.parse(row.xp_baseline);
@@ -149,7 +164,9 @@ export class BotStats {
       last_login_ts: this.lastLoginTs,
       tick_align_samples: JSON.stringify(this.tickAlignSamples),
       reaction_samples: JSON.stringify(this.reactionSamples),
+      ping_interval_samples: JSON.stringify(this.pingIntervalSamples),
       path_destinations: JSON.stringify(pathObj),
+      device_ids: JSON.stringify(Object.fromEntries(this.deviceIds)),
       xp_baseline: JSON.stringify(xpObj),
       last_session_summary: lastSummary ? JSON.stringify(lastSummary) : null,
     };
@@ -157,7 +174,7 @@ export class BotStats {
 
   /** Mark login: reset session counters, capture current XP per skill as
    *  the baseline so XP-rate is computed against play (not lifetime). */
-  onLogin(currentXp: Record<string, number>): void {
+  onLogin(currentXp: Record<string, number>, deviceId: string = ''): void {
     const now = Date.now();
     this.sessionStartedAt = now;
     this.sessionSkillingActions = 0;
@@ -167,10 +184,16 @@ export class BotStats {
     this.actionSignatures.clear();
     this.lastMovementDestinationKey = null;
     this.lastMovementTs = null;
+    this.lastPingAt = null;
+    this.lastPingSeq = null;
+    this.pingSeqResets = 0;
     this.pendingReactionStart = null;
     this.xpBaseline.clear();
     for (const [skill, xp] of Object.entries(currentXp)) {
       this.xpBaseline.set(skill, xp);
+    }
+    if (deviceId) {
+      this.deviceIds.set(deviceId, (this.deviceIds.get(deviceId) ?? 0) + 1);
     }
     this.lastLoginTs = Math.floor(now / 1000);
   }
@@ -269,14 +292,38 @@ export class BotStats {
     this.lastChatTs = Math.floor(Date.now() / 1000);
   }
 
+  /** Browser heartbeat timing. The official client sends every 5s via
+   *  setInterval, but real browsers/network stacks add jitter. A raw script
+   *  tends to produce near-perfect intervals and sequence monotonicity. */
+  recordHeartbeat(seq: number, now: number = performance.now()): void {
+    if (this.lastPingAt !== null) {
+      const interval = now - this.lastPingAt;
+      if (interval >= 1000 && interval <= 30000) {
+        this.pushSample(this.pingIntervalSamples, interval, MAX_PING_INTERVAL_SAMPLES);
+      }
+    }
+    if (this.lastPingSeq !== null) {
+      const expected = (this.lastPingSeq + 1) & 0x7fff;
+      if (seq !== expected) this.pingSeqResets++;
+    }
+    this.lastPingSeq = seq;
+    this.lastPingAt = now;
+  }
+
   /** Compute session summary + flags. Pure read-only on stats. */
   computeSummary(currentXp: Record<string, number>): SessionSummary {
     const now = Date.now();
     const sessionMinutes = Math.floor((now - this.sessionStartedAt) / 60000);
     const tickAlignStdDevMs = stdDev(this.tickAlignSamples);
     const reactionMedianMs = median(this.reactionSamples);
+    const pingIntervalStdDevMs = stdDev(this.pingIntervalSamples);
+    const pingIntervalMedianMs = median(this.pingIntervalSamples);
     const topPathRepetition = topRatio(this.pathDestinations);
     const topActionLoopRepetition = topRatio(this.actionSignatures);
+    const deviceIdsSeen = this.deviceIds.size;
+    const deviceLogins = [...this.deviceIds.values()].reduce((a, b) => a + b, 0);
+    const maxDeviceReuse = this.deviceIds.size > 0 ? Math.max(...this.deviceIds.values()) : 0;
+    const deviceReuseRatio = deviceLogins > 0 ? maxDeviceReuse / deviceLogins : null;
 
     // XP rate per skill = (current - baseline) / hours
     const hours = Math.max(1 / 60, sessionMinutes / 60);
@@ -291,6 +338,15 @@ export class BotStats {
     // tickAligned: stddev < 30ms over ≥30 samples → near-zero variance
     if (this.tickAlignSamples.length >= 30 && tickAlignStdDevMs !== null && tickAlignStdDevMs < 30) {
       flags.push('tickAligned');
+    }
+    if (this.pingIntervalSamples.length >= 12 && pingIntervalStdDevMs !== null && pingIntervalStdDevMs < 20) {
+      flags.push('pingRegular');
+    }
+    if (this.pingSeqResets >= 2) {
+      flags.push('pingSeqReset');
+    }
+    if (deviceLogins >= 5 && deviceIdsSeen >= 5 && deviceReuseRatio !== null && deviceReuseRatio <= 0.25) {
+      flags.push('deviceRotating');
     }
     // noChat: 0 chat over an active session of ≥2hr
     if (this.sessionChats === 0 && sessionMinutes >= 120 &&
@@ -328,8 +384,12 @@ export class BotStats {
       sessionChats: this.sessionChats,
       tickAlignStdDevMs,
       reactionMedianMs,
+      pingIntervalStdDevMs,
+      pingIntervalMedianMs,
       topPathRepetition,
       topActionLoopRepetition,
+      deviceIdsSeen,
+      deviceReuseRatio,
       xpPerHour,
       flags,
     };

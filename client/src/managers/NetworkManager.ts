@@ -6,6 +6,11 @@ import {
   ClientOpcode,
   encodePacket,
   decodePacket,
+  ENCRYPTED_GAME_FRAME,
+  deriveGameCipherKey,
+  decryptGamePacket,
+  encryptGamePacket,
+  nonceWordsToBytes,
 } from '@projectrs/shared';
 
 export interface PlayerSyncData {
@@ -58,6 +63,13 @@ export class NetworkManager {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastGameMessageAt: number = 0;
   private heartbeatSeq: number = 0;
+  private authToken: string = '';
+  private gameCipherKey: CryptoKey | null = null;
+  private gameCipherNonce: Uint8Array | null = null;
+  private sendCipherCounter: number = 0;
+  private lastRecvCipherCounter: number = -1;
+  private sendCipherQueue: Promise<void> = Promise.resolve();
+  private recvCipherQueue: Promise<void> = Promise.resolve();
 
   private closeQuietly(socket: WebSocket | null): void {
     if (!socket) return;
@@ -92,7 +104,7 @@ export class NetworkManager {
 
       this.heartbeatSeq = (this.heartbeatSeq + 1) & 0x7fff;
       try {
-        socket.send(encodePacket(ClientOpcode.CLIENT_PING, this.heartbeatSeq) as BufferSource);
+        void this.sendFrame(socket, encodePacket(ClientOpcode.CLIENT_PING, this.heartbeatSeq));
       } catch {
         this.failGameSocket(socket, 4001, 'send failed');
       }
@@ -122,6 +134,13 @@ export class NetworkManager {
     this.closeQuietly(this.chatSocket);
     this.gameSocket = null;
     this.chatSocket = null;
+    this.authToken = token;
+    this.gameCipherKey = null;
+    this.gameCipherNonce = null;
+    this.sendCipherCounter = 0;
+    this.lastRecvCipherCounter = -1;
+    this.sendCipherQueue = Promise.resolve();
+    this.recvCipherQueue = Promise.resolve();
 
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Vite's WS proxy doesn't reliably upgrade on Windows — connect directly to the server in dev.
@@ -150,20 +169,31 @@ export class NetworkManager {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       if (!(event.data instanceof ArrayBuffer)) return;
       this.markGameMessageReceived();
+      this.recvCipherQueue = this.recvCipherQueue
+        .then(() => this.handleGameMessage(gameSocket, generation, event.data))
+        .catch((e) => {
+          console.warn('[net] Failed to process game packet:', e);
+          this.failGameSocket(gameSocket, 4006, 'packet decrypt failed');
+        });
+    };
+
+    const handlePlainMessage = (data: ArrayBuffer) => {
       // Raw handlers consume string-layout packets (UTF-8 payload + trailing
       // int16s — different shape from the standard binary protocol).
       for (const handler of this.rawHandlers) {
-        handler(event.data);
+        handler(data);
       }
       // String-packet opcodes are handled exclusively above. Skip the int16
       // dispatch path so we never (a) throw on odd-length UTF-8 payloads or
       // (b) silently re-dispatch garbage int16s when the payload length
       // happens to be even. Real decode errors on int16 packets still throw.
-      const opcode = new DataView(event.data).getUint8(0);
+      const opcode = new DataView(data).getUint8(0);
       if (STRING_PACKET_OPCODES.has(opcode)) return;
-      const { values } = decodePacket(event.data);
+      const { values } = decodePacket(data);
       this.dispatch(opcode as ServerOpcode, values);
     };
+
+    this.handlePlainGameMessage = handlePlainMessage;
 
     gameSocket.onclose = (event) => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
@@ -202,6 +232,45 @@ export class NetworkManager {
       if (generation !== this.socketGeneration || this.chatSocket !== chatSocket) return;
       this.chatSocket = null;
     };
+  }
+
+  private handlePlainGameMessage: ((data: ArrayBuffer) => void) | null = null;
+
+  private async handleGameMessage(socket: WebSocket, generation: number, data: ArrayBuffer): Promise<void> {
+    if (generation !== this.socketGeneration || this.gameSocket !== socket) return;
+    let plain = data;
+    if (new DataView(data).getUint8(0) === ENCRYPTED_GAME_FRAME) {
+      if (!this.gameCipherKey || !this.gameCipherNonce) throw new Error('encrypted frame before session key');
+      const decrypted = await decryptGamePacket(this.gameCipherKey, this.gameCipherNonce, 'server-to-client', data);
+      if (decrypted.counter <= this.lastRecvCipherCounter) throw new Error('replayed encrypted frame');
+      this.lastRecvCipherCounter = decrypted.counter;
+      plain = decrypted.plaintext;
+    }
+
+    const opcode = new DataView(plain).getUint8(0);
+    if (opcode === ServerOpcode.LOGIN_OK) {
+      const { values } = decodePacket(plain);
+      if (values.length >= 9 && !this.gameCipherKey) {
+        this.gameCipherNonce = nonceWordsToBytes(values.slice(5, 9));
+        this.gameCipherKey = await deriveGameCipherKey(this.authToken, this.gameCipherNonce);
+      }
+    }
+
+    this.handlePlainGameMessage?.(plain);
+  }
+
+  private sendFrame(socket: WebSocket, packet: Uint8Array): Promise<void> {
+    this.sendCipherQueue = this.sendCipherQueue.then(async () => {
+      if (this.gameSocket !== socket || socket.readyState !== WebSocket.OPEN) return;
+      const frame = this.gameCipherKey && this.gameCipherNonce
+        ? await encryptGamePacket(this.gameCipherKey, this.gameCipherNonce, 'client-to-server', this.sendCipherCounter++, packet)
+        : packet;
+      socket.send(frame as BufferSource);
+    }).catch((e) => {
+      console.warn('[net] Failed to send encrypted game packet:', e);
+      this.failGameSocket(socket, 4007, 'packet encrypt failed');
+    });
+    return this.sendCipherQueue;
   }
 
   onDisconnect(handler: DisconnectHandler): void {
@@ -258,7 +327,7 @@ export class NetworkManager {
       values.push(Math.round(path[i].z * 10));
     }
     try {
-      this.gameSocket.send(encodePacket(ClientOpcode.PLAYER_MOVE, ...values) as BufferSource);
+      void this.sendFrame(this.gameSocket, encodePacket(ClientOpcode.PLAYER_MOVE, ...values));
       return true;
     } catch {
       this.failGameSocket(this.gameSocket, 4003, 'move send failed');
@@ -273,7 +342,7 @@ export class NetworkManager {
       return false;
     }
     try {
-      this.gameSocket.send(data as BufferSource);
+      void this.sendFrame(this.gameSocket, data);
       return true;
     } catch {
       this.failGameSocket(this.gameSocket, 4005, 'packet send failed');

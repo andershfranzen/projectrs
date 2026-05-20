@@ -502,7 +502,8 @@ function getMimeType(path: string): string {
 
 function serveStatic(pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
-  let filePath = resolve(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
+  let filePath = resolvePossiblyMissingWithinBase(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
+  if (!filePath) return null;
   let isIndexFallback = false;
 
   try {
@@ -542,7 +543,8 @@ function serveStatic(pathname: string): Response | null {
 function serveWebsite(pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
   if (decoded !== '/' && decoded !== '/hiscores' && !decoded.startsWith('/_next/')) return null;
-  let filePath = resolve(WEBSITE_DIST, decoded === '/' ? 'index.html' : decoded === '/hiscores' ? 'hiscores.html' : decoded.slice(1));
+  let filePath = resolvePossiblyMissingWithinBase(WEBSITE_DIST, decoded === '/' ? 'index.html' : decoded === '/hiscores' ? 'hiscores.html' : decoded.slice(1));
+  if (!filePath) return null;
   let isHtml = false;
 
   try {
@@ -781,6 +783,21 @@ function banGateResponse(accountId: number, ip: string): Response | null {
   return null;
 }
 
+function getBearerSession(req: Request) {
+  const auth = req.headers.get('Authorization') || '';
+  const m = auth.match(/^Bearer\s+(.+)$/i);
+  return m ? db.getSession(m[1]) : null;
+}
+
+function isGameplayMapDataPath(mapPath: string): boolean {
+  return /^[-\w]+\/(?:meta\.json|map\.json|walls\.json|biomes\.json)$/.test(mapPath)
+    || /^[-\w]+\/(?:tiles|heights|objects)\/chunk_-?\d+_-?\d+\.json$/.test(mapPath);
+}
+
+function requiresAuthenticatedJsonAsset(pathname: string): boolean {
+  return pathname === '/assets/assets.json' || pathname === '/assets/textures/textures.json';
+}
+
 // Clean expired sessions every 10 minutes
 setInterval(() => db.cleanExpiredSessions(), 10 * 60 * 1000);
 
@@ -991,7 +1008,7 @@ const server = Bun.serve<SocketData>({
       const banned = banGateResponse(session.accountId, wsIp);
       if (banned) return banned;
       const upgraded = server.upgrade(req, {
-        data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, ip: wsIp, deviceId: session.deviceId } as GameSocketData,
+        data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, ip: wsIp, deviceId: session.deviceId, token } as GameSocketData,
         headers: wsAcceptHeaders(req),
       });
       if (upgraded) return undefined as unknown as Response;
@@ -1022,6 +1039,9 @@ const server = Bun.serve<SocketData>({
       const filename = url.pathname.slice(6); // remove '/data/'
       if (filename.includes('/') || filename.includes('..')) {
         return new Response('Forbidden', { status: 403 });
+      }
+      if (isProductionLike() && !getBearerSession(req)) {
+        return new Response('Unauthorized', { status: 401 });
       }
       if (isProductionLike() && !isPublicDataFile(filename)) {
         return new Response('Not Found', { status: 404 });
@@ -1283,6 +1303,9 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/spells' && req.method === 'GET') {
+      if (isProductionLike() && !getBearerSession(req)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
       return jsonResponse({ spells: world.data.getAllSpells() });
     }
 
@@ -1858,6 +1881,9 @@ const server = Bun.serve<SocketData>({
       if (mapPath.includes('/backups/') || mapPath.endsWith('/backups')) {
         return new Response('Forbidden', { status: 403 });
       }
+      if (isProductionLike() && isGameplayMapDataPath(mapPath) && !getBearerSession(req)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
       // Symlink-safe path resolution
       const filePath = resolvePossiblyMissingWithinBase(MAPS_DIR, mapPath);
       if (!filePath) {
@@ -1900,6 +1926,9 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname.startsWith('/assets/')) {
       const decodedPath = decodeURIComponent(url.pathname);
+      if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBearerSession(req)) {
+        return new Response('Unauthorized', { status: 401 });
+      }
       const publicAssetsDir = resolve(import.meta.dir, '../../client/public');
       for (const baseDir of [CLIENT_DIST, publicAssetsDir]) {
         const filePath = resolvePossiblyMissingWithinBase(baseDir, decodedPath.slice(1));

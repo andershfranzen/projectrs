@@ -176,6 +176,35 @@ describe('player trading anti-dupe validation', () => {
     expect(countItem(a, COINS)).toBe(50);
   });
 
+  test('the accepted side can remove offered items and reset both accept stages', () => {
+    const a = makePlayer('alice', 1);
+    const b = makePlayer('bob', 2);
+    a.inventory[0] = { itemId: COINS, quantity: 100 };
+    const { world } = makeHarness(a, b);
+    const session = openTrade(world, a, b);
+
+    world.handleTradeOfferItem(a.id, 0, COINS, 40);
+    world.handleTradeAccept(a.id);
+    expect(session.a.stage).toBe(1);
+
+    world.handleTradeRemoveOffered(a.id, 0, COINS, 10);
+    expect(session.a.stage).toBe(0);
+    expect(session.b.stage).toBe(0);
+    expect(session.a.offer[0]).toEqual({ itemId: COINS, quantity: 30 });
+    expect(countItem(a, COINS)).toBe(70);
+
+    world.handleTradeAccept(a.id);
+    world.handleTradeAccept(b.id);
+    expect(session.a.stage).toBe(1);
+    expect(session.b.stage).toBe(1);
+
+    world.handleTradeRemoveOffered(a.id, 0, COINS, -1);
+    expect(session.a.stage).toBe(0);
+    expect(session.b.stage).toBe(0);
+    expect(session.a.offer[0]).toBeNull();
+    expect(countItem(a, COINS)).toBe(100);
+  });
+
   test('one player cannot advance to final confirm before both players first-accept', () => {
     const a = makePlayer('alice', 1);
     const b = makePlayer('bob', 2);

@@ -6,7 +6,12 @@ import { renderItemSlot } from '../rendering/ItemIcon';
 
 interface BankSlotData { itemId: number; quantity: number }
 
-/** Bank UI — opens as a centered modal with the bank grid on the left and a
+const BANK_TEXT_SHADOW = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000';
+const BANK_BUTTON_BG = 'rgba(43, 10, 8, 0.9)';
+const BANK_BUTTON_HOVER_BG = 'rgba(78, 18, 14, 0.95)';
+const BANK_BUTTON_BORDER = '#9a332b';
+
+/** Bank UI — opens inside the playable game frame with the bank grid on the left and a
  *  mirror of the player's inventory on the right.
  *  - Click a bank slot → withdraw 1
  *  - Right-click a bank slot → 5 / 10 / All
@@ -14,7 +19,7 @@ interface BankSlotData { itemId: number; quantity: number }
  *  - Right-click an inventory slot → 5 / 10 / All
  *  All operations are server-authoritative; this panel only renders state
  *  pushed by BANK_OPEN / BANK_UPDATE_SLOT and the existing inventory packets.
- *  The X button (or Escape) sends BANK_CLOSE; the server is also free to send
+ *  The close button (or Escape) sends BANK_CLOSE; the server is also free to send
  *  a server-driven BANK_CLOSE when the player walks/attacks/etc. */
 export class BankPanel {
   private container: HTMLDivElement;
@@ -34,7 +39,7 @@ export class BankPanel {
     this.container = built.root;
     this.bankGridEl = built.bankGrid;
     this.invGridEl = built.invGrid;
-    document.body.appendChild(this.container);
+    (document.getElementById('game-frame') ?? document.body).appendChild(this.container);
 
     // Escape closes the bank.
     document.addEventListener('keydown', (e) => {
@@ -89,29 +94,31 @@ export class BankPanel {
     const { root } = createModalPanel({
       id: 'bank-panel',
       title: 'Bank of EvilQuest',
-      geometry: { kind: 'viewport' },
+      geometry: {
+        kind: 'game-canvas',
+        width: 'min(690px, calc(100% - var(--right-rail-width, 300px) - 18px))',
+        maxHeight: 'calc(100% - var(--chat-height, 220px) - 18px)',
+      },
+      chrome: 'dialogue',
+      closeButton: false,
       onClose: () => this.hide(true),
     });
 
     // Body — two columns
     const body = document.createElement('div');
-    body.style.cssText = `display: flex; gap: 12px; padding: 12px; flex: 1; min-height: 0;`;
+    body.style.cssText = `display: flex; gap: 10px; padding: 9px 10px 6px; flex: 1; min-height: 0; overflow: hidden;`;
 
     // Bank column
     const bankCol = document.createElement('div');
-    bankCol.style.cssText = `flex: 1.6 1 0; display: flex; flex-direction: column; min-height: 0;`;
+    bankCol.style.cssText = `flex: 1.45 1 0; display: flex; flex-direction: column; min-height: 0; min-width: 0;`;
     const bankLabel = document.createElement('div');
     bankLabel.textContent = `Bank (${BANK_SIZE} slots)`;
-    bankLabel.style.cssText = `color: #d8372b; font-size: 12px; margin-bottom: 6px;`;
+    bankLabel.style.cssText = this.labelCss();
     bankCol.appendChild(bankLabel);
 
     const bankGrid = document.createElement('div');
-    bankGrid.style.cssText = `
-      display: grid; grid-template-columns: repeat(8, 1fr);
-      gap: 2px; overflow-y: auto;
-      background: rgba(0,0,0,0.4); padding: 4px; border: 1px inset #3a3025;
-      flex: 1; min-height: 0;
-    `;
+    bankGrid.style.cssText = this.inventoryGridCss(8, true);
+    this.addInventoryStitch(bankGrid);
     for (let i = 0; i < BANK_SIZE; i++) {
       const slot = this.makeSlot();
       slot.addEventListener('click', () => this.onBankClick(i));
@@ -127,15 +134,12 @@ export class BankPanel {
     invCol.style.cssText = `flex: 1 1 0; display: flex; flex-direction: column; min-width: 0;`;
     const invLabel = document.createElement('div');
     invLabel.textContent = 'Inventory';
-    invLabel.style.cssText = `color: #d8372b; font-size: 12px; margin-bottom: 6px;`;
+    invLabel.style.cssText = this.labelCss();
     invCol.appendChild(invLabel);
 
     const invGrid = document.createElement('div');
-    invGrid.style.cssText = `
-      display: grid; grid-template-columns: repeat(5, 1fr);
-      gap: 2px;
-      background: rgba(0,0,0,0.4); padding: 4px; border: 1px inset #3a3025;
-    `;
+    invGrid.style.cssText = this.inventoryGridCss(5, false);
+    this.addInventoryStitch(invGrid);
     for (let i = 0; i < INVENTORY_SIZE; i++) {
       const slot = this.makeSlot();
       slot.addEventListener('click', () => this.onInvClick(i));
@@ -148,25 +152,73 @@ export class BankPanel {
 
     root.appendChild(body);
 
-    // Hint footer
+    const footer = document.createElement('div');
+    footer.style.cssText = `display: flex; align-items: center; gap: 8px; padding: 0 10px 8px;`;
     const hint = document.createElement('div');
     hint.textContent = 'Left-click = 1 · Right-click = 5/10/All';
-    hint.style.cssText = `padding: 6px 12px; font-size: 11px; color: #888; border-top: 1px solid #333; text-align: center;`;
-    root.appendChild(hint);
+    hint.style.cssText = `flex: 1; min-width: 0; font-size: 11px; color: #f4ded5; opacity: 0.82; text-shadow: ${BANK_TEXT_SHADOW};`;
+    footer.appendChild(hint);
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = 'Close';
+    closeBtn.style.cssText = this.actionButtonCss();
+    this.installButtonHover(closeBtn);
+    closeBtn.onclick = () => this.hide(true);
+    footer.appendChild(closeBtn);
+    root.appendChild(footer);
 
     return { root, bankGrid, invGrid };
+  }
+
+  private inventoryGridCss(cols: number, scroll: boolean): string {
+    return `
+      display: grid;
+      grid-template-columns: repeat(${cols}, minmax(0, 1fr));
+      gap: 0;
+      position: relative;
+      overflow-y: ${scroll ? 'auto' : 'hidden'};
+      overflow-x: hidden;
+      background:
+        repeating-linear-gradient(0deg, rgba(196, 126, 70, 0.035) 0 1px, transparent 1px 4px),
+        repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 5px),
+        repeating-linear-gradient(45deg, rgba(138, 74, 42, 0.05) 0 2px, transparent 2px 10px),
+        linear-gradient(180deg, #2c180f 0%, #1f100a 50%, #120806 100%);
+      border-top: 2px solid #6f4227;
+      border-left: 2px solid #5c341f;
+      border-right: 2px solid #160b06;
+      border-bottom: 2px solid #120804;
+      border-radius: 2px;
+      box-shadow:
+        inset 2px 2px 0 rgba(160, 88, 48, 0.13),
+        inset -2px -2px 0 rgba(0,0,0,0.5),
+        2px 2px 0 rgba(0,0,0,0.45);
+      flex: ${scroll ? '1 1 auto' : '0 0 auto'};
+      min-height: 0;
+    `;
+  }
+
+  private addInventoryStitch(grid: HTMLDivElement): void {
+    const stitch = document.createElement('div');
+    stitch.style.cssText = `
+      position: absolute; inset: 3px;
+      border: 1px dotted rgba(150, 82, 46, 0.38);
+      border-radius: 1px;
+      box-shadow: 0 0 0 1px rgba(35, 16, 9, 0.7);
+      pointer-events: none; z-index: 1;
+    `;
+    grid.appendChild(stitch);
   }
 
   private makeSlot(): HTMLDivElement {
     const slot = document.createElement('div');
     slot.style.cssText = `
-      width: 100%; aspect-ratio: 1 / 1; min-height: 40px;
-      background: rgba(0,0,0,0.3); border: 1px solid #2a2218;
+      width: 100%; aspect-ratio: 1 / 1; min-height: 0;
+      background: transparent; border: 0;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; position: relative; font-size: 9px;
+      z-index: 2;
     `;
-    slot.addEventListener('mouseenter', () => { slot.style.background = 'rgba(255,255,255,0.06)'; });
-    slot.addEventListener('mouseleave', () => { slot.style.background = 'rgba(0,0,0,0.3)'; });
+    slot.addEventListener('mouseenter', () => { slot.style.background = 'rgba(154,51,43,0.22)'; });
+    slot.addEventListener('mouseleave', () => { slot.style.background = 'transparent'; });
     return slot;
   }
 
@@ -193,6 +245,32 @@ export class BankPanel {
       quantity,
       placeholderSize: 24,
     });
+  }
+
+  private labelCss(): string {
+    return `color: #f4ded5; font-size: 12px; margin-bottom: 5px; font-weight: bold; text-shadow: ${BANK_TEXT_SHADOW};`;
+  }
+
+  private actionButtonCss(): string {
+    return `
+      background: ${BANK_BUTTON_BG};
+      border: 1px solid ${BANK_BUTTON_BORDER};
+      color: #f4ded5;
+      padding: 5px 11px;
+      min-width: 74px;
+      border-radius: 2px;
+      cursor: pointer;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 12px;
+      font-weight: bold;
+      text-shadow: ${BANK_TEXT_SHADOW};
+      box-shadow: inset 0 0 0 1px rgba(255,190,150,0.08);
+    `;
+  }
+
+  private installButtonHover(button: HTMLButtonElement): void {
+    button.addEventListener('mouseenter', () => { if (!button.disabled) button.style.background = BANK_BUTTON_HOVER_BG; });
+    button.addEventListener('mouseleave', () => { button.style.background = BANK_BUTTON_BG; });
   }
 
   private onBankClick(slot: number): void {

@@ -23,6 +23,14 @@ import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
 
+function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const token = localStorage.getItem('projectrs_token') || '';
+  if (!token) return fetch(input, init);
+  const headers = new Headers(init.headers);
+  headers.set('Authorization', `Bearer ${token}`);
+  return fetch(input, { ...init, headers });
+}
+
 // --- Building mesh types ---
 
 interface FloorMeshSet {
@@ -307,7 +315,7 @@ export class ChunkManager {
     const joinCb = cacheBust ? `${cacheBust}&` : '?';
 
     // Fetch meta
-    const metaRes = await fetch(`/maps/${mapId}/meta.json${cacheBust}`);
+    const metaRes = await authFetch(`/maps/${mapId}/meta.json${cacheBust}`);
     if (isStale()) return;
     this.meta = await metaRes.json() as MapMeta;
     if (isStale()) return;
@@ -315,7 +323,7 @@ export class ChunkManager {
     this.mapHeight = this.meta.height;
 
     // Fetch KC map data — request chunked mode (metadata only, no tiles/heights)
-    const mapRes = await fetch(`/maps/${mapId}/map.json${joinCb}chunked=1`);
+    const mapRes = await authFetch(`/maps/${mapId}/map.json${joinCb}chunked=1`);
     if (isStale()) return;
     const mapFile: KCMapFile = await mapRes.json();
     if (isStale()) return;
@@ -377,7 +385,7 @@ export class ChunkManager {
     this.floorLayerData.clear();
     this.currentFloor = 0;
     try {
-      const wallsRes = await fetch(`/maps/${mapId}/walls.json${cacheBust}`);
+      const wallsRes = await authFetch(`/maps/${mapId}/walls.json${cacheBust}`);
       if (isStale()) return;
       if (wallsRes.ok) {
         const wallsData: WallsFile = await wallsRes.json();
@@ -944,8 +952,8 @@ export class ChunkManager {
     try {
       // Fetch tiles and heights in parallel (missing chunks return 404 — that's OK)
       const [tilesRes, heightsRes] = await Promise.all([
-        fetch(`/maps/${this.mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
-        fetch(`/maps/${this.mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
+        authFetch(`/maps/${this.mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
+        authFetch(`/maps/${this.mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
       ]);
       if ((!tilesRes || !tilesRes.ok) && (!heightsRes || !heightsRes.ok)) {
         // No data for this chunk — mark as loaded (empty) and skip
@@ -2690,7 +2698,7 @@ export class ChunkManager {
 
   private async loadAssetRegistry(): Promise<void> {
     try {
-      const res = await fetch('/assets/assets.json');
+      const res = await authFetch('/assets/assets.json');
       const data = await res.json();
       for (const asset of data.assets || []) {
         this.assetRegistry.set(asset.id, { path: asset.path });
@@ -2700,7 +2708,7 @@ export class ChunkManager {
       console.warn('[ChunkManager] Failed to load asset registry:', e);
     }
     try {
-      const res = await fetch('/assets/textures/textures.json');
+      const res = await authFetch('/assets/textures/textures.json');
       const data = await res.json();
       for (const tex of data) {
         this.textureRegistry.set(tex.id, { path: tex.path });
@@ -2916,7 +2924,7 @@ export class ChunkManager {
     if (!objects || objects.length === 0) {
       try {
         const [cx, cz] = chunkKey.split(',').map(Number);
-        const res = await fetch(`/maps/${this.mapId}/objects/chunk_${cx}_${cz}.json`);
+        const res = await authFetch(`/maps/${this.mapId}/objects/chunk_${cx}_${cz}.json`);
         if (res.ok) {
           const fetched: PlacedObject[] = await res.json();
           if (fetched.length > 0) {

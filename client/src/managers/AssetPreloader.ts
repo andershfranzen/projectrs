@@ -20,6 +20,7 @@ export interface PreloadProgress {
 export type PreloadCallback = (p: PreloadProgress) => void;
 
 const DEFAULT_MAP = 'kcmap';
+const TOKEN_KEY = 'projectrs_token';
 
 const DEF_FILES = [
   '/data/objects.json',
@@ -43,6 +44,7 @@ const mapAssets = (map: string): string[] => [
  * Resolves once every fetch settles (fulfilled or rejected).
  */
 export async function preloadAssets(onProgress?: PreloadCallback): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY) || '';
   const assets = [
     ...mapAssets(DEFAULT_MAP),
     ...DEF_FILES,
@@ -69,7 +71,7 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
   // load fetches `/foo.glb?v=…`, a different cache key. Skip the
   // network round-trip entirely in dev; the SceneLoader path handles
   // its own fetches at game-init time.
-  if (import.meta.env.DEV) {
+  if (import.meta.env.DEV || !token) {
     loaded = total;
     report('Cache ready');
     return;
@@ -78,7 +80,9 @@ export async function preloadAssets(onProgress?: PreloadCallback): Promise<void>
   await Promise.all(
     assets.map(async (url) => {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         // Drain the body so the response is fully cached. Without this,
         // some browsers keep the stream pending and `SceneLoader` may
         // still hit the network on its own fetch.

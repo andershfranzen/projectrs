@@ -111,11 +111,13 @@ export interface ContextMenuOpts {
   onClose?: () => void;
 }
 
+const DEFAULT_CONTEXT_MENU_Z_INDEX = 3000;
+
 export function contextMenuCss(opts: ContextMenuOpts): string {
   return `
     position: fixed; left: ${opts.x}px; top: ${opts.y}px;
     background: #3a3125; border: 2px solid #5a4a35;
-    font-family: Arial, Helvetica, sans-serif; font-size: ${opts.fontSizePx ?? 12}px; z-index: ${opts.zIndex ?? 1001};
+    font-family: Arial, Helvetica, sans-serif; font-size: ${opts.fontSizePx ?? 12}px; z-index: ${opts.zIndex ?? DEFAULT_CONTEXT_MENU_Z_INDEX};
     min-width: ${opts.minWidthPx ?? 100}px;
     ${opts.maxWidthPx ? `max-width: ${opts.maxWidthPx}px;` : ''}
     box-shadow: 2px 2px 8px rgba(0,0,0,0.5);
