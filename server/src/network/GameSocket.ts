@@ -64,7 +64,7 @@ const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_
 
 const OK_PACKET: PacketValidationResult = { ok: true };
 
-function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void {
+export function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void {
   if (ws.data.crypto) return;
   const sessionNonce = new Uint8Array(randomBytes(8));
   const cryptoState: GameSocketCryptoState = {
@@ -89,8 +89,9 @@ function installGameSocketEncryption(ws: ServerWebSocket<GameSocketData>): void 
         : ArrayBuffer.isView(data)
           ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
           : new Uint8Array(data as unknown as ArrayBuffer);
+    const shouldEncrypt = cryptoState.encryptEnabled;
     cryptoState.sendQueue = cryptoState.sendQueue.then(async () => {
-      if (!cryptoState.encryptEnabled) {
+      if (!shouldEncrypt) {
         originalSendBinary(packet);
         return;
       }
