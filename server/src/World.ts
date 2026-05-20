@@ -465,7 +465,7 @@ export class World {
     for (const eid of nearbyIds) {
       if (eid === player.id) continue;
       const other = this.players.get(eid);
-      if (other) { this.sendPlayerUpdate(player, other); continue; }
+      if (other) { this.sendPlayerPresence(player, other); continue; }
       const npc = this.npcs.get(eid);
       if (npc && !npc.dead) {
         // Static data first — the client uses cached appearance to decide
@@ -5400,13 +5400,7 @@ export class World {
 
           const subject = this.players.get(eid);
           if (subject) {
-            this.sendPlayerUpdate(viewer, subject);
-            // Equipment isn't part of PLAYER_SYNC (it'd bloat every position
-            // tick), so push it as a separate packet on chunk entry. Matches
-            // what we do for world-object state — full sync on chunk change.
-            this.sendRemoteEquipment(viewer, subject);
-            this.sendRemoteStance(viewer, subject);
-            this.sendRemoteAnimation(viewer, subject);
+            this.sendPlayerPresence(viewer, subject);
             return;
           }
           const npc = this.npcs.get(eid);
@@ -5487,6 +5481,18 @@ export class World {
       a ? a.hairStyle  : -1,
       subject.combatLevel,
     );
+  }
+
+  private sendPlayerPresence(viewer: Player, subject: Player): void {
+    this.sendPlayerUpdate(viewer, subject);
+    // Equipment/stance/animation are intentionally separate from PLAYER_SYNC
+    // so ordinary movement packets stay small. On map-ready and chunk-entry
+    // we need the full bundle, otherwise a late-joining client can spawn a
+    // player who is already chopping/mining but miss the active animation
+    // until the next start/stop event.
+    this.sendRemoteEquipment(viewer, subject);
+    this.sendRemoteStance(viewer, subject);
+    this.sendRemoteAnimation(viewer, subject);
   }
 
   private sendNpcUpdate(viewer: Player, npc: Npc): void {
