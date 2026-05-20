@@ -500,7 +500,22 @@ function getMimeType(path: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
-function serveStatic(pathname: string): Response | null {
+function isGameRoute(pathname: string): boolean {
+  const decoded = decodeURIComponent(pathname);
+  const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
+  return normalized === '/play' || normalized.startsWith('/play/');
+}
+
+function shouldServeWebsiteNotFound(req: Request, pathname: string): boolean {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  const lastSegment = pathname.split('/').pop() ?? '';
+  if (lastSegment.includes('.')) return false;
+
+  const accept = req.headers.get('accept') ?? '';
+  return accept.includes('text/html') || accept.includes('*/*') || accept === '';
+}
+
+function serveStatic(pathname: string, allowIndexFallback = false): Response | null {
   const decoded = decodeURIComponent(pathname);
   let filePath = resolvePossiblyMissingWithinBase(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
   if (!filePath) return null;
@@ -513,6 +528,7 @@ function serveStatic(pathname: string): Response | null {
       isIndexFallback = true;
     }
   } catch {
+    if (!allowIndexFallback) return null;
     filePath = resolve(CLIENT_DIST, 'index.html');
     isIndexFallback = true;
   }
@@ -540,19 +556,61 @@ function serveStatic(pathname: string): Response | null {
   }
 }
 
+function serveWebsiteNotFound(): Response {
+  const candidates = ['404.html', '_not-found.html'];
+  for (const candidate of candidates) {
+    const filePath = resolveWithinBase(WEBSITE_DIST, candidate);
+    if (!filePath) continue;
+    try {
+      return new Response(readFileSync(filePath), {
+        status: 404,
+        headers: {
+          'Content-Type': 'text/html',
+          'Cache-Control': 'no-cache',
+        },
+      });
+    } catch {
+      // Try the next exported not-found page.
+    }
+  }
+
+  return new Response('Not Found', { status: 404 });
+}
+
 function serveWebsite(pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
-  if (decoded !== '/' && decoded !== '/hiscores' && !decoded.startsWith('/_next/')) return null;
-  let filePath = resolvePossiblyMissingWithinBase(WEBSITE_DIST, decoded === '/' ? 'index.html' : decoded === '/hiscores' ? 'hiscores.html' : decoded.slice(1));
-  if (!filePath) return null;
-  let isHtml = false;
-
-  try {
-    const stat = statSync(filePath);
-    if (stat.isDirectory()) filePath = resolve(filePath, 'index.html');
-  } catch {
+  const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
+  if (
+    normalized !== '/'
+    && normalized !== '/hiscores'
+    && normalized !== '/news'
+    && !normalized.startsWith('/news/')
+    && !normalized.startsWith('/_next/')
+  ) {
     return null;
   }
+
+  const routePath = normalized === '/' ? 'index' : normalized.slice(1);
+  const candidates = normalized.startsWith('/_next/')
+    ? [routePath]
+    : [`${routePath}.html`, routePath, `${routePath}/index.html`];
+
+  let filePath: string | null = null;
+  let isHtml = false;
+
+  for (const candidate of candidates) {
+    const resolved = resolvePossiblyMissingWithinBase(WEBSITE_DIST, candidate);
+    if (!resolved) continue;
+    try {
+      const stat = statSync(resolved);
+      filePath = stat.isDirectory() ? resolve(resolved, 'index.html') : resolved;
+      break;
+    } catch {
+      // Try the next static export shape.
+    }
+  }
+
+  if (!filePath) return null;
 
   try {
     const content = readFileSync(filePath);
@@ -856,7 +914,14 @@ const server = Bun.serve<SocketData>({
         url.searchParams.get('category') ?? 'overall',
         Number(url.searchParams.get('limit') ?? 25),
         Number(url.searchParams.get('page') ?? 1),
+        url.searchParams.get('q') ?? '',
       ));
+    }
+
+    if (url.pathname === '/api/hiscores/player' && req.method === 'GET') {
+      const profile = db.getHiscoreProfile(url.searchParams.get('username') ?? '');
+      if (!profile) return jsonResponse({ ok: false, error: 'Player profile not found.' }, 404);
+      return jsonResponse(profile);
     }
 
     // --- REST Auth Endpoints ---
@@ -1960,8 +2025,10 @@ const server = Bun.serve<SocketData>({
     const websiteResponse = serveWebsite(url.pathname);
     if (websiteResponse) return websiteResponse;
 
-    const response = serveStatic(url.pathname);
+    const response = serveStatic(url.pathname, isGameRoute(url.pathname));
     if (response) return response;
+
+    if (shouldServeWebsiteNotFound(req, url.pathname)) return serveWebsiteNotFound();
 
     return new Response('Not Found', { status: 404 });
   },

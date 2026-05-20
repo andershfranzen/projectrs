@@ -1,37 +1,31 @@
-import Image from 'next/image';
+import { FaDiscord } from 'react-icons/fa';
+import { getLatestNewsPosts } from '../lib/news';
+import { FooterCredits } from './components/FooterCredits';
 import { OnlineCount } from './OnlineCount';
-
-const newsItems = [
-  ['Castle Doors and Upper Floors', 'Today'],
-  ['Good Magic and Evil Magic', 'In Dev'],
-  ["The Sultan's Mine", 'Open'],
-  ['Smithing Tiers Expanded', 'Recent'],
-  ['Character Gear Tests', 'Recent'],
-] as const;
 
 const mainFeatures = [
   {
     image: '/items/Iron_2-handed_Sword_77.png',
-    title: 'Play Game',
-    subtitle: '(Existing User)',
-    body: 'Play EvilQuest right now!',
-    cta: 'Click Here',
+    title: 'Play Now',
+    subtitle: 'Existing Adventurer',
+    body: 'Return to EvilQuest and continue your character.',
+    cta: 'Launch Game',
     href: '/play',
   },
   {
     image: '/items/Medium_Bronze_Helmet_104.png',
     title: 'Create Account',
-    subtitle: '(New User)',
-    body: 'Create an account for both the game and website.',
-    cta: 'Click Here',
+    subtitle: 'New Adventurer',
+    body: 'Open the game client and create your account from the login screen.',
+    cta: 'Start Here',
     href: '/play',
   },
   {
     image: '/items/Staff_of_fire_197.png',
-    title: 'Hiscores',
-    subtitle: 'Table',
-    body: 'Is your character climbing the old lists?',
-    cta: 'Click Here',
+    title: 'View Hiscores',
+    subtitle: 'Rankings',
+    body: 'Compare overall progress, skills, and daily gains.',
+    cta: 'View Rankings',
     href: '/hiscores',
   },
 ] as const;
@@ -105,7 +99,8 @@ function DirectoryTile({ item }: { item: (typeof secureServices | typeof otherFe
     <article className={isActive ? 'tile' : 'tile inactive-tile'}>
       {isActive ? (
         <a className="button" href={item.href}>
-          {item.title}
+          {item.title === 'Discord' ? <FaDiscord className="button-icon" aria-hidden="true" /> : null}
+          <span>{item.title}</span>
         </a>
       ) : (
         <span className="button disabled-button" aria-disabled="true">
@@ -115,39 +110,42 @@ function DirectoryTile({ item }: { item: (typeof secureServices | typeof otherFe
       <p>
         {item.body}
         <br />
-        {isActive ? <a href={item.href}>{item.cta}</a> : <span className="disabled-link">{item.cta}</span>}
+        {isActive ? <a href={item.href}>{item.cta}</a> : <span className="coming-soon">Coming Soon</span>}
       </p>
     </article>
   );
 }
 
 export default function Home() {
+  const newsItems = getLatestNewsPosts(5);
+
   return (
     <main className="page">
-      <section className="top top-centered" aria-label="EvilQuest overview">
+      <section className="top" aria-label="EvilQuest overview">
         <div className="brand">
           <div className="logo">EvilQuest</div>
           <OnlineCount />
         </div>
 
-        <section className="panel news hidden-section" aria-labelledby="news-title">
+        <section className="panel news" aria-labelledby="news-title">
           <h1 id="news-title" className="panel-title">
             Latest News and Updates
           </h1>
-          <div className="news-grid">
-            <Image src="/items/Scroll_1173.png" alt="" width={138} height={138} priority />
-            <ol>
-              {newsItems.map(([title, date]) => (
-                <li key={title}>
-                  <a href="#">{title}</a>
-                  <time>{date}</time>
-                </li>
-              ))}
-            </ol>
-          </div>
-          <p className="news-footer">
-            To view a full list of news and updates, <a href="#">Click Here</a>.
-          </p>
+          {newsItems.length > 0 ? (
+            <div className="news-grid">
+              <ol>
+                {newsItems.map(({ slug, title, date, formattedDate }) => (
+                  <li key={slug}>
+                    <a href={`/news/${slug}`}>{title}</a>
+                    <time dateTime={date}>{formattedDate}</time>
+                  </li>
+                ))}
+              </ol>
+              <a className="news-index-link" href="/news">
+                View All News
+              </a>
+            </div>
+          ) : null}
         </section>
       </section>
 
@@ -172,7 +170,8 @@ export default function Home() {
       </section>
 
       <footer className="site-footer">
-        Copyright © {new Date().getFullYear()} EvilQuest. All rights reserved.
+        <FooterCredits />
+        <span>Copyright © {new Date().getFullYear()} EvilQuest. All rights reserved.</span>
       </footer>
     </main>
   );

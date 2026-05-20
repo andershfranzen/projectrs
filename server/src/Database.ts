@@ -104,6 +104,29 @@ export interface HiscoreResponse {
   totalPages: number;
 }
 
+export interface HiscoreProfileRow {
+  category: HiscoreCategory;
+  rank: number;
+  level: number;
+  xp: number;
+  dailyXp: number;
+}
+
+export interface HiscoreProfileResponse {
+  username: string;
+  rows: HiscoreProfileRow[];
+}
+
+interface RankedHiscoreRow extends HiscoreRow {
+  accountId: number;
+}
+
+interface HiscorePlayerRecord {
+  accountId: number;
+  username: string;
+  skills: SkillBlock;
+}
+
 export interface BanInfo {
   reason: string;
   bannedAt: number;
@@ -944,20 +967,49 @@ export class GameDatabase {
     }
   }
 
-  getHiscores(
-    categoryId: string = 'overall',
-    limit: number = 25,
-    page: number = 1,
-  ): HiscoreResponse {
-    const categories: HiscoreCategory[] = [
+  private hiscoreCategories(): HiscoreCategory[] {
+    return [
       { id: 'overall', name: 'Overall' },
       { id: 'combat', name: 'Combat' },
       ...ALL_SKILLS.map((id) => ({ id, name: SKILL_NAMES[id] })),
     ];
-    const category = categories.find((c) => c.id === categoryId) ?? categories[0];
-    const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
-    const currentPage = Math.max(1, Math.floor(page) || 1);
-    const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
+  }
+
+  private parseHiscoreSkills(rawSkills: string): SkillBlock {
+    const skills = initSkills();
+    try {
+      const saved = JSON.parse(rawSkills) as Partial<Record<SkillId, Partial<SkillBlock[SkillId]>>>;
+      for (const id of ALL_SKILLS) {
+        const skill = saved[id];
+        if (!skill) continue;
+        const xp = typeof skill.xp === 'number' && Number.isFinite(skill.xp) ? Math.max(0, Math.floor(skill.xp)) : skills[id].xp;
+        const level = typeof skill.level === 'number' && Number.isFinite(skill.level) ? Math.max(1, Math.floor(skill.level)) : skills[id].level;
+        const currentLevel = typeof skill.currentLevel === 'number' && Number.isFinite(skill.currentLevel)
+          ? Math.max(0, Math.floor(skill.currentLevel))
+          : level;
+        skills[id] = { xp, level, currentLevel };
+      }
+    } catch {
+      // Keep default level-1/10hp skills for corrupted or legacy rows.
+    }
+    return skills;
+  }
+
+  private loadHiscorePlayers(): HiscorePlayerRecord[] {
+    const rows = this.db.query(`
+      SELECT ps.account_id, a.username, ps.skills
+      FROM player_state ps
+      JOIN accounts a ON a.id = ps.account_id
+    `).all() as Array<{ account_id: number; username: string; skills: string }>;
+
+    return rows.map((row) => ({
+      accountId: row.account_id,
+      username: row.username,
+      skills: this.parseHiscoreSkills(row.skills),
+    }));
+  }
+
+  private loadDailyHiscoreBaselines(categoryId: string, cutoff: number): Map<number, number> {
     const baselineRows = this.db.query(`
       SELECT hs.account_id, hs.xp
       FROM hiscore_snapshots hs
@@ -970,48 +1022,48 @@ export class GameDatabase {
         ON latest.account_id = hs.account_id
        AND latest.bucket_start = hs.bucket_start
       WHERE hs.category = ?
-    `).all(category.id, cutoff, category.id) as Array<{ account_id: number; xp: number }>;
+    `).all(categoryId, cutoff, categoryId) as Array<{ account_id: number; xp: number }>;
     const dailyBaselineXp = new Map<number, number>();
     for (const row of baselineRows) dailyBaselineXp.set(row.account_id, row.xp);
-    const rows = this.db.query(`
-      SELECT ps.account_id, a.username, ps.skills
-      FROM player_state ps
-      JOIN accounts a ON a.id = ps.account_id
-    `).all() as Array<{ account_id: number; username: string; skills: string }>;
+    return dailyBaselineXp;
+  }
 
-    const mapped = rows.map((row) => {
-      const skills = initSkills();
-      try {
-        const saved = JSON.parse(row.skills) as Partial<Record<SkillId, Partial<SkillBlock[SkillId]>>>;
-        for (const id of ALL_SKILLS) {
-          const skill = saved[id];
-          if (!skill) continue;
-          const xp = typeof skill.xp === 'number' && Number.isFinite(skill.xp) ? Math.max(0, Math.floor(skill.xp)) : skills[id].xp;
-          const level = typeof skill.level === 'number' && Number.isFinite(skill.level) ? Math.max(1, Math.floor(skill.level)) : skills[id].level;
-          const currentLevel = typeof skill.currentLevel === 'number' && Number.isFinite(skill.currentLevel)
-            ? Math.max(0, Math.floor(skill.currentLevel))
-            : level;
-          skills[id] = { xp, level, currentLevel };
-        }
-      } catch {
-        // Keep default level-1/10hp skills for corrupted or legacy rows.
-      }
-
-      const value = this.hiscoreCategoryValue(category.id, skills);
-      const baselineXp = dailyBaselineXp.get(row.account_id);
-      return {
-        username: row.username,
-        level: value.level,
-        xp: value.xp,
-        dailyXp: baselineXp == null ? 0 : Math.max(0, value.xp - baselineXp),
-      };
-    });
-
-    const ranked = mapped
+  private rankedHiscoreRows(category: HiscoreCategory, players: HiscorePlayerRecord[], cutoff: number): RankedHiscoreRow[] {
+    const dailyBaselineXp = this.loadDailyHiscoreBaselines(category.id, cutoff);
+    return players
+      .map((row) => {
+        const value = this.hiscoreCategoryValue(category.id, row.skills);
+        const baselineXp = dailyBaselineXp.get(row.accountId);
+        return {
+          accountId: row.accountId,
+          username: row.username,
+          level: value.level,
+          xp: value.xp,
+          dailyXp: baselineXp == null ? 0 : Math.max(0, value.xp - baselineXp),
+        };
+      })
       .sort((a, b) => b.level - a.level || b.xp - a.xp || a.username.localeCompare(b.username))
       .map((row, idx) => ({ rank: idx + 1, ...row }));
+  }
 
-    const totalRows = ranked.length;
+  getHiscores(
+    categoryId: string = 'overall',
+    limit: number = 25,
+    page: number = 1,
+    query: string = '',
+  ): HiscoreResponse {
+    const categories = this.hiscoreCategories();
+    const category = categories.find((c) => c.id === categoryId) ?? categories[0];
+    const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
+    const currentPage = Math.max(1, Math.floor(page) || 1);
+    const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
+    const ranked = this.rankedHiscoreRows(category, this.loadHiscorePlayers(), cutoff);
+    const normalizedQuery = query.trim().toLowerCase();
+    const filtered = normalizedQuery
+      ? ranked.filter((row) => row.username.toLowerCase().includes(normalizedQuery))
+      : ranked;
+
+    const totalRows = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalRows / cappedLimit));
     const safePage = Math.min(currentPage, totalPages);
     const start = (safePage - 1) * cappedLimit;
@@ -1019,11 +1071,39 @@ export class GameDatabase {
     return {
       category,
       categories,
-      rows: ranked.slice(start, start + cappedLimit),
+      rows: filtered.slice(start, start + cappedLimit).map(({ accountId: _accountId, ...row }) => row),
       page: safePage,
       pageSize: cappedLimit,
       totalRows,
       totalPages,
+    };
+  }
+
+  getHiscoreProfile(username: string): HiscoreProfileResponse | null {
+    const normalizedUsername = username.trim().toLowerCase();
+    if (!normalizedUsername) return null;
+
+    const categories = this.hiscoreCategories();
+    const players = this.loadHiscorePlayers();
+    const target = players.find((player) => player.username.toLowerCase() === normalizedUsername);
+    if (!target) return null;
+
+    const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
+    const rows = categories.map((category) => {
+      const ranked = this.rankedHiscoreRows(category, players, cutoff);
+      const row = ranked.find((entry) => entry.accountId === target.accountId);
+      return {
+        category,
+        rank: row?.rank ?? 0,
+        level: row?.level ?? 0,
+        xp: row?.xp ?? 0,
+        dailyXp: row?.dailyXp ?? 0,
+      };
+    });
+
+    return {
+      username: target.username,
+      rows,
     };
   }
 

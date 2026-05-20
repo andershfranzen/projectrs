@@ -7,17 +7,21 @@
     "dev": "next dev --port 3000",
     "build": "next build"
   },
-  "dependencies": {
-    "@babylonjs/core": "^7.0.0",
-    "@babylonjs/loaders": "^7.0.0",
-    "next": "^16.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "typescript": "^6.0.3"
-  }
+    "dependencies": {
+        "@babylonjs/core": "^7.0.0",
+        "@babylonjs/loaders": "^7.0.0",
+        "marked": "^18.0.4",
+        "next": "^16.0.0",
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
+        "react-icons": "^5.6.0",
+        "sanitize-html": "^2.17.4"
+    },
+    "devDependencies": {
+        "@types/node": "^24.0.0",
+        "@types/react": "^19.0.0",
+        "@types/react-dom": "^19.0.0",
+        "@types/sanitize-html": "^2.16.1",
+        "typescript": "^6.0.3"
+    }
 }
