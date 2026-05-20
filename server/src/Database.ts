@@ -11,6 +11,7 @@ const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
 const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
 const SUSPECT_SKETCH_ITEM_ID = 236;
+const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
 
 export interface SessionInfo {
   accountId: number;
@@ -126,6 +127,10 @@ interface HiscorePlayerRecord {
   accountId: number;
   username: string;
   skills: SkillBlock;
+}
+
+function isHiscoreExcludedUsername(username: string): boolean {
+  return HISCORE_EXCLUDED_USERNAMES.has(username.trim().toLowerCase());
 }
 
 export interface BanInfo {
@@ -1008,11 +1013,14 @@ export class GameDatabase {
       JOIN accounts a ON a.id = ps.account_id
     `).all() as Array<{ account_id: number; username: string; skills: string }>;
 
-    return rows.map((row) => ({
-      accountId: row.account_id,
-      username: row.username,
-      skills: this.parseHiscoreSkills(row.skills),
-    }));
+    return rows
+      // Anti-bot test accounts can produce artificial XP; keep them out of public rankings.
+      .filter((row) => !isHiscoreExcludedUsername(row.username))
+      .map((row) => ({
+        accountId: row.account_id,
+        username: row.username,
+        skills: this.parseHiscoreSkills(row.skills),
+      }));
   }
 
   private loadDailyHiscoreBaselines(categoryId: string, cutoff: number): Map<number, number> {
