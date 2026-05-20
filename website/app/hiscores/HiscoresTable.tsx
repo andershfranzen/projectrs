@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 type HiscoreCategory = {
   id: string;
   name: string;
+  hasXp: boolean;
 };
 
 type HiscoreRow = {
@@ -39,8 +40,8 @@ type HiscoreProfileResponse = {
 };
 
 const fallbackCategories: HiscoreCategory[] = [
-  { id: 'overall', name: 'Overall' },
-  { id: 'combat', name: 'Combat' },
+  { id: 'overall', name: 'Overall', hasXp: true },
+  { id: 'combat', name: 'Combat', hasXp: true },
 ];
 
 const formatNumber = new Intl.NumberFormat('en-US');
@@ -212,16 +213,26 @@ export function HiscoresTable() {
           </form>
 
           <nav className="skill-nav" aria-label="Hiscore categories">
-            {categories.map((category) => (
-              <button
-                className={category.id === selected ? 'skill-tab active' : 'skill-tab'}
-                key={category.id}
-                type="button"
-                onClick={() => selectCategory(category.id)}
-              >
-                {category.name}
-              </button>
-            ))}
+            {categories.map((category) => {
+              const isInactiveSkill = category.hasXp === false;
+              const classes = [
+                'skill-tab',
+                category.id === selected ? 'active' : '',
+                isInactiveSkill ? 'inactive-skill' : '',
+              ].filter(Boolean).join(' ');
+
+              return (
+                <button
+                  className={classes}
+                  key={category.id}
+                  type="button"
+                  title={isInactiveSkill ? 'No player has gained XP in this skill yet.' : undefined}
+                  onClick={() => selectCategory(category.id)}
+                >
+                  {category.name}
+                </button>
+              );
+            })}
           </nav>
         </aside>
 

@@ -900,6 +900,17 @@ a:hover {
   border-color: #8d3932;
 }
 
+.skill-tab.inactive-skill {
+  color: #8f8f8f;
+  filter: grayscale(1) brightness(0.72);
+}
+
+.skill-tab.inactive-skill:hover,
+.skill-tab.inactive-skill.active {
+  color: #c8c8c8;
+  filter: grayscale(1) brightness(0.9);
+}
+
 .ranking-shell {
   min-width: 0;
 }

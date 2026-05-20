@@ -84,6 +84,7 @@ export interface SavedPlayerState {
 export interface HiscoreCategory {
   id: string;
   name: string;
+  hasXp: boolean;
 }
 
 export interface HiscoreRow {
@@ -967,11 +968,16 @@ export class GameDatabase {
     }
   }
 
-  private hiscoreCategories(): HiscoreCategory[] {
+  private hiscoreCategories(players: HiscorePlayerRecord[] = []): HiscoreCategory[] {
+    const startingSkills = initSkills();
+    const hasEarnedSkillXp = (skillId: SkillId): boolean => {
+      return players.some((player) => player.skills[skillId].xp > startingSkills[skillId].xp);
+    };
+
     return [
-      { id: 'overall', name: 'Overall' },
-      { id: 'combat', name: 'Combat' },
-      ...ALL_SKILLS.map((id) => ({ id, name: SKILL_NAMES[id] })),
+      { id: 'overall', name: 'Overall', hasXp: true },
+      { id: 'combat', name: 'Combat', hasXp: true },
+      ...ALL_SKILLS.map((id) => ({ id, name: SKILL_NAMES[id], hasXp: hasEarnedSkillXp(id) })),
     ];
   }
 
@@ -1052,12 +1058,13 @@ export class GameDatabase {
     page: number = 1,
     query: string = '',
   ): HiscoreResponse {
-    const categories = this.hiscoreCategories();
+    const players = this.loadHiscorePlayers();
+    const categories = this.hiscoreCategories(players);
     const category = categories.find((c) => c.id === categoryId) ?? categories[0];
     const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
     const currentPage = Math.max(1, Math.floor(page) || 1);
     const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
-    const ranked = this.rankedHiscoreRows(category, this.loadHiscorePlayers(), cutoff);
+    const ranked = this.rankedHiscoreRows(category, players, cutoff);
     const normalizedQuery = query.trim().toLowerCase();
     const filtered = normalizedQuery
       ? ranked.filter((row) => row.username.toLowerCase().includes(normalizedQuery))
@@ -1083,8 +1090,8 @@ export class GameDatabase {
     const normalizedUsername = username.trim().toLowerCase();
     if (!normalizedUsername) return null;
 
-    const categories = this.hiscoreCategories();
     const players = this.loadHiscorePlayers();
+    const categories = this.hiscoreCategories(players);
     const target = players.find((player) => player.username.toLowerCase() === normalizedUsername);
     if (!target) return null;
 
