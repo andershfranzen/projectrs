@@ -16,6 +16,16 @@ type ModalGeometry =
 
 type ModalChrome = 'standard' | 'dark' | 'stone' | 'dialogue';
 
+export const GAME_DIALOG_MODAL_WIDTH = '470px';
+export const GAME_DIALOG_MODAL_HEIGHT = '420px';
+export const GAME_DIALOG_MODAL_MAX_HEIGHT = 'calc(100% - var(--chat-height, 220px) - 18px)';
+export const DIALOGUE_TEXT_SHADOW = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000';
+export const DIALOGUE_PARCHMENT_BG = 'linear-gradient(rgba(45, 28, 20, 0.5), rgba(21, 14, 11, 0.7)), url("/ui/parchment.png") repeat';
+export const DIALOGUE_ACCENT = '#8f2f28';
+export const DIALOGUE_ACCENT_BRIGHT = '#b4493f';
+export const DIALOGUE_STONE_EDGE = '#4a4035';
+export const DIALOGUE_STONE_EDGE_DARK = '#18120f';
+
 export interface ModalPanelParts {
   root: HTMLDivElement;
   header: HTMLDivElement;
@@ -34,6 +44,13 @@ export interface ModalPanelOpts {
   closeLabel?: string;
   onClose?: () => void;
   display?: 'none' | 'flex';
+}
+
+export interface GameDialogModalOpts extends Omit<ModalPanelOpts, 'geometry' | 'chrome'> {
+  width?: string;
+  maxHeight?: string;
+  height?: string;
+  zIndex?: number;
 }
 
 function centerPanelCss(opts: Extract<ModalGeometry, { kind: 'center' }>): string {
@@ -74,13 +91,17 @@ function rootCss(geometry: ModalGeometry, chrome: ModalChrome): string {
     const theme = chrome === 'dialogue'
       ? `
         background:
-          linear-gradient(rgba(34, 12, 9, 0.92), rgba(18, 7, 5, 0.96)),
-          url('/ui/parchment.png') repeat;
-        border: 2px solid #7d2c25;
-        border-radius: 4px;
+          ${DIALOGUE_PARCHMENT_BG};
+        border: 3px solid ${DIALOGUE_STONE_EDGE};
+        border-radius: 5px;
         box-shadow:
-          inset 0 0 0 1px rgba(255,190,150,0.08),
-          0 4px 18px rgba(0,0,0,0.62);
+          inset 0 0 0 1px rgba(214, 188, 143, 0.18),
+          inset 0 0 0 4px rgba(14, 11, 10, 0.68),
+          inset 0 -2px 0 rgba(0, 0, 0, 0.45),
+          0 0 0 1px ${DIALOGUE_STONE_EDGE_DARK},
+          0 0 0 2px rgba(143, 47, 40, 0.76),
+          0 7px 20px rgba(0,0,0,0.68);
+        padding: 4px;
       `
       : `
         background: url('/ui/stone-dark.png') repeat;
@@ -117,10 +138,17 @@ function headerCss(chrome: ModalChrome): string {
   if (chrome === 'dialogue') {
     return `
       display: flex; justify-content: space-between; align-items: center;
-      padding: 6px 9px;
-      background: rgba(43, 10, 8, 0.95);
-      border-bottom: 1px solid #9a332b;
-      box-shadow: inset 0 -1px 0 rgba(255,190,150,0.08);
+      padding: 6px 9px 7px;
+      background:
+        linear-gradient(180deg, rgba(92, 82, 67, 0.52), rgba(36, 29, 24, 0.82)),
+        url('/ui/stone-light.png') repeat;
+      border: 1px solid rgba(23, 17, 14, 0.92);
+      border-bottom-color: ${DIALOGUE_ACCENT};
+      border-radius: 2px 2px 0 0;
+      box-shadow:
+        inset 0 1px 0 rgba(235, 210, 168, 0.14),
+        inset 0 -1px 0 rgba(180, 73, 63, 0.42),
+        0 1px 0 rgba(0, 0, 0, 0.75);
     `;
   }
   if (chrome === 'stone') {
@@ -145,8 +173,10 @@ function headerCss(chrome: ModalChrome): string {
 function closeCss(chrome: ModalChrome): string {
   if (chrome === 'dialogue') {
     return `
-      background: rgba(43, 10, 8, 0.9);
-      border: 1px solid #9a332b;
+      background:
+        linear-gradient(180deg, rgba(62, 48, 39, 0.95), rgba(28, 21, 18, 0.98)),
+        url('/ui/stone-dark.png') repeat;
+      border: 1px solid ${DIALOGUE_ACCENT_BRIGHT};
       color: #f4ded5;
       cursor: pointer;
       padding: 1px 7px;
@@ -155,6 +185,9 @@ function closeCss(chrome: ModalChrome): string {
       font-size: 12px;
       font-weight: bold;
       text-shadow: 1px 1px 0 #000;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 220, 180, 0.1),
+        0 1px 0 rgba(0, 0, 0, 0.65);
     `;
   }
   if (chrome === 'stone') {
@@ -182,7 +215,7 @@ export function createModalPanel(opts: ModalPanelOpts): ModalPanelParts {
   title.style.cssText = chrome === 'stone'
     ? 'font-size: 14px; color: #d8372b; font-weight: bold; text-shadow: 1px 1px 0 #000;'
     : chrome === 'dialogue'
-      ? 'font-size: 14px; color: #f4ded5; font-weight: bold; text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;'
+      ? `font-size: 14px; color: #f1d6b6; font-weight: bold; text-shadow: ${DIALOGUE_TEXT_SHADOW};`
       : panelTitleCss;
   header.appendChild(title);
 
@@ -205,4 +238,26 @@ export function createModalPanel(opts: ModalPanelOpts): ModalPanelParts {
 
   root.appendChild(header);
   return { root, header, title, subtitle, closeButton };
+}
+
+export function createGameDialogModal(opts: GameDialogModalOpts): ModalPanelParts {
+  const { width, maxHeight, height, zIndex, ...modalOpts } = opts;
+  const geometry: Extract<ModalGeometry, { kind: 'game-canvas' }> = {
+    kind: 'game-canvas',
+    width: width ?? GAME_DIALOG_MODAL_WIDTH,
+    maxHeight: maxHeight ?? GAME_DIALOG_MODAL_MAX_HEIGHT,
+  };
+  if (zIndex !== undefined) geometry.zIndex = zIndex;
+
+  const modal = createModalPanel({
+    ...modalOpts,
+    geometry,
+    chrome: 'dialogue',
+  });
+  modal.root.style.height = height ?? GAME_DIALOG_MODAL_HEIGHT;
+  return modal;
+}
+
+export function mountModalInGameFrame(root: HTMLElement): void {
+  (document.getElementById('game-frame') ?? document.body).appendChild(root);
 }

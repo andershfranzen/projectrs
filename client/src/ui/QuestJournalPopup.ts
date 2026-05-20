@@ -1,20 +1,25 @@
 import { QUEST_STAGE_COMPLETED, type QuestDef } from '@projectrs/shared';
+import {
+  DIALOGUE_ACCENT,
+  DIALOGUE_PARCHMENT_BG,
+  createGameDialogModal,
+  mountModalInGameFrame,
+} from './ModalPanel';
 
 export type QuestState = Record<string, { stage: number; triggerProgress: number }>;
 
-/** Overlay panel that mimics the RS2 / 2004scape quest journal: a dark wood
- *  frame around a parchment text area, status-colored quest title, and
+/** Quest journal detail panel: a dialogue-chrome game-frame modal with a
+ *  parchment-like text area, status-colored quest title, and
  *  cumulative journal entries (each stage that's been reached contributes
  *  a paragraph, matching the way the real RS quest log layered text as the
  *  player progressed).
  *
- *  Opened by clicking a quest in the side panel's Quests tab. Closes on
- *  the X button, click outside the panel, or Escape.
+ *  Opened by clicking a quest in the side panel's Quests tab. Closes on the
+ *  shared modal X button or Escape.
  */
 export class QuestJournalPopup {
-  private overlay: HTMLDivElement;
-  private inner: HTMLDivElement;
-  private titleEl: HTMLDivElement;
+  private panel: HTMLDivElement;
+  private titleEl: HTMLSpanElement;
   private bodyEl: HTMLDivElement;
   private currentQuestId: string | null = null;
   private getDef: (id: string) => QuestDef | undefined;
@@ -30,79 +35,40 @@ export class QuestJournalPopup {
     this.getState = getState;
     this.onClose = onClose;
 
-    this.overlay = document.createElement('div');
-    this.overlay.style.cssText = [
-      'position:fixed',
-      'inset:0',
-      'background:rgba(0,0,0,0.55)',
-      'display:none',
-      'align-items:center',
-      'justify-content:center',
-      'z-index:700',
-    ].join(';');
-    this.overlay.addEventListener('click', (e) => {
-      if (e.target === this.overlay) this.hide();
+    const modal = createGameDialogModal({
+      id: 'quest-journal-popup',
+      title: 'Quest Journal',
+      closeLabel: 'X',
+      onClose: () => this.hide(),
     });
-
-    this.inner = document.createElement('div');
-    this.inner.style.cssText = [
-      'width:min(520px, 90vw)',
-      'max-height:min(560px, 80vh)',
-      'background:#1a140e',
-      'border:2px solid #aa8844',
-      'border-radius:8px',
-      'box-shadow:0 4px 18px rgba(0,0,0,0.7), inset 0 0 0 1px rgba(255,210,120,0.12)',
-      'display:flex',
-      'flex-direction:column',
-      'overflow:hidden',
-    ].join(';');
-
-    // Top bar: quest title + close button. Title color carries the status.
-    const topBar = document.createElement('div');
-    topBar.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 14px;background:#0f0a06;border-bottom:1px solid #6a4a22;';
-
-    this.titleEl = document.createElement('div');
-    this.titleEl.style.cssText = `
-      flex:1;
-      font-family: 'Cinzel', 'Times New Roman', serif;
-      font-size:18px;
-      font-weight:700;
-      letter-spacing:1px;
-      text-shadow: 2px 2px 0 #000;
-      color:#ffcc44;
-    `;
-    topBar.appendChild(this.titleEl);
-
-    const closeBtn = document.createElement('div');
-    closeBtn.textContent = '✕';
-    closeBtn.style.cssText = 'cursor:pointer;color:#cfc2a1;font-size:14px;padding:2px 8px;user-select:none;';
-    closeBtn.addEventListener('click', () => this.hide());
-    topBar.appendChild(closeBtn);
-
-    this.inner.appendChild(topBar);
+    this.panel = modal.root;
+    this.titleEl = modal.title;
 
     // Body: parchment-ish background, dark serif text, scrollable.
     this.bodyEl = document.createElement('div');
     this.bodyEl.style.cssText = [
       'flex:1',
+      'min-height:0',
       'overflow-y:auto',
       'padding:14px 18px 18px 18px',
-      'background:#2a1f15',
+      'margin-top:4px',
+      `background:${DIALOGUE_PARCHMENT_BG}`,
+      `border:1px solid ${DIALOGUE_ACCENT}`,
+      'box-shadow:inset 0 1px 0 rgba(255,220,170,0.08), inset 0 0 18px rgba(0,0,0,0.28)',
       'font-family: "Times New Roman", Georgia, serif',
-      'color:#e8d8a8',
+      'color:#f0d2bd',
       'font-size:14px',
       'line-height:1.55',
       'white-space:pre-wrap',
     ].join(';');
-    this.inner.appendChild(this.bodyEl);
+    this.panel.appendChild(this.bodyEl);
 
-    this.overlay.appendChild(this.inner);
-    document.body.appendChild(this.overlay);
+    mountModalInGameFrame(this.panel);
 
-    // Escape closes the popup. Captured at document level so the listener
+    // Escape closes the modal. Captured at document level so the listener
     // fires regardless of focus.
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.overlay.style.display !== 'none') {
+      if (e.key === 'Escape' && this.panel.style.display !== 'none') {
         this.hide();
       }
     });
@@ -114,11 +80,11 @@ export class QuestJournalPopup {
   show(questId: string): void {
     this.currentQuestId = questId;
     this.render();
-    this.overlay.style.display = 'flex';
+    this.panel.style.display = 'flex';
   }
 
   hide(): void {
-    this.overlay.style.display = 'none';
+    this.panel.style.display = 'none';
     this.currentQuestId = null;
     this.onClose();
   }
@@ -126,7 +92,7 @@ export class QuestJournalPopup {
   /** Re-render the open popup (no-op if closed). Called by SidePanel when
    *  a quest delta arrives so a journal you've left open updates in place. */
   refresh(): void {
-    if (this.overlay.style.display === 'none' || !this.currentQuestId) return;
+    if (this.panel.style.display === 'none' || !this.currentQuestId) return;
     this.render();
   }
 
@@ -146,7 +112,7 @@ export class QuestJournalPopup {
     // Status color on the title matches the side-panel red/yellow/green so
     // the player's eye carries from "I clicked the red one" to "the title
     // is still red here." Keeps the status legible inside the popup.
-    this.titleEl.style.color = notStarted ? '#c44' : completed ? '#6c6' : '#ffcc44';
+    this.titleEl.style.color = notStarted ? '#e05a52' : completed ? '#8bd18b' : '#ffcc44';
     this.titleEl.textContent = def.name;
 
     this.bodyEl.innerHTML = '';
