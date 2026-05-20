@@ -249,14 +249,14 @@ export class GameManager {
 
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
-  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; depleted: boolean; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }> = new Map();
+  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }> = new Map();
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
   private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number }> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
-  /** Tiles blocked by non-depleted world objects (key = `${tileX},${tileZ}`) */
+  /** Tiles blocked by non-depleted world objects (key = `${floor},${tileX},${tileZ}`) */
   private blockedObjectTiles: Set<string> = new Set();
   private objectDefsCache: Map<number, WorldObjectDef> = new Map();
   private itemDefsCache: Map<number, ItemDef> = new Map();
@@ -570,7 +570,7 @@ export class GameManager {
     this._defsReady = this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this._objectModelsReady = this.objectModels.loadAll();
-    this.entities = new EntityManager(this.scene, (x, z, cy) => this.getHeightAt(x, z, cy), this.itemDefsCache);
+    this.entities = new EntityManager(this.scene, (x, z, floor = 0, cy) => this.getHeightAtFloor(x, z, floor, cy), this.itemDefsCache);
     // Dev-only console hook for triage (NPC name overrides, entity sprites).
     // Tree-shaken Babylon imports remove the global namespace, so without
     // this the only way to inspect runtime entity state is to hack imports.
@@ -1034,11 +1034,13 @@ export class GameManager {
     return override.y;
   }
 
-  /** Height query for floor-0 entities (NPCs, remote players, ground items).
-   *  Keep it pinned to the ground floor so the local player's active building
-   *  floor cannot lift unrelated entities onto an upper floor. */
+  /** Height query for legacy floor-0 entity callers. */
   private getHeightAt(x: number, z: number, currentY?: number): number {
     return this.chunkManager.getEffectiveHeight(x, z, 0, currentY);
+  }
+
+  private getHeightAtFloor(x: number, z: number, floor: number, currentY?: number): number {
+    return this.chunkManager.getEffectiveHeight(x, z, floor, currentY);
   }
 
   private applyFog(): void {
@@ -1218,15 +1220,19 @@ export class GameManager {
       // Depleted ores/stumps stay blocking — they still physically occupy
       // the tile. setObjectTilesBlocked is a no-op for doors.
       if (def?.blocking) {
-        this.setObjectTilesBlocked(data.x, data.z, def, true);
+        this.setObjectTilesBlocked(data.x, data.z, def, true, data.floor);
       }
     }
   }
 
-  private setObjectTilesBlocked(x: number, z: number, def: WorldObjectDef, blocked: boolean): void {
+  private blockedObjectKey(floor: number, tileX: number, tileZ: number): string {
+    return `${Math.max(0, Math.floor(floor))},${Math.floor(tileX)},${Math.floor(tileZ)}`;
+  }
+
+  private setObjectTilesBlocked(x: number, z: number, def: WorldObjectDef, blocked: boolean, floor: number = 0): void {
     if (!def.blocking || def.category === 'door') return;
     for (const tile of getObjectFootprintTiles(x, z, def)) {
-      const key = `${tile.x},${tile.z}`;
+      const key = this.blockedObjectKey(floor, tile.x, tile.z);
       if (blocked) this.blockedObjectTiles.add(key);
       else this.blockedObjectTiles.delete(key);
     }
@@ -1351,6 +1357,9 @@ export class GameManager {
       const objectData = this.worldObjectDefs.get(targetId);
       if (objectData) {
         remote.faceToward(new Vector3(objectData.x, 0, objectData.z));
+      } else if (targetId > 0) {
+        const target = this.resolveTargetableIncludingLocal(targetId);
+        if (target) remote.faceToward(target.position);
       }
       // Magic is a one-shot cast (single-tick obelisk offering); other skill
       // variants loop until the server sends Idle.
@@ -1371,16 +1380,21 @@ export class GameManager {
       remote.playAttackAnimation(this.getPlayerAttackAnimName(entityId));
       if (targetId > 0) {
         this.entities.remoteCombatTargets.set(entityId, targetId);
-        const target = this.entities.npcSprites.get(targetId) ?? this.entities.remotePlayers.get(targetId);
+        const target = this.resolveTargetableIncludingLocal(targetId);
         if (target) remote.faceToward(target.position);
       }
     }
   }
 
+  private resolveTargetableIncludingLocal(entityId: number): Targetable | null {
+    if (entityId === this.localPlayerId) return this.localPlayer;
+    return this.entities.resolveTargetable(entityId);
+  }
+
   /** Reposition all world objects/models after heightmap loads (fixes race condition) */
   private repositionWorldObjects(): void {
     for (const [objectEntityId, data] of this.worldObjectDefs) {
-      const h = this.getHeight(data.x, data.z);
+      const h = data.y ?? this.getHeightAtFloor(data.x, data.z, data.floor, 0);
       const doorEntry = this.doorPivots.get(objectEntityId);
       if (doorEntry) {
         // Doors keep the Y they were authored with — upper-floor doors live
@@ -1422,7 +1436,7 @@ export class GameManager {
     let linked = 0;
     for (const [objectEntityId, data] of this.worldObjectDefs) {
       if (this.worldObjectModels.has(objectEntityId)) continue;
-      const placedNode = this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId);
+      const placedNode = this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId, data.y);
       if (placedNode) {
         this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
         linked++;
@@ -1441,7 +1455,18 @@ export class GameManager {
     const data = this.worldObjectDefs.get(objectEntityId);
     if (!data) return true;
     const def = this.objectDefsCache.get(data.defId);
+    if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return false;
     return !data.depleted || def?.category === 'door';
+  }
+
+  private isWorldObjectOnCurrentInteractionFloor(
+    data: { defId: number; x: number; z: number; floor: number },
+    def: WorldObjectDef | undefined | null = this.objectDefsCache.get(data.defId),
+  ): boolean {
+    if (data.floor === this.currentFloor) return true;
+    if (def?.category !== 'ladder') return false;
+    const actions = this.ladderActionsForObject(data);
+    return actions.includes('Climb-up') || actions.includes('Climb-down');
   }
 
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
@@ -1488,7 +1513,7 @@ export class GameManager {
   /** Link a placed GLB node to a world object entity, tagging for picking and handling depletion */
   private linkPlacedNodeToEntity(
     objectEntityId: number,
-    data: { defId: number; x: number; z: number; depleted: boolean },
+    data: { defId: number; x: number; z: number; floor?: number; y?: number; depleted: boolean },
     placedNode: TransformNode,
   ): void {
     this.worldObjectModels.set(objectEntityId, placedNode);
@@ -1499,20 +1524,21 @@ export class GameManager {
       this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
       const modelRotY = this.modelRotY(placedNode);
       const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
+      const floor = data.floor ?? 0;
       this.doorTiles.set(objectEntityId, [tx, tz]);
       const nb = DOOR_EDGE_NEIGHBOR[wallEdge];
       // Wall mask for the door tile is set up by the chunk's wall data —
       // we just need to flip openDoorEdges to match the current state.
       // Keeping the wall mask permanent ensures the elevation gate in
       // wallEdgeBlocksAtHeight can block wrong-elevation passage.
-      this.chunkManager.setWall(tx, tz, this.chunkManager.getWallRawPublic(tx, tz) | wallEdge);
+      this.chunkManager.setWallOnFloor(tx, tz, floor, this.chunkManager.getWallOnFloorPublic(tx, tz, floor) | wallEdge);
       if (nb) {
         const nx = tx + nb.dx, nz = tz + nb.dz;
-        this.chunkManager.setWall(nx, nz, this.chunkManager.getWallRawPublic(nx, nz) | nb.opposite);
+        this.chunkManager.setWallOnFloor(nx, nz, floor, this.chunkManager.getWallOnFloorPublic(nx, nz, floor) | nb.opposite);
       }
       if (data.depleted) {
-        this.chunkManager.setOpenDoorEdges(tx, tz, wallEdge, true);
-        if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, true);
+        this.chunkManager.setOpenDoorEdges(tx, tz, wallEdge, true, floor);
+        if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, true, floor);
       }
       this.setupDoorPivot(objectEntityId);
       this.createDoorPickProxy(objectEntityId, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
@@ -2070,6 +2096,8 @@ export class GameManager {
 
       const hasAppearance = v.length >= 12 && v[5] >= 0;
       const syncCombatLevel = v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
+      const floor = v.length >= 14 ? Math.max(0, v[13] ?? 0) : 0;
+      const y = v.length >= 15 ? (v[14] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       const syncAppearance: PlayerAppearance | null = hasAppearance ? {
         shirtColor: v[5], pantsColor: v[6], shoesColor: v[7], hairColor: v[8], beltColor: v[9], skinColor: v[10],
         hairStyle: v[11],
@@ -2112,7 +2140,7 @@ export class GameManager {
       const isNew = !this.entities.remotePlayers.has(entityId);
       if (isNew) {
         const playerName = this.entities.playerNames.get(entityId) || 'Player';
-        const remote = this.entities.createRemotePlayer(entityId, x, z, playerName);
+        const remote = this.entities.createRemotePlayer(entityId, x, z, playerName, floor, y);
         // Apply cached appearance + equipment once the GLB + animations finish
         // loading. Both arrive over the network independently of the entity's
         // local-load timing, so we cache them in the EntityManager and flush
@@ -2154,7 +2182,7 @@ export class GameManager {
         // the player actually stops walking.
         this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
       }
-      this.entities.remoteTargets.set(entityId, { x, z });
+      this.entities.remoteTargets.set(entityId, { x, z, floor, y });
       const character = this.entities.remotePlayers.get(entityId)!;
       // Skip bar update if a COMBAT_HIT splat is pending — splat closure
       // applies the bar at impact time so they stay in sync.
@@ -2228,6 +2256,7 @@ export class GameManager {
       const toolItemId = v[4] ?? 0;
 
       if (entityId === this.localPlayerId) {
+        if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
           this.localPlayer.playAttackAnimation(this.getPlayerAttackAnimName(entityId), true);
         } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
@@ -2246,16 +2275,18 @@ export class GameManager {
       const [entityId, npcDefId, x10, z10, health, maxHealth] = v;
       const x = x10 / 10;
       const z = z10 / 10;
+      const floor = v.length >= 7 ? Math.max(0, v[6] ?? 0) : 0;
+      const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
 
       this.entities.npcDefs.set(entityId, npcDefId);
 
       if (!this.entities.npcSprites.has(entityId)) {
-        this.tryMaterializeNpc(entityId, npcDefId, x, z);
+        this.tryMaterializeNpc(entityId, npcDefId, x, z, floor, y);
       }
 
       const prev = this.entities.npcTargets.get(entityId);
       this.entities.npcTargets.set(entityId, {
-        x, z,
+        x, z, floor, y,
         prevX: prev ? prev.x : x,
         prevZ: prev ? prev.z : z,
         t: performance.now(),
@@ -2341,7 +2372,9 @@ export class GameManager {
 
       const x = x10 / 10;
       const z = z10 / 10;
-      this.entities.createGroundItem(groundItemId, itemId, quantity, x, z);
+      const floor = v.length >= 6 ? Math.max(0, v[5] ?? 0) : 0;
+      const y = v.length >= 7 ? (v[6] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      this.entities.createGroundItem(groundItemId, itemId, quantity, x, z, floor, y);
     });
 
     this.network.on(ServerOpcode.ENTITY_DEATH, (_op, v) => {
@@ -2356,6 +2389,20 @@ export class GameManager {
       this.toolSwappedEntities.delete(entityId);
       this.entities.removeRemotePlayer(entityId);
       this.entities.removeNpc(entityId);
+      const objectData = this.worldObjectDefs.get(entityId);
+      if (objectData) {
+        const def = this.objectDefsCache.get(objectData.defId);
+        if (def) this.setObjectTilesBlocked(objectData.x, objectData.z, def, false, objectData.floor);
+        const model = this.worldObjectModels.get(entityId);
+        if (model) this.setWorldObjectPickTarget(entityId, false, model);
+        this.objectModels.deleteStump(entityId);
+        this.doorPickProxies.get(entityId)?.dispose();
+        this.doorPickProxies.delete(entityId);
+        this.doorPivots.delete(entityId);
+        this.doorTiles.delete(entityId);
+        this.worldObjectModels.delete(entityId);
+        this.worldObjectDefs.delete(entityId);
+      }
     });
   }
 
@@ -2523,15 +2570,19 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.WORLD_OBJECT_SYNC, (_op, v) => {
-      const [objectEntityId, objectDefId, x10, z10, depleted, interactionSides = 0, rotY1000 = 0, explicitTileCount = 0] = v;
+      const [objectEntityId, objectDefId, x10, z10, depleted, interactionSides = 0, rotY1000 = 0] = v;
       const x = x10 / 10;
       const z = z10 / 10;
       const isDepleted = depleted === 1;
+      const floor = v.length >= 10 ? Math.max(0, v[7] ?? 0) : 0;
+      const y = v.length >= 10 ? (v[8] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      const explicitTileCount = v.length >= 10 ? v[9] ?? 0 : v[7] ?? 0;
+      const explicitStart = v.length >= 10 ? 10 : 8;
       const interactionTiles: { x: number; z: number }[] = [];
       const count = Math.max(0, Math.min(16, explicitTileCount | 0));
       for (let i = 0; i < count; i++) {
-        const ix = v[8 + i * 2];
-        const iz = v[9 + i * 2];
+        const ix = v[explicitStart + i * 2];
+        const iz = v[explicitStart + i * 2 + 1];
         if (Number.isFinite(ix) && Number.isFinite(iz)) interactionTiles.push({ x: ix, z: iz });
       }
 
@@ -2552,6 +2603,8 @@ export class GameManager {
         defId: objectDefId,
         x,
         z,
+        floor,
+        y,
         depleted: isDepleted,
         interactionSides: interactionSides || undefined,
         rotY: rotY1000 / 1000,
@@ -2564,10 +2617,10 @@ export class GameManager {
         const doorEntry = this.doorPivots.get(objectEntityId);
         const rotY = doorEntry ? doorEntry.closedRotY : 0;
         const { tile: [tx, tz], edge } = doorEdgeFromPlacement(x, z, rotY);
-        this.chunkManager.setOpenDoorEdges(tx, tz, edge, isDepleted);
+        this.chunkManager.setOpenDoorEdges(tx, tz, edge, isDepleted, floor);
         const nb = DOOR_EDGE_NEIGHBOR[edge];
         if (nb) {
-          this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, isDepleted);
+          this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, isDepleted, floor);
         }
         // animateDoor only runs if the pivot exists; if it doesn't yet (chunk
         // still loading), linkPlacedNodeToEntity will pick the correct pose
@@ -2580,14 +2633,14 @@ export class GameManager {
       } else if (def) {
         // Depleted state intentionally ignored — depleted ores/stumps still
         // occupy their tile (matches server policy at the depletion site).
-        this.setObjectTilesBlocked(x, z, def, true);
+        this.setObjectTilesBlocked(x, z, def, true, floor);
       }
 
       // Try to link to an editor-placed GLB model
       if (!this.worldObjectModels.has(objectEntityId)) {
-        const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId);
+        const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId, y);
         if (placedNode) {
-          this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, depleted: isDepleted }, placedNode);
+          this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted }, placedNode);
         }
         // If no placed GLB and the chunk has finished loading, the world
         // object simply isn't rendered. Pre-3D maps had a sprite fallback
@@ -2635,6 +2688,7 @@ export class GameManager {
           const doorEntry = this.doorPivots.get(objectEntityId);
           const rotY = doorEntry ? doorEntry.closedRotY : 0;
           const { tile: [tx, tz], edge } = doorEdgeFromPlacement(data.x, data.z, rotY);
+          const floor = data.floor ?? 0;
 
           const opened = isDepleted === 1;
           // Leave the wall mask alone — only toggle openDoorEdges. The
@@ -2642,11 +2696,11 @@ export class GameManager {
           // bypass mechanism (see ChunkManager.wallEdgeBlocksAtHeight), so
           // clearing the mask would let players at the wrong elevation
           // skip through.
-          this.chunkManager.setOpenDoorEdges(tx, tz, edge, opened);
+          this.chunkManager.setOpenDoorEdges(tx, tz, edge, opened, floor);
           const nb = DOOR_EDGE_NEIGHBOR[edge];
           if (nb) {
             const nx = tx + nb.dx, nz = tz + nb.dz;
-            this.chunkManager.setOpenDoorEdges(nx, nz, nb.opposite, opened);
+            this.chunkManager.setOpenDoorEdges(nx, nz, nb.opposite, opened, floor);
           }
 
           this.animateDoor(objectEntityId, opened, swingSign || 0);
@@ -2664,7 +2718,7 @@ export class GameManager {
       } else {
         const model = this.worldObjectModels.get(objectEntityId);
         if (hasDepleteModel && data) {
-          const placedNode = model ?? this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId);
+          const placedNode = model ?? this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId, data.y);
           if (placedNode) {
             if (!model) this.worldObjectModels.set(objectEntityId, placedNode);
             this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
@@ -2872,6 +2926,7 @@ export class GameManager {
       this.duelActive = true;
       this.clearPredictedPath(true);
       this.localPlayer?.stopWalking();
+      this.faceLocalPlayerTowardTarget(otherEntityId);
       this.minimap?.clearDestination();
       this.chatPanel?.addSystemMessage(`Duel started with ${name}.`, '#ff0');
     });
@@ -3278,6 +3333,8 @@ export class GameManager {
   }
 
   private getPlayerInteractionOptions(entityId: number): InteractionOption[] {
+    const target = this.entities.remoteTargets.get(entityId);
+    if (target && target.floor !== this.currentFloor) return [];
     const name = this.entities.playerNames.get(entityId) ?? 'Player';
     const lvl = this.entities.remoteCombatLevels.get(entityId) ?? 0;
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
@@ -3301,6 +3358,8 @@ export class GameManager {
   }
 
   private getNpcInteractionOptions(entityId: number): InteractionOption[] {
+    const target = this.entities.npcTargets.get(entityId);
+    if (target && target.floor !== this.currentFloor) return [];
     const npcDefId = this.entities.npcDefs.get(entityId);
     const name = this.npcDisplayName(entityId, npcDefId);
     // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
@@ -3345,6 +3404,7 @@ export class GameManager {
 
   private getGroundItemInteractionOptions(groundItemId: number): InteractionOption[] {
     return this.groundItemStackForTile(groundItemId).map((gi) => {
+      if (gi.floor !== this.currentFloor) return null;
       const iDef = this.itemDefsCache.get(gi.itemId);
       const iName = iDef?.name ?? 'item';
       const qtyLabel = gi.quantity > 1 ? ` (${gi.quantity})` : '';
@@ -3353,7 +3413,7 @@ export class GameManager {
         label: `Pick up ${iName}${qtyLabel}`,
         action: () => this.pickupItem(giId),
       };
-    });
+    }).filter((opt): opt is InteractionOption => opt !== null);
   }
 
   private findWorldObjectIdFromPick(pickedMesh: TransformNode): number | null {
@@ -3362,10 +3422,14 @@ export class GameManager {
     let walkMesh: TransformNode | null = pickedMesh;
     while (walkMesh) {
       if (typeof walkMesh.metadata?.objectEntityId === 'number') {
-        return walkMesh.metadata.objectEntityId;
+        const id = walkMesh.metadata.objectEntityId;
+        const data = this.worldObjectDefs.get(id);
+        return data && this.isWorldObjectOnCurrentInteractionFloor(data) ? id : null;
       }
       if (walkMesh.metadata?.kind === 'worldObject' && typeof walkMesh.metadata?.objectEntityId === 'number') {
-        return walkMesh.metadata.objectEntityId;
+        const id = walkMesh.metadata.objectEntityId;
+        const data = this.worldObjectDefs.get(id);
+        return data && this.isWorldObjectOnCurrentInteractionFloor(data) ? id : null;
       }
       walkMesh = walkMesh.parent as TransformNode | null;
     }
@@ -3391,6 +3455,7 @@ export class GameManager {
     let bestDist = 3.0;
     for (const [eid, data] of this.worldObjectDefs) {
       if (data.defId !== expectedDefId) continue;
+      if (!this.isWorldObjectOnCurrentInteractionFloor(data)) continue;
       const dist = Math.hypot(data.x - px, data.z - pz);
       if (dist < bestDist) {
         bestDist = dist;
@@ -3407,6 +3472,7 @@ export class GameManager {
     const data = this.worldObjectDefs.get(objectEntityId);
     if (!data) return [];
     const def = this.objectDefsCache.get(data.defId);
+    if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return [];
     if (!def || (data.depleted && def.category !== 'door')) return [];
 
     return this.actionsForInstance(def, data.depleted, data).map((actionName, actionIdx) => ({
@@ -3495,6 +3561,16 @@ export class GameManager {
     const lp = this.localPlayer;
     if (!lp) return;
     lp.faceToward(new Vector3(x, lp.position.y, z));
+  }
+
+  private faceLocalPlayerTowardTarget(targetId: number): void {
+    const objectData = this.worldObjectDefs.get(targetId);
+    if (objectData) {
+      this.faceLocalPlayerToward(objectData.x, objectData.z);
+      return;
+    }
+    const target = this.resolveTargetableIncludingLocal(targetId);
+    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
   }
 
   /** scene.pick returns the closest hit; that lets placed scenery (anvils,
@@ -3630,7 +3706,7 @@ export class GameManager {
       // just the picked sprite, since a kill drops several items per tile.
       let itemLines: string[] = [];
       if (playerLabel == null && npcLabel == null && groundItemId != null) {
-        itemLines = this.groundItemStackForTile(groundItemId).map((gi) => {
+        itemLines = this.groundItemStackForTile(groundItemId).filter(gi => gi.floor === this.currentFloor).map((gi) => {
           const iName = this.itemDefsCache.get(gi.itemId)?.name ?? 'item';
           return gi.quantity > 1 ? `${iName} (${gi.quantity})` : iName;
         });
@@ -3669,12 +3745,15 @@ export class GameManager {
     this.sidePanel!.clearUsingInvItem();
 
     if (kind === 'npc') {
+      const target = this.entities.npcTargets.get(entityId);
+      if (target && target.floor !== this.currentFloor) return true;
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_NPC, using.slot, using.itemId, entityId));
       return true;
     }
 
     const data = this.worldObjectDefs.get(entityId);
     const def = data ? this.objectDefsCache.get(data.defId) : null;
+    if (data && !this.isWorldObjectOnCurrentInteractionFloor(data, def)) return true;
     if (!data || !def) {
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
       return true;
@@ -3701,6 +3780,8 @@ export class GameManager {
 
   private attackNpc(npcEntityId: number): void {
     if (performance.now() < this.castingUntil) return;
+    const floorTarget = this.entities.npcTargets.get(npcEntityId);
+    if (floorTarget && floorTarget.floor !== this.currentFloor) return;
     if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
 
     const targetingSpell = this.sidePanel?.getTargetingSpell() ?? -1;
@@ -3781,6 +3862,8 @@ export class GameManager {
   }
 
   private followPlayer(playerEntityId: number): void {
+    const targetState = this.entities.remoteTargets.get(playerEntityId);
+    if (targetState && targetState.floor !== this.currentFloor) return;
     const target = this.entities.remotePlayers.get(playerEntityId);
     if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
     this.combatTargetId = -1;
@@ -3813,6 +3896,8 @@ export class GameManager {
   }
 
   private requestTrade(playerEntityId: number): void {
+    const targetState = this.entities.remoteTargets.get(playerEntityId);
+    if (targetState && targetState.floor !== this.currentFloor) return;
     const target = this.entities.remotePlayers.get(playerEntityId);
     if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
     this.combatTargetId = -1;
@@ -3831,6 +3916,8 @@ export class GameManager {
   }
 
   private requestDuel(playerEntityId: number): void {
+    const targetState = this.entities.remoteTargets.get(playerEntityId);
+    if (targetState && targetState.floor !== this.currentFloor) return;
     const target = this.entities.remotePlayers.get(playerEntityId);
     if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
     this.combatTargetId = -1;
@@ -3845,6 +3932,8 @@ export class GameManager {
 
   private talkToNpc(npcEntityId: number): void {
     if (performance.now() < this.castingUntil) return;
+    const target = this.entities.npcTargets.get(npcEntityId);
+    if (target && target.floor !== this.currentFloor) return;
     if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.resumeTalkToNpc(npcEntityId);
@@ -3853,6 +3942,7 @@ export class GameManager {
   private resumeTalkToNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (!target) return;
+    if (target.floor !== this.currentFloor) return;
     this.pendingFaceTargetEntityId = npcEntityId;
 
     // sendMove BEFORE TALK_NPC so the server walks the same tiles.
@@ -4211,6 +4301,7 @@ export class GameManager {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     const item = this.entities.groundItems.get(groundItemId);
     if (item) {
+      if (item.floor !== this.currentFloor) return;
       const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(item.x, item.z);
       if (path.length > 0) {
         this.startPredictedPath(path, preserveCurrentStep);
@@ -4229,6 +4320,7 @@ export class GameManager {
     if (!data) return;
     const def = this.objectDefsCache.get(data.defId);
     if (!def) return;
+    if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return;
     // Doors can always be clicked (open/close toggle). Other objects can't when depleted.
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
@@ -4304,6 +4396,7 @@ export class GameManager {
     const data = this.worldObjectDefs.get(objectEntityId);
     if (!data) return;
     const def = this.objectDefsCache.get(data.defId);
+    if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return;
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
@@ -4599,6 +4692,7 @@ export class GameManager {
     const def = this.spellsByIndex[spellIndex];
     if (!def) return;
     const nearest = this.entities.findNearestNpc(this.localPlayer.position);
+    if (nearest && this.entities.npcTargets.get(nearest.entityId)?.floor !== this.currentFloor) return;
     if (!nearest) {
       this.chatPanel?.addSystemMessage(`${def.name}: no target in sight.`);
       return;
@@ -4741,6 +4835,7 @@ export class GameManager {
     let targetId = targetIdRaw ? parseInt(targetIdRaw, 10) : NaN;
     if (!Number.isFinite(targetId)) {
       const nearest = this.entities.findNearestNpc(this.localPlayer.position);
+      if (nearest && this.entities.npcTargets.get(nearest.entityId)?.floor !== this.currentFloor) return;
       if (!nearest) {
         this.chatPanel?.addSystemMessage('No target — cast failed.');
         return;
@@ -5042,13 +5137,14 @@ export class GameManager {
   /** Tile blocked check that includes world objects (trees, rocks, etc.) */
   private isTileBlocked = (x: number, z: number): boolean => {
     if (this.currentFloor === 0) {
-      return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(`${x},${z}`);
+      return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedObjectKey(0, x, z));
     }
-    return this.chunkManager.isBlockedOnFloor(x, z, this.currentFloor);
+    return this.chunkManager.isBlockedOnFloor(x, z, this.currentFloor)
+      || this.blockedObjectTiles.has(this.blockedObjectKey(this.currentFloor, x, z));
   };
 
   private isGroundTileBlocked = (x: number, z: number): boolean => {
-    return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(`${x},${z}`);
+    return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedObjectKey(0, x, z));
   };
 
   private isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
@@ -5250,11 +5346,11 @@ export class GameManager {
     else void character.whenReady().then(apply);
   }
 
-  private tryMaterializeNpc(entityId: number, npcDefId: number, x: number, z: number): void {
+  private tryMaterializeNpc(entityId: number, npcDefId: number, x: number, z: number, floor: number = 0, y?: number): void {
     if (this.entities.npcSprites.has(entityId)) return;
     const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
     const tileSize = this.npcDefsCache.get(npcDefId)?.size ?? 1;
-    const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D, tileSize);
+    const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D, tileSize, floor, y);
     if (created instanceof CharacterEntity) {
       this.applyCachedNpcRigState(entityId, created);
     }
@@ -5280,7 +5376,7 @@ export class GameManager {
       if (this.entities.npcSprites.has(entityId)) continue;
       const npcDefId = this.entities.npcDefs.get(entityId);
       if (npcDefId === undefined) continue;
-      this.tryMaterializeNpc(entityId, npcDefId, target.x, target.z);
+      this.tryMaterializeNpc(entityId, npcDefId, target.x, target.z, target.floor, target.y);
     }
   }
 
@@ -6092,25 +6188,32 @@ export class GameManager {
   private createDoorPickProxy(objectEntityId: number, x: number, z: number, rotY: number, baseY: number): void {
     this.doorPickProxies.get(objectEntityId)?.dispose();
     const { tile: [tx, tz], edge, axis } = doorEdgeFromPlacement(x, z, rotY);
+    if (!this.doorPivots.has(objectEntityId)) this.setupDoorPivot(objectEntityId);
+    const doorEntry = this.doorPivots.get(objectEntityId);
     const proxy = MeshBuilder.CreateBox(`door_pickProxy_${objectEntityId}`, {
       width: axis === 'NS' ? 0.9 : 0.18,
       depth: axis === 'NS' ? 0.18 : 0.9,
       height: 1.8,
     }, this.scene);
 
-    proxy.position.x = tx + 0.5;
-    proxy.position.z = tz + 0.5;
-    if (edge === WallEdge.N) proxy.position.z = tz + 0.08;
-    else if (edge === WallEdge.S) proxy.position.z = tz + 0.92;
-    else if (edge === WallEdge.E) proxy.position.x = tx + 0.92;
-    else if (edge === WallEdge.W) proxy.position.x = tx + 0.08;
-    proxy.position.y = baseY + 0.9;
+    const closedCenter = new Vector3(tx + 0.5, baseY + 0.9, tz + 0.5);
+    if (edge === WallEdge.N) closedCenter.z = tz + 0.08;
+    else if (edge === WallEdge.S) closedCenter.z = tz + 0.92;
+    else if (edge === WallEdge.E) closedCenter.x = tx + 0.92;
+    else if (edge === WallEdge.W) closedCenter.x = tx + 0.08;
+
+    if (doorEntry) {
+      proxy.parent = doorEntry.pivot;
+      proxy.position = closedCenter.subtract(doorEntry.pivot.getAbsolutePosition());
+      proxy.rotation.y = 0;
+    } else {
+      proxy.position = closedCenter;
+    }
     proxy.isVisible = true;
     proxy.visibility = 0;
     proxy.isPickable = true;
     proxy.layerMask = 0;
     proxy.metadata = { kind: 'worldObject', objectEntityId };
-    proxy.freezeWorldMatrix();
 
     this.doorPickProxies.set(objectEntityId, proxy);
   }

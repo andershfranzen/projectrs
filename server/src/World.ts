@@ -27,9 +27,9 @@ function getMapIdx(mapId: string): number {
   if (idx === undefined) { idx = nextMapIdx++; mapIdRegistry.set(mapId, idx); }
   return idx;
 }
-/** Encode map+tile into a single number. Supports tiles up to 65535x65535 with up to ~2000 maps. */
-function blockedKey(mapIdx: number, tileX: number, tileZ: number): number {
-  return mapIdx * 4294967296 + tileX * 65536 + tileZ;
+/** Encode map+floor+tile into a stable object-blocker key. */
+function blockedKey(mapIdx: number, floor: number, tileX: number, tileZ: number): string {
+  return `${mapIdx}|${Math.max(0, Math.floor(floor))}|${Math.floor(tileX)}|${Math.floor(tileZ)}`;
 }
 const HITPOINTS_SKILL_INDEX = ALL_SKILLS.indexOf('hitpoints' as SkillId);
 
@@ -82,6 +82,7 @@ export interface GroundItem {
   quantity: number;
   x: number;
   z: number;
+  floor: number;
   mapLevel: string;
   despawnTimer: number;
   ownerPlayerId?: number;
@@ -92,6 +93,8 @@ interface RuntimeObjectSpawn {
   objectId: number;
   x: number;
   z: number;
+  y?: number;
+  floor?: number;
   rotY?: number;
   name?: string;
   examineText?: string;
@@ -211,8 +214,8 @@ export class World {
   readonly groundItems: Map<number, GroundItem> = new Map();
   readonly worldObjects: Map<number, WorldObject> = new Map();
   private doorObjectsByMap: Map<string, Set<WorldObject>> = new Map();
-  /** Tiles blocked by non-depleted world objects, encoded as numeric key */
-  private blockedObjectTiles: Set<number> = new Set();
+  /** Tiles blocked by non-depleted world objects, keyed by map+floor+tile. */
+  private blockedObjectTiles: Set<string> = new Set();
 
   private currentTick: number = 0;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -258,6 +261,7 @@ export class World {
      *  spell def reload couldn't reroute XP to a different school. */
     xpSkill: SkillId;
     mapLevel: string;
+    floor: number;
   }[] = [];
 
   constructor(db: GameDatabase) {
@@ -288,29 +292,29 @@ export class World {
   /** Re-apply persisted door / respawn state on boot. Called once at the
    *  end of construction, after spawnWorldObjects has populated worldObjects
    *  with their default (closed / not-depleted) state. Rows are keyed by
-   *  (mapLevel, defId, tileX, tileZ) — stable across editor saves and
+   *  (mapLevel, defId, tileX, tileZ, floor) — stable across editor saves and
    *  reboots — so we scan worldObjects for the matching live entity instead
    *  of looking up by runtime entity id. */
   private restorePersistedObjectState(): void {
-    // One-time pass: build a (map|defId|tx|tz) → WorldObject index so the
+    // One-time pass: build a (map|defId|tx|tz|floor) → WorldObject index so the
     // O(rows × worldObjects) restore work collapses to O(rows + worldObjects).
     const stableIndex = new Map<string, WorldObject>();
-    const stableKey = (mapLevel: string, defId: number, tileX: number, tileZ: number) =>
-      `${mapLevel}|${defId}|${tileX}|${tileZ}`;
+    const stableKey = (mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number) =>
+      `${mapLevel}|${defId}|${tileX}|${tileZ}|${Math.max(0, Math.floor(floor))}`;
     for (const [, obj] of this.worldObjects) {
-      stableIndex.set(stableKey(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z)), obj);
+      stableIndex.set(stableKey(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor), obj);
     }
 
     try {
       const doorRows = this.db.loadAllDoorStates();
       let restored = 0;
       for (const row of doorRows) {
-        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ));
+        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor));
         if (!obj || obj.def.category !== 'door') {
           // Object was deleted from the map or its def changed — drop the
           // stale row. With stable identity this only happens on real
           // edits, not on routine spawn-order reshuffles.
-          this.db.clearDoorState(row.mapLevel, row.defId, row.tileX, row.tileZ);
+          this.db.clearDoorState(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor);
           continue;
         }
         if (row.isOpen && !obj.doorOpen) {
@@ -337,9 +341,9 @@ export class World {
       const now = Date.now();
       let restored = 0;
       for (const row of respawnRows) {
-        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ));
+        const obj = stableIndex.get(stableKey(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor));
         if (!obj) {
-          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
+          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor);
           continue;
         }
         // Doors handled by door_state above; skip here.
@@ -347,7 +351,7 @@ export class World {
         const msRemaining = row.respawnAtUnixMs - now;
         if (msRemaining <= 0) {
           // Already due — drop the row, leave the live spawn alone.
-          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ);
+          this.db.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor);
           continue;
         }
         const maxRespawnTicks = Math.max(1, obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS);
@@ -404,7 +408,7 @@ export class World {
     }
     for (const [id, obj] of this.worldObjects) {
       if (obj.mapLevel === mapId) {
-        this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false);
+        this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false, obj.floor);
         this.worldObjects.delete(id);
       }
     }
@@ -424,6 +428,7 @@ export class World {
         spawn.stats ?? null, spawn.customColors ?? null,
         spawn.attackAnim ?? null);
       npc.currentMapLevel = mapId;
+      npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
       cm.addEntity(npc.id, spawn.x, spawn.z);
     }
@@ -433,7 +438,7 @@ export class World {
       if (!objDef) continue;
       const obj = this.createWorldObject(objDef, spawn, mapId);
       this.worldObjects.set(obj.id, obj);
-      this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
+      this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true, obj.floor);
       if (objDef.category === 'door') {
         this.initDoorEdge(obj);
         this.setDoorWallEdges(obj, gameMap);
@@ -459,6 +464,7 @@ export class World {
         quantity: item.quantity ?? 1,
         x: item.x,
         z: item.z,
+        floor: this.resolveAuthoredFloor(gameMap, item.x, item.z, item.y, item.floor).floor,
         mapLevel: mapId,
         despawnTimer: -1,
       };
@@ -494,9 +500,9 @@ export class World {
     for (const eid of nearbyIds) {
       if (eid === player.id) continue;
       const other = this.players.get(eid);
-      if (other) { this.sendPlayerPresence(player, other); continue; }
+      if (other && other.currentFloor === player.currentFloor) { this.sendPlayerPresence(player, other); continue; }
       const npc = this.npcs.get(eid);
-      if (npc && !npc.dead) {
+      if (npc && this.canPlayerTargetNpc(player, npc)) {
         // Static data first — the client uses cached appearance to decide
         // whether to render as sprite or CharacterEntity on NPC_SYNC.
         this.sendNpcStaticData(player, npc);
@@ -504,9 +510,9 @@ export class World {
         continue;
       }
       const obj = this.worldObjects.get(eid);
-      if (obj) { this.sendWorldObjectUpdate(player, obj); continue; }
+      if (obj && this.canPlayerTargetObject(player, obj)) { this.sendWorldObjectUpdate(player, obj); continue; }
       const item = this.groundItems.get(eid);
-      if (item) { this.sendGroundItemUpdate(player, item); continue; }
+      if (item && this.canPlayerTargetGroundItem(player, item)) { this.sendGroundItemUpdate(player, item); continue; }
     }
     this.sendSkills(player);
     this.sendInventory(player);
@@ -522,6 +528,89 @@ export class World {
   /** Get the map the player is currently on */
   getPlayerMap(player: Player): GameMap {
     return this.getMap(player.currentMapLevel);
+  }
+
+  private resolveAuthoredFloor(
+    map: GameMap,
+    x: number,
+    z: number,
+    authoredY?: number,
+    authoredFloor?: number,
+  ): { floor: number; y: number } {
+    if (Number.isFinite(authoredFloor)) {
+      const floor = Math.max(0, Math.floor(authoredFloor!));
+      const y = Number.isFinite(authoredY)
+        ? authoredY!
+        : map.getEffectiveHeightOnFloor(x, z, floor, floor > 0 ? Number.POSITIVE_INFINITY : undefined);
+      return { floor, y };
+    }
+
+    if (Number.isFinite(authoredY)) {
+      const targets = map.getWalkableFloorTargetsAt(x, z);
+      if (targets.length > 0) {
+        let best = targets[0];
+        let bestDist = Math.abs(best.y - authoredY!);
+        for (let i = 1; i < targets.length; i++) {
+          const dist = Math.abs(targets[i].y - authoredY!);
+          if (dist < bestDist) {
+            best = targets[i];
+            bestDist = dist;
+          }
+        }
+        return { floor: best.floor, y: authoredY! };
+      }
+      return { floor: 0, y: authoredY! };
+    }
+
+    return { floor: 0, y: map.getEffectiveHeightOnFloor(x, z, 0) };
+  }
+
+  private floorWorldY(mapId: string, x: number, z: number, floor: number, currentY?: number): number {
+    const map = this.maps.get(mapId);
+    if (!map) return 0;
+    const heightGateY = currentY ?? (floor > 0 ? Number.POSITIVE_INFINITY : undefined);
+    return map.getEffectiveHeightOnFloor(x, z, floor, heightGateY);
+  }
+
+  private npcWorldY(npc: Npc): number {
+    return this.floorWorldY(npc.currentMapLevel, npc.position.x, npc.position.y, npc.currentFloor);
+  }
+
+  canPlayerTargetNpc(player: Player, npc: Npc): boolean {
+    return !npc.dead
+      && npc.currentMapLevel === player.currentMapLevel
+      && (npc.currentFloor ?? 0) === player.currentFloor;
+  }
+
+  canPlayerTargetObject(player: Player, obj: WorldObject): boolean {
+    if (obj.mapLevel !== player.currentMapLevel) return false;
+    if ((obj.floor ?? 0) === player.currentFloor) return true;
+    return obj.def.category === 'ladder' && this.canPlayerUseLadderOnCurrentFloor(player, obj);
+  }
+
+  canPlayerTargetGroundItem(player: Player, item: GroundItem): boolean {
+    return item.mapLevel === player.currentMapLevel
+      && (item.floor ?? 0) === player.currentFloor
+      && this.isGroundItemVisibleTo(player, item);
+  }
+
+  private canPlayerUseLadderOnCurrentFloor(player: Player, obj: WorldObject): boolean {
+    const map = this.maps.get(obj.mapLevel);
+    if (!map) return false;
+    const seen = new Set<string>();
+    const positions: { x: number; z: number }[] = [];
+    const add = (x: number, z: number): void => {
+      const pos = { x: Math.floor(x) + 0.5, z: Math.floor(z) + 0.5 };
+      const key = `${pos.x},${pos.z}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      positions.push(pos);
+    };
+    add(obj.x, obj.z);
+    for (const tile of this.objectInteractionTiles(obj)) add(tile.x, tile.z);
+    return positions.some(pos =>
+      map.getWalkableFloorTargetsAt(pos.x, pos.z).some(target => target.floor === player.currentFloor),
+    );
   }
 
   /** Path from the player to the NPC's interaction surface. Targets the
@@ -567,6 +656,7 @@ export class World {
   }
 
   private isPlayerNpcInteractionReachable(player: Player, npc: Npc): boolean {
+    if (!this.canPlayerTargetNpc(player, npc)) return false;
     const map = this.getPlayerMap(player);
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
@@ -579,6 +669,7 @@ export class World {
   }
 
   private queuePlayerPathToNpcInteraction(player: Player, npc: Npc): boolean {
+    if (!this.canPlayerTargetNpc(player, npc)) return false;
     const path = this.findPlayerPathToNpc(player, npc);
     if (path.length === 0) return false;
     player.setMoveQueue(path);
@@ -604,18 +695,21 @@ export class World {
     return true;
   }
 
-  private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean): void {
+  private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean, floor: number = 0): void {
     if (!def.blocking || def.category === 'door') return;
     for (const tile of getObjectFootprintTiles(x, z, def)) {
-      const key = this.blockedKeyFor(mapId, tile.x, tile.z);
+      const key = this.blockedKeyFor(mapId, tile.x, tile.z, floor);
       if (blocked) this.blockedObjectTiles.add(key);
       else this.blockedObjectTiles.delete(key);
     }
   }
 
   private isTileBlockedForPlayer(player: Player, map: GameMap, tileX: number, tileZ: number): boolean {
-    if (player.currentFloor !== 0) return map.isTileBlockedOnFloor(tileX, tileZ, player.currentFloor);
-    return map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ));
+    if (player.currentFloor !== 0) {
+      return map.isTileBlockedOnFloor(tileX, tileZ, player.currentFloor)
+        || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor));
+    }
+    return map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor));
   }
 
   private usesCornerObjectInteraction(obj: WorldObject): boolean {
@@ -679,10 +773,19 @@ export class World {
             player.position.y,
             goalX,
             goalZ,
-            (x, z) => map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, x, z)),
+            (x, z) => map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, x, z, player.currentFloor)),
             800,
           )
-        : map.findPathOnFloor(player.position.x, player.position.y, goalX, goalZ, player.currentFloor);
+        : map.findPathForNpc(
+            player.position.x,
+            player.position.y,
+            goalX,
+            goalZ,
+            (x, z) => map.isTileBlockedOnFloor(x, z, player.currentFloor)
+              || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, x, z, player.currentFloor)),
+            800,
+            (fx, fz, tx, tz) => map.isWallBlockedOnFloor(fx, fz, tx, tz, player.currentFloor),
+          );
       if (path.length > 0) return path;
     }
 
@@ -718,6 +821,7 @@ export class World {
           spawn.attackAnim ?? null,
         );
         npc.currentMapLevel = mapId;
+        npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
         this.npcs.set(npc.id, npc);
 
         // Sized NPCs need an unblocked NxN footprint at their anchor or
@@ -751,7 +855,7 @@ export class World {
         }
         const obj = this.createWorldObject(objDef, spawn, mapId);
         this.worldObjects.set(obj.id, obj);
-        this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true);
+        this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true, obj.floor);
         if (objDef.category === 'door') {
           this.initDoorEdge(obj);
           this.setDoorWallEdges(obj, gameMap);
@@ -775,6 +879,7 @@ export class World {
           quantity: item.quantity ?? 1,
           x: item.x,
           z: item.z,
+          floor: this.resolveAuthoredFloor(this.maps.get(mapId)!, item.x, item.z, item.y, item.floor).floor,
           mapLevel: mapId,
           despawnTimer: -1, // permanent spawn
         };
@@ -790,7 +895,7 @@ export class World {
   private collectObjectSpawns(
     mapId: string,
     gameMap: GameMap,
-    fallbackObjects: ReadonlyArray<{ objectId: number; x: number; z: number; rotY?: number }>,
+    fallbackObjects: ReadonlyArray<{ objectId: number; x: number; z: number; y?: number; floor?: number; rotY?: number }>,
   ): RuntimeObjectSpawn[] {
     const objectSpawns: RuntimeObjectSpawn[] = [];
     for (const placed of gameMap.placedObjects ?? []) {
@@ -800,6 +905,7 @@ export class World {
           objectId: defId,
           x: placed.position.x,
           z: placed.position.z,
+          y: placed.position.y,
           rotY: placed.rotation?.y,
           name: placed.name,
           examineText: placed.examineText,
@@ -814,7 +920,8 @@ export class World {
       if (BLOCKING_DECOR_ASSETS.has(placed.assetId)) {
         const tx = Math.floor(placed.position.x);
         const tz = Math.floor(placed.position.z);
-        this.blockedObjectTiles.add(this.blockedKeyFor(mapId, tx, tz));
+        const { floor } = this.resolveAuthoredFloor(gameMap, placed.position.x, placed.position.z, placed.position.y);
+        this.blockedObjectTiles.add(this.blockedKeyFor(mapId, tx, tz, floor));
       }
     }
     for (const obj of fallbackObjects) objectSpawns.push(obj);
@@ -822,7 +929,11 @@ export class World {
   }
 
   private createWorldObject(objDef: WorldObjectDef, spawn: RuntimeObjectSpawn, mapId: string): WorldObject {
-    const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId);
+    const map = this.maps.get(mapId);
+    const resolved = map
+      ? this.resolveAuthoredFloor(map, spawn.x, spawn.z, spawn.y, spawn.floor)
+      : { floor: Math.max(0, Math.floor(spawn.floor ?? 0)), y: spawn.y ?? 0 };
+    const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId, resolved.floor, resolved.y);
     if (spawn.rotY != null) obj.rotationY = spawn.rotY;
     if (spawn.name) obj.name = spawn.name;
     if (spawn.examineText) obj.examineText = spawn.examineText;
@@ -902,6 +1013,30 @@ export class World {
     player.effectiveY = map.getEffectiveHeightOnFloor(
       player.position.x, player.position.y, player.currentFloor, player.effectiveY,
     );
+  }
+
+  /** Server-side floor inference from the server's own walking Y. This fills
+   *  the gap left by removing client floor hints: KC maps often model an
+   *  upstairs walkway as an elevated texture plane, so the player can climb
+   *  to Y=2.7 while still technically on floor 0 unless we reconcile the
+   *  floor index from the authored walkable targets at that tile. */
+  private inferFloorFromEffectiveY(map: GameMap, x: number, z: number, effectiveY: number, currentFloor: number): number {
+    const targets = map.getWalkableFloorTargetsAt(x, z);
+    if (targets.length === 0) return currentFloor;
+
+    let best = targets[0];
+    let bestDist = Math.abs(best.y - effectiveY);
+    for (let i = 1; i < targets.length; i++) {
+      const candidate = targets[i];
+      const dist = Math.abs(candidate.y - effectiveY);
+      const tied = Math.abs(dist - bestDist) < 0.05;
+      if (dist < bestDist - 0.05 || (tied && candidate.floor === currentFloor)) {
+        best = candidate;
+        bestDist = dist;
+      }
+    }
+
+    return bestDist <= 0.75 ? best.floor : currentFloor;
   }
 
   private sendFloorChange(player: Player): void {
@@ -1114,7 +1249,29 @@ export class World {
     // Send login confirmation — entity data will be sent when client responds with MAP_READY
     // The 4th value is the effective walking Y so the client can spawn at
     // the right elevation (e.g. on top of a texture-plane bridge interior).
-    const spawnY = this.computeEffectiveY(player);
+    let spawnY = this.computeEffectiveY(player);
+    const playerMap = this.getPlayerMap(player);
+    if (
+      player.currentFloor > 0
+      || this.isNearGroundStair(playerMap, Math.floor(player.position.x), Math.floor(player.position.y))
+    ) {
+      const spawnFloor = this.inferFloorFromEffectiveY(
+        playerMap,
+        player.position.x,
+        player.position.y,
+        spawnY,
+        player.currentFloor,
+      );
+      if (spawnFloor !== player.currentFloor) {
+        player.currentFloor = spawnFloor;
+        spawnY = playerMap.getEffectiveHeightOnFloor(
+          player.position.x,
+          player.position.y,
+          player.currentFloor,
+          spawnY,
+        );
+      }
+    }
     // Do not auto-snap low saved Y up to an elevated texture plane. Multi-story
     // buildings can have a valid floor-0 walkable tile directly under an upper
     // floor, so the persisted Y is the only reliable signal for which plane
@@ -1199,7 +1356,7 @@ export class World {
       if (item.ownerPlayerId !== playerId) continue;
       item.ownerPlayerId = undefined;
       item.privateTicks = 0;
-      this.forEachPlayerNear(item.mapLevel, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
+      this.forEachPlayerNearOnFloor(item.mapLevel, item.floor, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
     }
   }
 
@@ -1232,7 +1389,7 @@ export class World {
     console.log(`Player "${player.name}" left`);
 
     // Notify nearby players
-    this.broadcastNearby(player.currentMapLevel, player.position.x, player.position.y, ServerOpcode.ENTITY_DEATH, playerId);
+    this.broadcastNearbyOnFloor(player.currentMapLevel, player.currentFloor, player.position.x, player.position.y, ServerOpcode.ENTITY_DEATH, playerId);
   }
 
   /** Called from the WS close handler. The Player entity is frozen in-world
@@ -1420,12 +1577,12 @@ export class World {
   private setDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
-    map.setWall(tx, tz, map.getWall(tx, tz) | edge);
+    map.setWallOnFloor(tx, tz, obj.floor, map.getWallOnFloor(tx, tz, obj.floor) | edge);
     const nb = DOOR_EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
-        map.setWall(nx, nz, map.getWall(nx, nz) | nb.opposite);
+        map.setWallOnFloor(nx, nz, obj.floor, map.getWallOnFloor(nx, nz, obj.floor) | nb.opposite);
       }
     }
   }
@@ -1438,12 +1595,12 @@ export class World {
   private clearDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
-    map.setOpenDoorEdges(tx, tz, edge, true);
+    map.setOpenDoorEdges(tx, tz, edge, true, obj.floor);
     const nb = DOOR_EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
-        map.setOpenDoorEdges(nx, nz, nb.opposite, true);
+        map.setOpenDoorEdges(nx, nz, nb.opposite, true, obj.floor);
       }
     }
   }
@@ -1452,12 +1609,12 @@ export class World {
   private restoreDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
-    map.setOpenDoorEdges(tx, tz, edge, false);
+    map.setOpenDoorEdges(tx, tz, edge, false, obj.floor);
     const nb = DOOR_EDGE_NEIGHBOR[edge];
     if (nb) {
       const nx = tx + nb.dx, nz = tz + nb.dz;
       if (nx >= 0 && nz >= 0 && nx < map.width && nz < map.height) {
-        map.setOpenDoorEdges(nx, nz, nb.opposite, false);
+        map.setOpenDoorEdges(nx, nz, nb.opposite, false, obj.floor);
       }
     }
   }
@@ -1485,14 +1642,14 @@ export class World {
       swingSign = 0;
       // Closed is the default state — drop the persisted row so a fresh
       // server boot doesn't waste cycles processing a no-op.
-      this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
+      this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
     } else {
       this.clearDoorWallEdges(obj, map);
       obj.doorOpen = true;
       obj.depleted = true;
       obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
       this.depletedObjectIds.add(obj.id);
-      this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), true, this.currentTick + obj.respawnTimer);
+      this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, true, this.currentTick + obj.respawnTimer);
     }
 
     this.broadcastWorldObjectStateChange(obj, swingSign);
@@ -1554,6 +1711,22 @@ export class World {
     });
   }
 
+  private broadcastNearbyOnFloor(mapId: string, floor: number, worldX: number, worldZ: number, opcode: ServerOpcode, ...values: number[]): void {
+    if (!this.chunkManagers) {
+      this.broadcastNearby(mapId, worldX, worldZ, opcode, ...values);
+      return;
+    }
+    const cm = this.chunkManagers.get(mapId);
+    if (!cm) return;
+    const packet = encodePacket(opcode, ...values);
+    cm.forEachPlayerNear(worldX, worldZ, (pid) => {
+      const p = this.players.get(pid);
+      if (p && !p.disconnected && p.currentMapLevel === mapId && p.currentFloor === floor) {
+        try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
+      }
+    });
+  }
+
   private broadcastWorldObjectStateChange(obj: WorldObject, swingSign: number = 0): void {
     const cm = this.chunkManagers.get(obj.mapLevel);
     if (!cm) return;
@@ -1561,7 +1734,7 @@ export class World {
     const syncPacket = this.encodeWorldObjectUpdate(obj);
     cm.forEachPlayerNear(obj.x, obj.z, (pid) => {
       const player = this.players.get(pid);
-      if (!player || player.disconnected || player.currentMapLevel !== obj.mapLevel) return;
+      if (!player || player.disconnected || player.currentMapLevel !== obj.mapLevel || player.currentFloor !== obj.floor) return;
       try {
         player.ws.sendBinary(eventPacket);
         player.ws.sendBinary(syncPacket);
@@ -1575,6 +1748,7 @@ export class World {
     const doors = this.doorObjectsByMap.get(player.currentMapLevel);
     if (!doors) return;
     for (const obj of doors) {
+      if (obj.floor !== player.currentFloor) continue;
       if (Math.max(Math.abs(Math.floor(obj.x) - px), Math.abs(Math.floor(obj.z) - pz)) > radius) continue;
       this.sendWorldObjectUpdate(player, obj);
     }
@@ -1594,12 +1768,12 @@ export class World {
    *  NPCs are excluded by the caller's pre-check on hasDialogue/hasShop. */
   private npcHasInteractionAudience(npc: Npc): boolean {
     for (const [, player] of this.players) {
-      if (player.openDialogueState?.npcEntityId === npc.id) return true;
+      if (player.openDialogueState?.npcEntityId === npc.id && player.currentMapLevel === npc.currentMapLevel && player.currentFloor === npc.currentFloor) return true;
       // openShopNpcId is keyed by def id, not entity id — two NPCs of the
       // same def in the same area would both freeze when one is shopped at,
       // which is acceptable (rare, and the wrong-direction facing risk is
       // worse than the standing-still cost).
-      if (player.openShopNpcId === npc.npcId && player.currentMapLevel === npc.currentMapLevel) return true;
+      if (player.openShopNpcId === npc.npcId && player.currentMapLevel === npc.currentMapLevel && player.currentFloor === npc.currentFloor) return true;
     }
     return false;
   }
@@ -1613,7 +1787,11 @@ export class World {
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     const angle = Math.atan2(dx, dz);
     const q = Math.round(angle * 1000);
-    this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.NPC_FACING, npc.id, q);
+    this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, ServerOpcode.NPC_FACING, npc.id, q);
+  }
+
+  private broadcastNpcFacingPlayer(npc: Npc, player: Player): void {
+    this.broadcastNpcFacing(npc, player.position.x - npc.position.x, player.position.y - npc.position.y);
   }
 
   /** Call fn for each player near a world position on a given map (zero-allocation) */
@@ -1623,6 +1801,12 @@ export class World {
     cm.forEachPlayerNear(worldX, worldZ, (pid) => {
       const p = this.players.get(pid);
       if (p && !p.disconnected) fn(p);
+    });
+  }
+
+  private forEachPlayerNearOnFloor(mapId: string, floor: number, worldX: number, worldZ: number, fn: (p: Player) => void): void {
+    this.forEachPlayerNear(mapId, worldX, worldZ, (p) => {
+      if (p.currentMapLevel === mapId && p.currentFloor === floor) fn(p);
     });
   }
 
@@ -1660,7 +1844,7 @@ export class World {
       for (const playerId of [...targeters]) this.clearCombatTarget(playerId);
     }
 
-    this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
+      this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
 
     const cm = this.chunkManagers.get(npc.currentMapLevel);
     if (cm) cm.removeEntity(npc.id);
@@ -1745,12 +1929,13 @@ export class World {
     }
   }
 
-  private blockedKeyFor(mapId: string, x: number, z: number): number {
-    return blockedKey(getMapIdx(mapId), Math.floor(x), Math.floor(z));
+  private blockedKeyFor(mapId: string, x: number, z: number, floor: number = 0): string {
+    return blockedKey(getMapIdx(mapId), floor, Math.floor(x), Math.floor(z));
   }
 
   /** Check if player is on a valid interaction tile for the object. */
   private isAdjacentToObject(player: Player, obj: WorldObject): boolean {
+    if (!this.canPlayerTargetObject(player, obj)) return false;
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
     const otx = Math.floor(obj.x);
@@ -1873,8 +2058,9 @@ export class World {
         const nextTileX = curTileX + stepDX;
         const nextTileZ = curTileZ + stepDZ;
         const tileBlocked = pFloor === 0
-          ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ)))
-          : map.isTileBlockedOnFloor(nextTileX, nextTileZ, pFloor);
+          ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ, pFloor)))
+          : map.isTileBlockedOnFloor(nextTileX, nextTileZ, pFloor)
+            || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ, pFloor));
         // The player's authoritative walking elevation gates wall-edge
         // collision: a wall authored at an upper-floor Y must not block a
         // player standing at that elevation, and an open upper-floor door
@@ -1957,7 +2143,7 @@ export class World {
         const tx = targetTileX + ox;
         const tz = targetTileZ + oz;
         const blocked = player.currentFloor === 0
-          ? map.isBlocked(tx, tz) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tx, tz))
+          ? map.isBlocked(tx, tz) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tx, tz, player.currentFloor))
           : map.isTileBlockedOnFloor(tx, tz, player.currentFloor);
         if (!blocked) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
       }
@@ -1987,17 +2173,11 @@ export class World {
     // handlePlayerTalkNpc: dialogue > shop > bank.
     if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
     this.cancelSkilling(playerId);
-    if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
     this.closeNpcUiContext(player);
     player.botStats?.recordActionSignature('attackNpc', npc.npcId, player.position.x, player.position.y);
 
-    const dx = npc.position.x - player.position.x;
-    const dz = npc.position.y - player.position.y;
-    // Face the attacker — 2004scape NPC.faceEntity. The combat loop
-    // continues to update this naturally if the player moves, since the
-    // hit broadcast carries the attacker's tile.
-    this.broadcastNpcFacing(npc, -dx, -dz);
     // Distance to the NPC's nearest footprint tile (size-1 falls through to
     // a plain target-anchor distance) — sized mobs are "in range" when the
     // player is adjacent to their body, not just their SW anchor.
@@ -2051,7 +2231,7 @@ export class World {
     const npc = this.npcs.get(npcEntityId);
     if (!player || !npc || npc.dead) return;
     if (player.isInterfaceOpen()) return;
-    if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
 
     // Chebyshev (max-of-axes) matches the rest of the interaction surface —
@@ -2130,7 +2310,7 @@ export class World {
     if (shopNpcId === null) return false;
     for (const [, npc] of this.npcs) {
       if (npc.npcId !== shopNpcId || npc.dead) continue;
-      if (npc.currentMapLevel !== player.currentMapLevel) continue;
+      if (!this.canPlayerTargetNpc(player, npc)) continue;
       if (this.isPlayerNpcInteractionReachable(player, npc)) return true;
     }
     return false;
@@ -2213,7 +2393,7 @@ export class World {
     if (!state || state.npcEntityId !== npcEntityId) return;
     if (sessionId !== -1 && state.sessionId !== sessionId) return;
     const npc = this.npcs.get(npcEntityId);
-    if (!npc || npc.dead) { this.sendDialogueClose(player); return; }
+    if (!npc || npc.dead || !this.canPlayerTargetNpc(player, npc)) { this.sendDialogueClose(player); return; }
     const tree = npc.effectiveDialogue;
     if (!tree) { this.sendDialogueClose(player); return; }
     const node = tree.nodes[state.nodeId];
@@ -2476,8 +2656,7 @@ export class World {
     if (!player || !item) return;
     if (player.isBusy(this.currentTick)) return;
     if (player.isInterfaceOpen()) return;
-    if (item.mapLevel !== player.currentMapLevel) return;
-    if (!this.isGroundItemVisibleTo(player, item)) return;
+    if (!this.canPlayerTargetGroundItem(player, item)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
     this.closeNpcUiContext(player);
 
@@ -2508,9 +2687,9 @@ export class World {
       if (itemCm) itemCm.removeEntity(groundItemId);
       // Map-wide broadcast: a viewer who saw the drop, walked OOR, and stays
       // away when someone else grabs it would otherwise keep the stale sprite.
-      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0);
+      const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, groundItemId, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
       for (const [, p] of this.players) {
-        if (p.currentMapLevel !== item.mapLevel) continue;
+        if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
         try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
       }
       this.sendInventory(player);
@@ -2549,6 +2728,7 @@ export class World {
       quantity: removed.completed,
       x: player.position.x,
       z: player.position.y,
+      floor: player.currentFloor,
       mapLevel: player.currentMapLevel,
       despawnTimer: GROUND_ITEM_DESPAWN_TICKS,
     };
@@ -2557,7 +2737,7 @@ export class World {
     const dropCm = this.chunkManagers.get(groundItem.mapLevel);
     if (dropCm) dropCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
 
-    this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
+    this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
   }
@@ -2592,7 +2772,7 @@ export class World {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
-    if (obj.mapLevel !== player.currentMapLevel) return;
+    if (!this.canPlayerTargetObject(player, obj)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     if (obj.def.category !== 'door') expectedDoorOpen = null;
     if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen)) return;
@@ -2782,7 +2962,7 @@ export class World {
     obj.respawnTimer = Math.max(0, Math.floor(respawnTicks ?? obj.def.respawnTime ?? 0));
     if (obj.respawnTimer > 0) {
       this.depletedObjectIds.add(obj.id);
-      this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
+      this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, Date.now() + obj.respawnTimer * TICK_RATE);
     }
     this.broadcastWorldObjectStateChange(obj);
   }
@@ -3225,7 +3405,7 @@ export class World {
     if (!obj) return;
     const player = this.validateInvUse(playerId, invSlot, itemId);
     if (!player) return;
-    if (obj.mapLevel !== player.currentMapLevel) return;
+    if (!this.canPlayerTargetObject(player, obj)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     this.clearPendingObjectIntents(player);
     if (!this.isAdjacentToObject(player, obj)) {
@@ -3255,7 +3435,7 @@ export class World {
     if (!npc) return;
     const player = this.validateInvUse(playerId, invSlot, itemId);
     if (!player) return;
-    if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
     this.clearPendingObjectIntents(player);
     if (!this.isPlayerNpcInteractionReachable(player, npc)) {
@@ -3327,7 +3507,7 @@ export class World {
     const npc = this.npcs.get(targetEntityId);
     if (!npc || npc.dead) return;
     if (this.data.getShop(npc.npcId)) return;                 // shopkeepers immune
-    if (npc.currentMapLevel !== player.currentMapLevel) return;
+    if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(targetEntityId)) return;
 
     player.clearMoveQueue();
@@ -3403,8 +3583,8 @@ export class World {
       true,
     );
 
-    this.broadcastNearby(
-      player.currentMapLevel, player.position.x, player.position.y,
+    this.broadcastNearbyOnFloor(
+      player.currentMapLevel, player.currentFloor, player.position.x, player.position.y,
       ServerOpcode.SPELL_CAST, player.id, npc.id, spellIndex,
     );
 
@@ -3416,6 +3596,7 @@ export class World {
       spellId: def.id,
       xpSkill,
       mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
     });
   }
 
@@ -4538,6 +4719,7 @@ export class World {
     this.activeDuels.set(session.a.id, duel);
     this.activeDuels.set(session.b.id, duel);
 
+    this.faceDuelOpponents(aPlayer, bPlayer);
     this.sendToPlayer(aPlayer, ServerOpcode.DUEL_START, bPlayer.id);
     this.sendToPlayer(bPlayer, ServerOpcode.DUEL_START, aPlayer.id);
     this.sendChatSystem(aPlayer, `Duel with ${bPlayer.name} started.`);
@@ -4551,6 +4733,11 @@ export class World {
         b: { accountId: bPlayer.accountId, name: bPlayer.name, stake: session.b.stake.filter(o => o !== null) },
       },
     });
+  }
+
+  private faceDuelOpponents(a: Player, b: Player): void {
+    this.setPlayerAnimation(a, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, b.id, true);
+    this.setPlayerAnimation(b, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, a.id, true);
   }
 
   private clearDuelSetupState(player: Player): void {
@@ -4642,7 +4829,7 @@ export class World {
       attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
       attacker.removeItemFromSlot(ammo.slotIndex, 1);
       this.sendInventory(attacker);
-      this.broadcastProjectile(attacker.id, defender.id, 1, attacker.currentMapLevel, attacker.position.x, attacker.position.y);
+      this.broadcastProjectile(attacker.id, defender.id, 1, attacker.currentMapLevel, duel.floor, attacker.position.x, attacker.position.y);
       this.applyDuelHit(duel, attacker, defender, hit, false);
       return;
     }
@@ -4722,8 +4909,8 @@ export class World {
       defender.id,
       true,
     );
-    this.broadcastNearby(
-      attacker.currentMapLevel, attacker.position.x, attacker.position.y,
+    this.broadcastNearbyOnFloor(
+      attacker.currentMapLevel, attacker.currentFloor, attacker.position.x, attacker.position.y,
       ServerOpcode.SPELL_CAST, attacker.id, defender.id, spellIndex,
     );
     return hit;
@@ -4738,7 +4925,7 @@ export class World {
       this.setPlayerAnimation(attacker, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, defender.id, true);
     }
     attacker.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
-    this.broadcastCombatHit(attacker.id, defender.id, actual, defender.health, defender.maxHealth, duel.mapLevel, defender.position.x, defender.position.y);
+    this.broadcastCombatHit(attacker.id, defender.id, actual, defender.health, defender.maxHealth, duel.mapLevel, duel.floor, defender.position.x, defender.position.y);
     this.sendToPlayer(defender, ServerOpcode.PLAYER_STATS, defender.health, defender.maxHealth);
     this.sendSingleSkill(defender, HITPOINTS_SKILL_INDEX);
   }
@@ -4918,6 +5105,7 @@ export class World {
       quantity,
       x: player.position.x,
       z: player.position.y,
+      floor: player.currentFloor,
       mapLevel: player.currentMapLevel,
       despawnTimer,
     };
@@ -4927,7 +5115,7 @@ export class World {
     if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
     // Broadcast to nearby players so the dropped item appears immediately
     // (without this, clients only see it after re-entering the chunk).
-    this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p =>
+    this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
       this.sendGroundItemUpdate(p, groundItem));
   }
 
@@ -4935,7 +5123,7 @@ export class World {
     const loot = rollLoot(npc);
     if (loot.length === 0) return;
     const owner = ownerPlayerId != null ? this.players.get(ownerPlayerId) : null;
-    const effectiveOwnerId = owner && owner.currentMapLevel === npc.currentMapLevel ? owner.id : null;
+    const effectiveOwnerId = owner && owner.currentMapLevel === npc.currentMapLevel && owner.currentFloor === npc.currentFloor ? owner.id : null;
     const deathX = npc.position.x;
     const deathZ = npc.position.y;
     for (const drop of loot) {
@@ -4945,6 +5133,7 @@ export class World {
         quantity: drop.quantity,
         x: deathX,
         z: deathZ,
+        floor: npc.currentFloor,
         mapLevel: npc.currentMapLevel,
         despawnTimer: NPC_LOOT_DESPAWN_TICKS,
         ownerPlayerId: effectiveOwnerId ?? undefined,
@@ -4958,7 +5147,7 @@ export class World {
       if (effectiveOwnerId != null && owner) {
         this.sendGroundItemUpdate(owner, groundItem);
       } else {
-        this.forEachPlayerNear(groundItem.mapLevel, groundItem.x, groundItem.z, p =>
+        this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
           this.sendGroundItemUpdate(p, groundItem));
       }
     }
@@ -5135,7 +5324,7 @@ export class World {
         const isDoorInteraction = obj?.def.category === 'door';
         if (!isDoorInteraction && justArrived) continue;
         this.clearPendingObjectIntents(player);
-        if (obj && obj.mapLevel === player.currentMapLevel) {
+        if (obj && this.canPlayerTargetObject(player, obj)) {
           if (this.isAdjacentToObject(player, obj)) {
             player.clearMoveQueue();
             player.attackTarget = null;
@@ -5173,7 +5362,7 @@ export class World {
         const id = player.pendingTalkNpcId;
         const targetNpc = this.npcs.get(id);
         const inRange = targetNpc && !targetNpc.dead
-          && targetNpc.currentMapLevel === player.currentMapLevel
+          && this.canPlayerTargetNpc(player, targetNpc)
           && this.isPlayerNpcInteractionReachable(player, targetNpc);
         if (inRange) {
           player.pendingTalkNpcId = -1;
@@ -5182,7 +5371,7 @@ export class World {
         } else if (
           targetNpc
           && !targetNpc.dead
-          && targetNpc.currentMapLevel === player.currentMapLevel
+          && this.canPlayerTargetNpc(player, targetNpc)
           && player.pendingTalkRepathTicks > 0
           && this.queuePlayerPathToNpcInteraction(player, targetNpc)
         ) {
@@ -5223,6 +5412,7 @@ export class World {
             if (npc.combatTarget) return;
             const player = this.players.get(pid);
             if (!player) return;
+            if (player.currentMapLevel !== npc.currentMapLevel || player.currentFloor !== npc.currentFloor) return;
             if (player.openInterface !== null || this.activeDuels?.has(player.id)) return;
             if (player.combatLevel > dropoffLvl) return;
             const fp = npc.distToFootprint(player.position.x, player.position.y);
@@ -5251,27 +5441,42 @@ export class World {
         // are allocation-free in the hot path (no footprint array per call).
         const npcBlocked = size <= 1
           ? (x: number, z: number) =>
-              map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z))
+              map.isTileBlockedOnFloor(x, z, npc.currentFloor) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z, npc.currentFloor))
           : (x: number, z: number) => {
-              if (map.isNpcBlocked(x, z, size)) return true;
               const minX = Math.floor(x) - Math.floor((size - 1) / 2);
               const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
               for (let i = 0; i < size; i++) {
                 for (let j = 0; j < size; j++) {
-                  if (this.blockedObjectTiles.has(this.blockedKeyFor(mapId, minX + i, minZ + j))) return true;
+                  if (map.isTileBlockedOnFloor(minX + i, minZ + j, npc.currentFloor)) return true;
+                }
+              }
+              for (let i = 0; i < size; i++) {
+                for (let j = 0; j < size; j++) {
+                  if (this.blockedObjectTiles.has(this.blockedKeyFor(mapId, minX + i, minZ + j, npc.currentFloor))) return true;
                 }
               }
               return false;
             };
         const npcWallBlocked = size <= 1
-          ? map.isWallBlockedCb
-          : (fx: number, fz: number, tx: number, tz: number) => map.isNpcWallBlocked(fx, fz, tx, tz, size);
+          ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, npc.currentFloor)
+          : (fx: number, fz: number, tx: number, tz: number) => {
+              const minFx = Math.floor(fx) - Math.floor((size - 1) / 2);
+              const minFz = Math.floor(fz) - Math.floor((size - 1) / 2);
+              const minTx = Math.floor(tx) - Math.floor((size - 1) / 2);
+              const minTz = Math.floor(tz) - Math.floor((size - 1) / 2);
+              for (let i = 0; i < size; i++) {
+                for (let j = 0; j < size; j++) {
+                  if (map.isWallBlockedOnFloor(minFx + i, minFz + j, minTx + i, minTz + j, npc.currentFloor)) return true;
+                }
+              }
+              return false;
+            };
         const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
           map.findPathForNpc(sx, sz, gx, gz, npcBlocked, 100, npcWallBlocked);
         npc.processAI(npcBlocked, npcWallBlocked, npcFindPath);
       }
       if (hadCombatTarget && npc.combatTarget == null) {
-        this.broadcastNearby(npc.currentMapLevel, npc.position.x, npc.position.y,
+        this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y,
           ServerOpcode.COMBAT_HIT, npc.id, -1, 0, npc.health, npc.maxHealth);
       }
 
@@ -5311,7 +5516,7 @@ export class World {
         this.clearCombatTarget(playerId);
         continue;
       }
-      if (!player || !npc || npc.dead || npc.currentMapLevel !== player.currentMapLevel) {
+      if (!player || !npc || npc.dead || !this.canPlayerTargetNpc(player, npc)) {
         this.clearCombatTarget(playerId);
         continue;
       }
@@ -5382,7 +5587,7 @@ export class World {
           if (result) {
             player.removeItemFromSlot(ammo.slotIndex, 1);
             this.sendInventory(player);
-            this.broadcastProjectile(player.id, npc.id, 1, player.currentMapLevel, player.position.x, player.position.y);
+            this.broadcastProjectile(player.id, npc.id, 1, player.currentMapLevel, player.currentFloor, player.position.x, player.position.y);
           }
         } else {
           this.clearCombatTarget(playerId);
@@ -5394,10 +5599,11 @@ export class World {
       }
       if (result) {
         this.setPlayerAnimation(player, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, npc.id, true);
+        this.broadcastNpcFacingPlayer(npc, player);
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
         player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
-        this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, player.currentMapLevel, npc.position.x, npc.position.y);
+        this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, player.currentMapLevel, player.currentFloor, npc.position.x, npc.position.y);
 
         for (const xp of result.xpDrops) {
           const skillIdx = ALL_SKILLS.indexOf(xp.skill as SkillId);
@@ -5457,7 +5663,8 @@ export class World {
       const npc = this.npcs.get(imp.targetId);
       if (!player || !npc || npc.dead) continue;
       if (player.openInterface === 'duel' || this.activeDuels?.has(player.id)) continue;
-      if (npc.currentMapLevel !== imp.mapLevel) continue;
+      if (npc.currentMapLevel !== imp.mapLevel || npc.currentFloor !== imp.floor) continue;
+      if (player.currentMapLevel !== imp.mapLevel || player.currentFloor !== imp.floor) continue;
 
       const actual = npc.takeDamage(imp.damage);
 
@@ -5489,7 +5696,8 @@ export class World {
         player.syncHealthFromSkills();
       }
 
-      this.broadcastCombatHit(player.id, npc.id, actual, npc.health, npc.maxHealth, npc.currentMapLevel, npc.position.x, npc.position.y);
+      this.broadcastNpcFacingPlayer(npc, player);
+      this.broadcastCombatHit(player.id, npc.id, actual, npc.health, npc.maxHealth, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y);
 
       if (!npc.alive) {
         npc.die();
@@ -5508,7 +5716,7 @@ export class World {
     for (const [, npc] of this.npcs) {
       if (npc.dead || !npc.combatTarget) continue;
       const target = npc.combatTarget as Player;
-      if (!target.alive || !this.players.has(target.id) || target.currentMapLevel !== npc.currentMapLevel) {
+      if (!target.alive || !this.players.has(target.id) || target.currentMapLevel !== npc.currentMapLevel || target.currentFloor !== npc.currentFloor) {
         npc.combatTarget = null;
         continue;
       }
@@ -5522,7 +5730,8 @@ export class World {
       if (hit) {
         // Player took (or dodged) a hit — arm post-combat logout block.
         target.markInCombat(this.currentTick);
-        this.broadcastCombatHit(hit.attackerId, hit.targetId, hit.damage, hit.targetHealth, hit.targetMaxHealth, npc.currentMapLevel, target.position.x, target.position.y);
+        this.broadcastNpcFacingPlayer(npc, target);
+        this.broadcastCombatHit(hit.attackerId, hit.targetId, hit.damage, hit.targetHealth, hit.targetMaxHealth, npc.currentMapLevel, npc.currentFloor, target.position.x, target.position.y);
 
         this.sendToPlayer(target, ServerOpcode.PLAYER_STATS,
           target.health, target.maxHealth
@@ -5572,7 +5781,7 @@ export class World {
       }
 
       const obj = this.worldObjects.get(action.objectId);
-      if (!obj || obj.depleted || obj.mapLevel !== player.currentMapLevel) {
+      if (!obj || obj.depleted || !this.canPlayerTargetObject(player, obj)) {
         this.stopPlayerSkilling(playerId, player);
         continue;
       }
@@ -5727,7 +5936,7 @@ export class World {
     cm.forEachPlayerNear(obj.x, obj.z, (pid) => {
       if (near) return;
       const p = this.players.get(pid);
-      if (!p || p.currentMapLevel !== obj.mapLevel) return;
+      if (!p || p.currentMapLevel !== obj.mapLevel || p.currentFloor !== obj.floor) return;
       const ptx = Math.floor(p.position.x);
       const ptz = Math.floor(p.position.y);
       if ((ptx === dtx && ptz === dtz) ||
@@ -5758,15 +5967,15 @@ export class World {
         // blockedObjectTiles. Without this, the door tile becomes pathing-
         // blocked after the first auto-close and silently breaks every
         // subsequent click.
-        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true);
+        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true, obj.floor);
         if (obj.def.category === 'door') {
           const map = this.maps.get(obj.mapLevel);
           if (map) this.restoreDoorWallEdges(obj, map);
           obj.doorOpen = false;
-          this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
+          this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
         } else {
           // Skilling object respawned — drop the persisted target.
-          this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z));
+          this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
         }
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
@@ -5785,7 +5994,7 @@ export class World {
         if (item.privateTicks <= 0) {
           item.ownerPlayerId = undefined;
           item.privateTicks = 0;
-          this.forEachPlayerNear(item.mapLevel, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
+          this.forEachPlayerNearOnFloor(item.mapLevel, item.floor, item.x, item.z, p => this.sendGroundItemUpdate(p, item));
         }
       }
       if (item.despawnTimer <= 0) {
@@ -5797,9 +6006,9 @@ export class World {
         // A player who saw the drop and then walked OOR keeps a stale local
         // sprite if the despawn is filtered by chunk proximity. Cost is
         // negligible — items despawn at ~200-tick intervals.
-        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0);
+        const packet = encodePacket(ServerOpcode.GROUND_ITEM_SYNC, id, 0, 0, 0, 0, item.floor, qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)));
         for (const [, p] of this.players) {
-          if (p.currentMapLevel !== item.mapLevel) continue;
+          if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
           try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
         }
       }
@@ -5887,11 +6096,25 @@ export class World {
           player.lastFloorChangeTile = tileIdx;
         }
       }
+      if (player.currentFloor === oldFloor) {
+        player.currentFloor = this.inferFloorFromEffectiveY(
+          map,
+          player.position.x,
+          player.position.y,
+          player.effectiveY,
+          player.currentFloor,
+        );
+      }
 
       if (player.currentFloor !== oldFloor) {
         // The floor index just changed — re-resolve the walking elevation
         // against the new floor's layer before the next move validates.
+        this.clearCombatReferencesTo(player.id);
+        player.pendingPickup = -1;
+        player.pendingSpellCast = null;
+        this.closeNpcUiContext(player);
         this.refreshPlayerEffectiveY(player);
+        player.syncDirty = true;
         this.sendFloorChange(player);
       }
     }
@@ -5916,10 +6139,11 @@ export class World {
     const oldMapId = player.currentMapLevel;
     const oldX = player.position.x;
     const oldZ = player.position.y;
+    const oldFloor = player.currentFloor;
 
     // Tell observers the player died at their current tile. Mirrors the
     // NPC death broadcast — clients use this to clear the remote entity.
-    this.broadcastNearby(oldMapId, oldX, oldZ, ServerOpcode.ENTITY_DEATH, player.id);
+    this.broadcastNearbyOnFloor(oldMapId, oldFloor, oldX, oldZ, ServerOpcode.ENTITY_DEATH, player.id);
 
     // Abort any modal interface BEFORE position changes. Trade abort returns
     // items to both sides; bank close just clears the flag (contents are
@@ -5987,6 +6211,7 @@ export class World {
         quantity: d.quantity,
         x: oldX,
         z: oldZ,
+        floor: oldFloor,
         mapLevel: oldMapId,
         despawnTimer: DEATH_DROP_DESPAWN_TICKS,
       };
@@ -5994,7 +6219,7 @@ export class World {
       this.despawningItemIds.add(groundItem.id);
       const cm = this.chunkManagers.get(oldMapId);
       if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
-      this.forEachPlayerNear(oldMapId, oldX, oldZ, p => this.sendGroundItemUpdate(p, groundItem));
+      this.forEachPlayerNearOnFloor(oldMapId, oldFloor, oldX, oldZ, p => this.sendGroundItemUpdate(p, groundItem));
     }
 
     // Equipment changed — broadcast empty equipment to nearby viewers so
@@ -6237,6 +6462,8 @@ export class World {
           a ? a.hairColor  : -1, a ? a.beltColor  : -1, a ? a.skinColor  : -1,
           a ? a.hairStyle  : -1,
           player.combatLevel,
+          player.currentFloor,
+          qPos(player.effectiveY),
         ));
       }
     }
@@ -6251,6 +6478,8 @@ export class World {
         npc.syncDirty = true;
         dirtyNpcPackets.set(npc.id, encodePacket(ServerOpcode.NPC_SYNC,
           npc.id, npc.npcId, sx, sz, npc.health, npc.maxHealth,
+          npc.currentFloor,
+          qPos(this.npcWorldY(npc)),
         ));
       }
     }
@@ -6275,8 +6504,14 @@ export class World {
         const nextVisible = new Set<number>();
         cm.forEachEntityNearChunk(viewer.currentChunkX, viewer.currentChunkZ, (eid) => {
           if (eid === viewer.id) return;
+          const subject = this.players.get(eid);
+          if (subject && subject.currentFloor !== viewer.currentFloor) return;
+          const npc = this.npcs.get(eid);
+          if (npc && (npc.dead || npc.currentFloor !== viewer.currentFloor)) return;
+          const obj = this.worldObjects.get(eid);
+          if (obj && !this.canPlayerTargetObject(viewer, obj)) return;
           const item = this.groundItems.get(eid);
-          if (item && !this.isGroundItemVisibleTo(viewer, item)) return;
+          if (item && !this.canPlayerTargetGroundItem(viewer, item)) return;
           nextVisible.add(eid);
         });
 
@@ -6297,12 +6532,12 @@ export class World {
           }
 
           const subject = this.players.get(eid);
-          if (subject) {
+          if (subject && subject.currentFloor === viewer.currentFloor) {
             this.sendPlayerPresence(viewer, subject);
             return;
           }
           const npc = this.npcs.get(eid);
-          if (npc && !npc.dead) {
+          if (npc && this.canPlayerTargetNpc(viewer, npc)) {
             this.sendNpcStaticData(viewer, npc);
             this.sendNpcUpdate(viewer, npc);
             return;
@@ -6313,12 +6548,12 @@ export class World {
           // WORLD_OBJECT_DEPLETED broadcast keeps a stale local state and
           // can't interact correctly until they re-login.
           const obj = this.worldObjects.get(eid);
-          if (obj) { this.sendWorldObjectUpdate(viewer, obj); return; }
+          if (obj && this.canPlayerTargetObject(viewer, obj)) { this.sendWorldObjectUpdate(viewer, obj); return; }
           // Re-sync ground items too — a player who saw a drop, walked OOR,
           // and walked back would otherwise keep the stale local sprite for
           // an item the server has already despawned (or vice versa).
           const item = this.groundItems.get(eid);
-          if (item && item.mapLevel === viewer.currentMapLevel) {
+          if (item && this.canPlayerTargetGroundItem(viewer, item)) {
             this.sendGroundItemUpdate(viewer, item);
           }
         });
@@ -6334,12 +6569,12 @@ export class World {
     for (const [, npc] of this.npcs) npc.syncDirty = false;
   }
 
-  private broadcastCombatHit(attackerId: number, targetId: number, damage: number, targetHp: number, targetMaxHp: number, mapLevel: string, worldX: number, worldZ: number): void {
-    this.broadcastNearby(mapLevel, worldX, worldZ, ServerOpcode.COMBAT_HIT, attackerId, targetId, damage, targetHp, targetMaxHp);
+  private broadcastCombatHit(attackerId: number, targetId: number, damage: number, targetHp: number, targetMaxHp: number, mapLevel: string, floor: number, worldX: number, worldZ: number): void {
+    this.broadcastNearbyOnFloor(mapLevel, floor, worldX, worldZ, ServerOpcode.COMBAT_HIT, attackerId, targetId, damage, targetHp, targetMaxHp);
   }
 
-  private broadcastProjectile(attackerId: number, targetId: number, projectileType: number, mapLevel: string, worldX: number, worldZ: number): void {
-    this.broadcastNearby(mapLevel, worldX, worldZ, ServerOpcode.COMBAT_PROJECTILE, attackerId, targetId, projectileType);
+  private broadcastProjectile(attackerId: number, targetId: number, projectileType: number, mapLevel: string, floor: number, worldX: number, worldZ: number): void {
+    this.broadcastNearbyOnFloor(mapLevel, floor, worldX, worldZ, ServerOpcode.COMBAT_PROJECTILE, attackerId, targetId, projectileType);
   }
 
   private sendChatSystem(player: Player, message: string): void {
@@ -6363,6 +6598,7 @@ export class World {
   }
 
   private sendPlayerUpdate(viewer: Player, subject: Player): void {
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
     const a = subject.appearance;
     this.sendToPlayer(viewer, ServerOpcode.PLAYER_SYNC,
       subject.id,
@@ -6378,6 +6614,8 @@ export class World {
       a ? a.skinColor  : -1,
       a ? a.hairStyle  : -1,
       subject.combatLevel,
+      subject.currentFloor,
+      qPos(subject.effectiveY),
     );
   }
 
@@ -6394,13 +6632,16 @@ export class World {
   }
 
   private sendNpcUpdate(viewer: Player, npc: Npc): void {
+    if (!this.canPlayerTargetNpc(viewer, npc)) return;
     this.sendToPlayer(viewer, ServerOpcode.NPC_SYNC,
       npc.id,
       npc.npcId,
       qPos(npc.position.x),
       qPos(npc.position.y),
       npc.health,
-      npc.maxHealth
+      npc.maxHealth,
+      npc.currentFloor,
+      qPos(this.npcWorldY(npc)),
     );
   }
 
@@ -6467,6 +6708,7 @@ export class World {
   }
 
   private sendWorldObjectUpdate(viewer: Player, obj: WorldObject): void {
+    if (!this.canPlayerTargetObject(viewer, obj)) return;
     const packet = this.encodeWorldObjectUpdate(obj);
     try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
   }
@@ -6474,7 +6716,7 @@ export class World {
   private encodeWorldObjectUpdate(obj: WorldObject): Uint8Array {
     const explicitTiles = this.explicitObjectInteractionTiles(obj).slice(0, 16);
     const tileValues = explicitTiles.flatMap(tile => [tile.x, tile.z]);
-    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, explicitTileCount, ...tileX,tileZ]
+    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ]
     return encodePacket(ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
@@ -6483,13 +6725,17 @@ export class World {
       obj.depleted ? 1 : 0,
       obj.interactionSides ?? 0,
       Math.round(obj.rotationY * 1000),
+      obj.floor,
+      qPos(obj.worldY),
       explicitTiles.length,
       ...tileValues,
     );
   }
 
   private isGroundItemVisibleTo(viewer: Player, item: GroundItem): boolean {
-    return !item.ownerPlayerId || item.ownerPlayerId === viewer.id || (item.privateTicks ?? 0) <= 0;
+    return item.mapLevel === viewer.currentMapLevel
+      && (item.floor ?? 0) === viewer.currentFloor
+      && (!item.ownerPlayerId || item.ownerPlayerId === viewer.id || (item.privateTicks ?? 0) <= 0);
   }
 
   private sendGroundItemUpdate(viewer: Player, item: GroundItem): void {
@@ -6500,7 +6746,9 @@ export class World {
       item.itemId,
       item.quantity,
       qPos(item.x),
-      qPos(item.z)
+      qPos(item.z),
+      item.floor,
+      qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)),
     );
   }
 
@@ -6556,6 +6804,7 @@ export class World {
   /** Send a subject player's equipment to one viewer (for chunk-entry resync). */
   private sendRemoteEquipment(viewer: Player, subject: Player): void {
     if (viewer.disconnected) return;
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
     try { viewer.ws.sendBinary(this.encodeRemoteEquipment(subject)); } catch { /* connection closed */ }
   }
 
@@ -6568,7 +6817,7 @@ export class World {
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (pid === subject.id) return;
       const viewer = this.players.get(pid);
-      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
   }
@@ -6583,6 +6832,7 @@ export class World {
   /** Send a subject player's stance to one viewer (for chunk-entry resync). */
   private sendRemoteStance(viewer: Player, subject: Player): void {
     if (viewer.disconnected) return;
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
     try { viewer.ws.sendBinary(this.encodeRemoteStance(subject)); } catch { /* connection closed */ }
   }
 
@@ -6596,7 +6846,7 @@ export class World {
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (pid === subject.id) return;
       const viewer = this.players.get(pid);
-      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
   }
@@ -6614,6 +6864,7 @@ export class World {
 
   private sendRemoteAnimation(viewer: Player, subject: Player): void {
     if (viewer.disconnected) return;
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
     try { viewer.ws.sendBinary(this.encodePlayerAnimation(subject)); } catch { /* connection closed */ }
   }
 
@@ -6646,7 +6897,7 @@ export class World {
     cm.forEachPlayerNear(subject.position.x, subject.position.y, (pid) => {
       if (!includeSelf && pid === subject.id) return;
       const viewer = this.players.get(pid);
-      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel) return;
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     });
   }
@@ -6664,7 +6915,7 @@ export class World {
     if (obj.depleted) return;
     obj.deplete();
     this.depletedObjectIds.add(obj.id);
-    this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), Date.now() + obj.respawnTimer * TICK_RATE);
+    this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, Date.now() + obj.respawnTimer * TICK_RATE);
     this.broadcastWorldObjectStateChange(obj);
   }
 

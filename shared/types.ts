@@ -365,6 +365,10 @@ export interface SpawnEntry {
   npcId: number;
   x: number;
   z: number;
+  /** Authoritative floor for this spawn. Omitted legacy spawns are floor 0. */
+  floor?: number;
+  /** Optional authored world Y, used to infer floor when floor is omitted. */
+  y?: number;
   wanderRange?: number;
   /** Per-spawn display name override. When set, the editor + in-world UI
    *  use this instead of the NpcDef's name — so a single "Guard" def can
@@ -442,6 +446,9 @@ export interface ObjectSpawnEntry {
   objectId: number;
   x: number;
   z: number;
+  floor?: number;
+  y?: number;
+  rotY?: number;
 }
 
 export interface SpawnedItem {
@@ -449,6 +456,8 @@ export interface SpawnedItem {
   quantity?: number;
   x: number;
   z: number;
+  floor?: number;
+  y?: number;
 }
 
 export interface SpawnsFile {

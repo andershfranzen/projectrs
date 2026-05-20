@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
-import type { NpcDef } from '@projectrs/shared';
+import { ServerOpcode, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -37,6 +37,36 @@ function makeWorld(): any {
   return world;
 }
 
+function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Array<{ opcode: ServerOpcode; values: number[] }> } {
+  const world = makeWorld();
+  const broadcasts: Array<{ opcode: ServerOpcode; values: number[] }> = [];
+  world.players = new Map([[player.id, player]]);
+  world.npcs = new Map([[npc.id, npc]]);
+  world.playerCombatTargets = new Map();
+  world.npcTargetedBy = new Map();
+  world.activeDuels = new Map();
+  world.currentTick = 1;
+  world.currentTickStartMs = 0;
+  world.data = {
+    itemDefs: new Map(),
+    getSpellByIndex: () => null,
+  };
+  world.cancelSkilling = () => {};
+  world.closeNpcUiContext = () => {};
+  world.sendChatSystem = () => {};
+  world.sendInventory = () => {};
+  world.sendToPlayer = () => {};
+  world.sendSingleSkill = () => {};
+  world.setPlayerAnimation = () => {};
+  world.broadcastPlayerAnimationEvent = () => {};
+  world.broadcastCombatHit = () => {};
+  world.broadcastProjectile = () => {};
+  world.broadcastNearby = (_map: string, _x: number, _z: number, opcode: ServerOpcode, ...values: number[]) => {
+    broadcasts.push({ opcode, values });
+  };
+  return { world, broadcasts };
+}
+
 describe('NPC interaction reachability', () => {
   test('requires standing on a valid interaction tile, not just within two path steps', () => {
     const world = makeWorld();
@@ -65,5 +95,33 @@ describe('NPC interaction reachability', () => {
 
     expect(queued).toBe(true);
     expect(player.hasMoveQueue()).toBe(true);
+  });
+
+  test('attacking from far away does not turn the NPC before combat connects', () => {
+    const player = new Player('tester', 1.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+
+    expect(player.hasMoveQueue()).toBe(true);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
+  });
+
+  test('NPC turns toward the player when the first combat hit resolves', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
+
+    world.tickPlayerCombat();
+
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(true);
   });
 });

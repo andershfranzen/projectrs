@@ -133,10 +133,10 @@ export class ChunkManager {
   private roofData: Map<number, RoofData> = new Map();
   private holeTiles: Set<number> = new Set();
   private texturePlaneFloorTiles: Set<number> = new Set(); // floors from texture planes (don't render floor mesh)
-  /** Edge bits currently suppressed by open doors. Bypasses wall-blocking on any
-   *  floor layer so an open door clears the path even when an upper-floor wall
-   *  is painted on the same tile/edge. */
-  private openDoorEdges: Map<number, number> = new Map();
+  /** Edge bits currently suppressed by open doors (`floor:tileIdx` → edge bitmask).
+   *  Scoping by floor keeps stacked doors from leaking pathing state across
+   *  each other. */
+  private openDoorEdges: Map<string, number> = new Map();
 
   // Multi-floor layer data (floor 1+)
   private floorLayerData: Map<number, FloorLayerClientData> = new Map();
@@ -178,7 +178,7 @@ export class ChunkManager {
   // Placed objects and texture planes from KC editor
   private placedObjectNodes: TransformNode[] = [];
   /** Spatial index: "tileX,tileZ" → placed object node (only interactable objects) */
-  private placedObjectGrid: Map<string, TransformNode> = new Map();
+  private placedObjectGrid: Map<string, TransformNode[]> = new Map();
   /** Raw placed object data indexed by chunk key "cx,cz" */
   private placedObjectsByChunk: Map<string, PlacedObject[]> = new Map();
   /** Tile-index blockers for thin-instanced decor (bushes); mirrored server-side. */
@@ -248,6 +248,20 @@ export class ChunkManager {
   private overlayMatCache: Map<string, StandardMaterial> = new Map();
   private templateBaseMatrices: Map<string, { sourceMesh: Mesh; baseMatrix: Matrix }[]> = new Map();
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
+
+  private doorEdgeKey(floor: number, tileIdx: number): string {
+    return `${Math.max(0, Math.floor(floor))}:${tileIdx}`;
+  }
+
+  private ensureFloorLayer(floor: number): FloorLayerClientData {
+    const floorIdx = Math.max(1, Math.floor(floor));
+    let layer = this.floorLayerData.get(floorIdx);
+    if (!layer) {
+      layer = { walls: new Map(), wallHeights: new Map(), floors: new Map(), stairs: new Map(), roofs: new Map(), tiles: new Map() };
+      this.floorLayerData.set(floorIdx, layer);
+    }
+    return layer;
+  }
 
   /** Increments on every loadMap call. After each await inside loadMap, the
    *  function checks `this.loadMapToken === myToken` and returns early if a
@@ -2245,14 +2259,36 @@ export class ChunkManager {
     this.walls[z * this.mapWidth + x] = mask;
   }
 
-  /** Mark edge bits on (x,z) as open by a door — overrides wall-blocking on every floor. */
-  setOpenDoorEdges(x: number, z: number, edgeMask: number, open: boolean): void {
+  getWallOnFloorPublic(x: number, z: number, floor: number): number {
+    if (floor === 0) return this.getWallRawPublic(x, z);
+    if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return 0;
+    const layer = this.floorLayerData.get(floor);
+    if (!layer) return 0;
+    return layer.walls.get(z * this.mapWidth + x) ?? 0;
+  }
+
+  /** Set wall bitmask at a tile on the authoritative interaction floor. */
+  setWallOnFloor(x: number, z: number, floor: number, mask: number): void {
+    if (floor === 0) {
+      this.setWall(x, z, mask);
+      return;
+    }
     if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return;
     const idx = z * this.mapWidth + x;
-    const cur = this.openDoorEdges.get(idx) ?? 0;
+    const layer = this.ensureFloorLayer(floor);
+    if (mask === 0) layer.walls.delete(idx);
+    else layer.walls.set(idx, mask);
+  }
+
+  /** Mark edge bits on (x,z) as open by a door on the same floor. */
+  setOpenDoorEdges(x: number, z: number, edgeMask: number, open: boolean, floor: number = 0): void {
+    if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return;
+    const idx = z * this.mapWidth + x;
+    const key = this.doorEdgeKey(floor, idx);
+    const cur = this.openDoorEdges.get(key) ?? 0;
     const next = open ? (cur | edgeMask) : (cur & ~edgeMask);
-    if (next === 0) this.openDoorEdges.delete(idx);
-    else this.openDoorEdges.set(idx, next);
+    if (next === 0) this.openDoorEdges.delete(key);
+    else this.openDoorEdges.set(key, next);
   }
 
 
@@ -2294,26 +2330,31 @@ export class ChunkManager {
   /** Find the nearest placed GLB object (that maps to a game object) near a world position.
    *  Uses spatial grid for O(1) lookup, checking the tile and its neighbours.
    *  If defId is provided, only matches nodes whose assetId maps to that object definition. */
-  findPlacedObjectNear(x: number, z: number, radius: number, defId?: number): TransformNode | null {
+  findPlacedObjectNear(x: number, z: number, radius: number, defId?: number, y?: number): TransformNode | null {
     const tx = Math.floor(x);
     const tz = Math.floor(z);
     let best: TransformNode | null = null;
-    let bestDist = radius;
+    let bestScore = Number.POSITIVE_INFINITY;
     for (let dz = -1; dz <= 1; dz++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const node = this.placedObjectGrid.get(`${tx + dx},${tz + dz}`);
-        if (!node) continue;
-        // Filter by defId if specified
-        if (defId !== undefined) {
-          const assetId = node.metadata?.assetId;
-          if (!assetId || ASSET_TO_OBJECT_DEF[assetId] !== defId) continue;
-        }
-        const nx = node.position.x - x;
-        const nz = node.position.z - z;
-        const dist = Math.sqrt(nx * nx + nz * nz);
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = node;
+        const nodes = this.placedObjectGrid.get(`${tx + dx},${tz + dz}`);
+        if (!nodes) continue;
+        for (const node of nodes) {
+          // Filter by defId if specified
+          if (defId !== undefined) {
+            const assetId = node.metadata?.assetId;
+            if (!assetId || ASSET_TO_OBJECT_DEF[assetId] !== defId) continue;
+          }
+          const nx = node.position.x - x;
+          const nz = node.position.z - z;
+          const dist = Math.sqrt(nx * nx + nz * nz);
+          if (dist >= radius) continue;
+          const yPenalty = Number.isFinite(y) ? Math.abs(node.position.y - (y as number)) : 0;
+          const score = dist + yPenalty;
+          if (score < bestScore) {
+            bestScore = score;
+            best = node;
+          }
         }
       }
     }
@@ -2330,7 +2371,7 @@ export class ChunkManager {
       if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return false;
       const idx = z * this.mapWidth + x;
       // Open-door bypass on every floor — mirrors GameMap.wallBlocksOnFloorAt
-      if (((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0) return false;
+      if (((this.openDoorEdges.get(this.doorEdgeKey(floor, idx)) ?? 0) & edge) !== 0) return false;
       return ((layer.walls.get(idx) ?? 0) & edge) !== 0;
     };
     if (dx === 0 && dz === -1) return w(fx, fz, WallEdge.N) || w(tx, tz, WallEdge.S);
@@ -2378,7 +2419,7 @@ export class ChunkManager {
     // `floorH` with the elev fallback (as it used to) made ground-floor
     // doors fail when the tile ALSO had an upper-floor plane, because the
     // bypass then demanded upper-floor Y.
-    const isOpenDoor = ((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0;
+    const isOpenDoor = ((this.openDoorEdges.get(this.doorEdgeKey(0, idx)) ?? 0) & edge) !== 0;
     const groundBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
     const upperBaseH = this.elevatedFloorHeights.get(idx);
     const atGroundDoor = playerY == null || (playerY >= groundBaseH - 0.5 && playerY < groundBaseH + wallH);
@@ -3135,7 +3176,12 @@ export class ChunkManager {
 
       if (obj.assetId in ASSET_TO_OBJECT_DEF) {
         const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
-        this.placedObjectGrid.set(gridKey, root);
+        let nodesAtTile = this.placedObjectGrid.get(gridKey);
+        if (!nodesAtTile) {
+          nodesAtTile = [];
+          this.placedObjectGrid.set(gridKey, nodesAtTile);
+        }
+        nodesAtTile.push(root);
       }
 
       if (this.isRoofLikeAsset(obj.assetId)) {
@@ -3219,7 +3265,12 @@ export class ChunkManager {
         const assetId = node.metadata?.assetId;
         if (assetId && assetId in ASSET_TO_OBJECT_DEF) {
           const gridKey = `${Math.floor(node.position.x)},${Math.floor(node.position.z)}`;
-          this.placedObjectGrid.delete(gridKey);
+          const nodesAtTile = this.placedObjectGrid.get(gridKey);
+          if (nodesAtTile) {
+            const idx = nodesAtTile.indexOf(node);
+            if (idx >= 0) nodesAtTile.splice(idx, 1);
+            if (nodesAtTile.length === 0) this.placedObjectGrid.delete(gridKey);
+          }
         }
         // Remove from roof grid using the cached footprint keys stamped at
         // add time — bbox-derived, so the cleanup mirrors the stamp exactly.

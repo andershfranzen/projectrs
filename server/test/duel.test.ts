@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DUEL_STAKE_SIZE, INVENTORY_SIZE, ServerOpcode, type ItemDef } from '@projectrs/shared';
+import { DUEL_STAKE_SIZE, INVENTORY_SIZE, PlayerAnimationKind, ServerOpcode, type ItemDef } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 
@@ -36,6 +36,7 @@ interface DuelHarness {
   chats: Map<number, string[]>;
   saves: number[];
   spills: Array<{ playerId: number; itemId: number; quantity: number }>;
+  animations: Array<{ playerId: number; kind: PlayerAnimationKind; targetId: number; includeSelf: boolean }>;
 }
 
 function makePlayer(name: string, accountId: number, x = 1.5, z = 1.5): Player {
@@ -56,6 +57,7 @@ function makeHarness(a: Player, b: Player): DuelHarness {
   ]);
   const saves: number[] = [];
   const spills: Array<{ playerId: number; itemId: number; quantity: number }> = [];
+  const animations: Array<{ playerId: number; kind: PlayerAnimationKind; targetId: number; includeSelf: boolean }> = [];
   const world = Object.create(World.prototype) as any;
   world.players = new Map([[a.id, a], [b.id, b]]);
   world.npcs = new Map();
@@ -91,7 +93,15 @@ function makeHarness(a: Player, b: Player): DuelHarness {
   world.closeDialogueForPlayer = () => {};
   world.clearPendingObjectIntents = () => {};
   world.cancelSkilling = () => {};
-  world.setPlayerAnimation = () => {};
+  world.setPlayerAnimation = (
+    player: Player,
+    kind: PlayerAnimationKind,
+    _variant = 0,
+    targetId = 0,
+    includeSelf = false,
+  ) => {
+    animations.push({ playerId: player.id, kind, targetId, includeSelf });
+  };
   world.broadcastPlayerAnimationEvent = () => {};
   world.broadcastNearby = () => {};
   world.broadcastCombatHit = () => {};
@@ -101,7 +111,7 @@ function makeHarness(a: Player, b: Player): DuelHarness {
   world.spawnGroundItem = (player: Player, itemId: number, quantity: number) => {
     spills.push({ playerId: player.id, itemId, quantity });
   };
-  return { world, packets, chats, saves, spills };
+  return { world, packets, chats, saves, spills, animations };
 }
 
 function countItem(player: Player, itemId: number): number {
@@ -256,6 +266,28 @@ describe('player duel staking and combat validation', () => {
     expect(world.activeDuels.get(a.id)).toBe(world.activeDuels.get(b.id));
     expect(a.openInterface).toBe('duel');
     expect(b.openInterface).toBe('duel');
+  });
+
+  test('duel start faces both fighters toward each other', () => {
+    const a = makePlayer('alice', 1);
+    const b = makePlayer('bob', 2, 2.5, 1.5);
+    const { world, animations } = makeHarness(a, b);
+
+    openDuel(world, a, b);
+    acceptBothTwice(world, a, b);
+
+    expect(animations).toContainEqual({
+      playerId: a.id,
+      kind: PlayerAnimationKind.Idle,
+      targetId: b.id,
+      includeSelf: true,
+    });
+    expect(animations).toContainEqual({
+      playerId: b.id,
+      kind: PlayerAnimationKind.Idle,
+      targetId: a.id,
+      includeSelf: true,
+    });
   });
 
   test('full potential winner inventory aborts start and refunds stakes', () => {

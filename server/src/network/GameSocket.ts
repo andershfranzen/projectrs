@@ -88,6 +88,24 @@ const EQUIP_SLOT_COUNT = 10;
 const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
 
+function savedFloorMatchesReportedY(
+  map: { getWalkableFloorTargetsAt?: (x: number, z: number) => Array<{ floor: number; y: number }> },
+  x: number,
+  z: number,
+  floor: number,
+  reportedY: number,
+): boolean {
+  if (!Number.isFinite(reportedY) || !map.getWalkableFloorTargetsAt) return false;
+  const targets = map.getWalkableFloorTargetsAt(x, z);
+  if (targets.length === 0) return false;
+  const current = targets.filter(target => target.floor === floor)
+    .sort((a, b) => Math.abs(a.y - reportedY) - Math.abs(b.y - reportedY))[0];
+  if (!current) return false;
+  const currentDist = Math.abs(current.y - reportedY);
+  const bestDist = Math.min(...targets.map(target => Math.abs(target.y - reportedY)));
+  return currentDist <= 0.75 && currentDist <= bestDist + 0.05;
+}
+
 const OK_PACKET: PacketValidationResult = { ok: true };
 
 function toPacketBytes(data: Bun.BufferSource): Uint8Array {
@@ -284,7 +302,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 1)) return invalid('missing-npc-target');
       const npc = world.npcs.get(values[0]);
       if (!npc || npc.dead) return invalid('stale-npc-target');
-      if (npc.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-npc-target');
+      if (!world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-npc-target');
       if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-npc-target');
       return OK_PACKET;
     }
@@ -301,8 +319,8 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 1)) return invalid('missing-ground-item');
       const item = world.groundItems.get(values[0]);
       if (!item) return invalid('stale-ground-item');
-      if (item.mapLevel !== player.currentMapLevel) return invalid('cross-map-ground-item');
       if (item.ownerPlayerId && item.ownerPlayerId !== player.id && (item.privateTicks ?? 0) > 0) return invalid('private-ground-item');
+      if (!world.canPlayerTargetGroundItem(player, item)) return invalid('unreachable-ground-item');
       if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-ground-item');
       return OK_PACKET;
     }
@@ -335,7 +353,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!Number.isInteger(values[0]) || values[0] < 0) return invalid('bad-spell-index');
       const target = world.npcs.get(values[1]);
       if (!target || target.dead) return invalid('stale-spell-target');
-      if (target.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-spell-target');
+      if (!world.canPlayerTargetNpc(player, target)) return invalid('unreachable-spell-target');
       return OK_PACKET;
     }
 
@@ -349,7 +367,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 1)) return invalid('missing-object-target');
       const obj = world.worldObjects.get(values[0]);
       if (!obj) return invalid('stale-object-target');
-      if (obj.mapLevel !== player.currentMapLevel) return invalid('cross-map-object-target');
+      if (!world.canPlayerTargetObject(player, obj)) return invalid('unreachable-object-target');
       if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-object-target');
       const actionIndex = values[1] ?? 0;
       if (!Number.isInteger(actionIndex) || actionIndex < 0 || actionIndex > 20) return invalid('bad-object-action-index');
@@ -377,7 +395,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-use-item-slot');
       const obj = world.worldObjects.get(values[2]);
       if (!obj) return invalid('stale-use-object-target');
-      if (obj.mapLevel !== player.currentMapLevel) return invalid('cross-map-use-object');
+      if (!world.canPlayerTargetObject(player, obj)) return invalid('unreachable-use-object');
       if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[2])) return invalid('unseen-use-object-target');
       return OK_PACKET;
     }
@@ -388,7 +406,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (player.inventory[values[0]]?.itemId !== values[1]) return invalid('stale-use-item-slot');
       const npc = world.npcs.get(values[2]);
       if (!npc || npc.dead) return invalid('stale-use-npc-target');
-      if (npc.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-use-npc');
+      if (!world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-use-npc');
       if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[2])) return invalid('unseen-use-npc-target');
       return OK_PACKET;
     }
@@ -397,7 +415,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 1)) return invalid('missing-talk-npc');
       const npc = world.npcs.get(values[0]);
       if (!npc || npc.dead) return invalid('stale-talk-npc');
-      if (npc.currentMapLevel !== player.currentMapLevel) return invalid('cross-map-talk-npc');
+      if (!world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-talk-npc');
       return OK_PACKET;
     }
 
@@ -409,6 +427,8 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const state = player.openDialogueState;
       if (!state || state.npcEntityId !== npcEntityId) return invalid('dialogue-not-open');
       if (sessionId !== state.sessionId) return invalid('stale-dialogue-session');
+      const npc = world.npcs.get(npcEntityId);
+      if (!npc || !world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-dialogue-npc');
       if (!isSlot(optionIndex, state.visibleOptionIndices.length)) return invalid('bad-dialogue-option');
       return OK_PACKET;
     }
@@ -743,16 +763,12 @@ function completeGameSocketLogin(
       player.reportedY = 0;
     }
 
-    // Unstick recovery. Two cases:
-    //   1) Saved floor is BLOCKED at the saved tile — try other floors,
-    //      fall back to default spawn if none work. Triggered by old bugs
-    //      that corrupted player.currentFloor.
-    //   2) Saved floor > 0 but floor 0 is also walkable at the saved tile.
-    //      Downgrade to floor 0 — this catches players whose floor was
-    //      corrupted to 1+ by the (now-removed) stair-mirror bug while
-    //      they were on an elevated-floor-0 building tile. Genuine
-    //      upper-floor maps have walls/blocks on floor 0 below, so the
-    //      downgrade only triggers in the corrupt-state case.
+    // Unstick recovery. If the saved floor is blocked at the saved tile, try
+    // other floors and fall back to spawn if none work. If the saved floor is
+    // upper but floor 0 is also walkable underneath, only downgrade when the
+    // saved visual Y does not actually match that upper floor. Multi-storey
+    // KC buildings intentionally have walkable floor 0 below real upper
+    // floors, so "floor 0 walkable" alone is not corruption.
     const tx = Math.floor(player.position.x);
     const tz = Math.floor(player.position.y);
     if (map.isTileBlockedOnFloor(tx, tz, player.currentFloor)) {
@@ -771,8 +787,12 @@ function completeGameSocketLogin(
         player.position.y = defaultSpawn.z;
         player.currentFloor = 0;
       }
-    } else if (player.currentFloor > 0 && !map.isTileBlockedOnFloor(tx, tz, 0)) {
-      console.log(`[GameSocket] Downgrading "${username}" from floor ${player.currentFloor} → 0 (floor 0 walkable at saved tile, corrupted upper-floor state)`);
+    } else if (
+      player.currentFloor > 0
+      && !map.isTileBlockedOnFloor(tx, tz, 0)
+      && !savedFloorMatchesReportedY(map, player.position.x, player.position.y, player.currentFloor, player.reportedY)
+    ) {
+      console.log(`[GameSocket] Downgrading "${username}" from floor ${player.currentFloor} → 0 (saved Y does not match upper floor at saved tile)`);
       player.currentFloor = 0;
     }
 

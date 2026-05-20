@@ -11,6 +11,8 @@ export class WorldObject {
   readonly def: WorldObjectDef;
   readonly x: number;
   readonly z: number;
+  readonly floor: number;
+  readonly worldY: number;
   readonly mapLevel: string;
 
   depleted: boolean = false;
@@ -32,12 +34,14 @@ export class WorldObject {
    *  0 / undefined = any adjacent interaction tile. */
   interactionSides?: number;
 
-  constructor(def: WorldObjectDef, x: number, z: number, mapLevel: string) {
+  constructor(def: WorldObjectDef, x: number, z: number, mapLevel: string, floor: number = 0, worldY: number = 0) {
     this.id = nextObjectEntityId++;
     this.defId = def.id;
     this.def = def;
     this.x = x;
     this.z = z;
+    this.floor = floor;
+    this.worldY = worldY;
     this.mapLevel = mapLevel;
   }
 

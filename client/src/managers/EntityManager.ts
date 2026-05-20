@@ -15,13 +15,15 @@ interface GroundItemData {
   quantity: number;
   x: number;
   z: number;
+  floor: number;
+  y: number;
 }
 
 export { type GroundItemData };
 
 export class EntityManager {
   private scene: Scene;
-  private getHeight: (x: number, z: number, currentY?: number) => number;
+  private getHeight: (x: number, z: number, floor?: number, currentY?: number) => number;
   private itemDefsCache: Map<number, ItemDef>;
 
   // Remote players — 3D CharacterEntities. Equipment is loaded by GameManager
@@ -29,7 +31,7 @@ export class EntityManager {
   // ready). Appearance is similarly cached in remoteAppearances and applied
   // via whenReady().
   readonly remotePlayers: Map<number, CharacterEntity> = new Map();
-  readonly remoteTargets: Map<number, { x: number; z: number }> = new Map();
+  readonly remoteTargets: Map<number, { x: number; z: number; floor: number; y: number }> = new Map();
   /** Wall-clock timestamp until which the entity is treated as still
    *  walking, even if its current visual position has caught up to the
    *  latest server target. Bridges the ~600 ms gap between server ticks
@@ -49,7 +51,7 @@ export class EntityManager {
 
   // NPCs
   readonly npcSprites: Map<number, Npc3DEntity | CharacterEntity> = new Map();
-  readonly npcTargets: Map<number, { x: number; z: number; prevX: number; prevZ: number; t: number }> = new Map();
+  readonly npcTargets: Map<number, { x: number; z: number; floor: number; y: number; prevX: number; prevZ: number; t: number }> = new Map();
   readonly npcDefs: Map<number, number> = new Map();
   readonly npcCombatTargets: Map<number, number> = new Map();
   /** Per-spawn appearance for customizable NPCs (e.g. bankers, shopkeepers).
@@ -88,7 +90,7 @@ export class EntityManager {
   private groundItemRefreshQueued = false;
   private groundItemIdsByTile: Map<string, Set<number>> = new Map();
 
-  constructor(scene: Scene, getHeight: (x: number, z: number, currentY?: number) => number, itemDefsCache: Map<number, ItemDef>) {
+  constructor(scene: Scene, getHeight: (x: number, z: number, floor?: number, currentY?: number) => number, itemDefsCache: Map<number, ItemDef>) {
     this.scene = scene;
     this.getHeight = getHeight;
     this.itemDefsCache = itemDefsCache;
@@ -96,7 +98,7 @@ export class EntityManager {
 
   // --- Entity creation ---
 
-  createRemotePlayer(entityId: number, x: number, z: number, name: string): CharacterEntity {
+  createRemotePlayer(entityId: number, x: number, z: number, name: string, floor: number = 0, y?: number): CharacterEntity {
     const character = new CharacterEntity(this.scene, {
       name: `player_${entityId}`,
       modelPath: CHARACTER_MODEL_PATH,
@@ -108,7 +110,7 @@ export class EntityManager {
     character.setEntityIdMetadata(entityId, 'player');
     // Spawn at terrain height — pass currentY=0 so the elevation gate
     // doesn't snap a remote player up to a roof above their actual tile.
-    character.setPositionXYZ(x, this.getHeight(x, z, 0), z);
+    character.setPositionXYZ(x, y ?? this.getHeight(x, z, floor, 0), z);
     this.remotePlayers.set(entityId, character);
     return character;
   }
@@ -126,7 +128,7 @@ export class EntityManager {
     return true;
   }
 
-  createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false, tileSize: number = 1): Npc3DEntity | CharacterEntity | null {
+  createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false, tileSize: number = 1, floor: number = 0, y?: number): Npc3DEntity | CharacterEntity | null {
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
     // floating label is correct from frame 1.
@@ -142,7 +144,7 @@ export class EntityManager {
         tileSize,
         originMode: modelCfg.originMode,
       });
-      npc3d.position = new Vector3(x, this.getHeight(x, z, 0), z);
+      npc3d.position = new Vector3(x, y ?? this.getHeight(x, z, floor, 0), z);
       // Stamp entityId on every mesh's metadata so picking can disambiguate
       // multiple instances of the same GLB (every cow shares mesh names).
       npc3d.setEntityIdMetadata(entityId);
@@ -184,7 +186,7 @@ export class EntityManager {
       // right-click menu label.
       additionalAnimations: anims,
     });
-    character.setPositionXYZ(x, this.getHeight(x, z, 0), z);
+    character.setPositionXYZ(x, y ?? this.getHeight(x, z, floor, 0), z);
     character.setEntityIdMetadata(entityId);
     // freezeAtIdle removed — same reason as the walk-anim gate. A stationary
     // shopkeeper's idle is now driven by the regular anim state machine,
@@ -194,8 +196,8 @@ export class EntityManager {
     return character;
   }
 
-  private groundItemTileKey(x: number, z: number): string {
-    return `${Math.floor(x)},${Math.floor(z)}`;
+  private groundItemTileKey(x: number, z: number, floor: number): string {
+    return `${Math.max(0, Math.floor(floor))},${Math.floor(x)},${Math.floor(z)}`;
   }
 
   private sortGroundItemStackForDisplay(stack: GroundItemStackEntry[]): GroundItemStackEntry[] {
@@ -224,7 +226,7 @@ export class EntityManager {
   getGroundItemStackForItem(groundItemId: number): GroundItemData[] {
     const item = this.groundItems.get(groundItemId);
     if (!item) return [];
-    return this.collectGroundItemTileStack(this.groundItemTileKey(item.x, item.z)).map(({ def: _def, ...data }) => data);
+    return this.collectGroundItemTileStack(this.groundItemTileKey(item.x, item.z, item.floor)).map(({ def: _def, ...data }) => data);
   }
 
   private addGroundItemToTileIndex(groundItemId: number, tileKey: string): void {
@@ -252,7 +254,7 @@ export class EntityManager {
 
     for (const [groundItemId, sprite] of this.groundItemSprites) {
       const item = this.groundItems.get(groundItemId);
-      if (!item || this.groundItemTileKey(item.x, item.z) === tileKey) {
+      if (!item || this.groundItemTileKey(item.x, item.z, item.floor) === tileKey) {
         sprite.dispose();
         this.groundItemSprites.delete(groundItemId);
       }
@@ -268,13 +270,13 @@ export class EntityManager {
       height: 0.85,
       iconUrl: syncIcon ?? undefined,
     });
-    sprite.position = new Vector3(top.x, this.getHeight(top.x, top.z, 0), top.z);
+    sprite.position = new Vector3(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
     sprite.getMesh().metadata = { kind: 'groundItem', groundItemId: top.id };
     this.groundItemSprites.set(top.id, sprite);
 
     getItemIconUrl(top.def).then((url) => {
       if (!url) return;
-      if (this.groundItemTileKey(top.x, top.z) !== tileKey) return;
+      if (this.groundItemTileKey(top.x, top.z, top.floor) !== tileKey) return;
       if (this.groundItemSprites.get(top.id) !== sprite) return;
       if (url === syncIcon) return;
       sprite.setIconUrl(url);
@@ -290,7 +292,7 @@ export class EntityManager {
     const top = stack[0];
     if (!top) return;
 
-    const y = this.getHeight(top.x, top.z, 0);
+    const y = top.y ?? this.getHeight(top.x, top.z, top.floor, 0);
     GroundItemEntity.create(this.scene, tileKey, stack, y).then((entity) => {
       if ((this.groundItemTileVersions.get(tileKey) ?? 0) !== version) {
         entity?.dispose();
@@ -316,11 +318,12 @@ export class EntityManager {
     });
   }
 
-  createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number): void {
+  createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number, floor: number = 0, y?: number): void {
     const previous = this.groundItems.get(groundItemId);
-    const previousTileKey = previous ? this.groundItemTileKey(previous.x, previous.z) : null;
-    const nextTileKey = this.groundItemTileKey(x, z);
-    this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z });
+    const safeFloor = Math.max(0, Math.floor(floor));
+    const previousTileKey = previous ? this.groundItemTileKey(previous.x, previous.z, previous.floor) : null;
+    const nextTileKey = this.groundItemTileKey(x, z, safeFloor);
+    this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z, floor: safeFloor, y: y ?? this.getHeight(x, z, safeFloor, 0) });
     if (previousTileKey && previousTileKey !== nextTileKey) {
       this.removeGroundItemFromTileIndex(groundItemId, previousTileKey);
       this.queueGroundItemTileRefresh(previousTileKey);
@@ -398,7 +401,7 @@ export class EntityManager {
 
   removeGroundItem(groundItemId: number): void {
     const item = this.groundItems.get(groundItemId);
-    const tileKey = item ? this.groundItemTileKey(item.x, item.z) : null;
+    const tileKey = item ? this.groundItemTileKey(item.x, item.z, item.floor) : null;
     this.groundItems.delete(groundItemId);
     if (tileKey) {
       this.removeGroundItemFromTileIndex(groundItemId, tileKey);
@@ -455,7 +458,7 @@ export class EntityManager {
       const dist = Math.hypot(dx, dz);
       if (isRemoteSkilling(entityId)) {
         if (dist > 0.05) {
-          sprite.setPositionXYZ(target.x, this.getHeight(target.x, target.z, sprite.position.y), target.z);
+          sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
         }
         continue;
       }
@@ -477,7 +480,7 @@ export class EntityManager {
         const stepRatio = Math.min(1.67 * dt / Math.max(tileSteps, 0.001), 1);
         const nx = c.x + dx * stepRatio;
         const nz = c.z + dz * stepRatio;
-        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
+        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, target.floor, sprite.position.y), nz);
       } else if (serverWalking) {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
@@ -550,14 +553,14 @@ export class EntityManager {
         const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
         const nx = c.x + dx * stepRatio;
         const nz = c.z + dz * stepRatio;
-        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, sprite.position.y), nz);
+        sprite.setPositionXYZ(nx, this.getHeight(nx, nz, target.floor, sprite.position.y), nz);
       } else if (serverMoving) {
         if (!sprite.isWalking()) sprite.startWalking();
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
         // Re-snap Y if terrain height resolved since this NPC was created
         // (NPC_SYNC can arrive before the chunk heightmap loads).
-        const expectedY = this.getHeight(target.x, target.z, sprite.position.y);
+        const expectedY = target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y);
         if (Math.abs(expectedY - sprite.position.y) > 0.05) {
           sprite.setPositionXYZ(target.x, expectedY, target.z);
         }
@@ -579,24 +582,24 @@ export class EntityManager {
     for (const [entityId, sprite] of this.npcSprites) {
       const target = this.npcTargets.get(entityId);
       if (target) {
-        sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z, sprite.position.y), target.z);
+        sprite.position = new Vector3(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
       }
     }
     for (const [entityId, sprite] of this.remotePlayers) {
       const target = this.remoteTargets.get(entityId);
       if (target) {
-        sprite.position = new Vector3(target.x, this.getHeight(target.x, target.z, sprite.position.y), target.z);
+        sprite.position = new Vector3(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
       }
     }
     for (const [groundItemId, item] of this.groundItems) {
       const sprite = this.groundItemSprites.get(groundItemId);
       if (sprite) {
-        sprite.position = new Vector3(item.x, this.getHeight(item.x, item.z, sprite.position.y), item.z);
+        sprite.position = new Vector3(item.x, item.y ?? this.getHeight(item.x, item.z, item.floor, sprite.position.y), item.z);
       }
     }
     for (const [tileKey, model] of this.groundItemModels) {
       const top = this.collectGroundItemTileStack(tileKey)[0];
-      if (top) model.setPosition(top.x, this.getHeight(top.x, top.z, 0), top.z);
+      if (top) model.setPosition(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
     }
     // Local player intentionally NOT repositioned here. Its Y came from
     // LOGIN_OK (server-authoritative) and getHeight() without currentY

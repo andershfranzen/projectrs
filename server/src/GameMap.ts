@@ -53,9 +53,10 @@ export class GameMap {
   private roofs: Map<number, RoofData> = new Map();
   /** Terrain holes (sparse) */
   private holes: Set<number> = new Set();
-  /** Edge bits currently suppressed by open doors (tileIdx → edge bitmask). Bypasses
-   *  wall-blocking on any floor so a door on floor 0 can open through an upper-floor wall. */
-  private openDoorEdges: Map<number, number> = new Map();
+  /** Edge bits currently suppressed by open doors (`floor:tileIdx` → edge bitmask).
+   *  Door state is floor-scoped so a ground-floor door cannot accidentally
+   *  open or close a different door directly above it. */
+  private openDoorEdges: Map<string, number> = new Map();
 
   /** Hashed transition lookup: tileKey -> MapTransition */
   private transitionMap: Map<number, MapTransition> = new Map();
@@ -73,6 +74,27 @@ export class GameMap {
     stairs: Map<number, StairData>;
     roofs: Map<number, RoofData>;
   }> = new Map();
+
+  private floorLayer(floor: number) {
+    const floorIdx = Math.max(1, Math.floor(floor));
+    let layer = this.floorLayers.get(floorIdx);
+    if (!layer) {
+      layer = {
+        tiles: new Map<number, number>(),
+        walls: new Map<number, number>(),
+        wallHeights: new Map<number, number>(),
+        floors: new Map<number, number>(),
+        stairs: new Map<number, StairData>(),
+        roofs: new Map<number, RoofData>(),
+      };
+      this.floorLayers.set(floorIdx, layer);
+    }
+    return layer;
+  }
+
+  private doorEdgeKey(floor: number, tileIdx: number): string {
+    return `${Math.max(0, Math.floor(floor))}:${tileIdx}`;
+  }
 
   constructor(mapId: string) {
     this.id = mapId;
@@ -372,6 +394,20 @@ export class GameMap {
     return layer.walls.get(idx) ?? 0;
   }
 
+  /** Set wall bitmask at position for a specific floor. Runtime doors use
+   *  this so upper-floor doors block upper-floor movement while closed. */
+  setWallOnFloor(x: number, z: number, floor: number, mask: number): void {
+    if (floor === 0) {
+      this.setWall(x, z, mask);
+      return;
+    }
+    if (x < 0 || x >= this.width || z < 0 || z >= this.height) return;
+    const idx = z * this.width + x;
+    const layer = this.floorLayer(floor);
+    if (mask === 0) layer.walls.delete(idx);
+    else layer.walls.set(idx, mask);
+  }
+
   /** Check if a tile is walkable on a specific floor */
   isTileBlockedOnFloor(x: number, z: number, floor: number): boolean {
     if (floor === 0) return this.isBlocked(x, z);
@@ -389,7 +425,7 @@ export class GameMap {
   private wallBlocksOnFloorAt(x: number, z: number, edge: number, floor: number): boolean {
     if (x < 0 || x >= this.width || z < 0 || z >= this.height) return false;
     const idx = z * this.width + x;
-    if (((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0) return false;
+    if (((this.openDoorEdges.get(this.doorEdgeKey(floor, idx)) ?? 0) & edge) !== 0) return false;
     return (this.getWallOnFloor(x, z, floor) & edge) !== 0;
   }
 
@@ -516,13 +552,14 @@ export class GameMap {
   }
 
   /** Mark edge bits on (x,z) as open by a door — overrides wall-blocking on every floor. */
-  setOpenDoorEdges(x: number, z: number, edgeMask: number, open: boolean): void {
+  setOpenDoorEdges(x: number, z: number, edgeMask: number, open: boolean, floor: number = 0): void {
     if (x < 0 || x >= this.width || z < 0 || z >= this.height) return;
     const idx = z * this.width + x;
-    const cur = this.openDoorEdges.get(idx) ?? 0;
+    const key = this.doorEdgeKey(floor, idx);
+    const cur = this.openDoorEdges.get(key) ?? 0;
     const next = open ? (cur | edgeMask) : (cur & ~edgeMask);
-    if (next === 0) this.openDoorEdges.delete(idx);
-    else this.openDoorEdges.set(idx, next);
+    if (next === 0) this.openDoorEdges.delete(key);
+    else this.openDoorEdges.set(key, next);
   }
 
 
@@ -701,7 +738,7 @@ export class GameMap {
     // single `floorH` with the elev fallback (as it used to) made ground-
     // floor doors fail when the tile ALSO had an upper-floor plane,
     // because the bypass then demanded upper-floor Y.
-    const isOpenDoor = ((this.openDoorEdges.get(idx) ?? 0) & edge) !== 0;
+    const isOpenDoor = ((this.openDoorEdges.get(this.doorEdgeKey(0, idx)) ?? 0) & edge) !== 0;
     const groundBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
     const upperBaseH = this.elevatedFloorHeights.get(idx);
     const atGroundDoor = playerY == null || (playerY >= groundBaseH - 0.5 && playerY < groundBaseH + wallH);

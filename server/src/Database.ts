@@ -428,6 +428,26 @@ export class GameDatabase {
       const cols = this.db.query("PRAGMA table_info(door_state)").all() as Array<{ name: string }>;
       if (cols.length > 0 && !cols.some(c => c.name === 'tile_x')) {
         this.db.exec('DROP TABLE door_state');
+      } else if (cols.length > 0 && !cols.some(c => c.name === 'floor')) {
+        this.db.exec('ALTER TABLE door_state RENAME TO door_state_legacy_floor');
+        this.db.exec(`
+          CREATE TABLE door_state (
+            map_level TEXT NOT NULL,
+            def_id INTEGER NOT NULL,
+            tile_x INTEGER NOT NULL,
+            tile_z INTEGER NOT NULL,
+            floor INTEGER NOT NULL DEFAULT 0,
+            is_open INTEGER NOT NULL,
+            auto_close_at_tick INTEGER,
+            PRIMARY KEY (map_level, def_id, tile_x, tile_z, floor)
+          );
+        `);
+        this.db.exec(`
+          INSERT INTO door_state (map_level, def_id, tile_x, tile_z, floor, is_open, auto_close_at_tick)
+          SELECT map_level, def_id, tile_x, tile_z, 0, is_open, auto_close_at_tick
+          FROM door_state_legacy_floor
+        `);
+        this.db.exec('DROP TABLE door_state_legacy_floor');
       }
     } catch { /* table absent */ }
     this.db.exec(`
@@ -436,9 +456,10 @@ export class GameDatabase {
         def_id INTEGER NOT NULL,
         tile_x INTEGER NOT NULL,
         tile_z INTEGER NOT NULL,
+        floor INTEGER NOT NULL DEFAULT 0,
         is_open INTEGER NOT NULL,
         auto_close_at_tick INTEGER,
-        PRIMARY KEY (map_level, def_id, tile_x, tile_z)
+        PRIMARY KEY (map_level, def_id, tile_x, tile_z, floor)
       );
     `);
 
@@ -453,6 +474,25 @@ export class GameDatabase {
       const cols = this.db.query("PRAGMA table_info(world_object_respawn)").all() as Array<{ name: string }>;
       if (cols.length > 0 && !cols.some(c => c.name === 'tile_x')) {
         this.db.exec('DROP TABLE world_object_respawn');
+      } else if (cols.length > 0 && !cols.some(c => c.name === 'floor')) {
+        this.db.exec('ALTER TABLE world_object_respawn RENAME TO world_object_respawn_legacy_floor');
+        this.db.exec(`
+          CREATE TABLE world_object_respawn (
+            map_level TEXT NOT NULL,
+            def_id INTEGER NOT NULL,
+            tile_x INTEGER NOT NULL,
+            tile_z INTEGER NOT NULL,
+            floor INTEGER NOT NULL DEFAULT 0,
+            respawn_at_unix_ms INTEGER NOT NULL,
+            PRIMARY KEY (map_level, def_id, tile_x, tile_z, floor)
+          );
+        `);
+        this.db.exec(`
+          INSERT INTO world_object_respawn (map_level, def_id, tile_x, tile_z, floor, respawn_at_unix_ms)
+          SELECT map_level, def_id, tile_x, tile_z, 0, respawn_at_unix_ms
+          FROM world_object_respawn_legacy_floor
+        `);
+        this.db.exec('DROP TABLE world_object_respawn_legacy_floor');
       }
     } catch { /* table absent */ }
     this.db.exec(`
@@ -461,8 +501,9 @@ export class GameDatabase {
         def_id INTEGER NOT NULL,
         tile_x INTEGER NOT NULL,
         tile_z INTEGER NOT NULL,
+        floor INTEGER NOT NULL DEFAULT 0,
         respawn_at_unix_ms INTEGER NOT NULL,
-        PRIMARY KEY (map_level, def_id, tile_x, tile_z)
+        PRIMARY KEY (map_level, def_id, tile_x, tile_z, floor)
       );
     `);
 
@@ -521,30 +562,31 @@ export class GameDatabase {
 
   // -- Door state -----------------------------------------------------------
 
-  saveDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number, isOpen: boolean, autoCloseAtTick: number | null): void {
+  saveDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number, isOpen: boolean, autoCloseAtTick: number | null): void {
     try {
       this.db.query(`
-        INSERT INTO door_state (map_level, def_id, tile_x, tile_z, is_open, auto_close_at_tick)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(map_level, def_id, tile_x, tile_z) DO UPDATE SET
+        INSERT INTO door_state (map_level, def_id, tile_x, tile_z, floor, is_open, auto_close_at_tick)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(map_level, def_id, tile_x, tile_z, floor) DO UPDATE SET
           is_open = excluded.is_open,
           auto_close_at_tick = excluded.auto_close_at_tick
-      `).run(mapLevel, defId, tileX, tileZ, isOpen ? 1 : 0, autoCloseAtTick);
+      `).run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)), isOpen ? 1 : 0, autoCloseAtTick);
     } catch (e) {
       console.error('saveDoorState failed:', e);
     }
   }
 
-  loadAllDoorStates(): Array<{ mapLevel: string; defId: number; tileX: number; tileZ: number; isOpen: boolean; autoCloseAtTick: number | null }> {
+  loadAllDoorStates(): Array<{ mapLevel: string; defId: number; tileX: number; tileZ: number; floor: number; isOpen: boolean; autoCloseAtTick: number | null }> {
     try {
       const rows = this.db.query(`
-        SELECT map_level, def_id, tile_x, tile_z, is_open, auto_close_at_tick FROM door_state
-      `).all() as Array<{ map_level: string; def_id: number; tile_x: number; tile_z: number; is_open: number; auto_close_at_tick: number | null }>;
+        SELECT map_level, def_id, tile_x, tile_z, floor, is_open, auto_close_at_tick FROM door_state
+      `).all() as Array<{ map_level: string; def_id: number; tile_x: number; tile_z: number; floor: number; is_open: number; auto_close_at_tick: number | null }>;
       return rows.map(r => ({
         mapLevel: r.map_level,
         defId: r.def_id,
         tileX: r.tile_x,
         tileZ: r.tile_z,
+        floor: r.floor ?? 0,
         isOpen: r.is_open === 1,
         autoCloseAtTick: r.auto_close_at_tick,
       }));
@@ -554,10 +596,10 @@ export class GameDatabase {
     }
   }
 
-  clearDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number): void {
+  clearDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number = 0): void {
     try {
-      this.db.query('DELETE FROM door_state WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ?')
-        .run(mapLevel, defId, tileX, tileZ);
+      this.db.query('DELETE FROM door_state WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ? AND floor = ?')
+        .run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)));
     } catch (e) {
       console.error('clearDoorState failed:', e);
     }
@@ -565,29 +607,30 @@ export class GameDatabase {
 
   // -- World object respawn -------------------------------------------------
 
-  saveObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number, respawnAtUnixMs: number): void {
+  saveObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number, respawnAtUnixMs: number): void {
     try {
       this.db.query(`
-        INSERT INTO world_object_respawn (map_level, def_id, tile_x, tile_z, respawn_at_unix_ms)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(map_level, def_id, tile_x, tile_z) DO UPDATE SET
+        INSERT INTO world_object_respawn (map_level, def_id, tile_x, tile_z, floor, respawn_at_unix_ms)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(map_level, def_id, tile_x, tile_z, floor) DO UPDATE SET
           respawn_at_unix_ms = excluded.respawn_at_unix_ms
-      `).run(mapLevel, defId, tileX, tileZ, respawnAtUnixMs);
+      `).run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)), respawnAtUnixMs);
     } catch (e) {
       console.error('saveObjectRespawn failed:', e);
     }
   }
 
-  loadAllObjectRespawns(): Array<{ mapLevel: string; defId: number; tileX: number; tileZ: number; respawnAtUnixMs: number }> {
+  loadAllObjectRespawns(): Array<{ mapLevel: string; defId: number; tileX: number; tileZ: number; floor: number; respawnAtUnixMs: number }> {
     try {
       const rows = this.db.query(`
-        SELECT map_level, def_id, tile_x, tile_z, respawn_at_unix_ms FROM world_object_respawn
-      `).all() as Array<{ map_level: string; def_id: number; tile_x: number; tile_z: number; respawn_at_unix_ms: number }>;
+        SELECT map_level, def_id, tile_x, tile_z, floor, respawn_at_unix_ms FROM world_object_respawn
+      `).all() as Array<{ map_level: string; def_id: number; tile_x: number; tile_z: number; floor: number; respawn_at_unix_ms: number }>;
       return rows.map(r => ({
         mapLevel: r.map_level,
         defId: r.def_id,
         tileX: r.tile_x,
         tileZ: r.tile_z,
+        floor: r.floor ?? 0,
         respawnAtUnixMs: r.respawn_at_unix_ms,
       }));
     } catch (e) {
@@ -596,10 +639,10 @@ export class GameDatabase {
     }
   }
 
-  clearObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number): void {
+  clearObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number = 0): void {
     try {
-      this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ?')
-        .run(mapLevel, defId, tileX, tileZ);
+      this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ? AND floor = ?')
+        .run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)));
     } catch (e) {
       console.error('clearObjectRespawn failed:', e);
     }

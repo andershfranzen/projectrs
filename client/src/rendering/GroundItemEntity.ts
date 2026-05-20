@@ -17,6 +17,8 @@ export interface GroundItemStackEntry {
   quantity: number;
   x: number;
   z: number;
+  floor: number;
+  y: number;
   def: ItemDef;
 }
 
