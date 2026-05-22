@@ -323,6 +323,7 @@ export class SpriteEntity {
   private ownedTexture: DynamicTexture | null = null;
   /** Monotonic counter so a late `setIconUrl` load can't overwrite a newer one. */
   private iconLoadGen: number = 0;
+  private disposed: boolean = false;
 
   // Directional sprites
   private dirSprites: DirectionalSpriteSet | null = null;
@@ -389,8 +390,10 @@ export class SpriteEntity {
       const texture = new DynamicTexture(`${options.name}_tex`, texSize, scene, false);
       const ctx = texture.getContext();
       const img = new Image();
+      const gen = ++this.iconLoadGen;
       img.crossOrigin = 'anonymous';
       img.onload = () => {
+        if (this.disposed || gen !== this.iconLoadGen || this.ownedTexture !== texture) return;
         // Draw icon centered, scaled to fit
         const iconSize = 80;
         const offsetX = (texSize - iconSize) / 2;
@@ -407,10 +410,8 @@ export class SpriteEntity {
           (ctx as any).textAlign = 'center';
           ctx.fillText(this.label, 64, 104);
         }
-        texture.update();
+        if (!this.disposed && this.ownedTexture === texture) texture.update();
       };
-      img.src = options.iconUrl;
-
       const mat = new StandardMaterial(`${options.name}_mat`, scene);
       mat.diffuseTexture = texture;
       mat.specularColor = new Color3(0, 0, 0);
@@ -423,6 +424,7 @@ export class SpriteEntity {
       this.plane.material = mat;
       this.ownedMaterial = mat;
       this.ownedTexture = texture;
+      img.src = options.iconUrl;
     } else {
       // Fallback: colored rectangle with label (original behavior)
       const texSize = 128;
@@ -471,7 +473,7 @@ export class SpriteEntity {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => {
-      if (gen !== this.iconLoadGen) return;
+      if (this.disposed || gen !== this.iconLoadGen || this.ownedTexture !== tex) return;
       const ctx = tex.getContext() as CanvasRenderingContext2D;
       const texSize = 128;
       const iconSize = 80;
@@ -486,7 +488,7 @@ export class SpriteEntity {
         ctx.textAlign = 'center';
         ctx.fillText(this.label, 64, 104);
       }
-      tex.update();
+      if (!this.disposed && this.ownedTexture === tex) tex.update();
     };
     img.src = url;
   }
@@ -848,6 +850,9 @@ export class SpriteEntity {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.iconLoadGen++;
     this.hideChatBubble();
     this.hideHealthBar();
     this.plane.dispose();

@@ -667,7 +667,7 @@ export class GameManager {
     // not after LOGIN_OK. LOGIN_OK later snaps the position to the real
     // saved spawn (usually a few tiles away — chunks around the default
     // already cover it) and applies the saved appearance.
-    this.playerX = 160.5;
+    this.playerX = 192.5;
     this.playerZ = 170.5;
     this.localPlayer = this.createLocalCharacterEntity();
     this.localPlayer.setPickable(false);
