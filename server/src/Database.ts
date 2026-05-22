@@ -71,7 +71,7 @@ export interface BotStatsRow {
  *  inventory, bank, etc. are preserved — only position is reset. On respawn
  *  the player_state row's respawn_version is updated to this value, so
  *  subsequent logins use the saved position normally. */
-export const WORLD_RESPAWN_VERSION = 5;
+export const WORLD_RESPAWN_VERSION = 4;
 
 export interface SavedPlayerState {
   x: number;
