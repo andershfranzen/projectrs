@@ -33,6 +33,11 @@
       -webkit-user-drag: none;
     }
 
+    /* Google permits hiding the reCAPTCHA v3 badge as long as the branding
+       notice is shown in the user flow — see the small text under the login
+       button in LoginScreen.ts. */
+    .grecaptcha-badge { visibility: hidden !important; }
+
     /* RS-style fixed frame layout */
     #game-frame {
       --right-rail-width: 300px;

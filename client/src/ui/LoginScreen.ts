@@ -86,6 +86,8 @@ export class LoginScreen {
     this.submitBtn = submitBtn;
     form.appendChild(submitBtn);
 
+    form.appendChild(this.createRecaptchaNotice());
+
     card.appendChild(form);
     overlay.appendChild(card);
 
@@ -205,6 +207,18 @@ export class LoginScreen {
     label.appendChild(box);
     label.appendChild(text);
     return label;
+  }
+
+  // Google permits hiding the v3 badge as long as the branding notice
+  // remains visible in the user flow. Anchor it under the login button.
+  private createRecaptchaNotice(): HTMLDivElement {
+    const notice = document.createElement('div');
+    notice.className = 'eq-login-recaptcha-notice';
+    notice.style.cssText = 'margin-top:8px;font-size:10px;line-height:1.4;color:#9a8c70;text-align:center;';
+    notice.innerHTML = 'This site is protected by reCAPTCHA and the Google '
+      + '<a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" style="color:#c9b78a;">Privacy Policy</a> and '
+      + '<a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer" style="color:#c9b78a;">Terms of Service</a> apply.';
+    return notice;
   }
 
   private createSignupClosedNotice(): HTMLDivElement {
