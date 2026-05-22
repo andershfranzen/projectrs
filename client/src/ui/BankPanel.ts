@@ -5,6 +5,21 @@ import { closeActiveContextMenu, createContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
 
 interface BankSlotData { itemId: number; quantity: number }
+type BankDragSource = 'bank' | 'inventory';
+type BankDropTarget = 'bank' | 'inventory';
+
+interface BankTouchDragState {
+  pointerId: number;
+  source: BankDragSource;
+  slot: number;
+  itemId: number;
+  startX: number;
+  startY: number;
+  dragging: boolean;
+  ghost: HTMLDivElement | null;
+  dropTarget: BankDropTarget | null;
+  sourceEl: HTMLDivElement;
+}
 
 const BANK_TEXT_SHADOW = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000';
 const BANK_BUTTON_BG = 'rgba(43, 10, 8, 0.9)';
@@ -32,6 +47,8 @@ export class BankPanel {
   private network: NetworkManager;
   private itemDefs: Map<number, ItemDef> = new Map();
   private visible: boolean = false;
+  private touchDrag: BankTouchDragState | null = null;
+  private suppressClickUntil: number = 0;
 
   constructor(network: NetworkManager) {
     this.network = network;
@@ -106,22 +123,34 @@ export class BankPanel {
 
     // Body — two columns
     const body = document.createElement('div');
+    body.className = 'bank-panel-body';
     body.style.cssText = `display: flex; gap: 10px; padding: 9px 10px 6px; flex: 1; min-height: 0; overflow: hidden;`;
 
     // Bank column
     const bankCol = document.createElement('div');
+    bankCol.className = 'bank-panel-bank-col';
     bankCol.style.cssText = `flex: 1.45 1 0; display: flex; flex-direction: column; min-height: 0; min-width: 0;`;
     const bankLabel = document.createElement('div');
+    bankLabel.className = 'bank-panel-label';
     bankLabel.textContent = `Bank (${BANK_SIZE} slots)`;
     bankLabel.style.cssText = this.labelCss();
     bankCol.appendChild(bankLabel);
 
     const bankGrid = document.createElement('div');
+    bankGrid.className = 'bank-panel-bank-grid';
     bankGrid.style.cssText = this.inventoryGridCss(8, true);
     this.addInventoryStitch(bankGrid);
     for (let i = 0; i < BANK_SIZE; i++) {
       const slot = this.makeSlot();
-      slot.addEventListener('click', () => this.onBankClick(i));
+      this.installTouchDrag(slot, 'bank', i);
+      slot.addEventListener('click', (e) => {
+        if (this.shouldSuppressClick()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        this.onBankClick(i);
+      });
       slot.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onBankRightClick(i, e); });
       bankGrid.appendChild(slot);
       this.bankSlotElements.push(slot);
@@ -131,18 +160,29 @@ export class BankPanel {
 
     // Inventory column
     const invCol = document.createElement('div');
+    invCol.className = 'bank-panel-inv-col';
     invCol.style.cssText = `flex: 1 1 0; display: flex; flex-direction: column; min-width: 0;`;
     const invLabel = document.createElement('div');
+    invLabel.className = 'bank-panel-label';
     invLabel.textContent = 'Inventory';
     invLabel.style.cssText = this.labelCss();
     invCol.appendChild(invLabel);
 
     const invGrid = document.createElement('div');
+    invGrid.className = 'bank-panel-inv-grid';
     invGrid.style.cssText = this.inventoryGridCss(5, false);
     this.addInventoryStitch(invGrid);
     for (let i = 0; i < INVENTORY_SIZE; i++) {
       const slot = this.makeSlot();
-      slot.addEventListener('click', () => this.onInvClick(i));
+      this.installTouchDrag(slot, 'inventory', i);
+      slot.addEventListener('click', (e) => {
+        if (this.shouldSuppressClick()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        this.onInvClick(i);
+      });
       slot.addEventListener('contextmenu', (e) => { e.preventDefault(); this.onInvRightClick(i, e); });
       invGrid.appendChild(slot);
       this.invSlotElements.push(slot);
@@ -153,8 +193,10 @@ export class BankPanel {
     root.appendChild(body);
 
     const footer = document.createElement('div');
+    footer.className = 'bank-panel-footer';
     footer.style.cssText = `display: flex; align-items: center; gap: 8px; padding: 0 10px 8px;`;
     const hint = document.createElement('div');
+    hint.className = 'bank-panel-hint';
     hint.textContent = 'Left-click = 1 · Right-click = 5/10/All';
     hint.style.cssText = `flex: 1; min-width: 0; font-size: 11px; color: #f4ded5; opacity: 0.82; text-shadow: ${BANK_TEXT_SHADOW};`;
     footer.appendChild(hint);
@@ -172,11 +214,14 @@ export class BankPanel {
   private inventoryGridCss(cols: number, scroll: boolean): string {
     return `
       display: grid;
-      grid-template-columns: repeat(${cols}, minmax(0, 1fr));
+      grid-template-columns: repeat(${cols}, minmax(var(--bank-slot-min-size, 44px), 1fr));
+      grid-auto-rows: minmax(var(--bank-slot-min-size, 44px), auto);
+      align-content: start;
       gap: 0;
       position: relative;
       overflow-y: ${scroll ? 'auto' : 'hidden'};
-      overflow-x: hidden;
+      overflow-x: auto;
+      scrollbar-gutter: stable;
       background:
         repeating-linear-gradient(0deg, rgba(196, 126, 70, 0.035) 0 1px, transparent 1px 4px),
         repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 5px),
@@ -211,10 +256,13 @@ export class BankPanel {
   private makeSlot(): HTMLDivElement {
     const slot = document.createElement('div');
     slot.style.cssText = `
-      width: 100%; aspect-ratio: 1 / 1; min-height: 0;
+      width: 100%; aspect-ratio: 1 / 1;
+      min-width: var(--bank-slot-min-size, 44px);
+      min-height: var(--bank-slot-min-size, 44px);
       background: transparent; border: 0;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; position: relative; font-size: 9px;
+      touch-action: none; user-select: none; -webkit-user-select: none;
       z-index: 2;
     `;
     slot.addEventListener('mouseenter', () => { slot.style.background = 'rgba(154,51,43,0.22)'; });
@@ -241,7 +289,8 @@ export class BankPanel {
     const def = this.itemDefs.get(itemId);
     renderItemSlot(el, def, this.itemDefs, {
       size: 32,
-      extraStyle: 'max-width:32px;max-height:32px;width:100%;height:100%;',
+      draggable: false,
+      extraStyle: 'max-width:32px;max-height:32px;width:100%;height:100%;pointer-events:none;',
       quantity,
       placeholderSize: 24,
     });
@@ -271,6 +320,151 @@ export class BankPanel {
   private installButtonHover(button: HTMLButtonElement): void {
     button.addEventListener('mouseenter', () => { if (!button.disabled) button.style.background = BANK_BUTTON_HOVER_BG; });
     button.addEventListener('mouseleave', () => { button.style.background = BANK_BUTTON_BG; });
+  }
+
+  private shouldSuppressClick(): boolean {
+    return performance.now() < this.suppressClickUntil;
+  }
+
+  private installTouchDrag(slot: HTMLDivElement, source: BankDragSource, index: number): void {
+    slot.addEventListener('pointerdown', (event) => this.beginTouchDrag(event, source, index, slot));
+    slot.addEventListener('pointermove', (event) => this.moveTouchDrag(event));
+    slot.addEventListener('pointerup', (event) => this.finishTouchDrag(event));
+    slot.addEventListener('pointercancel', (event) => this.cancelTouchDrag(event));
+    slot.addEventListener('lostpointercapture', (event) => this.cancelTouchDrag(event));
+  }
+
+  private beginTouchDrag(event: PointerEvent, source: BankDragSource, slot: number, sourceEl: HTMLDivElement): void {
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    const data = source === 'bank' ? this.bankSlots[slot] : this.invSlots[slot];
+    if (!data) return;
+    this.touchDrag = {
+      pointerId: event.pointerId,
+      source,
+      slot,
+      itemId: data.itemId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+      ghost: null,
+      dropTarget: null,
+      sourceEl,
+    };
+    try {
+      sourceEl.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort on mobile browsers.
+    }
+  }
+
+  private moveTouchDrag(event: PointerEvent): void {
+    const drag = this.touchDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (!drag.dragging) {
+      if (Math.hypot(dx, dy) < 7) return;
+      this.startTouchDragVisual(drag, event.clientX, event.clientY);
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.moveTouchDragGhost(drag, event.clientX, event.clientY);
+    this.setDropTarget(this.dropTargetAt(event.clientX, event.clientY));
+  }
+
+  private finishTouchDrag(event: PointerEvent): void {
+    const drag = this.touchDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.dragging) {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = this.dropTargetAt(event.clientX, event.clientY);
+      if (drag.source === 'inventory' && target === 'bank' && this.invSlots[drag.slot]?.itemId === drag.itemId) {
+        this.network.sendRaw(encodePacket(ClientOpcode.BANK_DEPOSIT, drag.slot, drag.itemId, 1));
+      } else if (drag.source === 'bank' && target === 'inventory' && this.bankSlots[drag.slot]?.itemId === drag.itemId) {
+        this.network.sendRaw(encodePacket(ClientOpcode.BANK_WITHDRAW, drag.slot, drag.itemId, 1));
+      }
+      this.suppressClickUntil = performance.now() + 350;
+    }
+    this.clearTouchDrag(event.pointerId);
+  }
+
+  private cancelTouchDrag(event: PointerEvent): void {
+    const drag = this.touchDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    this.clearTouchDrag(event.pointerId);
+  }
+
+  private startTouchDragVisual(drag: BankTouchDragState, clientX: number, clientY: number): void {
+    drag.dragging = true;
+    drag.sourceEl.style.opacity = '0.45';
+    const rect = drag.sourceEl.getBoundingClientRect();
+    const ghost = drag.sourceEl.cloneNode(true) as HTMLDivElement;
+    ghost.style.cssText = `
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: ${Math.max(34, rect.width)}px;
+      height: ${Math.max(34, rect.height)}px;
+      z-index: 1000;
+      pointer-events: none;
+      opacity: 0.92;
+      transform: translate(-50%, -50%);
+      background: rgba(43, 10, 8, 0.88);
+      border: 1px solid rgba(255, 200, 80, 0.75);
+      border-radius: 3px;
+      box-shadow: 0 5px 16px rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+    document.body.appendChild(ghost);
+    drag.ghost = ghost;
+    this.moveTouchDragGhost(drag, clientX, clientY);
+  }
+
+  private moveTouchDragGhost(drag: BankTouchDragState, clientX: number, clientY: number): void {
+    if (!drag.ghost) return;
+    drag.ghost.style.left = `${clientX}px`;
+    drag.ghost.style.top = `${clientY}px`;
+  }
+
+  private dropTargetAt(clientX: number, clientY: number): BankDropTarget | null {
+    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    if (!el) return null;
+    if (this.bankGridEl.contains(el)) return 'bank';
+    if (this.invGridEl.contains(el)) return 'inventory';
+    return null;
+  }
+
+  private setDropTarget(target: BankDropTarget | null): void {
+    const drag = this.touchDrag;
+    if (!drag || drag.dropTarget === target) return;
+    this.bankGridEl.style.outline = '';
+    this.invGridEl.style.outline = '';
+    drag.dropTarget = target;
+    const validTarget =
+      (drag.source === 'inventory' && target === 'bank')
+      || (drag.source === 'bank' && target === 'inventory');
+    if (!validTarget) return;
+    const grid = target === 'bank' ? this.bankGridEl : this.invGridEl;
+    grid.style.outline = '1px solid rgba(255, 200, 80, 0.9)';
+    grid.style.outlineOffset = '-2px';
+  }
+
+  private clearTouchDrag(pointerId: number): void {
+    const drag = this.touchDrag;
+    if (!drag || drag.pointerId !== pointerId) return;
+    this.setDropTarget(null);
+    drag.sourceEl.style.opacity = '';
+    drag.ghost?.remove();
+    this.touchDrag = null;
+    try {
+      if (drag.sourceEl.hasPointerCapture(pointerId)) drag.sourceEl.releasePointerCapture(pointerId);
+    } catch {
+      // Capture may already have been released by the browser.
+    }
   }
 
   private onBankClick(slot: number): void {

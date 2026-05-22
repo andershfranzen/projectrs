@@ -223,6 +223,7 @@ function invalid(reason: string): PacketValidationResult {
 function opcodeCountsAsActivity(opcode: number): boolean {
   return opcode !== ClientOpcode.CLIENT_PING
     && opcode !== ClientOpcode.CLIENT_POSITION_Y
+    && opcode !== ClientOpcode.CURSOR_POSITION
     && opcode !== ClientOpcode.MAP_READY;
 }
 
@@ -269,6 +270,8 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
       return { bucket: 'heartbeat', maxMessages: 4, windowMs: 10_000 };
     case ClientOpcode.CLIENT_ACTIVITY:
       return { bucket: 'activity', maxMessages: 12, windowMs: 60_000 };
+    case ClientOpcode.CURSOR_POSITION:
+      return { bucket: 'cursor', maxMessages: 8, windowMs: 10_000 };
     case ClientOpcode.CLIENT_POSITION_Y:
       return { bucket: 'metadata', maxMessages: 8, windowMs: 1000 };
     default:
@@ -466,6 +469,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 1)) return invalid('missing-position-y');
       return OK_PACKET;
 
+    case ClientOpcode.CURSOR_POSITION:
+      if (!hasValues(values, 2)) return invalid('missing-cursor-position');
+      if (!Number.isInteger(values[0]) || values[0] < 0 || values[0] > 1000) return invalid('bad-cursor-x');
+      if (!Number.isInteger(values[1]) || values[1] < 0 || values[1] > 1000) return invalid('bad-cursor-y');
+      return OK_PACKET;
+
     case ClientOpcode.SET_APPEARANCE: {
       if (!hasValues(values, 7)) return invalid('missing-appearance-values');
       if (!player.appearanceEditorOpen && player.appearance !== null) return invalid('appearance-editor-not-open');
@@ -572,6 +581,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
 
     case ClientOpcode.CLIENT_PING:
     case ClientOpcode.CLIENT_ACTIVITY:
+    case ClientOpcode.CURSOR_POSITION:
     case ClientOpcode.MAP_READY:
       return OK_PACKET;
 
@@ -1202,6 +1212,13 @@ function handleDecryptedGameSocketMessage(
     }
 
     case ClientOpcode.CLIENT_ACTIVITY: {
+      player.botStats?.recordClientActivity();
+      break;
+    }
+
+    case ClientOpcode.CURSOR_POSITION: {
+      if (!hasValues(values, 2)) return;
+      player.botStats?.recordCursorPosition(values[0], values[1]);
       break;
     }
 

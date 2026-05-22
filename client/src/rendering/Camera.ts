@@ -42,6 +42,7 @@ export class GameCamera {
   private targetRadius: number = -1; // -1 = no active zoom transition
   private targetBeta: number = -1;  // -1 = no active beta transition
   private locked: boolean = true;
+  private lockedRadius: number = LOCKED_RADIUS;
 
   constructor(scene: Scene, canvas: HTMLCanvasElement) {
     this.targetPosition = new Vector3(32, 0, 32);
@@ -95,20 +96,31 @@ export class GameCamera {
     if (this.locked) {
       this.camera.lowerBetaLimit = LOCKED_BETA_AT_PITCH_MAX;
       this.camera.upperBetaLimit = LOCKED_BETA_AT_PITCH_MIN;
-      this.camera.lowerRadiusLimit = LOCKED_RADIUS;
-      this.camera.upperRadiusLimit = LOCKED_RADIUS;
+      this.camera.lowerRadiusLimit = this.lockedRadius;
+      this.camera.upperRadiusLimit = this.lockedRadius;
       this.camera.fov = LOCKED_FOV;
       this.camera.beta = Math.min(
         Math.max(this.camera.beta, LOCKED_BETA_AT_PITCH_MAX),
         LOCKED_BETA_AT_PITCH_MIN,
       );
-      this.camera.radius = LOCKED_RADIUS;
+      this.camera.radius = this.lockedRadius;
     } else {
       this.camera.lowerBetaLimit = FREE_LOWER_BETA;
       this.camera.upperBetaLimit = FREE_UPPER_BETA;
       this.camera.lowerRadiusLimit = FREE_LOWER_RADIUS;
       this.camera.upperRadiusLimit = FREE_UPPER_RADIUS;
       this.camera.fov = 0.8;  // Babylon default
+    }
+  }
+
+  setLockedRadiusScale(scale: number): void {
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const nextRadius = LOCKED_RADIUS * scale;
+    if (Math.abs(nextRadius - this.lockedRadius) < 0.01) return;
+    this.lockedRadius = nextRadius;
+    if (this.locked) {
+      this.targetRadius = -1;
+      this.applyLockState();
     }
   }
 
@@ -147,6 +159,24 @@ export class GameCamera {
 
   setTargetBeta(beta: number): void {
     this.targetBeta = beta;
+  }
+
+  zoomByFactor(factor: number): void {
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    const lower = this.camera.lowerRadiusLimit ?? FREE_LOWER_RADIUS;
+    const upper = this.camera.upperRadiusLimit ?? FREE_UPPER_RADIUS;
+    this.targetRadius = -1;
+    this.camera.radius = Math.min(Math.max(this.camera.radius * factor, lower), upper);
+  }
+
+  rotate(deltaAlpha: number, deltaBeta: number = 0): void {
+    this.camera.alpha += deltaAlpha;
+    if (deltaBeta !== 0) {
+      const lower = this.camera.lowerBetaLimit ?? FREE_LOWER_BETA;
+      const upper = this.camera.upperBetaLimit ?? FREE_UPPER_BETA;
+      this.camera.beta = Math.min(Math.max(this.camera.beta + deltaBeta, lower), upper);
+      this.targetBeta = -1;
+    }
   }
 
   enterDebugZoom(): void {

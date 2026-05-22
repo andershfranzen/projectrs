@@ -95,6 +95,7 @@ export class NetworkManager {
   private sendCipherQueue: Promise<void> = Promise.resolve();
   private recvCipherQueue: Promise<void> = Promise.resolve();
   private lastActivitySentAt: number = -Infinity;
+  private lastCursorSentAt: number = -Infinity;
 
   private closeQuietly(socket: WebSocket | null): void {
     if (!socket) return;
@@ -183,6 +184,7 @@ export class NetworkManager {
     this.lastRecvCipherCounter = -1;
     this.sendCipherQueue = Promise.resolve();
     this.recvCipherQueue = Promise.resolve();
+    this.lastCursorSentAt = -Infinity;
 
     void ensureDeviceKeyRegistered(token)
       .then((identity) => {
@@ -496,6 +498,18 @@ export class NetworkManager {
     if (now - this.lastActivitySentAt < 5_000) return true;
     this.lastActivitySentAt = now;
     return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY));
+  }
+
+  sendCursorPosition(clientX: number, clientY: number, force: boolean = false): boolean {
+    if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return false;
+    const now = performance.now();
+    if (!force && now - this.lastCursorSentAt < 1_500) return true;
+    this.lastCursorSentAt = now;
+    const width = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+    const height = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
+    const x = Math.max(0, Math.min(1000, Math.round((clientX / width) * 1000)));
+    const y = Math.max(0, Math.min(1000, Math.round((clientY / height) * 1000)));
+    return this.sendRaw(encodePacket(ClientOpcode.CURSOR_POSITION, x, y));
   }
 
   sendChat(message: string): void {

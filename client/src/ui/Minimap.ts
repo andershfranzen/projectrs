@@ -79,6 +79,7 @@ export class Minimap {
     this.tileSize = VIEW_RADIUS * 2;
 
     this.canvas = document.createElement('canvas');
+    this.canvas.className = 'eq-minimap';
     this.canvas.width = RENDER_SIZE;
     this.canvas.height = RENDER_SIZE;
     // Render internally at a fixed crisp size, but let CSS scale the displayed

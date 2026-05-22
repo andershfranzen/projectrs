@@ -31,12 +31,16 @@ interface SessionSummary {
   sessionCombatSwings: number;
   sessionMovements: number;
   sessionChats: number;
+  sessionActivityEvents?: number;
+  sessionCursorEvents?: number;
   sessionSuspiciousPackets?: number;
   totalSuspiciousPackets?: number;
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
   pingIntervalStdDevMs?: number | null;
+  heartbeatActivityCouplingRatio?: number | null;
   topActionLoopRepetition?: number | null;
+  topCursorCellRepetition?: number | null;
   topPathRepetition: number | null;
   xpPerHour: Record<string, number>;
   flags: string[];
@@ -455,8 +459,11 @@ function computeReviewRisk(
   if (score === 0) {
     if (flags.has('tickAligned')) add(24, 'tick-aligned action timing');
     if (flags.has('pingRegular')) add(18, 'script-regular heartbeat timing');
+    if (flags.has('activityHeartbeatCoupled')) add(20, 'activity packets coupled to heartbeat');
     if (flags.has('routeActionLoop')) add(22, 'repeated route/action loop');
     if (flags.has('pathRepetitive')) add(16, 'repetitive movement destination');
+    if (flags.has('noCursorTelemetry')) add(16, 'active session without cursor telemetry');
+    if (flags.has('cursorStatic')) add(10, 'static cursor telemetry');
     if (flags.has('fastReaction')) add(22, 'fast NPC re-engage reaction');
     if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
     if (flags.has('suspiciousPackets')) add(14, 'invalid/stale gameplay packets');
@@ -693,9 +700,11 @@ function main(): void {
       const tickStd = d.tickAlignStdDevMs;
       const react = d.reactionMedianMs;
       const path = d.topPathRepetition;
+      const activityCoupled = d.heartbeatActivityCouplingRatio;
       const chats = d.sessionChats;
+      const cursors = d.sessionCursorEvents;
       const mins = d.sessionMinutes;
-      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  flags=[${flags.join(',')}]`);
+      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  flags=[${flags.join(',')}]`);
     }
     console.log('');
   }

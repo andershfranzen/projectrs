@@ -38,6 +38,24 @@ export function popupGeometryCss(opts: PopupGeometryOpts = {}): string {
   const margin = opts.marginPx ?? 40;
   const right = RIGHT_COLUMN_WIDTH_PX;
   const bottom = CHAT_HEIGHT_PX;
+  const isMobile = typeof window !== 'undefined'
+    && window.matchMedia?.('(max-width: 760px), (pointer: coarse) and (max-width: 900px)').matches;
+
+  if (isMobile) {
+    const mobileMargin = Math.max(10, Math.floor(margin / 2));
+    const mobileWidth = Math.max(360, minWidth);
+    return `
+      position: fixed;
+      left: 50vw;
+      top: calc((100dvh - var(--mobile-nav-height, 68px) - env(safe-area-inset-bottom, 0px)) / 2);
+      transform: translate(-50%, -50%);
+      width: min(${mobileWidth}px, calc(100vw - ${mobileMargin * 2}px));
+      min-width: 0;
+      max-width: calc(100vw - ${mobileMargin * 2}px);
+      max-height: calc(100dvh - var(--mobile-nav-height, 68px) - env(safe-area-inset-bottom, 0px) - ${mobileMargin * 2}px);
+    `;
+  }
+
   return `
     position: fixed;
     left: calc((100vw - ${right}px) / 2);
@@ -103,6 +121,7 @@ export interface ContextMenuItem {
 export interface ContextMenuOpts {
   x: number;
   y: number;
+  title?: string;
   fontSizePx?: number;
   itemPadding?: string;
   maxWidthPx?: number;
@@ -157,6 +176,7 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
 
   const menu = document.createElement('div');
   menu.className = 'eq-context-menu';
+  menu.setAttribute('role', 'menu');
   menu.style.cssText = contextMenuCss(opts);
   let closed = false;
 
@@ -169,9 +189,24 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
     opts.onClose?.();
   };
 
+  const title = document.createElement('div');
+  title.textContent = opts.title ?? 'Select an option';
+  title.style.cssText = `
+    padding: 5px 12px 4px;
+    color: #f4ded5;
+    font-weight: bold;
+    text-align: center;
+    border-bottom: 1px solid rgba(216,55,43,0.45);
+    background: rgba(20, 13, 9, 0.72);
+    text-shadow: 1px 1px 0 #000;
+    cursor: default;
+  `;
+  menu.appendChild(title);
+
   for (const opt of items) {
     const item = document.createElement('div');
     item.textContent = opt.label;
+    item.setAttribute('role', 'menuitem');
     item.style.cssText = `padding: ${opts.itemPadding ?? '4px 12px'}; color: #d8372b; cursor: pointer;`;
     item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
     item.addEventListener('mouseleave', () => item.style.background = 'transparent');
@@ -183,6 +218,13 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
   }
 
   document.body.appendChild(menu);
+  const margin = 4;
+  clampElementToRect(menu, new DOMRect(
+    margin,
+    margin,
+    window.innerWidth - margin * 2,
+    window.innerHeight - margin * 2,
+  ));
   activeContextMenu = { el: menu, close };
   setTimeout(() => document.addEventListener('click', close), 0);
   return menu;

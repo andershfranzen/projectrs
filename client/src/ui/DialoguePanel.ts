@@ -49,6 +49,7 @@ export class DialoguePanel {
     this.keyHandler = (event) => this.handleKeyDown(event);
 
     this.container = document.createElement('div');
+    this.container.id = 'dialogue-panel';
     this.container.style.cssText = `
       width: 100%;
       height: 100%;
@@ -63,6 +64,7 @@ export class DialoguePanel {
     `;
 
     this.optionsEl = document.createElement('div');
+    this.optionsEl.id = 'dialogue-options';
     this.optionsEl.style.cssText = `
       width: 100%;
       height: 100%;

@@ -46,9 +46,13 @@ export function ensurePreAuthTheme(): void {
 
     .eq-preauth-brand {
       font-family: 'Cinzel', 'Times New Roman', serif;
-      font-size: 68px;
+      font-size: clamp(34px, 14vw, 68px);
       font-weight: 900;
-      letter-spacing: 7px;
+      letter-spacing: clamp(1px, 1vw, 7px);
+      line-height: 1;
+      max-width: calc(100vw - 24px);
+      white-space: nowrap;
+      text-align: center;
       color: #d8372b;
       text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
       user-select: none;

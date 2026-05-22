@@ -10,12 +10,14 @@ export type ChatSendCallback = (message: string) => void;
 type ChatTab = 'all' | 'game' | 'public';
 const MAX_CHAT_MESSAGES = 300;
 const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
+const MOBILE_CHAT_HINT_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
 
 export class ChatPanel {
   private container: HTMLDivElement;
   private log: HTMLDivElement;
   private input: HTMLInputElement;
   private onSend: ChatSendCallback | null = null;
+  private mobileHintMedia: MediaQueryList | null = null;
 
   // Chat filtering
   private activeTab: ChatTab = 'all';
@@ -28,6 +30,10 @@ export class ChatPanel {
     this.container = this.buildUI();
     this.log = this.container.querySelector('#chat-log') as HTMLDivElement;
     this.input = this.container.querySelector('#chat-input') as HTMLInputElement;
+    this.mobileHintMedia = window.matchMedia(MOBILE_CHAT_HINT_QUERY);
+    this.updateInputPlaceholder();
+    this.mobileHintMedia.addEventListener('change', this.updateInputPlaceholder);
+    window.addEventListener('resize', this.updateInputPlaceholder);
     const mount = document.getElementById('ui-chat-inner');
     (mount ?? document.body).appendChild(this.container);
 
@@ -58,11 +64,18 @@ export class ChatPanel {
     });
   }
 
+  private readonly updateInputPlaceholder = (): void => {
+    const isMobile = this.mobileHintMedia?.matches ?? window.matchMedia(MOBILE_CHAT_HINT_QUERY).matches;
+    this.input.placeholder = isMobile ? 'Press here to chat...' : 'Press Enter to chat...';
+  };
+
   private installChatStyles(): void {
     if (document.getElementById(CHAT_PLACEHOLDER_STYLE_ID)) return;
     const style = document.createElement('style');
     style.id = CHAT_PLACEHOLDER_STYLE_ID;
-    style.textContent = '#chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }';
+    style.textContent = `
+      #chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }
+    `;
     document.head.appendChild(style);
   }
 
@@ -90,6 +103,7 @@ export class ChatPanel {
       background: transparent;
       display: flex; flex-direction: column;
       font-family: Arial, Helvetica, sans-serif; font-size: 12px;
+      position: relative;
     `;
 
     // Tab bar — sits on the stone, no separate background
@@ -159,6 +173,23 @@ export class ChatPanel {
 
     inputBar.appendChild(input);
     panel.appendChild(inputBar);
+
+    const collapseButton = document.createElement('button');
+    collapseButton.id = 'chat-collapse-button';
+    collapseButton.type = 'button';
+    collapseButton.textContent = '<';
+    collapseButton.title = 'Slide chat closed';
+    collapseButton.setAttribute('aria-label', 'Slide chat closed');
+    collapseButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const frame = document.getElementById('game-frame');
+      const collapsed = frame?.classList.toggle('mobile-chat-collapsed') ?? false;
+      collapseButton.textContent = collapsed ? '>' : '<';
+      collapseButton.title = collapsed ? 'Open chat' : 'Slide chat closed';
+      collapseButton.setAttribute('aria-label', collapsed ? 'Open chat' : 'Slide chat closed');
+    });
+    panel.appendChild(collapseButton);
 
     // Set initial tab
     this.switchTab('all');
@@ -270,6 +301,12 @@ export class ChatPanel {
 
   setSendHandler(handler: ChatSendCallback): void {
     this.onSend = handler;
+  }
+
+  destroy(): void {
+    this.mobileHintMedia?.removeEventListener('change', this.updateInputPlaceholder);
+    window.removeEventListener('resize', this.updateInputPlaceholder);
+    this.container.remove();
   }
 
   private escapeHtml(str: string): string {

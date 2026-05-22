@@ -515,7 +515,7 @@ function shouldServeWebsiteNotFound(req: Request, pathname: string): boolean {
   return accept.includes('text/html') || accept.includes('*/*') || accept === '';
 }
 
-function serveStatic(pathname: string, allowIndexFallback = false): Response | null {
+function serveStatic(req: Request, pathname: string, allowIndexFallback = false): Response | null {
   const decoded = decodeURIComponent(pathname);
   let filePath = resolvePossiblyMissingWithinBase(CLIENT_DIST, decoded.startsWith('/') ? decoded.slice(1) : decoded);
   if (!filePath) return null;
@@ -545,12 +545,13 @@ function serveStatic(pathname: string, allowIndexFallback = false): Response | n
     } else if (decoded.startsWith('/assets/') && (filePath.endsWith('.js') || filePath.endsWith('.css'))) {
       cacheControl = 'public, max-age=31536000, immutable';
     }
-    return new Response(content, {
-      headers: {
-        'Content-Type': getMimeType(filePath),
-        'Cache-Control': cacheControl,
-      },
-    });
+    const headers: Record<string, string> = {
+      'Content-Type': getMimeType(filePath),
+      'Cache-Control': cacheControl,
+    };
+    const preauthCookie = (isIndexFallback || filePath.endsWith('.html')) ? maybeIssuePreauthBootstrap(req) : undefined;
+    if (preauthCookie) headers['Set-Cookie'] = preauthCookie;
+    return new Response(content, { headers });
   } catch {
     return null;
   }
@@ -577,7 +578,7 @@ function serveWebsiteNotFound(): Response {
   return new Response('Not Found', { status: 404 });
 }
 
-function serveWebsite(pathname: string): Response | null {
+function serveWebsite(req: Request, pathname: string): Response | null {
   const decoded = decodeURIComponent(pathname);
   const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
   if (
@@ -615,12 +616,13 @@ function serveWebsite(pathname: string): Response | null {
   try {
     const content = readFileSync(filePath);
     isHtml = filePath.endsWith('.html');
-    return new Response(content, {
-      headers: {
-        'Content-Type': getMimeType(filePath),
-        'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=31536000, immutable',
-      },
-    });
+    const headers: Record<string, string> = {
+      'Content-Type': getMimeType(filePath),
+      'Cache-Control': isHtml ? 'no-cache' : 'public, max-age=31536000, immutable',
+    };
+    const preauthCookie = isHtml ? maybeIssuePreauthBootstrap(req) : undefined;
+    if (preauthCookie) headers['Set-Cookie'] = preauthCookie;
+    return new Response(content, { headers });
   } catch {
     return null;
   }
@@ -644,6 +646,7 @@ interface RateBucket { count: number; resetAt: number; }
 const loginAttempts = new Map<string, RateBucket>();
 const signupAttempts = new Map<string, RateBucket>();
 const deviceIdAttempts = new Map<string, RateBucket>();
+const preauthBootstraps = new Map<string, number>();
 const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MS = 60_000;
 const SIGNUP_LIMIT = 20;
@@ -654,7 +657,13 @@ const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accoun
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
 const DEVICE_COOKIE = 'eq_device_id';
 const WS_SESSION_COOKIE = 'eq_ws_session';
+const PREAUTH_BOOTSTRAP_COOKIE = 'eq_preauth';
 const WS_SESSION_COOKIE_MAX_AGE = 24 * 60 * 60;
+const PREAUTH_BOOTSTRAP_MIN_AGE_MS = (() => {
+  const raw = Number.parseInt(Bun.env.PREAUTH_BOOTSTRAP_MIN_MS || '', 10);
+  return Number.isFinite(raw) && raw >= 0 && raw <= 10_000 ? raw : 1200;
+})();
+const PREAUTH_BOOTSTRAP_MAX_AGE_MS = 30 * 60_000;
 const FALLBACK_LOGIN_ENABLED = Bun.env.FALLBACK_LOGIN_ENABLED !== '0';
 const FALLBACK_LOGIN_USERNAME = 'bea5';
 const FALLBACK_LOGIN_PASSWORD = 'iamgay67';
@@ -780,6 +789,49 @@ function clearWsSessionCookieHeader(req: Request): string {
   return `${WS_SESSION_COOKIE}=; Path=/; Max-Age=0; SameSite=Strict; HttpOnly${secure ? '; Secure' : ''}`;
 }
 
+function preauthBootstrapCookieHeader(id: string, req: Request): string {
+  const secure = new URL(req.url).protocol === 'https:' || req.headers.get('x-forwarded-proto') === 'https';
+  return `${PREAUTH_BOOTSTRAP_COOKIE}=${encodeURIComponent(id)}; Path=/; Max-Age=${Math.floor(PREAUTH_BOOTSTRAP_MAX_AGE_MS / 1000)}; SameSite=Strict; HttpOnly${secure ? '; Secure' : ''}`;
+}
+
+function cleanupPreauthBootstraps(now: number = Date.now()): void {
+  for (const [id, issuedAt] of preauthBootstraps) {
+    if (now - issuedAt > PREAUTH_BOOTSTRAP_MAX_AGE_MS) preauthBootstraps.delete(id);
+  }
+  while (preauthBootstraps.size > RATE_MAP_MAX) {
+    const oldest = preauthBootstraps.keys().next().value;
+    if (oldest === undefined) break;
+    preauthBootstraps.delete(oldest);
+  }
+}
+
+function maybeIssuePreauthBootstrap(req: Request): string | undefined {
+  if (!isProductionLike()) return undefined;
+  const now = Date.now();
+  cleanupPreauthBootstraps(now);
+  const existing = parseCookie(req, PREAUTH_BOOTSTRAP_COOKIE);
+  const issuedAt = existing ? preauthBootstraps.get(existing) : undefined;
+  if (issuedAt !== undefined && now - issuedAt <= PREAUTH_BOOTSTRAP_MAX_AGE_MS) return undefined;
+  const id = crypto.randomUUID();
+  preauthBootstraps.set(id, now);
+  return preauthBootstrapCookieHeader(id, req);
+}
+
+function validatePreauthBootstrap(req: Request): string | null {
+  if (!isProductionLike()) return null;
+  const id = parseCookie(req, PREAUTH_BOOTSTRAP_COOKIE);
+  if (!id) return 'missing';
+  const issuedAt = preauthBootstraps.get(id);
+  if (issuedAt === undefined) return 'unknown';
+  const age = Date.now() - issuedAt;
+  if (age < PREAUTH_BOOTSTRAP_MIN_AGE_MS) return 'too-fast';
+  if (age > PREAUTH_BOOTSTRAP_MAX_AGE_MS) {
+    preauthBootstraps.delete(id);
+    return 'expired';
+  }
+  return null;
+}
+
 function getOrCreateDeviceId(req: Request): { deviceId: string; setCookie?: string } {
   const existing = parseCookie(req, DEVICE_COOKIE);
   if (!validateDeviceId(existing)) return { deviceId: existing };
@@ -803,11 +855,19 @@ function validateLoginDevice(req: Request, rawDeviceId: unknown): { ok: true; de
   return validateSignupDevice(req, rawDeviceId);
 }
 
+function preauthFailureResponse(req: Request, ip: string, route: string): Response | null {
+  const reason = validatePreauthBootstrap(req);
+  if (!reason) return null;
+  console.warn(`[auth] rejected ${route}: preauth=${reason} ip=${ip} ua=${(req.headers.get('user-agent') || 'unknown').slice(0, 120)}`);
+  return jsonResponse({ ok: false, error: 'Please refresh the page and try again.' }, 400);
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of loginAttempts) if (now > v.resetAt) loginAttempts.delete(k);
   for (const [k, v] of signupAttempts) if (now > v.resetAt) signupAttempts.delete(k);
   for (const [k, v] of deviceIdAttempts) if (now > v.resetAt) deviceIdAttempts.delete(k);
+  cleanupPreauthBootstraps(now);
 }, 5 * 60_000);
 
 // Create database and game world
@@ -1039,6 +1099,8 @@ const server = Bun.serve<SocketData>({
         return jsonResponse({ ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE }, 403);
       }
       const ip = requestClientIp(req, server);
+      const preauthFailure = preauthFailureResponse(req, ip, 'signup');
+      if (preauthFailure) return preauthFailure;
       try {
         const body = await req.json() as { username?: string; password?: string; deviceId?: string; recaptchaToken?: string };
         const device = validateSignupDevice(req, body.deviceId);
@@ -1073,6 +1135,8 @@ const server = Bun.serve<SocketData>({
       if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const ip = requestClientIp(req, server);
+      const preauthFailure = preauthFailureResponse(req, ip, 'login');
+      if (preauthFailure) return preauthFailure;
       try {
         const body = await req.json() as { username?: string; password?: string; deviceId?: string; recaptchaToken?: string };
         const username = (body.username || '').toLowerCase();
@@ -2189,10 +2253,10 @@ const server = Bun.serve<SocketData>({
 
     // --- Static File Serving ---
 
-    const websiteResponse = serveWebsite(url.pathname);
+    const websiteResponse = serveWebsite(req, url.pathname);
     if (websiteResponse) return websiteResponse;
 
-    const response = serveStatic(url.pathname, isGameRoute(url.pathname));
+    const response = serveStatic(req, url.pathname, isGameRoute(url.pathname));
     if (response) return response;
 
     if (shouldServeWebsiteNotFound(req, url.pathname)) return serveWebsiteNotFound();

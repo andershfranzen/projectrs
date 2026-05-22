@@ -76,6 +76,32 @@ type InteractionOption = {
   action: () => void;
 };
 
+type MobilePanelMode = 'game' | 'map' | 'panel' | 'chat';
+
+type PendingTouchInteraction = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  lastX: number;
+  lastY: number;
+  clientX: number;
+  clientY: number;
+  options: InteractionOption[];
+  longPressTimer: number;
+  contextShown: boolean;
+  rotating: boolean;
+};
+
+type ActiveTouchPoint = {
+  clientX: number;
+  clientY: number;
+};
+
+type PinchZoomState = {
+  pointerIds: [number, number];
+  lastDistance: number;
+};
+
 type LoadingProgressCallback = (pct: number, status: string) => void;
 type GearApplyGuard = () => boolean;
 
@@ -104,6 +130,9 @@ export class GameManager {
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
+  private static readonly MOBILE_LANDSCAPE_CAMERA_QUERY =
+    '(max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
+  private static readonly DESKTOP_CAMERA_ASPECT_CAP = 980 / 500;
 
   // Auth
   private token: string;
@@ -188,6 +217,7 @@ export class GameManager {
   private _hiddenSinceMs: number = 0;
   private _visibilityHandler: (() => void) | null = null;
   private _activityHandler: (() => void) | null = null;
+  private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
@@ -306,6 +336,24 @@ export class GameManager {
   private sidePanel: SidePanel | null = null;
   private chatPanel: ChatPanel | null = null;
   private minimap: Minimap | null = null;
+  private mobileControlsEl: HTMLDivElement | null = null;
+  private mobileStatusEl: HTMLDivElement | null = null;
+  private mobileLogoutButton: HTMLButtonElement | null = null;
+  private mobilePanelButtons: Partial<Record<MobilePanelMode, HTMLButtonElement>> = {};
+  private pendingTouchInteraction: PendingTouchInteraction | null = null;
+  private activeTouchPointers: Map<number, ActiveTouchPoint> = new Map();
+  private pinchZoom: PinchZoomState | null = null;
+  private isAdmin: boolean = false;
+  private static readonly TOUCH_LONG_PRESS_MS = 450;
+  private static readonly TOUCH_MOVE_CANCEL_PX = 12;
+  private static readonly TOUCH_CAMERA_YAW_PER_PX = 0.008;
+  private static readonly TOUCH_CAMERA_PITCH_PER_PX = 0.004;
+  private static readonly TOUCH_PINCH_MIN_DISTANCE_PX = 24;
+  private static readonly TOUCH_PINCH_MAX_STEP_FACTOR = 1.18;
+  private mobileGoodMagicCurrent: number = 1;
+  private mobileGoodMagicMax: number = 1;
+  private mobileEvilMagicCurrent: number = 1;
+  private mobileEvilMagicMax: number = 1;
   private gearDebugPanel: GearDebugPanel | null = null;
   private boneDebugPanel: BoneDebugPanel | null = null;
   private shopPanel: ShopPanel | null = null;
@@ -421,6 +469,29 @@ export class GameManager {
       this.lastClickX = e.clientX;
       this.lastClickY = e.clientY;
 
+      if (this.isTouchPointer(e)) {
+        this.trackTouchPointer(e);
+        if (this.activeTouchPointers.size >= 2) {
+          this.cancelPendingTouchInteraction();
+          if (this.isAdmin) this.beginPinchZoom(canvas);
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          return;
+        }
+
+        this.cancelPendingTouchInteraction();
+        if (!this.inputManager.isEnabled() || this.duelActive || e.shiftKey) return;
+        const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
+        this.beginTouchInteraction(canvas, e, options);
+        // Touch is resolved on pointerup so a finger drag can rotate the
+        // camera without also issuing a move/interact command on touch down.
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        return;
+      }
+
+      this.cancelPendingTouchInteraction();
+
       if (!this.inputManager.isEnabled() || this.duelActive || e.shiftKey) return;
       const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
       if (options.length > 0) {
@@ -432,6 +503,10 @@ export class GameManager {
         e.preventDefault();
       }
     }, true);
+    canvas.addEventListener('pointermove', (e) => this.handlePendingTouchMove(e), true);
+    canvas.addEventListener('pointerup', (e) => this.finishPendingTouchInteraction(e), true);
+    canvas.addEventListener('pointercancel', (e) => this.cancelTouchPointer(e), true);
+    canvas.addEventListener('lostpointercapture', (e) => this.cancelTouchPointer(e), true);
 
     // Hover tooltip — shows "Name (level-N)" when the cursor is over an NPC.
     this.setupNpcTooltip(canvas);
@@ -497,6 +572,7 @@ export class GameManager {
     this.sidePanel?.setQuestState(this.questState);
     this.chatPanel.addSystemMessage(`Welcome to EvilQuest!`);
     this.chatPanel.addSystemMessage(`You last logged in from: ${window.location.hostname}`);
+    this.setupMobileControls();
 
     // Chat message handler
     this.network.onChat((data) => {
@@ -612,7 +688,7 @@ export class GameManager {
       const expectedW = Math.round(canvas.clientWidth * dpr);
       const expectedH = Math.round(canvas.clientHeight * dpr);
       if (canvas.width !== expectedW || canvas.height !== expectedH) {
-        this.engine.resize();
+        this.handleViewportResize();
       }
 
       const now = performance.now();
@@ -631,12 +707,13 @@ export class GameManager {
 
     // Resize on window changes AND on canvas-element changes (catches CSS grid reflows
     // like opening DevTools or panel toggles that don't fire a window.resize event).
-    this.onWindowResize = () => this.engine.resize();
+    this.onWindowResize = () => this.handleViewportResize();
     window.addEventListener('resize', this.onWindowResize);
     if (typeof ResizeObserver !== 'undefined') {
-      this.resizeObserver = new ResizeObserver(() => this.engine.resize());
+      this.resizeObserver = new ResizeObserver(() => this.handleViewportResize());
       this.resizeObserver.observe(canvas);
     }
+    this.updateResponsiveCameraZoom();
   }
 
   /** Resolves once every preload-phase artifact is in memory:
@@ -896,6 +973,26 @@ export class GameManager {
       this.localPlayer?.stopSkillAnimation();
       this.minimap?.clearDestination();
     }
+  }
+
+  private handleViewportResize(): void {
+    this.engine.resize();
+    this.updateResponsiveCameraZoom();
+  }
+
+  private updateResponsiveCameraZoom(): void {
+    const canvas = this.engine.getRenderingCanvas();
+    const isMobileLandscape = window.matchMedia?.(GameManager.MOBILE_LANDSCAPE_CAMERA_QUERY).matches ?? false;
+    let radiusScale = 1;
+
+    if (isMobileLandscape && canvas && canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+      const aspect = canvas.clientWidth / canvas.clientHeight;
+      if (aspect > GameManager.DESKTOP_CAMERA_ASPECT_CAP) {
+        radiusScale = GameManager.DESKTOP_CAMERA_ASPECT_CAP / aspect;
+      }
+    }
+
+    this.camera.setLockedRadiusScale(radiusScale);
   }
 
   private showReconnectOverlay(status: string): void {
@@ -2102,6 +2199,8 @@ export class GameManager {
 
     this.network.on(ServerOpcode.ADMIN_FLAGS, (_op, v) => {
       const isAdmin = (v[0] & 1) === 1;
+      this.isAdmin = isAdmin;
+      if (!isAdmin) this.pinchZoom = null;
       this.camera.setLockedMode(!isAdmin);
     });
   }
@@ -2971,6 +3070,7 @@ export class GameManager {
       if (this.sidePanel) {
         this.sidePanel.updateSkill(skillIndex, level, currentLevel, xp);
       }
+      this.updateMobileMagicStatus(skillIndex, level, currentLevel);
       if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
         this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
       }
@@ -2978,15 +3078,14 @@ export class GameManager {
 
     // Batch skills: [skill0_level, skill0_currentLevel, skill0_xpHigh, skill0_xpLow, ...]
     this.network.on(ServerOpcode.PLAYER_SKILLS_BATCH, (_op, v) => {
-      if (this.sidePanel) {
-        for (let i = 0; i < v.length; i += 4) {
-          const skillIndex = i / 4;
-          const level = v[i], currentLevel = v[i + 1];
-          const xp = (v[i + 2] << 16) | (v[i + 3] & 0xFFFF);
-          this.sidePanel.updateSkill(skillIndex, level, currentLevel, xp);
-          if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-            this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
-          }
+      for (let i = 0; i < v.length; i += 4) {
+        const skillIndex = i / 4;
+        const level = v[i], currentLevel = v[i + 1];
+        const xp = (v[i + 2] << 16) | (v[i + 3] & 0xFFFF);
+        this.sidePanel?.updateSkill(skillIndex, level, currentLevel, xp);
+        this.updateMobileMagicStatus(skillIndex, level, currentLevel);
+        if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
+          this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
         }
       }
       this.noteLoginBootstrapPacket('skills');
@@ -3155,6 +3254,7 @@ export class GameManager {
           // new node; DialoguePanel.show resets the line index so a multi-line
           // node restarts from line 0.
           this.dialoguePanel?.show(npcEntityId, node);
+          this.setMobilePanelMode('chat');
         } catch (e) {
           console.warn('[dialogue] failed to parse node payload', e);
         }
@@ -3308,6 +3408,400 @@ export class GameManager {
         this.showContextMenu(e.clientX, e.clientY, options);
       }
     });
+  }
+
+  private setupMobileControls(): void {
+    const frame = document.getElementById('game-frame');
+    if (!frame) return;
+
+    this.mobileControlsEl?.remove();
+    this.mobilePanelButtons = {};
+
+    const bar = document.createElement('div');
+    bar.id = 'mobile-control-bar';
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'Mobile game controls');
+
+    const makeButton = (
+      label: string,
+      title: string,
+      onClick?: () => void,
+    ): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'mobile-nav-button';
+      button.textContent = label;
+      button.title = title;
+      if (onClick) {
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          onClick();
+        });
+      }
+      return button;
+    };
+
+    const mapButton = makeButton('Map', 'Open minimap', () => {
+      this.setMobilePanelMode(frame.classList.contains('mobile-map-open') ? 'game' : 'map');
+    });
+    const panelButton = makeButton('Panel', 'Open inventory and stats', () => {
+      this.setMobilePanelMode(frame.classList.contains('mobile-panel-open') ? 'game' : 'panel');
+    });
+    const chatButton = makeButton('Chat', 'Open chat', () => {
+      this.setMobilePanelMode(frame.classList.contains('mobile-chat-open') ? 'game' : 'chat');
+    });
+
+    this.mobilePanelButtons.map = mapButton;
+    this.mobilePanelButtons.panel = panelButton;
+    this.mobilePanelButtons.chat = chatButton;
+
+    bar.append(mapButton, panelButton, chatButton);
+    frame.appendChild(bar);
+    this.mobileControlsEl = bar;
+    this.setupMobileStatusHud(frame);
+    this.setupMobileLogoutButton(frame);
+    this.setMobilePanelMode('game');
+  }
+
+  private setMobilePanelMode(mode: MobilePanelMode): void {
+    const frame = document.getElementById('game-frame');
+    if (!frame) return;
+
+    const mapOpen = mode === 'map';
+    const panelOpen = mode === 'panel';
+    const chatOpen = mode === 'chat';
+    frame.classList.toggle('mobile-map-open', mapOpen);
+    frame.classList.toggle('mobile-panel-open', panelOpen);
+    frame.classList.toggle('mobile-chat-open', chatOpen);
+    if (chatOpen) frame.classList.remove('mobile-chat-collapsed');
+
+    this.mobilePanelButtons.map?.classList.toggle('active', mapOpen);
+    this.mobilePanelButtons.panel?.classList.toggle('active', panelOpen);
+    this.mobilePanelButtons.chat?.classList.toggle('active', chatOpen);
+    this.mobilePanelButtons.map?.setAttribute('aria-pressed', String(mapOpen));
+    this.mobilePanelButtons.panel?.setAttribute('aria-pressed', String(panelOpen));
+    this.mobilePanelButtons.chat?.setAttribute('aria-pressed', String(chatOpen));
+
+    window.setTimeout(() => {
+      if (!this.destroyed && !this.engine.isDisposed) this.handleViewportResize();
+    }, 0);
+  }
+
+  private setupMobileStatusHud(frame: HTMLElement): void {
+    this.mobileStatusEl?.remove();
+
+    const hud = document.createElement('div');
+    hud.id = 'mobile-status-hud';
+    hud.append(
+      this.createMobileStatusItem('hp', 'HP', 'hp'),
+      this.createMobileStatusItem('evil', 'Evil', 'evil'),
+      this.createMobileStatusItem('good', 'Good', 'good'),
+    );
+    frame.appendChild(hud);
+    this.mobileStatusEl = hud;
+    this.syncMobileStatusHud();
+  }
+
+  private setupMobileLogoutButton(frame: HTMLElement): void {
+    this.mobileLogoutButton?.remove();
+
+    const button = document.createElement('button');
+    button.id = 'mobile-logout-button';
+    button.type = 'button';
+    button.textContent = 'Logout';
+    button.title = 'Logout';
+    button.addEventListener('click', async () => {
+      let ok = false;
+      try {
+        const res = await fetch('/api/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ token: this.token }),
+        });
+        ok = res.ok;
+      } catch {
+        // Fall through to the temporary blocked state.
+      }
+      if (!ok) {
+        button.textContent = 'Blocked';
+        window.setTimeout(() => { button.textContent = 'Logout'; }, 1800);
+        return;
+      }
+      localStorage.removeItem('projectrs_token');
+      localStorage.removeItem('projectrs_username');
+      location.reload();
+    });
+
+    frame.appendChild(button);
+    this.mobileLogoutButton = button;
+  }
+
+  private createMobileStatusItem(key: 'hp' | 'good' | 'evil', label: string, colorClass: string): HTMLDivElement {
+    const item = document.createElement('div');
+    item.className = 'mobile-status-item';
+
+    const labelEl = document.createElement('div');
+    labelEl.className = 'mobile-status-label';
+    labelEl.textContent = label;
+    item.appendChild(labelEl);
+
+    const track = document.createElement('div');
+    track.className = 'mobile-status-track';
+
+    const fill = document.createElement('div');
+    fill.id = `mobile-${key}-fill`;
+    fill.className = `mobile-status-fill ${colorClass}`;
+    track.appendChild(fill);
+
+    const text = document.createElement('div');
+    text.id = `mobile-${key}-text`;
+    text.className = 'mobile-status-text';
+    track.appendChild(text);
+
+    item.appendChild(track);
+    return item;
+  }
+
+  private syncMobileStatusHud(): void {
+    this.updateMobileStatusBar('hp', this.playerHealth, this.playerMaxHealth);
+    this.updateMobileStatusBar('good', this.mobileGoodMagicCurrent, this.mobileGoodMagicMax);
+    this.updateMobileStatusBar('evil', this.mobileEvilMagicCurrent, this.mobileEvilMagicMax);
+  }
+
+  private updateMobileMagicStatus(skillIndex: number, level: number, currentLevel: number): void {
+    const id = ALL_SKILLS[skillIndex];
+    if (id === 'goodmagic') {
+      this.mobileGoodMagicCurrent = currentLevel;
+      this.mobileGoodMagicMax = level;
+      this.updateMobileStatusBar('good', currentLevel, level);
+    } else if (id === 'evilmagic') {
+      this.mobileEvilMagicCurrent = currentLevel;
+      this.mobileEvilMagicMax = level;
+      this.updateMobileStatusBar('evil', currentLevel, level);
+    }
+  }
+
+  private updateMobileStatusBar(key: 'hp' | 'good' | 'evil', current: number, max: number): void {
+    const fill = document.getElementById(`mobile-${key}-fill`) as HTMLDivElement | null;
+    const text = document.getElementById(`mobile-${key}-text`) as HTMLDivElement | null;
+    const ratio = max > 0 ? Math.max(0, Math.min(1, current / max)) : 0;
+    if (fill) fill.style.width = `${ratio * 100}%`;
+    if (text) text.textContent = `${current}/${max}`;
+    if (key === 'hp' && fill) {
+      if (ratio > 0.5) {
+        fill.style.background = 'linear-gradient(180deg, #1a8a1a 0%, #0a6a0a 100%)';
+      } else if (ratio > 0.25) {
+        fill.style.background = 'linear-gradient(180deg, #8a8a1a 0%, #6a6a0a 100%)';
+      } else {
+        fill.style.background = 'linear-gradient(180deg, #8a1a1a 0%, #6a0a0a 100%)';
+      }
+    }
+  }
+
+  private isTouchPointer(event: PointerEvent): boolean {
+    return event.pointerType === 'touch' || event.pointerType === 'pen';
+  }
+
+  private trackTouchPointer(event: PointerEvent): void {
+    if (!this.isTouchPointer(event)) return;
+    this.activeTouchPointers.set(event.pointerId, {
+      clientX: event.clientX,
+      clientY: event.clientY,
+    });
+  }
+
+  private beginPinchZoom(canvas: HTMLCanvasElement): void {
+    const pointerIds = Array.from(this.activeTouchPointers.keys()).slice(0, 2);
+    if (pointerIds.length < 2) return;
+    const distance = this.touchPointerDistance(pointerIds[0], pointerIds[1]);
+    if (distance < GameManager.TOUCH_PINCH_MIN_DISTANCE_PX) return;
+
+    this.pinchZoom = {
+      pointerIds: [pointerIds[0], pointerIds[1]],
+      lastDistance: distance,
+    };
+
+    for (const pointerId of pointerIds) {
+      try {
+        if (!canvas.hasPointerCapture(pointerId)) canvas.setPointerCapture(pointerId);
+      } catch {
+        // Some mobile browsers decline capture for the first touch once the
+        // second finger lands. The active pointer map still gives us enough
+        // state to finish the gesture cleanly.
+      }
+    }
+  }
+
+  private touchPointerDistance(aId: number, bId: number): number {
+    const a = this.activeTouchPointers.get(aId);
+    const b = this.activeTouchPointers.get(bId);
+    if (!a || !b) return 0;
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  }
+
+  private handlePinchZoomMove(event: PointerEvent): boolean {
+    const pinch = this.pinchZoom;
+    if (!pinch || !pinch.pointerIds.includes(event.pointerId)) return false;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    if (!this.isAdmin) return true;
+
+    const distance = this.touchPointerDistance(pinch.pointerIds[0], pinch.pointerIds[1]);
+    if (
+      distance >= GameManager.TOUCH_PINCH_MIN_DISTANCE_PX
+      && pinch.lastDistance >= GameManager.TOUCH_PINCH_MIN_DISTANCE_PX
+    ) {
+      const rawFactor = pinch.lastDistance / distance;
+      const maxStep = GameManager.TOUCH_PINCH_MAX_STEP_FACTOR;
+      const factor = Math.min(Math.max(rawFactor, 1 / maxStep), maxStep);
+      this.camera.zoomByFactor(factor);
+    }
+    pinch.lastDistance = distance;
+    return true;
+  }
+
+  private finishPinchTouch(event: PointerEvent): boolean {
+    const isPinchPointer = this.pinchZoom?.pointerIds.includes(event.pointerId) ?? false;
+    if (!isPinchPointer) return false;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.pinchZoom = null;
+    this.activeTouchPointers.delete(event.pointerId);
+    this.releaseTouchPointerCapture(event.pointerId);
+    return true;
+  }
+
+  private releaseTouchPointerCapture(pointerId: number): void {
+    const canvas = this.engine.getRenderingCanvas();
+    if (!canvas) return;
+    try {
+      if (canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
+    } catch {
+      // Capture may already be gone after pointercancel/lostpointercapture.
+    }
+  }
+
+  private cancelTouchPointer(event: PointerEvent): void {
+    if (this.isTouchPointer(event)) {
+      this.activeTouchPointers.delete(event.pointerId);
+      if (this.pinchZoom?.pointerIds.includes(event.pointerId)) this.pinchZoom = null;
+    }
+    this.cancelPendingTouchInteraction(event);
+    this.releaseTouchPointerCapture(event.pointerId);
+  }
+
+  private beginTouchInteraction(
+    canvas: HTMLCanvasElement,
+    event: PointerEvent,
+    options: InteractionOption[],
+  ): void {
+    const pending: PendingTouchInteraction = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      lastX: event.clientX,
+      lastY: event.clientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      options,
+      longPressTimer: 0,
+      contextShown: false,
+      rotating: false,
+    };
+
+    pending.longPressTimer = window.setTimeout(() => {
+      if (this.pendingTouchInteraction !== pending || this.destroyed) return;
+      if (pending.options.length === 0) return;
+      pending.contextShown = true;
+      this.showContextMenu(pending.clientX, pending.clientY, pending.options);
+    }, GameManager.TOUCH_LONG_PRESS_MS);
+
+    this.pendingTouchInteraction = pending;
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Some mobile browsers decline capture on canvas; the event stream still
+      // usually stays on the same target during a stationary tap.
+    }
+  }
+
+  private handlePendingTouchMove(event: PointerEvent): void {
+    if (this.isTouchPointer(event)) {
+      this.trackTouchPointer(event);
+      if (this.handlePinchZoomMove(event)) return;
+      if (this.activeTouchPointers.size >= 2) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
+    }
+
+    const pending = this.pendingTouchInteraction;
+    if (!pending || pending.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const moved = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
+    if (!pending.contextShown && (pending.rotating || moved > GameManager.TOUCH_MOVE_CANCEL_PX)) {
+      if (!pending.rotating) {
+        pending.rotating = true;
+        window.clearTimeout(pending.longPressTimer);
+      }
+
+      const dx = event.clientX - pending.lastX;
+      const dy = event.clientY - pending.lastY;
+      this.camera.rotate(
+        -dx * GameManager.TOUCH_CAMERA_YAW_PER_PX,
+        dy * GameManager.TOUCH_CAMERA_PITCH_PER_PX,
+      );
+    }
+
+    pending.lastX = event.clientX;
+    pending.lastY = event.clientY;
+    pending.clientX = event.clientX;
+    pending.clientY = event.clientY;
+  }
+
+  private finishPendingTouchInteraction(event: PointerEvent): void {
+    if (this.isTouchPointer(event) && this.finishPinchTouch(event)) return;
+
+    const pending = this.pendingTouchInteraction;
+    if (!pending || pending.pointerId !== event.pointerId) {
+      if (this.isTouchPointer(event)) {
+        this.activeTouchPointers.delete(event.pointerId);
+        this.releaseTouchPointerCapture(event.pointerId);
+      }
+      return;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const option = pending.options[0];
+    const shouldRunTap = !pending.contextShown && !pending.rotating;
+    this.cancelPendingTouchInteraction(event);
+    if (shouldRunTap && option) {
+      this.runInteractionOption(option, event.clientX, event.clientY);
+    } else if (shouldRunTap) {
+      this.lastClickX = event.clientX;
+      this.lastClickY = event.clientY;
+      this.inputManager.handlePrimaryActionAt(event.clientX, event.clientY, event.shiftKey);
+    }
+    if (this.isTouchPointer(event)) this.activeTouchPointers.delete(event.pointerId);
+  }
+
+  private cancelPendingTouchInteraction(event?: PointerEvent): void {
+    const pending = this.pendingTouchInteraction;
+    if (!pending) return;
+
+    window.clearTimeout(pending.longPressTimer);
+    this.pendingTouchInteraction = null;
+    if (!event || event.pointerId === pending.pointerId) this.releaseTouchPointerCapture(pending.pointerId);
   }
 
   private getWorldInteractionOptionsAt(clientX: number, clientY: number): InteractionOption[] {
@@ -3508,6 +4002,7 @@ export class GameManager {
 
   private showContextMenu(x: number, y: number, options: InteractionOption[]): void {
     this.hideContextMenu();
+    const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
     let menu: HTMLDivElement;
     menu = createContextMenu(options.map((opt) => ({
@@ -3518,8 +4013,9 @@ export class GameManager {
     })), {
       x,
       y,
-      fontSizePx: 13,
-      minWidthPx: 120,
+      fontSizePx: coarsePointer ? 15 : 13,
+      itemPadding: coarsePointer ? '9px 14px' : undefined,
+      minWidthPx: coarsePointer ? 160 : 120,
       zIndex: 1000,
       onClose: () => {
         if (this.contextMenu === menu) this.contextMenu = null;
@@ -5318,6 +5814,19 @@ export class GameManager {
       window.clearTimeout(this.reconnectSleepTimer);
       this.reconnectSleepTimer = null;
     }
+    this.cancelPendingTouchInteraction();
+    this.activeTouchPointers.clear();
+    this.pinchZoom = null;
+    this.mobileControlsEl?.remove();
+    this.mobileControlsEl = null;
+    this.mobileStatusEl?.remove();
+    this.mobileStatusEl = null;
+    this.mobileLogoutButton?.remove();
+    this.mobileLogoutButton = null;
+    this.mobilePanelButtons = {};
+    this.chatPanel?.destroy();
+    this.chatPanel = null;
+    document.getElementById('game-frame')?.classList.remove('mobile-map-open', 'mobile-panel-open', 'mobile-chat-open', 'mobile-chat-collapsed');
     this.hideReconnectOverlay();
     this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
@@ -5330,6 +5839,11 @@ export class GameManager {
       window.removeEventListener('keydown', this._activityHandler, true);
       window.removeEventListener('touchstart', this._activityHandler, true);
       this._activityHandler = null;
+    }
+    if (this._cursorTelemetryHandler) {
+      window.removeEventListener('pointermove', this._cursorTelemetryHandler, true);
+      window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
+      this._cursorTelemetryHandler = null;
     }
     this.engine.stopRenderLoop();
     this.engine.dispose();
@@ -5566,6 +6080,7 @@ export class GameManager {
 
   private updateHUD(): void {
     this.sidePanel?.updateHP(this.playerHealth, this.playerMaxHealth);
+    this.updateMobileStatusBar('hp', this.playerHealth, this.playerMaxHealth);
   }
 
   private clearPendingHealthApply(entityId: number): void {
@@ -5793,13 +6308,22 @@ export class GameManager {
   }
 
   private setupActivityTracking(): void {
-    const handler = () => {
+    const handler = (event?: Event) => {
       this.network.sendActivity();
+      if (event instanceof PointerEvent) {
+        this.network.sendCursorPosition(event.clientX, event.clientY, true);
+      }
+    };
+    const cursorHandler = (event: PointerEvent) => {
+      this.network.sendCursorPosition(event.clientX, event.clientY);
     };
     window.addEventListener('pointerdown', handler, true);
     window.addEventListener('keydown', handler, true);
     window.addEventListener('touchstart', handler, true);
+    window.addEventListener('pointermove', cursorHandler, true);
+    window.addEventListener('pointerdown', cursorHandler, true);
     this._activityHandler = handler;
+    this._cursorTelemetryHandler = cursorHandler;
   }
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean): void {

@@ -120,6 +120,10 @@ export enum ClientOpcode {
    *  that do not otherwise produce a gameplay packet; unlike CLIENT_PING,
    *  this resets the server-side AFK timer. */
   CLIENT_ACTIVITY = 121,
+  /** Low-rate cursor telemetry. Values: [xPermille, yPermille] where each
+   *  coordinate is normalized to the viewport (0..1000). Used only for
+   *  server-side bot review signals; it does not reset AFK state. */
+  CURSOR_POSITION = 122,
 }
 
 // Server → Client opcodes

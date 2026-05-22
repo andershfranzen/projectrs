@@ -40,54 +40,7 @@ export class InputManager {
     this.scene.onPointerObservable.add((pointerInfo) => {
       if (pointerInfo.type === PointerEventTypes.POINTERDOWN) {
         if (pointerInfo.event.button !== 0) return;
-        if (!this.enabled) return;
-
-        // Shift+click = debug teleport
-        if (pointerInfo.event.shiftKey && this.onTeleportClick) {
-          const groundPos = this.pickGround();
-          if (groundPos) {
-            this.onTeleportClick(groundPos.x, groundPos.z);
-          }
-          return;
-        }
-
-        // Check for interactive object hit (trees, rocks, doors)
-        // Use scene.pick (closest to camera) for objects — prevents clicking
-        // a rock behind another rock or through terrain
-        if (this.onObjectClick) {
-          const pick = this.scene.pick(
-            this.scene.pointerX,
-            this.scene.pointerY,
-            (mesh) => {
-              // Only pick meshes that belong to interactive objects
-              let node: Node | null = mesh;
-              while (node) {
-                if (node.metadata?.objectEntityId != null) return true;
-                node = node.parent;
-              }
-              return false;
-            },
-            false,
-            this.scene.activeCamera!
-          );
-          if (pick?.hit && pick.pickedMesh) {
-            let node: Node | null = pick.pickedMesh;
-            while (node) {
-              if (node.metadata?.objectEntityId != null) {
-                this.onObjectClick(node.metadata.objectEntityId);
-                return;
-              }
-              node = node.parent;
-            }
-          }
-        }
-
-        // Ground click: project ray onto horizontal plane at player height.
-        // This ignores walls and objects entirely — click WHERE you want to go.
-        const groundPos = this.pickGround();
-        if (groundPos) {
-          this.onGroundClick?.(groundPos.x, groundPos.z);
-        }
+        this.handlePrimaryAction(this.scene.pointerX, this.scene.pointerY, pointerInfo.event.shiftKey);
       }
     });
   }
@@ -100,6 +53,71 @@ export class InputManager {
   setEnabled(enabled: boolean): void { this.enabled = enabled; }
   isEnabled(): boolean { return this.enabled; }
 
+  handlePrimaryActionAt(clientX: number, clientY: number, shiftKey: boolean = false): boolean {
+    const canvas = this.scene.getEngine().getRenderingCanvas();
+    if (!canvas) return false;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const pointerX = (clientX - rect.left) * (this.scene.getEngine().getRenderWidth() / rect.width);
+    const pointerY = (clientY - rect.top) * (this.scene.getEngine().getRenderHeight() / rect.height);
+    return this.handlePrimaryAction(pointerX, pointerY, shiftKey);
+  }
+
+  private handlePrimaryAction(pointerX: number, pointerY: number, shiftKey: boolean): boolean {
+    if (!this.enabled) return false;
+
+    // Shift+click = debug teleport
+    if (shiftKey && this.onTeleportClick) {
+      const groundPos = this.pickGround(pointerX, pointerY);
+      if (groundPos) {
+        this.onTeleportClick(groundPos.x, groundPos.z);
+        return true;
+      }
+      return false;
+    }
+
+    // Check for interactive object hit (trees, rocks, doors)
+    // Use scene.pick (closest to camera) for objects — prevents clicking
+    // a rock behind another rock or through terrain
+    if (this.onObjectClick) {
+      const pick = this.scene.pick(
+        pointerX,
+        pointerY,
+        (mesh) => {
+          // Only pick meshes that belong to interactive objects
+          let node: Node | null = mesh;
+          while (node) {
+            if (node.metadata?.objectEntityId != null) return true;
+            node = node.parent;
+          }
+          return false;
+        },
+        false,
+        this.scene.activeCamera!
+      );
+      if (pick?.hit && pick.pickedMesh) {
+        let node: Node | null = pick.pickedMesh;
+        while (node) {
+          if (node.metadata?.objectEntityId != null) {
+            this.onObjectClick(node.metadata.objectEntityId);
+            return true;
+          }
+          node = node.parent;
+        }
+      }
+    }
+
+    // Ground click: project ray onto horizontal plane at player height.
+    // This ignores walls and objects entirely — click WHERE you want to go.
+    const groundPos = this.pickGround(pointerX, pointerY);
+    if (groundPos) {
+      this.onGroundClick?.(groundPos.x, groundPos.z);
+      return true;
+    }
+
+    return false;
+  }
+
   /**
    * Pick the ground tile the cursor is over by raycasting against any walkable
    * surface — floor 0 terrain, upper-floor mesh sets, and texture planes —
@@ -108,7 +126,7 @@ export class InputManager {
    * surface would resolve to the floor 0 X/Z behind/below it (RS2's "your
    * click only counts on your own plane" rule). Snapped to tile centre.
    */
-  private pickGround(): { x: number; z: number } | null {
+  private pickGround(pointerX: number = this.scene.pointerX, pointerY: number = this.scene.pointerY): { x: number; z: number } | null {
     if (!this.scene.activeCamera) return null;
 
     // Accept any pickable visible mesh — the Y-match check below handles
@@ -166,8 +184,8 @@ export class InputManager {
       };
     };
     const ray = this.scene.createPickingRay(
-      this.scene.pointerX,
-      this.scene.pointerY,
+      pointerX,
+      pointerY,
       null,
       this.scene.activeCamera
     );
@@ -180,8 +198,8 @@ export class InputManager {
     }
 
     const hits = this.scene.multiPick(
-      this.scene.pointerX,
-      this.scene.pointerY,
+      pointerX,
+      pointerY,
       pickPredicate,
       this.scene.activeCamera
     );
@@ -215,8 +233,8 @@ export class InputManager {
     }
 
     const pick = this.scene.pick(
-      this.scene.pointerX,
-      this.scene.pointerY,
+      pointerX,
+      pointerY,
       pickPredicate,
       false,
       this.scene.activeCamera

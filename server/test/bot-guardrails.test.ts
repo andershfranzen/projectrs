@@ -15,6 +15,7 @@ describe('anti-bot guardrails', () => {
     expect(getOpcodeRateRule(ClientOpcode.PLAYER_MOVE).bucket).toBe('movement');
     expect(getOpcodeRateRule(ClientOpcode.TRADE_OFFER_ITEM).bucket).toBe('inventory-ui');
     expect(getOpcodeRateRule(ClientOpcode.CLIENT_PING).windowMs).toBe(10_000);
+    expect(getOpcodeRateRule(ClientOpcode.CURSOR_POSITION).bucket).toBe('cursor');
   });
 
   test('per-action rate limits are independent from the global socket limit', () => {
@@ -67,6 +68,49 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('high');
     expect(summary.riskScore).toBeGreaterThanOrEqual(60);
     expect(summary.riskReasons.length).toBeGreaterThan(0);
+  });
+
+  test('heartbeat-coupled activity is flagged as scripted input cadence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 12; i++) {
+      const t = i * 5000;
+      stats.recordHeartbeat(i, t);
+      stats.recordClientActivity(t + 25);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.heartbeatActivityCouplingRatio).toBe(1);
+    expect(summary.flags).toContain('activityHeartbeatCoupled');
+  });
+
+  test('active sessions without cursor telemetry are flagged for review', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 20 * 60_000;
+
+    for (let i = 0; i < 100; i++) {
+      stats.recordMovement(40.5 + (i % 3), 20.5);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionCursorEvents).toBe(0);
+    expect(summary.flags).toContain('noCursorTelemetry');
+  });
+
+  test('static cursor telemetry is flagged separately from missing telemetry', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 20; i++) {
+      stats.recordCursorPosition(500, 500);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.topCursorCellRepetition).toBe(1);
+    expect(summary.flags).toContain('cursorStatic');
+    expect(summary.flags).not.toContain('noCursorTelemetry');
   });
 
   test('risk profile persists in bot_stats rows', () => {

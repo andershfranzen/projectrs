@@ -29,6 +29,17 @@ export interface SkillData {
   xp: number;
 }
 
+interface TouchInvDragState {
+  pointerId: number;
+  fromSlot: number;
+  itemId: number;
+  startX: number;
+  startY: number;
+  dragging: boolean;
+  ghost: HTMLDivElement | null;
+  overSlot: number | null;
+}
+
 export class SidePanel {
   private container: HTMLDivElement;
   private network: NetworkManager;
@@ -43,6 +54,8 @@ export class SidePanel {
   private using: { slot: number; itemId: number } | null = null;
   private usingBanner: HTMLDivElement | null = null;
   private invGrid: HTMLDivElement | null = null;
+  private touchInvDrag: TouchInvDragState | null = null;
+  private suppressInvClickUntil: number = 0;
 
   // Skills state
   private skills: Map<SkillId, SkillData> = new Map();
@@ -244,6 +257,74 @@ export class SidePanel {
           #side-panel .stance-btn {
             padding-top: 6px !important;
             padding-bottom: 6px !important;
+          }
+        }
+
+        @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
+          #side-panel {
+            border-top: 0 !important;
+          }
+          #side-panel .side-resource-row {
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+          }
+          #side-panel .side-tab-row {
+            gap: 2px !important;
+            padding-left: 3px !important;
+            padding-right: 3px !important;
+          }
+          #side-panel .side-content-area {
+            flex: 1 1 auto !important;
+            flex-basis: auto !important;
+            max-height: none !important;
+            min-height: 0 !important;
+          }
+          #side-panel .side-brand-area {
+            display: none !important;
+          }
+          #side-panel .inv-grid {
+            grid-template-rows: repeat(6, minmax(42px, 1fr)) !important;
+            min-height: 260px !important;
+          }
+          #side-panel .inv-slot,
+          #side-panel .stance-btn {
+            touch-action: manipulation;
+          }
+          #side-panel .inv-slot[data-filled="1"] {
+            touch-action: none;
+          }
+        }
+
+        @media (max-height: 520px) and (max-width: 900px) and (orientation: landscape) {
+          #side-panel .side-tab-row {
+            gap: 1px !important;
+            padding-left: 1px !important;
+            padding-right: 1px !important;
+          }
+          #side-panel .side-content-area {
+            flex: 1 1 auto !important;
+            flex-basis: auto !important;
+            max-height: none !important;
+            min-height: 0 !important;
+            padding: 1px 2px !important;
+          }
+          #side-panel .eq-tab-button img {
+            max-width: 22px !important;
+            max-height: 22px !important;
+          }
+          #side-panel .inv-grid {
+            grid-template-rows: repeat(6, minmax(24px, 1fr)) !important;
+            min-height: 0 !important;
+            height: 100% !important;
+          }
+          #side-panel .inv-slot .item-icon img {
+            width: 26px !important;
+            height: 26px !important;
+          }
+          #side-panel .stance-btn {
+            padding-top: 4px !important;
+            padding-bottom: 4px !important;
+            font-size: 10px !important;
           }
         }
       `;
@@ -998,9 +1079,20 @@ export class SidePanel {
         this.onInvSlotRightClick(i, e);
       });
 
-      slot.addEventListener('click', () => {
+      slot.addEventListener('click', (e) => {
+        if (this.shouldSuppressInvClick()) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         this.onInvSlotClick(i);
       });
+
+      slot.addEventListener('pointerdown', (e) => this.beginTouchInvDrag(e, i));
+      slot.addEventListener('pointermove', (e) => this.moveTouchInvDrag(e));
+      slot.addEventListener('pointerup', (e) => this.finishTouchInvDrag(e));
+      slot.addEventListener('pointercancel', (e) => this.cancelTouchInvDrag(e));
+      slot.addEventListener('lostpointercapture', (e) => this.cancelTouchInvDrag(e));
 
       // --- Drag-and-drop reorder ---
       // draggable is toggled per-render based on slot fill state (empty slots
@@ -1284,6 +1376,140 @@ export class SidePanel {
     const armed = this.using?.slot === index;
     el.style.boxShadow = armed ? 'inset 0 0 6px rgba(255, 220, 90, 0.7)' : '';
     el.style.outline = armed ? '1px solid #e8d04a' : '';
+  }
+
+  private shouldSuppressInvClick(): boolean {
+    return performance.now() < this.suppressInvClickUntil;
+  }
+
+  private beginTouchInvDrag(event: PointerEvent, index: number): void {
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    const slot = this.invSlots[index];
+    if (!slot || this.tradeOfferCallback) return;
+    this.touchInvDrag = {
+      pointerId: event.pointerId,
+      fromSlot: index,
+      itemId: slot.itemId,
+      startX: event.clientX,
+      startY: event.clientY,
+      dragging: false,
+      ghost: null,
+      overSlot: null,
+    };
+    try {
+      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    } catch {
+      // Some embedded browser/device combos decline capture; move/up still work
+      // while the pointer remains over the inventory.
+    }
+  }
+
+  private moveTouchInvDrag(event: PointerEvent): void {
+    const drag = this.touchInvDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (!drag.dragging) {
+      if (Math.hypot(dx, dy) < 7) return;
+      this.startTouchInvDragVisual(drag, event.clientX, event.clientY);
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.moveTouchDragGhost(drag, event.clientX, event.clientY);
+    this.setTouchInvDropTarget(this.invSlotIndexAt(event.clientX, event.clientY));
+  }
+
+  private finishTouchInvDrag(event: PointerEvent): void {
+    const drag = this.touchInvDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.dragging) {
+      event.preventDefault();
+      event.stopPropagation();
+      const target = this.invSlotIndexAt(event.clientX, event.clientY);
+      if (target !== null && target !== drag.fromSlot && this.invSlots[drag.fromSlot]?.itemId === drag.itemId) {
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_MOVE_INV_ITEM, drag.fromSlot, target, drag.itemId));
+      }
+      this.suppressInvClickUntil = performance.now() + 350;
+    }
+    this.clearTouchInvDrag(event.pointerId);
+  }
+
+  private cancelTouchInvDrag(event: PointerEvent): void {
+    const drag = this.touchInvDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    this.clearTouchInvDrag(event.pointerId);
+  }
+
+  private startTouchInvDragVisual(
+    drag: TouchInvDragState,
+    clientX: number,
+    clientY: number,
+  ): void {
+    drag.dragging = true;
+    const source = this.invSlotElements[drag.fromSlot];
+    source.classList.add('dragging');
+    const rect = source.getBoundingClientRect();
+    const ghost = source.cloneNode(true) as HTMLDivElement;
+    ghost.classList.remove('dragging', 'drag-over', 'hovered');
+    ghost.style.cssText = `
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: ${Math.max(34, rect.width)}px;
+      height: ${Math.max(34, rect.height)}px;
+      z-index: 1000;
+      pointer-events: none;
+      opacity: 0.9;
+      transform: translate(-50%, -50%);
+      background: rgba(43, 10, 8, 0.88);
+      border: 1px solid rgba(255, 200, 80, 0.75);
+      border-radius: 3px;
+      box-shadow: 0 5px 16px rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    `;
+    document.body.appendChild(ghost);
+    drag.ghost = ghost;
+    this.moveTouchDragGhost(drag, clientX, clientY);
+  }
+
+  private moveTouchDragGhost(drag: TouchInvDragState, clientX: number, clientY: number): void {
+    if (!drag.ghost) return;
+    drag.ghost.style.left = `${clientX}px`;
+    drag.ghost.style.top = `${clientY}px`;
+  }
+
+  private invSlotIndexAt(clientX: number, clientY: number): number | null {
+    const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
+    const slotEl = el?.closest('.inv-slot') as HTMLDivElement | null;
+    if (!slotEl) return null;
+    const index = this.invSlotElements.indexOf(slotEl);
+    return index >= 0 ? index : null;
+  }
+
+  private setTouchInvDropTarget(index: number | null): void {
+    const drag = this.touchInvDrag;
+    if (!drag || drag.overSlot === index) return;
+    if (drag.overSlot !== null) this.invSlotElements[drag.overSlot]?.classList.remove('drag-over');
+    drag.overSlot = index;
+    if (index !== null && index !== drag.fromSlot) this.invSlotElements[index]?.classList.add('drag-over');
+  }
+
+  private clearTouchInvDrag(pointerId: number): void {
+    const drag = this.touchInvDrag;
+    if (!drag || drag.pointerId !== pointerId) return;
+    this.setTouchInvDropTarget(null);
+    this.invSlotElements[drag.fromSlot]?.classList.remove('dragging');
+    drag.ghost?.remove();
+    const source = this.invSlotElements[drag.fromSlot];
+    this.touchInvDrag = null;
+    try {
+      if (source?.hasPointerCapture(pointerId)) source.releasePointerCapture(pointerId);
+    } catch {
+      // Capture may already have been released by the browser.
+    }
   }
 
   private onInvSlotClick(index: number): void {
