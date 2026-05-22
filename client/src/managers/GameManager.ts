@@ -64,6 +64,12 @@ const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
+const TERMINAL_CLOSE_REASONS = new Set([
+  'Idle timeout',
+  'Logged out',
+  'Logged in from another session',
+  'Account is still in combat',
+]);
 
 type InteractionOption = {
   label: string;
@@ -842,7 +848,16 @@ export class GameManager {
       sinceAuthorityMs: this.lastSelfAuthorityAt === 0 ? -1 : Math.round(performance.now() - this.lastSelfAuthorityAt),
       connected: this.network.isConnected(),
     });
+    if (this.isTerminalSessionClose(event)) {
+      this.finishReconnectFailure();
+      return;
+    }
     void this.reconnectOrLogout();
+  }
+
+  private isTerminalSessionClose(event: CloseEvent): boolean {
+    if (TERMINAL_CLOSE_REASONS.has(event.reason)) return true;
+    return event.code === 4009;
   }
 
   private reportClientLog(event: string, details: Record<string, unknown>): void {
@@ -2392,6 +2407,7 @@ export class GameManager {
       this.toolSwappedEntities.delete(entityId);
       this.entities.removeRemotePlayer(entityId);
       this.entities.removeNpc(entityId);
+      this.entities.removeGroundItem(entityId);
       const objectData = this.worldObjectDefs.get(entityId);
       if (objectData) {
         const def = this.objectDefsCache.get(objectData.defId);

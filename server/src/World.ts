@@ -71,6 +71,7 @@ const IDLE_LOGOUT_TICKS = Math.ceil(5 * 60_000 / TICK_RATE);
 const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
 const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
+const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = 800;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -163,7 +164,9 @@ interface ActiveDuel {
   startedTick: number;
 }
 
-let nextGroundItemId = 1;
+const GROUND_ITEM_ENTITY_ID_MIN = 20000;
+const GROUND_ITEM_ENTITY_ID_MAX = 32760;
+let nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
 
 export class World {
   readonly maps: Map<string, GameMap> = new Map();
@@ -216,6 +219,11 @@ export class World {
   private doorObjectsByMap: Map<string, Set<WorldObject>> = new Map();
   /** Tiles blocked by non-depleted world objects, keyed by map+floor+tile. */
   private blockedObjectTiles: Set<string> = new Set();
+  // Tile occupancy for entities (players + NPC footprints), rebuilt at the
+  // top of each tick. Used to keep combatants from stacking on the same tile
+  // — players' click paths and NPC chase steps both check this set so they
+  // settle adjacent (Chebyshev 1) instead of stacked (Chebyshev 0).
+  private entityTileOccupants: Set<string> = new Set();
 
   private currentTick: number = 0;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -458,8 +466,10 @@ export class World {
       }
     }
     for (const item of spawns.items ?? []) {
+      const id = this.allocateGroundItemId();
+      if (id === null) continue;
       const groundItem: GroundItem = {
-        id: nextGroundItemId++,
+        id,
         itemId: item.itemId,
         quantity: item.quantity ?? 1,
         x: item.x,
@@ -476,6 +486,7 @@ export class World {
     for (const [id, player] of this.players) {
       if (player.currentMapLevel === mapId) {
         cm.addEntity(id, player.position.x, player.position.y);
+        cm.registerPlayer(id);
       }
     }
     // Send MAP_CHANGE to all players — entity data will be sent when client responds with MAP_READY
@@ -630,9 +641,41 @@ export class World {
       const db = Math.max(Math.abs((b.x + 0.5) - ps.x), Math.abs((b.z + 0.5) - ps.y));
       return da - db;
     });
+    // Path must avoid stepping onto other entities, but the target NPC's own
+    // footprint is excluded — the player is pathing AROUND it to the
+    // interaction tile, not onto it.
+    const mapId = player.currentMapLevel;
+    const floor = player.currentFloor;
+    const targetFootprintKeys = new Set<string>();
+    for (const foot of footprint) {
+      targetFootprintKeys.add(this.blockedKeyFor(mapId, foot.x, foot.z, floor));
+    }
+    const playerTileBlocker = (x: number, z: number): boolean => {
+      const tileKey = this.blockedKeyFor(mapId, x, z, floor);
+      const terrain = floor === 0
+        ? (map.isBlocked(x, z) || this.blockedObjectTiles.has(tileKey))
+        : map.isTileBlockedOnFloor(x, z, floor) || this.blockedObjectTiles.has(tileKey);
+      if (terrain) return true;
+      if (targetFootprintKeys.has(tileKey)) return false;
+      return this.entityTileOccupants?.has(tileKey) ?? false;
+    };
+    const playerWallBlocker = floor === 0
+      ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
+      : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
+    const findPathForPlayer = typeof (map as any).findPathForNpc === 'function'
+      ? (sx: number, sz: number, gx: number, gz: number) => (map as any).findPathForNpc(
+          sx,
+          sz,
+          gx,
+          gz,
+          playerTileBlocker,
+          PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
+          playerWallBlocker,
+        )
+      : (sx: number, sz: number, gx: number, gz: number) => map.findPathOnFloor(sx, sz, gx, gz, floor);
     for (const t of candidates) {
       if (Math.floor(ps.x) === t.x && Math.floor(ps.y) === t.z) return [];
-      const path = map.findPathOnFloor(ps.x, ps.y, t.x + 0.5, t.z + 0.5, player.currentFloor);
+      const path = findPathForPlayer(ps.x, ps.y, t.x + 0.5, t.z + 0.5);
       if (path.length > 0) return path;
     }
     return [];
@@ -873,8 +916,10 @@ export class World {
     for (const [mapId] of this.maps) {
       const spawns = this.data.loadSpawns(mapId);
       for (const item of spawns.items ?? []) {
+        const id = this.allocateGroundItemId();
+        if (id === null) continue;
         const groundItem: GroundItem = {
-          id: nextGroundItemId++,
+          id,
           itemId: item.itemId,
           quantity: item.quantity ?? 1,
           x: item.x,
@@ -1937,6 +1982,62 @@ export class World {
     return blockedKey(getMapIdx(mapId), floor, Math.floor(x), Math.floor(z));
   }
 
+  private allocateGroundItemId(): number | null {
+    const poolSize = GROUND_ITEM_ENTITY_ID_MAX - GROUND_ITEM_ENTITY_ID_MIN + 1;
+    for (let attempts = 0; attempts < poolSize; attempts++) {
+      const id = nextGroundItemId;
+      nextGroundItemId++;
+      if (nextGroundItemId > GROUND_ITEM_ENTITY_ID_MAX) {
+        nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
+      }
+      if (
+        !this.groundItems.has(id) &&
+        !this.players.has(id) &&
+        !this.npcs.has(id) &&
+        !this.worldObjects.has(id)
+      ) {
+        return id;
+      }
+    }
+    console.error('[world] Ground item entity-id pool exhausted');
+    return null;
+  }
+
+  /** Rebuild entityTileOccupants from current player + NPC positions. NPC
+   *  footprints span size×size tiles. */
+  private rebuildEntityTileOccupants(): void {
+    if (!this.entityTileOccupants) this.entityTileOccupants = new Set();
+    this.entityTileOccupants.clear();
+    for (const [, player] of this.players) {
+      if (player.disconnected) continue;
+      this.entityTileOccupants.add(
+        this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor),
+      );
+    }
+    for (const [, npc] of this.npcs) {
+      if (npc.dead) continue;
+      const size = Math.max(1, npc.size | 0);
+      if (size === 1) {
+        this.entityTileOccupants.add(
+          this.blockedKeyFor(npc.currentMapLevel, npc.position.x, npc.position.y, npc.currentFloor),
+        );
+        continue;
+      }
+      // Multi-tile NPCs: anchor + (size-1)/2 offset matches the chase blocker math.
+      const ax = Math.floor(npc.position.x);
+      const az = Math.floor(npc.position.y);
+      const minX = ax - Math.floor((size - 1) / 2);
+      const minZ = az - Math.floor((size - 1) / 2);
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          this.entityTileOccupants.add(
+            this.blockedKeyFor(npc.currentMapLevel, minX + i, minZ + j, npc.currentFloor),
+          );
+        }
+      }
+    }
+  }
+
   /** Check if player is on a valid interaction tile for the object. */
   private isAdjacentToObject(player: Player, obj: WorldObject): boolean {
     if (!this.canPlayerTargetObject(player, obj)) return false;
@@ -2061,10 +2162,16 @@ export class World {
       for (let i = 0; i < distance; i++) {
         const nextTileX = curTileX + stepDX;
         const nextTileZ = curTileZ + stepDZ;
-        const tileBlocked = pFloor === 0
-          ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ, pFloor)))
+        const tileKey = this.blockedKeyFor(mapId, nextTileX, nextTileZ, pFloor);
+        const tileBlocked = (pFloor === 0
+          ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(tileKey))
           : map.isTileBlockedOnFloor(nextTileX, nextTileZ, pFloor)
-            || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, nextTileX, nextTileZ, pFloor));
+            || this.blockedObjectTiles.has(tileKey))
+          // Refuse to step onto a tile occupied by another entity. Keeps
+          // players from walking onto an NPC during combat. The player's
+          // own current tile isn't a candidate here (i starts after the
+          // current tile), so self-occupancy never trips this.
+          || (this.entityTileOccupants?.has(tileKey) ?? false);
         // The player's authoritative walking elevation gates wall-edge
         // collision: a wall authored at an upper-floor Y must not block a
         // player standing at that elevation, and an open upper-floor door
@@ -2721,13 +2828,18 @@ export class World {
 
     const slot = player.inventory[slotIndex];
     if (!slot) return;
+    const groundItemId = this.allocateGroundItemId();
+    if (groundItemId === null) {
+      this.sendChatSystem(player, 'The ground is too cluttered here.');
+      return;
+    }
 
     const removed = player.removeItem(slotIndex, slot.quantity);
     if (removed.completed === 0) return;
     this.interruptPlayerAction(playerId, player);
 
     const groundItem: GroundItem = {
-      id: nextGroundItemId++,
+      id: groundItemId,
       itemId: removed.itemId,
       quantity: removed.completed,
       x: player.position.x,
@@ -5103,8 +5215,10 @@ export class World {
     despawnTimer: number = REFUND_SPILL_DESPAWN_TICKS,
   ): void {
     if (quantity <= 0) return;
+    const id = this.allocateGroundItemId();
+    if (id === null) return;
     const groundItem: GroundItem = {
-      id: nextGroundItemId++,
+      id,
       itemId,
       quantity,
       x: player.position.x,
@@ -5131,8 +5245,10 @@ export class World {
     const deathX = npc.position.x;
     const deathZ = npc.position.y;
     for (const drop of loot) {
+      const id = this.allocateGroundItemId();
+      if (id === null) continue;
       const groundItem: GroundItem = {
-        id: nextGroundItemId++,
+        id,
         itemId: drop.itemId,
         quantity: drop.quantity,
         x: deathX,
@@ -5189,8 +5305,11 @@ export class World {
     this.currentTickStartMs = tickStart;
     this.currentTick++;
 
+    this.rebuildEntityTileOccupants();
     this.tickPlayerMovement();
+    this.rebuildEntityTileOccupants();
     this.tickNpcAI();
+    this.rebuildEntityTileOccupants();
     this.tickPlayerCooldowns();
     this.tickQueuedSpellCasts();
     this.tickActiveDuels();
@@ -5206,6 +5325,7 @@ export class World {
     this.tickTransitions();
     this.tickIdleLogouts();
     this.tickDeferredLogouts();
+    this.rebuildEntityTileOccupants();
     this.broadcastSync();
 
     // Bot-stats checkpoint every 500 ticks (~5 min). Flushes each connected
@@ -5438,25 +5558,48 @@ export class World {
       } else {
         const mapId = npc.currentMapLevel;
         const size = npc.size;
+        const npcFloor = npc.currentFloor;
+        // Self-footprint exclusion: an NPC must not block its own movement
+        // via the entity-tile-occupants set. Compute the current footprint
+        // keys once so the hot blocker can check membership in O(1).
+        const selfAx = Math.floor(npc.position.x);
+        const selfAz = Math.floor(npc.position.y);
+        const selfMinX = selfAx - Math.floor((size - 1) / 2);
+        const selfMinZ = selfAz - Math.floor((size - 1) / 2);
+        const selfFootprintKeys = new Set<string>();
+        for (let i = 0; i < size; i++) {
+          for (let j = 0; j < size; j++) {
+            selfFootprintKeys.add(this.blockedKeyFor(mapId, selfMinX + i, selfMinZ + j, npcFloor));
+          }
+        }
         // For size-1 NPCs the callbacks reduce to the original single-tile
         // checks. For larger NPCs the wrappers test every footprint tile
         // against terrain (map.isNpcBlocked) AND world-object blockers, and
         // require the move's leading wall edges to be open. Both wrappers
         // are allocation-free in the hot path (no footprint array per call).
         const npcBlocked = size <= 1
-          ? (x: number, z: number) =>
-              map.isTileBlockedOnFloor(x, z, npc.currentFloor) || this.blockedObjectTiles.has(this.blockedKeyFor(mapId, x, z, npc.currentFloor))
+          ? (x: number, z: number) => {
+              const key = this.blockedKeyFor(mapId, x, z, npcFloor);
+              if (map.isTileBlockedOnFloor(x, z, npcFloor)) return true;
+              if (this.blockedObjectTiles.has(key)) return true;
+              // Refuse to step onto another entity. Self-occupancy is
+              // filtered so the NPC never blocks its own current tile.
+              if ((this.entityTileOccupants?.has(key) ?? false) && !selfFootprintKeys.has(key)) return true;
+              return false;
+            }
           : (x: number, z: number) => {
               const minX = Math.floor(x) - Math.floor((size - 1) / 2);
               const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
               for (let i = 0; i < size; i++) {
                 for (let j = 0; j < size; j++) {
-                  if (map.isTileBlockedOnFloor(minX + i, minZ + j, npc.currentFloor)) return true;
+                  if (map.isTileBlockedOnFloor(minX + i, minZ + j, npcFloor)) return true;
                 }
               }
               for (let i = 0; i < size; i++) {
                 for (let j = 0; j < size; j++) {
-                  if (this.blockedObjectTiles.has(this.blockedKeyFor(mapId, minX + i, minZ + j, npc.currentFloor))) return true;
+                  const key = this.blockedKeyFor(mapId, minX + i, minZ + j, npcFloor);
+                  if (this.blockedObjectTiles.has(key)) return true;
+                  if ((this.entityTileOccupants?.has(key) ?? false) && !selfFootprintKeys.has(key)) return true;
                 }
               }
               return false;
@@ -6210,8 +6353,10 @@ export class World {
     // spawnGroundItem logic because that helper uses player.position which
     // we're about to teleport away from.
     for (const d of dropped) {
+      const id = this.allocateGroundItemId();
+      if (id === null) continue;
       const groundItem: GroundItem = {
-        id: nextGroundItemId++,
+        id,
         itemId: d.itemId,
         quantity: d.quantity,
         x: oldX,
