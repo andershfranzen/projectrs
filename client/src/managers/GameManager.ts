@@ -6442,18 +6442,30 @@ export class GameManager {
     if (this.followPathTimer > 0 || this.pathIndex < this.path.length) return;
     this.followPathTimer = 0.6;
 
-    const pathResult = this.findPathFromMovementAnchor(target.position.x, target.position.z);
-    const path = pathResult.path;
-    if (path.length > 0) {
-      const last = path[path.length - 1];
-      if (Math.floor(last.x) === Math.floor(target.position.x) && Math.floor(last.z) === Math.floor(target.position.z)) {
-        path.pop();
+    const targetTileX = Math.floor(target.position.x);
+    const targetTileZ = Math.floor(target.position.z);
+    const candidates: { x: number; z: number }[] = [];
+    for (let oz = -1; oz <= 1; oz++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        if (ox === 0 && oz === 0) continue;
+        const tx = targetTileX + ox;
+        const tz = targetTileZ + oz;
+        if (!this.isTileBlocked(tx, tz)) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
       }
     }
-    if (path.length > 0) {
-      this.startLocalPredictedPath(path, pathResult.preserveCurrentStep);
+    candidates.sort((a, b) => {
+      const da = Math.hypot(a.x - this.playerX, a.z - this.playerZ);
+      const db = Math.hypot(b.x - this.playerX, b.z - this.playerZ);
+      return da - db;
+    });
+
+    for (const candidate of candidates) {
+      const pathResult = this.findPathFromMovementAnchor(candidate.x, candidate.z);
+      if (pathResult.path.length === 0) continue;
+      this.startLocalPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
+      break;
     }
   }
 

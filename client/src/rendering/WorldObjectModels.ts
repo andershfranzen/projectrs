@@ -11,6 +11,7 @@ const TREE_MODEL_CONFIG: { defId: number; files: string[]; targetHeight: number;
   { defId: 2, files: ['oaktree2.glb'], targetHeight: 4.3, stumpFile: 'oakstump.glb' },
   { defId: 9, files: ['willow_tree.glb'], targetHeight: 4.6, stumpFile: 'willowstump.glb' },
   { defId: 10, files: ['DeadTreeLam.glb'], targetHeight: 2.875, stumpFile: 'stump2.glb' },
+  { defId: 14, files: ['/assets/models/maple tree.glb'], targetHeight: 4.6, stumpFile: 'maplestump.glb' },
 ];
 
 export class WorldObjectModels {
@@ -108,7 +109,9 @@ export class WorldObjectModels {
       const templates: ModelTemplate[] = [];
       for (const file of cfg.files) {
         try {
-          const result = await SceneLoader.ImportMeshAsync('', '/models/', file, this.scene);
+          const rootUrl = file.startsWith('/') ? '/' : '/models/';
+          const sceneFilename = file.startsWith('/') ? file.slice(1) : file;
+          const result = await SceneLoader.ImportMeshAsync('', rootUrl, sceneFilename, this.scene);
           const bb = worldAABB(result.meshes);
           const modelHeight = bb.maxY - bb.minY;
           const scale = modelHeight > 0 ? cfg.targetHeight / modelHeight : 1;

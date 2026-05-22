@@ -609,7 +609,7 @@
       20
     ],
     "skill": "woodcut",
-    "levelRequired": 45,
+    "levelRequired": 40,
     "xpReward": 100,
     "harvestItemId": 39,
     "harvestQuantity": 1,

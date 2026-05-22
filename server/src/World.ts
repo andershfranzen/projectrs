@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -233,6 +233,10 @@ export class World {
   // — players' click paths and NPC chase steps both check this set so they
   // settle adjacent (Chebyshev 1) instead of stacked (Chebyshev 0).
   private entityTileOccupants: Set<string> = new Set();
+  // Player-only occupancy. Player movement checks this instead of
+  // entityTileOccupants so wandering NPCs cannot physically trap players in
+  // narrow paths.
+  private playerTileOccupants: Set<string> = new Set();
 
   private currentTick: number = 0;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -650,23 +654,9 @@ export class World {
       const db = Math.max(Math.abs((b.x + 0.5) - ps.x), Math.abs((b.z + 0.5) - ps.y));
       return da - db;
     });
-    // Path must avoid stepping onto other entities, but the target NPC's own
-    // footprint is excluded — the player is pathing AROUND it to the
-    // interaction tile, not onto it.
-    const mapId = player.currentMapLevel;
     const floor = player.currentFloor;
-    const targetFootprintKeys = new Set<string>();
-    for (const foot of footprint) {
-      targetFootprintKeys.add(this.blockedKeyFor(mapId, foot.x, foot.z, floor));
-    }
     const playerTileBlocker = (x: number, z: number): boolean => {
-      const tileKey = this.blockedKeyFor(mapId, x, z, floor);
-      const terrain = floor === 0
-        ? (map.isBlocked(x, z) || this.blockedObjectTiles.has(tileKey))
-        : map.isTileBlockedOnFloor(x, z, floor) || this.blockedObjectTiles.has(tileKey);
-      if (terrain) return true;
-      if (targetFootprintKeys.has(tileKey)) return false;
-      return this.entityTileOccupants?.has(tileKey) ?? false;
+      return this.isPlayerMovementTileBlocked(player, map, x, z, floor);
     };
     const playerWallBlocker = floor === 0
       ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
@@ -762,6 +752,23 @@ export class World {
         || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor));
     }
     return map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor));
+  }
+
+  private isPlayerMovementTileBlocked(
+    player: Player,
+    map: GameMap,
+    tileX: number,
+    tileZ: number,
+    floor: number = player.currentFloor,
+    ignorePlayerTileKey?: string,
+  ): boolean {
+    const tileKey = this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, floor);
+    const staticBlocked = floor === 0
+      ? map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(tileKey)
+      : map.isTileBlockedOnFloor(tileX, tileZ, floor) || this.blockedObjectTiles.has(tileKey);
+    if (staticBlocked) return true;
+    if (tileKey === ignorePlayerTileKey) return false;
+    return this.playerTileOccupants?.has(tileKey) ?? false;
   }
 
   private usesCornerObjectInteraction(obj: WorldObject): boolean {
@@ -2016,12 +2023,14 @@ export class World {
    *  footprints span size×size tiles. */
   private rebuildEntityTileOccupants(): void {
     if (!this.entityTileOccupants) this.entityTileOccupants = new Set();
+    if (!this.playerTileOccupants) this.playerTileOccupants = new Set();
     this.entityTileOccupants.clear();
+    this.playerTileOccupants.clear();
     for (const [, player] of this.players) {
       if (player.disconnected) continue;
-      this.entityTileOccupants.add(
-        this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor),
-      );
+      const key = this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor);
+      this.entityTileOccupants.add(key);
+      this.playerTileOccupants.add(key);
     }
     for (const [, npc] of this.npcs) {
       if (npc.dead) continue;
@@ -2171,16 +2180,7 @@ export class World {
       for (let i = 0; i < distance; i++) {
         const nextTileX = curTileX + stepDX;
         const nextTileZ = curTileZ + stepDZ;
-        const tileKey = this.blockedKeyFor(mapId, nextTileX, nextTileZ, pFloor);
-        const tileBlocked = (pFloor === 0
-          ? (map.isBlocked(nextTileX, nextTileZ) || this.blockedObjectTiles.has(tileKey))
-          : map.isTileBlockedOnFloor(nextTileX, nextTileZ, pFloor)
-            || this.blockedObjectTiles.has(tileKey))
-          // Refuse to step onto a tile occupied by another entity. Keeps
-          // players from walking onto an NPC during combat. The player's
-          // own current tile isn't a candidate here (i starts after the
-          // current tile), so self-occupancy never trips this.
-          || (this.entityTileOccupants?.has(tileKey) ?? false);
+        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, nextTileX, nextTileZ, pFloor);
         // The player's authoritative walking elevation gates wall-edge
         // collision: a wall authored at an upper-floor Y must not block a
         // player standing at that elevation, and an open upper-floor door
@@ -2231,6 +2231,7 @@ export class World {
     player.pendingTalkNpcId = -1;
     player.pendingTalkRepathTicks = 0;
     player.followTargetPlayerId = target.id;
+    player.nextFollowRepathTick = 0;
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
     if (player.openDialogueState) this.sendDialogueClose(player);
@@ -2251,21 +2252,31 @@ export class World {
       return;
     }
 
-    if (player.hasMoveQueue()) return;
+    const targetDestination = target.getMoveDestination();
+    const targetGoalX = targetDestination?.x ?? target.position.x;
+    const targetGoalZ = targetDestination?.z ?? target.position.y;
+    if (player.hasMoveQueue()) {
+      const queuedDest = player.getMoveDestination();
+      const queuedDestStillUseful = queuedDest
+        && Math.max(Math.abs(queuedDest.x - targetGoalX), Math.abs(queuedDest.z - targetGoalZ)) <= 1.5;
+      if (queuedDestStillUseful) return;
+      player.clearMoveQueue();
+    }
+
+    if (this.currentTick < player.nextFollowRepathTick) return;
 
     const map = this.getPlayerMap(player);
-    const targetTileX = Math.floor(target.position.x);
-    const targetTileZ = Math.floor(target.position.y);
+    const targetTileX = Math.floor(targetGoalX);
+    const targetTileZ = Math.floor(targetGoalZ);
+    const floor = player.currentFloor;
+    const selfTileKey = this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, floor);
     const candidates: { x: number; z: number }[] = [];
     for (let oz = -1; oz <= 1; oz++) {
       for (let ox = -1; ox <= 1; ox++) {
         if (ox === 0 && oz === 0) continue;
         const tx = targetTileX + ox;
         const tz = targetTileZ + oz;
-        const blocked = player.currentFloor === 0
-          ? map.isBlocked(tx, tz) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tx, tz, player.currentFloor))
-          : map.isTileBlockedOnFloor(tx, tz, player.currentFloor);
-        if (!blocked) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
+        if (!this.isPlayerMovementTileBlocked(player, map, tx, tz, floor, selfTileKey)) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
       }
     }
     candidates.sort((a, b) => {
@@ -2274,13 +2285,21 @@ export class World {
       return da - db;
     });
 
+    const tileBlocked = (x: number, z: number): boolean => {
+      return this.isPlayerMovementTileBlocked(player, map, x, z, floor, selfTileKey);
+    };
+    const wallBlocked = floor === 0
+      ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
+      : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
     for (const dest of candidates) {
-      const path = map.findPathOnFloor(player.position.x, player.position.y, dest.x, dest.z, player.currentFloor);
+      const path = map.findPathForNpc(player.position.x, player.position.y, dest.x, dest.z, tileBlocked, 200, wallBlocked);
       if (path.length > 0) {
         player.setMoveQueue(path);
+        player.nextFollowRepathTick = this.currentTick + 1;
         return;
       }
     }
+    player.nextFollowRepathTick = this.currentTick + 2;
   }
 
   handlePlayerAttackNpc(playerId: number, npcId: number): void {
@@ -4021,24 +4040,32 @@ export class World {
 
   private tradeSessions: Map<number, TradeSession> = new Map();
 
-  /** Distance within which a trade request is allowed. Both players must remain
-   *  in this range; anyone walking out aborts the trade. */
-  private static readonly TRADE_REQUEST_RANGE = 4;
-  private static readonly TRADE_REQUEST_TTL_MS = 3000;
-
   private isTradeablePlayer(player: Player): boolean {
     return player.alive && !player.disconnected && !player.requestIdleLogout;
   }
 
-  private canPlayersTrade(a: Player, b: Player): boolean {
+  private canPlayersTrade(a: Player, b: Player, reporter?: Player): boolean {
     if (a.id === b.id) return false;
-    if (!this.isTradeablePlayer(a) || !this.isTradeablePlayer(b)) return false;
-    if (a.currentMapLevel !== b.currentMapLevel) return false;
+    if (!this.isTradeablePlayer(a) || !this.isTradeablePlayer(b)) {
+      if (reporter === a) this.sendChatSystem(a, 'That player is not available to trade.');
+      return false;
+    }
+    if (a.currentMapLevel !== b.currentMapLevel) {
+      if (reporter === a) this.sendChatSystem(a, 'That player is too far away to trade.');
+      return false;
+    }
     // Floor check is required even with same x,z map check — multi-floor
     // buildings let two players overlap in 2D while being on different planes,
     // and a through-floor trade lets gear teleport up/down a building.
-    if (a.currentFloor !== b.currentFloor) return false;
-    return this.tileChebyshev(a, b) <= World.TRADE_REQUEST_RANGE;
+    if (a.currentFloor !== b.currentFloor) {
+      if (reporter === a) this.sendChatSystem(a, 'You need to be on the same floor to trade.');
+      return false;
+    }
+    if (this.tileChebyshev(a, b) > TRADE_REQUEST_RANGE) {
+      if (reporter === a) this.sendChatSystem(a, 'That player is too far away to trade.');
+      return false;
+    }
+    return true;
   }
 
   private clearTradeRequestsFor(playerId: number): void {
@@ -4074,8 +4101,12 @@ export class World {
     const player = this.players.get(playerId);
     const target = this.players.get(targetEntityId);
     if (!player || !target || player.id === target.id) return;
-    if (player.isInterfaceOpen() || target.isInterfaceOpen()) return;
-    if (!this.canPlayersTrade(player, target)) return;
+    if (player.isInterfaceOpen()) return;
+    if (target.isInterfaceOpen()) {
+      this.sendChatSystem(player, 'That player is busy.');
+      return;
+    }
+    if (!this.canPlayersTrade(player, target, player)) return;
     player.botStats?.recordActionSignature('tradeRequest', 'player', player.position.x, player.position.y);
 
     // If the target has already requested us, opening from either side commits
@@ -4086,12 +4117,12 @@ export class World {
       return;
     }
     this.pendingTradeRequests.set(player.id, target.id);
-    // 5-tick (~3s) request lifetime so stale requests don't pile up.
+    // Short request lifetime so stale requests don't pile up.
     setTimeout(() => {
       if (this.pendingTradeRequests.get(player.id) === target.id) {
         this.pendingTradeRequests.delete(player.id);
       }
-    }, World.TRADE_REQUEST_TTL_MS);
+    }, TRADE_REQUEST_TTL_MS);
     // Notify the target so their client can show the popup.
     this.sendToPlayer(target, ServerOpcode.TRADE_REQUEST_RECEIVED, player.id);
     this.sendChatSystem(player, `Sending trade request to ${target.name}...`);
@@ -4104,9 +4135,17 @@ export class World {
     const player = this.players.get(playerId);
     const requester = this.players.get(requesterEntityId);
     if (!player || !requester) return;
-    if (player.isInterfaceOpen() || requester.isInterfaceOpen()) return;
-    if (this.pendingTradeRequests.get(requester.id) !== player.id) return;
-    if (!this.canPlayersTrade(player, requester)) return;
+    if (player.isInterfaceOpen()) return;
+    if (requester.isInterfaceOpen()) {
+      this.sendChatSystem(player, 'That player is busy.');
+      this.clearTradeRequestsFor(requester.id);
+      return;
+    }
+    if (this.pendingTradeRequests.get(requester.id) !== player.id) {
+      this.sendChatSystem(player, 'That trade request has expired.');
+      return;
+    }
+    if (!this.canPlayersTrade(player, requester, player)) return;
     this.openTradeSession(requester, player);
   }
 

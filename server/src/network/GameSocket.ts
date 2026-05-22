@@ -518,8 +518,6 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 1)) return invalid('missing-trade-target');
       const target = world.getPlayer(values[0]);
       if (!target || target.id === player.id || target.disconnected || target.requestIdleLogout) return invalid('bad-trade-target');
-      if (target.currentMapLevel !== player.currentMapLevel || target.currentFloor !== player.currentFloor) return invalid('unreachable-trade-target');
-      if (Math.max(Math.abs(target.position.x - player.position.x), Math.abs(target.position.y - player.position.y)) > 4) return invalid('distant-trade-target');
       return OK_PACKET;
     }
 

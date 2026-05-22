@@ -6,6 +6,11 @@ export const INVENTORY_SIZE = 30;
 export const BANK_SIZE = 200;
 export const TRADE_OFFER_SIZE = 28;
 export const DUEL_STAKE_SIZE = TRADE_OFFER_SIZE;
+/** Chebyshev range (in tiles) for initiating and maintaining a trade. Kept a
+ *  little wider than direct NPC/object interactions because player positions
+ *  drift during walk ticks and trade is a social action, not melee contact. */
+export const TRADE_REQUEST_RANGE = 8;
+export const TRADE_REQUEST_TTL_MS = 10000;
 
 /** Hard ceiling on any single stack's quantity. Int31 — matches the wire
  *  encoding `(qtyHigh << 16) | (qtyLow & 0xFFFF)` so over-the-wire values

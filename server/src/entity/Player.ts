@@ -113,6 +113,8 @@ export class Player extends Entity {
   pendingTalkRepathTicks: number = 0;
   /** Player entity id this player is following, or -1 when not following. */
   followTargetPlayerId: number = -1;
+  /** Earliest world tick where follow may run another path search. */
+  nextFollowRepathTick: number = 0;
   /** Per-quest state. Key = quest id from quests.json. Value tracks the
    *  current stage and progress toward that stage's trigger threshold
    *  (kill count, item count, etc). `stage: -1` = completed. Persisted in
@@ -613,6 +615,10 @@ export class Player extends Entity {
 
   peekNextMove(): { x: number; z: number } | null {
     return this.moveQueue[this.moveQueueIndex] ?? null;
+  }
+
+  getMoveDestination(): { x: number; z: number } | null {
+    return this.hasMoveQueue() ? this.moveQueue[this.moveQueue.length - 1] ?? null : null;
   }
 
   syncHealthFromSkills(): void {
