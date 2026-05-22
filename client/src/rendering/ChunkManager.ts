@@ -969,15 +969,10 @@ export class ChunkManager {
         authFetch(`/maps/${this.mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
         authFetch(`/maps/${this.mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
       ]);
-      if ((!tilesRes || !tilesRes.ok) && (!heightsRes || !heightsRes.ok)) {
-        // No data for this chunk — mark as loaded (empty) and skip
-        this.loadedEditorChunks.add(key);
-        this.loadingEditorChunks.delete(key);
-        this.buildPendingGameChunks();
-        return;
-      }
-
       const startX = ecx * ECHUNK, startZ = ecz * ECHUNK;
+      const endX = Math.min(startX + ECHUNK, this.mapWidth);
+      const endZ = Math.min(startZ + ECHUNK, this.mapHeight);
+      if (!this.mapData || !this.tileTypes) return;
 
       // Populate heights
       if (heightsRes?.ok) {
@@ -993,9 +988,6 @@ export class ChunkManager {
       }
 
       // Populate tiles — fill entire chunk region with defaults, then overlay sparse data
-      const endX = Math.min(startX + ECHUNK, this.mapWidth);
-      const endZ = Math.min(startZ + ECHUNK, this.mapHeight);
-      if (!this.mapData || !this.tileTypes) return;
       for (let gz = startZ; gz < endZ; gz++) {
         if (!this.mapData.tiles[gz]) this.mapData.tiles[gz] = [];
         for (let gx = startX; gx < endX; gx++) {
@@ -1060,6 +1052,7 @@ export class ChunkManager {
       textureRotationB: partial.textureRotationB ?? 0,
       textureScaleB: partial.textureScaleB ?? 1,
       textureCutAngle: partial.textureCutAngle ?? legacyCutAngleFromSplit(partial.split),
+      textureCutOffset: partial.textureCutOffset ?? 0,
       waterPainted: partial.waterPainted ?? false,
       waterSurface: partial.waterSurface ?? false,
     };
@@ -1568,7 +1561,7 @@ export class ChunkManager {
         };
 
         if (tile.textureHalfMode) {
-          const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle);
+          const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle, tile.textureCutOffset ?? 0);
           if (tile.textureId) appendOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA);
           if (tile.textureIdB) appendOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB);
         } else if (tile.textureId) {
@@ -3083,9 +3076,7 @@ export class ChunkManager {
 
         for (const obj of placements) {
           const { x: orx, y: ory, z: orz } = obj.rotation;
-          const quat = Quaternion.RotationAxis(Vector3.Right(), orx)
-            .multiply(Quaternion.RotationAxis(Vector3.Up(), ory))
-            .multiply(Quaternion.RotationAxis(Vector3.Forward(), orz));
+          const quat = Quaternion.FromEulerAngles(orx, ory, orz);
           const sx = obj.scale.x * treeBoost, sy = obj.scale.y * treeBoost, sz = obj.scale.z * treeBoost;
           Matrix.ComposeToRef(
             TmpVectors.Vector3[0].set(sx, sy, sz),
@@ -3175,9 +3166,7 @@ export class ChunkManager {
 
       root.position = new Vector3(obj.position.x, obj.position.y, obj.position.z);
       const { x: orx, y: ory, z: orz } = obj.rotation;
-      root.rotationQuaternion = Quaternion.RotationAxis(new Vector3(1, 0, 0), orx)
-        .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), ory))
-        .multiply(Quaternion.RotationAxis(new Vector3(0, 0, 1), orz));
+      root.rotationQuaternion = Quaternion.FromEulerAngles(orx, ory, orz);
       const assetDef = this.assetRegistry.get(obj.assetId);
       const treeBoost = assetDef?.path?.toLowerCase().includes('tree') ? 1.15 : 1.0;
       root.scaling = new Vector3(obj.scale.x * treeBoost, obj.scale.y * treeBoost, obj.scale.z * treeBoost);
@@ -3843,17 +3832,18 @@ export class ChunkManager {
   private buildPlaneWorldVerts(plane: TexturePlane): { positions: number[]; normals: number[]; uvs: number[]; indices: number[] } {
     const hw = plane.width / 2, hh = plane.height / 2;
     // Plane quad in local space (XY plane, facing +Z)
-    const localVerts = [
-      new Vector3(-hw, -hh, 0), new Vector3(hw, -hh, 0),
-      new Vector3(hw, hh, 0), new Vector3(-hw, hh, 0),
-    ];
+    const halfRing = (plane as any).__halfRing as { u: number; v: number }[] | undefined;
+    const localVerts = halfRing?.length
+      ? halfRing.map((p) => new Vector3((p.u - 0.5) * plane.width, (p.v - 0.5) * plane.height, 0))
+      : [
+        new Vector3(-hw, -hh, 0), new Vector3(hw, -hh, 0),
+        new Vector3(hw, hh, 0), new Vector3(-hw, hh, 0),
+      ];
     const localNormal = new Vector3(0, 0, 1);
 
     // Build world matrix
     const { x: rx, y: ry, z: rz } = plane.rotation;
-    const quat = Quaternion.RotationAxis(new Vector3(1, 0, 0), rx)
-      .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), ry))
-      .multiply(Quaternion.RotationAxis(new Vector3(0, 0, 1), rz));
+    const quat = Quaternion.FromEulerAngles(rx, ry, rz);
     const scale = new Vector3(plane.scale.x, plane.scale.y, plane.scale.z);
     const pos = new Vector3(plane.position.x, plane.position.y, plane.position.z);
     const worldMat = Matrix.Compose(scale, quat, pos);
@@ -3865,12 +3855,16 @@ export class ChunkManager {
       positions.push(wv.x, wv.y, wv.z);
     }
     const wn = Vector3.TransformNormal(localNormal, worldMat).normalize();
-    for (let i = 0; i < 4; i++) normals.push(wn.x, wn.y, wn.z);
+    for (let i = 0; i < localVerts.length; i++) normals.push(wn.x, wn.y, wn.z);
 
-    const uvs = [0, 0, 1, 0, 1, 1, 0, 1];
-    const indices = plane.doubleSided
-      ? [0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2]
-      : [0, 1, 2, 0, 2, 3];
+    const uvs = halfRing?.length
+      ? halfRing.flatMap((p) => [p.u, p.v])
+      : [0, 0, 1, 0, 1, 1, 0, 1];
+    const indices: number[] = [];
+    for (let i = 1; i < localVerts.length - 1; i++) indices.push(0, i, i + 1);
+    if (plane.doubleSided) {
+      for (let i = 1; i < localVerts.length - 1; i++) indices.push(0, i + 1, i);
+    }
     return { positions, normals, uvs, indices };
   }
 
@@ -3880,9 +3874,7 @@ export class ChunkManager {
       if (!isFlatPlane(plane)) continue;
 
       const { x: rx, y: ry, z: rz } = plane.rotation;
-      const quat = Quaternion.RotationAxis(new Vector3(1, 0, 0), rx)
-        .multiply(Quaternion.RotationAxis(new Vector3(0, 1, 0), ry))
-        .multiply(Quaternion.RotationAxis(new Vector3(0, 0, 1), rz));
+      const quat = Quaternion.FromEulerAngles(rx, ry, rz);
       const scale = new Vector3(plane.scale.x, plane.scale.y, plane.scale.z);
       const pos = new Vector3(plane.position.x, plane.position.y, plane.position.z);
       const invWorld = Matrix.Compose(scale, quat, pos);
@@ -3912,7 +3904,16 @@ export class ChunkManager {
     }
     const mergeGroups = new Map<string, MergeGroup>();
 
-    for (const plane of planes) {
+    for (const sourcePlane of planes) {
+      const renderPlanes: TexturePlane[] = [];
+      if (sourcePlane.textureHalfMode) {
+        const { halfA } = computeCutPolygons(sourcePlane.textureCutAngle ?? Math.PI / 4);
+        renderPlanes.push({ ...(sourcePlane as any), __halfRing: halfA });
+      } else {
+        renderPlanes.push(sourcePlane);
+      }
+
+      for (const plane of renderPlanes) {
       if (!this.getOrLoadTexture(plane.textureId)) continue;
       const isFlat = isFlatPlane(plane);
       const pcx = Math.floor(plane.position.x / CHUNK_SIZE);
@@ -3948,6 +3949,7 @@ export class ChunkManager {
       let group = mergeGroups.get(groupKey);
       if (!group) { group = { planes: [], isFlat, isRoof, roofFloor, isNoRoof }; mergeGroups.set(groupKey, group); }
       group.planes.push(plane);
+      }
     }
 
     let mergedCount = 0;
@@ -4012,23 +4014,12 @@ export class ChunkManager {
       // decorative plane on it.
       if (group.isRoof) {
         for (const plane of group.planes) {
-          const px = plane.position.x, pz = plane.position.z;
-          const halfW = ((plane.width ?? 1) * Math.abs(plane.scale.x || 1)) / 2;
-          const halfD = ((plane.height ?? 1) * Math.abs(plane.scale.z || plane.scale.y || 1)) / 2;
-          const tx0 = Math.floor(px - halfW);
-          const tx1 = Math.floor(px + halfW);
-          const tz0 = Math.floor(pz - halfD);
-          const tz1 = Math.floor(pz + halfD);
-          for (let tz = tz0; tz <= tz1; tz++) {
-            for (let tx = tx0; tx <= tx1; tx++) {
-              if (Math.abs(tx + 0.5 - px) > halfW) continue;
-              if (Math.abs(tz + 0.5 - pz) > halfD) continue;
-              const rk = `${tx},${tz}`;
-              let roofArr = this.roofObjectGrid.get(rk);
-              if (!roofArr) { roofArr = []; this.roofObjectGrid.set(rk, roofArr); }
-              roofArr.push({ node: mesh, floor: group.roofFloor, y: plane.position.y });
-            }
-          }
+          forEachTileInPlaneFootprint(plane, this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
+            const rk = `${tx},${tz}`;
+            let roofArr = this.roofObjectGrid.get(rk);
+            if (!roofArr) { roofArr = []; this.roofObjectGrid.set(rk, roofArr); }
+            roofArr.push({ node: mesh, floor: group.roofFloor, y: plane.position.y });
+          });
         }
       }
 

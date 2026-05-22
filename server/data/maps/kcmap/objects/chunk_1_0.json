@@ -1,0 +1,344 @@
+[
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 57,
+      "y": -0.03680004924535751,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 55,
+      "y": 1.7763568394002505e-15,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 53,
+      "y": 0,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 52,
+      "y": 0,
+      "z": 31
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948972,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 57,
+      "y": 2.7031999507546427,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 55,
+      "y": 2.740000000000002,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 53,
+      "y": 2.74,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 52,
+      "y": 2.74,
+      "z": 31
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948972,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 52,
+      "y": 5.512019276618957,
+      "z": 31
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.0999999999999999,
+      "y": 1,
+      "z": 0.3999999999999999
+    }
+  },
+  {
+    "assetId": "stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 53,
+      "y": 5.492019276618957,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.0999999999999999,
+      "y": 1,
+      "z": 0.3999999999999999
+    }
+  },
+  {
+    "assetId": "stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 55.0116807896805,
+      "y": 5.492019276618957,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.0999999999999999,
+      "y": 1,
+      "z": 0.3999999999999999
+    }
+  },
+  {
+    "assetId": "stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 57.023361579360994,
+      "y": 5.4720192766189575,
+      "z": 30
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.0999999999999999,
+      "y": 1,
+      "z": 0.3999999999999999
+    }
+  },
+  {
+    "assetId": "stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 58,
+      "y": 5.44640040397644,
+      "z": 31
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.570796326794897,
+      "z": 0
+    },
+    "scale": {
+      "x": 1.0999999999999999,
+      "y": 1,
+      "z": 0.3999999999999999
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 58,
+      "y": -0.005823671473378589,
+      "z": 31
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948957,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "stone arrowslit ",
+    "layerId": "layer_0",
+    "position": {
+      "x": 58,
+      "y": 2.74,
+      "z": 31
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948957,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Crate1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 57.5,
+      "y": -0.026598658094126648,
+      "z": 31.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "maple tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 59,
+      "y": 0,
+      "z": 5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "maple tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 58,
+      "y": 0,
+      "z": 4
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  }
+]

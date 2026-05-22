@@ -7,7 +7,7 @@ import { CharacterEntity } from '../rendering/CharacterEntity';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { MAX_3D_NPCS_VISIBLE, NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, type ItemDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, type ItemDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -51,7 +51,7 @@ export class EntityManager {
 
   // NPCs
   readonly npcSprites: Map<number, Npc3DEntity | CharacterEntity> = new Map();
-  readonly npcTargets: Map<number, { x: number; z: number; floor: number; y: number; prevX: number; prevZ: number; t: number }> = new Map();
+  readonly npcTargets: Map<number, { x: number; z: number; floor: number; y: number; prevX: number; prevZ: number; t: number; continueWalking: boolean }> = new Map();
   readonly npcDefs: Map<number, number> = new Map();
   readonly npcCombatTargets: Map<number, number> = new Map();
   /** Per-spawn appearance for customizable NPCs (e.g. bankers, shopkeepers).
@@ -77,8 +77,9 @@ export class EntityManager {
    *  display path falls back to NPC_NAMES[defId]. Used in right-click menu,
    *  tooltip, and shop title. */
   readonly npcOverrideNames: Map<number, string> = new Map();
-  /** Count of NPCs currently rendered as CharacterEntity. Compared against
-   *  MAX_3D_NPCS_VISIBLE (shared/constants) for mobile budget enforcement. */
+  /** Count of NPCs currently rendered as CharacterEntity. Kept for diagnostics
+   *  and possible future adaptive quality, but not used to hide humanoid NPCs:
+   *  they have no fallback sprite, so budget-culling makes them invisible. */
   npc3dCount: number = 0;
 
   // Ground items
@@ -115,13 +116,10 @@ export class EntityManager {
     return character;
   }
 
-  /** Mobile budget check: is this NPC within LOD distance and the concurrent
-   *  CharacterEntity-NPC count is below MAX_3D_NPCS_VISIBLE? Caller passes
-   *  the result as the render3D flag to createNpc — when false and the NPC
-   *  has no dedicated NPC_3D_MODELS entry, the NPC simply doesn't render
-   *  this frame (will be created later when it comes back into LOD range). */
+  /** Humanoid NPC visibility gate. These NPCs have no sprite fallback: when
+   *  this returns false, they are literally invisible. Keep the mobile budget
+   *  out of the authoring/debug path and gate only by distance. */
   shouldRender3DNpc(_entityId: number, npcX: number, npcZ: number, playerX: number, playerZ: number): boolean {
-    if (this.npc3dCount >= MAX_3D_NPCS_VISIBLE) return false;
     const dx = npcX - playerX;
     const dz = npcZ - playerZ;
     if (Math.max(Math.abs(dx), Math.abs(dz)) > NPC_3D_LOD_DISTANCE) return false;
@@ -157,18 +155,9 @@ export class EntityManager {
     // mobile — caller defers creation until the NPC comes into range.
     if (!render3D) return null;
 
-    // Always load idle + walk. The old "stationary skips walk" optimization
-    // (~50 KB GLB saved per shopkeeper/banker) broke any editor-authored
-    // spawn whose wanderRange > 0 — the NPC tried to wander but had no
-    // walk anim to play. Per-spawn wanderRange isn't known at this call
-    // site (it lives server-side), so loading both anims for every
-    // customizable NPC is the simplest correct policy.
-    //
-    // Combat NPCs pull NPC_COMBAT_ANIMATIONS — curated subset of PLAYER_ANIMATIONS
-    // covering every branch of the weapon-driven attack-anim picker in
-    // getPlayerAttackAnimName. Loading the full PLAYER_ANIMATIONS set would
-    // ImportMeshAsync ~15 GLBs per NPC for skill/strafe/turn anims the NPC
-    // state machine never plays — see shared/character.ts for why.
+    // Humanoid NPCs use the same CharacterEntity rig as players, but they do
+    // not need every player-only animation. Keep their animation package small
+    // so authoring several guards/shopkeepers does not parse 15 GLBs per NPC.
     const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
     const combat = profile?.combat ?? false;
     const anims: { name: string; path: string }[] = combat
@@ -177,6 +166,7 @@ export class EntityManager {
           { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
           { name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` },
         ];
+
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,
       modelPath: CHARACTER_MODEL_PATH,
@@ -526,7 +516,7 @@ export class EntityManager {
       const dist = Math.hypot(dx, dz);
 
       // NPC is considered walking if server sent velocity recently
-      const serverMoving = moving && elapsed < EntityManager.SERVER_TICK_MS * 2;
+      const serverMoving = moving && target.continueWalking && elapsed < EntityManager.SERVER_TICK_MS * 2;
 
       // Resolve combat target world position (local player or remote player).
       const combatTarget = this.npcCombatTargets.get(entityId);

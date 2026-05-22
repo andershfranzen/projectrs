@@ -1,0 +1,648 @@
+[
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.5,
+      "y": 1.7763568394002505e-15,
+      "z": 72.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "sTree4",
+    "layerId": "layer_0",
+    "position": {
+      "x": 77,
+      "y": -0.553328451807392,
+      "z": 66
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.110223024625157e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.99999998742777,
+      "y": 1.7763568394002505e-15,
+      "z": 72.50000008090991
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.99999997485556,
+      "y": 1.7763568394002505e-15,
+      "z": 71.50000016181981
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.99999996228334,
+      "y": 1.7763568394002505e-15,
+      "z": 70.50000024272971
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "grass1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.00000001257222,
+      "y": 0.017838001239400825,
+      "z": 70.50000024982533
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.5,
+      "y": 0.5,
+      "z": 0.5
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.00000005028886,
+      "y": -3.552713678800501e-15,
+      "z": 73.50000000709564
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5000001618198,
+      "y": -1.7763568394002505e-15,
+      "z": 73.99999994778234
+    },
+    "rotation": {
+      "x": 0,
+      "y": -6.661338147750942e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.50000008090991,
+      "y": -1.7763568394002505e-15,
+      "z": 73.99999993521013
+    },
+    "rotation": {
+      "x": 0,
+      "y": -6.661338147750942e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.00000003771666,
+      "y": -1.7763568394002505e-15,
+      "z": 72.50000008800552
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.00000002514443,
+      "y": -1.7763568394002505e-15,
+      "z": 71.50000016891543
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.00000001257222,
+      "y": -1.7763568394002505e-15,
+      "z": 70.50000024982533
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90,
+      "y": -1.7763568394002505e-15,
+      "z": 69.50000033073522
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": 0,
+      "z": 69
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 94,
+      "y": 1.7763568394002505e-15,
+      "z": 73.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 92.5,
+      "y": -1.7763568394002505e-15,
+      "z": 73.99999992263791
+    },
+    "rotation": {
+      "x": 0,
+      "y": -6.661338147750942e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": 0,
+      "z": 72.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 92.5,
+      "y": 0,
+      "z": 72.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.5,
+      "y": -1.7763568394002505e-15,
+      "z": 73.99999992263791
+    },
+    "rotation": {
+      "x": 0,
+      "y": -6.661338147750942e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 92.5,
+      "y": 1.7763568394002505e-15,
+      "z": 71.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 92.5,
+      "y": 1.7763568394002505e-15,
+      "z": 70.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.5,
+      "y": 1.7763568394002505e-15,
+      "z": 71.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": 0,
+      "z": 71.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 92.5,
+      "y": 0,
+      "z": 73.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.5,
+      "y": 0,
+      "z": 73.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": 0,
+      "z": 73.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": 0,
+      "z": 70.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.5,
+      "y": 1.7763568394002505e-15,
+      "z": 70.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.5,
+      "y": 0,
+      "z": 73.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.5,
+      "y": 0,
+      "z": 72.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "CauliflowerPlant",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.5,
+      "y": 1.7763568394002505e-15,
+      "z": 71.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "sTree4",
+    "layerId": "layer_0",
+    "position": {
+      "x": 88.5,
+      "y": -0.02659576354826676,
+      "z": 70
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.110223024625157e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "sTree4",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.5,
+      "y": 0,
+      "z": 75
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.110223024625157e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "sTree4",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": 1.7763568394002505e-15,
+      "z": 75
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.110223024625157e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  }
+]

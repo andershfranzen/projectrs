@@ -696,6 +696,7 @@ export function updateTerrainLandHeights(map: MapData, shadowInf: number[][] | n
 
   for (let z = rz1; z <= rz2; z++) {
     for (let x = rx1; x <= rx2; x++) {
+      if (!map.isTileInActiveChunk(x, z)) continue
       const off = _landTileOff[z * map.width + x]
       const h = map.getTileCornerHeights(x, z)
       const landType = map.getBaseGroundType(x, z) as GroundType
@@ -840,7 +841,7 @@ export function buildTextureOverlays(
       }
 
       if (tile.textureHalfMode) {
-        const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle)
+        const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle, tile.textureCutOffset ?? 0)
         if (tile.textureId) addPolygon(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
         if (tile.textureIdB) addPolygon(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
       } else if (tile.textureId) {
@@ -852,21 +853,107 @@ export function buildTextureOverlays(
   return group
 }
 
-export function buildSingleTexturePlane(plane: TexturePlane, textureRegistry: TextureEntry[], textureCache: Map<string, Texture>, scene: Scene, isSelected: boolean): Mesh | null {
+function texturePlaneTintKey(tint: { r: number; g: number; b: number }): string {
+  return `${tint.r.toFixed(3)},${tint.g.toFixed(3)},${tint.b.toFixed(3)}`
+}
+
+function getOrCreateTexturePlaneMaterial(
+  planeId: string,
+  textureId: string,
+  repeat: number,
+  rotation: number,
+  tint: { r: number; g: number; b: number },
+  isSelected: boolean,
+  suffix: string,
+  textureRegistry: TextureEntry[],
+  textureCache: Map<string, Texture>,
+  scene: Scene,
+  materialCache?: Map<string, StandardMaterial>,
+): StandardMaterial | null {
+  const info = textureRegistry.find((t) => t.id === textureId)
+  if (!info) return null
+  const src = textureCache.get(info.id)
+  if (!src) return null
+
+  const scale = repeat || 1
+  const rot = rotation || 0
+  const key = `${textureId}|${scale}|${rot}|${texturePlaneTintKey(tint)}|${isSelected ? 1 : 0}|${suffix}`
+  const cached = materialCache?.get(key)
+  if (cached) return cached
+
+  const tex = src.clone()
+  tex.wrapU = Texture.WRAP_ADDRESSMODE
+  tex.wrapV = Texture.WRAP_ADDRESSMODE
+  tex.uScale = 1 / scale
+  tex.vScale = 1 / scale
+  tex.wAng = rot * Math.PI / 2
+  tex.hasAlpha = true
+
+  const mat = new StandardMaterial(`texplane_mat_${materialCache ? key : `${planeId}_${suffix}`}`, scene)
+  mat.diffuseTexture = tex
+  mat.emissiveTexture = tex
+  mat.useAlphaFromDiffuseTexture = true
+  mat.diffuseColor = new Color3(0, 0, 0)
+  mat.emissiveColor = isSelected ? new Color3(0.2, 0.4, 0.8) : new Color3(tint.r, tint.g, tint.b)
+  mat.specularColor = new Color3(0, 0, 0)
+  mat.transparencyMode = 1
+  mat.alphaCutOff = 0.05
+  mat.zOffset = -1
+  mat.freeze()
+  materialCache?.set(key, mat)
+  return mat
+}
+
+export function buildSingleTexturePlane(
+  plane: TexturePlane,
+  textureRegistry: TextureEntry[],
+  textureCache: Map<string, Texture>,
+  scene: Scene,
+  isSelected: boolean,
+  materialCache?: Map<string, StandardMaterial>,
+): Mesh | null {
   const textureInfo = textureRegistry.find((t) => t.id === plane.textureId)
   if (!textureInfo) return null
 
   const textureSrc = textureCache.get(textureInfo.id)
   if (!textureSrc) return null
 
-  const texture = textureSrc.clone()
-  const scale = plane.uvRepeat || 1
+  const tint = plane.tintColor || { r: 1, g: 1, b: 1 }
 
-  texture.wrapU = Texture.WRAP_ADDRESSMODE
-  texture.wrapV = Texture.WRAP_ADDRESSMODE
-  texture.uScale = 1 / scale
-  texture.vScale = 1 / scale
-  texture.wAng = (plane.texRotation || 0) * Math.PI / 2
+  const makeMaterial = (textureId: string, repeat: number, rotation: number, suffix: string) =>
+    getOrCreateTexturePlaneMaterial(plane.id, textureId, repeat, rotation, tint, isSelected, suffix, textureRegistry, textureCache, scene, materialCache)
+
+  if (plane.textureHalfMode) {
+    const root = new TransformNode(`texplane_${plane.id}`, scene)
+    root.position.set(plane.position?.x ?? 0, plane.position?.y ?? 0, plane.position?.z ?? 0)
+    root.rotation.set(plane.rotation?.x ?? 0, plane.rotation?.y ?? 0, plane.rotation?.z ?? 0)
+    root.scaling.set(plane.scale?.x ?? 1, plane.scale?.y ?? 1, plane.scale?.z ?? 1)
+    root.metadata = { texturePlane: plane }
+
+    const makeHalfMesh = (textureId: string | null | undefined, repeat: number, rotation: number, ring: { u: number; v: number }[], suffix: string) => {
+      if (!textureId || ring.length < 3) return
+      const mat = makeMaterial(textureId, repeat, rotation, suffix)
+      if (!mat) return
+      const positions: number[] = []
+      const uvs: number[] = []
+      for (const p of ring) {
+        positions.push((p.u - 0.5) * Math.max(0.01, plane.width || 1), (p.v - 0.5) * Math.max(0.01, plane.height || 1), 0)
+        uvs.push(p.u, p.v)
+      }
+      const indices = fanTriangulate(ring.length)
+      const mesh = createMeshFromArrays(`texplane_${plane.id}_${suffix}`, positions, null, uvs, indices, scene)
+      mesh.material = mat
+      mesh.renderingGroupId = 0
+      mesh.metadata = { texturePlane: plane, texturePlaneRoot: root }
+      mesh.parent = root
+    }
+
+    const { halfA } = computeCutPolygons(plane.textureCutAngle ?? Math.PI / 4)
+    makeHalfMesh(plane.textureId, plane.uvRepeat || 1, plane.texRotation || 0, halfA, 'a')
+    return root as unknown as Mesh
+  }
+
+  const scale = plane.uvRepeat || 1
 
   const mesh = MeshBuilder.CreatePlane(`texplane_${plane.id}`, {
     width: Math.max(0.01, plane.width || 1),
@@ -874,18 +961,11 @@ export function buildSingleTexturePlane(plane: TexturePlane, textureRegistry: Te
     sideOrientation: Mesh.DOUBLESIDE
   }, scene)
 
-  texture.hasAlpha = true
-  const mat = new StandardMaterial(`texplane_mat_${plane.id}`, scene)
-  mat.diffuseTexture = texture
-  mat.emissiveTexture = texture
-  mat.useAlphaFromDiffuseTexture = true
-  const tint = plane.tintColor || { r: 1, g: 1, b: 1 }
-  mat.diffuseColor = new Color3(0, 0, 0)
-  mat.emissiveColor = isSelected ? new Color3(0.2, 0.4, 0.8) : new Color3(tint.r, tint.g, tint.b)
-  mat.specularColor = new Color3(0, 0, 0)
-  mat.transparencyMode = 1
-  mat.alphaCutOff = 0.05
-  mat.zOffset = -1
+  const mat = getOrCreateTexturePlaneMaterial(plane.id, plane.textureId, scale, plane.texRotation || 0, tint, isSelected, 'full', textureRegistry, textureCache, scene, materialCache)
+  if (!mat) {
+    mesh.dispose()
+    return null
+  }
   mesh.material = mat
 
   mesh.position.set(plane.position?.x ?? 0, plane.position?.y ?? 0, plane.position?.z ?? 0)
@@ -897,13 +977,13 @@ export function buildSingleTexturePlane(plane: TexturePlane, textureRegistry: Te
   return mesh
 }
 
-export function buildTexturePlanes(map: MapData, textureRegistry: TextureEntry[], textureCache: Map<string, Texture>, scene: Scene): TransformNode {
+export function buildTexturePlanes(map: MapData, textureRegistry: TextureEntry[], textureCache: Map<string, Texture>, scene: Scene, materialCache?: Map<string, StandardMaterial>): TransformNode {
   const group = new TransformNode('texture-planes', scene)
   group.setEnabled(false)
 
   for (const plane of map.texturePlanes) {
     const isSelected = map.selectedTexturePlaneId === plane.id
-    const mesh = buildSingleTexturePlane(plane, textureRegistry, textureCache, scene, isSelected)
+    const mesh = buildSingleTexturePlane(plane, textureRegistry, textureCache, scene, isSelected, materialCache)
     if (mesh) mesh.parent = group
   }
 

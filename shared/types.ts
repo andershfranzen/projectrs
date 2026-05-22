@@ -524,6 +524,8 @@ export interface KCTile {
    * terrain triangulation).
    */
   textureCutAngle: number;
+  /** Signed half-paint cut offset in tile UV units. Positive makes half A larger. */
+  textureCutOffset: number;
   waterPainted: boolean;
   waterSurface: boolean;
 }
@@ -540,6 +542,8 @@ export interface TexturePlane {
   scale: { x: number; y: number; z: number };
   uvRepeat: number;
   texRotation: number;
+  textureHalfMode?: boolean;
+  textureCutAngle?: number;
   tintColor?: { r: number; g: number; b: number }; // RGB 0-1, default white
   noRoof?: boolean; // If true, never treated as a roof/ceiling for indoor detection
 }
@@ -635,6 +639,7 @@ export function defaultKCTile(ground: GroundType = 'grass'): KCTile {
     textureRotationB: 0,
     textureScaleB: 1,
     textureCutAngle: DEFAULT_CUT_ANGLE,
+    textureCutOffset: 0,
     waterPainted: false,
     waterSurface: false,
   };

@@ -2278,5 +2278,42 @@
     "equipSlot": "cape",
     "value": 100,
     "model": "/assets/equipment/cape/CamelCape.glb"
+  },
+  {
+    "id": 238,
+    "name": "Potato",
+    "description": "A freshly picked potato.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "model": "/assets/models/Potato.glb"
+  },
+  {
+    "id": 239,
+    "name": "Cauliflower",
+    "description": "A freshly picked cauliflower.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "model": "/assets/models/CauliflowerPlant.glb"
+  },
+  {
+    "id": 240,
+    "name": "Baked Potato",
+    "description": "A hot baked potato. Heals 3 HP.",
+    "stackable": false,
+    "equippable": false,
+    "healAmount": 3,
+    "value": 8,
+    "model": "/assets/models/BakedPotato.glb"
+  },
+  {
+    "id": 241,
+    "name": "Grain",
+    "description": "A small bundle of harvested grain.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "model": "/assets/models/grain.glb"
   }
 ]

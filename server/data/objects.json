@@ -367,6 +367,15 @@
         "skill": "cooking",
         "levelRequired": 1,
         "xpReward": 25
+      },
+      {
+        "inputItemId": 238,
+        "inputQuantity": 1,
+        "outputItemId": 240,
+        "outputQuantity": 1,
+        "skill": "cooking",
+        "levelRequired": 1,
+        "xpReward": 25
       }
     ]
   },
@@ -1598,7 +1607,7 @@
     "harvestQuantity": 1,
     "harvestTime": 2,
     "depletionChance": 0.5,
-    "respawnTime": 12
+    "respawnTime": 35
   },
   {
     "id": 23,
@@ -1731,5 +1740,71 @@
       80,
       90
     ]
+  },
+  {
+    "id": 28,
+    "name": "Potato Plant",
+    "category": "crop",
+    "actions": [
+      "Pick",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 0.6,
+    "height": 0.6,
+    "color": [
+      105,
+      150,
+      70
+    ],
+    "harvestItemId": 238,
+    "harvestQuantity": 1,
+    "harvestTime": 2,
+    "depletionChance": 0.5,
+    "respawnTime": 35
+  },
+  {
+    "id": 29,
+    "name": "Cauliflower Plant",
+    "category": "crop",
+    "actions": [
+      "Pick",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 0.6,
+    "height": 0.6,
+    "color": [
+      135,
+      170,
+      90
+    ],
+    "harvestItemId": 239,
+    "harvestQuantity": 1,
+    "harvestTime": 2,
+    "depletionChance": 0.5,
+    "respawnTime": 35
+  },
+  {
+    "id": 30,
+    "name": "Wheat Plant",
+    "category": "crop",
+    "actions": [
+      "Pick",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 0.6,
+    "height": 0.6,
+    "color": [
+      155,
+      145,
+      90
+    ],
+    "harvestItemId": 241,
+    "harvestQuantity": 1,
+    "harvestTime": 2,
+    "depletionChance": 1.0,
+    "respawnTime": 0
   }
 ]

@@ -46,6 +46,13 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'closed chest': 20, // Wooden Chest
   // Crops
   'rice': 22, // Rice Plant
+  'PotatoPlant': 28, // Potato Plant
+  'CauliflowerPlant': 29, // Cauliflower Plant
+  'wheat': 30, // Wheat Plant
+  'wheat2': 30,
+  'wheat2rotated1': 30,
+  'wheat2rotated2': 30,
+  'wheat2rotated3': 30,
   // Evil magic altar
   'Obelisk': 24, // Obelisk — offer bones for evilmagic xp + evil tokens
   // Quest/scenery interactions

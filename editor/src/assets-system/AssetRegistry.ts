@@ -40,8 +40,14 @@ function deriveAssetMeta(path: unknown): { section: string; group: string; folde
   let group = 'General'
 
   if (rel[0]?.toLowerCase() === 'models') {
-    section = 'Models'
-    group = 'Base Models'
+    const modelGroup = rel[1] ? humanizeName(rel[1]) : 'Base Models'
+    if (modelGroup.toLowerCase() === 'roofs') {
+      section = 'Roofs'
+      group = 'General'
+    } else {
+      section = 'Models'
+      group = 'Base Models'
+    }
   } else if (rel[0]?.toLowerCase() === 'modular assets') {
     section = 'Modular Assets'
     group = rel[1] ? humanizeName(rel[1]) : 'General'

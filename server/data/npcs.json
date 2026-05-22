@@ -735,14 +735,46 @@
     "aggressive": true,
     "wanderRange": 5,
     "lootTable": [
-      { "itemId": 72, "quantity": 1, "chance": 0.18 },
-      { "itemId": 32, "quantity": 1, "chance": 0.14 },
-      { "itemId": 53, "quantity": 1, "chance": 0.14 },
-      { "itemId": 79, "quantity": 1, "chance": 0.10 },
-      { "itemId": 18, "quantity": 1, "chance": 0.08 },
-      { "itemId": 74, "quantity": 1, "chance": 0.06 },
-      { "itemId": 83, "quantity": 1, "chance": 0.05 },
-      { "itemId": 54, "quantity": 1, "chance": 0.0005 }
+      {
+        "itemId": 72,
+        "quantity": 1,
+        "chance": 0.18
+      },
+      {
+        "itemId": 32,
+        "quantity": 1,
+        "chance": 0.14
+      },
+      {
+        "itemId": 53,
+        "quantity": 1,
+        "chance": 0.14
+      },
+      {
+        "itemId": 79,
+        "quantity": 1,
+        "chance": 0.1
+      },
+      {
+        "itemId": 18,
+        "quantity": 1,
+        "chance": 0.08
+      },
+      {
+        "itemId": 74,
+        "quantity": 1,
+        "chance": 0.06
+      },
+      {
+        "itemId": 83,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 54,
+        "quantity": 1,
+        "chance": 0.0005
+      }
     ]
   },
   {
@@ -757,23 +789,55 @@
     "aggressive": false,
     "wanderRange": 3,
     "lootTable": [
-      { "itemId": 72, "quantity": 1, "chance": 0.25 },
-      { "itemId": 74, "quantity": 1, "chance": 0.18 },
-      { "itemId": 75, "quantity": 1, "chance": 0.14 },
-      { "itemId": 80, "quantity": 1, "chance": 0.10 },
-      { "itemId": 83, "quantity": 1, "chance": 0.06 },
-      { "itemId": 82, "quantity": 1, "chance": 0.05 },
-      { "itemId": 84, "quantity": 1, "chance": 0.04 },
-      { "itemId": 54, "quantity": 1, "chance": 0.02 }
+      {
+        "itemId": 72,
+        "quantity": 1,
+        "chance": 0.25
+      },
+      {
+        "itemId": 74,
+        "quantity": 1,
+        "chance": 0.18
+      },
+      {
+        "itemId": 75,
+        "quantity": 1,
+        "chance": 0.14
+      },
+      {
+        "itemId": 80,
+        "quantity": 1,
+        "chance": 0.1
+      },
+      {
+        "itemId": 83,
+        "quantity": 1,
+        "chance": 0.06
+      },
+      {
+        "itemId": 82,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 84,
+        "quantity": 1,
+        "chance": 0.04
+      },
+      {
+        "itemId": 54,
+        "quantity": 1,
+        "chance": 0.02
+      }
     ]
   },
   {
     "id": 102,
     "name": "Custom Humanoid",
     "health": 10,
-    "attack": 1,
-    "defence": 1,
-    "strength": 1,
+    "attack": 3,
+    "defence": 2,
+    "strength": 2,
     "attackSpeed": 4,
     "respawnTime": 30,
     "aggressive": false,

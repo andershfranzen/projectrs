@@ -1212,7 +1212,12 @@ export class CharacterEntity {
       }
       return;
     }
-    if (this.currentState >= AnimState.Attack) return; // don't interrupt attack
+    if (this.currentState >= AnimState.Attack) {
+      this.queuedState = AnimState.Walk;
+      this.queuedAnimName = '';
+      this.convertActiveAttackToWalkLayer();
+      return;
+    }
     this.queuedState = AnimState.Walk;
     this.queuedAnimName = '';
     // Walk preempts Skill (matches RS2 seq `postanim_move=abortanim`) so
@@ -1247,7 +1252,8 @@ export class CharacterEntity {
   }
 
   isWalking(): boolean {
-    return this.currentState === AnimState.Walk;
+    return this.currentState === AnimState.Walk
+      || (this.attackIsLayered && (this.activeWalkLowerGroup?.isPlaying ?? false));
   }
 
   /**
@@ -1275,15 +1281,9 @@ export class CharacterEntity {
    *  layered over walk's lower-body so the legs keep cycling — the silhouette
    *  walks AND swings. stopWalking swaps walk_lower for attack_lower mid-swing
    *  so the legs finish the attack pose. */
-  playAttackAnimation(variant?: string, restart: boolean = false): void {
+  playAttackAnimation(variant?: string, _restart: boolean = false): void {
     if (this.currentState === AnimState.Attack) {
-      if (!restart) return;
-      this.clearLayeredAttack();
-      this.oneShotCallback = null;
-      const current = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
-      current?.stop();
-      this.currentState = AnimState.Idle;
-      this.currentAnimName = '';
+      return;
     }
     this.queuedState = this.currentState >= AnimState.Walk ? AnimState.Walk : AnimState.Idle;
     this.queuedAnimName = '';
@@ -1312,6 +1312,7 @@ export class CharacterEntity {
       return;
     }
     // Non-walking, or split-variants unavailable: existing full-body path.
+    this.attackStartMs = performance.now();
     this.playAnimByState(AnimState.Attack, variant, false);
   }
 
@@ -1368,6 +1369,51 @@ export class CharacterEntity {
     });
   }
 
+  /** If movement starts during a full-body attack, keep the attack's upper
+   *  body running from its current frame and hand the legs over to the walk
+   *  cycle. This prevents combat movement from skating while still letting
+   *  the swing finish naturally. */
+  private convertActiveAttackToWalkLayer(): void {
+    if (this.attackIsLayered || this.currentState !== AnimState.Attack) return;
+    const baseName = this.currentAnimName;
+    if (!baseName || !this.animGroups.has(baseName)) return;
+    const walkVariant = isWalkVariant(this.walkanim) ? this.walkanim : 'walk';
+    if (!this.ensureBoneSplitVariants(baseName) || !this.ensureBoneSplitVariants(walkVariant)) return;
+
+    const fullBody = this.animGroups.get(baseName);
+    const upper = this.animGroups.get(`${baseName}_upper`);
+    const walkLower = this.animGroups.get(`${walkVariant}_lower`) ?? null;
+    if (!upper) return;
+
+    const speed = ANIM_SPEED_RATIO[baseName] ?? 1.0;
+    const fps = upper.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+    const elapsedMs = Math.max(0, performance.now() - this.attackStartMs);
+    const frame = Math.min(upper.from + (elapsedMs / 1000) * fps * speed, upper.to);
+
+    // Stopping the old full-body group can fire its previous one-shot end
+    // callback. Clear it first so movement cannot cancel the attack handoff.
+    this.oneShotCallback = null;
+    fullBody?.stop();
+    if (walkLower) {
+      walkLower.start(true, this.getAnimationSpeed(`${walkVariant}_lower`), walkLower.from, walkLower.to, false);
+    }
+    upper.start(false, speed, frame, upper.to, false);
+
+    this.attackIsLayered = true;
+    this.activeAttackBase = baseName;
+    this.activeWalkBase = walkVariant;
+    this.activeWalkLowerName = `${walkVariant}_lower`;
+    this.activeWalkLowerGroup = walkLower;
+    this.currentAnimName = `${baseName}_upper`;
+
+    upper.onAnimationGroupEndObservable.addOnce(() => {
+      if (!this.attackIsLayered || this.activeAttackBase !== baseName) return;
+      this.clearLayeredAttack();
+      this.currentState = AnimState.Idle;
+      this.playAnimByState(this.queuedState, this.queuedAnimName, undefined);
+    });
+  }
+
   /** Play a looping skill animation (e.g. 'chop', 'mine', 'fish'). */
   startSkillAnimation(variant?: string): void {
     this.queuedState = AnimState.Skill;
@@ -1402,6 +1448,10 @@ export class CharacterEntity {
   /** Whether any one-shot animation is playing (attack/death). */
   isAnimating(): boolean {
     return this.currentState >= AnimState.Attack;
+  }
+
+  isAttackAnimationPlaying(): boolean {
+    return this.currentState === AnimState.Attack;
   }
 
   /** Wall-clock duration of a loaded animation in milliseconds (0 if unknown). */

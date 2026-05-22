@@ -18,6 +18,8 @@ export interface Tile {
    * π/2=vertical, 3π/4=BL-TR diag.
    */
   textureCutAngle: number
+  /** Signed half-paint cut offset in tile UV units. Positive makes half A larger. */
+  textureCutOffset: number
   waterPainted: boolean
   waterSurface: boolean
 }
@@ -41,6 +43,8 @@ export interface TexturePlane {
   scale: { x: number; y: number; z: number }
   uvRepeat: number
   texRotation: number
+  textureHalfMode?: boolean
+  textureCutAngle?: number
   tintColor?: { r: number; g: number; b: number }
   noRoof?: boolean
 }
@@ -78,6 +82,7 @@ function createDefaultTile(): Tile {
     textureRotationB: 0,
     textureScaleB: 1,
     textureCutAngle: DEFAULT_CUT_ANGLE,
+    textureCutOffset: 0,
     waterPainted: false,
     waterSurface: false
   }
@@ -306,6 +311,15 @@ export class MapData {
     this.terrainGeneration++
   }
 
+  clearGroundPaint(x: number, z: number, groundType: string = 'grass'): void {
+    const tile = this.getTile(x, z)
+    if (!tile) return
+    tile.ground = groundType
+    tile.groundB = null
+    tile.waterPainted = false
+    this.terrainGeneration++
+  }
+
   paintWaterSurface(x: number, z: number): void {
     const tile = this.getTile(x, z)
     if (!tile) return
@@ -332,6 +346,7 @@ export class MapData {
     tile.textureIdB = null
     tile.textureRotationB = 0
     tile.textureScaleB = 1
+    tile.textureCutOffset = 0
   }
 
   paintTextureTileFirst(x: number, z: number, textureId: string, rotation: number = 0, scale: number = 1): void {
@@ -361,6 +376,13 @@ export class MapData {
     tile.textureCutAngle = normalizeCutAngle(angle)
   }
 
+  /** Set signed half-paint cut offset. Positive makes textureId/half A larger. */
+  setTextureCutOffset(x: number, z: number, offset: number): void {
+    const tile = this.getTile(x, z)
+    if (!tile) return
+    tile.textureCutOffset = Math.max(-0.45, Math.min(0.45, Number.isFinite(offset) ? offset : 0))
+  }
+
   clearTextureTile(x: number, z: number): void {
     const tile = this.getTile(x, z)
     if (!tile) return
@@ -372,6 +394,7 @@ export class MapData {
     tile.textureIdB = null
     tile.textureRotationB = 0
     tile.textureScaleB = 1
+    tile.textureCutOffset = 0
   }
 
   clearTextureTileFirst(x: number, z: number): void {
@@ -550,6 +573,7 @@ export class MapData {
             textureRotationB: src.textureRotationB || 0,
             textureScaleB: src.textureScaleB || 1,
             textureCutAngle: cutAngle,
+            textureCutOffset: typeof (src as any).textureCutOffset === 'number' ? (src as any).textureCutOffset : 0,
             waterPainted: !!src.waterPainted || src.ground === 'water',
             waterSurface: !!src.waterSurface
           }

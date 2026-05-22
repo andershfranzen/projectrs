@@ -169,13 +169,36 @@ interface QueueItem {
 }
 
 const queue: QueueItem[] = []
+const pending = new Map<string, Promise<string | null>>()
 let processing = false
 
-function enqueue(path: string, override?: AssetThumbnailOverride): Promise<string | null> {
+function waitForIdleSlot(): Promise<void> {
   return new Promise((resolve) => {
+    const win = window as Window & {
+      requestIdleCallback?: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number
+    }
+    if (typeof win.requestIdleCallback === 'function') {
+      win.requestIdleCallback(() => resolve(), { timeout: 750 })
+      return
+    }
+    window.setTimeout(resolve, 32)
+  })
+}
+
+function enqueue(path: string, override?: AssetThumbnailOverride): Promise<string | null> {
+  const key = `${path}::${JSON.stringify(override || {})}`
+  const existing = pending.get(key)
+  if (existing) return existing
+
+  const promise = new Promise<string | null>((resolve) => {
     queue.push({ path, override, resolve })
     if (!processing) processQueue()
+  }).finally(() => {
+    pending.delete(key)
   })
+
+  pending.set(key, promise)
+  return promise
 }
 
 async function processQueue(): Promise<void> {
@@ -183,6 +206,7 @@ async function processQueue(): Promise<void> {
   while (queue.length > 0) {
     const { path, override, resolve } = queue.shift()!
     try {
+      await waitForIdleSlot()
       const url = await withTimeout(renderOne(path, override), RENDER_TIMEOUT_MS)
       resolve(url)
     } catch (err) {

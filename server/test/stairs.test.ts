@@ -48,9 +48,9 @@ describe('placed stair descent', () => {
   test('kcmap registers placed stair ramp tiles from object chunks', () => {
     const map = new GameMap('kcmap');
 
-    expect(map.getStair(155, 156)).not.toBeNull();
-    expect(map.getStair(156, 156)).not.toBeNull();
-    expect(map.getStair(157, 156)).not.toBeNull();
+    expect(map.getStair(219, 156)).not.toBeNull();
+    expect(map.getStair(220, 156)).not.toBeNull();
+    expect(map.getStair(221, 156)).not.toBeNull();
   });
 
   test('castle exterior stair rises toward the authored upper floor plane', () => {
@@ -85,10 +85,10 @@ describe('placed stair descent', () => {
 
   test('upper-floor move to a ground target near a placed stair demotes before path validation', () => {
     const map = new GameMap('kcmap');
-    const player = makePlayer(157.5, 156.5, 1, 2.5);
+    const player = makePlayer(221.5, 156.5, 1, 2.5);
     const { world, floorChanges } = makeHarness(map, player);
 
-    world.handlePlayerMove(player.id, [{ x: 160.5, z: 156.5 }]);
+    world.handlePlayerMove(player.id, [{ x: 224.5, z: 156.5 }]);
 
     expect(player.currentFloor).toBe(0);
     expect(floorChanges).toEqual([{ floor: 0, y: 25 }]);
@@ -97,10 +97,10 @@ describe('placed stair descent', () => {
 
   test('upper-floor move to a valid upstairs tile near a placed stair stays upstairs', () => {
     const map = new GameMap('kcmap');
-    const player = makePlayer(157.5, 156.5, 1, 2.5);
+    const player = makePlayer(221.5, 156.5, 1, 2.5);
     const { world, floorChanges } = makeHarness(map, player);
 
-    world.handlePlayerMove(player.id, [{ x: 158.5, z: 156.5 }]);
+    world.handlePlayerMove(player.id, [{ x: 222.5, z: 156.5 }]);
 
     expect(player.currentFloor).toBe(1);
     expect(floorChanges).toEqual([]);

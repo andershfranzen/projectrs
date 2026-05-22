@@ -67,6 +67,65 @@ function loadChunkedObjects(mapDir: string): PlacedObject[] | null {
   return objects.length > 0 ? objects : null;
 }
 
+function detectUniformNpcSpawnOffset(existing: SpawnsFile | null, incoming: SpawnsFile | undefined): { dx: number; dz: number; count: number; matched: number } | null {
+  const oldNpcs = existing?.npcs ?? [];
+  const newNpcs = incoming?.npcs ?? [];
+  if (oldNpcs.length < 5 || newNpcs.length < 5) return null;
+
+  const oldById = new Map<number, SpawnsFile['npcs'][number]>();
+  for (const spawn of oldNpcs) {
+    const id = (spawn as { id?: unknown }).id;
+    if (typeof id === 'number') oldById.set(id, spawn);
+  }
+
+  const counts = new Map<string, { dx: number; dz: number; count: number }>();
+  let matched = 0;
+  for (let i = 0; i < newNpcs.length; i++) {
+    const next = newNpcs[i];
+    const id = (next as { id?: unknown }).id;
+    const prev = typeof id === 'number' ? oldById.get(id) : oldNpcs[i];
+    if (!prev) continue;
+    const dx = Number((next.x - prev.x).toFixed(6));
+    const dz = Number((next.z - prev.z).toFixed(6));
+    if (!Number.isFinite(dx) || !Number.isFinite(dz)) continue;
+    matched++;
+    if (dx === 0 && dz === 0) continue;
+    const key = `${dx},${dz}`;
+    const entry = counts.get(key) ?? { dx, dz, count: 0 };
+    entry.count++;
+    counts.set(key, entry);
+  }
+
+  if (matched < 5) return null;
+  let best: { dx: number; dz: number; count: number } | null = null;
+  for (const entry of counts.values()) {
+    if (!best || entry.count > best.count) best = entry;
+  }
+  if (!best) return null;
+
+  const isChunkOffset = (n: number) => Math.abs(n) >= EDITOR_CHUNK_SIZE && Math.abs(n % EDITOR_CHUNK_SIZE) < 0.000001;
+  const threshold = Math.max(5, Math.floor(matched * 0.8));
+  if (best.count >= threshold && (isChunkOffset(best.dx) || isChunkOffset(best.dz))) {
+    return { ...best, matched };
+  }
+  return null;
+}
+
+function sameStringSet(a: unknown, b: unknown): boolean {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+  const set = new Set(a.filter((value): value is string => typeof value === 'string'));
+  return b.every((value) => typeof value === 'string' && set.has(value));
+}
+
+function mapShapeChanged(existing: KCMapFile | null, incoming: KCMapFile): boolean {
+  const oldMap = existing?.map;
+  const newMap = incoming.map;
+  if (!oldMap || !newMap) return false;
+  return oldMap.width !== newMap.width
+    || oldMap.height !== newMap.height
+    || !sameStringSet(oldMap.activeChunks, newMap.activeChunks);
+}
+
 /** Read + parse JSON, returning null on any failure (missing file, bad JSON, etc.). */
 async function loadJsonOrNull<T = unknown>(path: string): Promise<T | null> {
   try {
@@ -211,6 +270,7 @@ const TILE_DEFAULTS: Record<string, any> = {
   textureRotationB: 0,
   textureScaleB: 1,
   textureCutAngle: DEFAULT_CUT_ANGLE,
+  textureCutOffset: 0,
   waterPainted: false,
   waterSurface: false,
 };
@@ -903,7 +963,7 @@ function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { addres
 }
 
 function adminForbidden(): Response {
-  return new Response('Forbidden — admin authorization required', { status: 403 });
+  return jsonResponse({ ok: false, error: 'Forbidden — admin authorization required' }, 403);
 }
 
 // --- Body size limits ---
@@ -912,7 +972,7 @@ function adminForbidden(): Response {
 // oversize requests before reading the body. Streaming requests without a
 // Content-Length header are rejected outright (we don't accept chunked uploads).
 function tooLarge(): Response {
-  return new Response('Payload too large', { status: 413 });
+  return jsonResponse({ ok: false, error: 'Payload too large' }, 413);
 }
 
 /** Returns true if the request body fits within `maxBytes`. */
@@ -926,7 +986,7 @@ function bodyWithinLimit(req: Request, maxBytes: number): boolean {
 
 const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
-const BODY_LIMIT_EDITOR = 50 * 1024 * 1024; // 50 MB — full map import / save
+const BODY_LIMIT_EDITOR = 200 * 1024 * 1024; // 200 MB — full map import / save
 
 // REST/API origin allow-list. Missing Origin stays allowed here because normal
 // same-origin browser GETs often omit it. WebSocket upgrades use stricter
@@ -1700,18 +1760,29 @@ const server = Bun.serve<SocketData>({
         // Use editor's dimensions (may have changed via chunk add/remove), preserve spawn point
         const metaPath = resolve(mapDir, 'meta.json');
         const existingMeta = await loadJsonOrNull<MapMeta>(metaPath);
-        if (existingMeta?.spawnPoint) meta.spawnPoint = existingMeta.spawnPoint;
+        if (!meta.spawnPoint && existingMeta?.spawnPoint) meta.spawnPoint = existingMeta.spawnPoint;
         if (mapData.map?.width) meta.width = mapData.map.width;
         if (mapData.map?.height) meta.height = mapData.map.height;
 
         const spawnsPath = resolve(mapDir, 'spawns.json');
+        const mapJsonPath = resolve(mapDir, 'map.json');
+        const [existingSpawns, existingMapForShape] = await Promise.all([
+          loadJsonOrNull<SpawnsFile>(spawnsPath),
+          loadJsonOrNull<KCMapFile>(mapJsonPath),
+        ]);
         const mergedSpawns = {
           npcs: spawns?.npcs ?? [],
           objects: spawns?.objects ?? [],
           items: spawns?.items ?? [],
         };
+        const bulkNpcOffset = detectUniformNpcSpawnOffset(existingSpawns, mergedSpawns);
+        if (bulkNpcOffset && !mapShapeChanged(existingMapForShape, mapData)) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing to save: ${bulkNpcOffset.count}/${bulkNpcOffset.matched} NPC spawns moved by the same chunk offset (${bulkNpcOffset.dx}, ${bulkNpcOffset.dz}). Reload the editor map before saving.`,
+          }, 409);
+        }
 
-        const mapJsonPath = resolve(mapDir, 'map.json');
         let objectsToSave = mapData.placedObjects ?? [];
         // Preserve existing objects if editor sends empty (prevents accidental wipe)
         if (objectsToSave.length === 0) {
@@ -2226,7 +2297,11 @@ const server = Bun.serve<SocketData>({
         return new Response('Unauthorized', { status: 401 });
       }
       const publicAssetsDir = resolve(import.meta.dir, '../../client/public');
-      for (const baseDir of [CLIENT_DIST, publicAssetsDir]) {
+      const isBundleRequest = decodedPath.endsWith('.js') || decodedPath.endsWith('.css');
+      const baseDirs = isBundleRequest
+        ? [CLIENT_DIST, publicAssetsDir]
+        : [publicAssetsDir, CLIENT_DIST];
+      for (const baseDir of baseDirs) {
         const filePath = resolvePossiblyMissingWithinBase(baseDir, decodedPath.slice(1));
         if (!filePath) continue;
         try {

@@ -311,6 +311,20 @@ function handleCommand(
       break;
     }
 
+    case '/copygeartonpc':
+    case '/copyplayergeartonpc':
+    case '/equipnpc': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'Player not online.');
+        return;
+      }
+      const result = world.copyPlayerGearToNearestNpcSpawn(player);
+      sendSystem(ws, result.message);
+      break;
+    }
+
     case '/bank': {
       // Test hook for the bank UI until the banker NPC ships. Admin-only so
       // regular players can't bypass having to walk to a bank.

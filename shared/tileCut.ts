@@ -109,11 +109,11 @@ export function transformOverlayUV(u: number, v: number, rotationMod4: number, s
  * (cos angle, sin angle); the normal that defines HALF_A is rotated +π/2
  * from the line direction.
  */
-export function cutSideOf(u: number, v: number, angle: number): CutHalf {
+export function cutSideOf(u: number, v: number, angle: number, offset = 0): CutHalf {
   const a = normalizeCutAngle(angle)
   const nu = -Math.sin(a)
   const nv =  Math.cos(a)
-  const d = (u - 0.5) * nu + (v - 0.5) * nv
+  const d = (u - 0.5) * nu + (v - 0.5) * nv + offset
   return d >= 0 ? 'A' : 'B'
 }
 
@@ -136,16 +136,17 @@ const CORNERS: readonly UVPoint[] = [CORNER_TL, CORNER_TR, CORNER_BR, CORNER_BL]
  * For diagonal cuts that pass through corners exactly, those corners are
  * treated as the endpoints.
  */
-export function computeCutPolygons(angle: number): CutPolygons {
+export function computeCutPolygons(angle: number, offset = 0): CutPolygons {
   const a = normalizeCutAngle(angle)
   const nu = -Math.sin(a)
   const nv =  Math.cos(a)
+  const o = Math.max(-0.49, Math.min(0.49, Number.isFinite(offset) ? offset : 0))
 
   // Signed distance from cut line for each corner. Positive = HALF_A side.
-  const sd0 = (-0.5) * nu + (-0.5) * nv  // TL
-  const sd1 = ( 0.5) * nu + (-0.5) * nv  // TR
-  const sd2 = ( 0.5) * nu + ( 0.5) * nv  // BR
-  const sd3 = (-0.5) * nu + ( 0.5) * nv  // BL
+  const sd0 = (-0.5) * nu + (-0.5) * nv + o  // TL
+  const sd1 = ( 0.5) * nu + (-0.5) * nv + o  // TR
+  const sd2 = ( 0.5) * nu + ( 0.5) * nv + o  // BR
+  const sd3 = (-0.5) * nu + ( 0.5) * nv + o  // BL
   const sd = [sd0, sd1, sd2, sd3]
 
   const EPS = 1e-9

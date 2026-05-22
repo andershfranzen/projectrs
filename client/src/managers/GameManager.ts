@@ -356,6 +356,8 @@ export class GameManager {
   private mobileEvilMagicCurrent: number = 1;
   private mobileEvilMagicMax: number = 1;
   private gearDebugPanel: GearDebugPanel | null = null;
+  private gearDebugTargetMode: 'player' | 'npc' = 'player';
+  private gearDebugNpcTargetId: number = -1;
   private boneDebugPanel: BoneDebugPanel | null = null;
   private shopPanel: ShopPanel | null = null;
   private dialoguePanel: DialoguePanel | null = null;
@@ -683,6 +685,8 @@ export class GameManager {
     // Game loop
     let lastTime = performance.now();
     this.engine.runRenderLoop(() => {
+      const now = performance.now();
+
       // Belt-and-suspenders resize: if the canvas CSS size drifted from the render
       // buffer size (e.g. ResizeObserver was throttled or the container reflowed
       // mid-frame), fix it here before rendering.
@@ -693,7 +697,6 @@ export class GameManager {
         this.handleViewportResize();
       }
 
-      const now = performance.now();
       const dt = Math.min((now - lastTime) / 1000, MAX_FRAME_DT_SECONDS);
       lastTime = now;
       this.update(dt);
@@ -1742,6 +1745,45 @@ export class GameManager {
     await this.applyGearToCharacter(this.localPlayer, slotName, itemId, /* isLocal */ true, this.localPlayerId);
   }
 
+  private applyGearOverrideTransform(character: CharacterEntity, slotName: string, itemId: number, override: GearOverride): void {
+    if (character.getGearItemId(slotName) !== itemId) return;
+    if (character.getSkinnedArmorMeshes(slotName)) {
+      character.applySkinnedArmorTransform(slotName, override);
+      return;
+    }
+
+    const node = character.getGearNode(slotName);
+    if (!node) return;
+    node.rotationQuaternion = null;
+    if (override.localPosition) {
+      node.position.set(override.localPosition.x, override.localPosition.y, override.localPosition.z);
+    }
+    if (override.localRotation) {
+      node.rotation.set(override.localRotation.x, override.localRotation.y, override.localRotation.z);
+    }
+    if (override.scale != null) {
+      node.scaling.set(override.scale, override.scale, override.scale);
+    }
+  }
+
+  private refreshEquippedGearOverride(itemId: number, override: GearOverride): void {
+    const itemDef = this.itemDefsCache.get(itemId);
+    const slotName = itemDef?.equipSlot;
+    if (!slotName) return;
+
+    if (this.localPlayer) {
+      this.applyGearOverrideTransform(this.localPlayer, slotName, itemId, override);
+    }
+    for (const character of this.entities.remotePlayers.values()) {
+      this.applyGearOverrideTransform(character, slotName, itemId, override);
+    }
+    for (const npc of this.entities.npcSprites.values()) {
+      if (npc instanceof CharacterEntity) {
+        this.applyGearOverrideTransform(npc, slotName, itemId, override);
+      }
+    }
+  }
+
   private nextGearApplyGuard(target: CharacterEntity, slotName: string, entityId?: number): GearApplyGuard {
     let perTarget = this.gearApplySeq.get(target);
     if (!perTarget) {
@@ -1753,8 +1795,9 @@ export class GameManager {
     return () => {
       if (perTarget!.get(slotName) !== seq) return false;
       if (entityId === undefined) return true;
-      if (entityId === this.localPlayerId) return this.localPlayer === target;
-      return this.entities.remotePlayers.get(entityId) === target;
+      if (this.localPlayer === target) return entityId === this.localPlayerId;
+      return this.entities.remotePlayers.get(entityId) === target
+        || this.entities.npcSprites.get(entityId) === target;
     };
   }
 
@@ -1945,6 +1988,10 @@ export class GameManager {
         if (ok) {
           const loaderRoot = result.meshes.find(m => m.name === '__root__');
           if (loaderRoot) loaderRoot.dispose();
+          const override = this.gearOverrides.get(itemId);
+          if (override) {
+            character.applySkinnedArmorTransform(slotName, override);
+          }
           return null;
         }
       }
@@ -2382,7 +2429,7 @@ export class GameManager {
         } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
           this.localPlayer.playNamedOneShot('spell_cast_2h');
         } else if (kind === PlayerAnimationKind.Idle && this.localPlayer) {
-          this.localPlayer.resetTransientAnimation();
+          if (!this.localPlayer.isAttackAnimationPlaying()) this.localPlayer.resetTransientAnimation();
         }
         return;
       }
@@ -2410,6 +2457,7 @@ export class GameManager {
         prevX: prev ? prev.x : x,
         prevZ: prev ? prev.z : z,
         t: performance.now(),
+        continueWalking: (v[8] ?? 0) === 1,
       });
 
       const sprite = this.entities.npcSprites.get(entityId);
@@ -2465,7 +2513,7 @@ export class GameManager {
       this.entities.npcEquipment.set(entityId, slots);
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
-        this.applyRemoteEquipmentArray(sprite, slots);
+        this.applyRemoteEquipmentArray(sprite, slots, entityId);
       }
     });
 
@@ -4754,7 +4802,7 @@ export class GameManager {
     if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
     this.localPlayer?.clearFaceLock();
-    if (this.localPlayer?.isAnimating()) this.localPlayer.resetTransientAnimation();
+    if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
     this.path = path;
     this.pathIndex = 0;
     if (preserveCurrentStep && activeStep && this.sameTile(path[0], activeStep.target)) {
@@ -5032,19 +5080,31 @@ export class GameManager {
     }
 
     if (import.meta.env.DEV) {
-    if (msg === '/geardebug') {
+    if (msg === '/geardebug' || msg === '/geardebug player' || msg === '/geardebug npc') {
+      this.gearDebugTargetMode = msg === '/geardebug npc' ? 'npc' : 'player';
+      if (this.gearDebugTargetMode === 'npc') {
+        const target = this.getNearestHumanoidNpcEntryForGearDebug();
+        if (!target) {
+          this.gearDebugNpcTargetId = -1;
+          this.chatPanel?.addSystemMessage('No loaded humanoid NPC nearby for /geardebug npc.');
+          return true;
+        }
+        this.gearDebugNpcTargetId = target.entityId;
+      } else {
+        this.gearDebugNpcTargetId = -1;
+      }
       if (!this.gearDebugPanel) {
         this.gearDebugPanel = new GearDebugPanel();
-        this.gearDebugPanel.setSlotGetter((slot) => this.localPlayer?.getGearNode?.(slot) ?? null);
+        this.gearDebugPanel.setSlotGetter((slot) => this.getGearDebugCharacter()?.getGearNode?.(slot) ?? null);
         this.gearDebugPanel.setSlotBoneGetter((slot) => EQUIP_SLOT_BONES[slot]?.boneName ?? '');
         this.gearDebugPanel.setItemInfoGetter((slot) => {
-          const itemId = this.localPlayer?.getGearItemId(slot) ?? -1;
+          const itemId = this.getGearDebugCharacter()?.getGearItemId(slot) ?? -1;
           if (itemId < 0) return null;
           const def = this.itemDefsCache.get(itemId);
           return { id: itemId, name: def?.name ?? `item ${itemId}`, toolType: def?.toolType };
         });
         this.gearDebugPanel.setOverrideGetter((itemId) => this.gearOverrides.get(itemId) ?? null);
-        this.gearDebugPanel.setSkinnedChecker((slot) => this.localPlayer?.getSkinnedArmorMeshes?.(slot) != null);
+        this.gearDebugPanel.setSkinnedChecker((slot) => this.getGearDebugCharacter()?.getSkinnedArmorMeshes?.(slot) != null);
         this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('projectrs_token') || '');
         this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
           this.gearOverrides.set(itemId, override);
@@ -5060,8 +5120,10 @@ export class GameManager {
             body: JSON.stringify(all),
           });
           if (!res.ok) throw new Error('Server returned ' + res.status);
-          const slotName = EQUIP_SLOT_NAMES.find(s => this.localPlayer?.getGearItemId(s) === itemId);
+          const target = this.getGearDebugCharacter();
+          const slotName = EQUIP_SLOT_NAMES.find(s => target?.getGearItemId(s) === itemId);
           if (slotName) this.gearTemplateCache.delete(`${slotName}/${itemId}`);
+          this.refreshEquippedGearOverride(itemId, override);
         });
         this.gearDebugPanel.setBulkSaveCallback(async (sourceItemId, slot, override) => {
           const targets = [...this.itemDefsCache.values()]
@@ -5095,10 +5157,15 @@ export class GameManager {
             body: JSON.stringify(all),
           });
           if (!res.ok) throw new Error('Server returned ' + res.status);
+          for (const def of targets) {
+            const nextOverride = this.gearOverrides.get(def.id);
+            if (nextOverride) this.refreshEquippedGearOverride(def.id, nextOverride);
+          }
           return targets.length;
         });
         this.gearDebugPanel.setLoadGlbCallback(async (slot, path) => {
-          if (!this.localPlayer) throw new Error('No local player');
+          const target = this.getGearDebugCharacter();
+          if (!target) throw new Error(this.gearDebugTargetMode === 'npc' ? 'No humanoid NPC target' : 'No local player');
           const boneConfig = EQUIP_SLOT_BONES[slot];
           if (!boneConfig) throw new Error('Unknown slot: ' + slot);
 
@@ -5109,9 +5176,9 @@ export class GameManager {
           const hasSkeleton = result.skeletons.length > 0;
 
           if (hasSkeleton) {
-            this.localPlayer.detachGear(slot);
+            target.detachGear(slot);
 
-            this.localPlayer.attachSkinnedArmor(slot, result.meshes, result.skeletons[0]);
+            target.attachSkinnedArmor(slot, result.meshes, result.skeletons[0]);
             const loaderRoot = result.meshes.find(m => m.name === '__root__');
             if (loaderRoot) loaderRoot.dispose();
           } else {
@@ -5126,34 +5193,47 @@ export class GameManager {
             };
             const tmpl = await loadGearTemplate(this.scene, gearDef);
             if (!tmpl) throw new Error('Failed to load ' + path);
-            this.localPlayer.attachGear(slot, -999, tmpl);
+            target.attachGear(slot, -999, tmpl);
           }
         });
         this.gearDebugPanel.setUnequipCallback((slot) => {
-          if (!this.localPlayer) return;
-          this.localPlayer.detachGear(slot);
-          this.localPlayer.detachSkinnedArmor(slot);
+          const target = this.getGearDebugCharacter();
+          if (!target) return;
+          target.detachGear(slot);
+          target.detachSkinnedArmor(slot);
         });
         this.gearDebugPanel.setAnimCallback((anim) => {
-          if (!this.localPlayer) return;
+          const target = this.getGearDebugCharacter();
+          if (!target) return;
           if (anim === 'idle') {
-            this.localPlayer.stopWalking();
-            this.localPlayer.stopSkillAnimation();
+            target.stopWalking();
+            target.stopSkillAnimation();
           } else if (anim === 'walk') {
-            this.localPlayer.startWalking();
+            target.startWalking();
           } else if (anim === 'attack') {
-            this.localPlayer.playAttackAnimation();
+            target.playAttackAnimation();
           } else if (anim === 'chop') {
-            this.localPlayer.startSkillAnimation('chop');
+            target.startSkillAnimation('chop');
           } else if (anim === 'mine') {
-            this.localPlayer.startSkillAnimation('mine');
+            target.startSkillAnimation('mine');
           }
         });
       }
       this.gearDebugPanel.toggle();
-      if (this.gearDebugPanel.isVisible) this.camera.enterDebugZoom();
-      else this.camera.exitDebugZoom();
+      if (this.gearDebugPanel.isVisible) {
+        this.camera.enterDebugZoom();
+        this.chatPanel?.addSystemMessage(`Gear debug target: ${this.gearDebugTargetMode === 'npc' ? 'nearest humanoid NPC' : 'player'}.`);
+      } else {
+        this.camera.exitDebugZoom();
+      }
       return true;
+    }
+    if (msg === '/copygearfitnpc') {
+      this.copyLocalGearFitToNearestNpc();
+      return true;
+    }
+    if (msg === '/copyplayergeartonpc') {
+      return false;
     }
     if (msg === '/scenebudget') {
       logSceneBudget(this.scene);
@@ -5258,6 +5338,98 @@ export class GameManager {
       const names = this.localPlayer.getAnimationNames();
       this.chatPanel?.addSystemMessage(`Unknown animation '${animName}'. Available: ${names.join(', ')}`);
     }
+  }
+
+  private getNearestHumanoidNpcForGearDebug(): CharacterEntity | null {
+    return this.getNearestHumanoidNpcEntryForGearDebug()?.npc ?? null;
+  }
+
+  private getNearestHumanoidNpcEntryForGearDebug(): { entityId: number; npc: CharacterEntity } | null {
+    if (!this.localPlayer) return null;
+    let best: CharacterEntity | null = null;
+    let bestId = -1;
+    let bestDist = Infinity;
+    for (const [entityId, sprite] of this.entities.npcSprites) {
+      if (!(sprite instanceof CharacterEntity)) continue;
+      const dist = Vector3.DistanceSquared(this.localPlayer.position, sprite.position);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestId = entityId;
+        best = sprite;
+      }
+    }
+    return best ? { entityId: bestId, npc: best } : null;
+  }
+
+  private getGearDebugCharacter(): CharacterEntity | null {
+    if (this.gearDebugTargetMode !== 'npc') return this.localPlayer;
+    const cached = this.entities.npcSprites.get(this.gearDebugNpcTargetId);
+    if (cached instanceof CharacterEntity) return cached;
+    const nearest = this.getNearestHumanoidNpcEntryForGearDebug();
+    this.gearDebugNpcTargetId = nearest?.entityId ?? -1;
+    return nearest?.npc ?? null;
+  }
+
+  private copyLocalGearFitToNearestNpc(): void {
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+    const npc = this.getNearestHumanoidNpcForGearDebug();
+    if (!npc) {
+      this.chatPanel?.addSystemMessage('No loaded humanoid NPC nearby.');
+      return;
+    }
+
+    let copied = 0;
+    for (const slot of EQUIP_SLOT_NAMES) {
+      const playerItemId = this.localPlayer.getGearItemId(slot);
+      const npcItemId = npc.getGearItemId(slot);
+      if (playerItemId <= 0 || playerItemId !== npcItemId) continue;
+
+      const source = this.localPlayer.getGearNode(slot);
+      const target = npc.getGearNode(slot);
+      if (!source || !target) continue;
+
+      target.position.copyFrom(source.position);
+      target.rotationQuaternion = null;
+      target.rotation.copyFrom(source.rotation);
+      target.scaling.copyFrom(source.scaling);
+      copied++;
+    }
+
+    this.chatPanel?.addSystemMessage(copied > 0
+      ? `Copied ${copied} matching player gear fit(s) to nearest humanoid NPC.`
+      : 'No matching equipped gear between player and nearest humanoid NPC.');
+  }
+
+  private async copyLocalGearToNearestNpc(): Promise<void> {
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+    const target = this.getNearestHumanoidNpcEntryForGearDebug();
+    if (!target) {
+      this.chatPanel?.addSystemMessage('No loaded humanoid NPC nearby.');
+      return;
+    }
+
+    const slots = EQUIP_SLOT_NAMES.map((slot) => {
+      const itemId = this.localPlayer!.getGearItemId(slot);
+      return itemId > 0 ? itemId : 0;
+    });
+    if (!slots.some(itemId => itemId > 0)) {
+      this.chatPanel?.addSystemMessage('Player has no visible gear to copy.');
+      return;
+    }
+
+    this.entities.npcEquipment.set(target.entityId, slots);
+    this.applyRemoteEquipmentArray(target.npc, slots, target.entityId);
+    this.chatPanel?.addSystemMessage('Copied player equipment ids to nearest humanoid NPC locally.');
+
+    const copyFit = () => this.copyLocalGearFitToNearestNpc();
+    window.setTimeout(copyFit, 400);
+    window.setTimeout(copyFit, 1200);
   }
 
   /**
@@ -5890,7 +6062,7 @@ export class GameManager {
         character.applyAppearance(appearance, custom ?? null);
       }
       const eq = this.entities.npcEquipment.get(entityId);
-      if (eq) this.applyRemoteEquipmentArray(character, eq);
+      if (eq) this.applyRemoteEquipmentArray(character, eq, entityId);
     };
 
     if (character.isReady) apply();

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -14,7 +14,8 @@ import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } f
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
-import { readdirSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
+import { resolve } from 'path';
 import type { ServerWebSocket } from 'bun';
 
 /** Map string IDs to small integers for blockedObjectTiles encoding */
@@ -76,6 +77,7 @@ const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = 800;
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
 const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 
 export interface GroundItem {
   id: number;
@@ -103,6 +105,13 @@ interface RuntimeObjectSpawn {
   trigger?: WorldObject['trigger'];
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
+}
+
+type MutableNpcSpawn = SpawnEntry & { id?: number };
+
+export interface NpcGearPersistResult {
+  ok: boolean;
+  message: string;
 }
 
 type DialogueScheduledStep =
@@ -6422,14 +6431,39 @@ export class World {
    *  transitions still go through MAP_CHANGE (handleMapTransition). */
   teleportPlayer(player: Player, x: number, z: number, forcedY?: number, forcedFloor?: number): void {
     const mapId = player.currentMapLevel;
+    const map = this.getPlayerMap(player);
+    let targetX = x;
+    let targetZ = z;
+    let targetFloor = forcedFloor !== undefined ? Math.max(0, Math.floor(forcedFloor)) : player.currentFloor;
+    let forceFloorChange = forcedFloor !== undefined;
+    const tx = Math.floor(targetX);
+    const tz = Math.floor(targetZ);
+    const destinationValid = Number.isFinite(targetX)
+      && Number.isFinite(targetZ)
+      && Number.isFinite(targetFloor)
+      && targetX >= 0
+      && targetX < map.width
+      && targetZ >= 0
+      && targetZ < map.height
+      && !map.isTileBlockedOnFloor(tx, tz, targetFloor);
+    if (!destinationValid) {
+      const fallback = map.findSpawnPoint();
+      console.warn(`[teleportPlayer] invalid target (${x},${z}, floor=${forcedFloor ?? player.currentFloor}) on ${mapId}; using spawn (${fallback.x},${fallback.z})`);
+      targetX = fallback.x;
+      targetZ = fallback.z;
+      targetFloor = 0;
+      forceFloorChange = true;
+      forcedY = undefined;
+    }
+
     const cm = this.chunkManagers.get(mapId);
     if (cm) cm.removeEntity(player.id);
-    if (forcedFloor !== undefined) {
-      player.currentFloor = Math.max(0, Math.floor(forcedFloor));
+    if (forceFloorChange) {
+      player.currentFloor = targetFloor;
       player.lastFloorChangeTile = -1;
     }
-    player.position.x = x;
-    player.position.y = z;
+    player.position.x = targetX;
+    player.position.y = targetZ;
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearPendingObjectIntents(player);
@@ -6441,18 +6475,17 @@ export class World {
     player.actionDelay = 0;
     this.cancelSkilling(player.id);
     this.clearCombatTarget(player.id);
-    player.currentChunkX = Math.floor(x / CHUNK_SIZE);
-    player.currentChunkZ = Math.floor(z / CHUNK_SIZE);
-    if (cm) cm.addEntity(player.id, x, z);
+    player.currentChunkX = Math.floor(targetX / CHUNK_SIZE);
+    player.currentChunkZ = Math.floor(targetZ / CHUNK_SIZE);
+    if (cm) cm.addEntity(player.id, targetX, targetZ);
     // Compute server-authoritative Y at the destination. Forced floor changes
     // deliberately bypass the elevated-plane auto-snap so commands like
     // /spawn can put a player back on the ground under a two-story building.
-    const map = this.getPlayerMap(player);
     let teleportY = forcedY;
     if (teleportY == null) {
-      const heightGateY = forcedFloor === 0 ? undefined : player.reportedY;
-      teleportY = map.getEffectiveHeightOnFloor(x, z, player.currentFloor, heightGateY);
-      const elevAtTile = forcedFloor === undefined ? map.getElevatedFloorHeight(x, z) : undefined;
+      const heightGateY = forceFloorChange && player.currentFloor === 0 ? undefined : player.reportedY;
+      teleportY = map.getEffectiveHeightOnFloor(targetX, targetZ, player.currentFloor, heightGateY);
+      const elevAtTile = !forceFloorChange ? map.getElevatedFloorHeight(targetX, targetZ) : undefined;
       if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && teleportY < elevAtTile - 1.0) {
         teleportY = elevAtTile;
       }
@@ -6461,8 +6494,8 @@ export class World {
     player.effectiveY = teleportY;
     const packet = encodePacket(
       ServerOpcode.PLAYER_TELEPORT,
-      qPos(x),
-      qPos(z),
+      qPos(targetX),
+      qPos(targetZ),
       qPos(teleportY),
       player.currentFloor,
     );
@@ -6481,13 +6514,22 @@ export class World {
     // a negative value, or a coordinate past the map edge, which would put the
     // player on an unloadable tile. Fall back to the map's spawn point if so.
     const targetMapObj = this.maps.get(newMap)!;
-    const tx = transition.targetX;
-    const tz = transition.targetZ;
-    const txValid = typeof tx === 'number' && isFinite(tx) && tx >= 0 && tx < targetMapObj.width;
-    const tzValid = typeof tz === 'number' && isFinite(tz) && tz >= 0 && tz < targetMapObj.height;
-    if (!txValid || !tzValid) {
+    const targetX = transition.targetX;
+    const targetZ = transition.targetZ;
+    const tileX = Math.floor(targetX);
+    const tileZ = Math.floor(targetZ);
+    const targetValid = typeof targetX === 'number'
+      && isFinite(targetX)
+      && typeof targetZ === 'number'
+      && isFinite(targetZ)
+      && targetX >= 0
+      && targetX < targetMapObj.width
+      && targetZ >= 0
+      && targetZ < targetMapObj.height
+      && !targetMapObj.isBlocked(tileX, tileZ);
+    if (!targetValid) {
       const fallback = targetMapObj.findSpawnPoint();
-      console.warn(`[handleMapTransition] invalid target (${tx},${tz}) on ${newMap}; using spawn (${fallback.x},${fallback.z})`);
+      console.warn(`[handleMapTransition] invalid target (${targetX},${targetZ}) on ${newMap}; using spawn (${fallback.x},${fallback.z})`);
       transition = { targetMap: newMap, targetX: fallback.x, targetZ: fallback.z };
     }
 
@@ -6630,6 +6672,7 @@ export class World {
           npc.id, npc.npcId, sx, sz, npc.health, npc.maxHealth,
           npc.currentFloor,
           qPos(this.npcWorldY(npc)),
+          this.npcWillContinueWalking(npc) ? 1 : 0,
         ));
       }
     }
@@ -6781,6 +6824,13 @@ export class World {
     this.sendRemoteAnimation(viewer, subject);
   }
 
+  private npcWillContinueWalking(npc: Npc): boolean {
+    if (npc.pathQueue.length > 0) return true;
+    if (!npc.combatTarget) return false;
+    const fp = npc.distToFootprint(npc.combatTarget.position.x, npc.combatTarget.position.y);
+    return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE;
+  }
+
   private sendNpcUpdate(viewer: Player, npc: Npc): void {
     if (!this.canPlayerTargetNpc(viewer, npc)) return;
     this.sendToPlayer(viewer, ServerOpcode.NPC_SYNC,
@@ -6792,6 +6842,7 @@ export class World {
       npc.maxHealth,
       npc.currentFloor,
       qPos(this.npcWorldY(npc)),
+      this.npcWillContinueWalking(npc) ? 1 : 0,
     );
   }
 
@@ -7064,8 +7115,12 @@ export class World {
   private persistAndBroadcastDepletion(obj: WorldObject): void {
     if (obj.depleted) return;
     obj.deplete();
-    this.depletedObjectIds.add(obj.id);
-    this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, Date.now() + obj.respawnTimer * TICK_RATE);
+    if (obj.respawnTimer > 0) {
+      this.depletedObjectIds.add(obj.id);
+      this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, Date.now() + obj.respawnTimer * TICK_RATE);
+    } else {
+      this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+    }
     this.broadcastWorldObjectStateChange(obj);
   }
 
@@ -7078,6 +7133,98 @@ export class World {
 
   getPlayer(id: number): Player | undefined {
     return this.players.get(id);
+  }
+
+  copyPlayerGearToNearestNpcSpawn(player: Player, maxDistance: number = 8): NpcGearPersistResult {
+    const equipment = EQUIPMENT_SLOT_NAMES.map((slot) => player.equipment.get(slot) ?? 0);
+    if (!equipment.some((itemId) => itemId > 0)) {
+      return { ok: false, message: 'You have no equipped gear to copy.' };
+    }
+
+    let nearest: Npc | null = null;
+    let nearestDistSq = Infinity;
+    for (const [, npc] of this.npcs) {
+      if (npc.currentMapLevel !== player.currentMapLevel) continue;
+      const dx = npc.position.x - player.position.x;
+      const dz = npc.position.y - player.position.y;
+      const distSq = dx * dx + dz * dz;
+      if (distSq < nearestDistSq) {
+        nearest = npc;
+        nearestDistSq = distSq;
+      }
+    }
+
+    if (!nearest || nearestDistSq > maxDistance * maxDistance) {
+      return { ok: false, message: `No NPC found within ${maxDistance} tiles.` };
+    }
+
+    const spawnsPath = resolve(MAPS_DIR, player.currentMapLevel, 'spawns.json');
+    let spawnsFile: { npcs?: MutableNpcSpawn[]; objects?: unknown[]; items?: unknown[] };
+    try {
+      spawnsFile = JSON.parse(readFileSync(spawnsPath, 'utf-8')) as typeof spawnsFile;
+    } catch (e) {
+      return { ok: false, message: `Could not read ${player.currentMapLevel}/spawns.json: ${e instanceof Error ? e.message : e}` };
+    }
+
+    const spawns = spawnsFile.npcs ?? [];
+    const spawn = this.findSpawnForRuntimeNpc(spawns, nearest);
+    if (!spawn) {
+      return { ok: false, message: `Could not match ${nearest.name} at ${nearest.spawnX.toFixed(1)}, ${nearest.spawnZ.toFixed(1)} to a saved spawn.` };
+    }
+
+    const appearance = isValidAppearance(player.appearance ?? DEFAULT_APPEARANCE)
+      ? { ...(player.appearance ?? DEFAULT_APPEARANCE) }
+      : { ...DEFAULT_APPEARANCE };
+
+    spawn.appearance = spawn.appearance && isValidAppearance(spawn.appearance)
+      ? spawn.appearance
+      : appearance;
+    spawn.equipment = equipment;
+
+    nearest.appearance = spawn.appearance;
+    nearest.equipment = equipment;
+
+    try {
+      const backupDir = resolve(MAPS_DIR, player.currentMapLevel, 'backups', 'npc-gear');
+      mkdirSync(backupDir, { recursive: true });
+      copyFileSync(spawnsPath, resolve(backupDir, `spawns.${new Date().toISOString().replace(/[:.]/g, '-')}.json`));
+      writeFileSync(spawnsPath, `${JSON.stringify(spawnsFile, null, 2)}\n`, 'utf-8');
+    } catch (e) {
+      return { ok: false, message: `Could not write ${player.currentMapLevel}/spawns.json: ${e instanceof Error ? e.message : e}` };
+    }
+
+    this.broadcastNpcStaticData(nearest);
+    const spawnLabel = spawn.id != null ? `spawn ${spawn.id}` : `${nearest.spawnX.toFixed(1)}, ${nearest.spawnZ.toFixed(1)}`;
+    return {
+      ok: true,
+      message: `Saved ${equipment.filter((itemId) => itemId > 0).length} equipped item(s) to ${nearest.name} (${spawnLabel}) in ${player.currentMapLevel}.`,
+    };
+  }
+
+  private findSpawnForRuntimeNpc(spawns: MutableNpcSpawn[], npc: Npc): MutableNpcSpawn | null {
+    let best: MutableNpcSpawn | null = null;
+    let bestScore = Infinity;
+    for (const spawn of spawns) {
+      if (spawn.npcId !== npc.npcId) continue;
+      const dx = spawn.x - npc.spawnX;
+      const dz = spawn.z - npc.spawnZ;
+      const score = dx * dx + dz * dz;
+      if (score < bestScore) {
+        best = spawn;
+        bestScore = score;
+      }
+    }
+    return bestScore <= 0.05 * 0.05 ? best : null;
+  }
+
+  private broadcastNpcStaticData(npc: Npc): void {
+    const cm = this.chunkManagers.get(npc.currentMapLevel);
+    if (!cm) return;
+    cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
+      const viewer = this.players.get(pid);
+      if (!viewer || viewer.disconnected || viewer.currentMapLevel !== npc.currentMapLevel) return;
+      this.sendNpcStaticData(viewer, npc);
+    });
   }
 
   /** Convenience: get the default ('kcmap') map. Used by legacy callers

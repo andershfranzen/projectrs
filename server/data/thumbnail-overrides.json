@@ -531,6 +531,15 @@
     "rotationZ": -0.12217304763960307,
     "iconScale": 1.1
   },
+  "241": {
+    "alpha": -1.5707963267948966,
+    "beta": 0.8203047484373349,
+    "distanceMult": 0.8,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1.08
+  },
   "_doc": "Thumbnail tuning. Top-level numeric keys are item IDs ({ alpha, beta, distanceMult, rotationY } in radians/multipliers) consumed by client/src/rendering/ItemIcon.ts. The _thumbnail_assets object is keyed by asset path ({ alpha, beta, distanceMult, rotationY }) and consumed by editor/src/assets-system/ThumbnailRenderer.ts. Underscore-prefixed top-level keys are ignored by the item loader.",
   "_example_31": {
     "alpha": -0.8,

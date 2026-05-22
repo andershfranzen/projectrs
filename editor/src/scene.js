@@ -4,6 +4,7 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera'
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight'
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
+import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
@@ -49,6 +50,7 @@ import {
   localAdjacentTilesOrdered,
   ASSET_TO_OBJECT_DEF,
   NPC_COMBAT_ANIMATIONS,
+  deriveUpperFloorTilesFromPlanes,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -408,7 +410,10 @@ function tuneModelLighting(model) {
       // Force detach so applyEquipmentToPreview re-attaches with new offsets
       // (its short-circuit "already wearing this item" check would otherwise
       // skip the reload).
-      for (const slot of EDITOR_EQUIP_SLOT_ORDER) entry.entity.detachGear(slot)
+      for (const slot of EDITOR_EQUIP_SLOT_ORDER) {
+        entry.entity.detachGear(slot)
+        entry.entity.detachSkinnedArmor(slot)
+      }
       void applyEquipmentToPreview(spawn, entry)
     }
   }
@@ -446,17 +451,158 @@ function tuneModelLighting(model) {
   /** PLAYER_REMOTE_EQUIPMENT index order — matches both
    *  EQUIP_SLOT_NAMES (client) and the spawn.equipment array stored on disk. */
   const EDITOR_EQUIP_SLOT_ORDER = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape']
+  const EDITOR_SKINNED_GEAR_SLOTS = new Set(['body', 'legs', 'hands', 'feet'])
+
+  function disposeImportedGearResult(result) {
+    for (const group of result.animationGroups ?? []) group.dispose()
+    for (const skeleton of result.skeletons ?? []) skeleton.dispose()
+    for (const mesh of result.meshes ?? []) mesh.dispose()
+  }
+
+  function flattenPreviewGearMaterials(meshes) {
+    for (const mesh of meshes) {
+      const pbrMat = mesh.material
+      if (!pbrMat || !pbrMat.getClassName || pbrMat.getClassName() !== 'PBRMaterial') continue
+      const flat = new StandardMaterial(`${pbrMat.name}_flat`, scene)
+      if (pbrMat.albedoTexture) flat.diffuseTexture = pbrMat.albedoTexture
+      if (pbrMat.albedoColor) {
+        const b = 1.3
+        flat.diffuseColor = new Color3(
+          Math.min(1, pbrMat.albedoColor.r * b),
+          Math.min(1, pbrMat.albedoColor.g * b),
+          Math.min(1, pbrMat.albedoColor.b * b),
+        )
+      }
+      flat.specularColor = Color3.Black()
+      const dc = flat.diffuseColor
+      flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55)
+      flat.backFaceCulling = pbrMat.backFaceCulling ?? true
+      mesh.material = flat
+    }
+  }
+
+  function buildGearTemplateFromImportedResult(result, def) {
+    const root = new TransformNode(`gearTemplate_${def.itemId}`, scene)
+    for (const mesh of result.meshes) {
+      if (!mesh.parent || mesh.parent.name === '__root__') mesh.parent = root
+    }
+
+    if (!def.centerOrigin) {
+      let minY = Infinity
+      for (const mesh of result.meshes) {
+        if (mesh.getTotalVertices && mesh.getTotalVertices() === 0) continue
+        mesh.computeWorldMatrix(true)
+        const bb = mesh.getBoundingInfo().boundingBox
+        minY = Math.min(minY, bb.minimumWorld.y)
+      }
+      if (isFinite(minY)) {
+        for (const mesh of result.meshes) mesh.position.y -= minY
+      }
+    }
+
+    root.setEnabled(false)
+    for (const child of root.getChildMeshes()) child.setEnabled(false)
+    return {
+      template: root,
+      boneName: def.boneName,
+      localPosition: new Vector3(def.localPosition?.x ?? 0, def.localPosition?.y ?? 0, def.localPosition?.z ?? 0),
+      localRotation: new Vector3(def.localRotation?.x ?? 0, def.localRotation?.y ?? 0, def.localRotation?.z ?? 0),
+      scale: def.scale ?? 1,
+    }
+  }
+
+  async function loadGearSmartForPreview(spawn, entry, slot, itemId, def) {
+    const stillCurrent = () => npcPreviews.get(spawn.id) === entry
+      && Array.isArray(spawn.equipment)
+      && spawn.equipment[EDITOR_EQUIP_SLOT_ORDER.indexOf(slot)] === itemId
+
+    try {
+      const lastSlash = def.file.lastIndexOf('/')
+      const dir = def.file.substring(0, lastSlash + 1)
+      const file = def.file.substring(lastSlash + 1)
+      const result = await SceneLoader.ImportMeshAsync('', dir, file, scene)
+      if (!stillCurrent()) {
+        disposeImportedGearResult(result)
+        return null
+      }
+
+      const itemDef = itemDefs.find(d => d.id === itemId)
+      const bodyHideStyle = itemDef?.bodyHideStyle === 'chain' ? 'chain' : 'plate'
+
+      if (result.skeletons.length === 0 && EDITOR_SKINNED_GEAR_SLOTS.has(slot)) {
+        const ok = await entry.entity.attachManualSkinnedArmor(slot, def.file, result.meshes, itemId, bodyHideStyle, stillCurrent)
+        if (!stillCurrent()) {
+          disposeImportedGearResult(result)
+          return null
+        }
+        if (ok) {
+          const loaderRoot = result.meshes.find(m => m.name === '__root__')
+          if (loaderRoot) loaderRoot.dispose()
+          const override = editorGearOverrides?.get(itemId)
+          if (override) entry.entity.applySkinnedArmorTransform(slot, override)
+          return null
+        }
+      }
+
+      if (result.skeletons.length > 0) {
+        flattenPreviewGearMaterials(result.meshes)
+
+        if (slot === 'head') {
+          const armorSkel = result.skeletons[0]
+          const headBone = armorSkel.bones.find(b => b.name === 'mixamorig:Head')
+          let headBindY = 0
+          if (headBone) {
+            const tn = headBone.getTransformNode()
+            if (tn) {
+              tn.computeWorldMatrix(true)
+              headBindY = tn.absolutePosition.y
+            }
+          }
+          for (const sk of result.skeletons) sk.dispose()
+          for (const mesh of result.meshes) mesh.skeleton = null
+          def.boneName = 'mixamorig:Head'
+          def.centerOrigin = true
+          const tmpl = buildGearTemplateFromImportedResult(result, def)
+          if (!stillCurrent()) {
+            tmpl.template.dispose()
+            return null
+          }
+          for (const child of tmpl.template.getChildren()) child.position.y -= headBindY
+          return tmpl
+        }
+
+        if (EDITOR_SKINNED_GEAR_SLOTS.has(slot)) {
+          entry.entity.detachGear(slot)
+          if (!stillCurrent()) {
+            disposeImportedGearResult(result)
+            return null
+          }
+          entry.entity.attachSkinnedArmor(slot, result.meshes, result.skeletons[0], itemId, bodyHideStyle)
+          const loaderRoot = result.meshes.find(m => m.name === '__root__')
+          if (loaderRoot) loaderRoot.dispose()
+          const override = editorGearOverrides?.get(itemId)
+          if (override) entry.entity.applySkinnedArmorTransform(slot, override)
+          return null
+        }
+      }
+
+      return buildGearTemplateFromImportedResult(result, def)
+    } catch (e) {
+      console.warn(`[editor-gear] couldn't preview ${slot}/${itemId}: ${e?.message ?? e}`)
+      return null
+    }
+  }
 
   /** Apply (or re-apply) the spawn's equipment array to its preview entity.
-   *  Bone-attached gear (weapons, helmets, shields, accessories) attaches
-   *  via the standard attachGear path. Skinned armor (body/legs/etc.) is
-   *  skipped here — its retargeting pipeline lives in GameManager and isn't
-   *  available standalone yet. The Gear-tab hint notes this so it's not
-   *  surprising. */
+   *  Matches the game runtime: rigid pieces are bone-parented; body/legs/
+   *  hands/feet are skinned to the humanoid skeleton. */
   async function applyEquipmentToPreview(spawn, entry) {
     if (!Array.isArray(spawn.equipment)) {
       // No equipment array — detach anything currently shown.
-      for (const slot of EDITOR_EQUIP_SLOT_ORDER) entry.entity.detachGear(slot)
+      for (const slot of EDITOR_EQUIP_SLOT_ORDER) {
+        entry.entity.detachGear(slot)
+        entry.entity.detachSkinnedArmor(slot)
+      }
       return
     }
     await ensureGearOverrides()
@@ -470,21 +616,23 @@ function tuneModelLighting(model) {
       const itemId = spawn.equipment[i] ?? 0
       if (itemId <= 0) {
         entry.entity.detachGear(slot)
+        entry.entity.detachSkinnedArmor(slot)
         continue
       }
       // Already wearing this exact item? Skip re-load (loadGearTemplate
       // is ~50ms per GLB).
-      if (entry.entity.getGearItemId(slot) === itemId) continue
+      const hasExpectedSkinnedAttachment = !EDITOR_SKINNED_GEAR_SLOTS.has(slot) || entry.entity.getSkinnedArmorMeshes(slot)
+      if (entry.entity.getGearItemId(slot) === itemId && hasExpectedSkinnedAttachment) continue
       const def = buildGearDef(slot, itemId)
       if (!def) continue
       try {
-        const tmpl = await loadGearTemplate(scene, def)
-        if (!tmpl) continue
+        const tmpl = EDITOR_SKINNED_GEAR_SLOTS.has(slot) || slot === 'head'
+          ? await loadGearSmartForPreview(spawn, entry, slot, itemId, def)
+          : await loadGearTemplate(scene, def)
+        if (!tmpl) continue // skinned armor attaches directly and returns null
         if (npcPreviews.get(spawn.id) !== entry) return
         entry.entity.attachGear(slot, itemId, tmpl)
       } catch (e) {
-        // Skinned armor (body GLBs with a skeleton) fails here — log quietly
-        // so a flooded console doesn't drown out actual issues.
         console.warn(`[editor-gear] couldn't preview ${slot}/${itemId}: ${e?.message ?? e}`)
       }
     }
@@ -1045,10 +1193,111 @@ function tuneModelLighting(model) {
     return h
   }
 
+  function buildCollisionFloorVisualMaps() {
+    const explicit = new Map()
+    for (const [floorKey, layer] of Object.entries(collisionData.floorLayers || {})) {
+      const floor = Number(floorKey)
+      if (!Number.isFinite(floor) || floor <= 0) continue
+      const byTile = new Map()
+      for (const [key, h] of Object.entries(layer.floors || {})) {
+        const [x, z] = key.split(',').map(Number)
+        if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(h)) byTile.set(z * map.width + x, h)
+      }
+      for (const [key, h] of Object.entries(layer.tiles || {})) {
+        const [x, z] = key.split(',').map(Number)
+        if (Number.isFinite(x) && Number.isFinite(z) && Number.isFinite(h)) byTile.set(z * map.width + x, h)
+      }
+      explicit.set(floor, byTile)
+    }
+
+    const derived = deriveUpperFloorTilesFromPlanes(map.texturePlanes || [], map.width, map.height)
+
+    // Fallback for editor-authored maps whose floorLayers are sparse: rank
+    // every horizontal texture-plane surface above terrain per tile. Floor 1
+    // means the lowest elevated surface at that tile, floor 2 the next, etc.
+    const ranked = new Map()
+    for (const plane of map.texturePlanes || []) {
+      const rx = plane.rotation?.x ?? 0
+      if (Math.abs(Math.abs(rx) - Math.PI / 2) >= 0.1) continue
+      const py = plane.position?.y ?? 0
+      const px = plane.position?.x ?? 0
+      const pz = plane.position?.z ?? 0
+      const sx = plane.scale?.x ?? 1
+      const sy = plane.scale?.y ?? 1
+      const ry = plane.rotation?.y ?? 0
+      const hw = ((plane.width ?? 1) * sx) / 2
+      const hd = ((plane.height ?? 1) * sy) / 2
+      const cosR = Math.cos(ry)
+      const sinR = Math.sin(ry)
+      const tx0 = Math.max(0, Math.floor(px - Math.abs(cosR * hw) - Math.abs(sinR * hd)))
+      const tx1 = Math.min(map.width - 1, Math.floor(px + Math.abs(cosR * hw) + Math.abs(sinR * hd)))
+      const tz0 = Math.max(0, Math.floor(pz - Math.abs(sinR * hw) - Math.abs(cosR * hd)))
+      const tz1 = Math.min(map.height - 1, Math.floor(pz + Math.abs(sinR * hw) + Math.abs(cosR * hd)))
+      for (let tz = tz0; tz <= tz1; tz++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          const tcx = tx + 0.5
+          const tcz = tz + 0.5
+          const lx = (tcx - px) * cosR + (tcz - pz) * sinR
+          const lz = -(tcx - px) * sinR + (tcz - pz) * cosR
+          if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue
+          const terrainH = map.getAverageTileHeight(tx, tz)
+          if (py <= terrainH + 0.75) continue
+          const idx = tz * map.width + tx
+          let heights = ranked.get(idx)
+          if (!heights) {
+            heights = []
+            ranked.set(idx, heights)
+          }
+          if (!heights.some(h => Math.abs(h - py) < 0.15)) heights.push(py)
+        }
+      }
+    }
+    for (const heights of ranked.values()) heights.sort((a, b) => a - b)
+
+    return { explicit, derived, ranked }
+  }
+
+  function resolveCollisionFloorDisplayHeight(x, z, floor, visualMaps) {
+    if (floor <= 0) return getCollisionDisplayHeight(x, z)
+    const idx = z * map.width + x
+    const direct =
+      visualMaps.explicit.get(floor)?.get(idx)
+      ?? visualMaps.derived.get(floor)?.get(idx)
+      ?? visualMaps.ranked.get(idx)?.[floor - 1]
+    if (direct != null) return direct
+
+    // Boundary walls are often authored just outside the walkable plane. Use
+    // the nearest neighboring tile on the same selected floor for display Y.
+    let best = null
+    let bestDist = Infinity
+    const searchRadius = 2
+    for (let dz = -searchRadius; dz <= searchRadius; dz++) {
+      for (let dx = -searchRadius; dx <= searchRadius; dx++) {
+        if (dx === 0 && dz === 0) continue
+        const nx = x + dx
+        const nz = z + dz
+        if (nx < 0 || nx >= map.width || nz < 0 || nz >= map.height) continue
+        const nIdx = nz * map.width + nx
+        const h =
+          visualMaps.explicit.get(floor)?.get(nIdx)
+          ?? visualMaps.derived.get(floor)?.get(nIdx)
+          ?? visualMaps.ranked.get(nIdx)?.[floor - 1]
+        if (h == null) continue
+        const dist = dx * dx + dz * dz
+        if (dist < bestDist) {
+          bestDist = dist
+          best = h
+        }
+      }
+    }
+    return best ?? getCollisionDisplayHeight(x, z)
+  }
+
   function rebuildCollisionMeshes() {
     for (const child of [...collisionGroup.getChildren()]) child.dispose()
 
     const layer = getCollisionLayer()
+    const visualMaps = buildCollisionFloorVisualMaps()
 
     // Wall edges — render as 3D rectangle outlines at the actual wallHeights.
     // Top edge is color-coded: yellow = default 1.8, orange = custom-height
@@ -1059,44 +1308,8 @@ function tuneModelLighting(model) {
     //   layer.floors → layer.tiles → texture-plane elev → terrain.
     // Without the elev fallback, upper-floor walls would visualise at Y=0
     // even though collision blocks at Y=elev (same bug the game client had).
-    const elevByTile = new Map()
-    if (collisionFloor !== 0 && map.texturePlanes) {
-      for (const plane of map.texturePlanes) {
-        const rx = plane.rotation?.x ?? 0
-        const isFlat = Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1
-        if (!isFlat) continue
-        const px = plane.position?.x ?? 0
-        const py = plane.position?.y ?? 0
-        const pz = plane.position?.z ?? 0
-        const hw = ((plane.width ?? 1) * (plane.scale?.x ?? 1)) / 2
-        const hd = ((plane.height ?? 1) * (plane.scale?.y ?? 1)) / 2
-        const ry = plane.rotation?.y ?? 0
-        const cosR = Math.cos(ry), sinR = Math.sin(ry)
-        const tx0 = Math.floor(px - Math.abs(cosR * hw) - Math.abs(sinR * hd))
-        const tx1 = Math.floor(px + Math.abs(cosR * hw) + Math.abs(sinR * hd))
-        const tz0 = Math.floor(pz - Math.abs(sinR * hw) - Math.abs(cosR * hd))
-        const tz1 = Math.floor(pz + Math.abs(sinR * hw) + Math.abs(cosR * hd))
-        for (let tz = tz0; tz <= tz1; tz++) {
-          for (let tx = tx0; tx <= tx1; tx++) {
-            const tcx = tx + 0.5, tcz = tz + 0.5
-            const lx = (tcx - px) * cosR + (tcz - pz) * sinR
-            const lz = -(tcx - px) * sinR + (tcz - pz) * cosR
-            if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue
-            const k = `${tx},${tz}`
-            const existing = elevByTile.get(k)
-            if (existing === undefined || py < existing) elevByTile.set(k, py)
-          }
-        }
-      }
-    }
-
     const wallBaseAt = (x, z) => {
-      const k = `${x},${z}`
-      if (collisionFloor === 0) return getCollisionDisplayHeight(x, z)
-      if (layer.floors?.[k] != null) return layer.floors[k]
-      if (layer.tiles?.[k] != null) return layer.tiles[k]
-      if (elevByTile.has(k)) return elevByTile.get(k)
-      return getCollisionDisplayHeight(x, z)
+      return resolveCollisionFloorDisplayHeight(x, z, collisionFloor, visualMaps)
     }
 
     const DEFAULT_WALL_H = 1.8
@@ -1172,7 +1385,7 @@ function tuneModelLighting(model) {
     // Hole tiles — semi-transparent red-orange planes
     for (const key of Object.keys(layer.holes || {})) {
       const [x, z] = key.split(',').map(Number)
-      const h = getCollisionDisplayHeight(x, z)
+      const h = resolveCollisionFloorDisplayHeight(x, z, collisionFloor, visualMaps)
       const plane = MeshBuilder.CreatePlane(`collHole_${key}`, { size: 0.9 }, scene)
       plane.rotation.x = Math.PI / 2
       plane.position = new Vector3(x + 0.5, h + 0.05, z + 0.5)
@@ -1852,6 +2065,11 @@ let paintBrushRadius = 1
   statusBar.innerHTML = `<span id="statusText">Terrain Tool</span><span id="hoverText" style="margin-left:auto;opacity:0.55;"></span>`
   uiRoot.appendChild(statusBar)
 
+  const editorNotice = document.createElement('div')
+  editorNotice.id = 'editorNotice'
+  editorNotice.style.cssText = 'position:absolute;top:44px;left:50%;transform:translateX(-50%);max-width:min(720px,calc(100vw - 32px));padding:8px 12px;border-radius:4px;background:rgba(20,24,30,0.96);border:1px solid rgba(255,255,255,0.18);box-shadow:0 8px 24px rgba(0,0,0,0.35);font-size:12px;line-height:1.35;color:#fff;display:none;pointer-events:auto;z-index:80;white-space:pre-wrap;'
+  uiRoot.appendChild(editorNotice)
+
   // Keybinds overlay
   const keybindsPanel = document.createElement('div')
   keybindsPanel.id = 'keybindsPanel'
@@ -2183,6 +2401,7 @@ let paintBrushRadius = 1
       </select>
       <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Forces a swing animation regardless of equipped weapon. Combat NPCs only.</div>
       <button id="duplicateSpawnBtn" style="width:100%;margin-top:10px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" ${spawn ? '' : 'disabled'}>Duplicate spawn (Shift+D)</button>
+      <button id="basicGuardPresetBtn" style="width:100%;margin-top:6px;font-size:11px;padding:5px;background:#2f3d33;color:#fff;cursor:pointer;border:1px solid #4c6a52;border-radius:3px;" ${spawn ? '' : 'disabled'}>Make basic guard</button>
       <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">
         ${spawn ? 'Editing the selected spawn.' : 'Click a placed NPC to edit its spawn.'}<br>
         Click empty tile to place · Shift+click to remove · Ctrl+click to move selected.
@@ -2232,6 +2451,7 @@ let paintBrushRadius = 1
     root.querySelector('#spawnXInput')?.addEventListener('change', (e) => updatePosition('x', e.target.value))
     root.querySelector('#spawnZInput')?.addEventListener('change', (e) => updatePosition('z', e.target.value))
     root.querySelector('#duplicateSpawnBtn')?.addEventListener('click', duplicateSelectedNpcSpawn)
+    root.querySelector('#basicGuardPresetBtn')?.addEventListener('click', () => applyBasicGuardPreset())
   }
 
   /** Combat-stat keys eligible for per-spawn override. Matches the
@@ -2615,6 +2835,29 @@ let paintBrushRadius = 1
     })
   }
 
+  function applyBasicGuardPreset(spawn = selectedNpcSpawn) {
+    if (!spawn) return
+    pushUndoState('npc guard preset')
+    const guardDef = npcDefs.find(d => d.name === 'Guard') || npcDefs.find(d => d.id === 7)
+    if (guardDef) spawn.npcId = guardDef.id
+    delete spawn.name
+    spawn.aggressive = false
+    spawn.wanderRange = spawn.wanderRange ?? guardDef?.wanderRange ?? 2
+    spawn.appearance = { ...DEFAULT_APPEARANCE, hairStyle: 1 }
+    // PLAYER_REMOTE_EQUIPMENT order:
+    // [weapon, shield, head, body, legs, neck, ring, hands, feet, cape]
+    spawn.equipment = [87, 97, 94, 99, 98, 0, 0, 0, 0, 0]
+    delete spawn.attackAnim
+
+    const sel = sidebar.querySelector('#npcTypeSelect')
+    if (sel) sel.value = spawn.npcId
+    ensureNpcPreview(spawn)
+    refreshNpcPreviewGear(spawn)
+    rebuildNpcSpawnMeshes()
+    refreshNpcSpawnList()
+    renderNpcInspector()
+  }
+
   function renderEquipmentTab(root) {
     root.innerHTML = ''
     const spawn = selectedNpcSpawn
@@ -2647,8 +2890,12 @@ let paintBrushRadius = 1
     // Header line — anchors what the user is editing.
     const header = document.createElement('div')
     header.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.6);margin-bottom:8px;line-height:1.4;'
-    header.innerHTML = 'Pick items to equip on this spawn. Type to filter — only items that fit each slot appear in the dropdown. Live preview updates on commit.'
+    header.innerHTML = `
+      Pick items to equip on this spawn. Type to filter — only items that fit each slot appear in the dropdown. Live preview updates on commit.
+      <button id="basicGuardGearPresetBtn" style="width:100%;margin-top:8px;font-size:11px;padding:5px;background:#2f3d33;color:#fff;cursor:pointer;border:1px solid #4c6a52;border-radius:3px;">Make basic guard</button>
+    `
     root.appendChild(header)
+    root.querySelector('#basicGuardGearPresetBtn')?.addEventListener('click', () => applyBasicGuardPreset(spawn))
 
     // Slot rows, grouped. Visual separator + group header before each new group.
     let lastGroup = null
@@ -2661,7 +2908,8 @@ let paintBrushRadius = 1
         root.appendChild(groupHeader)
         lastGroup = group
       }
-      const slotIdx = i
+      const slotIdx = EDITOR_EQUIP_SLOT_ORDER.indexOf(slot)
+      if (slotIdx < 0) continue
       const curId = spawn.equipment[slotIdx] ?? 0
       const row = document.createElement('div')
       row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;'
@@ -2699,9 +2947,9 @@ let paintBrushRadius = 1
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-top:10px;line-height:1.4;padding-top:8px;border-top:1px solid #333;'
     hint.innerHTML = `
       <b>Preview:</b> ${spawn.appearance
-        ? 'weapons, shields, helmets, and accessories show on the editor character above.'
+        ? 'equipped gear shows on the editor character above using the same humanoid rig path as the game.'
         : 'enable an <i>appearance</i> override (Look tab) to see the gear preview.'}<br>
-      Body/legs/hands/feet plate armor uses skinned rigging and only renders in-game.
+      If a piece was just re-rigged, refresh the editor to reload gear-overrides.json.
     `
     root.appendChild(hint)
   }
@@ -3256,6 +3504,28 @@ let paintBrushRadius = 1
   const mapSizeLabel = topBar.querySelector('#mapSizeLabel')
   const statusText = statusBar.querySelector('#statusText')
   const hoverText = statusBar.querySelector('#hoverText')
+  let statusHoldUntil = 0
+  let editorNoticeTimer = null
+
+  function showEditorNotice(message, kind = 'info', duration = 6000) {
+    const colors = {
+      info: ['rgba(20,24,30,0.96)', 'rgba(255,255,255,0.18)'],
+      success: ['rgba(18,55,34,0.96)', 'rgba(95,210,130,0.55)'],
+      error: ['rgba(72,22,22,0.97)', 'rgba(255,96,96,0.6)'],
+    }
+    const [bg, border] = colors[kind] || colors.info
+    statusHoldUntil = performance.now() + duration
+    statusText.textContent = message
+    editorNotice.textContent = message
+    editorNotice.style.background = bg
+    editorNotice.style.borderColor = border
+    editorNotice.style.display = 'block'
+    if (editorNoticeTimer) clearTimeout(editorNoticeTimer)
+    editorNoticeTimer = setTimeout(() => {
+      editorNotice.style.display = 'none'
+      editorNoticeTimer = null
+    }, duration)
+  }
 
   const tabProps = sidebar.querySelector('#tabProps')
   const tabModular = sidebar.querySelector('#tabModular')
@@ -3975,7 +4245,7 @@ let paintBrushRadius = 1
       else if (transformAxis !== 'all') axisLabel = transformAxis.toUpperCase()
       status += ` · ${transformMode.toUpperCase()} (${axisLabel})`
     }
-    statusText.textContent = status
+    if (performance.now() >= statusHoldUntil) statusText.textContent = status
   }
 
   function setTool(mode) {
@@ -4274,9 +4544,50 @@ let paintBrushRadius = 1
     }
   }
 
+  function autosaveWeight(data) {
+    if (!data || typeof data !== 'object') return 0
+    const objectCount = Array.isArray(data.placedObjects) ? data.placedObjects.length : 0
+    const npcCount = Array.isArray(data.npcSpawns) ? data.npcSpawns.length : 0
+    const itemCount = Array.isArray(data.itemSpawns) ? data.itemSpawns.length : 0
+    const planeCount = Array.isArray(data.map?.texturePlanes) ? data.map.texturePlanes.length : 0
+    const chunkCount = Array.isArray(data.map?.activeChunks) ? data.map.activeChunks.length : 0
+    const area = (data.map?.width || 0) * (data.map?.height || 0)
+    return objectCount * 10 + npcCount * 3 + itemCount + planeCount * 2 + chunkCount + Math.floor(area / 4096)
+  }
+
+  function parseAutosave(raw) {
+    if (!raw) return null
+    try { return JSON.parse(raw) } catch { return null }
+  }
+
   function autoSave() {
     try {
-      localStorage.setItem('projectrs-autosave', JSON.stringify(buildSaveData()))
+      const nextData = buildSaveData()
+      const nextText = JSON.stringify(nextData)
+      const prevText = localStorage.getItem('projectrs-autosave')
+      const prevData = parseAutosave(prevText)
+      const nextWeight = autosaveWeight(nextData)
+      const prevWeight = autosaveWeight(prevData)
+
+      // Do not let an empty/default editor boot clobber the last useful work.
+      if (prevText && prevWeight > 20 && nextWeight <= 2) {
+        console.warn('Auto-save skipped: refusing to overwrite non-empty autosave with empty map')
+        return
+      }
+
+      if (prevText && prevText !== nextText) {
+        localStorage.setItem('projectrs-autosave-prev', prevText)
+      }
+      localStorage.setItem('projectrs-autosave', nextText)
+      localStorage.setItem('projectrs-autosave-meta', JSON.stringify({
+        savedAt: new Date().toISOString(),
+        weight: nextWeight,
+        width: nextData.map?.width,
+        height: nextData.map?.height,
+        objects: nextData.placedObjects?.length || 0,
+        npcs: nextData.npcSpawns?.length || 0,
+        items: nextData.itemSpawns?.length || 0,
+      }))
       const prev = statusText.textContent
       statusText.textContent = 'Auto-saved'
       setTimeout(() => { statusText.textContent = prev }, 2000)
@@ -4924,7 +5235,10 @@ let paintBrushRadius = 1
     mesh.scaling.set(plane.scale?.x ?? 1, plane.scale?.y ?? 1, plane.scale?.z ?? 1)
   }
 
+  let _lastMouseEvent = null
   function updateMouse(event) {
+    if (_lastMouseEvent === event) return
+    _lastMouseEvent = event
     // Update Babylon.js pointer position from the event
     const rect = canvas.getBoundingClientRect()
     scene.pointerX = event.clientX - rect.left
@@ -6631,8 +6945,8 @@ function applyToolAtTile(tile, eventLike = null) {
     if (!paintTexturePalette) return
     const q = (paintTextureSearch?.value || '').trim().toLowerCase()
     const list = textureRegistry.filter((tex) => {
-      if (paintTextureCat === 'stretched' && !tex.defaultScale) return false
-      if (paintTextureCat === 'all' && tex.defaultScale) return false
+      const isStretched = !!tex.defaultScale || String(tex.path || '').includes('/stretched-textures/')
+      if (paintTextureCat === 'stretched' && !isStretched) return false
       const name = (tex.name || '').toLowerCase()
       return !q || name.includes(q) || String(tex.id).toLowerCase().includes(q)
     })
@@ -6887,9 +7201,15 @@ function applyToolAtTile(tile, eventLike = null) {
 
   const restoreAutoSaveBtn = topBar.querySelector('#restoreAutoSaveBtn')
   restoreAutoSaveBtn.addEventListener('click', async () => {
-    const raw = localStorage.getItem('projectrs-autosave')
-    if (!raw) { alert('No auto-save found.'); return }
-    await loadSaveData(JSON.parse(raw))
+    const candidates = [
+      localStorage.getItem('projectrs-autosave'),
+      localStorage.getItem('projectrs-autosave-prev'),
+    ]
+      .map(parseAutosave)
+      .filter(Boolean)
+      .sort((a, b) => autosaveWeight(b) - autosaveWeight(a))
+    if (!candidates.length) { alert('No auto-save found.'); return }
+    await loadSaveData(candidates[0])
   })
 
   // --- Server map integration ---
@@ -6900,6 +7220,61 @@ function applyToolAtTile(tile, eventLike = null) {
   const serverReloadBtn = topBar.querySelector('#serverReloadBtn')
   const questsBtn = topBar.querySelector('#questsBtn')
   const itemsBtn = topBar.querySelector('#itemsBtn')
+  let serverHealthOk = null
+  let serverHealthTimer = null
+  let serverHealthInFlight = false
+  let serverSaveInProgress = false
+
+  function setServerHealth(ok, detail = '') {
+    const previous = serverHealthOk
+    if (previous === ok && ok) return
+    const wasOk = previous !== false
+    serverHealthOk = ok
+    if (serverSaveBtn) {
+      serverSaveBtn.disabled = !ok || serverSaveInProgress
+      serverSaveBtn.title = ok
+        ? 'Save map to game server (overwrites!)'
+        : `SERVER DOWN - Save disabled${detail ? `: ${detail}` : ''}`
+    }
+    if (serverReloadBtn) {
+      serverReloadBtn.disabled = !ok
+      serverReloadBtn.title = ok
+        ? 'Hot-reload map in running game'
+        : `SERVER DOWN - Reload disabled${detail ? `: ${detail}` : ''}`
+    }
+    if (!ok) {
+      const message = `SERVER IS DOWN - DO NOT KEEP BUILDING WITHOUT SAVE BACKUP\n${detail || 'Cannot reach game server on :4000'}`
+      showEditorNotice(message, 'error', 600000)
+      if (wasOk) {
+        window.alert(message)
+      }
+    } else if (previous === false) {
+      showEditorNotice('Server connection restored', 'success', 4000)
+    }
+  }
+
+  async function checkServerHealth() {
+    if (serverHealthInFlight) return
+    serverHealthInFlight = true
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 3000)
+    try {
+      const res = await fetch('/api/status', { cache: 'no-store', signal: controller.signal })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setServerHealth(true)
+    } catch (err) {
+      const detail = err?.name === 'AbortError'
+        ? 'API heartbeat timed out'
+        : (err?.message || String(err))
+      setServerHealth(false, detail)
+    } finally {
+      clearTimeout(timeout)
+      serverHealthInFlight = false
+    }
+  }
+
+  checkServerHealth()
+  serverHealthTimer = setInterval(checkServerHealth, 5000)
 
   async function saveNpcDefsToServer() {
     const r = await fetch('/api/editor/npcs', {
@@ -6945,15 +7320,53 @@ function applyToolAtTile(tile, eventLike = null) {
     }
   }
 
+  async function postEditorJson(path, payload, { timeoutMs = 120000, bodyText = null } = {}) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    let response
+    let text = ''
+    try {
+      response = await fetch(`${SERVER_API}${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: bodyText ?? JSON.stringify(payload),
+        signal: controller.signal,
+      })
+      text = await response.text()
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        throw new Error(`Server did not respond within ${Math.round(timeoutMs / 1000)}s`)
+      }
+      throw new Error(`Could not reach server: ${err?.message || err}`)
+    } finally {
+      clearTimeout(timeout)
+    }
+
+    let data = {}
+    if (text) {
+      try {
+        data = JSON.parse(text)
+      } catch {
+        data = { error: text.slice(0, 300) }
+      }
+    }
+
+    if (!response.ok || !data.ok) {
+      const detail = data.error || response.statusText || 'unknown'
+      throw new Error(`HTTP ${response.status}: ${detail}`)
+    }
+    return data
+  }
+
   async function saveCurrentMapToServer(mapId) {
-    const res = await fetch(`${SERVER_API}/save-map`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildCurrentMapServerPayload(mapId))
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok || !data.ok) throw new Error(data.error || 'unknown')
-    refreshServerMapList(true)
+    const payload = buildCurrentMapServerPayload(mapId)
+    const payloadText = JSON.stringify(payload)
+    const bytes = new TextEncoder().encode(payloadText).length
+    const mb = bytes / 1024 / 1024
+    showEditorNotice(`Saving "${mapId}" to server (${mb.toFixed(1)} MB)…`, 'info', 120000)
+    const data = await postEditorJson('/save-map', payload, { timeoutMs: 180000, bodyText: payloadText })
+    await refreshServerMapList(true)
+    return { ...data, bytes }
   }
 
   // Quests editor — structured form. Two-pane modal: list of quests on the
@@ -8597,6 +9010,10 @@ function applyToolAtTile(tile, eventLike = null) {
     const mapId = serverMapSelect.value
     if (!mapId) return
     if (!confirm(`Overwrite "${mapId}" on the game server?`)) return
+    if (serverHealthOk === false) {
+      showEditorNotice('SERVER IS DOWN - Save Server is blocked. Use Save Backup first.', 'error', 600000)
+      return
+    }
 
     // If the inspector has unsaved NPC-def edits (stats / shared shop /
     // shared dialogue), flush them first. The map save endpoint only writes
@@ -8604,20 +9021,26 @@ function applyToolAtTile(tile, eventLike = null) {
     // silently loses every def-level edit since the last explicit "Save NPC
     // defs". Per-spawn overrides go through with the map save below.
     if (npcDefsDirty) {
-      statusText.textContent = 'Saving NPC defs…'
+      showEditorNotice('Saving NPC defs…', 'info', 120000)
       try {
         await saveNpcDefsToServer()
       } catch (err) {
-        statusText.textContent = `NPC defs save failed: ${err.message}`
+        showEditorNotice(`NPC defs save failed:\n${err.message}`, 'error', 12000)
         return
       }
     }
 
+    serverSaveInProgress = true
+    serverSaveBtn.disabled = true
     try {
-      await saveCurrentMapToServer(mapId)
-      statusText.textContent = `Saved "${mapId}" to server`
+      const result = await saveCurrentMapToServer(mapId)
+      const mb = result.bytes / 1024 / 1024
+      showEditorNotice(`Saved "${mapId}" to server (${mb.toFixed(1)} MB)`, 'success', 8000)
     } catch (e) {
-      statusText.textContent = `Server error: ${e.message}`
+      showEditorNotice(`Save Server failed:\n${e.message}`, 'error', 15000)
+    } finally {
+      serverSaveInProgress = false
+      serverSaveBtn.disabled = serverHealthOk === false
     }
   })
 
@@ -9106,7 +9529,175 @@ function applyToolAtTile(tile, eventLike = null) {
     applyTintToSelected()
   })
 
+  function handleMoveTransform(event) {
+    if (transformMode !== 'move') return false
+
+    if (selectedTexturePlane && transformStart?.primaryType === 'plane') {
+      const needsTerrainPick = transformAxis !== 'height'
+      const terrainPoint = needsTerrainPick ? pickTerrainPoint(event) : null
+      // For vertical planes, fall back to a virtual horizontal plane at the plane's current Y
+      // so movement isn't blocked when the cursor passes over a wall model.
+      const cursorPoint = terrainPoint
+        ?? (selectedTexturePlane.vertical ? pickHorizontalPlane(event, selectedTexturePlane.position.y) : null)
+      if (!cursorPoint && transformAxis !== 'height') {
+        updateTexturePlaneMeshTransform(selectedTexturePlane)
+        updateSelectionHelper()
+        return true
+      }
+
+      const snappedX = cursorPoint ? (event.shiftKey ? snapValue(cursorPoint.x, 0.5) : cursorPoint.x) : selectedTexturePlane.position.x
+      const snappedZ = cursorPoint ? (event.shiftKey ? snapValue(cursorPoint.z, 0.5) : cursorPoint.z) : selectedTexturePlane.position.z
+
+      const planeHalfHeight =
+        ((selectedTexturePlane.height || 1) * (selectedTexturePlane.scale?.y ?? 1)) / 2
+
+      if (transformAxis === 'x') {
+        selectedTexturePlane.position.x = snappedX
+      } else if (transformAxis === 'ground-z') {
+        selectedTexturePlane.position.z = snappedZ
+      } else if (transformAxis === 'height') {
+        if (!movePlaneStart) {
+          movePlaneStart = {
+            mouseY: event.clientY,
+            value: selectedTexturePlane.position.y
+          }
+        }
+
+        const deltaY = (movePlaneStart.mouseY - event.clientY) * 0.02
+        selectedTexturePlane.position.y = movePlaneStart.value + deltaY
+      } else {
+        if (selectedTexturePlane.vertical) {
+          const planeSnap = !event.altKey && findNearbyPlaneSnap(selectedTexturePlane, snappedX, snappedZ)
+          if (planeSnap) {
+            selectedTexturePlane.position.x = planeSnap.x
+            selectedTexturePlane.position.z = planeSnap.z
+            selectedTexturePlane.position.y = planeSnap.y + transformLift
+          } else {
+            selectedTexturePlane.position.x = snappedX
+            selectedTexturePlane.position.z = snappedZ
+            selectedTexturePlane.position.y = (transformStart?.position.y ?? (terrainPoint ? terrainPoint.y + planeHalfHeight : selectedTexturePlane.position.y)) + transformLift
+          }
+        } else {
+          selectedTexturePlane.position.x = snappedX
+          selectedTexturePlane.position.z = snappedZ
+          if (terrainPoint) selectedTexturePlane.position.y = terrainPoint.y + 0.05 + transformLift
+        }
+      }
+
+      updateTexturePlaneMeshTransform(selectedTexturePlane)
+
+      // Move group members by the same delta
+      const dx = selectedTexturePlane.position.x - transformStart.position.x
+      const dy = selectedTexturePlane.position.y - transformStart.position.y
+      const dz = selectedTexturePlane.position.z - transformStart.position.z
+      if (transformStart?.groupStarts?.length) {
+        for (const { plane, position } of transformStart.groupStarts) {
+          plane.position.x = position.x + dx
+          plane.position.y = position.y + dy
+          plane.position.z = position.z + dz
+          updateTexturePlaneMeshTransform(plane)
+        }
+      }
+      // Also move cross-type GLB objects
+      if (transformStart?.crossGroupStarts?.length) {
+        for (const { obj, position } of transformStart.crossGroupStarts) {
+          obj.position.set(position.x + dx, position.y + dy, position.z + dz)
+        }
+      }
+
+      updateSelectionHelper()
+      return true
+    }
+
+    if (selectedPlacedObject && transformStart?.primaryType !== 'plane') {
+      if (transformAxis === 'height') {
+        // Vertical: mouse Y delta
+        if (!movePlaneStart) {
+          movePlaneStart = { mouseY: event.clientY, value: selectedPlacedObject.position.y }
+        }
+        const deltaY = (movePlaneStart.mouseY - event.clientY) * 0.02
+        selectedPlacedObject.position.y = movePlaneStart.value + deltaY
+      } else if (transformAxis === 'x' || transformAxis === 'ground-z') {
+        // Single axis: delta-based so movement is predictable.
+        if (!movePlaneStart) {
+          const initPick = pickHorizontalPlane(event, selectedPlacedObject.position.y)
+          movePlaneStart = {
+            pickX: initPick?.x ?? selectedPlacedObject.position.x,
+            pickZ: initPick?.z ?? selectedPlacedObject.position.z
+          }
+        }
+        const movePoint = pickHorizontalPlane(event, selectedPlacedObject.position.y)
+        if (!movePoint) return true
+        const dx = movePoint.x - movePlaneStart.pickX
+        const dz = movePoint.z - movePlaneStart.pickZ
+        if (transformAxis === 'x') {
+          selectedPlacedObject.position.x = event.shiftKey
+            ? snapValue(transformStart.position.x + dx, 0.5)
+            : transformStart.position.x + dx
+        } else {
+          selectedPlacedObject.position.z = event.shiftKey
+            ? snapValue(transformStart.position.z + dz, 0.5)
+            : transformStart.position.z + dz
+        }
+      } else {
+        // Unconstrained: object follows cursor on a horizontal plane. Terrain height
+        // is sampled once, avoiding the multi-pick surface snap that made live drag slow.
+        const movePoint = pickHorizontalPlane(event, selectedPlacedObject.position.y)
+        if (!movePoint) return true
+
+        const _movingAsset = assetRegistry.find((a) => a.id === selectedPlacedObject.userData.assetId)
+        const movingIsWallModular = isModularAsset(selectedPlacedObject.userData.assetId)
+          && _movingAsset?.name?.toLowerCase().includes('wall')
+
+        let newX, newZ
+        if (movingIsWallModular && !event.altKey) {
+          const snap = findModularEdgeSnap(selectedPlacedObject, movePoint.x, movePoint.z)
+          newX = snap.x; newZ = snap.z
+        } else if (event.shiftKey) {
+          newX = snapValue(movePoint.x, 0.5)
+          newZ = snapValue(movePoint.z, 0.5)
+        } else {
+          newX = movePoint.x; newZ = movePoint.z
+        }
+
+        let targetY
+        if (transformLift !== 0) {
+          targetY = selectedPlacedObject.position.y
+        } else {
+          const terrainPoint = pickTerrainPoint(event)
+          targetY = terrainPoint?.y ?? selectedPlacedObject.position.y
+        }
+        selectedPlacedObject.position.set(newX, targetY, newZ)
+      }
+
+      // Move group members by the same delta as the primary
+      const dx = selectedPlacedObject.position.x - transformStart.position.x
+      const dy = selectedPlacedObject.position.y - transformStart.position.y
+      const dz = selectedPlacedObject.position.z - transformStart.position.z
+      if (transformStart?.groupStarts?.length) {
+        for (const { obj, position } of transformStart.groupStarts) {
+          obj.position.set(position.x + dx, position.y + dy, position.z + dz)
+        }
+      }
+      // Also move cross-type texture planes
+      if (transformStart?.crossPlaneStarts?.length) {
+        for (const { plane, position } of transformStart.crossPlaneStarts) {
+          plane.position.x = position.x + dx
+          plane.position.y = position.y + dy
+          plane.position.z = position.z + dz
+          updateTexturePlaneMeshTransform(plane)
+        }
+      }
+
+      return true
+    }
+
+    return false
+  }
+
   canvas.addEventListener('mousemove', (event) => {
+    if (handleMoveTransform(event)) return
+
     const tile = pickTile(event)
     if (!tile) return
 
@@ -9167,167 +9758,6 @@ function applyToolAtTile(tile, eventLike = null) {
         diagFloorPreview.material = mat
         diagFloorPreview.isPickable = false
       }
-    }
-
-    const terrainPoint = transformMode === 'move' ? pickTerrainPoint(event) : null
-
-    if (transformMode === 'move' && selectedTexturePlane && transformStart?.primaryType === 'plane') {
-      // For vertical planes, fall back to a virtual horizontal plane at the plane's current Y
-      // so movement isn't blocked when the cursor passes over a wall model
-      const cursorPoint = terrainPoint
-        ?? (selectedTexturePlane.vertical ? pickHorizontalPlane(event, selectedTexturePlane.position.y) : null)
-      if (!cursorPoint) {
-        updateTexturePlaneMeshTransform(selectedTexturePlane)
-        updateSelectionHelper()
-        return
-      }
-
-      const snappedX = event.shiftKey ? snapValue(cursorPoint.x, 0.5) : cursorPoint.x
-      const snappedZ = event.shiftKey ? snapValue(cursorPoint.z, 0.5) : cursorPoint.z
-
-      const planeHalfHeight =
-        ((selectedTexturePlane.height || 1) * (selectedTexturePlane.scale?.y ?? 1)) / 2
-
-      if (transformAxis === 'x') {
-        selectedTexturePlane.position.x = snappedX
-      } else if (transformAxis === 'ground-z') {
-        selectedTexturePlane.position.z = snappedZ
-      } else if (transformAxis === 'height') {
-        if (!movePlaneStart) {
-          movePlaneStart = {
-            mouseY: event.clientY,
-            value: selectedTexturePlane.position.y
-          }
-        }
-
-        const deltaY = (movePlaneStart.mouseY - event.clientY) * 0.02
-        selectedTexturePlane.position.y = movePlaneStart.value + deltaY
-      } else {
-        if (selectedTexturePlane.vertical) {
-          const planeSnap = !event.altKey && findNearbyPlaneSnap(selectedTexturePlane, snappedX, snappedZ)
-          if (planeSnap) {
-            selectedTexturePlane.position.x = planeSnap.x
-            selectedTexturePlane.position.z = planeSnap.z
-            selectedTexturePlane.position.y = planeSnap.y + transformLift
-          } else {
-            selectedTexturePlane.position.x = snappedX
-            selectedTexturePlane.position.z = snappedZ
-            selectedTexturePlane.position.y = (transformStart?.position.y ?? (terrainPoint ? terrainPoint.y + planeHalfHeight : selectedTexturePlane.position.y)) + transformLift
-          }
-        } else {
-          selectedTexturePlane.position.x = snappedX
-          selectedTexturePlane.position.z = snappedZ
-          if (terrainPoint) selectedTexturePlane.position.y = terrainPoint.y + 0.05 + transformLift
-        }
-      }
-
-      updateTexturePlaneMeshTransform(selectedTexturePlane)
-
-      // Move group members by the same delta
-      const dx = selectedTexturePlane.position.x - transformStart.position.x
-      const dy = selectedTexturePlane.position.y - transformStart.position.y
-      const dz = selectedTexturePlane.position.z - transformStart.position.z
-      if (transformStart?.groupStarts?.length) {
-        for (const { plane, position } of transformStart.groupStarts) {
-          plane.position.x = position.x + dx
-          plane.position.y = position.y + dy
-          plane.position.z = position.z + dz
-          updateTexturePlaneMeshTransform(plane)
-        }
-      }
-      // Also move cross-type GLB objects
-      if (transformStart?.crossGroupStarts?.length) {
-        for (const { obj, position } of transformStart.crossGroupStarts) {
-          obj.position.set(position.x + dx, position.y + dy, position.z + dz)
-        }
-      }
-
-      updateSelectionHelper()
-      return
-    }
-
-    if (transformMode === 'move' && selectedPlacedObject && transformStart?.primaryType !== 'plane') {
-      if (transformAxis === 'height') {
-        // Vertical: mouse Y delta
-        if (!movePlaneStart) {
-          movePlaneStart = { mouseY: event.clientY, value: selectedPlacedObject.position.y }
-        }
-        const deltaY = (movePlaneStart.mouseY - event.clientY) * 0.02
-        selectedPlacedObject.position.y = movePlaneStart.value + deltaY
-      } else if (transformAxis === 'x' || transformAxis === 'ground-z') {
-        // Single axis: delta-based so movement is predictable
-        if (!movePlaneStart) {
-          const initPick = pickHorizontalPlane(event, selectedPlacedObject.position.y)
-          movePlaneStart = {
-            pickX: initPick?.x ?? selectedPlacedObject.position.x,
-            pickZ: initPick?.z ?? selectedPlacedObject.position.z
-          }
-        }
-        const movePoint = pickHorizontalPlane(event, selectedPlacedObject.position.y)
-        if (!movePoint) return
-        const dx = movePoint.x - movePlaneStart.pickX
-        const dz = movePoint.z - movePlaneStart.pickZ
-        if (transformAxis === 'x') {
-          selectedPlacedObject.position.x = event.shiftKey
-            ? snapValue(transformStart.position.x + dx, 0.5)
-            : transformStart.position.x + dx
-        } else {
-          selectedPlacedObject.position.z = event.shiftKey
-            ? snapValue(transformStart.position.z + dz, 0.5)
-            : transformStart.position.z + dz
-        }
-      } else {
-        // Unconstrained: object follows cursor on terrain
-        const movePoint = pickHorizontalPlane(event, selectedPlacedObject.position.y)
-        if (!movePoint) return
-
-        const _movingAsset = assetRegistry.find((a) => a.id === selectedPlacedObject.userData.assetId)
-        const movingIsWallModular = isModularAsset(selectedPlacedObject.userData.assetId)
-          && _movingAsset?.name?.toLowerCase().includes('wall')
-
-        let newX, newZ
-        if (movingIsWallModular && !event.altKey) {
-          const snap = findModularEdgeSnap(selectedPlacedObject, movePoint.x, movePoint.z)
-          newX = snap.x; newZ = snap.z
-        } else if (event.shiftKey) {
-          newX = snapValue(movePoint.x, 0.5)
-          newZ = snapValue(movePoint.z, 0.5)
-        } else {
-          newX = movePoint.x; newZ = movePoint.z
-        }
-
-        let targetY
-        if (transformLift !== 0) {
-          targetY = selectedPlacedObject.position.y
-        } else if (!event.altKey) {
-          const sp = pickSurfacePoint(event, selectedPlacedObjects)
-          targetY = sp?.y ?? terrainPoint?.y ?? selectedPlacedObject.position.y
-        } else {
-          targetY = terrainPoint?.y ?? selectedPlacedObject.position.y
-        }
-        selectedPlacedObject.position.set(newX, targetY, newZ)
-      }
-
-      // Move group members by the same delta as the primary
-      const dx = selectedPlacedObject.position.x - transformStart.position.x
-      const dy = selectedPlacedObject.position.y - transformStart.position.y
-      const dz = selectedPlacedObject.position.z - transformStart.position.z
-      if (transformStart?.groupStarts?.length) {
-        for (const { obj, position } of transformStart.groupStarts) {
-          obj.position.set(position.x + dx, position.y + dy, position.z + dz)
-        }
-      }
-      // Also move cross-type texture planes
-      if (transformStart?.crossPlaneStarts?.length) {
-        for (const { plane, position } of transformStart.crossPlaneStarts) {
-          plane.position.x = position.x + dx
-          plane.position.y = position.y + dy
-          plane.position.z = position.z + dz
-          updateTexturePlaneMeshTransform(plane)
-        }
-      }
-
-      return
     }
 
     if (isDragSelecting && dragSelectStart) {
