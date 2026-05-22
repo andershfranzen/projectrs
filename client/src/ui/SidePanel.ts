@@ -38,7 +38,11 @@ interface TouchInvDragState {
   dragging: boolean;
   ghost: HTMLDivElement | null;
   overSlot: number | null;
+  longPressTimer: number;
 }
+
+const TOUCH_INV_DRAG_START_PX = 7;
+const TOUCH_INV_DRAG_LONG_PRESS_MS = 220;
 
 export class SidePanel {
   private container: HTMLDivElement;
@@ -286,12 +290,28 @@ export class SidePanel {
             grid-template-rows: repeat(6, minmax(42px, 1fr)) !important;
             min-height: 260px !important;
           }
+          #side-panel .inventory-panel-frame {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            height: 100% !important;
+          }
+          #side-panel .inventory-panel-frame > .inventory-panel-content {
+            flex: 1 1 auto !important;
+            min-height: 0 !important;
+            overflow-x: hidden !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch;
+            touch-action: pan-y;
+          }
+          #side-panel .inventory-panel-frame .inv-grid {
+            flex: 1 0 260px !important;
+          }
           #side-panel .inv-slot,
           #side-panel .stance-btn {
             touch-action: manipulation;
           }
           #side-panel .inv-slot[data-filled="1"] {
-            touch-action: none;
+            touch-action: pan-y;
           }
         }
 
@@ -564,7 +584,7 @@ export class SidePanel {
     // is smaller than the cumulative fixed UI demands. At 600px viewport
     // (the locked min) all 6 inventory rows should fit; this is just a
     // safety net for awkward intermediate heights.
-    invWrap.style.cssText = 'flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto;';
+    invWrap.style.cssText = 'flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; -webkit-overflow-scrolling: touch; touch-action: pan-y;';
     invWrap.appendChild(this.invGrid);
     contentArea.appendChild(invWrap);
     this.tabContents.set('inventory', invWrap);
@@ -1132,10 +1152,14 @@ export class SidePanel {
       this.invSlotElements.push(slot);
     }
 
-	    return this.buildPanelFrame('Inventory', '#b56d3b', grid);
-	  }
+    const frame = this.buildPanelFrame('Inventory', '#b56d3b', grid);
+    frame.className = 'inventory-panel-frame';
+    const content = frame.children[1] as HTMLDivElement | undefined;
+    if (content) content.className = 'inventory-panel-content';
+    return frame;
+  }
 
-	  private buildSkillsContent(): HTMLDivElement {
+  private buildSkillsContent(): HTMLDivElement {
 	    const wrap = document.createElement('div');
 	    wrap.style.cssText = `
 	      flex: 1 1 auto;
@@ -1311,7 +1335,8 @@ export class SidePanel {
       if (key === tab) {
         el.style.display = 'flex';
         el.style.flexDirection = 'column';
-        el.style.overflow = key === 'inventory' ? 'hidden' : 'auto';
+        el.style.overflowX = key === 'inventory' ? 'hidden' : 'auto';
+        el.style.overflowY = 'auto';
         el.style.flex = '1';
         el.style.minHeight = '0';
       } else {
@@ -1395,13 +1420,13 @@ export class SidePanel {
       dragging: false,
       ghost: null,
       overSlot: null,
+      longPressTimer: 0,
     };
-    try {
-      (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    } catch {
-      // Some embedded browser/device combos decline capture; move/up still work
-      // while the pointer remains over the inventory.
-    }
+    this.touchInvDrag.longPressTimer = window.setTimeout(() => {
+      if (this.touchInvDrag !== null && this.touchInvDrag.pointerId === event.pointerId && !this.touchInvDrag.dragging) {
+        this.startTouchInvDragVisual(this.touchInvDrag, this.touchInvDrag.startX, this.touchInvDrag.startY);
+      }
+    }, TOUCH_INV_DRAG_LONG_PRESS_MS);
   }
 
   private moveTouchInvDrag(event: PointerEvent): void {
@@ -1410,7 +1435,11 @@ export class SidePanel {
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
     if (!drag.dragging) {
-      if (Math.hypot(dx, dy) < 7) return;
+      if (Math.hypot(dx, dy) < TOUCH_INV_DRAG_START_PX) return;
+      if (Math.abs(dy) > Math.abs(dx) * 1.15) {
+        this.clearTouchInvDrag(event.pointerId);
+        return;
+      }
       this.startTouchInvDragVisual(drag, event.clientX, event.clientY);
     }
 
@@ -1446,9 +1475,16 @@ export class SidePanel {
     clientX: number,
     clientY: number,
   ): void {
+    window.clearTimeout(drag.longPressTimer);
     drag.dragging = true;
     const source = this.invSlotElements[drag.fromSlot];
     source.classList.add('dragging');
+    try {
+      source.setPointerCapture(drag.pointerId);
+    } catch {
+      // Some embedded browser/device combos decline capture; move/up still work
+      // while the pointer remains over the inventory.
+    }
     const rect = source.getBoundingClientRect();
     const ghost = source.cloneNode(true) as HTMLDivElement;
     ghost.classList.remove('dragging', 'drag-over', 'hovered');
@@ -1501,6 +1537,7 @@ export class SidePanel {
     const drag = this.touchInvDrag;
     if (!drag || drag.pointerId !== pointerId) return;
     this.setTouchInvDropTarget(null);
+    window.clearTimeout(drag.longPressTimer);
     this.invSlotElements[drag.fromSlot]?.classList.remove('dragging');
     drag.ghost?.remove();
     const source = this.invSlotElements[drag.fromSlot];

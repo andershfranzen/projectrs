@@ -46,13 +46,13 @@ export function popupGeometryCss(opts: PopupGeometryOpts = {}): string {
     const mobileWidth = Math.max(360, minWidth);
     return `
       position: fixed;
-      left: 50vw;
-      top: calc((100dvh - var(--mobile-nav-height, 68px) - env(safe-area-inset-bottom, 0px)) / 2);
+      left: calc(var(--eq-viewport-left, 0px) + var(--eq-viewport-width, 100vw) / 2);
+      top: calc(var(--eq-viewport-top, 0px) + (var(--eq-viewport-height, 100dvh) - var(--mobile-nav-height, 68px) - env(safe-area-inset-bottom, 0px)) / 2);
       transform: translate(-50%, -50%);
-      width: min(${mobileWidth}px, calc(100vw - ${mobileMargin * 2}px));
+      width: min(${mobileWidth}px, calc(var(--eq-viewport-width, 100vw) - ${mobileMargin * 2}px));
       min-width: 0;
-      max-width: calc(100vw - ${mobileMargin * 2}px);
-      max-height: calc(100dvh - var(--mobile-nav-height, 68px) - env(safe-area-inset-bottom, 0px) - ${mobileMargin * 2}px);
+      max-width: calc(var(--eq-viewport-width, 100vw) - ${mobileMargin * 2}px);
+      max-height: calc(var(--eq-viewport-height, 100dvh) - var(--mobile-nav-height, 68px) - env(safe-area-inset-bottom, 0px) - ${mobileMargin * 2}px);
     `;
   }
 
@@ -90,8 +90,12 @@ export interface ViewportPanelOpts {
 
 export function viewportPanelCss(opts: ViewportPanelOpts = {}): string {
   return `
-    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
-    width: ${opts.width ?? 'min(720px, 92vw)'}; max-height: ${opts.maxHeight ?? '90vh'};
+    position: fixed;
+    left: calc(var(--eq-viewport-left, 0px) + var(--eq-viewport-width, 100vw) / 2);
+    top: calc(var(--eq-viewport-top, 0px) + var(--eq-viewport-height, 100vh) / 2);
+    transform: translate(-50%, -50%);
+    width: ${opts.width ?? 'min(720px, calc(var(--eq-viewport-width, 100vw) - 24px))'};
+    max-height: ${opts.maxHeight ?? 'calc(var(--eq-viewport-height, 100vh) - 24px)'};
     display: none; flex-direction: column;
     background: #1a1410; border: 2px solid #aa8844;
     border-radius: 6px; z-index: ${opts.zIndex ?? 500};
@@ -219,11 +223,16 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
 
   document.body.appendChild(menu);
   const margin = 4;
+  const visualViewport = window.visualViewport;
+  const viewportLeft = visualViewport?.offsetLeft ?? 0;
+  const viewportTop = visualViewport?.offsetTop ?? 0;
+  const viewportWidth = visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = visualViewport?.height ?? window.innerHeight;
   clampElementToRect(menu, new DOMRect(
-    margin,
-    margin,
-    window.innerWidth - margin * 2,
-    window.innerHeight - margin * 2,
+    viewportLeft + margin,
+    viewportTop + margin,
+    Math.max(0, viewportWidth - margin * 2),
+    Math.max(0, viewportHeight - margin * 2),
   ));
   activeContextMenu = { el: menu, close };
   setTimeout(() => document.addEventListener('click', close), 0);

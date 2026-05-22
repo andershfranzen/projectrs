@@ -12,6 +12,83 @@ const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
 installGlobalScrollbars();
 startupTrace.mark('entry');
 
+function getBrowserPageScale(): number {
+  const scale = window.visualViewport?.scale ?? 1;
+  return Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
+function installMobileViewportVars(): void {
+  const root = document.documentElement;
+  let framePending = false;
+
+  const apply = () => {
+    framePending = false;
+    const visualViewport = window.visualViewport;
+    const layoutWidth = window.innerWidth || root.clientWidth || 0;
+    const layoutHeight = window.innerHeight || root.clientHeight || 0;
+    const width = visualViewport?.width ?? layoutWidth;
+    const height = visualViewport?.height ?? layoutHeight;
+    const left = visualViewport?.offsetLeft ?? 0;
+    const top = visualViewport?.offsetTop ?? 0;
+    const right = Math.max(0, layoutWidth - left - width);
+    const bottom = Math.max(0, layoutHeight - top - height);
+    const scale = getBrowserPageScale();
+
+    root.style.setProperty('--eq-viewport-width', `${Math.round(width)}px`);
+    root.style.setProperty('--eq-viewport-height', `${Math.round(height)}px`);
+    root.style.setProperty('--eq-viewport-left', `${Math.round(left)}px`);
+    root.style.setProperty('--eq-viewport-top', `${Math.round(top)}px`);
+    root.style.setProperty('--eq-viewport-right', `${Math.round(right)}px`);
+    root.style.setProperty('--eq-viewport-bottom', `${Math.round(bottom)}px`);
+    root.style.setProperty('--eq-viewport-scale', `${scale.toFixed(3)}`);
+    root.classList.toggle('eq-browser-page-zoomed', scale > 1.01);
+    window.dispatchEvent(new Event('evilquest:viewportchange'));
+  };
+
+  const schedule = () => {
+    if (framePending) return;
+    framePending = true;
+    window.requestAnimationFrame(apply);
+  };
+
+  apply();
+  window.addEventListener('resize', schedule, { passive: true });
+  window.addEventListener('orientationchange', schedule, { passive: true });
+  window.visualViewport?.addEventListener('resize', schedule, { passive: true });
+  window.visualViewport?.addEventListener('scroll', schedule, { passive: true });
+}
+
+function installMobilePageZoomGuard(): void {
+  const isGameSurface = (event: Event): boolean => {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if (path.some((target) => (
+      target instanceof Element
+      && !!target.closest('#game-frame, .eq-preauth-overlay')
+    ))) {
+      return true;
+    }
+
+    if (document.querySelector('.eq-preauth-overlay')) return true;
+    return getComputedStyle(gameFrame).display !== 'none';
+  };
+
+  const shouldLetBrowserRecoverZoom = (): boolean => getBrowserPageScale() > 1.01;
+
+  const preventNativeScaleAtNormalZoom = (event: Event) => {
+    if (!isGameSurface(event)) return;
+    if (shouldLetBrowserRecoverZoom()) return;
+    event.preventDefault();
+  };
+
+  document.addEventListener('gesturestart', preventNativeScaleAtNormalZoom, { passive: false });
+  document.addEventListener('gesturechange', preventNativeScaleAtNormalZoom, { passive: false });
+  document.addEventListener('gestureend', preventNativeScaleAtNormalZoom, { passive: false });
+  document.addEventListener('dblclick', preventNativeScaleAtNormalZoom, { passive: false, capture: true });
+}
+
+installMobileViewportVars();
+installMobilePageZoomGuard();
+
 let game: GameManagerType | null = null;
 let loginScreen: LoginScreen | null = null;
 let backgroundParticles: BackgroundParticles | null = null;

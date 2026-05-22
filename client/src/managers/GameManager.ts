@@ -350,6 +350,7 @@ export class GameManager {
   private static readonly TOUCH_CAMERA_PITCH_PER_PX = 0.004;
   private static readonly TOUCH_PINCH_MIN_DISTANCE_PX = 24;
   private static readonly TOUCH_PINCH_MAX_STEP_FACTOR = 1.18;
+  private static readonly BROWSER_PAGE_ZOOM_EPSILON = 0.01;
   private mobileGoodMagicCurrent: number = 1;
   private mobileGoodMagicMax: number = 1;
   private mobileEvilMagicCurrent: number = 1;
@@ -473,9 +474,10 @@ export class GameManager {
         this.trackTouchPointer(e);
         if (this.activeTouchPointers.size >= 2) {
           this.cancelPendingTouchInteraction();
-          if (this.isAdmin) this.beginPinchZoom(canvas);
+          const pageZoomed = this.isBrowserPageZoomed();
+          if (this.isAdmin && !pageZoomed) this.beginPinchZoom(canvas);
           e.stopImmediatePropagation();
-          e.preventDefault();
+          if (!pageZoomed) e.preventDefault();
           return;
         }
 
@@ -709,6 +711,7 @@ export class GameManager {
     // like opening DevTools or panel toggles that don't fire a window.resize event).
     this.onWindowResize = () => this.handleViewportResize();
     window.addEventListener('resize', this.onWindowResize);
+    window.addEventListener('evilquest:viewportchange', this.onWindowResize);
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.handleViewportResize());
       this.resizeObserver.observe(canvas);
@@ -3603,6 +3606,11 @@ export class GameManager {
     return event.pointerType === 'touch' || event.pointerType === 'pen';
   }
 
+  private isBrowserPageZoomed(): boolean {
+    const scale = window.visualViewport?.scale ?? 1;
+    return Number.isFinite(scale) && scale > 1 + GameManager.BROWSER_PAGE_ZOOM_EPSILON;
+  }
+
   private trackTouchPointer(event: PointerEvent): void {
     if (!this.isTouchPointer(event)) return;
     this.activeTouchPointers.set(event.pointerId, {
@@ -3644,6 +3652,12 @@ export class GameManager {
     const pinch = this.pinchZoom;
     if (!pinch || !pinch.pointerIds.includes(event.pointerId)) return false;
 
+    if (this.isBrowserPageZoomed()) {
+      for (const pointerId of pinch.pointerIds) this.releaseTouchPointerCapture(pointerId);
+      this.pinchZoom = null;
+      return false;
+    }
+
     event.preventDefault();
     event.stopImmediatePropagation();
 
@@ -3667,7 +3681,7 @@ export class GameManager {
     const isPinchPointer = this.pinchZoom?.pointerIds.includes(event.pointerId) ?? false;
     if (!isPinchPointer) return false;
 
-    event.preventDefault();
+    if (!this.isBrowserPageZoomed()) event.preventDefault();
     event.stopImmediatePropagation();
     this.pinchZoom = null;
     this.activeTouchPointers.delete(event.pointerId);
@@ -3734,8 +3748,8 @@ export class GameManager {
       this.trackTouchPointer(event);
       if (this.handlePinchZoomMove(event)) return;
       if (this.activeTouchPointers.size >= 2) {
-        event.preventDefault();
         event.stopImmediatePropagation();
+        if (!this.isBrowserPageZoomed()) event.preventDefault();
         return;
       }
     }
@@ -3756,8 +3770,8 @@ export class GameManager {
       const dx = event.clientX - pending.lastX;
       const dy = event.clientY - pending.lastY;
       this.camera.rotate(
-        -dx * GameManager.TOUCH_CAMERA_YAW_PER_PX,
-        dy * GameManager.TOUCH_CAMERA_PITCH_PER_PX,
+        dx * GameManager.TOUCH_CAMERA_YAW_PER_PX,
+        -dy * GameManager.TOUCH_CAMERA_PITCH_PER_PX,
       );
     }
 
@@ -5832,7 +5846,11 @@ export class GameManager {
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
     if (this.characterCreator) { this.characterCreator.destroy(); this.characterCreator = null; }
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
-    if (this.onWindowResize) { window.removeEventListener('resize', this.onWindowResize); this.onWindowResize = null; }
+    if (this.onWindowResize) {
+      window.removeEventListener('resize', this.onWindowResize);
+      window.removeEventListener('evilquest:viewportchange', this.onWindowResize);
+      this.onWindowResize = null;
+    }
     if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
     if (this._activityHandler) {
       window.removeEventListener('pointerdown', this._activityHandler, true);

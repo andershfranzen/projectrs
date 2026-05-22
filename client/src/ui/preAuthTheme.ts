@@ -16,7 +16,10 @@ export function ensurePreAuthTheme(): void {
 
     .eq-preauth-overlay {
       position: fixed;
-      inset: 0;
+      left: var(--eq-viewport-left, 0px);
+      top: var(--eq-viewport-top, 0px);
+      width: var(--eq-viewport-width, 100vw);
+      height: var(--eq-viewport-height, 100vh);
       background: #050505;
       overflow: hidden;
       display: flex;
@@ -50,7 +53,7 @@ export function ensurePreAuthTheme(): void {
       font-weight: 900;
       letter-spacing: clamp(1px, 1vw, 7px);
       line-height: 1;
-      max-width: calc(100vw - 24px);
+      max-width: calc(var(--eq-viewport-width, 100vw) - 24px);
       white-space: nowrap;
       text-align: center;
       color: #d8372b;
@@ -88,7 +91,7 @@ export function ensurePreAuthTheme(): void {
 
     .eq-loading-progress-wrap {
       width: 304px;
-      max-width: 70vw;
+      max-width: min(70vw, calc(var(--eq-viewport-width, 100vw) - 24px));
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -133,7 +136,7 @@ export function ensurePreAuthTheme(): void {
       margin-top: 8px;
       font-size: 12px;
       color: #a09a90;
-      max-width: 70vw;
+      max-width: min(70vw, calc(var(--eq-viewport-width, 100vw) - 24px));
       text-align: center;
       white-space: nowrap;
       overflow: hidden;
@@ -259,7 +262,7 @@ export function ensurePreAuthTheme(): void {
       outline: 1px solid #000;
       color: #e8e0cf;
       font-family: Arial, Helvetica, sans-serif;
-      font-size: 14px;
+      font-size: 16px;
       box-shadow: inset 0 0 0 1px #101010;
     }
 

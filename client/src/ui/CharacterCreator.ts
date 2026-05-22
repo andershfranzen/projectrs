@@ -183,7 +183,12 @@ export class CharacterCreator {
       id: 'character-creator',
       title: 'Create Your Character',
       subtitle: 'Choose your appearance',
-      geometry: { kind: 'center', width: 'min(640px, 92vw)', maxHeight: '92vh', zIndex: 10000 },
+      geometry: {
+        kind: 'center',
+        width: 'min(640px, calc(var(--eq-viewport-width, 100vw) - 24px))',
+        maxHeight: 'calc(var(--eq-viewport-height, 100vh) - 24px)',
+        zIndex: 10000,
+      },
       chrome: 'stone',
       closeButton: false,
       display: 'flex',

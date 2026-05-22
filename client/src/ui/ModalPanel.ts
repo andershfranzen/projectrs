@@ -55,9 +55,13 @@ export interface GameDialogModalOpts extends Omit<ModalPanelOpts, 'geometry' | '
 
 function centerPanelCss(opts: Extract<ModalGeometry, { kind: 'center' }>): string {
   return `
-    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    position: fixed;
+    left: calc(var(--eq-viewport-left, 0px) + var(--eq-viewport-width, 100vw) / 2);
+    top: calc(var(--eq-viewport-top, 0px) + var(--eq-viewport-height, 100vh) / 2);
+    transform: translate(-50%, -50%);
     display: none; flex-direction: column;
-    width: ${opts.width}; max-height: ${opts.maxHeight ?? '92vh'};
+    width: ${opts.width};
+    max-height: ${opts.maxHeight ?? 'calc(var(--eq-viewport-height, 100vh) - 24px)'};
     background: url('/ui/stone-dark.png') repeat;
     border: 2px solid #5a4a35; border-radius: 4px;
     z-index: ${opts.zIndex ?? 1001}; user-select: none; color: #ddd;

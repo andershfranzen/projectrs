@@ -19,12 +19,15 @@ interface BankTouchDragState {
   ghost: HTMLDivElement | null;
   dropTarget: BankDropTarget | null;
   sourceEl: HTMLDivElement;
+  longPressTimer: number;
 }
 
 const BANK_TEXT_SHADOW = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000';
 const BANK_BUTTON_BG = 'rgba(43, 10, 8, 0.9)';
 const BANK_BUTTON_HOVER_BG = 'rgba(78, 18, 14, 0.95)';
 const BANK_BUTTON_BORDER = '#9a332b';
+const TOUCH_DRAG_START_PX = 7;
+const TOUCH_DRAG_LONG_PRESS_MS = 220;
 
 /** Bank UI — opens inside the playable game frame with the bank grid on the left and a
  *  mirror of the player's inventory on the right.
@@ -221,6 +224,8 @@ export class BankPanel {
       position: relative;
       overflow-y: ${scroll ? 'auto' : 'hidden'};
       overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
       scrollbar-gutter: stable;
       background:
         repeating-linear-gradient(0deg, rgba(196, 126, 70, 0.035) 0 1px, transparent 1px 4px),
@@ -262,7 +267,7 @@ export class BankPanel {
       background: transparent; border: 0;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; position: relative; font-size: 9px;
-      touch-action: none; user-select: none; -webkit-user-select: none;
+      touch-action: pan-y; user-select: none; -webkit-user-select: none;
       z-index: 2;
     `;
     slot.addEventListener('mouseenter', () => { slot.style.background = 'rgba(154,51,43,0.22)'; });
@@ -349,12 +354,13 @@ export class BankPanel {
       ghost: null,
       dropTarget: null,
       sourceEl,
+      longPressTimer: 0,
     };
-    try {
-      sourceEl.setPointerCapture(event.pointerId);
-    } catch {
-      // Pointer capture is best-effort on mobile browsers.
-    }
+    this.touchDrag.longPressTimer = window.setTimeout(() => {
+      if (this.touchDrag !== null && this.touchDrag.pointerId === event.pointerId && !this.touchDrag.dragging) {
+        this.startTouchDragVisual(this.touchDrag, this.touchDrag.startX, this.touchDrag.startY);
+      }
+    }, TOUCH_DRAG_LONG_PRESS_MS);
   }
 
   private moveTouchDrag(event: PointerEvent): void {
@@ -363,7 +369,11 @@ export class BankPanel {
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
     if (!drag.dragging) {
-      if (Math.hypot(dx, dy) < 7) return;
+      if (Math.hypot(dx, dy) < TOUCH_DRAG_START_PX) return;
+      if (Math.abs(dy) > Math.abs(dx) * 1.15) {
+        this.clearTouchDrag(event.pointerId);
+        return;
+      }
       this.startTouchDragVisual(drag, event.clientX, event.clientY);
     }
 
@@ -397,8 +407,14 @@ export class BankPanel {
   }
 
   private startTouchDragVisual(drag: BankTouchDragState, clientX: number, clientY: number): void {
+    window.clearTimeout(drag.longPressTimer);
     drag.dragging = true;
     drag.sourceEl.style.opacity = '0.45';
+    try {
+      drag.sourceEl.setPointerCapture(drag.pointerId);
+    } catch {
+      // Pointer capture is best-effort on mobile browsers.
+    }
     const rect = drag.sourceEl.getBoundingClientRect();
     const ghost = drag.sourceEl.cloneNode(true) as HTMLDivElement;
     ghost.style.cssText = `
@@ -457,6 +473,7 @@ export class BankPanel {
     const drag = this.touchDrag;
     if (!drag || drag.pointerId !== pointerId) return;
     this.setDropTarget(null);
+    window.clearTimeout(drag.longPressTimer);
     drag.sourceEl.style.opacity = '';
     drag.ghost?.remove();
     this.touchDrag = null;

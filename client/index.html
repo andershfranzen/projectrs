@@ -13,6 +13,21 @@
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&display=swap" rel="stylesheet">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --eq-viewport-width: 100vw;
+      --eq-viewport-height: 100vh;
+      --eq-viewport-left: 0px;
+      --eq-viewport-top: 0px;
+      --eq-viewport-right: 0px;
+      --eq-viewport-bottom: 0px;
+      --eq-viewport-scale: 1;
+    }
+    @supports (height: 100dvh) {
+      :root {
+        --eq-viewport-width: 100dvw;
+        --eq-viewport-height: 100dvh;
+      }
+    }
     /* Below 800×600 the page becomes scrollable rather than letting the UI
        crush itself. Matches RS2's behavior of having a fixed minimum playable
        size below which the browser scrollbars take over. */
@@ -21,6 +36,7 @@
       font-family: Arial, Helvetica, sans-serif;
       user-select: none;
       -webkit-user-select: none;
+      -webkit-text-size-adjust: 100%;
     }
     body { overflow: auto; }
 
@@ -82,6 +98,10 @@
       border-right: 4px solid #1a1208;
       border-bottom: 4px solid #1a1208;
       box-shadow: inset 0 0 0 1px rgba(255,200,100,0.15);
+    }
+
+    html.eq-browser-page-zoomed #game-canvas {
+      touch-action: pinch-zoom;
     }
 
     /* Right column spans both rows — transparent, inherits frame bg */
@@ -162,8 +182,11 @@
         --mobile-nav-height: 68px;
         --mobile-sheet-height: min(58dvh, 470px);
         --mobile-chat-height: min(34dvh, 260px);
-        width: 100dvw;
-        height: 100dvh;
+        position: fixed;
+        left: var(--eq-viewport-left, 0px);
+        top: var(--eq-viewport-top, 0px);
+        width: var(--eq-viewport-width, 100dvw);
+        height: var(--eq-viewport-height, 100dvh);
         min-width: 0;
         min-height: 0;
         grid-template-columns: minmax(0, 1fr);
@@ -182,11 +205,11 @@
         grid-column: 1;
         grid-row: 1;
         position: fixed;
-        left: 8px;
-        right: 8px;
-        bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 8px);
+        left: calc(var(--eq-viewport-left, 0px) + 8px);
+        right: calc(var(--eq-viewport-right, 0px) + 8px);
+        bottom: calc(var(--eq-viewport-bottom, 0px) + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px) + 8px);
         height: var(--mobile-sheet-height);
-        max-height: calc(100dvh - var(--mobile-nav-height) - env(safe-area-inset-bottom, 0px) - 18px);
+        max-height: calc(var(--eq-viewport-height, 100dvh) - var(--mobile-nav-height) - env(safe-area-inset-bottom, 0px) - 18px);
         z-index: 25;
         overflow: hidden;
         border: 2px solid rgba(97, 79, 49, 0.95);
@@ -208,8 +231,11 @@
       }
 
       #game-frame.mobile-panel-open #ui-right-column {
-        left: 18px;
-        right: 18px;
+        left: calc(var(--eq-viewport-left, 0px) + 20px);
+        right: calc(var(--eq-viewport-right, 0px) + 20px);
+        width: min(320px, calc(var(--eq-viewport-width, 100dvw) - 40px));
+        margin-left: auto;
+        margin-right: auto;
       }
 
       #game-frame.mobile-map-open {
@@ -217,6 +243,9 @@
       }
 
       #game-frame.mobile-map-open #ui-right-column {
+        left: calc(var(--eq-viewport-left, 0px) + 8px);
+        right: auto;
+        width: calc(var(--minimap-size) + 28px);
         height: calc(var(--minimap-size) + 28px);
         justify-content: center;
         align-items: center;
@@ -277,13 +306,13 @@
 
       #mobile-status-hud {
         position: fixed;
-        left: 8px;
-        top: calc(8px + env(safe-area-inset-top, 0px));
+        left: calc(var(--eq-viewport-left, 0px) + 8px);
+        top: calc(var(--eq-viewport-top, 0px) + 8px + env(safe-area-inset-top, 0px));
         z-index: 42;
         display: flex;
         flex-direction: column;
         gap: 4px;
-        width: min(172px, calc(100vw - 16px));
+        width: min(172px, calc(var(--eq-viewport-width, 100vw) - 16px));
         padding: 6px;
         background:
           linear-gradient(rgba(10, 7, 5, 0.78), rgba(10, 7, 5, 0.78)),
@@ -295,8 +324,8 @@
 
       #mobile-logout-button {
         position: fixed;
-        top: calc(8px + env(safe-area-inset-top, 0px));
-        right: 8px;
+        top: calc(var(--eq-viewport-top, 0px) + 8px + env(safe-area-inset-top, 0px));
+        right: calc(var(--eq-viewport-right, 0px) + 8px);
         z-index: 43;
         display: block;
         min-width: 82px;
@@ -368,9 +397,9 @@
 
       #mobile-control-bar {
         position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
+        left: var(--eq-viewport-left, 0px);
+        right: var(--eq-viewport-right, 0px);
+        bottom: var(--eq-viewport-bottom, 0px);
         z-index: 50;
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -405,6 +434,12 @@
         box-shadow: inset 0 0 7px rgba(216,55,43,0.36);
       }
 
+      input,
+      textarea,
+      select {
+        font-size: 16px !important;
+      }
+
       #fps-counter {
         display: none !important;
       }
@@ -413,10 +448,10 @@
     @media (max-width: 760px) and (orientation: portrait), (pointer: coarse) and (max-width: 900px) and (orientation: portrait) {
       #bank-panel {
         position: fixed !important;
-        left: 10px !important;
-        right: 10px !important;
-        top: calc(78px + env(safe-area-inset-top, 0px)) !important;
-        bottom: calc(var(--mobile-nav-height, 68px) + env(safe-area-inset-bottom, 0px) + 10px) !important;
+        left: calc(var(--eq-viewport-left, 0px) + 10px) !important;
+        right: calc(var(--eq-viewport-right, 0px) + 10px) !important;
+        top: calc(var(--eq-viewport-top, 0px) + 78px + env(safe-area-inset-top, 0px)) !important;
+        bottom: calc(var(--eq-viewport-bottom, 0px) + var(--mobile-nav-height, 68px) + env(safe-area-inset-bottom, 0px) + 10px) !important;
         width: auto !important;
         max-width: none !important;
         height: auto !important;
@@ -489,11 +524,11 @@
       #ui-right-column,
       #ui-chat-area {
         left: auto;
-        right: 0;
-        width: min(360px, calc(100dvw - 32px));
+        right: var(--eq-viewport-right, 0px);
+        width: min(360px, calc(var(--eq-viewport-width, 100dvw) - 32px));
         height: var(--mobile-sheet-height);
-        bottom: calc(var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
-        max-height: calc(100dvh - var(--mobile-nav-height) - env(safe-area-inset-bottom, 0px) - 10px);
+        bottom: calc(var(--eq-viewport-bottom, 0px) + var(--mobile-nav-height) + env(safe-area-inset-bottom, 0px));
+        max-height: calc(var(--eq-viewport-height, 100dvh) - var(--mobile-nav-height) - env(safe-area-inset-bottom, 0px) - 10px);
         transform: translateY(calc(100% + var(--mobile-nav-height) + 24px));
       }
 
@@ -505,9 +540,11 @@
 
       #game-frame.mobile-panel-open #ui-right-column {
         left: auto;
-        right: 0;
-        width: min(238px, calc(100dvw - 32px));
+        right: var(--eq-viewport-right, 0px);
+        width: min(238px, calc(var(--eq-viewport-width, 100dvw) - 32px));
         height: min(78dvh, 290px);
+        margin-left: 0;
+        margin-right: 0;
       }
 
       #game-frame.mobile-map-open {
@@ -520,16 +557,16 @@
       }
 
       #game-frame.mobile-chat-open #ui-chat-area {
-        width: min(400px, calc(100dvw - 260px));
+        width: min(400px, calc(var(--eq-viewport-width, 100dvw) - 260px));
         height: var(--mobile-chat-height);
       }
 
       #ui-chat-area,
       #game-frame.mobile-chat-open #ui-chat-area {
-        left: 0;
+        left: var(--eq-viewport-left, 0px);
         right: auto;
-        bottom: 0;
-        width: min(400px, calc(100dvw - 260px));
+        bottom: var(--eq-viewport-bottom, 0px);
+        width: min(400px, calc(var(--eq-viewport-width, 100dvw) - 260px));
         height: var(--mobile-chat-height);
         max-height: var(--mobile-chat-height);
         border-left: 0;
@@ -572,7 +609,7 @@
       #chat-input {
         min-height: 32px;
         padding: 4px 7px !important;
-        font-size: 14px !important;
+        font-size: 16px !important;
       }
 
       #chat-collapse-button {
@@ -601,7 +638,7 @@
       }
 
       #mobile-status-hud {
-        width: min(150px, calc(100dvw - 16px));
+        width: min(150px, calc(var(--eq-viewport-width, 100dvw) - 16px));
         gap: 3px;
         padding: 5px;
       }
@@ -629,7 +666,7 @@
 
       #mobile-control-bar {
         left: auto;
-        right: 0;
+        right: var(--eq-viewport-right, 0px);
         width: min(220px, 46dvw);
         transform: none;
         grid-template-columns: repeat(2, minmax(0, 1fr));
