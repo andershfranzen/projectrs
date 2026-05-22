@@ -17,6 +17,12 @@ COPY server/ ./server/
 COPY client/ ./client/
 COPY website/ ./website/
 
+# Vite bakes VITE_* env vars into the client bundle at build time. Surface
+# them as build-args so docker-compose can pipe them through from the host
+# .env file. RECAPTCHA_SECRET is runtime-only (server reads Bun.env), not here.
+ARG VITE_RECAPTCHA_SITE_KEY=""
+ENV VITE_RECAPTCHA_SITE_KEY=$VITE_RECAPTCHA_SITE_KEY
+
 # Build browser surfaces
 RUN cd client && bunx vite build
 RUN cd website && bunx next build

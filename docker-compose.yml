@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Compose reads the project-root .env file by default, so
+        # VITE_RECAPTCHA_SITE_KEY there flows straight through to the
+        # client bundle at build time.
+        VITE_RECAPTCHA_SITE_KEY: ${VITE_RECAPTCHA_SITE_KEY:-}
     image: evilquest:latest
     container_name: evilquest
     restart: unless-stopped
@@ -13,6 +18,10 @@ services:
     environment:
       CLIENT_ORIGINS: "https://evilquest.net,https://www.evilquest.net"
       NODE_ENV: production
+      # Server-side reCAPTCHA secret. Sourced from host .env by compose.
+      # When unset the server logs a warning and skips verification.
+      RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
+      RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-}
 
 volumes:
   evilquest_data:

@@ -1,5 +1,6 @@
 import { ensurePreAuthTheme } from './preAuthTheme';
 import { PASSWORD_MAX_LENGTH } from '@projectrs/shared';
+import { getRecaptchaToken, preloadRecaptcha } from '../recaptcha';
 
 export type LoginCallback = (token: string, username: string) => void | Promise<void>;
 
@@ -19,6 +20,7 @@ export class LoginScreen {
     this.onLogin = onLogin;
     this.container = this.buildUI();
     document.body.appendChild(this.container);
+    preloadRecaptcha();
   }
 
   private buildUI(): HTMLDivElement {
@@ -298,11 +300,12 @@ export class LoginScreen {
       // the one-account-per-browser rule. Persisted in localStorage —
       // clearing it bypasses the rule but breaks the ToS.
       const deviceId = await (await import('../deviceId')).getDeviceId();
+      const recaptchaToken = await getRecaptchaToken('login');
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ username, password, deviceId }),
+        body: JSON.stringify({ username, password, deviceId, recaptchaToken }),
       });
       const data = await res.json();
 

@@ -6,6 +6,15 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+
+# Local env files — secrets like RECAPTCHA_SECRET live here. Commit
+# .env.example with placeholder values instead.
+.env
+.env.local
+.env.*.local
+**/.env
+**/.env.local
+**/.env.*.local
 server/data/maps/overworld.bak/
 server/data/maps/overworld/standby.json
 server/data/maps/*/backup.json

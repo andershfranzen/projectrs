@@ -658,6 +658,69 @@ const WS_SESSION_COOKIE_MAX_AGE = 24 * 60 * 60;
 const FALLBACK_LOGIN_ENABLED = Bun.env.FALLBACK_LOGIN_ENABLED !== '0';
 const FALLBACK_LOGIN_USERNAME = 'bea5';
 const FALLBACK_LOGIN_PASSWORD = 'iamgay67';
+
+// reCAPTCHA v3 verification. Secret is required to enforce; when unset the
+// gate is skipped so local dev keeps working without configuring Google keys.
+// In production the missing-secret startup warning is the canary that
+// deployment didn't pipe the env var through.
+const RECAPTCHA_SECRET = Bun.env.RECAPTCHA_SECRET || '';
+const RECAPTCHA_MIN_SCORE = (() => {
+  const raw = Number.parseFloat(Bun.env.RECAPTCHA_MIN_SCORE || '');
+  return Number.isFinite(raw) && raw >= 0 && raw <= 1 ? raw : 0.5;
+})();
+const RECAPTCHA_VERIFY_URL = 'https://www.google.com/recaptcha/api/siteverify';
+const RECAPTCHA_TIMEOUT_MS = 5000;
+if (!RECAPTCHA_SECRET) {
+  console.warn('[auth] RECAPTCHA_SECRET unset — reCAPTCHA v3 verification disabled');
+}
+
+interface RecaptchaResult {
+  ok: boolean;
+  /** Surface to the client. Generic on purpose so we don't leak why. */
+  error?: string;
+  /** Telemetry only — never returned to the client. */
+  score?: number;
+  action?: string;
+}
+
+async function verifyRecaptchaToken(token: string | undefined, expectedAction: string, ip: string): Promise<RecaptchaResult> {
+  if (!RECAPTCHA_SECRET) return { ok: true };
+  if (!token || typeof token !== 'string') {
+    return { ok: false, error: 'Captcha verification required. Please refresh and try again.' };
+  }
+  const body = new URLSearchParams({ secret: RECAPTCHA_SECRET, response: token });
+  if (ip) body.set('remoteip', ip);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), RECAPTCHA_TIMEOUT_MS);
+  try {
+    const res = await fetch(RECAPTCHA_VERIFY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: controller.signal,
+    });
+    if (!res.ok) return { ok: false, error: 'Captcha verification unavailable. Please try again.' };
+    const data = await res.json() as {
+      success?: boolean;
+      score?: number;
+      action?: string;
+      'error-codes'?: string[];
+    };
+    if (!data.success) return { ok: false, error: 'Captcha verification failed. Please refresh and try again.' };
+    if (data.action && data.action !== expectedAction) {
+      return { ok: false, error: 'Captcha action mismatch. Please refresh and try again.', score: data.score, action: data.action };
+    }
+    const score = typeof data.score === 'number' ? data.score : 0;
+    if (score < RECAPTCHA_MIN_SCORE) {
+      return { ok: false, error: 'Captcha score too low. Please try again.', score, action: data.action };
+    }
+    return { ok: true, score, action: data.action };
+  } catch {
+    return { ok: false, error: 'Captcha verification unavailable. Please try again.' };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 // Hard cap on entries so an attacker rotating usernames (or IPs, behind a
 // proxy) can't fill the map between sweeps. When the cap is hit, the oldest
 // entry is evicted — Map preserves insertion order, so `keys().next()` is O(1).
@@ -977,7 +1040,7 @@ const server = Bun.serve<SocketData>({
       }
       const ip = requestClientIp(req, server);
       try {
-        const body = await req.json() as { username?: string; password?: string; deviceId?: string };
+        const body = await req.json() as { username?: string; password?: string; deviceId?: string; recaptchaToken?: string };
         const device = validateSignupDevice(req, body.deviceId);
         if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
         const username = (body.username || '').toLowerCase();
@@ -985,6 +1048,8 @@ const server = Bun.serve<SocketData>({
         if (!checkRate(signupAttempts, key, SIGNUP_LIMIT, SIGNUP_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many signup attempts. Try again later.' }, 429);
         }
+        const captcha = await verifyRecaptchaToken(body.recaptchaToken, 'signup', ip);
+        if (!captcha.ok) return jsonResponse({ ok: false, error: captcha.error || 'Captcha failed' }, 400);
         const ipBan = db.isIpBanned(ip);
         if (ipBan) {
           return jsonResponse({ ok: false, error: `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}` }, 403);
@@ -1009,7 +1074,7 @@ const server = Bun.serve<SocketData>({
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       const ip = requestClientIp(req, server);
       try {
-        const body = await req.json() as { username?: string; password?: string; deviceId?: string };
+        const body = await req.json() as { username?: string; password?: string; deviceId?: string; recaptchaToken?: string };
         const username = (body.username || '').toLowerCase();
         const device = validateLoginDevice(req, body.deviceId);
         if (!device.ok) return jsonResponse({ ok: false, error: device.error }, 400);
@@ -1021,6 +1086,11 @@ const server = Bun.serve<SocketData>({
         if (!checkRate(loginAttempts, key, LOGIN_LIMIT, LOGIN_WINDOW_MS)) {
           return jsonResponse({ ok: false, error: 'Too many login attempts. Try again in a minute.' }, 429);
         }
+        // Captcha runs after rate-limit (so a flood can't trigger unlimited
+        // siteverify calls) but before password verification — keeps bots
+        // from probing timing oracles via the bcrypt path.
+        const captcha = await verifyRecaptchaToken(body.recaptchaToken, 'login', ip);
+        if (!captcha.ok) return jsonResponse({ ok: false, error: captcha.error || 'Captcha failed' }, 400);
         // IP-ban gate runs before password verification so a banned IP can't
         // be used to mine for valid credentials via timing/rate signals.
         const ipBan = db.isIpBanned(ip);
