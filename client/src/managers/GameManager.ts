@@ -65,12 +65,7 @@ const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
-const EDGE_BASE_HARDWARE_SCALE = 1.5;
-const LOW_FPS_HARDWARE_SCALE = 2.0;
-const LOW_FPS_THRESHOLD = 28;
-const LOW_FPS_CONSECUTIVE_SECONDS = 4;
-const RECOVER_FPS_THRESHOLD = 45;
-const RECOVER_FPS_CONSECUTIVE_SECONDS = 10;
+const LOW_QUALITY_HARDWARE_SCALE = 2.0;
 const TERMINAL_CLOSE_REASONS = new Set([
   'Idle timeout',
   'Logged out',
@@ -130,8 +125,6 @@ export class GameManager {
   private destroyed: boolean = false;
   private readonly baseHardwareScalingLevel: number;
   private renderHardwareScalingLevel: number = 1;
-  private lowFpsSamples: number = 0;
-  private recoveryFpsSamples: number = 0;
 
   private connectionFrozen: boolean = false;
   private reconnecting: boolean = false;
@@ -403,6 +396,10 @@ export class GameManager {
 
   // Combat hit splats (HTML overlay)
   private hitSplats: { worldPos: Vector3; el: HTMLDivElement; timer: number; startY: number }[] = [];
+  private fpsCounterEl: HTMLDivElement | null = null;
+  private fpsFrameCount: number = 0;
+  private fpsLastSampleAt: number = 0;
+  private fpsCounterUserToggled: boolean = false;
 
   // WASD camera
   private keysDown: Set<string> = new Set();
@@ -419,8 +416,8 @@ export class GameManager {
     this.token = token;
     this.username = username;
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
-    // RS-style chunky pixels: keep the CSS size stable but allow a cheaper
-    // internal framebuffer for browsers/devices that struggle with fill-rate.
+    // RS-style chunky pixels: keep the CSS size stable but allow an explicit
+    // low-quality framebuffer for players who need the fill-rate savings.
     this.baseHardwareScalingLevel = this.detectBaseHardwareScalingLevel();
     this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
     canvas.style.imageRendering = 'pixelated';
@@ -698,13 +695,9 @@ export class GameManager {
     this.localPlayer.setPositionXYZ(this.playerX, 0, this.playerZ);
     this.inputManager.setEnabled(false);
 
-    // FPS counter (remove stale element from HMR reload)
+    // Remove a stale debug overlay from HMR/reconnect. It is opt-in via /fps.
     document.getElementById('fps-counter')?.remove();
-    const fpsEl = document.createElement('div');
-    fpsEl.id = 'fps-counter';
-    fpsEl.style.cssText = 'position:fixed;top:4px;left:50%;transform:translateX(-50%);color:#0f0;font: bold 14px Arial, Helvetica, sans-serif;z-index:9999;text-shadow:1px 1px 0 #000;pointer-events:none';
-    document.body.appendChild(fpsEl);
-    let fpsFrames = 0, fpsLast = performance.now();
+    this.fpsLastSampleAt = performance.now();
 
     // Game loop
     let lastTime = performance.now();
@@ -727,13 +720,7 @@ export class GameManager {
       this.update(dt);
       this.scene.render();
 
-      fpsFrames++;
-      if (now - fpsLast >= 1000) {
-        fpsEl.textContent = `${fpsFrames} FPS | ${this.scene.getActiveMeshes().length} meshes`;
-        this.updateAdaptiveRenderQuality(fpsFrames);
-        fpsFrames = 0;
-        fpsLast = now;
-      }
+      this.updateFpsCounter(now);
     });
 
     // Resize on window changes AND on canvas-element changes (catches CSS grid reflows
@@ -1016,16 +1003,14 @@ export class GameManager {
   private detectBaseHardwareScalingLevel(): number {
     const params = new URLSearchParams(window.location.search);
     const quality = params.get('quality')?.toLowerCase();
-    if (quality === 'low' || localStorage.getItem('projectrs_low_quality') === '1') {
-      return LOW_FPS_HARDWARE_SCALE;
-    }
     if (quality === 'high') return 1;
+    if (quality === 'low') return LOW_QUALITY_HARDWARE_SCALE;
 
-    // Microsoft Edge is Chromium-based, but in practice many affected players
-    // are on Edge with high-DPI laptop panels or power-saving GPU defaults.
-    // Start it at a cheaper framebuffer instead of waiting for several bad seconds.
-    const ua = navigator.userAgent;
-    if (/\bEdg\//.test(ua)) return EDGE_BASE_HARDWARE_SCALE;
+    try {
+      if (localStorage.getItem('projectrs_low_quality') === '1') return LOW_QUALITY_HARDWARE_SCALE;
+    } catch {
+      // Storage can be blocked in privacy modes; default to full quality.
+    }
     return 1;
   }
 
@@ -1042,30 +1027,43 @@ export class GameManager {
     }
   }
 
-  private updateAdaptiveRenderQuality(fps: number): void {
-    if (!this._loginSettled) return;
-    if (fps < LOW_FPS_THRESHOLD && this.renderHardwareScalingLevel < LOW_FPS_HARDWARE_SCALE) {
-      this.lowFpsSamples++;
-      this.recoveryFpsSamples = 0;
-      if (this.lowFpsSamples >= LOW_FPS_CONSECUTIVE_SECONDS) {
-        this.setRenderHardwareScalingLevel(LOW_FPS_HARDWARE_SCALE);
-        this.lowFpsSamples = 0;
-      }
+  private setFpsCounterVisible(visible: boolean, announce: boolean = false): void {
+    if (!visible) {
+      if (!this.fpsCounterEl) return;
+      this.fpsCounterEl.remove();
+      this.fpsCounterEl = null;
+      this.fpsFrameCount = 0;
+      this.fpsLastSampleAt = performance.now();
+      if (announce) this.chatPanel?.addSystemMessage('FPS counter disabled.');
       return;
     }
 
-    if (fps >= RECOVER_FPS_THRESHOLD && this.renderHardwareScalingLevel > this.baseHardwareScalingLevel) {
-      this.recoveryFpsSamples++;
-      this.lowFpsSamples = 0;
-      if (this.recoveryFpsSamples >= RECOVER_FPS_CONSECUTIVE_SECONDS) {
-        this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel);
-        this.recoveryFpsSamples = 0;
-      }
-      return;
-    }
+    if (this.fpsCounterEl) return;
 
-    this.lowFpsSamples = 0;
-    this.recoveryFpsSamples = 0;
+    document.getElementById('fps-counter')?.remove();
+    const el = document.createElement('div');
+    el.id = 'fps-counter';
+    el.style.cssText = 'position:fixed;top:4px;left:50%;transform:translateX(-50%);color:#0f0;font: bold 14px Arial, Helvetica, sans-serif;z-index:9999;text-shadow:1px 1px 0 #000;pointer-events:none';
+    el.textContent = 'FPS';
+    document.body.appendChild(el);
+    this.fpsCounterEl = el;
+    this.fpsFrameCount = 0;
+    this.fpsLastSampleAt = performance.now();
+    if (announce) this.chatPanel?.addSystemMessage('FPS counter enabled.');
+  }
+
+  private toggleFpsCounter(): void {
+    this.fpsCounterUserToggled = true;
+    this.setFpsCounterVisible(!this.fpsCounterEl, true);
+  }
+
+  private updateFpsCounter(now: number): void {
+    if (!this.fpsCounterEl) return;
+    this.fpsFrameCount++;
+    if (now - this.fpsLastSampleAt < 1000) return;
+    this.fpsCounterEl.textContent = `${this.fpsFrameCount} FPS | ${this.scene.getActiveMeshes().length} meshes`;
+    this.fpsFrameCount = 0;
+    this.fpsLastSampleAt = now;
   }
 
   private updateResponsiveCameraZoom(): void {
@@ -1210,6 +1208,8 @@ export class GameManager {
     this.reconnecting = false;
     this.setConnectionFrozen(false);
     this.hideReconnectOverlay();
+    this.fpsCounterEl?.remove();
+    this.fpsCounterEl = null;
     this.network.close();
     this.onFatalDisconnect?.();
   }
@@ -2340,6 +2340,9 @@ export class GameManager {
       if (!isAdmin) this.pinchZoom = null;
       this.camera.setLockedMode(!isAdmin);
       this.updateAdminSurfaces();
+      if (isAdmin && !this.fpsCounterUserToggled) {
+        this.setFpsCounterVisible(true);
+      }
     });
   }
 
@@ -2730,6 +2733,10 @@ export class GameManager {
         : 0;
       const impactMs = (liveDuration > 0 ? liveDuration : 800) * fraction;
       const splatAtTarget = () => {
+        if (this.destroyed) {
+          this.pendingHealthApply.delete(targetId);
+          return;
+        }
         if (targetSprite) {
           this.showHitSplat(targetSprite.position, damage);
           if (targetHp < targetMaxHp) {
@@ -5358,6 +5365,11 @@ export class GameManager {
   }
 
   private handleChatCommand(msg: string): boolean {
+    if (msg.trim().toLowerCase() === '/fps') {
+      this.toggleFpsCounter();
+      return true;
+    }
+
     if (msg === '/spellbook') {
       this.toggleSpellbook();
       return true;
@@ -6285,6 +6297,7 @@ export class GameManager {
       this.reconnectSleepTimer = null;
     }
     this.cancelPendingTouchInteraction();
+    this.clearAllPendingHealthApply();
     this.activeTouchPointers.clear();
     this.pinchZoom = null;
     this.mobileControlsEl?.remove();
@@ -6302,9 +6315,16 @@ export class GameManager {
     this.chatPanel = null;
     document.getElementById('game-frame')?.classList.remove('mobile-map-open', 'mobile-panel-open', 'mobile-chat-open', 'mobile-chat-collapsed');
     this.hideReconnectOverlay();
+    this.fpsCounterEl?.remove();
+    this.fpsCounterEl = null;
     this.network.close();
     if (this.minimap) { this.minimap.dispose(); this.minimap = null; }
     if (this.characterCreator) { this.characterCreator.destroy(); this.characterCreator = null; }
+    this.entities?.disposeAllEntities();
+    if (this.localPlayer) {
+      this.localPlayer.dispose();
+      this.localPlayer = null;
+    }
     if (this.resizeObserver) { this.resizeObserver.disconnect(); this.resizeObserver = null; }
     if (this.onWindowResize) {
       window.removeEventListener('resize', this.onWindowResize);
@@ -6339,6 +6359,7 @@ export class GameManager {
     this.hitSplats = [];
     document.querySelectorAll('.chat-bubble-overlay').forEach(el => el.remove());
     document.querySelectorAll('.entity-health-bar').forEach(el => el.remove());
+    document.querySelectorAll('.character-name-overlay').forEach(el => el.remove());
   }
 
   private applyCachedNpcRigState(entityId: number, character: CharacterEntity): void {
@@ -6575,6 +6596,13 @@ export class GameManager {
     }
   }
 
+  private clearAllPendingHealthApply(): void {
+    for (const pending of this.pendingHealthApply.values()) {
+      clearTimeout(pending);
+    }
+    this.pendingHealthApply.clear();
+  }
+
   private applyLocalHealth(
     health: number,
     maxHealth: number,
@@ -6717,25 +6745,34 @@ export class GameManager {
 
   private updatePlayerFollowPrediction(dt: number): void {
     if (this.followTargetPlayerId < 0 || !this.localPlayer) return;
+    const targetState = this.entities.remoteTargets.get(this.followTargetPlayerId);
     const target = this.entities.remotePlayers.get(this.followTargetPlayerId);
-    if (!target) {
+    if (!target || !targetState || targetState.floor !== this.currentFloor) {
       this.followTargetPlayerId = -1;
       return;
     }
 
     this.followPathTimer = Math.max(0, this.followPathTimer - dt);
-    const dx = target.position.x - this.playerX;
-    const dz = target.position.z - this.playerZ;
+    const dx = targetState.x - this.playerX;
+    const dz = targetState.z - this.playerZ;
     const dist = Math.max(Math.abs(dx), Math.abs(dz));
     if (dist <= 0.2) {
+      if (this.pathIndex < this.path.length) {
+        this.clearPredictedPath(true);
+        this.localPlayer.stopWalking();
+      }
       this.localPlayer.lockFaceTowardXZ(target.position.x, target.position.z);
       return;
     }
-    if (this.followPathTimer > 0 || this.pathIndex < this.path.length) return;
+    const queuedDest = this.pathIndex < this.path.length ? this.path[this.path.length - 1] : null;
+    const queuedDestStillUseful = queuedDest
+      && Math.max(Math.abs(queuedDest.x - targetState.x), Math.abs(queuedDest.z - targetState.z)) <= 0.2;
+    if (queuedDestStillUseful) return;
+    if (this.followPathTimer > 0) return;
     this.followPathTimer = 0.6;
 
-    const targetTileX = Math.floor(target.position.x);
-    const targetTileZ = Math.floor(target.position.z);
+    const targetTileX = Math.floor(targetState.x);
+    const targetTileZ = Math.floor(targetState.z);
     if (!this.isTileBlocked(targetTileX, targetTileZ)) {
       const pathResult = this.findPathFromMovementAnchor(targetTileX + 0.5, targetTileZ + 0.5);
       if (pathResult.path.length > 0) {

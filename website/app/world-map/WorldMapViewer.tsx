@@ -1,6 +1,6 @@
 'use client';
 
-import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type TileCode = 'g' | 'd' | 'p' | 's' | 'r' | 'w' | 'm' | 'u';
 type WorldMapObjectKind = 'building' | 'wall' | 'vegetation' | 'resource' | 'interactive' | 'decor';
@@ -11,14 +11,6 @@ interface WorldMapNpcSpawn {
   floor: number;
   npcId: number;
   name: string;
-  alive: boolean;
-}
-
-interface WorldMapPlayer {
-  x: number;
-  z: number;
-  floor: number;
-  username: string;
 }
 
 interface WorldMapObject {
@@ -55,8 +47,6 @@ interface WorldMapData {
   wallCount: number;
   buildingCount: number;
   npcSpawns: WorldMapNpcSpawn[];
-  onlinePlayers: WorldMapPlayer[];
-  onlinePlayerCount: number;
   updatedAt: number;
 }
 
@@ -66,26 +56,10 @@ interface WorldMapResponse {
   map: WorldMapData;
 }
 
-interface WorldMapLiveResponse {
-  ok: true;
-  generatedAt: number;
-  onlinePlayers: WorldMapPlayer[];
-  onlinePlayerCount: number;
-}
-
 interface ViewState {
   x: number;
   y: number;
   zoom: number;
-}
-
-interface SmoothWorldMapPlayer extends WorldMapPlayer {
-  fromX: number;
-  fromZ: number;
-  targetX: number;
-  targetZ: number;
-  startedAt: number;
-  duration: number;
 }
 
 interface HoverInfo {
@@ -95,16 +69,19 @@ interface HoverInfo {
   rows: string[];
 }
 
+interface HoverIndex {
+  npcs: Map<string, WorldMapNpcSpawn[]>;
+  objects: Map<string, WorldMapObject[]>;
+  walls: Map<string, WorldMapWall[]>;
+}
+
 const MIN_ZOOM = 0.75;
 const MAX_ZOOM = 16;
 const VIEW_PADDING = 28;
-const MAP_REFRESH_MS = 10000;
-const LIVE_INTERPOLATION_MS = 650;
-const LIVE_FALLBACK_POLL_MS = 1000;
+const MAP_REFRESH_MS = 5 * 60_000;
 const MAP_RENDER_SCALE = 4;
+const HOVER_CELL_SIZE = 16;
 const NPC_MARKER_RADIUS = 2.2;
-const PLAYER_MARKER_RADIUS = 2.6;
-const PLAYER_MARKER_RING_RADIUS = 4.1;
 
 const TILE_COLORS: Record<TileCode, [number, number, number, number]> = {
   g: [91, 138, 65, 255],
@@ -139,29 +116,6 @@ const OBJECT_COLORS: Record<WorldMapObjectKind, string> = {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
-}
-
-function liveStatusLabel(status: 'connecting' | 'live' | 'reconnecting' | 'polling'): string {
-  if (status === 'live') return 'Live';
-  if (status === 'polling') return 'Polling';
-  if (status === 'reconnecting') return 'Reconnecting';
-  return 'Connecting';
-}
-
-function playerKey(player: WorldMapPlayer): string {
-  return `${player.username}:${player.floor}`;
-}
-
-function sampleSmoothPlayer(player: SmoothWorldMapPlayer, now: number): WorldMapPlayer {
-  const rawT = player.duration <= 0 ? 1 : (now - player.startedAt) / player.duration;
-  const t = clamp(rawT, 0, 1);
-  const eased = t * t * (3 - 2 * t);
-  return {
-    username: player.username,
-    floor: player.floor,
-    x: player.fromX + (player.targetX - player.fromX) * eased,
-    z: player.fromZ + (player.targetZ - player.fromZ) * eased,
-  };
 }
 
 function mapPointFromEvent(event: ReactPointerEvent<HTMLElement>, view: ViewState): { x: number; z: number; screenX: number; screenY: number } {
@@ -212,6 +166,49 @@ function tileColorCss(code: TileCode): string {
 
 function tileCodeAt(map: WorldMapData, x: number, z: number): TileCode {
   return (map.tileRows[z]?.[x] as TileCode | undefined) ?? 'g';
+}
+
+function hoverCellKey(cx: number, cz: number): string {
+  return `${cx},${cz}`;
+}
+
+function addHoverCell<T extends { x: number; z: number }>(bucket: Map<string, T[]>, item: T): void {
+  const cx = Math.floor(item.x / HOVER_CELL_SIZE);
+  const cz = Math.floor(item.z / HOVER_CELL_SIZE);
+  const key = hoverCellKey(cx, cz);
+  const items = bucket.get(key);
+  if (items) items.push(item);
+  else bucket.set(key, [item]);
+}
+
+function nearbyHoverItems<T>(bucket: Map<string, T[]>, x: number, z: number, radius: number): T[] {
+  const minCx = Math.floor((x - radius) / HOVER_CELL_SIZE);
+  const maxCx = Math.floor((x + radius) / HOVER_CELL_SIZE);
+  const minCz = Math.floor((z - radius) / HOVER_CELL_SIZE);
+  const maxCz = Math.floor((z + radius) / HOVER_CELL_SIZE);
+  const items: T[] = [];
+
+  for (let cz = minCz; cz <= maxCz; cz++) {
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      const cellItems = bucket.get(hoverCellKey(cx, cz));
+      if (cellItems) items.push(...cellItems);
+    }
+  }
+
+  return items;
+}
+
+function buildHoverIndex(map: WorldMapData): HoverIndex {
+  const index: HoverIndex = {
+    npcs: new Map(),
+    objects: new Map(),
+    walls: new Map(),
+  };
+
+  for (const spawn of map.npcSpawns) addHoverCell(index.npcs, spawn);
+  for (const obj of map.objects) addHoverCell(index.objects, obj);
+  for (const wall of map.walls) addHoverCell(index.walls, wall);
+  return index;
 }
 
 function drawWorldMapTerrain(ctx: CanvasRenderingContext2D, map: WorldMapData): void {
@@ -310,7 +307,6 @@ function drawChunkGrid(ctx: CanvasRenderingContext2D, map: WorldMapData): void {
 
 function drawNpcSpawn(ctx: CanvasRenderingContext2D, spawn: WorldMapNpcSpawn): void {
   ctx.save();
-  ctx.globalAlpha = spawn.alive ? 1 : 0.55;
   ctx.fillStyle = '#f2d45c';
   ctx.strokeStyle = '#1b1005';
   ctx.lineWidth = 0.9;
@@ -396,32 +392,12 @@ function drawWorldMapWall(ctx: CanvasRenderingContext2D, wall: WorldMapWall): vo
   ctx.restore();
 }
 
-function drawOnlinePlayer(ctx: CanvasRenderingContext2D, player: WorldMapPlayer): void {
-  ctx.save();
-  ctx.fillStyle = '#5ee9ff';
-  ctx.strokeStyle = '#03131a';
-  ctx.lineWidth = 1.05;
-  ctx.beginPath();
-  ctx.arc(player.x, player.z, PLAYER_MARKER_RADIUS, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.82)';
-  ctx.lineWidth = 0.55;
-  ctx.beginPath();
-  ctx.arc(player.x, player.z, PLAYER_MARKER_RING_RADIUS, 0, Math.PI * 2);
-  ctx.stroke();
-  ctx.restore();
-}
-
 export function WorldMapViewer() {
   const viewportRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<ViewState>({ x: 0, y: 0, zoom: 1 });
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const lastFitKeyRef = useRef('');
-  const smoothPlayersRef = useRef<Map<string, SmoothWorldMapPlayer>>(new Map());
-  const hasLiveSnapshotRef = useRef(false);
 
   const [map, setMap] = useState<WorldMapData | null>(null);
   const [status, setStatus] = useState('Loading World Map');
@@ -430,11 +406,9 @@ export function WorldMapViewer() {
   const [showObjects, setShowObjects] = useState(true);
   const [showWalls, setShowWalls] = useState(true);
   const [showNpcSpawns, setShowNpcSpawns] = useState(true);
-  const [showPlayers, setShowPlayers] = useState(true);
   const [showChunks, setShowChunks] = useState(false);
-  const [onlineCount, setOnlineCount] = useState(0);
-  const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'polling'>('connecting');
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
+  const hoverIndex = useMemo(() => (map ? buildHoverIndex(map) : null), [map]);
 
   const clampView = useCallback((candidate: ViewState): ViewState => {
     const viewport = viewportRef.current;
@@ -514,35 +488,20 @@ export function WorldMapViewer() {
   }, [zoomAt]);
 
   const findHoverInfo = useCallback((x: number, z: number, screenX: number, screenY: number): HoverInfo | null => {
-    if (!map) return null;
+    if (!map || !hoverIndex) return null;
     const tooltipX = screenX + 16;
     const tooltipY = screenY + 16;
     const hitRadius = Math.max(3, 8 / viewRef.current.zoom);
-    const hitRadiusSq = hitRadius * hitRadius;
-
-    if (showPlayers) {
-      const now = performance.now();
-      for (const smoothPlayer of smoothPlayersRef.current.values()) {
-        const player = sampleSmoothPlayer(smoothPlayer, now);
-        if (distSq(x, z, player.x, player.z) <= Math.max(7, hitRadius) ** 2) {
-          return {
-            x: tooltipX,
-            y: tooltipY,
-            title: player.username,
-            rows: [`Online player`, `Tile ${player.x.toFixed(1)}, ${player.z.toFixed(1)}`, `Floor ${player.floor}`],
-          };
-        }
-      }
-    }
 
     if (showNpcSpawns) {
-      for (const spawn of map.npcSpawns) {
-        if (distSq(x, z, spawn.x, spawn.z) <= Math.max(5, hitRadius) ** 2) {
+      const radius = Math.max(5, hitRadius);
+      for (const spawn of nearbyHoverItems(hoverIndex.npcs, x, z, radius)) {
+        if (distSq(x, z, spawn.x, spawn.z) <= radius * radius) {
           return {
             x: tooltipX,
             y: tooltipY,
             title: spawn.name,
-            rows: [`NPC spawn`, spawn.alive ? 'Alive' : 'Respawning', `Tile ${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}`, `Floor ${spawn.floor}`],
+            rows: [`NPC spawn`, `Tile ${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}`, `Floor ${spawn.floor}`],
           };
         }
       }
@@ -550,7 +509,7 @@ export function WorldMapViewer() {
 
     if (showObjects) {
       let best: { obj: WorldMapObject; distance: number } | null = null;
-      for (const obj of map.objects) {
+      for (const obj of nearbyHoverItems(hoverIndex.objects, x, z, Math.max(hitRadius, 4))) {
         const radius = Math.max(hitRadius, obj.size * 1.25);
         const distance = distSq(x, z, obj.x, obj.z);
         if (distance > radius * radius) continue;
@@ -569,7 +528,7 @@ export function WorldMapViewer() {
 
     if (showWalls) {
       const edgeHitRadius = Math.max(0.65, 4 / viewRef.current.zoom);
-      for (const wall of map.walls) {
+      for (const wall of nearbyHoverItems(hoverIndex.walls, x, z, edgeHitRadius + 2)) {
         const edges: Array<[string, number, number, number, number]> = [];
         if (wall.edges & 1) edges.push(['North edge', wall.x, wall.z, wall.x + 1, wall.z]);
         if (wall.edges & 2) edges.push(['East edge', wall.x + 1, wall.z, wall.x + 1, wall.z + 1]);
@@ -588,49 +547,24 @@ export function WorldMapViewer() {
       }
     }
 
+    if (showChunks && x >= 0 && z >= 0 && x < map.width && z < map.height) {
+      const chunkSize = Math.max(1, Math.floor(map.chunkSize || 32));
+      const chunkX = Math.floor(x / chunkSize);
+      const chunkZ = Math.floor(z / chunkSize);
+      const startX = chunkX * chunkSize;
+      const startZ = chunkZ * chunkSize;
+      const endX = Math.min(map.width - 1, startX + chunkSize - 1);
+      const endZ = Math.min(map.height - 1, startZ + chunkSize - 1);
+      return {
+        x: tooltipX,
+        y: tooltipY,
+        title: `Chunk ${chunkX},${chunkZ}`,
+        rows: [`Tiles ${startX}-${endX}, ${startZ}-${endZ}`],
+      };
+    }
+
     return null;
-  }, [map, showNpcSpawns, showObjects, showPlayers, showWalls]);
-
-  const applyLivePlayers = useCallback((players: WorldMapPlayer[], markLiveSnapshot: boolean) => {
-    const now = performance.now();
-    const smoothPlayers = smoothPlayersRef.current;
-    const nextKeys = new Set<string>();
-
-    for (const player of players) {
-      const key = playerKey(player);
-      nextKeys.add(key);
-      const existing = smoothPlayers.get(key);
-      if (existing) {
-        const current = sampleSmoothPlayer(existing, now);
-        smoothPlayers.set(key, {
-          ...player,
-          fromX: current.x,
-          fromZ: current.z,
-          targetX: player.x,
-          targetZ: player.z,
-          startedAt: now,
-          duration: LIVE_INTERPOLATION_MS,
-        });
-      } else {
-        smoothPlayers.set(key, {
-          ...player,
-          fromX: player.x,
-          fromZ: player.z,
-          targetX: player.x,
-          targetZ: player.z,
-          startedAt: now,
-          duration: 0,
-        });
-      }
-    }
-
-    for (const key of smoothPlayers.keys()) {
-      if (!nextKeys.has(key)) smoothPlayers.delete(key);
-    }
-
-    if (markLiveSnapshot) hasLiveSnapshotRef.current = true;
-    setOnlineCount(players.length);
-  }, []);
+  }, [hoverIndex, map, showChunks, showNpcSpawns, showObjects, showWalls]);
 
   useEffect(() => {
     let cancelled = false;
@@ -644,9 +578,6 @@ export function WorldMapViewer() {
         .then((payload) => {
           if (cancelled) return;
           setMap(payload.map);
-          if (!hasLiveSnapshotRef.current) {
-            applyLivePlayers(payload.map.onlinePlayers, false);
-          }
           setStatus('');
         })
         .catch((err) => {
@@ -660,63 +591,7 @@ export function WorldMapViewer() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [applyLivePlayers]);
-
-  useEffect(() => {
-    let closed = false;
-    let fallbackTimer: number | null = null;
-
-    const applyPayload = (payload: WorldMapLiveResponse) => {
-      if (closed || !payload.ok) return;
-      applyLivePlayers(payload.onlinePlayers, true);
-    };
-
-    const startFallbackPolling = () => {
-      if (fallbackTimer !== null) return;
-      setLiveStatus('polling');
-      const poll = () => {
-        fetch('/api/world-map/live?format=json', { cache: 'no-store' })
-          .then((res) => {
-            if (!res.ok) throw new Error(`Live map request failed (${res.status})`);
-            return res.json() as Promise<WorldMapLiveResponse>;
-          })
-          .then(applyPayload)
-          .catch(() => {
-            if (!closed) setLiveStatus('reconnecting');
-          });
-      };
-      poll();
-      fallbackTimer = window.setInterval(poll, LIVE_FALLBACK_POLL_MS);
-    };
-
-    if (typeof EventSource === 'undefined') {
-      startFallbackPolling();
-      return () => {
-        closed = true;
-        if (fallbackTimer !== null) window.clearInterval(fallbackTimer);
-      };
-    }
-
-    const source = new EventSource('/api/world-map/live');
-    source.addEventListener('players', (event) => {
-      try {
-        const payload = JSON.parse((event as MessageEvent<string>).data) as WorldMapLiveResponse;
-        applyPayload(payload);
-        if (!closed) setLiveStatus('live');
-      } catch {
-        if (!closed) setLiveStatus('reconnecting');
-      }
-    });
-    source.onerror = () => {
-      if (!closed) setLiveStatus('reconnecting');
-    };
-
-    return () => {
-      closed = true;
-      source.close();
-      if (fallbackTimer !== null) window.clearInterval(fallbackTimer);
-    };
-  }, [applyLivePlayers]);
+  }, []);
 
   useEffect(() => {
     const currentMap = map;
@@ -729,13 +604,11 @@ export function WorldMapViewer() {
     canvas.width = pixelWidth;
     canvas.height = pixelHeight;
 
-    const baseCanvas = document.createElement('canvas');
-    baseCanvas.width = pixelWidth;
-    baseCanvas.height = pixelHeight;
-
-    const ctx = baseCanvas.getContext('2d');
+    const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, pixelWidth, pixelHeight);
     ctx.setTransform(MAP_RENDER_SCALE, 0, 0, MAP_RENDER_SCALE, 0, 0);
     drawWorldMapTerrain(ctx, currentMap);
 
@@ -755,38 +628,8 @@ export function WorldMapViewer() {
       for (const spawn of currentMap.npcSpawns) drawNpcSpawn(ctx, spawn);
     }
 
-    baseCanvasRef.current = baseCanvas;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }, [map, showChunks, showNpcSpawns, showObjects, showWalls]);
-
-  useEffect(() => {
-    const currentMap = map;
-    const canvas = canvasRef.current;
-    if (!currentMap || !canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    let frame = 0;
-    const draw = (now: number) => {
-      ctx.imageSmoothingEnabled = false;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      const baseCanvas = baseCanvasRef.current;
-      if (baseCanvas) ctx.drawImage(baseCanvas, 0, 0);
-
-      if (showPlayers) {
-        ctx.setTransform(MAP_RENDER_SCALE, 0, 0, MAP_RENDER_SCALE, 0, 0);
-        for (const player of smoothPlayersRef.current.values()) {
-          drawOnlinePlayer(ctx, sampleSmoothPlayer(player, now));
-        }
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-      }
-
-      frame = window.requestAnimationFrame(draw);
-    };
-
-    frame = window.requestAnimationFrame(draw);
-    return () => window.cancelAnimationFrame(frame);
-  }, [map, showChunks, showPlayers, showNpcSpawns, showObjects, showWalls]);
 
   useEffect(() => {
     if (!map) return;
@@ -877,11 +720,6 @@ export function WorldMapViewer() {
           <div className="world-map-mapbar" onPointerDown={(event) => event.stopPropagation()}>
             <div className="world-map-title">
               <h1>World Map</h1>
-              <span className="world-map-live-value">
-                <span className={`world-map-live-dot is-${liveStatus}`} />
-                {liveStatusLabel(liveStatus)}
-                <span>{onlineCount.toLocaleString()} online</span>
-              </span>
             </div>
             <div className="world-map-controls" aria-label="Map controls">
               <button type="button" title="Zoom out" aria-label="Zoom out" onClick={() => zoomFromCenter(0.82)}>-</button>
@@ -903,7 +741,6 @@ export function WorldMapViewer() {
               <label><input type="checkbox" checked={showObjects} onChange={(event) => setShowObjects(event.target.checked)} /> <span className="world-map-marker object" /> Objects</label>
               <label><input type="checkbox" checked={showWalls} onChange={(event) => setShowWalls(event.target.checked)} /> <span className="world-map-marker wall-line" /> Walls</label>
               <label><input type="checkbox" checked={showNpcSpawns} onChange={(event) => setShowNpcSpawns(event.target.checked)} /> <span className="world-map-marker npc" /> NPCs</label>
-              <label><input type="checkbox" checked={showPlayers} onChange={(event) => setShowPlayers(event.target.checked)} /> <span className="world-map-marker player" /> Players</label>
               <label><input type="checkbox" checked={showChunks} onChange={(event) => setShowChunks(event.target.checked)} /> <span className="world-map-marker chunk-grid" /> Chunks</label>
             </div>
           </div>

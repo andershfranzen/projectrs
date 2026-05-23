@@ -279,6 +279,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.PLAYER_CAST_SPELL:
     case ClientOpcode.PLAYER_SET_AUTOCAST:
       return { bucket: 'combat', maxMessages: 8, windowMs: 1000 };
+    case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
     case ClientOpcode.PLAYER_INTERACT_OBJECT:
     case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
@@ -359,6 +360,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const target = world.getPlayer(values[0]);
       if (!target || target.id === player.id || target.disconnected) return invalid('bad-follow-target');
       if (target.currentMapLevel !== player.currentMapLevel || target.currentFloor !== player.currentFloor) return invalid('unreachable-follow-target');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-follow-target');
       return OK_PACKET;
     }
 
@@ -837,6 +839,8 @@ function completeGameSocketLogin(
         console.log(`[GameSocket] Recovering "${username}": saved tile (${tx},${tz}) blocked on all floors, respawning at default`);
         player.position.x = defaultSpawn.x;
         player.position.y = defaultSpawn.z;
+        player.followAnchorX = defaultSpawn.x;
+        player.followAnchorZ = defaultSpawn.z;
         player.currentFloor = 0;
       }
     } else if (

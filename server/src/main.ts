@@ -519,8 +519,6 @@ interface PublicWorldMap {
   wallCount: number;
   buildingCount: number;
   npcSpawns: PublicWorldMapNpcSpawn[];
-  onlinePlayers: PublicWorldMapPlayer[];
-  onlinePlayerCount: number;
   updatedAt: number;
 }
 
@@ -530,14 +528,12 @@ interface PublicWorldMapNpcSpawn {
   floor: number;
   npcId: number;
   name: string;
-  alive: boolean;
 }
 
-interface PublicWorldMapPlayer {
-  x: number;
-  z: number;
-  floor: number;
-  username: string;
+interface PublicWorldMapSnapshot {
+  ok: true;
+  generatedAt: number;
+  map: PublicWorldMap;
 }
 
 interface PublicWorldMapObject {
@@ -557,11 +553,10 @@ interface PublicWorldMapWall {
   edges: number;
 }
 
-interface PublicWorldMapLiveSnapshot {
-  ok: true;
-  generatedAt: number;
-  onlinePlayers: PublicWorldMapPlayer[];
-  onlinePlayerCount: number;
+let worldMapSnapshotCache: PublicWorldMapSnapshot | null = null;
+
+function invalidateWorldMapSnapshotCache(): void {
+  worldMapSnapshotCache = null;
 }
 
 function readJsonFile<T>(filePath: string): T | null {
@@ -740,90 +735,20 @@ function countWallEdges(walls: PublicWorldMapWall[]): number {
 }
 
 function buildWorldMapNpcSpawns(world: World): PublicWorldMapNpcSpawn[] {
-  return [...world.npcs.values()]
-    .filter((npc) => npc.currentMapLevel === WORLD_MAP_SOURCE_MAP_ID)
-    .filter((npc) => Number.isFinite(npc.spawnX) && Number.isFinite(npc.spawnZ))
-    .map((npc) => ({
-      x: publicMapNumber(npc.spawnX),
-      z: publicMapNumber(npc.spawnZ),
-      floor: npc.currentFloor,
-      npcId: npc.npcId,
-      name: (npc.displayName || npc.name || 'NPC').slice(0, 48),
-      alive: !npc.dead,
+  const spawns = world.data.loadSpawns(WORLD_MAP_SOURCE_MAP_ID);
+  return (spawns.npcs ?? [])
+    .filter((spawn) => Number.isFinite(spawn.x) && Number.isFinite(spawn.z))
+    .map((spawn) => ({
+      x: publicMapNumber(spawn.x),
+      z: publicMapNumber(spawn.z),
+      floor: Math.floor(Number.isFinite(spawn.floor) ? Number(spawn.floor) : 0),
+      npcId: spawn.npcId,
+      name: (spawn.name || world.data.getNpc(spawn.npcId)?.name || 'NPC').slice(0, 48),
     }))
     .sort((a, b) => a.name.localeCompare(b.name) || a.z - b.z || a.x - b.x);
 }
 
-function buildWorldMapOnlinePlayers(world: World): PublicWorldMapPlayer[] {
-  return [...world.players.values()]
-    .filter((player) => player.currentMapLevel === WORLD_MAP_SOURCE_MAP_ID)
-    .filter((player) => !player.disconnected && !player.requestIdleLogout)
-    .filter((player) => Number.isFinite(player.position.x) && Number.isFinite(player.position.y))
-    .map((player) => ({
-      x: publicMapNumber(player.position.x),
-      z: publicMapNumber(player.position.y),
-      floor: player.currentFloor,
-      username: (player.name || 'Player').slice(0, 24),
-    }))
-    .sort((a, b) => a.username.localeCompare(b.username));
-}
-
-function buildWorldMapLiveSnapshot(world: World): PublicWorldMapLiveSnapshot {
-  const onlinePlayers = buildWorldMapOnlinePlayers(world);
-  return {
-    ok: true,
-    generatedAt: Math.floor(Date.now() / 1000),
-    onlinePlayers,
-    onlinePlayerCount: onlinePlayers.length,
-  };
-}
-
-function worldMapLiveStreamResponse(req: Request, world: World): Response {
-  const encoder = new TextEncoder();
-  let timer: ReturnType<typeof setInterval> | null = null;
-  let closed = false;
-
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const cleanup = () => {
-        if (closed) return;
-        closed = true;
-        if (timer) clearInterval(timer);
-        try { controller.close(); } catch {}
-      };
-
-      const send = () => {
-        if (closed) return;
-        try {
-          const payload = JSON.stringify(buildWorldMapLiveSnapshot(world));
-          controller.enqueue(encoder.encode(`event: players\ndata: ${payload}\n\n`));
-        } catch {
-          cleanup();
-        }
-      };
-
-      req.signal.addEventListener('abort', cleanup, { once: true });
-      controller.enqueue(encoder.encode(': connected\n\n'));
-      send();
-      timer = setInterval(send, 600);
-    },
-    cancel() {
-      closed = true;
-      if (timer) clearInterval(timer);
-    },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      'Connection': 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    },
-  });
-}
-
-function buildWorldMapSnapshot(world: World): { ok: true; generatedAt: number; map: PublicWorldMap } {
+function buildWorldMapSnapshot(world: World): PublicWorldMapSnapshot {
   const mapDir = resolve(MAPS_DIR, WORLD_MAP_SOURCE_MAP_ID);
   const mapFile = readJsonFile<KCMapFile>(resolve(mapDir, 'map.json'));
   if (!mapFile?.map) throw new Error('World Map data is unavailable');
@@ -838,7 +763,6 @@ function buildWorldMapSnapshot(world: World): { ok: true; generatedAt: number; m
   const objects = buildWorldMapObjects(mapDir, mapFile, world);
   const walls = buildWorldMapWalls(mapDir);
   const npcSpawns = buildWorldMapNpcSpawns(world);
-  const onlinePlayers = buildWorldMapOnlinePlayers(world);
   const buildingCount = objects.filter((obj) => obj.kind === 'building' || obj.kind === 'wall').length;
 
   return {
@@ -861,8 +785,6 @@ function buildWorldMapSnapshot(world: World): { ok: true; generatedAt: number; m
       wallCount: countWallEdges(walls),
       buildingCount,
       npcSpawns,
-      onlinePlayers,
-      onlinePlayerCount: onlinePlayers.length,
       updatedAt: maxMtimeSeconds([
         resolve(mapDir, 'meta.json'),
         resolve(mapDir, 'map.json'),
@@ -874,6 +796,13 @@ function buildWorldMapSnapshot(world: World): { ok: true; generatedAt: number; m
       ]),
     },
   };
+}
+
+function getWorldMapSnapshot(world: World): PublicWorldMapSnapshot {
+  if (!worldMapSnapshotCache) {
+    worldMapSnapshotCache = buildWorldMapSnapshot(world);
+  }
+  return worldMapSnapshotCache;
 }
 import { GameDatabase } from './Database';
 import { flushAuditSync } from './Audit';
@@ -1300,6 +1229,11 @@ setInterval(() => {
 const db = new GameDatabase();
 const world = new World(db);
 world.start();
+try {
+  getWorldMapSnapshot(world);
+} catch (e) {
+  console.warn('[world-map] initial snapshot build failed:', e instanceof Error ? e.message : e);
+}
 
 // --- Admin authorization for editor / dev APIs ---
 // A request is admin-authorized if:
@@ -1544,14 +1478,11 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/world-map' && req.method === 'GET') {
-      return jsonResponse(buildWorldMapSnapshot(world), 200, { 'Cache-Control': 'no-cache' });
+      return jsonResponse(getWorldMapSnapshot(world), 200, { 'Cache-Control': 'public, max-age=60' });
     }
 
     if (url.pathname === '/api/world-map/live' && req.method === 'GET') {
-      if (url.searchParams.get('format') === 'json') {
-        return jsonResponse(buildWorldMapLiveSnapshot(world), 200, { 'Cache-Control': 'no-cache' });
-      }
-      return worldMapLiveStreamResponse(req, world);
+      return jsonResponse({ ok: false, error: 'The public World Map does not expose live player tracking.' }, 410, { 'Cache-Control': 'no-store' });
     }
 
     // --- REST Auth Endpoints ---
@@ -2346,6 +2277,7 @@ const server = Bun.serve<SocketData>({
         // (including game ticks) are serviced.
         void createMapBackup(mapDir);
 
+        if (mapId === WORLD_MAP_SOURCE_MAP_ID) invalidateWorldMapSnapshotCache();
         return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
@@ -2609,6 +2541,7 @@ const server = Bun.serve<SocketData>({
         // Reload the map in the world (re-read JSON from disk)
         try {
           world.reloadMap(mapId);
+          if (mapId === WORLD_MAP_SOURCE_MAP_ID) invalidateWorldMapSnapshotCache();
           return jsonResponse({ ok: true });
         } catch (e: any) {
           return jsonResponse({ ok: false, error: e.message }, 500);
@@ -2706,6 +2639,7 @@ const server = Bun.serve<SocketData>({
             : Promise.resolve(),
         ]);
 
+        if (mapId === WORLD_MAP_SOURCE_MAP_ID) invalidateWorldMapSnapshotCache();
         return jsonResponse({ ok: true, mapId });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Import failed' }, 500);
@@ -2723,6 +2657,7 @@ const server = Bun.serve<SocketData>({
         if (!mapDir) return new Response('Forbidden', { status: 403 });
         if (!existsSync(mapDir)) return jsonResponse({ ok: false, error: 'Map not found' }, 404);
         rmSync(mapDir, { recursive: true, force: true });
+        if (mapId === WORLD_MAP_SOURCE_MAP_ID) invalidateWorldMapSnapshotCache();
         return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Delete failed' }, 500);

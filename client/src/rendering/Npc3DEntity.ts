@@ -39,6 +39,17 @@ async function importMeshWithTimeout(
   }
 }
 
+type ImportedMeshResult = Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>;
+
+function disposeImportedMeshResult(result: ImportedMeshResult): void {
+  for (const group of result.animationGroups) group.dispose();
+  for (const mesh of result.meshes) mesh.dispose();
+  for (const node of result.transformNodes) {
+    if (!node.isDisposed()) node.dispose();
+  }
+  for (const skeleton of result.skeletons) skeleton.dispose();
+}
+
 /**
  * 3D NPC entity — loads a GLB with embedded animations.
  * Exposes the same public interface as SpriteEntity so it can be used interchangeably.
@@ -47,6 +58,7 @@ export class Npc3DEntity {
   private scene: Scene;
   private root: TransformNode | null = null;
   private meshes: AbstractMesh[] = [];
+  private disposed: boolean = false;
   private _position: Vector3 = Vector3.Zero();
   private _rotationY: number = 0;
   private targetRotationY: number = 0;
@@ -107,6 +119,10 @@ export class Npc3DEntity {
       const dir = file.substring(0, lastSlash + 1);
       const fname = file.substring(lastSlash + 1);
       const result = await importMeshWithTimeout(this.scene, dir, fname);
+      if (this.disposed || this.scene.isDisposed) {
+        disposeImportedMeshResult(result);
+        return;
+      }
 
       // Clone every material before touching it — Babylon's glTF loader
       // shares material instances across multiple ImportMeshAsync() of the
@@ -198,7 +214,7 @@ export class Npc3DEntity {
         mesh.setEnabled(true);
       }
     } catch (e) {
-      console.warn(`[Npc3DEntity] Failed to load ${file}:`, e);
+      if (!this.disposed) console.warn(`[Npc3DEntity] Failed to load ${file}:`, e);
     }
   }
 
@@ -420,6 +436,8 @@ export class Npc3DEntity {
   isAnimating(): boolean { return this.currentAnim === 'attack'; }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     this.hideChatBubble();
     this.hideHealthBar();
     for (const [, group] of this.animGroups) { group.stop(); group.dispose(); }

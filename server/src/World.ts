@@ -73,6 +73,7 @@ const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
 const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
 const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = 800;
+const PLAYER_FOLLOW_PATH_SEARCH_STEPS = 800;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -2354,10 +2355,14 @@ export class World {
     const player = this.players.get(playerId);
     const target = this.players.get(targetPlayerId);
     if (!player || !target) return;
+    if (this.activeDuels?.has(playerId)) {
+      player.clearMoveQueue();
+      player.followTargetPlayerId = -1;
+      return;
+    }
     if (player.id === target.id) return;
     if (player.disconnected || target.disconnected) return;
     if (player.currentMapLevel !== target.currentMapLevel || player.currentFloor !== target.currentFloor) return;
-    if (player.isInterfaceOpen()) return;
 
     this.interruptPlayerAction(playerId, player);
     this.clearCombatTarget(playerId);
@@ -2372,6 +2377,8 @@ export class World {
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     player.openShopNpcId = null;
     if (player.openDialogueState) this.sendDialogueClose(player);
+    target.followAnchorX = target.position.x;
+    target.followAnchorZ = target.position.y;
     this.updatePlayerFollow(player, target);
   }
 
@@ -2382,16 +2389,15 @@ export class World {
       return;
     }
 
-    const dx = target.position.x - player.position.x;
-    const dz = target.position.y - player.position.y;
-    if (!target.hasMoveQueue() && Math.max(Math.abs(dx), Math.abs(dz)) <= 0.2) {
+    const targetGoalX = Number.isFinite(target.followAnchorX) ? target.followAnchorX : target.position.x;
+    const targetGoalZ = Number.isFinite(target.followAnchorZ) ? target.followAnchorZ : target.position.y;
+    const dx = targetGoalX - player.position.x;
+    const dz = targetGoalZ - player.position.y;
+    if (Math.max(Math.abs(dx), Math.abs(dz)) <= 0.2) {
       player.clearMoveQueue();
       return;
     }
 
-    const targetDestination = target.getMoveDestination();
-    const targetGoalX = targetDestination?.x ?? target.position.x;
-    const targetGoalZ = targetDestination?.z ?? target.position.y;
     if (player.hasMoveQueue()) {
       const queuedDest = player.getMoveDestination();
       const queuedDestStillUseful = queuedDest
@@ -2416,7 +2422,15 @@ export class World {
     const wallBlocked = floor === 0
       ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
       : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
-    const path = map.findPathForNpc(player.position.x, player.position.y, targetTileX + 0.5, targetTileZ + 0.5, tileBlocked, 200, wallBlocked);
+    const path = map.findPathForNpc(
+      player.position.x,
+      player.position.y,
+      targetTileX + 0.5,
+      targetTileZ + 0.5,
+      tileBlocked,
+      PLAYER_FOLLOW_PATH_SEARCH_STEPS,
+      wallBlocked,
+    );
     if (path.length > 0) {
       player.setMoveQueue(path);
       player.nextFollowRepathTick = this.currentTick + 1;
@@ -5550,6 +5564,7 @@ export class World {
   }
 
   private tickPlayerMovement(): void {
+    this.snapshotPlayerFollowAnchors();
     for (const [playerId, player] of this.players) {
       if (this.activeDuels?.has(playerId)) {
         player.clearMoveQueue();
@@ -5693,6 +5708,13 @@ export class World {
           player.pendingTalkRepathTicks = 0;
         }
       }
+    }
+  }
+
+  private snapshotPlayerFollowAnchors(): void {
+    for (const [, player] of this.players) {
+      player.followAnchorX = player.position.x;
+      player.followAnchorZ = player.position.y;
     }
   }
 
@@ -6654,6 +6676,8 @@ export class World {
     }
     player.position.x = targetX;
     player.position.y = targetZ;
+    player.followAnchorX = targetX;
+    player.followAnchorZ = targetZ;
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearPendingObjectIntents(player);
@@ -6775,6 +6799,8 @@ export class World {
     player.currentMapLevel = newMap;
     player.position.x = transition.targetX;
     player.position.y = transition.targetZ;
+    player.followAnchorX = transition.targetX;
+    player.followAnchorZ = transition.targetZ;
     player.currentFloor = 0;
     player.lastFloorChangeTile = -1;
     // Re-derive the authoritative collision elevation for the new map — the

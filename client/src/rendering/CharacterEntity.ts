@@ -61,6 +61,17 @@ async function importMeshWithTimeout(
   }
 }
 
+type ImportedMeshResult = Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>;
+
+function disposeImportedMeshResult(result: ImportedMeshResult): void {
+  for (const group of result.animationGroups) group.dispose();
+  for (const skeleton of result.skeletons) skeleton.dispose();
+  for (const mesh of result.meshes) mesh.dispose();
+  for (const node of result.transformNodes) {
+    if (!node.isDisposed()) node.dispose();
+  }
+}
+
 /**
  * Smooth a mesh's vertex normals by averaging across vertices that share a
  * world-space position. Unlike `forceSharedVertices()`, this preserves the
@@ -246,6 +257,7 @@ export class CharacterEntity {
   private root: TransformNode | null = null;
   private meshes: AbstractMesh[] = [];
   private skeleton: Skeleton | null = null;
+  private disposed: boolean = false;
   private _position: Vector3 = Vector3.Zero();
   private _rotationY: number = 0;
   private targetRotationY: number = 0;
@@ -437,6 +449,11 @@ export class CharacterEntity {
       const file = devCacheBust(options.modelPath.substring(lastSlash + 1));
 
       const result = await importMeshWithTimeout(this.scene, dir, file);
+      if (this.disposed || this.scene.isDisposed) {
+        disposeImportedMeshResult(result);
+        this._resolveReady();
+        return;
+      }
 
       // Apply nearest-neighbor filtering to character textures
       for (const mesh of result.meshes) {
@@ -630,6 +647,10 @@ export class CharacterEntity {
       if (options.additionalAnimations) {
         await this.loadAdditionalAnimations(options.additionalAnimations);
       }
+      if (this.disposed || this.scene.isDisposed || !this.root) {
+        this._resolveReady();
+        return;
+      }
 
       for (const [name, group] of this.animGroups) {
         quantizeAnimationGroup(group, name);
@@ -706,7 +727,7 @@ export class CharacterEntity {
       this._ready = true;
       this._resolveReady();
     } catch (e) {
-      console.error(`[CharacterEntity] Failed to load '${options.modelPath}':`, e);
+      if (!this.disposed) console.error(`[CharacterEntity] Failed to load '${options.modelPath}':`, e);
       this._resolveReady(); // resolve anyway so callers don't hang
     }
   }
@@ -753,6 +774,7 @@ export class CharacterEntity {
       animationGroups: AnimationGroup[];
       skeletons: Skeleton[];
       meshes: AbstractMesh[];
+      transformNodes: TransformNode[];
       srcRestRotations: Map<string, Quaternion>;
     }
     const loadedFiles = new Map<string, LoadedFile>();
@@ -772,6 +794,10 @@ export class CharacterEntity {
           const dir = animPath.substring(0, lastSlash + 1);
           const file = devCacheBust(animPath.substring(lastSlash + 1));
           const imported = await importMeshWithTimeout(this.scene, dir, file);
+          if (this.disposed || this.scene.isDisposed) {
+            disposeImportedMeshResult(imported);
+            return;
+          }
 
           // Capture source bone rest rotations from TransformNodes
           // (animation GLBs have no Skeleton — bones are just TransformNodes)
@@ -786,15 +812,30 @@ export class CharacterEntity {
             animationGroups: imported.animationGroups,
             skeletons: imported.skeletons,
             meshes: imported.meshes,
+            transformNodes: imported.transformNodes,
             srcRestRotations,
           };
           loadedFiles.set(animPath, result);
           for (const g of result.animationGroups) g.stop();
         } catch {
-          console.warn(`[CharacterEntity] Failed to load animation file ${animPath}`);
+          if (!this.disposed && !this.scene.isDisposed) {
+            console.warn(`[CharacterEntity] Failed to load animation file ${animPath}`);
+          }
         }
       }),
     );
+    if (this.disposed || this.scene.isDisposed) {
+      for (const [, result] of loadedFiles) {
+        for (const ag of result.animationGroups) ag.dispose();
+        for (const sk of result.skeletons) sk.dispose();
+        for (const mesh of result.meshes) mesh.dispose();
+        for (const node of result.transformNodes) {
+          if (!node.isDisposed()) node.dispose();
+        }
+      }
+      loadedFiles.clear();
+      return;
+    }
 
     // Phase 2: retarget each declared animation onto our skeleton. Synchronous
     // and fast — pure data transforms over already-loaded keyframes.
@@ -940,7 +981,7 @@ export class CharacterEntity {
           console.warn(`[CharacterEntity] Retargeting failed for '${anim.name}' — 0 tracks matched`);
         }
       } catch (e) {
-        console.warn(`[CharacterEntity] Failed to load '${anim.name}' from '${anim.path}':`, e);
+        if (!this.disposed) console.warn(`[CharacterEntity] Failed to load '${anim.name}' from '${anim.path}':`, e);
       }
     }
 
@@ -949,6 +990,9 @@ export class CharacterEntity {
       for (const ag of result.animationGroups) ag.dispose();
       for (const sk of result.skeletons) sk.dispose();
       for (const mesh of result.meshes) mesh.dispose();
+      for (const node of result.transformNodes) {
+        if (!node.isDisposed()) node.dispose();
+      }
     }
   }
 
@@ -2617,6 +2661,9 @@ export class CharacterEntity {
   // ---------------------------------------------------------------------------
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this._resolveReady();
     this.hideChatBubble();
     this.hideHealthBar();
     this.setLabel('');

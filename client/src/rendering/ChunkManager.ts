@@ -197,6 +197,7 @@ export class ChunkManager {
   private objectChunkQueue: string[] = [];
   private queuedObjectChunks: Set<string> = new Set();
   private objectChunkQueueScheduled: boolean = false;
+  private objectLoadGeneration: number = 0;
   private readonly objectChunkFrameBudgetMs: number = 6;
   private pendingShadowGroundRebuildChunks: Set<string> = new Set();
   private shadowGroundRebuildScheduled: boolean = false;
@@ -2775,7 +2776,12 @@ export class ChunkManager {
     }
   }
 
-  private async loadGLBModel(assetId: string): Promise<TransformNode | null> {
+  private isObjectLoadStale(generation: number): boolean {
+    return generation !== this.objectLoadGeneration || this.scene.isDisposed;
+  }
+
+  private async loadGLBModel(assetId: string, generation: number = this.objectLoadGeneration): Promise<TransformNode | null> {
+    if (this.isObjectLoadStale(generation)) return null;
     if (this.loadedModelCache.has(assetId)) {
       return this.loadedModelCache.get(assetId)!;
     }
@@ -2792,6 +2798,10 @@ export class ChunkManager {
       const dir = encodedPath.substring(0, lastSlash + 1);
       const file = encodedPath.substring(lastSlash + 1);
       const result = await this.importMeshWithTimeout(dir, file);
+      if (this.isObjectLoadStale(generation)) {
+        this.disposeImportedMeshResult(result);
+        return null;
+      }
 
       // Apply nearest-neighbor filtering to all GLB textures
       for (const mesh of result.meshes) {
@@ -2839,8 +2849,10 @@ export class ChunkManager {
 
       return template;
     } catch (e) {
-      console.warn(`[ChunkManager] Failed to load model ${assetId}:`, e);
-      this.loadedModelCache.set(assetId, null);
+      if (!this.isObjectLoadStale(generation)) {
+        console.warn(`[ChunkManager] Failed to load model ${assetId}:`, e);
+        this.loadedModelCache.set(assetId, null);
+      }
       return null;
     }
   }
@@ -2856,6 +2868,15 @@ export class ChunkManager {
       ]);
     } finally {
       if (timer !== null) window.clearTimeout(timer);
+    }
+  }
+
+  private disposeImportedMeshResult(result: Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>): void {
+    for (const group of result.animationGroups) group.dispose();
+    for (const skeleton of result.skeletons) skeleton.dispose();
+    for (const mesh of result.meshes) mesh.dispose();
+    for (const node of result.transformNodes) {
+      if (!node.isDisposed()) node.dispose();
     }
   }
 
@@ -2940,8 +2961,10 @@ export class ChunkManager {
   private async processObjectChunkQueue(): Promise<void> {
     this.objectChunkQueueScheduled = false;
     const start = performance.now();
+    const generation = this.objectLoadGeneration;
 
     while (this.objectChunkQueue.length > 0) {
+      if (this.isObjectLoadStale(generation)) return;
       const chunkKey = this.objectChunkQueue.shift()!;
       this.queuedObjectChunks.delete(chunkKey);
 
@@ -2951,11 +2974,12 @@ export class ChunkManager {
       }
 
       if (!this.chunkPlacedNodes.has(chunkKey)) {
-        await this.loadChunkPlacedObjects(chunkKey);
+        await this.loadChunkPlacedObjects(chunkKey, generation);
       } else {
         this.loadingObjectChunks.delete(chunkKey);
       }
 
+      if (this.isObjectLoadStale(generation)) return;
       if (performance.now() - start >= this.objectChunkFrameBudgetMs) break;
     }
 
@@ -2963,7 +2987,8 @@ export class ChunkManager {
   }
 
   /** Load and instantiate placed objects for a single chunk */
-  private async loadChunkPlacedObjects(chunkKey: string): Promise<void> {
+  private async loadChunkPlacedObjects(chunkKey: string, generation: number = this.objectLoadGeneration): Promise<void> {
+    if (this.isObjectLoadStale(generation)) return;
     if (this.chunkPlacedNodes.has(chunkKey)) {
       this.loadingObjectChunks.delete(chunkKey);
       return;
@@ -2981,8 +3006,10 @@ export class ChunkManager {
       try {
         const [cx, cz] = chunkKey.split(',').map(Number);
         const res = await authFetch(`/maps/${this.mapId}/objects/chunk_${cx}_${cz}.json`);
+        if (this.isObjectLoadStale(generation)) return;
         if (res.ok) {
           const fetched: PlacedObject[] = await res.json();
+          if (this.isObjectLoadStale(generation)) return;
           if (fetched.length > 0) {
             this.placedObjectsByChunk.set(chunkKey, fetched);
             objects = fetched;
@@ -3001,6 +3028,7 @@ export class ChunkManager {
       this.loadingObjectChunks.delete(chunkKey);
       return;
     }
+    if (this.isObjectLoadStale(generation)) return;
 
     // Stamps tile blockers for decor that stays thin-instanced (no WorldObject).
     const decorKeys: number[] = [];
@@ -3020,10 +3048,11 @@ export class ChunkManager {
     const templatePromises = new Map<string, Promise<TransformNode | null>>();
     for (const obj of objects) {
       if (!templatePromises.has(obj.assetId)) {
-        templatePromises.set(obj.assetId, this.loadGLBModel(obj.assetId));
+        templatePromises.set(obj.assetId, this.loadGLBModel(obj.assetId, generation));
       }
     }
     await Promise.all(templatePromises.values());
+    if (this.isObjectLoadStale(generation)) return;
 
     let groundY = Infinity;
     for (const obj of objects) { if (obj.position.y < groundY) groundY = obj.position.y; }
@@ -3260,11 +3289,13 @@ export class ChunkManager {
 
     this.onChunkObjectsLoaded?.(chunkKey);
     } catch (e) {
-      console.warn(`[ChunkManager] Failed to instantiate objects for chunk ${chunkKey}:`, e);
-      this.chunkPlacedNodes.set(chunkKey, []);
-      this.chunkThinInstSources.set(chunkKey, []);
+      if (!this.isObjectLoadStale(generation)) {
+        console.warn(`[ChunkManager] Failed to instantiate objects for chunk ${chunkKey}:`, e);
+        this.chunkPlacedNodes.set(chunkKey, []);
+        this.chunkThinInstSources.set(chunkKey, []);
+      }
     } finally {
-      this.loadingObjectChunks.delete(chunkKey);
+      if (!this.isObjectLoadStale(generation)) this.loadingObjectChunks.delete(chunkKey);
     }
   }
 
@@ -4028,6 +4059,7 @@ export class ChunkManager {
   }
 
   disposeAll(): void {
+    this.objectLoadGeneration++;
     // Dispose animations
     for (const ag of this.activeAnimationGroups) ag.dispose();
     this.activeAnimationGroups = [];
@@ -4052,6 +4084,7 @@ export class ChunkManager {
     this.objectChunkQueue = [];
     this.queuedObjectChunks.clear();
     this.objectChunkQueueScheduled = false;
+    this.chunksKnownEmpty.clear();
     this.pendingShadowGroundRebuildChunks.clear();
     this.shadowGroundRebuildScheduled = false;
     this.templateBaseMatrices.clear();

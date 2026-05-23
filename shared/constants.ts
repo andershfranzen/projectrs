@@ -31,12 +31,8 @@ export const GAME_WS_PATH = '/ws/game';
 export const CHAT_WS_PATH = '/ws/chat';
 export const EDITOR_CHUNK_SIZE = 64;
 
-/** Mobile/perf budget for 3D NPC rendering. Beyond this distance (tiles) or
- *  beyond this concurrent count, NPCs flagged for CharacterEntity rendering
- *  fall back to the 2D sprite path. Phone-browser headroom for skinned
- *  57-bone meshes is tight; LOD is the cheap win. */
+/** Distance budget for materializing humanoid NPCs as skinned 3D characters. */
 export const NPC_3D_LOD_DISTANCE = 15;
-export const MAX_3D_NPCS_VISIBLE = 8;
 
 /** Chebyshev range (in tiles) at which a Talk-to / interaction packet fires.
  *  Set to 2 rather than 1 so a 1-tile client/server divergence (typical

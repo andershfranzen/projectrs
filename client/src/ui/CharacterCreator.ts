@@ -80,6 +80,8 @@ export class CharacterCreator {
   private previewCamera: ArcRotateCamera | null = null;
   private previewLights: { hemi: HemisphericLight; dir: DirectionalLight } | null = null;
   private previewCharacter: CharacterEntity | null = null;
+  private previewInitFrame: number | null = null;
+  private destroyed: boolean = false;
 
   // Local player ref + saved enabled state. While the creator is open the
   // local player is hidden so they don't double-render with the preview char
@@ -132,11 +134,16 @@ export class CharacterCreator {
     // the entity reports ready.
     this.hideLocalPlayer();
     if (this.localPlayer) {
-      void this.localPlayer.whenReady().then(() => this.hideLocalPlayer());
+      void this.localPlayer.whenReady().then(() => {
+        if (!this.destroyed) this.hideLocalPlayer();
+      });
     }
 
     // Defer preview init to next frame so the DOM canvas is attached
-    requestAnimationFrame(() => this.initPreview());
+    this.previewInitFrame = requestAnimationFrame(() => {
+      this.previewInitFrame = null;
+      if (!this.destroyed) this.initPreview();
+    });
   }
 
   /** One spec per appearance slot. Order = visual order in the panel. */
@@ -416,6 +423,7 @@ export class CharacterCreator {
   }
 
   private hideLocalPlayer(): void {
+    if (this.destroyed) return;
     if (!this.localPlayer) return;
     const root = this.localPlayer.getRoot();
     if (!root) return;
@@ -438,6 +446,7 @@ export class CharacterCreator {
   }
 
   private initPreview(): void {
+    if (this.destroyed) return;
     if (!this.previewCanvas) return;
 
     const engine = new Engine(this.previewCanvas, false, { antialias: false, adaptToDeviceRatio: false });
@@ -483,8 +492,8 @@ export class CharacterCreator {
 
   private loadPreviewCharacter(anchor: Vector3): void {
     const scene = this.previewScene;
-    if (!scene) return;
-    this.previewCharacter = new CharacterEntity(scene, {
+    if (!scene || this.destroyed) return;
+    const character = new CharacterEntity(scene, {
       name: 'previewChar',
       modelPath: this.getModelPath(),
       targetHeight: CHARACTER_TARGET_HEIGHT,
@@ -493,10 +502,11 @@ export class CharacterCreator {
         { name: 'idle', path: CHARACTER_IDLE_ANIM },
       ],
     });
-    this.previewCharacter.setPositionXYZ(anchor.x, anchor.y, anchor.z);
-    this.previewCharacter.whenReady().then(() => {
-      if (this.previewCharacter) {
-        this.previewCharacter.applyAppearance(this.appearance);
+    this.previewCharacter = character;
+    character.setPositionXYZ(anchor.x, anchor.y, anchor.z);
+    character.whenReady().then(() => {
+      if (!this.destroyed && this.previewCharacter === character) {
+        character.applyAppearance(this.appearance);
       }
     });
   }
@@ -512,6 +522,12 @@ export class CharacterCreator {
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    if (this.previewInitFrame !== null) {
+      cancelAnimationFrame(this.previewInitFrame);
+      this.previewInitFrame = null;
+    }
     if (this.previewCharacter) { this.previewCharacter.dispose(); this.previewCharacter = null; }
     if (this.previewCamera) {
       this.previewCamera.dispose();
