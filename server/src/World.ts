@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -22,10 +22,6 @@ import type { ServerWebSocket } from 'bun';
 const mapIdRegistry: Map<string, number> = new Map();
 
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
-const RELIC_SACRIFICE_BY_TIER: Record<number, { itemIds: readonly number[]; xp: number }> = {
-  1: { itemIds: [224, 225, 226], xp: 10 },
-  2: { itemIds: [227, 228, 229], xp: 35 },
-};
 let nextMapIdx = 0;
 function getMapIdx(mapId: string): number {
   let idx = mapIdRegistry.get(mapId);
@@ -3235,7 +3231,7 @@ export class World {
     });
 
     if (action === 'Examine') {
-      this.sendChatSystem(player, obj.examineText || `It's ${obj.displayName}.`);
+      this.sendChatSystem(player, this.objectExamineTextFor(player, obj));
       return;
     }
 
@@ -3316,6 +3312,16 @@ export class World {
         this.depleteObjectFromInteractionEffect(obj, effect.depleteRespawnTicks);
       }
     }
+  }
+
+  private objectExamineTextFor(player: Player, obj: WorldObject): string {
+    if (obj.def.category === 'altar') {
+      const hasRelic = player.inventory.some(slot => slot !== null && RELIC_ITEM_IDS.has(slot.itemId));
+      return hasRelic
+        ? 'I should sacrifice some relics for good luck!'
+        : 'i wish i had something worth sacrificing';
+    }
+    return obj.examineText || `It's ${obj.displayName}.`;
   }
 
   private depleteObjectFromInteractionEffect(obj: WorldObject, respawnTicks?: number): void {
@@ -3597,7 +3603,7 @@ export class World {
 
   private handleAltarRelicOffer(player: Player, obj: WorldObject): void {
     const tier = Math.max(1, Math.floor(obj.altarTier || 1));
-    const sacrifice = RELIC_SACRIFICE_BY_TIER[tier];
+    const sacrifice = relicTierDef(tier);
     if (!sacrifice) {
       this.sendChatSystem(player, 'This altar is dormant.');
       return;
@@ -3619,10 +3625,11 @@ export class World {
     const removal = player.removeItemById(relicItemId, 1);
     if (removal.completed < 1) return;
 
-    const result = addXp(player.skills, 'goodmagic', sacrifice.xp);
+    const xp = sacrifice.goodMagicXp;
+    const result = addXp(player.skills, 'goodmagic', xp);
     const skillIdx = ALL_SKILLS.indexOf('goodmagic');
     if (skillIdx >= 0) {
-      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, sacrifice.xp);
+      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xp);
       if (result.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
       this.sendSingleSkill(player, skillIdx);
     }

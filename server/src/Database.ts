@@ -2,13 +2,14 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, combatLevel, initSkills, xpForLevel, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, combatLevel, initSkills, xpForLevel, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
+const MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID = 'move_stacked_relics_to_bank_2026_05_24';
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
 const SUSPECT_SKETCH_ITEM_ID = 236;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
@@ -239,6 +240,8 @@ function removeQuestFromSavedState(rawJson: string | null, questId: string): { j
   }
 }
 
+type SavedSlot = { itemId: number; quantity: number };
+
 function removeItemFromSavedSlots(rawJson: string | null, fallbackSize: number, itemId: number): { json: string; changed: boolean } {
   try {
     const parsed = rawJson ? JSON.parse(rawJson) as unknown : [];
@@ -255,6 +258,58 @@ function removeItemFromSavedSlots(rawJson: string | null, fallbackSize: number, 
   } catch {
     return { json: rawJson || JSON.stringify(new Array(fallbackSize).fill(null)), changed: false };
   }
+}
+
+function normalizeSlotArray(raw: unknown, fallbackSize: number): (SavedSlot | null)[] {
+  const slots = Array.isArray(raw) ? raw : new Array(fallbackSize).fill(null);
+  return slots.map(slot => {
+    if (!slot || typeof slot !== 'object') return null;
+    const maybeSlot = slot as { itemId?: unknown; quantity?: unknown };
+    if (typeof maybeSlot.itemId !== 'number' || !Number.isInteger(maybeSlot.itemId) || maybeSlot.itemId <= 0) return null;
+    if (typeof maybeSlot.quantity !== 'number' || !Number.isInteger(maybeSlot.quantity) || maybeSlot.quantity <= 0) return null;
+    return { itemId: maybeSlot.itemId, quantity: maybeSlot.quantity };
+  });
+}
+
+function addToBankSlots(bank: (SavedSlot | null)[], itemId: number, quantity: number): boolean {
+  for (let i = 0; i < BANK_SIZE; i++) {
+    const slot = bank[i];
+    if (slot?.itemId !== itemId) continue;
+    slot.quantity += quantity;
+    return true;
+  }
+  for (let i = 0; i < BANK_SIZE; i++) {
+    if (bank[i] !== null && bank[i] !== undefined) continue;
+    bank[i] = { itemId, quantity };
+    return true;
+  }
+  return false;
+}
+
+function moveStackedRelicsToBankSlots(
+  inventory: (SavedSlot | null)[],
+  bank: (SavedSlot | null)[],
+): { inventory: (SavedSlot | null)[]; bank: (SavedSlot | null)[]; changed: boolean; blocked: number } {
+  let normalizedBank = bank;
+  let changed = false;
+  let blocked = 0;
+  for (let i = 0; i < inventory.length; i++) {
+    const slot = inventory[i];
+    if (!slot || !RELIC_ITEM_IDS.has(slot.itemId) || slot.quantity <= 1) continue;
+    if (normalizedBank === bank) {
+      normalizedBank = bank.slice(0, Math.max(BANK_SIZE, bank.length));
+      while (normalizedBank.length < BANK_SIZE) normalizedBank.push(null);
+    }
+    const overflow = slot.quantity - 1;
+    if (!addToBankSlots(normalizedBank, slot.itemId, overflow)) {
+      blocked += overflow;
+      continue;
+    }
+    inventory[i] = { itemId: slot.itemId, quantity: 1 };
+    changed = true;
+  }
+
+  return { inventory, bank: normalizedBank, changed, blocked };
 }
 
 function parseJsonStringArray(raw: string | null | undefined): string[] {
@@ -761,13 +816,16 @@ export class GameDatabase {
   }
 
   private runOneTimeDataMigrations(): void {
-    const alreadyResetBob = this.db.query('SELECT 1 FROM server_migrations WHERE id = ?')
-      .get(RESET_BOBS_BURIAL_MIGRATION_ID);
-    if (alreadyResetBob) return;
+    const runOnce = (id: string, fn: () => number): void => {
+      const alreadyRun = this.db.query('SELECT 1 FROM server_migrations WHERE id = ?').get(id);
+      if (alreadyRun) return;
+      const changed = fn();
+      this.db.query('INSERT INTO server_migrations (id) VALUES (?)').run(id);
+      console.log(`[migration] ${id}: updated ${changed} saved player(s).`);
+    };
 
-    const changed = this.resetBobBurialSavedState();
-    this.db.query('INSERT INTO server_migrations (id) VALUES (?)').run(RESET_BOBS_BURIAL_MIGRATION_ID);
-    console.log(`[migration] Reset Bob's Burial quest state for ${changed} saved player(s).`);
+    runOnce(RESET_BOBS_BURIAL_MIGRATION_ID, () => this.resetBobBurialSavedState());
+    runOnce(MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID, () => this.moveStackedRelicsToBankSavedState());
   }
 
   private resetBobBurialSavedState(): number {
@@ -796,6 +854,49 @@ export class GameDatabase {
       }
     });
     tx(updates);
+    return updates.length;
+  }
+
+  private moveStackedRelicsToBankSavedState(): number {
+    const rows = this.db.query('SELECT account_id, inventory, bank FROM player_state')
+      .all() as Array<{ account_id: number; inventory: string | null; bank: string | null }>;
+    const updates: Array<{ accountId: number; inventory: string; bank: string }> = [];
+    let blockedRelics = 0;
+
+    for (const row of rows) {
+      let inventory: (SavedSlot | null)[];
+      let bank: (SavedSlot | null)[];
+      try {
+        inventory = normalizeSlotArray(row.inventory ? JSON.parse(row.inventory) : [], INVENTORY_SIZE);
+      } catch {
+        inventory = new Array(INVENTORY_SIZE).fill(null);
+      }
+      try {
+        bank = normalizeSlotArray(row.bank ? JSON.parse(row.bank) : [], BANK_SIZE);
+      } catch {
+        bank = new Array(BANK_SIZE).fill(null);
+      }
+
+      const normalized = moveStackedRelicsToBankSlots(inventory, bank);
+      blockedRelics += normalized.blocked;
+      if (!normalized.changed) continue;
+      updates.push({
+        accountId: row.account_id,
+        inventory: JSON.stringify(normalized.inventory),
+        bank: JSON.stringify(normalized.bank),
+      });
+    }
+
+    if (updates.length > 0) {
+      const tx = this.db.transaction((rowsToUpdate: typeof updates) => {
+        const stmt = this.db.query('UPDATE player_state SET inventory = ?, bank = ?, updated_at = unixepoch() WHERE account_id = ?');
+        for (const update of rowsToUpdate) stmt.run(update.inventory, update.bank, update.accountId);
+      });
+      tx(updates);
+    }
+    if (blockedRelics > 0) {
+      console.warn(`[migration] ${MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID}: ${blockedRelics} relic(s) could not move because banks were full; original inventory stacks were left intact.`);
+    }
     return updates.length;
   }
 
@@ -1234,6 +1335,11 @@ export class GameDatabase {
       bank = Array.isArray(raw) ? raw.map(sanitizeSlot) : [];
     } catch {
       bank = [];
+    }
+    const normalizedRelics = moveStackedRelicsToBankSlots(inventory, bank);
+    if (normalizedRelics.changed) {
+      inventory = normalizedRelics.inventory;
+      bank = normalizedRelics.bank;
     }
 
     // Parse quests. Sanitize: only accept entries with numeric stage +

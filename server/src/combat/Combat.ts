@@ -3,14 +3,13 @@ import type { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
   osrsMeleeMaxHit, rollHit, npcCombatLevel,
+  relicDropPoolForCombatLevel,
   type CombatBonuses, type ItemDef,
 } from '@projectrs/shared';
 
 /** Item-id pools for the combat-level-gated bonus relic drop. Tier 1 covers
  *  sub-30 mobs, tier 2 covers 30–60. RELIC_DROP_CHANCE applies once per kill;
  *  on a hit, one variant is picked uniformly from the tier pool. */
-const RELIC_TIER_1_IDS = [224, 225, 226] as const;
-const RELIC_TIER_2_IDS = [227, 228, 229] as const;
 const RELIC_DROP_CHANCE = 1 / 30;
 
 export interface CombatHit {
@@ -335,7 +334,7 @@ export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
 
   if (Math.random() < RELIC_DROP_CHANCE) {
     const level = npcCombatLevel(npc.def);
-    const pool = level < 30 ? RELIC_TIER_1_IDS : level <= 60 ? RELIC_TIER_2_IDS : null;
+    const pool = relicDropPoolForCombatLevel(level);
     if (pool) {
       drops.push({ itemId: pool[Math.floor(Math.random() * pool.length)], quantity: 1 });
     }
