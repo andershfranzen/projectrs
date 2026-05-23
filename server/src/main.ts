@@ -1025,7 +1025,7 @@ const SIGNUP_WINDOW_MS = 10 * 60_000;
 const DEVICE_ID_LIMIT = 20;
 const DEVICE_ID_WINDOW_MS = 10 * 60_000;
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
-const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
+const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const DEVICE_COOKIE = 'eq_device_id';
 const WS_SESSION_COOKIE = 'eq_ws_session';
 const PREAUTH_BOOTSTRAP_COOKIE = 'eq_preauth';

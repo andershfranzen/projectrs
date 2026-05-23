@@ -7,7 +7,7 @@ import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
-const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED === '1';
+const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
 const SUSPECT_SKETCH_ITEM_ID = 236;

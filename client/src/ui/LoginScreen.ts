@@ -10,7 +10,6 @@ export class LoginScreen {
   private activeMode: 'login' | 'signup' = 'login';
   private errorEl: HTMLDivElement | null = null;
   private submitBtn: HTMLButtonElement | null = null;
-  private signupClosedNotice: HTMLDivElement | null = null;
   private rememberUsernameRow: HTMLLabelElement | null = null;
   private rememberUsernameInput: HTMLInputElement | null = null;
   private vignetteIdleCallback: number | null = null;
@@ -76,7 +75,6 @@ export class LoginScreen {
     form.appendChild(passwordInput);
     form.appendChild(confirmInput);
     form.appendChild(this.createRememberUsernameRow());
-    form.appendChild(this.createSignupClosedNotice());
 
     const submitBtn = document.createElement('button');
     submitBtn.id = 'login-submit';
@@ -221,30 +219,6 @@ export class LoginScreen {
     return notice;
   }
 
-  private createSignupClosedNotice(): HTMLDivElement {
-    const notice = document.createElement('div');
-    notice.className = 'eq-login-signup-closed';
-    notice.style.display = 'none';
-
-    const text = document.createElement('p');
-    text.textContent = 'We have decided to close for new accounts until the Alpha launch.';
-    notice.appendChild(text);
-
-    const follow = document.createElement('p');
-    follow.appendChild(document.createTextNode('Join our '));
-    const link = document.createElement('a');
-    link.href = 'https://discord.gg/SSXyYY8Vx9';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.textContent = 'Discord';
-    follow.appendChild(link);
-    follow.appendChild(document.createTextNode(' for more info.'));
-    notice.appendChild(follow);
-
-    this.signupClosedNotice = notice;
-    return notice;
-  }
-
   private getSavedUsername(): string {
     return localStorage.getItem('evilquest_saved_username') || '';
   }
@@ -268,38 +242,37 @@ export class LoginScreen {
       el.classList.toggle('is-active', el.dataset.mode === mode);
     });
 
-    const signupClosed = mode === 'signup';
     const loginFields = this.container.querySelectorAll('.eq-login-field');
     loginFields.forEach((field) => {
-      (field as HTMLElement).style.display = signupClosed ? 'none' : '';
+      (field as HTMLElement).style.display = '';
     });
 
     const confirm = this.container.querySelector('[data-signup-only]') as HTMLDivElement;
     if (confirm) {
-      confirm.style.display = 'none';
+      confirm.style.display = mode === 'signup' ? '' : 'none';
     }
 
     const btn = this.submitBtn;
     if (btn) {
-      btn.textContent = 'Login';
-      btn.style.display = signupClosed ? 'none' : '';
+      btn.textContent = mode === 'login' ? 'Login' : 'Sign Up';
+      btn.style.display = '';
     }
     if (this.rememberUsernameRow) {
       this.rememberUsernameRow.style.display = mode === 'login' ? 'flex' : 'none';
     }
-    if (this.signupClosedNotice) {
-      this.signupClosedNotice.style.display = signupClosed ? 'block' : 'none';
-    }
   }
 
   private async handleSubmit(): Promise<void> {
-    if (this.activeMode === 'signup') return;
-
     const username = (this.container.querySelector('#login-username') as HTMLInputElement | null)?.value.trim();
     const password = (this.container.querySelector('#login-password') as HTMLInputElement | null)?.value;
+    const confirm = (this.container.querySelector('#login-confirm') as HTMLInputElement | null)?.value;
 
     if (!username || !password) {
       this.showError('Please fill in all fields');
+      return;
+    }
+    if (this.activeMode === 'signup' && password !== confirm) {
+      this.showError('Passwords do not match');
       return;
     }
 
@@ -314,8 +287,8 @@ export class LoginScreen {
       // the one-account-per-browser rule. Persisted in localStorage —
       // clearing it bypasses the rule but breaks the ToS.
       const deviceId = await (await import('../deviceId')).getDeviceId();
-      const recaptchaToken = await getRecaptchaToken('login');
-      const res = await fetch('/api/login', {
+      const recaptchaToken = await getRecaptchaToken(this.activeMode);
+      const res = await fetch(`/api/${this.activeMode}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
