@@ -248,6 +248,10 @@ export interface ThumbnailOptions {
   /** Pose used by the donor skeleton for skinned armor thumbnails. Defaults
    *  to bind pose so old fitted thumbnails keep their existing cache entry. */
   skinnedPose?: 'idle';
+  /** Stable discriminator for cache ownership. Item thumbnails pass item:id so
+   *  two different items that happen to share a GLB never accidentally share a
+   *  stale rendered result after one item's pose/tint is tuned. */
+  cacheIdentity?: string;
 }
 
 interface QueueEntry {
@@ -262,10 +266,12 @@ let processing = false;
 // `null` is cached so a broken/missing GLB doesn't trigger a retry storm on
 // every slot re-render. Reload clears it.
 const memCache = new Map<string, string | null>();
+const pendingCache = new Map<string, Promise<string | null>>();
 
 function buildCacheKey(path: string, options: ThumbnailOptions): string {
   const parts: string[] = [path];
   const n = (value: number): string => value.toFixed(5);
+  if (options.cacheIdentity) parts.push(`id:${options.cacheIdentity}`);
   if (options.tint) {
     const [r, g, b] = options.tint;
     const materialKey = options.tintAllMaterials ? '*' : (options.tintMaterialMatch ?? 'Material.002');
@@ -275,16 +281,14 @@ function buildCacheKey(path: string, options: ThumbnailOptions): string {
       parts.push(`base:${n(mr)},${n(mg)},${n(mb)}|tol:${n(options.tintBaseColorTolerance ?? 0.015)}`);
     }
   }
-  if (options.camera) {
-    const c = options.camera;
-    const a = c.alpha ?? DEFAULT_ALPHA;
-    const b = c.beta ?? DEFAULT_BETA;
-    const d = c.distanceMult ?? DEFAULT_DISTANCE_MULT;
-    parts.push(`cam:${n(a)},${n(b)},${n(d)}`);
-  }
-  if (options.rotationX) parts.push(`rotx:${n(options.rotationX)}`);
-  if (options.rotationY) parts.push(`roty:${n(options.rotationY)}`);
-  if (options.rotationZ) parts.push(`rotz:${n(options.rotationZ)}`);
+  const c = options.camera ?? {};
+  const a = c.alpha ?? DEFAULT_ALPHA;
+  const b = c.beta ?? DEFAULT_BETA;
+  const d = c.distanceMult ?? DEFAULT_DISTANCE_MULT;
+  parts.push(`cam:${n(a)},${n(b)},${n(d)}`);
+  if (typeof options.rotationX === 'number' && Number.isFinite(options.rotationX)) parts.push(`rotx:${n(options.rotationX)}`);
+  if (typeof options.rotationY === 'number' && Number.isFinite(options.rotationY)) parts.push(`roty:${n(options.rotationY)}`);
+  if (typeof options.rotationZ === 'number' && Number.isFinite(options.rotationZ)) parts.push(`rotz:${n(options.rotationZ)}`);
   if (typeof options.iconScale === 'number' && Number.isFinite(options.iconScale) && options.iconScale !== 1) {
     parts.push(`scale:${n(options.iconScale)}`);
   }
@@ -532,15 +536,25 @@ export async function getThumbnail(path: string, options: ThumbnailOptions = {})
   const hot = memCache.get(cacheKey);
   if (hot !== undefined) return hot;
 
-  const idb = await getCachedThumb(cacheKey, THUMB_VERSION);
-  if (idb) {
-    memCache.set(cacheKey, idb);
-    return idb;
-  }
+  const pending = pendingCache.get(cacheKey);
+  if (pending) return pending;
 
-  const rendered = await enqueue(path, options, cacheKey);
-  memCache.set(cacheKey, rendered);
-  return rendered;
+  const renderPromise = (async () => {
+    const idb = await getCachedThumb(cacheKey, THUMB_VERSION);
+    if (idb) {
+      memCache.set(cacheKey, idb);
+      return idb;
+    }
+
+    const rendered = await enqueue(path, options, cacheKey);
+    memCache.set(cacheKey, rendered);
+    return rendered;
+  })().finally(() => {
+    pendingCache.delete(cacheKey);
+  });
+
+  pendingCache.set(cacheKey, renderPromise);
+  return renderPromise;
 }
 
 export async function renderThumbnailPreview(path: string, options: ThumbnailOptions = {}): Promise<string | null> {
@@ -552,5 +566,6 @@ export async function invalidateThumbnail(path: string, options: ThumbnailOption
   if (!path) return;
   const cacheKey = buildCacheKey(path, options);
   memCache.delete(cacheKey);
+  pendingCache.delete(cacheKey);
   await clearCachedThumb(cacheKey);
 }

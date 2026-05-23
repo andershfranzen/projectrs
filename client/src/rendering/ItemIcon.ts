@@ -178,7 +178,7 @@ export function findThumbnailOverrideForItem(
 /** Build thumbnail options for a specific item and override. Used by both the
  *  game client and editor previews so saved editor poses match runtime icons. */
 export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride): ThumbnailOptions {
-  const opts: ThumbnailOptions = {};
+  const opts: ThumbnailOptions = { cacheIdentity: `item:${def.id}` };
   const tint = TOOL_TIER_METAL_COLOR[def.id];
   if (tint) opts.tint = tint;
   const shieldTint = SHIELD_THUMBNAIL_TINT[def.id];

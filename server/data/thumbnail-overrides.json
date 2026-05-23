@@ -522,6 +522,24 @@
     "rotationZ": 0,
     "iconScale": 1
   },
+  "232": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.3089969389957472,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "233": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.3089969389957472,
+    "distanceMult": 1,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
   "237": {
     "alpha": -1.888775653373959,
     "beta": 0.675398163397448,
@@ -530,6 +548,33 @@
     "rotationY": -2.260201381332657,
     "rotationZ": -0.12217304763960307,
     "iconScale": 1.1
+  },
+  "238": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.8,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "239": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.9,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "240": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.8,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
   },
   "241": {
     "alpha": -1.5707963267948966,
