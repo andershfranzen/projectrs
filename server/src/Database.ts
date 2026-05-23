@@ -58,12 +58,36 @@ export interface BotStatsRow {
   ping_interval_samples: string;
   /** JSON map of "x,z" tile → visit count. Capped at 100 entries. */
   path_destinations: string;
+  /** JSON map of route/action signatures → count. Capped at 100 entries. */
+  action_signatures?: string;
   /** JSON map of deviceId → login count. Used to catch fresh-ID-per-login bots. */
   device_ids: string;
+  /** JSON map of invalid packet reason → count. */
+  suspicious_packet_reasons?: string;
   /** JSON map of skill → xp at session start. Used to compute session-rate. */
   xp_baseline: string;
   /** JSON blob of the last computed session summary (flags + stats). */
   last_session_summary: string | null;
+  /** JSON array of recent finalized summaries. */
+  session_history?: string;
+}
+
+export interface AdminBotPacketReason {
+  reason: string;
+  count: number;
+}
+
+export interface AdminBotPathDestination {
+  tile: string;
+  count: number;
+}
+
+export interface AdminSharedDeviceAlt {
+  accountId: number;
+  username: string;
+  devices: number;
+  logins: number;
+  lastSeenTs: number | null;
 }
 
 export interface AdminBotReviewAccount {
@@ -92,7 +116,15 @@ export interface AdminBotReviewAccount {
   reactionSampleCount: number;
   pingIntervalSampleCount: number;
   pathDestinationCount: number;
+  topPathRepetition: number | null;
+  topPathDestinations: AdminBotPathDestination[];
   deviceIdsSeen: number;
+  suspiciousPacketReasons: AdminBotPacketReason[];
+  sessionHistory: Array<Record<string, unknown>>;
+  chatRatePerHour: number | null;
+  actionsPerHour: number | null;
+  actionsPerChat: number | null;
+  sharedDeviceAlts: AdminSharedDeviceAlt[];
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AccountBanRecord | null;
   ipBan: IpBanRecord | null;
@@ -268,6 +300,117 @@ function parseJsonObject(raw: string | null | undefined): Record<string, unknown
   }
 }
 
+function parseJsonObjectArray(raw: string | null | undefined): Array<Record<string, unknown>> {
+  try {
+    const parsed = JSON.parse(raw ?? '[]') as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((value): value is Record<string, unknown> => (
+      !!value && typeof value === 'object' && !Array.isArray(value)
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function topNumberRecordEntries(record: Record<string, number>, limit: number): Array<[string, number]> {
+  return Object.entries(record)
+    .filter(([, value]) => Number.isFinite(value) && value > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+}
+
+function topRecordRatio(record: Record<string, number>): number | null {
+  let total = 0;
+  let max = 0;
+  for (const value of Object.values(record)) {
+    if (!Number.isFinite(value) || value <= 0) continue;
+    total += value;
+    if (value > max) max = value;
+  }
+  return total > 0 ? max / total : null;
+}
+
+function riskLevelForScore(score: number): string {
+  if (score >= 85) return 'critical';
+  if (score >= 60) return 'high';
+  if (score >= 30) return 'medium';
+  return 'low';
+}
+
+function hasLegacyBotRiskReasons(reasons: string[]): boolean {
+  return reasons.some((reason) => (
+    reason.includes('tick-aligned action timing')
+    || reason.includes('invalid/stale gameplay packets')
+    || reason.includes('heavy packet fuzzing pattern')
+    || reason.includes('lifetime invalid packet volume')
+  ));
+}
+
+function hardInvalidPacketCount(reasons: Record<string, number>): number {
+  let total = 0;
+  for (const [reason, count] of Object.entries(reasons)) {
+    if (reason.startsWith('rate-limit:')
+      || reason === 'malformed-frame'
+      || reason === 'unknown-opcode'
+      || reason === 'bad-move-path-length'
+      || reason === 'truncated-move-path'
+      || reason === 'bad-cursor-x'
+      || reason === 'bad-cursor-y') {
+      total += count;
+    }
+  }
+  return total;
+}
+
+function calibratedLegacyBotRisk(input: {
+  storedReasons: string[];
+  totalSessionMinutes: number;
+  totalSkillingActions: number;
+  totalCombatSwings: number;
+  totalMovements: number;
+  totalChatMessages: number;
+  totalFlagEvents: number;
+  totalSuspiciousPackets: number;
+  pathDestinations: Record<string, number>;
+  suspiciousReasons: Record<string, number>;
+}): { score: number; level: string; reasons: string[] } | null {
+  if (!hasLegacyBotRiskReasons(input.storedReasons)) return null;
+  let score = 0;
+  const reasons: string[] = [];
+  const add = (points: number, reason: string) => {
+    if (points <= 0) return;
+    score += points;
+    reasons.push(`${reason} (+${points})`);
+  };
+  const activeActions = input.totalSkillingActions + input.totalCombatSwings + input.totalMovements;
+  const hours = input.totalSessionMinutes > 0 ? input.totalSessionMinutes / 60 : null;
+  const chatRate = hours ? input.totalChatMessages / hours : null;
+  const pathRatio = topRecordRatio(input.pathDestinations);
+  const hardInvalid = hardInvalidPacketCount(input.suspiciousReasons);
+
+  if (input.totalSessionMinutes >= 1200 && activeActions >= 25000 && chatRate !== null && chatRate < 1) {
+    add(32, `extreme low-social high-activity lifetime (${chatRate.toFixed(2)} chats/hr, ${activeActions} actions)`);
+  } else if (input.totalSessionMinutes >= 600 && activeActions >= 10000 && chatRate !== null && chatRate < 2) {
+    add(22, `low-social high-activity lifetime (${chatRate.toFixed(2)} chats/hr, ${activeActions} actions)`);
+  }
+  if (input.totalMovements >= 5000 && pathRatio !== null && pathRatio >= 0.12) {
+    add(pathRatio >= 0.2 ? 22 : 16, `lifetime path concentration (${pathRatio.toFixed(2)})`);
+  }
+  if (hardInvalid >= 25) add(hardInvalid >= 100 ? 22 : 14, `lifetime hard invalid packets (${hardInvalid})`);
+  if (input.totalFlagEvents >= 25) add(8, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  else if (input.totalFlagEvents >= 10) add(4, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  else if (input.totalFlagEvents >= 5) add(2, `lifetime flag history (${input.totalFlagEvents} prior fires)`);
+  if (input.totalSuspiciousPackets >= 500) add(4, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
+  else if (input.totalSuspiciousPackets >= 100) add(2, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
+
+  const capped = Math.min(100, Math.round(score));
+  return {
+    score: capped,
+    level: riskLevelForScore(capped),
+    reasons: reasons.slice(0, 12),
+  };
+}
+
 export class GameDatabase {
   private db: SQLiteDB;
   private lastHiscoreSnapshotPruneAt = 0;
@@ -385,9 +528,12 @@ export class GameDatabase {
         reaction_samples TEXT NOT NULL DEFAULT '[]',
         ping_interval_samples TEXT NOT NULL DEFAULT '[]',
         path_destinations TEXT NOT NULL DEFAULT '{}',
+        action_signatures TEXT NOT NULL DEFAULT '{}',
         device_ids TEXT NOT NULL DEFAULT '{}',
+        suspicious_packet_reasons TEXT NOT NULL DEFAULT '{}',
         xp_baseline TEXT NOT NULL DEFAULT '{}',
         last_session_summary TEXT,
+        session_history TEXT NOT NULL DEFAULT '[]',
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
     `);
@@ -408,6 +554,15 @@ export class GameDatabase {
     } catch { /* column already exists */ }
     try {
       this.db.exec(`ALTER TABLE bot_stats ADD COLUMN risk_reasons TEXT NOT NULL DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN action_signatures TEXT NOT NULL DEFAULT '{}'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN suspicious_packet_reasons TEXT NOT NULL DEFAULT '{}'`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE bot_stats ADD COLUMN session_history TEXT NOT NULL DEFAULT '[]'`);
     } catch { /* column already exists */ }
 
     // Login history: one row per session. IP is captured at WS upgrade time.
@@ -1350,15 +1505,16 @@ export class GameDatabase {
    *  account has never logged in (BotStats will start fresh). */
   loadBotStats(accountId: number): BotStatsRow | null {
     const row = this.db.query(`
-      SELECT total_skilling_actions, total_combat_swings, total_movements,
-             total_chat_messages, total_session_minutes, total_flag_events,
-             total_suspicious_packets,
-             last_chat_ts, last_action_ts, last_login_ts,
-             risk_score, risk_level, risk_reasons,
-             tick_align_samples, reaction_samples, path_destinations,
-             ping_interval_samples, device_ids, xp_baseline, last_session_summary
-      FROM bot_stats WHERE account_id = ?
-    `).get(accountId) as BotStatsRow | null;
+	      SELECT total_skilling_actions, total_combat_swings, total_movements,
+	             total_chat_messages, total_session_minutes, total_flag_events,
+	             total_suspicious_packets,
+	             last_chat_ts, last_action_ts, last_login_ts,
+	             risk_score, risk_level, risk_reasons,
+	             tick_align_samples, reaction_samples, path_destinations,
+	             action_signatures, ping_interval_samples, device_ids,
+	             suspicious_packet_reasons, xp_baseline, last_session_summary, session_history
+	      FROM bot_stats WHERE account_id = ?
+	    `).get(accountId) as BotStatsRow | null;
     return row;
   }
 
@@ -1387,13 +1543,14 @@ export class GameDatabase {
   /** Upsert the bot-stats row. Called every 5 min during play + at logout. */
   saveBotStats(accountId: number, row: BotStatsRow): void {
     this.db.query(`
-      INSERT INTO bot_stats (
-        account_id, total_skilling_actions, total_combat_swings, total_movements,
-        total_chat_messages, total_session_minutes, total_flag_events, total_suspicious_packets,
-        last_chat_ts, last_action_ts, last_login_ts, risk_score, risk_level, risk_reasons,
-        tick_align_samples, reaction_samples, path_destinations,
-        ping_interval_samples, device_ids, xp_baseline, last_session_summary, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
+	      INSERT INTO bot_stats (
+	        account_id, total_skilling_actions, total_combat_swings, total_movements,
+	        total_chat_messages, total_session_minutes, total_flag_events, total_suspicious_packets,
+	        last_chat_ts, last_action_ts, last_login_ts, risk_score, risk_level, risk_reasons,
+	        tick_align_samples, reaction_samples, path_destinations,
+	        action_signatures, ping_interval_samples, device_ids, suspicious_packet_reasons,
+	        xp_baseline, last_session_summary, session_history, updated_at
+	      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, unixepoch())
       ON CONFLICT(account_id) DO UPDATE SET
         total_skilling_actions = excluded.total_skilling_actions,
         total_combat_swings = excluded.total_combat_swings,
@@ -1408,14 +1565,17 @@ export class GameDatabase {
         risk_score = excluded.risk_score,
         risk_level = excluded.risk_level,
         risk_reasons = excluded.risk_reasons,
-        tick_align_samples = excluded.tick_align_samples,
-        reaction_samples = excluded.reaction_samples,
-        path_destinations = excluded.path_destinations,
-        ping_interval_samples = excluded.ping_interval_samples,
-        device_ids = excluded.device_ids,
-        xp_baseline = excluded.xp_baseline,
-        last_session_summary = excluded.last_session_summary,
-        updated_at = unixepoch()
+	        tick_align_samples = excluded.tick_align_samples,
+	        reaction_samples = excluded.reaction_samples,
+	        path_destinations = excluded.path_destinations,
+	        action_signatures = excluded.action_signatures,
+	        ping_interval_samples = excluded.ping_interval_samples,
+	        device_ids = excluded.device_ids,
+	        suspicious_packet_reasons = excluded.suspicious_packet_reasons,
+	        xp_baseline = excluded.xp_baseline,
+	        last_session_summary = COALESCE(excluded.last_session_summary, bot_stats.last_session_summary),
+	        session_history = excluded.session_history,
+	        updated_at = unixepoch()
     `).run(
       accountId,
       row.total_skilling_actions,
@@ -1430,15 +1590,18 @@ export class GameDatabase {
       row.last_login_ts ?? null,
       row.risk_score,
       row.risk_level,
-      row.risk_reasons,
-      row.tick_align_samples,
-      row.reaction_samples,
-      row.path_destinations,
-      row.ping_interval_samples,
-      row.device_ids,
-      row.xp_baseline,
-      row.last_session_summary ?? null,
-    );
+	      row.risk_reasons,
+	      row.tick_align_samples,
+	      row.reaction_samples,
+	      row.path_destinations,
+	      row.action_signatures ?? '{}',
+	      row.ping_interval_samples,
+	      row.device_ids,
+	      row.suspicious_packet_reasons ?? '{}',
+	      row.xp_baseline,
+	      row.last_session_summary ?? null,
+	      row.session_history ?? '[]',
+	    );
   }
 
   listAdminBotReviewAccounts(limit: number = 200): AdminBotReviewAccount[] {
@@ -1464,9 +1627,12 @@ export class GameDatabase {
         b.tick_align_samples,
         b.reaction_samples,
         b.path_destinations,
+        b.action_signatures,
         b.ping_interval_samples,
         b.device_ids,
+        b.suspicious_packet_reasons,
         b.last_session_summary,
+        b.session_history,
         b.updated_at,
         (
           SELECT lh.login_ts FROM login_history lh
@@ -1519,15 +1685,18 @@ export class GameDatabase {
       last_action_ts: number | null;
       bot_last_login_ts: number | null;
       risk_score: number | null;
-      risk_level: string | null;
-      risk_reasons: string | null;
-      tick_align_samples: string | null;
-      reaction_samples: string | null;
-      path_destinations: string | null;
-      ping_interval_samples: string | null;
-      device_ids: string | null;
-      last_session_summary: string | null;
-      updated_at: number | null;
+	      risk_level: string | null;
+	      risk_reasons: string | null;
+	      tick_align_samples: string | null;
+	      reaction_samples: string | null;
+	      path_destinations: string | null;
+	      action_signatures: string | null;
+	      ping_interval_samples: string | null;
+	      device_ids: string | null;
+	      suspicious_packet_reasons: string | null;
+	      last_session_summary: string | null;
+	      session_history: string | null;
+	      updated_at: number | null;
       latest_login_ts: number | null;
       latest_ip: string | null;
       latest_reverse_dns: string | null;
@@ -1535,17 +1704,35 @@ export class GameDatabase {
       latest_session_minutes: number | null;
     }>;
 
-    return rows.map((row) => {
-      const pathDestinations = parseJsonNumberRecord(row.path_destinations);
-      const deviceIds = parseJsonNumberRecord(row.device_ids);
-      const lastIp = row.latest_ip ?? null;
-      return {
+	    const accounts = rows.map((row) => {
+	      const pathDestinations = parseJsonNumberRecord(row.path_destinations);
+	      const deviceIds = parseJsonNumberRecord(row.device_ids);
+	      const suspiciousReasons = parseJsonNumberRecord(row.suspicious_packet_reasons);
+	      const totalActions = (row.total_skilling_actions ?? 0) + (row.total_combat_swings ?? 0) + (row.total_movements ?? 0);
+	      const totalMinutes = row.total_session_minutes ?? 0;
+	      const totalHours = totalMinutes > 0 ? totalMinutes / 60 : null;
+	      const totalChats = row.total_chat_messages ?? 0;
+	      const storedRiskReasons = parseJsonStringArray(row.risk_reasons);
+	      const calibratedRisk = calibratedLegacyBotRisk({
+	        storedReasons: storedRiskReasons,
+	        totalSessionMinutes: totalMinutes,
+	        totalSkillingActions: row.total_skilling_actions ?? 0,
+	        totalCombatSwings: row.total_combat_swings ?? 0,
+	        totalMovements: row.total_movements ?? 0,
+	        totalChatMessages: totalChats,
+	        totalFlagEvents: row.total_flag_events ?? 0,
+	        totalSuspiciousPackets: row.total_suspicious_packets ?? 0,
+	        pathDestinations,
+	        suspiciousReasons,
+	      });
+	      const lastIp = row.latest_ip ?? null;
+	      return {
         accountId: row.id,
         username: row.username,
         isAdmin: row.is_admin === 1,
-        riskScore: row.risk_score ?? 0,
-        riskLevel: row.risk_level ?? 'low',
-        riskReasons: parseJsonStringArray(row.risk_reasons),
+        riskScore: calibratedRisk?.score ?? row.risk_score ?? 0,
+        riskLevel: calibratedRisk?.level ?? row.risk_level ?? 'low',
+        riskReasons: calibratedRisk?.reasons ?? storedRiskReasons,
         totalSkillingActions: row.total_skilling_actions ?? 0,
         totalCombatSwings: row.total_combat_swings ?? 0,
         totalMovements: row.total_movements ?? 0,
@@ -1565,12 +1752,62 @@ export class GameDatabase {
         reactionSampleCount: parseJsonNumberArray(row.reaction_samples).length,
         pingIntervalSampleCount: parseJsonNumberArray(row.ping_interval_samples).length,
         pathDestinationCount: Object.keys(pathDestinations).length,
+        topPathRepetition: topRecordRatio(pathDestinations),
+        topPathDestinations: topNumberRecordEntries(pathDestinations, 5).map(([tile, count]) => ({ tile, count })),
         deviceIdsSeen: Object.keys(deviceIds).length,
+        suspiciousPacketReasons: topNumberRecordEntries(suspiciousReasons, 8).map(([reason, count]) => ({ reason, count })),
+        sessionHistory: parseJsonObjectArray(row.session_history).slice(-8),
+        chatRatePerHour: totalHours === null ? null : totalChats / totalHours,
+        actionsPerHour: totalHours === null ? null : totalActions / totalHours,
+        actionsPerChat: totalChats > 0 ? totalActions / totalChats : null,
+        sharedDeviceAlts: this.getSharedDeviceAlts(row.id),
         lastSessionSummary: parseJsonObject(row.last_session_summary),
         accountBan: this.getAccountBanRecord(row.id),
         ipBan: lastIp ? this.getIpBanRecord(lastIp) : null,
       };
     });
+    accounts.sort((a, b) =>
+      b.riskScore - a.riskScore
+      || (b.lastLoginTs ?? 0) - (a.lastLoginTs ?? 0)
+      || a.username.localeCompare(b.username)
+    );
+    return accounts;
+  }
+
+  private getSharedDeviceAlts(accountId: number, limit: number = 8): AdminSharedDeviceAlt[] {
+    const rows = this.db.query(`
+      WITH my_devices AS (
+        SELECT DISTINCT device_id
+        FROM login_history
+        WHERE account_id = ? AND device_id IS NOT NULL AND device_id <> ''
+      )
+      SELECT
+        a.id AS account_id,
+        a.username,
+        COUNT(DISTINCT lh.device_id) AS devices,
+        COUNT(*) AS logins,
+        MAX(lh.login_ts) AS last_seen_ts
+      FROM login_history lh
+      JOIN my_devices md ON md.device_id = lh.device_id
+      JOIN accounts a ON a.id = lh.account_id
+      WHERE lh.account_id <> ?
+      GROUP BY a.id, a.username
+      ORDER BY devices DESC, logins DESC, last_seen_ts DESC
+      LIMIT ?
+    `).all(accountId, accountId, Math.max(1, Math.min(20, limit))) as Array<{
+      account_id: number;
+      username: string;
+      devices: number;
+      logins: number;
+      last_seen_ts: number | null;
+    }>;
+    return rows.map((row) => ({
+      accountId: row.account_id,
+      username: row.username,
+      devices: row.devices,
+      logins: row.logins,
+      lastSeenTs: row.last_seen_ts,
+    }));
   }
 
   cleanExpiredSessions(): void {

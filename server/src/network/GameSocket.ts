@@ -597,7 +597,7 @@ function reportSuspiciousPacket(
   world: World,
 ): void {
   const count = player.recordSuspiciousPacket();
-  player.botStats?.recordSuspiciousPacket();
+  player.botStats?.recordSuspiciousPacket(reason);
   if (INVALID_PACKET_AUDIT_COUNTS.has(count)) {
     audit({
       type: 'player.suspicious_packet',

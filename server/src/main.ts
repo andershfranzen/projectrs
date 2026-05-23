@@ -7,6 +7,7 @@ import { defaultKCTile } from '@projectrs/shared';
 import { World } from './World';
 import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
+import { requestClientIp } from './network/clientIp';
 
 // --- Chunked object storage helpers ---
 
@@ -810,22 +811,6 @@ function checkRate(map: Map<string, RateBucket>, key: string, limit: number, win
   return bucket.count <= limit;
 }
 
-function requestClientIp(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): string {
-  const directIp = srv.requestIP(req)?.address ?? '';
-  if (LOOPBACK_IPS.has(directIp)) {
-    const forwardedFor = req.headers.get('x-forwarded-for');
-    if (forwardedFor) {
-      const first = forwardedFor.split(',')[0]?.trim();
-      if (first) return first;
-    }
-    const realIp = req.headers.get('x-real-ip')?.trim();
-    if (realIp) return realIp;
-    const cfIp = req.headers.get('cf-connecting-ip')?.trim();
-    if (cfIp) return cfIp;
-  }
-  return directIp || 'unknown';
-}
-
 function parseCookie(req: Request, name: string): string {
   return readCookie(req, name);
 }
@@ -1466,13 +1451,10 @@ const server = Bun.serve<SocketData>({
       if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) {
         return new Response('Unauthorized', { status: 401 });
       }
-      // Capture IP at upgrade time. Behind a reverse proxy this is the
-      // proxy's address — production deploys should be sure their proxy
-      // forwards X-Forwarded-For and Bun is configured to honor it. For
-      // anti-cheat purposes a stable per-NAT IP is what matters; the
-      // gold-farmer correlation tolerates shared-IP noise (residential
-      // CGNAT, university dorms) because flag-level review is manual.
-      const wsIp = server.requestIP(req)?.address ?? 'unknown';
+      // Capture the real client IP at upgrade time when traffic arrives via
+      // the trusted local/Docker reverse proxy; otherwise fall back to Bun's
+      // direct peer address so arbitrary public clients cannot spoof XFF.
+      const wsIp = requestClientIp(req, server);
       const banned = banGateResponse(session.accountId, wsIp);
       if (banned) return banned;
       const upgraded = server.upgrade(req, {
@@ -1496,7 +1478,7 @@ const server = Bun.serve<SocketData>({
       if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) {
         return new Response('Unauthorized', { status: 401 });
       }
-      const wsIp = server.requestIP(req)?.address ?? 'unknown';
+      const wsIp = requestClientIp(req, server);
       const banned = banGateResponse(session.accountId, wsIp);
       if (banned) return banned;
       const upgraded = server.upgrade(req, {

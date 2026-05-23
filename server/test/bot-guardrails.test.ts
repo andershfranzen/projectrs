@@ -50,24 +50,68 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).toContain('routeActionLoop');
   });
 
-  test('risk profile escalates when multiple bot signals stack', () => {
+  test('risk profile escalates when multiple calibrated bot signals stack', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 20 * 60_000;
+
+    for (let i = 0; i < 100; i++) {
+      stats.recordSkillingRoll(1000, 1000);
+      stats.recordMovement(42.5, 17.5);
+      stats.recordActionSignature('object', 123, 42.5, 17.5, 'Chop');
+    }
+    for (let i = 0; i < 3; i++) stats.recordSuspiciousPacket('malformed-frame');
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('tickAligned');
+    expect(summary.flags).toContain('routeActionLoop');
+    expect(summary.flags).toContain('protocolPackets');
+    expect(summary.flags).toContain('noCursorTelemetry');
+    expect(['high', 'critical']).toContain(summary.riskLevel);
+    expect(summary.riskScore).toBeGreaterThanOrEqual(60);
+    expect(summary.riskReasons.length).toBeGreaterThan(0);
+  });
+
+  test('server-tick alignment alone is diagnostic, not a high-risk score', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
 
     for (let i = 0; i < 30; i++) {
       stats.recordSkillingRoll(1000, 1000);
-      stats.recordMovement(42.5, 17.5);
-      stats.recordActionSignature('object', 123, 42.5, 17.5, 'Chop');
     }
-    for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket();
 
     const summary = stats.computeSummary({});
     expect(summary.flags).toContain('tickAligned');
-    expect(summary.flags).toContain('routeActionLoop');
-    expect(summary.flags).toContain('suspiciousPackets');
-    expect(summary.riskLevel).toBe('high');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(60);
-    expect(summary.riskReasons.length).toBeGreaterThan(0);
+    expect(summary.riskScore).toBe(0);
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('stale gameplay packets are tracked but do not fuzz-score like protocol abuse', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 25; i++) stats.recordSuspiciousPacket('stale-npc-target');
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionSuspiciousPacketClasses.stale).toBe(25);
+    expect(summary.flags).not.toContain('protocolPackets');
+    expect(summary.flags).not.toContain('rateLimitPackets');
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('lifetime low-social high-activity behavior escalates review score', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.totalSessionMinutes = 1300;
+    stats.totalSkillingActions = 15000;
+    stats.totalCombatSwings = 15000;
+    stats.totalMovements = 13000;
+    stats.totalChatMessages = 10;
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('lifetimeLowSocialHighActivity');
+    expect(summary.flags).toContain('lifetimeExtremeLowSocialHighActivity');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
   });
 
   test('heartbeat-coupled activity is flagged as scripted input cadence', () => {
@@ -119,7 +163,7 @@ describe('anti-bot guardrails', () => {
       const session = db.loginFallbackAccount('risk-tester', '11111111-1111-4111-8111-111111111111');
       const stats = BotStats.empty();
       stats.onLogin({});
-      for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket();
+      for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('malformed-frame');
       const summary = stats.finalize(db, session.accountId, {}, 1);
       const row = db.loadBotStats(session.accountId);
 
@@ -127,6 +171,32 @@ describe('anti-bot guardrails', () => {
       expect(row?.risk_level).toBe(summary.riskLevel);
       expect(JSON.parse(row?.risk_reasons ?? '[]')).toEqual(summary.riskReasons);
       expect(row?.total_suspicious_packets).toBe(5);
+      expect(JSON.parse(row?.suspicious_packet_reasons ?? '{}')['malformed-frame']).toBe(5);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('short sessions do not overwrite the last meaningful bot summary', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('summary-tester', '11111111-1111-4111-8111-111111111111');
+      const stats = BotStats.empty();
+      stats.onLogin({});
+      stats.sessionStartedAt = Date.now() - 10 * 60_000;
+      for (let i = 0; i < 10; i++) stats.recordMovement(10 + i, 20);
+      const meaningful = stats.finalize(db, session.accountId, {}, 1);
+
+      stats.onLogin({});
+      const short = stats.finalize(db, session.accountId, {}, 2);
+      const row = db.loadBotStats(session.accountId);
+      const last = JSON.parse(row?.last_session_summary ?? '{}') as { sessionMinutes?: number };
+      const history = JSON.parse(row?.session_history ?? '[]') as unknown[];
+
+      expect(meaningful.sessionMinutes).toBeGreaterThanOrEqual(9);
+      expect(short.sessionMinutes).toBe(0);
+      expect(last.sessionMinutes).toBe(meaningful.sessionMinutes);
+      expect(history).toHaveLength(2);
     } finally {
       db.close();
     }

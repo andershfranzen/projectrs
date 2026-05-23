@@ -12,7 +12,7 @@ describe('admin bot review data', () => {
 
       const stats = BotStats.empty();
       stats.onLogin({});
-      for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket();
+      for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('malformed-frame');
       stats.finalize(db, session.accountId, {}, 77);
       db.banAccount(session.accountId, 'review action', 'test-admin', Math.floor(Date.now() / 1000) + 3600);
 
@@ -26,10 +26,43 @@ describe('admin bot review data', () => {
       expect(row?.lastIp).toBe('203.0.113.7');
       expect(row?.lastSessionMinutes).toBe(12);
       expect(row?.totalSuspiciousPackets).toBe(5);
+      expect(row?.suspiciousPacketReasons[0]).toEqual({ reason: 'malformed-frame', count: 5 });
       expect(row?.riskScore).toBeGreaterThan(0);
       expect(row?.accountBan?.reason).toBe('review action');
       expect(row?.accountBan?.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
-      expect(flags).toContain('suspiciousPackets');
+      expect(flags).toContain('protocolPackets');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('surfaces shared device alts and calibrated lifetime behavior', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const deviceId = '11111111-1111-4111-8111-111111111111';
+      const target = db.loginFallbackAccount('review-target', deviceId);
+      const alt = db.loginFallbackAccount('alt-target', deviceId);
+      db.recordLogin(target.accountId, '203.0.113.7', deviceId);
+      db.recordLogin(alt.accountId, '203.0.113.8', deviceId);
+
+      const stats = BotStats.empty();
+      stats.onLogin({});
+      stats.totalSessionMinutes = 1300;
+      stats.totalSkillingActions = 15000;
+      stats.totalCombatSwings = 15000;
+      stats.totalMovements = 13000;
+      stats.totalChatMessages = 10;
+      stats.riskScore = 96;
+      stats.riskLevel = 'critical';
+      stats.riskReasons = ['tick-aligned action timing (8ms stddev) (+24)', 'invalid/stale gameplay packets (100 this session) (+14)'];
+      db.saveBotStats(target.accountId, stats.toRow());
+
+      const row = db.listAdminBotReviewAccounts().find((entry) => entry.accountId === target.accountId);
+
+      expect(row?.riskScore).toBeLessThan(96);
+      expect(row?.riskReasons.some((reason) => reason.includes('low-social high-activity'))).toBe(true);
+      expect(row?.chatRatePerHour).toBeLessThan(1);
+      expect(row?.sharedDeviceAlts[0]?.username).toBe('alt-target');
     } finally {
       db.close();
     }

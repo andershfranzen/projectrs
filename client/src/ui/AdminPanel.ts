@@ -28,7 +28,21 @@ interface AdminBotAccount {
   reactionSampleCount: number;
   pingIntervalSampleCount: number;
   pathDestinationCount: number;
+  topPathRepetition: number | null;
+  topPathDestinations: Array<{ tile: string; count: number }>;
   deviceIdsSeen: number;
+  suspiciousPacketReasons: Array<{ reason: string; count: number }>;
+  sessionHistory: Array<Record<string, unknown>>;
+  chatRatePerHour: number | null;
+  actionsPerHour: number | null;
+  actionsPerChat: number | null;
+  sharedDeviceAlts: Array<{
+    accountId: number;
+    username: string;
+    devices: number;
+    logins: number;
+    lastSeenTs: number | null;
+  }>;
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AdminAccountBan | null;
   ipBan: AdminIpBan | null;
@@ -297,6 +311,7 @@ export class AdminPanel {
       : this.summaryStringArray(summary, 'riskReasons');
     const xpPerHour = this.summaryNumberRecord(summary, 'xpPerHour');
     const actions = account.totalSkillingActions + account.totalCombatSwings;
+    const activeActions = actions + account.totalMovements;
 
     const root = document.createElement('div');
     root.style.cssText = `display: flex; flex-direction: column; gap: 8px;`;
@@ -343,10 +358,14 @@ export class AdminPanel {
       ['Total time', this.formatMinutes(account.totalSessionMinutes)],
       ['Flag events', String(account.totalFlagEvents)],
       ['Bad packets', String(account.totalSuspiciousPackets)],
-      ['Actions', this.formatNumber(actions)],
+      ['Actions', this.formatNumber(activeActions)],
+      ['Actions/hr', this.formatRate(account.actionsPerHour)],
+      ['Chats/hr', this.formatRate(account.chatRatePerHour)],
+      ['Actions/chat', this.formatRate(account.actionsPerChat)],
       ['Moves', this.formatNumber(account.totalMovements)],
       ['Chats', this.formatNumber(account.totalChatMessages)],
       ['Devices', String(account.deviceIdsSeen)],
+      ['Path repeat', this.formatPercent(account.topPathRepetition)],
       ['Last login', this.formatTime(account.lastLoginTs)],
       ['Last session', account.lastSessionMinutes == null ? '-' : this.formatMinutes(account.lastSessionMinutes)],
       ['Last IP', account.lastIp || '-'],
@@ -369,6 +388,7 @@ export class AdminPanel {
         ['Heartbeat link', this.formatPercent(this.summaryNumber(summary, 'heartbeatActivityCouplingRatio'))],
         ['Path repeat', this.formatPercent(this.summaryNumber(summary, 'topPathRepetition'))],
         ['Route loop', this.formatPercent(this.summaryNumber(summary, 'topActionLoopRepetition'))],
+        ['Lifetime route', this.formatPercent(this.summaryNumber(summary, 'topLifetimeActionLoopRepetition'))],
         ['Cursor repeat', this.formatPercent(this.summaryNumber(summary, 'topCursorCellRepetition'))],
         ['Cursor cells', String(this.summaryNumber(summary, 'cursorUniqueCells') ?? '-')],
       ];
@@ -384,6 +404,31 @@ export class AdminPanel {
         xp.appendChild(this.summaryPill(`${skill}: ${this.formatNumber(value)}/hr`, '#564428'));
       }
       root.appendChild(xp);
+    }
+
+    if (account.suspiciousPacketReasons.length > 0) {
+      const packets = document.createElement('div');
+      packets.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
+      for (const entry of account.suspiciousPacketReasons.slice(0, 8)) {
+        packets.appendChild(this.summaryPill(`${entry.reason}: ${this.formatNumber(entry.count)}`, '#4d355f'));
+      }
+      root.appendChild(packets);
+    }
+
+    if (account.topPathDestinations.length > 0 || account.sharedDeviceAlts.length > 0) {
+      const context = document.createElement('div');
+      context.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px;`;
+      for (const entry of account.topPathDestinations.slice(0, 5)) {
+        context.appendChild(this.summaryPill(`${entry.tile}: ${this.formatNumber(entry.count)} moves`, '#564428'));
+      }
+      for (const alt of account.sharedDeviceAlts.slice(0, 5)) {
+        context.appendChild(this.summaryPill(`device alt ${alt.username}: ${alt.devices} dev/${alt.logins} logins`, '#6b3b34'));
+      }
+      root.appendChild(context);
+    }
+
+    if (account.sessionHistory.length > 0) {
+      root.appendChild(this.sessionHistoryTable(account.sessionHistory));
     }
 
     root.appendChild(this.moderationControls(account));
@@ -488,6 +533,56 @@ export class AdminPanel {
       font-size: 11px;
     `;
     this.detailEl.appendChild(error);
+  }
+
+  private sessionHistoryTable(history: Array<Record<string, unknown>>): HTMLDivElement {
+    const table = document.createElement('div');
+    table.style.cssText = `
+      display: grid;
+      grid-template-columns: 86px 56px 50px minmax(92px, 1fr) 58px;
+      gap: 1px;
+      border: 1px solid rgba(84, 70, 50, 0.6);
+      background: rgba(84, 70, 50, 0.45);
+      font-size: 10px;
+    `;
+    for (const label of ['Session', 'Minutes', 'Score', 'Flags', 'Packets']) {
+      const cell = this.tableCell(label, true);
+      table.appendChild(cell);
+    }
+    for (const entry of history.slice(-5).reverse()) {
+      const flags = Array.isArray(entry.flags)
+        ? entry.flags.filter((flag): flag is string => typeof flag === 'string').slice(0, 3).join(', ')
+        : '';
+      table.append(
+        this.tableCell(this.formatTime(this.recordNumber(entry, 'finalizedAt'))),
+        this.tableCell(this.formatMinutes(this.recordNumber(entry, 'sessionMinutes') ?? 0)),
+        this.tableCell(String(this.recordNumber(entry, 'riskScore') ?? 0)),
+        this.tableCell(flags || '-'),
+        this.tableCell(String(this.recordNumber(entry, 'sessionSuspiciousPackets') ?? 0)),
+      );
+    }
+    return table;
+  }
+
+  private tableCell(text: string, header = false): HTMLDivElement {
+    const cell = document.createElement('div');
+    cell.textContent = text;
+    cell.title = text;
+    cell.style.cssText = `
+      min-width: 0;
+      padding: 4px 5px;
+      background: ${header ? 'rgba(18, 13, 10, 0.82)' : 'rgba(34, 25, 18, 0.7)'};
+      color: ${header ? '#a99573' : '#f4ded5'};
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    `;
+    return cell;
+  }
+
+  private recordNumber(record: Record<string, unknown>, key: string): number | null {
+    const value = record[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
 
   private renderEmpty(message: string): void {
@@ -672,6 +767,11 @@ export class AdminPanel {
 
   private formatNumber(value: number): string {
     return Number.isFinite(value) ? Math.round(value).toLocaleString() : '-';
+  }
+
+  private formatRate(value: number | null): string {
+    if (value === null || !Number.isFinite(value)) return '-';
+    return value >= 100 ? Math.round(value).toLocaleString() : value.toFixed(2);
   }
 
   private formatMs(value: number | null): string {

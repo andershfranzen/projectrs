@@ -457,17 +457,23 @@ function computeReviewRisk(
 
   const flags = candidate.uniqueFlags;
   if (score === 0) {
-    if (flags.has('tickAligned')) add(24, 'tick-aligned action timing');
-    if (flags.has('pingRegular')) add(18, 'script-regular heartbeat timing');
+    if (flags.has('tickAligned') && (flags.has('routeActionLoop') || flags.has('lifetimeRouteActionLoop') || flags.has('fastReaction'))) add(6, 'server-tick alignment paired with behavioral loop');
+    if (flags.has('pingRegular')) add(12, 'script-regular heartbeat timing');
     if (flags.has('activityHeartbeatCoupled')) add(20, 'activity packets coupled to heartbeat');
     if (flags.has('routeActionLoop')) add(22, 'repeated route/action loop');
+    if (flags.has('lifetimeRouteActionLoop')) add(20, 'lifetime route/action loop');
     if (flags.has('pathRepetitive')) add(16, 'repetitive movement destination');
+    if (flags.has('lifetimePathConcentration')) add(16, 'lifetime path concentration');
     if (flags.has('noCursorTelemetry')) add(16, 'active session without cursor telemetry');
     if (flags.has('cursorStatic')) add(10, 'static cursor telemetry');
     if (flags.has('fastReaction')) add(22, 'fast NPC re-engage reaction');
     if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
-    if (flags.has('suspiciousPackets')) add(14, 'invalid/stale gameplay packets');
-    if (flags.has('packetFuzzing')) add(20, 'heavy packet fuzzing pattern');
+    if (flags.has('protocolPackets')) add(18, 'malformed/protocol packet abuse');
+    if (flags.has('rateLimitPackets')) add(18, 'rate-limit automation packets');
+    if (flags.has('automationInvalidPackets')) add(10, 'automation-shaped invalid packets');
+    if (flags.has('lifetimeHardInvalidPackets')) add(14, 'lifetime hard invalid packets');
+    if (flags.has('lifetimeExtremeLowSocialHighActivity')) add(32, 'extreme low-social high-activity lifetime');
+    else if (flags.has('lifetimeLowSocialHighActivity')) add(22, 'low-social high-activity lifetime');
     if (flags.has('xpVelocity')) add(28, 'impossible XP velocity');
     if (flags.has('marathonSession')) add(10, 'marathon session');
     if (flags.has('noChat')) add(8, 'long active session with no chat');
