@@ -102,6 +102,7 @@ interface RuntimeObjectSpawn {
   name?: string;
   examineText?: string;
   interactions?: WorldObject['interactions'];
+  defaultOpen?: boolean;
   trigger?: WorldObject['trigger'];
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
@@ -340,12 +341,23 @@ export class World {
           this.clearDoorWallEdges(obj, map);
           obj.doorOpen = true;
           obj.depleted = true;
-          // Re-arm a fresh auto-close timer. The persisted auto_close_at_tick
+          // Re-arm a fresh auto-reset timer. The persisted auto_close_at_tick
           // is informational only — we don't try to map it back through the
           // pre-restart tick clock, just give the door its full timeout again.
           obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
           this.depletedObjectIds.add(obj.id);
           restored++;
+        } else if (!row.isOpen && obj.doorDefaultOpen && obj.doorOpen) {
+          const map = this.maps.get(obj.mapLevel);
+          if (!map) continue;
+          this.restoreDoorWallEdges(obj, map);
+          obj.doorOpen = false;
+          obj.depleted = false;
+          obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
+          this.depletedObjectIds.add(obj.id);
+          restored++;
+        } else if (row.isOpen === obj.doorDefaultOpen) {
+          this.db.clearDoorState(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor);
         }
       }
       if (restored > 0) console.log(`Restored ${restored} persisted door state(s)`);
@@ -459,6 +471,11 @@ export class World {
       if (objDef.category === 'door') {
         this.initDoorEdge(obj);
         this.setDoorWallEdges(obj, gameMap);
+        if (obj.doorDefaultOpen) {
+          this.clearDoorWallEdges(obj, gameMap);
+          obj.doorOpen = true;
+          obj.depleted = true;
+        }
         this.registerDoorObject(obj);
       }
       cm.addEntity(obj.id, spawn.x, spawn.z);
@@ -698,20 +715,119 @@ export class World {
     const map = this.getPlayerMap(player);
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
+    if (this.isBankerReachableAcrossBooth(player, npc, ptx, ptz)) return true;
+    if (!npc.isInteractionTile(ptx, ptz)) return false;
     const footprint = getObjectFootprintTiles(npc.position.x, npc.position.y, { width: npc.size });
     for (const tile of npc.interactionTiles()) {
+      if (tile.x !== ptx || tile.z !== ptz) continue;
       if (!this.npcInteractionTileHasLineOfWalk(player, map, footprint, tile.x, tile.z)) continue;
-      if (ptx === tile.x && ptz === tile.z) return true;
+      return true;
     }
     return false;
   }
 
+  private findBankBoothAt(player: Player, tileX: number, tileZ: number): WorldObject | null {
+    for (const obj of this.worldObjects.values()) {
+      if (obj.def.category !== 'bank') continue;
+      if (obj.mapLevel !== player.currentMapLevel || (obj.floor ?? 0) !== player.currentFloor) continue;
+      if (Math.floor(obj.x) === tileX && Math.floor(obj.z) === tileZ) return obj;
+    }
+    return null;
+  }
+
+  private getBankerBoothUseTile(player: Player, npc: Npc, booth: WorldObject): { x: number; z: number } | null {
+    if (!npc.hasBank || !this.canPlayerTargetNpc(player, npc)) return null;
+    const ntx = Math.floor(npc.position.x);
+    const ntz = Math.floor(npc.position.y);
+    const bx = Math.floor(booth.x);
+    const bz = Math.floor(booth.z);
+    const dx = ntx - bx;
+    const dz = ntz - bz;
+    if (Math.abs(dx) + Math.abs(dz) !== 1) return null;
+    return { x: bx - dx, z: bz - dz };
+  }
+
+  private isBankerReachableAcrossBooth(player: Player, npc: Npc, ptx = Math.floor(player.position.x), ptz = Math.floor(player.position.y)): boolean {
+    if (!npc.hasBank || !this.canPlayerTargetNpc(player, npc)) return false;
+    const ntx = Math.floor(npc.position.x);
+    const ntz = Math.floor(npc.position.y);
+    const dx = ntx - ptx;
+    const dz = ntz - ptz;
+    if (Math.abs(dx) + Math.abs(dz) !== 2) return false;
+    if (Math.abs(dx) === 1 && Math.abs(dz) === 1) return false;
+    return this.findBankBoothAt(player, ptx + Math.sign(dx), ptz + Math.sign(dz)) !== null;
+  }
+
   private queuePlayerPathToNpcInteraction(player: Player, npc: Npc): boolean {
     if (!this.canPlayerTargetNpc(player, npc)) return false;
+    const boothPath = this.findPlayerPathToBankerBooth(player, npc);
+    if (boothPath) {
+      player.setMoveQueue(boothPath);
+      return true;
+    }
     const path = this.findPlayerPathToNpc(player, npc);
     if (path.length === 0) return false;
     player.setMoveQueue(path);
     return true;
+  }
+
+  private findPlayerPathToBankerBooth(player: Player, npc: Npc): { x: number; z: number }[] | null {
+    if (!npc.hasBank || !this.canPlayerTargetNpc(player, npc)) return null;
+    const map = this.getPlayerMap(player);
+    const candidates: { booth: WorldObject; useTile: { x: number; z: number } }[] = [];
+    for (const obj of this.worldObjects.values()) {
+      if (obj.def.category !== 'bank') continue;
+      if (obj.mapLevel !== player.currentMapLevel || (obj.floor ?? 0) !== player.currentFloor) continue;
+      const useTile = this.getBankerBoothUseTile(player, npc, obj);
+      if (!useTile) continue;
+      if (this.isTileBlockedForPlayer(player, map, useTile.x, useTile.z)) continue;
+      candidates.push({ booth: obj, useTile });
+    }
+    candidates.sort((a, b) =>
+      (Math.abs(player.position.x - (a.useTile.x + 0.5)) + Math.abs(player.position.y - (a.useTile.z + 0.5)))
+      - (Math.abs(player.position.x - (b.useTile.x + 0.5)) + Math.abs(player.position.y - (b.useTile.z + 0.5))));
+    for (const candidate of candidates) {
+      if (Math.floor(player.position.x) === candidate.useTile.x && Math.floor(player.position.y) === candidate.useTile.z) return [];
+      const path = player.currentFloor === 0
+        ? map.findPathForNpc(
+            player.position.x,
+            player.position.y,
+            candidate.useTile.x + 0.5,
+            candidate.useTile.z + 0.5,
+            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
+            PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
+            (fx, fz, tx, tz) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY),
+          )
+        : map.findPathForNpc(
+            player.position.x,
+            player.position.y,
+            candidate.useTile.x + 0.5,
+            candidate.useTile.z + 0.5,
+            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
+            PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
+            (fx, fz, tx, tz) => map.isWallBlockedOnFloor(fx, fz, tx, tz, player.currentFloor),
+          );
+      if (path.length > 0) return path;
+    }
+    return null;
+  }
+
+  private findBankerAcrossBooth(player: Player, booth: WorldObject): Npc | null {
+    const ptx = Math.floor(player.position.x);
+    const ptz = Math.floor(player.position.y);
+    const bx = Math.floor(booth.x);
+    const bz = Math.floor(booth.z);
+    const dx = bx - ptx;
+    const dz = bz - ptz;
+    if (Math.abs(dx) + Math.abs(dz) !== 1) return null;
+    const bankerX = bx + dx;
+    const bankerZ = bz + dz;
+    for (const npc of this.npcs.values()) {
+      if (!npc.hasBank || npc.dead) continue;
+      if (npc.currentMapLevel !== player.currentMapLevel || npc.currentFloor !== player.currentFloor) continue;
+      if (Math.floor(npc.position.x) === bankerX && Math.floor(npc.position.y) === bankerZ) return npc;
+    }
+    return null;
   }
 
   private queuePlayerPathToNpcRange(player: Player, npc: Npc, range: number): boolean {
@@ -731,6 +847,14 @@ export class World {
     if (queue.length === 0) return false;
     player.setMoveQueue(queue);
     return true;
+  }
+
+  private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic'): boolean {
+    if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
+    const range = mode === 'magic' ? SPELL_CAST_DISTANCE : RANGED_ATTACK_DISTANCE;
+    return dist <= range;
   }
 
   private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean, floor: number = 0): void {
@@ -964,6 +1088,7 @@ export class World {
           name: placed.name,
           examineText: placed.examineText,
           interactions: placed.interactions,
+          defaultOpen: placed.defaultOpen === true,
           trigger: placed.trigger,
           interactionTiles: placed.interactionTiles,
           interactionSides: placed.interactionSides,
@@ -992,6 +1117,7 @@ export class World {
     if (spawn.name) obj.name = spawn.name;
     if (spawn.examineText) obj.examineText = spawn.examineText;
     if (spawn.interactions) obj.interactions = spawn.interactions;
+    if (spawn.defaultOpen) obj.doorDefaultOpen = true;
     if (spawn.trigger) obj.trigger = spawn.trigger;
     if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
     if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
@@ -1706,18 +1832,29 @@ export class World {
       this.restoreDoorWallEdges(obj, map);
       obj.doorOpen = false;
       obj.depleted = false;
-      this.depletedObjectIds.delete(obj.id);
       swingSign = 0;
-      // Closed is the default state — drop the persisted row so a fresh
-      // server boot doesn't waste cycles processing a no-op.
-      this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+      if (obj.doorDefaultOpen) {
+        obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
+        this.depletedObjectIds.add(obj.id);
+        this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, false, this.currentTick + obj.respawnTimer);
+      } else {
+        this.depletedObjectIds.delete(obj.id);
+        // Closed is the default state — drop the persisted row so a fresh
+        // server boot doesn't waste cycles processing a no-op.
+        this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+      }
     } else {
       this.clearDoorWallEdges(obj, map);
       obj.doorOpen = true;
       obj.depleted = true;
-      obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
-      this.depletedObjectIds.add(obj.id);
-      this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, true, this.currentTick + obj.respawnTimer);
+      if (obj.doorDefaultOpen) {
+        this.depletedObjectIds.delete(obj.id);
+        this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+      } else {
+        obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
+        this.depletedObjectIds.add(obj.id);
+        this.db.saveDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, true, this.currentTick + obj.respawnTimer);
+      }
     }
 
     this.broadcastWorldObjectStateChange(obj, swingSign);
@@ -2311,12 +2448,14 @@ export class World {
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const isMagicAutocast = player.autocastSpellIndex >= 0;
     const attackDist = isMagicAutocast ? SPELL_CAST_DISTANCE : (isRanged ? RANGED_ATTACK_DISTANCE : 1.5);
+    const attackMode = isMagicAutocast ? 'magic' : (isRanged ? 'ranged' : 'melee');
+    const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, attackMode);
     if (dist > Math.max(attackDist, 24)) return;
 
     player.attackTarget = npc;
     this.setCombatTarget(playerId, npcId);
 
-    if (dist > attackDist) {
+    if (!inAttackRange) {
       // Prefer the client-sent path. The client sends sendMove(path) right
       // before PLAYER_ATTACK_NPC; that path lands in moveQueue via
       // handlePlayerMove. Overwriting it with an independently-pathfound
@@ -2347,7 +2486,7 @@ export class World {
         }
       }
     } else {
-      player.clearMoveQueue();
+      if (!player.hasMoveQueue()) player.clearMoveQueue();
     }
   }
 
@@ -3030,6 +3169,21 @@ export class World {
 
     if (action === 'Enter') {
       this.handleTeleportInteraction(player, obj);
+      return;
+    }
+
+    if (obj.def.category === 'bank' && action === 'Talk-to') {
+      const banker = this.findBankerAcrossBooth(player, obj);
+      if (!banker) {
+        this.sendChatSystem(player, "I can't reach that.");
+        return;
+      }
+      this.handlePlayerTalkNpc(player.id, banker.id);
+      return;
+    }
+
+    if (obj.def.category === 'bank' && (action === 'Bank' || action === 'Use-quickly')) {
+      this.openBankFor(player);
       return;
     }
 
@@ -5721,10 +5875,8 @@ export class World {
       }
 
       const isRanged = player.isRangedWeapon(itemDefs);
-      const attackDist = isRanged ? RANGED_ATTACK_DISTANCE : 1.5;
-      const cfp = npc.distToFootprint(player.position.x, player.position.y);
-      const combatDist = Math.sqrt(cfp.dx * cfp.dx + cfp.dz * cfp.dz);
-      if (combatDist > attackDist) {
+      const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, isRanged ? 'ranged' : 'melee');
+      if (!inAttackRange) {
         // Out of range — only re-pathfind when the existing queue has been
         // fully consumed (player arrived at the previous target tile but the
         // NPC has since moved). Re-pathing every tick used to trample the
@@ -5745,7 +5897,7 @@ export class World {
               let cutIdx = path.length;
               for (let i = 0; i < path.length; i++) {
                 const pf = npc.distToFootprint(path[i].x, path[i].z);
-                if (Math.abs(pf.dx) <= attackDist && Math.abs(pf.dz) <= attackDist) {
+                if (Math.abs(pf.dx) <= RANGED_ATTACK_DISTANCE && Math.abs(pf.dz) <= RANGED_ATTACK_DISTANCE) {
                   cutIdx = i + 1;
                   break;
                 }
@@ -6132,13 +6284,33 @@ export class World {
     for (const objId of this.depletedObjectIds) {
       const obj = this.worldObjects.get(objId);
       if (!obj) { this.depletedObjectIds.delete(objId); continue; }
-      // Doors: keep the respawn timer pinned at full while any player is
-      // in the doorway. The countdown only runs once everyone has left, so
-      // the auto-close never slams shut on top of someone walking through.
-      // The base timer is generous (200 ticks ≈ 2 min) — doors are meant
-      // to stay open for a while after use.
-      if (obj.def.category === 'door' && obj.doorOpen && this.isAnyPlayerNearDoor(obj)) {
-        obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
+      if (obj.def.category === 'door') {
+        if (obj.doorOpen === obj.doorDefaultOpen) {
+          this.depletedObjectIds.delete(objId);
+          continue;
+        }
+        // Doors: keep the reset timer pinned at full while any player is
+        // in the doorway. The countdown only runs once everyone has left, so
+        // the reset never changes collision under someone walking through.
+        // The base timer is generous (200 ticks ≈ 2 min) — doors are meant
+        // to stay in their temporary state for a while after use.
+        if (this.isAnyPlayerNearDoor(obj)) {
+          obj.respawnTimer = obj.def.respawnTime ?? DEFAULT_OBJECT_RESPAWN_TICKS;
+          continue;
+        }
+        obj.respawnTimer--;
+        if (obj.respawnTimer > 0) continue;
+
+        const map = this.maps.get(obj.mapLevel);
+        if (map) {
+          if (obj.doorDefaultOpen) this.clearDoorWallEdges(obj, map);
+          else this.restoreDoorWallEdges(obj, map);
+        }
+        obj.doorOpen = obj.doorDefaultOpen;
+        obj.depleted = obj.doorOpen;
+        this.depletedObjectIds.delete(objId);
+        this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+        this.broadcastWorldObjectStateChange(obj);
         continue;
       }
       if (obj.tickRespawn()) {
@@ -6149,15 +6321,8 @@ export class World {
         // blocked after the first auto-close and silently breaks every
         // subsequent click.
         this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true, obj.floor);
-        if (obj.def.category === 'door') {
-          const map = this.maps.get(obj.mapLevel);
-          if (map) this.restoreDoorWallEdges(obj, map);
-          obj.doorOpen = false;
-          this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
-        } else {
-          // Skilling object respawned — drop the persisted target.
-          this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
-        }
+        // Skilling object respawned — drop the persisted target.
+        this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
         this.broadcastWorldObjectStateChange(obj);

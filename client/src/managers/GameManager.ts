@@ -65,16 +65,29 @@ const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
+const EDGE_BASE_HARDWARE_SCALE = 1.5;
+const LOW_FPS_HARDWARE_SCALE = 2.0;
+const LOW_FPS_THRESHOLD = 28;
+const LOW_FPS_CONSECUTIVE_SECONDS = 4;
+const RECOVER_FPS_THRESHOLD = 45;
+const RECOVER_FPS_CONSECUTIVE_SECONDS = 10;
 const TERMINAL_CLOSE_REASONS = new Set([
   'Idle timeout',
   'Logged out',
   'Logged in from another session',
   'Account is still in combat',
 ]);
+const GEAR_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
+
+function devCacheBustGearFile(file: string): string {
+  return GEAR_CACHE_BUST_TOKEN ? `${file}${GEAR_CACHE_BUST_TOKEN}` : file;
+}
 
 type InteractionOption = {
   label: string;
   action: () => void;
+  /** False means right-click/touch-menu only, not primary left-click. */
+  primary?: boolean;
 };
 
 type MobilePanelMode = 'game' | 'map' | 'panel' | 'chat';
@@ -115,6 +128,10 @@ export class GameManager {
   private network: NetworkManager;
   private readonly onFatalDisconnect?: () => void;
   private destroyed: boolean = false;
+  private readonly baseHardwareScalingLevel: number;
+  private renderHardwareScalingLevel: number = 1;
+  private lowFpsSamples: number = 0;
+  private recoveryFpsSamples: number = 0;
 
   private connectionFrozen: boolean = false;
   private reconnecting: boolean = false;
@@ -402,9 +419,10 @@ export class GameManager {
     this.token = token;
     this.username = username;
     this.engine = new Engine(canvas, false, { antialias: false, adaptToDeviceRatio: false });
-    // RS-style chunky pixels: render at half resolution and let the browser
-    // upscale the framebuffer with nearest-neighbor (set on canvas via CSS).
-    this.engine.setHardwareScalingLevel(1.0);
+    // RS-style chunky pixels: keep the CSS size stable but allow a cheaper
+    // internal framebuffer for browsers/devices that struggle with fill-rate.
+    this.baseHardwareScalingLevel = this.detectBaseHardwareScalingLevel();
+    this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel, canvas);
     canvas.style.imageRendering = 'pixelated';
     this.scene = new Scene(this.engine);
     this.scene.useRightHandedSystem = true; // Match Three.js coordinate system (KC editor)
@@ -503,8 +521,9 @@ export class GameManager {
 
       if (!this.inputManager.isEnabled() || this.duelActive || e.shiftKey) return;
       const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
-      if (options.length > 0) {
-        this.runInteractionOption(options[0], e.clientX, e.clientY);
+      const primaryOption = options.find(option => option.primary !== false);
+      if (primaryOption) {
+        this.runInteractionOption(primaryOption, e.clientX, e.clientY);
         // Suppress InputManager's object/ground handling for this event. The
         // first context option is the whole action, including its own walk-to
         // prediction when needed.
@@ -695,9 +714,10 @@ export class GameManager {
       // Belt-and-suspenders resize: if the canvas CSS size drifted from the render
       // buffer size (e.g. ResizeObserver was throttled or the container reflowed
       // mid-frame), fix it here before rendering.
-      const dpr = window.devicePixelRatio || 1;
-      const expectedW = Math.round(canvas.clientWidth * dpr);
-      const expectedH = Math.round(canvas.clientHeight * dpr);
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const scale = Math.max(1, this.renderHardwareScalingLevel);
+      const expectedW = Math.max(1, Math.round((canvas.clientWidth * dpr) / scale));
+      const expectedH = Math.max(1, Math.round((canvas.clientHeight * dpr) / scale));
       if (canvas.width !== expectedW || canvas.height !== expectedH) {
         this.handleViewportResize();
       }
@@ -710,6 +730,7 @@ export class GameManager {
       fpsFrames++;
       if (now - fpsLast >= 1000) {
         fpsEl.textContent = `${fpsFrames} FPS | ${this.scene.getActiveMeshes().length} meshes`;
+        this.updateAdaptiveRenderQuality(fpsFrames);
         fpsFrames = 0;
         fpsLast = now;
       }
@@ -847,6 +868,7 @@ export class GameManager {
     if (this._loginSettled || seq !== this._loginReadySeq || !this._loginOkResolver) return;
 
     this._loginProgress?.(1, 'Entering world');
+    this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel);
     this.inputManager.setEnabled(true);
     this._loginSettled = true;
     this.lastSelfAuthorityAt = performance.now();
@@ -989,6 +1011,61 @@ export class GameManager {
   private handleViewportResize(): void {
     this.engine.resize();
     this.updateResponsiveCameraZoom();
+  }
+
+  private detectBaseHardwareScalingLevel(): number {
+    const params = new URLSearchParams(window.location.search);
+    const quality = params.get('quality')?.toLowerCase();
+    if (quality === 'low' || localStorage.getItem('projectrs_low_quality') === '1') {
+      return LOW_FPS_HARDWARE_SCALE;
+    }
+    if (quality === 'high') return 1;
+
+    // Microsoft Edge is Chromium-based, but in practice many affected players
+    // are on Edge with high-DPI laptop panels or power-saving GPU defaults.
+    // Start it at a cheaper framebuffer instead of waiting for several bad seconds.
+    const ua = navigator.userAgent;
+    if (/\bEdg\//.test(ua)) return EDGE_BASE_HARDWARE_SCALE;
+    return 1;
+  }
+
+  private setRenderHardwareScalingLevel(level: number, canvas?: HTMLCanvasElement): void {
+    const next = Math.max(1, level);
+    if (Math.abs(next - this.renderHardwareScalingLevel) < 0.01) return;
+    this.renderHardwareScalingLevel = next;
+    this.engine.setHardwareScalingLevel(next);
+    this.engine.resize();
+
+    const targetCanvas = canvas ?? this.engine.getRenderingCanvas();
+    if (targetCanvas) {
+      targetCanvas.dataset.renderScale = next.toFixed(2);
+    }
+  }
+
+  private updateAdaptiveRenderQuality(fps: number): void {
+    if (!this._loginSettled) return;
+    if (fps < LOW_FPS_THRESHOLD && this.renderHardwareScalingLevel < LOW_FPS_HARDWARE_SCALE) {
+      this.lowFpsSamples++;
+      this.recoveryFpsSamples = 0;
+      if (this.lowFpsSamples >= LOW_FPS_CONSECUTIVE_SECONDS) {
+        this.setRenderHardwareScalingLevel(LOW_FPS_HARDWARE_SCALE);
+        this.lowFpsSamples = 0;
+      }
+      return;
+    }
+
+    if (fps >= RECOVER_FPS_THRESHOLD && this.renderHardwareScalingLevel > this.baseHardwareScalingLevel) {
+      this.recoveryFpsSamples++;
+      this.lowFpsSamples = 0;
+      if (this.recoveryFpsSamples >= RECOVER_FPS_CONSECUTIVE_SECONDS) {
+        this.setRenderHardwareScalingLevel(this.baseHardwareScalingLevel);
+        this.recoveryFpsSamples = 0;
+      }
+      return;
+    }
+
+    this.lowFpsSamples = 0;
+    this.recoveryFpsSamples = 0;
   }
 
   private updateResponsiveCameraZoom(): void {
@@ -1707,6 +1784,11 @@ export class GameManager {
   private setupKeyboard(): void {
     window.addEventListener('keydown', (e) => {
       if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+      if (e.key === 'Escape' && this.bankPanel?.isVisible()) {
+        this.keysDown.delete('escape');
+        e.preventDefault();
+        return;
+      }
       if (e.key === 'Escape' && this.sidePanel?.getUsing()) {
         this.sidePanel.clearUsingInvItem();
         e.preventDefault();
@@ -1965,7 +2047,7 @@ export class GameManager {
     try {
       const lastSlash = def.file.lastIndexOf('/');
       const dir = def.file.substring(0, lastSlash + 1);
-      const file = def.file.substring(lastSlash + 1);
+      const file = devCacheBustGearFile(def.file.substring(lastSlash + 1));
       const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
       if (isCurrentApply && !isCurrentApply()) {
         this.disposeImportedGearResult(result);
@@ -3920,7 +4002,7 @@ export class GameManager {
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const option = pending.options[0];
+    const option = pending.options.find(candidate => candidate.primary !== false);
     const shouldRunTap = !pending.contextShown && !pending.rotating;
     this.cancelPendingTouchInteraction(event);
     if (shouldRunTap && option) {
@@ -4128,6 +4210,7 @@ export class GameManager {
 
     return this.actionsForInstance(def, data.depleted, data).map((actionName, actionIdx) => ({
       label: `${actionName} ${def.name}`,
+      primary: actionName === 'Use-quickly' ? false : undefined,
       action: () => this.interactObject(objectEntityId, actionIdx),
     }));
   }
@@ -4467,10 +4550,15 @@ export class GameManager {
     if (target) {
       const attackRange = this.getLocalNpcAttackRange();
       const rangeMode = this.getLocalNpcAttackRangeMode();
+      const walkingToTile = this.pathIndex < this.path.length;
       if (this.isPointInNpcInteractionRange(npcEntityId, target, this.playerX, this.playerZ, attackRange, rangeMode)) {
-        this.clearPredictedPath(true);
-        if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
-        this.faceLocalPlayerToward(target.x, target.z);
+        if (walkingToTile) {
+          this.trimPredictedPathToCurrentTileStep();
+        } else {
+          this.clearPredictedPath(true);
+          if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
+          this.faceLocalPlayerToward(target.x, target.z);
+        }
       } else {
         const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode);
         const path = pathResult.path;
@@ -4607,7 +4695,17 @@ export class GameManager {
     this.pendingFaceTargetEntityId = npcEntityId;
 
     // sendMove BEFORE TALK_NPC so the server walks the same tiles.
-    if (!this.isPlayerOnNpcInteractionTile(npcEntityId, target)) {
+    const bankerBoothPath = this.findPathToBankerBooth(npcEntityId, target);
+    if (bankerBoothPath && bankerBoothPath.path.length === 0) {
+      this.clearPredictedPath();
+      if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
+      this.faceLocalPlayerToward(target.x, target.z);
+      this.pendingFaceTargetEntityId = -1;
+    } else if (bankerBoothPath) {
+      this.startPredictedPath(bankerBoothPath.path, bankerBoothPath.preserveCurrentStep);
+      if (this.destMarker) this.destMarker.isVisible = false;
+      this.minimap?.clearDestination();
+    } else if (!this.isPlayerOnNpcInteractionTile(npcEntityId, target)) {
       const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
       const path = pathResult.path;
       if (path.length > 0) {
@@ -4672,6 +4770,30 @@ export class GameManager {
     this.tileProgress = 0;
     this.pendingPath = null;
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
+  }
+
+  private trimPredictedPathToCurrentTileStep(): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    const activeStep = this.getActiveUnitStep();
+    const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
+    const alreadyTrimmed = this.path.length === 1
+      && this.pathIndex === 0
+      && this.pendingPath === null
+      && this.sameTile(this.path[0], currentTarget);
+    if (alreadyTrimmed) return false;
+
+    this.path = [currentTarget];
+    this.pathIndex = 0;
+    this.pendingPath = null;
+    if (activeStep) {
+      this.tileProgress = activeStep.progress;
+      this.setTileFrom(activeStep.from.x, activeStep.from.z);
+    }
+    if (this.destMarker) this.destMarker.isVisible = false;
+    this.minimap?.clearDestination();
+
+    this.network.sendMove([currentTarget]);
+    return true;
   }
 
   private stopLocalWalkForImmediateObjectInteraction(data: { x: number; z: number }): void {
@@ -4818,10 +4940,57 @@ export class GameManager {
   }
 
   private isPlayerOnNpcInteractionTile(npcEntityId: number, target: { x: number; z: number }): boolean {
-    const ptx = Math.floor(this.playerX);
-    const ptz = Math.floor(this.playerZ);
+    return this.isPointOnNpcInteractionTile(npcEntityId, target, this.playerX, this.playerZ);
+  }
+
+  private isPointOnNpcInteractionTile(npcEntityId: number, target: { x: number; z: number }, x: number, z: number): boolean {
+    const ptx = Math.floor(x);
+    const ptz = Math.floor(z);
     return this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
       .some(tile => ptx === tile.x && ptz === tile.z);
+  }
+
+  private isBankerNpc(npcEntityId: number): boolean {
+    return ((this.entities.npcInteractions.get(npcEntityId) ?? 0) & 4) !== 0;
+  }
+
+  private getBankerBoothUseTiles(npcEntityId: number, target: { x: number; z: number }): { x: number; z: number }[] {
+    if (!this.isBankerNpc(npcEntityId)) return [];
+    const ntx = Math.floor(target.x);
+    const ntz = Math.floor(target.z);
+    const tiles: { x: number; z: number; dist: number }[] = [];
+    for (const data of this.worldObjectDefs.values()) {
+      if (data.floor !== this.currentFloor) continue;
+      const def = this.objectDefsCache.get(data.defId);
+      if (def?.category !== 'bank') continue;
+      const bx = Math.floor(data.x);
+      const bz = Math.floor(data.z);
+      const dx = ntx - bx;
+      const dz = ntz - bz;
+      if (Math.abs(dx) + Math.abs(dz) !== 1) continue;
+      const useTile = { x: bx - dx, z: bz - dz };
+      if (this.isTileBlocked(useTile.x, useTile.z)) continue;
+      tiles.push({
+        ...useTile,
+        dist: Math.max(Math.abs((useTile.x + 0.5) - this.playerX), Math.abs((useTile.z + 0.5) - this.playerZ)),
+      });
+    }
+    tiles.sort((a, b) => a.dist - b.dist);
+    return tiles.map(({ x, z }) => ({ x, z }));
+  }
+
+  private findPathToBankerBooth(
+    npcEntityId: number,
+    target: { x: number; z: number },
+  ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } | null {
+    for (const tile of this.getBankerBoothUseTiles(npcEntityId, target)) {
+      if (Math.floor(this.playerX) === tile.x && Math.floor(this.playerZ) === tile.z) {
+        return { path: [], preserveCurrentStep: false };
+      }
+      const result = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
+      if (this.pathReachesGoal(result.path, tile.x + 0.5, tile.z + 0.5)) return result;
+    }
+    return null;
   }
 
   private getNpcInteractionTilesWithLineOfWalk(npcEntityId: number, target: { x: number; z: number }): { x: number; z: number }[] {
@@ -4844,8 +5013,11 @@ export class GameManager {
     x: number,
     z: number,
     range: number,
-    mode: 'euclidean' | 'chebyshev' = 'euclidean',
+    mode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
   ): boolean {
+    if (mode === 'cardinal') {
+      return this.isPointOnNpcInteractionTile(npcEntityId, target, x, z);
+    }
     const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
     if (mode === 'chebyshev') return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
     return Math.hypot(fp.dx, fp.dz) <= range;
@@ -4855,7 +5027,7 @@ export class GameManager {
     npcEntityId: number,
     target: { x: number; z: number },
     requiredRange: number = NPC_INTERACTION_RANGE,
-    rangeMode: 'euclidean' | 'chebyshev' = 'euclidean',
+    rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const candidates = this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
       .map(tile => ({
@@ -4899,8 +5071,8 @@ export class GameManager {
     return this.isLocalRangedWeapon() ? GameManager.RANGED_ATTACK_DISTANCE : 1.5;
   }
 
-  private getLocalNpcAttackRangeMode(): 'euclidean' | 'chebyshev' {
-    return this.isLocalRangedWeapon() ? 'chebyshev' : 'euclidean';
+  private getLocalNpcAttackRangeMode(): 'euclidean' | 'chebyshev' | 'cardinal' {
+    return this.isLocalRangedWeapon() ? 'chebyshev' : 'cardinal';
   }
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
@@ -5015,7 +5187,7 @@ export class GameManager {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     // Auto-interact with harvestable objects (trees, rocks), doors, ladders,
     // and crafting stations (furnace, anvil, range).
-    if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || (def.recipes && def.recipes.length > 0)) {
+    if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
       if (this.interactMarker) {
         let mx = data.x;
         let mz = data.z;
@@ -5283,7 +5455,7 @@ export class GameManager {
 
           const lastSlash = path.lastIndexOf('/');
           const dir = path.substring(0, lastSlash + 1);
-          const file = path.substring(lastSlash + 1);
+          const file = devCacheBustGearFile(path.substring(lastSlash + 1));
           const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
           const hasSkeleton = result.skeletons.length > 0;
 
@@ -6496,11 +6668,6 @@ export class GameManager {
     if (this.keysDown.has('d') || this.keysDown.has('arrowright')) cam.alpha -= camSpeed;
     if (this.keysDown.has('w') || this.keysDown.has('arrowup')) cam.beta = Math.max(0.2, cam.beta - camSpeed);
     if (this.keysDown.has('s') || this.keysDown.has('arrowdown')) cam.beta = Math.min(Math.PI / 2.2, cam.beta + camSpeed);
-    if (this.keysDown.has('escape')) {
-      cam.alpha = -Math.PI / 4;
-      cam.beta = Math.PI / 3.2;
-      this.keysDown.delete('escape');
-    }
   }
 
   private updateCombatFollow(dt: number): void {
@@ -6529,7 +6696,12 @@ export class GameManager {
     const attackRange = this.getLocalNpcAttackRange();
     const rangeMode = this.getLocalNpcAttackRangeMode();
     const inRange = this.isPointInNpcInteractionRange(this.combatTargetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode);
-    if (inRange) return;
+    if (inRange) {
+      if (this.trimPredictedPathToCurrentTileStep()) {
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+      }
+      return;
+    }
     if (this.pathIndex < this.path.length) return;
     if (this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;

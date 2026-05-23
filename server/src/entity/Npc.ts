@@ -190,6 +190,20 @@ export class Npc extends Entity {
     return getObjectInteractionTiles(this.position.x, this.position.y, { width: this.size });
   }
 
+  isInteractionTile(tileX: number, tileZ: number): boolean {
+    const size = this.size;
+    const sx = Math.floor(this.position.x);
+    const sz = Math.floor(this.position.y);
+    const startOffset = -Math.floor((size - 1) / 2);
+    const minX = sx + startOffset;
+    const minZ = sz + startOffset;
+    const maxX = minX + size - 1;
+    const maxZ = minZ + size - 1;
+    const eastOrWest = (tileX === minX - 1 || tileX === maxX + 1) && tileZ >= minZ && tileZ <= maxZ;
+    const northOrSouth = (tileZ === minZ - 1 || tileZ === maxZ + 1) && tileX >= minX && tileX <= maxX;
+    return eastOrWest || northOrSouth;
+  }
+
   /** True if (x, z) is within this NPC's wander box around spawn. The 0.5
    *  fudge covers half-integer tile centers — both spawnX and the queried
    *  point live at `floor(...)+0.5`, so abs differences are integers and the

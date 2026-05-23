@@ -281,7 +281,7 @@ export interface WallsFile extends FloorLayerData {
 export interface WorldObjectDef {
   id: number;
   name: string;
-  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'scenery';
+  category: 'tree' | 'rock' | 'fishingspot' | 'furnace' | 'cookingrange' | 'anvil' | 'altar' | 'obelisk' | 'door' | 'ladder' | 'chest' | 'crop' | 'bank' | 'scenery';
   actions: string[]; // e.g. ["Chop", "Examine"]
   blocking: boolean;
   width: number;
@@ -558,6 +558,8 @@ export interface PlacedObject {
   examineText?: string;
   /** Optional per-action effects for this specific placed object. */
   interactions?: PlacedObjectInteraction[];
+  /** Door instances with this enabled start open and auto-reset back open after being closed. */
+  defaultOpen?: boolean;
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   scale: { x: number; y: number; z: number };

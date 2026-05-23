@@ -34,6 +34,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'forge': 6,        // Furnace
   'cookingrange': 7, // Cooking Range
   'anvil': 19,       // Anvil (smithing)
+  'BankBooth': 31,   // Bank booth
   // Doors (only Truedoor assets — other "door" assets are decorative door frames)
   'castleTruedoor': 13,
   'basicTruedoor': 13,

@@ -2,46 +2,84 @@
   "8": {
     "name": "General Store",
     "items": [
-      { "itemId": 13, "price": 5, "stock": 10 },
-      { "itemId": 12, "price": 10, "stock": 5 },
-      { "itemId": 15, "price": 12, "stock": 5 },
-      { "itemId": 28, "price": 10, "stock": 5 },
-      { "itemId": 31, "price": 20, "stock": 3 },
-      { "itemId": 33, "price": 20, "stock": 3 }
+      {
+        "itemId": 13,
+        "price": 5,
+        "stock": 10
+      },
+      {
+        "itemId": 12,
+        "price": 10,
+        "stock": 5
+      },
+      {
+        "itemId": 15,
+        "price": 12,
+        "stock": 5
+      },
+      {
+        "itemId": 28,
+        "price": 10,
+        "stock": 5
+      },
+      {
+        "itemId": 31,
+        "price": 20,
+        "stock": 3
+      },
+      {
+        "itemId": 33,
+        "price": 20,
+        "stock": 3
+      }
     ]
   },
   "11": {
     "name": "Weapon Shop",
     "items": [
-      { "itemId": 2, "price": 20, "stock": 5 },
-      { "itemId": 3, "price": 30, "stock": 5 },
-      { "itemId": 73, "price": 75, "stock": 3 },
-      { "itemId": 6, "price": 120, "stock": 2 },
-      { "itemId": 31, "price": 20, "stock": 5 },
-      { "itemId": 32, "price": 65, "stock": 3 }
+      {
+        "itemId": 73,
+        "price": 75,
+        "stock": 3
+      },
+      {
+        "itemId": 31,
+        "price": 20,
+        "stock": 5
+      },
+      {
+        "itemId": 32,
+        "price": 65,
+        "stock": 3
+      }
     ]
   },
   "12": {
     "name": "Armor Shop — Head & Body",
     "items": [
-      { "itemId": 9, "price": 20, "stock": 5 },
-      { "itemId": 18, "price": 40, "stock": 3 },
-      { "itemId": 7, "price": 35, "stock": 5 },
-      { "itemId": 17, "price": 95, "stock": 2 }
+      {
+        "itemId": 9,
+        "price": 20,
+        "stock": 5
+      },
+      {
+        "itemId": 7,
+        "price": 35,
+        "stock": 5
+      },
+      {
+        "itemId": 17,
+        "price": 95,
+        "stock": 2
+      }
     ]
   },
   "13": {
     "name": "Armor Shop — Legs",
-    "items": [
-      { "itemId": 8, "price": 25, "stock": 5 },
-      { "itemId": 21, "price": 60, "stock": 3 }
-    ]
+    "items": []
   },
   "14": {
     "name": "Armor Shop — Shields",
-    "items": [
-      { "itemId": 4, "price": 25, "stock": 5 },
-      { "itemId": 16, "price": 60, "stock": 3 }
-    ]
+    "items": []
   }
 }

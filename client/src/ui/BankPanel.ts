@@ -63,7 +63,11 @@ export class BankPanel {
 
     // Escape closes the bank.
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.visible) this.hide(/*notifyServer*/ true);
+      if (e.key === 'Escape' && this.visible) {
+        e.preventDefault();
+        e.stopPropagation();
+        this.hide(/*notifyServer*/ true);
+      }
     });
   }
 

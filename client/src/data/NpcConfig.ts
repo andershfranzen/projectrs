@@ -61,7 +61,7 @@ export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; com
   9:  { stationary: false, combat: true },  // Dark Knight
   11: { stationary: true },                 // Weapon Smith
   12: { stationary: true },                 // Armorer
-  13: { stationary: true },                 // Leg Armorer
+  13: { stationary: false },                // Leg Armorer
   14: { stationary: true },                 // Shield Smith
   16: { stationary: true },                 // Banker
   // Editor-spawned customizable humanoid. `combat: true` pulls the full

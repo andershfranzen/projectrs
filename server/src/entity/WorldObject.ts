@@ -19,6 +19,7 @@ export class WorldObject {
   respawnTimer: number = 0;
   rotationY: number = 0;
   doorOpen: boolean = false;
+  doorDefaultOpen: boolean = false;
   closedEdge: number = 0;
   /** Optional per-instance name from an editor placed object. */
   name?: string;

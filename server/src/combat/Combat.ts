@@ -61,10 +61,10 @@ export function processPlayerCombat(
 ): { hit: CombatHit; xpDrops: XpDrop[]; levelUps: { skill: string; level: number }[] } | null {
   if (npc.dead || !player.alive) return null;
 
-  // Check distance — must be adjacent (within 1.5 tiles)
-  const dx = Math.abs(player.position.x - npc.position.x);
-  const dz = Math.abs(player.position.y - npc.position.y);
-  if (dx > 1.5 || dz > 1.5) return null;
+  // Melee must be from the NPC's cardinal interaction surface, not diagonal.
+  const playerTileX = Math.floor(player.position.x);
+  const playerTileZ = Math.floor(player.position.y);
+  if (!npc.isInteractionTile(playerTileX, playerTileZ)) return null;
 
   // Cooldown gate. The decrement is global (World.tickPlayerCooldowns) so the
   // timer keeps ticking even while you walk to the target — re-engaging a

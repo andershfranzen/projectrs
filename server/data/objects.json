@@ -115,7 +115,7 @@
     "harvestItemId": 25,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 17,
     "successChances": {
       "33": [
@@ -166,7 +166,7 @@
     "harvestItemId": 26,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 33,
     "successChances": {
       "33": [
@@ -512,7 +512,7 @@
     "harvestItemId": 34,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 17,
     "successChances": {
       "33": [
@@ -563,7 +563,7 @@
     "harvestItemId": 35,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 167,
     "successChances": {
       "33": [
@@ -701,7 +701,7 @@
     "harvestItemId": 45,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 667,
     "successChances": {
       "33": [
@@ -752,7 +752,7 @@
     "harvestItemId": 46,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 1333,
     "successChances": {
       "33": [
@@ -803,7 +803,7 @@
     "harvestItemId": 47,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 4000,
     "successChances": {
       "33": [
@@ -1281,46 +1281,6 @@
       },
       {
         "inputItemId": 49,
-        "inputQuantity": 3,
-        "outputItemId": 105,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 36,
-        "xpReward": 72,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
-        "inputQuantity": 3,
-        "outputItemId": 106,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 38,
-        "xpReward": 72,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
-        "inputQuantity": 1,
-        "outputItemId": 107,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 32,
-        "xpReward": 24,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
-        "inputQuantity": 2,
-        "outputItemId": 108,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 35,
-        "xpReward": 48,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
         "inputQuantity": 2,
         "outputItemId": 109,
         "outputQuantity": 1,
@@ -1332,27 +1292,7 @@
       {
         "inputItemId": 49,
         "inputQuantity": 3,
-        "outputItemId": 110,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 36,
-        "xpReward": 72,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
-        "inputQuantity": 3,
         "outputItemId": 111,
-        "outputQuantity": 1,
-        "skill": "smithing",
-        "levelRequired": 37,
-        "xpReward": 72,
-        "requiresTool": "hammer"
-      },
-      {
-        "inputItemId": 49,
-        "inputQuantity": 3,
-        "outputItemId": 112,
         "outputQuantity": 1,
         "skill": "smithing",
         "levelRequired": 37,
@@ -1523,7 +1463,7 @@
     "harvestItemId": 10,
     "harvestQuantity": 10,
     "harvestTime": 3,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 300,
     "depletedAssetId": "open chest",
     "extraLoot": [
@@ -1566,7 +1506,7 @@
     "harvestItemId": 10,
     "harvestQuantity": 40,
     "harvestTime": 4,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 600,
     "depletedAssetId": "open chest",
     "extraLoot": [
@@ -1677,7 +1617,7 @@
     "harvestItemId": 142,
     "harvestQuantity": 1,
     "harvestTime": 7,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 333,
     "successChances": {
       "33": [
@@ -1804,7 +1744,25 @@
     "harvestItemId": 241,
     "harvestQuantity": 1,
     "harvestTime": 2,
-    "depletionChance": 1.0,
+    "depletionChance": 1,
     "respawnTime": 0
+  },
+  {
+    "id": 31,
+    "name": "Bank booth",
+    "category": "bank",
+    "actions": [
+      "Talk-to",
+      "Use-quickly",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      120,
+      80,
+      45
+    ]
   }
 ]

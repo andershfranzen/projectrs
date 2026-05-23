@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
+import { processPlayerCombat } from '../src/combat/Combat';
 import { ServerOpcode, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
@@ -123,5 +124,14 @@ describe('NPC interaction reachability', () => {
     world.tickPlayerCombat();
 
     expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(true);
+  });
+
+  test('melee combat requires a cardinal NPC interaction tile', () => {
+    const diagonal = new Player('diagonal', 9.5, 9.5, fakeWs, 1);
+    const cardinal = new Player('cardinal', 9.5, 10.5, fakeWs, 2);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+
+    expect(processPlayerCombat(diagonal, npc, new Map())).toBeNull();
+    expect(processPlayerCombat(cardinal, npc, new Map())).not.toBeNull();
   });
 });

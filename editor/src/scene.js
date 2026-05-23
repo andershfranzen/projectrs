@@ -1857,6 +1857,10 @@ let paintBrushRadius = 1
       <div id="objectNameRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
         <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Quest object name</div>
         <input id="objectNameInput" type="text" placeholder="Optional named quest object" style="width:100%;box-sizing:border-box;font-size:11px;" />
+        <label id="doorDefaultOpenLabel" style="display:none;align-items:center;gap:6px;font-size:11px;color:#ddd;margin-top:8px;cursor:pointer;">
+          <input id="doorDefaultOpenInput" type="checkbox" />
+          Open by default
+        </label>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Examine text</div>
         <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Interaction effect</div>
@@ -3617,6 +3621,17 @@ let paintBrushRadius = 1
     else delete selectedPlacedObject.userData.name
     ensureShopItemDatalist()
   })
+  function isDoorPlacedObject(obj) {
+    const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
+    if (defId == null) return false
+    return editorObjectDefById.get(defId)?.category === 'door'
+  }
+  const doorDefaultOpenInput = sidebar.querySelector('#doorDefaultOpenInput')
+  doorDefaultOpenInput?.addEventListener('change', () => {
+    if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
+    if (doorDefaultOpenInput.checked) selectedPlacedObject.userData.defaultOpen = true
+    else delete selectedPlacedObject.userData.defaultOpen
+  })
   function saveObjectQuestFieldsFromUI() {
     if (!selectedPlacedObject) return
     const examineText = sidebar.querySelector('#objectExamineText')?.value.trim() || ''
@@ -4177,6 +4192,13 @@ let paintBrushRadius = 1
       const addSayLine = sidebar.querySelector('#objectEffectAddSayLine')
       const message = sidebar.querySelector('#objectEffectMessage')
       const effect = selectedPlacedObject?.userData?.interactions?.[0] || null
+      const doorLabel = sidebar.querySelector('#doorDefaultOpenLabel')
+      const doorInput = sidebar.querySelector('#doorDefaultOpenInput')
+      const showDoorDefault = showObjectName && isDoorPlacedObject(selectedPlacedObject)
+      if (doorLabel) doorLabel.style.display = showDoorDefault ? 'flex' : 'none'
+      if (showDoorDefault && doorInput && document.activeElement !== doorInput) {
+        doorInput.checked = selectedPlacedObject.userData.defaultOpen === true
+      }
       if (showObjectName && examine && document.activeElement !== examine) examine.value = selectedPlacedObject.userData.examineText || ''
       if (showObjectName && action && document.activeElement !== action) action.value = effect?.action || 'Examine'
       if (showObjectName && say && sayRows && !sayRows.contains(document.activeElement)) {
@@ -4521,6 +4543,7 @@ let paintBrushRadius = 1
       if (obj.userData.name) out.name = obj.userData.name
       if (obj.userData.examineText) out.examineText = obj.userData.examineText
       if (obj.userData.interactions?.length) out.interactions = JSON.parse(JSON.stringify(obj.userData.interactions))
+      if (obj.userData.defaultOpen) out.defaultOpen = true
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
       if (obj.userData.interactionTiles?.length) out.interactionTiles = JSON.parse(JSON.stringify(obj.userData.interactionTiles))
       if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
@@ -4567,6 +4590,7 @@ let paintBrushRadius = 1
       if (placed.name) model.userData.name = placed.name
       if (placed.examineText) model.userData.examineText = placed.examineText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
+      if (placed.defaultOpen) model.userData.defaultOpen = true
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
