@@ -1483,6 +1483,43 @@
         "hairStyle": 14
       },
       "name": "Farmer"
+    },
+    {
+      "id": 91,
+      "npcId": 7,
+      "x": 54.5,
+      "z": 32.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 8,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 0,
+        "hairStyle": 1
+      },
+      "equipment": [
+        73,
+        69,
+        79,
+        82,
+        70,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": 92,
+      "npcId": 7,
+      "x": 64.5,
+      "z": 27.5,
+      "wanderRange": 3,
+      "aggressive": false
     }
   ],
   "objects": [],

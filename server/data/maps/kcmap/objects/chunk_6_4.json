@@ -1879,7 +1879,8 @@
       "y": 2.349999999999999,
       "z": 1.15
     },
-    "defaultOpen": true
+    "defaultOpen": true,
+    "openDirection": 1
   },
   {
     "assetId": "stone wall",
