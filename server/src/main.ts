@@ -508,6 +508,7 @@ interface PublicWorldMap {
   name: string;
   width: number;
   height: number;
+  chunkSize: number;
   waterLevel: number;
   spawnPoint: { x: number; z: number } | null;
   tileRows: string[];
@@ -849,6 +850,7 @@ function buildWorldMapSnapshot(world: World): { ok: true; generatedAt: number; m
       name: 'World Map',
       width,
       height,
+      chunkSize: CHUNK_SIZE,
       waterLevel,
       spawnPoint: meta?.spawnPoint ?? null,
       tileRows: rows,

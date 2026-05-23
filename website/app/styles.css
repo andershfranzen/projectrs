@@ -1321,14 +1321,14 @@ a:hover {
 .world-map-marker {
   display: inline-block;
   flex: 0 0 auto;
-  width: 13px;
-  height: 13px;
-  border: 2px solid #120d07;
+  width: 10px;
+  height: 10px;
+  border: 1px solid #120d07;
 }
 
 .world-map-marker.npc {
   background: #f2d45c;
-  transform: rotate(45deg) scale(0.82);
+  transform: rotate(45deg) scale(0.78);
 }
 
 .world-map-marker.object {
@@ -1350,7 +1350,16 @@ a:hover {
 .world-map-marker.player {
   background: #5ee9ff;
   border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+
+.world-map-marker.chunk-grid {
+  width: 18px;
+  height: 12px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)) 50% 0 / 1px 100% no-repeat,
+    linear-gradient(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.72)) 0 50% / 100% 1px no-repeat;
+  border-color: rgba(255, 255, 255, 0.72);
 }
 
 .world-map-tooltip {

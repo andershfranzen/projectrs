@@ -44,6 +44,7 @@ interface WorldMapData {
   name: string;
   width: number;
   height: number;
+  chunkSize: number;
   waterLevel: number;
   spawnPoint: { x: number; z: number } | null;
   tileRows: string[];
@@ -101,6 +102,9 @@ const MAP_REFRESH_MS = 10000;
 const LIVE_INTERPOLATION_MS = 650;
 const LIVE_FALLBACK_POLL_MS = 1000;
 const MAP_RENDER_SCALE = 4;
+const NPC_MARKER_RADIUS = 2.2;
+const PLAYER_MARKER_RADIUS = 2.6;
+const PLAYER_MARKER_RING_RADIUS = 4.1;
 
 const TILE_COLORS: Record<TileCode, [number, number, number, number]> = {
   g: [91, 138, 65, 255],
@@ -262,6 +266,48 @@ function drawWorldMapTerrain(ctx: CanvasRenderingContext2D, map: WorldMapData): 
   ctx.restore();
 }
 
+function drawChunkGrid(ctx: CanvasRenderingContext2D, map: WorldMapData): void {
+  const chunkSize = Math.max(1, Math.floor(map.chunkSize || 32));
+  const maxX = map.width;
+  const maxZ = map.height;
+
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.34)';
+  ctx.lineWidth = 0.22;
+  ctx.beginPath();
+
+  for (let x = 0; x <= maxX; x += chunkSize) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, maxZ);
+  }
+  if (maxX % chunkSize !== 0) {
+    ctx.moveTo(maxX, 0);
+    ctx.lineTo(maxX, maxZ);
+  }
+
+  for (let z = 0; z <= maxZ; z += chunkSize) {
+    ctx.moveTo(0, z);
+    ctx.lineTo(maxX, z);
+  }
+  if (maxZ % chunkSize !== 0) {
+    ctx.moveTo(0, maxZ);
+    ctx.lineTo(maxX, maxZ);
+  }
+
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.62)';
+  ctx.font = '700 3.5px Arial, Helvetica, sans-serif';
+  ctx.textBaseline = 'top';
+  for (let z = 0; z < maxZ; z += chunkSize) {
+    for (let x = 0; x < maxX; x += chunkSize) {
+      ctx.fillText(`${Math.floor(x / chunkSize)},${Math.floor(z / chunkSize)}`, x + 1.2, z + 1);
+    }
+  }
+
+  ctx.restore();
+}
+
 function drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, z: number): void {
   if (!text) return;
   const label = text.length > 18 ? `${text.slice(0, 17)}...` : text;
@@ -283,8 +329,8 @@ function drawNpcSpawn(ctx: CanvasRenderingContext2D, spawn: WorldMapNpcSpawn): v
   ctx.globalAlpha = spawn.alive ? 1 : 0.55;
   ctx.fillStyle = '#f2d45c';
   ctx.strokeStyle = '#1b1005';
-  ctx.lineWidth = 1.4;
-  drawDiamond(ctx, spawn.x, spawn.z, 3.5);
+  ctx.lineWidth = 0.9;
+  drawDiamond(ctx, spawn.x, spawn.z, NPC_MARKER_RADIUS);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -312,8 +358,8 @@ function drawWorldObject(ctx: CanvasRenderingContext2D, obj: WorldMapObject): vo
   }
 
   const size = obj.kind === 'building'
-    ? clamp(obj.size * 0.9, 0.55, 2.35)
-    : clamp(obj.size * 0.95, 0.55, 2.6);
+    ? clamp(obj.size * 0.68, 0.42, 1.7)
+    : clamp(obj.size * 0.72, 0.42, 1.85);
   const half = size / 2;
   ctx.save();
   ctx.fillStyle = OBJECT_COLORS[obj.kind];
@@ -370,15 +416,15 @@ function drawOnlinePlayer(ctx: CanvasRenderingContext2D, player: WorldMapPlayer)
   ctx.save();
   ctx.fillStyle = '#5ee9ff';
   ctx.strokeStyle = '#03131a';
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 1.05;
   ctx.beginPath();
-  ctx.arc(player.x, player.z, 4.2, 0, Math.PI * 2);
+  ctx.arc(player.x, player.z, PLAYER_MARKER_RADIUS, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.82)';
-  ctx.lineWidth = 0.9;
+  ctx.lineWidth = 0.55;
   ctx.beginPath();
-  ctx.arc(player.x, player.z, 6.4, 0, Math.PI * 2);
+  ctx.arc(player.x, player.z, PLAYER_MARKER_RING_RADIUS, 0, Math.PI * 2);
   ctx.stroke();
   drawLabel(ctx, player.username, player.x, player.z);
   ctx.restore();
@@ -402,6 +448,7 @@ export function WorldMapViewer() {
   const [showWalls, setShowWalls] = useState(true);
   const [showNpcSpawns, setShowNpcSpawns] = useState(true);
   const [showPlayers, setShowPlayers] = useState(true);
+  const [showChunks, setShowChunks] = useState(false);
   const [onlineCount, setOnlineCount] = useState(0);
   const [liveStatus, setLiveStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'polling'>('connecting');
   const [hoverInfo, setHoverInfo] = useState<HoverInfo | null>(null);
@@ -717,12 +764,16 @@ export function WorldMapViewer() {
       for (const wall of currentMap.walls) drawWorldMapWall(ctx, wall);
     }
 
+    if (showChunks) {
+      drawChunkGrid(ctx, currentMap);
+    }
+
     if (showNpcSpawns) {
       for (const spawn of currentMap.npcSpawns) drawNpcSpawn(ctx, spawn);
     }
 
     baseCanvasRef.current = baseCanvas;
-  }, [map, showNpcSpawns, showObjects, showWalls]);
+  }, [map, showChunks, showNpcSpawns, showObjects, showWalls]);
 
   useEffect(() => {
     const currentMap = map;
@@ -752,7 +803,7 @@ export function WorldMapViewer() {
 
     frame = window.requestAnimationFrame(draw);
     return () => window.cancelAnimationFrame(frame);
-  }, [map, showPlayers, showNpcSpawns, showObjects, showWalls]);
+  }, [map, showChunks, showPlayers, showNpcSpawns, showObjects, showWalls]);
 
   useEffect(() => {
     if (!map) return;
@@ -870,6 +921,7 @@ export function WorldMapViewer() {
               <label><input type="checkbox" checked={showWalls} onChange={(event) => setShowWalls(event.target.checked)} /> <span className="world-map-marker wall-line" /> Walls</label>
               <label><input type="checkbox" checked={showNpcSpawns} onChange={(event) => setShowNpcSpawns(event.target.checked)} /> <span className="world-map-marker npc" /> NPCs</label>
               <label><input type="checkbox" checked={showPlayers} onChange={(event) => setShowPlayers(event.target.checked)} /> <span className="world-map-marker player" /> Players</label>
+              <label><input type="checkbox" checked={showChunks} onChange={(event) => setShowChunks(event.target.checked)} /> <span className="world-map-marker chunk-grid" /> Chunks</label>
             </div>
           </div>
         </div>
