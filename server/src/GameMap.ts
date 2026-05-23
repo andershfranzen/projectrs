@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, type StairAssetConfig } from '@projectrs/shared';
+import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, type StairAssetConfig } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
@@ -142,6 +142,11 @@ export class GameMap {
       interactions: Array.isArray((o as any).interactions) ? (o as any).interactions : undefined,
       defaultOpen: (o as any).defaultOpen === true,
       openDirection: (o as any).openDirection === 1 ? 1 : -1,
+      locked: (o as any).locked === true,
+      keyItemId: Number.isInteger((o as any).keyItemId) ? (o as any).keyItemId : undefined,
+      consumeKey: (o as any).consumeKey === true,
+      lockedMessage: typeof (o as any).lockedMessage === 'string' ? (o as any).lockedMessage : undefined,
+      altarTier: Number.isInteger((o as any).altarTier) ? (o as any).altarTier : undefined,
       position: o.position,
       rotation: o.rotation,
       scale: o.scale,
@@ -913,14 +918,13 @@ export class GameMap {
     return this.findPathGeneric(startX, startZ, goalX, goalZ, tileBlocked, wallBlocked ?? this.isWallBlockedCb, maxSearchSteps);
   }
 
-  /** True if any tile in a size-N footprint anchored at (x,z) is blocked.
-   *  Anchor convention matches getObjectFootprintTiles: SW for even sizes,
-   *  centered for odd. Hot path — enumerates inline (no array alloc) since
+  /** True if any tile in a size-N footprint centered at (x,z) is blocked.
+   *  Anchor convention matches getObjectFootprintTiles. Hot path — enumerates inline (no array alloc) since
    *  NPC AI calls this many times per A* expansion. */
   isNpcBlocked(x: number, z: number, size: number): boolean {
     if (size <= 1) return this.isBlocked(x, z);
-    const minX = Math.floor(x) - Math.floor((size - 1) / 2);
-    const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
+    const minX = getObjectFootprintMinTile(x, size);
+    const minZ = getObjectFootprintMinTile(z, size);
     for (let i = 0; i < size; i++) {
       for (let j = 0; j < size; j++) {
         if (this.isBlocked(minX + i + 0.5, minZ + j + 0.5)) return true;
@@ -953,21 +957,22 @@ export class GameMap {
 
     // Cardinal: walk the N tiles along the leading edge, checking the wall
     // between each source-side tile and its dest-side neighbour.
-    const sx = Math.floor(fromX);
-    const sz = Math.floor(fromZ);
-    const startOff = -Math.floor((size - 1) / 2);
+    const minX = getObjectFootprintMinTile(fromX, size);
+    const maxX = minX + size - 1;
+    const minZ = getObjectFootprintMinTile(fromZ, size);
+    const maxZ = minZ + size - 1;
     if (dx !== 0) {
-      const srcEdgeX = sx + startOff + (dx > 0 ? size - 1 : 0);
+      const srcEdgeX = dx > 0 ? maxX : minX;
       const destEdgeX = srcEdgeX + dx;
       for (let j = 0; j < size; j++) {
-        const z = sz + startOff + j + 0.5;
+        const z = minZ + j + 0.5;
         if (this.isWallBlocked(srcEdgeX + 0.5, z, destEdgeX + 0.5, z)) return true;
       }
     } else {
-      const srcEdgeZ = sz + startOff + (dz > 0 ? size - 1 : 0);
+      const srcEdgeZ = dz > 0 ? maxZ : minZ;
       const destEdgeZ = srcEdgeZ + dz;
       for (let i = 0; i < size; i++) {
-        const x = sx + startOff + i + 0.5;
+        const x = minX + i + 0.5;
         if (this.isWallBlocked(x, srcEdgeZ + 0.5, x, destEdgeZ + 0.5)) return true;
       }
     }

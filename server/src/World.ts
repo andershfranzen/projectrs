@@ -22,6 +22,10 @@ import type { ServerWebSocket } from 'bun';
 const mapIdRegistry: Map<string, number> = new Map();
 
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
+const RELIC_SACRIFICE_BY_TIER: Record<number, { itemIds: readonly number[]; xp: number }> = {
+  1: { itemIds: [224, 225, 226], xp: 10 },
+  2: { itemIds: [227, 228, 229], xp: 35 },
+};
 let nextMapIdx = 0;
 function getMapIdx(mapId: string): number {
   let idx = mapIdRegistry.get(mapId);
@@ -105,6 +109,11 @@ interface RuntimeObjectSpawn {
   interactions?: WorldObject['interactions'];
   defaultOpen?: boolean;
   openDirection?: -1 | 1;
+  locked?: boolean;
+  keyItemId?: number;
+  consumeKey?: boolean;
+  lockedMessage?: string;
+  altarTier?: number;
   trigger?: WorldObject['trigger'];
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
@@ -944,16 +953,16 @@ export class World {
             player.position.y,
             goalX,
             goalZ,
-            (x, z) => map.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, x, z, player.currentFloor)),
+            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
             800,
+            (fx, fz, tx, tz) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY),
           )
         : map.findPathForNpc(
             player.position.x,
             player.position.y,
             goalX,
             goalZ,
-            (x, z) => map.isTileBlockedOnFloor(x, z, player.currentFloor)
-              || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, x, z, player.currentFloor)),
+            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
             800,
             (fx, fz, tx, tz) => map.isWallBlockedOnFloor(fx, fz, tx, tz, player.currentFloor),
           );
@@ -1083,6 +1092,11 @@ export class World {
           interactions: placed.interactions,
           defaultOpen: placed.defaultOpen === true,
           openDirection: placed.openDirection === 1 ? 1 : -1,
+          locked: placed.locked === true,
+          keyItemId: Number.isInteger(placed.keyItemId) ? placed.keyItemId : undefined,
+          consumeKey: placed.consumeKey === true,
+          lockedMessage: placed.lockedMessage,
+          altarTier: Number.isInteger(placed.altarTier) ? placed.altarTier : undefined,
           trigger: placed.trigger,
           interactionTiles: placed.interactionTiles,
           interactionSides: placed.interactionSides,
@@ -1113,6 +1127,11 @@ export class World {
     if (spawn.interactions) obj.interactions = spawn.interactions;
     if (spawn.defaultOpen) obj.doorDefaultOpen = true;
     if (spawn.openDirection === 1) obj.doorOpenDirection = 1;
+    if (spawn.locked) obj.doorLocked = true;
+    if (Number.isInteger(spawn.keyItemId) && spawn.keyItemId! > 0) obj.doorKeyItemId = spawn.keyItemId!;
+    if (spawn.consumeKey) obj.doorConsumeKey = true;
+    if (spawn.lockedMessage) obj.doorLockedMessage = spawn.lockedMessage;
+    if (Number.isInteger(spawn.altarTier) && spawn.altarTier! > 0) obj.altarTier = Math.max(1, Math.floor(spawn.altarTier!));
     if (spawn.trigger) obj.trigger = spawn.trigger;
     if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
     if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
@@ -1830,6 +1849,40 @@ export class World {
     return 0;
   }
 
+  private playerHasItem(player: Player, itemId: number, quantity: number = 1): boolean {
+    if (!Number.isInteger(itemId) || itemId <= 0 || quantity <= 0) return false;
+    let count = 0;
+    for (const slot of player.inventory) {
+      if (!slot || slot.itemId !== itemId) continue;
+      count += slot.quantity;
+      if (count >= quantity) return true;
+    }
+    return false;
+  }
+
+  private canOpenLockedDoor(player: Player, obj: WorldObject): boolean {
+    if (!obj.doorLocked) return true;
+    if (obj.doorKeyItemId <= 0) {
+      this.sendChatSystem(player, obj.doorLockedMessage || 'The door is locked.');
+      return false;
+    }
+    if (!this.playerHasItem(player, obj.doorKeyItemId, 1)) {
+      const keyDef = this.data.getItem(obj.doorKeyItemId);
+      const keyName = keyDef?.name ? keyDef.name.toLowerCase() : 'key';
+      this.sendChatSystem(player, obj.doorLockedMessage || `The door is locked. You need a ${keyName}.`);
+      return false;
+    }
+    if (obj.doorConsumeKey) {
+      const removed = player.removeItemById(obj.doorKeyItemId, 1);
+      if (removed.completed < 1) {
+        this.sendChatSystem(player, obj.doorLockedMessage || 'The door is locked.');
+        return false;
+      }
+      this.sendInventory(player);
+    }
+    return true;
+  }
+
   private toggleDoor(obj: WorldObject, swingSign: number = 0): void {
     const map = this.maps.get(obj.mapLevel);
     if (!map) return;
@@ -2461,7 +2514,7 @@ export class World {
 
     // Distance to the NPC's nearest footprint tile (size-1 falls through to
     // a plain target-anchor distance) — sized mobs are "in range" when the
-    // player is adjacent to their body, not just their SW anchor.
+    // player is adjacent to their body, not just their placed coordinate.
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
@@ -3211,7 +3264,8 @@ export class World {
       return;
     }
 
-    if (obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
+    if (obj.def.category === 'door' && (action === 'Open' || action === 'Unlock' || action === 'Close')) {
+      if ((action === 'Open' || action === 'Unlock') && !this.canOpenLockedDoor(player, obj)) return;
       this.toggleDoor(obj, this.computeSwingSign(player, obj));
       return;
     }
@@ -3223,6 +3277,11 @@ export class World {
 
     if (obj.def.category === 'obelisk' && obj.def.recipes && obj.def.recipes.length > 0) {
       this.handleObeliskOffer(playerId, player, obj);
+      return;
+    }
+
+    if (obj.def.category === 'altar' && action === 'Offer-relic') {
+      this.handleAltarRelicOffer(player, obj);
       return;
     }
 
@@ -3536,6 +3595,42 @@ export class World {
     player.setDelay(this.currentTick, 1);
   }
 
+  private handleAltarRelicOffer(player: Player, obj: WorldObject): void {
+    const tier = Math.max(1, Math.floor(obj.altarTier || 1));
+    const sacrifice = RELIC_SACRIFICE_BY_TIER[tier];
+    if (!sacrifice) {
+      this.sendChatSystem(player, 'This altar is dormant.');
+      return;
+    }
+
+    let relicItemId = 0;
+    for (const itemId of sacrifice.itemIds) {
+      if (this.playerHasItem(player, itemId, 1)) {
+        relicItemId = itemId;
+        break;
+      }
+    }
+    if (relicItemId <= 0) {
+      this.sendChatSystem(player, `You need a tier-${tier} relic to sacrifice here.`);
+      return;
+    }
+
+    this.interruptPlayerAction(player.id, player);
+    const removal = player.removeItemById(relicItemId, 1);
+    if (removal.completed < 1) return;
+
+    const result = addXp(player.skills, 'goodmagic', sacrifice.xp);
+    const skillIdx = ALL_SKILLS.indexOf('goodmagic');
+    if (skillIdx >= 0) {
+      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, sacrifice.xp);
+      if (result.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+      this.sendSingleSkill(player, skillIdx);
+    }
+    this.sendInventory(player);
+    this.broadcastPlayerAnimationEvent(player, PlayerAnimationKind.Skill, PlayerSkillAnimationVariant.Magic, obj.id, true);
+    player.setDelay(this.currentTick, 1);
+  }
+
   handlePlayerEquip(playerId: number, slotIndex: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
@@ -3725,6 +3820,11 @@ export class World {
     }
     player.botStats?.recordActionSignature('useItemObject', obj.defId, player.position.x, player.position.y, itemId);
     this.interruptPlayerAction(playerId, player);
+    if (obj.def.category === 'door' && obj.doorLocked && !obj.doorOpen && itemId === obj.doorKeyItemId) {
+      if (!this.canOpenLockedDoor(player, obj)) return;
+      this.toggleDoor(obj, this.computeSwingSign(player, obj));
+      return;
+    }
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
@@ -7146,7 +7246,7 @@ export class World {
   private encodeWorldObjectUpdate(obj: WorldObject): Uint8Array {
     const explicitTiles = this.explicitObjectInteractionTiles(obj).slice(0, 16);
     const tileValues = explicitTiles.flatMap(tile => [tile.x, tile.z]);
-    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ, doorOpenDirection]
+    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ, doorOpenDirection, doorLocked]
     return encodePacket(ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
@@ -7160,6 +7260,7 @@ export class World {
       explicitTiles.length,
       ...tileValues,
       obj.doorOpenDirection,
+      obj.doorLocked ? 1 : 0,
     );
   }
 

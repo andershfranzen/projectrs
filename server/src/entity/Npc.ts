@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { getObjectInteractionTiles } from '@projectrs/shared';
+import { getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
 
 export class Npc extends Entity {
@@ -153,31 +153,29 @@ export class Npc extends Entity {
     return this.wanderRangeOverride ?? this.def.wanderRange;
   }
 
-  /** NxN tile footprint side length, ≥1. SW-anchored — `position.x/y` is the
-   *  SW tile center for even sizes, the center tile for odd sizes (matches
-   *  getObjectFootprintTiles). All blocking/wall checks consider the full
-   *  footprint when this is > 1. */
+  /** NxN tile footprint side length, ≥1. Uses the same centered even-width
+   *  footprint convention as world objects. All blocking/wall checks consider
+   *  the full footprint when this is > 1. */
   get size(): number {
     return Math.max(1, Math.round(this.def.size ?? 1));
   }
 
   /** Signed delta from the nearest footprint tile center to (targetX, targetZ).
-   *  For size 1 this is just `target - position`. For larger NPCs the player
-   *  on the camel's east face sits inside `nearestX = position.x + 1`, so
-   *  dx = 0 — making melee/talk range checks measure to the body, not the
-   *  SW anchor. Reusable by chase AI, combat range, ranged attack distance,
-   *  and any callsite that currently does `target - npc.position`. */
+   *  For size 1 this is just `target - position`. For larger NPCs, range checks
+   *  measure to the body instead of the placed coordinate. Reusable by chase AI,
+   *  combat range, ranged attack distance, and any callsite that currently does
+   *  `target - npc.position`. */
   distToFootprint(targetX: number, targetZ: number): { dx: number; dz: number } {
-    if (this.size <= 1) {
+    const size = this.size;
+    if (size <= 1) {
       return { dx: targetX - this.position.x, dz: targetZ - this.position.y };
     }
-    const sx = Math.floor(this.position.x);
-    const sz = Math.floor(this.position.y);
-    const startOffset = -Math.floor((this.size - 1) / 2);
-    const minX = sx + startOffset + 0.5;
-    const maxX = sx + startOffset + this.size - 0.5;
-    const minZ = sz + startOffset + 0.5;
-    const maxZ = sz + startOffset + this.size - 0.5;
+    const minTileX = getObjectFootprintMinTile(this.position.x, size);
+    const minTileZ = getObjectFootprintMinTile(this.position.y, size);
+    const minX = minTileX + 0.5;
+    const maxX = minTileX + size - 0.5;
+    const minZ = minTileZ + 0.5;
+    const maxZ = minTileZ + size - 0.5;
     const nearestX = targetX < minX ? minX : (targetX > maxX ? maxX : targetX);
     const nearestZ = targetZ < minZ ? minZ : (targetZ > maxZ ? maxZ : targetZ);
     return { dx: targetX - nearestX, dz: targetZ - nearestZ };
@@ -191,17 +189,7 @@ export class Npc extends Entity {
   }
 
   isInteractionTile(tileX: number, tileZ: number): boolean {
-    const size = this.size;
-    const sx = Math.floor(this.position.x);
-    const sz = Math.floor(this.position.y);
-    const startOffset = -Math.floor((size - 1) / 2);
-    const minX = sx + startOffset;
-    const minZ = sz + startOffset;
-    const maxX = minX + size - 1;
-    const maxZ = minZ + size - 1;
-    const eastOrWest = (tileX === minX - 1 || tileX === maxX + 1) && tileZ >= minZ && tileZ <= maxZ;
-    const northOrSouth = (tileZ === minZ - 1 || tileZ === maxZ + 1) && tileX >= minX && tileX <= maxX;
-    return eastOrWest || northOrSouth;
+    return isTileAdjacentToObject(tileX, tileZ, this.position.x, this.position.y, { width: this.size });
   }
 
   /** True if (x, z) is within this NPC's wander box around spawn. The 0.5

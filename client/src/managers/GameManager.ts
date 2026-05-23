@@ -55,12 +55,13 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
 // for the toggle, so the mismatch was previously a UX bug only.
 const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
+const DOOR_ACTIONS_LOCKED_CLIENT: readonly string[] = ['Unlock', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
 const NPC_MATERIALIZATION_RETRY_MS = 500;
@@ -298,7 +299,7 @@ export class GameManager {
 
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
-  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; interactionTiles?: { x: number; z: number }[] }> = new Map();
+  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[] }> = new Map();
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
@@ -1716,7 +1717,7 @@ export class GameManager {
   /** Link a placed GLB node to a world object entity, tagging for picking and handling depletion */
   private linkPlacedNodeToEntity(
     objectEntityId: number,
-    data: { defId: number; x: number; z: number; floor?: number; y?: number; depleted: boolean; openDirection?: -1 | 1 },
+    data: { defId: number; x: number; z: number; floor?: number; y?: number; depleted: boolean; openDirection?: -1 | 1; locked?: boolean },
     placedNode: TransformNode,
   ): void {
     this.worldObjectModels.set(objectEntityId, placedNode);
@@ -2864,6 +2865,7 @@ export class GameManager {
       }
       const doorOpenDirectionRaw = v[explicitStart + count * 2];
       const openDirection: -1 | 1 = doorOpenDirectionRaw === 1 ? 1 : -1;
+      const locked = v[explicitStart + count * 2 + 1] === 1;
 
       // Detect a state transition on a door we already know about. This fires
       // on chunk re-entry: we left range, the door state changed (someone
@@ -2888,6 +2890,7 @@ export class GameManager {
         interactionSides: interactionSides || undefined,
         rotY: rotY1000 / 1000,
         openDirection,
+        locked,
         interactionTiles: interactionTiles.length ? interactionTiles : undefined,
       });
 
@@ -2921,7 +2924,7 @@ export class GameManager {
       if (!this.worldObjectModels.has(objectEntityId)) {
         const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId, y);
         if (placedNode) {
-          this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection }, placedNode);
+          this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection, locked }, placedNode);
         }
         // If no placed GLB and the chunk has finished loading, the world
         // object simply isn't rendered. Pre-3D maps had a sprite fallback
@@ -4924,13 +4927,12 @@ export class GameManager {
   private distToNpcFootprint(npcEntityId: number, target: { x: number; z: number }, x: number, z: number): { dx: number; dz: number } {
     const size = this.getNpcTileSize(npcEntityId);
     if (size <= 1) return { dx: x - target.x, dz: z - target.z };
-    const sx = Math.floor(target.x);
-    const sz = Math.floor(target.z);
-    const startOffset = -Math.floor((size - 1) / 2);
-    const minX = sx + startOffset + 0.5;
-    const maxX = sx + startOffset + size - 0.5;
-    const minZ = sz + startOffset + 0.5;
-    const maxZ = sz + startOffset + size - 0.5;
+    const minTileX = getObjectFootprintMinTile(target.x, size);
+    const minTileZ = getObjectFootprintMinTile(target.z, size);
+    const minX = minTileX + 0.5;
+    const maxX = minTileX + size - 0.5;
+    const minZ = minTileZ + 0.5;
+    const maxZ = minTileZ + size - 0.5;
     const nearestX = x < minX ? minX : (x > maxX ? maxX : x);
     const nearestZ = z < minZ ? minZ : (z > maxZ ? maxZ : z);
     return { dx: x - nearestX, dz: z - nearestZ };
@@ -5161,7 +5163,7 @@ export class GameManager {
     candidates.sort((a, b) => a.dist - b.dist);
     for (const { ax, az } of candidates) {
       const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
-      if (path.length > 0) {
+      if (this.pathReachesGoal(path, ax + 0.5, az + 0.5)) {
         this.startPredictedPath(path, preserveCurrentStep);
         return true;
       }
@@ -6162,21 +6164,16 @@ export class GameManager {
     return this.chunkManager.isWallBlocked(fx, fz, tx, tz, playerY);
   };
 
-  /** Cancel any in-flight path, snap to the current tile's center, and face
-   *  the given object. Shared setup for both animated and stationary
-   *  skilling starts. */
+  /** Stop any in-flight path and face the given object. Shared setup for
+   *  animated and stationary skilling starts. Do not round/snap the local
+   *  player here: the server already delayed non-door object execution until
+   *  after arrival, and any remaining visual correction should come through
+   *  normal PLAYER_SYNC reconciliation. */
   private prepareSkillingAtObject(objectId: number): void {
     this.clearPredictedPath();
-    this.slideOffsetX = 0;
-    this.slideOffsetZ = 0;
-    this.slideStartMs = 0;
-    this.playerX = Math.round(this.playerX - 0.5) + 0.5;
-    this.playerZ = Math.round(this.playerZ - 0.5) + 0.5;
     this.setTileFrom(this.playerX, this.playerZ);
     if (!this.localPlayer) return;
     this.localPlayer.stopWalking();
-    const h = this.getHeight(this.playerX, this.playerZ);
-    this.localPlayer.setPositionXYZ(this.playerX, h, this.playerZ);
     const objData = this.worldObjectDefs.get(objectId);
     if (objData) {
       this.localPlayer.faceToward(new Vector3(objData.x, 0, objData.z));
@@ -7168,9 +7165,10 @@ export class GameManager {
   private actionsForInstance(
     def: WorldObjectDef,
     depleted: boolean,
-    data?: { x: number; z: number },
+    data?: { x: number; z: number; locked?: boolean },
   ): readonly string[] {
     if (def.category === 'door') {
+      if (!depleted && data?.locked) return DOOR_ACTIONS_LOCKED_CLIENT;
       return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
     }
     if (def.category === 'ladder') return this.ladderActionsForObject(data);

@@ -64,10 +64,8 @@ export class Npc3DEntity {
   private targetRotationY: number = 0;
   private modelScale: number = 1;
   private originMode: Npc3DEntityOptions['originMode'] = 'authored';
-  /** SW-anchor → geometric-center offset for the NPC's NxN footprint.
-   *  0 for size 1 / 3 / 5..., 0.5 for size 2 / 4..., applied to both X and Z.
-   *  Server positions arrive as SW anchors; we render at the footprint center
-   *  so the mesh sits visually centered instead of leaning into +X+Z. */
+  /** Server positions are already centered on the NPC footprint. Kept as a
+   *  field so existing position/facing code can share one render anchor. */
   private renderOffset: number = 0;
 
   // Animations keyed by role (idle, walk, attack, death)
@@ -103,8 +101,7 @@ export class Npc3DEntity {
     this.scene = scene;
     this.modelScale = scale;
     this.originMode = options.originMode ?? 'authored';
-    const tileSize = options.tileSize ?? 1;
-    this.renderOffset = (Math.max(1, Math.round(tileSize)) % 2 === 0) ? 0.5 : 0;
+    this.renderOffset = 0;
     this.load(file, animMap, options.label, options.materialColors);
   }
 

@@ -8,6 +8,14 @@ export interface TileCoord {
   z: number;
 }
 
+export interface ObjectFootprintBounds {
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+  width: number;
+}
+
 /** Per-tile interaction bitmask. For an object of width W, the mask is
  *  `4*W` bits long and enumerates cardinal-adjacent tiles in canonical
  *  clockwise order, starting from the front-left tile of the +Z side:
@@ -41,6 +49,29 @@ function normalizeWidth(w: number | undefined): number {
   return Math.max(1, Math.round(w ?? 1));
 }
 
+export function getObjectFootprintMinTile(coord: number, width?: number): number {
+  const W = normalizeWidth(width);
+  return W % 2 === 0 ? Math.floor(coord - W / 2) : Math.floor(coord) - Math.floor((W - 1) / 2);
+}
+
+function footprintMinTile(coord: number, normalizedWidth: number): number {
+  const W = normalizedWidth;
+  return W % 2 === 0 ? Math.floor(coord - W / 2) : Math.floor(coord) - Math.floor((W - 1) / 2);
+}
+
+export function getObjectFootprintBounds(x: number, z: number, width?: number): ObjectFootprintBounds {
+  const W = normalizeWidth(width);
+  const minX = footprintMinTile(x, W);
+  const minZ = footprintMinTile(z, W);
+  return {
+    minX,
+    maxX: minX + W - 1,
+    minZ,
+    maxZ: minZ + W - 1,
+    width: W,
+  };
+}
+
 /** Rotate a local-frame per-tile interaction bitmask into world frame. The
  *  bitmask layout is `4*width` bits in canonical CW order (see file header);
  *  a 90° CW rotation shifts each side block forward by `width` bits.
@@ -64,7 +95,7 @@ export function localSidesToWorldSides(localSides: number, rotY: number, width: 
  *  the object's local origin; offsets are in tile units. */
 export function localAdjacentTilesOrdered(width: number): TileCoord[] {
   const W = normalizeWidth(width);
-  const startOff = -Math.floor((W - 1) / 2);
+  const startOff = W % 2 === 0 ? -W / 2 : -Math.floor((W - 1) / 2);
   const minTile = startOff;
   const maxTile = startOff + W - 1;
   const out: TileCoord[] = [];
@@ -76,15 +107,12 @@ export function localAdjacentTilesOrdered(width: number): TileCoord[] {
 }
 
 export function getObjectFootprintTiles(x: number, z: number, def: ObjectFootprintDef): TileCoord[] {
-  const centerTileX = Math.floor(x);
-  const centerTileZ = Math.floor(z);
-  const span = normalizeWidth(def.width);
-  const startOffset = -Math.floor((span - 1) / 2);
+  const { minX, minZ, width: span } = getObjectFootprintBounds(x, z, def.width);
   const tiles: TileCoord[] = [];
 
   for (let dx = 0; dx < span; dx++) {
     for (let dz = 0; dz < span; dz++) {
-      tiles.push({ x: centerTileX + startOffset + dx, z: centerTileZ + startOffset + dz });
+      tiles.push({ x: minX + dx, z: minZ + dz });
     }
   }
 
@@ -102,7 +130,7 @@ export interface InteractionTileOptions {
 }
 
 export function usesCornerInteractionTiles(def: ObjectFootprintDef, hasInteractionSides: boolean = false): boolean {
-  return !hasInteractionSides && def.category === 'tree';
+  return !hasInteractionSides && def.category === 'tree' && normalizeWidth(def.width) <= 1;
 }
 
 /** Map a (dx, dz) cardinal offset from a footprint tile at (ftX, ftZ) to a
@@ -128,14 +156,7 @@ export function getObjectInteractionTiles(
   def: ObjectFootprintDef,
   opts?: InteractionTileOptions,
 ): TileCoord[] {
-  const W = normalizeWidth(def.width);
-  const centerTileX = Math.floor(x);
-  const centerTileZ = Math.floor(z);
-  const startOff = -Math.floor((W - 1) / 2);
-  const minX = centerTileX + startOff;
-  const maxX = minX + W - 1;
-  const minZ = centerTileZ + startOff;
-  const maxZ = minZ + W - 1;
+  const { minX, maxX, minZ, maxZ, width: W } = getObjectFootprintBounds(x, z, def.width);
   const allowed = opts?.allowedWorldSides;
   const tiles: TileCoord[] = [];
   // Enumerate in the same canonical CW order the bitmask indexes — duplicates
@@ -185,12 +206,9 @@ export function isTileAdjacentToObject(
   // Allocation-free fast path — World.tickPlayerSkilling calls this every
   // tick per active skiller.
   const W = normalizeWidth(def.width);
-  const centerTileX = Math.floor(objX);
-  const centerTileZ = Math.floor(objZ);
-  const startOff = -Math.floor((W - 1) / 2);
-  const minX = centerTileX + startOff;
+  const minX = footprintMinTile(objX, W);
   const maxX = minX + W - 1;
-  const minZ = centerTileZ + startOff;
+  const minZ = footprintMinTile(objZ, W);
   const maxZ = minZ + W - 1;
 
   // Inside footprint → not adjacent.

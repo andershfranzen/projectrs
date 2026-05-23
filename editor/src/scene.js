@@ -52,6 +52,7 @@ import {
   DEFAULT_CUT_ANGLE,
   CUT_SNAP_ANGLES,
   CUT_SNAP_TOLERANCE_RAD,
+  getObjectFootprintMinTile,
   localAdjacentTilesOrdered,
   ASSET_TO_OBJECT_DEF,
   NPC_COMBAT_ANIMATIONS,
@@ -1892,6 +1893,27 @@ let paintBrushRadius = 1
             <option value="1">+90</option>
           </select>
         </label>
+        <div id="doorLockedFields" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#ddd;cursor:pointer;">
+            <input id="doorLockedInput" type="checkbox" />
+            Locked
+          </label>
+          <div style="font-size:10px;color:#888;margin:6px 0 3px;">Required key item</div>
+          <input id="doorKeyItemInput" list="shopItemDatalist" type="text" placeholder="Key item (optional)" style="width:100%;box-sizing:border-box;font-size:11px;" />
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#ddd;margin-top:6px;cursor:pointer;">
+            <input id="doorConsumeKeyInput" type="checkbox" />
+            Consume key
+          </label>
+          <div style="font-size:10px;color:#888;margin:6px 0 3px;">Locked message</div>
+          <input id="doorLockedMessageInput" type="text" placeholder="The door is locked." style="width:100%;box-sizing:border-box;font-size:11px;" />
+        </div>
+        <label id="altarTierLabel" style="display:none;font-size:11px;color:#ddd;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+          <span style="display:block;color:#aaa;margin-bottom:3px;">Altar tier</span>
+          <select id="altarTierSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:11px;">
+            <option value="1">Tier 1 relics</option>
+            <option value="2">Tier 2 relics</option>
+          </select>
+        </label>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Examine text</div>
         <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Interaction effect</div>
@@ -3657,6 +3679,11 @@ let paintBrushRadius = 1
     if (defId == null) return false
     return editorObjectDefById.get(defId)?.category === 'door'
   }
+  function isAltarPlacedObject(obj) {
+    const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
+    if (defId == null) return false
+    return editorObjectDefById.get(defId)?.category === 'altar'
+  }
   const doorDefaultOpenInput = sidebar.querySelector('#doorDefaultOpenInput')
   doorDefaultOpenInput?.addEventListener('change', () => {
     if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
@@ -3670,6 +3697,53 @@ let paintBrushRadius = 1
     const dir = parseInt(doorOpenDirectionSelect.value, 10) === 1 ? 1 : -1
     if (dir === 1) selectedPlacedObject.userData.openDirection = 1
     else delete selectedPlacedObject.userData.openDirection
+    updateSelectionHelper()
+  })
+  const doorLockedInput = sidebar.querySelector('#doorLockedInput')
+  doorLockedInput?.addEventListener('change', () => {
+    if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
+    if (doorLockedInput.checked) selectedPlacedObject.userData.locked = true
+    else {
+      delete selectedPlacedObject.userData.locked
+      delete selectedPlacedObject.userData.keyItemId
+      delete selectedPlacedObject.userData.consumeKey
+      delete selectedPlacedObject.userData.lockedMessage
+    }
+    updateSelectionHelper()
+  })
+  const doorKeyItemInput = sidebar.querySelector('#doorKeyItemInput')
+  doorKeyItemInput?.addEventListener('change', () => {
+    if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
+    const id = parseItemIdFromDisplay(doorKeyItemInput.value)
+    if (id > 0) {
+      selectedPlacedObject.userData.locked = true
+      selectedPlacedObject.userData.keyItemId = id
+      doorKeyItemInput.value = formatItemDisplay(id)
+    } else {
+      delete selectedPlacedObject.userData.keyItemId
+      doorKeyItemInput.value = ''
+    }
+    updateSelectionHelper()
+  })
+  const doorConsumeKeyInput = sidebar.querySelector('#doorConsumeKeyInput')
+  doorConsumeKeyInput?.addEventListener('change', () => {
+    if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
+    if (doorConsumeKeyInput.checked) selectedPlacedObject.userData.consumeKey = true
+    else delete selectedPlacedObject.userData.consumeKey
+    updateSelectionHelper()
+  })
+  const doorLockedMessageInput = sidebar.querySelector('#doorLockedMessageInput')
+  doorLockedMessageInput?.addEventListener('input', () => {
+    if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
+    const message = doorLockedMessageInput.value.trim()
+    if (message) selectedPlacedObject.userData.lockedMessage = message
+    else delete selectedPlacedObject.userData.lockedMessage
+  })
+  const altarTierSelect = sidebar.querySelector('#altarTierSelect')
+  altarTierSelect?.addEventListener('change', () => {
+    if (!selectedPlacedObject || !isAltarPlacedObject(selectedPlacedObject)) return
+    const tier = Math.max(1, Math.floor(Number(altarTierSelect.value) || 1))
+    selectedPlacedObject.userData.altarTier = tier
     updateSelectionHelper()
   })
   function saveObjectQuestFieldsFromUI() {
@@ -3888,7 +3962,7 @@ let paintBrushRadius = 1
     const gap = 2
     const pad = 2
     const gridSize = W + pad * 2
-    const startOff = -Math.floor((W - 1) / 2)
+    const startOff = getObjectFootprintMinTile(0, W)
     const footMin = startOff
     const footMax = startOff + W - 1
     const gridMin = footMin - pad
@@ -3936,7 +4010,7 @@ let paintBrushRadius = 1
   sidebar.querySelector('#interactSidesFrontCenter')?.addEventListener('click', () => {
     if (!selectedPlacedObject) return
     const W = placedObjectWidth(selectedPlacedObject)
-    const startOff = -Math.floor((W - 1) / 2)
+    const startOff = getObjectFootprintMinTile(0, W)
     setInteractionTiles([{ x: startOff + Math.floor(W / 2), z: startOff + W }])
   })
   sidebar.querySelector('#interactSidesFront')?.addEventListener('click', () => {
@@ -4236,14 +4310,39 @@ let paintBrushRadius = 1
       const doorInput = sidebar.querySelector('#doorDefaultOpenInput')
       const doorDirectionLabel = sidebar.querySelector('#doorOpenDirectionLabel')
       const doorDirectionSelect = sidebar.querySelector('#doorOpenDirectionSelect')
+      const doorLockedFields = sidebar.querySelector('#doorLockedFields')
+      const doorLockedInput = sidebar.querySelector('#doorLockedInput')
+      const doorKeyItemInput = sidebar.querySelector('#doorKeyItemInput')
+      const doorConsumeKeyInput = sidebar.querySelector('#doorConsumeKeyInput')
+      const doorLockedMessageInput = sidebar.querySelector('#doorLockedMessageInput')
+      const altarTierLabel = sidebar.querySelector('#altarTierLabel')
+      const altarTierSelect = sidebar.querySelector('#altarTierSelect')
       const showDoorDefault = showObjectName && isDoorPlacedObject(selectedPlacedObject)
+      const showAltarTier = showObjectName && isAltarPlacedObject(selectedPlacedObject)
       if (doorLabel) doorLabel.style.display = showDoorDefault ? 'flex' : 'none'
       if (doorDirectionLabel) doorDirectionLabel.style.display = showDoorDefault ? 'block' : 'none'
+      if (doorLockedFields) doorLockedFields.style.display = showDoorDefault ? 'block' : 'none'
+      if (altarTierLabel) altarTierLabel.style.display = showAltarTier ? 'block' : 'none'
       if (showDoorDefault && doorInput && document.activeElement !== doorInput) {
         doorInput.checked = selectedPlacedObject.userData.defaultOpen === true
       }
       if (showDoorDefault && doorDirectionSelect && document.activeElement !== doorDirectionSelect) {
         doorDirectionSelect.value = selectedPlacedObject.userData.openDirection === 1 ? '1' : '-1'
+      }
+      if (showDoorDefault && doorLockedInput && document.activeElement !== doorLockedInput) {
+        doorLockedInput.checked = selectedPlacedObject.userData.locked === true
+      }
+      if (showDoorDefault && doorKeyItemInput && document.activeElement !== doorKeyItemInput) {
+        doorKeyItemInput.value = formatItemDisplay(selectedPlacedObject.userData.keyItemId || 0)
+      }
+      if (showDoorDefault && doorConsumeKeyInput && document.activeElement !== doorConsumeKeyInput) {
+        doorConsumeKeyInput.checked = selectedPlacedObject.userData.consumeKey === true
+      }
+      if (showDoorDefault && doorLockedMessageInput && document.activeElement !== doorLockedMessageInput) {
+        doorLockedMessageInput.value = selectedPlacedObject.userData.lockedMessage || ''
+      }
+      if (showAltarTier && altarTierSelect && document.activeElement !== altarTierSelect) {
+        altarTierSelect.value = String(Math.max(1, Math.floor(selectedPlacedObject.userData.altarTier || 1)))
       }
       if (showObjectName && examine && document.activeElement !== examine) examine.value = selectedPlacedObject.userData.examineText || ''
       if (showObjectName && action && document.activeElement !== action) action.value = effect?.action || 'Examine'
@@ -4700,6 +4799,11 @@ let paintBrushRadius = 1
       if (obj.userData.interactions?.length) out.interactions = JSON.parse(JSON.stringify(obj.userData.interactions))
       if (obj.userData.defaultOpen) out.defaultOpen = true
       if (obj.userData.openDirection === 1) out.openDirection = 1
+      if (obj.userData.locked) out.locked = true
+      if (Number.isInteger(obj.userData.keyItemId) && obj.userData.keyItemId > 0) out.keyItemId = obj.userData.keyItemId
+      if (obj.userData.consumeKey) out.consumeKey = true
+      if (obj.userData.lockedMessage) out.lockedMessage = obj.userData.lockedMessage
+      if (Number.isInteger(obj.userData.altarTier) && obj.userData.altarTier > 1) out.altarTier = obj.userData.altarTier
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
       if (obj.userData.interactionTiles?.length) out.interactionTiles = JSON.parse(JSON.stringify(obj.userData.interactionTiles))
       if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
@@ -4748,6 +4852,11 @@ let paintBrushRadius = 1
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.defaultOpen) model.userData.defaultOpen = true
       if (placed.openDirection === 1) model.userData.openDirection = 1
+      if (placed.locked) model.userData.locked = true
+      if (Number.isInteger(placed.keyItemId) && placed.keyItemId > 0) model.userData.keyItemId = placed.keyItemId
+      if (placed.consumeKey) model.userData.consumeKey = true
+      if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
+      if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
@@ -5671,6 +5780,13 @@ let paintBrushRadius = 1
     if (placed.name) model.userData.name = placed.name
     if (placed.examineText) model.userData.examineText = placed.examineText
     if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
+    if (placed.defaultOpen) model.userData.defaultOpen = true
+    if (placed.openDirection === 1) model.userData.openDirection = 1
+    if (placed.locked) model.userData.locked = true
+    if (Number.isInteger(placed.keyItemId) && placed.keyItemId > 0) model.userData.keyItemId = placed.keyItemId
+    if (placed.consumeKey) model.userData.consumeKey = true
+    if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
+    if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
     if (placed.trigger) model.userData.trigger = { ...placed.trigger }
     if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
     if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0

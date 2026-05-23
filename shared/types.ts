@@ -112,10 +112,9 @@ export interface NpcDef {
   /** Inline dialogue tree. When present, right-clicking the NPC offers a
    *  "Talk-to" option that opens the DialoguePanel with the root node. */
   dialogue?: DialogueTree;
-  /** OSRS-style NxN tile footprint. Default 1. Anchor is the SW tile center
-   *  (i.e. `position.x = Math.floor(swX) + 0.5`); the footprint extends
-   *  `+X` and `+Z` from there for even sizes, and centers on the anchor for
-   *  odd sizes (matches `getObjectFootprintTiles` in objectFootprint.ts).
+  /** OSRS-style NxN tile footprint. Default 1. Even sizes are centered around
+   *  the placed coordinate, and odd sizes center on the containing tile
+   *  (matches `getObjectFootprintTiles` in objectFootprint.ts).
    *  Pathfinding, blocking, and wall checks all consider the full footprint. */
   size?: number;
 }
@@ -562,6 +561,16 @@ export interface PlacedObject {
   defaultOpen?: boolean;
   /** Door open pose direction. -1 preserves the legacy swing, 1 opens the opposite way. */
   openDirection?: -1 | 1;
+  /** Door instances with this enabled refuse normal Open unless the player has the required key item. */
+  locked?: boolean;
+  /** Optional item id required to open a locked door. If omitted, the door cannot be opened by normal interaction. */
+  keyItemId?: number;
+  /** If true, consumes one key item when the door is opened. */
+  consumeKey?: boolean;
+  /** Optional private message shown when a player tries to open the door without the key. */
+  lockedMessage?: string;
+  /** Good-magic altar tier. Determines which relic tier can be sacrificed here. */
+  altarTier?: number;
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   scale: { x: number; y: number; z: number };

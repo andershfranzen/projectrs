@@ -3,6 +3,7 @@ import type { PlacedObjectInteraction, WorldObjectDef } from '@projectrs/shared'
 let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
 
 const DOOR_ACTIONS_CLOSED: readonly string[] = ['Open', 'Examine'];
+const DOOR_ACTIONS_LOCKED: readonly string[] = ['Unlock', 'Examine'];
 const DOOR_ACTIONS_OPEN: readonly string[] = ['Close', 'Examine'];
 
 export class WorldObject {
@@ -21,6 +22,11 @@ export class WorldObject {
   doorOpen: boolean = false;
   doorDefaultOpen: boolean = false;
   doorOpenDirection: -1 | 1 = -1;
+  doorLocked: boolean = false;
+  doorKeyItemId: number = 0;
+  doorConsumeKey: boolean = false;
+  doorLockedMessage?: string;
+  altarTier: number = 1;
   closedEdge: number = 0;
   /** Optional per-instance name from an editor placed object. */
   name?: string;
@@ -53,6 +59,7 @@ export class WorldObject {
    *  this getter avoids the per-toggle def allocation that previous code did. */
   get currentActions(): readonly string[] {
     if (this.def.category === 'door') {
+      if (!this.doorOpen && this.doorLocked) return DOOR_ACTIONS_LOCKED;
       return this.doorOpen ? DOOR_ACTIONS_OPEN : DOOR_ACTIONS_CLOSED;
     }
     return this.def.actions;

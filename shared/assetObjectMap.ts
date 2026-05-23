@@ -35,6 +35,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'cookingrange': 7, // Cooking Range
   'anvil': 19,       // Anvil (smithing)
   'BankBooth': 31,   // Bank booth
+  'Altar': 8,         // Good magic altar — offer relics for goodmagic xp
   // Doors (only Truedoor assets — other "door" assets are decorative door frames)
   'castleTruedoor': 13,
   'basicTruedoor': 13,
