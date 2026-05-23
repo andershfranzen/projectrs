@@ -140,6 +140,8 @@ export class GameMap {
       name: (o as any).name,
       examineText: (o as any).examineText,
       interactions: Array.isArray((o as any).interactions) ? (o as any).interactions : undefined,
+      defaultOpen: (o as any).defaultOpen === true,
+      openDirection: (o as any).openDirection === 1 ? 1 : -1,
       position: o.position,
       rotation: o.rotation,
       scale: o.scale,

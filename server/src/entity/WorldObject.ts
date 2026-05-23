@@ -20,6 +20,7 @@ export class WorldObject {
   rotationY: number = 0;
   doorOpen: boolean = false;
   doorDefaultOpen: boolean = false;
+  doorOpenDirection: -1 | 1 = -1;
   closedEdge: number = 0;
   /** Optional per-instance name from an editor placed object. */
   name?: string;

@@ -104,6 +104,7 @@ interface RuntimeObjectSpawn {
   examineText?: string;
   interactions?: WorldObject['interactions'];
   defaultOpen?: boolean;
+  openDirection?: -1 | 1;
   trigger?: WorldObject['trigger'];
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
@@ -470,14 +471,7 @@ export class World {
       this.worldObjects.set(obj.id, obj);
       this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true, obj.floor);
       if (objDef.category === 'door') {
-        this.initDoorEdge(obj);
-        this.setDoorWallEdges(obj, gameMap);
-        if (obj.doorDefaultOpen) {
-          this.clearDoorWallEdges(obj, gameMap);
-          obj.doorOpen = true;
-          obj.depleted = true;
-        }
-        this.registerDoorObject(obj);
+        this.initializeDoorObject(obj, gameMap);
       }
       cm.addEntity(obj.id, spawn.x, spawn.z);
     }
@@ -1034,9 +1028,7 @@ export class World {
         this.worldObjects.set(obj.id, obj);
         this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true, obj.floor);
         if (objDef.category === 'door') {
-          this.initDoorEdge(obj);
-          this.setDoorWallEdges(obj, gameMap);
-          this.registerDoorObject(obj);
+          this.initializeDoorObject(obj, gameMap);
         }
         const cm = this.chunkManagers.get(mapId);
         if (cm) cm.addEntity(obj.id, spawn.x, spawn.z);
@@ -1090,6 +1082,7 @@ export class World {
           examineText: placed.examineText,
           interactions: placed.interactions,
           defaultOpen: placed.defaultOpen === true,
+          openDirection: placed.openDirection === 1 ? 1 : -1,
           trigger: placed.trigger,
           interactionTiles: placed.interactionTiles,
           interactionSides: placed.interactionSides,
@@ -1119,6 +1112,7 @@ export class World {
     if (spawn.examineText) obj.examineText = spawn.examineText;
     if (spawn.interactions) obj.interactions = spawn.interactions;
     if (spawn.defaultOpen) obj.doorDefaultOpen = true;
+    if (spawn.openDirection === 1) obj.doorOpenDirection = 1;
     if (spawn.trigger) obj.trigger = spawn.trigger;
     if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
     if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
@@ -1132,6 +1126,17 @@ export class World {
       this.doorObjectsByMap.set(obj.mapLevel, doors);
     }
     doors.add(obj);
+  }
+
+  private initializeDoorObject(obj: WorldObject, map: GameMap): void {
+    this.initDoorEdge(obj);
+    this.setDoorWallEdges(obj, map);
+    if (obj.doorDefaultOpen) {
+      this.clearDoorWallEdges(obj, map);
+      obj.doorOpen = true;
+      obj.depleted = true;
+    }
+    this.registerDoorObject(obj);
   }
 
   start(): void {
@@ -7141,7 +7146,7 @@ export class World {
   private encodeWorldObjectUpdate(obj: WorldObject): Uint8Array {
     const explicitTiles = this.explicitObjectInteractionTiles(obj).slice(0, 16);
     const tileValues = explicitTiles.flatMap(tile => [tile.x, tile.z]);
-    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ]
+    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ, doorOpenDirection]
     return encodePacket(ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
@@ -7154,6 +7159,7 @@ export class World {
       qPos(obj.worldY),
       explicitTiles.length,
       ...tileValues,
+      obj.doorOpenDirection,
     );
   }
 

@@ -560,6 +560,8 @@ export interface PlacedObject {
   interactions?: PlacedObjectInteraction[];
   /** Door instances with this enabled start open and auto-reset back open after being closed. */
   defaultOpen?: boolean;
+  /** Door open pose direction. -1 preserves the legacy swing, 1 opens the opposite way. */
+  openDirection?: -1 | 1;
   position: { x: number; y: number; z: number };
   rotation: { x: number; y: number; z: number };
   scale: { x: number; y: number; z: number };

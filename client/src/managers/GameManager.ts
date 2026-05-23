@@ -298,11 +298,11 @@ export class GameManager {
 
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
-  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }> = new Map();
+  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; interactionTiles?: { x: number; z: number }[] }> = new Map();
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
-  private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number }> = new Map();
+  private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number; openDirection: -1 | 1 }> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
   /** Tiles blocked by non-depleted world objects (key = `${floor},${tileX},${tileZ}`) */
@@ -1716,7 +1716,7 @@ export class GameManager {
   /** Link a placed GLB node to a world object entity, tagging for picking and handling depletion */
   private linkPlacedNodeToEntity(
     objectEntityId: number,
-    data: { defId: number; x: number; z: number; floor?: number; y?: number; depleted: boolean },
+    data: { defId: number; x: number; z: number; floor?: number; y?: number; depleted: boolean; openDirection?: -1 | 1 },
     placedNode: TransformNode,
   ): void {
     this.worldObjectModels.set(objectEntityId, placedNode);
@@ -2862,6 +2862,8 @@ export class GameManager {
         const iz = v[explicitStart + i * 2 + 1];
         if (Number.isFinite(ix) && Number.isFinite(iz)) interactionTiles.push({ x: ix, z: iz });
       }
+      const doorOpenDirectionRaw = v[explicitStart + count * 2];
+      const openDirection: -1 | 1 = doorOpenDirectionRaw === 1 ? 1 : -1;
 
       // Detect a state transition on a door we already know about. This fires
       // on chunk re-entry: we left range, the door state changed (someone
@@ -2885,6 +2887,7 @@ export class GameManager {
         depleted: isDepleted,
         interactionSides: interactionSides || undefined,
         rotY: rotY1000 / 1000,
+        openDirection,
         interactionTiles: interactionTiles.length ? interactionTiles : undefined,
       });
 
@@ -2892,6 +2895,7 @@ export class GameManager {
 
       if (stateChangedForDoor) {
         const doorEntry = this.doorPivots.get(objectEntityId);
+        if (doorEntry) doorEntry.openDirection = openDirection;
         const rotY = doorEntry ? doorEntry.closedRotY : 0;
         const { tile: [tx, tz], edge } = doorEdgeFromPlacement(x, z, rotY);
         this.chunkManager.setOpenDoorEdges(tx, tz, edge, isDepleted, floor);
@@ -2917,7 +2921,7 @@ export class GameManager {
       if (!this.worldObjectModels.has(objectEntityId)) {
         const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId, y);
         if (placedNode) {
-          this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted }, placedNode);
+          this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection }, placedNode);
         }
         // If no placed GLB and the chunk has finished loading, the world
         // object simply isn't rendered. Pre-3D maps had a sprite fallback
@@ -7307,13 +7311,15 @@ export class GameManager {
       pivot.parent = savedParent;
     }
 
-    const startAngle = (data && data.depleted) ? -Math.PI / 2 : 0;
+    const openDirection = data?.openDirection === 1 ? 1 : -1;
+    const startAngle = (data && data.depleted) ? openDirection * Math.PI / 2 : 0;
 
     this.doorPivots.set(objectEntityId, {
       pivot,
       targetAngle: startAngle,
       currentAngle: startAngle,
       closedRotY,
+      openDirection,
     });
 
     pivot.rotation.y = startAngle;
@@ -7323,7 +7329,7 @@ export class GameManager {
     const entry = this.doorPivots.get(objectEntityId);
     if (!entry) return;
     if (opening) {
-      const dir = swingSign >= 0 ? -1 : 1;
+      const dir = swingSign === 0 ? entry.openDirection : (swingSign >= 0 ? -1 : 1);
       entry.targetAngle = dir * Math.PI / 2;
     } else {
       entry.targetAngle = 0;

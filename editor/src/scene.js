@@ -45,6 +45,11 @@ import {
   cutSideOf,
   transformOverlayUV,
   fullTileRingForSplit,
+  CUT_HORIZONTAL,
+  CUT_DIAG_TL_BR,
+  CUT_VERTICAL,
+  CUT_DIAG_BL_TR,
+  DEFAULT_CUT_ANGLE,
   CUT_SNAP_ANGLES,
   CUT_SNAP_TOLERANCE_RAD,
   localAdjacentTilesOrdered,
@@ -1521,6 +1526,9 @@ const state = {
   tool: ToolMode.SELECT,
   paintType: 'grass',
   halfPaint: false,
+  halfPaintCutMode: 'cursor',
+  halfPaintCutAngle: DEFAULT_CUT_ANGLE,
+  halfPaintCutOffset: 0,
   hovered: { x: 0, z: 0 },
   showSplitLines: false,
   showTileGrid: false,
@@ -1610,20 +1618,17 @@ let paintBrushRadius = 1
     const v = tile.v ?? 0.5
 
     const existing = map.getTile(tile.x, tile.z)
-    const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
-    const cutAngle = hadHalfMode
-      ? existing.textureCutAngle
-      : pickTextureCutAngle(u, v, eventLike)
-    const cursorHalf = cutSideOf(u, v, cutAngle)
+    const { angle: cutAngle, offset: cutOffset } = resolveHalfPaintCut(tile, u, v, eventLike, existing)
+    const cursorHalf = cutSideOf(u, v, cutAngle, cutOffset)
 
-    const key = `${tile.x},${tile.z},${cutAngle.toFixed(4)},${cursorHalf}`
+    const key = `${tile.x},${tile.z},${cutAngle.toFixed(4)},${cutOffset.toFixed(3)},${cursorHalf}`
     if (key === halfPaintPreviewKey) return
     halfPaintPreviewKey = key
 
     if (halfPaintPreviewLine) { halfPaintPreviewLine.dispose(); halfPaintPreviewLine = null }
     if (halfPaintPreviewFill) { halfPaintPreviewFill.dispose(); halfPaintPreviewFill = null }
 
-    const { halfA, halfB, cutEndpoints } = computeCutPolygons(cutAngle)
+    const { halfA, halfB, cutEndpoints } = computeCutPolygons(cutAngle, cutOffset)
     const ring = cursorHalf === 'A' ? halfA : halfB
     if (ring.length < 3) return
 
@@ -1759,6 +1764,25 @@ let paintBrushRadius = 1
         <label><input id="toggleSplitLines" type="checkbox" /> Show Split Lines</label>
         <label><input id="toggleTileGrid" type="checkbox" /> Show Tile Grid</label>
       </div>
+      <div id="halfPaintOptions" style="display:none;margin-top:6px;border:1px solid #444;border-radius:4px;padding:6px;background:#1b1b1b;">
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);">Half cut</label>
+        <select id="halfPaintCutMode" style="width:100%;margin-top:3px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:11px;">
+          <option value="cursor">Cursor direction</option>
+          <option value="horizontal">Horizontal</option>
+          <option value="vertical">Vertical</option>
+          <option value="diag_tl_br">Diagonal TL-BR</option>
+          <option value="diag_bl_tr">Diagonal BL-TR</option>
+          <option value="custom">Custom angle</option>
+        </select>
+        <div id="halfPaintAngleRow" style="display:none;margin-top:6px;">
+          <label style="font-size:11px;color:rgba(255,255,255,0.45);">Angle <span id="halfPaintAngleVal">135</span>°</label>
+          <input id="halfPaintAngle" type="range" min="0" max="179" step="1" value="135" style="width:100%;" />
+        </div>
+        <div style="margin-top:6px;">
+          <label style="font-size:11px;color:rgba(255,255,255,0.45);">Cut offset <span id="halfPaintOffsetVal">0.00</span></label>
+          <input id="halfPaintOffset" type="range" min="-0.45" max="0.45" step="0.01" value="0" style="width:100%;" />
+        </div>
+      </div>
       <div style="font-size:11px;opacity:0.6;margin:8px 0 4px;border-top:1px solid #444;padding-top:8px;">Texture Brushes</div>
       <div style="display:flex;gap:4px;margin-bottom:5px;align-items:center;">
         <div style="font-size:11px;opacity:0.6;">Slot:</div>
@@ -1860,6 +1884,13 @@ let paintBrushRadius = 1
         <label id="doorDefaultOpenLabel" style="display:none;align-items:center;gap:6px;font-size:11px;color:#ddd;margin-top:8px;cursor:pointer;">
           <input id="doorDefaultOpenInput" type="checkbox" />
           Open by default
+        </label>
+        <label id="doorOpenDirectionLabel" style="display:none;font-size:11px;color:#ddd;margin-top:6px;">
+          <span style="display:block;color:#aaa;margin-bottom:3px;">Open direction</span>
+          <select id="doorOpenDirectionSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:11px;">
+            <option value="-1">-90</option>
+            <option value="1">+90</option>
+          </select>
         </label>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Examine text</div>
         <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
@@ -3631,6 +3662,15 @@ let paintBrushRadius = 1
     if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
     if (doorDefaultOpenInput.checked) selectedPlacedObject.userData.defaultOpen = true
     else delete selectedPlacedObject.userData.defaultOpen
+    updateSelectionHelper()
+  })
+  const doorOpenDirectionSelect = sidebar.querySelector('#doorOpenDirectionSelect')
+  doorOpenDirectionSelect?.addEventListener('change', () => {
+    if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
+    const dir = parseInt(doorOpenDirectionSelect.value, 10) === 1 ? 1 : -1
+    if (dir === 1) selectedPlacedObject.userData.openDirection = 1
+    else delete selectedPlacedObject.userData.openDirection
+    updateSelectionHelper()
   })
   function saveObjectQuestFieldsFromUI() {
     if (!selectedPlacedObject) return
@@ -4194,10 +4234,16 @@ let paintBrushRadius = 1
       const effect = selectedPlacedObject?.userData?.interactions?.[0] || null
       const doorLabel = sidebar.querySelector('#doorDefaultOpenLabel')
       const doorInput = sidebar.querySelector('#doorDefaultOpenInput')
+      const doorDirectionLabel = sidebar.querySelector('#doorOpenDirectionLabel')
+      const doorDirectionSelect = sidebar.querySelector('#doorOpenDirectionSelect')
       const showDoorDefault = showObjectName && isDoorPlacedObject(selectedPlacedObject)
       if (doorLabel) doorLabel.style.display = showDoorDefault ? 'flex' : 'none'
+      if (doorDirectionLabel) doorDirectionLabel.style.display = showDoorDefault ? 'block' : 'none'
       if (showDoorDefault && doorInput && document.activeElement !== doorInput) {
         doorInput.checked = selectedPlacedObject.userData.defaultOpen === true
+      }
+      if (showDoorDefault && doorDirectionSelect && document.activeElement !== doorDirectionSelect) {
+        doorDirectionSelect.value = selectedPlacedObject.userData.openDirection === 1 ? '1' : '-1'
       }
       if (showObjectName && examine && document.activeElement !== examine) examine.value = selectedPlacedObject.userData.examineText || ''
       if (showObjectName && action && document.activeElement !== action) action.value = effect?.action || 'Examine'
@@ -4448,6 +4494,113 @@ let paintBrushRadius = 1
     return meshes
   }
 
+  function placedObjectRotY(obj) {
+    if (!obj) return 0
+    if (obj.rotationQuaternion) return obj.rotationQuaternion.toEulerAngles().y
+    return obj.rotation?.y || 0
+  }
+
+  let _doorOpenPreviewMatNeg = null
+  let _doorOpenPreviewMatPos = null
+  function getDoorOpenPreviewMaterial(dir) {
+    if (dir === 1 && _doorOpenPreviewMatPos) return _doorOpenPreviewMatPos
+    if (dir !== 1 && _doorOpenPreviewMatNeg) return _doorOpenPreviewMatNeg
+    const m = new StandardMaterial(dir === 1 ? 'doorOpenPreviewMatPos' : 'doorOpenPreviewMatNeg', scene)
+    const color = dir === 1 ? new Color3(1.0, 0.82, 0.12) : new Color3(0.12, 0.95, 1.0)
+    m.diffuseColor = color
+    m.emissiveColor = color.scale(0.75)
+    m.specularColor = new Color3(0, 0, 0)
+    m.alpha = 0.42
+    m.disableLighting = true
+    m.backFaceCulling = false
+    m.transparencyMode = 2
+    if (dir === 1) _doorOpenPreviewMatPos = m
+    else _doorOpenPreviewMatNeg = m
+    return m
+  }
+
+  function createDoorOpenDirectionHelper(obj) {
+    if (!isDoorPlacedObject(obj) || obj.userData.defaultOpen !== true) return []
+    const bounds = obj.getHierarchyBoundingVectors?.(true)
+    const min = bounds?.min
+    const max = bounds?.max
+    const cx = (min && max) ? (min.x + max.x) / 2 : obj.position.x
+    const cz = (min && max) ? (min.z + max.z) / 2 : obj.position.z
+    const y = (max?.y ?? obj.position.y + 1.6) + 0.18
+    const radius = Math.max(0.6, Math.min(1.25, Math.max(
+      max && min ? max.x - min.x : 1,
+      max && min ? max.z - min.z : 1,
+    ) * 0.75))
+    const dir = obj.userData.openDirection === 1 ? 1 : -1
+    // The game rotates the door pivot in Babylon's parent/local space. This
+    // world-space editor preview needs the opposite sign to land on the same
+    // visible side as the in-game opened door.
+    const previewDir = -dir
+    const start = placedObjectRotY(obj)
+    const end = start + previewDir * Math.PI / 2
+    const previewWidth = Math.max(0.65, Math.min(1.8, Math.max(
+      max && min ? max.x - min.x : 1,
+      max && min ? max.z - min.z : 1,
+    )))
+    const previewHeight = Math.max(1.2, Math.min(3.2, max && min ? max.y - min.y : 2))
+    const previewThickness = 0.08
+    const hinge = obj.getAbsolutePosition ? obj.getAbsolutePosition().clone() : obj.position.clone()
+    const center = new Vector3(
+      hinge.x + Math.cos(end) * previewWidth * 0.5,
+      (min?.y ?? obj.position.y) + previewHeight * 0.5,
+      hinge.z - Math.sin(end) * previewWidth * 0.5,
+    )
+    const panel = MeshBuilder.CreateBox('doorOpenPreviewPanel', {
+      width: previewWidth,
+      height: previewHeight,
+      depth: previewThickness,
+    }, scene)
+    panel.position = center
+    panel.rotationQuaternion = null
+    panel.rotation.y = end
+    panel.material = getDoorOpenPreviewMaterial(dir)
+    panel.isPickable = false
+    panel.metadata = { ...(panel.metadata || {}), editorHelper: true, doorOpenDirectionHelper: true }
+    panel.renderingGroupId = 1
+
+    const steps = 12
+    const arc = []
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps
+      const a = start + (end - start) * t
+      arc.push(new Vector3(cx + Math.sin(a) * radius, y, cz + Math.cos(a) * radius))
+    }
+    const tip = arc[arc.length - 1]
+    const backA = end - previewDir * 0.38
+    const sideA = end - previewDir * 0.18
+    const arrowSize = 0.28
+    const lines = [
+      arc,
+      [
+        tip,
+        new Vector3(
+          cx + Math.sin(backA) * (radius - arrowSize),
+          y,
+          cz + Math.cos(backA) * (radius - arrowSize),
+        ),
+      ],
+      [
+        tip,
+        new Vector3(
+          tip.x - Math.sin(sideA) * arrowSize,
+          y,
+          tip.z - Math.cos(sideA) * arrowSize,
+        ),
+      ],
+    ]
+    const mesh = MeshBuilder.CreateLineSystem('doorOpenDirectionHelper', { lines }, scene)
+    mesh.color = dir === 1 ? new Color3(1.0, 0.82, 0.25) : new Color3(0.25, 0.95, 1.0)
+    mesh.isPickable = false
+    mesh.metadata = { ...(mesh.metadata || {}), editorHelper: true, doorOpenDirectionHelper: true }
+    mesh.renderingGroupId = 1
+    return [panel, mesh]
+  }
+
   function clearSelectionHelper() {
     if (Array.isArray(selectionHelper)) {
       for (const h of selectionHelper) { if (h) h.dispose() }
@@ -4480,6 +4633,8 @@ let paintBrushRadius = 1
       if (h) helpers.push(h)
       const sideMarkers = createInteractionSideMarkers(obj)
       for (const m of sideMarkers) helpers.push(m)
+      const doorOpenHelpers = createDoorOpenDirectionHelper(obj)
+      for (const m of doorOpenHelpers) helpers.push(m)
     }
 
     // Update emissive colors on all texture plane meshes to reflect selection state
@@ -4544,6 +4699,7 @@ let paintBrushRadius = 1
       if (obj.userData.examineText) out.examineText = obj.userData.examineText
       if (obj.userData.interactions?.length) out.interactions = JSON.parse(JSON.stringify(obj.userData.interactions))
       if (obj.userData.defaultOpen) out.defaultOpen = true
+      if (obj.userData.openDirection === 1) out.openDirection = 1
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
       if (obj.userData.interactionTiles?.length) out.interactionTiles = JSON.parse(JSON.stringify(obj.userData.interactionTiles))
       if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
@@ -4591,6 +4747,7 @@ let paintBrushRadius = 1
       if (placed.examineText) model.userData.examineText = placed.examineText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.defaultOpen) model.userData.defaultOpen = true
+      if (placed.openDirection === 1) model.userData.openDirection = 1
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
@@ -5306,10 +5463,10 @@ let paintBrushRadius = 1
       list.push(mesh)
     }
 
-    if (tile.textureHalfMode) {
-      const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle)
-      if (tile.textureId) addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
-      if (tile.textureIdB) addOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
+      if (tile.textureHalfMode) {
+        const { halfA, halfB } = computeCutPolygons(tile.textureCutAngle, tile.textureCutOffset ?? 0)
+        if (tile.textureId) addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, halfA)
+        if (tile.textureIdB) addOverlay(tile.textureIdB, tile.textureRotationB, tile.textureScaleB, false, halfB)
     } else if (tile.textureId) {
       addOverlay(tile.textureId, tile.textureRotation, tile.textureScale, tile.textureWorldUV, fullTileRingForSplit(tile.split))
     }
@@ -5973,6 +6130,30 @@ function pickTextureCutAngle(u, v, eventLike) {
   return cutAngle
 }
 
+function halfPaintPresetAngle(mode) {
+  if (mode === 'horizontal') return CUT_HORIZONTAL
+  if (mode === 'vertical') return CUT_VERTICAL
+  if (mode === 'diag_tl_br') return CUT_DIAG_TL_BR
+  if (mode === 'diag_bl_tr') return CUT_DIAG_BL_TR
+  return state.halfPaintCutAngle
+}
+
+function resolveHalfPaintCut(tile, u, v, eventLike, existing = null) {
+  const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
+  if (state.halfPaintCutMode === 'cursor') {
+    return {
+      angle: hadHalfMode ? existing.textureCutAngle : pickTextureCutAngle(u, v, eventLike),
+      offset: state.halfPaintCutOffset,
+      shouldWrite: true,
+    }
+  }
+  return {
+    angle: normalizeCutAngle(halfPaintPresetAngle(state.halfPaintCutMode)),
+    offset: state.halfPaintCutOffset,
+    shouldWrite: true,
+  }
+}
+
 function captureStrokeHistoryOnce(scope) {
   if (!state.historyCapturedThisStroke) {
     pushUndoState(scope || 'terrain')
@@ -6048,23 +6229,17 @@ function applyToolAtTile(tile, eventLike = null) {
         const u = tile.u ?? 0.5
         const v = tile.v ?? 0.5
 
-        // Cut policy: if the tile is already half-painted, preserve the
-        // existing cut so each side can be refined without the diagonal
-        // jumping around. Fresh tiles (or tiles being converted from full
-        // paint to half) derive the cut from cursor position — the cut is
-        // perpendicular to (cursor − center), with snapping to common angles
-        // unless Alt is held.
+        // Cut policy: cursor mode preserves an existing half-painted cut so
+        // each side can be refined without the diagonal jumping around.
+        // Preset/custom modes intentionally overwrite the cut angle/offset.
         const existing = map.getTile(tile.x, tile.z)
-        const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
-        let cutAngle
-        if (hadHalfMode) {
-          cutAngle = existing.textureCutAngle
-        } else {
-          cutAngle = pickTextureCutAngle(u, v, eventLike)
+        const { angle: cutAngle, offset: cutOffset, shouldWrite } = resolveHalfPaintCut(tile, u, v, eventLike, existing)
+        if (shouldWrite) {
           map.setTextureCutAngle(tile.x, tile.z, cutAngle)
+          map.setTextureCutOffset(tile.x, tile.z, cutOffset)
         }
 
-        const cursorHalf = cutSideOf(u, v, cutAngle)
+        const cursorHalf = cutSideOf(u, v, cutAngle, cutOffset)
 
         if (paintTabTextureIdB && !isErase) {
           // Cursor side wins: whichever slot the user is pointing at goes to A.
@@ -9468,9 +9643,62 @@ function applyToolAtTile(tile, eventLike = null) {
     if (tileGrid) tileGrid.isVisible = state.showTileGrid
   })
 
+  function refreshHalfPaintOptionsUI() {
+    const panel = sidebar.querySelector('#halfPaintOptions')
+    const mode = sidebar.querySelector('#halfPaintCutMode')
+    const angleRow = sidebar.querySelector('#halfPaintAngleRow')
+    const angle = sidebar.querySelector('#halfPaintAngle')
+    const angleVal = sidebar.querySelector('#halfPaintAngleVal')
+    const offset = sidebar.querySelector('#halfPaintOffset')
+    const offsetVal = sidebar.querySelector('#halfPaintOffsetVal')
+    if (panel) panel.style.display = state.halfPaint ? 'block' : 'none'
+    if (mode && mode.value !== state.halfPaintCutMode) mode.value = state.halfPaintCutMode
+    if (angleRow) angleRow.style.display = state.halfPaintCutMode === 'custom' ? 'block' : 'none'
+    const deg = Math.round(normalizeCutAngle(state.halfPaintCutAngle) * 180 / Math.PI)
+    if (angle && Number(angle.value) !== deg) angle.value = String(deg)
+    if (angleVal) angleVal.textContent = String(deg)
+    if (offset && Number(offset.value) !== state.halfPaintCutOffset) offset.value = String(state.halfPaintCutOffset)
+    if (offsetVal) offsetVal.textContent = state.halfPaintCutOffset.toFixed(2)
+  }
+
+  function refreshHalfPaintPreviewForHovered() {
+    if (state.tool !== ToolMode.PAINT || !state.halfPaint) return
+    if (!Number.isFinite(state.hovered?.x) || !Number.isFinite(state.hovered?.z)) return
+    updateHalfPaintPreview(state.hovered, null)
+  }
+
   sidebar.querySelector('#toggleHalfPaint').addEventListener('change', (e) => {
     state.halfPaint = e.target.checked
     if (!state.halfPaint) clearHalfPaintPreview()
+    refreshHalfPaintOptionsUI()
+    refreshHalfPaintPreviewForHovered()
+  })
+
+  sidebar.querySelector('#halfPaintCutMode')?.addEventListener('change', (e) => {
+    state.halfPaintCutMode = e.target.value
+    const preset = halfPaintPresetAngle(state.halfPaintCutMode)
+    if (state.halfPaintCutMode !== 'cursor' && state.halfPaintCutMode !== 'custom') {
+      state.halfPaintCutAngle = preset
+    }
+    halfPaintPreviewKey = null
+    refreshHalfPaintOptionsUI()
+    refreshHalfPaintPreviewForHovered()
+  })
+
+  sidebar.querySelector('#halfPaintAngle')?.addEventListener('input', (e) => {
+    state.halfPaintCutMode = 'custom'
+    state.halfPaintCutAngle = normalizeCutAngle(Number(e.target.value) * Math.PI / 180)
+    halfPaintPreviewKey = null
+    refreshHalfPaintOptionsUI()
+    refreshHalfPaintPreviewForHovered()
+  })
+
+  sidebar.querySelector('#halfPaintOffset')?.addEventListener('input', (e) => {
+    const value = Number(e.target.value)
+    state.halfPaintCutOffset = Math.max(-0.45, Math.min(0.45, Number.isFinite(value) ? value : 0))
+    halfPaintPreviewKey = null
+    refreshHalfPaintOptionsUI()
+    refreshHalfPaintPreviewForHovered()
   })
 
   const panModeCheckbox = sidebar.querySelector('#togglePanMode')
