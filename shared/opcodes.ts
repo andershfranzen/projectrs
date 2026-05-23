@@ -324,8 +324,12 @@ export enum ServerOpcode {
   SERVER_PONG = 121,
   /** Authoritative state for the local player. Unlike PLAYER_SYNC, this is
    *  sent to the subject themselves on every server tick so the client can
-   *  detect stale authority and reconcile prediction continuously. Layout:
-   *  [x10, z10, health, maxHealth, tickLow, movingFlag]. */
+   *  detect stale authority and reconcile prediction continuously. Appearance
+   *  is included so the local client renders the same database-authored look
+   *  that other players see instead of trusting stale localStorage. Layout:
+   *  [x10, z10, health, maxHealth, tickLow, movingFlag,
+   *   shirtColor, pantsColor, shoesColor, hairColor, beltColor, skinColor, hairStyle].
+   *  Appearance values are -1 when the player has not completed character creation. */
   PLAYER_SELF_SYNC = 122,
 }
 

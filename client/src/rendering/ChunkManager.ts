@@ -14,7 +14,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -2677,8 +2677,7 @@ export class ChunkManager {
     if (!this.mapData) return;
     const planes = this.mapData.texturePlanes || [];
     for (const plane of planes) {
-      const rx = plane.rotation?.x ?? 0;
-      if (Math.abs(Math.abs(rx) - Math.PI / 2) >= 0.1) continue;
+      if (!isWalkableElevatedPlane(plane)) continue;
       const px = plane.position?.x ?? 0;
       const py = plane.position?.y ?? 0;
       const pz = plane.position?.z ?? 0;
@@ -2730,7 +2729,7 @@ export class ChunkManager {
             // below typical building-floor elevation (~2 units) or every
             // building's ground-floor plane auto-bridges and walking under
             // the overhang teleports the player to the upper floor.
-            if (wasBlocking || py < terrainH + 1.0) {
+            if (plane.bridge || wasBlocking || py < terrainH + 1.0) {
               this.bridgeFloorTiles.add(idx);
             }
             this.texturePlaneFloorTiles.add(idx);

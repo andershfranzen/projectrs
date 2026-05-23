@@ -144,7 +144,12 @@ export class Npc extends Entity {
     return this.aggressiveOverride !== null ? this.aggressiveOverride : this.def.aggressive;
   }
 
+  get stationary(): boolean {
+    return this.def.stationary === true;
+  }
+
   get wanderRange(): number {
+    if (this.stationary) return 0;
     return this.wanderRangeOverride ?? this.def.wanderRange;
   }
 

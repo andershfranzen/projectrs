@@ -5,8 +5,8 @@
   "height": 256,
   "waterLevel": -2.5,
   "spawnPoint": {
-    "x": 224.5,
-    "z": 170.5
+    "x": 192.5,
+    "z": 128.5
   },
   "fogColor": [
     0.4,

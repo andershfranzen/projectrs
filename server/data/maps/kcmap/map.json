@@ -17749,7 +17749,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_70215",
@@ -17773,7 +17775,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_28124",
@@ -17797,7 +17801,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_2922",
@@ -17821,7 +17827,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_87482",
@@ -17845,7 +17853,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_60848",
@@ -17862,14 +17872,16 @@
         "rotation": {
           "x": -1.3089969389957472,
           "y": 1.5707963267948966,
-          "z": 0
+          "z": 1.5707963267948966
         },
         "scale": {
           "x": 1,
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_84185",
@@ -17893,7 +17905,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_77921",
@@ -17917,7 +17931,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_98762",
@@ -17941,7 +17957,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_57222",
@@ -17965,7 +17983,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_6541",
@@ -17989,7 +18009,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_42098",
@@ -18013,7 +18035,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_4917",
@@ -18037,7 +18061,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_81637",
@@ -18061,7 +18087,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350869422_25267",
@@ -18085,7 +18113,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350921379_39747",
@@ -18102,14 +18132,16 @@
         "rotation": {
           "x": -1.3089969389957472,
           "y": 1.5707963267948966,
-          "z": 0
+          "z": 1.5707963267948966
         },
         "scale": {
           "x": 1,
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350933344_44228",
@@ -18126,14 +18158,15 @@
         "rotation": {
           "x": -1.3089969389957472,
           "y": 4.71238898038469,
-          "z": 0
+          "z": 1.5707963267948966
         },
         "scale": {
           "x": 1,
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true
       },
       {
         "id": "plane_1779350933344_59112",
@@ -18150,14 +18183,16 @@
         "rotation": {
           "x": -1.3089969389957472,
           "y": 4.71238898038469,
-          "z": 0
+          "z": 1.5707963267948966
         },
         "scale": {
           "x": 1,
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779350996021_30963",
@@ -18181,7 +18216,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779351787975_83557",

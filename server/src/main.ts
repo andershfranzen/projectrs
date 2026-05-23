@@ -1104,6 +1104,13 @@ const server = Bun.serve<SocketData>({
   async fetch(req, server) {
     const url = new URL(req.url);
 
+    if (url.pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
+      return new Response(null, {
+        status: 204,
+        headers: { 'Cache-Control': 'public, max-age=86400' },
+      });
+    }
+
     if (url.pathname === '/api/status' && req.method === 'GET') {
       return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
     }
@@ -2260,6 +2267,11 @@ const server = Bun.serve<SocketData>({
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
           });
         }
+        if (/^[-\w]+\/(?:tiles|heights)\/chunk_-?\d+_-?\d+\.json$/.test(mapPath) && !existsSync(filePath)) {
+          return new Response('{}', {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          });
+        }
         // For map.json requests, reassemble placedObjects from chunk files
         if (mapPath.endsWith('/map.json')) {
           const mapDir = resolve(filePath, '..');
@@ -2324,6 +2336,22 @@ const server = Bun.serve<SocketData>({
         } catch { /* try next */ }
       }
       return new Response('Not Found', { status: 404 });
+    }
+
+    if (url.pathname === '/items/3d/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const manifestPath = resolve(import.meta.dir, '../../client/public/items/3d/manifest.json');
+      const distManifestPath = resolve(CLIENT_DIST, 'items/3d/manifest.json');
+      for (const filePath of [manifestPath, distManifestPath]) {
+        try {
+          const content = readFileSync(filePath);
+          return new Response(content, {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, must-revalidate' },
+          });
+        } catch { /* try next */ }
+      }
+      return new Response('[]', {
+        headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, must-revalidate' },
+      });
     }
 
     // --- Static File Serving ---

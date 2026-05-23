@@ -5,11 +5,13 @@ import { BackgroundParticles } from './ui/BackgroundParticles';
 import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import { startupTrace } from './debug/StartupTrace';
+import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture';
 import type { GameManager as GameManagerType } from './managers/GameManager';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
 installGlobalScrollbars();
+installSafeDynamicTextureUpdate();
 startupTrace.mark('entry');
 
 function getBrowserPageScale(): number {

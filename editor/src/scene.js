@@ -171,12 +171,32 @@ function tuneModelLighting(model) {
     }
   }
 
-  function addPlacedModel(model) {
+  function nextFrame() {
+    return new Promise(resolve => requestAnimationFrame(resolve))
+  }
+
+  async function yieldIfOverBudget(workState, budgetMs = 3) {
+    const now = performance.now()
+    if (now - workState.startedAt < budgetMs) return
+    await nextFrame()
+    workState.startedAt = performance.now()
+  }
+
+  function updatePlacedModelDerivedData(model) {
+    const asset = assetById.get(model.userData?.assetId)
+    const path = asset?.path?.toLowerCase() || ''
+    const name = asset?.name?.toLowerCase() || ''
+    model.userData._isModularAsset = path.includes('modular assets')
+    model.userData._isTreeAsset = path.includes('tree') || name.includes('tree')
+  }
+
+  function addPlacedModel(model, { invalidateShadow = true } = {}) {
     ensureNodeCompat(model)
+    updatePlacedModelDerivedData(model)
     model.parent = placedGroup
     _spatialRegister(model)
-    invalidateShadowCache()
-    const asset = assetRegistry.find((a) => a.id === model.userData.assetId)
+    if (invalidateShadow) invalidateShadowCache()
+    const asset = assetById.get(model.userData.assetId)
     if (asset) setupModelAnimations(model, asset.path)
   }
 
@@ -211,6 +231,7 @@ function tuneModelLighting(model) {
   }
 
   let assetRegistry = []
+  let assetById = new Map()
   let filteredAssets = []
   let selectedAssetId = ''
   let previewObject = null
@@ -266,6 +287,7 @@ function tuneModelLighting(model) {
   let texturePlaneGroup = null
 
   let texturePlaneVertical = true
+  let texturePlaneBridge = false
 
   // --- NPC Spawn system ---
   let npcDefs = []           // loaded from /data/npcs.json
@@ -1010,6 +1032,20 @@ function tuneModelLighting(model) {
   function cancelDiagFloor() {
     diagFloorStart = null
     disposeDiagFloorPreview()
+  }
+
+  function setTexturePlaneBridgeFlag(plane, enabled) {
+    if (!plane) return
+    if (enabled) {
+      plane.bridge = true
+      plane.noRoof = true
+    } else {
+      delete plane.bridge
+    }
+  }
+
+  function applyTexturePlaneCreationFlags(plane) {
+    setTexturePlaneBridgeFlag(plane, texturePlaneBridge)
   }
   const collisionGroup = new TransformNode('collisionGroup', scene)
 
@@ -1889,6 +1925,9 @@ let paintBrushRadius = 1
       <div id="texNoRoofRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:6px;">
         <label style="font-size:11px;cursor:pointer;"><input id="texNoRoof" type="checkbox" /> No Roof (stays visible indoors)</label>
       </div>
+      <div id="texBridgeRow" style="display:none;margin-top:6px;">
+        <label style="font-size:11px;cursor:pointer;"><input id="texBridge" type="checkbox" /> Bridge / Walkway (snap to plane)</label>
+      </div>
     </div>
 
     <div class="ctx-panel" id="ctx-texture" style="display:none">
@@ -1901,6 +1940,7 @@ let paintBrushRadius = 1
       <label style="margin-top:6px;font-size:11px;color:rgba(255,255,255,0.45);">Scale <span id="textureScaleVal">1</span></label>
       <input id="textureScale" type="range" min="1" max="8" step="1" value="1" />
       <label style="margin-top:5px;"><input id="toggleTexturePlaneV" type="checkbox" checked /> Vertical plane (V)</label>
+      <label style="margin-top:5px;"><input id="toggleTexturePlaneBridge" type="checkbox" /> Bridge / Walkway</label>
       <div id="diagFloorRow" style="margin-top:6px;border-top:1px solid #444;padding-top:6px;">
         <label><input id="toggleDiagFloor" type="checkbox" /> Diagonal Floor (D)</label>
         <div id="diagFloorOptions" style="display:none;margin-top:4px;">
@@ -4061,6 +4101,8 @@ let paintBrushRadius = 1
 
     const vpCheckbox = sidebar.querySelector('#toggleTexturePlaneV')
     if (vpCheckbox) vpCheckbox.checked = texturePlaneVertical
+    const createBridgeCheckbox = sidebar.querySelector('#toggleTexturePlaneBridge')
+    if (createBridgeCheckbox) createBridgeCheckbox.checked = texturePlaneBridge
 
     // Status bar
     let status = toolLabel(state.tool)
@@ -4087,6 +4129,7 @@ let paintBrushRadius = 1
     }
     if (state.tool === ToolMode.TEXTURE_PLANE) {
       status += ` · ${diagFloorMode ? 'diagonal floor' : texturePlaneVertical ? 'vertical' : 'horizontal'}`
+      if (texturePlaneBridge) status += ' · bridge'
       if (diagFloorMode && diagFloorStart) status += ' · click end point'
     }
     if (state.tool === ToolMode.PAINT && diagFloorMode && paintTabTextureId && paintTabTextureId !== '__erase__') {
@@ -4183,6 +4226,11 @@ let paintBrushRadius = 1
       const showNoRoof = (state.tool === ToolMode.SELECT || state.tool === ToolMode.TEXTURE_PLANE) && selectedTexturePlane
       texNoRoofRow.style.display = showNoRoof ? 'block' : 'none'
       if (showNoRoof) texNoRoofCheckbox.checked = !!selectedTexturePlane.noRoof
+    }
+    if (texBridgeRow) {
+      const showBridge = (state.tool === ToolMode.SELECT || state.tool === ToolMode.TEXTURE_PLANE) && selectedTexturePlane
+      texBridgeRow.style.display = showBridge ? 'block' : 'none'
+      if (showBridge) texBridgeCheckbox.checked = !!selectedTexturePlane.bridge
     }
     const layerAssignRow = sidebar.querySelector('#layerAssignRow')
     if (layerAssignRow) {
@@ -4488,17 +4536,17 @@ let paintBrushRadius = 1
     _orphanPlacements = []  // full rebuild — reset and repopulate from data
     const _missing = new Map()
 
-    // Pre-load all unique models in parallel so cache is warm before sequential cloning.
+    // Pre-load unique models before sequential cloning.
     const uniquePaths = [...new Set(
       (placedObjectsData || [])
-        .map((p) => assetRegistry.find((a) => a.id === p.assetId)?.path)
+        .map((p) => assetById.get(p.assetId)?.path)
         .filter(Boolean)
     )]
     await warmAssetCache(uniquePaths)
 
-    // All models are now cached — clone synchronously (no per-object await)
+    const workState = { startedAt: performance.now() }
     for (const placed of placedObjectsData || []) {
-      const asset = assetRegistry.find((a) => a.id === placed.assetId)
+      const asset = assetById.get(placed.assetId)
       if (!asset) {
         _orphanPlacements.push(JSON.parse(JSON.stringify(placed)))
         const k = placed.assetId || '(no assetId)'
@@ -4524,8 +4572,10 @@ let paintBrushRadius = 1
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const layer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(layer ? layer.visible : true)
-      addPlacedModel(model)
+      addPlacedModel(model, { invalidateShadow: false })
+      await yieldIfOverBudget(workState)
     }
+    invalidateShadowCache()
     reportMissingAssets(_missing, 'load')
     // Re-mask the placed objects under any active appearance preview — the
     // previous TransformNode refs we stashed in hiddenNodes are now disposed.
@@ -4701,15 +4751,15 @@ let paintBrushRadius = 1
     // Add placed objects shifted by offset
     const _importPaths = [...new Set(
       (data.placedObjects || [])
-        .map((p) => assetRegistry.find((a) => a.id === p.assetId)?.path)
+        .map((p) => assetById.get(p.assetId)?.path)
         .filter(Boolean)
     )]
-    const _importPreloaded = await Promise.all(_importPaths.map((path) => loadAssetModel(path).catch(() => null)))
-    for (const inst of _importPreloaded) { if (inst) inst.dispose() }
+    await warmAssetCache(_importPaths)
 
     const _importMissing = new Map()
+    const _importWork = { startedAt: performance.now() }
     for (const placed of data.placedObjects || []) {
-      const asset = assetRegistry.find((a) => a.id === placed.assetId)
+      const asset = assetById.get(placed.assetId)
       if (!asset) {
         const orphan = JSON.parse(JSON.stringify(placed))
         orphan.position.x += offsetX
@@ -4719,7 +4769,7 @@ let paintBrushRadius = 1
         _importMissing.set(k, (_importMissing.get(k) || 0) + 1)
         continue
       }
-      const model = await loadAssetModel(asset.path)
+      const model = cloneAssetModelSync(asset.path)
       tuneModelLighting(model, asset.path)
       model.position.set(placed.position.x + offsetX, placed.position.y, placed.position.z + offsetZ)
       model.rotationQuaternion = null
@@ -4739,8 +4789,10 @@ let paintBrushRadius = 1
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const _layer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(_layer ? _layer.visible : true)
-      addPlacedModel(model)
+      addPlacedModel(model, { invalidateShadow: false })
+      await yieldIfOverBudget(_importWork)
     }
+    invalidateShadowCache()
     reportMissingAssets(_importMissing, 'import chunk')
 
     // Import NPC spawns shifted by offset. Drop the source id so chunks
@@ -4751,7 +4803,11 @@ let paintBrushRadius = 1
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
 
-    markTerrainDirty({ rebuildTexturePlanes: true, rebuildTextureOverlays: true })
+    markTerrainDirty({
+      rebuildTexturePlanes: true,
+      rebuildTextureOverlays: true,
+      region: { x1: offsetX, z1: offsetZ, x2: offsetX + src.width - 1, z2: offsetZ + src.height - 1 }
+    })
     updateToolUI()
   }
 
@@ -4958,18 +5014,27 @@ let paintBrushRadius = 1
 
     for (const obj of placedGroup.getChildren()) {
       let _size
-      try {
-        const bounds = obj.getHierarchyBoundingVectors(true)
-        _size = { x: bounds.max.x - bounds.min.x, y: bounds.max.y - bounds.min.y, z: bounds.max.z - bounds.min.z }
-        if (_size.x === 0 && _size.y === 0 && _size.z === 0) continue
-      } catch { continue }
+      const cachedBounds = obj.userData?.bounds
+      if (cachedBounds) {
+        const sx = Math.abs(obj.scale?.x ?? obj.scaling?.x ?? 1)
+        const sy = Math.abs(obj.scale?.y ?? obj.scaling?.y ?? 1)
+        const sz = Math.abs(obj.scale?.z ?? obj.scaling?.z ?? 1)
+        _size = { x: cachedBounds.width * sx, y: cachedBounds.height * sy, z: cachedBounds.depth * sz }
+      } else {
+        try {
+          const bounds = obj.getHierarchyBoundingVectors(true)
+          _size = { x: bounds.max.x - bounds.min.x, y: bounds.max.y - bounds.min.y, z: bounds.max.z - bounds.min.z }
+        } catch { continue }
+      }
+      if (_size.x === 0 && _size.y === 0 && _size.z === 0) continue
 
-      const asset = assetRegistry.find((a) => a.id === obj.userData?.assetId)
-      const isModular = asset?.path?.toLowerCase().includes('modular assets') ?? false
-      const isTree = asset?.name?.toLowerCase().includes('tree') ?? false
+      const isModular = obj.userData?._isModularAsset ?? false
+      const isTree = obj.userData?._isTreeAsset ?? false
 
       const footprint = Math.max(_size.x, _size.z) * 0.5
       const shadowR   = footprint + (isTree || isModular ? 2.8 : 1.0)
+      const shadowRSq = shadowR * shadowR
+      const invShadowR = 1 / shadowR
       const maxDark   = isTree || isModular ? 0.82 : 0.42
 
       const cx = obj.position.x
@@ -4984,10 +5049,10 @@ let paintBrushRadius = 1
         for (let vx = x0; vx <= x1; vx++) {
           const dx   = vx - cx
           const dz   = vz - cz
-          const dist = Math.sqrt(dx * dx + dz * dz)
-          if (dist >= shadowR) continue
+          const distSq = dx * dx + dz * dz
+          if (distSq >= shadowRSq) continue
 
-          const t      = 1.0 - dist / shadowR
+          const t      = 1.0 - Math.sqrt(distSq) * invShadowR
           const dark   = t * t * maxDark
           const factor = 1.0 - dark
           if (factor < inf[vz][vx]) inf[vz][vx] = factor
@@ -5386,18 +5451,18 @@ let paintBrushRadius = 1
     map.texturePlanes.push(clone)
   }
 
-  // import placed objects — pre-load unique models in parallel first
+  // import placed objects
   const _mergeUniquePaths = [...new Set(
     (data.placedObjects || [])
-      .map((p) => assetRegistry.find((a) => a.id === p.assetId)?.path)
+      .map((p) => assetById.get(p.assetId)?.path)
       .filter(Boolean)
   )]
-  const _mergePreloaded = await Promise.all(_mergeUniquePaths.map((path) => loadAssetModel(path).catch(() => null)))
-  for (const inst of _mergePreloaded) { if (inst) inst.dispose() }
+  await warmAssetCache(_mergeUniquePaths)
 
   const _mergeMissing = new Map()
+  const _mergeWork = { startedAt: performance.now() }
   for (const placed of data.placedObjects || []) {
-    const asset = assetRegistry.find((a) => a.id === placed.assetId)
+    const asset = assetById.get(placed.assetId)
     if (!asset) {
       const orphan = JSON.parse(JSON.stringify(placed))
       orphan.position.x += offsetX
@@ -5408,7 +5473,7 @@ let paintBrushRadius = 1
       continue
     }
 
-    const model = await loadAssetModel(asset.path)
+    const model = cloneAssetModelSync(asset.path)
     tuneModelLighting(model, asset.path)
 
     model.position.set(
@@ -5430,11 +5495,17 @@ let paintBrushRadius = 1
     if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
     const _importLayer = layers.find((l) => l.id === model.userData.layerId)
     model.setEnabled(_importLayer ? _importLayer.visible : true)
-    addPlacedModel(model)
+    addPlacedModel(model, { invalidateShadow: false })
+    await yieldIfOverBudget(_mergeWork)
   }
+  invalidateShadowCache()
   reportMissingAssets(_mergeMissing, 'import map')
 
-  markTerrainDirty({ rebuildTexturePlanes: true, rebuildTextureOverlays: true })
+  markTerrainDirty({
+    rebuildTexturePlanes: true,
+    rebuildTextureOverlays: true,
+    region: { x1: offsetX, z1: offsetZ, x2: offsetX + imported.width - 1, z2: offsetZ + imported.height - 1 }
+  })
   updateSelectionHelper()
   updateToolUI()
 }
@@ -9396,6 +9467,10 @@ function applyToolAtTile(tile, eventLike = null) {
     updateToolUI()
   })
 
+  sidebar.querySelector('#toggleTexturePlaneBridge').addEventListener('change', (e) => {
+    texturePlaneBridge = e.target.checked
+  })
+
   sidebar.querySelector('#toggleDiagFloor').addEventListener('change', (e) => {
     diagFloorMode = e.target.checked
     if (diagFloorMode) {
@@ -9496,8 +9571,25 @@ function applyToolAtTile(tile, eventLike = null) {
         plane.noRoof = true
       } else {
         delete plane.noRoof
+        delete plane.bridge
       }
     }
+    texBridgeCheckbox.checked = !!selectedTexturePlane.bridge
+  })
+
+  const texBridgeCheckbox = sidebar.querySelector('#texBridge')
+  const texBridgeRow = sidebar.querySelector('#texBridgeRow')
+  texBridgeCheckbox.addEventListener('change', () => {
+    if (!selectedTexturePlane) return
+    for (const plane of selectedTexturePlanes) {
+      if (texBridgeCheckbox.checked) {
+        plane.bridge = true
+        plane.noRoof = true
+      } else {
+        delete plane.bridge
+      }
+    }
+    texNoRoofCheckbox.checked = !!selectedTexturePlane.noRoof
   })
 
   // Tint color sliders
@@ -10000,6 +10092,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
           diagFloorWidth,
           false
         )
+        applyTexturePlaneCreationFlags(plane)
         plane.rotation = { x: -Math.PI / 2, y: angle, z: 0 }
         plane.uvRepeat = textureScale
         plane.texRotation = textureRotation
@@ -10026,6 +10119,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         planeSize.height,
         texturePlaneVertical
       )
+      applyTexturePlaneCreationFlags(plane)
 
       plane.uvRepeat = textureScale
       plane.texRotation = textureRotation
@@ -10287,6 +10381,7 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         diagFloorWidth,
         false
       )
+      applyTexturePlaneCreationFlags(plane)
       plane.rotation = { x: -Math.PI / 2, y: angle, z: 0 }
       plane.uvRepeat = textureScale
       plane.texRotation = textureRotation
@@ -10994,6 +11089,7 @@ if (key === 'e') {
   async function initAssets() {
     try {
       assetRegistry = await loadAssetRegistry()
+      assetById = new Map(assetRegistry.map((asset) => [asset.id, asset]))
 
       // Default to Props tab
       assetSectionFilter = 'Models'

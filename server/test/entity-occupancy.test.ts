@@ -52,6 +52,44 @@ describe('entity occupancy', () => {
     expect(world.entityTileOccupants.size).toBe(0);
   });
 
+  test('players do not block other players movement tiles', () => {
+    const world = makeWorldHarness();
+    const alice = new Player('alice', 1.5, 1.5, fakeWs, 1);
+    const bob = new Player('bob', 2.5, 1.5, fakeWs, 2);
+    const map = {
+      isBlocked: () => false,
+      isTileBlockedOnFloor: () => false,
+    };
+    world.players.set(alice.id, alice);
+    world.players.set(bob.id, bob);
+
+    world.rebuildEntityTileOccupants();
+
+    expect(world.entityTileOccupants.size).toBe(2);
+    expect(world.isPlayerMovementTileBlocked(alice, map, 2, 1, 0)).toBe(false);
+  });
+
+  test('player follow paths to the target player tile instead of orbiting adjacent tiles', () => {
+    const world = makeWorldHarness();
+    const alice = new Player('alice', 1.5, 1.5, fakeWs, 1);
+    const bob = new Player('bob', 2.5, 1.5, fakeWs, 2);
+    const map = {
+      isBlocked: () => false,
+      isTileBlockedOnFloor: () => false,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+      findPathForNpc: (_sx: number, _sz: number, gx: number, gz: number) => [{ x: gx, z: gz }],
+    };
+    world.players.set(alice.id, alice);
+    world.players.set(bob.id, bob);
+    world.getPlayerMap = () => map;
+
+    world.rebuildEntityTileOccupants();
+    world.updatePlayerFollow(alice, bob);
+
+    expect(alice.getMoveDestination()).toEqual({ x: 2.5, z: 1.5 });
+  });
+
   test('tick refreshes occupancy after player and NPC movement phases', () => {
     const world = makeWorldHarness();
     const calls: string[] = [];

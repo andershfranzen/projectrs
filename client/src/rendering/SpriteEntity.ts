@@ -305,6 +305,17 @@ export interface SpriteEntityOptions {
   iconUrl?: string;
 }
 
+function updateDynamicTextureIfLive(texture: DynamicTexture): void {
+  try {
+    if (!texture.getInternalTexture()) return;
+    texture.update();
+  } catch {
+    // Best-effort sprite/icon redraw. A late image onload can race Babylon
+    // texture disposal or WebGL context loss; the entity will refresh on the
+    // next icon assignment instead of taking down the whole client.
+  }
+}
+
 /**
  * A billboard sprite entity — a 2D plane that always faces the camera.
  * Used for players, NPCs, items on the ground.
@@ -410,7 +421,7 @@ export class SpriteEntity {
           (ctx as any).textAlign = 'center';
           ctx.fillText(this.label, 64, 104);
         }
-        if (!this.disposed && this.ownedTexture === texture) texture.update();
+        if (!this.disposed && this.ownedTexture === texture) updateDynamicTextureIfLive(texture);
       };
       const mat = new StandardMaterial(`${options.name}_mat`, scene);
       mat.diffuseTexture = texture;
@@ -446,7 +457,7 @@ export class SpriteEntity {
         ctx.fillText(this.label, 64, 126);
       }
 
-      texture.update();
+      updateDynamicTextureIfLive(texture);
 
       const mat = new StandardMaterial(`${options.name}_mat`, scene);
       mat.diffuseTexture = texture;
@@ -488,7 +499,7 @@ export class SpriteEntity {
         ctx.textAlign = 'center';
         ctx.fillText(this.label, 64, 104);
       }
-      if (!this.disposed && this.ownedTexture === tex) tex.update();
+      if (!this.disposed && this.ownedTexture === tex) updateDynamicTextureIfLive(tex);
     };
     img.src = url;
   }

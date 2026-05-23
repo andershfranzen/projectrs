@@ -47,6 +47,7 @@ export interface TexturePlane {
   textureCutAngle?: number
   tintColor?: { r: number; g: number; b: number }
   noRoof?: boolean
+  bridge?: boolean
 }
 
 export type MapType = 'overworld' | 'dungeon'

@@ -21,6 +21,14 @@ interface GroundItemData {
 
 export { type GroundItemData };
 
+interface NpcCreateOptions {
+  render3D?: boolean;
+  tileSize?: number;
+  floor?: number;
+  y?: number;
+  stationary?: boolean;
+}
+
 export class EntityManager {
   private scene: Scene;
   private getHeight: (x: number, z: number, floor?: number, currentY?: number) => number;
@@ -126,7 +134,15 @@ export class EntityManager {
     return true;
   }
 
-  createNpc(entityId: number, defId: number, x: number, z: number, render3D: boolean = false, tileSize: number = 1, floor: number = 0, y?: number): Npc3DEntity | CharacterEntity | null {
+  createNpc(entityId: number, defId: number, x: number, z: number, options: NpcCreateOptions = {}): Npc3DEntity | CharacterEntity | null {
+    const {
+      render3D = false,
+      tileSize = 1,
+      floor = 0,
+      y,
+      stationary: stationaryFromDef = false,
+    } = options;
+
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
     // floating label is correct from frame 1.
@@ -160,12 +176,15 @@ export class EntityManager {
     // so authoring several guards/shopkeepers does not parse 15 GLBs per NPC.
     const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
     const combat = profile?.combat ?? false;
+    const stationary = stationaryFromDef || (profile?.stationary ?? false);
     const anims: { name: string; path: string }[] = combat
       ? [...NPC_COMBAT_ANIMATIONS]
-      : [
-          { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
-          { name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` },
-        ];
+      : stationary
+        ? [{ name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` }]
+        : [
+            { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+            { name: 'walk', path: `${CHARACTER_ANIM_DIR}/walk.glb` },
+          ];
 
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,
@@ -350,13 +369,15 @@ export class EntityManager {
 
   // --- Entity removal ---
 
-  removeRemotePlayer(entityId: number): void {
+  removeRemotePlayer(entityId: number, forgetCachedState: boolean = false): void {
     const character = this.remotePlayers.get(entityId);
     if (character) {
       character.dispose();
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
+    }
+    if (forgetCachedState) {
       this.remoteAppearances.delete(entityId);
       this.remoteCombatLevels.delete(entityId);
       this.remoteEquipment.delete(entityId);
@@ -606,6 +627,9 @@ export class EntityManager {
     this.remoteAppearances.clear();
     this.remoteEquipment.clear();
     this.remoteStances.clear();
+    this.remoteCombatLevels.clear();
+    this.playerNames.clear();
+    this.nameToEntityId.clear();
 
     for (const [, sprite] of this.npcSprites) sprite.dispose();
     this.npcSprites.clear();

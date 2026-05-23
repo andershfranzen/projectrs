@@ -9,7 +9,8 @@
  *
  * This helper takes the raw texture planes and infers per-floor walkable tile
  * coverage by:
- *  1. Filtering to "flat" planes (rotation.x ≈ ±π/2 — they're horizontal).
+ *  1. Filtering to walkable horizontal-ish planes. Authored bridge planes may
+ *     be modest ramps; normal planes must be nearly flat.
  *  2. Clustering by Y so each set of co-planar planes becomes one floor.
  *  3. Cluster index 0 is the ground level (handled by terrain), 1+ are upper
  *     floors. For each elevated plane, its tile-aligned bounding box is added
@@ -232,6 +233,16 @@ export interface ElevatedTileSourcePlane extends DerivedFloorTilesPlane {
   /** Author flag: this plane must never trigger indoor / roof-culling
    *  detection (used for bridges and outdoor walkable surfaces). */
   noRoof?: boolean;
+  /** Author flag: this plane is an explicit walkable bridge/walkway. */
+  bridge?: boolean;
+}
+
+export function isWalkableElevatedPlane(plane: ElevatedTileSourcePlane): boolean {
+  const rx = plane.rotation?.x ?? 0;
+  const flatDelta = Math.abs(Math.abs(rx) - Math.PI / 2);
+  // Explicit bridge planes may be modest ramps. Keep the tolerance narrow
+  // enough that vertical wall planes cannot become walkable by accident.
+  return flatDelta < (plane.bridge ? 0.4 : 0.1);
 }
 
 export function deriveElevatedFloorTiles(
@@ -250,9 +261,7 @@ export function deriveElevatedFloorTiles(
   if (!planes || planes.length === 0) return result;
 
   for (const plane of planes) {
-    const rx = plane.rotation?.x ?? 0;
-    const isFlat = Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1;
-    if (!isFlat) continue;
+    if (!isWalkableElevatedPlane(plane)) continue;
 
     const px = plane.position?.x ?? 0;
     const py = plane.position?.y ?? 0;
@@ -309,7 +318,7 @@ export function deriveElevatedFloorTiles(
         // floor plane auto-bridges, and walking under the overhang
         // teleports the player straight up to the upper floor. 1.0 covers
         // genuine walkways while excluding upper floors.
-        const isBridge = wasBlocking || py < terrainH + 1.0;
+        const isBridge = !!plane.bridge || wasBlocking || py < terrainH + 1.0;
 
         const isNoRoof = !!plane.noRoof;
         const existing = result.get(idx);

@@ -130,6 +130,7 @@ export class GameManager {
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
+  private static readonly RANGED_ATTACK_DISTANCE = 7;
   private static readonly MOBILE_LANDSCAPE_CAMERA_QUERY =
     '(max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
   private static readonly DESKTOP_CAMERA_ASPECT_CAP = 980 / 500;
@@ -276,7 +277,8 @@ export class GameManager {
   private localAppearance: PlayerAppearance | null = null;
   /** The server sends MAP_CHANGE as part of login/session placement. That
    *  first map load is not player-facing travel, so don't spam chat with
-   *  "Entered Kcmap." on sign-in. Later transitions can still announce. */
+   *  "Entered Kcmap." on sign-in. Later transitions only announce dungeon
+   *  exits back to the overworld. */
   private hasHandledInitialMapChange: boolean = false;
   private suppressNextMapEntryMessage: boolean = false;
 
@@ -2369,12 +2371,26 @@ export class GameManager {
       const maxHealth = v[3] ?? this.playerMaxHealth;
       const serverTick = v[4] ?? -1;
       const serverMoving = (v[5] ?? 0) === 1;
+      const hasAppearance = v.length >= 13 && v[6] >= 0;
+      const syncAppearance: PlayerAppearance | null = hasAppearance ? {
+        shirtColor: v[6],
+        pantsColor: v[7],
+        shoesColor: v[8],
+        hairColor: v[9],
+        beltColor: v[10],
+        skinColor: v[11],
+        hairStyle: v[12],
+      } : null;
 
       this.lastSelfAuthorityAt = performance.now();
       this.selfAuthorityGraceUntil = 0;
       this.lastSelfServerTick = serverTick;
       if (!this.pendingHealthApply.has(this.localPlayerId)) {
         this.applyLocalHealth(health, maxHealth, { clearPendingImpact: health >= maxHealth });
+      }
+      if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
+        this.cacheLocalAppearance(syncAppearance);
+        if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
       }
 
       const dx = serverX - this.playerX;
@@ -2387,8 +2403,7 @@ export class GameManager {
       if (maxAxisDelta <= reconcileDist) return;
 
       const hiddenCatchup = this._hiddenSinceMs !== 0;
-      const hardStoppedCorrection = !serverMoving && !serverTileOnActiveStep;
-      this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup || hardStoppedCorrection);
+      this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
     });
 
     this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
@@ -3252,7 +3267,7 @@ export class GameManager {
             { x: lastX, z: lastZ },
           ];
         } else {
-          this.reconcileLocalPlayerToServer(lastX, lastZ, true);
+          this.reconcileLocalPlayerToServer(lastX, lastZ, false);
         }
       }
     });
@@ -3374,6 +3389,9 @@ export class GameManager {
 
     const isInitialPlacement = !this.hasHandledInitialMapChange;
     const mapAlreadyLoaded = this.chunkManager.isLoaded() && this.chunkManager.getMapId() === mapId;
+    const previousMapId = this.chunkManager.getMapId();
+    const previousMapMeta = this.chunkManager.getMeta();
+    const wasDungeon = this.isDungeonMap(previousMapId, previousMapMeta);
 
     this.playerX = newX;
     this.playerZ = newZ;
@@ -3441,9 +3459,21 @@ export class GameManager {
       this.suppressNextMapEntryMessage = false;
     } else if (this.suppressNextMapEntryMessage) {
       this.suppressNextMapEntryMessage = false;
-    } else if (this.chatPanel) {
-      this.chatPanel.addSystemMessage(`Entered ${this.chunkManager.getMeta()?.name || mapId}.`, '#0f0');
+    } else if (wasDungeon && this.isOverworldMap(mapId, this.chunkManager.getMeta())) {
+      this.chatPanel?.addSystemMessage('Entered overworld', '#0f0');
     }
+  }
+
+  private isDungeonMap(mapId: string, meta: { id?: string; mapType?: string; dungeon?: boolean } | null): boolean {
+    return meta?.dungeon === true
+      || meta?.mapType === 'dungeon'
+      || /\bdungeon\b/i.test(mapId)
+      || mapId === 'underground';
+  }
+
+  private isOverworldMap(mapId: string, meta: { id?: string; mapType?: string; dungeon?: boolean } | null): boolean {
+    if (meta?.dungeon === true || meta?.mapType === 'dungeon') return false;
+    return meta?.mapType === 'overworld' || mapId === 'kcmap';
   }
 
   private setupContextMenu(canvas: HTMLCanvasElement): void {
@@ -4389,14 +4419,22 @@ export class GameManager {
     }
 
     if (target) {
-      const pathResult = this.findPathToNpcInteraction(npcEntityId, target, 1.5);
-      const path = pathResult.path;
-      if (path.length > 0) {
-        this.startPredictedPath(path, pathResult.preserveCurrentStep);
-        if (this.destMarker) this.destMarker.isVisible = false;
-        this.minimap?.clearDestination();
-      } else {
+      const attackRange = this.getLocalNpcAttackRange();
+      const rangeMode = this.getLocalNpcAttackRangeMode();
+      if (this.isPointInNpcInteractionRange(npcEntityId, target, this.playerX, this.playerZ, attackRange, rangeMode)) {
+        this.clearPredictedPath(true);
+        if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
         this.faceLocalPlayerToward(target.x, target.z);
+      } else {
+        const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode);
+        const path = pathResult.path;
+        if (path.length > 0) {
+          this.startPredictedPath(path, pathResult.preserveCurrentStep);
+          if (this.destMarker) this.destMarker.isVisible = false;
+          this.minimap?.clearDestination();
+        } else {
+          this.faceLocalPlayerToward(target.x, target.z);
+        }
       }
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, npcEntityId));
@@ -4754,12 +4792,25 @@ export class GameManager {
       .filter(tile => !this.isTileBlocked(tile.x, tile.z) && hasLineOfWalk(tile.x, tile.z));
   }
 
-  private isPointInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, x: number, z: number, range: number): boolean {
+  private isPointInNpcInteractionRange(
+    npcEntityId: number,
+    target: { x: number; z: number },
+    x: number,
+    z: number,
+    range: number,
+    mode: 'euclidean' | 'chebyshev' = 'euclidean',
+  ): boolean {
     const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
+    if (mode === 'chebyshev') return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
     return Math.hypot(fp.dx, fp.dz) <= range;
   }
 
-  private findPathToNpcInteraction(npcEntityId: number, target: { x: number; z: number }, requiredRange: number = NPC_INTERACTION_RANGE): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
+  private findPathToNpcInteraction(
+    npcEntityId: number,
+    target: { x: number; z: number },
+    requiredRange: number = NPC_INTERACTION_RANGE,
+    rangeMode: 'euclidean' | 'chebyshev' = 'euclidean',
+  ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const candidates = this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
       .map(tile => ({
         x: tile.x,
@@ -4783,12 +4834,27 @@ export class GameManager {
         // adjacent tile is unreachable. For large NPCs, accepting that here
         // can walk the player near the body but still outside attack/talk
         // range, so keep trying other sides unless the terminal tile works.
-        if (requiredRange > NPC_INTERACTION_RANGE && this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange)) {
+        if (requiredRange > NPC_INTERACTION_RANGE && this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange, rangeMode)) {
           return result;
         }
       }
     }
     return { path: [], preserveCurrentStep: false };
+  }
+
+  private isLocalRangedWeapon(): boolean {
+    const weaponId = this.sidePanel?.getEquipItem(0) ?? 0;
+    const weaponDef = this.itemDefsCache.get(weaponId);
+    const style = weaponDef?.weaponStyle;
+    return style === 'bow' || style === 'crossbow';
+  }
+
+  private getLocalNpcAttackRange(): number {
+    return this.isLocalRangedWeapon() ? GameManager.RANGED_ATTACK_DISTANCE : 1.5;
+  }
+
+  private getLocalNpcAttackRangeMode(): 'euclidean' | 'chebyshev' {
+    return this.isLocalRangedWeapon() ? 'chebyshev' : 'euclidean';
   }
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
@@ -6072,8 +6138,14 @@ export class GameManager {
   private tryMaterializeNpc(entityId: number, npcDefId: number, x: number, z: number, floor: number = 0, y?: number): void {
     if (this.entities.npcSprites.has(entityId)) return;
     const render3D = this.entities.shouldRender3DNpc(entityId, x, z, this.playerX, this.playerZ);
-    const tileSize = this.npcDefsCache.get(npcDefId)?.size ?? 1;
-    const created = this.entities.createNpc(entityId, npcDefId, x, z, render3D, tileSize, floor, y);
+    const npcDef = this.npcDefsCache.get(npcDefId);
+    const created = this.entities.createNpc(entityId, npcDefId, x, z, {
+      render3D,
+      tileSize: npcDef?.size ?? 1,
+      floor,
+      y,
+      stationary: npcDef?.stationary === true,
+    });
     if (created instanceof CharacterEntity) {
       this.applyCachedNpcRigState(entityId, created);
     }
@@ -6404,16 +6476,14 @@ export class GameManager {
     if (this.combatTargetId < 0) return;
     const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
     if (!npcTarget) return;
-    const fp = this.distToNpcFootprint(this.combatTargetId, npcTarget, this.playerX, this.playerZ);
-    const dx = fp.dx;
-    const dz = fp.dz;
-    const dist = Math.hypot(dx, dz);
-    const inRange = dist <= 1.5;
+    const attackRange = this.getLocalNpcAttackRange();
+    const rangeMode = this.getLocalNpcAttackRangeMode();
+    const inRange = this.isPointInNpcInteractionRange(this.combatTargetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode);
     if (inRange) return;
-    const closeEnough = dist <= 3;
-    if ((this.pathIndex < this.path.length && closeEnough) || this._combatPathTimer > 0) return;
+    if (this.pathIndex < this.path.length) return;
+    if (this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
-    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, 1.5);
+    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, attackRange, rangeMode);
     const newPath = pathResult.path;
     if (newPath.length > 0) {
       this.startPredictedPath(newPath, pathResult.preserveCurrentStep);
@@ -6435,7 +6505,7 @@ export class GameManager {
     const dx = target.position.x - this.playerX;
     const dz = target.position.z - this.playerZ;
     const dist = Math.max(Math.abs(dx), Math.abs(dz));
-    if (dist <= 1.5) {
+    if (dist <= 0.2) {
       this.localPlayer.lockFaceTowardXZ(target.position.x, target.position.z);
       return;
     }
@@ -6444,28 +6514,13 @@ export class GameManager {
 
     const targetTileX = Math.floor(target.position.x);
     const targetTileZ = Math.floor(target.position.z);
-    const candidates: { x: number; z: number }[] = [];
-    for (let oz = -1; oz <= 1; oz++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        if (ox === 0 && oz === 0) continue;
-        const tx = targetTileX + ox;
-        const tz = targetTileZ + oz;
-        if (!this.isTileBlocked(tx, tz)) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
+    if (!this.isTileBlocked(targetTileX, targetTileZ)) {
+      const pathResult = this.findPathFromMovementAnchor(targetTileX + 0.5, targetTileZ + 0.5);
+      if (pathResult.path.length > 0) {
+        this.startLocalPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
       }
-    }
-    candidates.sort((a, b) => {
-      const da = Math.hypot(a.x - this.playerX, a.z - this.playerZ);
-      const db = Math.hypot(b.x - this.playerX, b.z - this.playerZ);
-      return da - db;
-    });
-
-    for (const candidate of candidates) {
-      const pathResult = this.findPathFromMovementAnchor(candidate.x, candidate.z);
-      if (pathResult.path.length === 0) continue;
-      this.startLocalPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
       if (this.destMarker) this.destMarker.isVisible = false;
       this.minimap?.clearDestination();
-      break;
     }
   }
 
@@ -6632,24 +6687,6 @@ export class GameManager {
   private updateLocalPlayerMovement(dt: number, camPos: Vector3 | null): void {
     if (this.pathIndex >= this.path.length || !this.localPlayer) return;
     if (!this.localPlayer.isWalking()) this.localPlayer.startWalking();
-
-    if (this.combatTargetId >= 0) {
-      const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
-      if (npcTarget) {
-        const fp = this.distToNpcFootprint(this.combatTargetId, npcTarget, this.playerX, this.playerZ);
-        const toDist = Math.hypot(fp.dx, fp.dz);
-        if (toDist <= 1.5) {
-          // In melee range — halt the path. Don't snap to tile center: a
-          // mid-tile fractional position is fine, and snapping is the visible
-          // "teleport" players see when entering combat. Next path will use
-          // (playerX, playerZ) as tileFrom so movement resumes seamlessly.
-          this.pathIndex = this.path.length;
-          this.localPlayer.stopWalking();
-          this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
-          return;
-        }
-      }
-    }
 
     if (this.pathIndex >= this.path.length) return;
     const target = this.path[this.pathIndex];

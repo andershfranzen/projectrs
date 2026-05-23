@@ -229,14 +229,10 @@ export class World {
   /** Tiles blocked by non-depleted world objects, keyed by map+floor+tile. */
   private blockedObjectTiles: Set<string> = new Set();
   // Tile occupancy for entities (players + NPC footprints), rebuilt at the
-  // top of each tick. Used to keep combatants from stacking on the same tile
-  // — players' click paths and NPC chase steps both check this set so they
-  // settle adjacent (Chebyshev 1) instead of stacked (Chebyshev 0).
+  // top of each tick. NPC chase/wander checks this so NPCs do not stack with
+  // entities, but player movement intentionally ignores player occupancy:
+  // players are allowed to walk through and stand on the same tile.
   private entityTileOccupants: Set<string> = new Set();
-  // Player-only occupancy. Player movement checks this instead of
-  // entityTileOccupants so wandering NPCs cannot physically trap players in
-  // narrow paths.
-  private playerTileOccupants: Set<string> = new Set();
 
   private currentTick: number = 0;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -760,15 +756,12 @@ export class World {
     tileX: number,
     tileZ: number,
     floor: number = player.currentFloor,
-    ignorePlayerTileKey?: string,
   ): boolean {
     const tileKey = this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, floor);
     const staticBlocked = floor === 0
       ? map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(tileKey)
       : map.isTileBlockedOnFloor(tileX, tileZ, floor) || this.blockedObjectTiles.has(tileKey);
-    if (staticBlocked) return true;
-    if (tileKey === ignorePlayerTileKey) return false;
-    return this.playerTileOccupants?.has(tileKey) ?? false;
+    return staticBlocked;
   }
 
   private usesCornerObjectInteraction(obj: WorldObject): boolean {
@@ -2023,14 +2016,11 @@ export class World {
    *  footprints span size×size tiles. */
   private rebuildEntityTileOccupants(): void {
     if (!this.entityTileOccupants) this.entityTileOccupants = new Set();
-    if (!this.playerTileOccupants) this.playerTileOccupants = new Set();
     this.entityTileOccupants.clear();
-    this.playerTileOccupants.clear();
     for (const [, player] of this.players) {
       if (player.disconnected) continue;
       const key = this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor);
       this.entityTileOccupants.add(key);
-      this.playerTileOccupants.add(key);
     }
     for (const [, npc] of this.npcs) {
       if (npc.dead) continue;
@@ -2247,8 +2237,8 @@ export class World {
 
     const dx = target.position.x - player.position.x;
     const dz = target.position.y - player.position.y;
-    if (Math.max(Math.abs(dx), Math.abs(dz)) <= 1.5) {
-      if (!target.hasMoveQueue()) player.clearMoveQueue();
+    if (!target.hasMoveQueue() && Math.max(Math.abs(dx), Math.abs(dz)) <= 0.2) {
+      player.clearMoveQueue();
       return;
     }
 
@@ -2258,7 +2248,7 @@ export class World {
     if (player.hasMoveQueue()) {
       const queuedDest = player.getMoveDestination();
       const queuedDestStillUseful = queuedDest
-        && Math.max(Math.abs(queuedDest.x - targetGoalX), Math.abs(queuedDest.z - targetGoalZ)) <= 1.5;
+        && Math.max(Math.abs(queuedDest.x - targetGoalX), Math.abs(queuedDest.z - targetGoalZ)) <= 0.2;
       if (queuedDestStillUseful) return;
       player.clearMoveQueue();
     }
@@ -2269,35 +2259,21 @@ export class World {
     const targetTileX = Math.floor(targetGoalX);
     const targetTileZ = Math.floor(targetGoalZ);
     const floor = player.currentFloor;
-    const selfTileKey = this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, floor);
-    const candidates: { x: number; z: number }[] = [];
-    for (let oz = -1; oz <= 1; oz++) {
-      for (let ox = -1; ox <= 1; ox++) {
-        if (ox === 0 && oz === 0) continue;
-        const tx = targetTileX + ox;
-        const tz = targetTileZ + oz;
-        if (!this.isPlayerMovementTileBlocked(player, map, tx, tz, floor, selfTileKey)) candidates.push({ x: tx + 0.5, z: tz + 0.5 });
-      }
+    if (this.isPlayerMovementTileBlocked(player, map, targetTileX, targetTileZ, floor)) {
+      player.nextFollowRepathTick = this.currentTick + 2;
+      return;
     }
-    candidates.sort((a, b) => {
-      const da = Math.hypot(a.x - player.position.x, a.z - player.position.y);
-      const db = Math.hypot(b.x - player.position.x, b.z - player.position.y);
-      return da - db;
-    });
-
     const tileBlocked = (x: number, z: number): boolean => {
-      return this.isPlayerMovementTileBlocked(player, map, x, z, floor, selfTileKey);
+      return this.isPlayerMovementTileBlocked(player, map, x, z, floor);
     };
     const wallBlocked = floor === 0
       ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
       : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
-    for (const dest of candidates) {
-      const path = map.findPathForNpc(player.position.x, player.position.y, dest.x, dest.z, tileBlocked, 200, wallBlocked);
-      if (path.length > 0) {
-        player.setMoveQueue(path);
-        player.nextFollowRepathTick = this.currentTick + 1;
-        return;
-      }
+    const path = map.findPathForNpc(player.position.x, player.position.y, targetTileX + 0.5, targetTileZ + 0.5, tileBlocked, 200, wallBlocked);
+    if (path.length > 0) {
+      player.setMoveQueue(path);
+      player.nextFollowRepathTick = this.currentTick + 1;
+      return;
     }
     player.nextFollowRepathTick = this.currentTick + 2;
   }
@@ -6719,6 +6695,7 @@ export class World {
     // Phase 2: Viewer-first iteration — all sends to each viewer are consecutive
     for (const [, viewer] of this.players) {
       if (viewer.disconnected) continue;
+      const a = viewer.appearance;
       this.sendToPlayer(
         viewer,
         ServerOpcode.PLAYER_SELF_SYNC,
@@ -6728,6 +6705,13 @@ export class World {
         viewer.maxHealth,
         this.currentTick & 0x7fff,
         viewer.hasMoveQueue() ? 1 : 0,
+        a ? a.shirtColor : -1,
+        a ? a.pantsColor : -1,
+        a ? a.shoesColor : -1,
+        a ? a.hairColor  : -1,
+        a ? a.beltColor  : -1,
+        a ? a.skinColor  : -1,
+        a ? a.hairStyle  : -1,
       );
       const cm = this.chunkManagers.get(viewer.currentMapLevel);
       if (!cm) continue;

@@ -546,6 +546,7 @@ export interface TexturePlane {
   textureCutAngle?: number;
   tintColor?: { r: number; g: number; b: number }; // RGB 0-1, default white
   noRoof?: boolean; // If true, never treated as a roof/ceiling for indoor detection
+  bridge?: boolean; // If true, snap as a floor-0 bridge regardless of terrain classification
 }
 
 export interface PlacedObject {

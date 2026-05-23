@@ -774,7 +774,7 @@
       "npcId": 16,
       "x": 71.5,
       "z": 25.5,
-      "wanderRange": 1,
+      "wanderRange": 0,
       "aggressive": false,
       "appearance": {
         "shirtColor": 7,
@@ -792,7 +792,7 @@
       "npcId": 16,
       "x": 72.5,
       "z": 25.5,
-      "wanderRange": 1,
+      "wanderRange": 0,
       "aggressive": false,
       "appearance": {
         "shirtColor": 7,

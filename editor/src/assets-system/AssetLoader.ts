@@ -121,9 +121,29 @@ function cloneFromCache(path: string): TransformNode | null {
   return instance
 }
 
+function nextFrame(): Promise<void> {
+  return new Promise(resolve => {
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve())
+    else setTimeout(resolve, 0)
+  })
+}
+
 /** Pre-warm the cache for a set of paths. After this, cloneAssetModelSync is safe. */
-export async function warmAssetCache(paths: string[]): Promise<void> {
-  await Promise.all(paths.map(p => loadAssetModel(p).then(inst => { if (inst) inst.dispose() }).catch(() => null)))
+export async function warmAssetCache(paths: string[], concurrency = 2): Promise<void> {
+  const uniquePaths = [...new Set(paths)].filter(Boolean)
+  let next = 0
+
+  async function worker(): Promise<void> {
+    while (next < uniquePaths.length) {
+      const path = uniquePaths[next++]
+      const inst = await loadAssetModel(path).catch(() => null)
+      if (inst) inst.dispose()
+      await nextFrame()
+    }
+  }
+
+  const workerCount = Math.max(1, Math.min(concurrency, uniquePaths.length))
+  await Promise.all(Array.from({ length: workerCount }, worker))
 }
 
 export function isAssetCached(path: string): boolean {
