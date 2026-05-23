@@ -318,6 +318,7 @@ export class CharacterEntity {
   private boneRestRotations: Map<string, Quaternion> = new Map();
   private armatureNode: TransformNode | null = null;
   private skinnedArmorMeshes: Map<string, AbstractMesh[]> = new Map();
+  private skinnedArmorRoots: Map<string, TransformNode> = new Map();
   private skinnedArmorItemIds: Map<string, number> = new Map();
 
   // Head meshes — collected during load for hide/show under full helmets
@@ -1638,6 +1639,49 @@ export class CharacterEntity {
         this.playAnim(this.readyanim, true);
       }
     }
+
+    this.updateCapeMorphTargets();
+  }
+
+  private updateCapeMorphTargets(): void {
+    const meshes = this.skinnedArmorMeshes.get('cape');
+    if (!meshes) return;
+
+    const walking =
+      this.currentState === AnimState.Walk
+      || (this.attackIsLayered && (this.activeWalkLowerGroup?.isPlaying ?? false));
+
+    let back = 0;
+    let left = 0;
+    let right = 0;
+    if (walking) {
+      const walkName = this.attackIsLayered
+        ? this.activeWalkBase
+        : (isWalkVariant(this.currentAnimName) ? this.currentAnimName : this.walkanim);
+      const group = this.animGroups.get(walkName);
+      const range = group ? group.to - group.from : 0;
+      const fps = group?.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+      const cycleSec = range > 0 ? range / fps : 1;
+      const elapsedSec = (performance.now() - this.walkCycleStartMs) / 1000;
+      const phase = cycleSec > 0 ? (elapsedSec % cycleSec) / cycleSec : 0;
+      const stride = Math.sin(phase * Math.PI * 2);
+      const push = (1 - Math.cos(phase * Math.PI * 4)) * 0.5;
+      back = 0.55 + push * 0.35;
+      left = Math.max(0, -stride) * 0.35;
+      right = Math.max(0, stride) * 0.35;
+    }
+
+    for (const mesh of meshes) {
+      const manager = mesh.morphTargetManager;
+      if (!manager) continue;
+      for (let i = 0; i < manager.numTargets; i++) {
+        const target = manager.getTarget(i);
+        const name = target.name.toLowerCase();
+        if (name === 'cape_walk_back') target.influence = back;
+        else if (name === 'cape_walk_left') target.influence = left;
+        else if (name === 'cape_walk_right') target.influence = right;
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -1744,11 +1788,16 @@ export class CharacterEntity {
     // 57 bones — Mixamo base + 25 finger bones — while a body might only
     // have 32). The shared helper does the name-based remap + vertex-buffer
     // rewrite + skeleton swap; we wrap with slot/visibility bookkeeping.
+    const root = new TransformNode(`skinned_${slot}_root`, this.scene);
+    root.parent = this.armatureNode;
+    root.rotationQuaternion = null;
     const { meshes: kept } = remapSkinningToSkeleton(meshes, armorSkeleton, this.skeleton, this.armatureNode, {
       disposeSourceSkeleton: true,
       warnOnUnmapped: true,
     });
+    for (const mesh of kept) mesh.parent = root;
     this.skinnedArmorMeshes.set(slot, kept);
+    this.skinnedArmorRoots.set(slot, root);
     this.skinnedArmorItemIds.set(slot, itemId);
     if (slot === 'head') this.setHeadVisible(false);
     if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
@@ -1762,6 +1811,11 @@ export class CharacterEntity {
       for (const mesh of meshes) mesh.dispose();
       this.skinnedArmorMeshes.delete(slot);
       this.skinnedArmorItemIds.delete(slot);
+    }
+    const root = this.skinnedArmorRoots.get(slot);
+    if (root) {
+      root.dispose();
+      this.skinnedArmorRoots.delete(slot);
     }
     if (slot === 'head' && this.getGearItemId('head') === -1) this.setHeadVisible(true);
     if (slot === 'body') this.setBodyVisible(true);
@@ -1881,7 +1935,7 @@ export class CharacterEntity {
         mesh.setVerticesData(VertexBuffer.MatricesWeightsKind, weightsF32, false);
         mesh.numBoneInfluencers = 4;
         mesh.skeleton = this.skeleton;
-        mesh.parent = this.armatureNode;
+        mesh.parent = null;
         mesh.rotationQuaternion = null;
         mesh.position.set(0, 0, 0);
         mesh.rotation.set(0, 0, 0);
@@ -1891,7 +1945,12 @@ export class CharacterEntity {
 
       if (shouldAttach && !shouldAttach()) return false;
       this.detachSkinnedArmor(slot);
+      const root = new TransformNode(`skinned_${slot}_root`, this.scene);
+      root.parent = this.armatureNode;
+      root.rotationQuaternion = null;
+      for (const mesh of kept) mesh.parent = root;
       this.skinnedArmorMeshes.set(slot, kept);
+      this.skinnedArmorRoots.set(slot, root);
       this.skinnedArmorItemIds.set(slot, itemId);
       if (slot === 'head') this.setHeadVisible(false);
       if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
@@ -1905,24 +1964,22 @@ export class CharacterEntity {
   }
 
   applySkinnedArmorTransform(slot: string, override: { localPosition?: { x: number; y: number; z: number }; localRotation?: { x: number; y: number; z: number }; scale?: number }): void {
-    const meshes = this.skinnedArmorMeshes.get(slot);
-    if (!meshes) return;
-    for (const mesh of meshes) {
-      if (override.localPosition) {
-        mesh.position.set(override.localPosition.x, override.localPosition.y, override.localPosition.z);
-      }
-      if (override.localRotation) {
-        mesh.rotation.set(override.localRotation.x, override.localRotation.y, override.localRotation.z);
-      }
-      if (override.scale != null) {
-        mesh.scaling.set(override.scale, override.scale, override.scale);
-      }
+    const root = this.skinnedArmorRoots.get(slot);
+    if (!root) return;
+    if (override.localPosition) {
+      root.position.set(override.localPosition.x, override.localPosition.y, override.localPosition.z);
+    }
+    if (override.localRotation) {
+      root.rotation.set(override.localRotation.x, override.localRotation.y, override.localRotation.z);
+    }
+    if (override.scale != null) {
+      root.scaling.set(override.scale, override.scale, override.scale);
     }
   }
 
   /** Get the transform node for gear in a slot (for debug panel). */
   getGearNode(slot: string): import('@babylonjs/core/Meshes/transformNode').TransformNode | null {
-    return this.gearAttachments.get(slot)?.node ?? this.skinnedArmorMeshes.get(slot)?.[0] ?? null;
+    return this.gearAttachments.get(slot)?.node ?? this.skinnedArmorRoots.get(slot) ?? null;
   }
 
   getSkinnedArmorMeshes(slot: string): AbstractMesh[] | undefined {
