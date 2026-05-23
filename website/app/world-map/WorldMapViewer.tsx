@@ -308,22 +308,6 @@ function drawChunkGrid(ctx: CanvasRenderingContext2D, map: WorldMapData): void {
   ctx.restore();
 }
 
-function drawLabel(ctx: CanvasRenderingContext2D, text: string, x: number, z: number): void {
-  if (!text) return;
-  const label = text.length > 18 ? `${text.slice(0, 17)}...` : text;
-  ctx.save();
-  ctx.font = '700 6px Arial, Helvetica, sans-serif';
-  ctx.textBaseline = 'middle';
-  const width = ctx.measureText(label).width + 5;
-  const left = x + 5;
-  const top = z - 7;
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
-  ctx.fillRect(left, top, width, 9);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(label, left + 2.5, top + 4.5);
-  ctx.restore();
-}
-
 function drawNpcSpawn(ctx: CanvasRenderingContext2D, spawn: WorldMapNpcSpawn): void {
   ctx.save();
   ctx.globalAlpha = spawn.alive ? 1 : 0.55;
@@ -426,7 +410,6 @@ function drawOnlinePlayer(ctx: CanvasRenderingContext2D, player: WorldMapPlayer)
   ctx.beginPath();
   ctx.arc(player.x, player.z, PLAYER_MARKER_RING_RADIUS, 0, Math.PI * 2);
   ctx.stroke();
-  drawLabel(ctx, player.username, player.x, player.z);
   ctx.restore();
 }
 
