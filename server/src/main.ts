@@ -2,8 +2,8 @@ import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE,
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
-import type { KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
-import { defaultKCTile } from '@projectrs/shared';
+import type { FloorLayerData, KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, TileType } from '@projectrs/shared';
 import { World } from './World';
 import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
@@ -495,6 +495,384 @@ function reassembleChunkedMapData(mapDir: string, mapFile: KCMapFile): void {
   const chunkedHeights = loadChunkedHeights(mapDir, w, h);
   if (chunkedHeights) mapFile.map.heights = chunkedHeights;
 }
+
+type WorldMapTileCode = 'g' | 'd' | 'p' | 's' | 'r' | 'w' | 'm' | 'u';
+type WorldMapObjectKind = 'building' | 'wall' | 'vegetation' | 'resource' | 'interactive' | 'decor';
+
+const WORLD_MAP_SOURCE_MAP_ID = 'kcmap';
+const WORLD_MAP_PUBLIC_MAP_ID = 'world-map';
+
+interface PublicWorldMap {
+  id: string;
+  sourceMapId: string;
+  name: string;
+  width: number;
+  height: number;
+  waterLevel: number;
+  spawnPoint: { x: number; z: number } | null;
+  tileRows: string[];
+  tileCounts: Record<WorldMapTileCode, number>;
+  objects: PublicWorldMapObject[];
+  walls: PublicWorldMapWall[];
+  objectCount: number;
+  wallCount: number;
+  buildingCount: number;
+  npcSpawns: PublicWorldMapNpcSpawn[];
+  onlinePlayers: PublicWorldMapPlayer[];
+  onlinePlayerCount: number;
+  updatedAt: number;
+}
+
+interface PublicWorldMapNpcSpawn {
+  x: number;
+  z: number;
+  floor: number;
+  npcId: number;
+  name: string;
+  alive: boolean;
+}
+
+interface PublicWorldMapPlayer {
+  x: number;
+  z: number;
+  floor: number;
+  username: string;
+}
+
+interface PublicWorldMapObject {
+  x: number;
+  z: number;
+  y: number;
+  rotationY: number;
+  assetId: string;
+  kind: WorldMapObjectKind;
+  size: number;
+}
+
+interface PublicWorldMapWall {
+  x: number;
+  z: number;
+  floor: number;
+  edges: number;
+}
+
+interface PublicWorldMapLiveSnapshot {
+  ok: true;
+  generatedAt: number;
+  onlinePlayers: PublicWorldMapPlayer[];
+  onlinePlayerCount: number;
+}
+
+function readJsonFile<T>(filePath: string): T | null {
+  try {
+    return JSON.parse(readFileSync(filePath, 'utf-8')) as T;
+  } catch {
+    return null;
+  }
+}
+
+function maxMtimeSeconds(paths: string[]): number {
+  let max = 0;
+  for (const path of paths) {
+    try {
+      const stat = statSync(path);
+      max = Math.max(max, Math.floor(stat.mtimeMs / 1000));
+      if (stat.isDirectory()) {
+        for (const child of readdirSync(path)) {
+          max = Math.max(max, maxMtimeSeconds([resolve(path, child)]));
+        }
+      }
+    } catch {
+      // A chunk can disappear while the editor is saving; the next request
+      // will see the settled filesystem state.
+    }
+  }
+  return max;
+}
+
+function getHeightAt(heights: number[][] | null, x: number, z: number): number {
+  return heights?.[z]?.[x] ?? 0;
+}
+
+function visualTileCode(tile: KCTile, heights: number[][] | null, x: number, z: number, waterLevel: number): WorldMapTileCode {
+  const tileType = classifyTileType(
+    tile,
+    {
+      tl: getHeightAt(heights, x, z),
+      tr: getHeightAt(heights, x + 1, z),
+      bl: getHeightAt(heights, x, z + 1),
+      br: getHeightAt(heights, x + 1, z + 1),
+    },
+    waterLevel,
+  );
+
+  if (tileType === TileType.WATER) return 'w';
+  if (tileType === TileType.MUD) return 'm';
+  if (tile.ground === 'path' || tile.ground === 'road') return 'p';
+  if (tileType === TileType.SAND) return 's';
+  if (tileType === TileType.STONE || tile.ground === 'dungeon-floor' || tile.ground === 'dungeon-rock') return 'r';
+  if (tileType === TileType.DIRT) return 'd';
+  if (tileType === TileType.WALL) return 'u';
+  return 'g';
+}
+
+function makeTileRows(mapFile: KCMapFile, mapDir: string, width: number, height: number, waterLevel: number): {
+  rows: string[];
+  counts: Record<WorldMapTileCode, number>;
+} {
+  const tiles = loadChunkedTiles(mapDir, width, height) ?? mapFile.map.tiles ?? [];
+  const heights = loadChunkedHeights(mapDir, width, height) ?? mapFile.map.heights ?? null;
+  const counts: Record<WorldMapTileCode, number> = { g: 0, d: 0, p: 0, s: 0, r: 0, w: 0, m: 0, u: 0 };
+  const rows: string[] = [];
+
+  for (let z = 0; z < height; z++) {
+    let row = '';
+    for (let x = 0; x < width; x++) {
+      const code = visualTileCode(tiles[z]?.[x] ?? defaultKCTile(), heights, x, z, waterLevel);
+      counts[code]++;
+      row += code;
+    }
+    rows.push(row);
+  }
+
+  return { rows, counts };
+}
+
+function publicMapNumber(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function parseWorldMapTileKey(key: string): { x: number; z: number } | null {
+  const [xRaw, zRaw] = key.split(',');
+  const x = Number(xRaw);
+  const z = Number(zRaw);
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+  return { x, z };
+}
+
+function classifyWorldMapObject(obj: PlacedObject, world: World): WorldMapObjectKind {
+  const lower = obj.assetId.toLowerCase();
+  if (
+    lower.includes('roof')
+    || lower.includes('slab')
+    || lower.includes('stair')
+    || lower.includes('ladder')
+    || lower.includes('tile roofing')
+  ) return 'building';
+  if (lower.includes('wall') || lower.includes('fence') || lower.includes('pole') || lower.includes('door')) return 'wall';
+  if (
+    lower.includes('tree')
+    || lower.includes('bush')
+    || lower.includes('grass')
+    || lower.includes('plant')
+    || lower.includes('wheat')
+    || lower.includes('rice')
+  ) return 'vegetation';
+
+  const defId = ASSET_TO_OBJECT_DEF[obj.assetId];
+  const category = defId ? world.data.getObject(defId)?.category : undefined;
+  if (category === 'tree' || category === 'crop') return 'vegetation';
+  if (category === 'rock') return 'resource';
+  if (category === 'door' || category === 'ladder' || category === 'scenery') return 'building';
+  if (category) return 'interactive';
+  if (lower.includes('rock') || lower.includes('ore')) return 'resource';
+  return 'decor';
+}
+
+function buildWorldMapObjects(mapDir: string, mapFile: KCMapFile, world: World): PublicWorldMapObject[] {
+  const objects = loadChunkedObjects(mapDir) ?? mapFile.placedObjects ?? [];
+  return objects
+    .filter((obj) => Number.isFinite(obj.position?.x) && Number.isFinite(obj.position?.z))
+    .map((obj) => {
+      const sx = Number.isFinite(obj.scale?.x) ? Math.abs(obj.scale.x) : 1;
+      const sz = Number.isFinite(obj.scale?.z) ? Math.abs(obj.scale.z) : 1;
+      return {
+        x: publicMapNumber(obj.position.x),
+        z: publicMapNumber(obj.position.z),
+        y: publicMapNumber(Number.isFinite(obj.position.y) ? obj.position.y : 0),
+        rotationY: publicMapNumber(Number.isFinite(obj.rotation?.y) ? obj.rotation.y : 0),
+        assetId: (obj.assetId || 'Unknown').slice(0, 48),
+        kind: classifyWorldMapObject(obj, world),
+        size: publicMapNumber(clampNumber(Math.max(sx, sz, 0.5), 0.5, 4)),
+      };
+    })
+    .sort((a, b) => a.z - b.z || a.x - b.x || a.assetId.localeCompare(b.assetId));
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function addWorldMapWallsFromLayer(target: PublicWorldMapWall[], layer: Partial<FloorLayerData> | null | undefined, floor: number): void {
+  if (!layer?.walls) return;
+  for (const [key, rawEdges] of Object.entries(layer.walls)) {
+    const coords = parseWorldMapTileKey(key);
+    const edges = Number(rawEdges);
+    if (!coords || !Number.isFinite(edges) || edges <= 0) continue;
+    target.push({ x: coords.x, z: coords.z, floor, edges: Math.floor(edges) & 15 });
+  }
+}
+
+function buildWorldMapWalls(mapDir: string): PublicWorldMapWall[] {
+  const wallsFile = readJsonFile<WallsFile>(resolve(mapDir, 'walls.json'));
+  if (!wallsFile) return [];
+
+  const walls: PublicWorldMapWall[] = [];
+  addWorldMapWallsFromLayer(walls, wallsFile, 0);
+  for (const [floorRaw, layer] of Object.entries(wallsFile.floorLayers ?? {})) {
+    const floor = Number(floorRaw);
+    if (!Number.isFinite(floor)) continue;
+    addWorldMapWallsFromLayer(walls, layer, floor);
+  }
+  return walls.sort((a, b) => a.floor - b.floor || a.z - b.z || a.x - b.x);
+}
+
+function countWallEdges(walls: PublicWorldMapWall[]): number {
+  let count = 0;
+  for (const wall of walls) {
+    if (wall.edges & 1) count++;
+    if (wall.edges & 2) count++;
+    if (wall.edges & 4) count++;
+    if (wall.edges & 8) count++;
+  }
+  return count;
+}
+
+function buildWorldMapNpcSpawns(world: World): PublicWorldMapNpcSpawn[] {
+  return [...world.npcs.values()]
+    .filter((npc) => npc.currentMapLevel === WORLD_MAP_SOURCE_MAP_ID)
+    .filter((npc) => Number.isFinite(npc.spawnX) && Number.isFinite(npc.spawnZ))
+    .map((npc) => ({
+      x: publicMapNumber(npc.spawnX),
+      z: publicMapNumber(npc.spawnZ),
+      floor: npc.currentFloor,
+      npcId: npc.npcId,
+      name: (npc.displayName || npc.name || 'NPC').slice(0, 48),
+      alive: !npc.dead,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.z - b.z || a.x - b.x);
+}
+
+function buildWorldMapOnlinePlayers(world: World): PublicWorldMapPlayer[] {
+  return [...world.players.values()]
+    .filter((player) => player.currentMapLevel === WORLD_MAP_SOURCE_MAP_ID)
+    .filter((player) => !player.disconnected && !player.requestIdleLogout)
+    .filter((player) => Number.isFinite(player.position.x) && Number.isFinite(player.position.y))
+    .map((player) => ({
+      x: publicMapNumber(player.position.x),
+      z: publicMapNumber(player.position.y),
+      floor: player.currentFloor,
+      username: (player.name || 'Player').slice(0, 24),
+    }))
+    .sort((a, b) => a.username.localeCompare(b.username));
+}
+
+function buildWorldMapLiveSnapshot(world: World): PublicWorldMapLiveSnapshot {
+  const onlinePlayers = buildWorldMapOnlinePlayers(world);
+  return {
+    ok: true,
+    generatedAt: Math.floor(Date.now() / 1000),
+    onlinePlayers,
+    onlinePlayerCount: onlinePlayers.length,
+  };
+}
+
+function worldMapLiveStreamResponse(req: Request, world: World): Response {
+  const encoder = new TextEncoder();
+  let timer: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        if (timer) clearInterval(timer);
+        try { controller.close(); } catch {}
+      };
+
+      const send = () => {
+        if (closed) return;
+        try {
+          const payload = JSON.stringify(buildWorldMapLiveSnapshot(world));
+          controller.enqueue(encoder.encode(`event: players\ndata: ${payload}\n\n`));
+        } catch {
+          cleanup();
+        }
+      };
+
+      req.signal.addEventListener('abort', cleanup, { once: true });
+      controller.enqueue(encoder.encode(': connected\n\n'));
+      send();
+      timer = setInterval(send, 600);
+    },
+    cancel() {
+      closed = true;
+      if (timer) clearInterval(timer);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    },
+  });
+}
+
+function buildWorldMapSnapshot(world: World): { ok: true; generatedAt: number; map: PublicWorldMap } {
+  const mapDir = resolve(MAPS_DIR, WORLD_MAP_SOURCE_MAP_ID);
+  const mapFile = readJsonFile<KCMapFile>(resolve(mapDir, 'map.json'));
+  if (!mapFile?.map) throw new Error('World Map data is unavailable');
+
+  const meta = readJsonFile<MapMeta>(resolve(mapDir, 'meta.json'));
+  const width = Math.max(1, Math.floor(Number(mapFile.map.width ?? meta?.width ?? 1)));
+  const height = Math.max(1, Math.floor(Number(mapFile.map.height ?? meta?.height ?? 1)));
+  const waterLevel = Number.isFinite(Number(mapFile.map.waterLevel))
+    ? Number(mapFile.map.waterLevel)
+    : Number(meta?.waterLevel ?? 0);
+  const { rows, counts } = makeTileRows(mapFile, mapDir, width, height, waterLevel);
+  const objects = buildWorldMapObjects(mapDir, mapFile, world);
+  const walls = buildWorldMapWalls(mapDir);
+  const npcSpawns = buildWorldMapNpcSpawns(world);
+  const onlinePlayers = buildWorldMapOnlinePlayers(world);
+  const buildingCount = objects.filter((obj) => obj.kind === 'building' || obj.kind === 'wall').length;
+
+  return {
+    ok: true,
+    generatedAt: Math.floor(Date.now() / 1000),
+    map: {
+      id: WORLD_MAP_PUBLIC_MAP_ID,
+      sourceMapId: WORLD_MAP_SOURCE_MAP_ID,
+      name: 'World Map',
+      width,
+      height,
+      waterLevel,
+      spawnPoint: meta?.spawnPoint ?? null,
+      tileRows: rows,
+      tileCounts: counts,
+      objects,
+      walls,
+      objectCount: objects.length,
+      wallCount: countWallEdges(walls),
+      buildingCount,
+      npcSpawns,
+      onlinePlayers,
+      onlinePlayerCount: onlinePlayers.length,
+      updatedAt: maxMtimeSeconds([
+        resolve(mapDir, 'meta.json'),
+        resolve(mapDir, 'map.json'),
+        resolve(mapDir, 'tiles'),
+        resolve(mapDir, 'heights'),
+        resolve(mapDir, 'objects'),
+        resolve(mapDir, 'walls.json'),
+        resolve(mapDir, 'spawns.json'),
+      ]),
+    },
+  };
+}
 import { GameDatabase } from './Database';
 import { flushAuditSync } from './Audit';
 import {
@@ -645,6 +1023,7 @@ function serveWebsite(req: Request, pathname: string): Response | null {
   if (
     normalized !== '/'
     && normalized !== '/hiscores'
+    && normalized !== '/world-map'
     && normalized !== '/news'
     && !normalized.startsWith('/news/')
     && !normalized.startsWith('/_next/')
@@ -1160,6 +1539,17 @@ const server = Bun.serve<SocketData>({
       const profile = db.getHiscoreProfile(url.searchParams.get('username') ?? '');
       if (!profile) return jsonResponse({ ok: false, error: 'Player profile not found.' }, 404);
       return jsonResponse(profile);
+    }
+
+    if (url.pathname === '/api/world-map' && req.method === 'GET') {
+      return jsonResponse(buildWorldMapSnapshot(world), 200, { 'Cache-Control': 'no-cache' });
+    }
+
+    if (url.pathname === '/api/world-map/live' && req.method === 'GET') {
+      if (url.searchParams.get('format') === 'json') {
+        return jsonResponse(buildWorldMapLiveSnapshot(world), 200, { 'Cache-Control': 'no-cache' });
+      }
+      return worldMapLiveStreamResponse(req, world);
     }
 
     // --- REST Auth Endpoints ---

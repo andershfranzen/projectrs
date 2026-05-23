@@ -59,8 +59,8 @@ const otherFeatures = [
     image: '/items/Map_415.png',
     title: 'World Map',
     body: 'Great for finding your way around.',
-    cta: 'Click Here',
-    href: '#',
+    cta: 'Open',
+    href: '/world-map',
   },
   {
     image: '/ui/Skill tab.png',
