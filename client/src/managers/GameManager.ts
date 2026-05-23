@@ -604,8 +604,9 @@ export class GameManager {
     this.network.onChat((data) => {
       switch (data.type) {
         case 'player_info': {
-          const entityId = data.entityId!;
-          const name = data.name!;
+          const entityId = data.entityId;
+          const name = data.name;
+          if (typeof entityId !== 'number' || typeof name !== 'string' || name.length === 0) break;
           this.entities.playerNames.set(entityId, name);
           this.entities.nameToEntityId.set(name.toLowerCase(), entityId);
           // If the remote 3D character was created with a fallback name
@@ -617,10 +618,13 @@ export class GameManager {
           break;
         }
         case 'local': {
+          const from = typeof data.from === 'string' ? data.from : '';
+          const message = typeof data.message === 'string' ? data.message : '';
+          if (message.length === 0) break;
           if (this.chatPanel) {
-            this.chatPanel.addMessage(data.from || '???', data.message, '#fff');
+            this.chatPanel.addMessage(from || '???', message, '#fff');
           }
-          this.showPlayerChatBubble(data.from || '', data.message);
+          this.showPlayerChatBubble(from, message);
           break;
         }
         case 'private':
@@ -5908,17 +5912,20 @@ export class GameManager {
     });
   }
 
-  private showPlayerChatBubble(fromName: string, message: string): void {
-    if (!fromName || !this.username) return;
+  private showPlayerChatBubble(fromName: unknown, message: unknown): void {
+    if (typeof fromName !== 'string' || typeof message !== 'string') return;
+    if (!fromName || typeof this.username !== 'string' || this.username.length === 0) return;
 
-    if (fromName.toLowerCase() === this.username.toLowerCase()) {
+    const normalizedFromName = fromName.toLowerCase();
+    const normalizedUsername = this.username.toLowerCase();
+    if (normalizedFromName === normalizedUsername) {
       if (this.localPlayer) {
         this.localPlayer.showChatBubble(message);
       }
       return;
     }
 
-    const entityId = this.entities.nameToEntityId.get(fromName.toLowerCase());
+    const entityId = this.entities.nameToEntityId.get(normalizedFromName);
     if (entityId !== undefined) {
       const sprite = this.entities.remotePlayers.get(entityId);
       if (sprite) {
