@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { FaBookOpen, FaCode, FaCubes, FaDiscord, FaUsers, FaVolumeUp } from 'react-icons/fa';
+import { FaBookOpen, FaCode, FaCubes, FaDiscord, FaShieldAlt, FaUsers, FaVolumeUp } from 'react-icons/fa';
 import { Modal } from './Modal';
 
 const DISCORD_URL = 'https://discord.gg/SSXyYY8Vx9';
@@ -31,6 +31,11 @@ const creditSections = [
     title: 'Lore and Story',
     names: ['Ez'],
     Icon: FaBookOpen,
+  },
+  {
+    title: 'Anti-botting',
+    names: ['Blackberry'],
+    Icon: FaShieldAlt,
   },
 ] as const;
 
