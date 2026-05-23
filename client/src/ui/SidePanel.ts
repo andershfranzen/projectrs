@@ -1216,8 +1216,17 @@ export class SidePanel {
 
     const frame = this.buildPanelFrame('Inventory', '#b56d3b', grid);
     frame.className = 'inventory-panel-frame';
+    frame.style.flex = '1 1 auto';
+    frame.style.minHeight = '0';
+    frame.style.height = '100%';
     const content = frame.children[1] as HTMLDivElement | undefined;
-    if (content) content.className = 'inventory-panel-content';
+    if (content) {
+      content.className = 'inventory-panel-content';
+      content.style.overflowX = 'hidden';
+      content.style.overflowY = 'auto';
+      content.style.setProperty('-webkit-overflow-scrolling', 'touch');
+      content.style.touchAction = 'pan-y';
+    }
     return frame;
   }
 
