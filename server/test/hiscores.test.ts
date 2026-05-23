@@ -52,4 +52,40 @@ describe('hiscores exclusions', () => {
       db.close();
     }
   });
+
+  test('omits actively banned accounts from public rankings and profiles', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const banned = db.loginFallbackAccount('BannedMiner');
+      const visible = db.loginFallbackAccount('VisibleMiner');
+      db.savePlayerState(banned.accountId, playerWithSkills(miningSkills(80)), 0);
+      db.savePlayerState(visible.accountId, playerWithSkills(miningSkills(20)), 0);
+      db.banAccount(banned.accountId, 'botting', 'test-admin', Math.floor(Date.now() / 1000) + 3600);
+
+      const mining = db.getHiscores('mining');
+      expect(mining.rows.map((row) => row.username.toLowerCase())).not.toContain('bannedminer');
+      expect(mining.rows[0]?.username).toBe('visibleminer');
+
+      const search = db.getHiscores('overall', 25, 1, 'BannedMiner');
+      expect(search.rows).toHaveLength(0);
+      expect(db.getHiscoreProfile('BannedMiner')).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test('expired account bans do not hide hiscores', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const player = db.loginFallbackAccount('ReturnedMiner');
+      db.savePlayerState(player.accountId, playerWithSkills(miningSkills(30)), 0);
+      db.banAccount(player.accountId, 'expired', 'test-admin', Math.floor(Date.now() / 1000) - 60);
+
+      expect(db.isAccountBanned(player.accountId)).toBeNull();
+      expect(db.getHiscores('mining').rows.map((row) => row.username)).toContain('returnedminer');
+      expect(db.getHiscoreProfile('ReturnedMiner')?.username).toBe('returnedminer');
+    } finally {
+      db.close();
+    }
+  });
 });

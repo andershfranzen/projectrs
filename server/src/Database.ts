@@ -66,6 +66,38 @@ export interface BotStatsRow {
   last_session_summary: string | null;
 }
 
+export interface AdminBotReviewAccount {
+  accountId: number;
+  username: string;
+  isAdmin: boolean;
+  riskScore: number;
+  riskLevel: string;
+  riskReasons: string[];
+  totalSkillingActions: number;
+  totalCombatSwings: number;
+  totalMovements: number;
+  totalChatMessages: number;
+  totalSessionMinutes: number;
+  totalFlagEvents: number;
+  totalSuspiciousPackets: number;
+  lastChatTs: number | null;
+  lastActionTs: number | null;
+  lastLoginTs: number | null;
+  lastIp: string | null;
+  lastReverseDns: string | null;
+  lastDeviceId: string | null;
+  lastSessionMinutes: number | null;
+  botStatsUpdatedAt: number | null;
+  tickAlignSampleCount: number;
+  reactionSampleCount: number;
+  pingIntervalSampleCount: number;
+  pathDestinationCount: number;
+  deviceIdsSeen: number;
+  lastSessionSummary: Record<string, unknown> | null;
+  accountBan: AccountBanRecord | null;
+  ipBan: IpBanRecord | null;
+}
+
 /** Bump this constant to force every existing account to spawn at the map's
  *  default spawnPoint on their next login (one-time per bump). Saved skills,
  *  inventory, bank, etc. are preserved — only position is reset. On respawn
@@ -150,6 +182,7 @@ function isHiscoreExcludedUsername(username: string): boolean {
 export interface BanInfo {
   reason: string;
   bannedAt: number;
+  expiresAt: number | null;
 }
 export interface AccountBanRecord extends BanInfo {
   accountId: number;
@@ -189,6 +222,49 @@ function removeItemFromSavedSlots(rawJson: string | null, fallbackSize: number, 
     return { json: changed ? JSON.stringify(cleaned) : (rawJson || JSON.stringify(slots)), changed };
   } catch {
     return { json: rawJson || JSON.stringify(new Array(fallbackSize).fill(null)), changed: false };
+  }
+}
+
+function parseJsonStringArray(raw: string | null | undefined): string[] {
+  try {
+    const parsed = JSON.parse(raw ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonNumberArray(raw: string | null | undefined): number[] {
+  try {
+    const parsed = JSON.parse(raw ?? '[]') as unknown;
+    return Array.isArray(parsed) ? parsed.filter((value): value is number => typeof value === 'number' && Number.isFinite(value)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonNumberRecord(raw: string | null | undefined): Record<string, number> {
+  try {
+    const parsed = JSON.parse(raw ?? '{}') as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'number' && Number.isFinite(value)) out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function parseJsonObject(raw: string | null | undefined): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw ?? 'null') as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
   }
 }
 
@@ -399,15 +475,23 @@ export class GameDatabase {
         account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
         reason TEXT NOT NULL DEFAULT '',
         banned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        expires_at INTEGER,
         banned_by TEXT NOT NULL DEFAULT ''
       );
       CREATE TABLE IF NOT EXISTS ip_bans (
         ip_address TEXT PRIMARY KEY,
         reason TEXT NOT NULL DEFAULT '',
         banned_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        expires_at INTEGER,
         banned_by TEXT NOT NULL DEFAULT ''
       );
     `);
+    try {
+      this.db.exec(`ALTER TABLE account_bans ADD COLUMN expires_at INTEGER`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE ip_bans ADD COLUMN expires_at INTEGER`);
+    } catch { /* column already exists */ }
 
     // Door state persistence. One row per open (or otherwise non-default) door
     // — closed doors don't need a row (the in-memory default is closed). On
@@ -1146,6 +1230,10 @@ export class GameDatabase {
       SELECT ps.account_id, a.username, ps.skills
       FROM player_state ps
       JOIN accounts a ON a.id = ps.account_id
+      LEFT JOIN account_bans ab
+        ON ab.account_id = a.id
+       AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      WHERE ab.account_id IS NULL
     `).all() as Array<{ account_id: number; username: string; skills: string }>;
 
     return rows
@@ -1353,6 +1441,138 @@ export class GameDatabase {
     );
   }
 
+  listAdminBotReviewAccounts(limit: number = 200): AdminBotReviewAccount[] {
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(Number.isFinite(limit) ? limit : 200)));
+    const rows = this.db.query(`
+      SELECT
+        a.id,
+        a.username,
+        a.is_admin,
+        b.total_skilling_actions,
+        b.total_combat_swings,
+        b.total_movements,
+        b.total_chat_messages,
+        b.total_session_minutes,
+        b.total_flag_events,
+        b.total_suspicious_packets,
+        b.last_chat_ts,
+        b.last_action_ts,
+        b.last_login_ts AS bot_last_login_ts,
+        b.risk_score,
+        b.risk_level,
+        b.risk_reasons,
+        b.tick_align_samples,
+        b.reaction_samples,
+        b.path_destinations,
+        b.ping_interval_samples,
+        b.device_ids,
+        b.last_session_summary,
+        b.updated_at,
+        (
+          SELECT lh.login_ts FROM login_history lh
+          WHERE lh.account_id = a.id
+          ORDER BY lh.login_ts DESC, lh.id DESC
+          LIMIT 1
+        ) AS latest_login_ts,
+        (
+          SELECT lh.ip_address FROM login_history lh
+          WHERE lh.account_id = a.id
+          ORDER BY lh.login_ts DESC, lh.id DESC
+          LIMIT 1
+        ) AS latest_ip,
+        (
+          SELECT lh.reverse_dns FROM login_history lh
+          WHERE lh.account_id = a.id
+          ORDER BY lh.login_ts DESC, lh.id DESC
+          LIMIT 1
+        ) AS latest_reverse_dns,
+        (
+          SELECT lh.device_id FROM login_history lh
+          WHERE lh.account_id = a.id
+          ORDER BY lh.login_ts DESC, lh.id DESC
+          LIMIT 1
+        ) AS latest_device_id,
+        (
+          SELECT lh.session_minutes FROM login_history lh
+          WHERE lh.account_id = a.id
+          ORDER BY lh.login_ts DESC, lh.id DESC
+          LIMIT 1
+        ) AS latest_session_minutes
+      FROM accounts a
+      LEFT JOIN bot_stats b ON b.account_id = a.id
+      ORDER BY COALESCE(b.risk_score, 0) DESC,
+               COALESCE(latest_login_ts, b.last_login_ts, 0) DESC,
+               a.username COLLATE NOCASE ASC
+      LIMIT ?
+    `).all(safeLimit) as Array<{
+      id: number;
+      username: string;
+      is_admin: number;
+      total_skilling_actions: number | null;
+      total_combat_swings: number | null;
+      total_movements: number | null;
+      total_chat_messages: number | null;
+      total_session_minutes: number | null;
+      total_flag_events: number | null;
+      total_suspicious_packets: number | null;
+      last_chat_ts: number | null;
+      last_action_ts: number | null;
+      bot_last_login_ts: number | null;
+      risk_score: number | null;
+      risk_level: string | null;
+      risk_reasons: string | null;
+      tick_align_samples: string | null;
+      reaction_samples: string | null;
+      path_destinations: string | null;
+      ping_interval_samples: string | null;
+      device_ids: string | null;
+      last_session_summary: string | null;
+      updated_at: number | null;
+      latest_login_ts: number | null;
+      latest_ip: string | null;
+      latest_reverse_dns: string | null;
+      latest_device_id: string | null;
+      latest_session_minutes: number | null;
+    }>;
+
+    return rows.map((row) => {
+      const pathDestinations = parseJsonNumberRecord(row.path_destinations);
+      const deviceIds = parseJsonNumberRecord(row.device_ids);
+      const lastIp = row.latest_ip ?? null;
+      return {
+        accountId: row.id,
+        username: row.username,
+        isAdmin: row.is_admin === 1,
+        riskScore: row.risk_score ?? 0,
+        riskLevel: row.risk_level ?? 'low',
+        riskReasons: parseJsonStringArray(row.risk_reasons),
+        totalSkillingActions: row.total_skilling_actions ?? 0,
+        totalCombatSwings: row.total_combat_swings ?? 0,
+        totalMovements: row.total_movements ?? 0,
+        totalChatMessages: row.total_chat_messages ?? 0,
+        totalSessionMinutes: row.total_session_minutes ?? 0,
+        totalFlagEvents: row.total_flag_events ?? 0,
+        totalSuspiciousPackets: row.total_suspicious_packets ?? 0,
+        lastChatTs: row.last_chat_ts ?? null,
+        lastActionTs: row.last_action_ts ?? null,
+        lastLoginTs: row.latest_login_ts ?? row.bot_last_login_ts ?? null,
+        lastIp,
+        lastReverseDns: row.latest_reverse_dns ?? null,
+        lastDeviceId: row.latest_device_id ?? null,
+        lastSessionMinutes: row.latest_session_minutes ?? null,
+        botStatsUpdatedAt: row.updated_at ?? null,
+        tickAlignSampleCount: parseJsonNumberArray(row.tick_align_samples).length,
+        reactionSampleCount: parseJsonNumberArray(row.reaction_samples).length,
+        pingIntervalSampleCount: parseJsonNumberArray(row.ping_interval_samples).length,
+        pathDestinationCount: Object.keys(pathDestinations).length,
+        deviceIdsSeen: Object.keys(deviceIds).length,
+        lastSessionSummary: parseJsonObject(row.last_session_summary),
+        accountBan: this.getAccountBanRecord(row.id),
+        ipBan: lastIp ? this.getIpBanRecord(lastIp) : null,
+      };
+    });
+  }
+
   cleanExpiredSessions(): void {
     const now = Math.floor(Date.now() / 1000);
     this.db.query('DELETE FROM sessions WHERE expires_at <= ?').run(now);
@@ -1368,27 +1588,52 @@ export class GameDatabase {
     return row?.id ?? null;
   }
 
+  getAccountModerationInfo(accountId: number): { accountId: number; username: string; isAdmin: boolean } | null {
+    const row = this.db.query('SELECT id, username, is_admin FROM accounts WHERE id = ?')
+      .get(accountId) as { id: number; username: string; is_admin: number } | null;
+    return row ? { accountId: row.id, username: row.username, isAdmin: row.is_admin === 1 } : null;
+  }
+
+  private pruneExpiredBans(): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.query('DELETE FROM account_bans WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
+    this.db.query('DELETE FROM ip_bans WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
+  }
+
   /** Shared upsert for the two ban tables. Table/keyCol come from string
    *  literals at the call site (not user input) so the template-literal SQL
    *  is safe. */
-  private upsertBan(table: 'account_bans' | 'ip_bans', keyCol: 'account_id' | 'ip_address', key: number | string, reason: string, bannedBy: string): void {
+  private upsertBan(
+    table: 'account_bans' | 'ip_bans',
+    keyCol: 'account_id' | 'ip_address',
+    key: number | string,
+    reason: string,
+    bannedBy: string,
+    expiresAt: number | null = null,
+  ): void {
     this.db.query(`
-      INSERT INTO ${table} (${keyCol}, reason, banned_by) VALUES (?, ?, ?)
+      INSERT INTO ${table} (${keyCol}, reason, banned_by, expires_at) VALUES (?, ?, ?, ?)
       ON CONFLICT(${keyCol}) DO UPDATE SET
         reason = excluded.reason,
         banned_by = excluded.banned_by,
+        expires_at = excluded.expires_at,
         banned_at = unixepoch()
-    `).run(key, reason, bannedBy);
+    `).run(key, reason, bannedBy, expiresAt);
   }
 
   private readBan(table: 'account_bans' | 'ip_bans', keyCol: 'account_id' | 'ip_address', key: number | string): BanInfo | null {
-    const row = this.db.query(`SELECT reason, banned_at FROM ${table} WHERE ${keyCol} = ?`)
-      .get(key) as { reason: string; banned_at: number } | null;
-    return row ? { reason: row.reason, bannedAt: row.banned_at } : null;
+    const row = this.db.query(`SELECT reason, banned_at, expires_at FROM ${table} WHERE ${keyCol} = ?`)
+      .get(key) as { reason: string; banned_at: number; expires_at: number | null } | null;
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= Math.floor(Date.now() / 1000)) {
+      this.db.query(`DELETE FROM ${table} WHERE ${keyCol} = ?`).run(key);
+      return null;
+    }
+    return { reason: row.reason, bannedAt: row.banned_at, expiresAt: row.expires_at };
   }
 
-  banAccount(accountId: number, reason: string, bannedBy: string): void {
-    this.upsertBan('account_bans', 'account_id', accountId, reason, bannedBy);
+  banAccount(accountId: number, reason: string, bannedBy: string, expiresAt: number | null = null): void {
+    this.upsertBan('account_bans', 'account_id', accountId, reason, bannedBy, expiresAt);
   }
 
   unbanAccount(accountId: number): boolean {
@@ -1399,8 +1644,8 @@ export class GameDatabase {
     return this.readBan('account_bans', 'account_id', accountId);
   }
 
-  banIp(ip: string, reason: string, bannedBy: string): void {
-    this.upsertBan('ip_bans', 'ip_address', ip, reason, bannedBy);
+  banIp(ip: string, reason: string, bannedBy: string, expiresAt: number | null = null): void {
+    this.upsertBan('ip_bans', 'ip_address', ip, reason, bannedBy, expiresAt);
   }
 
   unbanIp(ip: string): boolean {
@@ -1421,22 +1666,64 @@ export class GameDatabase {
     return row?.ip_address ?? null;
   }
 
+  getAccountBanRecord(accountId: number): AccountBanRecord | null {
+    const row = this.db.query(`
+      SELECT ab.account_id, a.username, ab.reason, ab.banned_at, ab.expires_at, ab.banned_by
+      FROM account_bans ab
+      JOIN accounts a ON a.id = ab.account_id
+      WHERE ab.account_id = ?
+    `).get(accountId) as { account_id: number; username: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string } | null;
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= Math.floor(Date.now() / 1000)) {
+      this.unbanAccount(accountId);
+      return null;
+    }
+    return {
+      accountId: row.account_id,
+      username: row.username,
+      reason: row.reason,
+      bannedAt: row.banned_at,
+      expiresAt: row.expires_at,
+      bannedBy: row.banned_by,
+    };
+  }
+
+  getIpBanRecord(ip: string): IpBanRecord | null {
+    if (!ip) return null;
+    const row = this.db.query('SELECT ip_address, reason, banned_at, expires_at, banned_by FROM ip_bans WHERE ip_address = ?')
+      .get(ip) as { ip_address: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string } | null;
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= Math.floor(Date.now() / 1000)) {
+      this.unbanIp(ip);
+      return null;
+    }
+    return {
+      ip: row.ip_address,
+      reason: row.reason,
+      bannedAt: row.banned_at,
+      expiresAt: row.expires_at,
+      bannedBy: row.banned_by,
+    };
+  }
+
   listAccountBans(): Array<AccountBanRecord> {
+    this.pruneExpiredBans();
     return this.db.query(`
-      SELECT ab.account_id, a.username, ab.reason, ab.banned_at, ab.banned_by
+      SELECT ab.account_id, a.username, ab.reason, ab.banned_at, ab.expires_at, ab.banned_by
       FROM account_bans ab JOIN accounts a ON a.id = ab.account_id
       ORDER BY ab.banned_at DESC
     `).all().map((r) => {
-      const row = r as { account_id: number; username: string; reason: string; banned_at: number; banned_by: string };
-      return { accountId: row.account_id, username: row.username, reason: row.reason, bannedAt: row.banned_at, bannedBy: row.banned_by };
+      const row = r as { account_id: number; username: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string };
+      return { accountId: row.account_id, username: row.username, reason: row.reason, bannedAt: row.banned_at, expiresAt: row.expires_at, bannedBy: row.banned_by };
     });
   }
 
   listIpBans(): Array<IpBanRecord> {
-    return this.db.query('SELECT ip_address, reason, banned_at, banned_by FROM ip_bans ORDER BY banned_at DESC')
+    this.pruneExpiredBans();
+    return this.db.query('SELECT ip_address, reason, banned_at, expires_at, banned_by FROM ip_bans ORDER BY banned_at DESC')
       .all().map((r) => {
-        const row = r as { ip_address: string; reason: string; banned_at: number; banned_by: string };
-        return { ip: row.ip_address, reason: row.reason, bannedAt: row.banned_at, bannedBy: row.banned_by };
+        const row = r as { ip_address: string; reason: string; banned_at: number; expires_at: number | null; banned_by: string };
+        return { ip: row.ip_address, reason: row.reason, bannedAt: row.banned_at, expiresAt: row.expires_at, bannedBy: row.banned_by };
       });
   }
 

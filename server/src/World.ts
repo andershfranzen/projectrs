@@ -1176,6 +1176,16 @@ export class World {
     }
   }
 
+  kickPlayersFromIp(ip: string): number {
+    if (!ip) return 0;
+    const accountIds = new Set<number>();
+    for (const [, player] of this.players) {
+      if (player.ip === ip) accountIds.add(player.accountId);
+    }
+    for (const accountId of accountIds) this.kickAccountIfOnline(accountId);
+    return accountIds.size;
+  }
+
   reconnectPlayer(
     accountId: number,
     ws: ServerWebSocket<{ type: string; playerId?: number; ip?: string; deviceId?: string }>

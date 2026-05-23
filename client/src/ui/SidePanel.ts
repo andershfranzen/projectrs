@@ -94,6 +94,9 @@ export class SidePanel {
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
   private tabButtons: HTMLButtonElement[] = [];
+  private accountActionsRow: HTMLDivElement | null = null;
+  private adminButton: HTMLButtonElement | null = null;
+  private logoutButton: HTMLButtonElement | null = null;
 
   // Spellbook state. Catalogue is supplied by GameManager after /api/spells
   // fetches; callback fires PLAYER_CAST_SPELL with the spell's stable index.
@@ -191,6 +194,29 @@ export class SidePanel {
           background: rgba(154,51,43,0.18);
         }
 
+        #side-panel .side-account-actions {
+          align-self: center;
+          width: 190px;
+          display: flex;
+          gap: 6px;
+          margin: 0 auto 8px;
+        }
+
+        #side-panel .side-account-actions .side-action-button {
+          flex: 1 1 0;
+          min-width: 0;
+          text-align: center;
+          padding: 6px 0;
+          border-radius: 3px;
+          color: #d8372b;
+          font-size: 12px;
+          cursor: pointer;
+          font-weight: bold;
+          letter-spacing: 1px;
+          text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
+          box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 0 rgba(255,200,100,0.05);
+        }
+
         @media (max-height: 700px), (max-width: 1000px) {
           #side-panel .side-resource-row {
             padding-top: 2px !important;
@@ -230,10 +256,12 @@ export class SidePanel {
           #side-panel .side-brand {
             display: none !important;
           }
-          #side-panel .side-logout {
+          #side-panel .side-account-actions {
             width: 150px !important;
-            padding: 4px 0 !important;
             margin-bottom: 4px !important;
+          }
+          #side-panel .side-account-actions .side-action-button {
+            padding: 4px 0 !important;
             font-size: 11px !important;
           }
           #side-panel .inv-grid {
@@ -350,6 +378,40 @@ export class SidePanel {
       `;
       document.head.appendChild(style);
     }
+  }
+
+  setAdminControls(enabled: boolean, onOpen: () => void): void {
+    if (!this.accountActionsRow || !this.logoutButton) return;
+    if (!enabled) {
+      this.adminButton?.remove();
+      this.adminButton = null;
+      this.accountActionsRow.style.width = '190px';
+      return;
+    }
+
+    if (!this.adminButton) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'eq-action-button side-action-button side-admin-button';
+      button.textContent = 'Admin';
+      button.style.cssText = `
+        background: rgba(50,45,90,0.52);
+        border: 1px solid rgba(120,110,190,0.45);
+      `;
+      button.addEventListener('mouseenter', () => {
+        button.style.background = 'rgba(70,62,130,0.62)';
+        button.style.borderColor = 'rgba(150,135,220,0.55)';
+      });
+      button.addEventListener('mouseleave', () => {
+        button.style.background = 'rgba(50,45,90,0.52)';
+        button.style.borderColor = 'rgba(120,110,190,0.45)';
+      });
+      this.accountActionsRow.insertBefore(button, this.logoutButton);
+      this.adminButton = button;
+    }
+
+    this.adminButton.onclick = onOpen;
+    this.accountActionsRow.style.width = '190px';
   }
 
   private buildUI(): HTMLDivElement {
@@ -677,22 +739,21 @@ export class SidePanel {
     brandArea.appendChild(brand);
     panel.appendChild(brandArea);
 
-    // Logout button at the bottom of the side column.
+    // Account actions at the bottom of the side column. Admin is inserted only
+    // after the server sends the admin flag for this session.
+    const accountActions = document.createElement('div');
+    accountActions.className = 'side-account-actions';
+    this.accountActionsRow = accountActions;
+
     const logoutBtn = document.createElement('button');
     logoutBtn.type = 'button';
-    logoutBtn.className = 'eq-action-button side-logout';
+    logoutBtn.className = 'eq-action-button side-action-button side-logout';
     logoutBtn.textContent = 'Logout';
     logoutBtn.style.cssText = `
-      align-self: center;
-      width: 190px;
-      text-align: center; padding: 6px 0; margin: 0 auto 8px;
       background: rgba(120,40,30,0.5);
       border: 1px solid rgba(180,80,60,0.4);
-      border-radius: 3px; color: #d8372b; font-size: 12px;
-      cursor: pointer; font-weight: bold; letter-spacing: 1px;
-      text-shadow: 1px 1px 0 rgba(0,0,0,0.5);
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 0 rgba(255,200,100,0.05);
     `;
+    this.logoutButton = logoutBtn;
     logoutBtn.addEventListener('mouseenter', () => {
       logoutBtn.style.background = 'rgba(160,50,30,0.6)';
       logoutBtn.style.borderColor = 'rgba(220,100,60,0.5)';
@@ -721,7 +782,8 @@ export class SidePanel {
       localStorage.removeItem('projectrs_username');
       location.reload();
     });
-    panel.appendChild(logoutBtn);
+    accountActions.appendChild(logoutBtn);
+    panel.appendChild(accountActions);
 
     // Highlight active tab
     this.switchTab('inventory');

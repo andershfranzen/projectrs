@@ -966,6 +966,26 @@ function adminForbidden(): Response {
   return jsonResponse({ ok: false, error: 'Forbidden — admin authorization required' }, 403);
 }
 
+function parseBanExpiresAt(rawDurationSeconds: unknown): { ok: true; expiresAt: number | null } | { ok: false; error: string } {
+  if (rawDurationSeconds === null || rawDurationSeconds === undefined || rawDurationSeconds === 0 || rawDurationSeconds === '0' || rawDurationSeconds === 'permanent') {
+    return { ok: true, expiresAt: null };
+  }
+  const durationSeconds = typeof rawDurationSeconds === 'number'
+    ? rawDurationSeconds
+    : typeof rawDurationSeconds === 'string'
+      ? Number(rawDurationSeconds)
+      : NaN;
+  if (!Number.isFinite(durationSeconds)) return { ok: false, error: 'Invalid ban duration' };
+  const seconds = Math.floor(durationSeconds);
+  if (seconds < 60) return { ok: false, error: 'Temporary bans must be at least 1 minute' };
+  if (seconds > 366 * 24 * 3600) return { ok: false, error: 'Temporary bans cannot exceed 366 days' };
+  return { ok: true, expiresAt: Math.floor(Date.now() / 1000) + seconds };
+}
+
+function banLabel(expiresAt: number | null): string {
+  return expiresAt === null ? 'permanent' : `until ${new Date(expiresAt * 1000).toISOString()}`;
+}
+
 // --- Body size limits ---
 // `req.json()` is unbounded by default — without a cap, a single 1 GB POST to
 // any endpoint can OOM the process. We pre-check Content-Length and reject
@@ -1282,6 +1302,11 @@ const server = Bun.serve<SocketData>({
         const body = await req.json() as { token?: string };
         const session = body.token ? db.getSession(body.token) : null;
         if (!session || !body.token) return jsonResponse({ ok: false });
+        const ip = requestClientIp(req, server);
+        if (db.isAccountBanned(session.accountId) || db.isIpBanned(ip)) {
+          db.logout(body.token);
+          return jsonResponse({ ok: false });
+        }
         if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) {
           return jsonResponse({ ok: false });
         }
@@ -1329,6 +1354,96 @@ const server = Bun.serve<SocketData>({
           db.logout(body.token);
         }
         return jsonResponse({ ok: true }, 200, { 'Set-Cookie': clearWsSessionCookieHeader(req) });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/bot-review' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const limit = Number(url.searchParams.get('limit') ?? '200');
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        accounts: db.listAdminBotReviewAccounts(limit),
+      });
+    }
+
+    if (url.pathname === '/api/admin/ban-account' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown; reason?: unknown; durationSeconds?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        if (accountId === session.accountId) return jsonResponse({ ok: false, error: 'You cannot ban your own account' }, 400);
+        const target = db.getAccountModerationInfo(accountId);
+        if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
+        if (target.isAdmin) return jsonResponse({ ok: false, error: 'Admin accounts cannot be banned here' }, 400);
+        const duration = parseBanExpiresAt(body.durationSeconds);
+        if (!duration.ok) return jsonResponse({ ok: false, error: duration.error }, 400);
+        const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+        db.banAccount(accountId, reason, session.username, duration.expiresAt);
+        world.kickAccountIfOnline(accountId);
+        return jsonResponse({
+          ok: true,
+          message: `Banned ${target.username} (${banLabel(duration.expiresAt)})`,
+          ban: db.getAccountBanRecord(accountId),
+        });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/unban-account' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        return jsonResponse({ ok: true, removed: db.unbanAccount(accountId) });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/ban-ip' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { ip?: unknown; reason?: unknown; durationSeconds?: unknown };
+        const ip = typeof body.ip === 'string' ? body.ip.trim().slice(0, 128) : '';
+        if (!ip) return jsonResponse({ ok: false, error: 'Missing IP address' }, 400);
+        const duration = parseBanExpiresAt(body.durationSeconds);
+        if (!duration.ok) return jsonResponse({ ok: false, error: duration.error }, 400);
+        const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+        db.banIp(ip, reason, session.username, duration.expiresAt);
+        const kicked = world.kickPlayersFromIp(ip);
+        return jsonResponse({
+          ok: true,
+          message: `IP-banned ${ip} (${banLabel(duration.expiresAt)})`,
+          ban: db.getIpBanRecord(ip),
+          kicked,
+        });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/unban-ip' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { ip?: unknown };
+        const ip = typeof body.ip === 'string' ? body.ip.trim().slice(0, 128) : '';
+        if (!ip) return jsonResponse({ ok: false, error: 'Missing IP address' }, 400);
+        return jsonResponse({ ok: true, removed: db.unbanIp(ip) });
       } catch {
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
       }

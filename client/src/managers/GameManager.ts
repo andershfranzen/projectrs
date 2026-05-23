@@ -46,6 +46,7 @@ import { DialoguePanel, type DialogueNodePayload } from '../ui/DialoguePanel';
 import { BankPanel } from '../ui/BankPanel';
 import { TradePanel } from '../ui/TradePanel';
 import { DuelPanel } from '../ui/DuelPanel';
+import { AdminPanel } from '../ui/AdminPanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
@@ -341,6 +342,7 @@ export class GameManager {
   private mobileControlsEl: HTMLDivElement | null = null;
   private mobileStatusEl: HTMLDivElement | null = null;
   private mobileLogoutButton: HTMLButtonElement | null = null;
+  private mobileAdminButton: HTMLButtonElement | null = null;
   private mobilePanelButtons: Partial<Record<MobilePanelMode, HTMLButtonElement>> = {};
   private pendingTouchInteraction: PendingTouchInteraction | null = null;
   private activeTouchPointers: Map<number, ActiveTouchPoint> = new Map();
@@ -370,6 +372,7 @@ export class GameManager {
   private duelPanel: DuelPanel | null = null;
   private currentDuelPartnerName: string = '';
   private duelActive = false;
+  private adminPanel: AdminPanel | null = null;
 
   // Spell effect runtime. Catalogue is lazy-loaded from /api/spells on first /spell command.
   // spellsByIndex mirrors the server's alphabetical order so binary protocol
@@ -2254,6 +2257,7 @@ export class GameManager {
       this.isAdmin = isAdmin;
       if (!isAdmin) this.pinchZoom = null;
       this.camera.setLockedMode(!isAdmin);
+      this.updateAdminSurfaces();
     });
   }
 
@@ -3541,6 +3545,7 @@ export class GameManager {
     this.mobileControlsEl = bar;
     this.setupMobileStatusHud(frame);
     this.setupMobileLogoutButton(frame);
+    this.updateAdminSurfaces();
     this.setMobilePanelMode('game');
   }
 
@@ -3616,6 +3621,47 @@ export class GameManager {
 
     frame.appendChild(button);
     this.mobileLogoutButton = button;
+  }
+
+  private setupMobileAdminButton(frame: HTMLElement): void {
+    this.mobileAdminButton?.remove();
+    if (!this.isAdmin) {
+      this.mobileAdminButton = null;
+      return;
+    }
+
+    const button = document.createElement('button');
+    button.id = 'mobile-admin-button';
+    button.type = 'button';
+    button.textContent = 'Admin';
+    button.title = 'Admin';
+    button.addEventListener('click', (event) => {
+      event.preventDefault();
+      this.openAdminPanel();
+    });
+
+    frame.appendChild(button);
+    this.mobileAdminButton = button;
+  }
+
+  private updateAdminSurfaces(): void {
+    if (this.isAdmin) {
+      this.sidePanel?.setAdminControls(true, () => this.openAdminPanel());
+      const frame = document.getElementById('game-frame');
+      if (frame && this.mobileLogoutButton) this.setupMobileAdminButton(frame);
+      return;
+    }
+
+    this.sidePanel?.setAdminControls(false, () => {});
+    this.mobileAdminButton?.remove();
+    this.mobileAdminButton = null;
+    this.adminPanel?.hide();
+  }
+
+  private openAdminPanel(): void {
+    if (!this.isAdmin) return;
+    if (!this.adminPanel) this.adminPanel = new AdminPanel(this.token);
+    this.adminPanel.show();
   }
 
   private createMobileStatusItem(key: 'hp' | 'good' | 'evil', label: string, colorClass: string): HTMLDivElement {
@@ -6075,6 +6121,10 @@ export class GameManager {
     this.mobileStatusEl = null;
     this.mobileLogoutButton?.remove();
     this.mobileLogoutButton = null;
+    this.mobileAdminButton?.remove();
+    this.mobileAdminButton = null;
+    this.adminPanel?.destroy();
+    this.adminPanel = null;
     this.mobilePanelButtons = {};
     this.chatPanel?.destroy();
     this.chatPanel = null;
