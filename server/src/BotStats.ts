@@ -78,6 +78,7 @@ export interface SessionSummary {
   sessionChats: number;
   sessionActivityEvents: number;
   sessionCursorEvents: number;
+  sessionInputlessCommands: number;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketReasons: Record<string, number>;
@@ -161,6 +162,7 @@ export class BotStats {
   sessionChats: number = 0;
   sessionActivityEvents: number = 0;
   sessionCursorEvents: number = 0;
+  sessionInputlessCommands: number = 0;
   sessionSuspiciousPackets: number = 0;
   sessionActionSignatures: Map<string, number> = new Map();
   sessionSuspiciousPacketReasons: Map<string, number> = new Map();
@@ -273,6 +275,7 @@ export class BotStats {
     this.sessionChats = 0;
     this.sessionActivityEvents = 0;
     this.sessionCursorEvents = 0;
+    this.sessionInputlessCommands = 0;
     this.sessionSuspiciousPackets = 0;
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
@@ -407,6 +410,10 @@ export class BotStats {
     this.bumpCappedMap(this.cursorCells, `${Math.floor(x / 100)},${Math.floor(y / 100)}`, MAX_CURSOR_CELLS);
   }
 
+  recordInputlessCommand(): void {
+    this.sessionInputlessCommands++;
+  }
+
   recordSuspiciousPacket(reason: string = 'unknown'): void {
     this.totalSuspiciousPackets++;
     this.sessionSuspiciousPackets++;
@@ -480,6 +487,8 @@ export class BotStats {
     }
 
     const flags: string[] = [];
+    const activeEvents = this.sessionSkillingActions + this.sessionCombatSwings + this.sessionMovements;
+    const directGameplayEvents = this.sessionSkillingActions + this.sessionCombatSwings;
     // tickAligned: stddev < 30ms over ≥30 samples → near-zero variance
     if (this.tickAlignSamples.length >= 30 && tickAlignStdDevMs !== null && tickAlignStdDevMs < 30) {
       flags.push('tickAligned');
@@ -531,9 +540,30 @@ export class BotStats {
     if (mapTotal(this.actionSignatures) >= 200 && topLifetimeActionLoopRepetition !== null && topLifetimeActionLoopRepetition >= 0.18) {
       flags.push('lifetimeRouteActionLoop');
     }
-    const activeEvents = this.sessionSkillingActions + this.sessionCombatSwings + this.sessionMovements;
-    if (sessionMinutes >= 15 && activeEvents >= 100 && this.sessionCursorEvents === 0) {
+    if (
+      sessionMinutes >= 2
+      && activeEvents >= 25
+      && this.sessionActivityEvents === 0
+      && this.sessionCursorEvents === 0
+    ) {
+      flags.push('browserlessActiveGameplay');
+    }
+    if (
+      sessionMinutes >= 5
+      && (activeEvents >= 50 || directGameplayEvents >= 25)
+      && this.sessionActivityEvents === 0
+    ) {
+      flags.push('noClientActivityTelemetry');
+    }
+    if (
+      sessionMinutes >= 5
+      && (activeEvents >= 50 || directGameplayEvents >= 25)
+      && this.sessionCursorEvents === 0
+    ) {
       flags.push('noCursorTelemetry');
+    }
+    if (this.sessionInputlessCommands >= 5) {
+      flags.push('inputlessCommandBurst');
     }
     if (this.sessionCursorEvents >= 20 && topCursorCellRepetition !== null && topCursorCellRepetition > 0.95) {
       flags.push('cursorStatic');
@@ -566,6 +596,7 @@ export class BotStats {
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
       sessionCursorEvents: this.sessionCursorEvents,
+      sessionInputlessCommands: this.sessionInputlessCommands,
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
@@ -607,6 +638,7 @@ export class BotStats {
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
       sessionCursorEvents: this.sessionCursorEvents,
+      sessionInputlessCommands: this.sessionInputlessCommands,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketReasons,
@@ -747,6 +779,7 @@ interface BotRiskInput {
   sessionMovements: number;
   sessionActivityEvents: number;
   sessionCursorEvents: number;
+  sessionInputlessCommands: number;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketClasses: SuspiciousPacketClassCounts;
@@ -793,6 +826,12 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('pingRegular')) add(12, `script-regular heartbeat timing (${input.pingIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
   if (flagSet.has('pingSeqReset')) add(10, `heartbeat sequence resets (${input.pingSeqResets})`);
   if (flagSet.has('activityHeartbeatCoupled')) add(20, `activity packets coupled to heartbeat (${ratioLabel(input.heartbeatActivityCouplingRatio)})`);
+  if (flagSet.has('browserlessActiveGameplay')) add(
+    46,
+    `active gameplay without browser input telemetry (${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions)`,
+  );
+  if (flagSet.has('inputlessCommandBurst')) add(28, `gameplay commands before browser input telemetry (${input.sessionInputlessCommands})`);
+  if (flagSet.has('noClientActivityTelemetry')) add(12, 'active session without client activity telemetry');
   if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
   if (flagSet.has('noChat')) add(8, 'long active session with no chat');
   if (flagSet.has('pathRepetitive')) add(16, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
@@ -802,7 +841,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     `lifetime path concentration (${ratioLabel(input.topLifetimePathRepetition)} over ${input.lifetimeActiveActions} actions)`,
   );
   if (flagSet.has('lifetimeRouteActionLoop')) add(20, `lifetime route/action loop (${ratioLabel(input.topLifetimeActionLoopRepetition)})`);
-  if (flagSet.has('noCursorTelemetry')) add(16, 'active session without cursor telemetry');
+  if (flagSet.has('noCursorTelemetry')) add(12, 'active session without cursor telemetry');
   if (flagSet.has('cursorStatic')) add(10, `static cursor telemetry (${ratioLabel(input.topCursorCellRepetition)})`);
   if (flagSet.has('marathonSession')) add(10, `marathon session (${input.sessionMinutes} minutes)`);
   if (flagSet.has('fastReaction')) add(22, `fast NPC re-engage median (${input.reactionMedianMs?.toFixed(0) ?? '?'}ms)`);
@@ -831,6 +870,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
 
   if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
   if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
+  if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(8, 'repeated route/action loop without cursor input');
   if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
 
@@ -929,7 +969,11 @@ function mapTotal(map: Map<string, number>): number {
 
 function isMeaningfulSession(summary: SessionSummary): boolean {
   const activeEvents = summary.sessionSkillingActions + summary.sessionCombatSwings + summary.sessionMovements;
-  return summary.sessionMinutes >= MIN_MEANINGFUL_SESSION_MINUTES || activeEvents >= 50 || summary.sessionSuspiciousPackets >= 5;
+  return summary.sessionMinutes >= MIN_MEANINGFUL_SESSION_MINUTES
+    || activeEvents >= 50
+    || summary.sessionSuspiciousPackets >= 5
+    || summary.sessionInputlessCommands >= 5
+    || summary.flags.includes('browserlessActiveGameplay');
 }
 
 function parseSessionSummary(raw: string | null | undefined): SessionSummary | null {

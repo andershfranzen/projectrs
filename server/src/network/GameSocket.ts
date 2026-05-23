@@ -227,6 +227,50 @@ function opcodeCountsAsActivity(opcode: number): boolean {
     && opcode !== ClientOpcode.MAP_READY;
 }
 
+function opcodeRequiresBrowserInputTelemetry(opcode: number): boolean {
+  switch (opcode) {
+    case ClientOpcode.PLAYER_MOVE:
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+    case ClientOpcode.PLAYER_TALK_NPC:
+    case ClientOpcode.PLAYER_FOLLOW:
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+    case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_EQUIP_ITEM:
+    case ClientOpcode.PLAYER_UNEQUIP_ITEM:
+    case ClientOpcode.PLAYER_EAT_ITEM:
+    case ClientOpcode.PLAYER_SET_STANCE:
+    case ClientOpcode.PLAYER_BUY_ITEM:
+    case ClientOpcode.PLAYER_SELL_ITEM:
+    case ClientOpcode.PLAYER_MOVE_INV_ITEM:
+    case ClientOpcode.DIALOGUE_CHOOSE:
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+    case ClientOpcode.PLAYER_CAST_SPELL:
+    case ClientOpcode.PLAYER_SET_AUTOCAST:
+    case ClientOpcode.BANK_REQUEST_OPEN:
+    case ClientOpcode.BANK_DEPOSIT:
+    case ClientOpcode.BANK_WITHDRAW:
+    case ClientOpcode.BANK_CLOSE:
+    case ClientOpcode.TRADE_REQUEST:
+    case ClientOpcode.TRADE_ACCEPT_REQUEST:
+    case ClientOpcode.TRADE_DECLINE:
+    case ClientOpcode.TRADE_OFFER_ITEM:
+    case ClientOpcode.TRADE_REMOVE_OFFERED:
+    case ClientOpcode.TRADE_ACCEPT:
+    case ClientOpcode.DUEL_REQUEST:
+    case ClientOpcode.DUEL_ACCEPT_REQUEST:
+    case ClientOpcode.DUEL_DECLINE:
+    case ClientOpcode.DUEL_STAKE_ITEM:
+    case ClientOpcode.DUEL_REMOVE_STAKE:
+    case ClientOpcode.DUEL_ACCEPT:
+      return true;
+    default:
+      return false;
+  }
+}
+
 export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE:
@@ -893,6 +937,12 @@ function handleDecryptedGameSocketMessage(
     return;
   }
   if (opcodeCountsAsActivity(opcode)) world.recordPlayerActivity(playerId);
+  if (opcodeRequiresBrowserInputTelemetry(opcode)
+      && player.botStats
+      && player.botStats.sessionActivityEvents === 0
+      && player.botStats.sessionCursorEvents === 0) {
+    player.botStats.recordInputlessCommand();
+  }
 
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE: {

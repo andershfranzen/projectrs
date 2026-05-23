@@ -143,6 +143,48 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).toContain('noCursorTelemetry');
   });
 
+  test('browserless active gameplay escalates current raw websocket bots', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 6 * 60_000;
+
+    for (let i = 0; i < 25; i++) {
+      stats.recordSkillingRoll(1000, 1000 + i * 17);
+    }
+    for (let i = 0; i < 6; i++) stats.recordInputlessCommand();
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionActivityEvents).toBe(0);
+    expect(summary.sessionCursorEvents).toBe(0);
+    expect(summary.sessionInputlessCommands).toBe(6);
+    expect(summary.flags).toContain('browserlessActiveGameplay');
+    expect(summary.flags).toContain('noClientActivityTelemetry');
+    expect(summary.flags).toContain('noCursorTelemetry');
+    expect(summary.flags).toContain('inputlessCommandBurst');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(60);
+    expect(['high', 'critical']).toContain(summary.riskLevel);
+  });
+
+  test('normal browser telemetry prevents browserless gameplay flags', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 6 * 60_000;
+    stats.recordClientActivity(1000);
+    stats.recordCursorPosition(450, 520);
+
+    for (let i = 0; i < 25; i++) {
+      stats.recordSkillingRoll(1000, 1000 + i * 17);
+    }
+    for (let i = 0; i < 4; i++) stats.recordInputlessCommand();
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).not.toContain('browserlessActiveGameplay');
+    expect(summary.flags).not.toContain('noClientActivityTelemetry');
+    expect(summary.flags).not.toContain('noCursorTelemetry');
+    expect(summary.flags).not.toContain('inputlessCommandBurst');
+    expect(summary.riskLevel).toBe('low');
+  });
+
   test('static cursor telemetry is flagged separately from missing telemetry', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
