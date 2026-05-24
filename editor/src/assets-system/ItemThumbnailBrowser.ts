@@ -8,6 +8,7 @@ import {
   buildThumbnailOptionsFromOverride,
   invalidateThumbnailOverrides,
   itemThumbnailFamily,
+  itemThumbnailTier,
   itemThumbnailTierIndex,
 } from '@client/rendering/ItemIcon'
 import { getItemOverride, invalidateOverridesCache, type AssetThumbnailOverride } from './ThumbnailRenderer'
@@ -127,12 +128,14 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
 
   const getEffectivePose = (def: ItemDef): AssetThumbnailOverride => {
     const direct = numericOverrides[def.id]
-    if (direct) return direct
     if (!def.equipSlot) return {}
     const family = itemThumbnailFamily(def)
-    if (!family) return {}
+    if (!family) return direct ?? {}
     const candidates = indexedPoseLookup.get(`${def.equipSlot}\0${family}`) ?? []
-    if (!candidates.length) return {}
+    if (!candidates.length) return direct ?? {}
+    const bronze = candidates.find((candidate) => itemThumbnailTier(candidate) === 'Bronze')
+    if (bronze && bronze.id !== def.id) return numericOverrides[bronze.id] ?? {}
+    if (direct) return direct
     const targetTier = itemThumbnailTierIndex(def)
     let best = candidates[0]
     let bestDelta = Math.abs(itemThumbnailTierIndex(best) - targetTier)
@@ -219,6 +222,10 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       entry.def.equipSlot === source.equipSlot &&
       itemThumbnailFamily(entry.def) === family
     )
+  }
+
+  const automaticPoseTargets = (source: ItemDef): typeof items => {
+    return itemThumbnailTier(source) === 'Bronze' ? sameFamilyTargets(source) : []
   }
 
   const sameSlotTargets = (source: ItemDef): typeof items => {
@@ -370,8 +377,9 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
             else delete thumbnailOverrides[String(def.id)]
             invalidateThumbnailOverrides()
             rebuildOverrideIndexes()
-            const url = await refreshRuntimeItemThumb(def, modelPath, getEffectivePose(def))
-            if (url) img.src = url
+            const inheritedTargets = automaticPoseTargets(def)
+            const refreshTargets = [{ def, modelPath }, ...inheritedTargets]
+            await Promise.all(refreshTargets.map((target) => refreshVisibleThumb(target.def)))
             sourceItemId = def.id
             renderList()
           },

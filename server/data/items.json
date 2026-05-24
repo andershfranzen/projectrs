@@ -22,20 +22,6 @@
     "value": 30
   },
   {
-    "id": 9,
-    "name": "Copper Helm",
-    "description": "A copper medium helmet.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "head",
-    "sprite": "helm base.png",
-    "stabDefence": 3,
-    "slashDefence": 4,
-    "crushDefence": 2,
-    "value": 15,
-    "model": "/assets/equipment/head/BronzeFullHelm.glb"
-  },
-  {
     "id": 10,
     "name": "Coins",
     "description": "Lovely money!",

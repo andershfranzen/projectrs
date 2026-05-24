@@ -33,6 +33,10 @@ export function itemThumbnailTierIndex(item: ItemDef): number {
   return tier ? ITEM_THUMBNAIL_TIERS.indexOf(tier) : Number.MAX_SAFE_INTEGER;
 }
 
+function findBronzeFamilyItem(candidates: readonly ItemDef[]): ItemDef | undefined {
+  return candidates.find((item) => itemThumbnailTier(item) === 'Bronze');
+}
+
 export function setThumbnailItemCatalog(defs: Iterable<ItemDef>): void {
   _itemCatalog = Array.from(defs);
   _itemFamilyIndex = new Map<string, ItemDef[]>();
@@ -148,11 +152,10 @@ export function findThumbnailOverrideForItem(
   itemDefs: readonly ItemDef[] = _itemCatalog,
 ): ThumbnailOverride | undefined {
   const direct = overrides[def.id];
-  if (direct) return direct;
-  if (!def.equipSlot || itemDefs.length === 0) return undefined;
+  if (!def.equipSlot || itemDefs.length === 0) return direct;
 
   const family = itemThumbnailFamily(def);
-  if (!family) return undefined;
+  if (!family) return direct;
 
   const targetTierIndex = itemThumbnailTierIndex(def);
   const indexed = itemDefs === _itemCatalog ? _itemFamilyIndex.get(`${def.equipSlot}\0${family}`) : undefined;
@@ -160,6 +163,10 @@ export function findThumbnailOverrideForItem(
     item.equipSlot === def.equipSlot &&
     itemThumbnailFamily(item) === family
   );
+
+  const bronze = findBronzeFamilyItem(candidates);
+  if (bronze && bronze.id !== def.id && overrides[bronze.id]) return overrides[bronze.id];
+  if (direct) return direct;
 
   let best: ItemDef | undefined;
   let bestDelta = Number.POSITIVE_INFINITY;

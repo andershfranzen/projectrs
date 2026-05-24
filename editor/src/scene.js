@@ -1780,7 +1780,7 @@ let paintBrushRadius = 1
           <input id="halfPaintAngle" type="range" min="0" max="179" step="1" value="135" style="width:100%;" />
         </div>
         <div style="margin-top:6px;">
-          <label style="font-size:11px;color:rgba(255,255,255,0.45);">Cut offset <span id="halfPaintOffsetVal">0.00</span></label>
+          <label style="font-size:11px;color:rgba(255,255,255,0.45);">Half Paint Size <span id="halfPaintOffsetVal">50%</span></label>
           <input id="halfPaintOffset" type="range" min="-0.45" max="0.45" step="0.01" value="0" style="width:100%;" />
         </div>
       </div>
@@ -1798,8 +1798,8 @@ let paintBrushRadius = 1
       <input id="paintTextureSearch" type="text" placeholder="Search textures..." style="width:100%;box-sizing:border-box;margin-bottom:5px;" />
       <div id="paintTexturePalette" style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;max-height:200px;overflow-y:auto;"></div>
       <div id="paintTextureScaleRow" style="display:none;margin-top:5px;">
-        <label style="font-size:11px;color:rgba(255,255,255,0.45);">Scale <span id="paintTextureScaleVal">1</span></label>
-        <input id="paintTextureScale" type="range" min="1" max="8" step="1" value="1" style="width:100%;" />
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);">Texture Size <span id="paintTextureScaleVal">1</span></label>
+        <input id="paintTextureScale" type="range" min="0.25" max="8" step="0.25" value="1" style="width:100%;" />
       </div>
       <div id="paintDiagFloorRow" style="margin-top:6px;border-top:1px solid #444;padding-top:6px;">
         <label><input id="paintToggleDiagFloor" type="checkbox" /> Diagonal Floor (D)</label>
@@ -4251,9 +4251,11 @@ let paintBrushRadius = 1
     const eraseBtn = sidebar.querySelector('#eraseTextureBrushBtn')
     if (eraseBtn) eraseBtn.classList.toggle('active-tool', state.tool === ToolMode.PAINT && paintTabTextureId === '__erase__')
 
-    // Show scale slider for painted textures (non-stretched, non-erase)
+    // Show size slider for every active painted texture. Half-tile painting
+    // still uses textureScale even when the texture is not world-UV/stretched.
     if (paintTextureScaleRow) {
-      const showScale = state.tool === ToolMode.PAINT && paintTabTextureId && paintTabTextureId !== '__erase__' && textureWorldUV
+      const hasPaintTexture = (paintTabTextureId && paintTabTextureId !== '__erase__') || !!paintTabTextureIdB
+      const showScale = state.tool === ToolMode.PAINT && hasPaintTexture
       paintTextureScaleRow.style.display = showScale ? 'block' : 'none'
     }
     if (state.tool === ToolMode.TEXTURE_PLANE) {
@@ -6257,15 +6259,17 @@ function halfPaintPresetAngle(mode) {
 function resolveHalfPaintCut(tile, u, v, eventLike, existing = null) {
   const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
   if (state.halfPaintCutMode === 'cursor') {
+    const angle = hadHalfMode ? existing.textureCutAngle : pickTextureCutAngle(u, v, eventLike)
     return {
-      angle: hadHalfMode ? existing.textureCutAngle : pickTextureCutAngle(u, v, eventLike),
-      offset: state.halfPaintCutOffset,
+      angle,
+      offset: cutSideOf(u, v, angle, 0) === 'A' ? state.halfPaintCutOffset : -state.halfPaintCutOffset,
       shouldWrite: true,
     }
   }
+  const angle = normalizeCutAngle(halfPaintPresetAngle(state.halfPaintCutMode))
   return {
-    angle: normalizeCutAngle(halfPaintPresetAngle(state.halfPaintCutMode)),
-    offset: state.halfPaintCutOffset,
+    angle,
+    offset: cutSideOf(u, v, angle, 0) === 'A' ? state.halfPaintCutOffset : -state.halfPaintCutOffset,
     shouldWrite: true,
   }
 }
@@ -7349,15 +7353,11 @@ function applyToolAtTile(tile, eventLike = null) {
         } else {
           paintTabTextureId = tex.id
           textureWorldUV = !!tex.defaultScale
-          if (tex.defaultScale) {
-            textureScale = tex.defaultScale
-            if (paintTextureScaleSlider) {
-              paintTextureScaleSlider.value = tex.defaultScale
-              if (paintTextureScaleVal) paintTextureScaleVal.textContent = tex.defaultScale
-            }
-          } else {
-            textureWorldUV = false
-          }
+        }
+        textureScale = tex.defaultScale || 1
+        if (paintTextureScaleSlider) {
+          paintTextureScaleSlider.value = textureScale
+          if (paintTextureScaleVal) paintTextureScaleVal.textContent = textureScale
         }
         setTool(ToolMode.PAINT)
         refreshSlotUI()
@@ -9774,7 +9774,7 @@ function applyToolAtTile(tile, eventLike = null) {
     if (angle && Number(angle.value) !== deg) angle.value = String(deg)
     if (angleVal) angleVal.textContent = String(deg)
     if (offset && Number(offset.value) !== state.halfPaintCutOffset) offset.value = String(state.halfPaintCutOffset)
-    if (offsetVal) offsetVal.textContent = state.halfPaintCutOffset.toFixed(2)
+    if (offsetVal) offsetVal.textContent = `${Math.round((0.5 + state.halfPaintCutOffset) * 100)}%`
   }
 
   function refreshHalfPaintPreviewForHovered() {
