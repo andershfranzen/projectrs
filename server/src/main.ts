@@ -1408,6 +1408,72 @@ function requiresAuthenticatedJsonAsset(pathname: string): boolean {
   return pathname === '/assets/assets.json' || pathname === '/assets/textures/textures.json';
 }
 
+interface HttpMapDataScanWindow {
+  startedAt: number;
+  lastSeenAt: number;
+  requests: number;
+  files: Set<string>;
+  burstRecorded: boolean;
+}
+
+const HTTP_MAP_DATA_SCAN_WINDOW_MS = 60_000;
+const HTTP_MAP_DATA_SCAN_UNIQUE_THRESHOLD = 110;
+const HTTP_MAP_DATA_SCAN_REQUEST_THRESHOLD = 160;
+const HTTP_MAP_DATA_SCAN_MAX_WINDOWS = 2000;
+const httpMapDataScanWindows = new Map<string, HttpMapDataScanWindow>();
+
+function sanitizeMapDataAuditPath(mapPath: string): string {
+  return mapPath.replace(/[^a-zA-Z0-9_./-]/g, '?').slice(0, 128);
+}
+
+function recordHttpMapDataScanWindow(
+  session: NonNullable<ReturnType<typeof getBoundBearerSession>>,
+  mapPath: string,
+  now: number = Date.now(),
+): { requests: number; uniqueFiles: number; sampleFiles: string[] } | null {
+  const key = `${session.accountId}:${session.deviceId || 'no-device'}`;
+  let window = httpMapDataScanWindows.get(key);
+  if (!window || now - window.startedAt > HTTP_MAP_DATA_SCAN_WINDOW_MS) {
+    window = {
+      startedAt: now,
+      lastSeenAt: now,
+      requests: 0,
+      files: new Set(),
+      burstRecorded: false,
+    };
+    if (httpMapDataScanWindows.size >= HTTP_MAP_DATA_SCAN_MAX_WINDOWS) {
+      let oldestKey: string | null = null;
+      let oldestSeen = Infinity;
+      for (const [k, v] of httpMapDataScanWindows) {
+        if (v.lastSeenAt < oldestSeen) {
+          oldestSeen = v.lastSeenAt;
+          oldestKey = k;
+        }
+      }
+      if (oldestKey) httpMapDataScanWindows.delete(oldestKey);
+    }
+    httpMapDataScanWindows.set(key, window);
+  }
+  window.lastSeenAt = now;
+  window.requests++;
+  window.files.add(sanitizeMapDataAuditPath(mapPath));
+  if (
+    !window.burstRecorded
+    && (
+      window.files.size >= HTTP_MAP_DATA_SCAN_UNIQUE_THRESHOLD
+      || window.requests >= HTTP_MAP_DATA_SCAN_REQUEST_THRESHOLD
+    )
+  ) {
+    window.burstRecorded = true;
+    return {
+      requests: window.requests,
+      uniqueFiles: window.files.size,
+      sampleFiles: [...window.files].slice(0, 12),
+    };
+  }
+  return null;
+}
+
 function recordGameplayMapDataFetch(
   session: NonNullable<ReturnType<typeof getBoundBearerSession>>,
   mapPath: string,
@@ -1415,7 +1481,8 @@ function recordGameplayMapDataFetch(
   server: { requestIP(req: Request): { address: string } | null },
 ): void {
   const player = world.getActivePlayerByAccountId(session.accountId);
-  const burst = player?.botStats?.recordMapDataFetch(mapPath);
+  const burst = player?.botStats?.recordMapDataFetch(mapPath)
+    ?? recordHttpMapDataScanWindow(session, mapPath);
   if (!burst) return;
   audit({
     type: 'map_data.scan',
@@ -1423,6 +1490,7 @@ function recordGameplayMapDataFetch(
     accountId: session.accountId,
     details: {
       mapPath,
+      mode: player ? 'active-session' : 'pre-session',
       ip: requestClientIp(req, server),
       requests: burst.requests,
       uniqueFiles: burst.uniqueFiles,

@@ -576,6 +576,19 @@ function showIpReport(db: SQLiteDB, ip: string): void {
   }
 }
 
+function normalizeMapDataScanDetails(details: AuditLine['details']): AuditLine['details'] {
+  const requests = typeof details?.requests === 'number' ? details.requests : 0;
+  const uniqueFiles = typeof details?.uniqueFiles === 'number' ? details.uniqueFiles : 0;
+  return {
+    ...(details ?? {}),
+    flags: ['mapDataScrape'],
+    sessionMinutes: 0,
+    sessionMapDataRequests: requests,
+    sessionUniqueMapDataFiles: uniqueFiles,
+    sessionMapDataScanBursts: 1,
+  };
+}
+
 function main(): void {
   const opts = parseArgs();
   const db = openDb();
@@ -598,13 +611,18 @@ function main(): void {
 
   const buckets: Map<number, AccountBucket> = new Map();
   for (const line of lines) {
-    if (line.type !== 'player.session_summary') continue;
+    const isSessionSummary = line.type === 'player.session_summary';
+    const isMapDataScan = line.type === 'map_data.scan';
+    if (!isSessionSummary && !isMapDataScan) continue;
     if (line.accountId == null) continue;
     if (opts.account != null && line.accountId !== opts.account) continue;
     const ts = new Date(line.ts).getTime();
     if (ts < cutoff) continue;
     if (auditEpochMs > 0 && ts < auditEpochMs) continue;
-    const details = line.details;
+    const scanDetails = isMapDataScan
+      ? normalizeMapDataScanDetails(line.details)
+      : null;
+    const details = scanDetails ?? line.details;
     const flags = (details?.flags as string[]) ?? [];
     if (flags.length === 0 && opts.account == null) continue;
     let b = buckets.get(line.accountId);
@@ -612,7 +630,7 @@ function main(): void {
       b = { accountId: line.accountId, sessions: [], uniqueFlags: new Set(), totalFlagFires: 0, totalMinutes: 0 };
       buckets.set(line.accountId, b);
     }
-    b.sessions.push(line);
+    b.sessions.push(scanDetails ? { ...line, details: scanDetails } : line);
     b.totalFlagFires += flags.length;
     b.totalMinutes += (details?.sessionMinutes as number) ?? 0;
     for (const f of flags) {
