@@ -3278,6 +3278,16 @@ export class World {
     this.closeNpcUiContext(player);
 
     // Check adjacency — player must be on a tile next to the object
+    const action = obj.def.category === 'ladder'
+      ? obj.def.actions[actionIndex]
+      : obj.currentActions[actionIndex];
+    if (!action) return;
+    if (obj.def.category === 'ladder' && (action === 'Climb-up' || action === 'Climb-down') && !this.resolveLadderLinkForPlayerAction(player, obj, action)) {
+      this.sendWorldObjectUpdate(player, obj);
+      this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
+      return;
+    }
+
     if (!this.isAdjacentToObject(player, obj)) {
       if (obj.def.category === 'door') {
         const swingSign = obj.doorOpen ? 0 : this.computeSwingSign(player, obj);
@@ -3348,10 +3358,6 @@ export class World {
     player.attackTarget = null;
     this.clearCombatTarget(playerId);
 
-    const action = obj.def.category === 'ladder'
-      ? obj.def.actions[actionIndex]
-      : obj.currentActions[actionIndex];
-    if (!action) return;
     player.botStats?.recordActionSignature('object', obj.defId, player.position.x, player.position.y, action);
 
     if (action !== 'Examine' && recipeIndex < 0 && this.shouldOpenRecipePicker(obj)) {
@@ -6704,6 +6710,7 @@ export class World {
         this.refreshPlayerEffectiveY(player);
         player.syncDirty = true;
         this.sendFloorChange(player);
+        this.sendNearbyVerticalObjectUpdates(player);
       }
     }
   }

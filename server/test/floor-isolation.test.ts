@@ -82,6 +82,7 @@ function makeWorld(): any {
   world.npcs = new Map();
   world.groundItems = new Map();
   world.worldObjects = new Map();
+  world.chunkManagers = new Map();
   world.playerCombatTargets = new Map();
   world.npcTargetedBy = new Map();
   world.pendingTradeRequests = new Map();
@@ -582,6 +583,34 @@ describe('floor isolation', () => {
     expect(player.currentFloor).toBe(1);
     expect(player.effectiveY).toBe(2.73);
     expect(packets.get(player.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.FLOOR_CHANGE && p.values[0] === 1)).toBe(true);
+  });
+
+  test('height-based floor changes refresh nearby ladder action masks', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('upper', 1, 0);
+    player.position.x = 158.5;
+    player.position.y = 156.5;
+    player.effectiveY = 2.73;
+    world.players.set(player.id, player);
+    world.maps.set('kcmap', {
+      width: 64,
+      getTransitionAt: () => null,
+      getStairOnFloor: () => null,
+      getWalkableFloorTargetsAt: () => [
+        { floor: 0, y: 0.52 },
+        { floor: 1, y: 2.73 },
+      ],
+      getEffectiveHeightOnFloor: (_x: number, _z: number, floor: number) => floor === 1 ? 2.73 : 0.52,
+    });
+    let refreshed = false;
+    world.sendNearbyVerticalObjectUpdates = (target: Player) => {
+      if (target.id === player.id) refreshed = true;
+    };
+
+    world.tickTransitions();
+
+    expect(player.currentFloor).toBe(1);
+    expect(refreshed).toBe(true);
   });
 
   test('login bootstrap recovers a floor-0 save whose persisted height matches an upper walking plane', () => {
