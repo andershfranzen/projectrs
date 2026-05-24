@@ -3376,23 +3376,31 @@ export class ChunkManager {
     const tz = Math.floor(z);
     const r = Math.ceil(radius);
     const seen = new Set<TransformNode>();
-    for (const [, nodes] of this.chunkPlacedNodes) {
-      for (const node of nodes) {
-        if (seen.has(node)) continue;
-        // Door panels remain visible while roofs/floor slabs are culled; only
-        // their interaction options are floor-gated by GameManager.
-        const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
-        if (assetId.includes('door')) continue;
+    const minChunkX = Math.floor((tx - r) / CHUNK_SIZE);
+    const maxChunkX = Math.floor((tx + r) / CHUNK_SIZE);
+    const minChunkZ = Math.floor((tz - r) / CHUNK_SIZE);
+    const maxChunkZ = Math.floor((tz + r) / CHUNK_SIZE);
+    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+        const nodes = this.chunkPlacedNodes.get(`${chunkX},${chunkZ}`);
+        if (!nodes) continue;
+        for (const node of nodes) {
+          if (seen.has(node)) continue;
+          // Door panels remain visible while roofs/floor slabs are culled; only
+          // their interaction options are floor-gated by GameManager.
+          const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
+          if (assetId.includes('door')) continue;
 
-        // Door/non-door placed objects can be reparented under pivots, so use
-        // absolute position rather than local transform when deciding height.
-        const ap = node.getAbsolutePosition();
-        if (ap.y <= minY) continue;
-        const dx = Math.floor(ap.x) - tx;
-        const dz = Math.floor(ap.z) - tz;
-        if (Math.abs(dx) <= r && Math.abs(dz) <= r) {
-          seen.add(node);
-          result.push(node);
+          // Door/non-door placed objects can be reparented under pivots, so use
+          // absolute position rather than local transform when deciding height.
+          const ap = node.getAbsolutePosition();
+          if (ap.y <= minY) continue;
+          const dx = Math.floor(ap.x) - tx;
+          const dz = Math.floor(ap.z) - tz;
+          if (Math.abs(dx) <= r && Math.abs(dz) <= r) {
+            seen.add(node);
+            result.push(node);
+          }
         }
       }
     }
@@ -3402,16 +3410,24 @@ export class ChunkManager {
     const playerChunkX = Math.floor(x / CHUNK_SIZE);
     const playerChunkZ = Math.floor(z / CHUNK_SIZE);
     const chunkRadius = Math.ceil(radius / CHUNK_SIZE) + 1;
-    for (const m of this.texturePlaneMeshes) {
-      const md = m.metadata as { isFlat?: boolean; isNoRoof?: boolean; minY?: number; chunkX?: number; chunkZ?: number } | undefined;
-      if (!md || !md.isFlat || md.minY === undefined || md.chunkX === undefined) continue;
-      if (md.isNoRoof) continue; // explicitly authored as "never hide"
-      if (md.minY <= minY) continue;
-      if (Math.abs(md.chunkX - playerChunkX) > chunkRadius) continue;
-      if (Math.abs((md.chunkZ ?? 0) - playerChunkZ) > chunkRadius) continue;
-      if (seen.has(m)) continue;
-      seen.add(m);
-      result.push(m);
+    const planeMinChunkX = playerChunkX - chunkRadius;
+    const planeMaxChunkX = playerChunkX + chunkRadius;
+    const planeMinChunkZ = playerChunkZ - chunkRadius;
+    const planeMaxChunkZ = playerChunkZ + chunkRadius;
+    for (let chunkZ = planeMinChunkZ; chunkZ <= planeMaxChunkZ; chunkZ++) {
+      for (let chunkX = planeMinChunkX; chunkX <= planeMaxChunkX; chunkX++) {
+        const meshes = this.texturePlanesByChunk.get(`${chunkX},${chunkZ}`);
+        if (!meshes) continue;
+        for (const m of meshes) {
+          const md = m.metadata as { isFlat?: boolean; isNoRoof?: boolean; minY?: number; chunkX?: number; chunkZ?: number } | undefined;
+          if (!md || !md.isFlat || md.minY === undefined || md.chunkX === undefined) continue;
+          if (md.isNoRoof) continue; // explicitly authored as "never hide"
+          if (md.minY <= minY) continue;
+          if (seen.has(m)) continue;
+          seen.add(m);
+          result.push(m);
+        }
+      }
     }
     return result;
   }

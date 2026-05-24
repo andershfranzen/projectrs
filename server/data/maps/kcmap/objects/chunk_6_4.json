@@ -4901,40 +4901,6 @@
       "x": 0.8,
       "y": 0.8,
       "z": 0.8
-    },
-    "verticalLinks": [
-      {
-        "from": {
-          "x": 216.5,
-          "z": 144.5,
-          "floor": 0
-        },
-        "to": {
-          "x": 216.5,
-          "z": 144.5,
-          "floor": 1
-        },
-        "fromAction": "Climb-up"
-      },
-      {
-        "from": {
-          "x": 216.5,
-          "z": 144.5,
-          "floor": 1
-        },
-        "to": {
-          "x": 216.5,
-          "z": 144.5,
-          "floor": 0
-        },
-        "fromAction": "Climb-down"
-      }
-    ],
-    "interactionTiles": [
-      {
-        "x": 1,
-        "z": 0
-      }
-    ]
+    }
   }
 ]

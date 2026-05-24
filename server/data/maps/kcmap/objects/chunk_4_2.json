@@ -3419,41 +3419,7 @@
       "x": 0.85,
       "y": 0.85,
       "z": 0.85
-    },
-    "verticalLinks": [
-      {
-        "from": {
-          "x": 154.5,
-          "z": 66.5,
-          "floor": 0
-        },
-        "to": {
-          "x": 154.5,
-          "z": 66.5,
-          "floor": 1
-        },
-        "fromAction": "Climb-up"
-      },
-      {
-        "from": {
-          "x": 154.5,
-          "z": 66.5,
-          "floor": 1
-        },
-        "to": {
-          "x": 154.5,
-          "z": 66.5,
-          "floor": 0
-        },
-        "fromAction": "Climb-down"
-      }
-    ],
-    "interactionTiles": [
-      {
-        "x": 1,
-        "z": 0
-      }
-    ]
+    }
   },
   {
     "assetId": "wood pole",

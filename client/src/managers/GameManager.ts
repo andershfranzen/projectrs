@@ -372,6 +372,7 @@ export class GameManager {
   private isSkilling: boolean = false;
   private isIndoors: boolean = false;
   private hiddenRoofNodes: TransformNode[] = [];
+  private hiddenRoofNodeSet: Set<TransformNode> = new Set();
   private _lastIndoorTileX: number = -9999;
   private _lastIndoorTileZ: number = -9999;
   private _outdoorFrameCount: number = 0;
@@ -1761,6 +1762,10 @@ export class GameManager {
     }
     const objectEntityId = this.worldObjectIdForNode(node);
     if (objectEntityId !== null && !this.shouldPlacedWorldObjectBeEnabled(objectEntityId)) {
+      node.setEnabled(false);
+      return;
+    }
+    if (this.hiddenRoofNodeSet.has(node)) {
       node.setEnabled(false);
       return;
     }
@@ -7128,6 +7133,9 @@ export class GameManager {
       this.cleanupDisposedWorldObjects();
       this.linkPlacedObjectsToWorldObjects();
       this.reapplyWorldObjectVisualStates();
+      // Chunk visibility flips can re-enable placed nodes; re-hide only on
+      // those events instead of walking the hidden roof list every frame.
+      this.reapplyHiddenRoofStates();
     }
     this.chunkManager.updateAnimations();
     this.updateFog(dt);
@@ -7654,6 +7662,7 @@ export class GameManager {
       this._outdoorFrameCount++;
       if (this._outdoorFrameCount >= 6 && this.isIndoors) {
         this.isIndoors = false;
+        this.hiddenRoofNodeSet.clear();
         for (const node of this.hiddenRoofNodes) this.setPlacedWorldObjectEnabled(node, true);
         this.hiddenRoofNodes = [];
         this._lastIndoorTileX = -9999;
@@ -7667,19 +7676,15 @@ export class GameManager {
         this._lastIndoorTileX = ptx;
         this._lastIndoorTileZ = ptz;
         this.recomputeHiddenRoofs();
-      } else {
-        // Even when the tile didn't change, something else may have re-enabled
-        // a hidden roof: chunk-radius transitions in updatePlayerPosition
-        // unconditionally call setEnabled(true) on every placed node in active
-        // chunks (line 543 of ChunkManager) and async chunk loading lands new
-        // meshes at default-enabled. Re-asserting setEnabled(false) on the
-        // cached hidden set is a no-op when already disabled — Babylon just
-        // sets a property — so this is cheap insurance against flicker.
-        for (let i = 0; i < this.hiddenRoofNodes.length; i++) {
-          const n = this.hiddenRoofNodes[i];
-          if (n.isEnabled(false)) n.setEnabled(false);
-        }
       }
+    }
+  }
+
+  private reapplyHiddenRoofStates(): void {
+    for (let i = 0; i < this.hiddenRoofNodes.length; i++) {
+      const node = this.hiddenRoofNodes[i];
+      if (node.isDisposed()) continue;
+      if (node.isEnabled(false)) node.setEnabled(false);
     }
   }
 
@@ -7705,12 +7710,14 @@ export class GameManager {
     for (const n of this.chunkManager.getRoofNodesNear(this.playerX, this.playerZ, 8, headClearY, floor)) newSet.add(n);
     for (const n of this.chunkManager.getNodesAboveHeight(this.playerX, this.playerZ, 8, hideAboveY)) newSet.add(n);
 
-    // Re-enable nodes that LEFT the hidden set
+    const oldSet = this.hiddenRoofNodeSet;
+    this.hiddenRoofNodeSet = newSet;
+
+    // Re-enable nodes that LEFT the hidden set.
     for (const node of this.hiddenRoofNodes) {
       if (!newSet.has(node)) this.setPlacedWorldObjectEnabled(node, true);
     }
-    // Disable nodes that ENTERED the hidden set (don't touch ones already in)
-    const oldSet = new Set(this.hiddenRoofNodes);
+    // Disable nodes that ENTERED the hidden set (don't touch ones already in).
     const next: TransformNode[] = [];
     for (const node of newSet) {
       if (!oldSet.has(node)) node.setEnabled(false);
