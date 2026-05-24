@@ -399,7 +399,7 @@
     },
     {
       "id": 49,
-      "npcId": 16,
+      "npcId": 21,
       "x": 343.5,
       "z": 167.5,
       "wanderRange": 0,
@@ -1567,6 +1567,14 @@
       "x": 211.5,
       "z": 156.5,
       "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 100,
+      "npcId": 16,
+      "x": 345.5,
+      "z": 168.5,
+      "wanderRange": 0,
       "aggressive": false
     }
   ],

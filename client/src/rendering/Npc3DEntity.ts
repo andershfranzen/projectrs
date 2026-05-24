@@ -15,6 +15,8 @@ export interface Npc3DEntityOptions {
   materialColors?: Record<string, [number, number, number]>;
   tileSize?: number;
   originMode?: 'authored' | 'boundsCenter';
+  /** World-space visual Y lift without changing gameplay/server position. */
+  groundOffset?: number;
 }
 
 async function importMeshWithTimeout(
@@ -64,6 +66,7 @@ export class Npc3DEntity {
   private targetRotationY: number = 0;
   private modelScale: number = 1;
   private originMode: Npc3DEntityOptions['originMode'] = 'authored';
+  private groundOffset: number = 0;
   /** Server positions are already centered on the NPC footprint. Kept as a
    *  field so existing position/facing code can share one render anchor. */
   private renderOffset: number = 0;
@@ -101,8 +104,13 @@ export class Npc3DEntity {
     this.scene = scene;
     this.modelScale = scale;
     this.originMode = options.originMode ?? 'authored';
+    this.groundOffset = options.groundOffset ?? 0;
     this.renderOffset = 0;
     this.load(file, animMap, options.label, options.materialColors);
+  }
+
+  private visualY(y: number): number {
+    return y + this.groundOffset;
   }
 
   private async load(
@@ -203,7 +211,7 @@ export class Npc3DEntity {
 
       if (this._walking && this.animGroups.has('walk')) this.playAnim('walk', true);
       else this.playAnim('idle', true);
-      this.root.position.set(this._position.x + this.renderOffset, this._position.y, this._position.z + this.renderOffset);
+      this.root.position.set(this._position.x + this.renderOffset, this.visualY(this._position.y), this._position.z + this.renderOffset);
       this._ready = true;
       // Force enable all meshes
       for (const mesh of this.meshes) {
@@ -257,13 +265,13 @@ export class Npc3DEntity {
 
   setPositionXYZ(x: number, y: number, z: number): void {
     this._position.set(x, y, z);
-    if (this.root) this.root.position.set(x + this.renderOffset, y, z + this.renderOffset);
+    if (this.root) this.root.position.set(x + this.renderOffset, this.visualY(y), z + this.renderOffset);
   }
 
   get position(): Vector3 { return this._position; }
   set position(pos: Vector3) {
     this._position = pos;
-    if (this.root) this.root.position.set(pos.x + this.renderOffset, pos.y, pos.z + this.renderOffset);
+    if (this.root) this.root.position.set(pos.x + this.renderOffset, this.visualY(pos.y), pos.z + this.renderOffset);
   }
 
   /** World-space point projectiles aim at: roughly chest-height above the NPC's base. */

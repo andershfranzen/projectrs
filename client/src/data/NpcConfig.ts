@@ -26,6 +26,8 @@ export interface Npc3DModelEntry {
    *  Keys match the GLB's material names; values are normalized RGB. Used to
    *  produce visual variants from a shared GLB (e.g. Snow Wolf reuses wolf.glb). */
   materialColors?: Record<string, [number, number, number]>;
+  /** World-space visual lift for models whose authored bounds clip into terrain. */
+  groundOffset?: number;
 }
 
 export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
@@ -35,7 +37,7 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', death: 'Armature|Armature|Death' } },
   // Camel.glb only ships with idle/walk/eat — no attack or death tracks.
   15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk' }, originMode: 'boundsCenter' },
-  18: { file: '/models/npcs/rat_small.glb', scale: 0.15, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
+  18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', groundOffset: 0.2, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   17: {
     file: '/models/npcs/wolf.glb',
     scale: 0.4,

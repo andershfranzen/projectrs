@@ -11,6 +11,7 @@ import {
  *  sub-30 mobs, tier 2 covers 30–60. RELIC_DROP_CHANCE applies once per kill;
  *  on a hit, one variant is picked uniformly from the tier pool. */
 const RELIC_DROP_CHANCE = 1 / 30;
+const NO_LOOT_NPC_IDS = new Set<number>([18]);
 
 export interface CombatHit {
   attackerId: number;
@@ -324,6 +325,8 @@ export function processNpcCombat(
  *   lvl >  60 → no bonus relic (reserved for future higher tiers)
  */
 export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
+  if (NO_LOOT_NPC_IDS.has(npc.def.id)) return [];
+
   const drops: { itemId: number; quantity: number }[] = [];
   for (const drop of npc.def.lootTable) {
     if (Math.random() <= drop.chance) {

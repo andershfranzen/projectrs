@@ -158,6 +158,7 @@ export class EntityManager {
         materialColors: modelCfg.materialColors,
         tileSize,
         originMode: modelCfg.originMode,
+        groundOffset: modelCfg.groundOffset,
       });
       npc3d.position = new Vector3(x, y ?? this.getHeight(x, z, floor, 0), z);
       // Stamp entityId on every mesh's metadata so picking can disambiguate

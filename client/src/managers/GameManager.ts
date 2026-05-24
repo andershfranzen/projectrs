@@ -7594,11 +7594,10 @@ export class GameManager {
     this.doorPickProxies.get(objectEntityId)?.dispose();
     const { tile: [tx, tz], edge, axis } = doorEdgeFromPlacement(x, z, rotY);
     if (!this.doorPivots.has(objectEntityId)) this.setupDoorPivot(objectEntityId);
-    const doorEntry = this.doorPivots.get(objectEntityId);
     const proxy = MeshBuilder.CreateBox(`door_pickProxy_${objectEntityId}`, {
-      width: axis === 'NS' ? 0.9 : 0.18,
-      depth: axis === 'NS' ? 0.18 : 0.9,
-      height: 1.8,
+      width: axis === 'NS' ? 1.05 : 0.42,
+      depth: axis === 'NS' ? 0.42 : 1.05,
+      height: 2.15,
     }, this.scene);
 
     const closedCenter = new Vector3(tx + 0.5, baseY + 0.9, tz + 0.5);
@@ -7607,18 +7606,17 @@ export class GameManager {
     else if (edge === WallEdge.E) closedCenter.x = tx + 0.92;
     else if (edge === WallEdge.W) closedCenter.x = tx + 0.08;
 
-    if (doorEntry) {
-      proxy.parent = doorEntry.pivot;
-      proxy.position = closedCenter.subtract(doorEntry.pivot.getAbsolutePosition());
-      proxy.rotation.y = 0;
-    } else {
-      proxy.position = closedCenter;
-    }
+    // Keep the interaction target on the physical doorway, not on the
+    // animated panel. When this follows the pivot, default-open doors move
+    // the pick box away from the doorway and clicks fall through as ground
+    // movement.
+    proxy.position = closedCenter;
     proxy.isVisible = true;
     proxy.visibility = 0;
     proxy.isPickable = true;
     proxy.layerMask = 0;
     proxy.metadata = { kind: 'worldObject', objectEntityId };
+    proxy.freezeWorldMatrix();
 
     this.doorPickProxies.set(objectEntityId, proxy);
   }

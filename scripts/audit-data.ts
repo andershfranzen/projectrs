@@ -16,6 +16,21 @@ interface ItemDefLike {
   equipSlot?: unknown;
 }
 
+interface NpcDefLike {
+  id?: unknown;
+  name?: unknown;
+  dialogue?: unknown;
+  shop?: unknown;
+  bankAccess?: unknown;
+}
+
+interface NpcSpawnLike {
+  npcId?: unknown;
+  name?: unknown;
+  x?: unknown;
+  z?: unknown;
+}
+
 const rootDir = join(import.meta.dir, '..');
 const dataDir = join(rootDir, 'server/data');
 const mapsDir = join(dataDir, 'maps');
@@ -194,6 +209,61 @@ function auditQuestRewardSkills(file: string, context: string, value: unknown): 
   }
 }
 
+function hasDialogueAction(value: unknown, actionType: string): boolean {
+  if (Array.isArray(value)) return value.some((entry) => hasDialogueAction(entry, actionType));
+  if (!isRecord(value)) return false;
+
+  const action = value.action;
+  if (isRecord(action) && action.type === actionType) return true;
+  const actions = value.actions;
+  if (Array.isArray(actions) && actions.some((entry) => isRecord(entry) && entry.type === actionType)) return true;
+
+  return Object.values(value).some((entry) => hasDialogueAction(entry, actionType));
+}
+
+function collectNpcSpawns(mapFiles: string[]): Map<number, Array<{ file: string; spawn: NpcSpawnLike }>> {
+  const spawnsByNpcId = new Map<number, Array<{ file: string; spawn: NpcSpawnLike }>>();
+  for (const file of mapFiles) {
+    if (!file.endsWith('/spawns.json')) continue;
+    const data = readJson<unknown>(file);
+    if (!isRecord(data) || !Array.isArray(data.npcs)) continue;
+    for (const spawn of data.npcs) {
+      if (!isRecord(spawn) || typeof spawn.npcId !== 'number') continue;
+      const entries = spawnsByNpcId.get(spawn.npcId) ?? [];
+      entries.push({ file, spawn: spawn as NpcSpawnLike });
+      spawnsByNpcId.set(spawn.npcId, entries);
+    }
+  }
+  return spawnsByNpcId;
+}
+
+function auditNpcSpawnCoverage(npcsPath: string, npcs: NpcDefLike[], mapFiles: string[]): void {
+  const spawnsByNpcId = collectNpcSpawns(mapFiles);
+  for (const npc of npcs) {
+    if (typeof npc.id !== 'number') continue;
+    const name = typeof npc.name === 'string' ? npc.name : `NPC ${npc.id}`;
+    const spawnCount = spawnsByNpcId.get(npc.id)?.length ?? 0;
+
+    if (hasDialogueAction(npc.dialogue, 'openAppearance') && spawnCount === 0) {
+      addIssue(npcsPath, `${name} (${npc.id}) has openAppearance dialogue but no live map spawn uses npcId ${npc.id}`);
+    }
+
+    if ((npc.dialogue || npc.shop || npc.bankAccess === true) && spawnCount === 0) {
+      addWarning(npcsPath, `${name} (${npc.id}) is interactive but has no live map spawn`);
+    }
+  }
+
+  for (const npc of npcs) {
+    if (typeof npc.id !== 'number' || npc.bankAccess !== true) continue;
+    for (const { file, spawn } of spawnsByNpcId.get(npc.id) ?? []) {
+      if (typeof spawn.name === 'string' && spawn.name.trim()) continue;
+      const x = typeof spawn.x === 'number' ? spawn.x : '?';
+      const z = typeof spawn.z === 'number' ? spawn.z : '?';
+      addWarning(file, `bank NPC spawn for npcId ${npc.id} at (${x},${z}) has no explicit name override`);
+    }
+  }
+}
+
 function auditGenericRefs(
   file: string,
   value: unknown,
@@ -294,6 +364,9 @@ function auditStaticData(): void {
     auditGenericRefs(file, readJson<unknown>(file), refs);
   }
 
+  const mapFiles = jsonFiles(mapsDir);
+  auditNpcSpawnCoverage(npcsPath, npcs.filter(isRecord) as NpcDefLike[], mapFiles);
+
   const spellFiles = jsonFiles(join(dataDir, 'spells'));
   const spellIds = new Set<string>();
   for (const file of spellFiles) {
@@ -308,7 +381,7 @@ function auditStaticData(): void {
     auditGenericRefs(file, spell, refs);
   }
 
-  for (const file of jsonFiles(mapsDir)) {
+  for (const file of mapFiles) {
     auditGenericRefs(file, readJson<unknown>(file), refs);
   }
 }
