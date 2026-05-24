@@ -202,6 +202,7 @@ type DialogueScheduledStep =
 interface ObjectSayScheduledLine {
   runAtTick: number;
   playerId: number;
+  accountId: number;
   playerName: string;
   message: string;
 }
@@ -3564,7 +3565,7 @@ export class World {
         this.queueObjectSaySequence(player, effect.saySequence);
       } else if (typeof effect.say === 'string') {
         const say = effect.say.trim();
-        if (say) broadcastLocalMessage(player.name, say.slice(0, 1000));
+        if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId);
       }
       const message = typeof effect.message === 'string' ? effect.message.trim() : '';
       if (message) this.sendChatSystem(player, message.slice(0, 300));
@@ -3607,12 +3608,13 @@ export class World {
         : 0;
       const delayTicks = Math.round((delaySeconds * 1000) / TICK_RATE);
       if (delayTicks <= 0) {
-        broadcastLocalMessage(player.name, message);
+        broadcastLocalMessage(player.name, message, player.accountId);
         continue;
       }
       this.objectSayScheduledLines.push({
         runAtTick: this.currentTick + delayTicks,
         playerId: player.id,
+        accountId: player.accountId,
         playerName: player.name,
         message,
       });
@@ -6779,7 +6781,7 @@ export class World {
       }
       const player = this.players.get(line.playerId);
       if (!player || player.disconnected || player.requestIdleLogout) continue;
-      broadcastLocalMessage(line.playerName, line.message);
+      broadcastLocalMessage(line.playerName, line.message, line.accountId);
     }
     this.objectSayScheduledLines = remaining;
   }

@@ -272,6 +272,7 @@ export class GameManager {
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
   private _minimapObjects: { x: number; z: number; category: string }[] = [];
+  private _minimapDrops: { x: number; z: number }[] = [];
   private _lastMinimapListRefreshMs: number = 0;
   // NOTE: do NOT reuse a single Vector3 for entity positions — the setter stores the reference
   private _overlayVp = new Viewport(0, 0, 1, 1);
@@ -451,6 +452,7 @@ export class GameManager {
   private fpsFrameCount: number = 0;
   private fpsLastSampleAt: number = 0;
   private fpsCounterUserToggled: boolean = false;
+  private nativeContextMenuBlocker: ((event: MouseEvent) => void) | null = null;
 
   // WASD camera
   private keysDown: Set<string> = new Set();
@@ -600,6 +602,7 @@ export class GameManager {
     this.setupNpcTooltip(canvas);
 
     // Right-click context menu for NPCs/items
+    this.setupNativeContextMenuBlocker();
     this.setupContextMenu(canvas);
 
     // WASD keyboard controls
@@ -635,6 +638,13 @@ export class GameManager {
       if (!this.handleChatCommand(msg)) {
         this.network.sendChat(msg);
       }
+    });
+    this.chatPanel.setPrivateSendHandler((to, msg) => {
+      this.network.sendPrivateMessage(to, msg);
+    });
+    this.sidePanel.setPrivateMessageTargetCallback((username) => {
+      this.chatPanel?.setPrivateTarget(username);
+      this.setMobilePanelMode('chat');
     });
     this.quantityInputPanel = new QuantityInputPanel();
     const requestQuantity = (request: QuantityInputRequest) => this.quantityInputPanel?.show(request);
@@ -694,10 +704,24 @@ export class GameManager {
           break;
         }
         case 'private':
-          if (this.chatPanel) this.chatPanel.addMessage(`[PM] ${data.from}`, data.message, '#c0f');
+          if (this.chatPanel && typeof data.from === 'string' && typeof data.message === 'string') {
+            this.chatPanel.addPrivateMessage(`From ${data.from}`, data.message, data.from);
+          }
           break;
         case 'private_sent':
-          if (this.chatPanel) this.chatPanel.addMessage(`[PM] To ${data.to}`, data.message, '#c0f');
+          if (this.chatPanel && typeof data.to === 'string' && typeof data.message === 'string') {
+            this.chatPanel.addPrivateMessage(`To ${data.to}`, data.message, data.to);
+          }
+          break;
+        case 'social_list':
+          if (Array.isArray(data.friends) && Array.isArray(data.ignore)) {
+            this.sidePanel?.setSocialLists(data.friends, data.ignore);
+          }
+          break;
+        case 'social_presence':
+          if (typeof data.accountId === 'number' && typeof data.username === 'string' && typeof data.online === 'boolean') {
+            this.sidePanel?.setSocialPresence(data.accountId, data.username, data.online);
+          }
           break;
         case 'system': {
           const color = data.message.startsWith('Quest complete:') ? '#4aa3ff' : '#ff0';
@@ -1119,9 +1143,9 @@ export class GameManager {
     document.getElementById('fps-counter')?.remove();
     const el = document.createElement('div');
     el.id = 'fps-counter';
-    el.style.cssText = 'position:fixed;top:4px;left:50%;transform:translateX(-50%);color:#0f0;font: bold 14px Arial, Helvetica, sans-serif;z-index:9999;text-shadow:1px 1px 0 #000;pointer-events:none';
+    el.style.cssText = 'position:absolute;top:6px;right:calc(var(--right-rail-width, 300px) + 10px);color:#0f0;font:bold 14px Arial, Helvetica, sans-serif;z-index:9999;text-shadow:1px 1px 0 #000;pointer-events:none;text-align:right';
     el.textContent = 'FPS';
-    document.body.appendChild(el);
+    (document.getElementById('game-frame') ?? document.body).appendChild(el);
     this.fpsCounterEl = el;
     this.fpsFrameCount = 0;
     this.fpsLastSampleAt = performance.now();
@@ -3668,6 +3692,16 @@ export class GameManager {
     });
   }
 
+  private setupNativeContextMenuBlocker(): void {
+    if (this.nativeContextMenuBlocker) return;
+    this.nativeContextMenuBlocker = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target?.closest('#game-frame')) return;
+      event.preventDefault();
+    };
+    document.addEventListener('contextmenu', this.nativeContextMenuBlocker, true);
+  }
+
   private setupMobileControls(): void {
     const frame = document.getElementById('game-frame');
     if (!frame) return;
@@ -3717,7 +3751,8 @@ export class GameManager {
     frame.appendChild(bar);
     this.mobileControlsEl = bar;
     this.setupMobileStatusHud(frame);
-    this.setupMobileLogoutButton(frame);
+    this.mobileLogoutButton?.remove();
+    this.mobileLogoutButton = null;
     this.updateAdminSurfaces();
     this.setMobilePanelMode('game');
   }
@@ -3819,13 +3854,15 @@ export class GameManager {
 
   private updateAdminSurfaces(): void {
     if (this.isAdmin) {
-      this.sidePanel?.setAdminControls(true, () => this.openAdminPanel());
-      const frame = document.getElementById('game-frame');
-      if (frame && this.mobileLogoutButton) this.setupMobileAdminButton(frame);
+      this.sidePanel?.setAdminControls(false, () => {});
+      this.chatPanel?.setAdminControls(true, () => this.openAdminPanel());
+      this.mobileAdminButton?.remove();
+      this.mobileAdminButton = null;
       return;
     }
 
     this.sidePanel?.setAdminControls(false, () => {});
+    this.chatPanel?.setAdminControls(false, () => {});
     this.mobileAdminButton?.remove();
     this.mobileAdminButton = null;
     this.adminPanel?.hide();
@@ -6530,6 +6567,10 @@ export class GameManager {
     }
     this.clearHiddenCatchupTimer();
     if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
+    if (this.nativeContextMenuBlocker) {
+      document.removeEventListener('contextmenu', this.nativeContextMenuBlocker, true);
+      this.nativeContextMenuBlocker = null;
+    }
     if (this._activityHandler) {
       window.removeEventListener('pointerdown', this._activityHandler, true);
       window.removeEventListener('keydown', this._activityHandler, true);
@@ -7788,6 +7829,11 @@ export class GameManager {
         if (!def) continue;
         this._minimapObjects.push({ x: data.x, z: data.z, category: def.category });
       }
+      this._minimapDrops.length = 0;
+      for (const [, item] of this.entities.groundItems) {
+        if (item.floor !== this.currentFloor) continue;
+        this._minimapDrops.push({ x: item.x, z: item.z });
+      }
     }
     const camAlpha = this.camera.getCamera().alpha;
     this.minimap.update(
@@ -7796,6 +7842,7 @@ export class GameManager {
       this.chunkManager,
       camAlpha,
       this._minimapObjects,
+      this._minimapDrops,
       dt,
     );
   }

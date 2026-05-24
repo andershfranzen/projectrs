@@ -3,14 +3,10 @@ export const UI_MUTED = '#8f8778';
 export const UI_TEXT = '#cfc7b8';
 
 export const TAB_BUTTON_BG = `
-  repeating-linear-gradient(0deg, rgba(255,255,255,0.025) 0 1px, transparent 1px 4px),
-  repeating-linear-gradient(90deg, rgba(0,0,0,0.22) 0 1px, transparent 1px 6px),
   linear-gradient(180deg, #302b24 0%, #211d18 48%, #16130f 100%)
 `;
 
 export const TAB_BUTTON_ACTIVE_BG = `
-  repeating-linear-gradient(0deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 4px),
-  repeating-linear-gradient(90deg, rgba(0,0,0,0.28) 0 1px, transparent 1px 5px),
   linear-gradient(180deg, #17130f 0%, #201913 55%, #2a2119 100%)
 `;
 
@@ -119,7 +115,6 @@ export function panelHeaderCss(color: string = UI_RED): string {
     letter-spacing: 0;
     text-shadow: 1px 1px 0 #000;
     padding: 0 0 5px;
-    border-bottom: 1px solid color-mix(in srgb, ${color} 38%, transparent);
     flex: 0 0 auto;
   `;
 }
@@ -191,6 +186,10 @@ export function createIconTabButton(opts: {
     button.appendChild(img);
   } else {
     button.textContent = opts.label;
+    button.style.fontSize = '10px';
+    button.style.fontWeight = 'bold';
+    button.style.lineHeight = '1';
+    button.style.textShadow = '1px 1px 0 #000';
   }
 
   return button;

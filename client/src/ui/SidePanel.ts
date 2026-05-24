@@ -3,14 +3,18 @@ import {
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   QUEST_STAGE_COMPLETED,
   spellReagentSummary, spellSchoolSkill,
+  zeroBonuses,
   type SkillId, type MeleeStance, type ItemDef, type QuestDef,
+  type CombatBonuses,
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
 import { QuestJournalPopup } from './QuestJournalPopup';
-import type { NetworkManager } from '../managers/NetworkManager';
+import { createGameDialogModal, mountModalInGameFrame } from './ModalPanel';
+import type { NetworkManager, SocialClientEntry } from '../managers/NetworkManager';
 import {
   clampElementToRect,
   createContextMenu,
+  HoverTooltip,
   installLongPressContextMenu,
   suppressNextContextMenuClick,
 } from './popupStyle';
@@ -26,6 +30,13 @@ import {
   setToggleButtonActive,
   UI_RED,
 } from './uiChrome';
+import {
+  FIXED_CLIENT_SIZE,
+  getClientSizeMode,
+  isDesktopClientSizeSettingAvailable,
+  setClientSizeMode,
+  type ClientSizeMode,
+} from './clientSizeMode';
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape'];
 
@@ -64,20 +75,27 @@ export class SidePanel {
   private using: { slot: number; itemId: number } | null = null;
   private usingBanner: HTMLDivElement | null = null;
   private invGrid: HTMLDivElement | null = null;
+  private inventoryTooltip: HoverTooltip | null = null;
   private touchInvDrag: TouchInvDragState | null = null;
   private suppressInvClickUntil: number = 0;
 
   // Skills state
   private skills: Map<SkillId, SkillData> = new Map();
   private skillsContent: HTMLDivElement | null = null;
+  private skillXpTooltip: HoverTooltip | null = null;
+  private skillGuidePanel: HTMLDivElement | null = null;
+  private skillGuideTitleEl: HTMLSpanElement | null = null;
+  private skillGuideBodyEl: HTMLDivElement | null = null;
 
   // Equipment state
   private equipment: Map<number, number> = new Map(); // slotIndex -> itemId
   private equipContent: HTMLDivElement | null = null;
+  private equipmentTooltip: HoverTooltip | null = null;
 
   // Stance
   private currentStance: MeleeStance = 'accurate';
   private stanceButtons: HTMLButtonElement[] = [];
+  private equipmentBonusValues: Partial<Record<keyof CombatBonuses, HTMLSpanElement>> = {};
 
   // Item definitions
   private itemDefs: Map<number, ItemDef> = new Map();
@@ -87,6 +105,7 @@ export class SidePanel {
   private questState: Record<string, { stage: number; triggerProgress: number }> = {};
   private renown: number = 0;
   private questsContent: HTMLDivElement | null = null;
+  private renownHeaderEl: HTMLSpanElement | null = null;
   /** RS2-style journal popup. Mounted lazily on the first quest click so
    *  players who never open it pay zero startup cost. */
   private questJournalPopup: QuestJournalPopup | null = null;
@@ -97,6 +116,12 @@ export class SidePanel {
   // inventory clicks offer items instead of performing equip/use/drop actions.
   private tradeOfferCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
   private requestQuantity: QuantityInputRequester | null = null;
+  private privateMessageTargetCallback: ((username: string) => void) | null = null;
+
+  // Social state
+  private friends: SocialClientEntry[] = [];
+  private ignore: SocialClientEntry[] = [];
+  private socialContent: HTMLDivElement | null = null;
 
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
@@ -117,6 +142,8 @@ export class SidePanel {
   private autocastSpellIndex: number = -1;
   private targetingSpellIndex: number = -1;
   private targetingBanner: HTMLDivElement | null = null;
+  private spellTooltip: HoverTooltip | null = null;
+  private settingsTooltip: HoverTooltip | null = null;
 
   constructor(network: NetworkManager, token: string = '') {
     this.network = network;
@@ -202,16 +229,20 @@ export class SidePanel {
           background: rgba(154,51,43,0.18);
         }
 
-        #side-panel .side-account-actions {
-          align-self: center;
-          width: 190px;
+        #game-frame .side-account-actions {
+          position: absolute;
+          top: 3px;
+          right: 3px;
+          z-index: 12;
+          width: auto;
           display: flex;
           gap: 6px;
-          margin: 0 auto 8px;
+          margin: 0;
+          pointer-events: auto;
         }
 
-        #side-panel .side-account-actions .side-action-button {
-          flex: 1 1 0;
+        #game-frame .side-account-actions .side-action-button {
+          flex: 0 0 82px;
           min-width: 0;
           text-align: center;
           padding: 6px 0;
@@ -225,6 +256,25 @@ export class SidePanel {
           box-shadow: inset 0 1px 3px rgba(0,0,0,0.3), 0 1px 0 rgba(255,200,100,0.05);
         }
 
+        #game-frame .side-account-actions .side-logout {
+          flex-basis: 36px;
+          width: 36px;
+          height: 32px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 2px;
+        }
+
+        #game-frame .side-account-actions .side-logout-icon {
+          width: 28px;
+          height: 28px;
+          display: block;
+          object-fit: contain;
+          image-rendering: pixelated;
+          pointer-events: none;
+        }
+
         @media (max-height: 700px), (max-width: 1000px) {
           #side-panel .side-resource-row {
             padding-top: 2px !important;
@@ -232,20 +282,10 @@ export class SidePanel {
           }
           #side-panel .side-resource-label {
             font-size: 11px !important;
-            width: 42px !important;
+            width: 54px !important;
           }
           #side-panel .side-resource-bar {
-            height: 14px !important;
-          }
-          #side-panel #side-player-info {
-            grid-template-columns: 26px minmax(0, 1fr) auto !important;
-            padding: 2px 7px !important;
-          }
-          #side-panel .side-combat-icon {
-            width: 26px !important;
-            height: 26px !important;
-            flex-basis: 26px !important;
-            transform: translateY(1px) !important;
+            height: 16px !important;
           }
           #side-panel .side-tab-row {
             padding-left: 1px !important;
@@ -264,13 +304,24 @@ export class SidePanel {
           #side-panel .side-brand {
             display: none !important;
           }
-          #side-panel .side-account-actions {
-            width: 150px !important;
-            margin-bottom: 4px !important;
+          #game-frame .side-account-actions {
+            top: 2px !important;
+            right: 2px !important;
           }
-          #side-panel .side-account-actions .side-action-button {
+          #game-frame .side-account-actions .side-action-button {
+            flex-basis: 74px !important;
             padding: 4px 0 !important;
             font-size: 11px !important;
+          }
+          #game-frame .side-account-actions .side-logout {
+            flex-basis: 32px !important;
+            width: 32px !important;
+            height: 30px !important;
+            padding: 2px !important;
+          }
+          #game-frame .side-account-actions .side-logout-icon {
+            width: 25px !important;
+            height: 25px !important;
           }
           #side-panel .inv-grid {
             grid-template-rows: repeat(6, minmax(38px, 1fr)) !important;
@@ -300,7 +351,31 @@ export class SidePanel {
           }
         }
 
+        html.eq-fixed-client-size #side-panel .side-brand-area {
+          display: none !important;
+        }
+
+        html.eq-fixed-client-size #side-panel .side-content-area {
+          flex-basis: 430px !important;
+        }
+
         @media (max-width: 760px), (pointer: coarse) and (max-width: 900px) {
+          #game-frame .side-account-actions {
+            position: fixed !important;
+            top: calc(var(--eq-viewport-top, 0px) + 8px + env(safe-area-inset-top, 0px)) !important;
+            right: calc(var(--eq-viewport-right, 0px) + 8px) !important;
+            z-index: 43 !important;
+            display: flex !important;
+          }
+          #game-frame .side-account-actions .side-logout {
+            flex-basis: 36px !important;
+            width: 36px !important;
+            height: 32px !important;
+          }
+          #game-frame .side-account-actions .side-logout-icon {
+            width: 28px !important;
+            height: 28px !important;
+          }
           #side-panel {
             border-top: 0 !important;
           }
@@ -349,6 +424,12 @@ export class SidePanel {
           #side-panel .inv-slot[data-filled="1"] {
             touch-action: pan-y;
           }
+          #side-panel .client-size-setting {
+            display: none !important;
+          }
+          #side-panel .client-size-setting-mobile-note {
+            display: block !important;
+          }
         }
 
         @media (max-height: 520px) and (max-width: 900px) and (orientation: landscape) {
@@ -393,7 +474,7 @@ export class SidePanel {
     if (!enabled) {
       this.adminButton?.remove();
       this.adminButton = null;
-      this.accountActionsRow.style.width = '190px';
+      this.accountActionsRow.style.width = '';
       return;
     }
 
@@ -419,7 +500,7 @@ export class SidePanel {
     }
 
     this.adminButton.onclick = onOpen;
-    this.accountActionsRow.style.width = '190px';
+    this.accountActionsRow.style.width = '';
   }
 
   private buildUI(): HTMLDivElement {
@@ -439,30 +520,39 @@ export class SidePanel {
     const hpRow = document.createElement('div');
     hpRow.className = 'side-resource-row';
     hpRow.style.cssText = `
-      display: flex; align-items: center; gap: 6px;
-      padding: 3px 10px;
-      border-bottom: 1px solid rgba(0,0,0,0.25);
-      border-top: 1px solid rgba(255,200,100,0.06);
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 10px 3px;
+      background: linear-gradient(180deg, rgba(24,18,13,0.42), rgba(8,6,5,0.22));
+      border-bottom: 1px solid rgba(0,0,0,0.32);
+      border-top: 1px solid rgba(255,210,120,0.08);
     `;
     const hpIcon = document.createElement('div');
     hpIcon.className = 'side-resource-label';
-    hpIcon.textContent = 'Health';
-    hpIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #d44; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
+    hpIcon.textContent = 'Hitpoints';
+    hpIcon.style.cssText = `
+      width: 62px; flex-shrink: 0;
+      font-size: 12px; line-height: 16px; font-weight: bold; color: #f0d2c4;
+    `;
     hpRow.appendChild(hpIcon);
 
     const hpBarBg = document.createElement('div');
     hpBarBg.className = 'side-resource-bar';
     hpBarBg.style.cssText = `
-      flex: 1; height: 18px; background: #1a0808;
-      border: 1px solid #4a2020; border-radius: 3px;
+      flex: 1; height: 20px;
+      background: linear-gradient(180deg, #060504 0%, #14100c 100%);
+      border: 1px solid rgba(123, 89, 57, 0.72);
+      border-radius: 0;
       position: relative; overflow: hidden;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), 0 1px 0 rgba(255,200,100,0.06);
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.82), 0 1px 0 rgba(255,210,120,0.1);
     `;
     const hpBarFill = document.createElement('div');
     hpBarFill.id = 'side-hp-fill';
     hpBarFill.style.cssText = `
-      height: 100%; width: 100%; background: linear-gradient(180deg, #1a8a1a 0%, #0a6a0a 100%);
-      transition: width 0.3s; border-radius: 1px;
+      height: 100%; width: 100%;
+      background: linear-gradient(180deg, #f26b5c 0%, #b72d28 46%, #681412 100%);
+      transition: width 0.3s;
+      border-radius: 0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.25), inset 0 -2px 3px rgba(0,0,0,0.28);
     `;
     hpBarBg.appendChild(hpBarFill);
     const hpText = document.createElement('div');
@@ -470,8 +560,8 @@ export class SidePanel {
     hpText.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: bold; color: #fff;
-      text-shadow: 1px 1px 0 #000; pointer-events: none;
+      font-size: 11px; font-weight: bold; color: #fff8e8;
+      text-shadow: 1px 1px 0 #000, 0 0 5px rgba(0,0,0,0.8); pointer-events: none;
     `;
     hpText.textContent = '10/10';
     hpBarBg.appendChild(hpText);
@@ -482,28 +572,37 @@ export class SidePanel {
     const goodMagicRow = document.createElement('div');
     goodMagicRow.className = 'side-resource-row';
     goodMagicRow.style.cssText = `
-      display: flex; align-items: center; gap: 6px;
-      padding: 5px 10px 3px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 10px 3px;
+      background: rgba(8, 6, 5, 0.16);
     `;
     const goodMagicIcon = document.createElement('div');
     goodMagicIcon.className = 'side-resource-label';
     goodMagicIcon.textContent = 'Good';
-    goodMagicIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #4ac; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
+    goodMagicIcon.style.cssText = `
+      width: 62px; flex-shrink: 0;
+      font-size: 12px; line-height: 16px; font-weight: bold; color: #d8eef8;
+    `;
     goodMagicRow.appendChild(goodMagicIcon);
 
     const goodMagicBarBg = document.createElement('div');
     goodMagicBarBg.className = 'side-resource-bar';
     goodMagicBarBg.style.cssText = `
-      flex: 1; height: 18px; background: #080818;
-      border: 1px solid #1a2a4a; border-radius: 3px;
+      flex: 1; height: 20px;
+      background: linear-gradient(180deg, #050607 0%, #0e1217 100%);
+      border: 1px solid rgba(76, 132, 158, 0.7);
+      border-radius: 0;
       position: relative; overflow: hidden;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), 0 1px 0 rgba(255,200,100,0.06);
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.82), 0 1px 0 rgba(180,230,255,0.1);
     `;
     const goodMagicBarFill = document.createElement('div');
     goodMagicBarFill.id = 'side-magic-fill';
     goodMagicBarFill.style.cssText = `
-      height: 100%; width: 100%; background: linear-gradient(180deg, #2a7aaa 0%, #1a5a8a 100%);
-      transition: width 0.3s; border-radius: 1px;
+      height: 100%; width: 100%;
+      background: linear-gradient(180deg, #8fe9ff 0%, #2b9fd0 46%, #126080 100%);
+      transition: width 0.3s;
+      border-radius: 0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.34), inset 0 -2px 3px rgba(0,0,0,0.28);
     `;
     goodMagicBarBg.appendChild(goodMagicBarFill);
     const goodMagicText = document.createElement('div');
@@ -511,8 +610,8 @@ export class SidePanel {
     goodMagicText.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: bold; color: #fff;
-      text-shadow: 1px 1px 0 #000; pointer-events: none;
+      font-size: 11px; font-weight: bold; color: #f2fbff;
+      text-shadow: 1px 1px 0 #000, 0 0 5px rgba(0,0,0,0.8); pointer-events: none;
     `;
     goodMagicText.textContent = '1';
     goodMagicBarBg.appendChild(goodMagicText);
@@ -523,29 +622,38 @@ export class SidePanel {
     const evilMagicRow = document.createElement('div');
     evilMagicRow.className = 'side-resource-row';
     evilMagicRow.style.cssText = `
-      display: flex; align-items: center; gap: 6px;
-      padding: 3px 10px 7px;
-      border-bottom: 1px solid rgba(0,0,0,0.25);
+      display: flex; align-items: center; gap: 8px;
+      padding: 3px 10px 6px;
+      background: linear-gradient(180deg, rgba(8,6,5,0.14), rgba(0,0,0,0.22));
+      border-bottom: 1px solid rgba(0,0,0,0.35);
     `;
     const evilMagicIcon = document.createElement('div');
     evilMagicIcon.className = 'side-resource-label';
     evilMagicIcon.textContent = 'Evil';
-    evilMagicIcon.style.cssText = `font-size: 13px; font-weight: bold; color: #c4a; text-shadow: 1px 1px 0 #000; width: 50px; flex-shrink: 0;`;
+    evilMagicIcon.style.cssText = `
+      width: 62px; flex-shrink: 0;
+      font-size: 12px; line-height: 16px; font-weight: bold; color: #ead3f0;
+    `;
     evilMagicRow.appendChild(evilMagicIcon);
 
     const evilMagicBarBg = document.createElement('div');
     evilMagicBarBg.className = 'side-resource-bar';
     evilMagicBarBg.style.cssText = `
-      flex: 1; height: 18px; background: #180818;
-      border: 1px solid #4a1a3a; border-radius: 3px;
+      flex: 1; height: 20px;
+      background: linear-gradient(180deg, #070507 0%, #150d17 100%);
+      border: 1px solid rgba(126, 74, 140, 0.72);
+      border-radius: 0;
       position: relative; overflow: hidden;
-      box-shadow: inset 0 1px 3px rgba(0,0,0,0.5), 0 1px 0 rgba(255,200,100,0.06);
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.82), 0 1px 0 rgba(235,180,255,0.1);
     `;
     const evilMagicBarFill = document.createElement('div');
     evilMagicBarFill.id = 'side-evilmagic-fill';
     evilMagicBarFill.style.cssText = `
-      height: 100%; width: 100%; background: linear-gradient(180deg, #8a2a6a 0%, #6a1a4a 100%);
-      transition: width 0.3s; border-radius: 1px;
+      height: 100%; width: 100%;
+      background: linear-gradient(180deg, #da83ee 0%, #9236ad 45%, #5c1d74 100%);
+      transition: width 0.3s;
+      border-radius: 0;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.28), inset 0 -2px 3px rgba(0,0,0,0.28);
     `;
     evilMagicBarBg.appendChild(evilMagicBarFill);
     const evilMagicText = document.createElement('div');
@@ -553,65 +661,60 @@ export class SidePanel {
     evilMagicText.style.cssText = `
       position: absolute; top: 0; left: 0; right: 0; bottom: 0;
       display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: bold; color: #fff;
-      text-shadow: 1px 1px 0 #000; pointer-events: none;
+      font-size: 11px; font-weight: bold; color: #fff3ff;
+      text-shadow: 1px 1px 0 #000, 0 0 5px rgba(0,0,0,0.8); pointer-events: none;
     `;
     evilMagicText.textContent = '1';
     evilMagicBarBg.appendChild(evilMagicText);
     evilMagicRow.appendChild(evilMagicBarBg);
     panel.appendChild(evilMagicRow);
 
-    // Player info strip — combat level + username
-    const playerInfo = document.createElement('div');
-    playerInfo.id = 'side-player-info';
-    playerInfo.style.cssText = `
-      display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 5px;
-      padding: 4px 8px 5px;
-      background: rgba(0,0,0,0.3);
-      border-top: 1px solid rgba(255,200,100,0.08);
-      border-bottom: 1px solid rgba(0,0,0,0.4);
+    const brandArea = document.createElement('div');
+    brandArea.className = 'side-brand-area';
+    brandArea.style.cssText = `
+      flex: 1 1 0;
+      min-height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      padding: 2px 8px;
     `;
-    const combatIcon = document.createElement('img');
-    combatIcon.className = 'side-combat-icon';
-    combatIcon.src = '/ui/combat.png';
-    combatIcon.style.cssText = `
-      width: 34px; height: 34px;
-      image-rendering: pixelated; object-fit: contain;
-      flex: 0 0 34px; display: block;
-      transform: translateY(3px);
-    `;
-    playerInfo.appendChild(combatIcon);
-    const combatText = document.createElement('span');
-    combatText.id = 'side-combat-level';
-    combatText.textContent = 'Combat Lv: 3';
-    combatText.style.cssText = `
-      display: inline-flex; align-items: center;
-      height: 24px; line-height: 24px;
-      font-size: 11px; font-weight: bold; color: #d8372b;
-      text-shadow: 1px 1px 0 #000; letter-spacing: 0.5px;
-    `;
-    playerInfo.appendChild(combatText);
-    panel.appendChild(playerInfo);
 
-    // Top tab row — 4 tabs above content
+    const brand = document.createElement('div');
+    brand.className = 'side-brand';
+    brand.textContent = 'EvilQuest';
+    brand.style.cssText = `
+      text-align: center;
+      font-family: 'Cinzel', 'Times New Roman', serif;
+      font-size: 20px;
+      line-height: 1;
+      font-weight: 900;
+      letter-spacing: 1px;
+      color: #d8372b;
+      text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
+    `;
+    brandArea.appendChild(brand);
+    panel.appendChild(brandArea);
+
+    // Top tab row — 5 tabs above content
     const topTabs = document.createElement('div');
     topTabs.className = 'side-tab-row';
     topTabs.style.cssText = `display: flex; gap: 1px; padding: 2px 2px 0;`;
 
-    // Bottom tab row — 4 tabs below content (added after contentArea)
+    // Bottom tab row — 5 tabs below content (added after contentArea)
     const bottomTabs = document.createElement('div');
     bottomTabs.className = 'side-tab-row';
     bottomTabs.style.cssText = `display: flex; gap: 1px; padding: 0 2px 2px;`;
 
     const tabs: { key: string; label: string; icon?: string; iconScale?: number; pos: 'top' | 'bottom' }[] = [
       { key: 'attack_style', label: 'Combat Style', icon: '/ui/attack style.png', pos: 'top' },
-      { key: 'skills', label: 'Skills', icon: '/ui/Skill tab.png', iconScale: 1.08, pos: 'top' },
+      { key: 'skills', label: 'Skills', icon: '/ui/Skill tab.png', iconScale: 1, pos: 'top' },
       { key: 'inventory', label: 'Inventory', icon: '/ui/Inventory.png', pos: 'top' },
       { key: 'equipment', label: 'Equipment', icon: '/ui/equipment.png', pos: 'top' },
-      { key: 'good_magic', label: 'Good Magic', icon: '/ui/good magic.png', pos: 'bottom' },
-      { key: 'evil_magic', label: 'Evil Magic', icon: '/ui/evil magic.png', pos: 'bottom' },
+      { key: 'social', label: 'Friends and Ignore', icon: '/ui/friendlist.png', iconScale: 1.42, pos: 'top' },
+      { key: 'good_magic', label: 'Good Magic', icon: '/ui/good magic.png', iconScale: 0.9, pos: 'bottom' },
+      { key: 'evil_magic', label: 'Evil Magic', icon: '/ui/evil magic.png', iconScale: 1.08, pos: 'bottom' },
       { key: 'quests', label: 'Quests', icon: '/ui/quest icon.png', pos: 'bottom' },
-      { key: 'social', label: 'Friends and Ignore', icon: '/ui/friendlist.png', iconScale: 1.06, pos: 'bottom' },
+      { key: 'emotes', label: 'Emotes', icon: '/ui/emotes-icon.png', iconScale: 0.9, pos: 'bottom' },
+      { key: 'settings', label: 'Settings', icon: '/ui/settings-icon.png', iconScale: 0.86, pos: 'bottom' },
     ];
 
     for (const tab of tabs) {
@@ -642,8 +745,9 @@ export class SidePanel {
     contentArea.style.cssText = `
       padding: 2px 3px; overflow: hidden;
       flex: 0 1 420px; min-height: 0; max-height: 420px;
-      background: rgba(30, 26, 20, 0.32);
-      border: 2px inset #3a3228;
+      background: linear-gradient(180deg, rgba(12, 9, 7, 0.92), rgba(6, 5, 4, 0.94));
+      border: 2px inset #241d17;
+      box-shadow: inset 0 4px 12px rgba(0,0,0,0.62), inset 0 -1px 0 rgba(255,210,120,0.04);
       display: flex; flex-direction: column;
     `;
 
@@ -712,43 +816,32 @@ export class SidePanel {
     // Social tab (friends + ignore combined)
     const socialWrap = document.createElement('div');
     socialWrap.style.display = 'none';
-    socialWrap.appendChild(this.buildEmptyPanelView([
-      { title: 'Friends List', body: 'Your friends list is empty.', color: '#0c0' },
-      { title: 'Ignore List', body: 'Your ignore list is empty.', color: '#c44' },
-    ]));
+    this.socialContent = this.buildSocialContent();
+    socialWrap.appendChild(this.socialContent);
     contentArea.appendChild(socialWrap);
     this.tabContents.set('social', socialWrap);
+
+    // Emotes tab
+    const emotesWrap = document.createElement('div');
+    emotesWrap.style.display = 'none';
+    emotesWrap.appendChild(this.buildEmptyPanelView([
+      { title: 'Emotes', body: 'No emotes available yet.', color: '#b8b0a0' },
+    ]));
+    contentArea.appendChild(emotesWrap);
+    this.tabContents.set('emotes', emotesWrap);
+
+    // Settings tab
+    const settingsWrap = document.createElement('div');
+    settingsWrap.style.display = 'none';
+    settingsWrap.appendChild(this.buildSettingsContent());
+    contentArea.appendChild(settingsWrap);
+    this.tabContents.set('settings', settingsWrap);
 
     panel.appendChild(contentArea);
     panel.appendChild(bottomTabs);
 
-    const brandArea = document.createElement('div');
-    brandArea.className = 'side-brand-area';
-    brandArea.style.cssText = `
-      flex: 1 1 0;
-      min-height: 44px;
-      display: flex; align-items: center; justify-content: center;
-      padding: 2px 8px;
-    `;
-
-    const brand = document.createElement('div');
-    brand.className = 'side-brand';
-    brand.textContent = 'EvilQuest';
-    brand.style.cssText = `
-      text-align: center;
-      font-family: 'Cinzel', 'Times New Roman', serif;
-      font-size: 20px;
-      line-height: 1;
-      font-weight: 900;
-      letter-spacing: 1px;
-      color: #d8372b;
-      text-shadow: 2px 2px 0 #160604, 0 0 10px rgba(200, 28, 18, 0.22);
-    `;
-    brandArea.appendChild(brand);
-    panel.appendChild(brandArea);
-
-    // Account actions at the bottom of the side column. Admin is inserted only
-    // after the server sends the admin flag for this session.
+    // Account actions float over the minimap. Admin is inserted only after the
+    // server sends the admin flag for this session.
     const accountActions = document.createElement('div');
     accountActions.className = 'side-account-actions';
     this.accountActionsRow = accountActions;
@@ -756,11 +849,18 @@ export class SidePanel {
     const logoutBtn = document.createElement('button');
     logoutBtn.type = 'button';
     logoutBtn.className = 'eq-action-button side-action-button side-logout';
-    logoutBtn.textContent = 'Logout';
+    logoutBtn.title = 'Logout';
+    logoutBtn.setAttribute('aria-label', 'Logout');
     logoutBtn.style.cssText = `
       background: rgba(120,40,30,0.5);
       border: 1px solid rgba(180,80,60,0.4);
     `;
+    const logoutIcon = document.createElement('img');
+    logoutIcon.className = 'side-logout-icon';
+    logoutIcon.src = '/ui/logout-icon.png';
+    logoutIcon.alt = '';
+    logoutIcon.setAttribute('aria-hidden', 'true');
+    logoutBtn.appendChild(logoutIcon);
     this.logoutButton = logoutBtn;
     logoutBtn.addEventListener('mouseenter', () => {
       logoutBtn.style.background = 'rgba(160,50,30,0.6)';
@@ -782,8 +882,12 @@ export class SidePanel {
         ok = res.ok;
       } catch { /* ignore */ }
       if (!ok) {
-        logoutBtn.textContent = 'Logout blocked';
-        window.setTimeout(() => { logoutBtn.textContent = 'Logout'; }, 1800);
+        logoutBtn.title = 'Logout blocked';
+        logoutBtn.setAttribute('aria-label', 'Logout blocked');
+        window.setTimeout(() => {
+          logoutBtn.title = 'Logout';
+          logoutBtn.setAttribute('aria-label', 'Logout');
+        }, 1800);
         return;
       }
       localStorage.removeItem('projectrs_token');
@@ -791,7 +895,7 @@ export class SidePanel {
       location.reload();
     });
     accountActions.appendChild(logoutBtn);
-    panel.appendChild(accountActions);
+    (document.getElementById('game-frame') ?? document.getElementById('ui-right-column') ?? panel).appendChild(accountActions);
 
     // Highlight active tab
     this.switchTab('inventory');
@@ -824,7 +928,35 @@ export class SidePanel {
 
   setRenown(value: number): void {
     this.renown = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
-    this.renderQuestJournal();
+    this.updateRenownHeader();
+  }
+
+  setPrivateMessageTargetCallback(cb: ((username: string) => void) | null): void {
+    this.privateMessageTargetCallback = cb;
+  }
+
+  setSocialLists(friends: SocialClientEntry[], ignore: SocialClientEntry[]): void {
+    this.friends = this.sortSocialEntries(friends);
+    this.ignore = this.sortSocialEntries(ignore);
+    this.renderSocialPanel();
+  }
+
+  setSocialPresence(accountId: number, username: string, online: boolean): void {
+    const update = (entries: SocialClientEntry[]): boolean => {
+      let changed = false;
+      for (const entry of entries) {
+        if (entry.accountId !== accountId) continue;
+        entry.username = username || entry.username;
+        entry.online = online;
+        changed = true;
+      }
+      return changed;
+    };
+    if (update(this.friends) || update(this.ignore)) {
+      this.friends = this.sortSocialEntries(this.friends);
+      this.ignore = this.sortSocialEntries(this.ignore);
+      this.renderSocialPanel();
+    }
   }
 
   /** Re-render the Quests tab body. List of status-colored quest names —
@@ -837,14 +969,30 @@ export class SidePanel {
     root.innerHTML = '';
 
     const header = document.createElement('div');
-    header.textContent = 'Quest Journal';
-    header.style.cssText = panelHeaderCss(UI_RED);
-    root.appendChild(header);
+    header.style.cssText = `
+      ${panelHeaderCss(UI_RED)}
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    `;
 
-    const renownRow = document.createElement('div');
-    renownRow.textContent = `Renown: ${this.renown}`;
-    renownRow.style.cssText = 'padding:4px 8px 6px;font:700 11px Arial,Helvetica,sans-serif;color:#d6b16a;text-shadow:1px 1px 0 #000;border-bottom:1px solid rgba(170,136,68,0.25);margin-bottom:4px;';
-    root.appendChild(renownRow);
+    const title = document.createElement('div');
+    title.textContent = 'Quest Journal';
+    header.appendChild(title);
+
+    this.renownHeaderEl = document.createElement('span');
+    this.renownHeaderEl.style.cssText = `
+      color: #b8b0a0;
+      font-size: 10px;
+      line-height: 13px;
+      font-weight: bold;
+      text-shadow: 1px 1px 0 #000;
+      white-space: nowrap;
+    `;
+    header.appendChild(this.renownHeaderEl);
+    root.appendChild(header);
+    this.updateRenownHeader();
 
     const defs = [...this.questDefs.values()];
     if (defs.length === 0) {
@@ -865,6 +1013,10 @@ export class SidePanel {
     });
 
     for (const def of defs) root.appendChild(this.buildQuestRow(def));
+  }
+
+  private updateRenownHeader(): void {
+    if (this.renownHeaderEl) this.renownHeaderEl.textContent = `Renown: ${this.renown}`;
   }
 
   private questStatus(questId: string): 'not-started' | 'active' | 'completed' {
@@ -1040,9 +1192,11 @@ export class SidePanel {
       user-select: none; -webkit-user-select: none;
       -webkit-touch-callout: none;
     `;
-    cell.title = unlocked
-      ? `${def.name}${isAutocast ? ' (auto-cast)' : ''}${spellReagentText(def)}\nLeft-click: cast on target\nRight-click: toggle auto-cast`
-      : `??? — requires level ${required} ${SKILL_NAMES[(spellSchoolSkill(def)) as SkillId]}`;
+    cell.addEventListener('mouseenter', (event) => {
+      this.showSpellTooltip(def, unlocked, isAutocast, required, event.clientX, event.clientY);
+    });
+    cell.addEventListener('mousemove', (event) => this.positionSpellTooltip(event.clientX, event.clientY));
+    cell.addEventListener('mouseleave', () => this.hideSpellTooltip());
 
     if (unlocked) {
       const img = document.createElement('img');
@@ -1072,6 +1226,157 @@ export class SidePanel {
     return cell;
   }
 
+  private showSpellTooltip(
+    def: SpellEffectDef,
+    unlocked: boolean,
+    isAutocast: boolean,
+    required: number,
+    x: number,
+    y: number,
+  ): void {
+    this.hideSpellTooltip();
+    const lines: string[] = unlocked
+      ? [
+          spellReagentSummary(def) ? `Requires: ${spellReagentSummary(def)}` : '',
+          'Left-click: cast on target',
+          'Right-click: toggle auto-cast',
+        ].filter(Boolean)
+      : [`Requires level ${required} ${SKILL_NAMES[(spellSchoolSkill(def)) as SkillId]}`];
+
+    this.spellTooltip = new HoverTooltip({
+      title: unlocked ? `${def.name}${isAutocast ? ' (auto-cast)' : ''}` : '???',
+      body: lines,
+      x,
+      y,
+      titleColor: unlocked ? '#f4ded5' : '#b8b0a0',
+      minWidthPx: 150,
+      maxWidthPx: 240,
+    });
+  }
+
+  private positionSpellTooltip(x: number, y: number): void {
+    this.spellTooltip?.move(x, y);
+  }
+
+  private hideSpellTooltip(): void {
+    this.spellTooltip?.remove();
+    this.spellTooltip = null;
+  }
+
+  private buildSettingsContent(): HTMLDivElement {
+    const view = document.createElement('div');
+    view.style.cssText = `${panelFrameCss()} gap: 12px;`;
+
+    const block = document.createElement('div');
+    block.className = 'client-size-setting';
+    block.style.cssText = `
+      display: ${isDesktopClientSizeSettingAvailable() ? 'flex' : 'none'};
+      flex-direction: column;
+      gap: 8px;
+    `;
+
+    const header = document.createElement('div');
+    header.textContent = 'Client';
+    header.style.cssText = panelHeaderCss('#b8b0a0');
+    block.appendChild(header);
+
+    const row = document.createElement('div');
+    row.setAttribute('role', 'radiogroup');
+    row.setAttribute('aria-label', 'Client size mode');
+    row.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+    `;
+
+    const buttons = new Map<ClientSizeMode, HTMLButtonElement>();
+    const applyVisualState = (mode: ClientSizeMode) => {
+      for (const [key, button] of buttons) {
+        const active = key === mode;
+        setToggleButtonActive(button, active);
+        button.setAttribute('role', 'radio');
+        button.setAttribute('aria-checked', String(active));
+        button.style.color = active ? '#d8372b' : '#b8b0a0';
+        button.style.borderColor = active ? 'rgba(216,55,43,0.72)' : 'rgba(91,71,45,0.72)';
+        button.style.background = active
+          ? 'linear-gradient(180deg, rgba(48,22,18,0.95), rgba(22,12,10,0.96))'
+          : 'linear-gradient(180deg, rgba(34,27,20,0.92), rgba(16,12,9,0.94))';
+      }
+    };
+
+    const makeModeButton = (mode: ClientSizeMode, label: string, description: string): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.title = description;
+      button.className = 'eq-action-button';
+      button.style.cssText = `
+        min-width: 0;
+        height: 30px;
+        border: 1px solid rgba(91,71,45,0.72);
+        border-radius: 2px;
+        background: linear-gradient(180deg, rgba(34,27,20,0.92), rgba(16,12,9,0.94));
+        font: 700 12px Arial, Helvetica, sans-serif;
+        text-shadow: 1px 1px 0 #000;
+        cursor: pointer;
+      `;
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setClientSizeMode(mode);
+        applyVisualState(getClientSizeMode());
+      });
+      button.addEventListener('mouseenter', (event) => {
+        this.showSettingsTooltip(label, description, event.clientX, event.clientY);
+      });
+      button.addEventListener('mousemove', (event) => {
+        this.positionSettingsTooltip(event.clientX, event.clientY);
+      });
+      button.addEventListener('mouseleave', () => this.hideSettingsTooltip());
+      button.addEventListener('blur', () => this.hideSettingsTooltip());
+      buttons.set(mode, button);
+      return button;
+    };
+
+    row.append(
+      makeModeButton('fixed', 'Fixed', `Locks the game frame to ${FIXED_CLIENT_SIZE.width}x${FIXED_CLIENT_SIZE.height}.`),
+      makeModeButton('dynamic', 'Dynamic', 'Scales the game frame with the window.'),
+    );
+    block.appendChild(row);
+    view.appendChild(block);
+
+    const unavailable = document.createElement('div');
+    unavailable.className = 'client-size-setting-mobile-note';
+    unavailable.textContent = 'Client size mode is available on desktop only.';
+    unavailable.style.cssText = `${mutedBodyCss()} display: ${isDesktopClientSizeSettingAvailable() ? 'none' : 'block'};`;
+    view.appendChild(unavailable);
+
+    applyVisualState(getClientSizeMode());
+    return view;
+  }
+
+  private showSettingsTooltip(title: string, body: string, x: number, y: number): void {
+    this.hideSettingsTooltip();
+    this.settingsTooltip = new HoverTooltip({
+      title,
+      body,
+      x,
+      y,
+      titleColor: '#f4ded5',
+      minWidthPx: 150,
+      maxWidthPx: 240,
+    });
+  }
+
+  private positionSettingsTooltip(x: number, y: number): void {
+    this.settingsTooltip?.move(x, y);
+  }
+
+  private hideSettingsTooltip(): void {
+    this.settingsTooltip?.remove();
+    this.settingsTooltip = null;
+  }
+
   private buildEmptyPanelView(sections: { title: string; body: string; color?: string }[]): HTMLDivElement {
     const view = document.createElement('div');
     view.style.cssText = `${panelFrameCss()} gap: 12px;`;
@@ -1099,6 +1404,177 @@ export class SidePanel {
     }
 
     return view;
+  }
+
+  private buildSocialContent(): HTMLDivElement {
+    const view = document.createElement('div');
+    view.style.cssText = `${panelFrameCss()} gap: 10px; overflow: hidden;`;
+    this.renderSocialPanel(view);
+    return view;
+  }
+
+  private renderSocialPanel(root: HTMLDivElement | null = this.socialContent): void {
+    if (!root) return;
+    root.innerHTML = '';
+    root.appendChild(this.buildSocialSection('friends', 'Friends List', '#56c96b', this.friends));
+    root.appendChild(this.buildSocialSection('ignore', 'Ignore List', '#c44', this.ignore));
+  }
+
+  private buildSocialSection(
+    list: 'friends' | 'ignore',
+    title: string,
+    color: string,
+    entries: SocialClientEntry[],
+  ): HTMLDivElement {
+    const section = document.createElement('div');
+    section.style.cssText = 'display:flex;flex-direction:column;gap:7px;min-height:0;flex:1 1 0;overflow:hidden;';
+
+    const headerRow = document.createElement('div');
+    headerRow.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+    const header = document.createElement('div');
+    header.textContent = title;
+    header.style.cssText = `${panelHeaderCss(color)} flex:1 1 auto;`;
+    headerRow.appendChild(header);
+
+    const add = document.createElement('button');
+    add.type = 'button';
+    add.textContent = 'Add';
+    add.className = 'eq-action-button';
+    add.style.cssText = `
+      flex: 0 0 auto;
+      height: 24px;
+      padding: 3px 9px;
+      border: 1px solid ${color};
+      background: rgba(0,0,0,0.32);
+      color: ${color};
+      border-radius: 2px;
+      font-size: 11px;
+      font-weight: bold;
+    `;
+    add.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.promptAddSocial(list);
+    });
+    headerRow.appendChild(add);
+    section.appendChild(headerRow);
+
+    const listEl = document.createElement('div');
+    listEl.style.cssText = `
+      flex:1 1 auto;
+      display:flex;
+      flex-direction:column;
+      gap:3px;
+      min-height:0;
+      overflow:auto;
+      padding-right:2px;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;
+    `;
+    if (entries.length === 0) {
+      const empty = document.createElement('div');
+      empty.textContent = list === 'friends' ? 'Your friends list is empty.' : 'Your ignore list is empty.';
+      empty.style.cssText = mutedBodyCss();
+      listEl.appendChild(empty);
+    } else {
+      for (const entry of entries) {
+        listEl.appendChild(this.buildSocialRow(list, entry, color));
+      }
+    }
+    section.appendChild(listEl);
+    return section;
+  }
+
+  private buildSocialRow(list: 'friends' | 'ignore', entry: SocialClientEntry, color: string): HTMLDivElement {
+    const row = document.createElement('div');
+    row.style.cssText = `
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      align-items:center;
+      gap:5px;
+      min-height:26px;
+      padding:2px 4px;
+      border:1px solid rgba(255,255,255,0.06);
+      background:rgba(0,0,0,0.22);
+      border-radius:2px;
+    `;
+
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.textContent = list === 'friends'
+      ? `${entry.username} ${entry.online ? '(online)' : '(offline)'}`
+      : entry.username;
+    name.title = list === 'friends' ? `Send private message to ${entry.username}` : entry.username;
+    name.style.cssText = `
+      appearance:none;
+      -webkit-appearance:none;
+      min-width:0;
+      border:0;
+      background:transparent;
+      color:${list === 'friends' && entry.online ? color : '#9b9487'};
+      text-align:left;
+      font:700 12px Arial, Helvetica, sans-serif;
+      text-shadow:1px 1px 0 #000;
+      cursor:${list === 'friends' ? 'pointer' : 'default'};
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      padding:3px 4px;
+    `;
+    if (list === 'friends') {
+      name.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.privateMessageTargetCallback?.(entry.username);
+      });
+    }
+    row.appendChild(name);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.className = 'eq-action-button';
+    remove.style.cssText = `
+      height:22px;
+      padding:2px 6px;
+      border:1px solid rgba(216,55,43,0.55);
+      background:rgba(43,10,8,0.78);
+      color:#f4ded5;
+      border-radius:2px;
+      font-size:10px;
+      font-weight:bold;
+    `;
+    remove.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.network.sendSocialRemove(list, entry.username);
+    });
+    row.appendChild(remove);
+
+    return row;
+  }
+
+  private promptAddSocial(list: 'friends' | 'ignore'): void {
+    if (!this.requestQuantity) return;
+    const label = list === 'friends' ? 'friend' : 'ignore';
+    this.requestQuantity({
+      inputType: 'text',
+      title: list === 'friends' ? 'Add Friend' : 'Add Ignore',
+      prompt: `Enter the username to add to your ${label} list.`,
+      submitLabel: 'Add',
+      maxLength: 12,
+      placeholder: 'Username',
+      validateText: (value) => value.trim().length === 0 ? 'Enter a username.' : null,
+      onTextSubmit: (name) => this.network.sendSocialAdd(list, name),
+    });
+  }
+
+  private sortSocialEntries(entries: SocialClientEntry[]): SocialClientEntry[] {
+    return [...entries].sort((a, b) => {
+      if (a.online !== b.online) return a.online ? -1 : 1;
+      return a.username.localeCompare(b.username);
+    });
   }
 
   private buildPanelFrame(title: string, color: string, body: HTMLDivElement): HTMLDivElement {
@@ -1165,8 +1641,15 @@ export class SidePanel {
       slot.dataset.filled = '0';
       slot.style.zIndex = '2';
 
-      slot.addEventListener('mouseenter', () => { slot.classList.add('hovered'); });
-      slot.addEventListener('mouseleave', () => { slot.classList.remove('hovered'); });
+      slot.addEventListener('mouseenter', (event) => {
+        slot.classList.add('hovered');
+        this.showInventoryTooltip(i, event.clientX, event.clientY);
+      });
+      slot.addEventListener('mousemove', (event) => this.positionInventoryTooltip(event.clientX, event.clientY));
+      slot.addEventListener('mouseleave', () => {
+        slot.classList.remove('hovered');
+        this.hideInventoryTooltip();
+      });
 
       slot.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -1242,6 +1725,33 @@ export class SidePanel {
     return frame;
   }
 
+  private showInventoryTooltip(slotIndex: number, x: number, y: number): void {
+    this.hideInventoryTooltip();
+    const slot = this.invSlots[slotIndex];
+    if (!slot) return;
+    const def = this.itemDefs.get(slot.itemId);
+    const itemName = def?.name ?? `Item ${slot.itemId}`;
+    const examine = def?.description?.trim();
+
+    this.inventoryTooltip = new HoverTooltip({
+      title: itemName,
+      body: examine,
+      x,
+      y,
+      minWidthPx: 136,
+      maxWidthPx: 240,
+    });
+  }
+
+  private positionInventoryTooltip(x: number, y: number): void {
+    this.inventoryTooltip?.move(x, y);
+  }
+
+  private hideInventoryTooltip(): void {
+    this.inventoryTooltip?.remove();
+    this.inventoryTooltip = null;
+  }
+
   private buildSkillsContent(): HTMLDivElement {
 	    const wrap = document.createElement('div');
 	    wrap.style.cssText = `
@@ -1250,43 +1760,99 @@ export class SidePanel {
 	      overflow-y: auto;
 	    `;
 
+    const skillsGrid = document.createElement('div');
+    skillsGrid.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px;
+    `;
+    wrap.appendChild(skillsGrid);
+
     for (const id of ALL_SKILLS) {
       const row = document.createElement('div');
       row.dataset.skill = id;
       row.style.cssText = `
-        display: flex; align-items: center; padding: 3px 4px;
-        margin-bottom: 1px;
-        background: #2a2218;
-        border: 1px outset #3a3228;
-        border-radius: 2px;
-        transition: background 0.1s;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 6px 7px;
+        min-width: 0;
+        background: linear-gradient(180deg, rgba(34, 28, 21, 0.74), rgba(18, 14, 10, 0.64));
+        border: 0;
+        border-left: 2px solid ${SKILL_COLORS[id]};
+        box-shadow: inset 0 -1px 0 rgba(255,255,255,0.035), 0 1px 0 rgba(0,0,0,0.45);
+        transition: background 0.1s, box-shadow 0.1s;
       `;
-      row.addEventListener('mouseenter', () => { row.style.background = '#3a3228'; });
-      row.addEventListener('mouseleave', () => { row.style.background = '#2a2218'; });
+      row.addEventListener('mouseenter', () => {
+        row.style.background = 'linear-gradient(180deg, rgba(47, 39, 29, 0.86), rgba(23, 18, 13, 0.74))';
+        row.style.boxShadow = 'inset 0 -1px 0 rgba(255,255,255,0.05), 0 1px 0 rgba(0,0,0,0.55)';
+      });
+      row.addEventListener('mouseleave', () => {
+        row.style.background = 'linear-gradient(180deg, rgba(34, 28, 21, 0.74), rgba(18, 14, 10, 0.64))';
+        row.style.boxShadow = 'inset 0 -1px 0 rgba(255,255,255,0.035), 0 1px 0 rgba(0,0,0,0.45)';
+      });
+      row.addEventListener('click', () => this.showSkillGuide(id));
+
+      const header = document.createElement('div');
+      header.style.cssText = `
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        min-height: 17px;
+      `;
 
       const nameEl = document.createElement('div');
-      nameEl.style.cssText = `width: 72px; font-size: 11px; color: ${SKILL_COLORS[id]}; text-shadow: 1px 1px 0 #000;`;
+      nameEl.style.cssText = `
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: bold;
+        line-height: 16px;
+        color: ${SKILL_COLORS[id]};
+        text-shadow: 1px 1px 0 #000;
+      `;
       nameEl.textContent = SKILL_NAMES[id];
-      row.appendChild(nameEl);
+      header.appendChild(nameEl);
 
       const levelEl = document.createElement('div');
       levelEl.className = 'skill-level';
-      levelEl.style.cssText = `width: 26px; text-align: center; font-size: 12px; font-weight: bold; color: #d8372b; text-shadow: 1px 1px 0 #000;`;
+      levelEl.style.cssText = `
+        flex: 0 0 auto;
+        min-width: 28px;
+        text-align: right;
+        font-size: 14px;
+        line-height: 16px;
+        font-weight: bold;
+        color: #d8372b;
+        text-shadow: 1px 1px 0 #000;
+      `;
       levelEl.textContent = '1';
-      row.appendChild(levelEl);
+      header.appendChild(levelEl);
+      row.appendChild(header);
 
       const barBg = document.createElement('div');
+      barBg.dataset.skillXpBar = id;
       barBg.style.cssText = `
-        flex: 1; height: 10px; background: #181410;
-        border: 1px inset #2a2218;
-        margin-left: 4px; position: relative; border-radius: 1px;
+        height: 16px;
+        background: rgba(8, 6, 5, 0.78);
+        border: 1px solid rgba(91, 74, 53, 0.45);
+        position: relative;
+        overflow: hidden;
+        box-shadow: inset 0 2px 5px rgba(0,0,0,0.65);
       `;
+      barBg.addEventListener('mouseenter', (event) => this.showSkillXpTooltip(id, event.clientX, event.clientY));
+      barBg.addEventListener('mousemove', (event) => this.positionSkillXpTooltip(event.clientX, event.clientY));
+      barBg.addEventListener('mouseleave', () => this.hideSkillXpTooltip());
 
       const barFill = document.createElement('div');
       barFill.className = 'skill-bar';
       barFill.style.cssText = `
         height: 100%; width: 0%; background: ${SKILL_COLORS[id]};
-        transition: width 0.3s; border-radius: 1px;
+        transition: width 0.3s;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.24), inset 0 -2px 3px rgba(0,0,0,0.24);
       `;
       barBg.appendChild(barFill);
 
@@ -1295,27 +1861,171 @@ export class SidePanel {
       xpLabel.style.cssText = `
         position: absolute; top: 0; left: 0; right: 0; bottom: 0;
         display: flex; align-items: center; justify-content: center;
-        font-size: 8px; color: #ccc; pointer-events: none;
-        text-shadow: 1px 1px 0 #000;
+        font-size: 10px;
+        font-weight: bold;
+        color: #f1e8d4;
+        pointer-events: none;
+        text-shadow: 1px 1px 0 #000, 0 0 4px rgba(0,0,0,0.9);
       `;
       barBg.appendChild(xpLabel);
 
       row.appendChild(barBg);
-      wrap.appendChild(row);
+      skillsGrid.appendChild(row);
     }
 
-    // Combat level display
-    const clRow = document.createElement('div');
-    clRow.id = 'combat-level-row';
-    clRow.style.cssText = `
-      text-align: center; padding: 6px 0; margin-top: 4px;
-      border-top: 1px solid #5a4a35; color: #d8372b; font-size: 12px;
-    `;
-    clRow.textContent = 'Combat Lv: 3';
-    wrap.appendChild(clRow);
-
-	    return this.buildPanelFrame('Skills', '#d8372b', wrap);
+	    return this.buildSkillsPanelFrame(wrap);
 	  }
+
+  private buildSkillsPanelFrame(body: HTMLDivElement): HTMLDivElement {
+    const view = document.createElement('div');
+    view.style.cssText = panelFrameCss();
+
+    const header = document.createElement('div');
+    header.style.cssText = `
+      ${panelHeaderCss('#d8372b')}
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    `;
+
+    const title = document.createElement('div');
+    title.textContent = 'Skills';
+    header.appendChild(title);
+
+    const summary = document.createElement('div');
+    summary.style.cssText = `
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #b8b0a0;
+      font-size: 10px;
+      line-height: 13px;
+      font-weight: bold;
+      text-shadow: 1px 1px 0 #000;
+      white-space: nowrap;
+    `;
+
+    const clRow = document.createElement('span');
+    clRow.id = 'combat-level-row';
+    clRow.textContent = 'Combat Lv: 3';
+    summary.appendChild(clRow);
+
+    const totalRow = document.createElement('span');
+    totalRow.id = 'total-level-row';
+    totalRow.textContent = 'Total Lv: 23';
+    summary.appendChild(totalRow);
+
+    header.appendChild(summary);
+
+    const content = document.createElement('div');
+    content.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    `;
+    content.appendChild(body);
+
+    view.appendChild(header);
+    view.appendChild(content);
+    return view;
+  }
+
+  private showSkillXpTooltip(skillId: SkillId, x: number, y: number): void {
+    this.hideSkillXpTooltip();
+    const data = this.skills.get(skillId);
+    if (!data) return;
+    const nextLevelXp = xpForLevel(data.level + 1);
+    const xpLeft = Math.max(0, nextLevelXp - data.xp);
+
+    this.skillXpTooltip = new HoverTooltip({
+      title: SKILL_NAMES[skillId],
+      body: data.level >= 99 ? 'Max level' : `${xpLeft} XP left`,
+      x,
+      y,
+      minWidthPx: 136,
+      maxWidthPx: 220,
+    });
+  }
+
+  private positionSkillXpTooltip(x: number, y: number): void {
+    this.skillXpTooltip?.move(x, y);
+  }
+
+  private hideSkillXpTooltip(): void {
+    this.skillXpTooltip?.remove();
+    this.skillXpTooltip = null;
+  }
+
+  private ensureSkillGuideModal(): void {
+    if (this.skillGuidePanel) return;
+
+    const modal = createGameDialogModal({
+      id: 'skill-guide-modal',
+      title: 'Skill Guide',
+      closeLabel: 'X',
+      width: '430px',
+      height: '360px',
+      onClose: () => this.hideSkillGuide(),
+    });
+    this.skillGuidePanel = modal.root;
+    this.skillGuideTitleEl = modal.title;
+
+    const body = document.createElement('div');
+    body.style.cssText = `
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      margin-top: 4px;
+      padding: 14px 16px;
+      color: #f0d2bd;
+      font-size: 13px;
+      line-height: 1.5;
+      text-shadow: 1px 1px 0 #000;
+    `;
+    modal.root.appendChild(body);
+    this.skillGuideBodyEl = body;
+    mountModalInGameFrame(modal.root);
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && this.skillGuidePanel?.style.display !== 'none') {
+        this.hideSkillGuide();
+      }
+    });
+  }
+
+  private showSkillGuide(skillId: SkillId): void {
+    this.ensureSkillGuideModal();
+    if (!this.skillGuidePanel || !this.skillGuideTitleEl || !this.skillGuideBodyEl) return;
+
+    const skillName = SKILL_NAMES[skillId];
+    const data = this.skills.get(skillId);
+    const level = data?.level ?? (skillId === 'hitpoints' ? 10 : 1);
+    this.skillGuideTitleEl.textContent = `${skillName} Guide`;
+    this.skillGuideBodyEl.innerHTML = '';
+
+    const levelLine = document.createElement('div');
+    levelLine.style.cssText = `
+      color: #f4ded5;
+      font-weight: bold;
+      margin-bottom: 10px;
+    `;
+    levelLine.textContent = `Current level: ${level}`;
+    this.skillGuideBodyEl.appendChild(levelLine);
+
+    const placeholder = document.createElement('div');
+    placeholder.style.cssText = `color: #c8aa92;`;
+    placeholder.textContent = 'Skill guide details will appear here.';
+    this.skillGuideBodyEl.appendChild(placeholder);
+
+    this.skillGuidePanel.style.display = 'flex';
+  }
+
+  private hideSkillGuide(): void {
+    if (this.skillGuidePanel) this.skillGuidePanel.style.display = 'none';
+  }
 
 	  private buildEquipmentContent(): HTMLDivElement {
 	    const wrap = document.createElement('div');
@@ -1323,41 +2033,117 @@ export class SidePanel {
 	      flex: 1 1 auto;
 	      min-height: 0;
 	      overflow-y: auto;
+        padding: 4px 0;
 	    `;
 
-    for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.dataset.equipSlot = i.toString();
-      row.style.cssText = `
-        appearance: none; -webkit-appearance: none; width: 100%;
-        display: flex; align-items: center; padding: 4px 2px;
-        border-bottom: 1px solid rgba(90,74,53,0.3);
-        border-top: 0; border-left: 0; border-right: 0;
-        background: transparent;
+    const layout = document.createElement('div');
+    layout.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(3, 64px);
+      grid-template-rows: repeat(5, 64px);
+      gap: 2px;
+      align-items: stretch;
+      padding: 2px;
+      max-width: 202px;
+      margin: 0 auto;
+    `;
+    wrap.appendChild(layout);
+
+    const positions: Array<{ slot: number | null; label: string; column: string; row: string }> = [
+      { slot: 2, label: 'Head', column: '2', row: '1' },
+      { slot: null, label: 'Quiver', column: '3', row: '1' },
+      { slot: 9, label: 'Cape', column: '1', row: '2' },
+      { slot: 5, label: 'Neck', column: '2', row: '2' },
+      { slot: 0, label: 'Weapon', column: '1', row: '3' },
+      { slot: 3, label: 'Body', column: '2', row: '3' },
+      { slot: 1, label: 'Shield', column: '3', row: '3' },
+      { slot: 7, label: 'Hands', column: '1', row: '4' },
+      { slot: 4, label: 'Legs', column: '2', row: '4' },
+      { slot: 6, label: 'Ring', column: '3', row: '4' },
+      { slot: 8, label: 'Feet', column: '2', row: '5' },
+    ];
+
+    for (const pos of positions) {
+      const slot = document.createElement('button');
+      slot.type = 'button';
+      if (pos.slot !== null) slot.dataset.equipSlot = pos.slot.toString();
+      slot.dataset.equipLabel = pos.label;
+      slot.style.cssText = `
+        appearance: none; -webkit-appearance: none;
+        grid-column: ${pos.column};
+        grid-row: ${pos.row};
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        padding: 4px;
+        border: 1px solid rgba(91, 71, 45, 0.75);
+        background: linear-gradient(180deg, rgba(34, 27, 20, 0.92), rgba(16, 12, 9, 0.94));
+        box-shadow:
+          inset 0 1px 0 rgba(255,255,255,0.05),
+          0 1px 2px rgba(0,0,0,0.45);
         cursor: pointer;
         font-family: Arial, Helvetica, sans-serif;
       `;
-      row.addEventListener('click', () => this.onEquipSlotClick(i));
-
-      const label = document.createElement('div');
-      label.style.cssText = `width: 60px; font-size: 11px; color: #aaa;`;
-      label.textContent = EQUIP_SLOT_NAMES[i];
-      row.appendChild(label);
+      if (pos.slot === null) {
+        slot.dataset.equipPlaceholder = '1';
+        slot.disabled = true;
+        slot.style.cursor = 'default';
+        slot.style.opacity = '0.7';
+      }
+      slot.addEventListener('mouseenter', () => {
+        if (pos.slot === null) return;
+        slot.style.borderColor = 'rgba(216, 55, 43, 0.75)';
+      });
+      slot.addEventListener('mouseleave', () => {
+        slot.style.borderColor = 'rgba(91, 71, 45, 0.75)';
+      });
+      if (pos.slot !== null) {
+        const slotIndex = pos.slot;
+        slot.addEventListener('click', () => this.onEquipSlotClick(slotIndex));
+      }
+      slot.addEventListener('mouseenter', (event) => this.showEquipTooltip(slot, event.clientX, event.clientY));
+      slot.addEventListener('mousemove', (event) => this.positionEquipTooltip(event.clientX, event.clientY));
+      slot.addEventListener('mouseleave', () => this.hideEquipTooltip());
+      slot.addEventListener('blur', () => this.hideEquipTooltip());
 
       const iconEl = document.createElement('div');
       iconEl.className = 'equip-icon';
-      iconEl.style.cssText = `width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; margin-right: 6px;`;
-      row.appendChild(iconEl);
+      iconEl.style.cssText = `
+        width: 38px;
+        height: 38px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+      `;
+      slot.appendChild(iconEl);
 
       const itemEl = document.createElement('div');
       itemEl.className = 'equip-item';
-      itemEl.style.cssText = `flex: 1; font-size: 11px; color: #d8372b;`;
-      itemEl.textContent = '—';
-      row.appendChild(itemEl);
+      itemEl.style.cssText = `
+        width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 8px;
+        line-height: 1;
+        color: #81786a;
+        text-align: center;
+        pointer-events: none;
+      `;
+      itemEl.textContent = pos.label;
+      slot.appendChild(itemEl);
 
-      wrap.appendChild(row);
+      layout.appendChild(slot);
     }
+
+    this.equipmentBonusValues = {};
+    wrap.appendChild(this.buildEquipmentBonusesSection());
+    this.updateEquipmentBonuses();
 
 	    return this.buildPanelFrame('Equipment', '#b8b0a0', wrap);
 	  }
@@ -1411,6 +2197,125 @@ export class SidePanel {
 	    return this.buildPanelFrame('Combat Style', '#d8372b', wrap);
 	  }
 
+  private buildEquipmentBonusesSection(): HTMLDivElement {
+    const section = document.createElement('div');
+    section.style.cssText = `
+      margin-top: 8px;
+      padding: 8px;
+      border: 1px solid rgba(91, 71, 45, 0.55);
+      background: rgba(14, 11, 9, 0.46);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = `
+      color: #d8372b;
+      font-size: 12px;
+      font-weight: bold;
+      text-align: center;
+      margin-bottom: 7px;
+      text-shadow: 1px 1px 0 #000;
+    `;
+    title.textContent = 'Equipment Bonuses';
+    section.appendChild(title);
+
+    const groups: Array<{ title: string; rows: Array<[string, keyof CombatBonuses]> }> = [
+      {
+        title: 'Attack',
+        rows: [
+          ['Stab', 'stabAttack'],
+          ['Slash', 'slashAttack'],
+          ['Crush', 'crushAttack'],
+          ['Ranged', 'rangedAccuracy'],
+          ['Magic', 'magicAccuracy'],
+        ],
+      },
+      {
+        title: 'Defence',
+        rows: [
+          ['Stab', 'stabDefence'],
+          ['Slash', 'slashDefence'],
+          ['Crush', 'crushDefence'],
+          ['Ranged', 'rangedDefence'],
+          ['Magic', 'magicDefence'],
+        ],
+      },
+      {
+        title: 'Strength',
+        rows: [
+          ['Melee', 'meleeStrength'],
+          ['Ranged', 'rangedStrength'],
+        ],
+      },
+    ];
+
+    for (const group of groups) {
+      const groupTitle = document.createElement('div');
+      groupTitle.style.cssText = `
+        color: #b8b0a0;
+        font-size: 10px;
+        text-transform: uppercase;
+        margin: 7px 0 3px;
+      `;
+      groupTitle.textContent = group.title;
+      section.appendChild(groupTitle);
+
+      for (const [labelText, key] of group.rows) {
+        const row = document.createElement('div');
+        row.style.cssText = `
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          min-height: 18px;
+          font-size: 11px;
+          color: #9f988b;
+        `;
+
+        const label = document.createElement('span');
+        label.textContent = labelText;
+        row.appendChild(label);
+
+        const value = document.createElement('span');
+        value.style.cssText = `color: #d8c6a3; font-variant-numeric: tabular-nums;`;
+        value.textContent = '+0';
+        row.appendChild(value);
+        this.equipmentBonusValues[key] = value;
+
+        section.appendChild(row);
+      }
+    }
+
+    return section;
+  }
+
+  private showEquipTooltip(slot: HTMLButtonElement, x: number, y: number): void {
+    this.hideEquipTooltip();
+    const slotName = slot.dataset.equipLabel || 'Slot';
+    const slotIndexText = slot.dataset.equipSlot;
+    const slotIndex = slotIndexText != null ? Number(slotIndexText) : null;
+    const itemId = slotIndex != null && Number.isFinite(slotIndex) ? this.equipment.get(slotIndex) : undefined;
+    const itemName = itemId ? (this.itemDefs.get(itemId)?.name || `Item ${itemId}`) : 'Empty';
+
+    this.equipmentTooltip = new HoverTooltip({
+      title: itemName,
+      body: slotName,
+      x,
+      y,
+      titleColor: itemId ? '#f4ded5' : '#b8b0a0',
+      minWidthPx: 126,
+      maxWidthPx: 220,
+    });
+  }
+
+  private positionEquipTooltip(x: number, y: number): void {
+    this.equipmentTooltip?.move(x, y);
+  }
+
+  private hideEquipTooltip(): void {
+    this.equipmentTooltip?.remove();
+    this.equipmentTooltip = null;
+  }
+
   switchTab(tab: string): void {
     for (const [key, el] of this.tabContents) {
       if (key === tab) {
@@ -1435,6 +2340,8 @@ export class SidePanel {
   setItemDefs(defs: Map<number, ItemDef>): void {
     this.itemDefs = defs;
     for (let i = 0; i < this.invSlots.length; i++) this.renderInvSlot(i);
+    for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) this.renderEquipSlot(i);
+    this.updateEquipmentBonuses();
   }
 
   updateInvSlot(index: number, itemId: number, quantity: number): void {
@@ -1845,6 +2752,7 @@ export class SidePanel {
     this.skills.set(id, { level, currentLevel, xp });
     this.renderSkill(id);
     this.updateCombatLevel();
+    this.updateTotalLevel();
     if (id === 'goodmagic') {
       this.updateBar('side-magic-fill', 'side-magic-text', currentLevel, level);
       this.renderSpellbook('good');
@@ -1888,7 +2796,7 @@ export class SidePanel {
     const progress = xpNeeded > 0 ? Math.min(100, (xpInLevel / xpNeeded) * 100) : 100;
 
     if (barEl) barEl.style.width = `${progress}%`;
-    if (xpEl) xpEl.textContent = data.level >= 99 ? '99' : `${xpInLevel}/${xpNeeded}`;
+    if (xpEl) xpEl.textContent = data.level >= 99 ? `${data.xp}/${data.xp}` : `${data.xp}/${nextLevelXp}`;
   }
 
   private updateCombatLevel(): void {
@@ -1909,8 +2817,15 @@ export class SidePanel {
 
     const rowEl = document.getElementById('combat-level-row');
     if (rowEl) rowEl.textContent = `Combat Lv: ${cl}`;
-    const headerEl = document.getElementById('side-combat-level');
-    if (headerEl) headerEl.textContent = `Combat Lv: ${cl}`;
+  }
+
+  private updateTotalLevel(): void {
+    let total = 0;
+    for (const id of ALL_SKILLS) {
+      total += this.skills.get(id)?.level ?? (id === 'hitpoints' ? 10 : 1);
+    }
+    const rowEl = document.getElementById('total-level-row');
+    if (rowEl) rowEl.textContent = `Total Lv: ${total}`;
   }
 
   private updateStanceUI(): void {
@@ -1976,11 +2891,11 @@ export class SidePanel {
     const fill = document.getElementById('side-hp-fill');
     if (!fill) return;
     if (ratio > 0.5) {
-      fill.style.background = 'linear-gradient(180deg, #1a8a1a 0%, #0a6a0a 100%)';
+      fill.style.background = 'linear-gradient(180deg, #f26b5c 0%, #b72d28 46%, #681412 100%)';
     } else if (ratio > 0.25) {
-      fill.style.background = 'linear-gradient(180deg, #8a8a1a 0%, #6a6a0a 100%)';
+      fill.style.background = 'linear-gradient(180deg, #e8463d 0%, #a8201e 46%, #5c1010 100%)';
     } else {
-      fill.style.background = 'linear-gradient(180deg, #8a1a1a 0%, #6a0a0a 100%)';
+      fill.style.background = 'linear-gradient(180deg, #b92020 0%, #7c1111 48%, #3c0808 100%)';
     }
   }
 
@@ -1993,6 +2908,33 @@ export class SidePanel {
       this.equipment.set(slotIndex, itemId);
     }
     this.renderEquipSlot(slotIndex);
+    this.updateEquipmentBonuses();
+  }
+
+  private updateEquipmentBonuses(): void {
+    const bonuses = zeroBonuses();
+    for (const itemId of this.equipment.values()) {
+      const def = this.itemDefs.get(itemId);
+      if (!def) continue;
+      bonuses.stabAttack += def.stabAttack ?? 0;
+      bonuses.slashAttack += def.slashAttack ?? 0;
+      bonuses.crushAttack += def.crushAttack ?? 0;
+      bonuses.stabDefence += def.stabDefence ?? 0;
+      bonuses.slashDefence += def.slashDefence ?? 0;
+      bonuses.crushDefence += def.crushDefence ?? 0;
+      bonuses.meleeStrength += def.meleeStrength ?? 0;
+      bonuses.rangedAccuracy += def.rangedAccuracy ?? 0;
+      bonuses.rangedStrength += def.rangedStrength ?? 0;
+      bonuses.rangedDefence += def.rangedDefence ?? 0;
+      bonuses.magicAccuracy += def.magicAccuracy ?? 0;
+      bonuses.magicDefence += def.magicDefence ?? 0;
+    }
+
+    for (const [key, el] of Object.entries(this.equipmentBonusValues) as Array<[keyof CombatBonuses, HTMLSpanElement]>) {
+      const value = bonuses[key];
+      el.textContent = `${value >= 0 ? '+' : ''}${value}`;
+      el.style.color = value > 0 ? '#9fd89b' : value < 0 ? '#e07b6e' : '#d8c6a3';
+    }
   }
 
   private renderEquipSlot(slotIndex: number): void {
@@ -2009,16 +2951,16 @@ export class SidePanel {
       const def = this.itemDefs.get(itemId);
       const name = def?.name || `Item ${itemId}`;
       itemEl.textContent = name;
-      itemEl.style.color = '#cda';
+      itemEl.style.color = '#d8c6a3';
       if (iconEl && def) {
         renderItemSlot(iconEl, def, this.itemDefs, {
-          size: 32, draggable: false,
-          extraStyle: 'max-width:32px;max-height:32px;pointer-events:none;',
+          size: 38, draggable: false,
+          extraStyle: 'max-width:38px;max-height:38px;pointer-events:none;',
         });
       }
     } else {
-      itemEl.textContent = '—';
-      itemEl.style.color = '#555';
+      itemEl.textContent = EQUIP_SLOT_NAMES[slotIndex];
+      itemEl.style.color = '#81786a';
       if (iconEl) iconEl.innerHTML = '';
     }
   }

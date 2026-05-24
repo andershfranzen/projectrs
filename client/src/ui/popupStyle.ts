@@ -151,6 +151,88 @@ export function contextMenuCss(opts: ContextMenuOpts): string {
   `;
 }
 
+export interface HoverTooltipOpts {
+  title: string;
+  body?: string | string[];
+  x: number;
+  y: number;
+  titleColor?: string;
+  bodyColor?: string;
+  minWidthPx?: number;
+  maxWidthPx?: number;
+  zIndex?: number;
+}
+
+export class HoverTooltip {
+  readonly el: HTMLDivElement;
+
+  constructor(opts: HoverTooltipOpts) {
+    const tooltip = document.createElement('div');
+    tooltip.className = 'eq-context-menu';
+    tooltip.style.cssText = contextMenuCss({
+      x: opts.x + 12,
+      y: opts.y + 12,
+      minWidthPx: opts.minWidthPx ?? 126,
+      maxWidthPx: opts.maxWidthPx ?? 220,
+      zIndex: opts.zIndex ?? 3100,
+    }) + `
+      pointer-events: none;
+      padding: 0;
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = `
+      padding: 5px 10px 2px;
+      color: ${opts.titleColor ?? '#f4ded5'};
+      font-weight: bold;
+      text-align: center;
+      text-shadow: 1px 1px 0 #000;
+      white-space: normal;
+    `;
+    title.textContent = opts.title;
+    tooltip.appendChild(title);
+
+    const bodyLines = Array.isArray(opts.body) ? opts.body.filter(Boolean) : (opts.body ? [opts.body] : []);
+    if (bodyLines.length > 0) {
+      const body = document.createElement('div');
+      body.style.cssText = `
+        padding: 0 10px 6px;
+        color: ${opts.bodyColor ?? '#d8372b'};
+        text-align: center;
+        font-size: 11px;
+        line-height: 15px;
+        white-space: pre-line;
+      `;
+      body.textContent = bodyLines.join('\n');
+      tooltip.appendChild(body);
+    }
+
+    document.body.appendChild(tooltip);
+    this.el = tooltip;
+    this.move(opts.x, opts.y);
+  }
+
+  move(x: number, y: number): void {
+    this.el.style.left = `${x + 12}px`;
+    this.el.style.top = `${y + 12}px`;
+    const visualViewport = window.visualViewport;
+    const viewportLeft = visualViewport?.offsetLeft ?? 0;
+    const viewportTop = visualViewport?.offsetTop ?? 0;
+    const viewportWidth = visualViewport?.width ?? window.innerWidth;
+    const viewportHeight = visualViewport?.height ?? window.innerHeight;
+    clampElementToRect(this.el, new DOMRect(
+      viewportLeft + 4,
+      viewportTop + 4,
+      Math.max(0, viewportWidth - 8),
+      Math.max(0, viewportHeight - 8),
+    ));
+  }
+
+  remove(): void {
+    this.el.remove();
+  }
+}
+
 let activeContextMenu: { el: HTMLDivElement; close: () => void } | null = null;
 let contextMenuGlobalsInstalled = false;
 let suppressedContextMenuClick: {
@@ -191,6 +273,12 @@ function ensureContextMenuGlobalListeners(): void {
     if (consumeSuppressedContextMenuFollowup(event)) return;
     closeActiveContextMenu();
   }, true);
+
+  document.addEventListener('contextmenu', (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target?.closest('#game-frame')) return;
+    event.preventDefault();
+  });
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeActiveContextMenu();

@@ -6,18 +6,25 @@ import {
 } from './uiChrome';
 
 export type ChatSendCallback = (message: string) => void;
+export type ChatPrivateSendCallback = (to: string, message: string) => void;
 
-type ChatTab = 'all' | 'game' | 'public';
+type ChatTab = 'all' | 'game' | 'public' | 'private';
 const MAX_CHAT_MESSAGES = 300;
 const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
 const MOBILE_CHAT_HINT_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
+const PRIVATE_CHAT_COLOR = '#4fdfff';
 
 export class ChatPanel {
   private container: HTMLDivElement;
   private log: HTMLDivElement;
   private input: HTMLInputElement;
+  private privatePrefixEl: HTMLButtonElement | null = null;
+  private privateClearBtn: HTMLButtonElement | null = null;
+  private adminButton: HTMLButtonElement | null = null;
   private onSend: ChatSendCallback | null = null;
+  private onPrivateSend: ChatPrivateSendCallback | null = null;
   private mobileHintMedia: MediaQueryList | null = null;
+  private privateTarget: string | null = null;
 
   // Chat filtering
   private activeTab: ChatTab = 'all';
@@ -41,12 +48,17 @@ export class ChatPanel {
       if (e.key === 'Enter') {
         const msg = this.input.value.trim();
         if (msg) {
-          this.onSend?.(msg);
+          if (this.privateTarget) this.onPrivateSend?.(this.privateTarget, msg);
+          else this.onSend?.(msg);
           this.input.value = '';
         }
         this.input.blur();
       }
       if (e.key === 'Escape') {
+        if (this.privateTarget) {
+          this.setPrivateTarget(null);
+          e.preventDefault();
+        }
         this.input.blur();
       }
       e.stopPropagation();
@@ -118,6 +130,7 @@ export class ChatPanel {
       { key: 'all', label: 'All' },
       { key: 'game', label: 'Game' },
       { key: 'public', label: 'Public' },
+      { key: 'private', label: 'Private' },
     ];
 
     for (const tab of tabs) {
@@ -126,6 +139,12 @@ export class ChatPanel {
       tabBar.appendChild(btn);
       this.tabButtons.push(btn);
     }
+
+    this.adminButton = createTextTabButton('Admin', () => {});
+    this.adminButton.style.display = 'none';
+    this.adminButton.title = 'Admin';
+    this.adminButton.setAttribute('aria-label', 'Open admin panel');
+    tabBar.appendChild(this.adminButton);
 
     panel.appendChild(tabBar);
 
@@ -154,7 +173,61 @@ export class ChatPanel {
       border-top: 1px solid rgba(0,0,0,0.3); padding: 3px 6px;
       display: flex; align-items: center;
       flex-shrink: 0;
+      gap: 5px;
     `;
+
+    this.privatePrefixEl = document.createElement('button');
+    this.privatePrefixEl.type = 'button';
+    this.privatePrefixEl.style.cssText = `
+      display:none;
+      flex:0 1 auto;
+      max-width:44%;
+      min-width:0;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      background:rgba(0,40,52,0.72);
+      border:1px solid rgba(79,223,255,0.45);
+      color:${PRIVATE_CHAT_COLOR};
+      border-radius:2px;
+      padding:5px 7px;
+      font:700 12px Arial, Helvetica, sans-serif;
+      text-shadow:1px 1px 0 #000;
+      cursor:pointer;
+    `;
+    this.privatePrefixEl.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.input.focus();
+    });
+
+    this.privateClearBtn = document.createElement('button');
+    this.privateClearBtn.type = 'button';
+    this.privateClearBtn.textContent = 'X';
+    this.privateClearBtn.title = 'Clear private chat target';
+    this.privateClearBtn.setAttribute('aria-label', 'Clear private chat target');
+    this.privateClearBtn.style.cssText = `
+      display:none;
+      flex:0 0 24px;
+      width:24px;
+      height:28px;
+      padding:0;
+      background:rgba(43,10,8,0.82);
+      border:1px solid rgba(216,55,43,0.55);
+      color:#f4ded5;
+      border-radius:2px;
+      font:700 11px Arial, Helvetica, sans-serif;
+      cursor:pointer;
+      text-shadow:1px 1px 0 #000;
+    `;
+    this.privateClearBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setPrivateTarget(null);
+      this.input.focus();
+    });
+    inputBar.appendChild(this.privateClearBtn);
+    inputBar.appendChild(this.privatePrefixEl);
 
     const input = document.createElement('input');
     input.id = 'chat-input';
@@ -216,6 +289,22 @@ export class ChatPanel {
     const el = document.createElement('div');
     el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${this.escapeHtml(from)}:</span> ${this.escapeHtml(message)}`;
     this.appendMessage(el, 'public');
+  }
+
+  addPrivateMessage(label: string, message: string, replyTarget: string | null = null): void {
+    const el = document.createElement('div');
+    el.style.color = PRIVATE_CHAT_COLOR;
+    el.innerHTML = `<span style="font-weight: bold;">${this.escapeHtml(label)}:</span> ${this.escapeHtml(message)}`;
+    if (replyTarget) {
+      el.title = `Send private message to ${replyTarget}`;
+      el.style.cursor = 'pointer';
+      el.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.setPrivateTarget(replyTarget);
+      });
+    }
+    this.appendMessage(el, 'private');
   }
 
   addSystemMessage(message: string, color: string = UI_RED): void {
@@ -301,6 +390,34 @@ export class ChatPanel {
 
   setSendHandler(handler: ChatSendCallback): void {
     this.onSend = handler;
+  }
+
+  setPrivateSendHandler(handler: ChatPrivateSendCallback): void {
+    this.onPrivateSend = handler;
+  }
+
+  setAdminControls(enabled: boolean, onOpen: () => void): void {
+    if (!this.adminButton) return;
+    this.adminButton.style.display = enabled ? '' : 'none';
+    this.adminButton.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpen();
+    };
+  }
+
+  setPrivateTarget(username: string | null): void {
+    const target = username?.trim() || null;
+    this.privateTarget = target;
+    if (this.privatePrefixEl) {
+      this.privatePrefixEl.textContent = target ? `Send to ${target}:` : '';
+      this.privatePrefixEl.style.display = target ? 'block' : 'none';
+      this.privatePrefixEl.title = target ? `Private message target: ${target}` : '';
+    }
+    if (this.privateClearBtn) {
+      this.privateClearBtn.style.display = target ? 'block' : 'none';
+    }
+    if (target) this.input.focus();
   }
 
   destroy(): void {

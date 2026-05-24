@@ -6,6 +6,7 @@ import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import { startupTrace } from './debug/StartupTrace';
 import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture';
+import { installClientSizeModeController } from './ui/clientSizeMode';
 import type { GameManager as GameManagerType } from './managers/GameManager';
 
 const WEBGL_STARTUP_ERROR_PREFIX = 'USER_VISIBLE:';
@@ -15,6 +16,7 @@ const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
 installGlobalScrollbars();
 installSafeDynamicTextureUpdate();
+installClientSizeModeController();
 startupTrace.mark('entry');
 
 function getBrowserPageScale(): number {

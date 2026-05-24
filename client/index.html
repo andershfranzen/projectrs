@@ -40,6 +40,12 @@
     }
     body { overflow: auto; }
 
+    html.eq-fixed-client-size body {
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+    }
+
     input, textarea, [contenteditable="true"] {
       user-select: text;
       -webkit-user-select: text;
@@ -72,22 +78,13 @@
       grid-template-columns: minmax(0, 1fr) var(--right-rail-width);
       grid-template-rows: minmax(0, 1fr) var(--chat-height);
       position: relative;
-      background: #000;
+      background:
+        linear-gradient(rgba(0,0,0,0.48), rgba(0,0,0,0.48)),
+        url('/ui/stone-bg.png') repeat,
+        #000;
       overflow: hidden;
       user-select: none;
       -webkit-user-select: none;
-    }
-
-    #game-frame::before {
-      content: "";
-      position: absolute;
-      inset: -50%;
-      background: url('/ui/stone-bg.png') repeat;
-      transform: rotate(90deg);
-      transform-origin: center;
-      filter: brightness(0.52) contrast(1.08);
-      pointer-events: none;
-      z-index: 0;
     }
 
     #game-canvas {
@@ -271,10 +268,9 @@
         display: none !important;
       }
 
-      #game-frame.mobile-panel-open #side-player-info,
       #game-frame.mobile-panel-open #side-panel .side-account-actions,
       #game-frame.mobile-panel-open #side-panel .side-logout {
-        display: none !important;
+        display: flex !important;
       }
 
       #ui-right-column {

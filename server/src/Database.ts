@@ -202,6 +202,18 @@ export interface HiscoreProfileResponse {
   rows: HiscoreProfileRow[];
 }
 
+export type SocialListKind = 'friends' | 'ignore';
+
+export interface SocialEntry {
+  accountId: number;
+  username: string;
+}
+
+export interface SocialLists {
+  friends: SocialEntry[];
+  ignore: SocialEntry[];
+}
+
 interface RankedHiscoreRow extends HiscoreRow {
   accountId: number;
 }
@@ -732,6 +744,19 @@ export class GameDatabase {
     try {
       this.db.exec(`ALTER TABLE ip_bans ADD COLUMN expires_at INTEGER`);
     } catch { /* column already exists */ }
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS account_social (
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        target_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        list_type TEXT NOT NULL CHECK (list_type IN ('friends', 'ignore')),
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (account_id, target_account_id),
+        CHECK (account_id <> target_account_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_account_social_target
+        ON account_social(target_account_id, list_type);
+    `);
 
     // Door state persistence. One row per open (or otherwise non-default) door
     // — closed doors don't need a row (the in-memory default is closed). On
@@ -2095,6 +2120,76 @@ export class GameDatabase {
   getAccountIdByUsername(username: string): number | null {
     const row = this.db.query('SELECT id FROM accounts WHERE username = ?').get(username) as { id: number } | null;
     return row?.id ?? null;
+  }
+
+  getUsernameByAccountId(accountId: number): string | null {
+    const row = this.db.query('SELECT username FROM accounts WHERE id = ?').get(accountId) as { username: string } | null;
+    return row?.username ?? null;
+  }
+
+  listSocialRelations(accountId: number): SocialLists {
+    const readList = (listType: SocialListKind): SocialEntry[] => {
+      const rows = this.db.query(`
+        SELECT a.id, a.username
+        FROM account_social s
+        JOIN accounts a ON a.id = s.target_account_id
+        WHERE s.account_id = ? AND s.list_type = ?
+        ORDER BY lower(a.username) ASC
+      `).all(accountId, listType) as Array<{ id: number; username: string }>;
+      return rows.map(row => ({ accountId: row.id, username: row.username }));
+    };
+
+    return {
+      friends: readList('friends'),
+      ignore: readList('ignore'),
+    };
+  }
+
+  addSocialRelation(
+    accountId: number,
+    targetUsername: string,
+    listType: SocialListKind,
+  ): { ok: true; entry: SocialEntry } | { ok: false; error: string } {
+    const name = targetUsername.trim();
+    if (!name) return { ok: false, error: 'Enter a username.' };
+    const target = this.db.query('SELECT id, username FROM accounts WHERE username = ?')
+      .get(name) as { id: number; username: string } | null;
+    if (!target) return { ok: false, error: `No account named "${name}" found.` };
+    if (target.id === accountId) {
+      return {
+        ok: false,
+        error: listType === 'friends'
+          ? 'You cannot add yourself as a friend.'
+          : 'You cannot ignore yourself.',
+      };
+    }
+
+    this.db.query(`
+      INSERT INTO account_social (account_id, target_account_id, list_type, created_at)
+      VALUES (?, ?, ?, unixepoch())
+      ON CONFLICT(account_id, target_account_id) DO UPDATE SET
+        list_type = excluded.list_type,
+        created_at = excluded.created_at
+    `).run(accountId, target.id, listType);
+    return { ok: true, entry: { accountId: target.id, username: target.username } };
+  }
+
+  removeSocialRelation(accountId: number, targetUsername: string, listType: SocialListKind): { ok: true } | { ok: false; error: string } {
+    const name = targetUsername.trim();
+    if (!name) return { ok: false, error: 'Enter a username.' };
+    const targetId = this.getAccountIdByUsername(name);
+    if (targetId == null) return { ok: false, error: `No account named "${name}" found.` };
+    this.db.query('DELETE FROM account_social WHERE account_id = ? AND target_account_id = ? AND list_type = ?')
+      .run(accountId, targetId, listType);
+    return { ok: true };
+  }
+
+  isIgnoring(accountId: number, targetAccountId: number): boolean {
+    const row = this.db.query(`
+      SELECT 1 FROM account_social
+      WHERE account_id = ? AND target_account_id = ? AND list_type = 'ignore'
+    `).get(accountId, targetAccountId);
+    return !!row;
   }
 
   getAccountModerationInfo(accountId: number): { accountId: number; username: string; isAdmin: boolean } | null {

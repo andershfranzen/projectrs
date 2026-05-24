@@ -1,6 +1,7 @@
 import { World } from '../World';
 import { ALL_SKILLS, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
+import type { SocialEntry, SocialListKind, SocialLists } from '../Database';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
 
@@ -20,6 +21,8 @@ function denyIfNotAdmin(ws: ServerWebSocket<ChatSocketData>, _from: string): boo
 // Keep track of all chat sockets for broadcasting
 const chatSockets: Set<ServerWebSocket<ChatSocketData>> = new Set();
 const chatSocketsByUsername: Map<string, ServerWebSocket<ChatSocketData>> = new Map();
+const chatSocketsByAccountId: Map<number, ServerWebSocket<ChatSocketData>> = new Map();
+const ignoredAccountIdsByAccountId: Map<number, Set<number>> = new Map();
 
 // --- Per-socket rate limit ---
 // Game socket has its own rate limit (Player.checkRateLimit, 30/sec). Chat
@@ -55,11 +58,111 @@ function checkChatRate(ws: ServerWebSocket<ChatSocketData>): boolean {
   return state.count <= CHAT_RL_MAX;
 }
 
-export function broadcastLocalMessage(from: string, message: string): void {
+function isSocialListKind(value: unknown): value is SocialListKind {
+  return value === 'friends' || value === 'ignore';
+}
+
+function entryWithPresence(entry: SocialEntry): SocialEntry & { online: boolean } {
+  return {
+    ...entry,
+    online: chatSocketsByAccountId.has(entry.accountId),
+  };
+}
+
+function refreshSocialCache(accountId: number, world: World): SocialLists {
+  const lists = world.db.listSocialRelations(accountId);
+  ignoredAccountIdsByAccountId.set(accountId, new Set(lists.ignore.map(entry => entry.accountId)));
+  return lists;
+}
+
+function sendSocialList(ws: ServerWebSocket<ChatSocketData>, world: World): void {
+  const lists = refreshSocialCache(ws.data.accountId, world);
+  ws.send(JSON.stringify({
+    type: 'social_list',
+    friends: lists.friends.map(entryWithPresence),
+    ignore: lists.ignore.map(entryWithPresence),
+  }));
+}
+
+function sendSocialPresence(accountId: number, username: string, online: boolean): void {
+  const payload = JSON.stringify({ type: 'social_presence', accountId, username, online });
+  for (const sock of chatSockets) {
+    try { sock.send(payload); } catch { /* ignore closed */ }
+  }
+}
+
+function sendPrivateMessage(
+  ws: ServerWebSocket<ChatSocketData>,
+  targetName: string,
+  rawMessage: string,
+  world: World,
+): void {
+  const msg = rawMessage.trim().slice(0, 200);
+  if (!msg) return;
+  const normalizedTarget = targetName.trim();
+  if (!normalizedTarget) {
+    sendSystem(ws, 'Choose a player to message.');
+    return;
+  }
+
+  const targetAccountId = world.db.getAccountIdByUsername(normalizedTarget);
+  if (targetAccountId == null) {
+    sendSystem(ws, `No account named "${normalizedTarget}" found.`);
+    return;
+  }
+  const targetUsername = world.db.getUsernameByAccountId(targetAccountId) ?? normalizedTarget;
+  if (targetAccountId === ws.data.accountId) {
+    sendSystem(ws, 'You cannot send a private message to yourself.');
+    return;
+  }
+  if (world.db.isIgnoring(ws.data.accountId, targetAccountId)) {
+    sendSystem(ws, `Remove ${targetUsername} from your ignore list before messaging them.`);
+    return;
+  }
+  if (world.db.isIgnoring(targetAccountId, ws.data.accountId)) {
+    sendSystem(ws, `${targetUsername} is not accepting private messages from you.`);
+    return;
+  }
+
+  const targetSocket = chatSocketsByAccountId.get(targetAccountId);
+  if (!targetSocket) {
+    sendSystem(ws, `${targetUsername} is not online.`);
+    return;
+  }
+
+  const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
+  speaker?.botStats?.recordChat();
+  if (ws.data.playerId != null) world.recordPlayerActivity(ws.data.playerId);
+
+  try {
+    targetSocket.send(JSON.stringify({
+      type: 'private',
+      from: ws.data.username,
+      fromAccountId: ws.data.accountId,
+      message: msg,
+    }));
+  } catch {
+    sendSystem(ws, `${targetUsername} is not online.`);
+    return;
+  }
+  try {
+    ws.send(JSON.stringify({
+      type: 'private_sent',
+      to: targetUsername,
+      toAccountId: targetAccountId,
+      message: msg,
+    }));
+  } catch { /* sender socket is closing */ }
+}
+
+export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number): void {
   const msg = message.substring(0, 1000);
   if (!from || msg.length === 0) return;
-  const payload = JSON.stringify({ type: 'local', from, message: msg });
+  const payload = JSON.stringify({ type: 'local', from, fromAccountId, message: msg });
   for (const sock of chatSockets) {
+    if (fromAccountId != null && ignoredAccountIdsByAccountId.get(sock.data.accountId)?.has(fromAccountId)) {
+      continue;
+    }
     try {
       sock.send(payload);
     } catch { /* ignore closed */ }
@@ -72,6 +175,7 @@ export function handleChatSocketOpen(
 ): void {
   chatSockets.add(ws);
   chatSocketsByUsername.set(ws.data.username.toLowerCase(), ws);
+  chatSocketsByAccountId.set(ws.data.accountId, ws);
   // Backfill: the game socket and chat socket race at login, so addPlayer's
   // broadcastPlayerInfo loop can fire before this socket is in chatSockets.
   // Without this catch-up, the joiner shows existing remotes as "Player"
@@ -81,6 +185,8 @@ export function handleChatSocketOpen(
       ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name }));
     } catch { /* ignore */ }
   }
+  sendSocialList(ws, world);
+  sendSocialPresence(ws.data.accountId, ws.data.username, true);
 }
 
 export function handleChatSocketMessage(
@@ -100,7 +206,7 @@ export function handleChatSocketMessage(
     data = JSON.parse(message);
   } catch { return; }
   if (typeof data !== 'object' || data === null) return;
-  const d = data as { type?: unknown; message?: unknown };
+  const d = data as { type?: unknown; message?: unknown; to?: unknown; name?: unknown; list?: unknown };
 
   switch (d.type) {
     case 'identify': {
@@ -133,7 +239,36 @@ export function handleChatSocketMessage(
       const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
       speaker?.botStats?.recordChat();
 
-      broadcastLocalMessage(from, msg);
+      broadcastLocalMessage(from, msg, ws.data.accountId);
+      break;
+    }
+
+    case 'private': {
+      if (typeof d.to !== 'string' || typeof d.message !== 'string') return;
+      sendPrivateMessage(ws, d.to, d.message, world);
+      break;
+    }
+
+    case 'social_add': {
+      if (!isSocialListKind(d.list) || typeof d.name !== 'string') return;
+      const result = world.db.addSocialRelation(ws.data.accountId, d.name, d.list);
+      if (!result.ok) {
+        sendSystem(ws, result.error);
+        return;
+      }
+      sendSystem(ws, `${result.entry.username} added to your ${d.list === 'friends' ? 'friends' : 'ignore'} list.`);
+      sendSocialList(ws, world);
+      break;
+    }
+
+    case 'social_remove': {
+      if (!isSocialListKind(d.list) || typeof d.name !== 'string') return;
+      const result = world.db.removeSocialRelation(ws.data.accountId, d.name, d.list);
+      if (!result.ok) {
+        sendSystem(ws, result.error);
+        return;
+      }
+      sendSocialList(ws, world);
       break;
     }
   }
@@ -164,18 +299,7 @@ function handleCommand(
         sendSystem(ws, 'Usage: /msg <player> <message>');
         return;
       }
-
-      const targetPlayer = findPlayerByUsername(targetName, world);
-
-      if (!targetPlayer) {
-        sendSystem(ws, `Player "${targetName}" not found.`);
-        return;
-      }
-
-      chatSocketsByUsername.get(targetPlayer.name.toLowerCase())?.send(JSON.stringify({ type: 'private', from, message: msg }));
-
-      // Confirm to sender
-      ws.send(JSON.stringify({ type: 'private_sent', to: targetPlayer.name, message: msg }));
+      sendPrivateMessage(ws, targetName, msg, world);
       break;
     }
 
@@ -626,6 +750,10 @@ export function handleChatSocketClose(
   chatSockets.delete(ws);
   const lc = ws.data.username.toLowerCase();
   if (chatSocketsByUsername.get(lc) === ws) chatSocketsByUsername.delete(lc);
+  if (chatSocketsByAccountId.get(ws.data.accountId) === ws) chatSocketsByAccountId.delete(ws.data.accountId);
+  const stillOnline = chatSocketsByAccountId.has(ws.data.accountId);
+  if (!stillOnline) ignoredAccountIdsByAccountId.delete(ws.data.accountId);
+  sendSocialPresence(ws.data.accountId, ws.data.username, stillOnline);
 }
 
 /** Broadcast player info to all chat sockets so clients can map entityId → name */

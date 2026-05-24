@@ -7,6 +7,7 @@ const INTERACTIVE_CATEGORIES = new Set([
 ]);
 
 export interface MinimapObject { x: number; z: number; category: string; }
+export interface MinimapDrop { x: number; z: number; }
 
 const TILE_COLORS: Record<number, [number, number, number]> = {
   [TileType.GRASS]: [0x3e, 0x8c, 0x2e],
@@ -169,6 +170,7 @@ export class Minimap {
     chunkManager: ChunkManager,
     cameraAlpha: number = 0,
     worldObjects: MinimapObject[] = [],
+    groundItems: MinimapDrop[] = [],
     dt: number = 1 / 60,
   ): void {
     const tileSize = this.tileSize;
@@ -457,6 +459,16 @@ export class Minimap {
       const relZ = (obj.z - startZ) * scale;
       ctx.beginPath();
       ctx.arc(relX, relZ, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Ground item drops — red dots
+    ctx.fillStyle = '#ff3030';
+    for (const item of groundItems) {
+      const relX = (item.x - startX) * scale;
+      const relZ = (item.z - startZ) * scale;
+      ctx.beginPath();
+      ctx.arc(relX, relZ, 2.4, 0, Math.PI * 2);
       ctx.fill();
     }
 

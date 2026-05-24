@@ -1,13 +1,26 @@
 import { closeActiveContextMenu } from './popupStyle';
 
-export interface QuantityInputRequest {
-  title: string;
-  prompt: string;
-  max?: number;
-  defaultValue?: number;
-  submitLabel?: string;
-  onSubmit: (quantity: number) => void;
-}
+export type QuantityInputRequest =
+  | {
+      inputType?: 'number';
+      title: string;
+      prompt: string;
+      max?: number;
+      defaultValue?: number;
+      submitLabel?: string;
+      onSubmit: (quantity: number) => void;
+    }
+  | {
+      inputType: 'text';
+      title: string;
+      prompt: string;
+      defaultText?: string;
+      maxLength?: number;
+      placeholder?: string;
+      submitLabel?: string;
+      validateText?: (value: string) => string | null;
+      onTextSubmit: (value: string) => void;
+    };
 
 export type QuantityInputRequester = (request: QuantityInputRequest) => void;
 
@@ -37,8 +50,25 @@ export class QuantityInputPanel {
     this.promptEl.textContent = request.prompt;
     this.errorEl.textContent = '';
     this.submitBtn.textContent = request.submitLabel ?? 'Confirm';
-    this.input.value = String(Math.max(1, Math.floor(request.defaultValue ?? 1)));
-    this.input.max = request.max && request.max > 0 ? String(Math.floor(request.max)) : '';
+    if (request.inputType === 'text') {
+      this.input.type = 'text';
+      this.input.inputMode = 'text';
+      this.input.min = '';
+      this.input.step = '';
+      this.input.max = '';
+      this.input.maxLength = Math.max(1, Math.floor(request.maxLength ?? 12));
+      this.input.placeholder = request.placeholder ?? '';
+      this.input.value = request.defaultText ?? '';
+    } else {
+      this.input.type = 'number';
+      this.input.inputMode = 'numeric';
+      this.input.min = '1';
+      this.input.step = '1';
+      this.input.removeAttribute('maxlength');
+      this.input.placeholder = '';
+      this.input.value = String(Math.max(1, Math.floor(request.defaultValue ?? 1)));
+      this.input.max = request.max && request.max > 0 ? String(Math.floor(request.max)) : '';
+    }
     this.setVisible(true);
     window.setTimeout(() => {
       this.input.focus();
@@ -181,6 +211,20 @@ export class QuantityInputPanel {
   private submit(): void {
     const request = this.request;
     if (!request) return;
+    if (request.inputType === 'text') {
+      const value = this.input.value.trim();
+      const error = request.validateText?.(value) ?? (!value ? 'Enter a username.' : null);
+      if (error) {
+        this.errorEl.textContent = error;
+        this.input.focus();
+        this.input.select();
+        return;
+      }
+      this.hide();
+      request.onTextSubmit(value);
+      return;
+    }
+
     const quantity = Number(this.input.value);
     if (!Number.isSafeInteger(quantity) || quantity <= 0) {
       this.errorEl.textContent = 'Enter a whole number greater than 0.';

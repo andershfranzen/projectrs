@@ -45,8 +45,15 @@ export type MessageHandler = (opcode: ServerOpcode, values: number[]) => void;
 export type ChatMessage =
   | { type: 'chat'; from?: string; to?: string; message: string }
   | { type: 'system'; message: string }
+  | { type: 'social_list'; friends: SocialClientEntry[]; ignore: SocialClientEntry[] }
+  | { type: 'social_presence'; accountId: number; username: string; online: boolean }
   | { type: 'player_info'; entityId: number; name: string; message: string }
-  | { type: string; from?: string; to?: string; message: string; entityId?: number; name?: string };
+  | { type: string; from?: string; to?: string; message: string; entityId?: number; name?: string; username?: string; accountId?: number; fromAccountId?: number; toAccountId?: number; friends?: SocialClientEntry[]; ignore?: SocialClientEntry[]; online?: boolean };
+export interface SocialClientEntry {
+  accountId: number;
+  username: string;
+  online: boolean;
+}
 export type ChatHandler = (data: ChatMessage) => void;
 export type RawMessageHandler = (data: ArrayBuffer) => void;
 export type DisconnectHandler = (event: CloseEvent) => void;
@@ -544,6 +551,21 @@ export class NetworkManager {
   sendChat(message: string): void {
     if (!this.chatSocket || this.chatSocket.readyState !== WebSocket.OPEN) return;
     this.chatSocket.send(JSON.stringify({ type: 'local', message }));
+  }
+
+  sendPrivateMessage(to: string, message: string): void {
+    if (!this.chatSocket || this.chatSocket.readyState !== WebSocket.OPEN) return;
+    this.chatSocket.send(JSON.stringify({ type: 'private', to, message }));
+  }
+
+  sendSocialAdd(list: 'friends' | 'ignore', name: string): void {
+    if (!this.chatSocket || this.chatSocket.readyState !== WebSocket.OPEN) return;
+    this.chatSocket.send(JSON.stringify({ type: 'social_add', list, name }));
+  }
+
+  sendSocialRemove(list: 'friends' | 'ignore', name: string): void {
+    if (!this.chatSocket || this.chatSocket.readyState !== WebSocket.OPEN) return;
+    this.chatSocket.send(JSON.stringify({ type: 'social_remove', list, name }));
   }
 
   isConnected(): boolean {
