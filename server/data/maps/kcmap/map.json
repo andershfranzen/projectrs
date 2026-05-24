@@ -7853,7 +7853,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371467765_72820",
@@ -7877,7 +7879,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371468456_30974",
@@ -7901,7 +7905,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371591305_7728",
@@ -7925,7 +7931,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371592484_54893",
@@ -7949,7 +7957,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371593176_80160",
@@ -7973,7 +7983,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371713558_46647",
@@ -7997,7 +8009,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371713558_43882",
@@ -8021,7 +8035,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371713558_8837",
@@ -8045,7 +8061,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371713558_91515",
@@ -8069,7 +8087,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371713558_71215",
@@ -8093,7 +8113,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371713558_31706",
@@ -8117,7 +8139,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371723445_59998",
@@ -8141,7 +8165,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774371727686_54568",
@@ -8165,7 +8191,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774372384353_34877",
@@ -8189,7 +8217,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774372385305_29340",
@@ -8213,7 +8243,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1774406674456_85099",
@@ -22693,7 +22725,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       },
       {
         "id": "plane_1779563771590_3883",
@@ -22717,7 +22751,9 @@
           "y": 1,
           "z": 1
         },
-        "uvRepeat": 4
+        "uvRepeat": 4,
+        "bridge": true,
+        "noRoof": true
       }
     ],
     "tiles": [],
