@@ -1559,7 +1559,8 @@
     "verticalLinks": [
       {
         "from": { "x": 87.5, "z": 32.5, "floor": 0, "y": 0 },
-        "to": { "x": 87.5, "z": 32.5, "floor": 1, "y": 2.62 }
+        "to": { "x": 87.5, "z": 32.5, "floor": 1, "y": 2.62 },
+        "fromAction": "Climb-up"
       }
     ]
   },
@@ -4665,7 +4666,8 @@
     "verticalLinks": [
       {
         "from": { "x": 70.5, "z": 18.5, "floor": 0, "y": 0 },
-        "to": { "x": 70.5, "z": 18.5, "floor": 1, "y": 2.68 }
+        "to": { "x": 70.5, "z": 18.5, "floor": 1, "y": 2.68 },
+        "fromAction": "Climb-up"
       }
     ]
   },

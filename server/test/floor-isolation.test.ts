@@ -222,13 +222,14 @@ describe('floor isolation', () => {
     expect(world.canPlayerTargetGroundItem(player, item)).toBe(true);
   });
 
-  test('ladder objects are targetable from connected upper floors', () => {
+  test('reversible ladder objects are targetable from connected upper floors', () => {
     const { world } = makeWorld();
     const player = makePlayer('player', 1, 1);
     const ladder = new WorldObject(ladderDef, player.position.x, player.position.y, 'kcmap', 0, 0);
     ladder.verticalLinks = [{
       from: { x: 5.5, z: 5.5, floor: 0, y: 0 },
       to: { x: 5.5, z: 5.5, floor: 1, y: 2.7 },
+      bidirectional: true,
     }];
     const crate = new WorldObject(objectDef, player.position.x, player.position.y, 'kcmap', 0, 0);
     world.maps.set('kcmap', {
@@ -326,6 +327,7 @@ describe('floor isolation', () => {
     ladder.verticalLinks = [{
       from: { x: 5.5, z: 5.5, floor: 0, y: 0 },
       to: { x: 5.5, z: 5.5, floor: 1, y: 2.7 },
+      bidirectional: true,
     }];
     world.players.set(viewer.id, viewer);
     world.worldObjects.set(ladder.id, ladder);
@@ -358,8 +360,9 @@ describe('floor isolation', () => {
     player.effectiveY = 2.73;
     const ladder = new WorldObject(ladderDef, 160.5, 157.5, 'kcmap', 0, 0);
     ladder.verticalLinks = [{
-      from: { x: 160.5, z: 156.5, floor: 0, y: 0.57 },
-      to: { x: 160.5, z: 158.5, floor: 1, y: 2.73 },
+      from: { x: 160.5, z: 158.5, floor: 1, y: 2.73 },
+      to: { x: 160.5, z: 156.5, floor: 0, y: 0.57 },
+      fromAction: 'Climb-down',
     }];
     player.visibleEntityIds.add(ladder.id);
     world.players.set(player.id, player);
@@ -424,6 +427,7 @@ describe('floor isolation', () => {
     ladder.verticalLinks = [{
       from: { x: 12.5, z: 13.5, floor: 0, y: 0 },
       to: { x: 12.5, z: 13.5, floor: 1, y: 2.7 },
+      bidirectional: true,
     }];
     player.visibleEntityIds.add(ladder.id);
     world.players.set(player.id, player);
@@ -454,6 +458,36 @@ describe('floor isolation', () => {
 
     expect(player.currentFloor).toBe(1);
     expect(player.effectiveY).toBe(2.7);
+  });
+
+  test('one-way vertical refresh removes stale ladder actions after a floor change', () => {
+    const { world, packets } = makeWorld();
+    const player = makePlayer('viewer', 1, 1);
+    player.position.x = 10.5;
+    player.position.y = 11.5;
+    player.effectiveY = 2.7;
+    const ladder = new WorldObject(ladderDef, 10.5, 10.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 10.5, z: 11.5, floor: 0, y: 0 },
+      to: { x: 10.5, z: 11.5, floor: 1, y: 2.7 },
+      fromAction: 'Climb-up',
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+    world.chunkManagers = new Map([[
+      'kcmap',
+      {
+        getEntitiesNear() {
+          return new Set([ladder.id]);
+        },
+      },
+    ]]);
+
+    world.sendNearbyVerticalObjectUpdates(player);
+
+    expect(packets.get(player.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === ladder.id)).toBe(true);
+    expect(player.visibleEntityIds.has(ladder.id)).toBe(false);
   });
 
   test('ladder links support signed negative destination floors', () => {

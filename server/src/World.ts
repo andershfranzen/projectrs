@@ -711,7 +711,7 @@ export class World {
         from,
         to,
       });
-      if (link.bidirectional !== false) {
+      if (link.bidirectional === true) {
         out.push({
           linkId: `${link.id ?? String(i)}:return`,
           action: link.toAction ?? this.defaultVerticalAction(to, from),
@@ -6940,7 +6940,12 @@ export class World {
     for (const eid of cm.getEntitiesNear(player.position.x, player.position.y)) {
       const obj = this.worldObjects.get(eid);
       if (!obj || obj.def.category !== 'ladder' || !obj.verticalLinks?.length) continue;
-      if (this.canPlayerTargetObject(player, obj)) this.sendWorldObjectUpdate(player, obj);
+      if (this.canPlayerTargetObject(player, obj)) {
+        this.sendWorldObjectUpdate(player, obj);
+      } else if (player.visibleEntityIds.has(eid)) {
+        this.sendToPlayer(player, ServerOpcode.ENTITY_DEATH, eid);
+        player.visibleEntityIds.delete(eid);
+      }
     }
   }
 

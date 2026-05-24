@@ -603,7 +603,7 @@ export interface PlacedObjectVerticalLink {
   id?: string;
   from: PlacedObjectVerticalLinkEndpoint;
   to: PlacedObjectVerticalLinkEndpoint;
-  /** Defaults to true. When true, the reverse direction is available too. */
+  /** Defaults to false. When true, the reverse direction is available too. */
   bidirectional?: boolean;
   /** Optional explicit action labels for from->to and to->from. */
   fromAction?: 'Climb-up' | 'Climb-down';
