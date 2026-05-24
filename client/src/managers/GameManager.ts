@@ -985,24 +985,6 @@ export class GameManager {
     }
   }
 
-  private resendCachedAppearance(): boolean {
-    const appearance = this.localAppearance ?? this.loadCachedAppearance();
-    if (!appearance) return false;
-    this.cacheLocalAppearance(appearance);
-    this.network.sendRaw(encodePacket(
-      ClientOpcode.SET_APPEARANCE,
-      appearance.shirtColor,
-      appearance.pantsColor,
-      appearance.shoesColor,
-      appearance.hairColor,
-      appearance.beltColor,
-      appearance.skinColor,
-      appearance.hairStyle,
-    ));
-    if (this.localPlayer) this.localPlayer.applyAppearance(appearance);
-    return true;
-  }
-
   /** Open the WebSocket and wait for the first LOGIN_OK to finish processing
    *  (real spawn position applied, saved appearance applied, input enabled).
    *  Use this after `whenPreloaded()` for a clean "click Login → world is
@@ -2427,7 +2409,6 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
-      if (this.resendCachedAppearance()) return;
       this.openCharacterCreatorWhenReady();
     });
 
@@ -5688,8 +5669,8 @@ export class GameManager {
         return true;
       }
       if (msg === '/appearance') {
-        this.openCharacterCreatorWhenReady();
-        return true;
+        // The server must open the editor so SET_APPEARANCE is accepted.
+        return false;
       }
       if (msg.startsWith('/anim ')) {
         this.runAnimCommand(msg.slice(6).trim());

@@ -3,7 +3,7 @@ import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { processNpcCombat, processPlayerCombat } from '../src/combat/Combat';
-import { ServerOpcode, type NpcDef } from '@projectrs/shared';
+import { ServerOpcode, decodePacket, type DialogueTree, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -81,6 +81,57 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
 }
 
 describe('NPC interaction reachability', () => {
+  test('stylist dialogue action opens the character creator for existing players', () => {
+    const packets: Array<{ opcode: number; values: number[] }> = [];
+    const ws = {
+      sendBinary(packet: Uint8Array) {
+        const exact = packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer;
+        packets.push(decodePacket(exact));
+      },
+      send() {},
+    } as any;
+    const dialogue: DialogueTree = {
+      root: 'greet',
+      nodes: {
+        greet: {
+          id: 'greet',
+          lines: ["Hello there! I'm the local stylist."],
+          options: [
+            {
+              label: 'Yes, please change my appearance.',
+              action: { type: 'openAppearance' },
+            },
+          ],
+        },
+      },
+    };
+    const player = new Player('tester', 9.5, 10.5, ws, 1);
+    const npc = new Npc({ ...npcDef, id: 21, name: 'Bill the Stylist' }, 10.5, 10.5, 0, null, null, null, null, dialogue);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.openDialogueState = {
+      sessionId: 123,
+      npcEntityId: npc.id,
+      nodeId: 'greet',
+      visibleOptionIndices: [0],
+    };
+    const world = makeWorld();
+    world.players = new Map([[player.id, player]]);
+    world.npcs = new Map([[npc.id, npc]]);
+    world.dialogueScheduledSteps = [];
+    world.quests = {
+      notifyQuestEvent() {},
+      dialogueOptionVisible: () => true,
+    };
+
+    world.handleDialogueChoose(player.id, npc.id, 123, 0);
+
+    expect(player.openDialogueState).toBeNull();
+    expect(player.appearanceEditorOpen).toBe(true);
+    expect(packets.map(packet => packet.opcode)).toContain(ServerOpcode.DIALOGUE_CLOSE);
+    expect(packets.map(packet => packet.opcode)).toContain(ServerOpcode.SHOW_CHARACTER_CREATOR);
+  });
+
   test('requires standing on a valid interaction tile, not just within two path steps', () => {
     const world = makeWorld();
     const npc = new Npc(npcDef, 10.5, 10.5);

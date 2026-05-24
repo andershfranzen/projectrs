@@ -75,6 +75,15 @@ describe('per-session opcode mapping', () => {
     expect([...parsed.serverWireToLogical.values()]).not.toContain(ServerOpcode.ADMIN_FLAGS);
   });
 
+  test('keeps the character creator opcode available to non-admin sessions', () => {
+    const mapping = createOpcodeMapping();
+    const parsed = parseOpcodeMappingPayload(opcodeMappingToPayload(mapping));
+    const wire = parsed.serverLogicalToWire.get(ServerOpcode.SHOW_CHARACTER_CREATOR);
+
+    expect(wire).toBeNumber();
+    expect(parsed.serverWireToLogical.get(wire!)).toBe(ServerOpcode.SHOW_CHARACTER_CREATOR);
+  });
+
   test('includes admin-only server opcodes for admin sessions', () => {
     const mapping = createOpcodeMapping({ includeAdminServerOpcodes: true });
     const parsed = parseOpcodeMappingPayload(opcodeMappingToPayload(mapping));

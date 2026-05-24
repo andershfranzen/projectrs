@@ -3,6 +3,7 @@ export const NPC_NAMES: Record<number, string> = {
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
+  16: 'Banker',
   17: 'Snow Wolf', 18: 'Rat',
   // 100 was the Custom Humanoid template; it is now reused for in-editor
   // mob authoring (the first session edited it into Vampire). 101 is the
