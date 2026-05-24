@@ -460,7 +460,7 @@ describe('floor isolation', () => {
     expect(player.effectiveY).toBe(2.7);
   });
 
-  test('one-way vertical refresh removes stale ladder actions after a floor change', () => {
+  test('one-way vertical refresh keeps ladder synced without stale climb actions', () => {
     const { world, packets } = makeWorld();
     const player = makePlayer('viewer', 1, 1);
     player.position.x = 10.5;
@@ -486,8 +486,10 @@ describe('floor isolation', () => {
 
     world.sendNearbyVerticalObjectUpdates(player);
 
-    expect(packets.get(player.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === ladder.id)).toBe(true);
-    expect(player.visibleEntityIds.has(ladder.id)).toBe(false);
+    expect((packets.get(player.id) ?? []).some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === ladder.id)).toBe(false);
+    expect(player.visibleEntityIds.has(ladder.id)).toBe(true);
+    expect(world.canPlayerTargetObject(player, ladder)).toBe(true);
+    expect(world.ladderActionMaskForPlayer(player, ladder)).toBe(0);
   });
 
   test('ladder links support signed negative destination floors', () => {
@@ -546,13 +548,15 @@ describe('floor isolation', () => {
     ladder.verticalLinks = [{
       from: { x: 20.5, z: 21.5, floor: 0, y: 0 },
       to: { x: 20.5, z: 21.5, floor: 1, y: 2.7 },
+      bidirectional: true,
     }];
     world.maps.set('kcmap', {
       ...world.maps.get('kcmap'),
       isTileBlockedOnFloor: (x: number, z: number, floor: number) => floor === 0 && x === 20 && z === 21,
     });
 
-    expect(world.canPlayerTargetObject(player, ladder)).toBe(false);
+    expect(world.canPlayerTargetObject(player, ladder)).toBe(true);
+    expect(world.ladderActionMaskForPlayer(player, ladder)).toBe(0);
   });
 
   test('tick transitions promote a player whose server-authored height reaches an upper texture-plane floor', () => {

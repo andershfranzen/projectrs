@@ -660,8 +660,11 @@ export class World {
 
   canPlayerTargetObject(player: Player, obj: WorldObject): boolean {
     if (obj.mapLevel !== player.currentMapLevel) return false;
+    // Keep ladders synced/pickable across nearby floors; ladderActionMask gates
+    // which climb actions are actually available to this player.
+    if (obj.def.category === 'ladder') return true;
     if ((obj.floor ?? 0) === player.currentFloor) return true;
-    return obj.def.category === 'ladder' && this.ladderActionMaskForPlayer(player, obj) !== 0;
+    return false;
   }
 
   canPlayerTargetGroundItem(player: Player, item: GroundItem): boolean {

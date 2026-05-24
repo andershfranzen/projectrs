@@ -1727,7 +1727,7 @@ export class GameManager {
     // Floor isolation is an interaction rule, not a scenery-visibility rule.
     // Placed models are part of the map and may be visible from another floor
     // or after a transient floor-sync/HMR state; keep the mesh rendered while
-    // right-click/use paths remain gated by isWorldObjectOnCurrentInteractionFloor.
+    // action builders decide what is usable for the current floor.
     return !data.depleted || def?.category === 'door';
   }
 
@@ -1737,7 +1737,7 @@ export class GameManager {
   ): boolean {
     if (data.floor === this.currentFloor) return true;
     if (def?.category !== 'ladder') return false;
-    return (data.ladderActionMask ?? 0) !== 0;
+    return true;
   }
 
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
@@ -4317,6 +4317,7 @@ export class GameManager {
       if (!available) return;
       options.push({
         label: `${actionName} ${def.name}`,
+        primary: actionName === 'Examine' ? false : undefined,
         action: () => this.interactObject(objectEntityId, actionIdx),
       });
     });
@@ -5275,6 +5276,14 @@ export class GameManager {
     // Auto-interact with harvestable objects (trees, rocks), doors, ladders,
     // and crafting stations (furnace, anvil, range).
     if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
+      const actionIndex = def.category === 'ladder'
+        ? this.primaryLadderActionIndex(def, data)
+        : 0;
+      if (def.category === 'ladder' && actionIndex < 0) {
+        this.handleGroundClick(data.x, data.z);
+        return;
+      }
+
       if (this.interactMarker) {
         let mx = data.x;
         let mz = data.z;
@@ -5308,9 +5317,6 @@ export class GameManager {
         }
       }
 
-      const actionIndex = def.category === 'ladder'
-        ? this.primaryLadderActionIndex(def, data)
-        : 0;
       if (actionIndex >= 0) this.interactObject(objectEntityId, actionIndex);
     }
   }
