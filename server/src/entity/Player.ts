@@ -294,9 +294,9 @@ export class Player extends Entity {
     return state.count <= maxMessages;
   }
 
-  /** Rolling count of packets that were syntactically valid but invalid for
-   *  the player's authoritative state (stale entity ids, wrong inventory
-   *  slot/item pairing, UI action without the UI open, etc.). */
+  /** Rolling count of hard-invalid packets that are eligible to close the
+   *  socket. Lower-risk state races still feed BotStats review telemetry but
+   *  must not disconnect normal players. */
   recordSuspiciousPacket(now: number = Date.now()): number {
     if (now - this._suspiciousPacketWindowStart > Player.SUSPICIOUS_PACKET_WINDOW_MS) {
       this._suspiciousPacketWindowStart = now;

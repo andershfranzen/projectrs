@@ -23,5 +23,21 @@ services:
       RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
       RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-}
 
+  left-hand:
+    build:
+      context: ./left-hand-bot
+      dockerfile: Dockerfile
+    image: left-hand-bot:latest
+    container_name: left-hand
+    restart: unless-stopped
+    depends_on:
+      - evilquest
+    environment:
+      DISCORD_TOKEN: ${LEFT_HAND_DISCORD_TOKEN:-}
+      DISCORD_GUILD_ID: ${LEFT_HAND_DISCORD_GUILD_ID:-}
+      EVILQUEST_STATUS_URL: http://evilquest:4000/api/status
+      LEFT_HAND_SET_NICKNAME: ${LEFT_HAND_SET_NICKNAME:-false}
+      LEFT_HAND_LOG_LEVEL: ${LEFT_HAND_LOG_LEVEL:-INFO}
+
 volumes:
   evilquest_data:

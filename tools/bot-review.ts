@@ -102,7 +102,7 @@ function parseArgs(): {
   let ip: string | null = null;
   let sharedIpOnly = false;
   let raw = false;
-  let minRisk: RiskLevel | null = null;
+  let minRisk: RiskLevel | null = 'medium';
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case '--min-flags': minFlags = parseInt(args[++i], 10); break;
@@ -122,7 +122,7 @@ Options:
   --account ID        full history for one account
   --ip ADDR           list all accounts ever seen on this IP
   --shared-ip-only    only show accounts that share an IP with another account
-  --min-risk LEVEL    only show accounts at/above low|medium|high|critical
+  --min-risk LEVEL    only show accounts at/above low|medium|high|critical (default medium)
   --raw               print raw JSONL of flagged sessions instead of summary
   -h, --help          this message`);
         process.exit(0);
@@ -451,11 +451,11 @@ function computeReviewRisk(
     if (flags.has('tickAligned') && (flags.has('routeActionLoop') || flags.has('lifetimeRouteActionLoop') || flags.has('fastReaction'))) add(6, 'server-tick alignment paired with behavioral loop');
     if (flags.has('pingRegular')) add(12, 'script-regular heartbeat timing');
     if (flags.has('activityHeartbeatCoupled')) add(20, 'activity packets coupled to heartbeat');
-    if (flags.has('routeActionLoop')) add(22, 'repeated route/action loop');
-    if (flags.has('lifetimeRouteActionLoop')) add(20, 'lifetime route/action loop');
-    if (flags.has('pathRepetitive')) add(16, 'repetitive movement destination');
-    if (flags.has('lifetimePathConcentration')) add(16, 'lifetime path concentration');
-    if (flags.has('noCursorTelemetry')) add(16, 'active session without cursor telemetry');
+    if (flags.has('routeActionLoop')) add(10, 'repeated route/action loop');
+    if (flags.has('lifetimeRouteActionLoop')) add(10, 'lifetime route/action loop');
+    if (flags.has('pathRepetitive')) add(8, 'repetitive movement destination');
+    if (flags.has('lifetimePathConcentration')) add(8, 'lifetime path concentration');
+    if (flags.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
     if (flags.has('cursorStatic')) add(10, 'static cursor telemetry');
     if (flags.has('fastReaction')) add(22, 'fast NPC re-engage reaction');
     if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
@@ -463,8 +463,8 @@ function computeReviewRisk(
     if (flags.has('rateLimitPackets')) add(18, 'rate-limit automation packets');
     if (flags.has('automationInvalidPackets')) add(10, 'automation-shaped invalid packets');
     if (flags.has('lifetimeHardInvalidPackets')) add(14, 'lifetime hard invalid packets');
-    if (flags.has('lifetimeExtremeLowSocialHighActivity')) add(32, 'extreme low-social high-activity lifetime');
-    else if (flags.has('lifetimeLowSocialHighActivity')) add(22, 'low-social high-activity lifetime');
+    if (flags.has('lifetimeExtremeLowSocialHighActivity')) add(22, 'extreme low-social high-activity lifetime');
+    else if (flags.has('lifetimeLowSocialHighActivity')) add(12, 'low-social high-activity lifetime');
     if (flags.has('xpVelocity')) add(28, 'impossible XP velocity');
     if (flags.has('marathonSession')) add(10, 'marathon session');
     if (flags.has('noChat')) add(8, 'long active session with no chat');

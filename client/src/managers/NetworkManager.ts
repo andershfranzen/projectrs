@@ -68,6 +68,11 @@ const STRING_PACKET_OPCODES = new Set<number>([
   ServerOpcode.QUEST_STAGE_ADVANCED,
 ]);
 
+function hostForWsUrl(hostname: string): string {
+  const host = hostname || 'localhost';
+  return host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+}
+
 export class NetworkManager {
   private gameSocket: WebSocket | null = null;
   private chatSocket: WebSocket | null = null;
@@ -202,9 +207,11 @@ export class NetworkManager {
   private openSockets(token: string, generation: number): void {
     if (generation !== this.socketGeneration) return;
     const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Vite's WS proxy doesn't reliably upgrade on Windows — connect directly to the server in dev.
+    // Vite's WS proxy doesn't reliably upgrade on Windows, so dev connects
+    // directly to the server. Keep the hostname aligned with the page URL so
+    // host-scoped auth cookies also work when opened via 127.0.0.1.
     const wsOrigin = import.meta.env.DEV
-      ? `${wsProtocol}//localhost:${SERVER_PORT}`
+      ? `${wsProtocol}//${hostForWsUrl(location.hostname)}:${SERVER_PORT}`
       : `${wsProtocol}//${location.host}`;
 
     // Game socket (binary) — pass auth token via Sec-WebSocket-Protocol so it
@@ -500,10 +507,10 @@ export class NetworkManager {
     return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY));
   }
 
-  sendCursorPosition(clientX: number, clientY: number, force: boolean = false): boolean {
+  sendCursorPosition(clientX: number, clientY: number): boolean {
     if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return false;
     const now = performance.now();
-    if (!force && now - this.lastCursorSentAt < 1_500) return true;
+    if (now - this.lastCursorSentAt < 1_500) return true;
     this.lastCursorSentAt = now;
     const width = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
     const height = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);

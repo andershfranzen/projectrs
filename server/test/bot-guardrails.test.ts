@@ -3,7 +3,7 @@ import { ClientOpcode } from '@projectrs/shared';
 import { BotStats } from '../src/BotStats';
 import { GameDatabase } from '../src/Database';
 import { Player } from '../src/entity/Player';
-import { getOpcodeRateRule } from '../src/network/GameSocket';
+import { getOpcodeRateRule, rateLimitOverflowIsSuspicious, suspiciousPacketCloseEligible } from '../src/network/GameSocket';
 
 const fakeWs = {
   sendBinary() {},
@@ -16,6 +16,25 @@ describe('anti-bot guardrails', () => {
     expect(getOpcodeRateRule(ClientOpcode.TRADE_OFFER_ITEM).bucket).toBe('inventory-ui');
     expect(getOpcodeRateRule(ClientOpcode.CLIENT_PING).windowMs).toBe(10_000);
     expect(getOpcodeRateRule(ClientOpcode.CURSOR_POSITION).bucket).toBe('cursor');
+  });
+
+  test('low-risk telemetry overflow is dropped without suspicious strikes', () => {
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.CURSOR_POSITION)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_ACTIVITY)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.CLIENT_POSITION_Y)).toBe(false);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.PLAYER_MOVE)).toBe(true);
+    expect(rateLimitOverflowIsSuspicious(ClientOpcode.TRADE_OFFER_ITEM)).toBe(true);
+  });
+
+  test('state-race packet telemetry does not qualify for disconnects', () => {
+    expect(suspiciousPacketCloseEligible('stale-npc-target')).toBe(false);
+    expect(suspiciousPacketCloseEligible('unreachable-object-target')).toBe(false);
+    expect(suspiciousPacketCloseEligible('dialogue-not-open')).toBe(false);
+    expect(suspiciousPacketCloseEligible('appearance-editor-not-open')).toBe(false);
+    expect(suspiciousPacketCloseEligible('malformed-frame')).toBe(true);
+    expect(suspiciousPacketCloseEligible('bad-move-path-length')).toBe(true);
+    expect(suspiciousPacketCloseEligible('missing-bank-deposit-values')).toBe(true);
+    expect(suspiciousPacketCloseEligible('rate-limit:inventory-ui')).toBe(true);
   });
 
   test('per-action rate limits are independent from the global socket limit', () => {
@@ -48,6 +67,38 @@ describe('anti-bot guardrails', () => {
     const summary = stats.computeSummary({});
     expect(summary.topActionLoopRepetition).toBe(1);
     expect(summary.flags).toContain('routeActionLoop');
+  });
+
+  test('single or sparse repeated actions do not create a route loop flag', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 40; i++) {
+      stats.recordMovement(i, 20);
+    }
+    stats.recordActionSignature('object', 123, 42.5, 17.5, 'Chop');
+
+    const summary = stats.computeSummary({});
+    expect(summary.topActionLoopRepetition).toBe(1);
+    expect(summary.flags).not.toContain('routeActionLoop');
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('session path repetition is isolated from lifetime destination history', () => {
+    const stats = BotStats.empty();
+    stats.totalMovements = 5000;
+    stats.pathDestinations.set('42,17', 900);
+    stats.pathDestinations.set('43,17', 100);
+    stats.onLogin({});
+
+    for (let i = 0; i < 60; i++) {
+      stats.recordMovement(i, 20);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.topPathRepetition).toBeLessThan(0.05);
+    expect(summary.flags).not.toContain('pathRepetitive');
+    expect(summary.flags).toContain('lifetimePathConcentration');
   });
 
   test('risk profile escalates when multiple calibrated bot signals stack', () => {
@@ -111,7 +162,32 @@ describe('anti-bot guardrails', () => {
     const summary = stats.computeSummary({});
     expect(summary.flags).toContain('lifetimeLowSocialHighActivity');
     expect(summary.flags).toContain('lifetimeExtremeLowSocialHighActivity');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('short-session XP bursts are not treated as reliable velocity evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({ mining: 0 });
+    stats.sessionStartedAt = Date.now() - 60_000;
+
+    const summary = stats.computeSummary({ mining: 10_000 });
+    expect(summary.xpPerHour.mining).toBeGreaterThan(80_000);
+    expect(summary.flags.some((flag) => flag.startsWith('xpVelocity:'))).toBe(false);
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('XP velocity requires enough active sampled play', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({ mining: 0 });
+    stats.sessionStartedAt = Date.now() - 10 * 60_000;
+    for (let i = 0; i < 20; i++) {
+      stats.recordSkillingRoll(1000, 1000 + i * 17);
+    }
+
+    const summary = stats.computeSummary({ mining: 20_000 });
+    expect(summary.flags).toContain('xpVelocity:mining');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(26);
   });
 
   test('heartbeat-coupled activity is flagged as scripted input cadence', () => {
@@ -186,6 +262,27 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).not.toContain('noCursorTelemetry');
     expect(summary.flags).not.toContain('inputlessCommandBurst');
     expect(summary.flags).not.toContain('commandsWithoutRecentInput');
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('cursorless but active repetitive skilling remains low risk by itself', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 20 * 60_000;
+    stats.recordClientActivity(1000);
+
+    for (let i = 0; i < 40; i++) {
+      stats.recordSkillingRoll(1000, 1000);
+      stats.recordMovement(42.5, 17.5);
+      stats.recordActionSignature('object', 123, 42.5, 17.5, 'Chop');
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.flags).toContain('tickAligned');
+    expect(summary.flags).toContain('routeActionLoop');
+    expect(summary.flags).toContain('noCursorTelemetry');
+    expect(summary.flags).not.toContain('browserlessActiveGameplay');
+    expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
 

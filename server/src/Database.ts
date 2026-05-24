@@ -444,12 +444,12 @@ function calibratedLegacyBotRisk(input: {
   const hardInvalid = hardInvalidPacketCount(input.suspiciousReasons);
 
   if (input.totalSessionMinutes >= 1200 && activeActions >= 25000 && chatRate !== null && chatRate < 1) {
-    add(32, `extreme low-social high-activity lifetime (${chatRate.toFixed(2)} chats/hr, ${activeActions} actions)`);
+    add(22, `extreme low-social high-activity lifetime (${chatRate.toFixed(2)} chats/hr, ${activeActions} actions)`);
   } else if (input.totalSessionMinutes >= 600 && activeActions >= 10000 && chatRate !== null && chatRate < 2) {
-    add(22, `low-social high-activity lifetime (${chatRate.toFixed(2)} chats/hr, ${activeActions} actions)`);
+    add(12, `low-social high-activity lifetime (${chatRate.toFixed(2)} chats/hr, ${activeActions} actions)`);
   }
   if (input.totalMovements >= 5000 && pathRatio !== null && pathRatio >= 0.12) {
-    add(pathRatio >= 0.2 ? 22 : 16, `lifetime path concentration (${pathRatio.toFixed(2)})`);
+    add(pathRatio >= 0.2 ? 14 : 8, `lifetime path concentration (${pathRatio.toFixed(2)})`);
   }
   if (hardInvalid >= 25) add(hardInvalid >= 100 ? 22 : 14, `lifetime hard invalid packets (${hardInvalid})`);
   if (input.totalFlagEvents >= 25) add(8, `lifetime flag history (${input.totalFlagEvents} prior fires)`);

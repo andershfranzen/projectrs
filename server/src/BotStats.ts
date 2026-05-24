@@ -40,6 +40,9 @@ const MAX_SESSION_HISTORY = 12;
 const ACTION_ROUTE_MEMORY_MS = 10_000;
 const HEARTBEAT_ACTIVITY_COUPLING_MS = 350;
 const MIN_MEANINGFUL_SESSION_MINUTES = 5;
+const MIN_ROUTE_ACTION_LOOP_SIGNATURES = 20;
+const MIN_XP_VELOCITY_SESSION_MINUTES = 5;
+const MIN_XP_VELOCITY_ACTIVE_EVENTS = 20;
 
 type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'state' | 'stale';
 
@@ -171,6 +174,7 @@ export class BotStats {
   sessionGameplayCommands: number = 0;
   sessionCommandsWithoutRecentInput: number = 0;
   sessionSuspiciousPackets: number = 0;
+  sessionPathDestinations: Map<string, number> = new Map();
   sessionActionSignatures: Map<string, number> = new Map();
   sessionSuspiciousPacketReasons: Map<string, number> = new Map();
   cursorCells: Map<string, number> = new Map();
@@ -287,6 +291,7 @@ export class BotStats {
     this.sessionGameplayCommands = 0;
     this.sessionCommandsWithoutRecentInput = 0;
     this.sessionSuspiciousPackets = 0;
+    this.sessionPathDestinations.clear();
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
     this.cursorCells.clear();
@@ -355,22 +360,8 @@ export class BotStats {
     const key = `${Math.floor(destX)},${Math.floor(destZ)}`;
     this.lastMovementDestinationKey = key;
     this.lastMovementTs = Date.now();
-    const existing = this.pathDestinations.get(key);
-    if (existing !== undefined) {
-      this.pathDestinations.set(key, existing + 1);
-      return;
-    }
-    if (this.pathDestinations.size >= MAX_PATH_DESTINATIONS) {
-      // Evict the least-visited. Bots concentrate visits to a few tiles,
-      // so eviction protects the high-signal entries.
-      let minKey: string | null = null;
-      let minCount = Infinity;
-      for (const [k, v] of this.pathDestinations) {
-        if (v < minCount) { minCount = v; minKey = k; }
-      }
-      if (minKey !== null) this.pathDestinations.delete(minKey);
-    }
-    this.pathDestinations.set(key, 1);
+    this.bumpCappedMap(this.sessionPathDestinations, key, MAX_PATH_DESTINATIONS);
+    this.bumpCappedMap(this.pathDestinations, key, MAX_PATH_DESTINATIONS);
   }
 
   /** Record a movement+action signature such as "walk to tree tile → chop".
@@ -477,7 +468,7 @@ export class BotStats {
     const reactionMedianMs = median(this.reactionSamples);
     const pingIntervalStdDevMs = stdDev(this.pingIntervalSamples);
     const pingIntervalMedianMs = median(this.pingIntervalSamples);
-    const topPathRepetition = topRatio(this.pathDestinations);
+    const topPathRepetition = topRatio(this.sessionPathDestinations);
     const topActionLoopRepetition = topRatio(this.sessionActionSignatures);
     const topLifetimePathRepetition = topRatio(this.pathDestinations);
     const topLifetimeActionLoopRepetition = topRatio(this.actionSignatures);
@@ -517,6 +508,7 @@ export class BotStats {
     const flags: string[] = [];
     const activeEvents = this.sessionSkillingActions + this.sessionCombatSwings + this.sessionMovements;
     const directGameplayEvents = this.sessionSkillingActions + this.sessionCombatSwings;
+    const sessionActionSignatureCount = mapTotal(this.sessionActionSignatures);
     // tickAligned: stddev < 30ms over ≥30 samples → near-zero variance
     if (this.tickAlignSamples.length >= 30 && tickAlignStdDevMs !== null && tickAlignStdDevMs < 30) {
       flags.push('tickAligned');
@@ -559,7 +551,11 @@ export class BotStats {
     if (this.sessionMovements >= 50 && topPathRepetition !== null && topPathRepetition > 0.5) {
       flags.push('pathRepetitive');
     }
-    if (this.sessionMovements >= 20 && topActionLoopRepetition !== null && topActionLoopRepetition > 0.45) {
+    if (
+      sessionActionSignatureCount >= MIN_ROUTE_ACTION_LOOP_SIGNATURES
+      && topActionLoopRepetition !== null
+      && topActionLoopRepetition > 0.45
+    ) {
       flags.push('routeActionLoop');
     }
     if (this.totalMovements >= 5000 && topLifetimePathRepetition !== null && topLifetimePathRepetition >= 0.12) {
@@ -620,11 +616,14 @@ export class BotStats {
     if (this.reactionSamples.length >= 10 && reactionMedianMs !== null && reactionMedianMs < 200) {
       flags.push('fastReaction');
     }
-    // xpVelocity: any skill exceeds realistic ceiling
-    for (const [skill, rate] of Object.entries(xpPerHour)) {
-      const ceiling = XP_PER_HOUR_CEILING[skill as SkillId];
-      if (ceiling !== undefined && rate > ceiling) {
-        flags.push(`xpVelocity:${skill}`);
+    // xpVelocity is noisy for very short sessions and quest/reward bursts.
+    // Treat it as reliable only after enough active play has been sampled.
+    if (sessionMinutes >= MIN_XP_VELOCITY_SESSION_MINUTES && activeEvents >= MIN_XP_VELOCITY_ACTIVE_EVENTS) {
+      for (const [skill, rate] of Object.entries(xpPerHour)) {
+        const ceiling = XP_PER_HOUR_CEILING[skill as SkillId];
+        if (ceiling !== undefined && rate > ceiling) {
+          flags.push(`xpVelocity:${skill}`);
+        }
       }
     }
 
@@ -896,14 +895,14 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('noClientActivityTelemetry')) add(12, 'active session without client activity telemetry');
   if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
   if (flagSet.has('noChat')) add(8, 'long active session with no chat');
-  if (flagSet.has('pathRepetitive')) add(16, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
-  if (flagSet.has('routeActionLoop')) add(22, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
+  if (flagSet.has('pathRepetitive')) add(8, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
+  if (flagSet.has('routeActionLoop')) add(10, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
   if (flagSet.has('lifetimePathConcentration')) add(
-    input.topLifetimePathRepetition !== null && input.topLifetimePathRepetition >= 0.2 ? 22 : 16,
+    input.topLifetimePathRepetition !== null && input.topLifetimePathRepetition >= 0.2 ? 14 : 8,
     `lifetime path concentration (${ratioLabel(input.topLifetimePathRepetition)} over ${input.lifetimeActiveActions} actions)`,
   );
-  if (flagSet.has('lifetimeRouteActionLoop')) add(20, `lifetime route/action loop (${ratioLabel(input.topLifetimeActionLoopRepetition)})`);
-  if (flagSet.has('noCursorTelemetry')) add(12, 'active session without cursor telemetry');
+  if (flagSet.has('lifetimeRouteActionLoop')) add(10, `lifetime route/action loop (${ratioLabel(input.topLifetimeActionLoopRepetition)})`);
+  if (flagSet.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
   if (flagSet.has('cursorStatic')) add(10, `static cursor telemetry (${ratioLabel(input.topCursorCellRepetition)})`);
   if (flagSet.has('marathonSession')) add(10, `marathon session (${input.sessionMinutes} minutes)`);
   if (flagSet.has('fastReaction')) add(22, `fast NPC re-engage median (${input.reactionMedianMs?.toFixed(0) ?? '?'}ms)`);
@@ -915,9 +914,9 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     `lifetime hard invalid packets (${input.totalSuspiciousPacketClasses.protocol + input.totalSuspiciousPacketClasses.rateLimit})`,
   );
   if (flagSet.has('lifetimeExtremeLowSocialHighActivity')) {
-    add(32, `extreme low-social high-activity lifetime (${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions)`);
+    add(22, `extreme low-social high-activity lifetime (${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions)`);
   } else if (flagSet.has('lifetimeLowSocialHighActivity')) {
-    add(22, `low-social high-activity lifetime (${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions)`);
+    add(12, `low-social high-activity lifetime (${rateLabel(input.chatRatePerHour)} chats/hr, ${input.lifetimeActiveActions} actions)`);
   }
 
   const xpVelocitySkills = input.flags.filter((flag) => flag.startsWith('xpVelocity:')).map((flag) => flag.split(':')[1]).filter(Boolean);
@@ -933,7 +932,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
   if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
-  if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(8, 'repeated route/action loop without cursor input');
+  if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');
   if (flagSet.has('commandsWithoutRecentInput') && flagSet.has('browserlessActiveGameplay')) add(8, 'raw socket commands during browserless gameplay');
   if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
 

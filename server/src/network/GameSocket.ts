@@ -89,7 +89,10 @@ const EQUIP_SLOT_COUNT = 10;
 const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
 const BROWSER_INPUT_MAX_AGE_MS = 15_000;
-const BLOCK_INPUTLESS_GAMEPLAY = process.env.BLOCK_INPUTLESS_GAMEPLAY !== '0';
+// Bot telemetry is review-only by default. Set this explicitly for a hardened
+// test shard; the live game should not reject normal play because browser input
+// telemetry was delayed, throttled, or unavailable.
+const BLOCK_INPUTLESS_GAMEPLAY = process.env.BLOCK_INPUTLESS_GAMEPLAY === '1';
 
 function savedFloorMatchesReportedY(
   map: { getWalkableFloorTargetsAt?: (x: number, z: number) => Array<{ floor: number; y: number }> },
@@ -327,6 +330,36 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
   }
 }
 
+export function rateLimitOverflowIsSuspicious(opcode: number): boolean {
+  switch (opcode) {
+    case ClientOpcode.CLIENT_ACTIVITY:
+    case ClientOpcode.CURSOR_POSITION:
+    case ClientOpcode.CLIENT_POSITION_Y:
+      return false;
+    default:
+      return true;
+  }
+}
+
+export function suspiciousPacketCloseEligible(reason: string): boolean {
+  if (reason.startsWith('rate-limit:')) return true;
+  if (
+    reason === 'malformed-frame'
+    || reason === 'unknown-opcode'
+    || reason === 'bad-move-path-length'
+    || reason === 'truncated-move-path'
+    || reason === 'bad-cursor-x'
+    || reason === 'bad-cursor-y'
+  ) return true;
+  if (
+    reason.startsWith('bad-')
+    || reason.startsWith('missing-')
+    || reason === 'self-use-item'
+    || reason === 'self-move-inventory'
+  ) return true;
+  return false;
+}
+
 function checkOpcodeRateLimit(
   player: Player,
   opcode: number,
@@ -336,7 +369,9 @@ function checkOpcodeRateLimit(
   const rule = getOpcodeRateRule(opcode);
   const allowed = player.checkActionRateLimit(rule.bucket, rule.maxMessages, rule.windowMs);
   if (allowed) return true;
-  reportSuspiciousPacket(player, opcode, `rate-limit:${rule.bucket}`, [], ws, world);
+  if (rateLimitOverflowIsSuspicious(opcode)) {
+    reportSuspiciousPacket(player, opcode, `rate-limit:${rule.bucket}`, [], ws, world);
+  }
   return false;
 }
 
@@ -645,8 +680,10 @@ function reportSuspiciousPacket(
   ws: ServerWebSocket<GameSocketData>,
   world: World,
 ): void {
-  const count = player.recordSuspiciousPacket();
   player.botStats?.recordSuspiciousPacket(reason);
+  if (!suspiciousPacketCloseEligible(reason)) return;
+
+  const count = player.recordSuspiciousPacket();
   if (INVALID_PACKET_AUDIT_COUNTS.has(count)) {
     audit({
       type: 'player.suspicious_packet',

@@ -54,7 +54,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -169,6 +169,8 @@ export class GameManager {
   private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly STOPPED_SELF_SYNC_RECONCILE_DIST = 0.35;
+  private static readonly HIDDEN_CATCHUP_ARM_MS = 3_000;
+  private static readonly HIDDEN_RECONNECT_AFTER_MS = 15_000;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
@@ -252,11 +254,12 @@ export class GameManager {
   private static readonly HIDDEN_RECONCILE_DIST = 2.5;
   private static readonly VISIBLE_RECONCILE_DIST = 2.25;
   private static readonly MINIMAP_LIST_REFRESH_INTERVAL_MS = 50;
-  // Tracks when the tab last became hidden. Non-zero means we recently
-  // returned to a visible tab and the divergence-snap is armed for ~2 ticks
-  // to catch the throttled-prediction backlog. Reset to 0 otherwise so
-  // steady-state play doesn't teleport on transient packet jitter.
+  // Hidden-tab catch-up state. While hidden, RAF can stop while the server
+  // keeps ticking; after resume we briefly trust authoritative sync over
+  // stale local prediction, then disarm for normal visible play.
   private _hiddenSinceMs: number = 0;
+  private _hiddenCatchupUntilMs: number = 0;
+  private _hiddenCatchupTimer: number | null = null;
   private _visibilityHandler: (() => void) | null = null;
   private _activityHandler: (() => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
@@ -309,7 +312,12 @@ export class GameManager {
   // splat instead of leading it. Maps entityId → pending timeout handle.
   private pendingHealthApply: Map<number, ReturnType<typeof setTimeout>> = new Map();
   private lastSelfAuthorityAt: number = 0;
+  private lastSelfAuthorityWarnAt: number = 0;
   private selfAuthorityGraceUntil: number = 0;
+  private latestSelfSync: { x: number; z: number; moving: boolean } | null = null;
+  private lastSelfSyncTickLow: number | null = null;
+  private lastSelfSyncReceivedAt: number = 0;
+  private bufferedSelfSyncReplayCount: number = 0;
   private lastNpcMaterializationRetryMs: number = 0;
 
   // Character creator
@@ -916,6 +924,7 @@ export class GameManager {
     this.inputManager.setEnabled(true);
     this._loginSettled = true;
     this.lastSelfAuthorityAt = performance.now();
+    this.lastSelfAuthorityWarnAt = 0;
     this.selfAuthorityGraceUntil = this.lastSelfAuthorityAt + GameManager.AUTHORITY_LOGIN_GRACE_MS;
     this._loginBootstrapPending = null;
     const resolver = this._loginOkResolver;
@@ -982,7 +991,12 @@ export class GameManager {
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = false;
       this.lastSelfAuthorityAt = 0;
+      this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
+      this.latestSelfSync = null;
+      this.lastSelfSyncTickLow = null;
+      this.lastSelfSyncReceivedAt = 0;
+      this.bufferedSelfSyncReplayCount = 0;
       this._loginReadySeq++;
       onProgress?.(0.02, 'Connecting to server');
       this.network.connect(token);
@@ -1216,7 +1230,12 @@ export class GameManager {
       this._initialMapReadySent = false;
       this.suppressNextMapEntryMessage = true;
       this.lastSelfAuthorityAt = 0;
+      this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
+      this.latestSelfSync = null;
+      this.lastSelfSyncTickLow = null;
+      this.lastSelfSyncReceivedAt = 0;
+      this.bufferedSelfSyncReplayCount = 0;
       this._loginReadySeq++;
       this.network.connect(this.token);
     });
@@ -2424,7 +2443,7 @@ export class GameManager {
         const serverZ = v[2] / 10;
         const dx = serverX - this.playerX;
         const dz = serverZ - this.playerZ;
-        const hiddenCatchup = this._hiddenSinceMs !== 0;
+        const hiddenCatchup = this.isHiddenCatchupActive();
         const reconcileDist = hiddenCatchup
           ? GameManager.HIDDEN_RECONCILE_DIST
           : GameManager.VISIBLE_RECONCILE_DIST;
@@ -2501,6 +2520,7 @@ export class GameManager {
       const serverZ = (v[1] ?? 0) / 10;
       const health = v[2] ?? this.playerHealth;
       const maxHealth = v[3] ?? this.playerMaxHealth;
+      const tickLow = v[4] ?? 0;
       const serverMoving = (v[5] ?? 0) === 1;
       const hasAppearance = v.length >= 13 && v[6] >= 0;
       const syncAppearance: PlayerAppearance | null = hasAppearance ? {
@@ -2513,12 +2533,22 @@ export class GameManager {
         hairStyle: v[12],
       } : null;
 
-      this.lastSelfAuthorityAt = performance.now();
+      const now = performance.now();
+      if (this.detectBufferedSelfSyncReplay(tickLow, now)) return;
+      this.lastSelfAuthorityAt = now;
+      this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
+      this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
       this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth });
       if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
         this.cacheLocalAppearance(syncAppearance);
         if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
+      }
+
+      const hiddenCatchup = this.isHiddenCatchupActive();
+      if (hiddenCatchup && (document.visibilityState === 'hidden' || this.pathIndex >= this.path.length)) {
+        this.acceptLocalAuthorityPosition(serverX, serverZ, { hardSnap: document.visibilityState === 'hidden' });
+        return;
       }
 
       const dx = serverX - this.playerX;
@@ -2530,8 +2560,7 @@ export class GameManager {
         : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
       if (maxAxisDelta <= reconcileDist) return;
 
-      const hiddenCatchup = this._hiddenSinceMs !== 0;
-      this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
+      this.reconcileLocalPlayerToServer(serverX, serverZ, false);
     });
 
     this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
@@ -6451,6 +6480,7 @@ export class GameManager {
       window.removeEventListener('evilquest:viewportchange', this.onWindowResize);
       this.onWindowResize = null;
     }
+    this.clearHiddenCatchupTimer();
     if (this._visibilityHandler) { document.removeEventListener('visibilitychange', this._visibilityHandler); this._visibilityHandler = null; }
     if (this._activityHandler) {
       window.removeEventListener('pointerdown', this._activityHandler, true);
@@ -6833,13 +6863,45 @@ export class GameManager {
     this.pendingLocalHealthSync = { health, maxHealth, timer };
   }
 
+  private detectBufferedSelfSyncReplay(tickLow: number, now: number): boolean {
+    if (this.lastSelfSyncTickLow !== null && this.lastSelfSyncReceivedAt !== 0) {
+      const tickDelta = (tickLow - this.lastSelfSyncTickLow + 0x8000) & 0x7fff;
+      const wallDelta = now - this.lastSelfSyncReceivedAt;
+      const looksBuffered = this.isHiddenCatchupActive(now)
+        && tickDelta > 0
+        && tickDelta < 100
+        && wallDelta >= 0
+        && wallDelta < Math.min(150, TICK_RATE * 0.25);
+      this.bufferedSelfSyncReplayCount = looksBuffered
+        ? this.bufferedSelfSyncReplayCount + 1
+        : 0;
+    }
+
+    this.lastSelfSyncTickLow = tickLow;
+    this.lastSelfSyncReceivedAt = now;
+
+    if (this.bufferedSelfSyncReplayCount < 8 || this.reconnecting || !this._loginSettled || !this.network.isConnected()) {
+      return false;
+    }
+
+    console.warn('[net] Buffered hidden-tab sync replay detected; reconnecting for a fresh snapshot');
+    this.bufferedSelfSyncReplayCount = 0;
+    this._hiddenSinceMs = 0;
+    this._hiddenCatchupUntilMs = 0;
+    this.clearHiddenCatchupTimer();
+    void this.reconnectOrLogout();
+    return true;
+  }
+
   private checkSelfAuthorityFreshness(): void {
     if (this.destroyed || this.reconnecting || this.connectionFrozen || !this._loginSettled) return;
     if (this.lastSelfAuthorityAt === 0) return;
     if (this.selfAuthorityGraceUntil !== 0 && performance.now() < this.selfAuthorityGraceUntil) return;
-    if (performance.now() - this.lastSelfAuthorityAt <= GameManager.AUTHORITY_STALE_MS) return;
+    const now = performance.now();
+    if (now - this.lastSelfAuthorityAt <= GameManager.AUTHORITY_STALE_MS) return;
+    if (now - this.lastSelfAuthorityWarnAt <= GameManager.AUTHORITY_STALE_MS) return;
     console.warn('[net] Local authority stream stale; waiting for socket heartbeat before reconnecting');
-    this.lastSelfAuthorityAt = performance.now();
+    this.lastSelfAuthorityWarnAt = now;
   }
 
   private update(dt: number): void {
@@ -7014,34 +7076,89 @@ export class GameManager {
     return { x: this.slideOffsetX * factor, z: this.slideOffsetZ * factor };
   }
 
-  /** Wire `document.visibilitychange` so we only treat large server/client
-   *  divergence as a hidden-tab catch-up situation. When the tab goes
-   *  hidden, Chrome throttles RAF + setInterval to ~1Hz while the server
-   *  keeps ticking — local prediction freezes and the server position
-   *  marches on. On returning to visible we stay armed for ~2 ticks
-   *  (enough for the next PLAYER_SYNC + snap), then disarm so steady-state
-   *  play doesn't snap on transient packet jitter. */
+  private isHiddenCatchupActive(now: number = performance.now()): boolean {
+    return this._hiddenSinceMs !== 0 || now < this._hiddenCatchupUntilMs;
+  }
+
+  private clearHiddenCatchupTimer(): void {
+    if (this._hiddenCatchupTimer === null) return;
+    window.clearTimeout(this._hiddenCatchupTimer);
+    this._hiddenCatchupTimer = null;
+  }
+
+  private scheduleHiddenCatchupDisarm(): void {
+    this.clearHiddenCatchupTimer();
+    const delay = Math.max(0, this._hiddenCatchupUntilMs - performance.now()) + 50;
+    this._hiddenCatchupTimer = window.setTimeout(() => {
+      this._hiddenCatchupTimer = null;
+      if (document.visibilityState !== 'visible') return;
+      if (performance.now() < this._hiddenCatchupUntilMs) {
+        this.scheduleHiddenCatchupDisarm();
+        return;
+      }
+      this._hiddenSinceMs = 0;
+      this._hiddenCatchupUntilMs = 0;
+    }, delay);
+  }
+
+  private catchUpAfterHiddenTab(hiddenForMs: number): void {
+    const now = performance.now();
+    const authorityStale = this.lastSelfAuthorityAt !== 0
+      && now - this.lastSelfAuthorityAt > GameManager.AUTHORITY_STALE_MS;
+    if (
+      hiddenForMs >= GameManager.HIDDEN_RECONNECT_AFTER_MS
+      && authorityStale
+      && this._loginSettled
+      && this.network.isConnected()
+    ) {
+      console.warn('[net] Authority stream stale after hidden tab; reconnecting to discard buffered snapshots');
+      this._hiddenSinceMs = 0;
+      this._hiddenCatchupUntilMs = 0;
+      this.clearHiddenCatchupTimer();
+      void this.reconnectOrLogout();
+      return;
+    }
+
+    this._hiddenCatchupUntilMs = now + GameManager.HIDDEN_CATCHUP_ARM_MS;
+    this.scheduleHiddenCatchupDisarm();
+    this.entities.snapDynamicEntitiesToTargets();
+    if (this.latestSelfSync) {
+      this.acceptLocalAuthorityPosition(this.latestSelfSync.x, this.latestSelfSync.z, { hardSnap: true });
+    }
+    if (this._loginSettled && this.network.isConnected()) {
+      this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+    }
+  }
+
+  /** Wire `document.visibilitychange` so hidden-tab throttling cannot leave
+   *  visuals replaying stale prediction. Hidden tabs throttle RAF and may
+   *  freeze JS entirely while the server keeps ticking every 600ms. On return,
+   *  snap visuals to the latest processed authoritative targets; if authority
+   *  stopped arriving while hidden, reconnect to discard any buffered packet
+   *  backlog and bootstrap from a fresh server snapshot. */
   private setupVisibilityHandler(): void {
     const handler = () => {
       if (document.visibilityState === 'hidden') {
+        this.clearHiddenCatchupTimer();
         this._hiddenSinceMs = performance.now();
+        this._hiddenCatchupUntilMs = 0;
       } else {
-        // Stay armed for ~2 ticks after returning to visible — enough for
-        // the first PLAYER_SYNC to arrive and the snap logic to make a
-        // corrective jump if needed, then disarm so steady-state play
-        // doesn't snap.
-        setTimeout(() => { this._hiddenSinceMs = 0; }, 1500);
+        const hiddenForMs = this._hiddenSinceMs === 0 ? 0 : performance.now() - this._hiddenSinceMs;
+        this.catchUpAfterHiddenTab(hiddenForMs);
       }
     };
     document.addEventListener('visibilitychange', handler);
     this._visibilityHandler = handler;
+    if (document.visibilityState === 'hidden') handler();
   }
 
   private setupActivityTracking(): void {
     const handler = (event?: Event) => {
       this.network.sendActivity();
       if (event instanceof PointerEvent) {
-        this.network.sendCursorPosition(event.clientX, event.clientY, true);
+        // CLIENT_ACTIVITY records the click itself; cursor telemetry stays
+        // low-rate so rapid UI clicking cannot trip server packet guardrails.
+        this.network.sendCursorPosition(event.clientX, event.clientY);
       }
     };
     const cursorHandler = (event: PointerEvent) => {
@@ -7054,6 +7171,39 @@ export class GameManager {
     window.addEventListener('pointerdown', cursorHandler, true);
     this._activityHandler = handler;
     this._cursorTelemetryHandler = cursorHandler;
+  }
+
+  private acceptLocalAuthorityPosition(
+    serverX: number,
+    serverZ: number,
+    opts: { hardSnap?: boolean } = {},
+  ): void {
+    const prevLogicalX = this.playerX;
+    const prevLogicalZ = this.playerZ;
+    this.playerX = serverX;
+    this.playerZ = serverZ;
+    this.clearPredictedPath();
+    this.setTileFrom(serverX, serverZ);
+    if (this.destMarker) this.destMarker.isVisible = false;
+    this.minimap?.clearDestination();
+
+    if (opts.hardSnap) {
+      this.slideOffsetX = 0;
+      this.slideOffsetZ = 0;
+      this.slideStartMs = 0;
+      if (this.localPlayer) {
+        this.localPlayer.setPositionXYZ(serverX, this.getHeight(serverX, serverZ), serverZ);
+        this.localPlayer.stopWalking();
+      }
+    } else {
+      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
+      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
+      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
+      this.renderLocalPlayerWithSlide();
+      this.localPlayer?.stopWalking();
+    }
+
+    this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
   }
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean): void {
@@ -7104,8 +7254,9 @@ export class GameManager {
 
     // Server is not on the path the client is currently predicting. During
     // visible play, keep the server queue authoritative and slide the local
-    // visual onto it. After a hidden-tab return, preserve the older hard reset
-    // behavior so stale background movement is cancelled instead of resumed.
+    // visual onto it. After a hidden-tab return, hard-reset only the stale
+    // client visual; do not send an empty move that would cancel the server's
+    // still-authoritative queue.
     this.clearPredictedPath();
     this.setTileFrom(serverX, serverZ);
     if (this.destMarker) this.destMarker.isVisible = false;
@@ -7119,7 +7270,6 @@ export class GameManager {
         this.localPlayer.setPositionXYZ(serverX, this.getHeight(serverX, serverZ), serverZ);
         this.localPlayer.stopWalking();
       }
-      this.network.sendMove([]);
     } else {
       const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
       const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);

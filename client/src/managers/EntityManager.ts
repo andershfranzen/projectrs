@@ -646,6 +646,19 @@ export class EntityManager {
     // gates roof reveal off and drops elevated-tile spawns to terrain (0).
   }
 
+  snapDynamicEntitiesToTargets(): void {
+    for (const [entityId, sprite] of this.remotePlayers) {
+      const target = this.remoteTargets.get(entityId);
+      if (!target) continue;
+      sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+    }
+    for (const [entityId, sprite] of this.npcSprites) {
+      const target = this.npcTargets.get(entityId);
+      if (!target) continue;
+      sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+    }
+  }
+
   // --- Lifecycle ---
 
   disposeAllEntities(): void {
