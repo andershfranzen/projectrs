@@ -1560,17 +1560,34 @@
       {
         "from": {
           "x": 87.5,
-          "z": 32.5,
-          "floor": 0,
-          "y": 0
+          "z": 30.5,
+          "floor": 0
         },
         "to": {
           "x": 87.5,
-          "z": 32.5,
-          "floor": 1,
-          "y": 2.62
+          "z": 30.5,
+          "floor": 1
         },
         "fromAction": "Climb-up"
+      },
+      {
+        "from": {
+          "x": 87.5,
+          "z": 30.5,
+          "floor": 1
+        },
+        "to": {
+          "x": 87.5,
+          "z": 30.5,
+          "floor": 0
+        },
+        "fromAction": "Climb-down"
+      }
+    ],
+    "interactionTiles": [
+      {
+        "x": -1,
+        "z": 0
       }
     ]
   },
@@ -4676,18 +4693,29 @@
     "verticalLinks": [
       {
         "from": {
-          "x": 70.5,
-          "z": 18.5,
-          "floor": 0,
-          "y": 0
+          "x": 71.5,
+          "z": 17.5,
+          "floor": 0
         },
         "to": {
-          "x": 70.5,
-          "z": 18.5,
-          "floor": 1,
-          "y": 2.68
+          "x": 71.5,
+          "z": 17.5,
+          "floor": 1
         },
         "fromAction": "Climb-up"
+      },
+      {
+        "from": {
+          "x": 71.5,
+          "z": 17.5,
+          "floor": 1
+        },
+        "to": {
+          "x": 71.5,
+          "z": 17.5,
+          "floor": 0
+        },
+        "fromAction": "Climb-down"
       }
     ],
     "interactionTiles": [

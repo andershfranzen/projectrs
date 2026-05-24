@@ -60,6 +60,8 @@ import {
   NPC_COMBAT_ANIMATIONS,
   deriveUpperFloorTilesFromPlanes,
   resolveEquipmentModelPath,
+  isAllowedBankAccessSpawn,
+  validateBankAccessSpawns,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -215,13 +217,16 @@ function tuneModelLighting(model) {
     if (invalidateShadow) invalidateShadowCache()
     const asset = assetById.get(model.userData.assetId)
     if (asset) setupModelAnimations(model, asset.path)
+    if (typeof refreshBrokenLadderIndicators === 'function' && isLadderPlacedObject(model)) refreshBrokenLadderIndicators()
   }
 
   function removePlacedModel(model) {
+    const wasLadder = typeof isLadderPlacedObject === 'function' && isLadderPlacedObject(model)
     _spatialUnregister(model)
     invalidateShadowCache()
     disposeMixer(model)
     model.dispose()
+    if (wasLadder && typeof refreshBrokenLadderIndicators === 'function') refreshBrokenLadderIndicators()
   }
 
   function clearPlacedModels() {
@@ -334,6 +339,18 @@ function tuneModelLighting(model) {
     // Forced attack animation name (e.g. 'attack_2h_smash'). Bypasses the
     // weapon-driven picker on the client when set.
     attackAnim:   v => typeof v === 'string' && v.length > 0,
+  }
+
+  function npcDefById(npcId) {
+    return npcDefs.find(d => d.id === npcId)
+  }
+
+  function bankAccessSaveErrors(mapId, spawns = npcSpawns) {
+    return validateBankAccessSpawns(mapId, spawns, npcDefById)
+  }
+
+  function bankAccessPlacementBlockedMessage(def) {
+    return `${def?.name || 'This NPC'} opens the bank and is locked to explicit allowlisted spawn positions. Edit shared/npcSafety.ts before adding or moving bank-enabled NPCs.`
   }
 
   function addNpcSpawn(input) {
@@ -1990,6 +2007,24 @@ let paintBrushRadius = 1
             <option value="2">Tier 2 relics</option>
           </select>
         </label>
+        <div id="ladderWiringRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+          <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Ladder wiring</div>
+          <div id="ladderWiringStatus" style="font-size:11px;margin-bottom:6px;color:#ddd;">(status)</div>
+          <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center;">
+            <span style="font-size:10px;color:#888;">Floor:</span>
+            <select id="ladderFloorSelect" style="flex:1;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:3px 5px;font-size:11px;">
+              <option value="0">0</option><option value="1">1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+            <span style="font-size:10px;color:#888;">→</span>
+            <select id="ladderTargetFloorSelect" style="flex:1;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:3px 5px;font-size:11px;">
+              <option value="0">0</option><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option>
+            </select>
+          </div>
+          <button id="ladderWireToBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Wire to another ladder…</button>
+          <button id="ladderSelfBidiBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Make bidirectional (this only)</button>
+          <button id="ladderClearLinksBtn" style="width:100%;font-size:11px;padding:4px 6px;color:#ffb0b0;">Clear all links</button>
+          <div id="ladderLinksList" style="margin-top:6px;font-size:10px;color:#999;line-height:1.4;"></div>
+        </div>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Examine text</div>
         <textarea id="objectExamineText" placeholder="It's an old sealed letter." style="width:100%;height:54px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
         <div style="font-size:11px;color:#aaa;margin:8px 0 4px;">Interaction effect</div>
@@ -2411,15 +2446,30 @@ let paintBrushRadius = 1
       npcDefs = defs
       const sel = sidebar.querySelector('#npcTypeSelect')
       if (sel) {
-        sel.innerHTML = defs.map(d => `<option value="${d.id}">${d.name} (ID ${d.id}) — HP ${d.health}</option>`).join('')
+        sel.innerHTML = defs.map(d => {
+          const locked = d.bankAccess ? ' disabled title="Bank-enabled NPCs are locked to explicit allowlisted spawn positions."' : ''
+          const suffix = d.bankAccess ? ' — BANK LOCKED' : ''
+          return `<option value="${d.id}"${locked}>${d.name} (ID ${d.id}) — HP ${d.health}${suffix}</option>`
+        }).join('')
       }
       renderNpcInspector()
     })
     .catch(e => console.warn('Failed to load NPC defs:', e))
 
   sidebar.querySelector('#npcTypeSelect')?.addEventListener('change', (e) => {
+    const requestedNpcId = parseInt(e.target.value)
+    const requestedDef = npcDefById(requestedNpcId)
     if (selectedNpcSpawn) {
-      selectedNpcSpawn.npcId = parseInt(e.target.value)
+      if (requestedDef?.bankAccess) {
+        const mapId = serverMapSelect?.value || ''
+        const candidate = { ...selectedNpcSpawn, npcId: requestedNpcId }
+        if (!isAllowedBankAccessSpawn(mapId, candidate)) {
+          alert(bankAccessPlacementBlockedMessage(requestedDef))
+          e.target.value = selectedNpcSpawn.npcId
+          return
+        }
+      }
+      selectedNpcSpawn.npcId = requestedNpcId
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
     }
@@ -2516,6 +2566,11 @@ let paintBrushRadius = 1
    *  don't leak back to the original. */
   function duplicateSelectedNpcSpawn() {
     if (!selectedNpcSpawn) return
+    const def = npcDefById(selectedNpcSpawn.npcId)
+    if (def?.bankAccess) {
+      alert(bankAccessPlacementBlockedMessage(def))
+      return
+    }
     pushUndoState('spawns')
     const src = selectedNpcSpawn
     const copy = structuredClone(src)
@@ -2615,6 +2670,12 @@ let paintBrushRadius = 1
     // expensive rebuildNpcSpawnMeshes runs once per edit instead of every keystroke.
     const updatePosition = (axis, raw) => {
       if (!selectedNpcSpawn) return
+      const selectedDef = npcDefById(selectedNpcSpawn.npcId)
+      if (selectedDef?.bankAccess) {
+        alert(bankAccessPlacementBlockedMessage(selectedDef))
+        renderSpawnTab(root)
+        return
+      }
       const v = parseFloat(raw)
       if (!Number.isFinite(v)) return
       selectedNpcSpawn[axis] = v
@@ -3777,6 +3838,202 @@ let paintBrushRadius = 1
     if (defId == null) return false
     return editorObjectDefById.get(defId)?.category === 'altar'
   }
+  function isLadderPlacedObject(obj) {
+    const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
+    if (defId == null) return false
+    return editorObjectDefById.get(defId)?.category === 'ladder'
+  }
+  function getAllPlacedLadders() {
+    return placedGroup.getChildren().filter(isLadderPlacedObject)
+  }
+  // The tile where the player must stand to interact with this ladder.
+  // Honours the editor's "Interaction tiles" grid: takes the first picked
+  // local-frame tile, rotates by the ladder's rotY (quantised to 90°), and
+  // translates to world coords. Falls back to the +Z neighbour when no tile
+  // was picked, matching the convention used by the existing maps.
+  function ladderInteractionTile(obj) {
+    if (!obj) return null
+    const baseX = Math.floor(obj.position.x)
+    const baseZ = Math.floor(obj.position.z)
+    const picked = typeof currentInteractionTiles === 'function' ? currentInteractionTiles(obj) : []
+    if (!picked.length) return { x: baseX, z: baseZ + 1 }
+    let rotY = obj.rotation?.y || 0
+    if (obj.rotationQuaternion) rotY = obj.rotationQuaternion.toEulerAngles().y
+    const q = (((Math.round(rotY / (Math.PI / 2)) % 4) + 4) % 4)
+    const tile = picked[0]
+    let rx = tile.x, rz = tile.z
+    if (q === 1) { rx = tile.z; rz = -tile.x }
+    else if (q === 2) { rx = -tile.x; rz = -tile.z }
+    else if (q === 3) { rx = -tile.z; rz = tile.x }
+    return { x: baseX + rx, z: baseZ + rz }
+  }
+  // Returns null if the ladder is properly wired, otherwise a short reason.
+  // "Properly wired" = every link's `to` resolves to a partner ladder that
+  // has a matching reciprocal link back, OR a single-object bidirectional
+  // self-pair (both directions on the same placement).
+  function ladderBrokenReason(obj, allLadders) {
+    const links = obj?.userData?.verticalLinks || []
+    if (links.length === 0) return 'no links'
+    const ladders = allLadders || getAllPlacedLadders()
+    for (const link of links) {
+      const to = link?.to
+      if (!to || !Number.isFinite(to.x) || !Number.isFinite(to.z) || !Number.isFinite(to.floor)) return 'malformed link'
+      const tx = Math.floor(to.x); const tz = Math.floor(to.z)
+      const frm = link.from
+      if (!frm || !Number.isFinite(frm.x) || !Number.isFinite(frm.z) || !Number.isFinite(frm.floor)) return 'malformed link'
+      const reciprocal = ladders.some(L => (L.userData?.verticalLinks || []).some(rl =>
+        rl?.from && Math.floor(rl.from.x) === tx && Math.floor(rl.from.z) === tz && rl.from.floor === to.floor
+        && rl?.to && Math.floor(rl.to.x) === Math.floor(frm.x) && Math.floor(rl.to.z) === Math.floor(frm.z) && rl.to.floor === frm.floor
+      ))
+      if (!reciprocal) return 'one-way (no return)'
+    }
+    return null
+  }
+
+  let pendingLadderWireSource = null
+  let brokenLadderIndicators = []
+  let ladderIndicatorMat = null
+
+  function getLadderIndicatorMaterial() {
+    if (ladderIndicatorMat) return ladderIndicatorMat
+    const mat = new StandardMaterial('brokenLadderMat', scene)
+    mat.emissiveColor = new Color3(1, 0.15, 0.15)
+    mat.diffuseColor = new Color3(0, 0, 0)
+    mat.specularColor = new Color3(0, 0, 0)
+    mat.alpha = 0.78
+    mat.disableLighting = true
+    mat.backFaceCulling = false
+    ladderIndicatorMat = mat
+    return mat
+  }
+
+  function disposeBrokenLadderIndicators() {
+    for (const m of brokenLadderIndicators) m?.dispose?.()
+    brokenLadderIndicators = []
+  }
+
+  // Always-on red beam above any ladder with broken/missing links. Refreshed
+  // after map load, save, ladder edits, and wire-flow completion.
+  function refreshBrokenLadderIndicators() {
+    disposeBrokenLadderIndicators()
+    const ladders = getAllPlacedLadders()
+    if (ladders.length === 0) return
+    const mat = getLadderIndicatorMaterial()
+    for (const L of ladders) {
+      if (!ladderBrokenReason(L, ladders)) continue
+      const beam = MeshBuilder.CreateCylinder(`brokenLadderBeam_${L.uniqueId}`, {
+        height: 8,
+        diameterTop: 0.35,
+        diameterBottom: 0.35,
+        tessellation: 12,
+      }, scene)
+      beam.material = mat
+      beam.position.set(L.position.x, L.position.y + 4, L.position.z)
+      beam.isPickable = false
+      beam.renderingGroupId = 1
+      brokenLadderIndicators.push(beam)
+    }
+  }
+
+  function describeLadderEndpoint(ep) {
+    if (!ep) return '?'
+    return `(${Math.floor(ep.x)},${Math.floor(ep.z)}) F${ep.floor}`
+  }
+
+  function renderLadderWiringPanel(obj) {
+    if (!obj) return
+    const statusEl = sidebar.querySelector('#ladderWiringStatus')
+    const listEl = sidebar.querySelector('#ladderLinksList')
+    const wireBtn = sidebar.querySelector('#ladderWireToBtn')
+    const reason = ladderBrokenReason(obj)
+    if (pendingLadderWireSource === obj) {
+      statusEl.innerHTML = '<span style="color:#ffd28a;">Click another ladder to pair (Esc to cancel)</span>'
+    } else if (!reason) {
+      statusEl.innerHTML = `<span style="color:#8fdc8f;">✓ Wired (${(obj.userData.verticalLinks||[]).length} link${(obj.userData.verticalLinks||[]).length===1?'':'s'})</span>`
+    } else {
+      statusEl.innerHTML = `<span style="color:#ff9090;">⚠ ${reason}</span>`
+    }
+    if (wireBtn) wireBtn.textContent = pendingLadderWireSource === obj ? 'Cancel wiring' : 'Wire to another ladder…'
+    const links = obj.userData.verticalLinks || []
+    listEl.innerHTML = links.length === 0
+      ? '<em style="color:#666;">(no links)</em>'
+      : links.map((l, i) => `${i + 1}. <b>${l.fromAction || 'Climb'}</b> ${describeLadderEndpoint(l.from)} → ${describeLadderEndpoint(l.to)}`).join('<br>')
+  }
+
+  // Make a ladder fully self-bidirectional at its OWN interaction tile, so it
+  // works from both floors regardless of which way the player is travelling.
+  // Matches the working chunk_7_4 pattern: one placement, two reciprocal links
+  // sharing the same X/Z, only differing in `from.floor`.
+  function makeLadderSelfBidirectional(obj, fromFloor, toFloor) {
+    if (!obj || fromFloor === toFloor) return false
+    const tile = ladderInteractionTile(obj)
+    // y is intentionally omitted: the editor doesn't know the destination
+    // floor's elevation at this tile, and the server's vertical-endpoint
+    // walkability check doesn't require it. Leaving y undefined is the
+    // documented permissive form on ResolvedVerticalEndpoint.
+    obj.userData.verticalLinks = [
+      {
+        from: { x: tile.x + 0.5, z: tile.z + 0.5, floor: fromFloor },
+        to:   { x: tile.x + 0.5, z: tile.z + 0.5, floor: toFloor },
+        fromAction: fromFloor < toFloor ? 'Climb-up' : 'Climb-down',
+      },
+      {
+        from: { x: tile.x + 0.5, z: tile.z + 0.5, floor: toFloor },
+        to:   { x: tile.x + 0.5, z: tile.z + 0.5, floor: fromFloor },
+        fromAction: toFloor < fromFloor ? 'Climb-up' : 'Climb-down',
+      },
+    ]
+    return true
+  }
+  // "Wire to another ladder" — convenience action that makes both selected
+  // ladders fully self-bidirectional in one click. They function as independent
+  // vertical portals at their own tiles (each works from both floors), so the
+  // player can use either entry point.
+  function wireLadderPair(a, b, fromFloor, toFloor) {
+    if (!a || !b || fromFloor === toFloor) return false
+    makeLadderSelfBidirectional(a, fromFloor, toFloor)
+    if (b !== a) makeLadderSelfBidirectional(b, fromFloor, toFloor)
+    return true
+  }
+
+  function cancelPendingLadderWire() {
+    pendingLadderWireSource = null
+    if (selectedPlacedObject && isLadderPlacedObject(selectedPlacedObject)) renderLadderWiringPanel(selectedPlacedObject)
+  }
+
+  function attachLadderWiringHandlers() {
+    const wireBtn = sidebar.querySelector('#ladderWireToBtn')
+    const selfBtn = sidebar.querySelector('#ladderSelfBidiBtn')
+    const clearBtn = sidebar.querySelector('#ladderClearLinksBtn')
+    const fromSel = sidebar.querySelector('#ladderFloorSelect')
+    const toSel = sidebar.querySelector('#ladderTargetFloorSelect')
+    wireBtn?.addEventListener('click', () => {
+      if (!selectedPlacedObject || !isLadderPlacedObject(selectedPlacedObject)) return
+      if (pendingLadderWireSource === selectedPlacedObject) {
+        cancelPendingLadderWire()
+        return
+      }
+      pendingLadderWireSource = selectedPlacedObject
+      renderLadderWiringPanel(selectedPlacedObject)
+    })
+    selfBtn?.addEventListener('click', () => {
+      if (!selectedPlacedObject || !isLadderPlacedObject(selectedPlacedObject)) return
+      const from = parseInt(fromSel.value, 10) | 0
+      const to = parseInt(toSel.value, 10) | 0
+      if (from === to) { window.alert('Source and target floor must differ.'); return }
+      wireLadderPair(selectedPlacedObject, selectedPlacedObject, from, to)
+      refreshBrokenLadderIndicators()
+      renderLadderWiringPanel(selectedPlacedObject)
+    })
+    clearBtn?.addEventListener('click', () => {
+      if (!selectedPlacedObject || !isLadderPlacedObject(selectedPlacedObject)) return
+      if (!window.confirm('Clear all vertical links on this ladder?')) return
+      selectedPlacedObject.userData.verticalLinks = []
+      refreshBrokenLadderIndicators()
+      renderLadderWiringPanel(selectedPlacedObject)
+    })
+  }
+  attachLadderWiringHandlers()
   const doorDefaultOpenInput = sidebar.querySelector('#doorDefaultOpenInput')
   doorDefaultOpenInput?.addEventListener('change', () => {
     if (!selectedPlacedObject || !isDoorPlacedObject(selectedPlacedObject)) return
@@ -4034,6 +4291,39 @@ let paintBrushRadius = 1
     interactionTilesRenderKey = ''
     if (opts.rerender !== false) renderInteractionTilesGrid()
     updateSelectionHelper()
+    // For ladders, link.from carries the player-stand tile, so a stale link
+    // ignores any newly picked interaction tile. Re-derive in place so the
+    // chosen tile is the one the server actually paths the player to.
+    if (typeof isLadderPlacedObject === 'function' && isLadderPlacedObject(selectedPlacedObject)) {
+      const links = selectedPlacedObject.userData?.verticalLinks
+      if (Array.isArray(links) && links.length > 0) {
+        rewireLadderInteractionTileInPlace(selectedPlacedObject)
+        if (typeof refreshBrokenLadderIndicators === 'function') refreshBrokenLadderIndicators()
+        if (typeof renderLadderWiringPanel === 'function') renderLadderWiringPanel(selectedPlacedObject)
+      }
+    }
+  }
+  // Update an already-wired ladder's link.from/to X/Z to match the current
+  // interactionTiles, without touching the floor pairs already chosen.
+  // Also strips any stale `y` so the server re-derives the correct elevation
+  // per floor — preserving an old `y` from a previous broken wire would carry
+  // the source floor's height into the destination endpoint.
+  function rewireLadderInteractionTileInPlace(obj) {
+    if (!obj) return
+    const tile = ladderInteractionTile(obj)
+    const links = obj.userData?.verticalLinks || []
+    for (const link of links) {
+      if (link?.from) {
+        link.from.x = tile.x + 0.5
+        link.from.z = tile.z + 0.5
+        delete link.from.y
+      }
+      if (link?.to) {
+        link.to.x = tile.x + 0.5
+        link.to.z = tile.z + 0.5
+        delete link.to.y
+      }
+    }
   }
   function renderInteractionTilesGrid() {
     const container = sidebar.querySelector('#interactionTilesGrid')
@@ -4438,6 +4728,12 @@ let paintBrushRadius = 1
       }
       if (showAltarTier && altarTierSelect && document.activeElement !== altarTierSelect) {
         altarTierSelect.value = String(Math.max(1, Math.floor(selectedPlacedObject.userData.altarTier || 1)))
+      }
+      const ladderWiringRow = sidebar.querySelector('#ladderWiringRow')
+      const showLadderUI = showObjectName && isLadderPlacedObject(selectedPlacedObject)
+      if (ladderWiringRow) {
+        ladderWiringRow.style.display = showLadderUI ? 'block' : 'none'
+        if (showLadderUI) renderLadderWiringPanel(selectedPlacedObject)
       }
       if (showObjectName && examine && document.activeElement !== examine) examine.value = selectedPlacedObject.userData.examineText || ''
       if (showObjectName && action && document.activeElement !== action) action.value = effect?.action || 'Examine'
@@ -4967,6 +5263,7 @@ let paintBrushRadius = 1
     // Re-mask the placed objects under any active appearance preview — the
     // previous TransformNode refs we stashed in hiddenNodes are now disposed.
     if (typeof refreshNpcPreviewMasks === 'function') refreshNpcPreviewMasks()
+    refreshBrokenLadderIndicators()
   }
 
   function buildSaveData() {
@@ -7930,6 +8227,10 @@ function applyToolAtTile(tile, eventLike = null) {
 
   async function saveCurrentMapToServer(mapId) {
     const payload = buildCurrentMapServerPayload(mapId)
+    const bankAccessErrors = bankAccessSaveErrors(mapId, payload.spawns.npcs)
+    if (bankAccessErrors.length > 0) {
+      throw new Error(`Bank-enabled NPC spawn blocked:\n${bankAccessErrors.join('\n')}`)
+    }
     const payloadText = JSON.stringify(payload)
     const bytes = new TextEncoder().encode(payloadText).length
     const mb = bytes / 1024 / 1024
@@ -10575,6 +10876,27 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
 
       if (picked?.type === 'placed') {
         const pickedObject = picked.object
+        // If we're in ladder-wiring mode, finish the pairing rather than selecting.
+        if (pendingLadderWireSource && isLadderPlacedObject(pickedObject) && pickedObject !== pendingLadderWireSource) {
+          const fromSel = sidebar.querySelector('#ladderFloorSelect')
+          const toSel = sidebar.querySelector('#ladderTargetFloorSelect')
+          const fromFloor = parseInt(fromSel?.value || '0', 10) | 0
+          const toFloor = parseInt(toSel?.value || '1', 10) | 0
+          if (fromFloor === toFloor) {
+            window.alert('Source and target floor must differ. Adjust the dropdowns first.')
+          } else {
+            wireLadderPair(pendingLadderWireSource, pickedObject, fromFloor, toFloor)
+            pendingLadderWireSource = null
+            refreshBrokenLadderIndicators()
+            selectedPlacedObjects = [pickedObject]
+            selectedPlacedObject = pickedObject
+            selectedTexturePlane = null
+            selectedTexturePlanes = []
+            updateSelectionHelper()
+            updateToolUI()
+          }
+          return
+        }
         if (event.shiftKey) {
           const idx = selectedPlacedObjects.indexOf(pickedObject)
           if (idx >= 0) {
@@ -10716,6 +11038,11 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         // If Ctrl+click lands ON a spawn, treat it as a normal select instead
         // of moving onto the clicked one.
         if (!picked) {
+          const selectedDef = npcDefById(selectedNpcSpawn.npcId)
+          if (selectedDef?.bankAccess) {
+            alert(bankAccessPlacementBlockedMessage(selectedDef))
+            return
+          }
           pushUndoState('spawns')
           selectedNpcSpawn.x = tile.x + 0.5
           selectedNpcSpawn.z = tile.z + 0.5
@@ -10743,6 +11070,10 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       const npcId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value)
       if (!npcId) return
       const defForPlace = npcDefs.find(d => d.id === npcId)
+      if (defForPlace?.bankAccess) {
+        alert(bankAccessPlacementBlockedMessage(defForPlace))
+        return
+      }
       const wanderSlider = sidebar.querySelector('#wanderRangeSlider')
       const aggCb = sidebar.querySelector('#aggressiveCheckbox')
       const wanderRange = wanderSlider ? (parseInt(wanderSlider.value) || (defForPlace?.wanderRange ?? 3)) : (defForPlace?.wanderRange ?? 3)
@@ -11321,7 +11652,9 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
     const key = event.key.toLowerCase()
     if (key === 'escape') {
       event.preventDefault()
-      if (diagFloorStart) {
+      if (pendingLadderWireSource) {
+        cancelPendingLadderWire()
+      } else if (diagFloorStart) {
         cancelDiagFloor()
         updateToolUI()
       } else if (transformMode) {

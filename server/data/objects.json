@@ -1436,7 +1436,7 @@
       "Climb-down",
       "Examine"
     ],
-    "blocking": false,
+    "blocking": true,
     "width": 1,
     "height": 2,
     "color": [
