@@ -30,6 +30,7 @@ import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
+import { mountWorldOverlayElement } from '../rendering/worldOverlay';
 import { EntityManager, type GroundItemData } from './EntityManager';
 import { InputManager } from './InputManager';
 import { NetworkManager } from './NetworkManager';
@@ -6157,7 +6158,7 @@ export class GameManager {
     );
     const el = document.createElement('div');
     el.style.cssText = `
-      position: fixed; pointer-events: none; z-index: 250;
+      position: absolute; pointer-events: none; z-index: 250;
       width: 34px; height: 34px;
       transform: translate(-50%, -50%);
       display: flex; align-items: center; justify-content: center;
@@ -6186,7 +6187,7 @@ export class GameManager {
     `;
     el.appendChild(numEl);
 
-    document.body.appendChild(el);
+    mountWorldOverlayElement(el);
 
     const splat: HitSplatOverlay = {
       worldPos,

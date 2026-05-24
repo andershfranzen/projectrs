@@ -7,6 +7,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
+import { mountWorldOverlayElement } from './worldOverlay';
 
 /**
  * Directional sprite set — 8-direction materials loaded from 4 sprite images.
@@ -739,7 +740,7 @@ export class SpriteEntity {
       this.healthBarEl = document.createElement('div');
       this.healthBarEl.className = 'entity-health-bar';
       this.healthBarEl.style.cssText = `
-        position: fixed; pointer-events: none; z-index: 150;
+        position: absolute; pointer-events: none; z-index: 150;
         width: 48px; height: 8px;
         background: #400; border: 1px solid #000;
         transform: translate(-50%, -50%);
@@ -764,7 +765,7 @@ export class SpriteEntity {
       `;
       this.healthBarEl.appendChild(this.healthBarTextEl);
 
-      document.body.appendChild(this.healthBarEl);
+      mountWorldOverlayElement(this.healthBarEl);
     }
 
     const ratio = Math.max(0, current / max);
@@ -815,7 +816,7 @@ export class SpriteEntity {
     this.hideChatBubble();
 
     const el = createChatBubbleElement(message, variant);
-    document.body.appendChild(el);
+    mountWorldOverlayElement(el);
     this.chatBubbleEl = el;
 
     this.chatBubbleTimer = setTimeout(() => {

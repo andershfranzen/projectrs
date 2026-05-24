@@ -18,6 +18,7 @@ import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
+import { mountWorldOverlayElement } from './worldOverlay';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
@@ -2352,7 +2353,7 @@ export class CharacterEntity {
       this.healthBarEl = document.createElement('div');
       this.healthBarEl.className = 'entity-health-bar';
       this.healthBarEl.style.cssText = `
-        position: fixed; pointer-events: none; z-index: 150;
+        position: absolute; pointer-events: none; z-index: 150;
         width: 48px; height: 8px;
         background: #400; border: 1px solid #000;
         transform: translate(-50%, -50%);
@@ -2372,7 +2373,7 @@ export class CharacterEntity {
         line-height: 10px; pointer-events: none;
       `;
       this.healthBarEl.appendChild(this.healthBarTextEl);
-      document.body.appendChild(this.healthBarEl);
+      mountWorldOverlayElement(this.healthBarEl);
     }
 
     const ratio = Math.max(0, current / max);
@@ -2422,7 +2423,7 @@ export class CharacterEntity {
   showChatBubble(message: string, duration: number = 5000, variant: ChatBubbleVariant = 'chat'): void {
     this.hideChatBubble();
     const el = createChatBubbleElement(message, variant);
-    document.body.appendChild(el);
+    mountWorldOverlayElement(el);
     this.chatBubbleEl = el;
     this.chatBubbleTimer = setTimeout(() => this.hideChatBubble(), chatBubbleDuration(message, duration));
   }
@@ -2470,7 +2471,7 @@ export class CharacterEntity {
       const el = document.createElement('div');
       el.className = 'character-name-overlay';
       el.style.cssText = `
-        position: fixed; pointer-events: none; z-index: 150;
+        position: absolute; pointer-events: none; z-index: 150;
         font-family: Arial, Helvetica, sans-serif; font-size: 12px;
         color: ${this.labelColor};
         white-space: nowrap;
@@ -2478,7 +2479,7 @@ export class CharacterEntity {
         text-shadow: 1px 1px 2px rgba(0,0,0,0.85);
         opacity: 0;
       `;
-      document.body.appendChild(el);
+      mountWorldOverlayElement(el);
       this.labelEl = el;
     } else {
       this.labelEl.style.color = this.labelColor;

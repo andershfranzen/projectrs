@@ -9,6 +9,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
+import { mountWorldOverlayElement } from './worldOverlay';
 
 export interface Npc3DEntityOptions {
   label?: string;
@@ -373,14 +374,14 @@ export class Npc3DEntity {
     if (!this.healthBarEl) {
       this.healthBarEl = document.createElement('div');
       this.healthBarEl.className = 'entity-health-bar';
-      this.healthBarEl.style.cssText = `position:fixed;pointer-events:none;z-index:150;width:48px;height:8px;background:#400;border:1px solid #000;transform:translate(-50%,-50%);border-radius:1px;overflow:hidden`;
+      this.healthBarEl.style.cssText = `position:absolute;pointer-events:none;z-index:150;width:48px;height:8px;background:#400;border:1px solid #000;transform:translate(-50%,-50%);border-radius:1px;overflow:hidden`;
       this.healthBarFillEl = document.createElement('div');
       this.healthBarFillEl.style.cssText = `height:100%;transition:width 0.15s,background 0.15s`;
       this.healthBarEl.appendChild(this.healthBarFillEl);
       this.healthBarTextEl = document.createElement('div');
       this.healthBarTextEl.style.cssText = `position:absolute;top:-1px;left:0;right:0;text-align:center;font-family: Arial, Helvetica, sans-serif;font-size:8px;font-weight:bold;color:#fff;text-shadow:1px 1px 0 #000,-1px -1px 0 #000;line-height:10px;pointer-events:none`;
       this.healthBarEl.appendChild(this.healthBarTextEl);
-      document.body.appendChild(this.healthBarEl);
+      mountWorldOverlayElement(this.healthBarEl);
     }
     const ratio = Math.max(0, current / max);
     this.healthBarFillEl!.style.width = `${ratio * 100}%`;
@@ -409,7 +410,7 @@ export class Npc3DEntity {
   showChatBubble(message: string, duration: number = 5000, variant: ChatBubbleVariant = 'chat'): void {
     this.hideChatBubble();
     const el = createChatBubbleElement(message, variant);
-    document.body.appendChild(el);
+    mountWorldOverlayElement(el);
     this.chatBubbleEl = el;
     this.chatBubbleTimer = window.setTimeout(() => this.hideChatBubble(), chatBubbleDuration(message, duration));
   }

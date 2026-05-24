@@ -17,12 +17,12 @@ export function createChatBubbleElement(
     : `
       background: rgba(0, 0, 0, 0.8); color: #fff;
       border: 1px solid #5a4a35;
-    `;
+  `;
 
   el.style.cssText = `
-    position: fixed; pointer-events: none; z-index: 200;
+    position: absolute; pointer-events: none; z-index: 200;
     ${palette}
-    max-width: min(360px, calc(100vw - 24px));
+    max-width: min(360px, calc(100% - 24px));
     box-sizing: border-box;
     font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 1.3;
     padding: 4px 10px; border-radius: 6px;
