@@ -118,6 +118,22 @@ export function createOpcodeMapping(options: OpcodeMappingOptions = {}): OpcodeM
   };
 }
 
+export function rotateServerOpcodeMapping(
+  current: OpcodeMappingTables,
+  options: OpcodeMappingOptions = {},
+): OpcodeMappingTables {
+  const serverLogicalValues = options.includeAdminServerOpcodes
+    ? ROTATABLE_SERVER_OPCODE_VALUES
+    : REQUIRED_ROTATABLE_SERVER_OPCODE_VALUES;
+  const serverLogicalToWire = makeDirectionalMap(serverLogicalValues);
+  return {
+    clientLogicalToWire: current.clientLogicalToWire,
+    clientWireToLogical: current.clientWireToLogical,
+    serverLogicalToWire,
+    serverWireToLogical: invert(serverLogicalToWire),
+  };
+}
+
 function recordFromMap(map: Map<number, number>): Record<string, number> {
   const out: Record<string, number> = {};
   for (const [logical, wire] of [...map.entries()].sort((a, b) => a[0] - b[0])) {

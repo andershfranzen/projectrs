@@ -406,6 +406,11 @@ export class NetworkManager {
       return;
     }
     if (!this.opcodeMapping) throw new Error('missing opcode mapping');
+    const opcode = new DataView(plain).getUint8(0);
+    if (opcode === ServerOpcode.OPCODE_MAPPING) {
+      this.handleOpcodeMapping(socket, generation, plain);
+      return;
+    }
     this.handlePlainGameMessage?.(rewriteArrayBufferOpcode(plain, this.opcodeMapping.serverWireToLogical, true));
   }
 

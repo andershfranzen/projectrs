@@ -27,6 +27,7 @@ import {
   isValidAppearance,
   createOpcodeMapping,
   opcodeMappingToPayload,
+  rotateServerOpcodeMapping,
   rewriteArrayBufferOpcode,
   rewritePacketOpcode,
   type GameCipherKeysV2,
@@ -60,6 +61,7 @@ interface GameSocketCryptoState {
   lastRecvCounter: number;
   sendQueue: Promise<void>;
   recvQueue: Promise<void>;
+  opcodeMappingRotationTimer?: ReturnType<typeof setInterval>;
   originalSendBinary?: (data: Bun.BufferSource) => number;
 }
 
@@ -90,6 +92,7 @@ const EQUIP_SLOT_COUNT = 10;
 const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
 const BROWSER_INPUT_MAX_AGE_MS = 15_000;
+const OPCODE_MAPPING_ROTATE_MS = 60_000;
 // Bot telemetry is review-only by default. Set this explicitly for a hardened
 // test shard; the live game should not reject normal play because browser input
 // telemetry was delayed, throttled, or unavailable.
@@ -155,10 +158,14 @@ export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocket
   ws.sendBinary = ((data: Bun.BufferSource) => {
     const packet = toPacketBytes(data);
     const shouldEncrypt = cryptoState.encryptEnabled && !!cryptoState.keys;
-    const shouldRewriteOpcode = cryptoState.opcodeMappingEnabled;
+    const serverOpcodeMap = cryptoState.opcodeMappingEnabled
+      ? cryptoState.opcodeMapping.serverLogicalToWire
+      : null;
+    const fixedServerOpcode = packet[0] === ServerOpcode.CRYPTO_CHALLENGE
+      || packet[0] === ServerOpcode.OPCODE_MAPPING;
     cryptoState.sendQueue = cryptoState.sendQueue.then(async () => {
-      const wirePacket = shouldRewriteOpcode
-        ? rewritePacketOpcode(packet, cryptoState.opcodeMapping.serverLogicalToWire, true)
+      const wirePacket = serverOpcodeMap && !fixedServerOpcode
+        ? rewritePacketOpcode(packet, serverOpcodeMap, true)
         : packet;
       if (!shouldEncrypt || !cryptoState.keys) {
         originalSendBinary(wirePacket);
@@ -788,8 +795,31 @@ async function completeGameSocketHandshake(
     JSON.stringify(opcodeMappingToPayload(cryptoState.opcodeMapping)),
   ));
   cryptoState.opcodeMappingEnabled = true;
+  scheduleOpcodeMappingRotation(ws);
 
   completeGameSocketLogin(ws, world);
+}
+
+function scheduleOpcodeMappingRotation(ws: ServerWebSocket<GameSocketData>): void {
+  const cryptoState = ws.data.crypto;
+  if (!cryptoState || cryptoState.opcodeMappingRotationTimer) return;
+  cryptoState.opcodeMappingRotationTimer = setInterval(() => {
+    const state = ws.data.crypto;
+    if (!state?.handshakeComplete || !state.opcodeMappingEnabled) return;
+    state.opcodeMapping = rotateServerOpcodeMapping(state.opcodeMapping, {
+      includeAdminServerOpcodes: ws.data.isAdmin,
+    });
+    ws.sendBinary(encodeStringPacket(
+      ServerOpcode.OPCODE_MAPPING,
+      JSON.stringify(opcodeMappingToPayload(state.opcodeMapping)),
+    ));
+  }, OPCODE_MAPPING_ROTATE_MS);
+}
+
+function clearOpcodeMappingRotation(ws: ServerWebSocket<GameSocketData>): void {
+  const timer = ws.data.crypto?.opcodeMappingRotationTimer;
+  if (timer) clearInterval(timer);
+  if (ws.data.crypto) ws.data.crypto.opcodeMappingRotationTimer = undefined;
 }
 
 export async function handleGameSocketOpen(
@@ -1357,6 +1387,7 @@ export function handleGameSocketClose(
   ws: ServerWebSocket<GameSocketData>,
   world: World
 ): void {
+  clearOpcodeMappingRotation(ws);
   const playerId = ws.data.playerId;
   console.log(`[GameSocket] close account=${ws.data.accountId} player=${playerId ?? 'none'}`);
   if (playerId) {

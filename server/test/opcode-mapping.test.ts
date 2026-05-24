@@ -5,6 +5,7 @@ import {
   createOpcodeMapping,
   opcodeMappingToPayload,
   parseOpcodeMappingPayload,
+  rotateServerOpcodeMapping,
   rewritePacketOpcode,
   ROTATABLE_CLIENT_OPCODE_VALUES,
   ROTATABLE_SERVER_OPCODE_VALUES,
@@ -47,6 +48,23 @@ describe('per-session opcode mapping', () => {
 
     const logicalPacket = rewritePacketOpcode(wirePacket, parsed.clientWireToLogical, true);
     expect([...logicalPacket]).toEqual([...packet]);
+  });
+
+  test('server opcode rotation preserves the client command map', () => {
+    const mapping = createOpcodeMapping();
+    const rotated = rotateServerOpcodeMapping(mapping);
+
+    expect(rotated.clientLogicalToWire).toBe(mapping.clientLogicalToWire);
+    expect(rotated.clientWireToLogical).toBe(mapping.clientWireToLogical);
+    expect(rotated.serverLogicalToWire).not.toBe(mapping.serverLogicalToWire);
+    expect(rotated.serverWireToLogical).not.toBe(mapping.serverWireToLogical);
+
+    for (const logical of ROTATABLE_SERVER_OPCODE_VALUES.filter((opcode) => opcode !== ServerOpcode.ADMIN_FLAGS)) {
+      const wire = rotated.serverLogicalToWire.get(logical);
+      expect(wire).toBeNumber();
+      expect(wire).not.toBe(logical);
+      expect(rotated.serverWireToLogical.get(wire!)).toBe(logical);
+    }
   });
 
   test('keeps admin-only server opcodes out of non-admin mappings', () => {
