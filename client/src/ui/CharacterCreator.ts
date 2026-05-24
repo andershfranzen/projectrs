@@ -32,6 +32,119 @@ export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
 const PREVIEW_LAYER_MASK = 0x10000000;
 const PREVIEW_CAMERA_MASK = PREVIEW_LAYER_MASK;
 const HIDDEN_LAYER_MASK = 0x20000000;
+const CHARACTER_CREATOR_STYLE_ID = 'eq-character-creator-styles';
+
+function ensureCharacterCreatorStyles(): void {
+  if (document.getElementById(CHARACTER_CREATOR_STYLE_ID)) return;
+  const style = document.createElement('style');
+  style.id = CHARACTER_CREATOR_STYLE_ID;
+  style.textContent = `
+    #character-creator.eq-character-creator {
+      --eq-character-padding: 12px;
+      --eq-character-gap: 12px;
+      --eq-character-preview-width: 280px;
+      --eq-character-preview-height: clamp(220px, calc(var(--eq-viewport-height, 100vh) - 160px), 400px);
+      --eq-character-label-width: 90px;
+      --eq-character-arrow-size: 32px;
+      --eq-character-arrow-height: 26px;
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    #character-creator .eq-character-creator-header {
+      gap: 8px;
+      min-width: 0;
+    }
+
+    #character-creator .eq-character-creator-title,
+    #character-creator .eq-character-creator-subtitle {
+      min-width: 0;
+    }
+
+    #character-creator .eq-character-creator-subtitle {
+      flex-shrink: 1;
+      text-align: right;
+    }
+
+    @media (max-width: 600px) {
+      #character-creator.eq-character-creator {
+        --eq-character-padding: 8px;
+        --eq-character-gap: 8px;
+        --eq-character-preview-width: min(180px, calc(var(--eq-viewport-width, 100vw) - 48px));
+        --eq-character-preview-height: clamp(150px, 30vh, 230px);
+        --eq-character-label-width: 70px;
+        --eq-character-arrow-size: 34px;
+        --eq-character-arrow-height: 30px;
+      }
+
+      #character-creator .eq-character-creator-body {
+        grid-template-columns: minmax(0, 1fr) !important;
+        overflow-y: auto !important;
+      }
+
+      #character-creator .eq-character-creator-preview-col {
+        width: 100% !important;
+      }
+
+      #character-creator .eq-character-creator-hint {
+        display: none !important;
+      }
+
+      #character-creator .eq-character-creator-footer {
+        padding: 7px 8px !important;
+      }
+
+      #character-creator .eq-character-creator-footer button {
+        padding-left: 12px !important;
+        padding-right: 12px !important;
+      }
+    }
+
+    @media (max-width: 420px) {
+      #character-creator .eq-character-creator-subtitle {
+        display: none !important;
+      }
+    }
+
+    @media (max-width: 360px) {
+      #character-creator.eq-character-creator {
+        --eq-character-preview-width: min(160px, calc(var(--eq-viewport-width, 100vw) - 40px));
+        --eq-character-preview-height: clamp(138px, 28vh, 190px);
+        --eq-character-label-width: 62px;
+        --eq-character-arrow-size: 32px;
+      }
+
+      #character-creator .eq-character-creator-footer button {
+        padding-left: 8px !important;
+        padding-right: 8px !important;
+      }
+    }
+
+    @media (max-height: 520px) and (max-width: 900px) {
+      #character-creator.eq-character-creator {
+        --eq-character-padding: 8px;
+        --eq-character-gap: 8px;
+        --eq-character-preview-width: 190px;
+        --eq-character-preview-height: clamp(120px, calc(var(--eq-viewport-height, 100vh) - 170px), 210px);
+        --eq-character-label-width: 74px;
+        --eq-character-arrow-size: 32px;
+        --eq-character-arrow-height: 28px;
+      }
+
+      #character-creator .eq-character-creator-hint {
+        display: none !important;
+      }
+    }
+
+    @media (max-height: 520px) and (max-width: 900px) and (orientation: landscape) {
+      #character-creator .eq-character-creator-body {
+        grid-template-columns: minmax(0, var(--eq-character-preview-width, 190px)) minmax(0, 1fr) !important;
+        overflow: hidden !important;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 /**
  * Fallback anchor used when no `localPlayer` ref is supplied (e.g. if the
@@ -81,6 +194,7 @@ export class CharacterCreator {
   private previewLights: { hemi: HemisphericLight; dir: DirectionalLight } | null = null;
   private previewCharacter: CharacterEntity | null = null;
   private previewInitFrame: number | null = null;
+  private previewResizeObserver: ResizeObserver | null = null;
   private destroyed: boolean = false;
 
   // Local player ref + saved enabled state. While the creator is open the
@@ -101,6 +215,10 @@ export class CharacterCreator {
   private rowSpecs: StepperRow[] = [];
   private rowSwatchEls: (HTMLDivElement | null)[] = [];
   private rowValueEls: HTMLDivElement[] = [];
+  private readonly resizePreview = (): void => {
+    if (this.destroyed) return;
+    this.previewEngine?.resize();
+  };
 
   /**
    * @param gameScene  Main Babylon scene (preview re-uses its engine + GL context)
@@ -183,10 +301,11 @@ export class CharacterCreator {
   }
 
   private buildUI(): HTMLDivElement {
+    ensureCharacterCreatorStyles();
     // No full-screen overlay — the panel sits directly in the playable area
     // so the world is visible around it. Matches SmithingPanel/ShopPanel which
     // also center themselves inside the canvas without dimming the background.
-    const { root: panel } = createModalPanel({
+    const { root: panel, header, title, subtitle } = createModalPanel({
       id: 'character-creator',
       title: 'Create Your Character',
       subtitle: 'Choose your appearance',
@@ -200,28 +319,48 @@ export class CharacterCreator {
       closeButton: false,
       display: 'flex',
     });
+    panel.classList.add('eq-character-creator');
+    header.classList.add('eq-character-creator-header');
+    title.classList.add('eq-character-creator-title');
+    subtitle?.classList.add('eq-character-creator-subtitle');
 
     // Body — 2-column: 3D preview on left, stepper rows on right.
     const body = document.createElement('div');
+    body.className = 'eq-character-creator-body';
     body.style.cssText = `
-      display: flex; gap: 12px; padding: 12px; flex: 1; min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(0, var(--eq-character-preview-width, 280px)) minmax(0, 1fr);
+      gap: var(--eq-character-gap, 12px);
+      padding: var(--eq-character-padding, 12px);
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
     `;
 
     // Preview column (fixed-shrink so the canvas always renders at full size)
     const previewCol = document.createElement('div');
-    previewCol.style.cssText = `display: flex; flex-direction: column; align-items: center; flex-shrink: 0;`;
+    previewCol.className = 'eq-character-creator-preview-col';
+    previewCol.style.cssText = `
+      display: flex; flex-direction: column; align-items: center;
+      width: var(--eq-character-preview-width, 280px);
+      min-width: 0;
+    `;
     const canvas = document.createElement('canvas');
     canvas.id = 'character-preview-canvas';
     canvas.width = 280;
     canvas.height = 400;
     canvas.style.cssText = `
-      width: 280px; height: 400px;
+      width: var(--eq-character-preview-width, 280px);
+      height: var(--eq-character-preview-height, 400px);
+      max-width: 100%;
       background: rgba(0,0,0,0.4);
       border: 2px inset #3a2a1a; border-radius: 3px;
+      touch-action: none;
     `;
     this.previewCanvas = canvas;
     previewCol.appendChild(canvas);
     const hint = document.createElement('div');
+    hint.className = 'eq-character-creator-hint';
     hint.textContent = 'Drag to rotate · Scroll to zoom';
     hint.style.cssText = `font-size: 10px; color: #8a857c; margin-top: 6px; text-shadow: 1px 1px 0 #000;`;
     previewCol.appendChild(hint);
@@ -229,9 +368,10 @@ export class CharacterCreator {
 
     // Stepper column
     const stepperCol = document.createElement('div');
+    stepperCol.className = 'eq-character-creator-stepper-col';
     stepperCol.style.cssText = `
       flex: 1; display: flex; flex-direction: column; gap: 4px;
-      min-width: 240px; overflow-y: auto;
+      min-width: 0; overflow-y: auto; overflow-x: hidden;
     `;
     this.rowSwatchEls = [];
     this.rowValueEls = [];
@@ -244,6 +384,7 @@ export class CharacterCreator {
 
     // Footer — Randomize on the left, Confirm on the right.
     const footer = document.createElement('div');
+    footer.className = 'eq-character-creator-footer';
     footer.style.cssText = `
       display: flex; gap: 8px; padding: 8px 12px;
       background: url('/ui/stone-light.png') repeat;
@@ -283,6 +424,7 @@ export class CharacterCreator {
       padding: 6px 18px; cursor: pointer; border-radius: 3px;
       letter-spacing: 0.5px;
       text-shadow: 1px 1px 0 #000;
+      touch-action: manipulation;
     `;
     btn.addEventListener('mouseenter', () => {
       btn.style.background = 'linear-gradient(180deg, #6a4a35 0%, #4a3528 100%)';
@@ -300,9 +442,14 @@ export class CharacterCreator {
   private buildStepperRow(rowIdx: number): HTMLDivElement {
     const spec = this.rowSpecs[rowIdx];
     const row = document.createElement('div');
+    row.className = 'eq-character-creator-stepper-row';
     row.style.cssText = `
       display: grid;
-      grid-template-columns: 90px 32px 1fr 32px;
+      grid-template-columns:
+        minmax(0, var(--eq-character-label-width, 90px))
+        var(--eq-character-arrow-size, 32px)
+        minmax(0, 1fr)
+        var(--eq-character-arrow-size, 32px);
       gap: 6px; align-items: center;
       padding: 4px 6px;
       background: rgba(0,0,0,0.25); border: 1px outset #3a2a1a;
@@ -311,7 +458,12 @@ export class CharacterCreator {
 
     const label = document.createElement('div');
     label.textContent = spec.label;
-    label.style.cssText = `font-size: 12px; color: #d8372b; font-weight: bold; text-shadow: 1px 1px 0 #000;`;
+    label.style.cssText = `
+      min-width: 0;
+      font-size: 12px; line-height: 1.08;
+      color: #d8372b; font-weight: bold; text-shadow: 1px 1px 0 #000;
+      overflow-wrap: anywhere;
+    `;
     row.appendChild(label);
 
     const prev = this.makeArrowBtn('<', () => this.step(rowIdx, -1));
@@ -326,6 +478,8 @@ export class CharacterCreator {
       padding: 2px 6px; min-height: 22px;
       background: rgba(0,0,0,0.4); border: 1px inset #1a1510;
       border-radius: 2px; cursor: pointer;
+      min-width: 0;
+      touch-action: manipulation;
     `;
     valueCell.addEventListener('click', () => this.step(rowIdx, 1));
 
@@ -339,7 +493,11 @@ export class CharacterCreator {
     this.rowSwatchEls[rowIdx] = swatch;
 
     const valueText = document.createElement('div');
-    valueText.style.cssText = `font-size: 12px; color: #d8372b; flex: 1; text-shadow: 1px 1px 0 #000;`;
+    valueText.style.cssText = `
+      min-width: 0;
+      font-size: 12px; color: #d8372b; flex: 1; text-shadow: 1px 1px 0 #000;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    `;
     valueCell.appendChild(valueText);
     this.rowValueEls[rowIdx] = valueText;
 
@@ -359,12 +517,14 @@ export class CharacterCreator {
     btn.textContent = label;
     // Stone-style chip — same visual family as the footer buttons but smaller.
     btn.style.cssText = `
-      width: 32px; height: 26px;
+      width: var(--eq-character-arrow-size, 32px);
+      height: var(--eq-character-arrow-height, 26px);
       background: linear-gradient(180deg, #5a3a2a 0%, #3a2518 100%);
       border: 1px solid #6a4a35; color: #d8372b;
       font-family: Arial, Helvetica, sans-serif; font-size: 14px; font-weight: bold;
       cursor: pointer; padding: 0; line-height: 1;
       text-shadow: 1px 1px 0 #000;
+      touch-action: manipulation;
     `;
     btn.addEventListener('mouseenter', () => {
       btn.style.background = 'linear-gradient(180deg, #6a4a35 0%, #4a3528 100%)';
@@ -456,6 +616,13 @@ export class CharacterCreator {
     scene.clearColor = new Color4(0.07, 0.10, 0.15, 1);
     this.previewEngine = engine;
     this.previewScene = scene;
+    if (typeof ResizeObserver !== 'undefined') {
+      this.previewResizeObserver = new ResizeObserver(this.resizePreview);
+      this.previewResizeObserver.observe(this.previewCanvas);
+    }
+    window.addEventListener('resize', this.resizePreview);
+    window.addEventListener('evilquest:viewportchange', this.resizePreview);
+    requestAnimationFrame(this.resizePreview);
     const anchor = Vector3.Zero();
 
     // Preview camera sees only the preview character layer. Rendering the
@@ -529,6 +696,12 @@ export class CharacterCreator {
       this.previewInitFrame = null;
     }
     if (this.previewCharacter) { this.previewCharacter.dispose(); this.previewCharacter = null; }
+    if (this.previewResizeObserver) {
+      this.previewResizeObserver.disconnect();
+      this.previewResizeObserver = null;
+    }
+    window.removeEventListener('resize', this.resizePreview);
+    window.removeEventListener('evilquest:viewportchange', this.resizePreview);
     if (this.previewCamera) {
       this.previewCamera.dispose();
       this.previewCamera = null;
