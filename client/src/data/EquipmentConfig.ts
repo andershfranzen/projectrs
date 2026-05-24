@@ -36,7 +36,7 @@ export const TOOL_TIER_METAL_COLOR: Record<number, [number, number, number]> = {
   32: METAL_TIER_THUMBNAIL_COLOR.iron, // Iron Axe
   36: METAL_TIER_THUMBNAIL_COLOR.steel, // Steel Axe
   37: METAL_TIER_THUMBNAIL_COLOR.mithril, // Mithril Axe
-  38: METAL_TIER_THUMBNAIL_COLOR.blackBronze, // Black Axe
+  38: METAL_TIER_THUMBNAIL_COLOR.blackBronze, // Black Bronze Axe
   // Pickaxes
   33: METAL_TIER_THUMBNAIL_COLOR.bronze, // Bronze Pickaxe
   53: METAL_TIER_THUMBNAIL_COLOR.iron, // Iron Pickaxe

@@ -247,7 +247,7 @@
     "toolLevel": 6,
     "toolBonus": 1,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Bronze axe.glb"
+    "model": "/assets/equipment/Tools/Iron axe.glb"
   },
   {
     "id": 33,
@@ -302,7 +302,7 @@
     "toolLevel": 15,
     "toolBonus": 2,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Bronze axe.glb"
+    "model": "/assets/equipment/Tools/Steel axe.glb"
   },
   {
     "id": 37,
@@ -324,8 +324,8 @@
   },
   {
     "id": 38,
-    "name": "Black Axe",
-    "description": "A menacing black axe for woodcutting.",
+    "name": "Black Bronze Axe",
+    "description": "A menacing black bronze axe for woodcutting.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -338,7 +338,7 @@
     "toolLevel": 35,
     "toolBonus": 4,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Bronze axe.glb"
+    "model": "/assets/equipment/Tools/BlackBronze axe.glb"
   },
   {
     "id": 39,
@@ -2032,7 +2032,11 @@
     "description": "A freshly picked potato.",
     "stackable": false,
     "equippable": false,
+<<<<<<< HEAD
     "value": 3,
+=======
+    "value": 5,
+>>>>>>> 747bdc0 (Wire up iron, steel, and black bronze axe models)
     "model": "/assets/models/Potato.glb"
   },
   {
@@ -2041,6 +2045,7 @@
     "description": "A freshly picked cauliflower.",
     "stackable": false,
     "equippable": false,
+<<<<<<< HEAD
     "value": 3,
     "model": "/assets/models/CauliflowerPlant.glb"
   },
@@ -2062,5 +2067,9 @@
     "equippable": false,
     "value": 3,
     "model": "/assets/models/grain.glb"
+=======
+    "value": 8,
+    "model": "/assets/models/Cauliflower.glb"
+>>>>>>> 747bdc0 (Wire up iron, steel, and black bronze axe models)
   }
 ]
