@@ -461,6 +461,33 @@ describe('floor isolation', () => {
     expect(player.effectiveY).toBe(2.7);
   });
 
+  test('ladder clicks from off the interaction tile queue movement before climbing', () => {
+    const { world } = makeWorld();
+    const messages: string[] = [];
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+    const player = makePlayer('viewer', 1, 0);
+    player.position.x = 10.5;
+    player.position.y = 10.5;
+    player.effectiveY = 0;
+    const ladder = new WorldObject(ladderDef, 12.5, 12.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 12.5, z: 13.5, floor: 0, y: 0 },
+      to: { x: 12.5, z: 13.5, floor: 1, y: 2.7 },
+      fromAction: 'Climb-up',
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+
+    world.handlePlayerInteractObject(player.id, ladder.id, 0);
+
+    expect(messages).not.toContain("I can't climb up there.");
+    expect(player.currentFloor).toBe(0);
+    expect(player.pendingInteraction?.objectEntityId).toBe(ladder.id);
+    expect(player.pendingInteraction?.actionIndex).toBe(0);
+    expect(player.hasMoveQueue()).toBe(true);
+  });
+
   test('one-way vertical refresh keeps ladder synced without stale climb actions', () => {
     const { world, packets } = makeWorld();
     const player = makePlayer('viewer', 1, 1);

@@ -677,6 +677,13 @@ export class World {
     return this.ladderActionMaskForPlayer(player, obj) !== 0;
   }
 
+  private canPlayerUseLadderActionOnCurrentFloor(player: Player, obj: WorldObject, action: LadderAction): boolean {
+    const mask = this.ladderActionMaskForPlayer(player, obj);
+    if (action === 'Climb-down') return (mask & 1) !== 0;
+    if (action === 'Climb-up') return (mask & 2) !== 0;
+    return false;
+  }
+
   private resolveVerticalEndpoint(obj: WorldObject, endpoint: PlacedObjectVerticalLinkEndpoint | undefined): ResolvedVerticalEndpoint | null {
     if (!endpoint) return null;
     if (!Number.isFinite(endpoint.x) || !Number.isFinite(endpoint.z) || !Number.isFinite(endpoint.floor)) return null;
@@ -3282,7 +3289,7 @@ export class World {
       ? obj.def.actions[actionIndex]
       : obj.currentActions[actionIndex];
     if (!action) return;
-    if (obj.def.category === 'ladder' && (action === 'Climb-up' || action === 'Climb-down') && !this.resolveLadderLinkForPlayerAction(player, obj, action)) {
+    if (obj.def.category === 'ladder' && (action === 'Climb-up' || action === 'Climb-down') && !this.canPlayerUseLadderActionOnCurrentFloor(player, obj, action)) {
       this.sendWorldObjectUpdate(player, obj);
       this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
       return;
