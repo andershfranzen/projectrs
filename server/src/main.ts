@@ -1225,8 +1225,20 @@ setInterval(() => {
   cleanupPreauthBootstraps(now);
 }, 5 * 60_000);
 
-// Create database and game world
-const db = new GameDatabase();
+// Create database and game world. Guard this so starting from the wrong
+// checkout cannot silently create an empty account DB and hide the admin login.
+const DB_PATH = process.env.PROJECTRS_DB_PATH || resolve('projectrs.db');
+const REQUIRED_ADMIN_USERNAME = process.env.REQUIRED_ADMIN_USERNAME || 'mogn';
+const ALLOW_EMPTY_DEV_DB = process.env.ALLOW_EMPTY_DEV_DB === '1';
+console.log(`[db] using ${DB_PATH}`);
+const db = new GameDatabase(DB_PATH);
+if (!ALLOW_EMPTY_DEV_DB && !db.isAdminUsername(REQUIRED_ADMIN_USERNAME)) {
+  db.close();
+  throw new Error(
+    `[db] Refusing to start: required admin account "${REQUIRED_ADMIN_USERNAME}" was not found in ${DB_PATH}. ` +
+    `Set PROJECTRS_DB_PATH to the populated database, restore the DB backup, or set ALLOW_EMPTY_DEV_DB=1 for intentional fresh-db work.`
+  );
+}
 const world = new World(db);
 world.start();
 try {
