@@ -30,6 +30,10 @@ interface SessionSummary {
   sessionSkillingActions: number;
   sessionCombatSwings: number;
   sessionMovements: number;
+  sessionMoveCommands?: number;
+  sessionMoveRedirects?: number;
+  sessionMaxPathMoveCommands?: number;
+  sessionPathTruncations?: number;
   sessionChats: number;
   sessionActivityEvents?: number;
   sessionDetailedActivityEvents?: number;
@@ -40,6 +44,9 @@ interface SessionSummary {
   reactionMedianMs: number | null;
   pingIntervalStdDevMs?: number | null;
   activityIntervalStdDevMs?: number | null;
+  moveRedirectRatio?: number | null;
+  maxPathCommandRatio?: number | null;
+  pathTruncationRatio?: number | null;
   heartbeatActivityCouplingRatio?: number | null;
   topActionLoopRepetition?: number | null;
   topCursorCellRepetition?: number | null;
@@ -476,6 +483,9 @@ function computeReviewRisk(
     if (flags.has('routeActionLoop')) add(10, 'repeated route/action loop');
     if (flags.has('lifetimeRouteActionLoop')) add(10, 'lifetime route/action loop');
     if (flags.has('pathRepetitive')) add(8, 'repetitive movement destination');
+    if (flags.has('noMoveRedirects')) add(6, 'no mid-path redirects');
+    if (flags.has('maxPathCommandRatio')) add(6, 'high max-length path command ratio');
+    if (flags.has('pathTruncationPattern')) add(14, 'repeated path truncations');
     if (flags.has('lifetimePathConcentration')) add(8, 'lifetime path concentration');
     if (flags.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
     if (flags.has('cursorStatic')) add(10, 'static cursor telemetry');
@@ -741,6 +751,10 @@ function main(): void {
       const tickStd = d.tickAlignStdDevMs;
       const react = d.reactionMedianMs;
       const path = d.topPathRepetition;
+      const moveRedirect = d.moveRedirectRatio;
+      const maxPath = d.maxPathCommandRatio;
+      const trunc = d.pathTruncationRatio;
+      const moveCommands = d.sessionMoveCommands;
       const activityCoupled = d.heartbeatActivityCouplingRatio;
       const activityStd = d.activityIntervalStdDevMs;
       const activityDetailed = d.sessionDetailedActivityEvents;
@@ -748,7 +762,7 @@ function main(): void {
       const chats = d.sessionChats;
       const cursors = d.sessionCursorEvents;
       const mins = d.sessionMinutes;
-      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
+      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  moves=${moveCommands ?? '-'}  redirect=${moveRedirect?.toFixed?.(2) ?? '-'}  maxPath=${maxPath?.toFixed?.(2) ?? '-'}  trunc=${trunc?.toFixed?.(2) ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
     }
     console.log('');
   }

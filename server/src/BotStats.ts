@@ -81,6 +81,10 @@ export interface SessionSummary {
   sessionSkillingActions: number;
   sessionCombatSwings: number;
   sessionMovements: number;
+  sessionMoveCommands: number;
+  sessionMoveRedirects: number;
+  sessionMaxPathMoveCommands: number;
+  sessionPathTruncations: number;
   sessionChats: number;
   sessionActivityEvents: number;
   sessionDetailedActivityEvents: number;
@@ -109,6 +113,9 @@ export interface SessionSummary {
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
   activitylessCommandRatio: number | null;
+  moveRedirectRatio: number | null;
+  maxPathCommandRatio: number | null;
+  pathTruncationRatio: number | null;
   topPathRepetition: number | null;
   topActionLoopRepetition: number | null;
   topLifetimePathRepetition: number | null;
@@ -179,6 +186,10 @@ export class BotStats {
   sessionSkillingActions: number = 0;
   sessionCombatSwings: number = 0;
   sessionMovements: number = 0;
+  sessionMoveCommands: number = 0;
+  sessionMoveRedirects: number = 0;
+  sessionMaxPathMoveCommands: number = 0;
+  sessionPathTruncations: number = 0;
   sessionChats: number = 0;
   sessionActivityEvents: number = 0;
   sessionDetailedActivityEvents: number = 0;
@@ -304,6 +315,10 @@ export class BotStats {
     this.sessionSkillingActions = 0;
     this.sessionCombatSwings = 0;
     this.sessionMovements = 0;
+    this.sessionMoveCommands = 0;
+    this.sessionMoveRedirects = 0;
+    this.sessionMaxPathMoveCommands = 0;
+    this.sessionPathTruncations = 0;
     this.sessionChats = 0;
     this.sessionActivityEvents = 0;
     this.sessionDetailedActivityEvents = 0;
@@ -391,6 +406,17 @@ export class BotStats {
     this.lastMovementTs = Date.now();
     this.bumpCappedMap(this.sessionPathDestinations, key, MAX_PATH_DESTINATIONS);
     this.bumpCappedMap(this.pathDestinations, key, MAX_PATH_DESTINATIONS);
+  }
+
+  recordMoveCommand(pathLength: number, hadQueuedMovement: boolean): void {
+    if (pathLength <= 0) return;
+    this.sessionMoveCommands++;
+    if (hadQueuedMovement) this.sessionMoveRedirects++;
+    if (pathLength >= 50) this.sessionMaxPathMoveCommands++;
+  }
+
+  recordPathTruncation(): void {
+    this.sessionPathTruncations++;
   }
 
   /** Record a movement+action signature such as "walk to tree tile → chop".
@@ -564,6 +590,15 @@ export class BotStats {
     const activitylessCommandRatio = this.sessionGameplayCommands > 0
       ? this.sessionCommandsWithoutRecentActivity / this.sessionGameplayCommands
       : null;
+    const moveRedirectRatio = this.sessionMoveCommands > 0
+      ? this.sessionMoveRedirects / this.sessionMoveCommands
+      : null;
+    const maxPathCommandRatio = this.sessionMoveCommands > 0
+      ? this.sessionMaxPathMoveCommands / this.sessionMoveCommands
+      : null;
+    const pathTruncationRatio = this.sessionMoveCommands > 0
+      ? this.sessionPathTruncations / this.sessionMoveCommands
+      : null;
     const deviceIdsSeen = this.deviceIds.size;
     const deviceLogins = [...this.deviceIds.values()].reduce((a, b) => a + b, 0);
     const maxDeviceReuse = this.deviceIds.size > 0 ? Math.max(...this.deviceIds.values()) : 0;
@@ -649,6 +684,27 @@ export class BotStats {
     // pathRepetitive: top destination > 50% of moves (very narrow loop)
     if (this.sessionMovements >= 50 && topPathRepetition !== null && topPathRepetition > 0.5) {
       flags.push('pathRepetitive');
+    }
+    if (
+      this.sessionMoveCommands >= 25
+      && this.sessionMovements >= 25
+      && this.sessionMoveRedirects === 0
+    ) {
+      flags.push('noMoveRedirects');
+    }
+    if (
+      this.sessionMoveCommands >= 20
+      && maxPathCommandRatio !== null
+      && maxPathCommandRatio >= 0.65
+    ) {
+      flags.push('maxPathCommandRatio');
+    }
+    if (
+      this.sessionPathTruncations >= 5
+      && pathTruncationRatio !== null
+      && pathTruncationRatio >= 0.1
+    ) {
+      flags.push('pathTruncationPattern');
     }
     if (
       sessionActionSignatureCount >= MIN_ROUTE_ACTION_LOOP_SIGNATURES
@@ -751,6 +807,10 @@ export class BotStats {
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
+      sessionMoveCommands: this.sessionMoveCommands,
+      sessionMoveRedirects: this.sessionMoveRedirects,
+      sessionMaxPathMoveCommands: this.sessionMaxPathMoveCommands,
+      sessionPathTruncations: this.sessionPathTruncations,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketClasses,
@@ -766,6 +826,9 @@ export class BotStats {
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
       activitylessCommandRatio,
+      moveRedirectRatio,
+      maxPathCommandRatio,
+      pathTruncationRatio,
       reactionSamples: this.reactionSamples.length,
       reactionMedianMs,
       topPathRepetition,
@@ -790,6 +853,10 @@ export class BotStats {
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
+      sessionMoveCommands: this.sessionMoveCommands,
+      sessionMoveRedirects: this.sessionMoveRedirects,
+      sessionMaxPathMoveCommands: this.sessionMaxPathMoveCommands,
+      sessionPathTruncations: this.sessionPathTruncations,
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
       sessionDetailedActivityEvents: this.sessionDetailedActivityEvents,
@@ -818,6 +885,9 @@ export class BotStats {
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
       activitylessCommandRatio,
+      moveRedirectRatio,
+      maxPathCommandRatio,
+      pathTruncationRatio,
       topPathRepetition,
       topActionLoopRepetition,
       topLifetimePathRepetition,
@@ -952,6 +1022,10 @@ interface BotRiskInput {
   sessionSkillingActions: number;
   sessionCombatSwings: number;
   sessionMovements: number;
+  sessionMoveCommands: number;
+  sessionMoveRedirects: number;
+  sessionMaxPathMoveCommands: number;
+  sessionPathTruncations: number;
   sessionActivityEvents: number;
   sessionDetailedActivityEvents: number;
   sessionLegacyActivityEvents: number;
@@ -975,6 +1049,9 @@ interface BotRiskInput {
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
   activitylessCommandRatio: number | null;
+  moveRedirectRatio: number | null;
+  maxPathCommandRatio: number | null;
+  pathTruncationRatio: number | null;
   reactionSamples: number;
   reactionMedianMs: number | null;
   topPathRepetition: number | null;
@@ -1041,6 +1118,18 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
   if (flagSet.has('noChat')) add(8, 'long active session with no chat');
   if (flagSet.has('pathRepetitive')) add(8, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
+  if (flagSet.has('noMoveRedirects')) add(
+    6,
+    `no mid-path redirects (${input.sessionMoveRedirects}/${input.sessionMoveCommands} move commands)`,
+  );
+  if (flagSet.has('maxPathCommandRatio')) add(
+    6,
+    `high max-length path command ratio (${ratioLabel(input.maxPathCommandRatio)})`,
+  );
+  if (flagSet.has('pathTruncationPattern')) add(
+    14,
+    `repeated path truncations (${input.sessionPathTruncations}/${input.sessionMoveCommands} move commands)`,
+  );
   if (flagSet.has('routeActionLoop')) add(10, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
   if (flagSet.has('lifetimePathConcentration')) add(
     input.topLifetimePathRepetition !== null && input.topLifetimePathRepetition >= 0.2 ? 14 : 8,
@@ -1077,6 +1166,9 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
   if (flagSet.has('activityRegular') && flagSet.has('routeActionLoop')) add(8, 'regular activity cadence during repeated route/action loop');
   if (flagSet.has('legacyActivityTelemetry') && flagSet.has('commandsWithoutRecentActivity')) add(6, 'legacy activity telemetry still missing near gameplay commands');
+  if (flagSet.has('noMoveRedirects') && flagSet.has('routeActionLoop')) add(6, 'uninterrupted movement during repeated route/action loop');
+  if (flagSet.has('maxPathCommandRatio') && flagSet.has('routeActionLoop')) add(4, 'max-length pathing during repeated route/action loop');
+  if (flagSet.has('pathTruncationPattern') && flagSet.has('routeActionLoop')) add(6, 'path truncation pattern during repeated route/action loop');
   if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');

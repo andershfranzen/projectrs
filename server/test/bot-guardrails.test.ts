@@ -115,6 +115,35 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).toContain('lifetimePathConcentration');
   });
 
+  test('movement command shape adds review context without convicting by itself', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 20 * 60_000;
+
+    for (let i = 0; i < 30; i++) {
+      const t = 10_000 + i * 20_000 + (i % 7) * 211;
+      stats.recordClientActivity(ClientActivityKind.Pointer, (i + 1) & 0x7fff, 450 + (i % 5) * 30, 520, t);
+      stats.recordCursorPosition(450 + (i % 5) * 30, 520, t + 25);
+      stats.recordMoveCommand(50, false);
+      if (i < 5) stats.recordPathTruncation();
+      stats.recordMovement(10 + i, 20);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionMoveCommands).toBe(30);
+    expect(summary.sessionMoveRedirects).toBe(0);
+    expect(summary.sessionMaxPathMoveCommands).toBe(30);
+    expect(summary.sessionPathTruncations).toBe(5);
+    expect(summary.moveRedirectRatio).toBe(0);
+    expect(summary.maxPathCommandRatio).toBe(1);
+    expect(summary.pathTruncationRatio).toBeCloseTo(5 / 30);
+    expect(summary.flags).toContain('noMoveRedirects');
+    expect(summary.flags).toContain('maxPathCommandRatio');
+    expect(summary.flags).toContain('pathTruncationPattern');
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
+  });
+
   test('risk profile escalates when multiple calibrated bot signals stack', () => {
     const stats = BotStats.empty();
     stats.onLogin({});

@@ -1022,6 +1022,7 @@ function handleDecryptedGameSocketMessage(
       const pathLength = values[0];
       if (!Number.isInteger(pathLength) || pathLength < 0 || pathLength > 50) return;
       if (values.length < 1 + pathLength * 2) return;
+      player.botStats?.recordMoveCommand(pathLength, player.hasMoveQueue());
       const path: { x: number; z: number }[] = [];
       for (let i = 0; i < pathLength && (1 + i * 2 + 1) < values.length; i++) {
         path.push({

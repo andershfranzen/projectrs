@@ -2405,6 +2405,7 @@ export class World {
     // produced exactly what was asked. Fire-and-forget — no server state.
     if (truncated && validPath.length < requestedTileCount && requestedTileCount > 0) {
       const last = validPath.length > 0 ? validPath[validPath.length - 1] : { x: player.position.x, z: player.position.y };
+      player.botStats?.recordPathTruncation();
       this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
       this.sendNearbyDoorUpdates(player);
     }
@@ -5711,6 +5712,7 @@ export class World {
           ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, player.effectiveY)
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
         if (wallBlocked) {
+          player.botStats?.recordPathTruncation();
           this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
           this.sendNearbyDoorUpdates(player);
           player.clearMoveQueue();
