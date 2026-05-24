@@ -74,10 +74,12 @@ export enum ClientOpcode {
    *  chat command. Values: none. */
   BANK_REQUEST_OPEN = 80,
   /** Deposit from inventory into bank. Values: [invSlot, expectedItemId, quantity].
-   *  quantity = -1 → deposit entire stack / all matching items. */
+   *  quantity = -1 → deposit entire stack / all matching items. X amounts above
+   *  int16 are encoded as [invSlot, expectedItemId, qtyHigh, qtyLow]. */
   BANK_DEPOSIT = 81,
   /** Withdraw from bank into inventory. Values: [bankSlot, expectedItemId, quantity].
-   *  quantity = -1 → withdraw entire stack. */
+   *  quantity = -1 → withdraw entire stack. X amounts above int16 are encoded
+   *  as [bankSlot, expectedItemId, qtyHigh, qtyLow]. */
   BANK_WITHDRAW = 82,
   /** Close the bank UI. */
   BANK_CLOSE = 83,
@@ -91,9 +93,11 @@ export enum ClientOpcode {
   /** Decline an incoming request or close an in-progress trade session. */
   TRADE_DECLINE = 92,
   /** Move items inventory → my-offer side. Values: [invSlot, expectedItemId, quantity].
-   *  quantity = -1 → whole stack. */
+   *  quantity = -1 → whole stack. X amounts above int16 are encoded as
+   *  [invSlot, expectedItemId, qtyHigh, qtyLow]. */
   TRADE_OFFER_ITEM = 93,
-  /** Move items my-offer → inventory. Values: [offerSlot, expectedItemId, quantity]. */
+  /** Move items my-offer → inventory. Values: [offerSlot, expectedItemId, quantity].
+   *  X amounts above int16 are encoded as [offerSlot, expectedItemId, qtyHigh, qtyLow]. */
   TRADE_REMOVE_OFFERED = 94,
   /** Press the Accept button at stage 1 (offer locked) or stage 2 (final commit).
    *  Server tracks the stage; client just sends "I accept". */
@@ -106,9 +110,11 @@ export enum ClientOpcode {
   /** Decline an incoming request or close an in-progress duel stake screen. */
   DUEL_DECLINE = 102,
   /** Move items inventory -> my stake side. Values: [invSlot, expectedItemId, quantity].
-   *  quantity = -1 -> whole stack. */
+   *  quantity = -1 -> whole stack. X amounts above int16 are encoded as
+   *  [invSlot, expectedItemId, qtyHigh, qtyLow]. */
   DUEL_STAKE_ITEM = 103,
-  /** Move items my-stake -> inventory. Values: [stakeSlot, expectedItemId, quantity]. */
+  /** Move items my-stake -> inventory. Values: [stakeSlot, expectedItemId, quantity].
+   *  X amounts above int16 are encoded as [stakeSlot, expectedItemId, qtyHigh, qtyLow]. */
   DUEL_REMOVE_STAKE = 104,
   /** Press Accept at stage 1 or final confirm. Server tracks the stage. */
   DUEL_ACCEPT = 105,

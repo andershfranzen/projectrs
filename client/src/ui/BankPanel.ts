@@ -1,8 +1,9 @@
-import { ClientOpcode, encodePacket, BANK_SIZE, INVENTORY_SIZE, type ItemDef } from '@projectrs/shared';
+import { ClientOpcode, encodePacket, encodeQuantityPacket, BANK_SIZE, INVENTORY_SIZE, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu, createContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
+import type { QuantityInputRequester } from './QuantityInputPanel';
 
 interface BankSlotData { itemId: number; quantity: number }
 type BankDragSource = 'bank' | 'inventory';
@@ -52,9 +53,11 @@ export class BankPanel {
   private visible: boolean = false;
   private touchDrag: BankTouchDragState | null = null;
   private suppressClickUntil: number = 0;
+  private requestQuantity: QuantityInputRequester | null;
 
-  constructor(network: NetworkManager) {
+  constructor(network: NetworkManager, hooks: { requestQuantity?: QuantityInputRequester } = {}) {
     this.network = network;
+    this.requestQuantity = hooks.requestQuantity ?? null;
     const built = this.buildUI();
     this.container = built.root;
     this.bankGridEl = built.bankGrid;
@@ -204,7 +207,7 @@ export class BankPanel {
     footer.style.cssText = `display: flex; align-items: center; gap: 8px; padding: 0 10px 8px;`;
     const hint = document.createElement('div');
     hint.className = 'bank-panel-hint';
-    hint.textContent = 'Left-click = 1 · Right-click = 5/10/All';
+    hint.textContent = 'Left-click = 1 · Right-click = 5/10/X/All';
     hint.style.cssText = `flex: 1; min-width: 0; font-size: 11px; color: #f4ded5; opacity: 0.82; text-shadow: ${BANK_TEXT_SHADOW};`;
     footer.appendChild(hint);
     const closeBtn = document.createElement('button');
@@ -395,9 +398,9 @@ export class BankPanel {
       event.stopPropagation();
       const target = this.dropTargetAt(event.clientX, event.clientY);
       if (drag.source === 'inventory' && target === 'bank' && this.invSlots[drag.slot]?.itemId === drag.itemId) {
-        this.network.sendRaw(encodePacket(ClientOpcode.BANK_DEPOSIT, drag.slot, drag.itemId, 1));
+        this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, drag.slot, drag.itemId, 1);
       } else if (drag.source === 'bank' && target === 'inventory' && this.bankSlots[drag.slot]?.itemId === drag.itemId) {
-        this.network.sendRaw(encodePacket(ClientOpcode.BANK_WITHDRAW, drag.slot, drag.itemId, 1));
+        this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, drag.slot, drag.itemId, 1);
       }
       this.suppressClickUntil = performance.now() + 350;
     }
@@ -491,7 +494,7 @@ export class BankPanel {
   private onBankClick(slot: number): void {
     const s = this.bankSlots[slot];
     if (!s) return;
-    this.network.sendRaw(encodePacket(ClientOpcode.BANK_WITHDRAW, slot, s.itemId, 1));
+    this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, slot, s.itemId, 1);
   }
   private onBankRightClick(slot: number, ev: MouseEvent): void {
     const s = this.bankSlots[slot];
@@ -500,13 +503,20 @@ export class BankPanel {
       { label: 'Withdraw 1', n: 1 },
       { label: 'Withdraw 5', n: 5 },
       { label: 'Withdraw 10', n: 10 },
+      { label: 'Withdraw X', n: 0 },
       { label: 'Withdraw All', n: -1 },
-    ], (n) => this.network.sendRaw(encodePacket(ClientOpcode.BANK_WITHDRAW, slot, s.itemId, n)));
+    ], (n) => {
+      if (n === 0) {
+        this.promptWithdrawQuantity(slot, s);
+        return;
+      }
+      this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, slot, s.itemId, n);
+    });
   }
   private onInvClick(slot: number): void {
     const s = this.invSlots[slot];
     if (!s) return;
-    this.network.sendRaw(encodePacket(ClientOpcode.BANK_DEPOSIT, slot, s.itemId, 1));
+    this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, slot, s.itemId, 1);
   }
   private onInvRightClick(slot: number, ev: MouseEvent): void {
     const s = this.invSlots[slot];
@@ -515,8 +525,63 @@ export class BankPanel {
       { label: 'Deposit 1', n: 1 },
       { label: 'Deposit 5', n: 5 },
       { label: 'Deposit 10', n: 10 },
+      { label: 'Deposit X', n: 0 },
       { label: 'Deposit All', n: -1 },
-    ], (n) => this.network.sendRaw(encodePacket(ClientOpcode.BANK_DEPOSIT, slot, s.itemId, n)));
+    ], (n) => {
+      if (n === 0) {
+        this.promptDepositQuantity(slot, s);
+        return;
+      }
+      this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, slot, s.itemId, n);
+    });
+  }
+
+  private sendBankQuantity(opcode: ClientOpcode, slot: number, itemId: number, quantity: number): void {
+    this.network.sendRaw(encodeQuantityPacket(opcode, slot, itemId, quantity));
+  }
+
+  private promptWithdrawQuantity(slot: number, original: BankSlotData): void {
+    if (!this.requestQuantity || original.quantity <= 0) return;
+    const name = this.itemName(original.itemId);
+    this.requestQuantity({
+      title: 'Withdraw X',
+      prompt: `How many ${name} do you want to withdraw?`,
+      max: original.quantity,
+      submitLabel: 'Withdraw',
+      onSubmit: (quantity) => {
+        const current = this.bankSlots[slot];
+        if (!this.visible || !current || current.itemId !== original.itemId) return;
+        this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, slot, original.itemId, quantity);
+      },
+    });
+  }
+
+  private promptDepositQuantity(slot: number, original: BankSlotData): void {
+    if (!this.requestQuantity) return;
+    const max = this.maxDepositable(original);
+    if (max <= 0) return;
+    const name = this.itemName(original.itemId);
+    this.requestQuantity({
+      title: 'Deposit X',
+      prompt: `How many ${name} do you want to deposit?`,
+      max,
+      submitLabel: 'Deposit',
+      onSubmit: (quantity) => {
+        const current = this.invSlots[slot];
+        if (!this.visible || !current || current.itemId !== original.itemId) return;
+        this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, slot, original.itemId, quantity);
+      },
+    });
+  }
+
+  private maxDepositable(original: BankSlotData): number {
+    const def = this.itemDefs.get(original.itemId);
+    if (def?.stackable) return original.quantity;
+    return this.invSlots.reduce((total, slot) => total + (slot?.itemId === original.itemId ? 1 : 0), 0);
+  }
+
+  private itemName(itemId: number): string {
+    return this.itemDefs.get(itemId)?.name ?? 'items';
   }
 
   private showQuantityMenu(ev: MouseEvent, opts: { label: string; n: number }[], cb: (n: number) => void): void {

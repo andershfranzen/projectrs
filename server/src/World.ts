@@ -5646,7 +5646,11 @@ export class World {
       this.lastBotStatsCheckpointTick = this.currentTick;
       for (const [, player] of this.players) {
         if (player.disconnected) continue;
-        player.botStats?.checkpoint(this.db, player.accountId);
+        if (player.botStats) {
+          const xpNow: Record<string, number> = {};
+          for (const skill of ALL_SKILLS) xpNow[skill] = player.skills[skill].xp;
+          player.botStats.checkpoint(this.db, player.accountId, xpNow);
+        }
       }
     }
 

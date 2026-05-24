@@ -24,6 +24,32 @@ export function encodePacket(opcode: number, ...values: number[]): Uint8Array {
   return _encU8.slice(0, len);
 }
 
+export function encodeQuantityPacket(opcode: number, slot: number, expectedItemId: number, quantity: number): Uint8Array {
+  if (quantity === -1 || (quantity >= -32768 && quantity <= 32767)) {
+    return encodePacket(opcode, slot, expectedItemId, quantity);
+  }
+  const normalized = Math.min(Math.max(Math.floor(quantity), 1), 0x7FFFFFFF);
+  return encodePacket(
+    opcode,
+    slot,
+    expectedItemId,
+    (normalized >>> 16) & 0x7FFF,
+    normalized & 0xFFFF,
+  );
+}
+
+export function decodeQuantityValues(values: number[], index: number = 2, fallback: number = 1): number {
+  if (values.length <= index) return fallback;
+  const first = values[index] ?? fallback;
+  if (first === -1) return -1;
+  if (values.length > index + 1) {
+    const high = first & 0xFFFF;
+    const low = values[index + 1] & 0xFFFF;
+    return Math.min((high * 0x10000) + low, 0x7FFFFFFF);
+  }
+  return first;
+}
+
 export function decodePacket(data: ArrayBuffer): { opcode: number; values: number[] } {
   if (data.byteLength < 1) throw new RangeError('packet too short');
   const view = new DataView(data);

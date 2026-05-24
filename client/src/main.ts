@@ -8,6 +8,9 @@ import { startupTrace } from './debug/StartupTrace';
 import { installSafeDynamicTextureUpdate } from './rendering/safeDynamicTexture';
 import type { GameManager as GameManagerType } from './managers/GameManager';
 
+const WEBGL_STARTUP_ERROR_PREFIX = 'USER_VISIBLE:';
+const WEBGL_STARTUP_MESSAGE = 'EvilQuest could not start WebGL on this device. Enable hardware acceleration, update your graphics drivers, then reload.';
+
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
 installGlobalScrollbars();
@@ -132,6 +135,53 @@ function loadGameModule(): Promise<typeof import('./managers/GameManager')> {
   return gameModulePromise;
 }
 
+function userVisibleStartupError(message: string): Error {
+  return new Error(`${WEBGL_STARTUP_ERROR_PREFIX}${message}`);
+}
+
+function isUserVisibleStartupError(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith(WEBGL_STARTUP_ERROR_PREFIX);
+}
+
+function releaseProbeContext(ctx: WebGLRenderingContext | WebGL2RenderingContext | null): void {
+  ctx?.getExtension('WEBGL_lose_context')?.loseContext();
+}
+
+function isLikelyWebGlStartupError(err: unknown): boolean {
+  const message = err instanceof Error ? `${err.name} ${err.message}` : String(err);
+  return /webgl|webgl2|graphics|gpu|failed to create engine|failed to create webgl context|exhausted gl driver|tryangle/i.test(message);
+}
+
+async function ensureWebGlAvailable(): Promise<void> {
+  if (typeof window.WebGLRenderingContext === 'undefined') {
+    throw userVisibleStartupError('Your browser or device does not appear to support WebGL. Enable hardware acceleration or try a current browser to play EvilQuest.');
+  }
+
+  const probeCanvas = document.createElement('canvas');
+  let ctx: WebGLRenderingContext | WebGL2RenderingContext | null = null;
+
+  try {
+    ctx = probeCanvas.getContext('webgl2', { failIfMajorPerformanceCaveat: false })
+      ?? probeCanvas.getContext('webgl', { failIfMajorPerformanceCaveat: false })
+      ?? (probeCanvas.getContext('experimental-webgl', { failIfMajorPerformanceCaveat: false }) as WebGLRenderingContext | null);
+  } catch {
+    throw userVisibleStartupError(WEBGL_STARTUP_MESSAGE);
+  } finally {
+    releaseProbeContext(ctx);
+  }
+
+  if (!ctx) throw userVisibleStartupError(WEBGL_STARTUP_MESSAGE);
+
+  try {
+    const { Engine } = await import('@babylonjs/core/Engines/engine');
+    if (!Engine.isSupported()) throw userVisibleStartupError(WEBGL_STARTUP_MESSAGE);
+  } catch (err) {
+    if (isUserVisibleStartupError(err)) throw err;
+    if (isLikelyWebGlStartupError(err)) throw userVisibleStartupError(WEBGL_STARTUP_MESSAGE);
+    console.warn('[bootstrap] Babylon WebGL support probe failed:', err);
+  }
+}
+
 function reportPrepProgress(pct: number, status: string): void {
   const clamped = Math.max(0, Math.min(1, pct));
   lastPrepProgress = { pct: Math.max(lastPrepProgress.pct, clamped), status };
@@ -165,6 +215,9 @@ function prepareGame(): Promise<GameManagerType> {
       Logger.LogLevels = Logger.ErrorLogLevel;
     }
 
+    reportPrepProgress(0.16, 'Checking graphics support');
+    await ensureWebGlAvailable();
+
     const { GameManager } = await loadGameModule();
     startupTrace.mark('game_module_loaded');
     reportPrepProgress(0.18, 'Preparing game engine');
@@ -175,7 +228,12 @@ function prepareGame(): Promise<GameManagerType> {
     gameFrame.style.visibility = 'hidden';
     void canvas.offsetWidth;
 
-    game = new GameManager(canvas, '', '', handleDisconnect);
+    try {
+      game = new GameManager(canvas, '', '', handleDisconnect);
+    } catch (err) {
+      if (isLikelyWebGlStartupError(err)) throw userVisibleStartupError(WEBGL_STARTUP_MESSAGE);
+      throw err;
+    }
     startupTrace.mark('game_manager_created');
     await game.whenPreloaded((pct, status) => {
       reportPrepProgress(0.18 + pct * 0.82, status);

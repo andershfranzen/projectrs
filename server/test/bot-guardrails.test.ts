@@ -151,16 +151,19 @@ describe('anti-bot guardrails', () => {
     for (let i = 0; i < 25; i++) {
       stats.recordSkillingRoll(1000, 1000 + i * 17);
     }
-    for (let i = 0; i < 6; i++) stats.recordInputlessCommand();
+    for (let i = 0; i < 6; i++) stats.recordGameplayCommandInputCheck(false);
 
     const summary = stats.computeSummary({});
     expect(summary.sessionActivityEvents).toBe(0);
     expect(summary.sessionCursorEvents).toBe(0);
     expect(summary.sessionInputlessCommands).toBe(6);
+    expect(summary.sessionGameplayCommands).toBe(6);
+    expect(summary.sessionCommandsWithoutRecentInput).toBe(6);
     expect(summary.flags).toContain('browserlessActiveGameplay');
     expect(summary.flags).toContain('noClientActivityTelemetry');
     expect(summary.flags).toContain('noCursorTelemetry');
     expect(summary.flags).toContain('inputlessCommandBurst');
+    expect(summary.flags).toContain('commandsWithoutRecentInput');
     expect(summary.riskScore).toBeGreaterThanOrEqual(60);
     expect(['high', 'critical']).toContain(summary.riskLevel);
   });
@@ -175,14 +178,37 @@ describe('anti-bot guardrails', () => {
     for (let i = 0; i < 25; i++) {
       stats.recordSkillingRoll(1000, 1000 + i * 17);
     }
-    for (let i = 0; i < 4; i++) stats.recordInputlessCommand();
+    for (let i = 0; i < 4; i++) stats.recordGameplayCommandInputCheck(true);
 
     const summary = stats.computeSummary({});
     expect(summary.flags).not.toContain('browserlessActiveGameplay');
     expect(summary.flags).not.toContain('noClientActivityTelemetry');
     expect(summary.flags).not.toContain('noCursorTelemetry');
     expect(summary.flags).not.toContain('inputlessCommandBurst');
+    expect(summary.flags).not.toContain('commandsWithoutRecentInput');
     expect(summary.riskLevel).toBe('low');
+  });
+
+  test('recent browser input is required for gameplay command telemetry', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 3 * 60_000;
+
+    expect(stats.hasRecentBrowserInput(10_000, 15_000)).toBe(false);
+    stats.recordClientActivity(10_000);
+    expect(stats.hasRecentBrowserInput(11_000, 15_000)).toBe(true);
+    expect(stats.hasRecentBrowserInput(30_500, 15_000)).toBe(false);
+
+    stats.recordGameplayCommandInputCheck(false);
+    stats.recordGameplayCommandInputCheck(false);
+    stats.recordGameplayCommandInputCheck(false);
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionGameplayCommands).toBe(3);
+    expect(summary.sessionCommandsWithoutRecentInput).toBe(3);
+    expect(summary.inputlessCommandRatio).toBe(1);
+    expect(summary.flags).toContain('commandsWithoutRecentInput');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
   });
 
   test('static cursor telemetry is flagged separately from missing telemetry', () => {
@@ -214,6 +240,27 @@ describe('anti-bot guardrails', () => {
       expect(JSON.parse(row?.risk_reasons ?? '[]')).toEqual(summary.riskReasons);
       expect(row?.total_suspicious_packets).toBe(5);
       expect(JSON.parse(row?.suspicious_packet_reasons ?? '{}')['malformed-frame']).toBe(5);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('checkpoint persists active-session risk before logout', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('active-risk', '11111111-1111-4111-8111-111111111111');
+      const stats = BotStats.empty();
+      stats.onLogin({});
+      stats.sessionStartedAt = Date.now() - 6 * 60_000;
+      for (let i = 0; i < 3; i++) stats.recordGameplayCommandInputCheck(false);
+
+      stats.checkpoint(db, session.accountId, {});
+      const row = db.loadBotStats(session.accountId);
+      const summary = JSON.parse(row?.last_session_summary ?? '{}') as { flags?: string[] };
+
+      expect(row?.risk_score).toBeGreaterThanOrEqual(30);
+      expect(row?.risk_level).toBe('medium');
+      expect(summary.flags).toContain('commandsWithoutRecentInput');
     } finally {
       db.close();
     }

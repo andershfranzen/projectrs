@@ -10,6 +10,7 @@ import { QuestJournalPopup } from './QuestJournalPopup';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { clampElementToRect, createContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
+import type { QuantityInputRequester } from './QuantityInputPanel';
 import {
   createIconTabButton,
   createPanelFrame,
@@ -88,6 +89,7 @@ export class SidePanel {
   // Optional trade callback (active when a trade window is open). While set,
   // inventory clicks offer items instead of performing equip/use/drop actions.
   private tradeOfferCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
+  private requestQuantity: QuantityInputRequester | null = null;
 
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
@@ -1681,6 +1683,10 @@ export class SidePanel {
         action: () => this.tradeOfferCallback!(index, slot.itemId, 10),
       });
       options.push({
+        label: `Offer-X ${name}`,
+        action: () => this.promptTradeOfferQuantity(index, slot.itemId, name),
+      });
+      options.push({
         label: `Offer-All ${name}`,
         action: () => this.tradeOfferCallback!(index, slot.itemId, -1),
       });
@@ -1722,6 +1728,31 @@ export class SidePanel {
     });
 
     return options;
+  }
+
+  private promptTradeOfferQuantity(index: number, itemId: number, name: string): void {
+    if (!this.requestQuantity) return;
+    const max = this.maxOfferableQuantity(index, itemId);
+    if (max <= 0) return;
+    this.requestQuantity({
+      title: 'Offer X',
+      prompt: `How many ${name} do you want to offer?`,
+      max,
+      submitLabel: 'Offer',
+      onSubmit: (quantity) => {
+        const current = this.invSlots[index];
+        if (!this.tradeOfferCallback || !current || current.itemId !== itemId) return;
+        this.tradeOfferCallback(index, itemId, quantity);
+      },
+    });
+  }
+
+  private maxOfferableQuantity(index: number, itemId: number): number {
+    const clicked = this.invSlots[index];
+    if (!clicked) return 0;
+    const def = this.itemDefs.get(itemId);
+    if (def?.stackable) return clicked.quantity;
+    return this.invSlots.reduce((total, slot) => total + (slot?.itemId === itemId ? 1 : 0), 0);
   }
 
   setUsingInvItem(index: number, itemId: number): void {
@@ -1874,6 +1905,10 @@ export class SidePanel {
     this.tradeOfferCallback = cb;
     this.container.classList.toggle('trade-offer-active', cb !== null);
     if (cb && this.using) this.clearUsingInvItem();
+  }
+
+  setQuantityInputRequester(cb: QuantityInputRequester | null): void {
+    this.requestQuantity = cb;
   }
 
   /** Get the item ID in a given equipment slot (0 = empty) */

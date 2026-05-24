@@ -8,6 +8,7 @@ import {
   DUEL_STAKE_SIZE,
   PROTOCOL_VERSION,
   decodePacket,
+  decodeQuantityValues,
   encodePacket,
   decodeStringPacket,
   encodeStringPacket,
@@ -87,6 +88,8 @@ interface PacketValidationResult {
 const EQUIP_SLOT_COUNT = 10;
 const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
+const BROWSER_INPUT_MAX_AGE_MS = 15_000;
+const BLOCK_INPUTLESS_GAMEPLAY = process.env.BLOCK_INPUTLESS_GAMEPLAY !== '0';
 
 function savedFloorMatchesReportedY(
   map: { getWalkableFloorTargetsAt?: (x: number, z: number) => Array<{ floor: number; y: number }> },
@@ -940,13 +943,16 @@ function handleDecryptedGameSocketMessage(
     reportSuspiciousPacket(player, opcode, validation.reason ?? 'invalid-packet', values, ws, world);
     return;
   }
-  if (opcodeCountsAsActivity(opcode)) world.recordPlayerActivity(playerId);
-  if (opcodeRequiresBrowserInputTelemetry(opcode)
-      && player.botStats
-      && player.botStats.sessionActivityEvents === 0
-      && player.botStats.sessionCursorEvents === 0) {
-    player.botStats.recordInputlessCommand();
+  if (opcodeRequiresBrowserInputTelemetry(opcode) && player.botStats) {
+    const now = performance.now();
+    const hasRecentInput = player.botStats.hasRecentBrowserInput(now, BROWSER_INPUT_MAX_AGE_MS);
+    player.botStats.recordGameplayCommandInputCheck(hasRecentInput);
+    if (!hasRecentInput && BLOCK_INPUTLESS_GAMEPLAY) {
+      reportSuspiciousPacket(player, opcode, 'missing-input-telemetry', values, ws, world);
+      return;
+    }
   }
+  if (opcodeCountsAsActivity(opcode)) world.recordPlayerActivity(playerId);
 
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE: {
@@ -1166,7 +1172,7 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
-      const quantity = values[2] ?? 1;
+      const quantity = decodeQuantityValues(values, 2, 1);
       world.handleBankDeposit(playerId, slot, expectedItemId, quantity);
       break;
     }
@@ -1174,7 +1180,7 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 2)) return;
       const bankSlot = values[0];
       const expectedItemId = values[1];
-      const quantity = values[2] ?? 1;
+      const quantity = decodeQuantityValues(values, 2, 1);
       world.handleBankWithdraw(playerId, bankSlot, expectedItemId, quantity);
       break;
     }
@@ -1203,7 +1209,7 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
-      const quantity = values[2] ?? 1;
+      const quantity = decodeQuantityValues(values, 2, 1);
       world.handleTradeOfferItem(playerId, slot, expectedItemId, quantity);
       break;
     }
@@ -1211,7 +1217,7 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 2)) return;
       const offerSlot = values[0];
       const expectedItemId = values[1];
-      const quantity = values[2] ?? 1;
+      const quantity = decodeQuantityValues(values, 2, 1);
       world.handleTradeRemoveOffered(playerId, offerSlot, expectedItemId, quantity);
       break;
     }
@@ -1238,7 +1244,7 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 2)) return;
       const slot = values[0];
       const expectedItemId = values[1];
-      const quantity = values[2] ?? 1;
+      const quantity = decodeQuantityValues(values, 2, 1);
       world.handleDuelStakeItem(playerId, slot, expectedItemId, quantity);
       break;
     }
@@ -1246,7 +1252,7 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 2)) return;
       const stakeSlot = values[0];
       const expectedItemId = values[1];
-      const quantity = values[2] ?? 1;
+      const quantity = decodeQuantityValues(values, 2, 1);
       world.handleDuelRemoveStake(playerId, stakeSlot, expectedItemId, quantity);
       break;
     }

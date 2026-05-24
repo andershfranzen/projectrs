@@ -1,4 +1,4 @@
-import { ClientOpcode, DUEL_STAKE_SIZE, INVENTORY_SIZE, encodePacket, type ItemDef } from '@projectrs/shared';
+import { ClientOpcode, DUEL_STAKE_SIZE, INVENTORY_SIZE, encodePacket, encodeQuantityPacket, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu, createContextMenu } from './popupStyle';
@@ -120,13 +120,13 @@ export class DuelPanel {
   offerInventorySlot(slot: number, quantity: number): void {
     const s = this.invSlots[slot];
     if (!s) return;
-    this.network.sendRaw(encodePacket(ClientOpcode.DUEL_STAKE_ITEM, slot, s.itemId, quantity));
+    this.network.sendRaw(encodeQuantityPacket(ClientOpcode.DUEL_STAKE_ITEM, slot, s.itemId, quantity));
   }
 
   private removeStakeSlot(slot: number, quantity: number): void {
     const s = this.myStake[slot];
     if (!s) return;
-    this.network.sendRaw(encodePacket(ClientOpcode.DUEL_REMOVE_STAKE, slot, s.itemId, quantity));
+    this.network.sendRaw(encodeQuantityPacket(ClientOpcode.DUEL_REMOVE_STAKE, slot, s.itemId, quantity));
   }
 
   private buildUI(): HTMLDivElement {

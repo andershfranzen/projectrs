@@ -44,6 +44,7 @@ import { DialoguePanel, type DialogueNodePayload } from '../ui/DialoguePanel';
 import { BankPanel } from '../ui/BankPanel';
 import { TradePanel } from '../ui/TradePanel';
 import { DuelPanel } from '../ui/DuelPanel';
+import { QuantityInputPanel, type QuantityInputRequest } from '../ui/QuantityInputPanel';
 import { AdminPanel } from '../ui/AdminPanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
@@ -410,6 +411,7 @@ export class GameManager {
   private boneDebugPanel: BoneDebugPanel | null = null;
   private shopPanel: ShopPanel | null = null;
   private dialoguePanel: DialoguePanel | null = null;
+  private quantityInputPanel: QuantityInputPanel | null = null;
   private smithingPanel: SmithingPanel | null = null;
   private bankPanel: BankPanel | null = null;
   private tradePanel: TradePanel | null = null;
@@ -620,6 +622,9 @@ export class GameManager {
         this.network.sendChat(msg);
       }
     });
+    this.quantityInputPanel = new QuantityInputPanel();
+    const requestQuantity = (request: QuantityInputRequest) => this.quantityInputPanel?.show(request);
+    this.sidePanel.setQuantityInputRequester(requestQuantity);
     this.shopPanel = new ShopPanel(this.network, this.itemDefsCache);
     this.shopPanel.setOnClose(() => {
       this.sidePanel?.setSellCallback(null);
@@ -630,9 +635,10 @@ export class GameManager {
       showPlayerBubble: (message) => this.showLocalDialogueBubble(message),
     });
     this.smithingPanel = new SmithingPanel();
-    this.bankPanel = new BankPanel(this.network);
+    this.bankPanel = new BankPanel(this.network, { requestQuantity });
     this.tradePanel = new TradePanel(this.network, {
       onClose: () => this.sidePanel?.setTradeOfferCallback(null),
+      requestQuantity,
     });
     this.duelPanel = new DuelPanel(this.network, {
       onClose: () => this.sidePanel?.setTradeOfferCallback(null),

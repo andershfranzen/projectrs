@@ -1,8 +1,9 @@
-import { ClientOpcode, encodePacket, INVENTORY_SIZE, TRADE_OFFER_SIZE, type ItemDef } from '@projectrs/shared';
+import { ClientOpcode, encodePacket, encodeQuantityPacket, INVENTORY_SIZE, TRADE_OFFER_SIZE, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu, createContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
+import type { QuantityInputRequester } from './QuantityInputPanel';
 
 interface OfferSlotData { itemId: number; quantity: number }
 
@@ -43,13 +44,15 @@ export class TradePanel {
   private previewMode = false;
   private previewMyStage = 0;
   private previewTheirStage = 0;
+  private requestQuantity: QuantityInputRequester | null;
 
   // Incoming-request popup is a separate small floating element.
   private requestPopup: HTMLDivElement | null = null;
 
-  constructor(network: NetworkManager, hooks: { onClose?: () => void } = {}) {
+  constructor(network: NetworkManager, hooks: { onClose?: () => void; requestQuantity?: QuantityInputRequester } = {}) {
     this.network = network;
     this.onClose = hooks.onClose ?? null;
+    this.requestQuantity = hooks.requestQuantity ?? null;
     this.container = this.buildUI();
     (document.getElementById('game-frame') ?? document.body).appendChild(this.container);
 
@@ -243,8 +246,15 @@ export class TradePanel {
         { label: 'Remove 1', n: 1 },
         { label: 'Remove 5', n: 5 },
         { label: 'Remove 10', n: 10 },
+        { label: 'Remove X', n: 0 },
         { label: 'Remove All', n: -1 },
-      ], (n) => this.removeOfferSlot(slot, n));
+      ], (n) => {
+        if (n === 0) {
+          this.promptRemoveQuantity(slot, s);
+          return;
+        }
+        this.removeOfferSlot(slot, n);
+      });
     }, this.myOfferEls);
     myWrap.appendChild(myGrid);
     offersRow.appendChild(myWrap);
@@ -396,7 +406,7 @@ export class TradePanel {
       this.addPreviewOfferFromInventory(slot, quantity);
       return;
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.TRADE_OFFER_ITEM, slot, s.itemId, quantity));
+    this.network.sendRaw(encodeQuantityPacket(ClientOpcode.TRADE_OFFER_ITEM, slot, s.itemId, quantity));
   }
 
   private removeOfferSlot(slot: number, quantity: number): void {
@@ -406,7 +416,23 @@ export class TradePanel {
       this.removePreviewOffer(slot, quantity);
       return;
     }
-    this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REMOVE_OFFERED, slot, s.itemId, quantity));
+    this.network.sendRaw(encodeQuantityPacket(ClientOpcode.TRADE_REMOVE_OFFERED, slot, s.itemId, quantity));
+  }
+
+  private promptRemoveQuantity(slot: number, original: OfferSlotData): void {
+    if (!this.requestQuantity || original.quantity <= 0) return;
+    const name = this.itemDefs.get(original.itemId)?.name ?? 'items';
+    this.requestQuantity({
+      title: 'Remove X',
+      prompt: `How many ${name} do you want to remove?`,
+      max: original.quantity,
+      submitLabel: 'Remove',
+      onSubmit: (quantity) => {
+        const current = this.myOffer[slot];
+        if (!this.visible || !current || current.itemId !== original.itemId) return;
+        this.removeOfferSlot(slot, quantity);
+      },
+    });
   }
 
   private addPreviewOfferFromInventory(slot: number, quantity: number): void {

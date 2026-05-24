@@ -81,6 +81,8 @@ export interface SessionSummary {
   sessionActivityEvents: number;
   sessionCursorEvents: number;
   sessionInputlessCommands: number;
+  sessionGameplayCommands: number;
+  sessionCommandsWithoutRecentInput: number;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketReasons: Record<string, number>;
@@ -92,6 +94,7 @@ export interface SessionSummary {
   pingIntervalStdDevMs: number | null;
   pingIntervalMedianMs: number | null;
   heartbeatActivityCouplingRatio: number | null;
+  inputlessCommandRatio: number | null;
   topPathRepetition: number | null;
   topActionLoopRepetition: number | null;
   topLifetimePathRepetition: number | null;
@@ -165,6 +168,8 @@ export class BotStats {
   sessionActivityEvents: number = 0;
   sessionCursorEvents: number = 0;
   sessionInputlessCommands: number = 0;
+  sessionGameplayCommands: number = 0;
+  sessionCommandsWithoutRecentInput: number = 0;
   sessionSuspiciousPackets: number = 0;
   sessionActionSignatures: Map<string, number> = new Map();
   sessionSuspiciousPacketReasons: Map<string, number> = new Map();
@@ -175,6 +180,7 @@ export class BotStats {
   private lastPingSeq: number | null = null;
   private pingSeqResets: number = 0;
   private lastActivityAt: number | null = null;
+  private lastCursorAt: number | null = null;
   private lastCoupledActivityAt: number | null = null;
   private activityHeartbeatCoupledEvents: number = 0;
   /** When the last NPC died near this player — feeds the next attack's
@@ -278,6 +284,8 @@ export class BotStats {
     this.sessionActivityEvents = 0;
     this.sessionCursorEvents = 0;
     this.sessionInputlessCommands = 0;
+    this.sessionGameplayCommands = 0;
+    this.sessionCommandsWithoutRecentInput = 0;
     this.sessionSuspiciousPackets = 0;
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
@@ -288,6 +296,7 @@ export class BotStats {
     this.lastPingSeq = null;
     this.pingSeqResets = 0;
     this.lastActivityAt = null;
+    this.lastCursorAt = null;
     this.lastCoupledActivityAt = null;
     this.activityHeartbeatCoupledEvents = 0;
     this.pendingReactionStart = null;
@@ -405,8 +414,9 @@ export class BotStats {
     }
   }
 
-  recordCursorPosition(xPermille: number, yPermille: number): void {
+  recordCursorPosition(xPermille: number, yPermille: number, now: number = performance.now()): void {
     this.sessionCursorEvents++;
+    this.lastCursorAt = now;
     const x = Math.max(0, Math.min(1000, Math.floor(xPermille)));
     const y = Math.max(0, Math.min(1000, Math.floor(yPermille)));
     this.bumpCappedMap(this.cursorCells, `${Math.floor(x / 100)},${Math.floor(y / 100)}`, MAX_CURSOR_CELLS);
@@ -414,6 +424,19 @@ export class BotStats {
 
   recordInputlessCommand(): void {
     this.sessionInputlessCommands++;
+  }
+
+  hasRecentBrowserInput(now: number = performance.now(), maxAgeMs: number = 15_000): boolean {
+    return (this.lastActivityAt !== null && now - this.lastActivityAt >= 0 && now - this.lastActivityAt <= maxAgeMs)
+      || (this.lastCursorAt !== null && now - this.lastCursorAt >= 0 && now - this.lastCursorAt <= maxAgeMs);
+  }
+
+  recordGameplayCommandInputCheck(hadRecentInput: boolean): void {
+    this.sessionGameplayCommands++;
+    if (!hadRecentInput) {
+      this.sessionCommandsWithoutRecentInput++;
+      this.recordInputlessCommand();
+    }
   }
 
   recordSuspiciousPacket(reason: string = 'unknown'): void {
@@ -465,6 +488,9 @@ export class BotStats {
     const totalSuspiciousPacketClasses = classifyReasonCounts(this.suspiciousPacketReasons);
     const heartbeatActivityCouplingRatio = this.sessionActivityEvents > 0
       ? this.activityHeartbeatCoupledEvents / this.sessionActivityEvents
+      : null;
+    const inputlessCommandRatio = this.sessionGameplayCommands > 0
+      ? this.sessionCommandsWithoutRecentInput / this.sessionGameplayCommands
       : null;
     const deviceIdsSeen = this.deviceIds.size;
     const deviceLogins = [...this.deviceIds.values()].reduce((a, b) => a + b, 0);
@@ -567,6 +593,16 @@ export class BotStats {
     if (this.sessionInputlessCommands >= 5) {
       flags.push('inputlessCommandBurst');
     }
+    if (this.sessionCommandsWithoutRecentInput >= 3) {
+      flags.push('commandsWithoutRecentInput');
+    }
+    if (
+      this.sessionGameplayCommands >= 10
+      && inputlessCommandRatio !== null
+      && inputlessCommandRatio >= 0.5
+    ) {
+      flags.push('inputlessCommandRatio');
+    }
     if (this.sessionCursorEvents >= 20 && topCursorCellRepetition !== null && topCursorCellRepetition > 0.95) {
       flags.push('cursorStatic');
     }
@@ -599,6 +635,8 @@ export class BotStats {
       sessionActivityEvents: this.sessionActivityEvents,
       sessionCursorEvents: this.sessionCursorEvents,
       sessionInputlessCommands: this.sessionInputlessCommands,
+      sessionGameplayCommands: this.sessionGameplayCommands,
+      sessionCommandsWithoutRecentInput: this.sessionCommandsWithoutRecentInput,
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
@@ -613,6 +651,7 @@ export class BotStats {
       pingIntervalStdDevMs,
       pingSeqResets: this.pingSeqResets,
       heartbeatActivityCouplingRatio,
+      inputlessCommandRatio,
       reactionSamples: this.reactionSamples.length,
       reactionMedianMs,
       topPathRepetition,
@@ -641,6 +680,8 @@ export class BotStats {
       sessionActivityEvents: this.sessionActivityEvents,
       sessionCursorEvents: this.sessionCursorEvents,
       sessionInputlessCommands: this.sessionInputlessCommands,
+      sessionGameplayCommands: this.sessionGameplayCommands,
+      sessionCommandsWithoutRecentInput: this.sessionCommandsWithoutRecentInput,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketReasons,
@@ -652,6 +693,7 @@ export class BotStats {
       pingIntervalStdDevMs,
       pingIntervalMedianMs,
       heartbeatActivityCouplingRatio,
+      inputlessCommandRatio,
       topPathRepetition,
       topActionLoopRepetition,
       topLifetimePathRepetition,
@@ -673,11 +715,18 @@ export class BotStats {
     };
   }
 
-  /** Periodic checkpoint: write current state to DB without ending the
-   *  session. Lets us survive a server crash mid-grind. Does NOT emit
-   *  audit log (that's only on finalize). */
-  checkpoint(db: GameDatabase, accountId: number): void {
-    db.saveBotStats(accountId, this.toRow());
+  /** Periodic checkpoint: recompute review risk and write current state to DB
+   *  without ending the session. Lets us surface active bots before logout
+   *  while keeping audit/session-history writes reserved for finalize(). */
+  checkpoint(db: GameDatabase, accountId: number, currentXp: Record<string, number> = {}): void {
+    const summary = this.computeSummary(currentXp);
+    this.riskScore = summary.riskScore;
+    this.riskLevel = summary.riskLevel;
+    this.riskReasons = summary.riskReasons;
+    if (isMeaningfulSession(summary)) {
+      this.lastSessionSummary = summary;
+    }
+    db.saveBotStats(accountId, this.toRow(this.lastSessionSummary));
   }
 
   /** Session end (logout, or 30-min auto-checkpoint with reset). Computes
@@ -782,6 +831,8 @@ interface BotRiskInput {
   sessionActivityEvents: number;
   sessionCursorEvents: number;
   sessionInputlessCommands: number;
+  sessionGameplayCommands: number;
+  sessionCommandsWithoutRecentInput: number;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketClasses: SuspiciousPacketClassCounts;
@@ -793,6 +844,7 @@ interface BotRiskInput {
   pingIntervalStdDevMs: number | null;
   pingSeqResets: number;
   heartbeatActivityCouplingRatio: number | null;
+  inputlessCommandRatio: number | null;
   reactionSamples: number;
   reactionMedianMs: number | null;
   topPathRepetition: number | null;
@@ -833,6 +885,14 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     `active gameplay without browser input telemetry (${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions)`,
   );
   if (flagSet.has('inputlessCommandBurst')) add(28, `gameplay commands before browser input telemetry (${input.sessionInputlessCommands})`);
+  if (flagSet.has('commandsWithoutRecentInput')) add(
+    34,
+    `gameplay commands without recent browser input (${input.sessionCommandsWithoutRecentInput}/${input.sessionGameplayCommands})`,
+  );
+  if (flagSet.has('inputlessCommandRatio')) add(
+    18,
+    `high no-input gameplay command ratio (${ratioLabel(input.inputlessCommandRatio)})`,
+  );
   if (flagSet.has('noClientActivityTelemetry')) add(12, 'active session without client activity telemetry');
   if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
   if (flagSet.has('noChat')) add(8, 'long active session with no chat');
@@ -874,6 +934,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(8, 'repeated route/action loop without cursor input');
+  if (flagSet.has('commandsWithoutRecentInput') && flagSet.has('browserlessActiveGameplay')) add(8, 'raw socket commands during browserless gameplay');
   if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
 
   if (input.sessionMinutes >= 240 && input.sessionChats === 0 && input.sessionMovements >= 100) {

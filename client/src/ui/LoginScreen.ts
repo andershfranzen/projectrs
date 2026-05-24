@@ -306,13 +306,23 @@ export class LoginScreen {
         this.showError(data.error || 'Unknown error');
       }
     } catch (err) {
-      this.showError('Connection failed — is the server running?');
+      this.showError(this.formatSubmitError(err));
     } finally {
       if (btn && this.container.isConnected) {
         btn.textContent = this.activeMode === 'login' ? 'Login' : 'Sign Up';
         btn.disabled = false;
       }
     }
+  }
+
+  private formatSubmitError(err: unknown): string {
+    const message = err instanceof Error ? err.message : String(err ?? '');
+    const userVisiblePrefix = 'USER_VISIBLE:';
+    if (message.startsWith(userVisiblePrefix)) return message.slice(userVisiblePrefix.length);
+    if (/webgl|webgl2|graphics|gpu|failed to create engine|failed to create webgl context|exhausted gl driver|tryangle/i.test(message)) {
+      return 'EvilQuest could not start WebGL on this device. Enable hardware acceleration, update your graphics drivers, then reload.';
+    }
+    return 'Connection failed — is the server running?';
   }
 
   private showError(message: string): void {
