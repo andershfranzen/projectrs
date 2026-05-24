@@ -54,7 +54,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -7154,11 +7154,22 @@ export class GameManager {
 
   private setupActivityTracking(): void {
     const handler = (event?: Event) => {
-      this.network.sendActivity();
       if (event instanceof PointerEvent) {
+        this.network.sendActivity(ClientActivityKind.Pointer, event.clientX, event.clientY);
         // CLIENT_ACTIVITY records the click itself; cursor telemetry stays
         // low-rate so rapid UI clicking cannot trip server packet guardrails.
         this.network.sendCursorPosition(event.clientX, event.clientY);
+      } else if (event instanceof KeyboardEvent) {
+        this.network.sendActivity(ClientActivityKind.Keyboard);
+      } else if (typeof TouchEvent !== 'undefined' && event instanceof TouchEvent) {
+        const touch = event.changedTouches[0] ?? event.touches[0];
+        this.network.sendActivity(
+          ClientActivityKind.Touch,
+          touch?.clientX,
+          touch?.clientY,
+        );
+      } else {
+        this.network.sendActivity();
       }
     };
     const cursorHandler = (event: PointerEvent) => {

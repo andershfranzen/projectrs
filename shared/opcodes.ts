@@ -124,12 +124,22 @@ export enum ClientOpcode {
   CLIENT_PING = 120,
   /** Explicit user activity marker. Sent by the client for UI interactions
    *  that do not otherwise produce a gameplay packet; unlike CLIENT_PING,
-   *  this resets the server-side AFK timer. */
+   *  this resets the server-side AFK timer.
+   *  Legacy layout: [].
+   *  Current layout: [kind, seq, xPermille, yPermille], where x/y are -1
+   *  for keyboard events. */
   CLIENT_ACTIVITY = 121,
   /** Low-rate cursor telemetry. Values: [xPermille, yPermille] where each
    *  coordinate is normalized to the viewport (0..1000). Used only for
    *  server-side bot review signals; it does not reset AFK state. */
   CURSOR_POSITION = 122,
+}
+
+export enum ClientActivityKind {
+  Legacy = 0,
+  Pointer = 1,
+  Keyboard = 2,
+  Touch = 3,
 }
 
 // Server → Client opcodes

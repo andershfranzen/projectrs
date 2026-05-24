@@ -1,5 +1,6 @@
 import {
   BANK_SIZE,
+  ClientActivityKind,
   ClientOpcode,
   HAIR_STYLE_COUNT,
   INVENTORY_SIZE,
@@ -216,6 +217,26 @@ function hasValues(values: number[], count: number): boolean {
     if (!Number.isFinite(values[i])) return false;
   }
   return true;
+}
+
+function validateClientActivityValues(values: number[]): PacketValidationResult {
+  if (values.length === 0) return OK_PACKET;
+  if (values.length !== 4 || !hasValues(values, 4)) return invalid('bad-client-activity-shape');
+  const [kind, seq, x, y] = values;
+  if (
+    kind !== ClientActivityKind.Pointer
+    && kind !== ClientActivityKind.Keyboard
+    && kind !== ClientActivityKind.Touch
+  ) return invalid('bad-client-activity-kind');
+  if (!Number.isInteger(seq) || seq < 0 || seq > 0x7fff) return invalid('bad-client-activity-seq');
+  if (kind === ClientActivityKind.Keyboard) {
+    if (x !== -1 || y !== -1) return invalid('bad-client-activity-coords');
+    return OK_PACKET;
+  }
+  if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || x > 1000 || y < 0 || y > 1000) {
+    return invalid('bad-client-activity-coords');
+  }
+  return OK_PACKET;
 }
 
 function isSlot(slot: number, size: number): boolean {
@@ -664,10 +685,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     }
 
     case ClientOpcode.CLIENT_PING:
-    case ClientOpcode.CLIENT_ACTIVITY:
     case ClientOpcode.CURSOR_POSITION:
     case ClientOpcode.MAP_READY:
       return OK_PACKET;
+
+    case ClientOpcode.CLIENT_ACTIVITY:
+      return validateClientActivityValues(values);
 
     default:
       return invalid('unknown-opcode');
@@ -1310,7 +1333,11 @@ function handleDecryptedGameSocketMessage(
     }
 
     case ClientOpcode.CLIENT_ACTIVITY: {
-      player.botStats?.recordClientActivity();
+      if (values.length === 0) {
+        player.botStats?.recordClientActivity();
+      } else {
+        player.botStats?.recordClientActivity(values[0] as ClientActivityKind, values[1], values[2], values[3]);
+      }
       break;
     }
 

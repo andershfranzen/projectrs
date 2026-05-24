@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { Database as SQLiteDB } from 'bun:sqlite';
-import { ClientOpcode } from '@projectrs/shared';
+import { ClientActivityKind, ClientOpcode } from '@projectrs/shared';
 import { BotStats } from '../src/BotStats';
 import { GameDatabase } from '../src/Database';
 import { Player } from '../src/entity/Player';
@@ -219,6 +219,48 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).toContain('activityHeartbeatCoupled');
   });
 
+  test('periodic spoofed activity cadence stacks with route loops for review', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 20 * 60_000;
+
+    for (let i = 0; i < 30; i++) {
+      const t = 10_000 + i * 5000;
+      stats.recordClientActivity(ClientActivityKind.Pointer, (i + 1) & 0x7fff, 450, 520, t);
+      stats.recordCursorPosition(450 + (i % 4) * 20, 520 + (i % 3) * 20, t + 10);
+      stats.recordMovement(42.5, 17.5);
+      stats.recordActionSignature('object', 123, 42.5, 17.5, 'Chop');
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionDetailedActivityEvents).toBe(30);
+    expect(summary.activityIntervalStdDevMs).toBe(0);
+    expect(summary.flags).toContain('activityRegular');
+    expect(summary.flags).toContain('routeActionLoop');
+    expect(summary.flags).not.toContain('legacyActivityTelemetry');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
+    expect(summary.riskLevel).toBe('medium');
+  });
+
+  test('legacy activity packets are diagnostic but do not convict normal users alone', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 20 * 60_000;
+
+    for (let i = 0; i < 50; i++) {
+      if (i < 10) stats.recordClientActivity(10_000 + i * 21_000);
+      stats.recordMovement(20 + i, 30);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionActivityEvents).toBe(10);
+    expect(summary.sessionDetailedActivityEvents).toBe(0);
+    expect(summary.sessionLegacyActivityEvents).toBe(10);
+    expect(summary.flags).toContain('legacyActivityTelemetry');
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
+  });
+
   test('active sessions without cursor telemetry are flagged for review', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
@@ -264,7 +306,7 @@ describe('anti-bot guardrails', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     stats.sessionStartedAt = Date.now() - 6 * 60_000;
-    stats.recordClientActivity(1000);
+    stats.recordClientActivity(ClientActivityKind.Pointer, 1, 450, 520, 1000);
     stats.recordCursorPosition(450, 520);
 
     for (let i = 0; i < 25; i++) {
@@ -312,7 +354,7 @@ describe('anti-bot guardrails', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     stats.sessionStartedAt = Date.now() - 20 * 60_000;
-    stats.recordClientActivity(1000);
+    stats.recordClientActivity(ClientActivityKind.Keyboard, 1, -1, -1, 1000);
 
     for (let i = 0; i < 40; i++) {
       stats.recordSkillingRoll(1000, 1000);
@@ -335,8 +377,14 @@ describe('anti-bot guardrails', () => {
     stats.sessionStartedAt = Date.now() - 3 * 60 * 60_000;
 
     for (let i = 0; i < 180; i++) {
-      const t = 10_000 + i * 30_000;
-      stats.recordClientActivity(t);
+      const t = 10_000 + i * 30_000 + (i % 7) * 137;
+      stats.recordClientActivity(
+        ClientActivityKind.Pointer,
+        (i + 1) & 0x7fff,
+        120 + (i % 8) * 95,
+        180 + (i % 5) * 120,
+        t,
+      );
       stats.recordCursorPosition(120 + (i % 8) * 95, 180 + (i % 5) * 120, t + 50);
       stats.recordSkillingRoll(1000, 1000);
       stats.recordMovement(42.5, 17.5);
@@ -352,6 +400,8 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).not.toContain('noClientActivityTelemetry');
     expect(summary.flags).not.toContain('noCursorTelemetry');
     expect(summary.flags).not.toContain('commandsWithoutRecentActivity');
+    expect(summary.flags).not.toContain('activityRegular');
+    expect(summary.flags).not.toContain('legacyActivityTelemetry');
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -362,7 +412,7 @@ describe('anti-bot guardrails', () => {
     stats.sessionStartedAt = Date.now() - 3 * 60_000;
 
     expect(stats.hasRecentBrowserInput(10_000, 15_000)).toBe(false);
-    stats.recordClientActivity(10_000);
+    stats.recordClientActivity(ClientActivityKind.Pointer, 1, 450, 520, 10_000);
     expect(stats.hasRecentBrowserInput(11_000, 15_000)).toBe(true);
     expect(stats.hasRecentClientActivity(11_000, 15_000)).toBe(true);
     expect(stats.hasRecentBrowserInput(30_500, 15_000)).toBe(false);

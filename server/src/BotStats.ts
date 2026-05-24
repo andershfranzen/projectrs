@@ -1,6 +1,6 @@
 import type { BotStatsRow, GameDatabase } from './Database';
 import { audit } from './Audit';
-import { TICK_RATE } from '@projectrs/shared';
+import { ClientActivityKind, TICK_RATE } from '@projectrs/shared';
 import type { SkillId } from '@projectrs/shared';
 
 /**
@@ -32,6 +32,7 @@ import type { SkillId } from '@projectrs/shared';
 const MAX_TICK_ALIGN_SAMPLES = 100;
 const MAX_REACTION_SAMPLES = 50;
 const MAX_PING_INTERVAL_SAMPLES = 100;
+const MAX_ACTIVITY_INTERVAL_SAMPLES = 100;
 const MAX_PATH_DESTINATIONS = 100;
 const MAX_ACTION_SIGNATURES = 100;
 const MAX_CURSOR_CELLS = 64;
@@ -82,6 +83,11 @@ export interface SessionSummary {
   sessionMovements: number;
   sessionChats: number;
   sessionActivityEvents: number;
+  sessionDetailedActivityEvents: number;
+  sessionPointerActivityEvents: number;
+  sessionKeyboardActivityEvents: number;
+  sessionTouchActivityEvents: number;
+  sessionLegacyActivityEvents: number;
   sessionCursorEvents: number;
   sessionInputlessCommands: number;
   sessionGameplayCommands: number;
@@ -97,6 +103,9 @@ export interface SessionSummary {
   reactionMedianMs: number | null;
   pingIntervalStdDevMs: number | null;
   pingIntervalMedianMs: number | null;
+  activityIntervalStdDevMs: number | null;
+  activityIntervalMedianMs: number | null;
+  activitySeqResets: number;
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
   activitylessCommandRatio: number | null;
@@ -154,6 +163,7 @@ export class BotStats {
   tickAlignSamples: number[] = [];
   reactionSamples: number[] = [];
   pingIntervalSamples: number[] = [];
+  activityIntervalSamples: number[] = [];
   pathDestinations: Map<string, number> = new Map();
   actionSignatures: Map<string, number> = new Map();
   deviceIds: Map<string, number> = new Map();
@@ -171,6 +181,11 @@ export class BotStats {
   sessionMovements: number = 0;
   sessionChats: number = 0;
   sessionActivityEvents: number = 0;
+  sessionDetailedActivityEvents: number = 0;
+  sessionPointerActivityEvents: number = 0;
+  sessionKeyboardActivityEvents: number = 0;
+  sessionTouchActivityEvents: number = 0;
+  sessionLegacyActivityEvents: number = 0;
   sessionCursorEvents: number = 0;
   sessionInputlessCommands: number = 0;
   sessionGameplayCommands: number = 0;
@@ -187,6 +202,8 @@ export class BotStats {
   private lastPingSeq: number | null = null;
   private pingSeqResets: number = 0;
   private lastActivityAt: number | null = null;
+  private lastActivitySeq: number | null = null;
+  private activitySeqResets: number = 0;
   private lastCursorAt: number | null = null;
   private lastCoupledActivityAt: number | null = null;
   private activityHeartbeatCoupledEvents: number = 0;
@@ -289,6 +306,11 @@ export class BotStats {
     this.sessionMovements = 0;
     this.sessionChats = 0;
     this.sessionActivityEvents = 0;
+    this.sessionDetailedActivityEvents = 0;
+    this.sessionPointerActivityEvents = 0;
+    this.sessionKeyboardActivityEvents = 0;
+    this.sessionTouchActivityEvents = 0;
+    this.sessionLegacyActivityEvents = 0;
     this.sessionCursorEvents = 0;
     this.sessionInputlessCommands = 0;
     this.sessionGameplayCommands = 0;
@@ -299,12 +321,15 @@ export class BotStats {
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
     this.cursorCells.clear();
+    this.activityIntervalSamples = [];
     this.lastMovementDestinationKey = null;
     this.lastMovementTs = null;
     this.lastPingAt = null;
     this.lastPingSeq = null;
     this.pingSeqResets = 0;
     this.lastActivityAt = null;
+    this.lastActivitySeq = null;
+    this.activitySeqResets = 0;
     this.lastCursorAt = null;
     this.lastCoupledActivityAt = null;
     this.activityHeartbeatCoupledEvents = 0;
@@ -400,8 +425,48 @@ export class BotStats {
     this.lastChatTs = Math.floor(Date.now() / 1000);
   }
 
-  recordClientActivity(now: number = performance.now()): void {
+  recordClientActivity(now?: number): void;
+  recordClientActivity(
+    kind: ClientActivityKind,
+    seq: number | null,
+    xPermille?: number | null,
+    yPermille?: number | null,
+    now?: number,
+  ): void;
+  recordClientActivity(
+    kindOrNow: ClientActivityKind | number = ClientActivityKind.Legacy,
+    seq: number | null = null,
+    xPermille: number | null = null,
+    yPermille: number | null = null,
+    now: number = performance.now(),
+  ): void {
+    const legacyNowOnly = arguments.length <= 1
+      && typeof kindOrNow === 'number'
+      && kindOrNow > ClientActivityKind.Touch;
+    const kind = legacyNowOnly ? ClientActivityKind.Legacy : kindOrNow as ClientActivityKind;
+    if (legacyNowOnly) now = kindOrNow;
     this.sessionActivityEvents++;
+    if (this.lastActivityAt !== null) {
+      const interval = now - this.lastActivityAt;
+      if (interval >= 250 && interval <= 60_000) {
+        this.pushSample(this.activityIntervalSamples, interval, MAX_ACTIVITY_INTERVAL_SAMPLES);
+      }
+    }
+    if (kind === ClientActivityKind.Pointer) this.sessionPointerActivityEvents++;
+    else if (kind === ClientActivityKind.Keyboard) this.sessionKeyboardActivityEvents++;
+    else if (kind === ClientActivityKind.Touch) this.sessionTouchActivityEvents++;
+    else this.sessionLegacyActivityEvents++;
+    if (kind !== ClientActivityKind.Legacy) {
+      this.sessionDetailedActivityEvents++;
+      if (seq !== null) {
+        const normalizedSeq = seq & 0x7fff;
+        if (this.lastActivitySeq !== null) {
+          const expected = (this.lastActivitySeq + 1) & 0x7fff;
+          if (normalizedSeq !== expected) this.activitySeqResets++;
+        }
+        this.lastActivitySeq = normalizedSeq;
+      }
+    }
     this.lastActionTs = Math.floor(Date.now() / 1000);
     this.lastActivityAt = now;
     if (this.lastPingAt !== null && Math.abs(now - this.lastPingAt) <= HEARTBEAT_ACTIVITY_COUPLING_MS) {
@@ -479,6 +544,8 @@ export class BotStats {
     const reactionMedianMs = median(this.reactionSamples);
     const pingIntervalStdDevMs = stdDev(this.pingIntervalSamples);
     const pingIntervalMedianMs = median(this.pingIntervalSamples);
+    const activityIntervalStdDevMs = stdDev(this.activityIntervalSamples);
+    const activityIntervalMedianMs = median(this.activityIntervalSamples);
     const topPathRepetition = topRatio(this.sessionPathDestinations);
     const topActionLoopRepetition = topRatio(this.sessionActionSignatures);
     const topLifetimePathRepetition = topRatio(this.pathDestinations);
@@ -539,6 +606,24 @@ export class BotStats {
       && heartbeatActivityCouplingRatio >= 0.8
     ) {
       flags.push('activityHeartbeatCoupled');
+    }
+    if (
+      this.activityIntervalSamples.length >= 10
+      && activityIntervalStdDevMs !== null
+      && activityIntervalStdDevMs < 75
+    ) {
+      flags.push('activityRegular');
+    }
+    if (this.activitySeqResets >= 2) {
+      flags.push('activitySeqReset');
+    }
+    if (
+      sessionMinutes >= 5
+      && (activeEvents >= 50 || directGameplayEvents >= 25)
+      && this.sessionActivityEvents >= 10
+      && this.sessionDetailedActivityEvents / this.sessionActivityEvents <= 0.2
+    ) {
+      flags.push('legacyActivityTelemetry');
     }
     if (sessionSuspiciousPacketClasses.protocol >= 3) {
       flags.push('protocolPackets');
@@ -656,6 +741,8 @@ export class BotStats {
       sessionMinutes,
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
+      sessionDetailedActivityEvents: this.sessionDetailedActivityEvents,
+      sessionLegacyActivityEvents: this.sessionLegacyActivityEvents,
       sessionCursorEvents: this.sessionCursorEvents,
       sessionInputlessCommands: this.sessionInputlessCommands,
       sessionGameplayCommands: this.sessionGameplayCommands,
@@ -674,6 +761,8 @@ export class BotStats {
       pingIntervalSamples: this.pingIntervalSamples.length,
       pingIntervalStdDevMs,
       pingSeqResets: this.pingSeqResets,
+      activityIntervalStdDevMs,
+      activitySeqResets: this.activitySeqResets,
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
       activitylessCommandRatio,
@@ -703,6 +792,11 @@ export class BotStats {
       sessionMovements: this.sessionMovements,
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
+      sessionDetailedActivityEvents: this.sessionDetailedActivityEvents,
+      sessionPointerActivityEvents: this.sessionPointerActivityEvents,
+      sessionKeyboardActivityEvents: this.sessionKeyboardActivityEvents,
+      sessionTouchActivityEvents: this.sessionTouchActivityEvents,
+      sessionLegacyActivityEvents: this.sessionLegacyActivityEvents,
       sessionCursorEvents: this.sessionCursorEvents,
       sessionInputlessCommands: this.sessionInputlessCommands,
       sessionGameplayCommands: this.sessionGameplayCommands,
@@ -718,6 +812,9 @@ export class BotStats {
       reactionMedianMs,
       pingIntervalStdDevMs,
       pingIntervalMedianMs,
+      activityIntervalStdDevMs,
+      activityIntervalMedianMs,
+      activitySeqResets: this.activitySeqResets,
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
       activitylessCommandRatio,
@@ -856,6 +953,8 @@ interface BotRiskInput {
   sessionCombatSwings: number;
   sessionMovements: number;
   sessionActivityEvents: number;
+  sessionDetailedActivityEvents: number;
+  sessionLegacyActivityEvents: number;
   sessionCursorEvents: number;
   sessionInputlessCommands: number;
   sessionGameplayCommands: number;
@@ -871,6 +970,8 @@ interface BotRiskInput {
   pingIntervalSamples: number;
   pingIntervalStdDevMs: number | null;
   pingSeqResets: number;
+  activityIntervalStdDevMs: number | null;
+  activitySeqResets: number;
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
   activitylessCommandRatio: number | null;
@@ -909,6 +1010,12 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('pingRegular')) add(12, `script-regular heartbeat timing (${input.pingIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
   if (flagSet.has('pingSeqReset')) add(10, `heartbeat sequence resets (${input.pingSeqResets})`);
   if (flagSet.has('activityHeartbeatCoupled')) add(20, `activity packets coupled to heartbeat (${ratioLabel(input.heartbeatActivityCouplingRatio)})`);
+  if (flagSet.has('activityRegular')) add(18, `script-regular activity timing (${input.activityIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
+  if (flagSet.has('activitySeqReset')) add(8, `activity sequence resets (${input.activitySeqResets})`);
+  if (flagSet.has('legacyActivityTelemetry')) add(
+    10,
+    `legacy/no-detail activity telemetry (${input.sessionDetailedActivityEvents}/${input.sessionActivityEvents} detailed)`,
+  );
   if (flagSet.has('browserlessActiveGameplay')) add(
     46,
     `active gameplay without browser input telemetry (${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions)`,
@@ -968,6 +1075,8 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   else if (input.totalSuspiciousPackets >= 100) add(2, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
 
   if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
+  if (flagSet.has('activityRegular') && flagSet.has('routeActionLoop')) add(8, 'regular activity cadence during repeated route/action loop');
+  if (flagSet.has('legacyActivityTelemetry') && flagSet.has('commandsWithoutRecentActivity')) add(6, 'legacy activity telemetry still missing near gameplay commands');
   if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');
@@ -993,6 +1102,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
 
 function hasHardBotEvidence(flagSet: Set<string>): boolean {
   return flagSet.has('activityHeartbeatCoupled')
+    || flagSet.has('activityRegular')
     || flagSet.has('browserlessActiveGameplay')
     || flagSet.has('commandsWithoutRecentInput')
     || flagSet.has('commandsWithoutRecentActivity')

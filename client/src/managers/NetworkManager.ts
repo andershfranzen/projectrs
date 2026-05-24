@@ -4,6 +4,7 @@ import {
   SERVER_PORT,
   ServerOpcode,
   ClientOpcode,
+  ClientActivityKind,
   encodePacket,
   decodePacket,
   decodeStringPacket,
@@ -89,6 +90,7 @@ export class NetworkManager {
   private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
   private lastGameMessageAt: number = 0;
   private heartbeatSeq: number = 0;
+  private activitySeq: number = 0;
   private authToken: string = '';
   private deviceSigningKeyPair: CryptoKeyPair | null = null;
   private devicePublicKey: JsonWebKey | null = null;
@@ -499,12 +501,17 @@ export class NetworkManager {
     }
   }
 
-  sendActivity(): boolean {
+  sendActivity(kind: ClientActivityKind = ClientActivityKind.Legacy, clientX?: number, clientY?: number): boolean {
     if (!this.gameSocket || !this.connected || this.gameSocket.readyState !== WebSocket.OPEN) return false;
     const now = performance.now();
     if (now - this.lastActivitySentAt < 5_000) return true;
     this.lastActivitySentAt = now;
-    return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY));
+    if (kind === ClientActivityKind.Legacy) return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY));
+    this.activitySeq = (this.activitySeq + 1) & 0x7fff;
+    const [x, y] = clientX === undefined || clientY === undefined
+      ? [-1, -1]
+      : this.normalizeViewportPoint(clientX, clientY);
+    return this.sendRaw(encodePacket(ClientOpcode.CLIENT_ACTIVITY, kind, this.activitySeq, x, y));
   }
 
   sendCursorPosition(clientX: number, clientY: number): boolean {
@@ -512,11 +519,16 @@ export class NetworkManager {
     const now = performance.now();
     if (now - this.lastCursorSentAt < 1_500) return true;
     this.lastCursorSentAt = now;
+    const [x, y] = this.normalizeViewportPoint(clientX, clientY);
+    return this.sendRaw(encodePacket(ClientOpcode.CURSOR_POSITION, x, y));
+  }
+
+  private normalizeViewportPoint(clientX: number, clientY: number): [number, number] {
     const width = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
     const height = Math.max(1, window.innerHeight || document.documentElement.clientHeight || 1);
     const x = Math.max(0, Math.min(1000, Math.round((clientX / width) * 1000)));
     const y = Math.max(0, Math.min(1000, Math.round((clientY / height) * 1000)));
-    return this.sendRaw(encodePacket(ClientOpcode.CURSOR_POSITION, x, y));
+    return [x, y];
   }
 
   sendChat(message: string): void {

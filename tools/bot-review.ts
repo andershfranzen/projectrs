@@ -32,12 +32,14 @@ interface SessionSummary {
   sessionMovements: number;
   sessionChats: number;
   sessionActivityEvents?: number;
+  sessionDetailedActivityEvents?: number;
   sessionCursorEvents?: number;
   sessionSuspiciousPackets?: number;
   totalSuspiciousPackets?: number;
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
   pingIntervalStdDevMs?: number | null;
+  activityIntervalStdDevMs?: number | null;
   heartbeatActivityCouplingRatio?: number | null;
   topActionLoopRepetition?: number | null;
   topCursorCellRepetition?: number | null;
@@ -462,6 +464,9 @@ function computeReviewRisk(
     if (flags.has('tickAligned') && (flags.has('routeActionLoop') || flags.has('lifetimeRouteActionLoop') || flags.has('fastReaction'))) add(6, 'server-tick alignment paired with behavioral loop');
     if (flags.has('pingRegular')) add(12, 'script-regular heartbeat timing');
     if (flags.has('activityHeartbeatCoupled')) add(20, 'activity packets coupled to heartbeat');
+    if (flags.has('activityRegular')) add(18, 'script-regular activity timing');
+    if (flags.has('activitySeqReset')) add(8, 'activity sequence resets');
+    if (flags.has('legacyActivityTelemetry')) add(10, 'legacy/no-detail activity telemetry');
     if (flags.has('browserlessActiveGameplay')) add(46, 'active gameplay without browser input telemetry');
     if (flags.has('commandsWithoutRecentInput')) add(34, 'gameplay commands without recent browser input');
     if (flags.has('commandsWithoutRecentActivity')) add(42, 'gameplay commands without recent browser activity');
@@ -521,6 +526,7 @@ function computeReviewRisk(
 
 function hasHardBotEvidence(flags: Set<string>): boolean {
   return flags.has('activityHeartbeatCoupled')
+    || flags.has('activityRegular')
     || flags.has('browserlessActiveGameplay')
     || flags.has('commandsWithoutRecentInput')
     || flags.has('commandsWithoutRecentActivity')
@@ -736,10 +742,13 @@ function main(): void {
       const react = d.reactionMedianMs;
       const path = d.topPathRepetition;
       const activityCoupled = d.heartbeatActivityCouplingRatio;
+      const activityStd = d.activityIntervalStdDevMs;
+      const activityDetailed = d.sessionDetailedActivityEvents;
+      const activities = d.sessionActivityEvents;
       const chats = d.sessionChats;
       const cursors = d.sessionCursorEvents;
       const mins = d.sessionMinutes;
-      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  flags=[${flags.join(',')}]`);
+      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
     }
     console.log('');
   }
