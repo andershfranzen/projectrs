@@ -1,6 +1,8 @@
 import {
   type PlayerAppearance,
+  BODY_TYPE_COUNT, BODY_TYPE_NAMES,
   DEFAULT_APPEARANCE,
+  normalizeAppearance,
   SHIRT_COLORS, SHIRT_COLOR_NAMES,
   PANTS_COLORS, PANTS_COLOR_NAMES,
   SHOES_COLORS, SHOES_COLOR_NAMES,
@@ -8,10 +10,11 @@ import {
   SKIN_COLORS, SKIN_COLOR_NAMES,
   BELT_COLORS, BELT_COLOR_NAMES,
   HAIR_STYLE_COUNT,
+  hairStyleChoicesForBodyType,
   hairStyleName,
-  CHARACTER_MODEL_PATH,
   CHARACTER_TARGET_HEIGHT,
   CHARACTER_IDLE_ANIM,
+  getCharacterModelPath,
 } from '@projectrs/shared';
 import { Engine } from '@babylonjs/core/Engines/engine';
 import { Scene } from '@babylonjs/core/scene';
@@ -160,6 +163,8 @@ interface StepperRow {
   /** Inclusive bounds of the slot's index. */
   min: number;
   max: number;
+  /** Optional dynamic value set for rows whose choices depend on other rows. */
+  choices?: (a: PlayerAppearance) => readonly number[];
   /** Read current index from the appearance struct. */
   get: (a: PlayerAppearance) => number;
   /** Write a new index back to the appearance struct (mutates). */
@@ -192,6 +197,7 @@ export class CharacterCreator {
   private previewCamera: ArcRotateCamera | null = null;
   private previewLights: { hemi: HemisphericLight; dir: DirectionalLight } | null = null;
   private previewCharacter: CharacterEntity | null = null;
+  private previewModelPath: string | null = null;
   private previewInitFrame: number | null = null;
   private previewResizeObserver: ResizeObserver | null = null;
   private destroyed: boolean = false;
@@ -238,7 +244,7 @@ export class CharacterCreator {
   ) {
     closeActiveContextMenu();
     this.onConfirm = onConfirm;
-    this.appearance = { ...(opts?.initial ?? DEFAULT_APPEARANCE) };
+    this.appearance = normalizeAppearance(opts?.initial ?? DEFAULT_APPEARANCE);
     this.localPlayer = opts?.localPlayer ?? null;
     this.rowSpecs = this.buildRowSpecs();
     this.container = this.buildUI();
@@ -279,11 +285,16 @@ export class CharacterCreator {
       swatch: (i) => palette[i] ?? null,
     });
     return [
+      { label: 'Body',       min: 0, max: BODY_TYPE_COUNT - 1,
+        get: (a) => a.bodyType, set: (a, i) => { a.bodyType = i; },
+        name: (i) => BODY_TYPE_NAMES[i] ?? `#${i}`,
+        swatch: () => null },
       { label: 'Skin',       min: 0, max: SKIN_COLORS.length - 1,
         get: (a) => a.skinColor, set: (a, i) => { a.skinColor = i; },
         name: (i) => SKIN_COLOR_NAMES[i] ?? `#${i}`,
         swatch: (i) => SKIN_COLORS[i] ?? null },
       { label: 'Hair',       min: 0, max: HAIR_STYLE_COUNT,
+        choices: (a) => hairStyleChoicesForBodyType(a.bodyType),
         get: (a) => a.hairStyle, set: (a, i) => { a.hairStyle = i; },
         name: hairStyleName,
         swatch: () => null },
@@ -391,16 +402,18 @@ export class CharacterCreator {
     `;
     const randomize = this.makeFooterBtn('Randomize', () => {
       for (const spec of this.rowSpecs) {
-        const idx = spec.min + Math.floor(Math.random() * (spec.max - spec.min + 1));
+        const choices = this.choicesFor(spec);
+        const idx = choices[Math.floor(Math.random() * choices.length)] ?? spec.min;
         spec.set(this.appearance, idx);
       }
+      this.appearance = normalizeAppearance(this.appearance);
       this.refreshAllRows();
       this.updatePreview();
     });
     const spacer = document.createElement('div');
     spacer.style.flex = '1';
     const confirm = this.makeFooterBtn('Confirm', () => {
-      this.onConfirm({ ...this.appearance });
+      this.onConfirm(normalizeAppearance(this.appearance));
     });
     footer.appendChild(randomize);
     footer.appendChild(spacer);
@@ -539,13 +552,23 @@ export class CharacterCreator {
   /** Cycle row `rowIdx` by +1 / -1 with wrap. Updates UI + 3D preview. */
   private step(rowIdx: number, delta: number): void {
     const spec = this.rowSpecs[rowIdx];
+    const choices = this.choicesFor(spec);
     const cur = spec.get(this.appearance);
-    const range = spec.max - spec.min + 1;
-    const next = ((cur - spec.min + delta) % range + range) % range + spec.min;
+    const curIdx = choices.indexOf(cur);
+    const next = curIdx >= 0
+      ? choices[((curIdx + delta) % choices.length + choices.length) % choices.length]
+      : choices[delta < 0 ? choices.length - 1 : 0];
+    if (next === undefined) return;
     if (next === cur) return;
     spec.set(this.appearance, next);
-    this.refreshRow(rowIdx);
+    this.appearance = normalizeAppearance(this.appearance);
+    this.refreshAllRows();
     this.updatePreview();
+  }
+
+  private choicesFor(spec: StepperRow): readonly number[] {
+    if (spec.choices) return spec.choices(this.appearance);
+    return Array.from({ length: spec.max - spec.min + 1 }, (_, i) => spec.min + i);
   }
 
   private refreshRow(rowIdx: number): void {
@@ -649,9 +672,11 @@ export class CharacterCreator {
   private loadPreviewCharacter(anchor: Vector3): void {
     const scene = this.previewScene;
     if (!scene || this.destroyed) return;
+    const modelPath = this.getModelPath();
+    this.previewModelPath = modelPath;
     const character = new CharacterEntity(scene, {
       name: 'previewChar',
-      modelPath: this.getModelPath(),
+      modelPath,
       targetHeight: CHARACTER_TARGET_HEIGHT,
       layerMask: PREVIEW_LAYER_MASK,
       additionalAnimations: [
@@ -668,10 +693,20 @@ export class CharacterCreator {
   }
 
   private getModelPath(): string {
-    return CHARACTER_MODEL_PATH;
+    return getCharacterModelPath(this.appearance);
   }
 
   private updatePreview(): void {
+    const nextModelPath = this.getModelPath();
+    if (nextModelPath !== this.previewModelPath) {
+      const anchor = this.previewCharacter?.position.clone() ?? Vector3.Zero();
+      if (this.previewCharacter) {
+        this.previewCharacter.dispose();
+        this.previewCharacter = null;
+      }
+      this.loadPreviewCharacter(anchor);
+      return;
+    }
     if (this.previewCharacter?.isReady) {
       this.previewCharacter.applyAppearance(this.appearance);
     }

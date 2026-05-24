@@ -28,14 +28,16 @@ import { MapData } from './map/MapData'
 import { ToolMode, toolLabel } from './editor/Tools'
 import {
   DEFAULT_APPEARANCE,
-  HAIR_STYLE_COUNT,
+  BODY_TYPE_NAMES,
   SHIRT_COLORS,
   PANTS_COLORS,
   SHOES_COLORS,
   BELT_COLORS,
   SKIN_COLORS,
   HAIR_COLORS,
-  CHARACTER_MODEL_PATH,
+  hairStyleChoicesForBodyType,
+  normalizeAppearance,
+  getCharacterModelPath,
   CHARACTER_TARGET_HEIGHT,
   CHARACTER_IDLE_ANIM,
   computeCutPolygons,
@@ -57,6 +59,7 @@ import {
   ASSET_TO_OBJECT_DEF,
   NPC_COMBAT_ANIMATIONS,
   deriveUpperFloorTilesFromPlanes,
+  resolveEquipmentModelPath,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -177,6 +180,13 @@ function tuneModelLighting(model) {
     }
   }
 
+  function setHierarchyPickable(node, pickable) {
+    if (!node) return
+    if ('isPickable' in node) node.isPickable = pickable
+    const meshes = node.getChildMeshes ? node.getChildMeshes() : []
+    for (const mesh of meshes) mesh.isPickable = pickable
+  }
+
   function nextFrame() {
     return new Promise(resolve => requestAnimationFrame(resolve))
   }
@@ -198,6 +208,7 @@ function tuneModelLighting(model) {
 
   function addPlacedModel(model, { invalidateShadow = true } = {}) {
     ensureNodeCompat(model)
+    setHierarchyPickable(model, true)
     updatePlacedModelDerivedData(model)
     model.parent = placedGroup
     _spatialRegister(model)
@@ -450,21 +461,41 @@ function tuneModelLighting(model) {
   /** Build the same GearDef shape GameManager builds, given an item def and
    *  a slot name. Mirrors applyGearToCharacter.buildDef so the preview rigs
    *  gear the same way the live game does. */
-  function buildGearDef(slotName, itemId) {
+  function resolveEditorGearOverride(itemId, bodyType = 0) {
+    const override = editorGearOverrides?.get(itemId)
+    if (!override) return null
+    const base = {
+      boneName: override.boneName,
+      localPosition: override.localPosition,
+      localRotation: override.localRotation,
+      scale: override.scale,
+      centerOrigin: override.centerOrigin,
+      file: override.file,
+    }
+    if (bodyType <= 0) return base
+    const body = override.bodyTypeOverrides?.[String(bodyType)]
+    return body ? { ...base, ...body } : base
+  }
+
+  function resolveEditorGearFile(slotName, itemId, bodyType = 0) {
+    const itemDef = itemDefs.find(d => d.id === itemId)
+    const rawOverride = editorGearOverrides?.get(itemId)
+    const bodyOverrideFile = bodyType > 0
+      ? rawOverride?.bodyTypeOverrides?.[String(bodyType)]?.file
+      : null
+    if (bodyOverrideFile) return bodyOverrideFile
+    if (bodyType > 0 && itemDef?.bodyTypeModels?.[String(bodyType)]) {
+      return resolveEquipmentModelPath(itemDef, bodyType, slotName)
+    }
+    if (rawOverride?.file) return rawOverride.file
+    return resolveEquipmentModelPath(itemDef, bodyType, slotName) ?? `/assets/equipment/${slotName}/${itemId}.glb`
+  }
+
+  function buildGearDef(slotName, itemId, bodyType = 0) {
     const boneConfig = EQUIP_SLOT_BONES[slotName]
     if (!boneConfig) return null
-    const override = editorGearOverrides?.get(itemId)
-    const itemDef = itemDefs.find(d => d.id === itemId)
-    let gearFile
-    if (override?.file) {
-      gearFile = override.file
-    } else if (itemDef?.model) {
-      gearFile = itemDef.model.startsWith('/')
-        ? itemDef.model
-        : `/assets/equipment/${slotName}/${itemDef.model}`
-    } else {
-      gearFile = `/assets/equipment/${slotName}/${itemId}.glb`
-    }
+    const override = resolveEditorGearOverride(itemId, bodyType)
+    const gearFile = resolveEditorGearFile(slotName, itemId, bodyType)
     return {
       itemId,
       file: gearFile,
@@ -566,7 +597,7 @@ function tuneModelLighting(model) {
         if (ok) {
           const loaderRoot = result.meshes.find(m => m.name === '__root__')
           if (loaderRoot) loaderRoot.dispose()
-          const override = editorGearOverrides?.get(itemId)
+          const override = resolveEditorGearOverride(itemId, spawn.appearance?.bodyType ?? 0)
           if (override) entry.entity.applySkinnedArmorTransform(slot, override)
           return null
         }
@@ -608,7 +639,7 @@ function tuneModelLighting(model) {
           entry.entity.attachSkinnedArmor(slot, result.meshes, result.skeletons[0], itemId, bodyHideStyle)
           const loaderRoot = result.meshes.find(m => m.name === '__root__')
           if (loaderRoot) loaderRoot.dispose()
-          const override = editorGearOverrides?.get(itemId)
+          const override = resolveEditorGearOverride(itemId, spawn.appearance?.bodyType ?? 0)
           if (override) entry.entity.applySkinnedArmorTransform(slot, override)
           return null
         }
@@ -651,7 +682,7 @@ function tuneModelLighting(model) {
       // is ~50ms per GLB).
       const hasExpectedSkinnedAttachment = !EDITOR_SKINNED_GEAR_SLOTS.has(slot) || entry.entity.getSkinnedArmorMeshes(slot)
       if (entry.entity.getGearItemId(slot) === itemId && hasExpectedSkinnedAttachment) continue
-      const def = buildGearDef(slot, itemId)
+      const def = buildGearDef(slot, itemId, spawn.appearance?.bodyType ?? 0)
       if (!def) continue
       try {
         const tmpl = EDITOR_SKINNED_GEAR_SLOTS.has(slot) || slot === 'head'
@@ -671,11 +702,16 @@ function tuneModelLighting(model) {
       disposeNpcPreview(spawn)
       return
     }
+    const modelPath = getCharacterModelPath(spawn.appearance)
     let entry = npcPreviews.get(spawn.id)
+    if (entry && entry.entity.getModelPath && entry.entity.getModelPath() !== modelPath) {
+      disposeNpcPreview(spawn)
+      entry = null
+    }
     if (!entry) {
       const entity = new CharacterEntity(scene, {
         name: `npcPreview_${spawn.id}`,
-        modelPath: CHARACTER_MODEL_PATH,
+        modelPath,
         targetHeight: CHARACTER_TARGET_HEIGHT,
         additionalAnimations: [
           { name: 'idle', path: CHARACTER_IDLE_ANIM },
@@ -837,6 +873,7 @@ function tuneModelLighting(model) {
         const circle = MeshBuilder.CreateLines(`npcWander_${spawn.id}`, { points }, scene)
         circle.color = isSelected ? new Color3(1, 1, 0.3) : (aggressive ? new Color3(0.9, 0.3, 0.2) : new Color3(0.2, 0.6, 0.8))
         circle.alpha = isSelected ? 0.9 : 0.5
+        circle.isPickable = false
         circle.parent = npcSpawnGroup
       }
     }
@@ -1336,7 +1373,7 @@ function tuneModelLighting(model) {
   }
 
   function rebuildCollisionMeshes() {
-    for (const child of [...collisionGroup.getChildren()]) child.dispose()
+    for (const child of [...collisionGroup.getChildren()]) child.dispose(false, true)
 
     const layer = getCollisionLayer()
     const visualMaps = buildCollisionFloorVisualMaps()
@@ -1384,6 +1421,7 @@ function tuneModelLighting(model) {
       const m = MeshBuilder.CreateLineSystem(name, { lines }, scene)
       m.color = color
       m.renderingGroupId = 3
+      m.isPickable = false
       m.parent = collisionGroup
     }
     makeLines('collWallBases', baseLines, new Color3(1, 0.2, 0.2))         // red bottoms
@@ -1391,55 +1429,86 @@ function tuneModelLighting(model) {
     makeLines('collWallTopsDefault', topLinesDefault, new Color3(1, 1, 0.2))   // yellow = default 1.8
     makeLines('collWallTopsCustom', topLinesCustom, new Color3(1, 0.6, 0.1))   // orange = per-tile override
 
-    // Floor tiles — flat quads
-    for (const [key, height] of Object.entries(layer.floors || {})) {
-      const [x, z] = key.split(',').map(Number)
-      const plane = MeshBuilder.CreatePlane(`collFloor_${key}`, { size: 0.9 }, scene)
-      plane.rotation.x = Math.PI / 2
-      plane.position = new Vector3(x + 0.5, height + 0.05, z + 0.5)
-      const mat = new StandardMaterial(`collFloorMat_${key}`, scene)
-      mat.diffuseColor = new Color3(0.2, 0.5, 1)
-      mat.emissiveColor = new Color3(0.1, 0.25, 0.5)
-      mat.alpha = 0.4
-      mat.specularColor = new Color3(0, 0, 0)
-      mat.backFaceCulling = false
-      plane.material = mat
-      plane.renderingGroupId = 3
-      plane.parent = collisionGroup
+    const addFlatQuad = (positions, indices, x, y, z, size = 0.9) => {
+      const half = size * 0.5
+      const base = positions.length / 3
+      positions.push(
+        x + 0.5 - half, y, z + 0.5 - half,
+        x + 0.5 + half, y, z + 0.5 - half,
+        x + 0.5 + half, y, z + 0.5 + half,
+        x + 0.5 - half, y, z + 0.5 + half,
+      )
+      indices.push(base, base + 1, base + 2, base, base + 2, base + 3)
     }
 
-    // Stairs — arrow indicators
+    const makeQuadMesh = (name, positions, indices, mat) => {
+      if (!positions.length) return
+      const mesh = new Mesh(name, scene)
+      const vd = new VertexData()
+      vd.positions = positions
+      vd.indices = indices
+      const normals = []
+      VertexData.ComputeNormals(positions, indices, normals)
+      vd.normals = normals
+      vd.applyToMesh(mesh)
+      mesh.material = mat
+      mesh.renderingGroupId = 3
+      mesh.isPickable = false
+      mesh.parent = collisionGroup
+    }
+
+    // Floor tiles — batched into one mesh. Creating a plane and material per
+    // tile made collision painting pay object/material churn on every drag step.
+    const floorPositions = []
+    const floorIndices = []
+    for (const [key, height] of Object.entries(layer.floors || {})) {
+      const [x, z] = key.split(',').map(Number)
+      addFlatQuad(floorPositions, floorIndices, x, height + 0.05, z)
+    }
+    if (floorPositions.length) {
+      const floorMat = new StandardMaterial('collFloorMat', scene)
+      floorMat.diffuseColor = new Color3(0.2, 0.5, 1)
+      floorMat.emissiveColor = new Color3(0.1, 0.25, 0.5)
+      floorMat.alpha = 0.4
+      floorMat.specularColor = new Color3(0, 0, 0)
+      floorMat.backFaceCulling = false
+      makeQuadMesh('collFloors', floorPositions, floorIndices, floorMat)
+    }
+
+    // Stairs — one batched line system instead of one LinesMesh per stair.
+    const stairLines = []
     for (const [key, stair] of Object.entries(layer.stairs || {})) {
       const [x, z] = key.split(',').map(Number)
       const midH = (stair.baseHeight + stair.topHeight) / 2
       // Arrow line showing direction
       const cx = x + 0.5, cz = z + 0.5
       const dirVec = { N: [0, -0.4], E: [0.4, 0], S: [0, 0.4], W: [-0.4, 0] }[stair.direction] || [0, -0.4]
-      const arrowLines = [
-        [new Vector3(cx - dirVec[0], midH + 0.2, cz - dirVec[1]), new Vector3(cx + dirVec[0], midH + 0.2, cz + dirVec[1])]
-      ]
-      const arrow = MeshBuilder.CreateLineSystem(`collStair_${key}`, { lines: arrowLines }, scene)
-      arrow.color = new Color3(0.2, 1, 0.4)
-      arrow.renderingGroupId = 3
-      arrow.parent = collisionGroup
+      stairLines.push([new Vector3(cx - dirVec[0], midH + 0.2, cz - dirVec[1]), new Vector3(cx + dirVec[0], midH + 0.2, cz + dirVec[1])])
+    }
+    if (stairLines.length) {
+      const stairs = MeshBuilder.CreateLineSystem('collStairs', { lines: stairLines }, scene)
+      stairs.color = new Color3(0.2, 1, 0.4)
+      stairs.renderingGroupId = 3
+      stairs.isPickable = false
+      stairs.parent = collisionGroup
     }
 
-    // Hole tiles — semi-transparent red-orange planes
+    // Hole tiles — batched into one mesh.
+    const holePositions = []
+    const holeIndices = []
     for (const key of Object.keys(layer.holes || {})) {
       const [x, z] = key.split(',').map(Number)
       const h = resolveCollisionFloorDisplayHeight(x, z, collisionFloor, visualMaps)
-      const plane = MeshBuilder.CreatePlane(`collHole_${key}`, { size: 0.9 }, scene)
-      plane.rotation.x = Math.PI / 2
-      plane.position = new Vector3(x + 0.5, h + 0.05, z + 0.5)
-      const mat = new StandardMaterial(`collHoleMat_${key}`, scene)
-      mat.diffuseColor = new Color3(0.9, 0.3, 0.1)
-      mat.emissiveColor = new Color3(0.45, 0.15, 0.05)
-      mat.alpha = 0.45
-      mat.specularColor = new Color3(0, 0, 0)
-      mat.backFaceCulling = false
-      plane.material = mat
-      plane.renderingGroupId = 3
-      plane.parent = collisionGroup
+      addFlatQuad(holePositions, holeIndices, x, h + 0.05, z)
+    }
+    if (holePositions.length) {
+      const holeMat = new StandardMaterial('collHoleMat', scene)
+      holeMat.diffuseColor = new Color3(0.9, 0.3, 0.1)
+      holeMat.emissiveColor = new Color3(0.45, 0.15, 0.05)
+      holeMat.alpha = 0.45
+      holeMat.specularColor = new Color3(0, 0, 0)
+      holeMat.backFaceCulling = false
+      makeQuadMesh('collHoles', holePositions, holeIndices, holeMat)
     }
 
     collisionGroup.setEnabled(state.tool === ToolMode.COLLISION)
@@ -1501,6 +1570,11 @@ function tuneModelLighting(model) {
       }
     }
     delete obj.userData._sc
+  }
+
+  function _spatialRefresh(obj) {
+    _spatialUnregister(obj)
+    _spatialRegister(obj)
   }
 
   function _spatialNearby(worldX, worldZ, radius) {
@@ -1585,6 +1659,7 @@ let paintBrushRadius = 1
   highlightMat.alpha = 0.18
   highlightMat.backFaceCulling = false
   highlight.material = highlightMat
+  highlight.isPickable = false
 
   // Half-paint hover preview: a cut line + filled polygon over the half
   // that will be painted on click.
@@ -1642,6 +1717,7 @@ let paintBrushRadius = 1
     }
     const indices = fanTriangulate(ring.length)
     halfPaintPreviewFill = new Mesh('halfPaintFill', scene)
+    halfPaintPreviewFill.isPickable = false
     const vd = new VertexData()
     vd.positions = positions
     vd.indices = indices
@@ -2841,13 +2917,25 @@ let paintBrushRadius = 1
       root.appendChild(hint)
       return
     }
+    spawn.appearance = normalizeAppearance(spawn.appearance)
     // Persist the swatch pick and rebuild the row so the selected highlight moves.
     const setField = (field, value) => {
       spawn.appearance[field] = value
+      spawn.appearance = normalizeAppearance(spawn.appearance)
       ensureNpcPreview(spawn)
       renderAppearanceTab(root)
       refreshNpcSpawnList()
     }
+    const bodyWrap = document.createElement('label')
+    bodyWrap.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:11px;color:rgba(255,255,255,0.65);'
+    bodyWrap.innerHTML = `
+      <span>Body</span>
+      <select style="flex:1;background:#121212;color:#ddd;border:1px solid #333;border-radius:3px;padding:3px 5px;font-size:11px;">
+        ${BODY_TYPE_NAMES.map((name, idx) => `<option value="${idx}"${idx === spawn.appearance.bodyType ? ' selected' : ''}>${name}</option>`).join('')}
+      </select>
+    `
+    bodyWrap.querySelector('select').addEventListener('change', (e) => setField('bodyType', parseInt(e.target.value)))
+    root.appendChild(bodyWrap)
     // Each row: palette swatches + a Custom RGB row beneath. Custom RGB,
     // when toggled on, wins over the palette pick in CharacterEntity.applyAppearance.
     root.appendChild(appearanceSwatchRow('Skin', SKIN_COLORS, spawn.appearance.skinColor, v => setField('skinColor', v)))
@@ -2862,16 +2950,21 @@ let paintBrushRadius = 1
     root.appendChild(customRgbRow(spawn, 'beltColor'))
     root.appendChild(appearanceSwatchRow('Hair color', HAIR_COLORS, spawn.appearance.hairColor, v => setField('hairColor', v)))
     root.appendChild(customRgbRow(spawn, 'hairColor'))
-    // Hair style is just an index 0..HAIR_STYLE_COUNT — no palette, use a slider.
+    // Hair style is just an index into the body-type's allowed hair choices.
+    const hairChoices = hairStyleChoicesForBodyType(spawn.appearance.bodyType)
+    const hairMin = Math.min(...hairChoices)
+    const hairMax = Math.max(...hairChoices)
     const hairWrap = document.createElement('div')
     hairWrap.style.cssText = 'margin-bottom:6px;'
     hairWrap.innerHTML = `
       <div style="font-size:11px;color:rgba(255,255,255,0.65);margin-bottom:3px;">Hair style <span style="opacity:0.5;">${spawn.appearance.hairStyle}</span></div>
-      <input type="range" min="0" max="${HAIR_STYLE_COUNT}" step="1" value="${spawn.appearance.hairStyle}" style="width:100%;" />
+      <input type="range" min="${hairMin}" max="${hairMax}" step="1" value="${spawn.appearance.hairStyle}" style="width:100%;" />
     `
     hairWrap.querySelector('input').addEventListener('input', (e) => {
-      spawn.appearance.hairStyle = parseInt(e.target.value)
+      const value = parseInt(e.target.value)
+      spawn.appearance.hairStyle = hairChoices.includes(value) ? value : hairChoices[0]
       e.currentTarget.previousElementSibling.querySelector('span').textContent = spawn.appearance.hairStyle
+      spawn.appearance = normalizeAppearance(spawn.appearance)
       ensureNpcPreview(spawn)
     })
     root.appendChild(hairWrap)
@@ -5226,6 +5319,7 @@ let paintBrushRadius = 1
 
     for (let z = 0; z < map.height; z++) {
       for (let x = 0; x < map.width; x++) {
+        if (!map.isTileInActiveChunk(x, z)) continue
         const tile = map.getTile(x, z)
         const h = map.getTileCornerHeights(x, z)
 
@@ -5252,6 +5346,7 @@ let paintBrushRadius = 1
     lines.color = new Color3(0, 0, 0)
     lines.alpha = 0.15
     lines.isVisible = state.showSplitLines
+    lines.isPickable = false
     return lines
   }
 
@@ -5261,6 +5356,7 @@ let paintBrushRadius = 1
 
     for (let z = 0; z < map.height; z++) {
       for (let x = 0; x < map.width; x++) {
+        if (!map.isTileInActiveChunk(x, z)) continue
         const h = map.getTileCornerHeights(x, z)
 
         // top edge
@@ -5297,6 +5393,7 @@ let paintBrushRadius = 1
     lines.color = new Color3(1, 1, 1)
     lines.alpha = 0.18
     lines.isVisible = state.showTileGrid
+    lines.isPickable = false
     return lines
   }
 
@@ -5434,8 +5531,8 @@ let paintBrushRadius = 1
     if (!skipTextureOverlays) overlayMeshesByTile.clear()
     const newTerrain = buildTerrainMeshes(map, waterTexture, shadowInf, scene)
     const newCliffs = buildCliffMeshes(map, scene)
-    const newSplitLines = buildSplitLines()
-    const newTileGrid = buildTileGrid()
+    const newSplitLines = state.showSplitLines ? buildSplitLines() : null
+    const newTileGrid = state.showTileGrid ? buildTileGrid() : null
     const newOverlays = !skipTextureOverlays ? buildTextureOverlays(map, textureRegistry, textureCache, scene, overlayMaterialCache, overlayMeshesByTile) : null
     const newPlanes = !skipTexturePlanes ? buildTexturePlanes(map, textureRegistry, textureCache, scene) : null
 
@@ -5571,6 +5668,7 @@ let paintBrushRadius = 1
       vd.applyToMesh(mesh)
 
       mesh.material = mat
+      mesh.isPickable = false
       mesh.parent = textureOverlayGroup
       let list = overlayMeshesByTile.get(tileKey)
       if (!list) { list = []; overlayMeshesByTile.set(tileKey, list) }
@@ -5605,74 +5703,123 @@ let paintBrushRadius = 1
     scene.pointerY = event.clientY - rect.top
   }
 
-  function getTerrainMeshes() {
-    const meshes = []
-    if (!terrainGroup) return meshes
-    for (const child of terrainGroup.getChildMeshes()) meshes.push(child)
-    return meshes
+  function getTerrainDisplayHeightAt(worldX, worldZ) {
+    if (worldX < 0 || worldZ < 0 || worldX >= map.width || worldZ >= map.height) return null
+    const tx = Math.max(0, Math.min(map.width - 1, Math.floor(worldX)))
+    const tz = Math.max(0, Math.min(map.height - 1, Math.floor(worldZ)))
+    const u = Math.max(0, Math.min(1, worldX - tx))
+    const v = Math.max(0, Math.min(1, worldZ - tz))
+    const h = map.getTileCornerHeights(tx, tz)
+    let y = bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v)
+    const tile = map.getTile(tx, tz)
+    if (tile?.waterSurface) y += 0.05
+    if (map.shouldRenderWaterTile?.(tx, tz)) y = Math.max(y, map.getTileWaterLevel(tx, tz) + 0.02)
+    return y
   }
 
-  function isTerrainMesh(mesh) {
-    return terrainGroup && mesh.isDescendantOf(terrainGroup)
+  function getRayMapRange(ray) {
+    let tMin = 0
+    let tMax = camera.maxZ || 1000
+    const slab = (origin, dir, min, max) => {
+      if (Math.abs(dir) < 1e-6) return origin >= min && origin <= max
+      let a = (min - origin) / dir
+      let b = (max - origin) / dir
+      if (a > b) { const tmp = a; a = b; b = tmp }
+      tMin = Math.max(tMin, a)
+      tMax = Math.min(tMax, b)
+      return tMin <= tMax
+    }
+    if (!slab(ray.origin.x, ray.direction.x, 0, map.width)) return null
+    if (!slab(ray.origin.z, ray.direction.z, 0, map.height)) return null
+    return tMax >= Math.max(0, tMin) ? { tMin: Math.max(0, tMin), tMax } : null
+  }
+
+  function pointOnRay(ray, t) {
+    return new Vector3(
+      ray.origin.x + ray.direction.x * t,
+      ray.origin.y + ray.direction.y * t,
+      ray.origin.z + ray.direction.z * t
+    )
+  }
+
+  function pickTerrainPointFromRay(ray, fallbackY = _pickTileFallbackY) {
+    const range = getRayMapRange(ray)
+    if (range) {
+      const sampleCount = 40
+      let prevT = range.tMin
+      let prev = pointOnRay(ray, prevT)
+      let prevH = getTerrainDisplayHeightAt(prev.x, prev.z)
+      let prevF = prevH == null ? Infinity : prev.y - prevH
+
+      for (let i = 1; i <= sampleCount; i++) {
+        const t = range.tMin + (range.tMax - range.tMin) * (i / sampleCount)
+        const p = pointOnRay(ray, t)
+        const h = getTerrainDisplayHeightAt(p.x, p.z)
+        if (h == null) continue
+        const f = p.y - h
+        if (prevF >= 0 && f <= 0) {
+          let lo = prevT
+          let hi = t
+          for (let j = 0; j < 10; j++) {
+            const mid = (lo + hi) * 0.5
+            const mp = pointOnRay(ray, mid)
+            const mh = getTerrainDisplayHeightAt(mp.x, mp.z)
+            if (mh == null) { hi = mid; continue }
+            if (mp.y - mh > 0) lo = mid
+            else hi = mid
+          }
+          const hit = pointOnRay(ray, hi)
+          const hy = getTerrainDisplayHeightAt(hit.x, hit.z)
+          if (hy != null) hit.y = hy
+          return hit
+        }
+        prevT = t
+        prevF = f
+      }
+    }
+
+    const p = pickHorizontalPlaneFromRay(ray, fallbackY)
+    if (!p) return null
+    const y = getTerrainDisplayHeightAt(p.x, p.z)
+    if (y == null) return null
+    p.y = y
+    return p
   }
 
   function pickTerrainPoint(event) {
     updateMouse(event)
-    const pick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => isTerrainMesh(mesh))
-    if (!pick.hit) return null
-    return pick.pickedPoint.clone()
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+    return pickTerrainPointFromRay(ray)
+  }
+
+  function pickHorizontalPlaneFromRay(ray, y = 0) {
+    if (Math.abs(ray.direction.y) < 0.0001) return null
+    const t = -(ray.origin.y - y) / ray.direction.y
+    if (t < 0) return null
+    return pointOnRay(ray, t)
   }
 
   function pickHorizontalPlane(event, y = 0) {
     updateMouse(event)
     const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
-    if (Math.abs(ray.direction.y) < 0.0001) return null
-    const t = -(ray.origin.y - y) / ray.direction.y
-    if (t < 0) return null
-    return new Vector3(
-      ray.origin.x + ray.direction.x * t,
-      y,
-      ray.origin.z + ray.direction.z * t
-    )
+    return pickHorizontalPlaneFromRay(ray, y)
   }
 
   function pickSurfacePoint(event, excludeObjects = []) {
     updateMouse(event)
     const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
 
-    // Pick terrain
-    const terrainPick = scene.pickWithRay(ray, (mesh) => isTerrainMesh(mesh))
+    const terrainPoint = pickTerrainPointFromRay(ray)
+    if (!terrainPoint) return null
 
-    // Pick placed objects (filter upward-facing, skip height-culled)
-    const placedPick = scene.pickWithRay(ray, (mesh) => {
-      if (!mesh.isDescendantOf(placedGroup)) return false
-      if (!mesh.isVisible || !mesh.isEnabled()) return false
-      // Walk up to find root placed object
-      let node = mesh
-      while (node.parent && node.parent !== placedGroup) node = node.parent
-      if (!node.isEnabled()) return false
-      return !excludeObjects.includes(node)
-    })
+    const point = terrainPoint.clone()
+    const planeTop = findTexturePlaneTopAtWorld(point.x, point.z)
+    if (planeTop != null && planeTop > point.y) point.y = planeTop
 
-    // Pick texture planes
-    const planePick = texturePlaneGroup ? scene.pickWithRay(ray, (mesh) => {
-      return mesh.isDescendantOf(texturePlaneGroup) && mesh.isVisible
-    }) : null
+    const objectTop = findObjectTopAt(point.x, point.z, excludeObjects)
+    if (objectTop != null && objectTop > point.y) point.y = objectTop
 
-    // Find closest hit with upward-facing normal
-    const candidates = []
-    if (terrainPick?.hit) candidates.push(terrainPick)
-    if (placedPick?.hit) {
-      const n = placedPick.getNormal(true)
-      if (n && n.y > 0.5) candidates.push(placedPick)
-    }
-    if (planePick?.hit) {
-      const n = planePick.getNormal(true)
-      if (n && n.y > 0.5) candidates.push(planePick)
-    }
-
-    candidates.sort((a, b) => a.distance - b.distance)
-    return candidates.length > 0 ? candidates[0].pickedPoint.clone() : null
+    return point
   }
 
   function pickTile(event) {
@@ -6044,6 +6191,34 @@ let paintBrushRadius = 1
       if (n && n.y > 0.5) return pick.pickedPoint.y
     }
     return null
+  }
+
+  function findTexturePlaneTopAtWorld(worldX, worldZ) {
+    let best = null
+    for (const plane of map.texturePlanes || []) {
+      const layer = layers.find((l) => l.id === (plane.layerId || 'layer_0'))
+      if (layer && !layer.visible) continue
+      const py = plane.position?.y ?? 0
+      if (heightCullEnabled && py > heightCullThreshold) continue
+
+      const rx = plane.rotation?.x ?? 0
+      if (Math.abs(Math.abs(rx) - Math.PI / 2) >= 0.12) continue
+
+      const px = plane.position?.x ?? 0
+      const pz = plane.position?.z ?? 0
+      const sx = plane.scale?.x ?? 1
+      const sy = plane.scale?.y ?? 1
+      const ry = plane.rotation?.y ?? 0
+      const hw = Math.max(0.01, (plane.width ?? 1) * sx) * 0.5
+      const hd = Math.max(0.01, (plane.height ?? 1) * sy) * 0.5
+      const cosR = Math.cos(ry)
+      const sinR = Math.sin(ry)
+      const lx = (worldX - px) * cosR + (worldZ - pz) * sinR
+      const lz = -(worldX - px) * sinR + (worldZ - pz) * cosR
+      if (Math.abs(lx) > hw || Math.abs(lz) > hd) continue
+      if (best == null || py > best) best = py
+    }
+    return best
   }
 
   function findObjectTopAt(worldX, worldZ, excludeObjects = []) {
@@ -6488,6 +6663,7 @@ function applyToolAtTile(tile, eventLike = null) {
       const linesMesh = MeshBuilder.CreateLineSystem(`edgeLine_${i}`, { lines: segs }, scene)
       linesMesh.color = c
       linesMesh.alpha = alpha
+      linesMesh.isPickable = false
       linesMesh.parent = group
     }
 
@@ -6518,6 +6694,7 @@ function applyToolAtTile(tile, eventLike = null) {
     previewObject.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
     previewObject.scaling.set(previewScale, previewScale, previewScale)
     previewObject.userData.assetId = asset.id
+    setHierarchyPickable(previewObject, false)
     // previewObject is already in the scene from makeGhostMaterial
 
     const pos = tileWorldPosition(state.hovered.x, state.hovered.z)
@@ -6674,6 +6851,7 @@ function applyToolAtTile(tile, eventLike = null) {
         addPlacedModel(model)
         model.computeWorldMatrix(true)
         model.position.copyFrom(src.position.add(offsetVec))
+        _spatialRefresh(model)
         newModels.push(model)
       }
 
@@ -6794,6 +6972,7 @@ function applyToolAtTile(tile, eventLike = null) {
         } else {
           model.position.copyFrom(src.position.add(offsetVec))
         }
+        _spatialRefresh(model)
 
         newModels.push(model)
       }
@@ -6851,6 +7030,7 @@ function applyToolAtTile(tile, eventLike = null) {
           )
         )
       }
+      _spatialRefresh(model)
 
       selectedPlacedObject = model
       selectedPlacedObjects = [model]
@@ -9755,11 +9935,13 @@ function applyToolAtTile(tile, eventLike = null) {
 
   sidebar.querySelector('#toggleSplitLines').addEventListener('change', (e) => {
     state.showSplitLines = e.target.checked
+    if (state.showSplitLines && !splitLines) splitLines = buildSplitLines()
     if (splitLines) splitLines.isVisible = state.showSplitLines
   })
 
   sidebar.querySelector('#toggleTileGrid').addEventListener('change', (e) => {
     state.showTileGrid = e.target.checked
+    if (state.showTileGrid && !tileGrid) tileGrid = buildTileGrid()
     if (tileGrid) tileGrid.isVisible = state.showTileGrid
   })
 
@@ -10066,6 +10248,7 @@ function applyToolAtTile(tile, eventLike = null) {
       if (transformStart?.crossGroupStarts?.length) {
         for (const { obj, position } of transformStart.crossGroupStarts) {
           obj.position.set(position.x + dx, position.y + dy, position.z + dz)
+          _spatialRefresh(obj)
         }
       }
 
@@ -10141,6 +10324,7 @@ function applyToolAtTile(tile, eventLike = null) {
       if (transformStart?.groupStarts?.length) {
         for (const { obj, position } of transformStart.groupStarts) {
           obj.position.set(position.x + dx, position.y + dy, position.z + dz)
+          _spatialRefresh(obj)
         }
       }
       // Also move cross-type texture planes
@@ -10152,6 +10336,7 @@ function applyToolAtTile(tile, eventLike = null) {
           updateTexturePlaneMeshTransform(plane)
         }
       }
+      _spatialRefresh(selectedPlacedObject)
 
       return true
     }
@@ -10215,6 +10400,7 @@ function applyToolAtTile(tile, eventLike = null) {
         }, scene)
         diagFloorPreview.position.set(midX, midY, midZ)
         diagFloorPreview.rotation.set(-Math.PI / 2, angle, 0)
+        diagFloorPreview.isPickable = false
         const mat = new StandardMaterial('diagFloorPreviewMat', scene)
         mat.diffuseColor = new Color3(0.3, 0.6, 1.0)
         mat.alpha = 0.35

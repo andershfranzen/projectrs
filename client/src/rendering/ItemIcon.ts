@@ -1,4 +1,4 @@
-import type { ItemDef } from '@projectrs/shared';
+import { resolveEquipmentModelPath, type ItemDef } from '@projectrs/shared';
 import { METAL_TIER_THUMBNAIL_COLOR, TOOL_TIER_METAL_COLOR } from '../data/EquipmentConfig';
 import { getThumbnail, type ThumbnailCamera, type ThumbnailOptions } from './ThumbnailRenderer';
 
@@ -326,12 +326,7 @@ export async function buildThumbnailOptionsForItem(def: ItemDef): Promise<Thumbn
  *  model. Items without a known model return null so they can still use
  *  legacy 2D art. */
 export function resolveItemModelPath(def: ItemDef): string | null {
-  if (def.model) {
-    if (def.model.startsWith('/')) return def.model;
-    if (!def.equipSlot) return null;
-    return `/assets/equipment/${def.equipSlot}/${def.model}`;
-  }
-  return null;
+  return resolveEquipmentModelPath(def, 0);
 }
 
 function uses3DIcon(def: ItemDef): boolean {

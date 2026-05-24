@@ -201,7 +201,7 @@ export enum ServerOpcode {
   PLAYER_REMOTE_EQUIPMENT = 72,
   /** Per-spawn appearance for a customizable NPC. Layout:
    *  [npcEntityId, shirtColor, pantsColor, shoesColor, hairColor, beltColor,
-   *   skinColor, hairStyle]. Same field order as SET_APPEARANCE, prefixed
+   *   skinColor, hairStyle, bodyType]. Same field order as SET_APPEARANCE, prefixed
    *  with npcEntityId. Broadcast on chunk-entry only — appearance
    *  is static unless an admin edits it (see /npcedit). */
   NPC_APPEARANCE = 73,
@@ -347,7 +347,7 @@ export enum ServerOpcode {
    *  is included so the local client renders the same database-authored look
    *  that other players see instead of trusting stale localStorage. Layout:
    *  [x10, z10, health, maxHealth, tickLow, movingFlag,
-   *   shirtColor, pantsColor, shoesColor, hairColor, beltColor, skinColor, hairStyle].
+   *   shirtColor, pantsColor, shoesColor, hairColor, beltColor, skinColor, hairStyle, bodyType].
    *  Appearance values are -1 when the player has not completed character creation. */
   PLAYER_SELF_SYNC = 122,
   /** Outer packet used to amortize encrypted websocket sends. Payload is a

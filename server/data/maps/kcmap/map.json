@@ -22754,6 +22754,30 @@
         "uvRepeat": 4,
         "bridge": true,
         "noRoof": true
+      },
+      {
+        "id": "plane_1779644954447_56463",
+        "textureId": "tex56",
+        "width": 0.85,
+        "height": 1,
+        "vertical": true,
+        "doubleSided": true,
+        "position": {
+          "x": 215.5763605313294,
+          "y": 2.0785685801489113,
+          "z": 145.50149366716713
+        },
+        "rotation": {
+          "x": -1.5707963267948966,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 0.3999999999999999
+        },
+        "uvRepeat": 1
       }
     ],
     "tiles": [],

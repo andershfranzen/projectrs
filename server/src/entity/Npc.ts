@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject } from '@projectrs/shared';
+import { getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, normalizeAppearance } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
 
 export class Npc extends Entity {
@@ -99,7 +99,7 @@ export class Npc extends Entity {
     this.spawnX = x;
     this.spawnZ = z;
     this.wanderRangeOverride = wanderRange;
-    this.appearance = appearance ?? null;
+    this.appearance = appearance ? normalizeAppearance(appearance) : null;
     this.equipment = equipment ?? null;
     this.customColors = customColors ?? null;
     this.aggressiveOverride = aggressive ?? null;

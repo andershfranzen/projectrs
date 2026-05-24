@@ -1,3 +1,5 @@
+import type { PlayerAppearance } from './appearance.js';
+
 // Shared paths + dimensions for the humanoid character GLB. Both the in-game
 // client (local player, remote players, customizable NPCs, character creator)
 // and the editor's appearance preview load the same rig — keeping the paths
@@ -6,6 +8,15 @@
 /** The skinned + rigged humanoid GLB. Served from client/public; the editor
  *  has a symlink at editor/public/Character models. */
 export const CHARACTER_MODEL_PATH = '/Character models/main character.glb';
+export const CHARACTER_FEMALE_MODEL_PATH = '/Character models/main character female.glb';
+export const CHARACTER_MODEL_PATHS: readonly string[] = [
+  CHARACTER_MODEL_PATH,
+  CHARACTER_FEMALE_MODEL_PATH,
+];
+
+export function getCharacterModelPath(appearance?: Pick<PlayerAppearance, 'bodyType'> | null): string {
+  return CHARACTER_MODEL_PATHS[appearance?.bodyType ?? 0] ?? CHARACTER_MODEL_PATH;
+}
 
 /** Height in world units the rig auto-scales to. Roughly RS-character size. */
 export const CHARACTER_TARGET_HEIGHT = 1.53;

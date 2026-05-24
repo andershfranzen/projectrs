@@ -14,5 +14,6 @@ export * from './spells.js';
 export * from './tileCut.js';
 export * from './auth.js';
 export * from './relics.js';
+export * from './gear.js';
 export * from './secureChannel.js';
 export * from './opcodeMapping.js';

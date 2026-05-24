@@ -5,15 +5,16 @@ import { getThumbnail } from '../rendering/ThumbnailRenderer';
 
 type SlotGetter = (slot: string) => TransformNode | null;
 type BoneGetter = (slot: string) => string;
-type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: string } | null;
+type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: string; modelPath?: string } | null;
 type SaveCallback = (itemId: number, override: GearOverride) => Promise<void>;
 type BulkSaveCallback = (sourceItemId: number, slot: string, override: GearOverride) => Promise<number>;
-type LoadGlbCallback = (slot: string, path: string) => Promise<void>;
+type LoadGlbCallback = (slot: string, path: string, itemId?: number) => Promise<void>;
 type AnimCallback = (anim: string) => void;
 type UnequipCallback = (slot: string) => void;
 type OverrideGetter = (itemId: number) => GearOverride | null;
 type SkinnedChecker = (slot: string) => boolean;
 type AuthTokenGetter = () => string;
+type BodyTypeGetter = () => number;
 
 interface GearFileInfo {
   file: string;
@@ -80,6 +81,7 @@ export class GearDebugPanel {
   private overrideGetter: OverrideGetter = () => null;
   private isSkinnedArmor: SkinnedChecker = () => false;
   private getAuthToken: AuthTokenGetter = () => '';
+  private getBodyType: BodyTypeGetter = () => 0;
   private activeSlot = 'weapon';
   private thumbGridOpen = true;
   private thumbCache: Map<string, string> = new Map();
@@ -107,6 +109,7 @@ export class GearDebugPanel {
   setOverrideGetter(getter: OverrideGetter): void { this.overrideGetter = getter; }
   setSkinnedChecker(checker: SkinnedChecker): void { this.isSkinnedArmor = checker; }
   setAuthTokenGetter(getter: AuthTokenGetter): void { this.getAuthToken = getter; }
+  setBodyTypeGetter(getter: BodyTypeGetter): void { this.getBodyType = getter; }
 
   private buildUI(): HTMLDivElement {
     const div = document.createElement('div');
@@ -209,7 +212,7 @@ export class GearDebugPanel {
     thumbHeader.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;';
     const thumbLabel = document.createElement('span');
     thumbLabel.style.cssText = 'color:#aaa;font-size:10px;font-weight:bold;';
-    thumbLabel.textContent = 'AVAILABLE GEAR';
+    thumbLabel.textContent = 'BRONZE BASE FITS';
     this.thumbToggleBtn = document.createElement('button');
     this.thumbToggleBtn.textContent = '▾';
     Object.assign(this.thumbToggleBtn.style, {
@@ -301,7 +304,7 @@ export class GearDebugPanel {
     btnRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;';
 
     const saveBtn = this.makeButton('Save', '#1a3a1a', '#4a4', () => this.saveOverride());
-    const applySlotBtn = this.makeButton('Apply Slot', '#1a2f3a', '#48a', () => this.applyToSlotClass());
+    const applySlotBtn = this.makeButton('Apply Family', '#1a2f3a', '#48a', () => this.applyToSlotClass());
     const copyBtn = this.makeButton('Copy', '#2a3a2a', '#484', () => this.copyCode());
     const resetBtn = this.makeButton('Reset', '#3a2a1a', '#a84', () => this.resetToDefaults());
     const zeroBtn = this.makeButton('Zero', '#4a2a2a', '#a44', () => this.resetAll());
@@ -517,23 +520,25 @@ export class GearDebugPanel {
   private async loadThumbGrid(slot: string): Promise<void> {
     this.thumbGrid.innerHTML = '';
 
-    let files: GearFileInfo[] = this.slotFilesCache.get(slot) || [];
-    if (files.length === 0 && !this.slotFilesCache.has(slot)) {
+    const bodyType = this.getBodyType();
+    const cacheKey = `${slot}:${bodyType}`;
+    let files: GearFileInfo[] = this.slotFilesCache.get(cacheKey) || [];
+    if (files.length === 0 && !this.slotFilesCache.has(cacheKey)) {
       try {
         const token = this.getAuthToken();
-        const res = await fetch(`/api/dev/gear-files?slot=${slot}`, {
+        const res = await fetch(`/api/dev/gear-files?slot=${encodeURIComponent(slot)}&fitBase=1&bodyType=${bodyType}`, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         const data = await res.json();
         files = data.files || [];
       } catch { /* keep empty */ }
-      this.slotFilesCache.set(slot, files);
+      this.slotFilesCache.set(cacheKey, files);
     }
 
     if (files.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'color:#444;font-size:10px;text-align:center;padding:8px;grid-column:1/-1;';
-      empty.textContent = `No gear files in /assets/equipment/${slot}/`;
+      empty.textContent = `No bronze base fit items for ${slot}`;
       this.thumbGrid.appendChild(empty);
       return;
     }
@@ -590,7 +595,7 @@ export class GearDebugPanel {
       labelEl.textContent = info.name;
       cell.appendChild(labelEl);
 
-      cell.title = `${info.name} (${info.file})`;
+      cell.title = `${info.name} (${info.itemId > 0 ? `item ${info.itemId}, ` : ''}${info.file})`;
       cell.addEventListener('click', () => this.loadGlbFromGrid(info));
       cell.addEventListener('mouseenter', () => {
         if (!isEquipped && !isLoadedPreview) { cell.style.background = '#252015'; cell.style.borderColor = '#3a3520'; }
@@ -621,7 +626,7 @@ export class GearDebugPanel {
     if (!this.loadGlbCallback) return;
     this.flashStatus(`Loading ${info.name}...`);
     try {
-      await this.loadGlbCallback(this.activeSlot, info.path);
+      await this.loadGlbCallback(this.activeSlot, info.path, info.itemId > 0 ? info.itemId : undefined);
       this.loadedGlbPath = info.path;
       // Refresh view after a tick so the attached gear node is available
       setTimeout(() => {
@@ -791,7 +796,7 @@ export class GearDebugPanel {
     }
 
     if (includeFile && this.loadedGlbPath) {
-      const defaultPath = `/assets/equipment/${this.activeSlot}/${item.id}.glb`;
+      const defaultPath = item.modelPath ?? `/assets/equipment/${this.activeSlot}/${item.id}.glb`;
       if (this.loadedGlbPath !== defaultPath) {
         override.file = this.loadedGlbPath;
       }
@@ -820,7 +825,7 @@ export class GearDebugPanel {
     if (currentBone) override.boneName = currentBone;
 
     const ok = window.confirm(
-      `Apply ${item.name}'s pose to every modeled item in the ${this.activeSlot} slot?\n\n` +
+      `Apply ${item.name}'s pose to matching tier-family items in the ${this.activeSlot} slot?\n\n` +
       'This copies position, rotation, scale, and bone only. It does not copy the GLB file.'
     );
     if (!ok) return;
@@ -828,7 +833,7 @@ export class GearDebugPanel {
     try {
       const count = await this.bulkSaveCallback(item.id, this.activeSlot, override);
       this.updateOverrideStatus();
-      this.flashStatus(`Applied pose to ${count} ${this.activeSlot} item(s)`);
+      this.flashStatus(`Applied pose to ${count} matching item(s)`);
     } catch (e: any) {
       this.flashStatus(`Bulk save failed: ${e.message || e}`);
     }

@@ -416,6 +416,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     // base shades. If the flat-shaded silhouette is wanted later, bake the
     // un-indexed layout into landVertices/landIndices at build time so the
     // cached buffers match the GPU layout.
+    landMesh.isPickable = false
     landMesh.parent = group
     _landMesh = landMesh
   }
@@ -435,6 +436,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     }
     waterMesh.material = waterMat
     waterMesh.hasVertexAlpha = true
+    waterMesh.isPickable = false
     waterMesh.parent = group
   }
 
@@ -455,6 +457,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     if (swTex) swMat.diffuseTexture = swTex
     swMesh.material = swMat
     swMesh.hasVertexAlpha = true
+    swMesh.isPickable = false
     swMesh.parent = group
   }
 
@@ -503,6 +506,7 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
     if (waterTexture) mat.diffuseTexture = waterTexture
     mesh.material = mat
     mesh.hasVertexAlpha = false
+    mesh.isPickable = false
     mesh.parent = group
   }
 
@@ -544,6 +548,7 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
     if (swTex) mat.diffuseTexture = swTex
     mesh.material = mat
     mesh.hasVertexAlpha = false
+    mesh.isPickable = false
     mesh.parent = group
   }
 
@@ -643,6 +648,7 @@ export function buildCliffMeshes(map: MapData, scene: Scene): Mesh | null {
   const mat = createLambertMaterial('cliffs-mat', scene, { backFaceCulling: false })
   mesh.material = mat
   mesh.hasVertexAlpha = true
+  mesh.isPickable = false
   mesh.setEnabled(false)
   return mesh
 }
@@ -811,6 +817,7 @@ export function buildTextureOverlays(
 
         const mesh = createMeshFromArrays(`texoverlay_${x}_${z}`, positions, null, uvs, indices, scene)
         mesh.material = mat
+        mesh.isPickable = false
         mesh.parent = group
         if (meshesByTile) {
           const key = `${x},${z}`

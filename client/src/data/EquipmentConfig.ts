@@ -1,10 +1,104 @@
-export interface GearOverride {
+export interface GearOverridePose {
   boneName?: string;
   localPosition?: { x: number; y: number; z: number };
   localRotation?: { x: number; y: number; z: number };
   scale?: number;
   centerOrigin?: boolean;
   file?: string;
+}
+
+export interface GearOverride extends GearOverridePose {
+  /** Body-type-specific fit overrides. Body type 0 uses the root fields. */
+  bodyTypeOverrides?: Record<string, GearOverridePose>;
+}
+
+export function gearOverridePose(override?: GearOverridePose | null): GearOverridePose {
+  const pose: GearOverridePose = {};
+  if (!override) return pose;
+  if (typeof override.boneName === 'string') pose.boneName = override.boneName;
+  if (override.localPosition) pose.localPosition = { ...override.localPosition };
+  if (override.localRotation) pose.localRotation = { ...override.localRotation };
+  if (typeof override.scale === 'number') pose.scale = override.scale;
+  if (typeof override.centerOrigin === 'boolean') pose.centerOrigin = override.centerOrigin;
+  if (typeof override.file === 'string') pose.file = override.file;
+  return pose;
+}
+
+function sameVec3(
+  a: { x: number; y: number; z: number } | undefined,
+  b: { x: number; y: number; z: number } | undefined,
+): boolean {
+  return a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.z === b.z);
+}
+
+export function gearOverridePoseEquals(a?: GearOverridePose | null, b?: GearOverridePose | null): boolean {
+  const left = gearOverridePose(a);
+  const right = gearOverridePose(b);
+  return left.boneName === right.boneName
+    && sameVec3(left.localPosition, right.localPosition)
+    && sameVec3(left.localRotation, right.localRotation)
+    && left.scale === right.scale
+    && left.centerOrigin === right.centerOrigin
+    && left.file === right.file;
+}
+
+export function resolveGearOverrideForBodyType(
+  override: GearOverride | undefined | null,
+  bodyType: number,
+): GearOverride | null {
+  if (!override) return null;
+  const basePose = gearOverridePose(override);
+  if (bodyType <= 0) return { ...basePose, bodyTypeOverrides: override.bodyTypeOverrides };
+
+  const bodyPose = override.bodyTypeOverrides?.[String(bodyType)];
+  if (!bodyPose) return { ...basePose, bodyTypeOverrides: override.bodyTypeOverrides };
+  return {
+    ...basePose,
+    ...gearOverridePose(bodyPose),
+    bodyTypeOverrides: override.bodyTypeOverrides,
+  };
+}
+
+export function mergeGearOverrideForBodyType(
+  existing: GearOverride | undefined | null,
+  bodyType: number,
+  patch: GearOverridePose,
+): GearOverride {
+  const patchPose = gearOverridePose(patch);
+  const bodyTypeOverrides = existing?.bodyTypeOverrides
+    ? { ...existing.bodyTypeOverrides }
+    : undefined;
+
+  if (bodyType <= 0) {
+    const previousBasePose = gearOverridePose(existing);
+    const nextBasePose = { ...previousBasePose, ...patchPose };
+    const nextBodyTypeOverrides = bodyTypeOverrides
+      ? { ...bodyTypeOverrides }
+      : undefined;
+    if (nextBodyTypeOverrides) {
+      for (const [key, bodyPose] of Object.entries(nextBodyTypeOverrides)) {
+        if (gearOverridePoseEquals(bodyPose, previousBasePose)) {
+          nextBodyTypeOverrides[key] = gearOverridePose(nextBasePose);
+        }
+      }
+    }
+    return {
+      ...nextBasePose,
+      ...(nextBodyTypeOverrides ? { bodyTypeOverrides: nextBodyTypeOverrides } : {}),
+    };
+  }
+
+  const key = String(bodyType);
+  return {
+    ...gearOverridePose(existing),
+    bodyTypeOverrides: {
+      ...(bodyTypeOverrides ?? {}),
+      [key]: {
+        ...gearOverridePose(bodyTypeOverrides?.[key]),
+        ...patchPose,
+      },
+    },
+  };
 }
 
 export const EQUIP_SLOT_BONES: Record<string, { boneName: string; localPosition: { x: number; y: number; z: number }; localRotation: { x: number; y: number; z: number }; scale: number }> = {

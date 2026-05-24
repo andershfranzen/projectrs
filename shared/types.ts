@@ -84,6 +84,12 @@ export interface ItemDef {
  * gear-overrides.json `file` still wins if present (legacy/per-instance).
  */
   model?: string;
+  /**
+   * Optional visual-only equipment model variants by character body type.
+   * The item id, stats, inventory icon, and server behavior stay unchanged;
+   * only the equipped 3D model path changes. Key "1" is the female body.
+   */
+  bodyTypeModels?: Record<string, string>;
   value: number;
 }
 

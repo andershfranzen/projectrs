@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -7291,6 +7291,7 @@ export class World {
           a ? a.shirtColor : -1, a ? a.pantsColor : -1, a ? a.shoesColor : -1,
           a ? a.hairColor  : -1, a ? a.beltColor  : -1, a ? a.skinColor  : -1,
           a ? a.hairStyle  : -1,
+          a ? a.bodyType : -1,
           player.combatLevel,
           player.currentFloor,
           qPos(player.effectiveY),
@@ -7336,6 +7337,7 @@ export class World {
         a ? a.beltColor  : -1,
         a ? a.skinColor  : -1,
         a ? a.hairStyle  : -1,
+        a ? a.bodyType   : -1,
       );
       const cm = this.chunkManagers.get(viewer.currentMapLevel);
       if (!cm) {
@@ -7482,6 +7484,7 @@ export class World {
       a ? a.beltColor  : -1,
       a ? a.skinColor  : -1,
       a ? a.hairStyle  : -1,
+      a ? a.bodyType : -1,
       subject.combatLevel,
       subject.currentFloor,
       qPos(subject.effectiveY),
@@ -7555,7 +7558,7 @@ export class World {
         npc.id,
         a.shirtColor, a.pantsColor, a.shoesColor,
         a.hairColor, a.beltColor, a.skinColor,
-        a.hairStyle,
+        a.hairStyle, a.bodyType,
       );
     }
     const eq = npc.equipment;
@@ -7938,12 +7941,14 @@ export class World {
       return { ok: false, message: `Could not match ${nearest.name} at ${nearest.spawnX.toFixed(1)}, ${nearest.spawnZ.toFixed(1)} to a saved spawn.` };
     }
 
-    const appearance = isValidAppearance(player.appearance ?? DEFAULT_APPEARANCE)
-      ? { ...(player.appearance ?? DEFAULT_APPEARANCE) }
+    const playerAppearance = normalizeAppearance(player.appearance ?? DEFAULT_APPEARANCE);
+    const appearance = isValidAppearance(playerAppearance)
+      ? { ...playerAppearance }
       : { ...DEFAULT_APPEARANCE };
 
-    spawn.appearance = spawn.appearance && isValidAppearance(spawn.appearance)
-      ? spawn.appearance
+    const spawnAppearance = spawn.appearance ? normalizeAppearance(spawn.appearance) : null;
+    spawn.appearance = spawnAppearance && isValidAppearance(spawnAppearance)
+      ? spawnAppearance
       : appearance;
     spawn.equipment = equipment;
 

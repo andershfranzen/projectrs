@@ -644,5 +644,119 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "willow tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 79.5,
+      "y": -0.8425006556269179,
+      "z": 66.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "willow tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 81.5,
+      "y": -0.6873850212322449,
+      "z": 67.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "willow tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 83,
+      "y": -0.635133240536491,
+      "z": 69.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "willow tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 90.5,
+      "y": -0.3359911551743884,
+      "z": 80.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "willow tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.5,
+      "y": -0.35886310547984357,
+      "z": 83
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "willow tree",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93,
+      "y": 0,
+      "z": 84
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

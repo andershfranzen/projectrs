@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -210,6 +210,16 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
     if (item.equipSkill !== undefined && !EQUIP_SKILLS.has(String(item.equipSkill))) return { ok: false, error: `Item ${item.id} has invalid equipSkill` };
     if (item.weaponStyle !== undefined && !WEAPON_STYLES.has(String(item.weaponStyle))) return { ok: false, error: `Item ${item.id} has invalid weaponStyle` };
     if (item.toolType !== undefined && !TOOL_TYPES.has(String(item.toolType))) return { ok: false, error: `Item ${item.id} has invalid toolType` };
+    if (item.bodyTypeModels !== undefined) {
+      if (!item.bodyTypeModels || typeof item.bodyTypeModels !== 'object' || Array.isArray(item.bodyTypeModels)) {
+        return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels` };
+      }
+      for (const [bodyType, model] of Object.entries(item.bodyTypeModels as Record<string, unknown>)) {
+        if (!/^\d+$/.test(bodyType) || typeof model !== 'string' || model.trim().length === 0) {
+          return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels.${bodyType}` };
+        }
+      }
+    }
     for (const field of finiteNumberFields) {
       const value = item[field];
       if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
@@ -2250,8 +2260,39 @@ const server = Bun.serve<SocketData>({
       }
       try {
         const equipRoot = resolve(import.meta.dir, '../../client/public/assets/equipment');
+        const publicRoot = resolve(import.meta.dir, '../../client/public');
         let itemDefs: any[] = [];
         try { itemDefs = JSON.parse(readFileSync(resolve(import.meta.dir, '../data/items.json'), 'utf-8')); } catch {}
+        const showAllFiles = url.searchParams.get('all') === '1';
+        const fitBaseOnly = url.searchParams.get('fitBase') === '1' || !showAllFiles;
+        const requestedBodyType = Number(url.searchParams.get('bodyType') ?? 0);
+        const bodyType = Number.isFinite(requestedBodyType) && requestedBodyType > 0
+          ? Math.floor(requestedBodyType)
+          : 0;
+        const modelPathForItem = (def: any): string => {
+          const resolved = resolveEquipmentModelPath(def, bodyType, slot)
+            ?? resolveEquipmentModelPath(def, 0, slot);
+          if (resolved) return resolved;
+          return `/assets/equipment/${slot}/${def.id}.glb`;
+        };
+
+        if (fitBaseOnly) {
+          const files = itemDefs
+            .filter(def => def?.equipSlot === slot && gearFitTierForName(def.name) === 'Bronze')
+            .map(def => {
+              const path = modelPathForItem(def);
+              return {
+                file: path.split('/').pop() || path,
+                path,
+                itemId: Number(def.id),
+                name: String(def.name ?? def.id),
+              };
+            })
+            .filter(info => Number.isInteger(info.itemId) && existsSync(resolve(publicRoot, info.path.replace(/^\//, ''))))
+            .sort((a, b) => a.itemId - b.itemId);
+          return jsonResponse({ files, fitBaseOnly: true, bodyType });
+        }
+
         const itemMap = new Map<number, string>();
         for (const def of itemDefs) itemMap.set(def.id, def.name);
 

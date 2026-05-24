@@ -5,6 +5,8 @@
  * Stored in the DB as JSON, synced to other players via PLAYER_SYNC.
  */
 export interface PlayerAppearance {
+  /** 0 = default/male body, 1 = female body. */
+  bodyType: number;
   shirtColor: number;
   pantsColor: number;
   shoesColor: number;
@@ -103,6 +105,13 @@ export const HAIR_COLORS: [number, number, number][] = [
 ];
 
 export const HAIR_STYLE_COUNT = 15;       // M_hair_1 … M_hair_15 (0 = bald)
+export const BODY_TYPE_NAMES: string[] = ['Male', 'Female'];
+export const BODY_TYPE_COUNT = BODY_TYPE_NAMES.length;
+export const APPEARANCE_WIRE_FIELD_COUNT = 8;
+export const FEMALE_BODY_TYPE = 1;
+export const FEMALE_HAIR_STYLE_CHOICES: readonly number[] = [10, 11, 12, 13, 14];
+export const DEFAULT_HAIR_STYLE_BY_BODY_TYPE: readonly number[] = [1, 10];
+const ALL_HAIR_STYLE_CHOICES: readonly number[] = Array.from({ length: HAIR_STYLE_COUNT + 1 }, (_, i) => i);
 
 /** Display labels parallel to each palette. Indices match the palette arrays
  *  above. Used by the character creator stepper to show the picked color's
@@ -142,7 +151,24 @@ export function hairStyleName(idx: number): string {
   return `Style ${idx}`;
 }
 
+export function hairStyleChoicesForBodyType(bodyType: number): readonly number[] {
+  return bodyType === FEMALE_BODY_TYPE ? FEMALE_HAIR_STYLE_CHOICES : ALL_HAIR_STYLE_CHOICES;
+}
+
+export function normalizeBodyType(bodyType: unknown): number {
+  return Number.isInteger(bodyType) && (bodyType as number) >= 0 && (bodyType as number) < BODY_TYPE_COUNT
+    ? bodyType as number
+    : 0;
+}
+
+export function normalizeHairStyleForBodyType(bodyType: number, hairStyle: unknown): number {
+  const choices = hairStyleChoicesForBodyType(bodyType);
+  if (Number.isInteger(hairStyle) && choices.includes(hairStyle as number)) return hairStyle as number;
+  return DEFAULT_HAIR_STYLE_BY_BODY_TYPE[bodyType] ?? choices[0] ?? 0;
+}
+
 export const DEFAULT_APPEARANCE: PlayerAppearance = {
+  bodyType: 0,
   shirtColor: 0,
   pantsColor: 0,
   shoesColor: 0,
@@ -155,13 +181,14 @@ export const DEFAULT_APPEARANCE: PlayerAppearance = {
 /** Validate that all indices are within palette range */
 export function isValidAppearance(a: PlayerAppearance): boolean {
   return (
+    Number.isInteger(a.bodyType) && a.bodyType >= 0 && a.bodyType < BODY_TYPE_COUNT &&
     Number.isInteger(a.shirtColor) && a.shirtColor >= 0 && a.shirtColor < SHIRT_COLORS.length &&
     Number.isInteger(a.pantsColor) && a.pantsColor >= 0 && a.pantsColor < PANTS_COLORS.length &&
     Number.isInteger(a.shoesColor) && a.shoesColor >= 0 && a.shoesColor < SHOES_COLORS.length &&
     Number.isInteger(a.hairColor)  && a.hairColor >= 0  && a.hairColor < HAIR_COLORS.length &&
     Number.isInteger(a.beltColor)  && a.beltColor >= 0  && a.beltColor < BELT_COLORS.length &&
     Number.isInteger(a.skinColor)  && a.skinColor >= 0  && a.skinColor < SKIN_COLORS.length &&
-    Number.isInteger(a.hairStyle)  && a.hairStyle >= 0  && a.hairStyle <= HAIR_STYLE_COUNT
+    hairStyleChoicesForBodyType(a.bodyType).includes(a.hairStyle)
   );
 }
 
@@ -169,7 +196,8 @@ export function isValidAppearance(a: PlayerAppearance): boolean {
 export function appearanceEquals(a: PlayerAppearance | null, b: PlayerAppearance | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
-  return a.shirtColor === b.shirtColor
+  return a.bodyType === b.bodyType
+    && a.shirtColor === b.shirtColor
     && a.pantsColor === b.pantsColor
     && a.shoesColor === b.shoesColor
     && a.hairColor === b.hairColor
@@ -180,14 +208,43 @@ export function appearanceEquals(a: PlayerAppearance | null, b: PlayerAppearance
 
 /** Fill in missing fields from older saved appearances (backwards compat) */
 export function normalizeAppearance(a: Partial<PlayerAppearance>): PlayerAppearance {
+  const bodyType = normalizeBodyType(a.bodyType);
   return {
+    bodyType,
     shirtColor: a.shirtColor ?? 0,
     pantsColor: a.pantsColor ?? 0,
     shoesColor: a.shoesColor ?? 0,
     hairColor:  a.hairColor ?? 0,
     beltColor:  a.beltColor ?? 0,
     skinColor:  a.skinColor ?? 0,
-    hairStyle:  a.hairStyle ?? 1,
+    hairStyle:  normalizeHairStyleForBodyType(bodyType, a.hairStyle),
+  };
+}
+
+/** Field order used by SET_APPEARANCE and appearance sync packets. */
+export function appearanceToWireValues(a: PlayerAppearance): number[] {
+  return [
+    a.shirtColor,
+    a.pantsColor,
+    a.shoesColor,
+    a.hairColor,
+    a.beltColor,
+    a.skinColor,
+    a.hairStyle,
+    a.bodyType,
+  ];
+}
+
+export function appearanceFromWireValues(values: readonly number[], offset: number = 0): PlayerAppearance {
+  return {
+    shirtColor: values[offset] ?? 0,
+    pantsColor: values[offset + 1] ?? 0,
+    shoesColor: values[offset + 2] ?? 0,
+    hairColor: values[offset + 3] ?? 0,
+    beltColor: values[offset + 4] ?? 0,
+    skinColor: values[offset + 5] ?? 0,
+    hairStyle: values[offset + 6] ?? 1,
+    bodyType: values[offset + 7] ?? 0,
   };
 }
 

@@ -680,6 +680,9 @@
     "value": 68,
     "icon": "Bronze_Plate_Mail_Legs_206.png",
     "model": "/assets/equipment/legs/BronzePlatelegs.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/legs/female/BronzePlatelegsWoman.glb"
+    },
     "stabDefence": 6,
     "slashDefence": 7,
     "crushDefence": 5,
@@ -697,6 +700,9 @@
     "value": 113,
     "icon": "Bronze_Plate_Mail_Body_117.png",
     "model": "/assets/equipment/body/BronzePlatebody.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/BronzePlatebodyWoman.glb"
+    },
     "stabDefence": 14,
     "slashDefence": 16,
     "crushDefence": 12,
@@ -904,6 +910,9 @@
     "value": 135,
     "icon": "Iron_Plate_Mail_Legs_9.png",
     "model": "/assets/equipment/legs/IronPlatelegs.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/legs/female/IronPlatelegsWoman.glb"
+    },
     "stabDefence": 9,
     "slashDefence": 11,
     "crushDefence": 8,
@@ -919,6 +928,9 @@
     "equippable": true,
     "equipSlot": "body",
     "model": "/assets/equipment/body/IronPlatebody.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/IronPlatebodyWoman.glb"
+    },
     "value": 225,
     "icon": "Iron_Plate_Mail_Body_8.png",
     "stabDefence": 21,
@@ -1132,6 +1144,9 @@
     "crushDefence": 10,
     "rangedDefence": 10,
     "model": "/assets/equipment/legs/SteelPlatelegs.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/legs/female/SteelPlatelegsWoman.glb"
+    },
     "equipSkill": "defence",
     "levelRequired": 15
   },
@@ -1149,6 +1164,9 @@
     "crushDefence": 24,
     "rangedDefence": 28,
     "model": "/assets/equipment/body/SteelPlatebody.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/SteelPlatebodyWoman.glb"
+    },
     "equipSkill": "defence",
     "levelRequired": 15
   },
@@ -1266,6 +1284,9 @@
     "value": 900,
     "icon": "Mithril_Plate_Mail_Body_119.png",
     "model": "/assets/equipment/body/MithrilPlatebody.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/MithrilPlatebodyWoman.glb"
+    },
     "stabDefence": 42,
     "slashDefence": 48,
     "crushDefence": 36,
@@ -1461,6 +1482,9 @@
     "equipSlot": "legs",
     "value": 1080,
     "model": "/assets/equipment/legs/BlackBronzePlatelegs.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/legs/female/BlackBronzePlatelegsWoman.glb"
+    },
     "stabDefence": 24,
     "slashDefence": 28,
     "crushDefence": 20,
@@ -1477,6 +1501,9 @@
     "equipSlot": "body",
     "value": 1800,
     "model": "/assets/equipment/body/BlackBronzePlatebody.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/BlackBronzePlatebodyWoman.glb"
+    },
     "stabDefence": 56,
     "slashDefence": 64,
     "crushDefence": 48,

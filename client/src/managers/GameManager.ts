@@ -54,9 +54,9 @@ import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
-import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
+import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -77,6 +77,7 @@ const TERMINAL_CLOSE_REASONS = new Set([
   'Account is still in combat',
 ]);
 const GEAR_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
+const PER_TARGET_GEAR_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet']);
 
 function devCacheBustGearFile(file: string): string {
   return GEAR_CACHE_BUST_TOKEN ? `${file}${GEAR_CACHE_BUST_TOKEN}` : file;
@@ -978,7 +979,7 @@ export class GameManager {
     try {
       const raw = localStorage.getItem(this.appearanceStorageKey(username));
       if (!raw) return null;
-      const parsed = JSON.parse(raw) as PlayerAppearance;
+      const parsed = normalizeAppearance(JSON.parse(raw) as Partial<PlayerAppearance>);
       return isValidAppearance(parsed) ? parsed : null;
     } catch {
       return null;
@@ -993,6 +994,7 @@ export class GameManager {
     this.token = token;
     this.username = username;
     this.localAppearance = this.loadCachedAppearance(username);
+    if (this.localAppearance) this.ensureLocalCharacterModel(this.localAppearance);
     return new Promise<void>((resolve) => {
       this._loginOkResolver = resolve;
       this._loginProgress = onProgress ?? null;
@@ -1900,6 +1902,28 @@ export class GameManager {
     }
   }
 
+  private recreateRemotePlayer(entityId: number, appearance: PlayerAppearance): void {
+    const current = this.entities.remotePlayers.get(entityId);
+    const target = this.entities.remoteTargets.get(entityId);
+    const pos = current?.position.clone();
+    const x = target?.x ?? pos?.x ?? 0;
+    const z = target?.z ?? pos?.z ?? 0;
+    const floor = target?.floor ?? 0;
+    const y = target?.y ?? pos?.y;
+    const name = this.entities.playerNames.get(entityId) || 'Player';
+
+    current?.dispose();
+    const replacement = this.entities.createRemotePlayer(entityId, x, z, name, floor, y, appearance);
+    replacement.whenReady().then(() => {
+      if (this.entities.remotePlayers.get(entityId) !== replacement) return;
+      replacement.applyAppearance(appearance);
+      const equipment = this.entities.remoteEquipment.get(entityId);
+      if (equipment) this.applyRemoteEquipmentArray(replacement, equipment, entityId);
+      const anim = this.remoteAnimationStates.get(entityId);
+      if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId, anim.toolItemId);
+    });
+  }
+
   /**
    * Equip or unequip a 3D gear piece on the local player.
    * Loads explicitly configured 3D gear models on demand, caches the template.
@@ -1912,8 +1936,56 @@ export class GameManager {
     await this.applyGearToCharacter(this.localPlayer, slotName, itemId, /* isLocal */ true, this.localPlayerId);
   }
 
-  private applyGearOverrideTransform(character: CharacterEntity, slotName: string, itemId: number, override: GearOverride): void {
+  private getCharacterBodyType(character?: CharacterEntity | null): number {
+    if (!character) return 0;
+    if (character === this.localPlayer && this.localAppearance) return this.localAppearance.bodyType;
+    const index = CHARACTER_MODEL_PATHS.indexOf(character.getModelPath());
+    return index >= 0 ? index : 0;
+  }
+
+  private getGearOverrideForCharacter(itemId: number, character?: CharacterEntity | null): GearOverride | null {
+    return resolveGearOverrideForBodyType(
+      this.gearOverrides.get(itemId),
+      this.getCharacterBodyType(character),
+    );
+  }
+
+  private getGearModelFileForCharacter(itemId: number, slotName: string, character?: CharacterEntity | null): string | null {
+    const itemDef = this.itemDefsCache.get(itemId);
+    const rawOverride = this.gearOverrides.get(itemId);
+    const bodyType = this.getCharacterBodyType(character);
+    const bodyOverrideFile = bodyType > 0
+      ? rawOverride?.bodyTypeOverrides?.[String(bodyType)]?.file
+      : undefined;
+    if (bodyOverrideFile) return bodyOverrideFile;
+
+    if (bodyType > 0 && itemDef?.bodyTypeModels?.[String(bodyType)]) {
+      return resolveEquipmentModelPath(itemDef, bodyType, slotName);
+    }
+
+    if (rawOverride?.file) return rawOverride.file;
+    return resolveEquipmentModelPath(itemDef, bodyType, slotName);
+  }
+
+  private async saveGearOverridesToServer(): Promise<void> {
+    const all: Record<string, GearOverride> = {};
+    for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
+    const token = this.token || localStorage.getItem('projectrs_token') || '';
+    const res = await fetch('/api/dev/gear-overrides', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(all),
+    });
+    if (!res.ok) throw new Error('Server returned ' + res.status);
+  }
+
+  private applyGearOverrideTransform(character: CharacterEntity, slotName: string, itemId: number): void {
     if (character.getGearItemId(slotName) !== itemId) return;
+    const override = this.getGearOverrideForCharacter(itemId, character);
+    if (!override) return;
     if (character.getSkinnedArmorMeshes(slotName)) {
       character.applySkinnedArmorTransform(slotName, override);
       return;
@@ -1933,21 +2005,32 @@ export class GameManager {
     }
   }
 
-  private refreshEquippedGearOverride(itemId: number, override: GearOverride): void {
+  private refreshEquippedGearOverride(itemId: number): void {
     const itemDef = this.itemDefsCache.get(itemId);
     const slotName = itemDef?.equipSlot;
     if (!slotName) return;
 
     if (this.localPlayer) {
-      this.applyGearOverrideTransform(this.localPlayer, slotName, itemId, override);
+      this.applyGearOverrideTransform(this.localPlayer, slotName, itemId);
     }
     for (const character of this.entities.remotePlayers.values()) {
-      this.applyGearOverrideTransform(character, slotName, itemId, override);
+      this.applyGearOverrideTransform(character, slotName, itemId);
     }
     for (const npc of this.entities.npcSprites.values()) {
       if (npc instanceof CharacterEntity) {
-        this.applyGearOverrideTransform(npc, slotName, itemId, override);
+        this.applyGearOverrideTransform(npc, slotName, itemId);
       }
+    }
+  }
+
+  private deleteGearTemplateCacheForItem(slotName: string, itemId: number): void {
+    const oldKey = `${slotName}/${itemId}`;
+    const suffix = `/${oldKey}`;
+    for (const key of this.gearTemplateCache.keys()) {
+      if (key === oldKey || key.endsWith(suffix)) this.gearTemplateCache.delete(key);
+    }
+    for (const key of this.gearLoadingPromises.keys()) {
+      if (key === oldKey || key.endsWith(suffix)) this.gearLoadingPromises.delete(key);
     }
   }
 
@@ -2008,20 +2091,10 @@ export class GameManager {
     await this.gearOverridesReady;
 
     const buildDef = (): GearDef | null => {
-      // gearOverrides is a global rigging file (server/data/gear-overrides.json)
-      // — every client fetches the same data, so the override applies to BOTH
-      // local and remote characters. Without this, remote viewers see your
-      // rigged gear at the EQUIP_SLOT_BONES defaults (random bones).
-      const override = this.gearOverrides.get(itemId);
-      const itemDef = this.itemDefsCache.get(itemId);
-      let gearFile: string | null = null;
-      if (override?.file) {
-        gearFile = override.file;
-      } else if (itemDef?.model) {
-        gearFile = itemDef.model.startsWith('/')
-          ? itemDef.model
-          : `/assets/equipment/${slotName}/${itemDef.model}`;
-      }
+      // gearOverrides is a shared rigging file; body type 0 uses the root fit,
+      // while other body types can override only the fields they need.
+      const override = this.getGearOverrideForCharacter(itemId, target);
+      const gearFile = this.getGearModelFileForCharacter(itemId, slotName, target);
       if (!gearFile) return null;
       return {
         itemId,
@@ -2041,16 +2114,18 @@ export class GameManager {
     // the head path returns a sharable template (mesh offsets are computed
     // against the armor GLB's own bones, not the character's), so it routes
     // through the cache below like any other bone-attached slot.
-    const PER_TARGET_SLOTS = new Set(['body', 'legs', 'hands', 'feet']);
-    if (PER_TARGET_SLOTS.has(slotName)) {
+    if (PER_TARGET_GEAR_SLOTS.has(slotName)) {
       const def = buildDef();
       if (def) await this.loadGearSmart(slotName, itemId, def, target, isCurrentApply);
       return;
     }
 
     // Cache-shareable bone-attached gear (weapon, shield, neck, ring).
-    const cacheKey = `${slotName}/${itemId}`;
-    if (isLocal) this.gearTemplateCache.delete(cacheKey);
+    const cacheKey = `${this.getCharacterBodyType(target)}/${slotName}/${itemId}`;
+    if (isLocal) {
+      this.gearTemplateCache.delete(cacheKey);
+      this.gearLoadingPromises.delete(cacheKey);
+    }
     let template = this.gearTemplateCache.get(cacheKey);
     if (!template) {
       let promise = this.gearLoadingPromises.get(cacheKey);
@@ -2154,7 +2229,7 @@ export class GameManager {
         if (ok) {
           const loaderRoot = result.meshes.find(m => m.name === '__root__');
           if (loaderRoot) loaderRoot.dispose();
-          const override = this.gearOverrides.get(itemId);
+          const override = this.getGearOverrideForCharacter(itemId, character);
           if (override) {
             character.applySkinnedArmorTransform(slotName, override);
           }
@@ -2229,11 +2304,8 @@ export class GameManager {
         const loaderRoot = result.meshes.find(m => m.name === '__root__');
         if (loaderRoot) loaderRoot.dispose();
 
-        // Apply saved override transforms for fine-tuning fit. gearOverrides
-        // is a global rigging file shared across all clients, so it applies
-        // to both local and remote characters — without this, remote viewers
-        // see your rigged armor offset to wrong positions.
-        const override = this.gearOverrides.get(itemId);
+        // Apply saved override transforms for fine-tuning fit.
+        const override = this.getGearOverrideForCharacter(itemId, character);
         if (override) {
           character.applySkinnedArmorTransform(slotName, override);
         }
@@ -2348,7 +2420,7 @@ export class GameManager {
   private createLocalCharacterEntity(): CharacterEntity {
     return new CharacterEntity(this.scene, {
       name: 'localPlayer',
-      modelPath: CHARACTER_MODEL_PATH,
+      modelPath: getCharacterModelPath(this.localAppearance),
       targetHeight: CHARACTER_TARGET_HEIGHT,
       // No label on the local player — matches pre-3D-remote-players behavior.
       // Other players see the local player's name through PLAYER_SYNC + the
@@ -2357,6 +2429,43 @@ export class GameManager {
       // so re-exports don't require renaming the action in Blender first.
       additionalAnimations: [...PLAYER_ANIMATIONS],
     });
+  }
+
+  private ensureLocalCharacterModel(appearance: PlayerAppearance): void {
+    const desiredModelPath = getCharacterModelPath(appearance);
+    if (this.localPlayer?.getModelPath() === desiredModelPath) {
+      this.localPlayer.applyAppearance(appearance);
+      return;
+    }
+
+    const previous = this.localPlayer;
+    const position = previous?.position.clone()
+      ?? new Vector3(this.playerX, this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor, 0), this.playerZ);
+    previous?.dispose();
+
+    const next = this.createLocalCharacterEntity();
+    next.setPickable(false);
+    next.setPositionXYZ(position.x, position.y, position.z);
+    this.localPlayer = next;
+    void next.whenReady().then(() => {
+      if (this.localPlayer !== next) return;
+      next.applyAppearance(appearance);
+      for (const [slotIndex, itemId] of this.localEquipment) {
+        void this.equipGear(slotIndex, itemId);
+      }
+    });
+  }
+
+  private sendAppearance(appearance: PlayerAppearance): void {
+    this.network.sendRaw(encodePacket(
+      ClientOpcode.SET_APPEARANCE,
+      ...appearanceToWireValues(appearance),
+    ));
+  }
+
+  private applyLocalAppearance(appearance: PlayerAppearance): void {
+    this.cacheLocalAppearance(appearance);
+    this.ensureLocalCharacterModel(appearance);
   }
 
   private setupNetworkHandlers(): void {
@@ -2431,13 +2540,15 @@ export class GameManager {
       const z = z10 / 10;
 
       const hasAppearance = v.length >= 12 && v[5] >= 0;
-      const syncCombatLevel = v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
-      const floor = v.length >= 14 ? Math.floor(v[13] ?? 0) : 0;
-      const y = v.length >= 15 ? (v[14] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
-      const syncAppearance: PlayerAppearance | null = hasAppearance ? {
-        shirtColor: v[5], pantsColor: v[6], shoesColor: v[7], hairColor: v[8], beltColor: v[9], skinColor: v[10],
-        hairStyle: v[11],
-      } : null;
+      const hasBodyType = v.length >= 16;
+      const syncCombatLevel = hasBodyType ? Math.max(0, v[13] ?? 0) : v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
+      const floor = hasBodyType ? Math.floor(v[14] ?? 0) : v.length >= 14 ? Math.floor(v[13] ?? 0) : 0;
+      const y = hasBodyType ? (v[15] ?? 0) / 10 : v.length >= 15 ? (v[14] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      const syncAppearance: PlayerAppearance | null = hasAppearance
+        ? hasBodyType
+          ? appearanceFromWireValues(v, 5)
+          : { ...appearanceFromWireValues(v, 5), bodyType: 0 }
+        : null;
 
       if (entityId === this.localPlayerId) {
         // While a COMBAT_HIT splat is pending for the local player, defer
@@ -2465,8 +2576,7 @@ export class GameManager {
           this.reconcileLocalPlayerToServer(serverX, serverZ, hiddenCatchup);
         }
         if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
-          this.cacheLocalAppearance(syncAppearance);
-          if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
+          this.applyLocalAppearance(syncAppearance);
         }
         return;
       }
@@ -2474,7 +2584,7 @@ export class GameManager {
       const isNew = !this.entities.remotePlayers.has(entityId);
       if (isNew) {
         const playerName = this.entities.playerNames.get(entityId) || 'Player';
-        const remote = this.entities.createRemotePlayer(entityId, x, z, playerName, floor, y);
+        const remote = this.entities.createRemotePlayer(entityId, x, z, playerName, floor, y, syncAppearance);
         // Apply cached appearance + equipment once the GLB + animations finish
         // loading. Both arrive over the network independently of the entity's
         // local-load timing, so we cache them in the EntityManager and flush
@@ -2497,9 +2607,13 @@ export class GameManager {
           this.entities.remoteAppearances.set(entityId, syncAppearance);
           const remote = this.entities.remotePlayers.get(entityId);
           if (remote && !isNew) {
-            // Only apply post-load — the new-entity path schedules it via
-            // whenReady. Calling applyAppearance before load is a no-op.
-            remote.applyAppearance(syncAppearance);
+            if (remote.getModelPath() !== getCharacterModelPath(syncAppearance)) {
+              this.recreateRemotePlayer(entityId, syncAppearance);
+            } else {
+              // Only apply post-load — the new-entity path schedules it via
+              // whenReady. Calling applyAppearance before load is a no-op.
+              remote.applyAppearance(syncAppearance);
+            }
           }
         }
       }
@@ -2533,15 +2647,11 @@ export class GameManager {
       const tickLow = v[4] ?? 0;
       const serverMoving = (v[5] ?? 0) === 1;
       const hasAppearance = v.length >= 13 && v[6] >= 0;
-      const syncAppearance: PlayerAppearance | null = hasAppearance ? {
-        shirtColor: v[6],
-        pantsColor: v[7],
-        shoesColor: v[8],
-        hairColor: v[9],
-        beltColor: v[10],
-        skinColor: v[11],
-        hairStyle: v[12],
-      } : null;
+      const syncAppearance: PlayerAppearance | null = hasAppearance
+        ? v.length >= 6 + APPEARANCE_WIRE_FIELD_COUNT
+          ? appearanceFromWireValues(v, 6)
+          : { ...appearanceFromWireValues(v, 6), bodyType: 0 }
+        : null;
 
       const now = performance.now();
       if (this.detectBufferedSelfSyncReplay(tickLow, now)) return;
@@ -2551,8 +2661,7 @@ export class GameManager {
       this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
       this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth });
       if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
-        this.cacheLocalAppearance(syncAppearance);
-        if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
+        this.applyLocalAppearance(syncAppearance);
       }
 
       const hiddenCatchup = this.isHiddenCatchupActive();
@@ -2650,17 +2759,20 @@ export class GameManager {
 
     this.network.on(ServerOpcode.NPC_APPEARANCE, (_op, v) => {
       const entityId = v[0];
-      const appearance: PlayerAppearance = {
-        shirtColor: v[1], pantsColor: v[2], shoesColor: v[3],
-        hairColor:  v[4], beltColor:  v[5], skinColor:  v[6],
-        hairStyle:  v[7],
-      };
+      const appearance = appearanceFromWireValues(v, 1);
       this.entities.npcAppearances.set(entityId, appearance);
       // Live-apply for an already-rendered customizable NPC (admin /npcedit).
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
-        const custom = this.entities.npcCustomColors.get(entityId);
-        sprite.applyAppearance(appearance, custom ?? null);
+        if (sprite.getModelPath() !== getCharacterModelPath(appearance)) {
+          const npcDefId = this.entities.npcDefs.get(entityId);
+          const target = this.entities.npcTargets.get(entityId);
+          this.entities.disposeNpcSprite(entityId);
+          if (npcDefId != null && target) this.tryMaterializeNpc(entityId, npcDefId, target.x, target.z, target.floor, target.y);
+        } else {
+          const custom = this.entities.npcCustomColors.get(entityId);
+          sprite.applyAppearance(appearance, custom ?? null);
+        }
       }
     });
 
@@ -5518,73 +5630,68 @@ export class GameManager {
             const itemId = this.getGearDebugCharacter()?.getGearItemId(slot) ?? -1;
             if (itemId < 0) return null;
             const def = this.itemDefsCache.get(itemId);
-            return { id: itemId, name: def?.name ?? `item ${itemId}`, toolType: def?.toolType };
+            return {
+              id: itemId,
+              name: def?.name ?? `item ${itemId}`,
+              toolType: def?.toolType,
+              modelPath: this.getGearModelFileForCharacter(itemId, slot, this.getGearDebugCharacter()) ?? undefined,
+            };
           });
-          this.gearDebugPanel.setOverrideGetter((itemId) => this.gearOverrides.get(itemId) ?? null);
+          this.gearDebugPanel.setOverrideGetter((itemId) => this.getGearOverrideForCharacter(itemId, this.getGearDebugCharacter()));
           this.gearDebugPanel.setSkinnedChecker((slot) => this.getGearDebugCharacter()?.getSkinnedArmorMeshes?.(slot) != null);
           this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('projectrs_token') || '');
+          this.gearDebugPanel.setBodyTypeGetter(() => this.getCharacterBodyType(this.getGearDebugCharacter()));
           this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
-            this.gearOverrides.set(itemId, override);
-            const all: Record<string, any> = {};
-            for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
-            const token = this.token || localStorage.getItem('projectrs_token') || '';
-            const res = await fetch('/api/dev/gear-overrides', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              },
-              body: JSON.stringify(all),
-            });
-            if (!res.ok) throw new Error('Server returned ' + res.status);
             const target = this.getGearDebugCharacter();
+            const bodyType = this.getCharacterBodyType(target);
+            this.gearOverrides.set(itemId, mergeGearOverrideForBodyType(this.gearOverrides.get(itemId), bodyType, override));
+            await this.saveGearOverridesToServer();
             const slotName = EQUIP_SLOT_NAMES.find(s => target?.getGearItemId(s) === itemId);
-            if (slotName) this.gearTemplateCache.delete(`${slotName}/${itemId}`);
-            this.refreshEquippedGearOverride(itemId, override);
+            if (slotName) this.deleteGearTemplateCacheForItem(slotName, itemId);
+            this.refreshEquippedGearOverride(itemId);
           });
           this.gearDebugPanel.setBulkSaveCallback(async (sourceItemId, slot, override) => {
+            const target = this.getGearDebugCharacter();
+            const bodyType = this.getCharacterBodyType(target);
+            const sourceDef = this.itemDefsCache.get(sourceItemId);
+            const sourceFamily = gearFitFamilyForName(sourceDef?.name);
             const targets = [...this.itemDefsCache.values()]
-              .filter((def) => def.equipSlot === slot && (def.model || this.gearOverrides.get(def.id)?.file));
+              .filter((def) => (
+                def.equipSlot === slot
+                && (!sourceFamily || gearFitFamilyForName(def.name) === sourceFamily)
+                && this.getGearModelFileForCharacter(def.id, slot, target)
+              ));
             if (!targets.some((def) => def.id === sourceItemId)) {
-              const sourceDef = this.itemDefsCache.get(sourceItemId);
               if (sourceDef?.equipSlot === slot) targets.push(sourceDef);
             }
 
             for (const def of targets) {
-              const existing = this.gearOverrides.get(def.id) ?? {};
-              this.gearOverrides.set(def.id, {
-                ...existing,
+              this.gearOverrides.set(def.id, mergeGearOverrideForBodyType(this.gearOverrides.get(def.id), bodyType, {
                 boneName: override.boneName,
                 localPosition: override.localPosition,
                 localRotation: override.localRotation,
                 scale: override.scale,
-              });
-              this.gearTemplateCache.delete(`${slot}/${def.id}`);
+              }));
+              this.deleteGearTemplateCacheForItem(slot, def.id);
             }
 
-            const all: Record<string, any> = {};
-            for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
-            const token = this.token || localStorage.getItem('projectrs_token') || '';
-            const res = await fetch('/api/dev/gear-overrides', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              },
-              body: JSON.stringify(all),
-            });
-            if (!res.ok) throw new Error('Server returned ' + res.status);
+            await this.saveGearOverridesToServer();
             for (const def of targets) {
-              const nextOverride = this.gearOverrides.get(def.id);
-              if (nextOverride) this.refreshEquippedGearOverride(def.id, nextOverride);
+              this.refreshEquippedGearOverride(def.id);
             }
             return targets.length;
           });
-          this.gearDebugPanel.setLoadGlbCallback(async (slot, path) => {
+          this.gearDebugPanel.setLoadGlbCallback(async (slot, path, itemId) => {
             const target = this.getGearDebugCharacter();
             if (!target) throw new Error(this.gearDebugTargetMode === 'npc' ? 'No humanoid NPC target' : 'No local player');
             const boneConfig = EQUIP_SLOT_BONES[slot];
             if (!boneConfig) throw new Error('Unknown slot: ' + slot);
+
+            const def = itemId != null && itemId > 0 ? this.itemDefsCache.get(itemId) : null;
+            if (def?.equipSlot === slot) {
+              await this.applyGearToCharacter(target, slot, itemId!, false);
+              return;
+            }
 
             const lastSlash = path.lastIndexOf('/');
             const dir = path.substring(0, lastSlash + 1);
@@ -5734,7 +5841,7 @@ export class GameManager {
   ): void {
     const preview = new CharacterEntity(this.scene, {
       name: `deathfx_preview_${Date.now()}`,
-      modelPath: CHARACTER_MODEL_PATH,
+      modelPath: getCharacterModelPath(this.localAppearance),
       targetHeight: CHARACTER_TARGET_HEIGHT,
       label: opts.label,
       labelColor: opts.labelColor,
@@ -6062,22 +6169,10 @@ export class GameManager {
     // For brand-new characters with no appearance set yet, localAppearance is
     // null and the creator falls back to DEFAULT_APPEARANCE.
     this.characterCreator = new CharacterCreator(this.scene, (appearance) => {
-      this.network.sendRaw(encodePacket(
-        ClientOpcode.SET_APPEARANCE,
-        appearance.shirtColor,
-        appearance.pantsColor,
-        appearance.shoesColor,
-        appearance.hairColor,
-        appearance.beltColor,
-        appearance.skinColor,
-        appearance.hairStyle,
-      ));
-      this.cacheLocalAppearance(appearance);
-      if (this.localPlayer) {
-        this.localPlayer.applyAppearance(appearance);
-      }
       this.characterCreator!.destroy();
       this.characterCreator = null;
+      this.sendAppearance(appearance);
+      this.applyLocalAppearance(appearance);
     }, {
       initial: this.localAppearance ?? undefined,
       // Pass the local player so the creator hides them while open and spawns

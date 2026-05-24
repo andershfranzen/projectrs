@@ -3,6 +3,8 @@ import {
   SKILL_NAMES,
   STANCE_BONUSES,
   calculateHitChance,
+  gearFitFamilyForName,
+  gearFitTierForName,
   osrsMeleeMaxHit,
 } from '@projectrs/shared'
 
@@ -40,13 +42,11 @@ function esc(value) {
 }
 
 function itemTier(item) {
-  return TIERS.find(t => item.name === t || item.name?.startsWith(`${t} `)) || ''
+  return gearFitTierForName(item?.name)
 }
 
 function itemFamily(item) {
-  const tier = itemTier(item)
-  if (!tier) return item.name || ''
-  return (item.name || '').slice(tier.length).trim()
+  return gearFitFamilyForName(item?.name) || item?.name || ''
 }
 
 function itemCategory(item) {
@@ -201,8 +201,21 @@ export async function openItemStatsEditor(options = {}) {
     render()
   }
 
+  function setBodyTypeModel(item, bodyType, value) {
+    const key = String(bodyType)
+    const trimmed = String(value ?? '').trim()
+    if (trimmed) {
+      item.bodyTypeModels = { ...(item.bodyTypeModels || {}), [key]: trimmed }
+    } else if (item.bodyTypeModels) {
+      delete item.bodyTypeModels[key]
+      if (Object.keys(item.bodyTypeModels).length === 0) delete item.bodyTypeModels
+    }
+    markDirty()
+    render()
+  }
+
   function itemHasModel(item) {
-    return !!(item?.model || gearOverrides[String(item?.id)]?.file)
+    return !!(item?.model || Object.keys(item?.bodyTypeModels || {}).length || gearOverrides[String(item?.id)]?.file)
   }
 
   function poseFieldsFromOverride(override) {
@@ -314,6 +327,17 @@ export async function openItemStatsEditor(options = {}) {
     `
   }
 
+  function bodyTypeModelInput(item, bodyType, label) {
+    const value = item.bodyTypeModels?.[String(bodyType)] ?? ''
+    const modelFile = String(item.model || '').split('/').pop()
+    return `
+      <label class="item-stat-field">
+        <span>${label}</span>
+        <input data-body-model="${bodyType}" type="text" value="${esc(value)}" placeholder="/assets/equipment/${esc(item.equipSlot || 'body')}/female/${esc(modelFile)}" />
+      </label>
+    `
+  }
+
   function renderList() {
     const categories = ['All', ...Array.from(new Set(items.map(itemCategory))).sort()]
     overlay.querySelector('#itemStatsCategory').innerHTML = categories.map(c => `<option value="${esc(c)}"${c === categoryFilter ? ' selected' : ''}>${esc(c)}</option>`).join('')
@@ -386,6 +410,8 @@ export async function openItemStatsEditor(options = {}) {
         ${selectInput(item, 'toolType', 'Tool type', TOOL_TYPES)}
         ${numberInput(item, 'toolLevel', 'Tool level')}
         ${numberInput(item, 'toolBonus', 'Tool bonus')}
+        ${textInput(item, 'model', 'Base model')}
+        ${item.equipSlot === 'body' || item.equipSlot === 'legs' ? bodyTypeModelInput(item, 1, 'Female model') : ''}
       </div>
       ${renderGearPoseTool(item)}
 
@@ -413,6 +439,9 @@ export async function openItemStatsEditor(options = {}) {
         const type = input.getAttribute('type')
         setField(item, field, type === 'checkbox' ? input.checked : input.value)
       })
+    }
+    for (const input of editorEl.querySelectorAll('[data-body-model]')) {
+      input.addEventListener('change', () => setBodyTypeModel(item, input.dataset.bodyModel, input.value))
     }
     editorEl.querySelector('[data-gear-copy="slot"]')?.addEventListener('click', () => copyGearPose('slot'))
     editorEl.querySelector('[data-gear-copy="family"]')?.addEventListener('click', () => copyGearPose('family'))

@@ -25,6 +25,10 @@ const FACE_DETAIL_MATS = new Set([
   'Eye Pupil', 'Eye White', 'Eyebrow', 'Mouth', 'Lip',
   'Eyewhite2', 'Eye colour',
 ]);
+const APPEARANCE_MATERIAL_ENTRIES = Object.entries(APPEARANCE_MATERIAL_MAP).map(([slot, matNames]) => ({
+  slotKey: slot as AppearanceColorSlot,
+  lcAliases: matNames.map(n => n.toLowerCase()),
+}));
 
 function keepCloseCameraDetailVisible(mesh: AbstractMesh): void {
   // These meshes are tiny and skinned to the head. Their imported bounds can
@@ -251,6 +255,7 @@ export interface CharacterEntityOptions {
  */
 export class CharacterEntity {
   private scene: Scene;
+  private readonly modelPath: string;
   private root: TransformNode | null = null;
   private meshes: AbstractMesh[] = [];
   private skeleton: Skeleton | null = null;
@@ -421,6 +426,7 @@ export class CharacterEntity {
 
   constructor(scene: Scene, options: CharacterEntityOptions) {
     this.scene = scene;
+    this.modelPath = options.modelPath;
     this.layerMask = options.layerMask;
     this._readyPromise = new Promise((resolve) => {
       this._resolveReady = resolve;
@@ -430,6 +436,10 @@ export class CharacterEntity {
       this.setLabel(options.label);
     }
     this.load(options);
+  }
+
+  getModelPath(): string {
+    return this.modelPath;
   }
 
   // ---------------------------------------------------------------------------
@@ -2595,10 +2605,9 @@ export class CharacterEntity {
     // per (mesh × material-alias) — wasteful when applyAppearance is called on
     // every editor color-picker tick. Each entry is shared across meshes by
     // reference; safe because nothing mutates these Color3s in place.
-    type SlotEntry = { lcAliases: string[]; diffuse: Color3; emissive: Color3 };
+    type SlotEntry = { lcAliases: readonly string[]; diffuse: Color3; emissive: Color3 };
     const slots: SlotEntry[] = [];
-    for (const [slot, matNames] of Object.entries(APPEARANCE_MATERIAL_MAP)) {
-      const slotKey = slot as AppearanceColorSlot;
+    for (const { slotKey, lcAliases } of APPEARANCE_MATERIAL_ENTRIES) {
       let rgb: [number, number, number] | undefined = cc?.[slotKey];
       if (!rgb) {
         let colorIdx = appearance[slotKey];
@@ -2623,9 +2632,7 @@ export class CharacterEntity {
         Math.min(1, rgb[2] * 1.3),
       );
       const emissive = new Color3(diffuse.r * 0.55, diffuse.g * 0.55, diffuse.b * 0.55);
-      // Pre-lowercase target names so the mesh loop's compare is a single
-      // string equality, not two toLowerCase() calls per alias per mesh.
-      slots.push({ lcAliases: matNames.map(n => n.toLowerCase()), diffuse, emissive });
+      slots.push({ lcAliases, diffuse, emissive });
     }
 
     // Apply to materials. Per mesh: lowercase the base name once, then test

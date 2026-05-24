@@ -10,7 +10,7 @@ import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, type ItemDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, getCharacterModelPath, type ItemDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -111,10 +111,10 @@ export class EntityManager {
 
   // --- Entity creation ---
 
-  createRemotePlayer(entityId: number, x: number, z: number, name: string, floor: number = 0, y?: number): CharacterEntity {
+  createRemotePlayer(entityId: number, x: number, z: number, name: string, floor: number = 0, y?: number, appearance?: PlayerAppearance | null): CharacterEntity {
     const character = new CharacterEntity(this.scene, {
       name: `player_${entityId}`,
-      modelPath: CHARACTER_MODEL_PATH,
+      modelPath: getCharacterModelPath(appearance),
       targetHeight: CHARACTER_TARGET_HEIGHT,
       label: name,
       labelColor: '#ffffff',
@@ -193,7 +193,7 @@ export class EntityManager {
 
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,
-      modelPath: CHARACTER_MODEL_PATH,
+      modelPath: getCharacterModelPath(this.npcAppearances.get(entityId) ?? null),
       targetHeight: CHARACTER_TARGET_HEIGHT,
       // No floating label — NPCs introduce themselves via chat on interaction
       // instead. Identity is still surfaced through the hover tooltip + the

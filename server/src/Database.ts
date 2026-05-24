@@ -1839,6 +1839,9 @@ export class GameDatabase {
 
   /** Upsert the bot-stats row. Called every 5 min during play + at logout. */
   saveBotStats(accountId: number, row: BotStatsRow): void {
+    const account = this.db.query('SELECT 1 FROM accounts WHERE id = ?').get(accountId);
+    if (!account) return;
+
     this.db.query(`
 	      INSERT INTO bot_stats (
 	        account_id, total_skilling_actions, total_combat_swings, total_movements,

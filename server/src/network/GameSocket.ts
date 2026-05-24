@@ -25,6 +25,8 @@ import {
   importGameEcdhPublicKey,
   verifyGameHandshakeTranscript,
   isValidAppearance,
+  APPEARANCE_WIRE_FIELD_COUNT,
+  appearanceFromWireValues,
   createOpcodeMapping,
   opcodeMappingToPayload,
   rotateServerOpcodeMapping,
@@ -34,7 +36,6 @@ import {
   type GameCryptoChallenge,
   type GameCryptoResponse,
   type OpcodeMappingTables,
-  type PlayerAppearance,
 } from '@projectrs/shared';
 import { World } from '../World';
 import { Player } from '../entity/Player';
@@ -590,17 +591,9 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       return OK_PACKET;
 
     case ClientOpcode.SET_APPEARANCE: {
-      if (!hasValues(values, 7)) return invalid('missing-appearance-values');
+      if (!hasValues(values, APPEARANCE_WIRE_FIELD_COUNT)) return invalid('missing-appearance-values');
       if (!player.appearanceEditorOpen && player.appearance !== null) return invalid('appearance-editor-not-open');
-      const appearance: PlayerAppearance = {
-        shirtColor: values[0] ?? 0,
-        pantsColor: values[1] ?? 0,
-        shoesColor: values[2] ?? 0,
-        hairColor: values[3] ?? 0,
-        beltColor: values[4] ?? 0,
-        skinColor: values[5] ?? 0,
-        hairStyle: values[6] ?? 1,
-      };
+      const appearance = appearanceFromWireValues(values);
       if (!isValidAppearance(appearance)) return invalid('bad-appearance');
       if (appearance.hairStyle > HAIR_STYLE_COUNT) return invalid('bad-hair-style');
       return OK_PACKET;
@@ -1247,16 +1240,8 @@ function handleDecryptedGameSocketMessage(
     }
 
     case ClientOpcode.SET_APPEARANCE: {
-      if (!hasValues(values, 7)) return;
-      const appearance: PlayerAppearance = {
-        shirtColor: values[0] ?? 0,
-        pantsColor: values[1] ?? 0,
-        shoesColor: values[2] ?? 0,
-        hairColor:  values[3] ?? 0,
-        beltColor:  values[4] ?? 0,
-        skinColor:  values[5] ?? 0,
-        hairStyle:  values[6] ?? 1,
-      };
+      if (!hasValues(values, APPEARANCE_WIRE_FIELD_COUNT)) return;
+      const appearance = appearanceFromWireValues(values);
       world.handleSetAppearance(playerId, appearance);
       break;
     }

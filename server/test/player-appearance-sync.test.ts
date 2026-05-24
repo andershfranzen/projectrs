@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { ServerOpcode, decodePacket, type PlayerAppearance } from '@projectrs/shared';
+import {
+  FEMALE_HAIR_STYLE_CHOICES,
+  ServerOpcode,
+  decodePacket,
+  hairStyleChoicesForBodyType,
+  isValidAppearance,
+  normalizeAppearance,
+  type PlayerAppearance,
+} from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 
@@ -29,17 +37,26 @@ function makePlayer(name: string, accountId: number, appearance: PlayerAppearanc
 }
 
 describe('player appearance sync', () => {
+  test('female appearances only allow the authored female hair meshes', () => {
+    expect(hairStyleChoicesForBodyType(1)).toEqual(FEMALE_HAIR_STYLE_CHOICES);
+    expect(normalizeAppearance({ bodyType: 1, hairStyle: 1 }).hairStyle).toBe(10);
+    expect(isValidAppearance(normalizeAppearance({ bodyType: 1, hairStyle: 12 }))).toBe(true);
+    expect(isValidAppearance({ ...normalizeAppearance({ bodyType: 1, hairStyle: 12 }), hairStyle: 9 })).toBe(false);
+  });
+
   test('self sync and remote presence use the same authoritative appearance', () => {
     const appearance: PlayerAppearance = {
+      bodyType: 1,
       shirtColor: 3,
       pantsColor: 4,
       shoesColor: 5,
       hairColor: 6,
       beltColor: 7,
       skinColor: 2,
-      hairStyle: 9,
+      hairStyle: 12,
     };
     const viewer = makePlayer('viewer', 1, {
+      bodyType: 0,
       shirtColor: 0,
       pantsColor: 1,
       shoesColor: 2,
@@ -68,7 +85,7 @@ describe('player appearance sync', () => {
     world.broadcastSync();
 
     const selfSync = subject.packets.find((packet) => packet.opcode === ServerOpcode.PLAYER_SELF_SYNC);
-    expect(selfSync?.values.slice(6, 13)).toEqual([
+    expect(selfSync?.values.slice(6, 14)).toEqual([
       appearance.shirtColor,
       appearance.pantsColor,
       appearance.shoesColor,
@@ -76,11 +93,12 @@ describe('player appearance sync', () => {
       appearance.beltColor,
       appearance.skinColor,
       appearance.hairStyle,
+      appearance.bodyType,
     ]);
 
     const remoteSync = viewer.packets.find(
       (packet) => packet.opcode === ServerOpcode.PLAYER_SYNC && packet.values[0] === subject.player.id,
     );
-    expect(remoteSync?.values.slice(5, 12)).toEqual(selfSync?.values.slice(6, 13));
+    expect(remoteSync?.values.slice(5, 13)).toEqual(selfSync?.values.slice(6, 14));
   });
 });
