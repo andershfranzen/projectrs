@@ -44,6 +44,11 @@ const MIN_MEANINGFUL_SESSION_MINUTES = 5;
 const MIN_ROUTE_ACTION_LOOP_SIGNATURES = 20;
 const MIN_XP_VELOCITY_SESSION_MINUTES = 5;
 const MIN_XP_VELOCITY_ACTIVE_EVENTS = 20;
+const IDLE_BREAK_MIN_MS = 5 * 60_000;
+const MIN_NO_IDLE_SESSION_MINUTES = 240;
+const MIN_NO_IDLE_ACTIVE_EVENTS = 400;
+const MIN_MARATHON_NO_IDLE_SESSION_MINUTES = 360;
+const MIN_MARATHON_NO_IDLE_ACTIVE_EVENTS = 800;
 
 type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'state' | 'stale';
 
@@ -97,6 +102,8 @@ export interface SessionSummary {
   sessionGameplayCommands: number;
   sessionCommandsWithoutRecentInput: number;
   sessionCommandsWithoutRecentActivity: number;
+  sessionActiveIdleBreaks: number;
+  longestActiveGapMinutes: number | null;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketReasons: Record<string, number>;
@@ -202,6 +209,8 @@ export class BotStats {
   sessionGameplayCommands: number = 0;
   sessionCommandsWithoutRecentInput: number = 0;
   sessionCommandsWithoutRecentActivity: number = 0;
+  sessionActiveIdleBreaks: number = 0;
+  sessionLongestActiveGapMs: number | null = null;
   sessionSuspiciousPackets: number = 0;
   sessionPathDestinations: Map<string, number> = new Map();
   sessionActionSignatures: Map<string, number> = new Map();
@@ -217,6 +226,7 @@ export class BotStats {
   private activitySeqResets: number = 0;
   private lastCursorAt: number | null = null;
   private lastCoupledActivityAt: number | null = null;
+  private lastActiveGameplayAt: number | null = null;
   private activityHeartbeatCoupledEvents: number = 0;
   /** When the last NPC died near this player — feeds the next attack's
    *  reaction time delta if it lands within 5 seconds. */
@@ -331,6 +341,8 @@ export class BotStats {
     this.sessionGameplayCommands = 0;
     this.sessionCommandsWithoutRecentInput = 0;
     this.sessionCommandsWithoutRecentActivity = 0;
+    this.sessionActiveIdleBreaks = 0;
+    this.sessionLongestActiveGapMs = null;
     this.sessionSuspiciousPackets = 0;
     this.sessionPathDestinations.clear();
     this.sessionActionSignatures.clear();
@@ -347,6 +359,7 @@ export class BotStats {
     this.activitySeqResets = 0;
     this.lastCursorAt = null;
     this.lastCoupledActivityAt = null;
+    this.lastActiveGameplayAt = null;
     this.activityHeartbeatCoupledEvents = 0;
     this.pendingReactionStart = null;
     this.xpBaseline.clear();
@@ -362,10 +375,10 @@ export class BotStats {
   /** Record a skilling roll (mining tick, fishing tick, etc.). The tick
    *  alignment delta is now treated as diagnostic only: this hook fires from
    *  server tick processing, not raw user input, so it cannot convict alone. */
-  recordSkillingRoll(tickStartWallclock: number, performanceNow: number): void {
+  recordSkillingRoll(tickStartWallclock: number, performanceNow: number, eventWallclockMs: number = Date.now()): void {
     this.totalSkillingActions++;
     this.sessionSkillingActions++;
-    this.lastActionTs = Math.floor(Date.now() / 1000);
+    this.recordActiveGameplayEvent(eventWallclockMs);
     const delta = (performanceNow - tickStartWallclock) % TICK_RATE;
     this.pushSample(this.tickAlignSamples, delta, MAX_TICK_ALIGN_SAMPLES);
   }
@@ -373,10 +386,10 @@ export class BotStats {
   /** Record a combat swing. Also closes a pending reaction window if this
    *  swing landed within 5s of an NPC death — that's the canonical
    *  reaction-time signal (re-engage on next mob). */
-  recordCombatSwing(tickStartWallclock: number, performanceNow: number): void {
+  recordCombatSwing(tickStartWallclock: number, performanceNow: number, eventWallclockMs: number = Date.now()): void {
     this.totalCombatSwings++;
     this.sessionCombatSwings++;
-    this.lastActionTs = Math.floor(Date.now() / 1000);
+    this.recordActiveGameplayEvent(eventWallclockMs);
     const delta = (performanceNow - tickStartWallclock) % TICK_RATE;
     this.pushSample(this.tickAlignSamples, delta, MAX_TICK_ALIGN_SAMPLES);
     if (this.pendingReactionStart !== null) {
@@ -397,10 +410,10 @@ export class BotStats {
 
   /** Record a completed movement (final destination tile). Bumps the
    *  destination's visit count; evicts the least-visited if at cap. */
-  recordMovement(destX: number, destZ: number): void {
+  recordMovement(destX: number, destZ: number, eventWallclockMs: number = Date.now()): void {
     this.totalMovements++;
     this.sessionMovements++;
-    this.lastActionTs = Math.floor(Date.now() / 1000);
+    this.recordActiveGameplayEvent(eventWallclockMs);
     const key = `${Math.floor(destX)},${Math.floor(destZ)}`;
     this.lastMovementDestinationKey = key;
     this.lastMovementTs = Date.now();
@@ -417,6 +430,20 @@ export class BotStats {
 
   recordPathTruncation(): void {
     this.sessionPathTruncations++;
+  }
+
+  private recordActiveGameplayEvent(nowMs: number): void {
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    const previous = this.lastActiveGameplayAt ?? this.sessionStartedAt;
+    const gapMs = now - previous;
+    if (gapMs >= 0) {
+      this.sessionLongestActiveGapMs = Math.max(this.sessionLongestActiveGapMs ?? 0, gapMs);
+      if (gapMs >= IDLE_BREAK_MIN_MS) {
+        this.sessionActiveIdleBreaks++;
+      }
+    }
+    this.lastActiveGameplayAt = now;
+    this.lastActionTs = Math.floor(now / 1000);
   }
 
   /** Record a movement+action signature such as "walk to tree tile → chop".
@@ -599,6 +626,9 @@ export class BotStats {
     const pathTruncationRatio = this.sessionMoveCommands > 0
       ? this.sessionPathTruncations / this.sessionMoveCommands
       : null;
+    const longestActiveGapMinutes = this.sessionLongestActiveGapMs !== null
+      ? this.sessionLongestActiveGapMs / 60000
+      : null;
     const deviceIdsSeen = this.deviceIds.size;
     const deviceLogins = [...this.deviceIds.values()].reduce((a, b) => a + b, 0);
     const maxDeviceReuse = this.deviceIds.size > 0 ? Math.max(...this.deviceIds.values()) : 0;
@@ -713,6 +743,20 @@ export class BotStats {
     ) {
       flags.push('routeActionLoop');
     }
+    if (
+      sessionMinutes >= MIN_NO_IDLE_SESSION_MINUTES
+      && activeEvents >= MIN_NO_IDLE_ACTIVE_EVENTS
+      && this.sessionActiveIdleBreaks === 0
+    ) {
+      flags.push('noIdleBreaks');
+    }
+    if (
+      sessionMinutes >= MIN_MARATHON_NO_IDLE_SESSION_MINUTES
+      && activeEvents >= MIN_MARATHON_NO_IDLE_ACTIVE_EVENTS
+      && this.sessionActiveIdleBreaks === 0
+    ) {
+      flags.push('marathonNoIdleBreaks');
+    }
     if (this.totalMovements >= 5000 && topLifetimePathRepetition !== null && topLifetimePathRepetition >= 0.12) {
       flags.push('lifetimePathConcentration');
     }
@@ -804,6 +848,8 @@ export class BotStats {
       sessionGameplayCommands: this.sessionGameplayCommands,
       sessionCommandsWithoutRecentInput: this.sessionCommandsWithoutRecentInput,
       sessionCommandsWithoutRecentActivity: this.sessionCommandsWithoutRecentActivity,
+      sessionActiveIdleBreaks: this.sessionActiveIdleBreaks,
+      longestActiveGapMinutes,
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
@@ -869,6 +915,8 @@ export class BotStats {
       sessionGameplayCommands: this.sessionGameplayCommands,
       sessionCommandsWithoutRecentInput: this.sessionCommandsWithoutRecentInput,
       sessionCommandsWithoutRecentActivity: this.sessionCommandsWithoutRecentActivity,
+      sessionActiveIdleBreaks: this.sessionActiveIdleBreaks,
+      longestActiveGapMinutes,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketReasons,
@@ -1034,6 +1082,8 @@ interface BotRiskInput {
   sessionGameplayCommands: number;
   sessionCommandsWithoutRecentInput: number;
   sessionCommandsWithoutRecentActivity: number;
+  sessionActiveIdleBreaks: number;
+  longestActiveGapMinutes: number | null;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketClasses: SuspiciousPacketClassCounts;
@@ -1139,6 +1189,14 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
   if (flagSet.has('cursorStatic')) add(10, `static cursor telemetry (${ratioLabel(input.topCursorCellRepetition)})`);
   if (flagSet.has('marathonSession')) add(10, `marathon session (${input.sessionMinutes} minutes)`);
+  if (flagSet.has('marathonNoIdleBreaks')) add(
+    14,
+    `marathon active session without idle breaks (${input.sessionActiveIdleBreaks} breaks, longest ${minutesLabel(input.longestActiveGapMinutes)})`,
+  );
+  else if (flagSet.has('noIdleBreaks')) add(
+    8,
+    `long active session without idle breaks (${input.sessionActiveIdleBreaks} breaks, longest ${minutesLabel(input.longestActiveGapMinutes)})`,
+  );
   if (flagSet.has('fastReaction')) add(22, `fast NPC re-engage median (${input.reactionMedianMs?.toFixed(0) ?? '?'}ms)`);
   if (flagSet.has('protocolPackets')) add(18, `malformed/protocol packet abuse (${input.sessionSuspiciousPacketClasses.protocol} this session)`);
   if (flagSet.has('rateLimitPackets')) add(18, `rate-limit automation packets (${input.sessionSuspiciousPacketClasses.rateLimit} this session)`);
@@ -1165,6 +1223,8 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
 
   if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
   if (flagSet.has('activityRegular') && flagSet.has('routeActionLoop')) add(8, 'regular activity cadence during repeated route/action loop');
+  if (flagSet.has('noIdleBreaks') && flagSet.has('routeActionLoop')) add(4, 'no idle breaks during repeated route/action loop');
+  if (flagSet.has('marathonNoIdleBreaks') && flagSet.has('activityRegular')) add(6, 'script-regular activity over a no-break marathon');
   if (flagSet.has('legacyActivityTelemetry') && flagSet.has('commandsWithoutRecentActivity')) add(6, 'legacy activity telemetry still missing near gameplay commands');
   if (flagSet.has('noMoveRedirects') && flagSet.has('routeActionLoop')) add(6, 'uninterrupted movement during repeated route/action loop');
   if (flagSet.has('maxPathCommandRatio') && flagSet.has('routeActionLoop')) add(4, 'max-length pathing during repeated route/action loop');
@@ -1227,6 +1287,11 @@ function ratioLabel(value: number | null): string {
 
 function rateLabel(value: number | null): string {
   return value === null ? '?' : value.toFixed(2);
+}
+
+function minutesLabel(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return '?m';
+  return `${value.toFixed(value >= 10 ? 0 : 1)}m`;
 }
 
 function sanitizeSignaturePart(value: string, maxLength: number): string {

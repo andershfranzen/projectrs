@@ -40,6 +40,8 @@ interface SessionSummary {
   sessionCursorEvents?: number;
   sessionSuspiciousPackets?: number;
   totalSuspiciousPackets?: number;
+  sessionActiveIdleBreaks?: number;
+  longestActiveGapMinutes?: number | null;
   tickAlignStdDevMs: number | null;
   reactionMedianMs: number | null;
   pingIntervalStdDevMs?: number | null;
@@ -489,6 +491,8 @@ function computeReviewRisk(
     if (flags.has('lifetimePathConcentration')) add(8, 'lifetime path concentration');
     if (flags.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
     if (flags.has('cursorStatic')) add(10, 'static cursor telemetry');
+    if (flags.has('marathonNoIdleBreaks')) add(14, 'marathon active session without idle breaks');
+    else if (flags.has('noIdleBreaks')) add(8, 'long active session without idle breaks');
     if (flags.has('fastReaction')) add(22, 'fast NPC re-engage reaction');
     if (flags.has('deviceRotating')) add(24, 'rotating browser device IDs');
     if (flags.has('protocolPackets')) add(18, 'malformed/protocol packet abuse');
@@ -757,12 +761,14 @@ function main(): void {
       const moveCommands = d.sessionMoveCommands;
       const activityCoupled = d.heartbeatActivityCouplingRatio;
       const activityStd = d.activityIntervalStdDevMs;
+      const idleBreaks = d.sessionActiveIdleBreaks;
+      const longestGap = d.longestActiveGapMinutes;
       const activityDetailed = d.sessionDetailedActivityEvents;
       const activities = d.sessionActivityEvents;
       const chats = d.sessionChats;
       const cursors = d.sessionCursorEvents;
       const mins = d.sessionMinutes;
-      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  moves=${moveCommands ?? '-'}  redirect=${moveRedirect?.toFixed?.(2) ?? '-'}  maxPath=${maxPath?.toFixed?.(2) ?? '-'}  trunc=${trunc?.toFixed?.(2) ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
+      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  idleBreaks=${idleBreaks ?? '-'}  longGap=${longestGap?.toFixed?.(1) ?? '-'}m  moves=${moveCommands ?? '-'}  redirect=${moveRedirect?.toFixed?.(2) ?? '-'}  maxPath=${maxPath?.toFixed?.(2) ?? '-'}  trunc=${trunc?.toFixed?.(2) ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
     }
     console.log('');
   }

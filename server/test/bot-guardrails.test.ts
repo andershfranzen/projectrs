@@ -15,6 +15,13 @@ const fakeWs = {
 } as any;
 const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
 
+function recordSparseBrowserTelemetry(stats: BotStats, seq: number, now: number): void {
+  const x = 80 + (seq % 9) * 97;
+  const y = 120 + (seq % 7) * 111;
+  stats.recordClientActivity(ClientActivityKind.Pointer, (seq + 1) & 0x7fff, x, y, now);
+  stats.recordCursorPosition(x, y, now + 15);
+}
+
 describe('anti-bot guardrails', () => {
   test('opcode rate rules bucket high-risk actions separately', () => {
     expect(getOpcodeRateRule(ClientOpcode.PLAYER_MOVE).bucket).toBe('movement');
@@ -432,6 +439,51 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).not.toContain('activityRegular');
     expect(summary.flags).not.toContain('legacyActivityTelemetry');
     expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('long active sessions without idle breaks are review context only', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    const start = Date.now() - 4 * 60 * 60_000;
+    stats.sessionStartedAt = start;
+    let telemetrySeq = 0;
+
+    for (let i = 0; i < 480; i++) {
+      const now = start + 10_000 + i * 30_000;
+      if (i % 37 === 0) recordSparseBrowserTelemetry(stats, telemetrySeq++, now);
+      stats.recordSkillingRoll(1000, 1000 + i * 17, now);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionActiveIdleBreaks).toBe(0);
+    expect(summary.longestActiveGapMinutes).toBeLessThan(1);
+    expect(summary.flags).toContain('noIdleBreaks');
+    expect(summary.flags).not.toContain('marathonNoIdleBreaks');
+    expect(summary.flags).not.toContain('activityRegular');
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('real idle breaks suppress no-idle session flags', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    const start = Date.now() - 260 * 60_000;
+    stats.sessionStartedAt = start;
+    let telemetrySeq = 0;
+
+    for (let i = 0; i < 480; i++) {
+      const breakOffset = i >= 240 ? 10 * 60_000 : 0;
+      const now = start + 10_000 + i * 30_000 + breakOffset;
+      if (i % 37 === 0) recordSparseBrowserTelemetry(stats, telemetrySeq++, now);
+      stats.recordSkillingRoll(1000, 1000 + i * 17, now);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionActiveIdleBreaks).toBe(1);
+    expect(summary.longestActiveGapMinutes).toBeGreaterThanOrEqual(10);
+    expect(summary.flags).not.toContain('noIdleBreaks');
+    expect(summary.flags).not.toContain('marathonNoIdleBreaks');
     expect(summary.riskLevel).toBe('low');
   });
 
