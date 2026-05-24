@@ -1,7 +1,9 @@
 import { Scene } from '@babylonjs/core/scene';
 import { Vector3, Color3 } from '@babylonjs/core/Maths/math';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { SpriteEntity } from '../rendering/SpriteEntity';
 import { GroundItemEntity, type GroundItemStackEntry } from '../rendering/GroundItemEntity';
+import { createGroundItemPickProxy, positionGroundItemPickProxy } from '../rendering/GroundItemPickProxy';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
@@ -95,6 +97,7 @@ export class EntityManager {
   readonly groundItems: Map<number, GroundItemData> = new Map();
   readonly groundItemSprites: Map<number, SpriteEntity> = new Map();
   readonly groundItemModels: Map<string, GroundItemEntity> = new Map();
+  private groundItemPickProxies: Map<string, Mesh> = new Map();
   private groundItemTileVersions: Map<string, number> = new Map();
   private pendingGroundItemTileRefreshes: Set<string> = new Set();
   private groundItemRefreshQueued = false;
@@ -257,6 +260,12 @@ export class EntityManager {
   }
 
   private disposeGroundItemTileRender(tileKey: string): void {
+    const pickProxy = this.groundItemPickProxies.get(tileKey);
+    if (pickProxy) {
+      pickProxy.dispose();
+      this.groundItemPickProxies.delete(tileKey);
+    }
+
     const model = this.groundItemModels.get(tileKey);
     if (model) {
       model.dispose();
@@ -272,6 +281,20 @@ export class EntityManager {
     }
   }
 
+  private createGroundItemTilePickProxy(tileKey: string, top: GroundItemStackEntry, y: number): void {
+    this.groundItemPickProxies.get(tileKey)?.dispose();
+    const safeTileKey = tileKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const proxy = createGroundItemPickProxy(
+      this.scene,
+      `gitem_pickProxy_${safeTileKey}`,
+      top.x,
+      y,
+      top.z,
+      top.id,
+    );
+    this.groundItemPickProxies.set(tileKey, proxy);
+  }
+
   private createGroundItemFallbackSprite(top: GroundItemStackEntry, tileKey: string): void {
     const syncIcon = getItemIconSyncUrl(top.def);
     const sprite = new SpriteEntity(this.scene, {
@@ -282,7 +305,8 @@ export class EntityManager {
       iconUrl: syncIcon ?? undefined,
     });
     sprite.position = new Vector3(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
-    sprite.getMesh().metadata = { kind: 'groundItem', groundItemId: top.id };
+    sprite.getMesh().isPickable = false;
+    sprite.getMesh().metadata = { kind: 'groundItemVisual', groundItemId: top.id };
     this.groundItemSprites.set(top.id, sprite);
 
     getItemIconUrl(top.def).then((url) => {
@@ -304,6 +328,7 @@ export class EntityManager {
     if (!top) return;
 
     const y = top.y ?? this.getHeight(top.x, top.z, top.floor, 0);
+    this.createGroundItemTilePickProxy(tileKey, top, y);
     GroundItemEntity.create(this.scene, tileKey, stack, y).then((entity) => {
       if ((this.groundItemTileVersions.get(tileKey) ?? 0) !== version) {
         entity?.dispose();
@@ -464,8 +489,14 @@ export class EntityManager {
   // --- Per-frame updates ---
 
   updateAnimations(dt: number): void {
-    for (const [, sprite] of this.remotePlayers) sprite.updateAnimation(dt);
-    for (const [, sprite] of this.npcSprites) sprite.updateAnimation(dt);
+    for (const [, sprite] of this.remotePlayers) {
+      if (sprite.isRenderEnabled()) sprite.updateAnimation(dt);
+    }
+    for (const [, sprite] of this.npcSprites) {
+      if (sprite instanceof CharacterEntity && !sprite.isRenderEnabled()) continue;
+      if (sprite instanceof Npc3DEntity && !sprite.isRenderEnabled()) continue;
+      sprite.updateAnimation(dt);
+    }
   }
 
   /** Reusable scratch vector for SpriteEntity/Npc3DEntity face fallback —
@@ -493,6 +524,11 @@ export class EntityManager {
     for (const [entityId, sprite] of this.remotePlayers) {
       const target = this.remoteTargets.get(entityId);
       if (!target) continue;
+      if (!sprite.isRenderEnabled()) {
+        if (sprite.isWalking()) sprite.stopWalking();
+        sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+        continue;
+      }
       const c = sprite.position;
       const dx = target.x - c.x;
       const dz = target.z - c.z;
@@ -546,6 +582,14 @@ export class EntityManager {
     for (const [entityId, sprite] of this.npcSprites) {
       const target = this.npcTargets.get(entityId);
       if (!target) continue;
+      if (
+        (sprite instanceof CharacterEntity && !sprite.isRenderEnabled())
+        || (sprite instanceof Npc3DEntity && !sprite.isRenderEnabled())
+      ) {
+        if (sprite.isWalking()) sprite.stopWalking();
+        sprite.setPositionXYZ(target.x, target.y ?? this.getHeight(target.x, target.z, target.floor, sprite.position.y), target.z);
+        continue;
+      }
       if (sprite instanceof Npc3DEntity && localPlayerPos) {
         const playerDx = target.x - localPlayerPos.x;
         const playerDz = target.z - localPlayerPos.z;
@@ -642,6 +686,10 @@ export class EntityManager {
       const top = this.collectGroundItemTileStack(tileKey)[0];
       if (top) model.setPosition(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
     }
+    for (const [tileKey, proxy] of this.groundItemPickProxies) {
+      const top = this.collectGroundItemTileStack(tileKey)[0];
+      if (top) positionGroundItemPickProxy(proxy, top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
+    }
     // Local player intentionally NOT repositioned here. Its Y came from
     // LOGIN_OK (server-authoritative) and getHeight() without currentY
     // gates roof reveal off and drops elevated-tile spawns to terrain (0).
@@ -690,6 +738,8 @@ export class EntityManager {
     this.groundItemSprites.clear();
     for (const [, model] of this.groundItemModels) model.dispose();
     this.groundItemModels.clear();
+    for (const [, proxy] of this.groundItemPickProxies) proxy.dispose();
+    this.groundItemPickProxies.clear();
     this.groundItemTileVersions.clear();
     this.pendingGroundItemTileRefreshes.clear();
     this.groundItemRefreshQueued = false;

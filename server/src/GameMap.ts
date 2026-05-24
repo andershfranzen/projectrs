@@ -4,6 +4,7 @@ import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBO
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, KCMapFile, KCMapData, KCTile, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
+const CARDINAL_PATH_DIRS: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 /**
  * Server-side map — loads terrain from KC editor JSON format (map.json).
@@ -1057,6 +1058,34 @@ export class GameMap {
       if (heap.length > 0) { heap[0] = last; last.heapIdx = 0; sinkDown(0); }
       return top;
     };
+    const considerNeighbor = (current: PNode, dx: number, dz: number) => {
+      const nx = current.x + dx;
+      const nz = current.z + dz;
+      const nk = key(nx, nz);
+      if (closed.has(nk)) return;
+      if (nx < 0 || nx >= w || nz < 0 || nz >= h) return;
+      if (tileBlocked(nx, nz)) return;
+      if (wallBlocked(current.x, current.z, nx, nz)) return;
+
+      const isDiag = dx !== 0 && dz !== 0;
+      const g = current.g + (isDiag ? 1.414 : 1);
+
+      const existing = openMap.get(nk);
+      if (existing) {
+        if (g < existing.g) {
+          existing.g = g;
+          existing.f = g + existing.hv;
+          existing.parent = current;
+          bubbleUp(existing.heapIdx);
+        }
+        return;
+      }
+
+      const nhv = heuristic(nx, nz);
+      const node: PNode = { x: nx, z: nz, g, hv: nhv, f: g + nhv, parent: current, heapIdx: 0 };
+      pushNode(node);
+      openMap.set(nk, node);
+    };
 
     const sh = heuristic(sx, sz);
     const startNode: PNode = { x: sx, z: sz, g: 0, hv: sh, f: sh, parent: null, heapIdx: 0 };
@@ -1083,44 +1112,15 @@ export class GameMap {
 
       closed.add(ck);
 
-      const dirs: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1]];
       const canW = !tileBlocked(current.x - 1, current.z) && !wallBlocked(current.x, current.z, current.x - 1, current.z);
       const canE = !tileBlocked(current.x + 1, current.z) && !wallBlocked(current.x, current.z, current.x + 1, current.z);
       const canN = !tileBlocked(current.x, current.z - 1) && !wallBlocked(current.x, current.z, current.x, current.z - 1);
       const canS = !tileBlocked(current.x, current.z + 1) && !wallBlocked(current.x, current.z, current.x, current.z + 1);
-      if (canW && canN) dirs.push([-1, -1]);
-      if (canE && canN) dirs.push([1, -1]);
-      if (canW && canS) dirs.push([-1, 1]);
-      if (canE && canS) dirs.push([1, 1]);
-
-      for (const [dx, dz] of dirs) {
-        const nx = current.x + dx;
-        const nz = current.z + dz;
-        const nk = key(nx, nz);
-        if (closed.has(nk)) continue;
-        if (nx < 0 || nx >= w || nz < 0 || nz >= h) continue;
-        if (tileBlocked(nx, nz)) continue;
-        if (wallBlocked(current.x, current.z, nx, nz)) continue;
-
-        const isDiag = dx !== 0 && dz !== 0;
-        const g = current.g + (isDiag ? 1.414 : 1);
-
-        const existing = openMap.get(nk);
-        if (existing) {
-          if (g < existing.g) {
-            existing.g = g;
-            existing.f = g + existing.hv;
-            existing.parent = current;
-            bubbleUp(existing.heapIdx);
-          }
-          continue;
-        }
-
-        const nhv = heuristic(nx, nz);
-        const node: PNode = { x: nx, z: nz, g, hv: nhv, f: g + nhv, parent: current, heapIdx: 0 };
-        pushNode(node);
-        openMap.set(nk, node);
-      }
+      for (const [dx, dz] of CARDINAL_PATH_DIRS) considerNeighbor(current, dx, dz);
+      if (canW && canN) considerNeighbor(current, -1, -1);
+      if (canE && canN) considerNeighbor(current, 1, -1);
+      if (canW && canS) considerNeighbor(current, -1, 1);
+      if (canE && canS) considerNeighbor(current, 1, 1);
     }
     return [];
   }

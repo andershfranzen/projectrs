@@ -249,8 +249,8 @@ export class GroundItemEntity {
       clone.setEnabled(true);
       for (const child of clone.getChildMeshes(false)) {
         child.setEnabled(true);
-        child.isPickable = true;
-        child.metadata = { kind: 'groundItem', groundItemId: primary.id };
+        child.isPickable = false;
+        child.metadata = { kind: 'groundItemVisual', groundItemId: primary.id };
       }
 
       const offset = STACK_OFFSETS[Math.min(i, STACK_OFFSETS.length - 1)];

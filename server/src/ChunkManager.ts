@@ -1,5 +1,7 @@
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS } from '@projectrs/shared';
 
+export type ServerEntityKind = 'entity' | 'player' | 'npc' | 'object' | 'groundItem';
+
 /**
  * Server-side spatial index for entities within a map.
  * Tracks which chunk each entity is in for efficient proximity queries.
@@ -8,6 +10,8 @@ import { CHUNK_SIZE, CHUNK_LOAD_RADIUS } from '@projectrs/shared';
 export class ServerChunkManager {
   private entityChunks: Map<number, number> = new Map(); // entityId -> chunkKey
   private chunkEntities: Map<number, Set<number>> = new Map(); // chunkKey -> set of entityIds
+  private chunkPlayers: Map<number, Set<number>> = new Map(); // chunkKey -> set of player entityIds
+  private entityKinds: Map<number, ServerEntityKind> = new Map(); // entityId -> kind
 
   /** Subset of entity IDs that are players (for broadcastNearby) */
   private playerIds: Set<number> = new Set();
@@ -31,22 +35,45 @@ export class ServerChunkManager {
 
   registerPlayer(entityId: number): void {
     this.playerIds.add(entityId);
+    this.entityKinds.set(entityId, 'player');
+    const key = this.entityChunks.get(entityId);
+    if (key !== undefined) this.addPlayerToChunk(entityId, key);
   }
 
   unregisterPlayer(entityId: number): void {
     this.playerIds.delete(entityId);
+    const key = this.entityChunks.get(entityId);
+    if (key !== undefined) this.removePlayerFromChunk(entityId, key);
   }
 
-  addEntity(entityId: number, worldX: number, worldZ: number): void {
+  private addPlayerToChunk(entityId: number, key: number): void {
+    let players = this.chunkPlayers.get(key);
+    if (!players) {
+      players = new Set();
+      this.chunkPlayers.set(key, players);
+    }
+    players.add(entityId);
+  }
+
+  private removePlayerFromChunk(entityId: number, key: number): void {
+    const players = this.chunkPlayers.get(key);
+    if (!players) return;
+    players.delete(entityId);
+    if (players.size === 0) this.chunkPlayers.delete(key);
+  }
+
+  addEntity(entityId: number, worldX: number, worldZ: number, kind: ServerEntityKind = 'entity'): void {
     const [cx, cz] = this.worldToChunk(worldX, worldZ);
     const key = this.chunkKey(cx, cz);
     this.entityChunks.set(entityId, key);
+    this.entityKinds.set(entityId, kind);
     let set = this.chunkEntities.get(key);
     if (!set) {
       set = new Set();
       this.chunkEntities.set(key, set);
     }
     set.add(entityId);
+    if (this.playerIds.has(entityId)) this.addPlayerToChunk(entityId, key);
   }
 
   removeEntity(entityId: number): void {
@@ -57,7 +84,9 @@ export class ServerChunkManager {
         set.delete(entityId);
         if (set.size === 0) this.chunkEntities.delete(key);
       }
+      if (this.playerIds.has(entityId)) this.removePlayerFromChunk(entityId, key);
       this.entityChunks.delete(entityId);
+      this.entityKinds.delete(entityId);
     }
   }
 
@@ -74,6 +103,7 @@ export class ServerChunkManager {
         set.delete(entityId);
         if (set.size === 0) this.chunkEntities.delete(oldKey);
       }
+      if (this.playerIds.has(entityId)) this.removePlayerFromChunk(entityId, oldKey);
     }
 
     // Add to new chunk
@@ -84,6 +114,7 @@ export class ServerChunkManager {
       this.chunkEntities.set(newKey, set);
     }
     set.add(entityId);
+    if (this.playerIds.has(entityId)) this.addPlayerToChunk(entityId, newKey);
   }
 
   /** Get all entity IDs within CHUNK_LOAD_RADIUS of the given chunk coords */
@@ -127,14 +158,17 @@ export class ServerChunkManager {
     for (let dx = -CHUNK_LOAD_RADIUS; dx <= CHUNK_LOAD_RADIUS; dx++) {
       for (let dz = -CHUNK_LOAD_RADIUS; dz <= CHUNK_LOAD_RADIUS; dz++) {
         const key = this.chunkKey(cx + dx, cz + dz);
-        const set = this.chunkEntities.get(key);
+        const set = this.chunkPlayers.get(key);
         if (set) {
-          for (const id of set) {
-            if (this.playerIds.has(id)) fn(id);
-          }
+          for (const id of set) fn(id);
         }
       }
     }
+  }
+
+  /** Zero-allocation: call fn for each entity and its registered kind near chunk coords */
+  forEachEntityKindNearChunk(cx: number, cz: number, fn: (entityId: number, kind: ServerEntityKind) => void): void {
+    this.forEachEntityNearChunk(cx, cz, id => fn(id, this.entityKinds.get(id) ?? 'entity'));
   }
 
   /** Zero-allocation: call fn for each player within CHUNK_LOAD_RADIUS of world position */

@@ -261,11 +261,13 @@ export class CharacterEntity {
   private yOffset: number = 0; // half model height, for health bar positioning
   private childYOffset: number = 0; // -minY applied to root children so feet are at y=0
   private layerMask: number | undefined = undefined;
+  private renderEnabled: boolean = true;
 
   // Animations — keyed by name as exported from Blender NLA strips
   private animGroups: Map<string, AnimationGroup> = new Map();
   private currentState: AnimState = AnimState.Idle;
   private currentAnimName: string = '';
+  private currentAnimLoop: boolean = true;
   private queuedState: AnimState = AnimState.Idle;
   private queuedAnimName: string = '';
 
@@ -715,6 +717,7 @@ export class CharacterEntity {
 
       // Propagate layerMask (if any) to all body+hair meshes
       this.applyLayerMask();
+      if (!this.renderEnabled) this.root.setEnabled(false);
 
       this._ready = true;
       this._resolveReady();
@@ -997,6 +1000,35 @@ export class CharacterEntity {
     return this._ready;
   }
 
+  setRenderEnabled(enabled: boolean): void {
+    if (this.renderEnabled === enabled) return;
+    this.renderEnabled = enabled;
+    if (this.root) this.root.setEnabled(enabled);
+    if (!enabled) {
+      for (const [, group] of this.animGroups) group.stop();
+      if (this.labelEl) this.labelEl.style.opacity = '0';
+      if (this.healthBarEl) {
+        this.healthBarEl.style.left = '-9999px';
+        this.healthBarEl.style.top = '-9999px';
+      }
+      if (this.chatBubbleEl) {
+        this.chatBubbleEl.style.left = '-9999px';
+        this.chatBubbleEl.style.top = '-9999px';
+      }
+      return;
+    }
+
+    if (!this._ready || !this.currentAnimName) return;
+    const name = this.currentAnimName;
+    const loop = this.currentAnimLoop;
+    this.currentAnimName = '';
+    this.playAnim(name, loop);
+  }
+
+  isRenderEnabled(): boolean {
+    return this.renderEnabled;
+  }
+
   /** Stamp picking metadata on every mesh so right-click resolves to the
    *  intended NPC entity (mirrors Npc3DEntity.setEntityIdMetadata). Multiple
    *  customizable NPCs share the `main character.glb` source, so without
@@ -1186,7 +1218,10 @@ export class CharacterEntity {
 
   /** Low-level: play a named animation group. */
   private playAnim(name: string, loop: boolean, onEnd?: () => void): void {
-    if (name === this.currentAnimName && loop) return;
+    if (name === this.currentAnimName && loop) {
+      const currentGroup = this.animGroups.get(name);
+      if (!this.renderEnabled || currentGroup?.isPlaying) return;
+    }
 
     const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
     const group = this.animGroups.get(name);
@@ -1199,11 +1234,13 @@ export class CharacterEntity {
     }
 
     if (oldGroup) oldGroup.stop();
+    this.currentAnimName = name;
+    this.currentAnimLoop = loop;
+    this.oneShotCallback = onEnd ?? null;
+    if (!this.renderEnabled) return;
+
     const speed = this.getAnimationSpeed(name);
     group.start(loop, speed, group.from, group.to, false);
-
-    this.currentAnimName = name;
-    this.oneShotCallback = onEnd ?? null;
 
     if (!loop && onEnd) {
       group.onAnimationGroupEndObservable.addOnce(() => {

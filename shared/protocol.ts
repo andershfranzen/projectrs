@@ -1,6 +1,9 @@
 // Binary protocol helpers for game socket
 // All game packets: [opcode (1 byte), ...payload]
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 // Reusable encode buffer — grows as needed to avoid per-call allocation.
 let _encBuf = new ArrayBuffer(256);
 let _encView = new DataView(_encBuf);
@@ -64,10 +67,49 @@ export function decodePacket(data: ArrayBuffer): { opcode: number; values: numbe
   return { opcode, values };
 }
 
+// Packet batch: [opcode, count:u16, repeated [packetLength:u32, packetBytes]]
+export function encodePacketBatch(opcode: number, packets: readonly Uint8Array[]): Uint8Array {
+  if (packets.length > 0xffff) throw new RangeError('too many packets in batch');
+  let len = 3;
+  for (const packet of packets) {
+    if (packet.byteLength === 0) throw new RangeError('empty packet in batch');
+    len += 4 + packet.byteLength;
+  }
+  const out = new Uint8Array(len);
+  const view = new DataView(out.buffer);
+  view.setUint8(0, opcode);
+  view.setUint16(1, packets.length);
+  let offset = 3;
+  for (const packet of packets) {
+    view.setUint32(offset, packet.byteLength);
+    offset += 4;
+    out.set(packet, offset);
+    offset += packet.byteLength;
+  }
+  return out;
+}
+
+export function decodePacketBatch(data: ArrayBuffer): ArrayBuffer[] {
+  if (data.byteLength < 3) throw new RangeError('packet batch too short');
+  const view = new DataView(data);
+  const count = view.getUint16(1);
+  const packets: ArrayBuffer[] = [];
+  let offset = 3;
+  for (let i = 0; i < count; i++) {
+    if (offset + 4 > data.byteLength) throw new RangeError('packet batch length truncated');
+    const len = view.getUint32(offset);
+    offset += 4;
+    if (len < 1 || offset + len > data.byteLength) throw new RangeError('packet batch payload truncated');
+    packets.push(data.slice(offset, offset + len));
+    offset += len;
+  }
+  if (offset !== data.byteLength) throw new RangeError('packet batch trailing bytes');
+  return packets;
+}
+
 // String packet: [opcode, stringLength (2 bytes), ...utf8 bytes, ...extra int16 values]
 export function encodeStringPacket(opcode: number, str: string, ...values: number[]): Uint8Array {
-  const encoder = new TextEncoder();
-  const strBytes = encoder.encode(str);
+  const strBytes = textEncoder.encode(str);
   const buf = new Uint8Array(1 + 2 + strBytes.length + values.length * 2);
   const view = new DataView(buf.buffer);
   view.setUint8(0, opcode);
@@ -88,8 +130,7 @@ export function decodeStringPacket(data: ArrayBuffer): { opcode: number; str: st
   // hostile client can't claim a 64K string in a 4-byte packet (which would
   // either OOB-read on TextDecoder or read uninitialized buffer memory).
   if (3 + strLen > view.byteLength) throw new RangeError('string packet length exceeds buffer');
-  const decoder = new TextDecoder();
-  const str = decoder.decode(new Uint8Array(data, 3, strLen));
+  const str = textDecoder.decode(new Uint8Array(data, 3, strLen));
   const values: number[] = [];
   for (let i = 3 + strLen; i + 1 < view.byteLength; i += 2) {
     values.push(view.getInt16(i));

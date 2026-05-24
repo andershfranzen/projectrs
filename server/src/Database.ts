@@ -497,6 +497,7 @@ function calibratedLegacyBotRisk(input: {
 export class GameDatabase {
   private db: SQLiteDB;
   private lastHiscoreSnapshotPruneAt = 0;
+  private readonly lastHiscoreSnapshotKeys = new Map<number, string>();
 
   constructor(dbPath: string = 'projectrs.db') {
     this.db = new SQLiteDB(dbPath);
@@ -1076,6 +1077,38 @@ export class GameDatabase {
     }
   }
 
+  applyObjectRespawnWritesBatch(writes: Array<
+    | { type: 'save'; mapLevel: string; defId: number; tileX: number; tileZ: number; floor: number; respawnAtUnixMs: number }
+    | { type: 'clear'; mapLevel: string; defId: number; tileX: number; tileZ: number; floor: number }
+  >): void {
+    if (writes.length === 0) return;
+    const saveStmt = this.db.query(`
+      INSERT INTO world_object_respawn (map_level, def_id, tile_x, tile_z, floor, respawn_at_unix_ms)
+      VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(map_level, def_id, tile_x, tile_z, floor) DO UPDATE SET
+        respawn_at_unix_ms = excluded.respawn_at_unix_ms
+    `);
+    const clearStmt = this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ? AND floor = ?');
+    const tx = this.db.transaction((rows: typeof writes) => {
+      for (const row of rows) {
+        if (row.type === 'save') {
+          saveStmt.run(row.mapLevel, row.defId, row.tileX, row.tileZ, Math.floor(row.floor), row.respawnAtUnixMs);
+        } else {
+          clearStmt.run(row.mapLevel, row.defId, row.tileX, row.tileZ, Math.floor(row.floor));
+        }
+      }
+    });
+    try {
+      tx(writes);
+    } catch (e) {
+      console.error('applyObjectRespawnWritesBatch failed; falling back to per-row writes:', e);
+      for (const row of writes) {
+        if (row.type === 'save') this.saveObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor, row.respawnAtUnixMs);
+        else this.clearObjectRespawn(row.mapLevel, row.defId, row.tileX, row.tileZ, row.floor);
+      }
+    }
+  }
+
   async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
     if (!PUBLIC_SIGNUPS_ENABLED) return { ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE };
 
@@ -1313,6 +1346,39 @@ export class GameDatabase {
     );
   }
 
+  savePlayerPositionsBatch(saves: Array<{ accountId: number; player: Player; effectiveY: number }>): void {
+    if (saves.length === 0) return;
+    const stmt = this.db.query(`
+      UPDATE player_state SET
+        x = ?, z = ?, y = ?, floor = ?, map_level = ?, updated_at = unixepoch()
+      WHERE account_id = ?
+    `);
+    const tx = this.db.transaction((rows: Array<{ accountId: number; player: Player; effectiveY: number }>) => {
+      for (const row of rows) {
+        stmt.run(
+          row.player.position.x,
+          row.player.position.y,
+          row.effectiveY,
+          row.player.currentFloor,
+          row.player.currentMapLevel,
+          row.accountId,
+        );
+      }
+    });
+    try {
+      tx(saves);
+    } catch (e) {
+      console.error('savePlayerPositionsBatch failed; falling back to per-row position saves:', e);
+      for (const row of saves) {
+        try {
+          this.savePlayerPosition(row.accountId, row.player, row.effectiveY);
+        } catch (rowErr) {
+          console.error(`per-row position save failed for accountId=${row.accountId}:`, rowErr);
+        }
+      }
+    }
+  }
+
   /** Batched save: wraps every per-row UPDATE in a single SQLite transaction
    *  so 100+ players flush in one fsync instead of N. Called by the 15s
    *  auto-save loop in World.saveAllPlayers.
@@ -1520,6 +1586,18 @@ export class GameDatabase {
     const now = Math.floor(Date.now() / 1000);
     const bucketStart = Math.floor(now / 3600) * 3600;
     const categories = ['overall', 'combat', ...ALL_SKILLS];
+    const snapshotKey = `${bucketStart}|${categories.map((categoryId) => {
+      const value = this.hiscoreCategoryValue(categoryId, skills);
+      return `${categoryId}:${value.level}:${value.xp}`;
+    }).join('|')}`;
+    if (this.lastHiscoreSnapshotKeys.get(accountId) === snapshotKey) {
+      if (now - this.lastHiscoreSnapshotPruneAt > 6 * 3600) {
+        this.lastHiscoreSnapshotPruneAt = now;
+        this.db.query('DELETE FROM hiscore_snapshots WHERE bucket_start < ?').run(now - 8 * 24 * 3600);
+      }
+      return;
+    }
+    this.lastHiscoreSnapshotKeys.set(accountId, snapshotKey);
     const stmt = this.db.query(`
       INSERT INTO hiscore_snapshots (account_id, category, bucket_start, level, xp)
       VALUES (?, ?, ?, ?, ?)

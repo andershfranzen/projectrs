@@ -7,6 +7,7 @@ import {
   ClientActivityKind,
   encodePacket,
   decodePacket,
+  decodePacketBatch,
   decodeStringPacket,
   encodeStringPacket,
   ENCRYPTED_GAME_FRAME_V2,
@@ -242,6 +243,11 @@ export class NetworkManager {
     };
 
     const handlePlainMessage = (data: ArrayBuffer) => {
+      const opcode = new DataView(data).getUint8(0);
+      if (opcode === ServerOpcode.PACKET_BATCH) {
+        for (const packet of decodePacketBatch(data)) handlePlainMessage(packet);
+        return;
+      }
       // Raw handlers consume string-layout packets (UTF-8 payload + trailing
       // int16s — different shape from the standard binary protocol).
       for (const handler of this.rawHandlers) {
@@ -251,7 +257,6 @@ export class NetworkManager {
       // dispatch path so we never (a) throw on odd-length UTF-8 payloads or
       // (b) silently re-dispatch garbage int16s when the payload length
       // happens to be even. Real decode errors on int16 packets still throw.
-      const opcode = new DataView(data).getUint8(0);
       if (STRING_PACKET_OPCODES.has(opcode)) return;
       const { values } = decodePacket(data);
       this.dispatch(opcode as ServerOpcode, values);

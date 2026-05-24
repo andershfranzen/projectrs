@@ -19,6 +19,7 @@ function denyIfNotAdmin(ws: ServerWebSocket<ChatSocketData>, _from: string): boo
 
 // Keep track of all chat sockets for broadcasting
 const chatSockets: Set<ServerWebSocket<ChatSocketData>> = new Set();
+const chatSocketsByUsername: Map<string, ServerWebSocket<ChatSocketData>> = new Map();
 
 // --- Per-socket rate limit ---
 // Game socket has its own rate limit (Player.checkRateLimit, 30/sec). Chat
@@ -70,6 +71,7 @@ export function handleChatSocketOpen(
   world: World
 ): void {
   chatSockets.add(ws);
+  chatSocketsByUsername.set(ws.data.username.toLowerCase(), ws);
   // Backfill: the game socket and chat socket race at login, so addPlayer's
   // broadcastPlayerInfo loop can fire before this socket is in chatSockets.
   // Without this catch-up, the joiner shows existing remotes as "Player"
@@ -163,27 +165,14 @@ function handleCommand(
         return;
       }
 
-      // Find target player's chat socket
-      let targetPlayer = null;
-      for (const [, p] of world.players) {
-        if (p.name.toLowerCase() === targetName.toLowerCase()) {
-          targetPlayer = p;
-          break;
-        }
-      }
+      const targetPlayer = findPlayerByUsername(targetName, world);
 
       if (!targetPlayer) {
         sendSystem(ws, `Player "${targetName}" not found.`);
         return;
       }
 
-      // Find their chat socket by username
-      for (const sock of chatSockets) {
-        if (sock.data.username.toLowerCase() === targetPlayer.name.toLowerCase()) {
-          sock.send(JSON.stringify({ type: 'private', from, message: msg }));
-          break;
-        }
-      }
+      chatSocketsByUsername.get(targetPlayer.name.toLowerCase())?.send(JSON.stringify({ type: 'private', from, message: msg }));
 
       // Confirm to sender
       ws.send(JSON.stringify({ type: 'private_sent', to: targetPlayer.name, message: msg }));
@@ -635,6 +624,8 @@ export function handleChatSocketClose(
   _world: World
 ): void {
   chatSockets.delete(ws);
+  const lc = ws.data.username.toLowerCase();
+  if (chatSocketsByUsername.get(lc) === ws) chatSocketsByUsername.delete(lc);
 }
 
 /** Broadcast player info to all chat sockets so clients can map entityId → name */
@@ -654,6 +645,11 @@ export function broadcastPlayerInfo(entityId: number, name: string): void {
 export function sendSystemMessageToUser(username: string, message: string): void {
   const lc = username.toLowerCase();
   const payload = JSON.stringify({ type: 'system', message });
+  const sock = chatSocketsByUsername.get(lc);
+  if (sock) {
+    try { sock.send(payload); } catch { /* ignore */ }
+    return;
+  }
   for (const sock of chatSockets) {
     if (sock.data.username.toLowerCase() === lc) {
       try { sock.send(payload); } catch { /* ignore */ }

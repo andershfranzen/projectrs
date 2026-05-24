@@ -67,6 +67,7 @@ export class Npc3DEntity {
   private modelScale: number = 1;
   private originMode: Npc3DEntityOptions['originMode'] = 'authored';
   private groundOffset: number = 0;
+  private renderEnabled: boolean = true;
   /** Server positions are already centered on the NPC footprint. Kept as a
    *  field so existing position/facing code can share one render anchor. */
   private renderOffset: number = 0;
@@ -212,6 +213,7 @@ export class Npc3DEntity {
       if (this._walking && this.animGroups.has('walk')) this.playAnim('walk', true);
       else this.playAnim('idle', true);
       this.root.position.set(this._position.x + this.renderOffset, this.visualY(this._position.y), this._position.z + this.renderOffset);
+      if (!this.renderEnabled) this.root.setEnabled(false);
       this._ready = true;
       // Force enable all meshes
       for (const mesh of this.meshes) {
@@ -224,7 +226,10 @@ export class Npc3DEntity {
   }
 
   private playAnim(name: string, loop: boolean): void {
-    if (name === this.currentAnim && loop) return;
+    if (name === this.currentAnim && loop) {
+      const currentGroup = this.animGroups.get(name);
+      if (!this.renderEnabled || currentGroup?.isPlaying) return;
+    }
     if (this.currentAnim) {
       const cur = this.animGroups.get(this.currentAnim);
       cur?.stop();
@@ -239,7 +244,7 @@ export class Npc3DEntity {
     }
     this.currentAnim = name;
     this.currentAnimLoop = loop;
-    if (this.animationEnabled) {
+    if (this.animationEnabled && this.renderEnabled) {
       group.start(loop, 1.0, group.from, group.to, false);
     }
   }
@@ -250,7 +255,7 @@ export class Npc3DEntity {
     this.animationEnabled = enabled;
     const group = this.currentAnim ? this.animGroups.get(this.currentAnim) : null;
     if (!group) return;
-    if (enabled) {
+    if (enabled && this.renderEnabled) {
       group.start(this.currentAnimLoop, 1.0, group.from, group.to, false);
     } else {
       group.stop();
@@ -259,6 +264,30 @@ export class Npc3DEntity {
 
   isAnimationEnabled(): boolean {
     return this.animationEnabled;
+  }
+
+  setRenderEnabled(enabled: boolean): void {
+    if (this.renderEnabled === enabled) return;
+    this.renderEnabled = enabled;
+    if (this.root) this.root.setEnabled(enabled);
+    const group = this.currentAnim ? this.animGroups.get(this.currentAnim) : null;
+    if (!enabled) {
+      for (const [, anim] of this.animGroups) anim.stop();
+      if (this.healthBarEl) {
+        this.healthBarEl.style.left = '-9999px';
+        this.healthBarEl.style.top = '-9999px';
+      }
+      if (this.chatBubbleEl) {
+        this.chatBubbleEl.style.left = '-9999px';
+        this.chatBubbleEl.style.top = '-9999px';
+      }
+    } else if (group && this.animationEnabled) {
+      group.start(this.currentAnimLoop, 1.0, group.from, group.to, false);
+    }
+  }
+
+  isRenderEnabled(): boolean {
+    return this.renderEnabled;
   }
 
   // --- Public API matching SpriteEntity ---

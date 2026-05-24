@@ -614,6 +614,105 @@
     "distanceMult": 0.9,
     "rotationY": 1.5707963
   },
-  "_item_families": {},
+  "_item_families": {
+    "weapon:axe": {
+      "alpha": -0.9512044423369096,
+      "beta": 0.29670597283903605,
+      "distanceMult": 0.75,
+      "rotationX": 0,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "weapon:pickaxe": {
+      "alpha": -0.9686577348568529,
+      "beta": 1.208304866765305,
+      "distanceMult": 0.75,
+      "rotationX": 0.5410520681182421,
+      "rotationY": -0.39269908169872414,
+      "rotationZ": -0.5148721293383273
+    },
+    "head:fullhelmet": {
+      "alpha": 1.182464196901784,
+      "beta": 1.3026432842146376,
+      "distanceMult": 1,
+      "rotationX": 0,
+      "rotationY": -0.431592653589793,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "head:mediumhelmet": {
+      "alpha": 1.9062289458939035,
+      "beta": 1.5149900478554355,
+      "distanceMult": 0.75,
+      "rotationX": 0.17453292519943295,
+      "rotationY": 0.17453292519943295,
+      "rotationZ": -0.026179938779914945,
+      "iconScale": 0.95
+    },
+    "weapon:2handedsword": {
+      "alpha": -1.8031834027050349,
+      "beta": 2.050104166754064,
+      "distanceMult": 0.75,
+      "rotationX": 2.2252947962927703,
+      "rotationY": 1.911135530933791,
+      "rotationZ": -1.0035643198967394,
+      "iconScale": 1
+    },
+    "body:platemailbody": {
+      "alpha": 1.350436266129598,
+      "beta": 1.0173910281165115,
+      "distanceMult": 0.75,
+      "rotationX": 0,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "shield:kiteshield": {
+      "alpha": 1.9427752871630228,
+      "beta": 1.4163050498707737,
+      "distanceMult": 0.75,
+      "rotationX": 0,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "shield:squareshield": {
+      "alpha": 1.7715091907742444,
+      "beta": 1.208304866765305,
+      "distanceMult": 0.75,
+      "rotationX": 0,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "weapon:mace": {
+      "alpha": 0.4701732307450718,
+      "beta": 1.4573568775907333,
+      "distanceMult": 0.75,
+      "rotationX": -0.5672320068981571,
+      "rotationY": -0.7330382858376184,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "weapon:battleaxe": {
+      "alpha": -1.2195574287564277,
+      "beta": 0.3839585310878163,
+      "distanceMult": 0.75,
+      "rotationX": 0,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "iconScale": 1
+    },
+    "weapon:scimitar": {
+      "alpha": -0.682865055092548,
+      "beta": 1.0723048057301456,
+      "distanceMult": 0.75,
+      "rotationX": 0,
+      "rotationY": 0,
+      "rotationZ": 0,
+      "iconScale": 1
+    }
+  },
   "_thumbnail_assets": {}
 }

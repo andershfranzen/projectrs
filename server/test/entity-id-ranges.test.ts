@@ -45,4 +45,27 @@ describe('entity id ranges', () => {
     expect(chunks.getEntityChunk(npcId)).toEqual([0, 0]);
     expect(chunks.getEntityChunk(groundItemId)).toEqual([2, 2]);
   });
+
+  test('chunk player iteration uses the player-only chunk index', () => {
+    const chunks = new ServerChunkManager(128, 128);
+    chunks.addEntity(1, 10.5, 10.5);
+    chunks.addEntity(2, 10.5, 10.5);
+    chunks.addEntity(20000, 10.5, 10.5);
+    chunks.registerPlayer(1);
+    chunks.registerPlayer(2);
+
+    const seen: number[] = [];
+    chunks.forEachPlayerNear(10.5, 10.5, id => seen.push(id));
+    expect(seen.sort((a, b) => a - b)).toEqual([1, 2]);
+
+    chunks.updateEntity(2, 200.5, 200.5);
+    const afterMove: number[] = [];
+    chunks.forEachPlayerNear(10.5, 10.5, id => afterMove.push(id));
+    expect(afterMove).toEqual([1]);
+
+    chunks.unregisterPlayer(1);
+    const afterUnregister: number[] = [];
+    chunks.forEachPlayerNear(10.5, 10.5, id => afterUnregister.push(id));
+    expect(afterUnregister).toEqual([]);
+  });
 });

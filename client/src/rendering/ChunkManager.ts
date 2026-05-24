@@ -20,6 +20,9 @@ import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
+const CHUNK_RENDER_PADDING_TILES = 8;
+const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
+const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 
 function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const token = localStorage.getItem('projectrs_token') || '';
@@ -144,6 +147,7 @@ export class ChunkManager {
   private chunks: Map<string, ChunkMeshes> = new Map();
   private lastChunkX: number = -999;
   private lastChunkZ: number = -999;
+  private lastRenderDistanceBucket: number = -999;
 
   // Shared materials
   private groundMat: StandardMaterial | null = null;
@@ -279,6 +283,80 @@ export class ChunkManager {
   getMeta(): MapMeta | null { return this.meta; }
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
+
+  private getRenderDistanceTiles(): number {
+    const metaFogEnd = this.meta?.fogEnd ?? (CHUNK_LOAD_RADIUS + 1) * CHUNK_SIZE;
+    const sceneFogEnd = Number.isFinite(this.scene.fogEnd) && this.scene.fogEnd > 0
+      ? this.scene.fogEnd
+      : metaFogEnd;
+    const cameraMaxZ = this.scene.activeCamera?.maxZ ?? Number.POSITIVE_INFINITY;
+    const limitingDistance = Math.min(sceneFogEnd, cameraMaxZ);
+    const baseDistance = Number.isFinite(limitingDistance) ? limitingDistance : sceneFogEnd;
+    return Math.max(CHUNK_MIN_RENDER_DISTANCE_TILES, baseDistance + CHUNK_RENDER_PADDING_TILES);
+  }
+
+  private getRenderDistanceBucket(renderDistance: number): number {
+    return Math.floor(renderDistance / CHUNK_RENDER_DISTANCE_BUCKET_TILES);
+  }
+
+  private isChunkWithinRenderDistance(
+    chunkX: number,
+    chunkZ: number,
+    playerX: number,
+    playerZ: number,
+    renderDistance: number,
+  ): boolean {
+    const minX = chunkX * CHUNK_SIZE;
+    const maxX = Math.min(minX + CHUNK_SIZE, this.mapWidth);
+    const minZ = chunkZ * CHUNK_SIZE;
+    const maxZ = Math.min(minZ + CHUNK_SIZE, this.mapHeight);
+    const dx = playerX < minX ? minX - playerX : (playerX > maxX ? playerX - maxX : 0);
+    const dz = playerZ < minZ ? minZ - playerZ : (playerZ > maxZ ? playerZ - maxZ : 0);
+    return dx * dx + dz * dz <= renderDistance * renderDistance;
+  }
+
+  private setChunkMeshesEnabled(meshes: ChunkMeshes, enabled: boolean): void {
+    meshes.ground.setEnabled(enabled);
+    for (const overlay of meshes.overlays) overlay.setEnabled(enabled);
+    meshes.water?.setEnabled(enabled);
+    meshes.paddyWater?.setEnabled(enabled);
+    meshes.cliff?.setEnabled(enabled);
+    meshes.ceiling?.setEnabled(enabled);
+    meshes.wall?.setEnabled(enabled);
+    meshes.roof?.setEnabled(enabled && this.currentFloor === 0);
+    meshes.floor?.setEnabled(enabled);
+    meshes.stairs?.setEnabled(enabled);
+    for (const [floorIdx, floorSet] of meshes.upperFloors) {
+      if (enabled) this.setFloorMeshSetVisibility(floorSet, floorIdx);
+      else {
+        floorSet.wall?.setEnabled(false);
+        floorSet.roof?.setEnabled(false);
+        floorSet.floor?.setEnabled(false);
+        floorSet.stairs?.setEnabled(false);
+      }
+    }
+  }
+
+  private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
+    meshes.ground.dispose();
+    this.disposeChunkTextureOverlays(key);
+    meshes.water?.dispose();
+    meshes.paddyWater?.dispose();
+    meshes.cliff?.dispose();
+    meshes.ceiling?.dispose();
+    meshes.wall?.dispose();
+    meshes.roof?.dispose();
+    meshes.floor?.dispose();
+    meshes.stairs?.dispose();
+    for (const [, floorSet] of meshes.upperFloors) {
+      floorSet.wall?.dispose();
+      floorSet.roof?.dispose();
+      floorSet.floor?.dispose();
+      floorSet.stairs?.dispose();
+    }
+    this.chunks.delete(key);
+    this.pendingShadowGroundRebuildChunks.delete(key);
+  }
 
   /** Resolves once map.json is parsed AND the spawn chunk's terrain data +
    *  placed objects have finished loading. Used by the login flow's loading
@@ -559,6 +637,7 @@ export class ChunkManager {
     this.loaded = true;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
+    this.lastRenderDistanceBucket = -999;
     if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded map '${mapId}': ${this.mapWidth}x${this.mapHeight}, tiles: ${this.mapData?.tiles?.length}, heights: ${this.mapData?.heights?.length}, waterLevel: ${this.mapData?.waterLevel}`);
   }
 
@@ -673,18 +752,26 @@ export class ChunkManager {
     if (!this.loaded) { return false; }
     const cx = Math.floor(playerX / CHUNK_SIZE);
     const cz = Math.floor(playerZ / CHUNK_SIZE);
-    if (cx === this.lastChunkX && cz === this.lastChunkZ) {
+    const renderDistance = this.getRenderDistanceTiles();
+    const renderDistanceBucket = this.getRenderDistanceBucket(renderDistance);
+    if (cx === this.lastChunkX && cz === this.lastChunkZ && renderDistanceBucket === this.lastRenderDistanceBucket) {
       this.buildQueuedGameChunks(cx, cz);
       return false;
     }
     this.lastChunkX = cx;
     this.lastChunkZ = cz;
+    this.lastRenderDistanceBucket = renderDistanceBucket;
 
-    // `desired` = chunks that should be loaded (within active radius).
+    // `stream`  = chunks whose tile/height data should be available for
+    //             pathing and near-future movement.
+    // `desired` = chunks whose meshes should be visible now. This is clipped
+    //             by fog/camera distance so fully fog-hidden scenery doesn't
+    //             spend active-mesh, draw-call, or instantiation budget.
     // `keep`    = chunks worth keeping in memory even when the player walks
     //             out of range, so a quick step back doesn't trigger a
-    //             rebuild from scratch (which causes the visible lag spikes).
+    //             rebuild from scratch (which causes visible lag spikes).
     const KEEP_RADIUS = CHUNK_LOAD_RADIUS + 2;
+    const stream = new Set<string>();
     const desired = new Set<string>();
     const keep = new Set<string>();
     const maxCX = Math.ceil(this.mapWidth / CHUNK_SIZE);
@@ -697,10 +784,15 @@ export class ChunkManager {
         const key = `${chunkX},${chunkZ}`;
         keep.add(key);
         if (Math.abs(dx) <= CHUNK_LOAD_RADIUS && Math.abs(dz) <= CHUNK_LOAD_RADIUS) {
-          desired.add(key);
+          stream.add(key);
+          if (this.isChunkWithinRenderDistance(chunkX, chunkZ, playerX, playerZ, renderDistance)) {
+            desired.add(key);
+          }
         }
       }
     }
+    const centerKey = `${cx},${cz}`;
+    if (stream.has(centerKey)) desired.add(centerKey);
     this.desiredGameChunks = desired;
     this.keepGameChunks = keep;
 
@@ -709,61 +801,14 @@ export class ChunkManager {
     // wanders back. Only fully dispose chunks beyond keep-radius.
     for (const [key, meshes] of this.chunks) {
       if (desired.has(key)) {
-        meshes.ground.setEnabled(true);
-        for (const overlay of meshes.overlays) overlay.setEnabled(true);
-        meshes.water?.setEnabled(true);
-        meshes.paddyWater?.setEnabled(true);
-        meshes.cliff?.setEnabled(true);
-        meshes.ceiling?.setEnabled(true);
-        meshes.wall?.setEnabled(true);
-        meshes.roof?.setEnabled(true);
-        meshes.floor?.setEnabled(true);
-        meshes.stairs?.setEnabled(true);
-        for (const [, floorSet] of meshes.upperFloors) {
-          floorSet.wall?.setEnabled(true);
-          floorSet.roof?.setEnabled(true);
-          floorSet.floor?.setEnabled(true);
-          floorSet.stairs?.setEnabled(true);
-        }
+        this.setChunkMeshesEnabled(meshes, true);
         this.setChunkPlacedObjectsEnabled(key, true);
       } else if (keep.has(key)) {
         // Just hide — meshes stay allocated for fast re-show.
-        meshes.ground.setEnabled(false);
-        for (const overlay of meshes.overlays) overlay.setEnabled(false);
-        meshes.water?.setEnabled(false);
-        meshes.paddyWater?.setEnabled(false);
-        meshes.cliff?.setEnabled(false);
-        meshes.ceiling?.setEnabled(false);
-        meshes.wall?.setEnabled(false);
-        meshes.roof?.setEnabled(false);
-        meshes.floor?.setEnabled(false);
-        meshes.stairs?.setEnabled(false);
-        for (const [, floorSet] of meshes.upperFloors) {
-          floorSet.wall?.setEnabled(false);
-          floorSet.roof?.setEnabled(false);
-          floorSet.floor?.setEnabled(false);
-          floorSet.stairs?.setEnabled(false);
-        }
+        this.setChunkMeshesEnabled(meshes, false);
         this.setChunkPlacedObjectsEnabled(key, false);
       } else {
-        meshes.ground.dispose();
-        this.disposeChunkTextureOverlays(key);
-        meshes.water?.dispose();
-        meshes.paddyWater?.dispose();
-        meshes.cliff?.dispose();
-        meshes.ceiling?.dispose();
-        meshes.wall?.dispose();
-        meshes.roof?.dispose();
-        meshes.floor?.dispose();
-        meshes.stairs?.dispose();
-        for (const [, floorSet] of meshes.upperFloors) {
-          floorSet.wall?.dispose();
-          floorSet.roof?.dispose();
-          floorSet.floor?.dispose();
-          floorSet.stairs?.dispose();
-        }
-        this.chunks.delete(key);
-        this.pendingShadowGroundRebuildChunks.delete(key);
+        this.disposeChunkMeshes(key, meshes);
       }
     }
 
@@ -778,7 +823,7 @@ export class ChunkManager {
     if (this.chunkedMode) {
       const ECHUNK = EDITOR_CHUNK_SIZE;
       const neededEditorChunks = new Set<string>();
-      for (const key of desired) {
+      for (const key of stream) {
         const [gcx, gcz] = key.split(',').map(Number);
         const sx = Math.floor((gcx * CHUNK_SIZE) / ECHUNK);
         const sz = Math.floor((gcz * CHUNK_SIZE) / ECHUNK);
@@ -2436,7 +2481,11 @@ export class ChunkManager {
   setCurrentFloor(floor: number): void {
     if (floor === this.currentFloor) return;
     this.currentFloor = floor;
-    for (const [, chunk] of this.chunks) {
+    for (const [key, chunk] of this.chunks) {
+      if (this.desiredGameChunks.size > 0 && !this.desiredGameChunks.has(key)) {
+        this.setChunkMeshesEnabled(chunk, false);
+        continue;
+      }
       if (chunk.roof) chunk.roof.setEnabled(floor === 0);
       for (const [floorIdx, meshSet] of chunk.upperFloors) this.setFloorMeshSetVisibility(meshSet, floorIdx);
     }
@@ -2775,13 +2824,22 @@ export class ChunkManager {
     this.objectChunkQueueScheduled = false;
     const start = performance.now();
     const generation = this.objectLoadGeneration;
+    if (this.objectChunkQueue.length > 1) {
+      this.objectChunkQueue.sort((a, b) => {
+        const [ax, az] = a.split(',').map(Number);
+        const [bx, bz] = b.split(',').map(Number);
+        const da = Math.max(Math.abs(ax - this.lastChunkX), Math.abs(az - this.lastChunkZ));
+        const db = Math.max(Math.abs(bx - this.lastChunkX), Math.abs(bz - this.lastChunkZ));
+        return da - db;
+      });
+    }
 
     while (this.objectChunkQueue.length > 0) {
       if (this.isObjectLoadStale(generation)) return;
       const chunkKey = this.objectChunkQueue.shift()!;
       this.queuedObjectChunks.delete(chunkKey);
 
-      if (this.keepGameChunks.size > 0 && !this.keepGameChunks.has(chunkKey)) {
+      if (this.desiredGameChunks.size > 0 && !this.desiredGameChunks.has(chunkKey)) {
         this.loadingObjectChunks.delete(chunkKey);
         continue;
       }
@@ -3093,7 +3151,7 @@ export class ChunkManager {
     this.chunkPlacedNodes.set(chunkKey, nodes);
     this.chunkAnimGroups.set(chunkKey, anims);
     this.chunkPlacedEnabled.set(chunkKey, true);
-    this.setChunkPlacedObjectsEnabled(chunkKey, this.desiredGameChunks.has(chunkKey));
+    this.setChunkPlacedObjectsEnabled(chunkKey, this.desiredGameChunks.size === 0 || this.desiredGameChunks.has(chunkKey));
 
     if (objects && objects.length > 0) {
       this.addShadowsForObjects(objects);
@@ -3931,6 +3989,7 @@ export class ChunkManager {
       meshes.water?.dispose();
       meshes.paddyWater?.dispose();
       meshes.cliff?.dispose();
+      meshes.ceiling?.dispose();
       meshes.wall?.dispose();
       meshes.roof?.dispose();
       meshes.floor?.dispose();
@@ -3966,5 +4025,6 @@ export class ChunkManager {
     this.loaded = false;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
+    this.lastRenderDistanceBucket = -999;
   }
 }

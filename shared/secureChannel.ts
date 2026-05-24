@@ -88,6 +88,8 @@ export interface GameCipherKeysV2 {
   serverToClientKey: CryptoKey;
   clientToServerIvPrefix: Uint8Array;
   serverToClientIvPrefix: Uint8Array;
+  clientToServerAadPrefix: Uint8Array;
+  serverToClientAadPrefix: Uint8Array;
   connectionId: string;
   accountId: number;
 }
@@ -199,6 +201,8 @@ export async function deriveGameCipherKeysV2(opts: {
     serverToClientKey: await deriveAes('server-to-client'),
     clientToServerIvPrefix: clientToServerIvHash.slice(0, 4),
     serverToClientIvPrefix: serverToClientIvHash.slice(0, 4),
+    clientToServerAadPrefix: frameAadPrefixV2(opts.connectionId, opts.accountId, 'client-to-server'),
+    serverToClientAadPrefix: frameAadPrefixV2(opts.connectionId, opts.accountId, 'server-to-client'),
     connectionId: opts.connectionId,
     accountId: opts.accountId,
   };
@@ -212,14 +216,26 @@ function frameNonceV2(keys: GameCipherKeysV2, direction: GameCipherDirection, co
 }
 
 function frameAadV2(keys: GameCipherKeysV2, direction: GameCipherDirection, counter: number): Uint8Array {
-  return encoder.encode(stableStringify({
-    frame: 'evilquest-game-v2',
-    version: GAME_CRYPTO_VERSION,
-    connectionId: keys.connectionId,
-    accountId: keys.accountId,
-    direction,
-    counter,
-  }));
+  const prefix = direction === 'client-to-server' ? keys.clientToServerAadPrefix : keys.serverToClientAadPrefix;
+  const aad = new Uint8Array(prefix.byteLength + 8);
+  aad.set(prefix, 0);
+  new DataView(aad.buffer).setBigUint64(prefix.byteLength, BigInt(counter));
+  return aad;
+}
+
+function frameAadPrefixV2(connectionId: string, accountId: number, direction: GameCipherDirection): Uint8Array {
+  const connectionIdBytes = encoder.encode(connectionId);
+  if (connectionIdBytes.byteLength > 0xffff) throw new RangeError('connection id too long');
+  const prefix = new Uint8Array(13 + connectionIdBytes.byteLength);
+  const view = new DataView(prefix.buffer);
+  prefix.set([0x65, 0x71, 0x67, 0x32], 0); // "eqg2"
+  view.setUint8(4, GAME_CRYPTO_VERSION);
+  view.setUint32(5, accountId);
+  view.setUint8(9, direction === 'client-to-server' ? 1 : 2);
+  view.setUint16(10, connectionIdBytes.byteLength);
+  prefix.set(connectionIdBytes, 12);
+  prefix[12 + connectionIdBytes.byteLength] = 0;
+  return prefix;
 }
 
 export async function encryptGamePacketV2(

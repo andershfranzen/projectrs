@@ -172,6 +172,9 @@ export class Player extends Entity {
    *  against the latest chunk query and sends despawns for anything that
    *  leaves range, preventing stale remote-player/NPC ghosts. */
   visibleEntityIds: Set<number> = new Set();
+  /** Scratch buffer swapped with visibleEntityIds during broadcastSync to
+   *  avoid allocating a new Set for every player on every sync tick. */
+  nextVisibleEntityIds: Set<number> = new Set();
 
   // Combat
   attackTarget: Entity | null = null;

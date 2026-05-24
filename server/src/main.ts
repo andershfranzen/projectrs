@@ -871,6 +871,26 @@ function getMimeType(path: string): string {
   return MIME_TYPES[ext] || 'application/octet-stream';
 }
 
+interface StaticFileCacheEntry {
+  mtimeMs: number;
+  size: number;
+  content: ArrayBuffer;
+}
+
+const staticFileCache = new Map<string, StaticFileCacheEntry>();
+
+function readCachedStaticFile(filePath: string): ArrayBuffer {
+  const stat = statSync(filePath);
+  const cached = staticFileCache.get(filePath);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    return cached.content;
+  }
+  const raw = readFileSync(filePath);
+  const content = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer;
+  staticFileCache.set(filePath, { mtimeMs: stat.mtimeMs, size: stat.size, content });
+  return content;
+}
+
 function isGameRoute(pathname: string): boolean {
   const decoded = decodeURIComponent(pathname);
   const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
@@ -905,7 +925,7 @@ function serveStatic(req: Request, pathname: string, allowIndexFallback = false)
   }
 
   try {
-    const content = readFileSync(filePath);
+    const content = readCachedStaticFile(filePath);
     // index.html must never be cached so deploys are picked up immediately.
     // Vite-hashed JS/CSS chunks under /assets/ are content-addressed and
     // safe to cache long. All other static GLBs/PNGs use a moderate cache
@@ -934,7 +954,7 @@ function serveWebsiteNotFound(): Response {
     const filePath = resolveWithinBase(WEBSITE_DIST, candidate);
     if (!filePath) continue;
     try {
-      return new Response(readFileSync(filePath), {
+      return new Response(readCachedStaticFile(filePath), {
         status: 404,
         headers: {
           'Content-Type': 'text/html',
@@ -986,7 +1006,7 @@ function serveWebsite(req: Request, pathname: string): Response | null {
   if (!filePath) return null;
 
   try {
-    const content = readFileSync(filePath);
+    const content = readCachedStaticFile(filePath);
     isHtml = filePath.endsWith('.html');
     const headers: Record<string, string> = {
       'Content-Type': getMimeType(filePath),
@@ -2849,7 +2869,7 @@ const server = Bun.serve<SocketData>({
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
           });
         }
-        const content = readFileSync(filePath);
+        const content = readCachedStaticFile(filePath);
         return new Response(content, {
           headers: {
             'Content-Type': getMimeType(filePath),
@@ -2877,7 +2897,7 @@ const server = Bun.serve<SocketData>({
         const filePath = resolvePossiblyMissingWithinBase(baseDir, decodedPath.slice(1));
         if (!filePath) continue;
         try {
-          const content = readFileSync(filePath);
+          const content = readCachedStaticFile(filePath);
           // Vite emits hashed filenames into client/dist/assets/ — those JS
           // and CSS chunks are content-addressed and safe to cache forever.
           // Everything else under /assets/ (GLBs, textures, raw JSON pulled
@@ -2903,7 +2923,7 @@ const server = Bun.serve<SocketData>({
       const distManifestPath = resolve(CLIENT_DIST, 'items/3d/manifest.json');
       for (const filePath of [manifestPath, distManifestPath]) {
         try {
-          const content = readFileSync(filePath);
+          const content = readCachedStaticFile(filePath);
           return new Response(content, {
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, must-revalidate' },
           });
@@ -2928,7 +2948,7 @@ const server = Bun.serve<SocketData>({
   },
 
   websocket: {
-    perMessageDeflate: true,
+    perMessageDeflate: false,
     // Hard cap on incoming WS message size. Game packets max out at a few
     // hundred bytes (movement path of 200 waypoints ≈ 800 bytes); chat messages
     // are capped client-side to 200 chars and server-side to 4096 bytes. 16 KB

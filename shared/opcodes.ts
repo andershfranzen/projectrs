@@ -350,6 +350,9 @@ export enum ServerOpcode {
    *   shirtColor, pantsColor, shoesColor, hairColor, beltColor, skinColor, hairStyle].
    *  Appearance values are -1 when the player has not completed character creation. */
   PLAYER_SELF_SYNC = 122,
+  /** Outer packet used to amortize encrypted websocket sends. Payload is a
+   *  custom length-prefixed list of ordinary logical server packets. */
+  PACKET_BATCH = 123,
 }
 
 export enum EntityDeathKind {

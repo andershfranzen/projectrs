@@ -25,6 +25,7 @@ import '@babylonjs/loaders/glTF';
 import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
+import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import type { Targetable } from '../rendering/Targetable';
@@ -65,6 +66,8 @@ const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
+const ENTITY_RENDER_PADDING_TILES = 8;
+const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
 const TERMINAL_CLOSE_REASONS = new Set([
   'Idle timeout',
@@ -484,7 +487,9 @@ export class GameManager {
     // Groups 1 (water) and 2 (texture planes) must NOT clear depth — they need terrain depth from group 0
     this.scene.setRenderingAutoClearDepthStencil(1, false, false, false);
     this.scene.setRenderingAutoClearDepthStencil(2, false, false, false);
-    // skipPointerMovePicking disabled — InputManager relies on pointer events
+    // Pointer-move hover uses explicit throttled picks; Babylon's automatic
+    // pointer-move picking just adds a scene traversal on high-Hz mice.
+    this.scene.skipPointerMovePicking = true;
 
     // Disable unused Babylon subsystems to skip per-frame checks.
     // particlesEnabled stays on — SpellEffectPlayer uses them for cast/trail/impact effects.
@@ -6616,6 +6621,48 @@ export class GameManager {
     }
   }
 
+  private getEntityRenderDistanceTiles(): number {
+    const metaFogEnd = this.chunkManager.getMeta()?.fogEnd ?? 50;
+    const fogEnd = Number.isFinite(this.scene.fogEnd) && this.scene.fogEnd > 0
+      ? this.scene.fogEnd
+      : metaFogEnd;
+    const cameraMaxZ = this.scene.activeCamera?.maxZ ?? Number.POSITIVE_INFINITY;
+    const limitingDistance = Math.min(fogEnd, cameraMaxZ);
+    const baseDistance = Number.isFinite(limitingDistance) ? limitingDistance : fogEnd;
+    return Math.max(NPC_3D_LOD_DISTANCE + NPC_LOD_HYSTERESIS_TILES, baseDistance + ENTITY_RENDER_PADDING_TILES);
+  }
+
+  private updateEntityRenderVisibility(): void {
+    const enableDist = this.getEntityRenderDistanceTiles();
+    const disableDist = enableDist + ENTITY_RENDER_HYSTERESIS_TILES;
+
+    for (const [entityId, sprite] of this.entities.remotePlayers) {
+      const target = this.entities.remoteTargets.get(entityId);
+      const x = target?.x ?? sprite.position.x;
+      const z = target?.z ?? sprite.position.z;
+      const dist = Math.max(Math.abs(x - this.playerX), Math.abs(z - this.playerZ));
+      const threshold = sprite.isRenderEnabled() ? disableDist : enableDist;
+      sprite.setRenderEnabled(dist <= threshold);
+    }
+
+    for (const [entityId, sprite] of this.entities.npcSprites) {
+      const target = this.entities.npcTargets.get(entityId);
+      const x = target?.x ?? sprite.position.x;
+      const z = target?.z ?? sprite.position.z;
+      const dist = Math.max(Math.abs(x - this.playerX), Math.abs(z - this.playerZ));
+      const enabled =
+        sprite instanceof CharacterEntity
+          ? sprite.isRenderEnabled()
+          : sprite instanceof Npc3DEntity
+            ? sprite.isRenderEnabled()
+            : true;
+      const threshold = enabled ? disableDist : enableDist;
+      const shouldRender = dist <= threshold;
+      if (sprite instanceof CharacterEntity) sprite.setRenderEnabled(shouldRender);
+      else if (sprite instanceof Npc3DEntity) sprite.setRenderEnabled(shouldRender);
+    }
+  }
+
   private static readonly IDENTITY = Matrix.Identity();
 
   private static readonly MAX_OVERLAY_DIST_SQ = 45 * 45;
@@ -6954,6 +7001,7 @@ export class GameManager {
     this.updateCameraKeys(dt);
 
     if (this.localPlayer) this.localPlayer.updateAnimation(dt);
+    this.updateEntityRenderVisibility();
     this.entities.updateAnimations(dt);
 
     const camPos = this.scene.activeCamera?.position ?? null;

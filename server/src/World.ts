@@ -1,7 +1,7 @@
 import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
-import { encodePacket, encodeStringPacket } from '@projectrs/shared';
+import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
 import { addXp, statRandom, npcCombatLevel, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot } from './entity/Player';
@@ -115,6 +115,37 @@ interface RuntimeObjectSpawn {
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
 }
+
+type SyncPacket = {
+  data: Uint8Array;
+  opcode?: ServerOpcode;
+  values?: number[];
+};
+
+type QueuedPositionCheckpoint = {
+  accountId: number;
+  player: Player;
+  effectiveY: number;
+};
+
+type QueuedObjectRespawnWrite =
+  | {
+      type: 'save';
+      mapLevel: string;
+      defId: number;
+      tileX: number;
+      tileZ: number;
+      floor: number;
+      respawnAtUnixMs: number;
+    }
+  | {
+      type: 'clear';
+      mapLevel: string;
+      defId: number;
+      tileX: number;
+      tileZ: number;
+      floor: number;
+    };
 
 type LadderAction = 'Climb-up' | 'Climb-down';
 
@@ -279,7 +310,8 @@ export class World {
   // top of each tick. NPC chase/wander checks this so NPCs do not stack with
   // entities, but player movement intentionally ignores player occupancy:
   // players are allowed to walk through and stand on the same tile.
-  private entityTileOccupants: Set<string> = new Set();
+  private entityTileOccupants: Set<number> = new Set();
+  private entityTileOccupantsDirty: boolean = true;
 
   private currentTick: number = 0;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
@@ -287,6 +319,8 @@ export class World {
   private nextDialogueSessionId: number = 1;
   private dialogueScheduledSteps: DialogueScheduledStep[] = [];
   private objectSayScheduledLines: ObjectSayScheduledLine[] = [];
+  private pendingPositionCheckpoints: Map<number, QueuedPositionCheckpoint> = new Map();
+  private pendingObjectRespawnWrites: Map<string, QueuedObjectRespawnWrite> = new Map();
 
   // Player combat targets (playerId -> npcId)
   private playerCombatTargets: Map<number, number> = new Map();
@@ -505,7 +539,7 @@ export class World {
       npc.currentMapLevel = mapId;
       npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
-      cm.addEntity(npc.id, spawn.x, spawn.z);
+      cm.addEntity(npc.id, spawn.x, spawn.z, 'npc');
     }
     const objectSpawns = this.collectObjectSpawns(mapId, gameMap, spawns.objects ?? []);
     for (const spawn of objectSpawns) {
@@ -517,7 +551,7 @@ export class World {
       if (objDef.category === 'door') {
         this.initializeDoorObject(obj, gameMap);
       }
-      cm.addEntity(obj.id, spawn.x, spawn.z);
+      cm.addEntity(obj.id, spawn.x, spawn.z, 'object');
     }
 
     // Re-spawn ground items for this map
@@ -544,16 +578,17 @@ export class World {
         despawnTimer: -1,
       };
       this.groundItems.set(groundItem.id, groundItem);
-      cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+      cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
     }
 
     // Re-register players on this map
     for (const [id, player] of this.players) {
       if (player.currentMapLevel === mapId) {
-        cm.addEntity(id, player.position.x, player.position.y);
+        cm.addEntity(id, player.position.x, player.position.y, 'player');
         cm.registerPlayer(id);
       }
     }
+    this.markEntityTileOccupantsDirty();
     // Send MAP_CHANGE to all players — entity data will be sent when client responds with MAP_READY
     for (const [, player] of this.players) {
       if (player.currentMapLevel === mapId) {
@@ -1149,7 +1184,7 @@ export class World {
 
         // Register with chunk manager
         const cm = this.chunkManagers.get(mapId)!;
-        cm.addEntity(npc.id, spawn.x, spawn.z);
+        cm.addEntity(npc.id, spawn.x, spawn.z, 'npc');
       }
       console.log(`Spawned NPCs for map '${mapId}'`);
     }
@@ -1175,7 +1210,7 @@ export class World {
           this.initializeDoorObject(obj, gameMap);
         }
         const cm = this.chunkManagers.get(mapId);
-        if (cm) cm.addEntity(obj.id, spawn.x, spawn.z);
+        if (cm) cm.addEntity(obj.id, spawn.x, spawn.z, 'object');
       }
       console.log(`Spawned objects for map '${mapId}'`);
     }
@@ -1200,7 +1235,7 @@ export class World {
         };
         this.groundItems.set(groundItem.id, groundItem);
         const cm = this.chunkManagers.get(mapId);
-        if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+        if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
         itemCount++;
       }
     }
@@ -1385,8 +1420,62 @@ export class World {
   }
 
   private checkpointPlayerPosition(player: Player): void {
-    this.db.savePlayerPosition(player.accountId, player, this.computeEffectiveY(player));
+    if (!this.pendingPositionCheckpoints) this.pendingPositionCheckpoints = new Map();
+    this.pendingPositionCheckpoints.set(player.accountId, {
+      accountId: player.accountId,
+      player,
+      effectiveY: this.computeEffectiveY(player),
+    });
     player.lastPositionPersistTick = this.currentTick;
+  }
+
+  private flushPendingPositionCheckpoints(): void {
+    if (!this.pendingPositionCheckpoints || this.pendingPositionCheckpoints.size === 0) return;
+    const saves = [...this.pendingPositionCheckpoints.values()];
+    this.pendingPositionCheckpoints.clear();
+    this.db.savePlayerPositionsBatch(saves);
+  }
+
+  private objectRespawnWriteKey(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number): string {
+    return `${mapLevel}|${defId}|${tileX}|${tileZ}|${Math.floor(floor)}`;
+  }
+
+  private queueObjectRespawnSave(obj: WorldObject, respawnAtUnixMs: number): void {
+    if (!this.pendingObjectRespawnWrites) this.pendingObjectRespawnWrites = new Map();
+    const tileX = Math.floor(obj.x);
+    const tileZ = Math.floor(obj.z);
+    const floor = Math.floor(obj.floor);
+    this.pendingObjectRespawnWrites.set(this.objectRespawnWriteKey(obj.mapLevel, obj.defId, tileX, tileZ, floor), {
+      type: 'save',
+      mapLevel: obj.mapLevel,
+      defId: obj.defId,
+      tileX,
+      tileZ,
+      floor,
+      respawnAtUnixMs,
+    });
+  }
+
+  private queueObjectRespawnClear(obj: WorldObject): void {
+    if (!this.pendingObjectRespawnWrites) this.pendingObjectRespawnWrites = new Map();
+    const tileX = Math.floor(obj.x);
+    const tileZ = Math.floor(obj.z);
+    const floor = Math.floor(obj.floor);
+    this.pendingObjectRespawnWrites.set(this.objectRespawnWriteKey(obj.mapLevel, obj.defId, tileX, tileZ, floor), {
+      type: 'clear',
+      mapLevel: obj.mapLevel,
+      defId: obj.defId,
+      tileX,
+      tileZ,
+      floor,
+    });
+  }
+
+  private flushPendingObjectRespawnWrites(): void {
+    if (!this.pendingObjectRespawnWrites || this.pendingObjectRespawnWrites.size === 0) return;
+    const writes = [...this.pendingObjectRespawnWrites.values()];
+    this.pendingObjectRespawnWrites.clear();
+    this.db.applyObjectRespawnWritesBatch(writes);
   }
 
   getTickForHeartbeat(): number {
@@ -1423,6 +1512,7 @@ export class World {
     this.closeDialogueForPlayer(player, false);
     this.finalizePlayerLogoutSession(player);
 
+    this.pendingPositionCheckpoints?.delete(player.accountId);
     this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
     try {
       player.ws.close(1000, closeReason);
@@ -1500,9 +1590,10 @@ export class World {
 
       const cm = this.chunkManagers.get(player.currentMapLevel);
       if (cm) {
-        cm.addEntity(player.id, player.position.x, player.position.y);
+        cm.addEntity(player.id, player.position.x, player.position.y, 'player');
         cm.registerPlayer(player.id);
       }
+      this.markEntityTileOccupantsDirty();
 
       audit({
         type: 'account.reconnect',
@@ -1561,8 +1652,9 @@ export class World {
 
     // Register with chunk manager
     const cm = this.chunkManagers.get(player.currentMapLevel)!;
-    cm.addEntity(player.id, player.position.x, player.position.y);
+    cm.addEntity(player.id, player.position.x, player.position.y, 'player');
     cm.registerPlayer(player.id);
+    this.markEntityTileOccupantsDirty();
     player.currentChunkX = Math.floor(player.position.x / CHUNK_SIZE);
     player.currentChunkZ = Math.floor(player.position.y / CHUNK_SIZE);
 
@@ -1736,7 +1828,9 @@ export class World {
       cm.removeEntity(player.id);
     }
 
+    this.pendingPositionCheckpoints?.delete(player.accountId);
     this.players.delete(playerId);
+    this.markEntityTileOccupantsDirty();
     this.skillingActions.delete(playerId);
     this.releasePrivateGroundItemsForPlayer(playerId);
     // Defensive sweep: catch any trade sessions whose other side already left.
@@ -2250,6 +2344,7 @@ export class World {
 
     const cm = this.chunkManagers.get(npc.currentMapLevel);
     if (cm) cm.removeEntity(npc.id);
+    this.markEntityTileOccupantsDirty();
     for (const [, player] of this.players) {
       player.visibleEntityIds.delete(npc.id);
     }
@@ -2257,7 +2352,8 @@ export class World {
 
   private handleNpcRespawn(npc: Npc): void {
     const cm = this.chunkManagers.get(npc.currentMapLevel);
-    if (cm) cm.addEntity(npc.id, npc.position.x, npc.position.y);
+    if (cm) cm.addEntity(npc.id, npc.position.x, npc.position.y, 'npc');
+    this.markEntityTileOccupantsDirty();
     npc.lastSyncX = -9999;
     npc.lastSyncZ = -9999;
     npc.lastSyncHealth = -1;
@@ -2335,6 +2431,18 @@ export class World {
     return blockedKey(getMapIdx(mapId), floor, Math.floor(x), Math.floor(z));
   }
 
+  private entityTileKeyFor(mapId: string, x: number, z: number, floor: number = 0): number {
+    const mapIdx = getMapIdx(mapId);
+    const floorKey = Math.floor(floor) + 128;
+    const tileX = Math.floor(x) + 32768;
+    const tileZ = Math.floor(z) + 32768;
+    return (((mapIdx * 256 + floorKey) * 131072 + tileX) * 131072) + tileZ;
+  }
+
+  private markEntityTileOccupantsDirty(): void {
+    this.entityTileOccupantsDirty = true;
+  }
+
   private allocateGroundItemId(): number | null {
     const poolSize = GROUND_ITEM_ENTITY_ID_MAX - GROUND_ITEM_ENTITY_ID_MIN + 1;
     for (let attempts = 0; attempts < poolSize; attempts++) {
@@ -2359,11 +2467,12 @@ export class World {
   /** Rebuild entityTileOccupants from current player + NPC positions. NPC
    *  footprints span size×size tiles. */
   private rebuildEntityTileOccupants(): void {
+    if (this.entityTileOccupantsDirty === false && this.entityTileOccupants) return;
     if (!this.entityTileOccupants) this.entityTileOccupants = new Set();
     this.entityTileOccupants.clear();
     for (const [, player] of this.players) {
       if (player.disconnected) continue;
-      const key = this.blockedKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor);
+      const key = this.entityTileKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor);
       this.entityTileOccupants.add(key);
     }
     for (const [, npc] of this.npcs) {
@@ -2371,7 +2480,7 @@ export class World {
       const size = Math.max(1, npc.size | 0);
       if (size === 1) {
         this.entityTileOccupants.add(
-          this.blockedKeyFor(npc.currentMapLevel, npc.position.x, npc.position.y, npc.currentFloor),
+          this.entityTileKeyFor(npc.currentMapLevel, npc.position.x, npc.position.y, npc.currentFloor),
         );
         continue;
       }
@@ -2383,11 +2492,12 @@ export class World {
       for (let i = 0; i < size; i++) {
         for (let j = 0; j < size; j++) {
           this.entityTileOccupants.add(
-            this.blockedKeyFor(npc.currentMapLevel, minX + i, minZ + j, npc.currentFloor),
+            this.entityTileKeyFor(npc.currentMapLevel, minX + i, minZ + j, npc.currentFloor),
           );
         }
       }
     }
+    this.entityTileOccupantsDirty = false;
   }
 
   /** Check if player is on a valid interaction tile for the object. */
@@ -3217,7 +3327,7 @@ export class World {
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
     const dropCm = this.chunkManagers.get(groundItem.mapLevel);
-    if (dropCm) dropCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+    if (dropCm) dropCm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
 
     this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p => this.sendGroundItemUpdate(p, groundItem));
     player.setDelay(this.currentTick, 1);
@@ -3481,7 +3591,7 @@ export class World {
     obj.respawnTimer = Math.max(0, Math.floor(respawnTicks ?? obj.def.respawnTime ?? 0));
     if (obj.respawnTimer > 0) {
       this.depletedObjectIds.add(obj.id);
-      this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, Date.now() + obj.respawnTimer * TICK_RATE);
+      this.queueObjectRespawnSave(obj, Date.now() + obj.respawnTimer * TICK_RATE);
     }
     this.broadcastWorldObjectStateChange(obj);
   }
@@ -5643,7 +5753,7 @@ export class World {
     this.groundItems.set(groundItem.id, groundItem);
     this.despawningItemIds.add(groundItem.id);
     const cm = this.chunkManagers.get(player.currentMapLevel);
-    if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+    if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
     // Broadcast to nearby players so the dropped item appears immediately
     // (without this, clients only see it after re-entering the chunk).
     this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
@@ -5675,7 +5785,7 @@ export class World {
       this.groundItems.set(groundItem.id, groundItem);
       this.despawningItemIds.add(groundItem.id);
       const lootCm = this.chunkManagers.get(groundItem.mapLevel);
-      if (lootCm) lootCm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+      if (lootCm) lootCm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
 
       if (effectiveOwnerId != null && owner) {
         this.sendGroundItemUpdate(owner, groundItem);
@@ -5720,6 +5830,7 @@ export class World {
 
     this.rebuildEntityTileOccupants();
     this.tickPlayerMovement();
+    this.flushPendingPositionCheckpoints();
     this.rebuildEntityTileOccupants();
     this.tickNpcAI();
     this.rebuildEntityTileOccupants();
@@ -5732,6 +5843,7 @@ export class World {
     if (this.currentTick % 40 === 0) this.tickHealthRegen();
     this.tickSkillingActions();
     this.tickObjectRespawns();
+    this.flushPendingObjectRespawnWrites();
     this.tickItemDespawns();
     this.tickDialogueScheduledSteps();
     this.tickObjectSayScheduledLines();
@@ -5847,6 +5959,7 @@ export class World {
       }
 
       const movedThisTick = player.lastMovedTick === this.currentTick;
+      if (movedThisTick) this.markEntityTileOccupantsDirty();
       if (movedThisTick && (justArrived || this.currentTick - player.lastPositionPersistTick >= 2)) {
         this.checkpointPlayerPosition(player);
       }
@@ -5944,6 +6057,10 @@ export class World {
       }
 
       const map = this.getMap(npc.currentMapLevel);
+      const oldNpcMap = npc.currentMapLevel;
+      const oldNpcFloor = npc.currentFloor;
+      const oldNpcX = npc.position.x;
+      const oldNpcZ = npc.position.y;
 
       if (npc.aggressive && !npc.combatTarget) {
         const cm = this.chunkManagers.get(npc.currentMapLevel);
@@ -5993,10 +6110,10 @@ export class World {
         const selfAz = Math.floor(npc.position.y);
         const selfMinX = selfAx - Math.floor((size - 1) / 2);
         const selfMinZ = selfAz - Math.floor((size - 1) / 2);
-        const selfFootprintKeys = new Set<string>();
+        const selfFootprintKeys = new Set<number>();
         for (let i = 0; i < size; i++) {
           for (let j = 0; j < size; j++) {
-            selfFootprintKeys.add(this.blockedKeyFor(mapId, selfMinX + i, selfMinZ + j, npcFloor));
+            selfFootprintKeys.add(this.entityTileKeyFor(mapId, selfMinX + i, selfMinZ + j, npcFloor));
           }
         }
         // For size-1 NPCs the callbacks reduce to the original single-tile
@@ -6006,12 +6123,13 @@ export class World {
         // are allocation-free in the hot path (no footprint array per call).
         const npcBlocked = size <= 1
           ? (x: number, z: number) => {
-              const key = this.blockedKeyFor(mapId, x, z, npcFloor);
+              const objectKey = this.blockedKeyFor(mapId, x, z, npcFloor);
+              const entityKey = this.entityTileKeyFor(mapId, x, z, npcFloor);
               if (map.isTileBlockedOnFloor(x, z, npcFloor)) return true;
-              if (this.blockedObjectTiles.has(key)) return true;
+              if (this.blockedObjectTiles.has(objectKey)) return true;
               // Refuse to step onto another entity. Self-occupancy is
               // filtered so the NPC never blocks its own current tile.
-              if ((this.entityTileOccupants?.has(key) ?? false) && !selfFootprintKeys.has(key)) return true;
+              if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfFootprintKeys.has(entityKey)) return true;
               return false;
             }
           : (x: number, z: number) => {
@@ -6024,9 +6142,10 @@ export class World {
               }
               for (let i = 0; i < size; i++) {
                 for (let j = 0; j < size; j++) {
-                  const key = this.blockedKeyFor(mapId, minX + i, minZ + j, npcFloor);
-                  if (this.blockedObjectTiles.has(key)) return true;
-                  if ((this.entityTileOccupants?.has(key) ?? false) && !selfFootprintKeys.has(key)) return true;
+                  const objectKey = this.blockedKeyFor(mapId, minX + i, minZ + j, npcFloor);
+                  if (this.blockedObjectTiles.has(objectKey)) return true;
+                  const entityKey = this.entityTileKeyFor(mapId, minX + i, minZ + j, npcFloor);
+                  if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfFootprintKeys.has(entityKey)) return true;
                 }
               }
               return false;
@@ -6058,6 +6177,14 @@ export class World {
       }
 
       const cm = this.chunkManagers.get(npc.currentMapLevel);
+      if (
+        oldNpcX !== npc.position.x
+        || oldNpcZ !== npc.position.y
+        || oldNpcFloor !== npc.currentFloor
+        || oldNpcMap !== npc.currentMapLevel
+      ) {
+        this.markEntityTileOccupantsDirty();
+      }
       if (cm) cm.updateEntity(npc.id, npc.position.x, npc.position.y);
     }
   }
@@ -6576,7 +6703,7 @@ export class World {
         // subsequent click.
         this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true, obj.floor);
         // Skilling object respawned — drop the persisted target.
-        this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+        this.queueObjectRespawnClear(obj);
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
         this.broadcastWorldObjectStateChange(obj);
@@ -6716,6 +6843,7 @@ export class World {
         this.closeNpcUiContext(player);
         this.refreshPlayerEffectiveY(player);
         player.syncDirty = true;
+        this.markEntityTileOccupantsDirty();
         this.sendFloorChange(player);
         this.sendNearbyVerticalObjectUpdates(player);
       }
@@ -6823,7 +6951,7 @@ export class World {
       this.groundItems.set(groundItem.id, groundItem);
       this.despawningItemIds.add(groundItem.id);
       const cm = this.chunkManagers.get(oldMapId);
-      if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z);
+      if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
       this.forEachPlayerNearOnFloor(oldMapId, oldFloor, oldX, oldZ, p => this.sendGroundItemUpdate(p, groundItem));
     }
 
@@ -6925,7 +7053,8 @@ export class World {
     this.clearCombatTarget(player.id);
     player.currentChunkX = Math.floor(targetX / CHUNK_SIZE);
     player.currentChunkZ = Math.floor(targetZ / CHUNK_SIZE);
-    if (cm) cm.addEntity(player.id, targetX, targetZ);
+    if (cm) cm.addEntity(player.id, targetX, targetZ, 'player');
+    this.markEntityTileOccupantsDirty();
     // Compute server-authoritative Y at the destination. Forced floor changes
     // deliberately bypass the elevated-plane auto-snap so commands like
     // /spawn can put a player back on the ground under a two-story building.
@@ -6952,7 +7081,7 @@ export class World {
   }
 
   private sendNearbyVerticalObjectUpdates(player: Player): void {
-    const cm = this.chunkManagers.get(player.currentMapLevel);
+    const cm = this.chunkManagers?.get(player.currentMapLevel);
     if (!cm) return;
     for (const eid of cm.getEntitiesNear(player.position.x, player.position.y)) {
       const obj = this.worldObjects.get(eid);
@@ -7077,9 +7206,10 @@ export class World {
     // Add to new map's chunk manager
     const newCm = this.chunkManagers.get(newMap);
     if (newCm) {
-      newCm.addEntity(player.id, player.position.x, player.position.y);
+      newCm.addEntity(player.id, player.position.x, player.position.y, 'player');
       newCm.registerPlayer(player.id);
     }
+    this.markEntityTileOccupantsDirty();
 
     // Send MAP_CHANGE packet
     this.sendMapChange(player, newMap);
@@ -7104,6 +7234,38 @@ export class World {
 
   private readonly _dirtyPlayerPackets: Map<number, Uint8Array> = new Map();
   private readonly _dirtyNpcPackets: Map<number, Uint8Array> = new Map();
+
+  private queueSyncPacket(out: SyncPacket[], opcode: ServerOpcode, ...values: number[]): void {
+    out.push({ opcode, values, data: encodePacket(opcode, ...values) });
+  }
+
+  private queueEncodedSyncPacket(out: SyncPacket[], data: Uint8Array): void {
+    out.push({ data });
+  }
+
+  private canBatchSyncPackets(player: Player): boolean {
+    const wsData = (player.ws as unknown as { data?: { crypto?: { encryptEnabled?: boolean; handshakeComplete?: boolean; opcodeMappingEnabled?: boolean } } }).data;
+    const crypto = wsData?.crypto;
+    return !!crypto?.encryptEnabled && !!crypto.handshakeComplete && !!crypto.opcodeMappingEnabled;
+  }
+
+  private flushSyncPackets(player: Player, packets: SyncPacket[]): void {
+    if (player.disconnected || packets.length === 0) return;
+    try {
+      if (packets.length > 1 && this.canBatchSyncPackets(player)) {
+        player.ws.sendBinary(encodePacketBatch(ServerOpcode.PACKET_BATCH, packets.map(packet => packet.data)));
+        return;
+      }
+      const sendToPlayerOverridden = this.sendToPlayer !== World.prototype.sendToPlayer;
+      for (const packet of packets) {
+        if (sendToPlayerOverridden && packet.opcode !== undefined && packet.values) {
+          this.sendToPlayer(player, packet.opcode, ...packet.values);
+        } else {
+          player.ws.sendBinary(packet.data);
+        }
+      }
+    } catch { /* connection closed */ }
+  }
 
   private broadcastSync(): void {
     const dirtyPlayerPackets = this._dirtyPlayerPackets;
@@ -7155,8 +7317,9 @@ export class World {
     for (const [, viewer] of this.players) {
       if (viewer.disconnected) continue;
       const a = viewer.appearance;
-      this.sendToPlayer(
-        viewer,
+      const syncPackets: SyncPacket[] = [];
+      this.queueSyncPacket(
+        syncPackets,
         ServerOpcode.PLAYER_SELF_SYNC,
         qPos(viewer.position.x),
         qPos(viewer.position.y),
@@ -7173,48 +7336,76 @@ export class World {
         a ? a.hairStyle  : -1,
       );
       const cm = this.chunkManagers.get(viewer.currentMapLevel);
-      if (!cm) continue;
+      if (!cm) {
+        this.flushSyncPackets(viewer, syncPackets);
+        continue;
+      }
 
       try {
-        const nextVisible = new Set<number>();
-        cm.forEachEntityNearChunk(viewer.currentChunkX, viewer.currentChunkZ, (eid) => {
+        const previousVisible = viewer.visibleEntityIds;
+        const nextVisible = viewer.nextVisibleEntityIds;
+        nextVisible.clear();
+        const visitNearbyEntity = (eid: number, kind: string) => {
           if (eid === viewer.id) return;
-          const subject = this.players.get(eid);
-          if (subject && subject.currentFloor !== viewer.currentFloor) return;
-          const npc = this.npcs.get(eid);
-          if (npc && (npc.dead || npc.currentFloor !== viewer.currentFloor)) return;
-          const obj = this.worldObjects.get(eid);
-          if (obj && !this.canPlayerTargetObject(viewer, obj)) return;
-          const item = this.groundItems.get(eid);
-          if (item && !this.canPlayerTargetGroundItem(viewer, item)) return;
+          if (kind === 'player') {
+            const subject = this.players.get(eid);
+            if (!subject || subject.currentFloor !== viewer.currentFloor) return;
+          } else if (kind === 'npc') {
+            const npc = this.npcs.get(eid);
+            if (!npc || npc.dead || npc.currentFloor !== viewer.currentFloor) return;
+          } else if (kind === 'object') {
+            const obj = this.worldObjects.get(eid);
+            if (!obj || !this.canPlayerTargetObject(viewer, obj)) return;
+          } else if (kind === 'groundItem') {
+            const item = this.groundItems.get(eid);
+            if (!item || !this.canPlayerTargetGroundItem(viewer, item)) return;
+          } else {
+            const subject = this.players.get(eid);
+            if (subject && subject.currentFloor !== viewer.currentFloor) return;
+            const npc = this.npcs.get(eid);
+            if (npc && (npc.dead || npc.currentFloor !== viewer.currentFloor)) return;
+            const obj = this.worldObjects.get(eid);
+            if (obj && !this.canPlayerTargetObject(viewer, obj)) return;
+            const item = this.groundItems.get(eid);
+            if (item && !this.canPlayerTargetGroundItem(viewer, item)) return;
+          }
           nextVisible.add(eid);
-        });
+        };
+        const forEachEntityKindNearChunk = (cm as unknown as {
+          forEachEntityKindNearChunk?: (cx: number, cz: number, fn: (entityId: number, kind: string) => void) => void;
+        }).forEachEntityKindNearChunk;
+        if (typeof forEachEntityKindNearChunk === 'function') {
+          forEachEntityKindNearChunk.call(cm, viewer.currentChunkX, viewer.currentChunkZ, visitNearbyEntity);
+        } else {
+          (cm as unknown as { forEachEntityNearChunk: (cx: number, cz: number, fn: (entityId: number) => void) => void })
+            .forEachEntityNearChunk(viewer.currentChunkX, viewer.currentChunkZ, (eid: number) => visitNearbyEntity(eid, 'entity'));
+        }
 
-        for (const eid of viewer.visibleEntityIds) {
+        for (const eid of previousVisible) {
           if (!nextVisible.has(eid)) {
-            this.sendToPlayer(viewer, ServerOpcode.ENTITY_DEATH, eid);
+            this.queueSyncPacket(syncPackets, ServerOpcode.ENTITY_DEATH, eid);
           }
         }
 
         nextVisible.forEach((eid) => {
-          const wasVisible = viewer.visibleEntityIds.has(eid);
+          const wasVisible = previousVisible.has(eid);
           if (wasVisible) {
             const pkt = dirtyPlayerPackets.get(eid);
-            if (pkt) { viewer.ws.sendBinary(pkt); return; }
+            if (pkt) { this.queueEncodedSyncPacket(syncPackets, pkt); return; }
             const npkt = dirtyNpcPackets.get(eid);
-            if (npkt) { viewer.ws.sendBinary(npkt); return; }
+            if (npkt) { this.queueEncodedSyncPacket(syncPackets, npkt); return; }
             return;
           }
 
           const subject = this.players.get(eid);
           if (subject && subject.currentFloor === viewer.currentFloor) {
-            this.sendPlayerPresence(viewer, subject);
+            this.queuePlayerPresence(syncPackets, viewer, subject);
             return;
           }
           const npc = this.npcs.get(eid);
           if (npc && this.canPlayerTargetNpc(viewer, npc)) {
-            this.sendNpcStaticData(viewer, npc);
-            this.sendNpcUpdate(viewer, npc);
+            this.queueNpcStaticData(syncPackets, npc);
+            this.queueNpcUpdate(syncPackets, viewer, npc);
             return;
           }
           // Re-sync world objects on chunk transitions. Without this, a player
@@ -7223,19 +7414,21 @@ export class World {
           // WORLD_OBJECT_DEPLETED broadcast keeps a stale local state and
           // can't interact correctly until they re-login.
           const obj = this.worldObjects.get(eid);
-          if (obj && this.canPlayerTargetObject(viewer, obj)) { this.sendWorldObjectUpdate(viewer, obj); return; }
+          if (obj && this.canPlayerTargetObject(viewer, obj)) { this.queueWorldObjectUpdate(syncPackets, viewer, obj); return; }
           // Re-sync ground items too — a player who saw a drop, walked OOR,
           // and walked back would otherwise keep the stale local sprite for
           // an item the server has already despawned (or vice versa).
           const item = this.groundItems.get(eid);
           if (item && this.canPlayerTargetGroundItem(viewer, item)) {
-            this.sendGroundItemUpdate(viewer, item);
+            this.queueGroundItemUpdate(syncPackets, viewer, item);
           }
         });
 
         viewer.visibleEntityIds = nextVisible;
+        viewer.nextVisibleEntityIds = previousVisible;
         viewer.lastBroadcastChunkX = viewer.currentChunkX;
         viewer.lastBroadcastChunkZ = viewer.currentChunkZ;
+        this.flushSyncPackets(viewer, syncPackets);
       } catch { /* connection closed */ }
     }
 
@@ -7272,10 +7465,9 @@ export class World {
     } catch { /* connection closed */ }
   }
 
-  private sendPlayerUpdate(viewer: Player, subject: Player): void {
-    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
+  private encodePlayerUpdate(subject: Player): Uint8Array {
     const a = subject.appearance;
-    this.sendToPlayer(viewer, ServerOpcode.PLAYER_SYNC,
+    return encodePacket(ServerOpcode.PLAYER_SYNC,
       subject.id,
       qPos(subject.position.x),
       qPos(subject.position.y),
@@ -7292,6 +7484,19 @@ export class World {
       subject.currentFloor,
       qPos(subject.effectiveY),
     );
+  }
+
+  private sendPlayerUpdate(viewer: Player, subject: Player): void {
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
+    try { viewer.ws.sendBinary(this.encodePlayerUpdate(subject)); } catch { /* connection closed */ }
+  }
+
+  private queuePlayerPresence(out: SyncPacket[], viewer: Player, subject: Player): void {
+    if (viewer.currentMapLevel !== subject.currentMapLevel || viewer.currentFloor !== subject.currentFloor) return;
+    this.queueEncodedSyncPacket(out, this.encodePlayerUpdate(subject));
+    this.queueEncodedSyncPacket(out, this.encodeRemoteEquipment(subject));
+    this.queueEncodedSyncPacket(out, this.encodeRemoteStance(subject));
+    this.queueEncodedSyncPacket(out, this.encodePlayerAnimation(subject));
   }
 
   private sendPlayerPresence(viewer: Player, subject: Player): void {
@@ -7313,9 +7518,8 @@ export class World {
     return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE;
   }
 
-  private sendNpcUpdate(viewer: Player, npc: Npc): void {
-    if (!this.canPlayerTargetNpc(viewer, npc)) return;
-    this.sendToPlayer(viewer, ServerOpcode.NPC_SYNC,
+  private encodeNpcUpdate(npc: Npc): Uint8Array {
+    return encodePacket(ServerOpcode.NPC_SYNC,
       npc.id,
       npc.npcId,
       qPos(npc.position.x),
@@ -7326,6 +7530,16 @@ export class World {
       qPos(this.npcWorldY(npc)),
       this.npcWillContinueWalking(npc) ? 1 : 0,
     );
+  }
+
+  private sendNpcUpdate(viewer: Player, npc: Npc): void {
+    if (!this.canPlayerTargetNpc(viewer, npc)) return;
+    try { viewer.ws.sendBinary(this.encodeNpcUpdate(npc)); } catch { /* connection closed */ }
+  }
+
+  private queueNpcUpdate(out: SyncPacket[], viewer: Player, npc: Npc): void {
+    if (!this.canPlayerTargetNpc(viewer, npc)) return;
+    this.queueEncodedSyncPacket(out, this.encodeNpcUpdate(npc));
   }
 
   /** Push the NPC's per-spawn appearance + equipment to a viewer who is
@@ -7390,10 +7604,56 @@ export class World {
     }
   }
 
+  private queueNpcStaticData(out: SyncPacket[], npc: Npc): void {
+    const a = npc.appearance;
+    if (a) {
+      this.queueSyncPacket(out, ServerOpcode.NPC_APPEARANCE,
+        npc.id,
+        a.shirtColor, a.pantsColor, a.shoesColor,
+        a.hairColor, a.beltColor, a.skinColor,
+        a.hairStyle,
+      );
+    }
+    const eq = npc.equipment;
+    if (eq && eq.length === 10) {
+      this.queueSyncPacket(out, ServerOpcode.NPC_EQUIPMENT,
+        npc.id,
+        eq[0], eq[1], eq[2], eq[3], eq[4],
+        eq[5], eq[6], eq[7], eq[8], eq[9],
+      );
+    }
+    const cc = npc.customColors;
+    if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
+      const payload: number[] = [npc.id];
+      for (const slot of CUSTOM_COLOR_SLOTS) {
+        const c = cc[slot];
+        if (c) {
+          payload.push(
+            Math.max(0, Math.min(1000, Math.round(c[0] * 1000))),
+            Math.max(0, Math.min(1000, Math.round(c[1] * 1000))),
+            Math.max(0, Math.min(1000, Math.round(c[2] * 1000))),
+          );
+        } else {
+          payload.push(-1, 0, 0);
+        }
+      }
+      this.queueSyncPacket(out, ServerOpcode.NPC_CUSTOM_COLORS, ...payload);
+    }
+    const flags = npc.interactionFlags();
+    if (flags !== 0) this.queueSyncPacket(out, ServerOpcode.NPC_INTERACTIONS, npc.id, flags);
+    if (npc.nameOverride) this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.NPC_NAME, npc.nameOverride, npc.id));
+    if (npc.attackAnimOverride) this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.NPC_ATTACK_ANIM, npc.attackAnimOverride, npc.id));
+  }
+
   private sendWorldObjectUpdate(viewer: Player, obj: WorldObject): void {
     if (!this.canPlayerTargetObject(viewer, obj)) return;
     const packet = this.encodeWorldObjectUpdate(obj, viewer);
     try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
+  private queueWorldObjectUpdate(out: SyncPacket[], viewer: Player, obj: WorldObject): void {
+    if (!this.canPlayerTargetObject(viewer, obj)) return;
+    this.queueEncodedSyncPacket(out, this.encodeWorldObjectUpdate(obj, viewer));
   }
 
   private encodeWorldObjectUpdate(obj: WorldObject, viewer?: Player): Uint8Array {
@@ -7433,6 +7693,20 @@ export class World {
     if (!this.isGroundItemVisibleTo(viewer, item)) return;
     viewer.visibleEntityIds.add(item.id);
     this.sendToPlayer(viewer, ServerOpcode.GROUND_ITEM_SYNC,
+      item.id,
+      item.itemId,
+      item.quantity,
+      qPos(item.x),
+      qPos(item.z),
+      item.floor,
+      qPos(this.floorWorldY(item.mapLevel, item.x, item.z, item.floor)),
+    );
+  }
+
+  private queueGroundItemUpdate(out: SyncPacket[], viewer: Player, item: GroundItem): void {
+    if (!this.isGroundItemVisibleTo(viewer, item)) return;
+    viewer.visibleEntityIds.add(item.id);
+    this.queueSyncPacket(out, ServerOpcode.GROUND_ITEM_SYNC,
       item.id,
       item.itemId,
       item.quantity,
@@ -7607,9 +7881,9 @@ export class World {
     obj.deplete();
     if (obj.respawnTimer > 0) {
       this.depletedObjectIds.add(obj.id);
-      this.db.saveObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor, Date.now() + obj.respawnTimer * TICK_RATE);
+      this.queueObjectRespawnSave(obj, Date.now() + obj.respawnTimer * TICK_RATE);
     } else {
-      this.db.clearObjectRespawn(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
+      this.queueObjectRespawnClear(obj);
     }
     this.broadcastWorldObjectStateChange(obj);
   }
