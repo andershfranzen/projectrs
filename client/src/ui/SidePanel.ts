@@ -8,7 +8,12 @@ import {
 } from '@projectrs/shared';
 import { QuestJournalPopup } from './QuestJournalPopup';
 import type { NetworkManager } from '../managers/NetworkManager';
-import { clampElementToRect, createContextMenu } from './popupStyle';
+import {
+  clampElementToRect,
+  createContextMenu,
+  installLongPressContextMenu,
+  suppressNextContextMenuClick,
+} from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
 import type { QuantityInputRequester } from './QuantityInputPanel';
 import {
@@ -40,10 +45,12 @@ interface TouchInvDragState {
   ghost: HTMLDivElement | null;
   overSlot: number | null;
   longPressTimer: number;
+  contextMenuShown: boolean;
+  allowDrag: boolean;
 }
 
 const TOUCH_INV_DRAG_START_PX = 7;
-const TOUCH_INV_DRAG_LONG_PRESS_MS = 220;
+const TOUCH_INV_CONTEXT_MENU_LONG_PRESS_MS = 450;
 
 export class SidePanel {
   private container: HTMLDivElement;
@@ -173,6 +180,7 @@ export class SidePanel {
           box-sizing: border-box;
           border-radius: 2px;
           transition: background 0.1s;
+          -webkit-touch-callout: none;
         }
         .inv-slot.hovered {
           background: rgba(255,255,255,0.07);
@@ -1028,6 +1036,9 @@ export class SidePanel {
       background: ${isAutocast ? '#2a2010' : '#1a120a'}; border: ${borderWidth} solid ${defaultBorder}; border-radius: 3px;
       ${unlocked ? 'cursor: pointer;' : 'cursor: not-allowed; opacity: 0.55;'}
       transition: border-color 0.1s, transform 0.05s;
+      touch-action: manipulation;
+      user-select: none; -webkit-user-select: none;
+      -webkit-touch-callout: none;
     `;
     cell.title = unlocked
       ? `${def.name}${isAutocast ? ' (auto-cast)' : ''}${spellReagentText(def)}\nLeft-click: cast on target\nRight-click: toggle auto-cast`
@@ -1046,6 +1057,7 @@ export class SidePanel {
         e.preventDefault();
         this.setAutocastSpell(spellIndex);
       });
+      installLongPressContextMenu(cell, () => this.setAutocastSpell(spellIndex));
       cell.appendChild(img);
     } else {
       const q = document.createElement('div');
@@ -1479,7 +1491,7 @@ export class SidePanel {
   private beginTouchInvDrag(event: PointerEvent, index: number): void {
     if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
     const slot = this.invSlots[index];
-    if (!slot || this.tradeOfferCallback) return;
+    if (!slot) return;
     this.touchInvDrag = {
       pointerId: event.pointerId,
       fromSlot: index,
@@ -1490,21 +1502,41 @@ export class SidePanel {
       ghost: null,
       overSlot: null,
       longPressTimer: 0,
+      contextMenuShown: false,
+      allowDrag: !this.tradeOfferCallback,
     };
     this.touchInvDrag.longPressTimer = window.setTimeout(() => {
       if (this.touchInvDrag !== null && this.touchInvDrag.pointerId === event.pointerId && !this.touchInvDrag.dragging) {
-        this.startTouchInvDragVisual(this.touchInvDrag, this.touchInvDrag.startX, this.touchInvDrag.startY);
+        this.touchInvDrag.contextMenuShown = true;
+        this.suppressInvClickUntil = performance.now() + 700;
+        const source = this.invSlotElements[index];
+        suppressNextContextMenuClick(source, this.touchInvDrag.startX, this.touchInvDrag.startY);
+        try {
+          source.setPointerCapture(event.pointerId);
+        } catch {
+          // Pointer capture is best-effort on mobile browsers.
+        }
+        this.onInvSlotRightClick(index, event);
       }
-    }, TOUCH_INV_DRAG_LONG_PRESS_MS);
+    }, TOUCH_INV_CONTEXT_MENU_LONG_PRESS_MS);
   }
 
   private moveTouchInvDrag(event: PointerEvent): void {
     const drag = this.touchInvDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.contextMenuShown) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const dx = event.clientX - drag.startX;
     const dy = event.clientY - drag.startY;
     if (!drag.dragging) {
       if (Math.hypot(dx, dy) < TOUCH_INV_DRAG_START_PX) return;
+      if (!drag.allowDrag) {
+        this.clearTouchInvDrag(event.pointerId);
+        return;
+      }
       if (Math.abs(dy) > Math.abs(dx) * 1.15) {
         this.clearTouchInvDrag(event.pointerId);
         return;
@@ -1521,6 +1553,13 @@ export class SidePanel {
   private finishTouchInvDrag(event: PointerEvent): void {
     const drag = this.touchInvDrag;
     if (!drag || drag.pointerId !== event.pointerId) return;
+    if (drag.contextMenuShown) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.suppressInvClickUntil = performance.now() + 350;
+      this.clearTouchInvDrag(event.pointerId);
+      return;
+    }
     if (drag.dragging) {
       event.preventDefault();
       event.stopPropagation();

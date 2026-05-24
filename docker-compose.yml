@@ -30,12 +30,17 @@ services:
     image: left-hand-bot:latest
     container_name: left-hand
     restart: unless-stopped
-    depends_on:
-      - evilquest
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DISCORD_TOKEN: ${LEFT_HAND_DISCORD_TOKEN:-}
       DISCORD_GUILD_ID: ${LEFT_HAND_DISCORD_GUILD_ID:-}
-      EVILQUEST_STATUS_URL: http://evilquest:4000/api/status
+      EVILQUEST_API_BASE_URL: ${LEFT_HAND_EVILQUEST_API_BASE_URL:-https://evilquest.net}
+      LEFT_HAND_BUG_REPORT_AUTOMATION_ENABLED: ${LEFT_HAND_BUG_REPORT_AUTOMATION_ENABLED:-false}
+      LEFT_HAND_BUG_REPORT_PARENT_CHANNEL_ID: ${LEFT_HAND_BUG_REPORT_PARENT_CHANNEL_ID:-}
+      LEFT_HAND_FIXED_AUTHOR_USER_IDS: ${LEFT_HAND_FIXED_AUTHOR_USER_IDS:-}
+      LEFT_HAND_BUG_REPORT_ARCHIVE_ON_STATUS: ${LEFT_HAND_BUG_REPORT_ARCHIVE_ON_STATUS:-true}
+      LEFT_HAND_BUG_REPORT_THREAD_SCAN_LIMIT: ${LEFT_HAND_BUG_REPORT_THREAD_SCAN_LIMIT:-200}
       LEFT_HAND_SET_NICKNAME: ${LEFT_HAND_SET_NICKNAME:-false}
       LEFT_HAND_LOG_LEVEL: ${LEFT_HAND_LOG_LEVEL:-INFO}
 

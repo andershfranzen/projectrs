@@ -15,14 +15,19 @@ LEFT_HAND_DISCORD_GUILD_ID=
 Invite Left Hand to a server with this URL:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=1508123662153289948&scope=bot%20applications.commands&permissions=2048
+https://discord.com/oauth2/authorize?client_id=1508123662153289948&scope=bot%20applications.commands&permissions=292057844736
 ```
 
 If `LEFT_HAND_SET_NICKNAME=true`, invite with `Manage Nicknames` too:
 
 ```text
-https://discord.com/oauth2/authorize?client_id=1508123662153289948&scope=bot%20applications.commands&permissions=134219776
+https://discord.com/oauth2/authorize?client_id=1508123662153289948&scope=bot%20applications.commands&permissions=292192062464
 ```
+
+If Discord says `Private application cannot have a default authorization link`,
+go to the app's **Installation** page and set **Install Link** to **None** before
+turning off **Public Bot**. Discord does not allow private apps to keep the
+default "Add App" authorization link.
 
 `LEFT_HAND_DISCORD_GUILD_ID` is optional, but useful while developing because
 guild-scoped slash commands sync immediately. Global commands can take longer
@@ -47,12 +52,56 @@ docker compose up -d --build left-hand
 docker compose logs -f left-hand
 ```
 
-The compose service sets `EVILQUEST_STATUS_URL` to
-`http://evilquest:4000/api/status`, so the bot can read the game status over
-the internal Docker network.
+By default the compose service points the bot at the live EvilQuest API:
+`https://evilquest.net`. For local dev against the host-running Bun server, set
+this in the project root `.env`:
+
+```env
+LEFT_HAND_EVILQUEST_API_BASE_URL=http://host.docker.internal:4000
+```
+
+If EvilQuest is running as the compose service instead, use:
+
+```env
+LEFT_HAND_EVILQUEST_API_BASE_URL=http://evilquest:4000
+```
 
 ## Commands
 
 - `/ping` checks the bot connection.
 - `/status` reports the EvilQuest online player count.
+- `/online` reports the EvilQuest online player count.
+- `/server` shows live API, hiscores, and online-player status.
+- `/player <name>` shows a player's trained-skill hiscore stats.
+- `/player <name> detail:true` shows every skill.
+- `/rank <name>` shows a player's key ranks.
+- `/hiscores` shows the top 10 overall hiscores.
+- `/hiscores category:<category>` shows the top 10 for a skill or combat.
+- `/top skill:<category>` is a shorter top-10 hiscores command.
+- `/bugstats` shows bug-report thread counts.
+- `/bugsearch query:<text>` searches bug-report thread titles.
 - `/about` identifies the bot.
+
+## Bug Report Automation
+
+Left Hand watches threads under `🐛│bug-reports`. When an allowed Discord user
+writes exactly `fixed`, the bot renames that thread with the `(FIXED) ` prefix.
+When an allowed Discord user writes exactly `not a bug`, the bot renames that
+thread with the `(NOT A BUG) ` prefix. When an allowed Discord user writes
+exactly `reopen`, the bot removes either status prefix. Fixed and not-a-bug
+threads are archived after the bot posts a confirmation message.
+
+Required Discord setup:
+
+- Enable **Message Content Intent** for the bot in the Discord Developer Portal.
+- Give the bot **Manage Threads** permission in `🐛│bug-reports`.
+
+Configuration:
+
+```env
+LEFT_HAND_BUG_REPORT_AUTOMATION_ENABLED=true
+LEFT_HAND_BUG_REPORT_PARENT_CHANNEL_ID=1504718539246800896
+LEFT_HAND_FIXED_AUTHOR_USER_IDS=206051525993299968,154607229364862976
+LEFT_HAND_BUG_REPORT_ARCHIVE_ON_STATUS=true
+LEFT_HAND_BUG_REPORT_THREAD_SCAN_LIMIT=200
+```

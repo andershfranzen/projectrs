@@ -2113,6 +2113,15 @@ export class World {
     }
   }
 
+  private clearPlayerCombatTargetForNpc(playerId: number, npcId: number): void {
+    if (this.playerCombatTargets.get(playerId) === npcId) this.clearCombatTarget(playerId);
+  }
+
+  private disengageLeashedNpcCombat(player: Player, npc: Npc): void {
+    this.clearPlayerCombatTargetForNpc(player.id, npc.id);
+    npc.disengageAndReturnHome();
+  }
+
   private handleNpcDeath(npc: Npc): void {
     const targeters = this.npcTargetedBy.get(npc.id);
     if (targeters) {
@@ -3949,6 +3958,10 @@ export class World {
     if (dist > SPELL_CAST_DISTANCE) {
       if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
       if (player.hasMoveQueue()) player.pendingSpellCast = { spellIndex, targetEntityId };
+      return;
+    }
+    if (npc.shouldDisengageFromTarget(player.position.x, player.position.y)) {
+      this.disengageLeashedNpcCombat(player, npc);
       return;
     }
 
@@ -5887,6 +5900,7 @@ export class World {
       // before the O(players) audience scan; combat-only NPCs skip both.
       const canHaveAudience = npc.hasDialogue || npc.hasShop || npc.hasBank;
       const hadCombatTarget = npc.combatTarget != null;
+      const previousCombatTargetId = npc.combatTarget?.id;
       if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
         npc.pathQueue.length = 0;
       } else {
@@ -5957,6 +5971,9 @@ export class World {
         npc.processAI(npcBlocked, npcWallBlocked, npcFindPath);
       }
       if (hadCombatTarget && npc.combatTarget == null) {
+        if (previousCombatTargetId !== undefined) {
+          this.clearPlayerCombatTargetForNpc(previousCombatTargetId, npc.id);
+        }
         this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y,
           ServerOpcode.COMBAT_HIT, npc.id, -1, 0, npc.health, npc.maxHealth);
       }
@@ -6014,6 +6031,10 @@ export class World {
           if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
           continue;
         }
+        if (npc.shouldDisengageFromTarget(player.position.x, player.position.y)) {
+          this.disengageLeashedNpcCombat(player, npc);
+          continue;
+        }
         if (player.attackCooldown <= 0) {
           this.handlePlayerCastSpell(playerId, player.autocastSpellIndex, npcId, true);
         }
@@ -6054,6 +6075,10 @@ export class World {
         }
         // Out of range this tick — defer the swing. Cooldown still ticks
         // globally so the next adjacency-tick can fire immediately if ready.
+        continue;
+      }
+      if (npc.shouldDisengageFromTarget(player.position.x, player.position.y)) {
+        this.disengageLeashedNpcCombat(player, npc);
         continue;
       }
 
@@ -6146,13 +6171,17 @@ export class World {
       if (player.currentMapLevel !== imp.mapLevel || player.currentFloor !== imp.floor) continue;
 
       const actual = npc.takeDamage(imp.damage);
+      const canNpcRetaliate = !npc.shouldDisengageFromTarget(player.position.x, player.position.y);
 
-      if (npc.alive) {
+      if (npc.alive && canNpcRetaliate) {
         const wasInCombat = npc.combatTarget != null;
         npc.combatTarget = player;
         if (!wasInCombat) {
           npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
         }
+      } else if (npc.alive) {
+        this.clearPlayerCombatTargetForNpc(player.id, npc.id);
+        if (npc.combatTarget?.id === player.id) npc.disengageAndReturnHome();
       }
 
       // XP: 4 per damage to the spell's school (locked in at cast time).
@@ -6175,7 +6204,7 @@ export class World {
         player.syncHealthFromSkills();
       }
 
-      this.broadcastNpcFacingPlayer(npc, player);
+      if (canNpcRetaliate) this.broadcastNpcFacingPlayer(npc, player);
       this.broadcastCombatHit(player.id, npc.id, actual, npc.health, npc.maxHealth, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y);
 
       if (!npc.alive) {

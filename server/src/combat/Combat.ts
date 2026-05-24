@@ -1,5 +1,5 @@
 import type { Player } from '../entity/Player';
-import type { Npc } from '../entity/Npc';
+import { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
   osrsMeleeMaxHit, rollHit, npcCombatLevel,
@@ -271,10 +271,9 @@ export function processNpcCombat(
     return null;
   }
 
-  // Check distance — must be adjacent to attack (chasing handled by AI)
-  const dx = Math.abs(npc.position.x - target.position.x);
-  const dz = Math.abs(npc.position.y - target.position.y);
-  if (dx > 1.5 || dz > 1.5) {
+  // Check distance to the NPC's body, not only its anchor tile.
+  const fp = npc.distToFootprint(target.position.x, target.position.y);
+  if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE) {
     return null;
   }
 

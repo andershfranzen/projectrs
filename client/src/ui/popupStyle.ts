@@ -135,6 +135,10 @@ export interface ContextMenuOpts {
 }
 
 const DEFAULT_CONTEXT_MENU_Z_INDEX = 3000;
+const DEFAULT_TOUCH_CONTEXT_MENU_MS = 450;
+const DEFAULT_TOUCH_CONTEXT_MENU_MOVE_CANCEL_PX = 12;
+const DEFAULT_CONTEXT_MENU_CLICK_SUPPRESS_MS = 900;
+const CONTEXT_MENU_CLICK_SUPPRESS_RADIUS_PX = 24;
 
 export function contextMenuCss(opts: ContextMenuOpts): string {
   return `
@@ -149,6 +153,32 @@ export function contextMenuCss(opts: ContextMenuOpts): string {
 
 let activeContextMenu: { el: HTMLDivElement; close: () => void } | null = null;
 let contextMenuGlobalsInstalled = false;
+let suppressedContextMenuClick: {
+  source: HTMLElement;
+  x: number;
+  y: number;
+  until: number;
+} | null = null;
+
+function consumeSuppressedContextMenuFollowup(event: MouseEvent): boolean {
+  const suppressed = suppressedContextMenuClick;
+  if (!suppressed) return false;
+  if (performance.now() > suppressed.until) {
+    suppressedContextMenuClick = null;
+    return false;
+  }
+
+  const target = event.target instanceof Node ? event.target : null;
+  const sourceEvent = target !== null && suppressed.source.contains(target);
+  const nearSourcePoint = Math.hypot(event.clientX - suppressed.x, event.clientY - suppressed.y)
+    <= CONTEXT_MENU_CLICK_SUPPRESS_RADIUS_PX;
+  if (!sourceEvent && !nearSourcePoint) return false;
+
+  suppressedContextMenuClick = null;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  return true;
+}
 
 function ensureContextMenuGlobalListeners(): void {
   if (contextMenuGlobalsInstalled) return;
@@ -157,13 +187,24 @@ function ensureContextMenuGlobalListeners(): void {
   // Capture-phase right-click handling closes an old menu before a panel's
   // target handler can create the replacement. If the right-click lands on
   // empty UI, this still clears the old menu instead of leaving it stranded.
-  document.addEventListener('contextmenu', () => {
+  document.addEventListener('contextmenu', (event) => {
+    if (consumeSuppressedContextMenuFollowup(event)) return;
     closeActiveContextMenu();
   }, true);
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') closeActiveContextMenu();
   });
+
+  document.addEventListener('pointerdown', () => {
+    if (suppressedContextMenuClick && performance.now() <= suppressedContextMenuClick.until) {
+      suppressedContextMenuClick = null;
+    }
+  }, true);
+
+  document.addEventListener('click', (event) => {
+    consumeSuppressedContextMenuFollowup(event);
+  }, true);
 }
 
 export function closeActiveContextMenu(menu?: HTMLDivElement): void {
@@ -237,6 +278,88 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
   activeContextMenu = { el: menu, close };
   setTimeout(() => document.addEventListener('click', close), 0);
   return menu;
+}
+
+export interface LongPressContextMenuOpts {
+  delayMs?: number;
+  moveCancelPx?: number;
+  isEnabled?: () => boolean;
+}
+
+export function suppressNextContextMenuClick(
+  source: HTMLElement,
+  x: number,
+  y: number,
+  durationMs: number = DEFAULT_CONTEXT_MENU_CLICK_SUPPRESS_MS,
+): void {
+  ensureContextMenuGlobalListeners();
+  suppressedContextMenuClick = {
+    source,
+    x,
+    y,
+    until: performance.now() + durationMs,
+  };
+}
+
+export function installLongPressContextMenu(
+  target: HTMLElement,
+  onLongPress: (event: PointerEvent) => void,
+  opts: LongPressContextMenuOpts = {},
+): void {
+  let pending: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    fired: boolean;
+    timer: number;
+  } | null = null;
+
+  const clearPending = (pointerId?: number): void => {
+    if (!pending || (pointerId !== undefined && pending.pointerId !== pointerId)) return;
+    window.clearTimeout(pending.timer);
+    pending = null;
+  };
+
+  target.addEventListener('pointerdown', (event) => {
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    if (event.button !== 0) return;
+    if (opts.isEnabled && !opts.isEnabled()) return;
+    clearPending();
+
+    pending = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      fired: false,
+      timer: 0,
+    };
+
+    const active = pending;
+    active.timer = window.setTimeout(() => {
+      if (pending !== active) return;
+      active.fired = true;
+      suppressNextContextMenuClick(target, active.startX, active.startY);
+      onLongPress(event);
+    }, opts.delayMs ?? DEFAULT_TOUCH_CONTEXT_MENU_MS);
+  });
+
+  target.addEventListener('pointermove', (event) => {
+    if (!pending || pending.pointerId !== event.pointerId || pending.fired) return;
+    const moved = Math.hypot(event.clientX - pending.startX, event.clientY - pending.startY);
+    if (moved > (opts.moveCancelPx ?? DEFAULT_TOUCH_CONTEXT_MENU_MOVE_CANCEL_PX)) clearPending(event.pointerId);
+  });
+
+  target.addEventListener('pointerup', (event) => {
+    if (!pending || pending.pointerId !== event.pointerId) return;
+    if (pending.fired) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    clearPending(event.pointerId);
+  });
+
+  target.addEventListener('pointercancel', (event) => clearPending(event.pointerId));
+  target.addEventListener('lostpointercapture', (event) => clearPending(event.pointerId));
 }
 
 export function clampElementToRect(el: HTMLElement, bounds: DOMRect): void {

@@ -264,7 +264,21 @@ export class Npc extends Entity {
     return false;
   }
 
-  private disengageAndReturnHome(): void {
+  shouldDisengageFromTarget(targetX: number, targetZ: number): boolean {
+    const fp = this.distToFootprint(targetX, targetZ);
+    const dist = Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
+    if (dist <= Npc.MELEE_RANGE) return false;
+
+    const dxSpawn = Math.abs(targetX - this.spawnX);
+    const dzSpawn = Math.abs(targetZ - this.spawnZ);
+    if (dxSpawn > Npc.RETREAT_INTERACTION_RANGE || dzSpawn > Npc.RETREAT_INTERACTION_RANGE) return true;
+
+    const npcDxSpawn = Math.abs(this.position.x - this.spawnX);
+    const npcDzSpawn = Math.abs(this.position.y - this.spawnZ);
+    return npcDxSpawn > Npc.RETREAT_MAX_RANGE || npcDzSpawn > Npc.RETREAT_MAX_RANGE;
+  }
+
+  disengageAndReturnHome(): void {
     this.combatTarget = null;
     this.returning = true;
     this.pathQueue.length = 0;
@@ -343,15 +357,7 @@ export class Npc extends Entity {
       // Hard leash on target: target fled past 2004scape's 25-tile cap
       // (measured from spawn). Soft leash on NPC: chase can't pull us
       // more than RETREAT_MAX_RANGE from spawn.
-      const dxSpawn = Math.abs(targetX - this.spawnX);
-      const dzSpawn = Math.abs(targetZ - this.spawnZ);
-      if (dxSpawn > Npc.RETREAT_INTERACTION_RANGE || dzSpawn > Npc.RETREAT_INTERACTION_RANGE) {
-        this.disengageAndReturnHome();
-        return;
-      }
-      const npcDxSpawn = Math.abs(this.position.x - this.spawnX);
-      const npcDzSpawn = Math.abs(this.position.y - this.spawnZ);
-      if (npcDxSpawn > Npc.RETREAT_MAX_RANGE || npcDzSpawn > Npc.RETREAT_MAX_RANGE) {
+      if (this.shouldDisengageFromTarget(targetX, targetZ)) {
         this.disengageAndReturnHome();
         return;
       }

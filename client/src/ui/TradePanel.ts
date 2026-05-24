@@ -1,7 +1,7 @@
 import { ClientOpcode, encodePacket, encodeQuantityPacket, INVENTORY_SIZE, TRADE_OFFER_SIZE, type ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
 import { createModalPanel } from './ModalPanel';
-import { closeActiveContextMenu, createContextMenu } from './popupStyle';
+import { closeActiveContextMenu, createContextMenu, installLongPressContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
 import type { QuantityInputRequester } from './QuantityInputPanel';
 
@@ -342,12 +342,16 @@ export class TradePanel {
         border: 0;
         display: flex; align-items: center; justify-content: center;
         cursor: pointer; position: relative; font-size: 9px;
+        touch-action: manipulation;
+        user-select: none; -webkit-user-select: none;
+        -webkit-touch-callout: none;
         z-index: 2;
       `;
       cell.addEventListener('mouseenter', () => { cell.style.background = 'rgba(154,51,43,0.22)'; });
       cell.addEventListener('mouseleave', () => { cell.style.background = 'transparent'; });
       cell.addEventListener('click', () => onClick(i));
       cell.addEventListener('contextmenu', (e) => { e.preventDefault(); onRight(i, e); });
+      installLongPressContextMenu(cell, (e) => onRight(i, e));
       grid.appendChild(cell);
       sink.push(cell);
     }

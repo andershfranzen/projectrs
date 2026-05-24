@@ -1,7 +1,7 @@
 import { INVENTORY_SIZE, ClientOpcode, encodePacket } from '@projectrs/shared';
 import type { ItemDef } from '@projectrs/shared';
 import type { NetworkManager } from '../managers/NetworkManager';
-import { createContextMenu } from './popupStyle';
+import { createContextMenu, installLongPressContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
 
 export interface InventorySlotData {
@@ -77,6 +77,9 @@ export class InventoryPanel {
         align-items: center; justify-content: center;
         cursor: pointer; font-size: 10px;
         position: relative;
+        touch-action: manipulation;
+        user-select: none; -webkit-user-select: none;
+        -webkit-touch-callout: none;
       `;
 
       // Right-click to drop/equip
@@ -84,6 +87,7 @@ export class InventoryPanel {
         e.preventDefault();
         this.onSlotRightClick(i, e);
       });
+      installLongPressContextMenu(slot, (e) => this.onSlotRightClick(i, e));
 
       // Left-click to use
       slot.addEventListener('click', () => {
