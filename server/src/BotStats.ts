@@ -49,6 +49,7 @@ const MIN_NO_IDLE_SESSION_MINUTES = 240;
 const MIN_NO_IDLE_ACTIVE_EVENTS = 400;
 const MIN_MARATHON_NO_IDLE_SESSION_MINUTES = 360;
 const MIN_MARATHON_NO_IDLE_ACTIVE_EVENTS = 800;
+const MIN_POST_DEATH_ROUTE_MOVES = 3;
 
 type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'state' | 'stale';
 
@@ -90,6 +91,8 @@ export interface SessionSummary {
   sessionMoveRedirects: number;
   sessionMaxPathMoveCommands: number;
   sessionPathTruncations: number;
+  sessionPlayerDeaths: number;
+  sessionPostDeathMoves: number;
   sessionChats: number;
   sessionActivityEvents: number;
   sessionDetailedActivityEvents: number;
@@ -123,6 +126,7 @@ export interface SessionSummary {
   moveRedirectRatio: number | null;
   maxPathCommandRatio: number | null;
   pathTruncationRatio: number | null;
+  topPostDeathDestinationRepetition: number | null;
   topPathRepetition: number | null;
   topActionLoopRepetition: number | null;
   topLifetimePathRepetition: number | null;
@@ -197,6 +201,8 @@ export class BotStats {
   sessionMoveRedirects: number = 0;
   sessionMaxPathMoveCommands: number = 0;
   sessionPathTruncations: number = 0;
+  sessionPlayerDeaths: number = 0;
+  sessionPostDeathMoves: number = 0;
   sessionChats: number = 0;
   sessionActivityEvents: number = 0;
   sessionDetailedActivityEvents: number = 0;
@@ -213,6 +219,7 @@ export class BotStats {
   sessionLongestActiveGapMs: number | null = null;
   sessionSuspiciousPackets: number = 0;
   sessionPathDestinations: Map<string, number> = new Map();
+  sessionPostDeathDestinations: Map<string, number> = new Map();
   sessionActionSignatures: Map<string, number> = new Map();
   sessionSuspiciousPacketReasons: Map<string, number> = new Map();
   cursorCells: Map<string, number> = new Map();
@@ -227,6 +234,7 @@ export class BotStats {
   private lastCursorAt: number | null = null;
   private lastCoupledActivityAt: number | null = null;
   private lastActiveGameplayAt: number | null = null;
+  private awaitingPostDeathMovement: boolean = false;
   private activityHeartbeatCoupledEvents: number = 0;
   /** When the last NPC died near this player — feeds the next attack's
    *  reaction time delta if it lands within 5 seconds. */
@@ -329,6 +337,8 @@ export class BotStats {
     this.sessionMoveRedirects = 0;
     this.sessionMaxPathMoveCommands = 0;
     this.sessionPathTruncations = 0;
+    this.sessionPlayerDeaths = 0;
+    this.sessionPostDeathMoves = 0;
     this.sessionChats = 0;
     this.sessionActivityEvents = 0;
     this.sessionDetailedActivityEvents = 0;
@@ -345,6 +355,7 @@ export class BotStats {
     this.sessionLongestActiveGapMs = null;
     this.sessionSuspiciousPackets = 0;
     this.sessionPathDestinations.clear();
+    this.sessionPostDeathDestinations.clear();
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
     this.cursorCells.clear();
@@ -360,6 +371,7 @@ export class BotStats {
     this.lastCursorAt = null;
     this.lastCoupledActivityAt = null;
     this.lastActiveGameplayAt = null;
+    this.awaitingPostDeathMovement = false;
     this.activityHeartbeatCoupledEvents = 0;
     this.pendingReactionStart = null;
     this.xpBaseline.clear();
@@ -419,6 +431,11 @@ export class BotStats {
     this.lastMovementTs = Date.now();
     this.bumpCappedMap(this.sessionPathDestinations, key, MAX_PATH_DESTINATIONS);
     this.bumpCappedMap(this.pathDestinations, key, MAX_PATH_DESTINATIONS);
+    if (this.awaitingPostDeathMovement) {
+      this.sessionPostDeathMoves++;
+      this.bumpCappedMap(this.sessionPostDeathDestinations, key, MAX_PATH_DESTINATIONS);
+      this.awaitingPostDeathMovement = false;
+    }
   }
 
   recordMoveCommand(pathLength: number, hadQueuedMovement: boolean): void {
@@ -430,6 +447,11 @@ export class BotStats {
 
   recordPathTruncation(): void {
     this.sessionPathTruncations++;
+  }
+
+  recordPlayerDeath(): void {
+    this.sessionPlayerDeaths++;
+    this.awaitingPostDeathMovement = true;
   }
 
   private recordActiveGameplayEvent(nowMs: number): void {
@@ -600,6 +622,7 @@ export class BotStats {
     const activityIntervalStdDevMs = stdDev(this.activityIntervalSamples);
     const activityIntervalMedianMs = median(this.activityIntervalSamples);
     const topPathRepetition = topRatio(this.sessionPathDestinations);
+    const topPostDeathDestinationRepetition = topRatio(this.sessionPostDeathDestinations);
     const topActionLoopRepetition = topRatio(this.sessionActionSignatures);
     const topLifetimePathRepetition = topRatio(this.pathDestinations);
     const topLifetimeActionLoopRepetition = topRatio(this.actionSignatures);
@@ -737,6 +760,14 @@ export class BotStats {
       flags.push('pathTruncationPattern');
     }
     if (
+      this.sessionPlayerDeaths >= MIN_POST_DEATH_ROUTE_MOVES
+      && this.sessionPostDeathMoves >= MIN_POST_DEATH_ROUTE_MOVES
+      && topPostDeathDestinationRepetition !== null
+      && topPostDeathDestinationRepetition >= 0.8
+    ) {
+      flags.push('postDeathRouteLoop');
+    }
+    if (
       sessionActionSignatureCount >= MIN_ROUTE_ACTION_LOOP_SIGNATURES
       && topActionLoopRepetition !== null
       && topActionLoopRepetition > 0.45
@@ -857,6 +888,8 @@ export class BotStats {
       sessionMoveRedirects: this.sessionMoveRedirects,
       sessionMaxPathMoveCommands: this.sessionMaxPathMoveCommands,
       sessionPathTruncations: this.sessionPathTruncations,
+      sessionPlayerDeaths: this.sessionPlayerDeaths,
+      sessionPostDeathMoves: this.sessionPostDeathMoves,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketClasses,
@@ -875,6 +908,7 @@ export class BotStats {
       moveRedirectRatio,
       maxPathCommandRatio,
       pathTruncationRatio,
+      topPostDeathDestinationRepetition,
       reactionSamples: this.reactionSamples.length,
       reactionMedianMs,
       topPathRepetition,
@@ -903,6 +937,8 @@ export class BotStats {
       sessionMoveRedirects: this.sessionMoveRedirects,
       sessionMaxPathMoveCommands: this.sessionMaxPathMoveCommands,
       sessionPathTruncations: this.sessionPathTruncations,
+      sessionPlayerDeaths: this.sessionPlayerDeaths,
+      sessionPostDeathMoves: this.sessionPostDeathMoves,
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
       sessionDetailedActivityEvents: this.sessionDetailedActivityEvents,
@@ -936,6 +972,7 @@ export class BotStats {
       moveRedirectRatio,
       maxPathCommandRatio,
       pathTruncationRatio,
+      topPostDeathDestinationRepetition,
       topPathRepetition,
       topActionLoopRepetition,
       topLifetimePathRepetition,
@@ -1074,6 +1111,8 @@ interface BotRiskInput {
   sessionMoveRedirects: number;
   sessionMaxPathMoveCommands: number;
   sessionPathTruncations: number;
+  sessionPlayerDeaths: number;
+  sessionPostDeathMoves: number;
   sessionActivityEvents: number;
   sessionDetailedActivityEvents: number;
   sessionLegacyActivityEvents: number;
@@ -1102,6 +1141,7 @@ interface BotRiskInput {
   moveRedirectRatio: number | null;
   maxPathCommandRatio: number | null;
   pathTruncationRatio: number | null;
+  topPostDeathDestinationRepetition: number | null;
   reactionSamples: number;
   reactionMedianMs: number | null;
   topPathRepetition: number | null;
@@ -1180,6 +1220,10 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     14,
     `repeated path truncations (${input.sessionPathTruncations}/${input.sessionMoveCommands} move commands)`,
   );
+  if (flagSet.has('postDeathRouteLoop')) add(
+    12,
+    `repeated post-death route destination (${input.sessionPostDeathMoves}/${input.sessionPlayerDeaths}, top ${ratioLabel(input.topPostDeathDestinationRepetition)})`,
+  );
   if (flagSet.has('routeActionLoop')) add(10, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
   if (flagSet.has('lifetimePathConcentration')) add(
     input.topLifetimePathRepetition !== null && input.topLifetimePathRepetition >= 0.2 ? 14 : 8,
@@ -1229,6 +1273,7 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('noMoveRedirects') && flagSet.has('routeActionLoop')) add(6, 'uninterrupted movement during repeated route/action loop');
   if (flagSet.has('maxPathCommandRatio') && flagSet.has('routeActionLoop')) add(4, 'max-length pathing during repeated route/action loop');
   if (flagSet.has('pathTruncationPattern') && flagSet.has('routeActionLoop')) add(6, 'path truncation pattern during repeated route/action loop');
+  if (flagSet.has('postDeathRouteLoop') && flagSet.has('routeActionLoop')) add(6, 'death recovery returns into repeated route/action loop');
   if (flagSet.has('fastReaction') && flagSet.has('pathRepetitive')) add(6, 'fast reactions while following a repetitive route');
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');

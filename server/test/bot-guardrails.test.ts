@@ -151,6 +151,43 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
+  test('post-death route loops are review context without convicting by themselves', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 60 * 60_000;
+
+    for (let i = 0; i < 3; i++) {
+      stats.recordPlayerDeath();
+      stats.recordMovement(42.5, 17.5);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionPlayerDeaths).toBe(3);
+    expect(summary.sessionPostDeathMoves).toBe(3);
+    expect(summary.topPostDeathDestinationRepetition).toBe(1);
+    expect(summary.flags).toContain('postDeathRouteLoop');
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('varied post-death recovery destinations do not flag as a route loop', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    stats.sessionStartedAt = Date.now() - 60 * 60_000;
+
+    for (let i = 0; i < 4; i++) {
+      stats.recordPlayerDeath();
+      stats.recordMovement(40 + i, 20);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionPlayerDeaths).toBe(4);
+    expect(summary.sessionPostDeathMoves).toBe(4);
+    expect(summary.topPostDeathDestinationRepetition).toBe(0.25);
+    expect(summary.flags).not.toContain('postDeathRouteLoop');
+    expect(summary.riskLevel).toBe('low');
+  });
+
   test('risk profile escalates when multiple calibrated bot signals stack', () => {
     const stats = BotStats.empty();
     stats.onLogin({});

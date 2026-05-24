@@ -34,6 +34,8 @@ interface SessionSummary {
   sessionMoveRedirects?: number;
   sessionMaxPathMoveCommands?: number;
   sessionPathTruncations?: number;
+  sessionPlayerDeaths?: number;
+  sessionPostDeathMoves?: number;
   sessionChats: number;
   sessionActivityEvents?: number;
   sessionDetailedActivityEvents?: number;
@@ -49,6 +51,7 @@ interface SessionSummary {
   moveRedirectRatio?: number | null;
   maxPathCommandRatio?: number | null;
   pathTruncationRatio?: number | null;
+  topPostDeathDestinationRepetition?: number | null;
   heartbeatActivityCouplingRatio?: number | null;
   topActionLoopRepetition?: number | null;
   topCursorCellRepetition?: number | null;
@@ -488,6 +491,7 @@ function computeReviewRisk(
     if (flags.has('noMoveRedirects')) add(6, 'no mid-path redirects');
     if (flags.has('maxPathCommandRatio')) add(6, 'high max-length path command ratio');
     if (flags.has('pathTruncationPattern')) add(14, 'repeated path truncations');
+    if (flags.has('postDeathRouteLoop')) add(12, 'repeated post-death route destination');
     if (flags.has('lifetimePathConcentration')) add(8, 'lifetime path concentration');
     if (flags.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
     if (flags.has('cursorStatic')) add(10, 'static cursor telemetry');
@@ -758,6 +762,9 @@ function main(): void {
       const moveRedirect = d.moveRedirectRatio;
       const maxPath = d.maxPathCommandRatio;
       const trunc = d.pathTruncationRatio;
+      const deaths = d.sessionPlayerDeaths;
+      const postDeathMoves = d.sessionPostDeathMoves;
+      const postDeathTop = d.topPostDeathDestinationRepetition;
       const moveCommands = d.sessionMoveCommands;
       const activityCoupled = d.heartbeatActivityCouplingRatio;
       const activityStd = d.activityIntervalStdDevMs;
@@ -768,7 +775,7 @@ function main(): void {
       const chats = d.sessionChats;
       const cursors = d.sessionCursorEvents;
       const mins = d.sessionMinutes;
-      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  idleBreaks=${idleBreaks ?? '-'}  longGap=${longestGap?.toFixed?.(1) ?? '-'}m  moves=${moveCommands ?? '-'}  redirect=${moveRedirect?.toFixed?.(2) ?? '-'}  maxPath=${maxPath?.toFixed?.(2) ?? '-'}  trunc=${trunc?.toFixed?.(2) ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
+      console.log(`    ${s.ts}  ${mins}min  chats=${chats}  cursors=${cursors ?? '-'}  activity=${activityDetailed ?? '-'}/${activities ?? '-'}  idleBreaks=${idleBreaks ?? '-'}  longGap=${longestGap?.toFixed?.(1) ?? '-'}m  moves=${moveCommands ?? '-'}  redirect=${moveRedirect?.toFixed?.(2) ?? '-'}  maxPath=${maxPath?.toFixed?.(2) ?? '-'}  trunc=${trunc?.toFixed?.(2) ?? '-'}  deaths=${deaths ?? '-'}  deathMoves=${postDeathMoves ?? '-'}  deathTop=${postDeathTop?.toFixed?.(2) ?? '-'}  tickStdDev=${tickStd?.toFixed?.(0) ?? '-'}ms  reaction=${react?.toFixed?.(0) ?? '-'}ms  pathTop=${path?.toFixed?.(2) ?? '-'}  activityPing=${activityCoupled?.toFixed?.(2) ?? '-'}  activityStd=${activityStd?.toFixed?.(0) ?? '-'}ms  flags=[${flags.join(',')}]`);
     }
     console.log('');
   }

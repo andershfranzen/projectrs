@@ -6624,6 +6624,7 @@ export class World {
     const oldX = player.position.x;
     const oldZ = player.position.y;
     const oldFloor = player.currentFloor;
+    player.botStats?.recordPlayerDeath();
 
     // Tell observers the player died at their current tile. Mirrors the
     // NPC death broadcast — clients use this to clear the remote entity.
