@@ -271,7 +271,7 @@ export interface FloorLayerData {
 
 /** On-disk format for walls.json — sparse, only tiles with walls/roofs/floors/stairs */
 export interface WallsFile extends FloorLayerData {
-  /** Additional floor layers (1, 2, ...). Floor 0 is the root level data. */
+  /** Additional non-zero floor layers. Floor 0 is the root level data. */
   floorLayers?: Record<number, FloorLayerData>;
 }
 
@@ -576,6 +576,9 @@ export interface PlacedObject {
   scale: { x: number; y: number; z: number };
   /** Per-instance trigger override (e.g. teleport doors authored in the editor) */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
+  /** Explicit server-authoritative vertical links for ladders/stairs/etc.
+   *  These replace runtime inference from nearby texture planes. */
+  verticalLinks?: PlacedObjectVerticalLink[];
   /** Exact local tile offsets the player may stand on to use this object.
    *  When present, these override interactionSides and normal adjacency. */
   interactionTiles?: { x: number; z: number }[];
@@ -583,6 +586,28 @@ export interface PlacedObject {
    *  For width W this is a 4*W-bit perimeter mask around the footprint;
    *  bit 0 starts at local +Z/front-left. 0 / undefined = any adjacent tile. */
   interactionSides?: number;
+}
+
+export interface PlacedObjectVerticalLinkEndpoint {
+  /** Optional map override. Omitted means the placed object's map. */
+  mapId?: string;
+  x: number;
+  z: number;
+  /** Signed floor index. 0 is ground, positive is above ground, negative is below. */
+  floor: number;
+  /** Optional authoritative landing/standing Y. Omitted is resolved from map collision. */
+  y?: number;
+}
+
+export interface PlacedObjectVerticalLink {
+  id?: string;
+  from: PlacedObjectVerticalLinkEndpoint;
+  to: PlacedObjectVerticalLinkEndpoint;
+  /** Defaults to true. When true, the reverse direction is available too. */
+  bidirectional?: boolean;
+  /** Optional explicit action labels for from->to and to->from. */
+  fromAction?: 'Climb-up' | 'Climb-down';
+  toAction?: 'Climb-up' | 'Climb-down';
 }
 
 export interface PlacedObjectInteraction {

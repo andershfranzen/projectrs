@@ -78,9 +78,33 @@ LEFT_HAND_EVILQUEST_API_BASE_URL=http://evilquest:4000
 - `/hiscores` shows the top 10 overall hiscores.
 - `/hiscores category:<category>` shows the top 10 for a skill or combat.
 - `/top skill:<category>` is a shorter top-10 hiscores command.
+- `/trade sell item:<item> quantity:<n> price:<text>` posts a validated sell listing.
+- `/trade buy item:<item> quantity:<n> offer:<text>` posts a validated buy listing.
+- `/trade search` searches recent trade listings.
+- `/trade close message:<id-or-link>` closes one of your listings.
+- `/trade item item:<item>` checks whether an item name is recognized.
 - `/bugstats` shows bug-report thread counts.
 - `/bugsearch query:<text>` searches bug-report thread titles.
 - `/about` identifies the bot.
+
+## Trading Helpers
+
+Left Hand posts buy/sell listings into `💸│trading-post`. Item fields use
+autocomplete from the EvilQuest item list and are validated before posting.
+
+The bot reads `server/data/items.json` from a read-only Docker mount. It only
+uses safe metadata for Discord: item name, whether the item stacks, and whether
+it is equipment. It does not expose inventories, item values, combat stats,
+drop tables, spawn data, or admin-only server state. Listings are Discord posts
+only; actual item exchange still happens through the in-game trade system.
+
+Configuration:
+
+```env
+LEFT_HAND_TRADING_POST_CHANNEL_ID=1504543318401482854
+LEFT_HAND_ITEMS_PATH=/app/game-data/items.json
+LEFT_HAND_TRADE_LISTING_SCAN_LIMIT=100
+```
 
 ## Bug Report Automation
 

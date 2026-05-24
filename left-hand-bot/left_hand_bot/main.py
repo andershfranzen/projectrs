@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from dataclasses import dataclass
+import json
 import logging
 import re
 from collections.abc import AsyncIterator
+from pathlib import Path
 from urllib.parse import urlencode
 from typing import Any
 
@@ -44,12 +47,166 @@ BUG_THREAD_STATUS_PREFIX_RE = re.compile(
     re.IGNORECASE,
 )
 BUG_SEARCH_MAX_RESULTS = 10
+TRADE_LISTING_FOOTER = "Left Hand trade listing"
+TRADE_SEARCH_MAX_RESULTS = 10
+MAX_TRADE_QUANTITY = 2_147_483_647
+ITEM_NAME_NORMALIZE_RE = re.compile(r"[^a-z0-9]+")
+CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+MESSAGE_ID_RE = re.compile(r"(\d{17,22})")
+USER_MENTION_RE = re.compile(r"<@!?(\d{17,22})>")
+
+TRADE_KIND_CHOICES = [
+    app_commands.Choice(name="All", value="all"),
+    app_commands.Choice(name="Selling", value="sell"),
+    app_commands.Choice(name="Buying", value="buy"),
+]
+
+
+@dataclass(frozen=True)
+class PublicItem:
+    id: int
+    name: str
+    normalized_name: str
+    stackable: bool
+    equippable: bool
+    equip_slot: str | None
+
+    @property
+    def type_label(self) -> str:
+        if self.equippable and self.equip_slot:
+            return f"Equipment ({self.equip_slot})"
+        if self.equippable:
+            return "Equipment"
+        if self.stackable:
+            return "Stackable item"
+        return "Item"
+
+
+@dataclass(frozen=True)
+class TradeListing:
+    message: discord.Message
+    kind: str
+    item_name: str
+    quantity: str
+    exchange: str
+    trader: str
+    trader_user_id: int | None
+    closed: bool
+
+
+class ItemCatalog:
+    """Read-only item-name catalog for Discord autocomplete and validation."""
+
+    def __init__(self, path: str) -> None:
+        self.path = Path(path)
+        self._mtime_ns: int | None = None
+        self._items: list[PublicItem] = []
+        self._items_by_normalized_name: dict[str, PublicItem] = {}
+
+    def refresh_if_needed(self) -> None:
+        stat = self.path.stat()
+        if self._mtime_ns == stat.st_mtime_ns and self._items:
+            return
+
+        with self.path.open("r", encoding="utf-8") as file:
+            raw_items = json.load(file)
+
+        if not isinstance(raw_items, list):
+            raise RuntimeError(f"{self.path} did not contain an item list.")
+
+        items: list[PublicItem] = []
+        items_by_normalized_name: dict[str, PublicItem] = {}
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            raw_id = raw_item.get("id")
+            raw_name = raw_item.get("name")
+            if isinstance(raw_id, bool) or not isinstance(raw_id, int):
+                continue
+            if not isinstance(raw_name, str) or not raw_name.strip():
+                continue
+            name = raw_name.strip()
+            normalized_name = normalize_item_name(name)
+            if not normalized_name:
+                continue
+            item = PublicItem(
+                id=raw_id,
+                name=name,
+                normalized_name=normalized_name,
+                stackable=raw_item.get("stackable") is True,
+                equippable=raw_item.get("equippable") is True,
+                equip_slot=raw_item.get("equipSlot") if isinstance(raw_item.get("equipSlot"), str) else None,
+            )
+            items.append(item)
+            items_by_normalized_name.setdefault(normalized_name, item)
+
+        items.sort(key=lambda item: item.name.lower())
+        self._items = items
+        self._items_by_normalized_name = items_by_normalized_name
+        self._mtime_ns = stat.st_mtime_ns
+        LOGGER.info("Loaded %s EvilQuest item names from %s", len(items), self.path)
+
+    def search(self, query: str, limit: int = 25) -> list[PublicItem]:
+        self.refresh_if_needed()
+        normalized_query = normalize_item_name(query)
+        if not normalized_query:
+            return self._items[:limit]
+
+        prefix_matches: list[PublicItem] = []
+        contains_matches: list[PublicItem] = []
+        for item in self._items:
+            if item.normalized_name.startswith(normalized_query):
+                prefix_matches.append(item)
+            elif normalized_query in item.normalized_name:
+                contains_matches.append(item)
+
+        return (prefix_matches + contains_matches)[:limit]
+
+    def resolve(self, query: str) -> tuple[PublicItem | None, list[PublicItem]]:
+        self.refresh_if_needed()
+        normalized_query = normalize_item_name(query)
+        if not normalized_query:
+            return None, []
+
+        exact_match = self._items_by_normalized_name.get(normalized_query)
+        if exact_match is not None:
+            return exact_match, []
+
+        matches = self.search(query, limit=6)
+        if len(matches) == 1:
+            return matches[0], []
+        return None, matches
 
 
 def format_number(value: Any) -> str:
     if isinstance(value, bool) or not isinstance(value, int):
         return "0"
     return f"{value:,}"
+
+
+def normalize_item_name(value: str) -> str:
+    return ITEM_NAME_NORMALIZE_RE.sub(" ", value.lower()).strip()
+
+
+def clean_listing_text(value: str | None, max_length: int) -> str:
+    if value is None:
+        return ""
+    cleaned = CONTROL_CHARS_RE.sub(" ", value)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = discord.utils.escape_mentions(cleaned)
+    if len(cleaned) <= max_length:
+        return cleaned
+    return cleaned[: max_length - 3].rstrip() + "..."
+
+
+def parse_discord_message_id(value: str) -> int | None:
+    match = MESSAGE_ID_RE.search(value)
+    if match is None:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 def as_int(value: Any) -> int:
@@ -174,12 +331,17 @@ class LeftHandBot(commands.Bot):
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.status_client: aiohttp.ClientSession | None = None
+        self.item_catalog = ItemCatalog(settings.items_path)
 
     async def setup_hook(self) -> None:
         self.status_client = aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=15, connect=10),
             headers={"User-Agent": "Left Hand Discord Bot"},
         )
+        try:
+            self.item_catalog.refresh_if_needed()
+        except Exception:
+            LOGGER.warning("Could not load EvilQuest item catalog from %s", self.settings.items_path, exc_info=True)
 
         if not self.settings.sync_commands:
             LOGGER.info("Slash command sync disabled")
@@ -444,6 +606,159 @@ def bug_thread_result_line(thread: discord.Thread) -> str:
     return f"[{title}]({thread_jump_url(thread)}) - {status}"
 
 
+def resolve_trade_item(bot: LeftHandBot, query: str) -> tuple[PublicItem | None, str | None]:
+    try:
+        item, suggestions = bot.item_catalog.resolve(query)
+    except FileNotFoundError:
+        LOGGER.exception("EvilQuest item catalog is missing")
+        return None, "EvilQuest item validation is unavailable right now."
+    except Exception:
+        LOGGER.exception("Failed to resolve EvilQuest item")
+        return None, "EvilQuest item validation is unavailable right now."
+
+    if item is not None:
+        return item, None
+
+    if suggestions:
+        suggestion_text = ", ".join(item.name for item in suggestions[:5])
+        return None, f'I could not uniquely match "{query}". Try one of: {suggestion_text}.'
+    return None, f'I could not find "{query}" in the EvilQuest item list.'
+
+
+async def trade_item_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[app_commands.Choice[str]]:
+    client = interaction.client
+    if not isinstance(client, LeftHandBot):
+        return []
+
+    try:
+        items = client.item_catalog.search(current, limit=25)
+    except Exception:
+        LOGGER.warning("Failed to load item autocomplete choices", exc_info=True)
+        return []
+
+    return [app_commands.Choice(name=item.name[:100], value=item.name[:100]) for item in items]
+
+
+async def fetch_trading_post_channel(bot: LeftHandBot) -> discord.TextChannel | None:
+    channel_id = bot.settings.trading_post_channel_id
+    if channel_id is None:
+        return None
+
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except discord.HTTPException:
+            LOGGER.exception("Failed to fetch trading-post channel %s", channel_id)
+            return None
+
+    if isinstance(channel, discord.TextChannel):
+        return channel
+
+    LOGGER.warning("Configured trading-post channel %s is not a text channel", channel_id)
+    return None
+
+
+def trade_allowed_mentions(user: discord.abc.User) -> discord.AllowedMentions:
+    return discord.AllowedMentions(everyone=False, roles=False, users=[user])
+
+
+def build_trade_listing_embed(
+    kind: str,
+    item: PublicItem,
+    quantity: int,
+    exchange: str,
+    notes: str,
+    user: discord.abc.User,
+) -> discord.Embed:
+    is_sell = kind == "sell"
+    title_action = "Selling" if is_sell else "Buying"
+    trader_label = "Seller" if is_sell else "Buyer"
+    exchange_label = "Asking Price" if is_sell else "Offer"
+    action_text = "selling" if is_sell else "looking for"
+    color = discord.Color.green() if is_sell else discord.Color.blue()
+    embed = discord.Embed(
+        title=f"{title_action}: {item.name}",
+        description=f"{user.mention} is {action_text} **{format_number(quantity)} x {item.name}**.",
+        color=color,
+        timestamp=datetime.now(timezone.utc),
+    )
+    embed.add_field(name=trader_label, value=user.mention, inline=True)
+    embed.add_field(name="Quantity", value=format_number(quantity), inline=True)
+    embed.add_field(name="Item Type", value=item.type_label, inline=True)
+    embed.add_field(name=exchange_label, value=exchange, inline=False)
+    if notes:
+        embed.add_field(name="Notes", value=notes, inline=False)
+    embed.set_footer(text=f"{TRADE_LISTING_FOOTER} | Validated item name only; inventory is not verified.")
+    return embed
+
+
+def parse_trade_listing(message: discord.Message) -> TradeListing | None:
+    if not message.embeds:
+        return None
+
+    embed = message.embeds[0]
+    footer_text = embed.footer.text or ""
+    if TRADE_LISTING_FOOTER not in footer_text:
+        return None
+
+    title = embed.title or ""
+    closed = title.lower().startswith("closed: ")
+    if closed:
+        title = title[len("Closed: ") :]
+
+    if title.startswith("Selling: "):
+        kind = "sell"
+        item_name = title[len("Selling: ") :].strip()
+    elif title.startswith("Buying: "):
+        kind = "buy"
+        item_name = title[len("Buying: ") :].strip()
+    else:
+        return None
+
+    fields = {field.name: field.value for field in embed.fields}
+    trader = fields.get("Seller") or fields.get("Buyer") or "Unknown"
+    trader_user_id = None
+    match = USER_MENTION_RE.search(trader)
+    if match is not None:
+        try:
+            trader_user_id = int(match.group(1))
+        except ValueError:
+            trader_user_id = None
+
+    return TradeListing(
+        message=message,
+        kind=kind,
+        item_name=item_name,
+        quantity=fields.get("Quantity", "Unknown"),
+        exchange=fields.get("Asking Price") or fields.get("Offer") or "Unspecified",
+        trader=trader,
+        trader_user_id=trader_user_id,
+        closed=closed,
+    )
+
+
+def trade_listing_result_line(listing: TradeListing) -> str:
+    action = "Selling" if listing.kind == "sell" else "Buying"
+    status = "closed" if listing.closed else "active"
+    return (
+        f"[{action}: {listing.item_name}]({listing.message.jump_url}) - "
+        f"{listing.quantity}, {listing.exchange} - {status}"
+    )
+
+
+def user_can_close_trade_listing(interaction: discord.Interaction, listing: TradeListing) -> bool:
+    if listing.trader_user_id == interaction.user.id:
+        return True
+    user = interaction.user
+    if isinstance(user, discord.Member):
+        return user.guild_permissions.manage_messages
+    return False
+
+
 def register_commands(bot: LeftHandBot) -> None:
     @bot.tree.command(name="ping", description="Check whether Left Hand is online.")
     async def ping(interaction: discord.Interaction) -> None:
@@ -493,6 +808,71 @@ def register_commands(bot: LeftHandBot) -> None:
     async def rank(interaction: discord.Interaction, name: str) -> None:
         await send_player_ranks(bot, interaction, name)
 
+    trade_group = app_commands.Group(name="trade", description="Trading-post helpers for EvilQuest items.")
+
+    @trade_group.command(name="sell", description="Post a validated sell listing in the trading post.")
+    @app_commands.describe(
+        item="The EvilQuest item you want to sell.",
+        quantity="How many you are selling.",
+        price="Your asking price, e.g. 500 coins or best offer.",
+        notes="Optional public notes for the listing.",
+    )
+    @app_commands.autocomplete(item=trade_item_autocomplete)
+    async def trade_sell(
+        interaction: discord.Interaction,
+        item: str,
+        quantity: int,
+        price: str,
+        notes: str | None = None,
+    ) -> None:
+        await send_trade_listing(bot, interaction, "sell", item, quantity, price, notes)
+
+    @trade_group.command(name="buy", description="Post a validated buy listing in the trading post.")
+    @app_commands.describe(
+        item="The EvilQuest item you want to buy.",
+        quantity="How many you want.",
+        offer="Your offer, e.g. 500 coins or trade.",
+        notes="Optional public notes for the listing.",
+    )
+    @app_commands.autocomplete(item=trade_item_autocomplete)
+    async def trade_buy(
+        interaction: discord.Interaction,
+        item: str,
+        quantity: int,
+        offer: str,
+        notes: str | None = None,
+    ) -> None:
+        await send_trade_listing(bot, interaction, "buy", item, quantity, offer, notes)
+
+    @trade_group.command(name="search", description="Search recent trade listings.")
+    @app_commands.describe(
+        item="Optional EvilQuest item to filter by.",
+        kind="Show sell listings, buy listings, or both.",
+        include_closed="Include listings that were closed.",
+    )
+    @app_commands.autocomplete(item=trade_item_autocomplete)
+    @app_commands.choices(kind=TRADE_KIND_CHOICES)
+    async def trade_search(
+        interaction: discord.Interaction,
+        item: str | None = None,
+        kind: app_commands.Choice[str] | None = None,
+        include_closed: bool = False,
+    ) -> None:
+        await send_trade_search(bot, interaction, item, kind.value if kind else "all", include_closed)
+
+    @trade_group.command(name="close", description="Close one of your trade listings.")
+    @app_commands.describe(message="The listing message ID or Discord message link.")
+    async def trade_close(interaction: discord.Interaction, message: str) -> None:
+        await close_trade_listing(bot, interaction, message)
+
+    @trade_group.command(name="item", description="Check whether an item name is recognized by EvilQuest.")
+    @app_commands.describe(item="The EvilQuest item to check.")
+    @app_commands.autocomplete(item=trade_item_autocomplete)
+    async def trade_item(interaction: discord.Interaction, item: str) -> None:
+        await send_trade_item_check(bot, interaction, item)
+
+    bot.tree.add_command(trade_group)
+
     @bot.tree.command(name="bugstats", description="Show bug-report thread counts.")
     async def bugstats(interaction: discord.Interaction) -> None:
         await send_bug_report_stats(bot, interaction)
@@ -505,6 +885,188 @@ def register_commands(bot: LeftHandBot) -> None:
     @bot.tree.command(name="about", description="Show what Left Hand is.")
     async def about(interaction: discord.Interaction) -> None:
         await interaction.response.send_message("I am the Left Hand of anders")
+
+
+async def send_trade_listing(
+    bot: LeftHandBot,
+    interaction: discord.Interaction,
+    kind: str,
+    item_query: str,
+    quantity: int,
+    exchange: str,
+    notes: str | None,
+) -> None:
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    if quantity < 1 or quantity > MAX_TRADE_QUANTITY:
+        await interaction.followup.send(f"Quantity must be between 1 and {MAX_TRADE_QUANTITY:,}.", ephemeral=True)
+        return
+
+    exchange_text = clean_listing_text(exchange, 160)
+    if not exchange_text:
+        await interaction.followup.send("Enter a price or offer for the listing.", ephemeral=True)
+        return
+
+    notes_text = clean_listing_text(notes, 500)
+    item, error = resolve_trade_item(bot, item_query)
+    if error is not None or item is None:
+        await interaction.followup.send(error or "That item could not be validated.", ephemeral=True)
+        return
+
+    channel = await fetch_trading_post_channel(bot)
+    if channel is None:
+        await interaction.followup.send("The trading-post channel is not configured or is unavailable.", ephemeral=True)
+        return
+
+    embed = build_trade_listing_embed(kind, item, quantity, exchange_text, notes_text, interaction.user)
+    try:
+        message = await channel.send(
+            embed=embed,
+            allowed_mentions=trade_allowed_mentions(interaction.user),
+        )
+    except discord.Forbidden:
+        LOGGER.warning("Missing permission to post trade listing in channel %s", channel.id)
+        await interaction.followup.send("I do not have permission to post in the trading-post channel.", ephemeral=True)
+        return
+    except discord.HTTPException:
+        LOGGER.exception("Failed to post trade listing")
+        await interaction.followup.send("I could not post that trade listing right now.", ephemeral=True)
+        return
+
+    await interaction.followup.send(f"Posted in {channel.mention}: {message.jump_url}", ephemeral=True)
+
+
+async def send_trade_search(
+    bot: LeftHandBot,
+    interaction: discord.Interaction,
+    item_query: str | None,
+    kind: str,
+    include_closed: bool,
+) -> None:
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    channel = await fetch_trading_post_channel(bot)
+    if channel is None:
+        await interaction.followup.send("The trading-post channel is not configured or is unavailable.", ephemeral=True)
+        return
+
+    item_filter: PublicItem | None = None
+    if item_query:
+        item_filter, error = resolve_trade_item(bot, item_query)
+        if error is not None or item_filter is None:
+            await interaction.followup.send(error or "That item could not be validated.", ephemeral=True)
+            return
+
+    listings: list[TradeListing] = []
+    try:
+        async for message in channel.history(limit=bot.settings.trade_listing_scan_limit):
+            listing = parse_trade_listing(message)
+            if listing is None:
+                continue
+            if not include_closed and listing.closed:
+                continue
+            if kind != "all" and listing.kind != kind:
+                continue
+            if item_filter is not None and normalize_item_name(listing.item_name) != item_filter.normalized_name:
+                continue
+            listings.append(listing)
+    except discord.Forbidden:
+        LOGGER.warning("Missing permission to read trade listing history in channel %s", channel.id)
+        await interaction.followup.send("I do not have permission to read the trading-post history.", ephemeral=True)
+        return
+    except discord.HTTPException:
+        LOGGER.exception("Failed to search trade listings")
+        await interaction.followup.send("I could not search trade listings right now.", ephemeral=True)
+        return
+
+    if not listings:
+        await interaction.followup.send("No matching trade listings found.", ephemeral=True)
+        return
+
+    title = "Trade Listings"
+    if item_filter is not None:
+        title = f"Trade Listings: {item_filter.name}"
+    lines = [trade_listing_result_line(listing) for listing in listings[:TRADE_SEARCH_MAX_RESULTS]]
+    embed = discord.Embed(
+        title=title,
+        description="\n".join(lines),
+        color=discord.Color.dark_gold(),
+    )
+    if len(listings) > TRADE_SEARCH_MAX_RESULTS:
+        embed.set_footer(text=f"Showing {TRADE_SEARCH_MAX_RESULTS} of {len(listings)} matches.")
+    else:
+        embed.set_footer(text=f"{len(listings)} match(es).")
+    await interaction.followup.send(embed=embed, ephemeral=True, allowed_mentions=discord.AllowedMentions.none())
+
+
+async def close_trade_listing(bot: LeftHandBot, interaction: discord.Interaction, message_ref: str) -> None:
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    message_id = parse_discord_message_id(message_ref)
+    if message_id is None:
+        await interaction.followup.send("Enter a valid Discord message ID or message link.", ephemeral=True)
+        return
+
+    channel = await fetch_trading_post_channel(bot)
+    if channel is None:
+        await interaction.followup.send("The trading-post channel is not configured or is unavailable.", ephemeral=True)
+        return
+
+    try:
+        message = await channel.fetch_message(message_id)
+    except discord.NotFound:
+        await interaction.followup.send("I could not find that listing in the trading-post channel.", ephemeral=True)
+        return
+    except discord.Forbidden:
+        LOGGER.warning("Missing permission to fetch trade listing %s", message_id)
+        await interaction.followup.send("I do not have permission to read that trade listing.", ephemeral=True)
+        return
+    except discord.HTTPException:
+        LOGGER.exception("Failed to fetch trade listing %s", message_id)
+        await interaction.followup.send("I could not load that trade listing right now.", ephemeral=True)
+        return
+
+    listing = parse_trade_listing(message)
+    if listing is None:
+        await interaction.followup.send("That message is not a Left Hand trade listing.", ephemeral=True)
+        return
+    if listing.closed:
+        await interaction.followup.send("That trade listing is already closed.", ephemeral=True)
+        return
+    if not user_can_close_trade_listing(interaction, listing):
+        await interaction.followup.send("Only the listing owner or a moderator can close that listing.", ephemeral=True)
+        return
+
+    embed = message.embeds[0]
+    embed.title = f"Closed: {embed.title}"
+    embed.color = discord.Color.dark_gray()
+    embed.set_footer(text=f"{TRADE_LISTING_FOOTER} | Closed by {interaction.user.display_name}.")
+    try:
+        await message.edit(embed=embed, allowed_mentions=discord.AllowedMentions.none())
+    except discord.Forbidden:
+        LOGGER.warning("Missing permission to edit trade listing %s", message.id)
+        await interaction.followup.send("I do not have permission to close that listing.", ephemeral=True)
+        return
+    except discord.HTTPException:
+        LOGGER.exception("Failed to close trade listing %s", message.id)
+        await interaction.followup.send("I could not close that trade listing right now.", ephemeral=True)
+        return
+
+    await interaction.followup.send(f"Closed listing: {message.jump_url}", ephemeral=True)
+
+
+async def send_trade_item_check(bot: LeftHandBot, interaction: discord.Interaction, item_query: str) -> None:
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    item, error = resolve_trade_item(bot, item_query)
+    if error is not None or item is None:
+        await interaction.followup.send(error or "That item could not be validated.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=item.name,
+        description="Recognized EvilQuest item.",
+        color=discord.Color.dark_gold(),
+    )
+    embed.add_field(name="Item Type", value=item.type_label, inline=True)
+    embed.add_field(name="Listing Validation", value="Name only. Inventories are not checked.", inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def send_online_count(bot: LeftHandBot, interaction: discord.Interaction) -> None:

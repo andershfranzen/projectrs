@@ -998,7 +998,7 @@ export class GameDatabase {
         ON CONFLICT(map_level, def_id, tile_x, tile_z, floor) DO UPDATE SET
           is_open = excluded.is_open,
           auto_close_at_tick = excluded.auto_close_at_tick
-      `).run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)), isOpen ? 1 : 0, autoCloseAtTick);
+      `).run(mapLevel, defId, tileX, tileZ, Math.floor(floor), isOpen ? 1 : 0, autoCloseAtTick);
     } catch (e) {
       console.error('saveDoorState failed:', e);
     }
@@ -1027,7 +1027,7 @@ export class GameDatabase {
   clearDoorState(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number = 0): void {
     try {
       this.db.query('DELETE FROM door_state WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ? AND floor = ?')
-        .run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)));
+        .run(mapLevel, defId, tileX, tileZ, Math.floor(floor));
     } catch (e) {
       console.error('clearDoorState failed:', e);
     }
@@ -1042,7 +1042,7 @@ export class GameDatabase {
         VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(map_level, def_id, tile_x, tile_z, floor) DO UPDATE SET
           respawn_at_unix_ms = excluded.respawn_at_unix_ms
-      `).run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)), respawnAtUnixMs);
+      `).run(mapLevel, defId, tileX, tileZ, Math.floor(floor), respawnAtUnixMs);
     } catch (e) {
       console.error('saveObjectRespawn failed:', e);
     }
@@ -1070,7 +1070,7 @@ export class GameDatabase {
   clearObjectRespawn(mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number = 0): void {
     try {
       this.db.query('DELETE FROM world_object_respawn WHERE map_level = ? AND def_id = ? AND tile_x = ? AND tile_z = ? AND floor = ?')
-        .run(mapLevel, defId, tileX, tileZ, Math.max(0, Math.floor(floor)));
+        .run(mapLevel, defId, tileX, tileZ, Math.floor(floor));
     } catch (e) {
       console.error('clearObjectRespawn failed:', e);
     }

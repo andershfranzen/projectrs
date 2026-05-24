@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
@@ -30,7 +30,7 @@ function getMapIdx(mapId: string): number {
 }
 /** Encode map+floor+tile into a stable object-blocker key. */
 function blockedKey(mapIdx: number, floor: number, tileX: number, tileZ: number): string {
-  return `${mapIdx}|${Math.max(0, Math.floor(floor))}|${Math.floor(tileX)}|${Math.floor(tileZ)}`;
+  return `${mapIdx}|${Math.floor(floor)}|${Math.floor(tileX)}|${Math.floor(tileZ)}`;
 }
 const HITPOINTS_SKILL_INDEX = ALL_SKILLS.indexOf('hitpoints' as SkillId);
 
@@ -111,8 +111,26 @@ interface RuntimeObjectSpawn {
   lockedMessage?: string;
   altarTier?: number;
   trigger?: WorldObject['trigger'];
+  verticalLinks?: WorldObject['verticalLinks'];
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
+}
+
+type LadderAction = 'Climb-up' | 'Climb-down';
+
+interface ResolvedVerticalEndpoint {
+  mapId: string;
+  x: number;
+  z: number;
+  floor: number;
+  y?: number;
+}
+
+interface DirectedVerticalLink {
+  linkId: string;
+  action: LadderAction;
+  from: ResolvedVerticalEndpoint;
+  to: ResolvedVerticalEndpoint;
 }
 
 type NpcPathCapableMap = GameMap & {
@@ -346,7 +364,7 @@ export class World {
     // O(rows × worldObjects) restore work collapses to O(rows + worldObjects).
     const stableIndex = new Map<string, WorldObject>();
     const stableKey = (mapLevel: string, defId: number, tileX: number, tileZ: number, floor: number) =>
-      `${mapLevel}|${defId}|${tileX}|${tileZ}|${Math.max(0, Math.floor(floor))}`;
+      `${mapLevel}|${defId}|${tileX}|${tileZ}|${Math.floor(floor)}`;
     for (const [, obj] of this.worldObjects) {
       stableIndex.set(stableKey(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor), obj);
     }
@@ -596,7 +614,7 @@ export class World {
     authoredFloor?: number,
   ): { floor: number; y: number } {
     if (Number.isFinite(authoredFloor)) {
-      const floor = Math.max(0, Math.floor(authoredFloor!));
+      const floor = Math.floor(authoredFloor!);
       const y = Number.isFinite(authoredY)
         ? authoredY!
         : map.getEffectiveHeightOnFloor(x, z, floor, floor > 0 ? Number.POSITIVE_INFINITY : undefined);
@@ -643,7 +661,7 @@ export class World {
   canPlayerTargetObject(player: Player, obj: WorldObject): boolean {
     if (obj.mapLevel !== player.currentMapLevel) return false;
     if ((obj.floor ?? 0) === player.currentFloor) return true;
-    return obj.def.category === 'ladder' && this.canPlayerUseLadderOnCurrentFloor(player, obj);
+    return obj.def.category === 'ladder' && this.ladderActionMaskForPlayer(player, obj) !== 0;
   }
 
   canPlayerTargetGroundItem(player: Player, item: GroundItem): boolean {
@@ -653,22 +671,108 @@ export class World {
   }
 
   private canPlayerUseLadderOnCurrentFloor(player: Player, obj: WorldObject): boolean {
-    const map = this.maps.get(obj.mapLevel);
-    if (!map) return false;
-    const seen = new Set<string>();
-    const positions: { x: number; z: number }[] = [];
-    const add = (x: number, z: number): void => {
-      const pos = { x: Math.floor(x) + 0.5, z: Math.floor(z) + 0.5 };
-      const key = `${pos.x},${pos.z}`;
-      if (seen.has(key)) return;
-      seen.add(key);
-      positions.push(pos);
+    return this.ladderActionMaskForPlayer(player, obj) !== 0;
+  }
+
+  private resolveVerticalEndpoint(obj: WorldObject, endpoint: PlacedObjectVerticalLinkEndpoint | undefined): ResolvedVerticalEndpoint | null {
+    if (!endpoint) return null;
+    if (!Number.isFinite(endpoint.x) || !Number.isFinite(endpoint.z) || !Number.isFinite(endpoint.floor)) return null;
+    const mapId = typeof endpoint.mapId === 'string' && endpoint.mapId.trim()
+      ? endpoint.mapId.trim()
+      : obj.mapLevel;
+    return {
+      mapId,
+      x: endpoint.x,
+      z: endpoint.z,
+      floor: Math.floor(endpoint.floor),
+      y: Number.isFinite(endpoint.y) ? endpoint.y : undefined,
     };
-    add(obj.x, obj.z);
-    for (const tile of this.objectInteractionTiles(obj)) add(tile.x, tile.z);
-    return positions.some(pos =>
-      map.getWalkableFloorTargetsAt(pos.x, pos.z).some(target => target.floor === player.currentFloor),
-    );
+  }
+
+  private defaultVerticalAction(from: ResolvedVerticalEndpoint, to: ResolvedVerticalEndpoint): LadderAction {
+    if (to.floor !== from.floor) return to.floor > from.floor ? 'Climb-up' : 'Climb-down';
+    if (to.y !== undefined && from.y !== undefined && Math.abs(to.y - from.y) > 0.1) {
+      return to.y > from.y ? 'Climb-up' : 'Climb-down';
+    }
+    return 'Climb-up';
+  }
+
+  private directedVerticalLinksForObject(obj: WorldObject): DirectedVerticalLink[] {
+    if (obj.def.category !== 'ladder' || !obj.verticalLinks?.length) return [];
+    const out: DirectedVerticalLink[] = [];
+    for (let i = 0; i < obj.verticalLinks.length; i++) {
+      const link = obj.verticalLinks[i];
+      const from = this.resolveVerticalEndpoint(obj, link.from);
+      const to = this.resolveVerticalEndpoint(obj, link.to);
+      if (!from || !to) continue;
+      out.push({
+        linkId: link.id ?? String(i),
+        action: link.fromAction ?? this.defaultVerticalAction(from, to),
+        from,
+        to,
+      });
+      if (link.bidirectional !== false) {
+        out.push({
+          linkId: `${link.id ?? String(i)}:return`,
+          action: link.toAction ?? this.defaultVerticalAction(to, from),
+          from: to,
+          to: from,
+        });
+      }
+    }
+    return out;
+  }
+
+  private directedVerticalLinksFromPlayerFloor(player: Player, obj: WorldObject): DirectedVerticalLink[] {
+    return this.directedVerticalLinksForObject(obj)
+      .filter(link => link.from.mapId === player.currentMapLevel && link.from.floor === player.currentFloor);
+  }
+
+  private ladderActionMaskForPlayer(player: Player, obj: WorldObject): number {
+    let mask = 0;
+    for (const link of this.directedVerticalLinksFromPlayerFloor(player, obj)) {
+      if (!this.isVerticalEndpointWalkable(link.from) || !this.isVerticalEndpointWalkable(link.to)) continue;
+      if (link.action === 'Climb-down') mask |= 1;
+      else if (link.action === 'Climb-up') mask |= 2;
+    }
+    return mask;
+  }
+
+  private ladderInteractionTilesForPlayer(player: Player, obj: WorldObject): { x: number; z: number }[] {
+    const seen = new Set<string>();
+    const out: { x: number; z: number }[] = [];
+    for (const link of this.directedVerticalLinksFromPlayerFloor(player, obj)) {
+      if (!this.isVerticalEndpointWalkable(link.from) || !this.isVerticalEndpointWalkable(link.to)) continue;
+      const tile = { x: Math.floor(link.from.x), z: Math.floor(link.from.z) };
+      const key = `${tile.x},${tile.z}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(tile);
+    }
+    return out;
+  }
+
+  private isVerticalEndpointWalkable(endpoint: ResolvedVerticalEndpoint): boolean {
+    const map = this.maps.get(endpoint.mapId);
+    if (!map) return false;
+    if (!Number.isFinite(endpoint.x) || !Number.isFinite(endpoint.z)) return false;
+    if (endpoint.x < 0 || endpoint.x >= map.width || endpoint.z < 0 || endpoint.z >= map.height) return false;
+    const tx = Math.floor(endpoint.x);
+    const tz = Math.floor(endpoint.z);
+    if (map.isTileBlockedOnFloor(tx, tz, endpoint.floor)) return false;
+    return !this.blockedObjectTiles.has(this.blockedKeyFor(endpoint.mapId, tx, tz, endpoint.floor));
+  }
+
+  private resolveLadderLinkForPlayerAction(player: Player, obj: WorldObject, action: LadderAction): DirectedVerticalLink | null {
+    const ptx = Math.floor(player.position.x);
+    const ptz = Math.floor(player.position.y);
+    for (const link of this.directedVerticalLinksFromPlayerFloor(player, obj)) {
+      if (link.action !== action) continue;
+      if (Math.floor(link.from.x) !== ptx || Math.floor(link.from.z) !== ptz) continue;
+      if (!this.isVerticalEndpointWalkable(link.from) || !this.isVerticalEndpointWalkable(link.to)) continue;
+      return link;
+    }
+    return null;
   }
 
   /** Path from the player to the NPC's interaction surface. Targets the
@@ -954,7 +1058,10 @@ export class World {
 
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
-    const candidates = this.objectInteractionTiles(obj)
+    const interactionTiles = obj.def.category === 'ladder' && obj.verticalLinks?.length
+      ? this.ladderInteractionTilesForPlayer(player, obj)
+      : this.objectInteractionTiles(obj);
+    const candidates = interactionTiles
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
       .sort((a, b) => {
         const ad = Math.abs(player.position.x - (a.x + 0.5)) + Math.abs(player.position.y - (a.z + 0.5));
@@ -1116,6 +1223,7 @@ export class World {
           lockedMessage: placed.lockedMessage,
           altarTier: Number.isInteger(placed.altarTier) ? placed.altarTier : undefined,
           trigger: placed.trigger,
+          verticalLinks: placed.verticalLinks,
           interactionTiles: placed.interactionTiles,
           interactionSides: placed.interactionSides,
         });
@@ -1137,7 +1245,7 @@ export class World {
     const map = this.maps.get(mapId);
     const resolved = map
       ? this.resolveAuthoredFloor(map, spawn.x, spawn.z, spawn.y, spawn.floor)
-      : { floor: Math.max(0, Math.floor(spawn.floor ?? 0)), y: spawn.y ?? 0 };
+      : { floor: Math.floor(spawn.floor ?? 0), y: spawn.y ?? 0 };
     const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId, resolved.floor, resolved.y);
     if (spawn.rotY != null) obj.rotationY = spawn.rotY;
     if (spawn.name) obj.name = spawn.name;
@@ -1151,6 +1259,7 @@ export class World {
     if (spawn.lockedMessage) obj.doorLockedMessage = spawn.lockedMessage;
     if (Number.isInteger(spawn.altarTier) && spawn.altarTier! > 0) obj.altarTier = Math.max(1, Math.floor(spawn.altarTier!));
     if (spawn.trigger) obj.trigger = spawn.trigger;
+    if (spawn.verticalLinks?.length) obj.verticalLinks = spawn.verticalLinks;
     if (spawn.interactionTiles?.length) obj.interactionTiles = spawn.interactionTiles;
     if (spawn.interactionSides) obj.interactionSides = spawn.interactionSides;
     return obj;
@@ -2006,13 +2115,12 @@ export class World {
     const cm = this.chunkManagers.get(obj.mapLevel);
     if (!cm) return;
     const eventPacket = encodePacket(ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
-    const syncPacket = this.encodeWorldObjectUpdate(obj);
     cm.forEachPlayerNear(obj.x, obj.z, (pid) => {
       const player = this.players.get(pid);
       if (!player || player.disconnected || player.currentMapLevel !== obj.mapLevel || player.currentFloor !== obj.floor) return;
       try {
         player.ws.sendBinary(eventPacket);
-        player.ws.sendBinary(syncPacket);
+        player.ws.sendBinary(this.encodeWorldObjectUpdate(obj, player));
       } catch { /* connection closed */ }
     });
   }
@@ -2282,6 +2390,10 @@ export class World {
     // Doors: player must be on the door tile or the tile the door faces into
     if (obj.def.category === 'door') {
       return (ptx === otx && ptz === otz) || (Math.abs(ptx - otx) + Math.abs(ptz - otz) === 1);
+    }
+    if (obj.def.category === 'ladder' && obj.verticalLinks?.length) {
+      return this.ladderInteractionTilesForPlayer(player, obj)
+        .some(tile => tile.x === ptx && tile.z === ptz);
     }
     const explicit = this.explicitObjectInteractionTiles(obj);
     if (explicit.length > 0) return explicit.some(tile => tile.x === ptx && tile.z === ptz);
@@ -3234,7 +3346,7 @@ export class World {
     this.clearCombatTarget(playerId);
 
     const action = obj.def.category === 'ladder'
-      ? this.ladderActionsForPlayer(player, obj)[actionIndex]
+      ? obj.def.actions[actionIndex]
       : obj.currentActions[actionIndex];
     if (!action) return;
     player.botStats?.recordActionSignature('object', obj.defId, player.position.x, player.position.y, action);
@@ -3401,75 +3513,26 @@ export class World {
   }
 
   private handleLadderInteraction(player: Player, obj: WorldObject, action: 'Climb-up' | 'Climb-down'): void {
-    const step = this.getLadderStep(player, obj);
-    const target = action === 'Climb-down' ? step.down : step.up;
-    if (!target) {
+    const link = this.resolveLadderLinkForPlayerAction(player, obj, action);
+    if (!link) {
       this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
       return;
     }
 
     this.interruptPlayerAction(player.id, player);
-    player.currentFloor = target.floor;
-    player.lastFloorChangeTile = Math.floor(target.z) * this.getPlayerMap(player).width + Math.floor(target.x);
-    this.teleportPlayer(player, target.x, target.z, target.y);
-  }
-
-  private ladderActionsForPlayer(player: Player, obj: WorldObject): readonly string[] {
-    const step = this.getLadderStep(player, obj);
-    const actions: string[] = [];
-    if (step.down) actions.push('Climb-down');
-    if (step.up) actions.push('Climb-up');
-    actions.push('Examine');
-    return actions;
-  }
-
-  private getLadderStep(
-    player: Player,
-    obj: WorldObject,
-  ): { up?: { x: number; z: number; y: number; floor: number }; down?: { x: number; z: number; y: number; floor: number } } {
-    const map = this.getPlayerMap(player);
-    const playerY = player.effectiveY;
-    const seenPositions = new Set<string>();
-    const addPosition = (x: number, z: number): { x: number; z: number } | null => {
-      const pos = { x: Math.floor(x) + 0.5, z: Math.floor(z) + 0.5 };
-      const key = `${pos.x},${pos.z}`;
-      if (seenPositions.has(key)) return null;
-      seenPositions.add(key);
-      return pos;
-    };
-    const positions = [
-      addPosition(player.position.x, player.position.y),
-      ...this.objectInteractionTiles(obj).map(tile => addPosition(tile.x, tile.z)),
-    ].filter((pos): pos is { x: number; z: number } => pos !== null);
-    const candidates: { x: number; z: number; y: number; floor: number }[] = [];
-    const add = (candidate: { x: number; z: number; y: number; floor: number }): void => {
-      if (!Number.isFinite(candidate.y)) return;
-      if (!candidates.some(existing =>
-        Math.abs(existing.x - candidate.x) < 0.01
-        && Math.abs(existing.z - candidate.z) < 0.01
-        && existing.floor === candidate.floor
-        && Math.abs(existing.y - candidate.y) < 0.1)) {
-        candidates.push(candidate);
-      }
-    };
-
-    for (const pos of positions) {
-      for (const target of map.getWalkableFloorTargetsAt(pos.x, pos.z)) {
-        add({ ...pos, y: target.y, floor: target.floor });
-      }
+    if (link.to.mapId !== player.currentMapLevel) {
+      this.handleMapTransition(player, {
+        targetMap: link.to.mapId,
+        targetX: link.to.x,
+        targetZ: link.to.z,
+        targetFloor: link.to.floor,
+        targetY: link.to.y,
+      });
+      return;
     }
-
-    const byDistance = (a: { x: number; z: number }, b: { x: number; z: number }): number =>
-      (Math.abs(a.x - player.position.x) + Math.abs(a.z - player.position.y))
-      - (Math.abs(b.x - player.position.x) + Math.abs(b.z - player.position.y));
-    const up = candidates
-      .filter(candidate => candidate.y > playerY + 0.8)
-      .sort((a, b) => (a.y - b.y) || byDistance(a, b))[0];
-    const down = candidates
-      .filter(candidate => candidate.y < playerY - 0.8)
-      .sort((a, b) => (b.y - a.y) || byDistance(a, b))[0];
-
-    return { up, down };
+    this.teleportPlayer(player, link.to.x, link.to.z, link.to.y, link.to.floor);
+    const map = this.getPlayerMap(player);
+    player.lastFloorChangeTile = Math.floor(link.to.z) * map.width + Math.floor(link.to.x);
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
@@ -5794,7 +5857,7 @@ export class World {
             player.attackTarget = null;
             this.clearCombatTarget(playerId);
             if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen ?? null)) continue;
-            const action = obj.currentActions[actionIndex];
+            const action = obj.def.category === 'ladder' ? obj.def.actions[actionIndex] : obj.currentActions[actionIndex];
             if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
               this.toggleDoor(obj, swingSign ?? 0);
             } else if (action) {
@@ -6609,7 +6672,7 @@ export class World {
       const stairCurrent = map.getStairOnFloor(tx, tz, player.currentFloor);
       if (stairCurrent && player.lastFloorChangeTile !== tileIdx) {
         const stairAbove = map.getStairOnFloor(tx, tz, player.currentFloor + 1);
-        const stairBelow = player.currentFloor > 0 ? map.getStairOnFloor(tx, tz, player.currentFloor - 1) : null;
+        const stairBelow = map.getStairOnFloor(tx, tz, player.currentFloor - 1);
         if (stairAbove) {
           player.currentFloor += 1;
           player.lastFloorChangeTile = tileIdx;
@@ -6800,7 +6863,7 @@ export class World {
     const map = this.getPlayerMap(player);
     let targetX = x;
     let targetZ = z;
-    let targetFloor = forcedFloor !== undefined ? Math.max(0, Math.floor(forcedFloor)) : player.currentFloor;
+    let targetFloor = forcedFloor !== undefined ? Math.floor(forcedFloor) : player.currentFloor;
     let forceFloorChange = forcedFloor !== undefined;
     const tx = Math.floor(targetX);
     const tz = Math.floor(targetZ);
@@ -6868,9 +6931,20 @@ export class World {
       player.currentFloor,
     );
     try { player.ws.sendBinary(packet); } catch {}
+    this.sendNearbyVerticalObjectUpdates(player);
   }
 
-  handleMapTransition(player: Player, transition: { targetMap: string; targetX: number; targetZ: number }): void {
+  private sendNearbyVerticalObjectUpdates(player: Player): void {
+    const cm = this.chunkManagers.get(player.currentMapLevel);
+    if (!cm) return;
+    for (const eid of cm.getEntitiesNear(player.position.x, player.position.y)) {
+      const obj = this.worldObjects.get(eid);
+      if (!obj || obj.def.category !== 'ladder' || !obj.verticalLinks?.length) continue;
+      if (this.canPlayerTargetObject(player, obj)) this.sendWorldObjectUpdate(player, obj);
+    }
+  }
+
+  handleMapTransition(player: Player, transition: { targetMap: string; targetX: number; targetZ: number; targetFloor?: number; targetY?: number }): void {
     const oldMap = player.currentMapLevel;
     const newMap = transition.targetMap;
 
@@ -6884,6 +6958,9 @@ export class World {
     const targetMapObj = this.maps.get(newMap)!;
     const targetX = transition.targetX;
     const targetZ = transition.targetZ;
+    const requestedFloor = Number.isFinite(transition.targetFloor)
+      ? Math.floor(transition.targetFloor!)
+      : 0;
     const tileX = Math.floor(targetX);
     const tileZ = Math.floor(targetZ);
     const targetValid = typeof targetX === 'number'
@@ -6894,12 +6971,13 @@ export class World {
       && targetX < targetMapObj.width
       && targetZ >= 0
       && targetZ < targetMapObj.height
-      && !targetMapObj.isBlocked(tileX, tileZ);
+      && !targetMapObj.isTileBlockedOnFloor(tileX, tileZ, requestedFloor);
     if (!targetValid) {
       const fallback = targetMapObj.findSpawnPoint();
-      console.warn(`[handleMapTransition] invalid target (${targetX},${targetZ}) on ${newMap}; using spawn (${fallback.x},${fallback.z})`);
-      transition = { targetMap: newMap, targetX: fallback.x, targetZ: fallback.z };
+      console.warn(`[handleMapTransition] invalid target (${targetX},${targetZ}, floor=${requestedFloor}) on ${newMap}; using spawn (${fallback.x},${fallback.z})`);
+      transition = { targetMap: newMap, targetX: fallback.x, targetZ: fallback.z, targetFloor: 0 };
     }
+    const targetFloor = Number.isFinite(transition.targetFloor) ? Math.floor(transition.targetFloor!) : 0;
 
     // Defense in depth: any modal interface (bank/trade) must close BEFORE
     // we save + transition. Movement also auto-closes via handlePlayerMove,
@@ -6955,13 +7033,17 @@ export class World {
     player.position.y = transition.targetZ;
     player.followAnchorX = transition.targetX;
     player.followAnchorZ = transition.targetZ;
-    player.currentFloor = 0;
+    player.currentFloor = targetFloor;
     player.lastFloorChangeTile = -1;
     // Re-derive the authoritative collision elevation for the new map — the
-    // old map's effectiveY is meaningless here. Cross-map transitions land
-    // on floor 0 unless a future transition type explicitly carries floor.
-    player.effectiveY = targetMapObj.getEffectiveHeightOnFloor(
-      player.position.x, player.position.y, player.currentFloor);
+    // old map's effectiveY is meaningless here. Explicit vertical links can
+    // carry a signed destination floor/Y; legacy map transitions default to 0.
+    player.effectiveY = Number.isFinite(transition.targetY)
+      ? transition.targetY!
+      : targetMapObj.getEffectiveHeightOnFloor(
+        player.position.x, player.position.y, player.currentFloor,
+        player.currentFloor > 0 ? Number.POSITIVE_INFINITY : undefined);
+    player.reportedY = player.effectiveY;
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearCombatTarget(player.id);
@@ -7288,14 +7370,19 @@ export class World {
 
   private sendWorldObjectUpdate(viewer: Player, obj: WorldObject): void {
     if (!this.canPlayerTargetObject(viewer, obj)) return;
-    const packet = this.encodeWorldObjectUpdate(obj);
+    const packet = this.encodeWorldObjectUpdate(obj, viewer);
     try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
   }
 
-  private encodeWorldObjectUpdate(obj: WorldObject): Uint8Array {
-    const explicitTiles = this.explicitObjectInteractionTiles(obj).slice(0, 16);
+  private encodeWorldObjectUpdate(obj: WorldObject, viewer?: Player): Uint8Array {
+    const explicitTiles = viewer && obj.def.category === 'ladder' && obj.verticalLinks?.length
+      ? this.ladderInteractionTilesForPlayer(viewer, obj).slice(0, 16)
+      : this.explicitObjectInteractionTiles(obj).slice(0, 16);
     const tileValues = explicitTiles.flatMap(tile => [tile.x, tile.z]);
-    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ, doorOpenDirection, doorLocked]
+    const ladderActionMask = viewer && obj.def.category === 'ladder'
+      ? this.ladderActionMaskForPlayer(viewer, obj)
+      : 0;
+    // [objectEntityId, objectDefId, x*10, z*10, depleted(0/1), interactionMask, rotY*1000, floor, y*10, explicitTileCount, ...tileX,tileZ, doorOpenDirection, doorLocked, ladderActionMask]
     return encodePacket(ServerOpcode.WORLD_OBJECT_SYNC,
       obj.id,
       obj.defId,
@@ -7310,6 +7397,7 @@ export class World {
       ...tileValues,
       obj.doorOpenDirection,
       obj.doorLocked ? 1 : 0,
+      ladderActionMask,
     );
   }
 

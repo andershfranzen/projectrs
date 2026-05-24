@@ -59,6 +59,9 @@ class Settings:
     fixed_author_user_ids: frozenset[int]
     bug_report_archive_on_status: bool
     bug_report_thread_scan_limit: int
+    trading_post_channel_id: int | None
+    items_path: str
+    trade_listing_scan_limit: int
     log_level: str
     sync_commands: bool
     set_nickname: bool
@@ -83,6 +86,9 @@ def load_settings() -> Settings:
         fixed_author_user_ids=_env_int_set("LEFT_HAND_FIXED_AUTHOR_USER_IDS"),
         bug_report_archive_on_status=_env_bool("LEFT_HAND_BUG_REPORT_ARCHIVE_ON_STATUS", True),
         bug_report_thread_scan_limit=_env_positive_int("LEFT_HAND_BUG_REPORT_THREAD_SCAN_LIMIT", 200),
+        trading_post_channel_id=_env_int("LEFT_HAND_TRADING_POST_CHANNEL_ID"),
+        items_path=os.getenv("LEFT_HAND_ITEMS_PATH", "/app/game-data/items.json"),
+        trade_listing_scan_limit=_env_positive_int("LEFT_HAND_TRADE_LISTING_SCAN_LIMIT", 100),
         log_level=os.getenv("LOG_LEVEL", os.getenv("LEFT_HAND_LOG_LEVEL", "INFO")).upper(),
         sync_commands=_env_bool("SYNC_COMMANDS", True),
         set_nickname=_env_bool("LEFT_HAND_SET_NICKNAME", False),

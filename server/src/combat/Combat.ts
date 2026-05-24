@@ -272,6 +272,11 @@ export function processNpcCombat(
     return null;
   }
 
+  // NPC attack timers should keep ticking while the NPC is engaged and chasing,
+  // not only while already adjacent. Otherwise ranged/magic kiting freezes the
+  // first-retaliation cooldown until the NPC reaches melee range.
+  if (npc.attackCooldown > 0) npc.attackCooldown--;
+
   // Check distance to the NPC's body, not only its anchor tile.
   const fp = npc.distToFootprint(target.position.x, target.position.y);
   if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE) {
@@ -279,7 +284,6 @@ export function processNpcCombat(
   }
 
   // Check cooldown
-  npc.attackCooldown--;
   if (npc.attackCooldown > 0) return null;
   npc.attackCooldown = npc.attackSpeed;
 

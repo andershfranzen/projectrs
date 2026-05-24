@@ -248,11 +248,12 @@ export class ChunkManager {
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
-    return `${Math.max(0, Math.floor(floor))}:${tileIdx}`;
+    return `${Math.floor(floor)}:${tileIdx}`;
   }
 
   private ensureFloorLayer(floor: number): FloorLayerClientData {
-    const floorIdx = Math.max(1, Math.floor(floor));
+    const floorIdx = Math.floor(floor);
+    if (floorIdx === 0) throw new Error('ensureFloorLayer() is only valid for non-zero floors');
     let layer = this.floorLayerData.get(floorIdx);
     if (!layer) {
       layer = { walls: new Map(), wallHeights: new Map(), floors: new Map(), stairs: new Map(), roofs: new Map(), tiles: new Map() };

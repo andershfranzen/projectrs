@@ -76,7 +76,8 @@ export class GameMap {
   }> = new Map();
 
   private floorLayer(floor: number) {
-    const floorIdx = Math.max(1, Math.floor(floor));
+    const floorIdx = Math.floor(floor);
+    if (floorIdx === 0) throw new Error('floorLayer() is only valid for non-zero floors');
     let layer = this.floorLayers.get(floorIdx);
     if (!layer) {
       layer = {
@@ -93,7 +94,7 @@ export class GameMap {
   }
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
-    return `${Math.max(0, Math.floor(floor))}:${tileIdx}`;
+    return `${Math.floor(floor)}:${tileIdx}`;
   }
 
   constructor(mapId: string) {
@@ -151,6 +152,7 @@ export class GameMap {
       rotation: o.rotation,
       scale: o.scale,
       trigger: o.trigger,
+      verticalLinks: Array.isArray(o.verticalLinks) ? o.verticalLinks : undefined,
       interactionTiles: Array.isArray(o.interactionTiles) ? o.interactionTiles : undefined,
       interactionSides: o.interactionSides,
     }));
@@ -420,6 +422,10 @@ export class GameMap {
   getFloorLayer(floor: number) {
     if (floor === 0) return null;
     return this.floorLayers.get(floor) ?? null;
+  }
+
+  getKnownFloors(): number[] {
+    return [0, ...this.floorLayers.keys()].sort((a, b) => a - b);
   }
 
   /** Get wall bitmask at position for a specific floor */

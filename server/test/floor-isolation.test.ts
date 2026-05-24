@@ -106,6 +106,7 @@ function makeWorld(): any {
     'kcmap',
     {
       width: 64,
+      height: 64,
       isBlocked: () => false,
       isTileBlockedOnFloor: () => false,
       isWallBlocked: () => false,
@@ -124,9 +125,10 @@ function makeWorld(): any {
   world.closeNpcUiContext = () => {};
   world.clearPendingObjectIntents = () => {};
   world.interruptPlayerAction = () => {};
-  world.teleportPlayer = (player: Player, x: number, z: number, y: number) => {
+  world.teleportPlayer = (player: Player, x: number, z: number, y: number, forcedFloor?: number) => {
     player.position.x = x;
     player.position.y = z;
+    if (forcedFloor !== undefined) player.currentFloor = forcedFloor;
     player.effectiveY = y;
   };
   world.sendInventory = () => {};
@@ -147,6 +149,7 @@ function makeWorld(): any {
   };
   world._dirtyPlayerPackets = new Map();
   world._dirtyNpcPackets = new Map();
+  world.blockedObjectTiles = new Set();
   return { world, packets };
 }
 
@@ -223,6 +226,10 @@ describe('floor isolation', () => {
     const { world } = makeWorld();
     const player = makePlayer('player', 1, 1);
     const ladder = new WorldObject(ladderDef, player.position.x, player.position.y, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 5.5, z: 5.5, floor: 0, y: 0 },
+      to: { x: 5.5, z: 5.5, floor: 1, y: 2.7 },
+    }];
     const crate = new WorldObject(objectDef, player.position.x, player.position.y, 'kcmap', 0, 0);
     world.maps.set('kcmap', {
       ...world.maps.get('kcmap'),
@@ -316,6 +323,10 @@ describe('floor isolation', () => {
     const { world } = makeWorld();
     const viewer = makePlayer('viewer', 1, 1);
     const ladder = new WorldObject(ladderDef, 5.5, 5.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 5.5, z: 5.5, floor: 0, y: 0 },
+      to: { x: 5.5, z: 5.5, floor: 1, y: 2.7 },
+    }];
     world.players.set(viewer.id, viewer);
     world.worldObjects.set(ladder.id, ladder);
     world.maps.set('kcmap', {
@@ -346,12 +357,17 @@ describe('floor isolation', () => {
     player.position.y = 158.5;
     player.effectiveY = 2.73;
     const ladder = new WorldObject(ladderDef, 160.5, 157.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 160.5, z: 156.5, floor: 0, y: 0.57 },
+      to: { x: 160.5, z: 158.5, floor: 1, y: 2.73 },
+    }];
     player.visibleEntityIds.add(ladder.id);
     world.players.set(player.id, player);
     world.worldObjects.set(ladder.id, ladder);
     world.maps.set('kcmap', {
       ...world.maps.get('kcmap'),
-      width: 64,
+      width: 256,
+      height: 256,
       getWalkableFloorTargetsAt: (x: number, z: number) => {
         if (Math.floor(x) === 160 && Math.floor(z) === 156) return [{ floor: 0, y: 0.57 }];
         return [
@@ -361,10 +377,148 @@ describe('floor isolation', () => {
       },
     });
 
-    world.handlePlayerInteractObject(player.id, ladder.id, 0);
+    world.handlePlayerInteractObject(player.id, ladder.id, 1);
 
     expect(player.currentFloor).toBe(0);
     expect(player.effectiveY).toBe(0.57);
+  });
+
+  test('explicit ladder link climbs only to its authored destination floor', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('viewer', 1, 0);
+    player.position.x = 10.5;
+    player.position.y = 11.5;
+    player.effectiveY = 0;
+    const ladder = new WorldObject(ladderDef, 10.5, 10.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 10.5, z: 11.5, floor: 0, y: 0 },
+      to: { x: 10.5, z: 11.5, floor: 1, y: 2.7 },
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      getWalkableFloorTargetsAt: () => [
+        { floor: 0, y: 0 },
+        { floor: 1, y: 2.7 },
+        { floor: 2, y: 5.4 },
+      ],
+    });
+
+    world.handlePlayerInteractObject(player.id, ladder.id, 0);
+
+    expect(player.currentFloor).toBe(1);
+    expect(player.position.x).toBe(10.5);
+    expect(player.position.y).toBe(11.5);
+    expect(player.effectiveY).toBe(2.7);
+  });
+
+  test('bidirectional ladder uses stable climb-down action index on the return trip', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('viewer', 1, 1);
+    player.position.x = 12.5;
+    player.position.y = 13.5;
+    player.effectiveY = 2.7;
+    const ladder = new WorldObject(ladderDef, 12.5, 12.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 12.5, z: 13.5, floor: 0, y: 0 },
+      to: { x: 12.5, z: 13.5, floor: 1, y: 2.7 },
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+
+    world.handlePlayerInteractObject(player.id, ladder.id, 1);
+
+    expect(player.currentFloor).toBe(0);
+    expect(player.effectiveY).toBe(0);
+  });
+
+  test('stale ladder action index is rejected on the wrong side of a link', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('viewer', 1, 1);
+    player.position.x = 14.5;
+    player.position.y = 15.5;
+    player.effectiveY = 2.7;
+    const ladder = new WorldObject(ladderDef, 14.5, 14.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 14.5, z: 15.5, floor: 0, y: 0 },
+      to: { x: 14.5, z: 15.5, floor: 1, y: 2.7 },
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+
+    world.handlePlayerInteractObject(player.id, ladder.id, 0);
+
+    expect(player.currentFloor).toBe(1);
+    expect(player.effectiveY).toBe(2.7);
+  });
+
+  test('ladder links support signed negative destination floors', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('viewer', 1, 0);
+    player.position.x = 16.5;
+    player.position.y = 17.5;
+    player.effectiveY = 0;
+    const ladder = new WorldObject(ladderDef, 16.5, 16.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 16.5, z: 17.5, floor: 0, y: 0 },
+      to: { x: 16.5, z: 17.5, floor: -1, y: -3 },
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+
+    world.handlePlayerInteractObject(player.id, ladder.id, 1);
+
+    expect(player.currentFloor).toBe(-1);
+    expect(player.effectiveY).toBe(-3);
+  });
+
+  test('ladder link rejects blocked destination floors', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('viewer', 1, 0);
+    player.position.x = 18.5;
+    player.position.y = 19.5;
+    player.effectiveY = 0;
+    const ladder = new WorldObject(ladderDef, 18.5, 18.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 18.5, z: 19.5, floor: 0, y: 0 },
+      to: { x: 18.5, z: 19.5, floor: 1, y: 2.7 },
+    }];
+    player.visibleEntityIds.add(ladder.id);
+    world.players.set(player.id, player);
+    world.worldObjects.set(ladder.id, ladder);
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      isTileBlockedOnFloor: (x: number, z: number, floor: number) => floor === 1 && x === 18 && z === 19,
+    });
+
+    world.handlePlayerInteractObject(player.id, ladder.id, 0);
+
+    expect(player.currentFloor).toBe(0);
+    expect(player.effectiveY).toBe(0);
+  });
+
+  test('blocked ladder landing hides cross-floor ladder targetability', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('viewer', 1, 1);
+    player.position.x = 20.5;
+    player.position.y = 21.5;
+    player.effectiveY = 2.7;
+    const ladder = new WorldObject(ladderDef, 20.5, 20.5, 'kcmap', 0, 0);
+    ladder.verticalLinks = [{
+      from: { x: 20.5, z: 21.5, floor: 0, y: 0 },
+      to: { x: 20.5, z: 21.5, floor: 1, y: 2.7 },
+    }];
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      isTileBlockedOnFloor: (x: number, z: number, floor: number) => floor === 0 && x === 20 && z === 21,
+    });
+
+    expect(world.canPlayerTargetObject(player, ladder)).toBe(false);
   });
 
   test('tick transitions promote a player whose server-authored height reaches an upper texture-plane floor', () => {

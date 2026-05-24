@@ -1,4 +1,4 @@
-import type { PlacedObjectInteraction, WorldObjectDef } from '@projectrs/shared';
+import type { PlacedObjectInteraction, PlacedObjectVerticalLink, WorldObjectDef } from '@projectrs/shared';
 
 let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
 
@@ -36,6 +36,8 @@ export class WorldObject {
   interactions?: PlacedObjectInteraction[];
   /** Per-instance transition override from editor trigger data */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
+  /** Explicit vertical movement endpoints for ladder-like objects. */
+  verticalLinks?: PlacedObjectVerticalLink[];
   /** Exact local tile offsets valid for using this object. Overrides side mask. */
   interactionTiles?: { x: number; z: number }[];
   /** Local-frame perimeter bitmask of valid interaction tiles.

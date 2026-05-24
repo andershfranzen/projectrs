@@ -208,7 +208,7 @@ export class EntityManager {
   }
 
   private groundItemTileKey(x: number, z: number, floor: number): string {
-    return `${Math.max(0, Math.floor(floor))},${Math.floor(x)},${Math.floor(z)}`;
+    return `${Math.floor(floor)},${Math.floor(x)},${Math.floor(z)}`;
   }
 
   private sortGroundItemStackForDisplay(stack: GroundItemStackEntry[]): GroundItemStackEntry[] {
@@ -331,7 +331,7 @@ export class EntityManager {
 
   createGroundItem(groundItemId: number, itemId: number, quantity: number, x: number, z: number, floor: number = 0, y?: number): void {
     const previous = this.groundItems.get(groundItemId);
-    const safeFloor = Math.max(0, Math.floor(floor));
+    const safeFloor = Math.floor(floor);
     const previousTileKey = previous ? this.groundItemTileKey(previous.x, previous.z, previous.floor) : null;
     const nextTileKey = this.groundItemTileKey(x, z, safeFloor);
     this.groundItems.set(groundItemId, { id: groundItemId, itemId, quantity, x, z, floor: safeFloor, y: y ?? this.getHeight(x, z, safeFloor, 0) });

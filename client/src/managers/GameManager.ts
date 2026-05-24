@@ -336,7 +336,7 @@ export class GameManager {
 
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
-  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[] }> = new Map();
+  private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
@@ -1495,7 +1495,7 @@ export class GameManager {
   }
 
   private blockedObjectKey(floor: number, tileX: number, tileZ: number): string {
-    return `${Math.max(0, Math.floor(floor))},${Math.floor(tileX)},${Math.floor(tileZ)}`;
+    return `${Math.floor(floor)},${Math.floor(tileX)},${Math.floor(tileZ)}`;
   }
 
   private setObjectTilesBlocked(x: number, z: number, def: WorldObjectDef, blocked: boolean, floor: number = 0): void {
@@ -1732,13 +1732,12 @@ export class GameManager {
   }
 
   private isWorldObjectOnCurrentInteractionFloor(
-    data: { defId: number; x: number; z: number; floor: number },
+    data: { defId: number; x: number; z: number; floor: number; ladderActionMask?: number },
     def: WorldObjectDef | undefined | null = this.objectDefsCache.get(data.defId),
   ): boolean {
     if (data.floor === this.currentFloor) return true;
     if (def?.category !== 'ladder') return false;
-    const actions = this.ladderActionsForObject(data);
-    return actions.includes('Climb-up') || actions.includes('Climb-down');
+    return (data.ladderActionMask ?? 0) !== 0;
   }
 
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
@@ -2422,7 +2421,7 @@ export class GameManager {
 
       const hasAppearance = v.length >= 12 && v[5] >= 0;
       const syncCombatLevel = v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
-      const floor = v.length >= 14 ? Math.max(0, v[13] ?? 0) : 0;
+      const floor = v.length >= 14 ? Math.floor(v[13] ?? 0) : 0;
       const y = v.length >= 15 ? (v[14] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       const syncAppearance: PlayerAppearance | null = hasAppearance ? {
         shirtColor: v[5], pantsColor: v[6], shoesColor: v[7], hairColor: v[8], beltColor: v[9], skinColor: v[10],
@@ -2614,7 +2613,7 @@ export class GameManager {
       const [entityId, npcDefId, x10, z10, health, maxHealth] = v;
       const x = x10 / 10;
       const z = z10 / 10;
-      const floor = v.length >= 7 ? Math.max(0, v[6] ?? 0) : 0;
+      const floor = v.length >= 7 ? Math.floor(v[6] ?? 0) : 0;
       const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
 
       this.entities.npcDefs.set(entityId, npcDefId);
@@ -2708,7 +2707,7 @@ export class GameManager {
 
       const x = x10 / 10;
       const z = z10 / 10;
-      const floor = v.length >= 6 ? Math.max(0, v[5] ?? 0) : 0;
+      const floor = v.length >= 6 ? Math.floor(v[5] ?? 0) : 0;
       const y = v.length >= 7 ? (v[6] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       this.entities.createGroundItem(groundItemId, itemId, quantity, x, z, floor, y);
     });
@@ -2922,7 +2921,7 @@ export class GameManager {
       const x = x10 / 10;
       const z = z10 / 10;
       const isDepleted = depleted === 1;
-      const floor = v.length >= 10 ? Math.max(0, v[7] ?? 0) : 0;
+      const floor = v.length >= 10 ? Math.floor(v[7] ?? 0) : 0;
       const y = v.length >= 10 ? (v[8] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       const explicitTileCount = v.length >= 10 ? v[9] ?? 0 : v[7] ?? 0;
       const explicitStart = v.length >= 10 ? 10 : 8;
@@ -2936,6 +2935,7 @@ export class GameManager {
       const doorOpenDirectionRaw = v[explicitStart + count * 2];
       const openDirection: -1 | 1 = doorOpenDirectionRaw === 1 ? 1 : -1;
       const locked = v[explicitStart + count * 2 + 1] === 1;
+      const ladderActionMask = v[explicitStart + count * 2 + 2];
 
       // Detect a state transition on a door we already know about. This fires
       // on chunk re-entry: we left range, the door state changed (someone
@@ -2962,6 +2962,7 @@ export class GameManager {
         openDirection,
         locked,
         interactionTiles: interactionTiles.length ? interactionTiles : undefined,
+        ladderActionMask: Number.isFinite(ladderActionMask) ? ladderActionMask : undefined,
       });
 
       const def = this.objectDefsCache.get(objectDefId);
@@ -4292,11 +4293,43 @@ export class GameManager {
     if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return [];
     if (!def || (data.depleted && def.category !== 'door')) return [];
 
+    if (def.category === 'ladder') return this.getLadderInteractionOptions(objectEntityId, def, data);
+
     return this.actionsForInstance(def, data.depleted, data).map((actionName, actionIdx) => ({
       label: `${actionName} ${def.name}`,
       primary: actionName === 'Use-quickly' ? false : undefined,
       action: () => this.interactObject(objectEntityId, actionIdx),
     }));
+  }
+
+  private getLadderInteractionOptions(
+    objectEntityId: number,
+    def: WorldObjectDef,
+    data: { ladderActionMask?: number },
+  ): InteractionOption[] {
+    const mask = data.ladderActionMask ?? 0;
+    const options: InteractionOption[] = [];
+    def.actions.forEach((actionName, actionIdx) => {
+      const available =
+        actionName === 'Examine'
+        || (actionName === 'Climb-down' && (mask & 1) !== 0)
+        || (actionName === 'Climb-up' && (mask & 2) !== 0);
+      if (!available) return;
+      options.push({
+        label: `${actionName} ${def.name}`,
+        action: () => this.interactObject(objectEntityId, actionIdx),
+      });
+    });
+    return options;
+  }
+
+  private primaryLadderActionIndex(def: WorldObjectDef, data: { ladderActionMask?: number }): number {
+    const mask = data.ladderActionMask ?? 0;
+    const upIdx = def.actions.indexOf('Climb-up');
+    const downIdx = def.actions.indexOf('Climb-down');
+    if ((mask & 2) !== 0 && upIdx >= 0) return upIdx;
+    if ((mask & 1) !== 0 && downIdx >= 0) return downIdx;
+    return -1;
   }
 
   private runInteractionOption(option: InteractionOption, clientX: number, clientY: number): void {
@@ -5275,7 +5308,10 @@ export class GameManager {
         }
       }
 
-      this.interactObject(objectEntityId, 0);
+      const actionIndex = def.category === 'ladder'
+        ? this.primaryLadderActionIndex(def, data)
+        : 0;
+      if (actionIndex >= 0) this.interactObject(objectEntityId, actionIndex);
     }
   }
 
@@ -7533,36 +7569,9 @@ export class GameManager {
       if (!depleted && data?.locked) return DOOR_ACTIONS_LOCKED_CLIENT;
       return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
     }
-    if (def.category === 'ladder') return this.ladderActionsForObject(data);
+    if (def.category === 'ladder') return def.actions;
     if (depleted) return [];
     return def.actions;
-  }
-
-  private ladderActionsForObject(data?: { x: number; z: number }): readonly string[] {
-    if (!data) return ['Examine'];
-    const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
-    const positions = [
-      { x: Math.floor(data.x) + 0.5, z: Math.floor(data.z) + 0.5 },
-      { x: Math.floor(data.x) + 0.5, z: Math.floor(data.z) - 0.5 },
-      { x: Math.floor(data.x) + 0.5, z: Math.floor(data.z) + 1.5 },
-      { x: Math.floor(data.x) - 0.5, z: Math.floor(data.z) + 0.5 },
-      { x: Math.floor(data.x) + 1.5, z: Math.floor(data.z) + 0.5 },
-    ];
-    const heights: number[] = [];
-    for (const pos of positions) {
-      for (const height of this.chunkManager.getWalkableHeightsAt(pos.x, pos.z)) {
-        if (!heights.some(existing => Math.abs(existing - height) < 0.1)) {
-          heights.push(height);
-        }
-      }
-    }
-    const hasUp = heights.some(height => height > playerY + 0.8);
-    const hasDown = heights.some(height => height < playerY - 0.8);
-    const actions: string[] = [];
-    if (hasDown) actions.push('Climb-down');
-    if (hasUp) actions.push('Climb-up');
-    actions.push('Examine');
-    return actions;
   }
 
   private isWorldObjectInteractable(def: WorldObjectDef | undefined | null, depleted: boolean): boolean {

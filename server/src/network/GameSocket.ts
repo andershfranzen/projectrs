@@ -893,12 +893,11 @@ function completeGameSocketLogin(
     player.quests = saved.quests;
     player.renown = saved.renown;
     player.currentMapLevel = mapLevel; // use validated mapLevel, not raw saved value
-    // Clamp floor to the supported range. A corrupted DB row could carry a
-    // floor of 99 or NaN — both would defeat the floor recovery loop below
-    // (which only iterates 0..3) and leave the player suspended above ground.
+    // Clamp floor to a sane signed range. Floors are signed: negative floors
+    // are valid for basements/caves, 0 is ground, positive floors are upstairs.
     const savedFloor = saved.floor;
     player.currentFloor = (typeof savedFloor === 'number' && isFinite(savedFloor))
-      ? Math.max(0, Math.min(3, Math.floor(savedFloor)))
+      ? Math.max(-10, Math.min(10, Math.floor(savedFloor)))
       : 0;
     player.reportedY = saved.y; // restore visual height for spawn
     player.syncHealthFromSkills();
@@ -922,7 +921,11 @@ function completeGameSocketLogin(
     const tz = Math.floor(player.position.y);
     if (map.isTileBlockedOnFloor(tx, tz, player.currentFloor)) {
       let recovered = false;
-      for (const f of [0, 1, 2, 3]) {
+      const knownFloors = typeof map.getKnownFloors === 'function'
+        ? map.getKnownFloors()
+        : [0, -1, 1, -2, 2, -3, 3];
+      const floorsToTry = [...new Set([0, ...knownFloors, -1, 1, -2, 2, -3, 3])];
+      for (const f of floorsToTry) {
         if (f !== player.currentFloor && !map.isTileBlockedOnFloor(tx, tz, f)) {
           console.log(`[GameSocket] Recovering "${username}": saved floor ${player.currentFloor} blocked at (${tx},${tz}), switching to floor ${f}`);
           player.currentFloor = f;
@@ -939,7 +942,7 @@ function completeGameSocketLogin(
         player.currentFloor = 0;
       }
     } else if (
-      player.currentFloor > 0
+      player.currentFloor !== 0
       && !map.isTileBlockedOnFloor(tx, tz, 0)
       && !savedFloorMatchesReportedY(map, player.position.x, player.position.y, player.currentFloor, player.reportedY)
     ) {

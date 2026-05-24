@@ -194,4 +194,22 @@ describe('NPC interaction reachability', () => {
 
     expect(processNpcCombat(npc, player, new Map())).not.toBeNull();
   });
+
+  test('NPC first-retaliation cooldown keeps ticking while chasing', () => {
+    const player = new Player('archer', 14.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    npc.combatTarget = player;
+    npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
+
+    expect(processNpcCombat(npc, player, new Map())).toBeNull();
+    expect(npc.attackCooldown).toBe(1);
+
+    expect(processNpcCombat(npc, player, new Map())).toBeNull();
+    expect(npc.attackCooldown).toBe(0);
+
+    player.position.x = 9.5;
+    const hit = processNpcCombat(npc, player, new Map());
+    expect(hit?.attackerId).toBe(npc.id);
+    expect(npc.attackCooldown).toBe(npc.attackSpeed);
+  });
 });

@@ -4807,6 +4807,7 @@ let paintBrushRadius = 1
       if (obj.userData.lockedMessage) out.lockedMessage = obj.userData.lockedMessage
       if (Number.isInteger(obj.userData.altarTier) && obj.userData.altarTier > 1) out.altarTier = obj.userData.altarTier
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
+      if (obj.userData.verticalLinks?.length) out.verticalLinks = JSON.parse(JSON.stringify(obj.userData.verticalLinks))
       if (obj.userData.interactionTiles?.length) out.interactionTiles = JSON.parse(JSON.stringify(obj.userData.interactionTiles))
       if (obj.userData.interactionSides) out.interactionSides = obj.userData.interactionSides | 0
       return out
@@ -4860,6 +4861,7 @@ let paintBrushRadius = 1
       if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
       if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+      if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const layer = layers.find((l) => l.id === model.userData.layerId)
@@ -5077,6 +5079,7 @@ let paintBrushRadius = 1
       if (placed.examineText) model.userData.examineText = placed.examineText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+      if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
       if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
       const _layer = layers.find((l) => l.id === model.userData.layerId)
@@ -5790,6 +5793,7 @@ let paintBrushRadius = 1
     if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
     if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
     if (placed.trigger) model.userData.trigger = { ...placed.trigger }
+    if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
     if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
     if (placed.interactionSides) model.userData.interactionSides = placed.interactionSides | 0
     const _importLayer = layers.find((l) => l.id === model.userData.layerId)
