@@ -222,6 +222,15 @@ export class World {
     return false;
   }
 
+  getActivePlayerByAccountId(accountId: number): Player | undefined {
+    for (const [, player] of this.players) {
+      if (player.accountId === accountId && !player.disconnected && !player.requestIdleLogout) {
+        return player;
+      }
+    }
+    return undefined;
+  }
+
   getOnlinePlayerCount(): number {
     let count = 0;
     for (const [, player] of this.players) {

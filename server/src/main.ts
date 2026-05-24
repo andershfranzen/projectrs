@@ -8,6 +8,7 @@ import { World } from './World';
 import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
+import { audit } from './Audit';
 
 // --- Chunked object storage helpers ---
 
@@ -1407,6 +1408,29 @@ function requiresAuthenticatedJsonAsset(pathname: string): boolean {
   return pathname === '/assets/assets.json' || pathname === '/assets/textures/textures.json';
 }
 
+function recordGameplayMapDataFetch(
+  session: NonNullable<ReturnType<typeof getBoundBearerSession>>,
+  mapPath: string,
+  req: Request,
+  server: { requestIP(req: Request): { address: string } | null },
+): void {
+  const player = world.getActivePlayerByAccountId(session.accountId);
+  const burst = player?.botStats?.recordMapDataFetch(mapPath);
+  if (!burst) return;
+  audit({
+    type: 'map_data.scan',
+    tick: world.getCurrentTick(),
+    accountId: session.accountId,
+    details: {
+      mapPath,
+      ip: requestClientIp(req, server),
+      requests: burst.requests,
+      uniqueFiles: burst.uniqueFiles,
+      sampleFiles: burst.sampleFiles,
+    },
+  });
+}
+
 // Clean expired sessions every 10 minutes
 setInterval(() => db.cleanExpiredSessions(), 10 * 60 * 1000);
 
@@ -2681,6 +2705,7 @@ const server = Bun.serve<SocketData>({
     if (url.pathname.startsWith('/maps/')) {
       const mapPath = url.pathname.slice(6); // remove '/maps/'
       let boundMapSession: ReturnType<typeof getBoundBearerSession> = null;
+      const gameplayMapDataPath = isGameplayMapDataPath(mapPath);
       // Refuse to serve backup snapshots. These contain prior map states which
       // an attacker could enumerate (ISO timestamps are predictable) to find
       // old object placements, NPC spawns, or interim editor saves. Backups
@@ -2688,9 +2713,10 @@ const server = Bun.serve<SocketData>({
       if (mapPath.includes('/backups/') || mapPath.endsWith('/backups')) {
         return new Response('Forbidden', { status: 403 });
       }
-      if (isProductionLike() && isGameplayMapDataPath(mapPath)) {
+      if (gameplayMapDataPath) {
         boundMapSession = getBoundBearerSession(req);
-        if (!boundMapSession) return new Response('Unauthorized', { status: 401 });
+        if (isProductionLike() && !boundMapSession) return new Response('Unauthorized', { status: 401 });
+        if (boundMapSession) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
       }
       // Symlink-safe path resolution
       const filePath = resolvePossiblyMissingWithinBase(MAPS_DIR, mapPath);

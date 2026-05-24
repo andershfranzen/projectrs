@@ -188,6 +188,41 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
+  test('normal map streaming volume does not flag as map data scraping', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    for (let i = 0; i < 75; i++) {
+      expect(stats.recordMapDataFetch(`kcmap/objects/chunk_${i % 15}_${Math.floor(i / 15)}.json`, 10_000 + i)).toBeNull();
+    }
+
+    const summary = stats.computeSummary({});
+    expect(summary.sessionMapDataRequests).toBe(75);
+    expect(summary.sessionUniqueMapDataFiles).toBe(75);
+    expect(summary.sessionMapDataScanBursts).toBe(0);
+    expect(summary.flags).not.toContain('mapDataScrape');
+    expect(summary.riskLevel).toBe('low');
+  });
+
+  test('rapid full-map chunk scraping is hard review evidence', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+    let burst: ReturnType<BotStats['recordMapDataFetch']> = null;
+
+    for (let i = 0; i < 110; i++) {
+      burst = stats.recordMapDataFetch(`kcmap/tiles/chunk_${i % 22}_${Math.floor(i / 22)}.json`, 10_000 + i);
+    }
+
+    const summary = stats.computeSummary({});
+    expect(burst).not.toBeNull();
+    expect(summary.sessionMapDataRequests).toBe(110);
+    expect(summary.sessionUniqueMapDataFiles).toBe(110);
+    expect(summary.sessionMapDataScanBursts).toBe(1);
+    expect(summary.flags).toContain('mapDataScrape');
+    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
+    expect(summary.riskLevel).toBe('medium');
+  });
+
   test('risk profile escalates when multiple calibrated bot signals stack', () => {
     const stats = BotStats.empty();
     stats.onLogin({});

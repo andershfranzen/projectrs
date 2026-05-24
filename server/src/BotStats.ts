@@ -50,6 +50,16 @@ const MIN_NO_IDLE_ACTIVE_EVENTS = 400;
 const MIN_MARATHON_NO_IDLE_SESSION_MINUTES = 360;
 const MIN_MARATHON_NO_IDLE_ACTIVE_EVENTS = 800;
 const MIN_POST_DEATH_ROUTE_MOVES = 3;
+const MAX_MAP_DATA_FILES = 256;
+const MAP_DATA_SCAN_WINDOW_MS = 60_000;
+const MAP_DATA_SCAN_UNIQUE_THRESHOLD = 110;
+const MAP_DATA_SCAN_REQUEST_THRESHOLD = 160;
+
+export interface MapDataScanBurst {
+  requests: number;
+  uniqueFiles: number;
+  sampleFiles: string[];
+}
 
 type SuspiciousPacketClass = 'protocol' | 'rateLimit' | 'automation' | 'state' | 'stale';
 
@@ -93,6 +103,9 @@ export interface SessionSummary {
   sessionPathTruncations: number;
   sessionPlayerDeaths: number;
   sessionPostDeathMoves: number;
+  sessionMapDataRequests: number;
+  sessionUniqueMapDataFiles: number;
+  sessionMapDataScanBursts: number;
   sessionChats: number;
   sessionActivityEvents: number;
   sessionDetailedActivityEvents: number;
@@ -203,6 +216,8 @@ export class BotStats {
   sessionPathTruncations: number = 0;
   sessionPlayerDeaths: number = 0;
   sessionPostDeathMoves: number = 0;
+  sessionMapDataRequests: number = 0;
+  sessionMapDataScanBursts: number = 0;
   sessionChats: number = 0;
   sessionActivityEvents: number = 0;
   sessionDetailedActivityEvents: number = 0;
@@ -220,6 +235,7 @@ export class BotStats {
   sessionSuspiciousPackets: number = 0;
   sessionPathDestinations: Map<string, number> = new Map();
   sessionPostDeathDestinations: Map<string, number> = new Map();
+  sessionMapDataFiles: Map<string, number> = new Map();
   sessionActionSignatures: Map<string, number> = new Map();
   sessionSuspiciousPacketReasons: Map<string, number> = new Map();
   cursorCells: Map<string, number> = new Map();
@@ -235,6 +251,10 @@ export class BotStats {
   private lastCoupledActivityAt: number | null = null;
   private lastActiveGameplayAt: number | null = null;
   private awaitingPostDeathMovement: boolean = false;
+  private mapDataWindowStartedAt: number = Date.now();
+  private mapDataWindowRequests: number = 0;
+  private mapDataWindowFiles: Set<string> = new Set();
+  private mapDataWindowBurstRecorded: boolean = false;
   private activityHeartbeatCoupledEvents: number = 0;
   /** When the last NPC died near this player — feeds the next attack's
    *  reaction time delta if it lands within 5 seconds. */
@@ -339,6 +359,8 @@ export class BotStats {
     this.sessionPathTruncations = 0;
     this.sessionPlayerDeaths = 0;
     this.sessionPostDeathMoves = 0;
+    this.sessionMapDataRequests = 0;
+    this.sessionMapDataScanBursts = 0;
     this.sessionChats = 0;
     this.sessionActivityEvents = 0;
     this.sessionDetailedActivityEvents = 0;
@@ -356,6 +378,7 @@ export class BotStats {
     this.sessionSuspiciousPackets = 0;
     this.sessionPathDestinations.clear();
     this.sessionPostDeathDestinations.clear();
+    this.sessionMapDataFiles.clear();
     this.sessionActionSignatures.clear();
     this.sessionSuspiciousPacketReasons.clear();
     this.cursorCells.clear();
@@ -372,6 +395,10 @@ export class BotStats {
     this.lastCoupledActivityAt = null;
     this.lastActiveGameplayAt = null;
     this.awaitingPostDeathMovement = false;
+    this.mapDataWindowStartedAt = now;
+    this.mapDataWindowRequests = 0;
+    this.mapDataWindowFiles.clear();
+    this.mapDataWindowBurstRecorded = false;
     this.activityHeartbeatCoupledEvents = 0;
     this.pendingReactionStart = null;
     this.xpBaseline.clear();
@@ -452,6 +479,39 @@ export class BotStats {
   recordPlayerDeath(): void {
     this.sessionPlayerDeaths++;
     this.awaitingPostDeathMovement = true;
+  }
+
+  recordMapDataFetch(mapPath: string, nowMs: number = Date.now()): MapDataScanBurst | null {
+    const key = sanitizeSignaturePart(mapPath, 96);
+    this.sessionMapDataRequests++;
+    this.bumpCappedMap(this.sessionMapDataFiles, key, MAX_MAP_DATA_FILES);
+
+    const now = Number.isFinite(nowMs) ? nowMs : Date.now();
+    if (now - this.mapDataWindowStartedAt > MAP_DATA_SCAN_WINDOW_MS) {
+      this.mapDataWindowStartedAt = now;
+      this.mapDataWindowRequests = 0;
+      this.mapDataWindowFiles.clear();
+      this.mapDataWindowBurstRecorded = false;
+    }
+    this.mapDataWindowRequests++;
+    this.mapDataWindowFiles.add(key);
+
+    if (
+      !this.mapDataWindowBurstRecorded
+      && (
+        this.mapDataWindowFiles.size >= MAP_DATA_SCAN_UNIQUE_THRESHOLD
+        || this.mapDataWindowRequests >= MAP_DATA_SCAN_REQUEST_THRESHOLD
+      )
+    ) {
+      this.mapDataWindowBurstRecorded = true;
+      this.sessionMapDataScanBursts++;
+      return {
+        requests: this.mapDataWindowRequests,
+        uniqueFiles: this.mapDataWindowFiles.size,
+        sampleFiles: [...this.mapDataWindowFiles].slice(0, 12),
+      };
+    }
+    return null;
   }
 
   private recordActiveGameplayEvent(nowMs: number): void {
@@ -624,6 +684,7 @@ export class BotStats {
     const topPathRepetition = topRatio(this.sessionPathDestinations);
     const topPostDeathDestinationRepetition = topRatio(this.sessionPostDeathDestinations);
     const topActionLoopRepetition = topRatio(this.sessionActionSignatures);
+    const sessionUniqueMapDataFiles = this.sessionMapDataFiles.size;
     const topLifetimePathRepetition = topRatio(this.pathDestinations);
     const topLifetimeActionLoopRepetition = topRatio(this.actionSignatures);
     const topCursorCellRepetition = topRatio(this.cursorCells);
@@ -767,6 +828,9 @@ export class BotStats {
     ) {
       flags.push('postDeathRouteLoop');
     }
+    if (this.sessionMapDataScanBursts > 0) {
+      flags.push('mapDataScrape');
+    }
     if (
       sessionActionSignatureCount >= MIN_ROUTE_ACTION_LOOP_SIGNATURES
       && topActionLoopRepetition !== null
@@ -890,6 +954,9 @@ export class BotStats {
       sessionPathTruncations: this.sessionPathTruncations,
       sessionPlayerDeaths: this.sessionPlayerDeaths,
       sessionPostDeathMoves: this.sessionPostDeathMoves,
+      sessionMapDataRequests: this.sessionMapDataRequests,
+      sessionUniqueMapDataFiles,
+      sessionMapDataScanBursts: this.sessionMapDataScanBursts,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketClasses,
@@ -939,6 +1006,9 @@ export class BotStats {
       sessionPathTruncations: this.sessionPathTruncations,
       sessionPlayerDeaths: this.sessionPlayerDeaths,
       sessionPostDeathMoves: this.sessionPostDeathMoves,
+      sessionMapDataRequests: this.sessionMapDataRequests,
+      sessionUniqueMapDataFiles,
+      sessionMapDataScanBursts: this.sessionMapDataScanBursts,
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
       sessionDetailedActivityEvents: this.sessionDetailedActivityEvents,
@@ -1113,6 +1183,9 @@ interface BotRiskInput {
   sessionPathTruncations: number;
   sessionPlayerDeaths: number;
   sessionPostDeathMoves: number;
+  sessionMapDataRequests: number;
+  sessionUniqueMapDataFiles: number;
+  sessionMapDataScanBursts: number;
   sessionActivityEvents: number;
   sessionDetailedActivityEvents: number;
   sessionLegacyActivityEvents: number;
@@ -1224,6 +1297,10 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     12,
     `repeated post-death route destination (${input.sessionPostDeathMoves}/${input.sessionPlayerDeaths}, top ${ratioLabel(input.topPostDeathDestinationRepetition)})`,
   );
+  if (flagSet.has('mapDataScrape')) add(
+    34,
+    `rapid map-data scrape (${input.sessionUniqueMapDataFiles} files, ${input.sessionMapDataRequests} requests, ${input.sessionMapDataScanBursts} burst)`,
+  );
   if (flagSet.has('routeActionLoop')) add(10, `repeated route/action loop (${ratioLabel(input.topActionLoopRepetition)})`);
   if (flagSet.has('lifetimePathConcentration')) add(
     input.topLifetimePathRepetition !== null && input.topLifetimePathRepetition >= 0.2 ? 14 : 8,
@@ -1310,6 +1387,7 @@ function hasHardBotEvidence(flagSet: Set<string>): boolean {
     || flagSet.has('protocolPackets')
     || flagSet.has('rateLimitPackets')
     || flagSet.has('lifetimeHardInvalidPackets')
+    || flagSet.has('mapDataScrape')
     || flagSet.has('xpVelocity');
 }
 
