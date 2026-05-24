@@ -632,7 +632,7 @@ function findPlayerByUsername(username: string, world: World) {
 
 export function handleChatSocketClose(
   ws: ServerWebSocket<ChatSocketData>,
-  world: World
+  _world: World
 ): void {
   chatSockets.delete(ws);
 }

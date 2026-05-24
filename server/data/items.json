@@ -388,6 +388,24 @@
     "icon": "mithril_ore_153.png"
   },
   {
+    "id": 46,
+    "name": "Adamantite Ore",
+    "description": "A lump of adamantite ore.",
+    "stackable": false,
+    "equippable": false,
+    "value": 96,
+    "icon": "adamantite_ore_154.png"
+  },
+  {
+    "id": 47,
+    "name": "Runite Ore",
+    "description": "A lump of runite ore.",
+    "stackable": false,
+    "equippable": false,
+    "value": 192,
+    "icon": "runite_ore_409.png"
+  },
+  {
     "id": 48,
     "name": "Steel Bar",
     "description": "A bar of steel.",
@@ -481,7 +499,7 @@
   {
     "id": 56,
     "name": "Black Bronze Pickaxe",
-    "description": "A adamantite pickaxe for mining.",
+    "description": "A black bronze pickaxe for mining.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -493,7 +511,6 @@
     "toolType": "pickaxe",
     "toolLevel": 35,
     "toolBonus": 4,
-    "icon": "Black Bronze_Pickaxe_1261.png",
     "model": "/assets/equipment/Tools/BlackBronzePickaxe.glb"
   },
   {
@@ -1315,7 +1332,6 @@
     "equippable": true,
     "equipSlot": "weapon",
     "value": 360,
-    "icon": "Black Bronze_dagger_65.png",
     "model": "/assets/equipment/weapon/BlackBronzeDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
@@ -1333,7 +1349,6 @@
     "equippable": true,
     "equipSlot": "weapon",
     "value": 360,
-    "icon": "Black Bronze_Short_Sword_69.png",
     "model": "/assets/equipment/weapon/BlackBronzeSword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
@@ -1351,7 +1366,6 @@
     "equippable": true,
     "equipSlot": "weapon",
     "value": 360,
-    "icon": "Black Bronze_Mace_97.png",
     "model": "/assets/equipment/weapon/BlackBronzeMace.glb",
     "weaponStyle": "crush",
     "attackSpeed": 4,
@@ -1368,7 +1382,6 @@
     "equippable": true,
     "equipSlot": "weapon",
     "value": 720,
-    "icon": "Black Bronze_Scimitar_86.png",
     "model": "/assets/equipment/weapon/BlackBronzeScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
@@ -1385,7 +1398,6 @@
     "equippable": true,
     "equipSlot": "weapon",
     "value": 1080,
-    "icon": "Black Bronze_battle_Axe_92.png",
     "model": "/assets/equipment/weapon/BlackBronzeBattleaxe.glb",
     "weaponStyle": "crush",
     "attackSpeed": 6,
@@ -1403,7 +1415,6 @@
     "equippable": true,
     "equipSlot": "weapon",
     "value": 1080,
-    "icon": "Black Bronze_2-handed_Sword_80.png",
     "model": "/assets/equipment/weapon/BlackBronze2hsword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 7,
@@ -1421,7 +1432,6 @@
     "equippable": true,
     "equipSlot": "head",
     "value": 360,
-    "icon": "Medium_Black Bronze_Helmet_107.png",
     "model": "/assets/equipment/head/BlackBronzeMedHelm.glb",
     "stabDefence": 12,
     "slashDefence": 16,
@@ -1437,7 +1447,6 @@
     "equippable": true,
     "equipSlot": "head",
     "value": 720,
-    "icon": "Large_Black Bronze_Helmet_111.png",
     "model": "/assets/equipment/head/BlackBronzeFullHelm.glb",
     "stabDefence": 20,
     "slashDefence": 24,
@@ -1453,7 +1462,6 @@
     "equippable": true,
     "equipSlot": "shield",
     "value": 720,
-    "icon": "Black Bronze_Square_Shield_127.png",
     "model": "/assets/equipment/shield/BlackBronzeSquareShield.glb",
     "stabDefence": 16,
     "slashDefence": 20,
@@ -1470,7 +1478,6 @@
     "equippable": true,
     "equipSlot": "body",
     "value": 1080,
-    "icon": "Black Bronze_Chain_Mail_Body_116.png",
     "model": "/assets/equipment/body/BlackBronzeCuirass.glb",
     "stabDefence": 32,
     "slashDefence": 40,
@@ -1488,7 +1495,6 @@
     "equippable": true,
     "equipSlot": "shield",
     "value": 1080,
-    "icon": "Black Bronze_Kite_Shield_131.png",
     "model": "/assets/equipment/shield/BlackBronzeKiteshield.glb",
     "stabDefence": 28,
     "slashDefence": 32,
@@ -1505,7 +1511,6 @@
     "equippable": true,
     "equipSlot": "legs",
     "value": 1080,
-    "icon": "Black Bronze_Plate_Mail_Legs_123.png",
     "model": "/assets/equipment/legs/BlackBronzePlatelegs.glb",
     "stabDefence": 24,
     "slashDefence": 28,
@@ -1522,7 +1527,6 @@
     "equippable": true,
     "equipSlot": "body",
     "value": 1800,
-    "icon": "Black Bronze_Plate_Mail_Body_120.png",
     "model": "/assets/equipment/body/BlackBronzePlatebody.glb",
     "stabDefence": 56,
     "slashDefence": 64,
@@ -2032,11 +2036,7 @@
     "description": "A freshly picked potato.",
     "stackable": false,
     "equippable": false,
-<<<<<<< HEAD
     "value": 3,
-=======
-    "value": 5,
->>>>>>> 747bdc0 (Wire up iron, steel, and black bronze axe models)
     "model": "/assets/models/Potato.glb"
   },
   {
@@ -2045,7 +2045,6 @@
     "description": "A freshly picked cauliflower.",
     "stackable": false,
     "equippable": false,
-<<<<<<< HEAD
     "value": 3,
     "model": "/assets/models/CauliflowerPlant.glb"
   },
@@ -2067,9 +2066,5 @@
     "equippable": false,
     "value": 3,
     "model": "/assets/models/grain.glb"
-=======
-    "value": 8,
-    "model": "/assets/models/Cauliflower.glb"
->>>>>>> 747bdc0 (Wire up iron, steel, and black bronze axe models)
   }
 ]

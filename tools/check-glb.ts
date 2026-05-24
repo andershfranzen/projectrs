@@ -17,7 +17,7 @@
  */
 
 import { readFileSync, statSync, readdirSync } from 'node:fs';
-import { join, basename, extname } from 'node:path';
+import { join, extname } from 'node:path';
 
 type Issue = { level: 'fail' | 'warn' | 'info'; msg: string };
 

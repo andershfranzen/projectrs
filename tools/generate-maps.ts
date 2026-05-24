@@ -33,12 +33,6 @@ const GROUND_TYPE: Record<number, string> = {
   [WOOD]:  'path',
 };
 
-// Wall edge bitmask constants (matching WallEdge in shared/types.ts)
-const WALL_N = 1;
-const WALL_E = 2;
-const WALL_S = 4;
-const WALL_W = 8;
-
 // ---------- KC tile helper ----------
 
 function tile(ground: string, waterPainted = false) {
@@ -49,16 +43,6 @@ function tile(ground: string, waterPainted = false) {
     textureIdB: null, textureRotationB: 0, textureScaleB: 1,
     waterPainted,
   };
-}
-
-// Seeded pseudo-random for reproducible generation
-let _seed = 12345;
-function seededRandom(): number {
-  _seed = (_seed * 1103515245 + 12345) & 0x7fffffff;
-  return _seed / 0x7fffffff;
-}
-function resetSeed(s: number = 12345): void {
-  _seed = s;
 }
 
 // Type for the KC map file format

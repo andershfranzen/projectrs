@@ -48,8 +48,6 @@ async function main() {
 
   // Get vertex data
   const posAccessor = skinPrim.getAttribute('POSITION');
-  const normAccessor = skinPrim.getAttribute('NORMAL');
-  const uvAccessor = skinPrim.getAttribute('TEXCOORD_0');
   const jointsAccessor = skinPrim.getAttribute('JOINTS_0');
   const weightsAccessor = skinPrim.getAttribute('WEIGHTS_0');
   const indicesAccessor = skinPrim.getIndices();

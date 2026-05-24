@@ -2,7 +2,6 @@ import { Scene } from '@babylonjs/core/scene';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import type { Node } from '@babylonjs/core/node';
-import { Plane } from '@babylonjs/core/Maths/math.plane';
 import { PointerEventTypes } from '@babylonjs/core/Events/pointerEvents';
 import '@babylonjs/core/Culling/ray';
 import type { ChunkManager } from '../rendering/ChunkManager';
@@ -266,7 +265,7 @@ export class InputManager {
     this.onObjectClick = callback;
   }
 
-  setIndoorCheck(check: () => { indoors: boolean; playerY: number }): void {
+  setIndoorCheck(_check: () => { indoors: boolean; playerY: number }): void {
     // Kept for API compatibility — indoor handling is now implicit via playerY
   }
 }

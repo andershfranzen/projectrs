@@ -26,7 +26,6 @@ export class ShopPanel {
   private itemDefs: Map<number, ItemDef>;
   private items: ShopItem[] = [];
   private visible: boolean = false;
-  private shopNpcId: number = -1;
   private gridEl: HTMLDivElement | null = null;
   private titleEl: HTMLSpanElement | null = null;
   private onCloseCallback: (() => void) | null = null;
@@ -81,9 +80,8 @@ export class ShopPanel {
     });
   }
 
-  show(npcEntityId: number, items: ShopItem[], shopTitle?: string): void {
+  show(_npcEntityId: number, items: ShopItem[], shopTitle?: string): void {
     closeActiveContextMenu();
-    this.shopNpcId = npcEntityId;
     this.items = items;
     this.visible = true;
     this.container.style.display = 'flex';
@@ -94,7 +92,6 @@ export class ShopPanel {
   hide(): void {
     this.visible = false;
     this.container.style.display = 'none';
-    this.shopNpcId = -1;
     if (this.onCloseCallback) this.onCloseCallback();
   }
 

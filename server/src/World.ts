@@ -1,8 +1,8 @@
-import { TICK_RATE, CHUNK_SIZE, CHUNK_LOAD_RADIUS, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodeStringPacket } from '@projectrs/shared';
-import { addXp, levelFromXp, statRandom, npcCombatLevel, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill } from '@projectrs/shared';
+import { addXp, statRandom, npcCombatLevel, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -114,6 +114,18 @@ interface RuntimeObjectSpawn {
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
 }
+
+type NpcPathCapableMap = GameMap & {
+  findPathForNpc?: (
+    startX: number,
+    startZ: number,
+    goalX: number,
+    goalZ: number,
+    tileBlocked: (x: number, z: number) => boolean,
+    maxSearchSteps?: number,
+    wallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+  ) => { x: number; z: number }[];
+};
 
 type MutableNpcSpawn = SpawnEntry & { id?: number };
 
@@ -674,8 +686,9 @@ export class World {
     const playerWallBlocker = floor === 0
       ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
       : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
-    const findPathForPlayer = typeof (map as any).findPathForNpc === 'function'
-      ? (sx: number, sz: number, gx: number, gz: number) => (map as any).findPathForNpc(
+    const pathMap = map as NpcPathCapableMap;
+    const findPathForPlayer = typeof pathMap.findPathForNpc === 'function'
+      ? (sx: number, sz: number, gx: number, gz: number) => pathMap.findPathForNpc!(
           sx,
           sz,
           gx,
@@ -1315,7 +1328,7 @@ export class World {
   }
 
   kickAccountIfOnline(accountId: number): void {
-    for (const [id, player] of this.players) {
+    for (const player of this.players.values()) {
       if (player.accountId === accountId) {
         this.closePlayerLogoutState(player, 'Logged in from another session');
         break;
@@ -1951,13 +1964,6 @@ export class World {
     return lowest;
   }
 
-  private isNearby(player: Player, worldX: number, worldZ: number): boolean {
-    const cx = Math.floor(worldX / CHUNK_SIZE);
-    const cz = Math.floor(worldZ / CHUNK_SIZE);
-    return Math.abs(cx - player.currentChunkX) <= CHUNK_LOAD_RADIUS &&
-           Math.abs(cz - player.currentChunkZ) <= CHUNK_LOAD_RADIUS;
-  }
-
   /** Send an opcode to all players near a world position on a given map (zero-allocation) */
   private broadcastNearby(mapId: string, worldX: number, worldZ: number, opcode: ServerOpcode, ...values: number[]): void {
     const cm = this.chunkManagers.get(mapId);
@@ -2104,7 +2110,7 @@ export class World {
       for (const playerId of [...targeters]) this.clearCombatTarget(playerId);
     }
 
-      this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id);
+      this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id, EntityDeathKind.Death);
 
     const cm = this.chunkManagers.get(npc.currentMapLevel);
     if (cm) cm.removeEntity(npc.id);
@@ -2139,7 +2145,7 @@ export class World {
       player.followTargetPlayerId = -1;
     }
     for (const [, npc] of this.npcs) {
-      if (npc.combatTarget && (npc.combatTarget as any).id === playerId) {
+      if (npc.combatTarget?.id === playerId) {
         npc.combatTarget = null;
         npc.pathQueue.length = 0;
       }
@@ -2329,7 +2335,6 @@ export class World {
     const validPath: { x: number; z: number }[] = [];
     let prevX = player.position.x;
     let prevZ = player.position.y;
-    const mapId = player.currentMapLevel;
     const pFloor = player.currentFloor;
     // Total unit-tile count the client requested (sum of per-segment max
     // axial distances). Used after the validation loop to detect whether
@@ -2572,7 +2577,6 @@ export class World {
     // (3,0) cardinal would be rejected (dist 3.001) — subtle inconsistency.
     // Sized NPCs measure to nearest footprint tile so a player adjacent to
     // a 2x2 camel's east face still passes the range check.
-    const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dx = npc.position.x - player.position.x;
     const dz = npc.position.y - player.position.y;
     // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
@@ -4271,7 +4275,6 @@ export class World {
     }
 
     // Atomic: decrement bank slot, then add to inventory. Roll back on failure.
-    const beforeQty = slot.quantity;
     slot.quantity -= toWithdraw;
     if (slot.quantity <= 0) player.bank[bankSlot] = null;
 
@@ -4801,7 +4804,7 @@ export class World {
 
   private isPlayerUnderNpcAttack(playerId: number): boolean {
     for (const [, npc] of this.npcs) {
-      if (npc.combatTarget && (npc.combatTarget as any).id === playerId) return true;
+      if (npc.combatTarget?.id === playerId) return true;
     }
     return false;
   }
@@ -5174,7 +5177,7 @@ export class World {
     this.clearCombatTarget(player.id);
     this.clearPendingSpellImpactsFor(player.id);
     for (const [, npc] of this.npcs) {
-      if (npc.combatTarget && (npc.combatTarget as any).id === player.id) {
+      if (npc.combatTarget?.id === player.id) {
         npc.combatTarget = null;
         npc.pathQueue.length = 0;
       }
@@ -5195,12 +5198,6 @@ export class World {
   private otherActiveDuelSide(duel: ActiveDuel, playerId: number): ActiveDuelSide | null {
     if (duel.a.id === playerId) return duel.b;
     if (duel.b.id === playerId) return duel.a;
-    return null;
-  }
-
-  private activeDuelSide(duel: ActiveDuel, playerId: number): ActiveDuelSide | null {
-    if (duel.a.id === playerId) return duel.a;
-    if (duel.b.id === playerId) return duel.b;
     return null;
   }
 
@@ -6624,7 +6621,7 @@ export class World {
 
     // Tell observers the player died at their current tile. Mirrors the
     // NPC death broadcast — clients use this to clear the remote entity.
-    this.broadcastNearbyOnFloor(oldMapId, oldFloor, oldX, oldZ, ServerOpcode.ENTITY_DEATH, player.id);
+    this.broadcastNearbyOnFloor(oldMapId, oldFloor, oldX, oldZ, ServerOpcode.ENTITY_DEATH, player.id, EntityDeathKind.Death);
 
     // Abort any modal interface BEFORE position changes. Trade abort returns
     // items to both sides; bank close just clears the flag (contents are

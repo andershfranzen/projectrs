@@ -729,7 +729,7 @@ async function completeGameSocketHandshake(
 
 export async function handleGameSocketOpen(
   ws: ServerWebSocket<GameSocketData>,
-  world: World
+  _world: World
 ): Promise<void> {
   await installGameSocketEncryption(ws);
 }

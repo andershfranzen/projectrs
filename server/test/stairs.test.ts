@@ -56,25 +56,25 @@ describe('placed stair descent', () => {
   test('castle exterior stair rises toward the authored upper floor plane', () => {
     const map = new GameMap('kcmap');
 
-    const lower = map.getEffectiveHeightOnFloor(155.5, 156.5, 0, 0);
-    const middle = map.getEffectiveHeightOnFloor(156.5, 156.5, 0, lower);
-    const upper = map.getEffectiveHeightOnFloor(157.5, 156.5, 0, middle);
+    const lower = map.getEffectiveHeightOnFloor(219.5, 156.5, 0, 0);
+    const middle = map.getEffectiveHeightOnFloor(220.5, 156.5, 0, lower);
+    const upper = map.getEffectiveHeightOnFloor(221.5, 156.5, 0, middle);
 
     expect(lower).toBeLessThan(middle);
     expect(middle).toBeLessThan(upper);
-    expect(map.getWalkableFloorTargetsAt(158.5, 156.5).some(target => target.floor === 1)).toBe(true);
+    expect(map.getWalkableFloorTargetsAt(222.5, 156.5).some(target => target.floor === 1)).toBe(true);
   });
 
   test('height inference waits until the player steps off a placed stair ramp', () => {
     const map = new GameMap('kcmap');
-    const player = makePlayer(157.5, 156.5, 0, 2.5);
+    const player = makePlayer(221.5, 156.5, 0, 2.5);
     const { world, floorChanges } = makeHarness(map, player);
 
     world.tickTransitions();
     expect(player.currentFloor).toBe(0);
     expect(floorChanges).toEqual([]);
 
-    player.position.x = 158.5;
+    player.position.x = 222.5;
     player.position.y = 156.5;
     player.effectiveY = map.getEffectiveHeightOnFloor(player.position.x, player.position.y, 0, 2.5);
 

@@ -212,8 +212,6 @@ export class BackgroundParticles {
     const imageData = this.imageData;
     if (!ctx || !bufferCtx || !imageData) return;
 
-    const w = this.logicalW;
-    const h = this.logicalH;
     const data = imageData.data;
     for (let i = 0; i < this.heat.length; i++) {
       const heat = this.heat[i];

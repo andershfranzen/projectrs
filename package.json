@@ -19,9 +19,12 @@
     "start": "bun server/src/main.ts",
     "validate:kcmap": "bun scripts/validate-kcmap-release.ts",
     "audit:assets": "bun scripts/audit-assets.ts",
+    "audit:data": "bun scripts/audit-data.ts",
     "audit:rsc-pngs": "bun tools/audit-rsc-pngs.ts",
     "test": "bun test",
-    "typecheck": "bunx tsc --noEmit -p tsconfig.json"
+    "typecheck:app": "bunx tsc --noEmit -p tsconfig.json",
+    "typecheck:website": "bunx tsc --noEmit -p website/tsconfig.json --incremental false",
+    "typecheck": "bun run typecheck:app && bun run typecheck:website"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.3.0",

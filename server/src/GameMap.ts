@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { CHUNK_SIZE, TileType, BLOCKING_TILES, groundTypeToTileType, shouldTileRenderWater, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, type StairAssetConfig } from '@projectrs/shared';
-import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject } from '@projectrs/shared';
+import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, type StairAssetConfig } from '@projectrs/shared';
+import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, KCMapFile, KCMapData, KCTile, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 
@@ -137,22 +137,22 @@ export class GameMap {
     this.placedObjects = rawObjects.map(o => ({
       assetId: o.assetId,
       layerId: o.layerId || 'layer_0',
-      name: (o as any).name,
-      examineText: (o as any).examineText,
-      interactions: Array.isArray((o as any).interactions) ? (o as any).interactions : undefined,
-      defaultOpen: (o as any).defaultOpen === true,
-      openDirection: (o as any).openDirection === 1 ? 1 : -1,
-      locked: (o as any).locked === true,
-      keyItemId: Number.isInteger((o as any).keyItemId) ? (o as any).keyItemId : undefined,
-      consumeKey: (o as any).consumeKey === true,
-      lockedMessage: typeof (o as any).lockedMessage === 'string' ? (o as any).lockedMessage : undefined,
-      altarTier: Number.isInteger((o as any).altarTier) ? (o as any).altarTier : undefined,
+      name: o.name,
+      examineText: o.examineText,
+      interactions: Array.isArray(o.interactions) ? o.interactions : undefined,
+      defaultOpen: o.defaultOpen === true,
+      openDirection: o.openDirection === 1 ? 1 : -1,
+      locked: o.locked === true,
+      keyItemId: Number.isInteger(o.keyItemId) ? o.keyItemId : undefined,
+      consumeKey: o.consumeKey === true,
+      lockedMessage: typeof o.lockedMessage === 'string' ? o.lockedMessage : undefined,
+      altarTier: Number.isInteger(o.altarTier) ? o.altarTier : undefined,
       position: o.position,
       rotation: o.rotation,
       scale: o.scale,
       trigger: o.trigger,
-      interactionTiles: Array.isArray((o as any).interactionTiles) ? (o as any).interactionTiles : undefined,
-      interactionSides: (o as any).interactionSides,
+      interactionTiles: Array.isArray(o.interactionTiles) ? o.interactionTiles : undefined,
+      interactionSides: o.interactionSides,
     }));
 
     // Load active chunks from editor data
@@ -750,8 +750,8 @@ export class GameMap {
     const layer = this.floorLayers.get(floor);
     if (layer) {
       const idx = tz * this.width + tx;
-      const floorH = layer.floors.get(idx) ?? layer.tiles.get(idx);
-      if (floorH !== undefined) return floorH;
+      const layerHeight = layer.floors.get(idx) ?? layer.tiles.get(idx);
+      if (layerHeight !== undefined) return layerHeight;
     }
 
     return this.getInterpolatedHeight(x, z);
@@ -765,9 +765,6 @@ export class GameMap {
   private wallBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.width + x;
     const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
-    const floorH = this.floorHeights.get(idx)
-      ?? this.elevatedFloorHeights.get(idx)
-      ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
     // Open-door bypass: the door is on a wall whose base is either floor 0
     // (terrain) or an upper floor (elev). The player must be at one of
     // those levels — covers both a ground-floor door entered from outside

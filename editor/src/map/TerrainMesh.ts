@@ -7,7 +7,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import type { Scene } from '@babylonjs/core/scene'
-import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, CLIFF_R, CLIFF_G, CLIFF_B, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit } from '@projectrs/shared'
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit } from '@projectrs/shared'
 import type { RGB, GroundType, UVPoint } from '@projectrs/shared'
 import type { MapData, TexturePlane } from './MapData'
 import type { TextureEntry } from '../assets-system/TextureRegistry'
@@ -20,22 +20,6 @@ function pushVertex(vertices: number[], colors: number[], uvs: number[], x: numb
   vertices.push(x, y, z)
   colors.push(color.r, color.g, color.b, 1.0)
   uvs.push(u, v)
-}
-
-function countAdjacentGround(map: MapData, x: number, z: number, groundType: string): number {
-  let count = 0
-  const neighbors: [number, number][] = [
-    [x - 1, z],
-    [x + 1, z],
-    [x, z - 1],
-    [x, z + 1]
-  ]
-
-  for (const [nx, nz] of neighbors) {
-    if (map.getBaseGroundType(nx, nz) === groundType) count++
-  }
-
-  return count
 }
 
 function shouldRenderWater(map: MapData, x: number, z: number): boolean {
@@ -107,10 +91,6 @@ function getCornerBlendedColor(map: MapData, cornerX: number, cornerZ: number, s
   if (totalWeight === 0) return groundColor('grass', shade)
   const s = shade + noise / totalWeight
   return { r: (r / totalWeight) * s, g: (g / totalWeight) * s, b: (b / totalWeight) * s }
-}
-
-function avgColor(a: RGB, b: RGB, c: RGB): RGB {
-  return { r: (a.r + b.r + c.r) / 3, g: (a.g + b.g + c.g) / 3, b: (a.b + b.b + c.b) / 3 }
 }
 
 // --- Per-rebuild vertex cache ---

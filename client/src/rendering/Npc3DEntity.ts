@@ -409,6 +409,7 @@ export class Npc3DEntity {
   setWalkAnimation(_anim: any): void { }
   setDirectionalSprites(_sprites: any): void { }
   addAttackAnimation(_name: string, _anim: any): void { }
+  getRoot(): TransformNode | null { return this.root; }
   getMesh(): any { return this.meshes[0] ?? null; }
 
   /**

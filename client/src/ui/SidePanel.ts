@@ -50,8 +50,6 @@ export class SidePanel {
   private token: string;
   // Tabs are registered dynamically (inventory, skills, equipment, quests, good_magic, evil_magic),
   // so this is keyed by string rather than a fixed union.
-  private activeTab: string = 'inventory';
-
   // Inventory state
   private invSlots: ({ itemId: number; quantity: number } | null)[] = new Array(INVENTORY_SIZE).fill(null);
   private invSlotElements: HTMLDivElement[] = [];
@@ -1400,8 +1398,6 @@ export class SidePanel {
 	  }
 
   switchTab(tab: string): void {
-    this.activeTab = tab;
-
     for (const [key, el] of this.tabContents) {
       if (key === tab) {
         el.style.display = 'flex';

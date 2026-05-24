@@ -81,7 +81,6 @@ export class GearDebugPanel {
   private isSkinnedArmor: SkinnedChecker = () => false;
   private getAuthToken: AuthTokenGetter = () => '';
   private activeSlot = 'weapon';
-  private activeAnim = 'idle';
   private thumbGridOpen = true;
   private thumbCache: Map<string, string> = new Map();
   private slotFilesCache: Map<string, GearFileInfo[]> = new Map();
@@ -434,7 +433,6 @@ export class GearDebugPanel {
       this.switchSlot(this.activeSlot);
     } else {
       if (this.animCallback) this.animCallback('idle');
-      this.activeAnim = 'idle';
     }
   }
 
@@ -883,7 +881,6 @@ export class GearDebugPanel {
   }
 
   private playAnim(anim: string): void {
-    this.activeAnim = anim;
     if (this.animCallback) this.animCallback(anim);
 
     for (const [name, btn] of this.animButtons) {

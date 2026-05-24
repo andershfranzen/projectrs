@@ -21,7 +21,6 @@ for (const c of anim.listChannels()) {
   // Iterate quaternion samples (xyzw stride 4)
   // Convert each to euler-ish: extract approximate axis-angle deviation from the first
   const first = [out[0], out[1], out[2], out[3]];
-  let maxDot = 1;
   let minDot = 1;
   for (let i = 0; i < out.length; i += 4) {
     const dot = Math.abs(first[0]*out[i] + first[1]*out[i+1] + first[2]*out[i+2] + first[3]*out[i+3]);

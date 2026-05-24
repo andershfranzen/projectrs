@@ -79,11 +79,22 @@ export async function loadAssetRegistry(): Promise<AssetEntry[]> {
     assets = data.assets
   }
 
+  const seenIds = new Set<string>()
+
   return assets
     .filter((asset): asset is RawAssetData & { path: string } => {
       if (!asset.path) return false
       const lower = asset.path.toLowerCase()
       return lower.endsWith('.glb') || lower.endsWith('.gltf')
+    })
+    .filter((asset) => {
+      const id = asset.id || asset.name || asset.path
+      if (seenIds.has(id)) {
+        console.warn(`[AssetRegistry] Duplicate asset id '${id}' ignored: ${asset.path}`)
+        return false
+      }
+      seenIds.add(id)
+      return true
     })
     .map((asset): AssetEntry => {
       const meta = deriveAssetMeta(asset.path)

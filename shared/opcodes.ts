@@ -146,6 +146,12 @@ export enum ServerOpcode {
   PLAYER_SKILLS_BATCH = 25,
   PLAYER_EQUIPMENT_BATCH = 26,
   COMBAT_HIT = 30,
+  /** Entity left the client's world. Payload: [entityId, kind?].
+   *  kind=0/omitted means ordinary despawn/visibility cleanup; kind=1 means
+   *  a true NPC/player death and clients should play the death effect. */
+  ENTITY_DEATH = 31,
+  XP_GAIN = 32,
+  LEVEL_UP = 33,
   COMBAT_PROJECTILE = 34,
   /**
    * Broadcast when a player casts a spell. Payload: [casterId, targetId, spellIndex].
@@ -153,9 +159,6 @@ export enum ServerOpcode {
    * arrives separately via a deferred COMBAT_HIT scheduled for the impact tick.
    */
   SPELL_CAST = 35,
-  ENTITY_DEATH = 31,
-  XP_GAIN = 32,
-  LEVEL_UP = 33,
   CHAT_SYSTEM = 42,
   SHOP_OPEN = 50,
   WORLD_OBJECT_SYNC = 55,
@@ -331,6 +334,11 @@ export enum ServerOpcode {
    *   shirtColor, pantsColor, shoesColor, hairColor, beltColor, skinColor, hairStyle].
    *  Appearance values are -1 when the player has not completed character creation. */
   PLAYER_SELF_SYNC = 122,
+}
+
+export enum EntityDeathKind {
+  Despawn = 0,
+  Death = 1,
 }
 
 export enum PlayerAnimationKind {

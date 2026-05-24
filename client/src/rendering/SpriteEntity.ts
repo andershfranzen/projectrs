@@ -67,8 +67,6 @@ const DIR_TO_CARDINAL: number[] = [
  * W/SW/NW are auto-mirrored from E/SE/NE.
  */
 export async function loadDirectionalSprites(scene: Scene, basePath: string, name: string): Promise<DirectionalSpriteSet> {
-  const files = ['south.png', 'south-east.png', 'east.png', 'north-east.png', 'north.png'];
-
   // Also try loading explicit NW, W, SW, N sprites (full 8-direction sets)
   const allFiles = [
     'south.png', 'south-east.png', 'east.png', 'north-east.png',
@@ -324,7 +322,6 @@ function updateDynamicTextureIfLive(texture: DynamicTexture): void {
  */
 export class SpriteEntity {
   private plane: Mesh;
-  private scene: Scene;
   private label: string;
   private _position: Vector3 = Vector3.Zero();
   private yOffset: number; // half-height, so feet sit on ground
@@ -361,8 +358,6 @@ export class SpriteEntity {
   private healthBarEl: HTMLDivElement | null = null;
   private healthBarFillEl: HTMLDivElement | null = null;
   private healthBarTextEl: HTMLDivElement | null = null;
-  private maxHealth: number = 10;
-  private currentHealth: number = 10;
   private healthBarVisible: boolean = false;
 
   // Chat bubble (HTML overlay — managed externally, we just store the element)
@@ -370,7 +365,6 @@ export class SpriteEntity {
   private chatBubbleTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(scene: Scene, options: SpriteEntityOptions) {
-    this.scene = scene;
     // Empty string = explicitly no label (used by ground items). The previous
     // `options.label || options.name` fallback baked the entity's internal
     // name (e.g. `gitem_42`) into the texture for any caller that omitted a
@@ -409,7 +403,8 @@ export class SpriteEntity {
         const iconSize = 80;
         const offsetX = (texSize - iconSize) / 2;
         ctx.clearRect(0, 0, texSize, texSize);
-        (ctx as CanvasRenderingContext2D).imageSmoothingEnabled = false;
+        const ctx2d = ctx as CanvasRenderingContext2D;
+        ctx2d.imageSmoothingEnabled = false;
         // Centered icon — recompute offsetY so the icon fills the texture
         // when there's no label, and stays in the upper area when there is one
         // (so the label has room beneath it).
@@ -418,7 +413,7 @@ export class SpriteEntity {
         if (this.label) {
           ctx.fillStyle = options.labelColor || '#ffaa00';
           ctx.font = 'bold 13px sans-serif';
-          (ctx as any).textAlign = 'center';
+          ctx2d.textAlign = 'center';
           ctx.fillText(this.label, 64, 104);
         }
         if (!this.disposed && this.ownedTexture === texture) updateDynamicTextureIfLive(texture);
@@ -453,7 +448,7 @@ export class SpriteEntity {
       if (this.label) {
         ctx.fillStyle = options.labelColor || '#ffffff';
         ctx.font = 'bold 14px sans-serif';
-        (ctx as any).textAlign = 'center';
+        (ctx as CanvasRenderingContext2D).textAlign = 'center';
         ctx.fillText(this.label, 64, 126);
       }
 
@@ -737,8 +732,6 @@ export class SpriteEntity {
   }
 
   showHealthBar(current: number, max: number): void {
-    this.currentHealth = current;
-    this.maxHealth = max;
     this.healthBarVisible = true;
 
     if (!this.healthBarEl) {

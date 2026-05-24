@@ -12,7 +12,7 @@ import { NodeIO } from '@gltf-transform/core'
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
 import { prune, dedup } from '@gltf-transform/functions'
 import { mkdir, writeFile } from 'node:fs/promises'
-import { resolve, basename, dirname } from 'node:path'
+import { resolve, dirname } from 'node:path'
 import { createHash } from 'node:crypto'
 
 function sanitize(name: string, fallback: string): string {

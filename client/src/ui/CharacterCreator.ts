@@ -25,6 +25,13 @@ import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
+type AppearanceIndexKey =
+  | 'shirtColor'
+  | 'pantsColor'
+  | 'shoesColor'
+  | 'hairColor'
+  | 'beltColor'
+  | 'skinColor';
 
 /**
  * Layer-mask bit reserved for the CharacterCreator preview character.
@@ -146,13 +153,6 @@ function ensureCharacterCreatorStyles(): void {
   document.head.appendChild(style);
 }
 
-/**
- * Fallback anchor used when no `localPlayer` ref is supplied (e.g. if the
- * creator is opened before the player has spawned). Sits deep below the
- * world floor so it doesn't collide with playable geometry.
- */
-const FALLBACK_PREVIEW_ANCHOR = new Vector3(0, -1000, 0);
-
 /** Stepper row spec — one per appearance slot. The picker UI is identical
  *  for all rows; only the value-display differs (color swatch vs label). */
 interface StepperRow {
@@ -186,7 +186,6 @@ export class CharacterCreator {
   private onConfirm: CharacterCreatorCallback;
   private appearance: PlayerAppearance;
 
-  private gameScene: Scene;
   private previewCanvas: HTMLCanvasElement | null = null;
   private previewEngine: Engine | null = null;
   private previewScene: Scene | null = null;
@@ -221,24 +220,23 @@ export class CharacterCreator {
   };
 
   /**
-   * @param gameScene  Main Babylon scene (preview re-uses its engine + GL context)
+   * @param _gameScene Main Babylon scene retained in the constructor signature
+   *                   for existing call sites; the preview now owns an
+   *                   isolated scene/engine.
    * @param onConfirm  Called with the final appearance when the user clicks Confirm
    * @param opts       Optional:
    *   - `initial`: starting appearance — `/appearance` edits should pass the
    *     player's current appearance so the stepper opens on existing values.
    *   - `localPlayer`: player's CharacterEntity. While the creator is open,
-   *     the local player is hidden and the preview character spawns at their
-   *     world position so the preview shows them in their actual environment.
-   *     If omitted, the preview falls back to the deep-below-world studio
-   *     anchor and shows the character on a flat backdrop.
+   *     the local player is hidden and the isolated preview scene displays a
+   *     separate copy so the gameplay camera/world cannot affect framing.
    */
   constructor(
-    gameScene: Scene,
+    _gameScene: Scene,
     onConfirm: CharacterCreatorCallback,
     opts?: { initial?: PlayerAppearance; localPlayer?: CharacterEntity | null },
   ) {
     closeActiveContextMenu();
-    this.gameScene = gameScene;
     this.onConfirm = onConfirm;
     this.appearance = { ...(opts?.initial ?? DEFAULT_APPEARANCE) };
     this.localPlayer = opts?.localPlayer ?? null;
@@ -268,15 +266,15 @@ export class CharacterCreator {
   private buildRowSpecs(): StepperRow[] {
     const colorRow = (
       label: string,
-      key: keyof PlayerAppearance,
+      key: AppearanceIndexKey,
       palette: [number, number, number][],
       names: string[],
     ): StepperRow => ({
       label,
       min: 0,
       max: palette.length - 1,
-      get: (a) => a[key] as number,
-      set: (a, i) => { (a as any)[key] = i; },
+      get: (a) => a[key],
+      set: (a, i) => { a[key] = i; },
       name: (i) => names[i] ?? `#${i}`,
       swatch: (i) => palette[i] ?? null,
     });
@@ -571,15 +569,6 @@ export class CharacterCreator {
 
   private refreshAllRows(): void {
     for (let i = 0; i < this.rowSpecs.length; i++) this.refreshRow(i);
-  }
-
-  /** Use the deep-below-world studio anchor always. Spawning at the local
-   *  player's world position made framing unreliable — variable terrain Y
-   *  and the character-rig feet-offset meant the character would slip above
-   *  or below the preview camera's target. The studio anchor gives a clean,
-   *  fixed reference. */
-  private getAnchor(): Vector3 {
-    return FALLBACK_PREVIEW_ANCHOR.clone();
   }
 
   private hideLocalPlayer(): void {

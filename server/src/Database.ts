@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, combatLevel, initSkills, xpForLevel, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, combatLevel, initSkills, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours

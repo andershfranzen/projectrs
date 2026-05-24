@@ -1,8 +1,8 @@
 import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
-import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, cpSync, renameSync, realpathSync } from 'fs';
+import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
-import type { FloorLayerData, KCMapFile, KCMapData, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
+import type { FloorLayerData, KCMapFile, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, TileType } from '@projectrs/shared';
 import { World } from './World';
 import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
@@ -2422,7 +2422,7 @@ const server = Bun.serve<SocketData>({
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
-        const spell = await req.json() as any;
+        const spell = await req.json() as Record<string, unknown>;
         if (!spell || typeof spell.id !== 'string' || !spell.id.trim()) {
           return jsonResponse({ ok: false, error: 'Spell must have a non-empty string id' }, 400);
         }

@@ -5,12 +5,8 @@ import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { Skeleton } from '@babylonjs/core/Bones/skeleton';
-import { Bone } from '@babylonjs/core/Bones/bone';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
-import { Animation } from '@babylonjs/core/Animations/animation';
 import { Vector3, Quaternion } from '@babylonjs/core/Maths/math.vector';
-import { Viewport } from '@babylonjs/core/Maths/math.viewport';
-import { Matrix } from '@babylonjs/core/Maths/math.vector';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { MorphTarget } from '@babylonjs/core/Morph/morphTarget';
 import { MorphTargetManager } from '@babylonjs/core/Morph/morphTargetManager';
@@ -19,7 +15,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, type CustomColors, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
-import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, WALK_VARIANT_NAMES, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
+import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 
@@ -370,7 +366,6 @@ export class CharacterEntity {
   private skinIndicesNoArms: Uint32Array | null = null;
   private skinIndicesNoLegs: Uint32Array | null = null;
   private skinIndicesNoArmsNoLegs: Uint32Array | null = null;
-  private bodyHidden: boolean = false;
   /** When true (plate body), arm triangles are also hidden on the skin mesh.
    *  When false (chain body), arms/shoulders/lower-neck stay visible even
    *  though the bare-chest mesh primitives are off. */
@@ -392,8 +387,6 @@ export class CharacterEntity {
   private healthBarEl: HTMLDivElement | null = null;
   private healthBarFillEl: HTMLDivElement | null = null;
   private healthBarTextEl: HTMLDivElement | null = null;
-  private maxHealth: number = 10;
-  private currentHealth: number = 10;
   private healthBarVisible: boolean = false;
 
   // Chat bubble
@@ -403,7 +396,6 @@ export class CharacterEntity {
   // Persistent label (e.g. player name) — HTML overlay, projected like the
   // health bar and chat bubble. Optional; only created when options.label set.
   private labelEl: HTMLDivElement | null = null;
-  private labelText: string = '';
   private labelColor: string = '#ffffff';
 
   // Feet-to-root offset. The 57-bone Mixamo rig has its skeleton origin at
@@ -1223,10 +1215,6 @@ export class CharacterEntity {
     }
   }
 
-  private getAnimDuration(group: AnimationGroup): number {
-    return (group.to - group.from) / 60;
-  }
-
   private getAnimationSpeed(name: string): number {
     return ANIM_SPEED_RATIO[name] ?? 1.0;
   }
@@ -1917,8 +1905,6 @@ export class CharacterEntity {
       }
 
       // glTF accessor → typed array slice from the BIN chunk
-      const componentSize = (ct: number): number =>
-        ({ 5121: 1, 5123: 2, 5125: 4, 5126: 4, 5120: 1, 5122: 2 } as Record<number, number>)[ct] ?? 4;
       const numComponents = (t: string): number =>
         ({ SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 } as Record<string, number>)[t] ?? 1;
       const readAccessor = (accIdx: number): { kind: number; data: Uint8Array | Uint16Array | Float32Array; ncomp: number } => {
@@ -2055,7 +2041,6 @@ export class CharacterEntity {
         m.setEnabled(false);
       }
     }
-    this.bodyHidden = !visible;
     this.bodyHidesArms = !visible && hideStyle === 'plate';
     this.applySkinIndexMask();
   }
@@ -2324,8 +2309,6 @@ export class CharacterEntity {
   // ---------------------------------------------------------------------------
 
   showHealthBar(current: number, max: number): void {
-    this.currentHealth = current;
-    this.maxHealth = max;
     this.healthBarVisible = true;
 
     if (!this.healthBarEl) {
@@ -2439,7 +2422,6 @@ export class CharacterEntity {
   /** Set or update the persistent name label rendered above the head. Pass
    *  empty string to clear. */
   setLabel(text: string): void {
-    this.labelText = text;
     if (!text) {
       if (this.labelEl) {
         this.labelEl.remove();

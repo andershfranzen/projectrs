@@ -1,9 +1,7 @@
 import { Scene } from '@babylonjs/core/scene';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
-import { PBRMaterial } from '@babylonjs/core/Materials/PBR/pbrMaterial';
-import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
+import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
-import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
 import { Vector3, Quaternion, Matrix, TmpVectors } from '@babylonjs/core/Maths/math.vector';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
@@ -13,9 +11,9 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
-import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, groundTypeToTileType, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
+import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
-import { clamp, sampleNoise, groundColor, getNoiseExtra, getSlopeShade, getTileAverageHeight, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, CLIFF_R, CLIFF_G, CLIFF_B, DESERT_SLOPE_TYPES, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
@@ -206,7 +204,6 @@ export class ChunkManager {
    *  fetch). Persists across chunk eviction so we never re-fetch a known-empty
    *  chunk in the same session. */
   private chunksKnownEmpty: Set<string> = new Set();
-  private _lastStairLog: number = -1;
   /** Elevated texture plane floor heights (only applied when player is already at that height via stairs) */
   private elevatedFloorHeights: Map<number, number> = new Map();
   /** Bridge tiles — elevated texture planes over originally-blocking terrain (always snap to height) */
@@ -650,21 +647,6 @@ export class ChunkManager {
 
   private getVertexWaterProximity(vx: number, vz: number): number {
     return sharedGetVertexWaterProximity(vx, vz, (tx, tz) => this.shouldRenderWater(tx, tz));
-  }
-
-  private isCliffNearby(x: number, z: number): boolean {
-    const h = this.getTileCornerHeights(x, z);
-    const minH = Math.min(h.tl, h.tr, h.bl, h.br);
-    const maxH = Math.max(h.tl, h.tr, h.bl, h.br);
-    if ((maxH - minH) > 1.1) return true;
-    const centerAvg = (h.tl + h.tr + h.bl + h.br) / 4;
-    for (const [nx, nz] of [[x - 1, z], [x + 1, z], [x, z - 1], [x, z + 1]] as [number, number][]) {
-      if (!this.getTileRaw(nx, nz)) continue;
-      const nh = this.getTileCornerHeights(nx, nz);
-      const nAvg = (nh.tl + nh.tr + nh.bl + nh.br) / 4;
-      if (Math.abs(centerAvg - nAvg) > 0.9) return true;
-    }
-    return false;
   }
 
   private getCornerBlendedColor(cornerX: number, cornerZ: number, shade: number): RGB {
@@ -1615,95 +1597,6 @@ export class ChunkManager {
 
   // --- Wall, Roof, Floor, Stair mesh builders (same as before) ---
 
-  private buildWallMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
-    if (!this.walls) return null;
-    const positions: number[] = [];
-    const indices: number[] = [];
-    const normals: number[] = [];
-    const colors: number[] = [];
-    let vertexIndex = 0;
-    let hasWalls = false;
-    const WALL_THICKNESS = 0.1;
-    const cr = 0.35, cg = 0.30, cb = 0.30;
-
-    for (let x = startX; x < endX; x++) {
-      for (let z = startZ; z < endZ; z++) {
-        const mask = this.getWallRaw(x, z);
-        if (mask === 0) continue;
-        hasWalls = true;
-        const tileIdx = z * this.mapWidth + x;
-        const wallH = this.wallHeights.get(tileIdx) ?? DEFAULT_WALL_HEIGHT;
-        const floorH = this.floorHeights.get(tileIdx) ?? 0;
-        const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE;
-        const z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
-
-        if (mask & WallEdge.N) {
-          const yL = this.getVertexHeight(x, z) + floorH, yR = this.getVertexHeight(x + 1, z) + floorH;
-          const ytL = yL + wallH, ytR = yR + wallH;
-          positions.push(x0, yL, z0, x0, ytL, z0, x1, ytR, z0, x1, yR, z0);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, -1); colors.push(cr, cg, cb, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          const zb = z0 + WALL_THICKNESS;
-          positions.push(x1, yR, zb, x1, ytR, zb, x0, ytL, zb, x0, yL, zb);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, 1); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, ytL, z0, x0, ytL, zb, x1, ytR, zb, x1, ytR, z0);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-        if (mask & WallEdge.S) {
-          const yL = this.getVertexHeight(x, z + 1) + floorH, yR = this.getVertexHeight(x + 1, z + 1) + floorH;
-          const ytL = yL + wallH, ytR = yR + wallH;
-          const zf = z1 - WALL_THICKNESS;
-          positions.push(x1, yR, z1, x1, ytR, z1, x0, ytL, z1, x0, yL, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, 1); colors.push(cr, cg, cb, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, yL, zf, x0, ytL, zf, x1, ytR, zf, x1, yR, zf);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, -1); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, ytL, zf, x0, ytL, z1, x1, ytR, z1, x1, ytR, zf);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-        if (mask & WallEdge.E) {
-          const yT = this.getVertexHeight(x + 1, z) + floorH, yB = this.getVertexHeight(x + 1, z + 1) + floorH;
-          const ytT = yT + wallH, ytB = yB + wallH;
-          positions.push(x1, yT, z0, x1, ytT, z0, x1, ytB, z1, x1, yB, z1);
-          for (let i = 0; i < 4; i++) { normals.push(1, 0, 0); colors.push(cr - 0.03, cg - 0.03, cb - 0.03, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          const xb = x1 - WALL_THICKNESS;
-          positions.push(xb, yB, z1, xb, ytB, z1, xb, ytT, z0, xb, yT, z0);
-          for (let i = 0; i < 4; i++) { normals.push(-1, 0, 0); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(xb, ytT, z0, x1, ytT, z0, x1, ytB, z1, xb, ytB, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-        if (mask & WallEdge.W) {
-          const yT = this.getVertexHeight(x, z) + floorH, yB = this.getVertexHeight(x, z + 1) + floorH;
-          const ytT = yT + wallH, ytB = yB + wallH;
-          positions.push(x0, yB, z1, x0, ytB, z1, x0, ytT, z0, x0, yT, z0);
-          for (let i = 0; i < 4; i++) { normals.push(-1, 0, 0); colors.push(cr - 0.03, cg - 0.03, cb - 0.03, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          const xb = x0 + WALL_THICKNESS;
-          positions.push(xb, yT, z0, xb, ytT, z0, xb, ytB, z1, xb, yB, z1);
-          for (let i = 0; i < 4; i++) { normals.push(1, 0, 0); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, ytT, z0, xb, ytT, z0, xb, ytB, z1, x0, ytB, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-      }
-    }
-    if (!hasWalls) return null;
-    const mesh = new Mesh(`wall_${chunkX}_${chunkZ}`, this.scene);
-    const vertexData = new VertexData();
-    vertexData.positions = positions; vertexData.indices = indices; vertexData.normals = normals; vertexData.colors = colors;
-    vertexData.applyToMesh(mesh);
-    mesh.material = this.wallMat; mesh.hasVertexAlpha = false; mesh.isPickable = false;
-    return mesh;
-  }
-
   private buildRoofMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
     const positions: number[] = []; const indices: number[] = []; const normals: number[] = []; const colors: number[] = [];
     let vertexIndex = 0; let hasRoof = false;
@@ -1842,89 +1735,6 @@ export class ChunkManager {
     const stairs = this.buildStairMeshForLayer(chunkX, chunkZ, startX, startZ, endX, endZ, floorIdx, layer);
     if (!wall && !roof && !floor && !stairs) return null;
     return { wall, roof, floor, stairs };
-  }
-
-  private buildWallMeshForLayer(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number, floorIdx: number, layer: FloorLayerClientData): Mesh | null {
-    const positions: number[] = []; const indices: number[] = []; const normals: number[] = []; const colors: number[] = [];
-    let vertexIndex = 0; let hasWalls = false;
-    const WALL_THICKNESS = 0.1; const cr = 0.35, cg = 0.30, cb = 0.30;
-    for (let x = startX; x < endX; x++) {
-      for (let z = startZ; z < endZ; z++) {
-        const tileIdx = z * this.mapWidth + x;
-        const mask = layer.walls.get(tileIdx) ?? 0;
-        if (mask === 0) continue;
-        hasWalls = true;
-        const wallH = layer.wallHeights.get(tileIdx) ?? DEFAULT_WALL_HEIGHT;
-        // Fall back to derived tile heights so walls on auto-derived upper
-        // floors get the right base instead of defaulting to ground (y=0).
-        // The final `elevatedFloorHeights` fallback mirrors the collision-
-        // side base in wallEdgeBlocksAtHeight — without it, a layer wall on
-        // a kcmap building (no explicit floors/tiles in walls.json, just a
-        // texture-plane upper floor) renders at Y=0 stacked on the ground
-        // wall while collision blocks at Y=elev, so the player walks into
-        // an invisible wall upstairs and sees double walls downstairs.
-        const floorH = layer.floors.get(tileIdx)
-          ?? layer.tiles.get(tileIdx)
-          ?? this.elevatedFloorHeights.get(tileIdx)
-          ?? 0;
-        const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE, z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
-        const baseY = floorH;
-        if (mask & WallEdge.N) {
-          positions.push(x0, baseY, z0, x0, baseY + wallH, z0, x1, baseY + wallH, z0, x1, baseY, z0);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, -1); colors.push(cr, cg, cb, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          const zb = z0 + WALL_THICKNESS;
-          positions.push(x1, baseY, zb, x1, baseY + wallH, zb, x0, baseY + wallH, zb, x0, baseY, zb);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, 1); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, baseY + wallH, z0, x0, baseY + wallH, zb, x1, baseY + wallH, zb, x1, baseY + wallH, z0);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-        if (mask & WallEdge.S) {
-          const zf = z1 - WALL_THICKNESS;
-          positions.push(x1, baseY, z1, x1, baseY + wallH, z1, x0, baseY + wallH, z1, x0, baseY, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, 1); colors.push(cr, cg, cb, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, baseY, zf, x0, baseY + wallH, zf, x1, baseY + wallH, zf, x1, baseY, zf);
-          for (let i = 0; i < 4; i++) { normals.push(0, 0, -1); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, baseY + wallH, zf, x0, baseY + wallH, z1, x1, baseY + wallH, z1, x1, baseY + wallH, zf);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-        if (mask & WallEdge.E) {
-          positions.push(x1, baseY, z0, x1, baseY + wallH, z0, x1, baseY + wallH, z1, x1, baseY, z1);
-          for (let i = 0; i < 4; i++) { normals.push(1, 0, 0); colors.push(cr - 0.03, cg - 0.03, cb - 0.03, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          const xb = x1 - WALL_THICKNESS;
-          positions.push(xb, baseY, z1, xb, baseY + wallH, z1, xb, baseY + wallH, z0, xb, baseY, z0);
-          for (let i = 0; i < 4; i++) { normals.push(-1, 0, 0); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(xb, baseY + wallH, z0, x1, baseY + wallH, z0, x1, baseY + wallH, z1, xb, baseY + wallH, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-        if (mask & WallEdge.W) {
-          positions.push(x0, baseY, z1, x0, baseY + wallH, z1, x0, baseY + wallH, z0, x0, baseY, z0);
-          for (let i = 0; i < 4; i++) { normals.push(-1, 0, 0); colors.push(cr - 0.03, cg - 0.03, cb - 0.03, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          const xb = x0 + WALL_THICKNESS;
-          positions.push(xb, baseY, z0, xb, baseY + wallH, z0, xb, baseY + wallH, z1, xb, baseY, z1);
-          for (let i = 0; i < 4; i++) { normals.push(1, 0, 0); colors.push(cr - 0.05, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, baseY + wallH, z0, xb, baseY + wallH, z0, xb, baseY + wallH, z1, x0, baseY + wallH, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr + 0.05, cg + 0.05, cb + 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        }
-      }
-    }
-    if (!hasWalls) return null;
-    const mesh = new Mesh(`wall_f${floorIdx}_${chunkX}_${chunkZ}`, this.scene);
-    const vertexData = new VertexData();
-    vertexData.positions = positions; vertexData.indices = indices; vertexData.normals = normals; vertexData.colors = colors;
-    vertexData.applyToMesh(mesh); mesh.material = this.wallMat; mesh.hasVertexAlpha = false; mesh.isPickable = false;
-    return mesh;
   }
 
   private buildFloorMeshForLayer(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number, floorIdx: number, layer: FloorLayerClientData): Mesh | null {
@@ -2426,14 +2236,11 @@ export class ChunkManager {
   private wallEdgeBlocksAtHeight(x: number, z: number, edge: number, playerY?: number): boolean {
     const idx = z * this.mapWidth + x;
     const wallH = this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
-    const floorH = this.floorHeights.get(idx)
-      ?? this.elevatedFloorHeights.get(idx)
-      ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
     // Open-door bypass: the door is on a wall whose base is either floor 0
     // (terrain) or an upper floor (elev). The player must be at one of those
     // levels — covers both a ground-floor door entered from outside AND an
-    // upper-floor door used from the elevated walkway. Using a single
-    // `floorH` with the elev fallback (as it used to) made ground-floor
+    // upper-floor door used from the elevated walkway. Using one base height
+    // with the elev fallback (as an older version did) made ground-floor
     // doors fail when the tile ALSO had an upper-floor plane, because the
     // bypass then demanded upper-floor Y.
     const isOpenDoor = ((this.openDoorEdges.get(this.doorEdgeKey(0, idx)) ?? 0) & edge) !== 0;
@@ -2758,6 +2565,11 @@ export class ChunkManager {
       const res = await authFetch('/assets/assets.json');
       const data = await res.json();
       for (const asset of data.assets || []) {
+        if (!asset?.id || !asset?.path) continue;
+        if (this.assetRegistry.has(asset.id)) {
+          if (import.meta.env.DEV) console.warn(`[ChunkManager] Duplicate asset id '${asset.id}' ignored: ${asset.path}`);
+          continue;
+        }
         this.assetRegistry.set(asset.id, { path: asset.path });
       }
       if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded ${this.assetRegistry.size} asset definitions`);

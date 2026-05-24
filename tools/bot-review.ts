@@ -65,15 +65,6 @@ interface AccountBucket {
   totalMinutes: number;
 }
 
-interface LoginRow {
-  id: number;
-  account_id: number;
-  ip_address: string;
-  login_ts: number;
-  logout_ts: number | null;
-  session_minutes: number | null;
-}
-
 interface AccountInfo {
   username: string;
   totalSessionMinutes: number;

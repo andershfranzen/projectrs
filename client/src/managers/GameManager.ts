@@ -20,15 +20,13 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
-import { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
-import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import '@babylonjs/loaders/glTF';
 import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
-import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
+import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
 import { EntityManager, type GroundItemData } from './EntityManager';
@@ -55,7 +53,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, appearanceEquals, isValidAppearance, PROTOCOL_VERSION, npcCombatLevel, CHARACTER_MODEL_PATH, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -106,6 +104,37 @@ type ActiveTouchPoint = {
   clientX: number;
   clientY: number;
 };
+
+type HealthBarHost = {
+  showHealthBar: (current: number, max: number) => void;
+  hideHealthBar: () => void;
+};
+
+type HitSplatOverlay = {
+  worldPos: Vector3;
+  el: HTMLDivElement;
+  timer: number;
+};
+
+type AttackAnimationHost = Targetable & {
+  playAttackAnimation?: (variant?: string) => void;
+  getAnimationDurationMs?: (name: string) => number;
+};
+
+declare global {
+  interface Window {
+    gm?: GameManager;
+    _gameEntities?: EntityManager;
+  }
+}
+
+function asAttackAnimationHost(entity: Targetable | null | undefined): AttackAnimationHost | null {
+  if (!entity) return null;
+  const candidate = entity as AttackAnimationHost;
+  return typeof candidate.playAttackAnimation === 'function' || typeof candidate.getAnimationDurationMs === 'function'
+    ? candidate
+    : null;
+}
 
 type PinchZoomState = {
   pointerIds: [number, number];
@@ -198,7 +227,6 @@ export class GameManager {
   private followTargetPlayerId: number = -1;
   private followPathTimer: number = 0;
   private skillCancelTime: number = 0; // timestamp when skilling was last cancelled
-  private skillingFacingAngle: number = 0; // locked facing angle while skilling
   private tileProgress: number = 0; // 0→1 progress through current tile step
   private tileFrom: { x: number; z: number } = { x: 0, z: 0 }; // where we started this tile step
 
@@ -231,6 +259,7 @@ export class GameManager {
   private _visibilityHandler: (() => void) | null = null;
   private _activityHandler: (() => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
+  private _npcTooltipHandler: ((event: PointerEvent) => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
@@ -280,7 +309,6 @@ export class GameManager {
   private pendingHealthApply: Map<number, ReturnType<typeof setTimeout>> = new Map();
   private lastSelfAuthorityAt: number = 0;
   private selfAuthorityGraceUntil: number = 0;
-  private lastSelfServerTick: number = -1;
   private lastNpcMaterializationRetryMs: number = 0;
 
   // Character creator
@@ -335,7 +363,6 @@ export class GameManager {
   private _lastBiomeCX: number = -9999;
   private _lastBiomeCZ: number = -9999;
   private _lastBiomeDef: BiomeDef | undefined = undefined;
-  private _roofDedup: Set<TransformNode> = new Set();
   private skillingObjectId: number = -1;
 
   // UI
@@ -366,6 +393,13 @@ export class GameManager {
   private static readonly TOUCH_PINCH_MIN_DISTANCE_PX = 24;
   private static readonly TOUCH_PINCH_MAX_STEP_FACTOR = 1.18;
   private static readonly BROWSER_PAGE_ZOOM_EPSILON = 0.01;
+  private static readonly HEALTH_BAR_VISIBLE_MS = 4500;
+  private static readonly LOCAL_DAMAGE_SYNC_GRACE_MS = 250;
+  private static readonly HIT_SPLAT_ASSET_URLS = [
+    '/sprites/effects/evil-hit-splash.svg',
+    '/sprites/effects/evil-no-hit-splash.svg',
+  ];
+  private static hitSplatAssetsPreloaded = false;
   private mobileGoodMagicCurrent: number = 1;
   private mobileGoodMagicMax: number = 1;
   private mobileEvilMagicCurrent: number = 1;
@@ -396,7 +430,9 @@ export class GameManager {
   private castingUntil = 0;
 
   // Combat hit splats (HTML overlay)
-  private hitSplats: { worldPos: Vector3; el: HTMLDivElement; timer: number; startY: number }[] = [];
+  private hitSplats: HitSplatOverlay[] = [];
+  private transientHealthBars: Map<number, number> = new Map();
+  private pendingLocalHealthSync: { health: number; maxHealth: number; timer: number } | null = null;
   private fpsCounterEl: HTMLDivElement | null = null;
   private fpsFrameCount: number = 0;
   private fpsLastSampleAt: number = 0;
@@ -405,13 +441,22 @@ export class GameManager {
   // WASD camera
   private keysDown: Set<string> = new Set();
 
+  private static preloadHitSplatAssets(): void {
+    if (GameManager.hitSplatAssetsPreloaded) return;
+    GameManager.hitSplatAssetsPreloaded = true;
+    for (const url of GameManager.HIT_SPLAT_ASSET_URLS) {
+      const img = new Image();
+      img.src = url;
+    }
+  }
+
   constructor(
     canvas: HTMLCanvasElement,
     token: string,
     username: string,
     onDisconnect?: () => void,
   ) {
-    (window as any).gm = this;
+    window.gm = this;
     this.onFatalDisconnect = onDisconnect;
     this.gearOverridesReady = new Promise<void>((resolve) => { this.resolveGearOverridesReady = resolve; });
     this.token = token;
@@ -425,6 +470,7 @@ export class GameManager {
     this.scene = new Scene(this.engine);
     this.scene.useRightHandedSystem = true; // Match Three.js coordinate system (KC editor)
     this.scene.clearColor = new Color4(0, 0, 0, 1);
+    GameManager.preloadHitSplatAssets();
     // Groups 1 (water) and 2 (texture planes) must NOT clear depth — they need terrain depth from group 0
     this.scene.setRenderingAutoClearDepthStencil(1, false, false, false);
     this.scene.setRenderingAutoClearDepthStencil(2, false, false, false);
@@ -686,7 +732,7 @@ export class GameManager {
     // Dev-only console hook for triage (NPC name overrides, entity sprites).
     // Tree-shaken Babylon imports remove the global namespace, so without
     // this the only way to inspect runtime entity state is to hack imports.
-    if (import.meta.env.DEV) (window as any)._gameEntities = this.entities;
+    if (import.meta.env.DEV) window._gameEntities = this.entities;
 
     // Pre-create the local player character at the kcmap default spawn so
     // the GLB + 10 animation GLBs start parsing during the loading screen,
@@ -931,7 +977,6 @@ export class GameManager {
       this.suppressNextMapEntryMessage = false;
       this.lastSelfAuthorityAt = 0;
       this.selfAuthorityGraceUntil = 0;
-      this.lastSelfServerTick = -1;
       this._loginReadySeq++;
       onProgress?.(0.02, 'Connecting to server');
       this.network.connect(token);
@@ -1166,7 +1211,6 @@ export class GameManager {
       this.suppressNextMapEntryMessage = true;
       this.lastSelfAuthorityAt = 0;
       this.selfAuthorityGraceUntil = 0;
-      this.lastSelfServerTick = -1;
       this._loginReadySeq++;
       this.network.connect(this.token);
     });
@@ -1237,11 +1281,6 @@ export class GameManager {
       return computed;
     }
     return override.y;
-  }
-
-  /** Height query for legacy floor-0 entity callers. */
-  private getHeightAt(x: number, z: number, currentY?: number): number {
-    return this.chunkManager.getEffectiveHeight(x, z, 0, currentY);
   }
 
   private getHeightAtFloor(x: number, z: number, floor: number, currentY?: number): number {
@@ -2048,7 +2087,6 @@ export class GameManager {
     isCurrentApply?: GearApplyGuard,
   ): Promise<GearTemplate | null> {
     const character = target ?? this.localPlayer;
-    const isLocal = character === this.localPlayer;
     try {
       const lastSlash = def.file.lastIndexOf('/');
       const dir = def.file.substring(0, lastSlash + 1);
@@ -2369,9 +2407,7 @@ export class GameManager {
       if (entityId === this.localPlayerId) {
         // While a COMBAT_HIT splat is pending for the local player, defer
         // applying the new HP so the bar/HUD drop in sync with the splat.
-        if (!this.pendingHealthApply.has(entityId)) {
-          this.applyLocalHealth(health, maxHealth, { clearPendingImpact: health >= maxHealth });
-        }
+        this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth });
         // Server-position reconciliation. The client still predicts normal
         // walking locally, but production desyncs showed several legitimate
         // server-side path changes can happen without the local path matching
@@ -2450,11 +2486,7 @@ export class GameManager {
       // Skip bar update if a COMBAT_HIT splat is pending — splat closure
       // applies the bar at impact time so they stay in sync.
       if (!this.pendingHealthApply.has(entityId)) {
-        if (health < maxHealth) {
-          character.showHealthBar(health, maxHealth);
-        } else {
-          character.hideHealthBar();
-        }
+        this.updateTransientHealthBar(entityId, character, health, maxHealth);
       }
     });
 
@@ -2463,7 +2495,6 @@ export class GameManager {
       const serverZ = (v[1] ?? 0) / 10;
       const health = v[2] ?? this.playerHealth;
       const maxHealth = v[3] ?? this.playerMaxHealth;
-      const serverTick = v[4] ?? -1;
       const serverMoving = (v[5] ?? 0) === 1;
       const hasAppearance = v.length >= 13 && v[6] >= 0;
       const syncAppearance: PlayerAppearance | null = hasAppearance ? {
@@ -2478,10 +2509,7 @@ export class GameManager {
 
       this.lastSelfAuthorityAt = performance.now();
       this.selfAuthorityGraceUntil = 0;
-      this.lastSelfServerTick = serverTick;
-      if (!this.pendingHealthApply.has(this.localPlayerId)) {
-        this.applyLocalHealth(health, maxHealth, { clearPendingImpact: health >= maxHealth });
-      }
+      this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth });
       if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
         this.cacheLocalAppearance(syncAppearance);
         if (this.localPlayer) this.localPlayer.applyAppearance(syncAppearance);
@@ -2571,11 +2599,7 @@ export class GameManager {
 
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite && !this.pendingHealthApply.has(entityId)) {
-        if (health < maxHealth) {
-          sprite.showHealthBar(health, maxHealth);
-        } else {
-          sprite.hideHealthBar();
-        }
+        this.updateTransientHealthBar(entityId, sprite, health, maxHealth);
       }
     });
 
@@ -2656,6 +2680,8 @@ export class GameManager {
 
     this.network.on(ServerOpcode.ENTITY_DEATH, (_op, v) => {
       const entityId = v[0];
+      const deathKind = (v[1] ?? EntityDeathKind.Despawn) as EntityDeathKind;
+      const isTrueDeath = deathKind === EntityDeathKind.Death;
 
       if (entityId === this.combatTargetId || entityId === this.magicTargetId) {
         this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
@@ -2664,8 +2690,21 @@ export class GameManager {
       this.entities.cleanupCombatTargetsFor(entityId);
       this.remoteAnimationStates.delete(entityId);
       this.toolSwappedEntities.delete(entityId);
-      this.entities.removeRemotePlayer(entityId);
-      this.entities.removeNpc(entityId);
+      if (isTrueDeath && entityId === this.localPlayerId) {
+        this.hideAllTransientHealthBars();
+      } else {
+        this.hideTransientHealthBar(entityId);
+      }
+      const deathEffectStarted = isTrueDeath && entityId !== this.localPlayerId
+        ? this.entities.startEntityDeathEffect(entityId)
+        : false;
+      if (isTrueDeath && entityId === this.localPlayerId && this.localPlayer) {
+        this.playLocalPlayerDeathEffect();
+      }
+      if (!deathEffectStarted) {
+        this.entities.removeRemotePlayer(entityId);
+        this.entities.removeNpc(entityId);
+      }
       this.entities.removeGroundItem(entityId);
       const objectData = this.worldObjectDefs.get(entityId);
       if (objectData) {
@@ -2691,6 +2730,7 @@ export class GameManager {
       if (targetId === -1) {
         this.entities.npcCombatTargets.delete(attackerId);
         const sprite = this.entities.npcSprites.get(attackerId);
+        this.hideTransientHealthBar(attackerId, sprite ?? null);
         if (sprite instanceof CharacterEntity) sprite.clearFaceLock();
         return;
       }
@@ -2725,7 +2765,7 @@ export class GameManager {
         if (npcAsCharacter) {
           (attackerEntity as CharacterEntity).playAttackAnimation(animName);
         } else {
-          (attackerEntity as any).playAttackAnimation();
+          asAttackAnimationHost(attackerEntity)?.playAttackAnimation?.();
         }
       }
 
@@ -2733,10 +2773,9 @@ export class GameManager {
       const fraction = GameManager.ATTACK_IMPACT_FRACTION[animName] ?? 0.5;
       // Prefer the actual loaded anim duration (local player has a CharacterEntity).
       // Fall back to a fixed estimate for sprites/NPCs that don't expose durations.
-      const liveDuration = (attackerEntity && (attackerEntity as any).getAnimationDurationMs)
-        ? (attackerEntity as any).getAnimationDurationMs(animName) as number
-        : 0;
+      const liveDuration = asAttackAnimationHost(attackerEntity)?.getAnimationDurationMs?.(animName) ?? 0;
       const impactMs = (liveDuration > 0 ? liveDuration : 800) * fraction;
+      if (targetId === this.localPlayerId) this.clearPendingLocalHealthSync();
       const splatAtTarget = () => {
         if (this.destroyed) {
           this.pendingHealthApply.delete(targetId);
@@ -2744,22 +2783,14 @@ export class GameManager {
         }
         if (targetSprite) {
           this.showHitSplat(targetSprite.position, damage);
-          if (targetHp < targetMaxHp) {
-            targetSprite.showHealthBar(targetHp, targetMaxHp);
-          } else {
-            targetSprite.hideHealthBar();
-          }
+          this.showTransientHealthBar(targetId, targetSprite, targetHp, targetMaxHp);
         }
         if (targetId === this.localPlayerId && this.localPlayer) {
           this.showHitSplat(this.localPlayer.position, damage);
           this.playerHealth = targetHp;
           this.playerMaxHealth = targetMaxHp;
           this.updateHUD();
-          if (targetHp < targetMaxHp) {
-            this.localPlayer.showHealthBar(targetHp, targetMaxHp);
-          } else {
-            this.localPlayer.hideHealthBar();
-          }
+          this.showTransientHealthBar(this.localPlayerId, this.localPlayer, targetHp, targetMaxHp);
         }
         this.pendingHealthApply.delete(targetId);
       };
@@ -3086,7 +3117,7 @@ export class GameManager {
 
   private setupPlayerStateHandlers(): void {
     this.network.on(ServerOpcode.PLAYER_STATS, (_op, v) => {
-      this.applyLocalHealth(v[0], v[1], { clearPendingImpact: v[0] >= v[1] });
+      this.applyLocalHealthFromServer(v[0], v[1], { clearPendingImpact: v[0] >= v[1] });
     });
 
     this.network.on(ServerOpcode.RENOWN_SYNC, (_op, v) => {
@@ -3242,7 +3273,7 @@ export class GameManager {
       }
       this.updateMobileMagicStatus(skillIndex, level, currentLevel);
       if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-        this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
+        this.applyLocalHealthFromServer(currentLevel, level, { clearPendingImpact: currentLevel >= level });
       }
     });
 
@@ -3255,7 +3286,7 @@ export class GameManager {
         this.sidePanel?.updateSkill(skillIndex, level, currentLevel, xp);
         this.updateMobileMagicStatus(skillIndex, level, currentLevel);
         if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-          this.applyLocalHealth(currentLevel, level, { clearPendingImpact: currentLevel >= level });
+          this.applyLocalHealthFromServer(currentLevel, level, { clearPendingImpact: currentLevel >= level });
         }
       }
       this.noteLoginBootstrapPacket('skills');
@@ -3556,7 +3587,7 @@ export class GameManager {
     // via getHeight() can drop the player below an elevated tile because
     // getHeight gates roof reveal on currentY, and the gate fails the
     // moment chunk data is mid-rebuild. For inter-map transitions (portals)
-    // the server should send the new Y alongside MAP_CHANGE — TODO Step 3.
+    // the follow-up FLOOR_CHANGE packet carries the authoritative Y.
 
     if (!this.hasHandledInitialMapChange) {
       this.hasHandledInitialMapChange = true;
@@ -4378,27 +4409,6 @@ export class GameManager {
     return null;
   }
 
-  /** Combat level for the local player. Reads skill levels from the side
-   *  panel (canonical store) and runs the OSRS-style combat-level formula.
-   *  Returns 0 if skills haven't synced yet. */
-  private getLocalCombatLevel(): number {
-    if (!this.sidePanel) return 0;
-    const get = (id: string) => this.sidePanel!.getSkillLevel(id as any);
-    const defence = get('defence');
-    const hitpoints = get('hitpoints');
-    const accuracy = get('accuracy');
-    const strength = get('strength');
-    const archery = get('archery');
-    const goodmagic = get('goodmagic');
-    const evilmagic = get('evilmagic');
-    const base = 0.25 * (defence + hitpoints);
-    const melee = 0.325 * (accuracy + strength);
-    const range = 0.325 * (Math.floor(archery / 2) + archery);
-    const magicLvl = Math.max(goodmagic, evilmagic);
-    const mage = 0.325 * (Math.floor(magicLvl / 2) + magicLvl);
-    return Math.floor(base + Math.max(melee, range, mage));
-  }
-
   /** Combat level for an NPC by defId, or 0 if unknown. */
   private npcLevelFor(npcDefId: number | undefined): number {
     if (npcDefId == null) return 0;
@@ -4407,9 +4417,9 @@ export class GameManager {
     return npcCombatLevel(def);
   }
 
-  private npcTooltipEl: HTMLDivElement | null = null;
   private setupNpcTooltip(canvas: HTMLCanvasElement): void {
     const el = document.createElement('div');
+    el.className = 'npc-tooltip-overlay';
     el.style.cssText = [
       'position: fixed', 'pointer-events: none', 'z-index: 999',
       'background: #1a1410ee', 'border: 1px solid #5a4a35',
@@ -4417,10 +4427,9 @@ export class GameManager {
       'padding: 3px 7px', 'display: none', 'white-space: nowrap',
     ].join('; ');
     document.body.appendChild(el);
-    this.npcTooltipEl = el;
 
     let lastPickAt = 0;
-    canvas.addEventListener('pointermove', (e) => {
+    this._npcTooltipHandler = (e) => {
       // Throttle: scene.pick walks every pickable mesh; running it on every
       // raw pointermove (which can fire 100+ times/sec on a high-Hz mouse)
       // would chew frame budget. 30ms gap = ~33Hz, smooth enough for a
@@ -4486,7 +4495,8 @@ export class GameManager {
       } else if (el.style.display !== 'none') {
         el.style.display = 'none';
       }
-    });
+    };
+    canvas.addEventListener('pointermove', this._npcTooltipHandler);
   }
 
   /** Redirect an NPC/object click to a use-on-target packet if the inventory
@@ -4913,14 +4923,6 @@ export class GameManager {
   private pathReachesGoal(path: { x: number; z: number }[], goalX: number, goalZ: number): boolean {
     const last = path[path.length - 1];
     return !!last && Math.floor(last.x) === Math.floor(goalX) && Math.floor(last.z) === Math.floor(goalZ);
-  }
-
-  /** Chebyshev-1 adjacency between the player's tile and (targetX, targetZ). */
-  private isPlayerAdjacentToTile(targetX: number, targetZ: number): boolean {
-    return Math.max(
-      Math.abs(Math.floor(this.playerX) - Math.floor(targetX)),
-      Math.abs(Math.floor(this.playerZ) - Math.floor(targetZ)),
-    ) <= 1;
   }
 
   private getNpcTileSize(npcEntityId: number): number {
@@ -5386,201 +5388,273 @@ export class GameManager {
     }
 
     if (import.meta.env.DEV) {
-    if (msg === '/geardebug' || msg === '/geardebug player' || msg === '/geardebug npc') {
-      this.gearDebugTargetMode = msg === '/geardebug npc' ? 'npc' : 'player';
-      if (this.gearDebugTargetMode === 'npc') {
-        const target = this.getNearestHumanoidNpcEntryForGearDebug();
-        if (!target) {
+      if (msg === '/deathfx') {
+        this.playDeathPortalDebugPreview();
+        return true;
+      }
+      if (msg === '/hitsplat' || msg === '/hitsplats') {
+        this.playHitSplatDebugPreview();
+        return true;
+      }
+      if (msg === '/geardebug' || msg === '/geardebug player' || msg === '/geardebug npc') {
+        this.gearDebugTargetMode = msg === '/geardebug npc' ? 'npc' : 'player';
+        if (this.gearDebugTargetMode === 'npc') {
+          const target = this.getNearestHumanoidNpcEntryForGearDebug();
+          if (!target) {
+            this.gearDebugNpcTargetId = -1;
+            this.chatPanel?.addSystemMessage('No loaded humanoid NPC nearby for /geardebug npc.');
+            return true;
+          }
+          this.gearDebugNpcTargetId = target.entityId;
+        } else {
           this.gearDebugNpcTargetId = -1;
-          this.chatPanel?.addSystemMessage('No loaded humanoid NPC nearby for /geardebug npc.');
-          return true;
         }
-        this.gearDebugNpcTargetId = target.entityId;
-      } else {
-        this.gearDebugNpcTargetId = -1;
-      }
-      if (!this.gearDebugPanel) {
-        this.gearDebugPanel = new GearDebugPanel();
-        this.gearDebugPanel.setSlotGetter((slot) => this.getGearDebugCharacter()?.getGearNode?.(slot) ?? null);
-        this.gearDebugPanel.setSlotBoneGetter((slot) => EQUIP_SLOT_BONES[slot]?.boneName ?? '');
-        this.gearDebugPanel.setItemInfoGetter((slot) => {
-          const itemId = this.getGearDebugCharacter()?.getGearItemId(slot) ?? -1;
-          if (itemId < 0) return null;
-          const def = this.itemDefsCache.get(itemId);
-          return { id: itemId, name: def?.name ?? `item ${itemId}`, toolType: def?.toolType };
-        });
-        this.gearDebugPanel.setOverrideGetter((itemId) => this.gearOverrides.get(itemId) ?? null);
-        this.gearDebugPanel.setSkinnedChecker((slot) => this.getGearDebugCharacter()?.getSkinnedArmorMeshes?.(slot) != null);
-        this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('projectrs_token') || '');
-        this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
-          this.gearOverrides.set(itemId, override);
-          const all: Record<string, any> = {};
-          for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
-          const token = this.token || localStorage.getItem('projectrs_token') || '';
-          const res = await fetch('/api/dev/gear-overrides', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify(all),
+        if (!this.gearDebugPanel) {
+          this.gearDebugPanel = new GearDebugPanel();
+          this.gearDebugPanel.setSlotGetter((slot) => this.getGearDebugCharacter()?.getGearNode?.(slot) ?? null);
+          this.gearDebugPanel.setSlotBoneGetter((slot) => EQUIP_SLOT_BONES[slot]?.boneName ?? '');
+          this.gearDebugPanel.setItemInfoGetter((slot) => {
+            const itemId = this.getGearDebugCharacter()?.getGearItemId(slot) ?? -1;
+            if (itemId < 0) return null;
+            const def = this.itemDefsCache.get(itemId);
+            return { id: itemId, name: def?.name ?? `item ${itemId}`, toolType: def?.toolType };
           });
-          if (!res.ok) throw new Error('Server returned ' + res.status);
-          const target = this.getGearDebugCharacter();
-          const slotName = EQUIP_SLOT_NAMES.find(s => target?.getGearItemId(s) === itemId);
-          if (slotName) this.gearTemplateCache.delete(`${slotName}/${itemId}`);
-          this.refreshEquippedGearOverride(itemId, override);
-        });
-        this.gearDebugPanel.setBulkSaveCallback(async (sourceItemId, slot, override) => {
-          const targets = [...this.itemDefsCache.values()]
-            .filter((def) => def.equipSlot === slot && (def.model || this.gearOverrides.get(def.id)?.file));
-          if (!targets.some((def) => def.id === sourceItemId)) {
-            const sourceDef = this.itemDefsCache.get(sourceItemId);
-            if (sourceDef?.equipSlot === slot) targets.push(sourceDef);
-          }
-
-          for (const def of targets) {
-            const existing = this.gearOverrides.get(def.id) ?? {};
-            this.gearOverrides.set(def.id, {
-              ...existing,
-              boneName: override.boneName,
-              localPosition: override.localPosition,
-              localRotation: override.localRotation,
-              scale: override.scale,
+          this.gearDebugPanel.setOverrideGetter((itemId) => this.gearOverrides.get(itemId) ?? null);
+          this.gearDebugPanel.setSkinnedChecker((slot) => this.getGearDebugCharacter()?.getSkinnedArmorMeshes?.(slot) != null);
+          this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('projectrs_token') || '');
+          this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
+            this.gearOverrides.set(itemId, override);
+            const all: Record<string, any> = {};
+            for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
+            const token = this.token || localStorage.getItem('projectrs_token') || '';
+            const res = await fetch('/api/dev/gear-overrides', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify(all),
             });
-            this.gearTemplateCache.delete(`${slot}/${def.id}`);
-          }
-
-          const all: Record<string, any> = {};
-          for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
-          const token = this.token || localStorage.getItem('projectrs_token') || '';
-          const res = await fetch('/api/dev/gear-overrides', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify(all),
+            if (!res.ok) throw new Error('Server returned ' + res.status);
+            const target = this.getGearDebugCharacter();
+            const slotName = EQUIP_SLOT_NAMES.find(s => target?.getGearItemId(s) === itemId);
+            if (slotName) this.gearTemplateCache.delete(`${slotName}/${itemId}`);
+            this.refreshEquippedGearOverride(itemId, override);
           });
-          if (!res.ok) throw new Error('Server returned ' + res.status);
-          for (const def of targets) {
-            const nextOverride = this.gearOverrides.get(def.id);
-            if (nextOverride) this.refreshEquippedGearOverride(def.id, nextOverride);
-          }
-          return targets.length;
-        });
-        this.gearDebugPanel.setLoadGlbCallback(async (slot, path) => {
-          const target = this.getGearDebugCharacter();
-          if (!target) throw new Error(this.gearDebugTargetMode === 'npc' ? 'No humanoid NPC target' : 'No local player');
-          const boneConfig = EQUIP_SLOT_BONES[slot];
-          if (!boneConfig) throw new Error('Unknown slot: ' + slot);
+          this.gearDebugPanel.setBulkSaveCallback(async (sourceItemId, slot, override) => {
+            const targets = [...this.itemDefsCache.values()]
+              .filter((def) => def.equipSlot === slot && (def.model || this.gearOverrides.get(def.id)?.file));
+            if (!targets.some((def) => def.id === sourceItemId)) {
+              const sourceDef = this.itemDefsCache.get(sourceItemId);
+              if (sourceDef?.equipSlot === slot) targets.push(sourceDef);
+            }
 
-          const lastSlash = path.lastIndexOf('/');
-          const dir = path.substring(0, lastSlash + 1);
-          const file = devCacheBustGearFile(path.substring(lastSlash + 1));
-          const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
-          const hasSkeleton = result.skeletons.length > 0;
+            for (const def of targets) {
+              const existing = this.gearOverrides.get(def.id) ?? {};
+              this.gearOverrides.set(def.id, {
+                ...existing,
+                boneName: override.boneName,
+                localPosition: override.localPosition,
+                localRotation: override.localRotation,
+                scale: override.scale,
+              });
+              this.gearTemplateCache.delete(`${slot}/${def.id}`);
+            }
 
-          if (hasSkeleton) {
+            const all: Record<string, any> = {};
+            for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
+            const token = this.token || localStorage.getItem('projectrs_token') || '';
+            const res = await fetch('/api/dev/gear-overrides', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify(all),
+            });
+            if (!res.ok) throw new Error('Server returned ' + res.status);
+            for (const def of targets) {
+              const nextOverride = this.gearOverrides.get(def.id);
+              if (nextOverride) this.refreshEquippedGearOverride(def.id, nextOverride);
+            }
+            return targets.length;
+          });
+          this.gearDebugPanel.setLoadGlbCallback(async (slot, path) => {
+            const target = this.getGearDebugCharacter();
+            if (!target) throw new Error(this.gearDebugTargetMode === 'npc' ? 'No humanoid NPC target' : 'No local player');
+            const boneConfig = EQUIP_SLOT_BONES[slot];
+            if (!boneConfig) throw new Error('Unknown slot: ' + slot);
+
+            const lastSlash = path.lastIndexOf('/');
+            const dir = path.substring(0, lastSlash + 1);
+            const file = devCacheBustGearFile(path.substring(lastSlash + 1));
+            const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
+            const hasSkeleton = result.skeletons.length > 0;
+
+            if (hasSkeleton) {
+              target.detachGear(slot);
+
+              target.attachSkinnedArmor(slot, result.meshes, result.skeletons[0]);
+              const loaderRoot = result.meshes.find(m => m.name === '__root__');
+              if (loaderRoot) loaderRoot.dispose();
+            } else {
+              const gearDef: GearDef = {
+                itemId: -999,
+                file: path,
+                boneName: boneConfig.boneName,
+                localPosition: boneConfig.localPosition,
+                localRotation: boneConfig.localRotation,
+                scale: boneConfig.scale,
+                centerOrigin: false,
+              };
+              const tmpl = await loadGearTemplate(this.scene, gearDef);
+              if (!tmpl) throw new Error('Failed to load ' + path);
+              target.attachGear(slot, -999, tmpl);
+            }
+          });
+          this.gearDebugPanel.setUnequipCallback((slot) => {
+            const target = this.getGearDebugCharacter();
+            if (!target) return;
             target.detachGear(slot);
-
-            target.attachSkinnedArmor(slot, result.meshes, result.skeletons[0]);
-            const loaderRoot = result.meshes.find(m => m.name === '__root__');
-            if (loaderRoot) loaderRoot.dispose();
-          } else {
-            const gearDef: GearDef = {
-              itemId: -999,
-              file: path,
-              boneName: boneConfig.boneName,
-              localPosition: boneConfig.localPosition,
-              localRotation: boneConfig.localRotation,
-              scale: boneConfig.scale,
-              centerOrigin: false,
-            };
-            const tmpl = await loadGearTemplate(this.scene, gearDef);
-            if (!tmpl) throw new Error('Failed to load ' + path);
-            target.attachGear(slot, -999, tmpl);
-          }
-        });
-        this.gearDebugPanel.setUnequipCallback((slot) => {
-          const target = this.getGearDebugCharacter();
-          if (!target) return;
-          target.detachGear(slot);
-          target.detachSkinnedArmor(slot);
-        });
-        this.gearDebugPanel.setAnimCallback((anim) => {
-          const target = this.getGearDebugCharacter();
-          if (!target) return;
-          if (anim === 'idle') {
-            target.stopWalking();
-            target.stopSkillAnimation();
-          } else if (anim === 'walk') {
-            target.startWalking();
-          } else if (anim === 'attack') {
-            target.playAttackAnimation();
-          } else if (anim === 'chop') {
-            target.startSkillAnimation('chop');
-          } else if (anim === 'mine') {
-            target.startSkillAnimation('mine');
-          }
-        });
+            target.detachSkinnedArmor(slot);
+          });
+          this.gearDebugPanel.setAnimCallback((anim) => {
+            const target = this.getGearDebugCharacter();
+            if (!target) return;
+            if (anim === 'idle') {
+              target.stopWalking();
+              target.stopSkillAnimation();
+            } else if (anim === 'walk') {
+              target.startWalking();
+            } else if (anim === 'attack') {
+              target.playAttackAnimation();
+            } else if (anim === 'chop') {
+              target.startSkillAnimation('chop');
+            } else if (anim === 'mine') {
+              target.startSkillAnimation('mine');
+            }
+          });
+        }
+        this.gearDebugPanel.toggle();
+        if (this.gearDebugPanel.isVisible) {
+          this.camera.enterDebugZoom();
+          this.chatPanel?.addSystemMessage(`Gear debug target: ${this.gearDebugTargetMode === 'npc' ? 'nearest humanoid NPC' : 'player'}.`);
+        } else {
+          this.camera.exitDebugZoom();
+        }
+        return true;
       }
-      this.gearDebugPanel.toggle();
-      if (this.gearDebugPanel.isVisible) {
-        this.camera.enterDebugZoom();
-        this.chatPanel?.addSystemMessage(`Gear debug target: ${this.gearDebugTargetMode === 'npc' ? 'nearest humanoid NPC' : 'player'}.`);
-      } else {
-        this.camera.exitDebugZoom();
+      if (msg === '/copygearfitnpc') {
+        this.copyLocalGearFitToNearestNpc();
+        return true;
       }
-      return true;
-    }
-    if (msg === '/copygearfitnpc') {
-      this.copyLocalGearFitToNearestNpc();
-      return true;
-    }
-    if (msg === '/copyplayergeartonpc') {
-      return false;
-    }
-    if (msg === '/scenebudget') {
-      logSceneBudget(this.scene);
-      this.chatPanel?.addMessage('System', 'Scene budget written to the browser console.');
-      return true;
-    }
-    if (msg === '/bonedebug') {
-      if (!this.boneDebugPanel) {
-        this.boneDebugPanel = new BoneDebugPanel();
-        this.boneDebugPanel.setSkeletonGetter(() => this.localPlayer?.getSkeleton?.() ?? null);
+      if (msg === '/copyplayergeartonpc') {
+        void this.copyLocalGearToNearestNpc();
+        return true;
       }
-      this.boneDebugPanel.toggle();
-      if (this.boneDebugPanel.isVisible) this.camera.enterDebugZoom();
-      else this.camera.exitDebugZoom();
-      return true;
-    }
-    if (msg === '/appearance') {
-      this.openCharacterCreatorWhenReady();
-      return true;
-    }
-    if (msg.startsWith('/anim ')) {
-      this.runAnimCommand(msg.slice(6).trim());
-      return true;
-    }
-    if (msg === '/anim' || msg === '/anim ?') {
-      const names = this.localPlayer?.getAnimationNames() ?? [];
-      this.chatPanel?.addSystemMessage(`Animations: ${names.join(', ') || '(none loaded)'}`);
-      return true;
-    }
-    // /spell and /cast require a space (or exact match) for the same reason —
-    // a bare `startsWith('/spell')` swallows any /spell* command.
-    if (msg === '/spell' || msg === '/spell ?' || msg.startsWith('/spell ')) {
-      this.runSpellCommand(msg.slice(6).trim());
-      return true;
-    }
-    if (msg === '/cast' || msg === '/cast ?' || msg.startsWith('/cast ')) {
-      this.runCastCommand(msg.slice(5).trim());
-      return true;
-    }
+      if (msg === '/scenebudget') {
+        logSceneBudget(this.scene);
+        this.chatPanel?.addMessage('System', 'Scene budget written to the browser console.');
+        return true;
+      }
+      if (msg === '/bonedebug') {
+        if (!this.boneDebugPanel) {
+          this.boneDebugPanel = new BoneDebugPanel();
+          this.boneDebugPanel.setSkeletonGetter(() => this.localPlayer?.getSkeleton?.() ?? null);
+        }
+        this.boneDebugPanel.toggle();
+        if (this.boneDebugPanel.isVisible) this.camera.enterDebugZoom();
+        else this.camera.exitDebugZoom();
+        return true;
+      }
+      if (msg === '/appearance') {
+        this.openCharacterCreatorWhenReady();
+        return true;
+      }
+      if (msg.startsWith('/anim ')) {
+        this.runAnimCommand(msg.slice(6).trim());
+        return true;
+      }
+      if (msg === '/anim' || msg === '/anim ?') {
+        const names = this.localPlayer?.getAnimationNames() ?? [];
+        this.chatPanel?.addSystemMessage(`Animations: ${names.join(', ') || '(none loaded)'}`);
+        return true;
+      }
+      // /spell and /cast require a space (or exact match) for the same reason —
+      // a bare `startsWith('/spell')` swallows any /spell* command.
+      if (msg === '/spell' || msg === '/spell ?' || msg.startsWith('/spell ')) {
+        this.runSpellCommand(msg.slice(6).trim());
+        return true;
+      }
+      if (msg === '/cast' || msg === '/cast ?' || msg.startsWith('/cast ')) {
+        this.runCastCommand(msg.slice(5).trim());
+        return true;
+      }
     }
     return false;
+  }
+
+  private playLocalPlayerDeathEffect(): void {
+    if (!this.localPlayer) return;
+    const foot = this.localPlayer.position.clone();
+    this.spawnDeathPortalCharacterPreview(foot, {
+      faceX: this.playerX,
+      faceZ: this.playerZ,
+    });
+  }
+
+  private playDeathPortalDebugPreview(): void {
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+
+    const x = this.playerX + 1.25;
+    const z = this.playerZ;
+    const y = this.getHeightAtFloor(x, z, this.currentFloor, this.localPlayer.position.y);
+    this.spawnDeathPortalCharacterPreview(new Vector3(x, y, z), {
+      label: 'Death FX',
+      labelColor: '#9eeaff',
+      faceX: this.playerX,
+      faceZ: this.playerZ,
+      systemMessage: 'Death portal preview spawned.',
+    });
+  }
+
+  private spawnDeathPortalCharacterPreview(
+    foot: Vector3,
+    opts: {
+      label?: string;
+      labelColor?: string;
+      faceX?: number;
+      faceZ?: number;
+      systemMessage?: string;
+    } = {},
+  ): void {
+    const preview = new CharacterEntity(this.scene, {
+      name: `deathfx_preview_${Date.now()}`,
+      modelPath: CHARACTER_MODEL_PATH,
+      targetHeight: CHARACTER_TARGET_HEIGHT,
+      label: opts.label,
+      labelColor: opts.labelColor,
+      additionalAnimations: [
+        { name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` },
+      ],
+    });
+    preview.setPositionXYZ(foot.x, foot.y, foot.z);
+    if (opts.faceX !== undefined && opts.faceZ !== undefined) {
+      preview.lockFaceTowardXZ(opts.faceX, opts.faceZ);
+    }
+    if (opts.systemMessage) this.chatPanel?.addSystemMessage(opts.systemMessage);
+
+    void preview.whenReady().then(() => {
+      if (this.destroyed) {
+        preview.dispose();
+        return;
+      }
+      if (this.localAppearance) preview.applyAppearance(this.localAppearance);
+      DeathPortalEffect.play(this.scene, preview, { onDone: () => preview.dispose() });
+    });
   }
 
   /**
@@ -5993,22 +6067,27 @@ export class GameManager {
   }
 
   private showHitSplat(pos: Vector3, damage: number): void {
+    const didDamage = damage > 0;
+    const worldPos = new Vector3(
+      pos.x + (Math.random() - 0.5) * 0.3,
+      pos.y + 1.5,
+      pos.z
+    );
     const el = document.createElement('div');
     el.style.cssText = `
       position: fixed; pointer-events: none; z-index: 250;
-      width: 32px; height: 32px;
+      width: 34px; height: 34px;
       transform: translate(-50%, -50%);
       display: flex; align-items: center; justify-content: center;
-      image-rendering: pixelated;
       opacity: 0;
-      transition: opacity 0.3s ease-out;
+      filter: drop-shadow(1px 2px 0 rgba(0, 0, 0, 0.7));
     `;
 
     const img = document.createElement('img');
-    img.src = damage > 0 ? '/sprites/effects/hitsplash.png' : '/sprites/effects/nohitsplash.png';
+    img.src = didDamage ? GameManager.HIT_SPLAT_ASSET_URLS[0] : GameManager.HIT_SPLAT_ASSET_URLS[1];
     img.style.cssText = `
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-      image-rendering: pixelated; pointer-events: none;
+      pointer-events: none;
     `;
     el.appendChild(img);
 
@@ -6016,25 +6095,52 @@ export class GameManager {
     numEl.textContent = damage.toString();
     numEl.style.cssText = `
       position: relative; z-index: 1;
-      color: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 13px; font-weight: bold;
+      color: ${didDamage ? '#fff1b8' : '#dbe2e8'};
+      font-family: Verdana, Arial, Helvetica, sans-serif;
+      font-size: ${didDamage && damage >= 10 ? '12px' : '13px'};
+      font-weight: 800;
+      line-height: 1;
       text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
     `;
     el.appendChild(numEl);
 
     document.body.appendChild(el);
 
-    const worldPos = new Vector3(
-      pos.x + (Math.random() - 0.5) * 0.3,
-      pos.y + 1.5,
-      pos.z
-    );
-
-    this.hitSplats.push({
+    const splat: HitSplatOverlay = {
       worldPos,
       el,
       timer: 1.2,
-      startY: worldPos.y,
-    });
+    };
+    this.positionHitSplat(splat);
+    this.hitSplats.push(splat);
+  }
+
+  private positionHitSplat(splat: HitSplatOverlay): void {
+    if (!this.ensureOverlayTransform()) return;
+    const cam = this.scene.activeCamera;
+    if (!cam) return;
+    const sp = this._overlayScreenPos;
+    Vector3.ProjectToRef(splat.worldPos, GameManager.IDENTITY, this._overlayTransform, this._overlayVp, sp);
+    const fogOpacity = this.overlayFogOpacity(splat.worldPos, cam.position);
+    const lifetimeOpacity = splat.timer < 0.3 ? splat.timer / 0.3 : 1;
+    const visible = sp.z > 0 && sp.z < 1 && fogOpacity > 0.01;
+
+    splat.el.style.opacity = visible ? (lifetimeOpacity * fogOpacity).toString() : '0';
+    splat.el.style.left = visible ? `${sp.x}px` : '-9999px';
+    splat.el.style.top = visible ? `${sp.y}px` : '-9999px';
+  }
+
+  private playHitSplatDebugPreview(): void {
+    if (!this.localPlayer) {
+      this.chatPanel?.addSystemMessage('No local player yet.');
+      return;
+    }
+    const base = this.localPlayer.position;
+    this.showHitSplat(new Vector3(base.x - 0.35, base.y, base.z), 7);
+    window.setTimeout(() => {
+      if (!this.destroyed) this.showHitSplat(new Vector3(base.x + 0.35, base.y, base.z), 0);
+    }, 160);
+    this.chatPanel?.addSystemMessage('Hit splat preview spawned.');
   }
 
   private createDestinationMarker(): void {
@@ -6351,6 +6457,10 @@ export class GameManager {
       window.removeEventListener('pointerdown', this._cursorTelemetryHandler, true);
       this._cursorTelemetryHandler = null;
     }
+    if (this._npcTooltipHandler) {
+      this.engine.getRenderingCanvas()?.removeEventListener('pointermove', this._npcTooltipHandler);
+      this._npcTooltipHandler = null;
+    }
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();
@@ -6365,9 +6475,11 @@ export class GameManager {
     document.getElementById('side-panel')?.remove();
     for (const splat of this.hitSplats) splat.el.remove();
     this.hitSplats = [];
+    this.transientHealthBars.clear();
     document.querySelectorAll('.chat-bubble-overlay').forEach(el => el.remove());
     document.querySelectorAll('.entity-health-bar').forEach(el => el.remove());
     document.querySelectorAll('.character-name-overlay').forEach(el => el.remove());
+    document.querySelectorAll('.npc-tooltip-overlay').forEach(el => el.remove());
   }
 
   private applyCachedNpcRigState(entityId: number, character: CharacterEntity): void {
@@ -6609,6 +6721,62 @@ export class GameManager {
       clearTimeout(pending);
     }
     this.pendingHealthApply.clear();
+    this.clearPendingLocalHealthSync();
+  }
+
+  private clearPendingLocalHealthSync(): void {
+    if (!this.pendingLocalHealthSync) return;
+    clearTimeout(this.pendingLocalHealthSync.timer);
+    this.pendingLocalHealthSync = null;
+  }
+
+  private getHealthBarHost(entityId: number): HealthBarHost | null {
+    if (entityId === this.localPlayerId) return this.localPlayer;
+    return this.entities.remotePlayers.get(entityId) ?? this.entities.npcSprites.get(entityId) ?? null;
+  }
+
+  private showTransientHealthBar(entityId: number, host: HealthBarHost, health: number, maxHealth: number): void {
+    if (health >= maxHealth) {
+      this.hideTransientHealthBar(entityId, host);
+      return;
+    }
+    host.showHealthBar(health, maxHealth);
+    this.transientHealthBars.set(entityId, performance.now() + GameManager.HEALTH_BAR_VISIBLE_MS);
+  }
+
+  private updateTransientHealthBar(entityId: number, host: HealthBarHost, health: number, maxHealth: number): void {
+    if (health >= maxHealth) {
+      this.hideTransientHealthBar(entityId, host);
+      return;
+    }
+    const expiresAt = this.transientHealthBars.get(entityId);
+    if (expiresAt === undefined) return;
+    if (performance.now() >= expiresAt) {
+      this.hideTransientHealthBar(entityId, host);
+      return;
+    }
+    host.showHealthBar(health, maxHealth);
+  }
+
+  private hideTransientHealthBar(entityId: number, host: HealthBarHost | null = this.getHealthBarHost(entityId)): void {
+    this.transientHealthBars.delete(entityId);
+    host?.hideHealthBar();
+  }
+
+  private hideAllTransientHealthBars(): void {
+    for (const entityId of this.transientHealthBars.keys()) {
+      this.getHealthBarHost(entityId)?.hideHealthBar();
+    }
+    this.transientHealthBars.clear();
+  }
+
+  private updateTransientHealthBars(): void {
+    if (this.transientHealthBars.size === 0) return;
+    const now = performance.now();
+    for (const [entityId, expiresAt] of this.transientHealthBars) {
+      if (now < expiresAt) continue;
+      this.hideTransientHealthBar(entityId);
+    }
   }
 
   private applyLocalHealth(
@@ -6616,16 +6784,47 @@ export class GameManager {
     maxHealth: number,
     opts: { clearPendingImpact?: boolean } = {},
   ): void {
+    this.clearPendingLocalHealthSync();
     if (opts.clearPendingImpact) this.clearPendingHealthApply(this.localPlayerId);
     this.playerHealth = health;
     this.playerMaxHealth = maxHealth;
     this.updateHUD();
     if (!this.localPlayer) return;
-    if (health < maxHealth) {
-      this.localPlayer.showHealthBar(health, maxHealth);
-    } else {
-      this.localPlayer.hideHealthBar();
+    this.updateTransientHealthBar(this.localPlayerId, this.localPlayer, health, maxHealth);
+  }
+
+  private applyLocalHealthFromServer(
+    health: number,
+    maxHealth: number,
+    opts: { clearPendingImpact?: boolean } = {},
+  ): void {
+    const currentHealth = this.playerHealth;
+    const isDamageDrop = health < currentHealth;
+    const isHealingOrFull = health >= currentHealth || health >= maxHealth;
+
+    if (opts.clearPendingImpact || isHealingOrFull) {
+      this.applyLocalHealth(health, maxHealth, opts);
+      return;
     }
+
+    if (this.pendingHealthApply.has(this.localPlayerId)) {
+      this.clearPendingLocalHealthSync();
+      return;
+    }
+
+    if (!isDamageDrop) {
+      this.applyLocalHealth(health, maxHealth, opts);
+      return;
+    }
+
+    this.clearPendingLocalHealthSync();
+    const timer = window.setTimeout(() => {
+      const pending = this.pendingLocalHealthSync;
+      this.pendingLocalHealthSync = null;
+      if (!pending || this.pendingHealthApply.has(this.localPlayerId)) return;
+      this.applyLocalHealth(pending.health, pending.maxHealth);
+    }, GameManager.LOCAL_DAMAGE_SYNC_GRACE_MS);
+    this.pendingLocalHealthSync = { health, maxHealth, timer };
   }
 
   private checkSelfAuthorityFreshness(): void {
@@ -6692,6 +6891,7 @@ export class GameManager {
     }
 
     this._overlayTransformReady = false;
+    this.updateTransientHealthBars();
     this.updateOverlayPositions();
     this.updateHitSplats(dt);
     this.updateMinimap(dt);
@@ -7028,11 +7228,6 @@ export class GameManager {
 
   private updateHitSplats(dt: number): void {
     if (this.hitSplats.length === 0) return;
-    if (!this.ensureOverlayTransform()) return;
-    const cam = this.scene.activeCamera;
-    if (!cam) return;
-    const sp = this._overlayScreenPos;
-    const camPos = cam.position;
 
     let writeIdx = 0;
     for (let i = 0; i < this.hitSplats.length; i++) {
@@ -7042,14 +7237,7 @@ export class GameManager {
       if (splat.timer <= 0) {
         splat.el.remove();
       } else {
-        Vector3.ProjectToRef(splat.worldPos, GameManager.IDENTITY, this._overlayTransform, this._overlayVp, sp);
-        const fogOpacity = this.overlayFogOpacity(splat.worldPos, camPos);
-        const lifetimeOpacity = splat.timer < 0.3 ? splat.timer / 0.3 : 1;
-        const visible = sp.z > 0 && sp.z < 1 && fogOpacity > 0.01;
-
-        splat.el.style.opacity = visible ? (lifetimeOpacity * fogOpacity).toString() : '0';
-        splat.el.style.left = visible ? `${sp.x}px` : '-9999px';
-        splat.el.style.top = visible ? `${sp.y}px` : '-9999px';
+        this.positionHitSplat(splat);
         this.hitSplats[writeIdx++] = splat;
       }
     }

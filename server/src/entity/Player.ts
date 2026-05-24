@@ -1,9 +1,8 @@
 import { Entity } from './Entity';
 import {
   InventorySlot, INVENTORY_SIZE, BANK_SIZE, MAX_STACK,
-  SkillBlock, SkillId, MeleeStance, CombatBonuses,
-  initSkills, addXp, combatLevel, zeroBonuses, STANCE_XP,
-  ACC_BASE, osrsMeleeMaxHit, calculateHitChance, STANCE_BONUSES,
+  SkillBlock, MeleeStance, CombatBonuses,
+  initSkills, combatLevel, zeroBonuses,
   PlayerAnimationKind, PlayerSkillAnimationVariant,
   type PlayerAppearance, type ItemDef,
 } from '@projectrs/shared';

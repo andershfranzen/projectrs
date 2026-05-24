@@ -1,6 +1,7 @@
 import type { BotStatsRow, GameDatabase } from './Database';
 import { audit } from './Audit';
 import { TICK_RATE } from '@projectrs/shared';
+import type { SkillId } from '@projectrs/shared';
 
 /**
  * Per-player bot-detection telemetry. Lives on each connected Player,
@@ -54,7 +55,7 @@ interface SuspiciousPacketClassCounts {
  *  EvilQuest's tick rate + drop rates — adjust as content lands. These are
  *  ceilings (faster than a human could plausibly grind), not "expected"
  *  rates. */
-const XP_PER_HOUR_CEILING: Record<string, number> = {
+const XP_PER_HOUR_CEILING: Record<SkillId, number> = {
   accuracy: 120000,
   strength: 120000,
   defence: 120000,
@@ -62,12 +63,13 @@ const XP_PER_HOUR_CEILING: Record<string, number> = {
   archery: 120000,
   goodmagic: 100000,
   evilmagic: 100000,
-  forestry: 80000,
+  woodcut: 80000,
   fishing: 80000,
   cooking: 100000,
   mining: 80000,
   smithing: 100000,
   crafting: 100000,
+  roguery: 80000,
 };
 
 export interface SessionSummary {
@@ -584,7 +586,7 @@ export class BotStats {
     }
     // xpVelocity: any skill exceeds realistic ceiling
     for (const [skill, rate] of Object.entries(xpPerHour)) {
-      const ceiling = XP_PER_HOUR_CEILING[skill];
+      const ceiling = XP_PER_HOUR_CEILING[skill as SkillId];
       if (ceiling !== undefined && rate > ceiling) {
         flags.push(`xpVelocity:${skill}`);
       }

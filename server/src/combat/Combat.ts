@@ -4,7 +4,7 @@ import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
   osrsMeleeMaxHit, rollHit, npcCombatLevel,
   relicDropPoolForCombatLevel,
-  type CombatBonuses, type ItemDef,
+  type ItemDef,
 } from '@projectrs/shared';
 
 /** Item-id pools for the combat-level-gated bonus relic drop. Tier 1 covers

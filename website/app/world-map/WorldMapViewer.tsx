@@ -94,17 +94,6 @@ const TILE_COLORS: Record<TileCode, [number, number, number, number]> = {
   u: [52, 49, 43, 255],
 };
 
-const TILE_LABELS: Record<TileCode, string> = {
-  g: 'Grass',
-  d: 'Dirt',
-  p: 'Path',
-  s: 'Sand',
-  r: 'Stone',
-  w: 'Water',
-  m: 'Mud',
-  u: 'Blocked',
-};
-
 const OBJECT_COLORS: Record<WorldMapObjectKind, string> = {
   building: 'rgba(139, 98, 58, 0.36)',
   wall: 'rgba(246, 241, 228, 0.62)',

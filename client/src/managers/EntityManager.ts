@@ -4,6 +4,7 @@ import { SpriteEntity } from '../rendering/SpriteEntity';
 import { GroundItemEntity, type GroundItemStackEntry } from '../rendering/GroundItemEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
+import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
@@ -368,6 +369,34 @@ export class EntityManager {
   }
 
   // --- Entity removal ---
+
+  startEntityDeathEffect(entityId: number): boolean {
+    const character = this.remotePlayers.get(entityId);
+    if (character) {
+      this.remotePlayers.delete(entityId);
+      this.remoteTargets.delete(entityId);
+      this.remoteWalkUntil.delete(entityId);
+      this.remoteCombatTargets.delete(entityId);
+      DeathPortalEffect.play(this.scene, character, { onDone: () => character.dispose() });
+      return true;
+    }
+
+    const npc = this.npcSprites.get(entityId);
+    if (!npc) return false;
+    if (npc instanceof CharacterEntity) this.npc3dCount = Math.max(0, this.npc3dCount - 1);
+    this.npcSprites.delete(entityId);
+    this.npcTargets.delete(entityId);
+    this.npcDefs.delete(entityId);
+    this.npcAppearances.delete(entityId);
+    this.npcEquipment.delete(entityId);
+    this.npcCustomColors.delete(entityId);
+    this.npcAttackAnimOverrides.delete(entityId);
+    this.npcInteractions.delete(entityId);
+    this.npcOverrideNames.delete(entityId);
+    this.npcCombatTargets.delete(entityId);
+    DeathPortalEffect.play(this.scene, npc, { onDone: () => npc.dispose() });
+    return true;
+  }
 
   removeRemotePlayer(entityId: number, forgetCachedState: boolean = false): void {
     const character = this.remotePlayers.get(entityId);

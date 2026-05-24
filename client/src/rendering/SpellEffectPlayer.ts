@@ -11,7 +11,7 @@ import { ParticleSystem } from '@babylonjs/core/Particles/particleSystem';
 import { Particle } from '@babylonjs/core/Particles/particle';
 import { FresnelParameters } from '@babylonjs/core/Materials/fresnelParameters';
 import { Observer } from '@babylonjs/core/Misc/observable';
-import type { SpellEffectDef, Color3Def, ProjectileShape, CastParticle, ImpactDecal } from '@projectrs/shared';
+import type { SpellEffectDef, Color3Def, ProjectileShape, ImpactDecal } from '@projectrs/shared';
 import type { Targetable } from './Targetable';
 
 // Side-effect imports for mesh builders (Babylon tree-shaking requires these).
