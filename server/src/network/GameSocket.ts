@@ -140,7 +140,7 @@ export async function installGameSocketEncryption(ws: ServerWebSocket<GameSocket
     serverKeyPair,
     serverPublicKey,
     handshakeComplete: false,
-    opcodeMapping: createOpcodeMapping(),
+    opcodeMapping: createOpcodeMapping({ includeAdminServerOpcodes: ws.data.isAdmin }),
     opcodeMappingEnabled: false,
     encryptEnabled: false,
     sendCounter: 0,
@@ -233,10 +233,12 @@ function opcodeCountsAsActivity(opcode: number): boolean {
     && opcode !== ClientOpcode.MAP_READY;
 }
 
-function opcodeRequiresBrowserInputTelemetry(opcode: number): boolean {
+export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: number[] = [], player?: Player): boolean {
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE:
+      return true;
     case ClientOpcode.PLAYER_ATTACK_NPC:
+      return !hasValues(values, 1) || player?.attackTarget?.id !== values[0];
     case ClientOpcode.PLAYER_TALK_NPC:
     case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
@@ -980,10 +982,11 @@ function handleDecryptedGameSocketMessage(
     reportSuspiciousPacket(player, opcode, validation.reason ?? 'invalid-packet', values, ws, world);
     return;
   }
-  if (opcodeRequiresBrowserInputTelemetry(opcode) && player.botStats) {
+  if (opcodeRequiresBrowserInputTelemetry(opcode, values, player) && player.botStats) {
     const now = performance.now();
     const hasRecentInput = player.botStats.hasRecentBrowserInput(now, BROWSER_INPUT_MAX_AGE_MS);
-    player.botStats.recordGameplayCommandInputCheck(hasRecentInput);
+    const hasRecentActivity = player.botStats.hasRecentClientActivity(now, BROWSER_INPUT_MAX_AGE_MS);
+    player.botStats.recordGameplayCommandInputCheck(hasRecentInput, hasRecentActivity);
     if (!hasRecentInput && BLOCK_INPUTLESS_GAMEPLAY) {
       reportSuspiciousPacket(player, opcode, 'missing-input-telemetry', values, ws, world);
       return;

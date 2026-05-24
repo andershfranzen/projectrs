@@ -21,7 +21,7 @@ describe('per-session opcode mapping', () => {
       expect(mapping.clientWireToLogical.get(wire!)).toBe(logical);
     }
 
-    for (const logical of ROTATABLE_SERVER_OPCODE_VALUES) {
+    for (const logical of ROTATABLE_SERVER_OPCODE_VALUES.filter((opcode) => opcode !== ServerOpcode.ADMIN_FLAGS)) {
       const wire = mapping.serverLogicalToWire.get(logical);
       expect(wire).toBeNumber();
       expect(wire).not.toBe(logical);
@@ -31,6 +31,7 @@ describe('per-session opcode mapping', () => {
     expect(mapping.clientLogicalToWire.has(ClientOpcode.CRYPTO_RESPONSE)).toBe(false);
     expect(mapping.serverLogicalToWire.has(ServerOpcode.CRYPTO_CHALLENGE)).toBe(false);
     expect(mapping.serverLogicalToWire.has(ServerOpcode.OPCODE_MAPPING)).toBe(false);
+    expect(mapping.serverLogicalToWire.has(ServerOpcode.ADMIN_FLAGS)).toBe(false);
   });
 
   test('round-trips payloads and rewrites packet opcode byte only', () => {
@@ -46,5 +47,23 @@ describe('per-session opcode mapping', () => {
 
     const logicalPacket = rewritePacketOpcode(wirePacket, parsed.clientWireToLogical, true);
     expect([...logicalPacket]).toEqual([...packet]);
+  });
+
+  test('keeps admin-only server opcodes out of non-admin mappings', () => {
+    const mapping = createOpcodeMapping();
+    const parsed = parseOpcodeMappingPayload(opcodeMappingToPayload(mapping));
+
+    expect(parsed.serverLogicalToWire.has(ServerOpcode.ADMIN_FLAGS)).toBe(false);
+    expect([...parsed.serverWireToLogical.values()]).not.toContain(ServerOpcode.ADMIN_FLAGS);
+  });
+
+  test('includes admin-only server opcodes for admin sessions', () => {
+    const mapping = createOpcodeMapping({ includeAdminServerOpcodes: true });
+    const parsed = parseOpcodeMappingPayload(opcodeMappingToPayload(mapping));
+    const wire = parsed.serverLogicalToWire.get(ServerOpcode.ADMIN_FLAGS);
+
+    expect(wire).toBeNumber();
+    expect(wire).not.toBe(ServerOpcode.ADMIN_FLAGS);
+    expect(parsed.serverWireToLogical.get(wire!)).toBe(ServerOpcode.ADMIN_FLAGS);
   });
 });

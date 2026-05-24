@@ -85,6 +85,7 @@ interface ReviewRisk {
 
 const AUDIT_PATH = resolve(import.meta.dir, '../server/data/audit.log');
 const DB_PATH = resolve(import.meta.dir, '../projectrs.db');
+const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
 
 function parseArgs(): {
   minFlags: number;
@@ -159,6 +160,16 @@ function botStatsHasRiskColumns(db: SQLiteDB): boolean {
     return names.has('risk_score') && names.has('risk_level') && names.has('risk_reasons');
   } catch {
     return false;
+  }
+}
+
+function loadBotMetricsAuditEpochMs(db: SQLiteDB): number {
+  try {
+    const row = db.query('SELECT applied_at FROM server_migrations WHERE id = ?')
+      .get(RESET_BOT_METRICS_MIGRATION_ID) as { applied_at: number } | null;
+    return row?.applied_at ? row.applied_at * 1000 : 0;
+  } catch {
+    return 0;
   }
 }
 
@@ -451,6 +462,12 @@ function computeReviewRisk(
     if (flags.has('tickAligned') && (flags.has('routeActionLoop') || flags.has('lifetimeRouteActionLoop') || flags.has('fastReaction'))) add(6, 'server-tick alignment paired with behavioral loop');
     if (flags.has('pingRegular')) add(12, 'script-regular heartbeat timing');
     if (flags.has('activityHeartbeatCoupled')) add(20, 'activity packets coupled to heartbeat');
+    if (flags.has('browserlessActiveGameplay')) add(46, 'active gameplay without browser input telemetry');
+    if (flags.has('commandsWithoutRecentInput')) add(34, 'gameplay commands without recent browser input');
+    if (flags.has('commandsWithoutRecentActivity')) add(42, 'gameplay commands without recent browser activity');
+    if (flags.has('inputlessCommandRatio')) add(18, 'high no-input gameplay command ratio');
+    if (flags.has('activitylessCommandRatio')) add(22, 'high no-activity gameplay command ratio');
+    if (flags.has('noClientActivityTelemetry')) add(12, 'active session without client activity telemetry');
     if (flags.has('routeActionLoop')) add(10, 'repeated route/action loop');
     if (flags.has('lifetimeRouteActionLoop')) add(10, 'lifetime route/action loop');
     if (flags.has('pathRepetitive')) add(8, 'repetitive movement destination');
@@ -490,12 +507,31 @@ function computeReviewRisk(
   if (tradeHits.some((hit) => hit.sharedDevices.length > 0)) add(45, 'trade transfer involving shared device');
   else if (tradeHits.length > 0) add(30, 'trade transfer involving shared IP/network');
 
+  if (!hasHardBotEvidence(flags) && tradeHits.length === 0 && uniqueSharedDeviceAlts.size === 0) {
+    score = Math.min(score, 29);
+  }
+
   const capped = Math.min(100, Math.round(score));
   return {
     score: capped,
     level: riskLevelForScore(capped),
     reasons: [...new Set(reasons)].slice(0, 12),
   };
+}
+
+function hasHardBotEvidence(flags: Set<string>): boolean {
+  return flags.has('activityHeartbeatCoupled')
+    || flags.has('browserlessActiveGameplay')
+    || flags.has('commandsWithoutRecentInput')
+    || flags.has('commandsWithoutRecentActivity')
+    || flags.has('deviceRotating')
+    || flags.has('inputlessCommandBurst')
+    || flags.has('inputlessCommandRatio')
+    || flags.has('activitylessCommandRatio')
+    || flags.has('protocolPackets')
+    || flags.has('rateLimitPackets')
+    || flags.has('lifetimeHardInvalidPackets')
+    || flags.has('xpVelocity');
 }
 
 /** --ip path: list every account that's ever used the given IP. */
@@ -528,6 +564,7 @@ function main(): void {
 
   const lines = loadAuditLog();
   const cutoff = Date.now() - opts.days * 86400_000;
+  const auditEpochMs = loadBotMetricsAuditEpochMs(db);
   const cutoffUnixSec = Math.floor(cutoff / 1000);
 
   const buckets: Map<number, AccountBucket> = new Map();
@@ -537,6 +574,7 @@ function main(): void {
     if (opts.account != null && line.accountId !== opts.account) continue;
     const ts = new Date(line.ts).getTime();
     if (ts < cutoff) continue;
+    if (auditEpochMs > 0 && ts < auditEpochMs) continue;
     const details = line.details;
     const flags = (details?.flags as string[]) ?? [];
     if (flags.length === 0 && opts.account == null) continue;

@@ -10,6 +10,7 @@ const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accoun
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
 const MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID = 'move_stacked_relics_to_bank_2026_05_24';
+const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
 const SUSPECT_SKETCH_ITEM_ID = 236;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
@@ -458,6 +459,10 @@ function calibratedLegacyBotRisk(input: {
   if (input.totalSuspiciousPackets >= 500) add(4, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
   else if (input.totalSuspiciousPackets >= 100) add(2, `lifetime stale/noisy invalid packet volume (${input.totalSuspiciousPackets})`);
 
+  if (hardInvalid < 25) {
+    score = Math.min(score, 29);
+  }
+
   const capped = Math.min(100, Math.round(score));
   return {
     score: capped,
@@ -619,6 +624,7 @@ export class GameDatabase {
     try {
       this.db.exec(`ALTER TABLE bot_stats ADD COLUMN session_history TEXT NOT NULL DEFAULT '[]'`);
     } catch { /* column already exists */ }
+    this.runOneTimeBotStatsMigrations();
 
     // Login history: one row per session. IP is captured at WS upgrade time.
     // Indexed by ip + account_id + login_ts so the bot-review CLI can cheaply
@@ -826,6 +832,14 @@ export class GameDatabase {
 
     runOnce(RESET_BOBS_BURIAL_MIGRATION_ID, () => this.resetBobBurialSavedState());
     runOnce(MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID, () => this.moveStackedRelicsToBankSavedState());
+  }
+
+  private runOneTimeBotStatsMigrations(): void {
+    const alreadyRun = this.db.query('SELECT 1 FROM server_migrations WHERE id = ?').get(RESET_BOT_METRICS_MIGRATION_ID);
+    if (alreadyRun) return;
+    const changed = this.db.query('DELETE FROM bot_stats').run().changes;
+    this.db.query('INSERT INTO server_migrations (id) VALUES (?)').run(RESET_BOT_METRICS_MIGRATION_ID);
+    console.log(`[migration] ${RESET_BOT_METRICS_MIGRATION_ID}: cleared ${changed} polluted bot metric row(s).`);
   }
 
   private resetBobBurialSavedState(): number {

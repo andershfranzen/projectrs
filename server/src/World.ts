@@ -1522,7 +1522,7 @@ export class World {
       PROTOCOL_VERSION,
     );
 
-    this.sendToPlayer(player, ServerOpcode.ADMIN_FLAGS, player.isAdmin ? 1 : 0);
+    if (player.isAdmin) this.sendToPlayer(player, ServerOpcode.ADMIN_FLAGS, 1);
 
     // Send MAP_CHANGE so client loads the correct map (handles underground, dungeons, etc.)
     this.sendMapChange(player, player.currentMapLevel);

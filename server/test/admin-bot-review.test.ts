@@ -52,6 +52,7 @@ describe('admin bot review data', () => {
       stats.totalCombatSwings = 15000;
       stats.totalMovements = 13000;
       stats.totalChatMessages = 10;
+      stats.totalFlagEvents = 40;
       stats.riskScore = 96;
       stats.riskLevel = 'critical';
       stats.riskReasons = ['tick-aligned action timing (8ms stddev) (+24)', 'invalid/stale gameplay packets (100 this session) (+14)'];
@@ -60,6 +61,7 @@ describe('admin bot review data', () => {
       const row = db.listAdminBotReviewAccounts().find((entry) => entry.accountId === target.accountId);
 
       expect(row?.riskScore).toBeLessThan(96);
+      expect(row?.riskScore).toBeLessThan(30);
       expect(row?.riskReasons.some((reason) => reason.includes('low-social high-activity'))).toBe(true);
       expect(row?.chatRatePerHour).toBeLessThan(1);
       expect(row?.sharedDeviceAlts[0]?.username).toBe('alt-target');

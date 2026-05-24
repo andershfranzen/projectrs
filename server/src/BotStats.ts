@@ -86,6 +86,7 @@ export interface SessionSummary {
   sessionInputlessCommands: number;
   sessionGameplayCommands: number;
   sessionCommandsWithoutRecentInput: number;
+  sessionCommandsWithoutRecentActivity: number;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketReasons: Record<string, number>;
@@ -98,6 +99,7 @@ export interface SessionSummary {
   pingIntervalMedianMs: number | null;
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
+  activitylessCommandRatio: number | null;
   topPathRepetition: number | null;
   topActionLoopRepetition: number | null;
   topLifetimePathRepetition: number | null;
@@ -173,6 +175,7 @@ export class BotStats {
   sessionInputlessCommands: number = 0;
   sessionGameplayCommands: number = 0;
   sessionCommandsWithoutRecentInput: number = 0;
+  sessionCommandsWithoutRecentActivity: number = 0;
   sessionSuspiciousPackets: number = 0;
   sessionPathDestinations: Map<string, number> = new Map();
   sessionActionSignatures: Map<string, number> = new Map();
@@ -290,6 +293,7 @@ export class BotStats {
     this.sessionInputlessCommands = 0;
     this.sessionGameplayCommands = 0;
     this.sessionCommandsWithoutRecentInput = 0;
+    this.sessionCommandsWithoutRecentActivity = 0;
     this.sessionSuspiciousPackets = 0;
     this.sessionPathDestinations.clear();
     this.sessionActionSignatures.clear();
@@ -418,15 +422,22 @@ export class BotStats {
   }
 
   hasRecentBrowserInput(now: number = performance.now(), maxAgeMs: number = 15_000): boolean {
-    return (this.lastActivityAt !== null && now - this.lastActivityAt >= 0 && now - this.lastActivityAt <= maxAgeMs)
+    return this.hasRecentClientActivity(now, maxAgeMs)
       || (this.lastCursorAt !== null && now - this.lastCursorAt >= 0 && now - this.lastCursorAt <= maxAgeMs);
   }
 
-  recordGameplayCommandInputCheck(hadRecentInput: boolean): void {
+  hasRecentClientActivity(now: number = performance.now(), maxAgeMs: number = 15_000): boolean {
+    return this.lastActivityAt !== null && now - this.lastActivityAt >= 0 && now - this.lastActivityAt <= maxAgeMs;
+  }
+
+  recordGameplayCommandInputCheck(hadRecentInput: boolean, hadRecentActivity: boolean = hadRecentInput): void {
     this.sessionGameplayCommands++;
     if (!hadRecentInput) {
       this.sessionCommandsWithoutRecentInput++;
       this.recordInputlessCommand();
+    }
+    if (!hadRecentActivity) {
+      this.sessionCommandsWithoutRecentActivity++;
     }
   }
 
@@ -482,6 +493,9 @@ export class BotStats {
       : null;
     const inputlessCommandRatio = this.sessionGameplayCommands > 0
       ? this.sessionCommandsWithoutRecentInput / this.sessionGameplayCommands
+      : null;
+    const activitylessCommandRatio = this.sessionGameplayCommands > 0
+      ? this.sessionCommandsWithoutRecentActivity / this.sessionGameplayCommands
       : null;
     const deviceIdsSeen = this.deviceIds.size;
     const deviceLogins = [...this.deviceIds.values()].reduce((a, b) => a + b, 0);
@@ -592,12 +606,22 @@ export class BotStats {
     if (this.sessionCommandsWithoutRecentInput >= 3) {
       flags.push('commandsWithoutRecentInput');
     }
+    if (this.sessionCommandsWithoutRecentActivity >= 5) {
+      flags.push('commandsWithoutRecentActivity');
+    }
     if (
       this.sessionGameplayCommands >= 10
       && inputlessCommandRatio !== null
       && inputlessCommandRatio >= 0.5
     ) {
       flags.push('inputlessCommandRatio');
+    }
+    if (
+      this.sessionGameplayCommands >= 10
+      && activitylessCommandRatio !== null
+      && activitylessCommandRatio >= 0.5
+    ) {
+      flags.push('activitylessCommandRatio');
     }
     if (this.sessionCursorEvents >= 20 && topCursorCellRepetition !== null && topCursorCellRepetition > 0.95) {
       flags.push('cursorStatic');
@@ -636,6 +660,7 @@ export class BotStats {
       sessionInputlessCommands: this.sessionInputlessCommands,
       sessionGameplayCommands: this.sessionGameplayCommands,
       sessionCommandsWithoutRecentInput: this.sessionCommandsWithoutRecentInput,
+      sessionCommandsWithoutRecentActivity: this.sessionCommandsWithoutRecentActivity,
       sessionSkillingActions: this.sessionSkillingActions,
       sessionCombatSwings: this.sessionCombatSwings,
       sessionMovements: this.sessionMovements,
@@ -651,6 +676,7 @@ export class BotStats {
       pingSeqResets: this.pingSeqResets,
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
+      activitylessCommandRatio,
       reactionSamples: this.reactionSamples.length,
       reactionMedianMs,
       topPathRepetition,
@@ -681,6 +707,7 @@ export class BotStats {
       sessionInputlessCommands: this.sessionInputlessCommands,
       sessionGameplayCommands: this.sessionGameplayCommands,
       sessionCommandsWithoutRecentInput: this.sessionCommandsWithoutRecentInput,
+      sessionCommandsWithoutRecentActivity: this.sessionCommandsWithoutRecentActivity,
       sessionSuspiciousPackets: this.sessionSuspiciousPackets,
       totalSuspiciousPackets: this.totalSuspiciousPackets,
       sessionSuspiciousPacketReasons,
@@ -693,6 +720,7 @@ export class BotStats {
       pingIntervalMedianMs,
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
+      activitylessCommandRatio,
       topPathRepetition,
       topActionLoopRepetition,
       topLifetimePathRepetition,
@@ -832,6 +860,7 @@ interface BotRiskInput {
   sessionInputlessCommands: number;
   sessionGameplayCommands: number;
   sessionCommandsWithoutRecentInput: number;
+  sessionCommandsWithoutRecentActivity: number;
   sessionSuspiciousPackets: number;
   totalSuspiciousPackets: number;
   sessionSuspiciousPacketClasses: SuspiciousPacketClassCounts;
@@ -844,6 +873,7 @@ interface BotRiskInput {
   pingSeqResets: number;
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
+  activitylessCommandRatio: number | null;
   reactionSamples: number;
   reactionMedianMs: number | null;
   topPathRepetition: number | null;
@@ -888,9 +918,17 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     34,
     `gameplay commands without recent browser input (${input.sessionCommandsWithoutRecentInput}/${input.sessionGameplayCommands})`,
   );
+  if (flagSet.has('commandsWithoutRecentActivity')) add(
+    42,
+    `gameplay commands without recent browser activity (${input.sessionCommandsWithoutRecentActivity}/${input.sessionGameplayCommands})`,
+  );
   if (flagSet.has('inputlessCommandRatio')) add(
     18,
     `high no-input gameplay command ratio (${ratioLabel(input.inputlessCommandRatio)})`,
+  );
+  if (flagSet.has('activitylessCommandRatio')) add(
+    22,
+    `high no-activity gameplay command ratio (${ratioLabel(input.activitylessCommandRatio)})`,
   );
   if (flagSet.has('noClientActivityTelemetry')) add(12, 'active session without client activity telemetry');
   if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
@@ -934,10 +972,15 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');
   if (flagSet.has('commandsWithoutRecentInput') && flagSet.has('browserlessActiveGameplay')) add(8, 'raw socket commands during browserless gameplay');
+  if (flagSet.has('commandsWithoutRecentActivity') && flagSet.has('noClientActivityTelemetry')) add(8, 'gameplay commands without browser activity telemetry');
   if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
 
   if (input.sessionMinutes >= 240 && input.sessionChats === 0 && input.sessionMovements >= 100) {
     add(6, 'multi-hour silent movement-heavy session');
+  }
+
+  if (!hasHardBotEvidence(flagSet)) {
+    score = Math.min(score, 29);
   }
 
   const capped = Math.min(100, Math.round(score));
@@ -946,6 +989,21 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     level: riskLevelForScore(capped),
     reasons: reasons.slice(0, 12),
   };
+}
+
+function hasHardBotEvidence(flagSet: Set<string>): boolean {
+  return flagSet.has('activityHeartbeatCoupled')
+    || flagSet.has('browserlessActiveGameplay')
+    || flagSet.has('commandsWithoutRecentInput')
+    || flagSet.has('commandsWithoutRecentActivity')
+    || flagSet.has('deviceRotating')
+    || flagSet.has('inputlessCommandBurst')
+    || flagSet.has('inputlessCommandRatio')
+    || flagSet.has('activitylessCommandRatio')
+    || flagSet.has('protocolPackets')
+    || flagSet.has('rateLimitPackets')
+    || flagSet.has('lifetimeHardInvalidPackets')
+    || flagSet.has('xpVelocity');
 }
 
 function riskLevelForScore(score: number): BotRiskLevel {

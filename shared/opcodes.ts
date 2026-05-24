@@ -322,7 +322,7 @@ export enum ServerOpcode {
    *  quest-log re-render. */
   QUEST_STAGE_ADVANCED = 111,
 
-  /** Per-session permission flags. Sent once, immediately after LOGIN_OK.
+  /** Per-session permission flags. Sent only to admin sessions after LOGIN_OK.
    *  Payload: [flags] — bit 0 = isAdmin. Client uses this to gate things
    *  like the free-camera mode (non-admins are locked to a 2004scape-style
    *  fixed-pitch / fixed-zoom view). */

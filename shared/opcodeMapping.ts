@@ -15,6 +15,10 @@ export interface OpcodeMappingTables {
   serverWireToLogical: Map<number, number>;
 }
 
+export interface OpcodeMappingOptions {
+  includeAdminServerOpcodes?: boolean;
+}
+
 const RESERVED_WIRE_OPCODES = new Set([
   0,
   ClientOpcode.CRYPTO_RESPONSE,
@@ -44,6 +48,16 @@ export const ROTATABLE_CLIENT_OPCODE_VALUES = enumNumericValues(ClientOpcode)
 
 export const ROTATABLE_SERVER_OPCODE_VALUES = enumNumericValues(ServerOpcode)
   .filter((opcode) => !FIXED_SERVER_OPCODES.has(opcode));
+
+const ADMIN_ONLY_SERVER_OPCODE_VALUES = new Set<number>([
+  ServerOpcode.ADMIN_FLAGS,
+]);
+
+const REQUIRED_ROTATABLE_SERVER_OPCODE_VALUES = ROTATABLE_SERVER_OPCODE_VALUES
+  .filter((opcode) => !ADMIN_ONLY_SERVER_OPCODE_VALUES.has(opcode));
+
+const OPTIONAL_ROTATABLE_SERVER_OPCODE_VALUES = ROTATABLE_SERVER_OPCODE_VALUES
+  .filter((opcode) => ADMIN_ONLY_SERVER_OPCODE_VALUES.has(opcode));
 
 function randomIndex(maxExclusive: number): number {
   if (maxExclusive <= 0) throw new RangeError('empty shuffle range');
@@ -90,9 +104,12 @@ function invert(map: Map<number, number>): Map<number, number> {
   return out;
 }
 
-export function createOpcodeMapping(): OpcodeMappingTables {
+export function createOpcodeMapping(options: OpcodeMappingOptions = {}): OpcodeMappingTables {
   const clientLogicalToWire = makeDirectionalMap(ROTATABLE_CLIENT_OPCODE_VALUES);
-  const serverLogicalToWire = makeDirectionalMap(ROTATABLE_SERVER_OPCODE_VALUES);
+  const serverLogicalValues = options.includeAdminServerOpcodes
+    ? ROTATABLE_SERVER_OPCODE_VALUES
+    : REQUIRED_ROTATABLE_SERVER_OPCODE_VALUES;
+  const serverLogicalToWire = makeDirectionalMap(serverLogicalValues);
   return {
     clientLogicalToWire,
     clientWireToLogical: invert(clientLogicalToWire),
@@ -117,11 +134,16 @@ export function opcodeMappingToPayload(mapping: OpcodeMappingTables): OpcodeMapp
   };
 }
 
-function mapFromRecord(record: Record<string, unknown>, expectedLogicalValues: number[]): Map<number, number> {
+function mapFromRecord(
+  record: Record<string, unknown>,
+  expectedLogicalValues: number[],
+  optionalLogicalValues: number[] = [],
+): Map<number, number> {
   const out = new Map<number, number>();
   const seenWire = new Set<number>();
-  for (const logical of expectedLogicalValues) {
+  const read = (logical: number, optional: boolean): void => {
     const raw = record[String(logical)];
+    if (raw === undefined && optional) return;
     if (!Number.isInteger(raw) || (raw as number) < 1 || (raw as number) > 253) {
       throw new Error(`missing opcode mapping for ${logical}`);
     }
@@ -131,6 +153,12 @@ function mapFromRecord(record: Record<string, unknown>, expectedLogicalValues: n
     if (seenWire.has(wire)) throw new Error(`duplicate wire opcode ${wire}`);
     seenWire.add(wire);
     out.set(logical, wire);
+  };
+  for (const logical of expectedLogicalValues) {
+    read(logical, false);
+  }
+  for (const logical of optionalLogicalValues) {
+    read(logical, true);
   }
   return out;
 }
@@ -142,7 +170,11 @@ export function parseOpcodeMappingPayload(raw: unknown): OpcodeMappingTables {
   if (!payload.client || typeof payload.client !== 'object') throw new Error('missing client opcode mapping');
   if (!payload.server || typeof payload.server !== 'object') throw new Error('missing server opcode mapping');
   const clientLogicalToWire = mapFromRecord(payload.client as Record<string, unknown>, ROTATABLE_CLIENT_OPCODE_VALUES);
-  const serverLogicalToWire = mapFromRecord(payload.server as Record<string, unknown>, ROTATABLE_SERVER_OPCODE_VALUES);
+  const serverLogicalToWire = mapFromRecord(
+    payload.server as Record<string, unknown>,
+    REQUIRED_ROTATABLE_SERVER_OPCODE_VALUES,
+    OPTIONAL_ROTATABLE_SERVER_OPCODE_VALUES,
+  );
   return {
     clientLogicalToWire,
     clientWireToLogical: invert(clientLogicalToWire),
