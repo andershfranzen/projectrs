@@ -7,11 +7,11 @@ import {
 import {
   buildThumbnailOptionsFromOverride,
   invalidateThumbnailOverrides,
-  itemThumbnailFamily,
+  itemThumbnailFamilyKey,
   itemThumbnailTier,
   itemThumbnailTierIndex,
 } from '@client/rendering/ItemIcon'
-import { getItemOverride, invalidateOverridesCache, type AssetThumbnailOverride } from './ThumbnailRenderer'
+import { getItemFamilyOverride, getItemOverride, invalidateOverridesCache, type AssetThumbnailOverride } from './ThumbnailRenderer'
 import { openThumbnailPoseEditor } from './ThumbnailRotationEditor'
 
 export interface ItemThumbnailBrowserOptions {
@@ -23,6 +23,11 @@ let itemThumbManifestPromise: Promise<Set<number>> | null = null
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value))
+}
+
+interface ItemThumbnailOverrideStore {
+  items: Record<string, AssetThumbnailOverride>
+  families: Record<string, AssetThumbnailOverride>
 }
 
 function normalizeOverride(value: unknown): AssetThumbnailOverride | null {
@@ -39,21 +44,29 @@ function normalizeOverride(value: unknown): AssetThumbnailOverride | null {
   return Object.keys(out).length ? out : null
 }
 
-async function loadItemThumbnailOverrides(): Promise<Record<string, AssetThumbnailOverride>> {
+async function loadItemThumbnailOverrides(): Promise<ItemThumbnailOverrideStore> {
   try {
     const res = await fetch('/data/thumbnail-overrides.json', { cache: 'no-store' })
-    if (!res.ok) return {}
+    if (!res.ok) return { items: {}, families: {} }
     const data = await res.json()
-    if (!data || typeof data !== 'object') return {}
-    const out: Record<string, AssetThumbnailOverride> = {}
+    if (!data || typeof data !== 'object') return { items: {}, families: {} }
+    const items: Record<string, AssetThumbnailOverride> = {}
     for (const [key, value] of Object.entries(data)) {
-      if (key === '_thumbnail_assets') continue
+      if (key.startsWith('_')) continue
       const ov = normalizeOverride(value)
-      if (ov) out[key] = ov
+      if (ov) items[key] = ov
     }
-    return out
+    const families: Record<string, AssetThumbnailOverride> = {}
+    const rawFamilies = (data as { _item_families?: unknown })._item_families
+    if (rawFamilies && typeof rawFamilies === 'object') {
+      for (const [key, value] of Object.entries(rawFamilies)) {
+        const ov = normalizeOverride(value)
+        if (ov) families[key] = ov
+      }
+    }
+    return { items, families }
   } catch {
-    return {}
+    return { items: {}, families: {} }
   }
 }
 
@@ -101,16 +114,15 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
     .filter((entry): entry is { def: ItemDef; modelPath: string } => !!entry.modelPath)
   const itemById = new Map(items.map((entry) => [entry.def.id, entry]))
   const itemDefsForInheritance = items.map((entry) => entry.def)
-  let numericOverrides = buildOverrideMap(thumbnailOverrides)
+  let numericOverrides = buildOverrideMap(thumbnailOverrides.items)
   let indexedPoseLookup = buildPoseLookup()
 
   function buildPoseLookup(): Map<string, ItemDef[]> {
     const out = new Map<string, ItemDef[]>()
     for (const def of itemDefsForInheritance) {
-      if (!def.equipSlot || !numericOverrides[def.id]) continue
-      const family = itemThumbnailFamily(def)
-      if (!family) continue
-      const key = `${def.equipSlot}\0${family}`
+      if (!numericOverrides[def.id]) continue
+      const key = itemThumbnailFamilyKey(def)
+      if (!key) continue
       const arr = out.get(key)
       if (arr) arr.push(def)
       else out.set(key, [def])
@@ -122,16 +134,16 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   }
 
   function rebuildOverrideIndexes(): void {
-    numericOverrides = buildOverrideMap(thumbnailOverrides)
+    numericOverrides = buildOverrideMap(thumbnailOverrides.items)
     indexedPoseLookup = buildPoseLookup()
   }
 
   const getEffectivePose = (def: ItemDef): AssetThumbnailOverride => {
     const direct = numericOverrides[def.id]
-    if (!def.equipSlot) return {}
-    const family = itemThumbnailFamily(def)
-    if (!family) return direct ?? {}
-    const candidates = indexedPoseLookup.get(`${def.equipSlot}\0${family}`) ?? []
+    const familyKey = itemThumbnailFamilyKey(def)
+    if (familyKey && thumbnailOverrides.families[familyKey]) return thumbnailOverrides.families[familyKey]
+    if (!familyKey) return direct ?? {}
+    const candidates = indexedPoseLookup.get(familyKey) ?? []
     if (!candidates.length) return direct ?? {}
     const bronze = candidates.find((candidate) => itemThumbnailTier(candidate) === 'Bronze')
     if (bronze && bronze.id !== def.id) return numericOverrides[bronze.id] ?? {}
@@ -200,8 +212,13 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   closeBtn.addEventListener('click', close)
   backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close() })
 
-  const getSavedPose = (itemId: number): AssetThumbnailOverride | null => {
-    return normalizeOverride(thumbnailOverrides[String(itemId)])
+  const getSavedPose = (def: ItemDef): AssetThumbnailOverride | null => {
+    const familyKey = itemThumbnailFamilyKey(def)
+    if (familyKey) {
+      const familyPose = normalizeOverride(thumbnailOverrides.families[familyKey])
+      if (familyPose) return familyPose
+    }
+    return normalizeOverride(thumbnailOverrides.items[String(def.id)])
   }
 
   const setCopyStatus = (message?: string): void => {
@@ -216,16 +233,16 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   }
 
   const sameFamilyTargets = (source: ItemDef): typeof items => {
-    const family = itemThumbnailFamily(source)
+    const familyKey = itemThumbnailFamilyKey(source)
     return items.filter((entry) =>
       entry.def.id !== source.id &&
-      entry.def.equipSlot === source.equipSlot &&
-      itemThumbnailFamily(entry.def) === family
+      !!familyKey &&
+      itemThumbnailFamilyKey(entry.def) === familyKey
     )
   }
 
   const automaticPoseTargets = (source: ItemDef): typeof items => {
-    return itemThumbnailTier(source) === 'Bronze' ? sameFamilyTargets(source) : []
+    return itemThumbnailFamilyKey(source) ? sameFamilyTargets(source) : []
   }
 
   const sameSlotTargets = (source: ItemDef): typeof items => {
@@ -236,21 +253,32 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
     )
   }
 
+  const buildPoseEntryForTarget = (target: ItemDef, pose: AssetThumbnailOverride): Record<string, unknown> => {
+    const familyKey = itemThumbnailFamilyKey(target)
+    return {
+      type: familyKey ? 'item-family' : 'item',
+      key: familyKey ?? target.id,
+      alpha: pose.alpha,
+      beta: pose.beta,
+      distanceMult: pose.distanceMult,
+      rotationX: pose.rotationX,
+      rotationY: pose.rotationY,
+      rotationZ: pose.rotationZ,
+      iconScale: pose.iconScale,
+    }
+  }
+
   const saveItemThumbnailPoseBatch = async (targets: typeof items, pose: AssetThumbnailOverride): Promise<void> => {
+    const entriesByKey = new Map<string, Record<string, unknown>>()
+    for (const target of targets) {
+      const entry = buildPoseEntryForTarget(target.def, pose)
+      entriesByKey.set(`${entry.type}:${entry.key}`, entry)
+    }
     const res = await fetch('/api/dev/thumbnail-overrides/batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        entries: targets.map((target) => ({
-          key: target.def.id,
-          alpha: pose.alpha,
-          beta: pose.beta,
-          distanceMult: pose.distanceMult,
-          rotationX: pose.rotationX,
-          rotationY: pose.rotationY,
-          rotationZ: pose.rotationZ,
-          iconScale: pose.iconScale,
-        })),
+        entries: Array.from(entriesByKey.values()),
       }),
     })
     if (!res.ok) {
@@ -268,7 +296,7 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   }
 
   const copyPoseTo = async (source: ItemDef, targets: typeof items, label: string): Promise<void> => {
-    const pose = getSavedPose(source.id)
+    const pose = getSavedPose(source)
     if (!pose) {
       setCopyStatus(`Save a thumbnail pose for ${source.name} first.`)
       return
@@ -282,7 +310,11 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
     try {
       setCopyStatus(`Saving thumbnail pose to ${targets.length} item(s)...`)
       await saveItemThumbnailPoseBatch(targets, pose)
-      for (const target of targets) thumbnailOverrides[String(target.def.id)] = clone(pose)
+      for (const target of targets) {
+        const familyKey = itemThumbnailFamilyKey(target.def)
+        if (familyKey) thumbnailOverrides.families[familyKey] = clone(pose)
+        else thumbnailOverrides.items[String(target.def.id)] = clone(pose)
+      }
       invalidateOverridesCache()
       invalidateThumbnailOverrides()
       rebuildOverrideIndexes()
@@ -348,7 +380,9 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       name.textContent = def.name || `Item ${def.id}`
       const detail = document.createElement('div')
       detail.className = 'item-thumb-detail'
-      detail.textContent = `#${def.id}${def.equipSlot ? ` · ${def.equipSlot}` : ''}${manifest.has(def.id) ? ' · baked' : ''}`
+      const familyKey = itemThumbnailFamilyKey(def)
+      const familySaved = familyKey ? !!thumbnailOverrides.families[familyKey] : false
+      detail.textContent = `#${def.id}${def.equipSlot ? ` · ${def.equipSlot}` : ''}${familySaved ? ' · family pose' : ''}${manifest.has(def.id) ? ' · baked' : ''}`
       meta.appendChild(name)
       meta.appendChild(detail)
 
@@ -356,11 +390,14 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       editBtn.className = 'asset-rotate-modal-btn'
       editBtn.textContent = 'Edit'
       editBtn.addEventListener('click', () => {
+        const targetType = familyKey ? 'item-family' : 'item'
         openThumbnailPoseEditor({
-          targetType: 'item',
-          key: def.id,
+          targetType,
+          key: familyKey ?? def.id,
           modelPath,
-          title: `${def.name || 'Item'} (#${def.id})`,
+          title: familyKey
+            ? `${def.name || 'Item'} family pose (#${def.id})`
+            : `${def.name || 'Item'} (#${def.id})`,
           subtitle: modelPath,
           bakedWarning: manifest.has(def.id)
             ? 'This item has a baked PNG. Rebuild item thumbnails before the saved pose appears in-game.'
@@ -371,10 +408,18 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
             return renderRuntimeThumbnailPreview(modelPath, opts)
           },
           onSaved: async () => {
-            const saved = await getItemOverride(def.id)
+            const saved = familyKey
+              ? await getItemFamilyOverride(familyKey)
+              : await getItemOverride(def.id)
             const normalized = normalizeOverride(saved)
-            if (normalized) thumbnailOverrides[String(def.id)] = normalized
-            else delete thumbnailOverrides[String(def.id)]
+            if (familyKey) {
+              if (normalized) thumbnailOverrides.families[familyKey] = normalized
+              else delete thumbnailOverrides.families[familyKey]
+            } else if (normalized) {
+              thumbnailOverrides.items[String(def.id)] = normalized
+            } else {
+              delete thumbnailOverrides.items[String(def.id)]
+            }
             invalidateThumbnailOverrides()
             rebuildOverrideIndexes()
             const inheritedTargets = automaticPoseTargets(def)
@@ -386,7 +431,7 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
         })
       })
 
-      const pose = getSavedPose(def.id)
+      const pose = getSavedPose(def)
       const sourceBtn = document.createElement('button')
       sourceBtn.className = 'asset-rotate-modal-btn secondary'
       sourceBtn.textContent = 'Source'

@@ -12,6 +12,7 @@ import {
   createThumbnailCamera,
   disposeImportResult,
   getAssetOverride,
+  getItemFamilyOverride,
   getItemOverride,
   invalidateOverridesCache,
   setupThumbnailLights,
@@ -31,7 +32,7 @@ const MIN_DISTANCE_MULT = 0.1
 const MAX_DISTANCE_MULT = 12
 
 export interface ThumbnailPoseEditorOptions {
-  targetType: 'asset' | 'item'
+  targetType: 'asset' | 'item' | 'item-family'
   key: string | number
   modelPath: string
   title: string
@@ -376,9 +377,13 @@ export async function openThumbnailPoseEditor(
     if (closed) return
   }
 
-  const initial = options.targetType === 'item'
-    ? options.initialOverride ?? await getItemOverride(Number(options.key))
-    : await getAssetOverride(String(options.key))
+  const initial = options.targetType === 'asset'
+    ? await getAssetOverride(String(options.key))
+    : options.initialOverride ?? (
+      options.targetType === 'item-family'
+        ? await getItemFamilyOverride(String(options.key))
+        : await getItemOverride(Number(options.key))
+    )
   if (closed) return
   let distMult = initial.distanceMult ?? DEFAULT_THUMB_DISTANCE_MULT
   iconScale = initial.iconScale ?? 1
@@ -671,7 +676,7 @@ export async function openThumbnailPoseEditor(
       rotationX,
       rotationY,
       rotationZ,
-      ...(options.targetType === 'item' ? { iconScale } : {}),
+      ...(options.targetType !== 'asset' ? { iconScale } : {}),
     })
   })
 }

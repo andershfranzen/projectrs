@@ -36,8 +36,7 @@ const TIERS: Tier[] = [
   { name: "Iron",       miningLevel: 15, miningXp: 35,  smeltLevel: 15, smeltXp: 13, smithBaseLevel: 15, equipLevel: 6,  statMultiplier: 1.5, barValue: 30,  respawnTime: 18,  depletionChance: 0.35, rockColor: [100, 70,  60]  },
   { name: "Steel",      miningLevel: 30, miningXp: 50,  smeltLevel: 30, smeltXp: 18, smithBaseLevel: 30, equipLevel: 15, statMultiplier: 2.0, barValue: 60,  respawnTime: 20,  depletionChance: 0.30, rockColor: [ 40, 40,  40]  },
   { name: "Mithril",    miningLevel: 55, miningXp: 80,  smeltLevel: 50, smeltXp: 30, smithBaseLevel: 50, equipLevel: 25, statMultiplier: 3.0, barValue: 120, respawnTime: 120, depletionChance: 0.25, rockColor: [ 70, 70, 120]  },
-  { name: "Adamantite", miningLevel: 70, miningXp: 95,  smeltLevel: 70, smeltXp: 38, smithBaseLevel: 70, equipLevel: 35, statMultiplier: 4.0, barValue: 240, respawnTime: 240, depletionChance: 0.20, rockColor: [ 50, 100, 60]  },
-  { name: "Runite",     miningLevel: 85, miningXp: 125, smeltLevel: 85, smeltXp: 50, smithBaseLevel: 85, equipLevel: 42, statMultiplier: 5.5, barValue: 480, respawnTime: 720, depletionChance: 0.15, rockColor: [ 60, 180, 180] },
+  { name: "Black Bronze", miningLevel: 70, miningXp: 95,  smeltLevel: 70, smeltXp: 38, smithBaseLevel: 70, equipLevel: 35, statMultiplier: 4.0, barValue: 240, respawnTime: 240, depletionChance: 0.20, rockColor: [ 50, 100, 60]  },
 ];
 
 // Fix Bronze — it needs copper ore + tin ore
@@ -51,8 +50,6 @@ TIERS[3].secondaryOreId = 35;
 TIERS[3].secondaryOreQty = 4;
 TIERS[4].secondaryOreId = 35;
 TIERS[4].secondaryOreQty = 6;
-TIERS[5].secondaryOreId = 35;
-TIERS[5].secondaryOreQty = 8;
 
 // ─── SMITHABLE ITEM TYPES ─────────────────────────────────────────
 // bars = number of bars required, levelOffset = added to tier's smithBaseLevel
@@ -140,26 +137,7 @@ const ICON_MAP: Record<string, Record<string, string>> = {
     "Plate Mail Body": "Mithril_Plate_Mail_Body_119.png", "Plate Mail Legs": "Mithril_Plate_Mail_Legs_122.png",
     "Square Shield": "Mithril_Square_Shield_126.png", "Kite Shield": "Mithril_Kite_Shield_130.png",
   },
-  Adamantite: {
-    Ore: "adamantite_ore_154.png", Bar: "adamantite_bar_174.png", Pickaxe: "Adamantite_Pickaxe_1261.png",
-    Dagger: "Adamantite_dagger_65.png", "Short Sword": "Adamantite_Short_Sword_69.png",
-    "Long Sword": "Adamantite_Long_Sword_74.png", "2-handed Sword": "Adamantite_2-handed_Sword_80.png",
-    Scimitar: "Adamantite_Scimitar_86.png", "Battle Axe": "Adamantite_battle_Axe_92.png",
-    Mace: "Adamantite_Mace_97.png", "Medium Helmet": "Medium_Adamantite_Helmet_107.png",
-    "Full Helmet": "Large_Adamantite_Helmet_111.png", "Cuirass": "Adamantite_Chain_Mail_Body_116.png",
-    "Plate Mail Body": "Adamantite_Plate_Mail_Body_120.png", "Plate Mail Legs": "Adamantite_Plate_Mail_Legs_123.png",
-    "Square Shield": "Adamantite_Square_Shield_127.png", "Kite Shield": "Adamantite_Kite_Shield_131.png",
-  },
-  Runite: {
-    Ore: "runite_ore_409.png", Bar: "Runite_bar_408.png", Pickaxe: "Rune_Pickaxe_1262.png",
-    Dagger: "rune_dagger_396.png", "Short Sword": "Rune_short_sword_397.png",
-    "Long Sword": "Rune_long_sword_75.png", "2-handed Sword": "rune_2-handed_Sword_81.png",
-    Scimitar: "rune_Scimitar_398.png", "Battle Axe": "Rune_battle_Axe_93.png",
-    Mace: "Rune_Mace_98.png", "Medium Helmet": "Medium_Rune_Helmet_399.png",
-    "Full Helmet": "Large_Rune_Helmet_112.png", "Cuirass": "Rune_Chain_Mail_Body_400.png",
-    "Plate Mail Body": "Rune_Plate_Mail_Body_401.png", "Plate Mail Legs": "Rune_Plate_Mail_Legs_402.png",
-    "Square Shield": "Rune_Square_Shield_403.png", "Kite Shield": "Rune_Kite_Shield_404.png",
-  },
+  "Black Bronze": {},
 };
 
 // ─── EXISTING ITEM IDS TO PRESERVE ────────────────────────────────
@@ -341,7 +319,7 @@ let nextObjId = 16;
 // Existing: Copper Rock (3), Iron Rock (4), Tin Rock (11), Coal Rock (12)
 const tiersNeedingRocks = TIERS.filter(t => !["Bronze", "Iron", "Steel"].includes(t.name));
 // Steel's ore is iron+coal, no "steel rock" needed
-// But we need Silver, Gold, Mithril, Adamantite, Runite rocks
+// But we need Silver, Gold, Mithril, and Black Bronze rocks
 
 for (const tier of tiersNeedingRocks) {
   newRocks.push({

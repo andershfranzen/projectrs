@@ -2028,10 +2028,11 @@ const server = Bun.serve<SocketData>({
     }
 
     // Thumbnail pose override. The editor POSTs asset targets into
-    // `_thumbnail_assets[path]` and item targets into top-level numeric item
-    // keys. The game client only reads the existing small JSON file when an
-    // item icon is requested, so this editor tooling does not add work to
-    // normal gameplay.
+    // `_thumbnail_assets[path]`, one-off item targets into top-level numeric
+    // item keys, and reusable equipment-family targets into
+    // `_item_families[slot:family]`. The game client only reads the existing
+    // small JSON file when an item icon is requested, so this editor tooling
+    // does not add work to normal gameplay.
     if ((url.pathname === '/api/dev/thumbnail-asset-rotation' || url.pathname === '/api/dev/thumbnail-override') && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
@@ -2063,6 +2064,13 @@ const server = Bun.serve<SocketData>({
           }
           target = '_thumbnail_assets';
           targetKey = path;
+        } else if (type === 'item-family') {
+          const key = typeof body.key === 'string' ? body.key : '';
+          if (!/^[a-z0-9_-]+:[a-z0-9_-]+$/.test(key)) {
+            return jsonResponse({ ok: false, error: 'Invalid item family key' }, 400);
+          }
+          target = '_item_families';
+          targetKey = key;
         } else if (type === 'item') {
           const itemId = typeof body.key === 'number' ? body.key : Number(body.key);
           if (!Number.isInteger(itemId) || itemId <= 0 || itemId > 1000000) {
@@ -2081,6 +2089,9 @@ const server = Bun.serve<SocketData>({
         if (!data._thumbnail_assets || typeof data._thumbnail_assets !== 'object') {
           data._thumbnail_assets = {};
         }
+        if (!data._item_families || typeof data._item_families !== 'object') {
+          data._item_families = {};
+        }
         const entry: any = {};
         const a = body.alpha, b = body.beta, d = body.distanceMult;
         const rx = body.rotationX, ry = body.rotationY, rz = body.rotationZ, s = body.iconScale;
@@ -2093,9 +2104,11 @@ const server = Bun.serve<SocketData>({
         if (typeof s === 'number' && Number.isFinite(s) && s > 0) entry.iconScale = s;
         if (Object.keys(entry).length === 0) {
           if (target === '_thumbnail_assets') delete data._thumbnail_assets[targetKey];
+          else if (target === '_item_families') delete data._item_families[targetKey];
           else delete data[targetKey];
         } else {
           if (target === '_thumbnail_assets') data._thumbnail_assets[targetKey] = entry;
+          else if (target === '_item_families') data._item_families[targetKey] = entry;
           else data[targetKey] = entry;
         }
         await saveJsonWithBackup({
@@ -2128,13 +2141,24 @@ const server = Bun.serve<SocketData>({
         if (!data._thumbnail_assets || typeof data._thumbnail_assets !== 'object') {
           data._thumbnail_assets = {};
         }
+        if (!data._item_families || typeof data._item_families !== 'object') {
+          data._item_families = {};
+        }
 
         let saved = 0;
         for (const raw of body.entries) {
           if (!raw || typeof raw !== 'object') continue;
           const entryBody = raw as Record<string, unknown>;
-          const itemId = typeof entryBody.key === 'number' ? entryBody.key : Number(entryBody.key);
-          if (!Number.isInteger(itemId) || itemId <= 0 || itemId > 1000000) continue;
+          const entryType = entryBody.type === 'item-family' ? 'item-family' : 'item';
+          let targetKey = '';
+          if (entryType === 'item-family') {
+            targetKey = typeof entryBody.key === 'string' ? entryBody.key : '';
+            if (!/^[a-z0-9_-]+:[a-z0-9_-]+$/.test(targetKey)) continue;
+          } else {
+            const itemId = typeof entryBody.key === 'number' ? entryBody.key : Number(entryBody.key);
+            if (!Number.isInteger(itemId) || itemId <= 0 || itemId > 1000000) continue;
+            targetKey = String(itemId);
+          }
           const entry: any = {};
           const a = entryBody.alpha, b = entryBody.beta, d = entryBody.distanceMult;
           const rx = entryBody.rotationX, ry = entryBody.rotationY, rz = entryBody.rotationZ, s = entryBody.iconScale;
@@ -2145,8 +2169,14 @@ const server = Bun.serve<SocketData>({
           if (typeof ry === 'number' && Number.isFinite(ry)) entry.rotationY = ry;
           if (typeof rz === 'number' && Number.isFinite(rz)) entry.rotationZ = rz;
           if (typeof s === 'number' && Number.isFinite(s) && s > 0) entry.iconScale = s;
-          if (Object.keys(entry).length === 0) delete data[String(itemId)];
-          else data[String(itemId)] = entry;
+          if (entryType === 'item-family') {
+            if (Object.keys(entry).length === 0) delete data._item_families[targetKey];
+            else data._item_families[targetKey] = entry;
+          } else if (Object.keys(entry).length === 0) {
+            delete data[targetKey];
+          } else {
+            data[targetKey] = entry;
+          }
           saved++;
         }
 

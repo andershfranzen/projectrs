@@ -11,8 +11,11 @@ const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
 const MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID = 'move_stacked_relics_to_bank_2026_05_24';
 const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
+const REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID = 'remove_retired_resource_items_2026_05_24';
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
 const SUSPECT_SKETCH_ITEM_ID = 236;
+const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
+const RETIRED_RESOURCE_OBJECT_IDS = [17, 18] as const;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
 
 export interface SessionInfo {
@@ -258,6 +261,26 @@ function removeItemFromSavedSlots(rawJson: string | null, fallbackSize: number, 
     return { json: changed ? JSON.stringify(cleaned) : (rawJson || JSON.stringify(slots)), changed };
   } catch {
     return { json: rawJson || JSON.stringify(new Array(fallbackSize).fill(null)), changed: false };
+  }
+}
+
+function removeItemsFromSavedEquipment(rawJson: string | null, itemIds: readonly number[]): { json: string; changed: boolean } {
+  try {
+    const parsed = rawJson ? JSON.parse(rawJson) as unknown : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { json: rawJson || '{}', changed: false };
+    }
+    const retired = new Set<number>(itemIds);
+    const equipment = parsed as Record<string, unknown>;
+    let changed = false;
+    for (const [slot, itemId] of Object.entries(equipment)) {
+      if (typeof itemId !== 'number' || !retired.has(itemId)) continue;
+      delete equipment[slot];
+      changed = true;
+    }
+    return { json: changed ? JSON.stringify(equipment) : (rawJson || '{}'), changed };
+  } catch {
+    return { json: rawJson || '{}', changed: false };
   }
 }
 
@@ -832,6 +855,7 @@ export class GameDatabase {
 
     runOnce(RESET_BOBS_BURIAL_MIGRATION_ID, () => this.resetBobBurialSavedState());
     runOnce(MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID, () => this.moveStackedRelicsToBankSavedState());
+    runOnce(REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID, () => this.removeRetiredResourceSavedState());
   }
 
   private runOneTimeBotStatsMigrations(): void {
@@ -911,6 +935,56 @@ export class GameDatabase {
     if (blockedRelics > 0) {
       console.warn(`[migration] ${MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID}: ${blockedRelics} relic(s) could not move because banks were full; original inventory stacks were left intact.`);
     }
+    return updates.length;
+  }
+
+  private removeRetiredResourceSavedState(): number {
+    const rows = this.db.query('SELECT account_id, inventory, bank, equipment FROM player_state')
+      .all() as Array<{ account_id: number; inventory: string | null; bank: string | null; equipment: string | null }>;
+    const updates: Array<{ accountId: number; inventory: string; bank: string; equipment: string }> = [];
+
+    for (const row of rows) {
+      let inventoryJson = row.inventory;
+      let bankJson = row.bank;
+      let inventoryChanged = false;
+      let bankChanged = false;
+
+      for (const itemId of RETIRED_RESOURCE_ITEM_IDS) {
+        const inventory = removeItemFromSavedSlots(inventoryJson, INVENTORY_SIZE, itemId);
+        inventoryJson = inventory.json;
+        inventoryChanged ||= inventory.changed;
+
+        const bank = removeItemFromSavedSlots(bankJson, BANK_SIZE, itemId);
+        bankJson = bank.json;
+        bankChanged ||= bank.changed;
+      }
+
+      const equipment = removeItemsFromSavedEquipment(row.equipment, RETIRED_RESOURCE_ITEM_IDS);
+      if (!inventoryChanged && !bankChanged && !equipment.changed) continue;
+      updates.push({
+        accountId: row.account_id,
+        inventory: inventoryJson || JSON.stringify(new Array(INVENTORY_SIZE).fill(null)),
+        bank: bankJson || JSON.stringify(new Array(BANK_SIZE).fill(null)),
+        equipment: equipment.json,
+      });
+    }
+
+    try {
+      for (const defId of RETIRED_RESOURCE_OBJECT_IDS) {
+        this.db.query('DELETE FROM world_object_respawn WHERE def_id = ?').run(defId);
+      }
+    } catch {
+      // Fresh databases create world_object_respawn after one-time data migrations.
+      // Existing production databases already have it, so stale retired-rock state is purged there.
+    }
+    if (updates.length === 0) return 0;
+    const tx = this.db.transaction((rowsToUpdate: typeof updates) => {
+      const stmt = this.db.query('UPDATE player_state SET inventory = ?, bank = ?, equipment = ?, updated_at = unixepoch() WHERE account_id = ?');
+      for (const update of rowsToUpdate) {
+        stmt.run(update.inventory, update.bank, update.equipment, update.accountId);
+      }
+    });
+    tx(updates);
     return updates.length;
   }
 

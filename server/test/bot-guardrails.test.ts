@@ -14,6 +14,7 @@ const fakeWs = {
   send() {},
 } as any;
 const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
+const REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID = 'remove_retired_resource_items_2026_05_24';
 
 function recordSparseBrowserTelemetry(stats: BotStats, seq: number, now: number): void {
   const x = 80 + (seq % 9) * 97;
@@ -658,6 +659,44 @@ describe('anti-bot guardrails', () => {
       const second = new GameDatabase(dbPath);
       expect(second.loadBotStats(session.accountId)).toBeNull();
       second.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('retired resource items migration removes saved inventory, bank, and equipment', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'evilquest-resource-removal-'));
+    const dbPath = join(dir, 'test.db');
+    try {
+      const first = new GameDatabase(dbPath);
+      const session = first.loginFallbackAccount('resource-holder', '11111111-1111-4111-8111-111111111111');
+      first.close();
+
+      const raw = new SQLiteDB(dbPath);
+      raw.query('UPDATE player_state SET inventory = ?, bank = ?, equipment = ? WHERE account_id = ?').run(
+        JSON.stringify([{ itemId: 46, quantity: 1 }, { itemId: 47, quantity: 3 }, { itemId: 57, quantity: 1 }, { itemId: 58, quantity: 1 }]),
+        JSON.stringify([{ itemId: 57, quantity: 2 }, { itemId: 47, quantity: 1 }, { itemId: 46, quantity: 4 }, { itemId: 59, quantity: 1 }]),
+        JSON.stringify({ weapon: 57, shield: 67 }),
+        session.accountId,
+      );
+      raw.query('DELETE FROM server_migrations WHERE id = ?').run(REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID);
+      raw.close();
+
+      const second = new GameDatabase(dbPath);
+      second.close();
+
+      const verify = new SQLiteDB(dbPath);
+      const row = verify.query('SELECT inventory, bank, equipment FROM player_state WHERE account_id = ?')
+        .get(session.accountId) as { inventory: string; bank: string; equipment: string };
+      verify.close();
+
+      const inventory = JSON.parse(row.inventory) as Array<{ itemId?: number } | null>;
+      const bank = JSON.parse(row.bank) as Array<{ itemId?: number } | null>;
+      const equipment = JSON.parse(row.equipment) as Record<string, number>;
+      expect(inventory.some(slot => slot?.itemId === 46 || slot?.itemId === 47 || slot?.itemId === 57)).toBe(false);
+      expect(bank.some(slot => slot?.itemId === 46 || slot?.itemId === 47 || slot?.itemId === 57)).toBe(false);
+      expect(equipment.weapon).toBeUndefined();
+      expect(equipment.shield).toBe(67);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

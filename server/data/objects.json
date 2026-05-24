@@ -137,10 +137,6 @@
       "56": [
         128,
         400
-      ],
-      "57": [
-        128,
-        400
       ]
     }
   },
@@ -186,10 +182,6 @@
         350
       ],
       "56": [
-        96,
-        350
-      ],
-      "57": [
         96,
         350
       ]
@@ -534,10 +526,6 @@
       "56": [
         128,
         400
-      ],
-      "57": [
-        128,
-        400
       ]
     }
   },
@@ -583,10 +571,6 @@
         100
       ],
       "56": [
-        16,
-        100
-      ],
-      "57": [
         16,
         100
       ]
@@ -723,112 +707,6 @@
       "56": [
         5,
         50
-      ],
-      "57": [
-        5,
-        50
-      ]
-    }
-  },
-  {
-    "id": 17,
-    "name": "Adamantite Rock",
-    "category": "rock",
-    "actions": [
-      "Mine",
-      "Examine"
-    ],
-    "blocking": true,
-    "width": 0.9,
-    "height": 0.8,
-    "color": [
-      50,
-      100,
-      60
-    ],
-    "skill": "mining",
-    "levelRequired": 70,
-    "xpReward": 95,
-    "harvestItemId": 46,
-    "harvestQuantity": 1,
-    "harvestTime": 7,
-    "depletionChance": 1,
-    "respawnTime": 1333,
-    "successChances": {
-      "33": [
-        2,
-        25
-      ],
-      "53": [
-        2,
-        25
-      ],
-      "54": [
-        2,
-        25
-      ],
-      "55": [
-        2,
-        25
-      ],
-      "56": [
-        2,
-        25
-      ],
-      "57": [
-        2,
-        25
-      ]
-    }
-  },
-  {
-    "id": 18,
-    "name": "Runite Rock",
-    "category": "rock",
-    "actions": [
-      "Mine",
-      "Examine"
-    ],
-    "blocking": true,
-    "width": 0.9,
-    "height": 0.8,
-    "color": [
-      60,
-      180,
-      180
-    ],
-    "skill": "mining",
-    "levelRequired": 85,
-    "xpReward": 125,
-    "harvestItemId": 47,
-    "harvestQuantity": 1,
-    "harvestTime": 7,
-    "depletionChance": 1,
-    "respawnTime": 4000,
-    "successChances": {
-      "33": [
-        1,
-        18
-      ],
-      "53": [
-        1,
-        18
-      ],
-      "54": [
-        1,
-        18
-      ],
-      "55": [
-        1,
-        18
-      ],
-      "56": [
-        1,
-        18
-      ],
-      "57": [
-        1,
-        18
       ]
     }
   },
@@ -1637,10 +1515,6 @@
         100
       ],
       "56": [
-        12,
-        100
-      ],
-      "57": [
         12,
         100
       ]

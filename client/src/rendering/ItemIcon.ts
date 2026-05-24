@@ -19,13 +19,94 @@ let _itemFamilyIndex = new Map<string, ItemDef[]>();
 
 export const ITEM_THUMBNAIL_TIERS = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze'];
 
+const ITEM_THUMBNAIL_FAMILY_SUFFIXES: Array<{ label: string; aliases: string[] }> = [
+  { label: '2-handed Sword', aliases: ['2-handed sword', '2 handed sword', '2h sword'] },
+  { label: 'Amulet of Power', aliases: ['amulet of power'] },
+  { label: 'Armet Helmet (F)', aliases: ['armet helmet (f)', 'armet helmet f'] },
+  { label: 'Armet Helmet', aliases: ['armet helmet'] },
+  { label: 'Battle Axe', aliases: ['battle axe', 'battleaxe'] },
+  { label: 'Beret', aliases: ['beret'] },
+  { label: 'Bishop Hat', aliases: ['bishop hat'] },
+  { label: 'Bycocket Hat', aliases: ['bycocket hat'] },
+  { label: 'Camel Cape', aliases: ['camel cape'] },
+  { label: 'Chain Mail Body', aliases: ['chain mail body', 'chainmail body', 'chainbody'] },
+  { label: 'Chainmail', aliases: ['chainmail', 'chain mail'] },
+  { label: 'Circlet (F)', aliases: ['circlet (f)', 'circlet f'] },
+  { label: 'Circlet', aliases: ['circlet'] },
+  { label: 'Crystal Staff', aliases: ['crystal staff'] },
+  { label: 'Cuirass', aliases: ['cuirass'] },
+  { label: 'Eyepatch (Left)', aliases: ['eyepatch (left)', 'left eyepatch', 'eyepatch left'] },
+  { label: 'Eyepatch (Right)', aliases: ['eyepatch (right)', 'right eyepatch', 'eyepatch right'] },
+  { label: 'Face Mask (F)', aliases: ['face mask (f)', 'face mask f'] },
+  { label: 'Face Mask', aliases: ['face mask', 'facemask'] },
+  { label: 'Felted Hat', aliases: ['felted hat'] },
+  { label: 'Full Helmet', aliases: ['full helmet', 'full helm'] },
+  { label: 'Great Helm', aliases: ['great helm', 'great helmet'] },
+  { label: 'Headband', aliases: ['headband'] },
+  { label: 'Hood', aliases: ['hood'] },
+  { label: 'Kettle Hat (F)', aliases: ['kettle hat (f)', 'kettle hat f'] },
+  { label: 'Kettle Hat', aliases: ['kettle hat'] },
+  { label: 'Kite Shield', aliases: ['kite shield'] },
+  { label: 'Leather Body', aliases: ['leather body'] },
+  { label: 'Leather Coif (F)', aliases: ['leather coif (f)', 'leather coif f'] },
+  { label: 'Leather Coif', aliases: ['leather coif'] },
+  { label: 'Long Sword', aliases: ['long sword', 'longsword'] },
+  { label: 'Medium Helmet', aliases: ['medium helmet', 'med helm', 'medium helm'] },
+  { label: 'Plate Mail Body', aliases: ['plate mail body', 'platemail body', 'platebody'] },
+  { label: 'Plate Mail Legs', aliases: ['plate mail legs', 'platemail legs', 'platelegs'] },
+  { label: 'Plated Skirt', aliases: ['plated skirt', 'plateskirt'] },
+  { label: 'Pointed Mage Hat', aliases: ['pointed mage hat'] },
+  { label: 'Short Sword', aliases: ['short sword', 'shortsword'] },
+  { label: 'Skullcap', aliases: ['skullcap', 'skull cap'] },
+  { label: 'Square Shield', aliases: ['square shield'] },
+  { label: 'Staff', aliases: ['staff'] },
+  { label: 'Pickaxe', aliases: ['pickaxe', 'pick axe'] },
+  { label: 'Scimitar', aliases: ['scimitar'] },
+  { label: 'Dagger', aliases: ['dagger'] },
+  { label: 'Spear', aliases: ['spear'] },
+  { label: 'Arrows', aliases: ['arrows', 'arrow'] },
+  { label: 'Throwing Dart', aliases: ['throwing dart', 'dart'] },
+  { label: 'Throwing Knife', aliases: ['throwing knife'] },
+  { label: 'Tyrolean Hat', aliases: ['tyrolean hat'] },
+  { label: 'Wide Mage Hat', aliases: ['wide mage hat'] },
+  { label: 'Witch Hat', aliases: ['witch hat'] },
+  { label: 'Sword', aliases: ['sword'] },
+  { label: 'Mace', aliases: ['mace'] },
+  { label: 'Axe', aliases: ['axe'] },
+];
+
+function normalizeFamilyText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\b2h\b/g, '2 handed')
+    .replace(/&/g, 'and')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+const FAMILY_SUFFIX_ALIASES = ITEM_THUMBNAIL_FAMILY_SUFFIXES
+  .flatMap((family) => family.aliases.map((alias) => ({
+    label: family.label,
+    normalized: normalizeFamilyText(alias),
+  })))
+  .sort((a, b) => b.normalized.length - a.normalized.length);
+
 export function itemThumbnailTier(item: ItemDef): string {
   return ITEM_THUMBNAIL_TIERS.find((tier) => item.name === tier || item.name?.startsWith(`${tier} `)) || '';
 }
 
 export function itemThumbnailFamily(item: ItemDef): string {
   const tier = itemThumbnailTier(item);
-  return tier ? (item.name || '').slice(tier.length).trim() : item.name || '';
+  const name = item.name || '';
+  if (tier) return name.slice(tier.length).trim();
+  const normalizedName = normalizeFamilyText(name);
+  const suffix = FAMILY_SUFFIX_ALIASES.find((entry) => normalizedName.endsWith(entry.normalized));
+  return suffix?.label ?? name;
+}
+
+export function itemThumbnailFamilyKey(item: ItemDef): string | null {
+  const slot = item.equipSlot?.trim().toLowerCase();
+  const family = normalizeFamilyText(itemThumbnailFamily(item));
+  return slot && family ? `${slot}:${family}` : null;
 }
 
 export function itemThumbnailTierIndex(item: ItemDef): number {
@@ -41,10 +122,8 @@ export function setThumbnailItemCatalog(defs: Iterable<ItemDef>): void {
   _itemCatalog = Array.from(defs);
   _itemFamilyIndex = new Map<string, ItemDef[]>();
   for (const item of _itemCatalog) {
-    if (!item.equipSlot) continue;
-    const family = itemThumbnailFamily(item);
-    if (!family) continue;
-    const key = `${item.equipSlot}\0${family}`;
+    const key = itemThumbnailFamilyKey(item);
+    if (!key) continue;
     const arr = _itemFamilyIndex.get(key);
     if (arr) arr.push(item);
     else _itemFamilyIndex.set(key, [item]);
@@ -79,6 +158,13 @@ export interface ThumbnailOverride extends ThumbnailCamera {
   iconScale?: number;
 }
 
+export interface ThumbnailOverrideStore {
+  items: Record<number, ThumbnailOverride>;
+  families: Record<string, ThumbnailOverride>;
+}
+
+type ThumbnailOverrideInput = Record<number, ThumbnailOverride> | Partial<ThumbnailOverrideStore>;
+
 /** Per-slot defaults — the average best framing for a slot. Tune here once
  *  rather than per-item where possible. Items override individually via
  *  `thumbnail-overrides.json` when the slot default doesn't fit. */
@@ -98,7 +184,7 @@ export const SLOT_THUMBNAIL_CAMERAS: Record<string, ThumbnailCamera> = {
   cape:   { alpha: -Math.PI / 4, beta: Math.PI / 2.4, distanceMult: 1.0 },
 };
 
-let _overridesPromise: Promise<Record<number, ThumbnailOverride>> | null = null;
+let _overridesPromise: Promise<ThumbnailOverrideStore> | null = null;
 
 const SHIELD_THUMBNAIL_TINT: Record<number, [number, number, number]> = {
   // Square shields
@@ -117,7 +203,7 @@ const SHIELD_THUMBNAIL_TINT: Record<number, [number, number, number]> = {
 
 const SHIELD_DOMINANT_BROWN: [number, number, number] = [0.119, 0.044, 0.007];
 
-function loadOverrides(): Promise<Record<number, ThumbnailOverride>> {
+function loadOverrides(): Promise<ThumbnailOverrideStore> {
   if (_overridesPromise) return _overridesPromise;
   _overridesPromise = (async () => {
     try {
@@ -126,17 +212,24 @@ function loadOverrides(): Promise<Record<number, ThumbnailOverride>> {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         credentials: 'same-origin',
       });
-      if (!res.ok) return {};
+      if (!res.ok) return { items: {}, families: {} };
       const data = await res.json();
-      if (!data || typeof data !== 'object') return {};
-      const out: Record<number, ThumbnailOverride> = {};
+      if (!data || typeof data !== 'object') return { items: {}, families: {} };
+      const items: Record<number, ThumbnailOverride> = {};
       for (const [k, v] of Object.entries(data)) {
         const id = Number(k);
-        if (Number.isFinite(id) && v && typeof v === 'object') out[id] = v as ThumbnailOverride;
+        if (Number.isFinite(id) && v && typeof v === 'object') items[id] = v as ThumbnailOverride;
       }
-      return out;
+      const families: Record<string, ThumbnailOverride> = {};
+      const rawFamilies = (data as { _item_families?: unknown })._item_families;
+      if (rawFamilies && typeof rawFamilies === 'object') {
+        for (const [key, value] of Object.entries(rawFamilies)) {
+          if (value && typeof value === 'object') families[key] = value as ThumbnailOverride;
+        }
+      }
+      return { items, families };
     } catch {
-      return {};
+      return { items: {}, families: {} };
     }
   })();
   return _overridesPromise;
@@ -146,32 +239,47 @@ export function invalidateThumbnailOverrides(): void {
   _overridesPromise = null;
 }
 
+function asOverrideStore(overrides: ThumbnailOverrideInput): ThumbnailOverrideStore {
+  const maybeStore = overrides as Partial<ThumbnailOverrideStore>;
+  if (maybeStore.items || maybeStore.families) {
+    return {
+      items: maybeStore.items ?? {},
+      families: maybeStore.families ?? {},
+    };
+  }
+  return { items: overrides as Record<number, ThumbnailOverride>, families: {} };
+}
+
 export function findThumbnailOverrideForItem(
   def: ItemDef,
-  overrides: Record<number, ThumbnailOverride>,
+  overrides: ThumbnailOverrideInput,
   itemDefs: readonly ItemDef[] = _itemCatalog,
 ): ThumbnailOverride | undefined {
-  const direct = overrides[def.id];
-  if (!def.equipSlot || itemDefs.length === 0) return direct;
+  const store = asOverrideStore(overrides);
+  const direct = store.items[def.id];
+  if (!def.equipSlot) return direct;
 
-  const family = itemThumbnailFamily(def);
-  if (!family) return direct;
+  const familyKey = itemThumbnailFamilyKey(def);
+  if (!familyKey) return direct;
+
+  const familyOverride = store.families[familyKey];
+  if (familyOverride) return familyOverride;
+  if (itemDefs.length === 0) return direct;
 
   const targetTierIndex = itemThumbnailTierIndex(def);
-  const indexed = itemDefs === _itemCatalog ? _itemFamilyIndex.get(`${def.equipSlot}\0${family}`) : undefined;
+  const indexed = itemDefs === _itemCatalog ? _itemFamilyIndex.get(familyKey) : undefined;
   const candidates = indexed ?? itemDefs.filter((item) =>
-    item.equipSlot === def.equipSlot &&
-    itemThumbnailFamily(item) === family
+    itemThumbnailFamilyKey(item) === familyKey
   );
 
   const bronze = findBronzeFamilyItem(candidates);
-  if (bronze && bronze.id !== def.id && overrides[bronze.id]) return overrides[bronze.id];
+  if (bronze && bronze.id !== def.id && store.items[bronze.id]) return store.items[bronze.id];
   if (direct) return direct;
 
   let best: ItemDef | undefined;
   let bestDelta = Number.POSITIVE_INFINITY;
   for (const item of candidates) {
-    if (item.id === def.id || !overrides[item.id]) continue;
+    if (item.id === def.id || !store.items[item.id]) continue;
     const delta = Math.abs(itemThumbnailTierIndex(item) - targetTierIndex);
     if (!best || delta < bestDelta || (delta === bestDelta && item.id < best.id)) {
       best = item;
@@ -179,7 +287,7 @@ export function findThumbnailOverrideForItem(
     }
   }
 
-  return best ? overrides[best.id] : undefined;
+  return best ? store.items[best.id] : undefined;
 }
 
 /** Build thumbnail options for a specific item and override. Used by both the

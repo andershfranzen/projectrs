@@ -374,24 +374,6 @@
     "icon": "mithril_ore_153.png"
   },
   {
-    "id": 46,
-    "name": "Adamantite Ore",
-    "description": "A lump of adamantite ore.",
-    "stackable": false,
-    "equippable": false,
-    "value": 96,
-    "icon": "adamantite_ore_154.png"
-  },
-  {
-    "id": 47,
-    "name": "Runite Ore",
-    "description": "A lump of runite ore.",
-    "stackable": false,
-    "equippable": false,
-    "value": 192,
-    "icon": "runite_ore_409.png"
-  },
-  {
     "id": 48,
     "name": "Steel Bar",
     "description": "A bar of steel.",
@@ -415,8 +397,7 @@
     "description": "A bar of black bronze.",
     "stackable": false,
     "equippable": false,
-    "value": 240,
-    "icon": "adamantite_bar_174.png"
+    "value": 240
   },
   {
     "id": 52,
@@ -498,24 +479,6 @@
     "toolLevel": 35,
     "toolBonus": 4,
     "model": "/assets/equipment/Tools/BlackBronzePickaxe.glb"
-  },
-  {
-    "id": 57,
-    "name": "Runite Pickaxe",
-    "description": "A runite pickaxe for mining.",
-    "stackable": false,
-    "equippable": true,
-    "equipSlot": "weapon",
-    "attackSpeed": 5,
-    "weaponStyle": "crush",
-    "crushAttack": 22,
-    "meleeStrength": 17,
-    "value": 960,
-    "toolType": "pickaxe",
-    "toolLevel": 42,
-    "toolBonus": 5,
-    "icon": "Rune_Pickaxe_1262.png",
-    "model": "/assets/equipment/Tools/Pickaxe.glb"
   },
   {
     "id": 58,

@@ -95,6 +95,7 @@ export interface AssetThumbnailOverride {
 
 interface ThumbnailOverrideDocument {
   _thumbnail_assets?: Record<string, AssetThumbnailOverride>
+  _item_families?: Record<string, AssetThumbnailOverride>
   [key: string]: unknown
 }
 
@@ -142,6 +143,12 @@ export async function getAssetOverride(path: string): Promise<AssetThumbnailOver
 export async function getItemOverride(itemId: number): Promise<AssetThumbnailOverride> {
   const data = await loadOverrideDocument()
   const value = data?.[String(itemId)]
+  return value && typeof value === 'object' ? value as AssetThumbnailOverride : {}
+}
+
+export async function getItemFamilyOverride(familyKey: string): Promise<AssetThumbnailOverride> {
+  const data = await loadOverrideDocument()
+  const value = data?._item_families?.[familyKey]
   return value && typeof value === 'object' ? value as AssetThumbnailOverride : {}
 }
 

@@ -94,14 +94,6 @@
     "rotationY": -0.39269908169872414,
     "rotationZ": -0.5148721293383273
   },
-  "57": {
-    "alpha": -0.9686577348568529,
-    "beta": 1.208304866765305,
-    "distanceMult": 0.75,
-    "rotationX": 0.5410520681182421,
-    "rotationY": -0.39269908169872414,
-    "rotationZ": -0.5148721293383273
-  },
   "58": {
     "alpha": 1.858775653373961,
     "beta": 1.1955505376161157,
@@ -615,12 +607,13 @@
     "rotationZ": 0,
     "iconScale": 1.08
   },
-  "_doc": "Thumbnail tuning. Top-level numeric keys are item IDs ({ alpha, beta, distanceMult, rotationY } in radians/multipliers) consumed by client/src/rendering/ItemIcon.ts. The _thumbnail_assets object is keyed by asset path ({ alpha, beta, distanceMult, rotationY }) and consumed by editor/src/assets-system/ThumbnailRenderer.ts. Underscore-prefixed top-level keys are ignored by the item loader.",
+  "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_example_31": {
     "alpha": -0.8,
     "beta": 1.1,
     "distanceMult": 0.9,
     "rotationY": 1.5707963
   },
+  "_item_families": {},
   "_thumbnail_assets": {}
 }
