@@ -179,6 +179,7 @@ export class ChunkManager {
 
   // Placed objects and texture planes from KC editor
   private placedObjectNodes: TransformNode[] = [];
+  private placedObjectNodeSet: Set<TransformNode> = new Set();
   /** Spatial index: "tileX,tileZ" → placed object node (only interactable objects) */
   private placedObjectGrid: Map<string, TransformNode[]> = new Map();
   /** Raw placed object data indexed by chunk key "cx,cz" */
@@ -2192,7 +2193,7 @@ export class ChunkManager {
 
   /** Check if a node is a root placed object node */
   isPlacedObjectNode(node: TransformNode): boolean {
-    return this.placedObjectNodes.includes(node);
+    return this.placedObjectNodeSet.has(node);
   }
 
   /** Check if any placed GLB object exists near a world position */
@@ -3084,6 +3085,7 @@ export class ChunkManager {
 
       nodes.push(root);
       this.placedObjectNodes.push(root);
+      this.placedObjectNodeSet.add(root);
 
       if (obj.assetId in ASSET_TO_OBJECT_DEF) {
         const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
@@ -3209,6 +3211,7 @@ export class ChunkManager {
         // Remove from flat list
         const idx = this.placedObjectNodes.indexOf(node);
         if (idx >= 0) this.placedObjectNodes.splice(idx, 1);
+        this.placedObjectNodeSet.delete(node);
         node.dispose();
       }
       this.chunkPlacedNodes.delete(chunkKey);
@@ -3957,6 +3960,7 @@ export class ChunkManager {
     // Dispose placed objects and texture planes
     for (const n of this.placedObjectNodes) n.dispose();
     this.placedObjectNodes = [];
+    this.placedObjectNodeSet.clear();
     this.placedObjectGrid.clear();
     this.placedObjectsByChunk.clear();
     this.decorBlockedTiles.clear();

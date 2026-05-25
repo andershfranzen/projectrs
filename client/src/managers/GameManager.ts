@@ -342,6 +342,8 @@ export class GameManager {
 
   // World objects
   private worldObjectModels: Map<number, TransformNode> = new Map();
+  private worldObjectIdByNode: WeakMap<TransformNode, number> = new WeakMap();
+  private worldObjectPickState: WeakMap<TransformNode, { entityId: number; interactive: boolean }> = new WeakMap();
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
@@ -1699,7 +1701,7 @@ export class GameManager {
   private cleanupDisposedWorldObjects(): void {
     for (const [entityId, node] of this.worldObjectModels) {
       if (node.isDisposed()) {
-        this.worldObjectModels.delete(entityId);
+        this.deleteWorldObjectModel(entityId);
         this.objectModels.deleteStump(entityId);
         const doorEntry = this.doorPivots.get(entityId);
         if (doorEntry) {
@@ -1729,10 +1731,35 @@ export class GameManager {
   }
 
   private worldObjectIdForNode(node: TransformNode): number | null {
-    for (const [objectEntityId, model] of this.worldObjectModels) {
-      if (model === node) return objectEntityId;
+    return this.worldObjectIdByNode.get(node) ?? null;
+  }
+
+  private setWorldObjectModel(objectEntityId: number, node: TransformNode): void {
+    const previous = this.worldObjectModels.get(objectEntityId);
+    if (previous === node) {
+      this.worldObjectIdByNode.set(node, objectEntityId);
+      return;
     }
-    return null;
+    if (previous) {
+      this.worldObjectIdByNode.delete(previous);
+      this.worldObjectPickState.delete(previous);
+    }
+    const currentEntityId = this.worldObjectIdByNode.get(node);
+    if (currentEntityId != null && currentEntityId !== objectEntityId) {
+      this.worldObjectModels.delete(currentEntityId);
+      this.worldObjectPickState.delete(node);
+    }
+    this.worldObjectModels.set(objectEntityId, node);
+    this.worldObjectIdByNode.set(node, objectEntityId);
+  }
+
+  private deleteWorldObjectModel(objectEntityId: number): void {
+    const node = this.worldObjectModels.get(objectEntityId);
+    if (node) {
+      this.worldObjectIdByNode.delete(node);
+      this.worldObjectPickState.delete(node);
+    }
+    this.worldObjectModels.delete(objectEntityId);
   }
 
   private shouldPlacedWorldObjectBeEnabled(objectEntityId: number): boolean {
@@ -1806,7 +1833,7 @@ export class GameManager {
     data: { defId: number; x: number; z: number; floor?: number; y?: number; depleted: boolean; openDirection?: -1 | 1; locked?: boolean },
     placedNode: TransformNode,
   ): void {
-    this.worldObjectModels.set(objectEntityId, placedNode);
+    this.setWorldObjectModel(objectEntityId, placedNode);
 
     const def = this.objectDefsCache.get(data.defId);
     this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), placedNode);
@@ -1826,10 +1853,8 @@ export class GameManager {
         const nx = tx + nb.dx, nz = tz + nb.dz;
         this.chunkManager.setWallOnFloor(nx, nz, floor, this.chunkManager.getWallOnFloorPublic(nx, nz, floor) | nb.opposite);
       }
-      if (data.depleted) {
-        this.chunkManager.setOpenDoorEdges(tx, tz, wallEdge, true, floor);
-        if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, true, floor);
-      }
+      this.chunkManager.setOpenDoorEdges(tx, tz, wallEdge, data.depleted, floor);
+      if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, data.depleted, floor);
       this.setupDoorPivot(objectEntityId);
       this.createDoorPickProxy(objectEntityId, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
       // Doors stay visible regardless of depleted state
@@ -2879,7 +2904,15 @@ export class GameManager {
         this.doorPickProxies.delete(entityId);
         this.doorPivots.delete(entityId);
         this.doorTiles.delete(entityId);
-        this.worldObjectModels.delete(entityId);
+        if (model && this.chunkManager.isPlacedObjectNode(model) && !model.isDisposed()) {
+          // Keep the placed-node association across floor/range visibility
+          // churn. Re-entering a dense ground floor can resync hundreds of
+          // object entities in one packet batch; avoiding the spatial relink
+          // pass keeps ladder-down floor swaps from hitching.
+          this.setWorldObjectModel(entityId, model);
+        } else {
+          this.deleteWorldObjectModel(entityId);
+        }
         this.worldObjectDefs.delete(entityId);
       }
     });
@@ -3119,19 +3152,24 @@ export class GameManager {
         this.setObjectTilesBlocked(x, z, def, true, floor);
       }
 
-      // Try to link to an editor-placed GLB model
-      if (!this.worldObjectModels.has(objectEntityId)) {
+      // Try to link to an editor-placed GLB model. Cached placed-node links are
+      // kept across floor/range visibility churn, but doors still need their
+      // pivot and wall-edge bookkeeping rebuilt after ENTITY_DEATH removed it.
+      let model = this.worldObjectModels.get(objectEntityId);
+      if (!model) {
         const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId, y);
         if (placedNode) {
           this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection, locked }, placedNode);
+          model = placedNode;
         }
         // If no placed GLB and the chunk has finished loading, the world
         // object simply isn't rendered. Pre-3D maps had a sprite fallback
         // here; with the editor pipeline every object should now have a GLB.
+      } else if (def?.category === 'door' && !this.doorPivots.has(objectEntityId)) {
+        this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection, locked }, model);
       }
 
       // Update depletion visuals
-      const model = this.worldObjectModels.get(objectEntityId);
       if (model) {
         if (def?.category === 'door') {
           // Doors stay visible — animate rotation instead
@@ -3203,7 +3241,7 @@ export class GameManager {
         if (hasDepleteModel && data) {
           const placedNode = model ?? this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId, data.y);
           if (placedNode) {
-            if (!model) this.worldObjectModels.set(objectEntityId, placedNode);
+            if (!model) this.setWorldObjectModel(objectEntityId, placedNode);
             this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
             this.setWorldObjectPickTarget(objectEntityId, isDepleted === 0, placedNode);
 
@@ -3718,6 +3756,8 @@ export class GameManager {
         if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
       }
       this.worldObjectModels.clear();
+      this.worldObjectIdByNode = new WeakMap();
+      this.worldObjectPickState = new WeakMap();
       this.objectModels.disposeStumps();
       this.worldObjectDefs.clear();
       this.blockedObjectTiles.clear();
@@ -4423,7 +4463,7 @@ export class GameManager {
     }
 
     if (bestEid < 0) return null;
-    this.worldObjectModels.set(bestEid, rootNode);
+    this.setWorldObjectModel(bestEid, rootNode);
     return bestEid;
   }
 
@@ -6672,6 +6712,8 @@ export class GameManager {
     this.chunkManager.disposeAll();
     for (const [, model] of this.worldObjectModels) model.dispose();
     this.worldObjectModels.clear();
+    this.worldObjectIdByNode = new WeakMap();
+    this.worldObjectPickState = new WeakMap();
     for (const [, proxy] of this.doorPickProxies) proxy.dispose();
     this.doorPickProxies.clear();
     for (const [, entry] of this.doorPivots) entry.pivot.dispose();
@@ -7761,6 +7803,8 @@ export class GameManager {
   private setWorldObjectPickTarget(objectEntityId: number, interactive: boolean, root?: TransformNode | null): void {
     const target = root ?? this.worldObjectModels.get(objectEntityId);
     if (!target) return;
+    const previous = this.worldObjectPickState.get(target);
+    if (previous?.entityId === objectEntityId && previous.interactive === interactive) return;
 
     const apply = (node: TransformNode): void => {
       if ('isPickable' in node) {
@@ -7776,6 +7820,7 @@ export class GameManager {
     apply(target);
     for (const child of target.getChildMeshes(false)) apply(child);
     for (const child of target.getChildTransformNodes(false)) apply(child);
+    this.worldObjectPickState.set(target, { entityId: objectEntityId, interactive });
   }
 
   private createDoorPickProxy(objectEntityId: number, x: number, z: number, rotY: number, baseY: number): void {

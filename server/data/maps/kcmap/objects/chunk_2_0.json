@@ -1561,12 +1561,14 @@
         "from": {
           "x": 87.5,
           "z": 30.5,
-          "floor": 0
+          "floor": 0,
+          "y": 0
         },
         "to": {
           "x": 87.5,
           "z": 30.5,
-          "floor": 1
+          "floor": 1,
+          "y": 2.62
         },
         "fromAction": "Climb-up"
       },
@@ -1574,12 +1576,14 @@
         "from": {
           "x": 87.5,
           "z": 30.5,
-          "floor": 1
+          "floor": 1,
+          "y": 2.62
         },
         "to": {
           "x": 87.5,
           "z": 30.5,
-          "floor": 0
+          "floor": 0,
+          "y": 0
         },
         "fromAction": "Climb-down"
       }
@@ -4695,12 +4699,14 @@
         "from": {
           "x": 71.5,
           "z": 17.5,
-          "floor": 0
+          "floor": 0,
+          "y": 0
         },
         "to": {
           "x": 71.5,
           "z": 17.5,
-          "floor": 1
+          "floor": 1,
+          "y": 2.68
         },
         "fromAction": "Climb-up"
       },
@@ -4708,12 +4714,14 @@
         "from": {
           "x": 71.5,
           "z": 17.5,
-          "floor": 1
+          "floor": 1,
+          "y": 2.68
         },
         "to": {
           "x": 71.5,
           "z": 17.5,
-          "floor": 0
+          "floor": 0,
+          "y": 0
         },
         "fromAction": "Climb-down"
       }

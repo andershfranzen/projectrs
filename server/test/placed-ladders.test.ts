@@ -164,6 +164,8 @@ describe('placed ladder audit', () => {
         expect(toMap, `${ladder.file} link ${linkIndex} to map missing`).toBeDefined();
         expect(endpointIsWalkable(fromMap!, link.from), `${ladder.file} link ${linkIndex} source is not walkable`).toBe(true);
         expect(endpointIsWalkable(toMap!, link.to), `${ladder.file} link ${linkIndex} destination is not walkable`).toBe(true);
+        expect(link.from.y, `${ladder.file} link ${linkIndex} source must pin its exact Y`).toBeNumber();
+        expect(link.to.y, `${ladder.file} link ${linkIndex} destination must pin its exact Y`).toBeNumber();
 
         const action = link.fromAction ?? inferredAction(link.from, link.to);
         expect(action, `${ladder.file} link ${linkIndex} action must match destination direction`)
