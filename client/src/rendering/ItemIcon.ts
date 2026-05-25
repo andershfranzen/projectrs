@@ -1,10 +1,10 @@
 import { resolveEquipmentModelPath, type ItemDef } from '@projectrs/shared';
 import { METAL_TIER_THUMBNAIL_COLOR, TOOL_TIER_METAL_COLOR } from '../data/EquipmentConfig';
-import { getThumbnail, type ThumbnailCamera, type ThumbnailOptions } from './ThumbnailRenderer';
+import { getThumbnail, getThumbnailPoseKey, type ThumbnailCamera, type ThumbnailOptions } from './ThumbnailRenderer';
 
 /**
  * Central icon resolver for items. Precedence:
- *   1. Pre-baked PNG at `/items/3d/{id}.png` (zero runtime cost).
+ *   1. Pose-matched pre-baked PNG at `/items/3d/{id}.png` (zero runtime cost).
  *   2. Runtime 3D render of `def.model` (IDB-cached across reloads).
  *   3. `def.sprite` (legacy 2D, only for items without a 3D model).
  *   4. `def.icon` (legacy 2D, only for items without a 3D model).
@@ -13,7 +13,18 @@ import { getThumbnail, type ThumbnailCamera, type ThumbnailOptions } from './Thu
  * The baked-PNG manifest is fetched once on first call.
  */
 
-let _manifestPromise: Promise<Set<number>> | null = null;
+export interface BakedThumbnailManifestEntry {
+  file?: string;
+  poseKey?: string;
+  rendererVersion?: number;
+}
+
+export interface ParsedBakedThumbnailManifest {
+  entries: Map<number, BakedThumbnailManifestEntry>;
+  legacyIds: Set<number>;
+}
+
+let _manifestPromise: Promise<ParsedBakedThumbnailManifest> | null = null;
 let _itemCatalog: ItemDef[] = [];
 let _itemFamilyIndex = new Map<string, ItemDef[]>();
 
@@ -133,17 +144,88 @@ export function setThumbnailItemCatalog(defs: Iterable<ItemDef>): void {
   }
 }
 
-function loadManifest(): Promise<Set<number>> {
+function emptyBakedThumbnailManifest(): ParsedBakedThumbnailManifest {
+  return { entries: new Map(), legacyIds: new Set() };
+}
+
+function readManifestItemId(value: unknown): number | null {
+  const id = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function readManifestEntry(id: number, value: unknown): BakedThumbnailManifestEntry | null {
+  if (!value || typeof value !== 'object') return null;
+  const source = value as Record<string, unknown>;
+  const out: BakedThumbnailManifestEntry = {};
+  if (typeof source.file === 'string' && source.file.startsWith('/items/3d/') && !source.file.includes('..')) out.file = source.file;
+  if (typeof source.poseKey === 'string' && source.poseKey.length > 0) out.poseKey = source.poseKey;
+  if (typeof source.rendererVersion === 'number' && Number.isFinite(source.rendererVersion)) out.rendererVersion = source.rendererVersion;
+  if (!out.file) out.file = `/items/3d/${id}.png`;
+  return out.poseKey ? out : null;
+}
+
+export function parseBakedThumbnailManifest(data: unknown): ParsedBakedThumbnailManifest {
+  const parsed = emptyBakedThumbnailManifest();
+  if (Array.isArray(data)) {
+    for (const value of data) {
+      const id = readManifestItemId(value);
+      if (id !== null) parsed.legacyIds.add(id);
+    }
+    return parsed;
+  }
+
+  if (!data || typeof data !== 'object') return parsed;
+  const source = data as Record<string, unknown>;
+
+  if (Array.isArray(source.ids)) {
+    for (const value of source.ids) {
+      const id = readManifestItemId(value);
+      if (id !== null) parsed.legacyIds.add(id);
+    }
+  }
+
+  const rawEntries = source.entries;
+  if (Array.isArray(rawEntries)) {
+    for (const raw of rawEntries) {
+      if (!raw || typeof raw !== 'object') continue;
+      const obj = raw as Record<string, unknown>;
+      const id = readManifestItemId(obj.id);
+      if (id === null) continue;
+      const entry = readManifestEntry(id, obj);
+      if (entry) parsed.entries.set(id, entry);
+    }
+  } else if (rawEntries && typeof rawEntries === 'object') {
+    for (const [key, value] of Object.entries(rawEntries)) {
+      const id = readManifestItemId(key);
+      if (id === null) continue;
+      const entry = readManifestEntry(id, value);
+      if (entry) parsed.entries.set(id, entry);
+    }
+  }
+
+  return parsed;
+}
+
+export function resolveBakedThumbnailUrl(
+  manifest: ParsedBakedThumbnailManifest,
+  itemId: number,
+  poseKey: string,
+): string | null {
+  const entry = manifest.entries.get(itemId);
+  if (!entry || entry.poseKey !== poseKey) return null;
+  return entry.file ?? `/items/3d/${itemId}.png`;
+}
+
+function loadManifest(): Promise<ParsedBakedThumbnailManifest> {
   if (_manifestPromise) return _manifestPromise;
   _manifestPromise = (async () => {
     try {
-      const res = await fetch('/items/3d/manifest.json');
-      if (!res.ok) return new Set<number>();
+      const res = await fetch('/items/3d/manifest.json', { cache: 'no-store' });
+      if (!res.ok) return emptyBakedThumbnailManifest();
       const data = await res.json();
-      const arr = Array.isArray(data) ? data : Array.isArray(data?.ids) ? data.ids : [];
-      return new Set<number>(arr.filter((x: unknown) => typeof x === 'number'));
+      return parseBakedThumbnailManifest(data);
     } catch {
-      return new Set<number>();
+      return emptyBakedThumbnailManifest();
     }
   })();
   return _manifestPromise;
@@ -211,6 +293,7 @@ function loadOverrides(): Promise<ThumbnailOverrideStore> {
       const res = await fetch('/data/thumbnail-overrides.json', {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         credentials: 'same-origin',
+        cache: 'no-store',
       });
       if (!res.ok) return { items: {}, families: {} };
       const data = await res.json();
@@ -262,6 +345,7 @@ export function findThumbnailOverrideForItem(
   const familyKey = itemThumbnailFamilyKey(def);
   if (!familyKey) return direct;
 
+  if (direct) return direct;
   const familyOverride = store.families[familyKey];
   if (familyOverride) return familyOverride;
   if (itemDefs.length === 0) return direct;
@@ -274,7 +358,6 @@ export function findThumbnailOverrideForItem(
 
   const bronze = findBronzeFamilyItem(candidates);
   if (bronze && bronze.id !== def.id && store.items[bronze.id]) return store.items[bronze.id];
-  if (direct) return direct;
 
   let best: ItemDef | undefined;
   let bestDelta = Number.POSITIVE_INFINITY;
@@ -335,12 +418,14 @@ function uses3DIcon(def: ItemDef): boolean {
 
 /** Best-effort async lookup. Returns the highest-quality icon URL available. */
 export async function getItemIconUrl(def: ItemDef): Promise<string | null> {
-  const manifest = await loadManifest();
-  if (manifest.has(def.id)) return `/items/3d/${def.id}.png`;
-
   const modelPath = resolveItemModelPath(def);
   if (modelPath) {
-    const opts = await buildThumbnailOptionsForItem(def);
+    const [manifest, opts] = await Promise.all([
+      loadManifest(),
+      buildThumbnailOptionsForItem(def),
+    ]);
+    const bakedUrl = resolveBakedThumbnailUrl(manifest, def.id, getThumbnailPoseKey(modelPath, opts));
+    if (bakedUrl) return bakedUrl;
     const dataUrl = await getThumbnail(modelPath, opts);
     if (dataUrl) return dataUrl;
     return null;

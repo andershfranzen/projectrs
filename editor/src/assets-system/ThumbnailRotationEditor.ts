@@ -330,6 +330,7 @@ export async function openThumbnailPoseEditor(
   let outputPreviewSeq = 0
   let outputPreviewRunning = false
   let outputPreviewQueued = false
+  let outputPreviewPainted = false
 
   const onKeyDown = (e: KeyboardEvent): void => {
     if (e.key === 'Escape') close()
@@ -422,6 +423,15 @@ export async function openThumbnailPoseEditor(
   const clampTilt = (value: number): number => {
     return clamp(value, MIN_TILT_DEG * DEG_TO_RAD, MAX_TILT_DEG * DEG_TO_RAD)
   }
+  const buildCurrentEntry = (): AssetThumbnailOverride => ({
+    alpha: cam.alpha,
+    beta: cam.beta,
+    distanceMult: distMult,
+    rotationX,
+    rotationY,
+    rotationZ,
+    iconScale,
+  })
   const scheduleOutputPreview = (): void => {
     if (!options.renderOutputPreview || !outputImg) return
     if (outputPreviewTimer !== null) window.clearTimeout(outputPreviewTimer)
@@ -435,27 +445,40 @@ export async function openThumbnailPoseEditor(
     if (!options.renderOutputPreview || !outputImg || closed) return
     if (outputPreviewRunning) {
       outputPreviewQueued = true
+      outputPreviewSeq++
       return
     }
     outputPreviewRunning = true
     outputPreviewQueued = false
     const seq = ++outputPreviewSeq
-    const entry = {
-      alpha: cam.alpha,
-      beta: cam.beta,
-      distanceMult: distMult,
-      rotationX,
-      rotationY,
-      rotationZ,
-      iconScale,
-    }
+    const entry = buildCurrentEntry()
     outputImg.style.opacity = '0.72'
-    const url = await options.renderOutputPreview(entry).catch(() => null)
-    outputPreviewRunning = false
-    if (closed || seq !== outputPreviewSeq) return
-    if (url) outputImg.src = url
-    outputImg.style.opacity = '1'
-    if (outputPreviewQueued) void renderLatestOutputPreview()
+    try {
+      let url = await options.renderOutputPreview(entry).catch(() => null)
+      if (!outputPreviewPainted && !closed && seq === outputPreviewSeq) {
+        url = await options.renderOutputPreview(entry).catch(() => url)
+      }
+      if (!closed && seq === outputPreviewSeq && url) outputImg.src = url
+      if (!closed && seq === outputPreviewSeq && url) outputPreviewPainted = true
+    } finally {
+      outputPreviewRunning = false
+      if (!closed && outputImg && seq === outputPreviewSeq) outputImg.style.opacity = '1'
+      if (outputPreviewQueued && !closed) {
+        outputPreviewQueued = false
+        void renderLatestOutputPreview()
+      }
+    }
+  }
+  const flushOutputPreview = async (): Promise<void> => {
+    if (!options.renderOutputPreview) return
+    if (outputPreviewTimer !== null) {
+      window.clearTimeout(outputPreviewTimer)
+      outputPreviewTimer = null
+    }
+    while (outputPreviewRunning) {
+      await new Promise((resolve) => window.setTimeout(resolve, 25))
+    }
+    await renderLatestOutputPreview()
   }
   const applyYaw = (): void => {
     if (!modelRoot) return
@@ -478,7 +501,7 @@ export async function openThumbnailPoseEditor(
   applyYaw()
   refitCamera()
   syncControls()
-  scheduleOutputPreview()
+  void renderLatestOutputPreview()
 
   if (engine && scene) engine.runRenderLoop(() => scene!.render())
 
@@ -669,14 +692,13 @@ export async function openThumbnailPoseEditor(
   })
 
   saveBtn.addEventListener('click', async () => {
-    await saveOverride({
-      alpha: cam.alpha,
-      beta: cam.beta,
-      distanceMult: distMult,
-      rotationX,
-      rotationY,
-      rotationZ,
-      ...(options.targetType !== 'asset' ? { iconScale } : {}),
-    })
+    if (runtimePreviewMode) {
+      saveBtn.disabled = true
+      saveBtn.textContent = 'Rendering…'
+      await flushOutputPreview()
+    }
+    const entry = buildCurrentEntry()
+    if (options.targetType === 'asset') delete entry.iconScale
+    await saveOverride(entry)
   })
 }

@@ -105,7 +105,7 @@ async function loadOverrideDocument(): Promise<ThumbnailOverrideDocument> {
   if (_overrideDocPromise) return _overrideDocPromise
   _overrideDocPromise = (async () => {
     try {
-      const res = await fetch('/data/thumbnail-overrides.json')
+      const res = await fetch('/data/thumbnail-overrides.json', { cache: 'no-store' })
       if (!res.ok) return {}
       const data = await res.json()
       return data && typeof data === 'object' ? data as ThumbnailOverrideDocument : {}

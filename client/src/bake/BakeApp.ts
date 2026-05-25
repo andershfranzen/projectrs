@@ -3,7 +3,7 @@
  * server is running locally (admin = loopback). Iterates every item with a
  * GLB `model`, runs ThumbnailRenderer (with tier tint for tool tiers), and
  * POSTs each PNG to `/api/dev/item-thumb`. On completion, POSTs the final
- * manifest to `/api/dev/item-thumbs/manifest`. PNGs land in
+ * pose-aware manifest to `/api/dev/item-thumbs/manifest`. PNGs land in
  * `client/public/items/3d/` and ship as static assets.
  *
  * Re-run any time items.json or TOOL_TIER_METAL_COLOR changes for items
@@ -12,7 +12,7 @@
  */
 
 import type { ItemDef } from '@projectrs/shared';
-import { getThumbnail } from '../rendering/ThumbnailRenderer';
+import { getThumbnail, getThumbnailPoseKey, THUMBNAIL_RENDERER_VERSION } from '../rendering/ThumbnailRenderer';
 import { resolveItemModelPath, buildThumbnailOptionsForItem, setThumbnailItemCatalog } from '../rendering/ItemIcon';
 
 interface BakeTarget {
@@ -89,11 +89,20 @@ async function postPng(id: number, dataUrl: string): Promise<{ ok: boolean; erro
   return { ok: true };
 }
 
-async function postManifest(ids: number[]): Promise<{ ok: boolean; error?: string }> {
+interface BakedManifestEntry {
+  file: string;
+  poseKey: string;
+  rendererVersion: number;
+}
+
+async function postManifest(
+  ids: number[],
+  entries: Record<string, BakedManifestEntry>,
+): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch('/api/dev/item-thumbs/manifest', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ids }),
+    body: JSON.stringify({ ids, entries }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
@@ -131,6 +140,7 @@ export async function runBake(): Promise<void> {
   ui.setProgress(0, targets.length);
 
   const baked: number[] = [];
+  const manifestEntries: Record<string, BakedManifestEntry> = {};
   let done = 0;
   let failed = 0;
 
@@ -146,6 +156,11 @@ export async function runBake(): Promise<void> {
         const post = await postPng(target.id, dataUrl);
         if (post.ok) {
           baked.push(target.id);
+          manifestEntries[String(target.id)] = {
+            file: `/items/3d/${target.id}.png`,
+            poseKey: getThumbnailPoseKey(target.modelPath, opts),
+            rendererVersion: THUMBNAIL_RENDERER_VERSION,
+          };
           ui.appendLog(`  ${label}: OK`, '#7c7');
         } else {
           ui.appendLog(`  ${label}: POST failed — ${post.error}`, '#f55');
@@ -161,7 +176,7 @@ export async function runBake(): Promise<void> {
   }
 
   ui.setStatus('Writing manifest...');
-  const m = await postManifest(baked);
+  const m = await postManifest(baked, manifestEntries);
   if (!m.ok) {
     ui.appendLog(`Manifest POST failed: ${m.error}`, '#f55');
     ui.setStatus('Done (manifest failed)');

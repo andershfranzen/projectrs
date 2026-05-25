@@ -1972,7 +1972,7 @@ const server = Bun.serve<SocketData>({
         return new Response(content, {
           headers: {
             'Content-Type': 'application/json',
-            'Cache-Control': 'no-cache',
+            'Cache-Control': filename === 'thumbnail-overrides.json' ? 'no-store' : 'no-cache',
           },
         });
       } catch {
@@ -2226,20 +2226,57 @@ const server = Bun.serve<SocketData>({
     }
 
     // Manifest of baked item-thumbnail IDs. Written after a bake run completes;
-    // the client reads it at startup to know which items have pre-baked PNGs.
+    // new clients require the poseKey to match the current editor-selected
+    // render pose before a static PNG is allowed to override runtime rendering.
     if (url.pathname === '/api/dev/item-thumbs/manifest' && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
-        const body = await req.json() as { ids?: unknown };
-        if (!Array.isArray(body.ids)) return jsonResponse({ ok: false, error: 'ids must be an array' }, 400);
-        const ids = body.ids
+        const body = await req.json() as { ids?: unknown; entries?: unknown };
+        const manifestEntries: Record<string, { file: string; poseKey: string; rendererVersion?: number }> = {};
+        if (body.entries && typeof body.entries === 'object') {
+          for (const [key, raw] of Object.entries(body.entries as Record<string, unknown>)) {
+            const id = Number(key);
+            if (!Number.isInteger(id) || id <= 0 || id > 1_000_000) continue;
+            if (!raw || typeof raw !== 'object') continue;
+            const entry = raw as Record<string, unknown>;
+            const file = typeof entry.file === 'string' ? entry.file : `/items/3d/${id}.png`;
+            const poseKey = typeof entry.poseKey === 'string' ? entry.poseKey : '';
+            const rendererVersion = entry.rendererVersion;
+            if (!file.startsWith('/items/3d/') || file.includes('..') || file.length > 128) continue;
+            if (!poseKey || poseKey.length > 2048) continue;
+            manifestEntries[String(id)] = {
+              file,
+              poseKey,
+              ...(typeof rendererVersion === 'number' && Number.isFinite(rendererVersion)
+                ? { rendererVersion }
+                : {}),
+            };
+          }
+        }
+        if (!Array.isArray(body.ids) && Object.keys(manifestEntries).length === 0) {
+          return jsonResponse({ ok: false, error: 'ids or entries required' }, 400);
+        }
+        const rawIds = Array.isArray(body.ids)
+          ? body.ids
+          : Object.keys(manifestEntries).map((key) => Number(key));
+        const ids = rawIds
           .filter((x): x is number => typeof x === 'number' && Number.isInteger(x) && x > 0 && x <= 1_000_000)
           .sort((a, b) => a - b);
         const outDir = resolve(import.meta.dir, '../../client/public/items/3d');
         if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
         const manifestPath = resolve(outDir, 'manifest.json');
-        writeFileSync(manifestPath, JSON.stringify(ids));
+        const manifest = Object.keys(manifestEntries).length > 0
+          ? {
+              version: 2,
+              generatedAt: new Date().toISOString(),
+              ids,
+              entries: Object.fromEntries(
+                Object.entries(manifestEntries).sort(([a], [b]) => Number(a) - Number(b)),
+              ),
+            }
+          : ids;
+        writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
         return jsonResponse({ ok: true, count: ids.length });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);

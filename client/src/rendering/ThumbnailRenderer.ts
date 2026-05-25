@@ -7,7 +7,7 @@ import { Quaternion, Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3, Color4 } from '@babylonjs/core/Maths/math.color';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
-import type { TransformNode } from '@babylonjs/core/Meshes/transformNode';
+import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { CHARACTER_IDLE_ANIM, CHARACTER_MODEL_PATH } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
 import { clearCachedThumb, getCachedThumb, putCachedThumb } from './ThumbnailCache';
@@ -24,10 +24,11 @@ const THUMB_INTERNAL_SIZE = 256;
 const THUMB_PADDING = 0.02;
 /** Alpha threshold below which a pixel is considered transparent. Trims AA halos. */
 const TRIM_ALPHA_MIN = 12;
-// Bump to invalidate every cached thumbnail across clients. v11: refreshes
-// platebody thumbnails after replacement GLBs were exported.
-const THUMB_VERSION = 11;
+// Bump to invalidate every cached thumbnail across clients. v14 caches only
+// the stabilized second item render, matching the editor preview behavior.
+const THUMB_VERSION = 14;
 const RENDER_TIMEOUT_MS = 8000;
+export const THUMBNAIL_RENDERER_VERSION = THUMB_VERSION;
 
 // ArcRotateCamera defaults applied when options.camera doesn't specify an axis.
 // α=-π/4, β=π/2.6 puts the camera at the upper-front-right, looking down-toward
@@ -258,6 +259,7 @@ interface QueueEntry {
   path: string;
   options: ThumbnailOptions;
   cacheKey?: string;
+  priority?: boolean;
   resolve: (url: string | null) => void;
 }
 
@@ -296,9 +298,53 @@ function buildCacheKey(path: string, options: ThumbnailOptions): string {
   return parts.join('|');
 }
 
-function enqueue(path: string, options: ThumbnailOptions, cacheKey?: string): Promise<string | null> {
+export function getThumbnailCacheKey(path: string, options: ThumbnailOptions = {}): string {
+  return buildCacheKey(path, options);
+}
+
+export function getThumbnailPoseKey(path: string, options: ThumbnailOptions = {}): string {
+  return `thumb:v${THUMB_VERSION}|${buildCacheKey(path, options)}`;
+}
+
+function shouldStabilizePersistentRender(options: ThumbnailOptions): boolean {
+  return typeof options.cacheIdentity === 'string' && options.cacheIdentity.startsWith('item:');
+}
+
+function hasModelRotation(options: ThumbnailOptions): boolean {
+  return [options.rotationX, options.rotationY, options.rotationZ]
+    .some((value) => typeof value === 'number' && Number.isFinite(value) && value !== 0);
+}
+
+function applyThumbnailModelRotation(options: ThumbnailOptions, result: { meshes: any[]; transformNodes: any[] }): TransformNode | null {
+  if (!hasModelRotation(options) || !_scene) return null;
+
+  const wrapper = new TransformNode('thumb-pose-root', _scene);
+  const topNodes = new Set<TransformNode>();
+
+  for (const mesh of result.meshes || []) {
+    if (!mesh.parent) topNodes.add(mesh as TransformNode);
+  }
+  for (const node of result.transformNodes || []) {
+    if (!node.parent) topNodes.add(node as TransformNode);
+  }
+
+  if (topNodes.size === 0) {
+    wrapper.dispose();
+    return null;
+  }
+
+  for (const node of topNodes) node.parent = wrapper;
+  wrapper.rotation.set(options.rotationX ?? 0, options.rotationY ?? 0, options.rotationZ ?? 0);
+  wrapper.computeWorldMatrix(true);
+  for (const mesh of result.meshes || []) mesh.computeWorldMatrix?.(true);
+  return wrapper;
+}
+
+function enqueue(path: string, options: ThumbnailOptions, cacheKey?: string, priority = false): Promise<string | null> {
   return new Promise((resolve) => {
-    queue.push({ path, options, cacheKey, resolve });
+    const entry = { path, options, cacheKey, priority, resolve };
+    if (priority) queue.unshift(entry);
+    else queue.push(entry);
     if (!processing) processQueue();
   });
 }
@@ -439,6 +485,7 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
   const file = path.substring(lastSlash + 1);
 
   const result = await SceneLoader.ImportMeshAsync('', dir, file, _scene!);
+  let poseRoot: TransformNode | null = null;
 
   try {
     for (const ag of result.animationGroups || []) ag.stop();
@@ -452,18 +499,10 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
       if (donor) bindToDonor(result, donor);
     }
 
-    if (options.rotationX || options.rotationY || options.rotationZ) {
-      // Rotate the loader root so bbox + render reflect the new orientation.
-      // Null out any baked quaternion so .rotation.y actually takes effect
-      // (rotationQuaternion overrides euler when set).
-      const root = result.meshes.find((m) => m.name === '__root__') ?? result.meshes.find((m) => !m.parent);
-      if (root) {
-        if (root.rotationQuaternion) root.rotationQuaternion = null;
-        root.rotation.x += options.rotationX ?? 0;
-        root.rotation.y += options.rotationY ?? 0;
-        root.rotation.z += options.rotationZ ?? 0;
-      }
-    }
+    // Apply thumbnail pose above the imported GLTF root. This preserves
+    // Babylon's loader quaternion on `__root__`, so clearing browser caches
+    // cannot change which transform wins.
+    poseRoot = applyThumbnailModelRotation(options, result);
 
     if (options.tint) {
       const match = options.tintMaterialMatch ?? 'Material.002';
@@ -526,6 +565,7 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
     return await trimAndResize(rawUrl, THUMB_SIZE, options.iconScale ?? 1);
   } finally {
     disposeLoadResult(result);
+    poseRoot?.dispose(false, false);
   }
 }
 
@@ -546,7 +586,10 @@ export async function getThumbnail(path: string, options: ThumbnailOptions = {})
       return idb;
     }
 
-    const rendered = await enqueue(path, options, cacheKey);
+    if (shouldStabilizePersistentRender(options)) {
+      await enqueue(path, options, undefined, true);
+    }
+    const rendered = await enqueue(path, options, cacheKey, shouldStabilizePersistentRender(options));
     memCache.set(cacheKey, rendered);
     return rendered;
   })().finally(() => {
@@ -559,7 +602,7 @@ export async function getThumbnail(path: string, options: ThumbnailOptions = {})
 
 export async function renderThumbnailPreview(path: string, options: ThumbnailOptions = {}): Promise<string | null> {
   if (!path) return null;
-  return enqueue(path, options);
+  return enqueue(path, options, undefined, true);
 }
 
 export async function invalidateThumbnail(path: string, options: ThumbnailOptions = {}): Promise<void> {

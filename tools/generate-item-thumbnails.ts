@@ -16,9 +16,11 @@
  *   4. Wait for "Done"          : PNGs land in client/public/items/3d/
  *   5. Commit                   : client/public/items/3d/*.png + manifest.json
  *
- * After bake, every item with a `model` in items.json gets a baked PNG that
- * the UI uses with zero runtime cost. Items added later still work via the
- * runtime fallback in ThumbnailRenderer; re-run the bake to upgrade them.
+ * After bake, every item with a `model` in items.json gets a baked PNG plus a
+ * pose-aware manifest entry. The UI only uses a baked PNG when its manifest
+ * poseKey still matches the current editor thumbnail pose; otherwise it falls
+ * back to the runtime renderer. Items added later still work via the runtime
+ * fallback in ThumbnailRenderer; re-run the bake to upgrade them.
  */
 
 export {};
