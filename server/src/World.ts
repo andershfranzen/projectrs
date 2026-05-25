@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -528,6 +528,11 @@ export class World {
     for (const spawn of spawns.npcs ?? []) {
       const npcDef = this.data.getNpc(spawn.npcId);
       if (!npcDef) continue;
+      const bankAccessViolation = bankAccessSpawnViolation(mapId, spawn, npcDef);
+      if (bankAccessViolation) {
+        console.error(`[spawn guard] Skipping ${bankAccessViolation}`);
+        continue;
+      }
       // Per-spawn shop/dialogue fully replace the def's (no field-merge).
       // Falls through: spawn override → def → legacy shops.json (shop only).
       const effShop = spawn.shop ?? this.data.getShop(spawn.npcId) ?? null;
@@ -1155,6 +1160,11 @@ export class World {
         const npcDef = this.data.getNpc(spawn.npcId);
         if (!npcDef) {
           console.warn(`Unknown NPC id ${spawn.npcId} in ${mapId}/spawns.json`);
+          continue;
+        }
+        const bankAccessViolation = bankAccessSpawnViolation(mapId, spawn, npcDef);
+        if (bankAccessViolation) {
+          console.error(`[spawn guard] Skipping ${bankAccessViolation}`);
           continue;
         }
         // Resolve effective shop/dialogue once per spawn — Npc caches these

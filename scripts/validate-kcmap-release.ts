@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { GameMap } from '../server/src/GameMap';
+import { validateBankAccessSpawns } from '../shared/npcSafety';
 
 const mapId = process.argv[2] || 'kcmap';
 const root = resolve(import.meta.dir, '..');
@@ -23,6 +24,9 @@ if (!existsSync(mapDir)) fail(`map directory not found: ${mapDir}`);
 
 const meta = readJson(resolve(mapDir, 'meta.json'));
 const mapFile = readJson(resolve(mapDir, 'map.json'));
+const spawnsFile = readJson(resolve(mapDir, 'spawns.json'));
+const npcDefs = readJson(resolve(root, 'server/data/npcs.json'));
+const npcDefById = new Map((Array.isArray(npcDefs) ? npcDefs : []).map((def: any) => [def.id, def]));
 const map = new GameMap(mapId);
 const errors: string[] = [];
 const warnings: string[] = [];
@@ -90,6 +94,10 @@ if (Math.abs(foundSpawn.x - spawn.x) > 0.001 || Math.abs(foundSpawn.z - spawn.z)
 for (const t of meta.transitions ?? []) {
   const targetDir = resolve(root, 'server/data/maps', t.targetMap);
   if (!existsSync(targetDir)) errors.push(`transition at (${t.tileX},${t.tileZ}) targets missing map ${t.targetMap}`);
+}
+
+for (const error of validateBankAccessSpawns(mapId, spawnsFile?.npcs ?? [], npcId => npcDefById.get(npcId))) {
+  errors.push(error);
 }
 
 for (const warning of warnings) console.warn(`WARN: ${warning}`);

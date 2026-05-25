@@ -17,3 +17,4 @@ export * from './relics.js';
 export * from './gear.js';
 export * from './secureChannel.js';
 export * from './opcodeMapping.js';
+export * from './npcSafety.js';

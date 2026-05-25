@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -2397,6 +2397,13 @@ const server = Bun.serve<SocketData>({
           objects: spawns?.objects ?? [],
           items: spawns?.items ?? [],
         };
+        const bankAccessErrors = validateBankAccessSpawns(mapId, mergedSpawns.npcs, npcId => world.data.getNpc(npcId));
+        if (bankAccessErrors.length > 0) {
+          return jsonResponse({
+            ok: false,
+            error: `Refusing to save bank-enabled NPC spawn(s): ${bankAccessErrors.join(' ')}`,
+          }, 409);
+        }
         const bulkNpcOffset = detectUniformNpcSpawnOffset(existingSpawns, mergedSpawns);
         if (bulkNpcOffset && !mapShapeChanged(existingMapForShape, mapData)) {
           return jsonResponse({
