@@ -29,7 +29,22 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'IronRock': 4,    // Iron Rock
   'TinRock': 11,    // Tin Rock
   'CoalRock': 12,   // Coal Rock
+  'MithrilRock': 16, // Mithril Rock
   'SilverRock': 25, // Silver Rock
+  'CopperRock2': 3,
+  'CopperRock3': 3,
+  'IronRock2': 4,
+  'IronRock3': 4,
+  'TinRock2': 11,
+  'TinRock3': 11,
+  'CoalRock2': 12,
+  'CoalRock3': 12,
+  'MithrilRock2': 16,
+  'MithrilRock3': 16,
+  'SilverRock2': 25,
+  'SilverRock3': 25,
+  'ClayRock2': 33,
+  'ClayRock3': 33,
   // Crafting stations
   'forge': 6,        // Furnace
   'cookingrange': 7, // Cooking Range

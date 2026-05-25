@@ -1666,5 +1666,52 @@
         "xpReward": 6
       }
     ]
+  },
+  {
+    "id": 33,
+    "name": "Clay Rock",
+    "category": "rock",
+    "actions": [
+      "Mine",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 0.9,
+    "height": 0.8,
+    "color": [
+      106,
+      64,
+      8
+    ],
+    "skill": "mining",
+    "levelRequired": 1,
+    "xpReward": 5,
+    "harvestItemId": 242,
+    "harvestQuantity": 1,
+    "harvestTime": 7,
+    "depletionChance": 1,
+    "respawnTime": 13,
+    "successChances": {
+      "33": [
+        128,
+        400
+      ],
+      "53": [
+        128,
+        400
+      ],
+      "54": [
+        128,
+        400
+      ],
+      "55": [
+        128,
+        400
+      ],
+      "56": [
+        128,
+        400
+      ]
+    }
   }
 ]
