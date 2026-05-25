@@ -297,7 +297,7 @@ describe('floor isolation', () => {
     expect(world.isTileBlockedForPlayer(upper, map, 5, 5)).toBe(true);
   });
 
-  test('broadcast sync removes entities that are nearby but on another floor', () => {
+  test('broadcast sync keeps nearby NPCs resident across floors', () => {
     const { world, packets } = makeWorld();
     const viewer = makePlayer('viewer', 1, 0);
     const npc = new Npc(npcDef, 5.5, 5.5);
@@ -317,8 +317,8 @@ describe('floor isolation', () => {
 
     world.broadcastSync();
 
-    expect(packets.get(viewer.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === npc.id)).toBe(true);
-    expect(viewer.visibleEntityIds.has(npc.id)).toBe(false);
+    expect(packets.get(viewer.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.ENTITY_DEATH && p.values[0] === npc.id)).toBe(false);
+    expect(viewer.visibleEntityIds.has(npc.id)).toBe(true);
   });
 
   test('broadcast sync keeps ladders visible from connected upper floors', () => {

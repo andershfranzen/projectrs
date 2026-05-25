@@ -614,7 +614,7 @@ export class World {
       const other = this.players.get(eid);
       if (other && other.currentFloor === player.currentFloor) { this.sendPlayerPresence(player, other); continue; }
       const npc = this.npcs.get(eid);
-      if (npc && this.canPlayerTargetNpc(player, npc)) {
+      if (npc && this.canPlayerSyncNpc(player, npc)) {
         // Static data first — the client uses cached appearance to decide
         // whether to render as sprite or CharacterEntity on NPC_SYNC.
         this.sendNpcStaticData(player, npc);
@@ -692,6 +692,11 @@ export class World {
     return !npc.dead
       && npc.currentMapLevel === player.currentMapLevel
       && (npc.currentFloor ?? 0) === player.currentFloor;
+  }
+
+  private canPlayerSyncNpc(player: Player, npc: Npc): boolean {
+    return !npc.dead
+      && npc.currentMapLevel === player.currentMapLevel;
   }
 
   canPlayerTargetObject(player: Player, obj: WorldObject): boolean {
@@ -7356,7 +7361,7 @@ export class World {
             if (!subject || subject.currentFloor !== viewer.currentFloor) return;
           } else if (kind === 'npc') {
             const npc = this.npcs.get(eid);
-            if (!npc || npc.dead || npc.currentFloor !== viewer.currentFloor) return;
+            if (!npc || !this.canPlayerSyncNpc(viewer, npc)) return;
           } else if (kind === 'object') {
             const obj = this.worldObjects.get(eid);
             if (!obj || !this.canPlayerTargetObject(viewer, obj)) return;
@@ -7367,7 +7372,7 @@ export class World {
             const subject = this.players.get(eid);
             if (subject && subject.currentFloor !== viewer.currentFloor) return;
             const npc = this.npcs.get(eid);
-            if (npc && (npc.dead || npc.currentFloor !== viewer.currentFloor)) return;
+            if (npc && !this.canPlayerSyncNpc(viewer, npc)) return;
             const obj = this.worldObjects.get(eid);
             if (obj && !this.canPlayerTargetObject(viewer, obj)) return;
             const item = this.groundItems.get(eid);
@@ -7407,7 +7412,7 @@ export class World {
             return;
           }
           const npc = this.npcs.get(eid);
-          if (npc && this.canPlayerTargetNpc(viewer, npc)) {
+          if (npc && this.canPlayerSyncNpc(viewer, npc)) {
             this.queueNpcStaticData(syncPackets, npc);
             this.queueNpcUpdate(syncPackets, viewer, npc);
             return;
@@ -7538,12 +7543,12 @@ export class World {
   }
 
   private sendNpcUpdate(viewer: Player, npc: Npc): void {
-    if (!this.canPlayerTargetNpc(viewer, npc)) return;
+    if (!this.canPlayerSyncNpc(viewer, npc)) return;
     try { viewer.ws.sendBinary(this.encodeNpcUpdate(npc)); } catch { /* connection closed */ }
   }
 
   private queueNpcUpdate(out: SyncPacket[], viewer: Player, npc: Npc): void {
-    if (!this.canPlayerTargetNpc(viewer, npc)) return;
+    if (!this.canPlayerSyncNpc(viewer, npc)) return;
     this.queueEncodedSyncPacket(out, this.encodeNpcUpdate(npc));
   }
 

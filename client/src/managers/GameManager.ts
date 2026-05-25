@@ -1784,19 +1784,19 @@ export class GameManager {
 
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
     if (!enabled) {
-      node.setEnabled(false);
+      if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     const objectEntityId = this.worldObjectIdForNode(node);
     if (objectEntityId !== null && !this.shouldPlacedWorldObjectBeEnabled(objectEntityId)) {
-      node.setEnabled(false);
+      if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
     if (this.hiddenRoofNodeSet.has(node)) {
-      node.setEnabled(false);
+      if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
-    node.setEnabled(true);
+    if (!node.isEnabled(false)) node.setEnabled(true);
   }
 
   private reapplyWorldObjectVisualStates(): void {
@@ -6757,6 +6757,9 @@ export class GameManager {
       y,
       stationary: npcDef?.stationary === true,
     });
+    if ((created instanceof CharacterEntity || created instanceof Npc3DEntity) && floor !== this.currentFloor) {
+      created.setRenderEnabled(false);
+    }
     if (created instanceof CharacterEntity) {
       this.applyCachedNpcRigState(entityId, created);
     }
@@ -6822,7 +6825,8 @@ export class GameManager {
             ? sprite.isRenderEnabled()
             : true;
       const threshold = enabled ? disableDist : enableDist;
-      const shouldRender = dist <= threshold;
+      const sameFloor = target ? target.floor === this.currentFloor : true;
+      const shouldRender = sameFloor && dist <= threshold;
       if (sprite instanceof CharacterEntity) sprite.setRenderEnabled(shouldRender);
       else if (sprite instanceof Npc3DEntity) sprite.setRenderEnabled(shouldRender);
     }
