@@ -5757,11 +5757,32 @@ export class GameManager {
           this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
             const target = this.getGearDebugCharacter();
             const bodyType = this.getCharacterBodyType(target);
+            const changedItemIds = new Set<number>([itemId]);
             this.gearOverrides.set(itemId, mergeGearOverrideForBodyType(this.gearOverrides.get(itemId), bodyType, override));
-            await this.saveGearOverridesToServer();
             const slotName = EQUIP_SLOT_NAMES.find(s => target?.getGearItemId(s) === itemId);
+            const sourceDef = this.itemDefsCache.get(itemId);
+            if (slotName && sourceDef?.toolType) {
+              const toolPose = {
+                boneName: override.boneName,
+                localPosition: override.localPosition,
+                localRotation: override.localRotation,
+                scale: override.scale,
+                centerOrigin: override.centerOrigin,
+              };
+              for (const def of this.itemDefsCache.values()) {
+                if (def.id === itemId) continue;
+                if (def.equipSlot !== slotName || def.toolType !== sourceDef.toolType) continue;
+                if (!this.getGearModelFileForCharacter(def.id, slotName, target)) continue;
+                this.gearOverrides.set(def.id, mergeGearOverrideForBodyType(this.gearOverrides.get(def.id), bodyType, toolPose));
+                this.deleteGearTemplateCacheForItem(slotName, def.id);
+                changedItemIds.add(def.id);
+              }
+            }
+            await this.saveGearOverridesToServer();
             if (slotName) this.deleteGearTemplateCacheForItem(slotName, itemId);
-            this.refreshEquippedGearOverride(itemId);
+            for (const changedItemId of changedItemIds) {
+              this.refreshEquippedGearOverride(changedItemId);
+            }
           });
           this.gearDebugPanel.setBulkSaveCallback(async (sourceItemId, slot, override) => {
             const target = this.getGearDebugCharacter();

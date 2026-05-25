@@ -63,7 +63,12 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   // variant is the depleted-state visual loaded by WorldObjectModels and
   // never needs its own mapping. Add a new entry per chest tier when a
   // distinct closed GLB ships.
-  'closed chest': 20, // Wooden Chest
+  'tier 1 chest': 20, // Wooden Chest
+  'tier 2 chest': 21, // Iron Chest
+  'tier 3 chest': 34, // Black Bronze Chest
+  'tier 4 chest': 35, // Mithril Chest
+  'tier 5 chest': 36, // Steel Chest
+  'tier 6 chest': 37, // Royal Gold Chest
   // Crops
   'rice': 22, // Rice Plant
   'PotatoPlant': 28, // Potato Plant

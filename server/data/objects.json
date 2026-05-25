@@ -1343,7 +1343,7 @@
     "harvestTime": 3,
     "depletionChance": 1,
     "respawnTime": 300,
-    "depletedAssetId": "open chest",
+    "depletedAssetId": "open tier 1 chest",
     "extraLoot": [
       {
         "itemId": 224,
@@ -1379,14 +1379,186 @@
       100
     ],
     "skill": "roguery",
-    "levelRequired": 25,
+    "levelRequired": 13,
     "xpReward": 65,
     "harvestItemId": 10,
     "harvestQuantity": 40,
     "harvestTime": 4,
     "depletionChance": 1,
     "respawnTime": 600,
-    "depletedAssetId": "open chest",
+    "depletedAssetId": "open tier 2 chest",
+    "extraLoot": [
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 228,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 229,
+        "quantity": 1,
+        "chance": 0.05
+      }
+    ]
+  },
+  {
+    "id": 34,
+    "name": "Black Bronze Chest",
+    "category": "chest",
+    "actions": [
+      "Lockpick",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      70,
+      38,
+      20
+    ],
+    "skill": "roguery",
+    "levelRequired": 25,
+    "xpReward": 120,
+    "harvestItemId": 10,
+    "harvestQuantity": 90,
+    "harvestTime": 5,
+    "depletionChance": 1,
+    "respawnTime": 900,
+    "depletedAssetId": "open tier 3 chest",
+    "extraLoot": [
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 228,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 229,
+        "quantity": 1,
+        "chance": 0.05
+      }
+    ]
+  },
+  {
+    "id": 35,
+    "name": "Mithril Chest",
+    "category": "chest",
+    "actions": [
+      "Lockpick",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      80,
+      170,
+      185
+    ],
+    "skill": "roguery",
+    "levelRequired": 37,
+    "xpReward": 190,
+    "harvestItemId": 10,
+    "harvestQuantity": 160,
+    "harvestTime": 5,
+    "depletionChance": 1,
+    "respawnTime": 1200,
+    "depletedAssetId": "open tier 4 chest",
+    "extraLoot": [
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 228,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 229,
+        "quantity": 1,
+        "chance": 0.05
+      }
+    ]
+  },
+  {
+    "id": 36,
+    "name": "Steel Chest",
+    "category": "chest",
+    "actions": [
+      "Lockpick",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      115,
+      120,
+      130
+    ],
+    "skill": "roguery",
+    "levelRequired": 49,
+    "xpReward": 280,
+    "harvestItemId": 10,
+    "harvestQuantity": 260,
+    "harvestTime": 6,
+    "depletionChance": 1,
+    "respawnTime": 1500,
+    "depletedAssetId": "open tier 5 chest",
+    "extraLoot": [
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 228,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 229,
+        "quantity": 1,
+        "chance": 0.05
+      }
+    ]
+  },
+  {
+    "id": 37,
+    "name": "Royal Gold Chest",
+    "category": "chest",
+    "actions": [
+      "Lockpick",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      210,
+      150,
+      40
+    ],
+    "skill": "roguery",
+    "levelRequired": 61,
+    "xpReward": 400,
+    "harvestItemId": 10,
+    "harvestQuantity": 400,
+    "harvestTime": 6,
+    "depletionChance": 1,
+    "respawnTime": 1800,
+    "depletedAssetId": "open tier 6 chest",
     "extraLoot": [
       {
         "itemId": 227,

@@ -4726,7 +4726,7 @@
     ]
   },
   {
-    "assetId": "closed chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 70.5,
@@ -4745,7 +4745,7 @@
     }
   },
   {
-    "assetId": "closed chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 71.3581046669442,
@@ -6170,7 +6170,7 @@
     }
   },
   {
-    "assetId": "closed chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 76.5,
@@ -6189,7 +6189,7 @@
     }
   },
   {
-    "assetId": "closed chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 75.5,

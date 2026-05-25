@@ -880,6 +880,9 @@
     "value": 135,
     "icon": "Iron_Chain_Mail_Body_7.png",
     "model": "/assets/equipment/body/IronCuirass.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/IronCuirassWoman.glb"
+    },
     "stabDefence": 12,
     "slashDefence": 15,
     "crushDefence": 9,
@@ -1115,6 +1118,9 @@
     "rangedDefence": 16,
     "bodyHideStyle": "chain",
     "model": "/assets/equipment/body/SteelCuirass.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/SteelCuirassWoman.glb"
+    },
     "equipSkill": "defence",
     "levelRequired": 15
   },
@@ -1454,6 +1460,9 @@
     "equipSlot": "body",
     "value": 1080,
     "model": "/assets/equipment/body/BlackBronzeCuirass.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/BlackBronzeCuirassWoman.glb"
+    },
     "stabDefence": 32,
     "slashDefence": 40,
     "crushDefence": 24,

@@ -24,6 +24,8 @@ export class WorldObjectModels {
   private stumpModels: Map<number, ModelTemplate> = new Map();
   private stumpModelsByName: Map<string, ModelTemplate> = new Map();
   private depletedRockModel: ModelTemplate | null = null;
+  private depletedRockModelsByFile: Map<string, ModelTemplate> = new Map();
+  private depletedRockModelsByAsset: Map<string, ModelTemplate> = new Map();
   /** Pre-loaded depleted-state templates for chests, keyed by depletedAssetId
    *  from the object def. Multiple chest tiers can share the same open-chest
    *  asset without re-importing. */
@@ -65,12 +67,59 @@ export class WorldObjectModels {
     ]);
   }
 
-  /** Map an `depletedAssetId` (e.g. "open chest") to the GLB file under
+  /** Map an `depletedAssetId` (e.g. "open tier 1 chest") to the GLB file under
    *  /models/ to import. Add entries here when a new chest tier introduces
    *  a different open variant. */
   private static readonly DEPLETED_ASSET_FILES: Record<string, string> = {
-    'open chest': 'OpenChest.glb',
+    'open tier 1 chest': 'OpenChest.glb',
+    'open tier 2 chest': 'OpenTier2Chest.glb',
+    'open tier 3 chest': 'OpenTier3Chest.glb',
+    'open tier 4 chest': 'OpenTier4Chest.glb',
+    'open tier 5 chest': 'OpenTier5Chest.glb',
+    'open tier 6 chest': 'OpenTier6Chest.glb',
   };
+
+  private static readonly DEPLETED_ROCK_ASSET_FILES: Record<string, string> = {
+    CopperRock: 'depleted_rock.glb',
+    IronRock: 'depleted_rock.glb',
+    TinRock: 'depleted_rock.glb',
+    CoalRock: 'depleted_rock.glb',
+    MithrilRock: 'depleted_rock.glb',
+    SilverRock: 'depleted_rock.glb',
+    CopperRock2: 'DepletedRock2.glb',
+    IronRock2: 'DepletedRock2.glb',
+    TinRock2: 'DepletedRock2.glb',
+    CoalRock2: 'DepletedRock2.glb',
+    MithrilRock2: 'DepletedRock2.glb',
+    SilverRock2: 'DepletedRock2.glb',
+    ClayRock2: 'DepletedRock2.glb',
+    CopperRock3: 'DepletedRock3.glb',
+    IronRock3: 'DepletedRock3.glb',
+    TinRock3: 'DepletedRock3.glb',
+    CoalRock3: 'DepletedRock3.glb',
+    MithrilRock3: 'DepletedRock3.glb',
+    SilverRock3: 'DepletedRock3.glb',
+    ClayRock3: 'DepletedRock3.glb',
+  };
+
+  private async loadModelTemplate(rootUrl: string, file: string, templateName: string): Promise<ModelTemplate> {
+    const result = await SceneLoader.ImportMeshAsync('', rootUrl, file, this.scene);
+    const bb = worldAABB(result.meshes);
+    const centerX = (bb.minX + bb.maxX) / 2;
+    const centerZ = (bb.minZ + bb.maxZ) / 2;
+    const root = new TransformNode(templateName, this.scene);
+    for (const mesh of result.meshes) {
+      if (!mesh.parent) mesh.parent = root;
+    }
+    for (const child of root.getChildren()) {
+      const c = child as TransformNode;
+      c.position.x -= centerX;
+      c.position.y -= bb.minY;
+      c.position.z -= centerZ;
+    }
+    root.setEnabled(false);
+    return { template: root, scale: 1 };
+  }
 
   private async loadChestDepletedModels(): Promise<void> {
     // Iterate the static asset→file map rather than objectDefsCache: loadAll()
@@ -79,25 +128,7 @@ export class WorldObjectModels {
     // here gets pre-loaded; chest defs reference them via depletedAssetId.
     await Promise.all(Object.entries(WorldObjectModels.DEPLETED_ASSET_FILES).map(async ([assetId, file]) => {
       try {
-        const result = await SceneLoader.ImportMeshAsync('', '/models/', file, this.scene);
-        // Bottom-center pivot so the open chest swaps in place with the
-        // placed closed chest, which goes through the same transform in
-        // ChunkManager.loadGLBModel.
-        const bb = worldAABB(result.meshes);
-        const centerX = (bb.minX + bb.maxX) / 2;
-        const centerZ = (bb.minZ + bb.maxZ) / 2;
-        const root = new TransformNode(`chestDepletedTemplate_${assetId}`, this.scene);
-        for (const mesh of result.meshes) {
-          if (!mesh.parent) mesh.parent = root;
-        }
-        for (const child of root.getChildren()) {
-          const c = child as TransformNode;
-          c.position.x -= centerX;
-          c.position.y -= bb.minY;
-          c.position.z -= centerZ;
-        }
-        root.setEnabled(false);
-        this.chestDepletedModels.set(assetId, { template: root, scale: 1 });
+        this.chestDepletedModels.set(assetId, await this.loadModelTemplate('/models/', file, `chestDepletedTemplate_${assetId}`));
       } catch (e) {
         console.warn(`[WorldObjectModels] Failed to load chest depleted model '${file}':`, e);
       }
@@ -163,28 +194,20 @@ export class WorldObjectModels {
   }
 
   private async loadDepletedRockModel(): Promise<void> {
-    try {
-      const result = await SceneLoader.ImportMeshAsync('', '/models/', 'depleted_rock.glb', this.scene);
-      // Same bottom-center pivot as ChunkManager.loadGLBModel — without it
-      // the depleted rock lands offset from the original (X/Z centering)
-      // and the lower portion sinks into the ground (minY lift).
-      const bb = worldAABB(result.meshes);
-      const centerX = (bb.minX + bb.maxX) / 2;
-      const centerZ = (bb.minZ + bb.maxZ) / 2;
-      const root = new TransformNode('depletedRockTemplate', this.scene);
-      for (const mesh of result.meshes) {
-        if (!mesh.parent) mesh.parent = root;
+    const uniqueFiles = new Set(Object.values(WorldObjectModels.DEPLETED_ROCK_ASSET_FILES));
+    await Promise.all([...uniqueFiles].map(async (file) => {
+      try {
+        const model = await this.loadModelTemplate('/assets/models/', file, `depletedRockTemplate_${file}`);
+        this.depletedRockModelsByFile.set(file, model);
+        if (file === 'depleted_rock.glb') this.depletedRockModel = model;
+      } catch (e) {
+        console.warn(`[WorldObjectModels] Failed to load depleted rock model '${file}':`, e);
       }
-      for (const child of root.getChildren()) {
-        const c = child as TransformNode;
-        c.position.x -= centerX;
-        c.position.y -= bb.minY;
-        c.position.z -= centerZ;
-      }
-      root.setEnabled(false);
-      this.depletedRockModel = { template: root, scale: 1 };
-    } catch (e) {
-      console.warn('Failed to load depleted rock model:', e);
+    }));
+
+    for (const [assetId, file] of Object.entries(WorldObjectModels.DEPLETED_ROCK_ASSET_FILES)) {
+      const model = this.depletedRockModelsByFile.get(file);
+      if (model) this.depletedRockModelsByAsset.set(assetId, model);
     }
   }
 
@@ -243,7 +266,8 @@ export class WorldObjectModels {
     if (def?.category === 'tree') {
       depletedModel = this.stumpModels.get(defId) ?? null;
     } else if (def?.category === 'rock') {
-      depletedModel = this.depletedRockModel;
+      const assetId = typeof placedNode.metadata?.assetId === 'string' ? placedNode.metadata.assetId : undefined;
+      depletedModel = (assetId ? this.depletedRockModelsByAsset.get(assetId) : null) ?? this.depletedRockModel;
     } else if (def?.category === 'chest' && def.depletedAssetId) {
       depletedModel = this.chestDepletedModels.get(def.depletedAssetId) ?? null;
     }
@@ -282,7 +306,9 @@ export class WorldObjectModels {
     for (const [, m] of this.stumpModels) m.template.dispose();
     this.stumpModels.clear();
     this.stumpModelsByName.clear();
-    if (this.depletedRockModel) this.depletedRockModel.template.dispose();
+    for (const [, m] of this.depletedRockModelsByFile) m.template.dispose();
+    this.depletedRockModelsByFile.clear();
+    this.depletedRockModelsByAsset.clear();
     this.depletedRockModel = null;
     for (const [, m] of this.chestDepletedModels) m.template.dispose();
     this.chestDepletedModels.clear();

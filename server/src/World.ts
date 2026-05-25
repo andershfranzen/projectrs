@@ -393,7 +393,13 @@ export class World {
   private skillingActions: Map<number, { objectId: number; action: string; cycleTime: number; toolItemId?: number; toolBonus?: number }> = new Map();
 
   private static readonly DEFAULT_MINING_RATE = 7;
-  private static readonly MINING_TOOL_ACCURACY_BONUS = 8;
+  private static readonly MINING_TOOL_SPEED_REDUCTION_BY_BONUS: Record<number, number> = {
+    0: 0, // Bronze: 7 ticks
+    1: 1, // Iron: 6 ticks
+    2: 2, // Steel: 5 ticks
+    3: 2, // Mithril: 5 ticks
+    4: 3, // Black Bronze: 4 ticks; leave 3/2 ticks for future tiers.
+  };
 
   /**
    * Damage queued by a spell cast, fired on the tick the projectile visually
@@ -1150,6 +1156,54 @@ export class World {
     });
   }
 
+  private requiresClearObjectInteractionEdge(obj: WorldObject): boolean {
+    return obj.def.category === 'chest';
+  }
+
+  private hasClearObjectInteractionEdge(
+    player: Player,
+    obj: WorldObject,
+    tileX: number,
+    tileZ: number,
+    map?: GameMap,
+  ): boolean {
+    if (!this.requiresClearObjectInteractionEdge(obj)) return true;
+    const gameMap = map ?? this.getPlayerMap(player);
+    for (const footprintTile of getObjectFootprintTiles(obj.x, obj.z, obj.def)) {
+      const dx = footprintTile.x - tileX;
+      const dz = footprintTile.z - tileZ;
+      if (Math.abs(dx) + Math.abs(dz) !== 1) continue;
+      const blocked = player.currentFloor === 0
+        ? gameMap.isWallBlocked(tileX, tileZ, footprintTile.x, footprintTile.z, player.effectiveY)
+        : gameMap.isWallBlockedOnFloor(tileX, tileZ, footprintTile.x, footprintTile.z, player.currentFloor);
+      if (!blocked) return true;
+    }
+    return false;
+  }
+
+  private canUseObjectFromTile(player: Player, obj: WorldObject, tileX: number, tileZ: number, map?: GameMap): boolean {
+    if (!this.canPlayerTargetObject(player, obj)) return false;
+    if (obj.def.category === 'door') {
+      const otx = Math.floor(obj.x);
+      const otz = Math.floor(obj.z);
+      return (tileX === otx && tileZ === otz) || (Math.abs(tileX - otx) + Math.abs(tileZ - otz) === 1);
+    }
+    if (obj.def.category === 'ladder' && obj.verticalLinks?.length) {
+      return this.ladderInteractionTilesForPlayer(player, obj)
+        .some(tile => tile.x === tileX && tile.z === tileZ);
+    }
+    const explicit = this.explicitObjectInteractionTiles(obj);
+    const adjacent = explicit.length > 0
+      ? explicit.some(tile => tile.x === tileX && tile.z === tileZ)
+      : isTileAdjacentToObject(tileX, tileZ, obj.x, obj.z, obj.def, {
+          allowedWorldSides: obj.interactionSides
+            ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
+            : undefined,
+          includeCorners: this.usesCornerObjectInteraction(obj),
+        });
+    return adjacent && this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map);
+  }
+
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
     const interactionTiles = obj.def.category === 'ladder' && obj.verticalLinks?.length
@@ -1157,6 +1211,7 @@ export class World {
       : this.objectInteractionTiles(obj);
     const candidates = interactionTiles
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
+      .filter(tile => this.canUseObjectFromTile(player, obj, tile.x, tile.z, map))
       .sort((a, b) => {
         const ad = Math.abs(player.position.x - (a.x + 0.5)) + Math.abs(player.position.y - (a.z + 0.5));
         const bd = Math.abs(player.position.x - (b.x + 0.5)) + Math.abs(player.position.y - (b.z + 0.5));
@@ -2640,27 +2695,9 @@ export class World {
 
   /** Check if player is on a valid interaction tile for the object. */
   private isAdjacentToObject(player: Player, obj: WorldObject): boolean {
-    if (!this.canPlayerTargetObject(player, obj)) return false;
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
-    const otx = Math.floor(obj.x);
-    const otz = Math.floor(obj.z);
-    // Doors: player must be on the door tile or the tile the door faces into
-    if (obj.def.category === 'door') {
-      return (ptx === otx && ptz === otz) || (Math.abs(ptx - otx) + Math.abs(ptz - otz) === 1);
-    }
-    if (obj.def.category === 'ladder' && obj.verticalLinks?.length) {
-      return this.ladderInteractionTilesForPlayer(player, obj)
-        .some(tile => tile.x === ptx && tile.z === ptz);
-    }
-    const explicit = this.explicitObjectInteractionTiles(obj);
-    if (explicit.length > 0) return explicit.some(tile => tile.x === ptx && tile.z === ptz);
-    return isTileAdjacentToObject(ptx, ptz, obj.x, obj.z, obj.def, {
-      allowedWorldSides: obj.interactionSides
-        ? localSidesToWorldSides(obj.interactionSides, obj.rotationY, obj.def.width)
-        : undefined,
-      includeCorners: this.usesCornerObjectInteraction(obj),
-    });
+    return this.canUseObjectFromTile(player, obj, ptx, ptz);
   }
 
   handlePlayerMove(playerId: number, path: { x: number; z: number }[]): void {
@@ -3854,11 +3891,14 @@ export class World {
       toolBonus = bestTool.toolBonus ?? 0;
     }
 
-    // Rocks all roll on the same cadence; better pickaxes affect success chance.
-    // Other harvestables still use tool bonus to shorten the cycle.
+    // Better pickaxes shorten the mining cycle. Current tiers intentionally
+    // stop at 4 ticks; 3/2 ticks are reserved for future high-end pickaxes.
+    // Other harvestables still use the raw tool bonus to shorten the cycle.
     let cycleTime: number;
     if (obj.def.category === 'rock') {
-      cycleTime = obj.def.harvestTime ?? World.DEFAULT_MINING_RATE;
+      const baseTime = obj.def.harvestTime ?? World.DEFAULT_MINING_RATE;
+      const speedReduction = World.MINING_TOOL_SPEED_REDUCTION_BY_BONUS[toolBonus] ?? Math.max(0, Math.min(3, toolBonus - 1));
+      cycleTime = Math.max(4, baseTime - speedReduction);
     } else {
       const baseTime = obj.def.harvestTime ?? 4;
       cycleTime = Math.max(2, baseTime - toolBonus);
@@ -6743,10 +6783,7 @@ export class World {
             continue;
           }
           const playerLevel = player.skills[skillId]?.level ?? 1;
-          const toolAccuracyBonus = obj.def.category === 'rock'
-            ? (action.toolBonus ?? 0) * World.MINING_TOOL_ACCURACY_BONUS
-            : 0;
-          if (!statRandom(playerLevel, chances[0] + toolAccuracyBonus, chances[1] + toolAccuracyBonus)) {
+          if (!statRandom(playerLevel, chances[0], chances[1])) {
             // Miss — schedule next roll one cycle out.
             player.actionDelay = this.currentTick + action.cycleTime;
             continue;

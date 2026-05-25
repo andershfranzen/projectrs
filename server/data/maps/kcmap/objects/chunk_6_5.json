@@ -2661,7 +2661,7 @@
     }
   },
   {
-    "assetId": "chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 219.97623532913235,
@@ -2674,9 +2674,9 @@
       "z": 3.885780586188053e-16
     },
     "scale": {
-      "x": 0.4499999999999999,
-      "y": 0.4499999999999999,
-      "z": 0.4499999999999999
+      "x": 1.1925,
+      "y": 1.1925,
+      "z": 1.1925
     }
   },
   {
@@ -2756,7 +2756,7 @@
     }
   },
   {
-    "assetId": "closed chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 215.5,
@@ -2781,7 +2781,7 @@
     ]
   },
   {
-    "assetId": "closed chest",
+    "assetId": "tier 1 chest",
     "layerId": "layer_0",
     "position": {
       "x": 219.5,

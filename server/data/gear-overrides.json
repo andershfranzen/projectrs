@@ -70,9 +70,9 @@
     "bodyTypeOverrides": {
       "1": {
         "localPosition": {
-          "x": -0.216,
-          "y": 0.034,
-          "z": -0.023
+          "x": -0.114,
+          "y": 0.057,
+          "z": 0.011
         },
         "localRotation": {
           "x": 0,
@@ -182,9 +182,9 @@
     "bodyTypeOverrides": {
       "1": {
         "localPosition": {
-          "x": -0.216,
-          "y": 0.034,
-          "z": -0.023
+          "x": -0.114,
+          "y": 0.057,
+          "z": 0.011
         },
         "localRotation": {
           "x": 0,
@@ -210,9 +210,9 @@
     "bodyTypeOverrides": {
       "1": {
         "localPosition": {
-          "x": -0.216,
-          "y": 0.034,
-          "z": -0.023
+          "x": -0.114,
+          "y": 0.057,
+          "z": 0.011
         },
         "localRotation": {
           "x": 0,
@@ -238,9 +238,9 @@
     "bodyTypeOverrides": {
       "1": {
         "localPosition": {
-          "x": -0.216,
-          "y": 0.034,
-          "z": -0.023
+          "x": -0.114,
+          "y": 0.057,
+          "z": 0.011
         },
         "localRotation": {
           "x": 0,
@@ -266,9 +266,9 @@
     "bodyTypeOverrides": {
       "1": {
         "localPosition": {
-          "x": -0.216,
-          "y": 0.034,
-          "z": -0.023
+          "x": -0.114,
+          "y": 0.057,
+          "z": 0.011
         },
         "localRotation": {
           "x": 0,
