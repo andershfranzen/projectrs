@@ -60,6 +60,7 @@ import {
   NPC_COMBAT_ANIMATIONS,
   deriveUpperFloorTilesFromPlanes,
   resolveEquipmentModelPath,
+  BANK_ACCESS_SPAWN_NAME,
   isAllowedBankAccessSpawn,
   validateBankAccessSpawns,
 } from '@projectrs/shared'
@@ -349,8 +350,12 @@ function tuneModelLighting(model) {
     return validateBankAccessSpawns(mapId, spawns, npcDefById)
   }
 
-  function bankAccessPlacementBlockedMessage(def) {
-    return `${def?.name || 'This NPC'} opens the bank and is locked to explicit allowlisted spawn positions. Edit shared/npcSafety.ts before adding or moving bank-enabled NPCs.`
+  function ensureBankAccessSpawnName(spawn, def) {
+    if (def?.bankAccess && !spawn.name) spawn.name = BANK_ACCESS_SPAWN_NAME
+  }
+
+  function bankAccessSpawnHint(def) {
+    return `${def?.name || 'This NPC'} opens the bank. Bank-enabled spawns must be explicitly named "${BANK_ACCESS_SPAWN_NAME}".`
   }
 
   function addNpcSpawn(input) {
@@ -2447,9 +2452,9 @@ let paintBrushRadius = 1
       const sel = sidebar.querySelector('#npcTypeSelect')
       if (sel) {
         sel.innerHTML = defs.map(d => {
-          const locked = d.bankAccess ? ' disabled title="Bank-enabled NPCs are locked to explicit allowlisted spawn positions."' : ''
-          const suffix = d.bankAccess ? ' — BANK LOCKED' : ''
-          return `<option value="${d.id}"${locked}>${d.name} (ID ${d.id}) — HP ${d.health}${suffix}</option>`
+          const title = d.bankAccess ? ` title="Bank-enabled spawns must be named &quot;${BANK_ACCESS_SPAWN_NAME}&quot;."` : ''
+          const suffix = d.bankAccess ? ' — BANK' : ''
+          return `<option value="${d.id}"${title}>${d.name} (ID ${d.id}) — HP ${d.health}${suffix}</option>`
         }).join('')
       }
       renderNpcInspector()
@@ -2463,11 +2468,13 @@ let paintBrushRadius = 1
       if (requestedDef?.bankAccess) {
         const mapId = serverMapSelect?.value || ''
         const candidate = { ...selectedNpcSpawn, npcId: requestedNpcId }
+        ensureBankAccessSpawnName(candidate, requestedDef)
         if (!isAllowedBankAccessSpawn(mapId, candidate)) {
-          alert(bankAccessPlacementBlockedMessage(requestedDef))
+          alert(bankAccessSpawnHint(requestedDef))
           e.target.value = selectedNpcSpawn.npcId
           return
         }
+        selectedNpcSpawn.name = candidate.name
       }
       selectedNpcSpawn.npcId = requestedNpcId
       rebuildNpcSpawnMeshes()
@@ -2567,17 +2574,21 @@ let paintBrushRadius = 1
   function duplicateSelectedNpcSpawn() {
     if (!selectedNpcSpawn) return
     const def = npcDefById(selectedNpcSpawn.npcId)
-    if (def?.bankAccess) {
-      alert(bankAccessPlacementBlockedMessage(def))
-      return
-    }
-    pushUndoState('spawns')
     const src = selectedNpcSpawn
     const copy = structuredClone(src)
     // structuredClone preserves `id`; strip it so addNpcSpawn assigns a fresh one.
     delete copy.id
     copy.x = src.x + 1
     copy.z = src.z
+    ensureBankAccessSpawnName(copy, def)
+    if (def?.bankAccess) {
+      const mapId = serverMapSelect?.value || ''
+      if (!isAllowedBankAccessSpawn(mapId, copy)) {
+        alert(bankAccessSpawnHint(def))
+        return
+      }
+    }
+    pushUndoState('spawns')
     const created = addNpcSpawn(copy)
     selectedNpcSpawn = created
     rebuildNpcSpawnMeshes()
@@ -2670,12 +2681,6 @@ let paintBrushRadius = 1
     // expensive rebuildNpcSpawnMeshes runs once per edit instead of every keystroke.
     const updatePosition = (axis, raw) => {
       if (!selectedNpcSpawn) return
-      const selectedDef = npcDefById(selectedNpcSpawn.npcId)
-      if (selectedDef?.bankAccess) {
-        alert(bankAccessPlacementBlockedMessage(selectedDef))
-        renderSpawnTab(root)
-        return
-      }
       const v = parseFloat(raw)
       if (!Number.isFinite(v)) return
       selectedNpcSpawn[axis] = v
@@ -11038,11 +11043,6 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         // If Ctrl+click lands ON a spawn, treat it as a normal select instead
         // of moving onto the clicked one.
         if (!picked) {
-          const selectedDef = npcDefById(selectedNpcSpawn.npcId)
-          if (selectedDef?.bankAccess) {
-            alert(bankAccessPlacementBlockedMessage(selectedDef))
-            return
-          }
           pushUndoState('spawns')
           selectedNpcSpawn.x = tile.x + 0.5
           selectedNpcSpawn.z = tile.z + 0.5
@@ -11070,10 +11070,6 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       const npcId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value)
       if (!npcId) return
       const defForPlace = npcDefs.find(d => d.id === npcId)
-      if (defForPlace?.bankAccess) {
-        alert(bankAccessPlacementBlockedMessage(defForPlace))
-        return
-      }
       const wanderSlider = sidebar.querySelector('#wanderRangeSlider')
       const aggCb = sidebar.querySelector('#aggressiveCheckbox')
       const wanderRange = wanderSlider ? (parseInt(wanderSlider.value) || (defForPlace?.wanderRange ?? 3)) : (defForPlace?.wanderRange ?? 3)
@@ -11081,8 +11077,17 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       // visible AND the user has set it; otherwise leave it null so the spawn
       // inherits the def's flag.
       const aggressive = aggCb ? aggCb.checked : null
+      const spawnInput = { npcId, x: tile.x + 0.5, z: tile.z + 0.5, wanderRange, aggressive }
+      ensureBankAccessSpawnName(spawnInput, defForPlace)
+      if (defForPlace?.bankAccess) {
+        const mapId = serverMapSelect?.value || ''
+        if (!isAllowedBankAccessSpawn(mapId, spawnInput)) {
+          alert(bankAccessSpawnHint(defForPlace))
+          return
+        }
+      }
       pushUndoState('spawns')
-      const spawn = addNpcSpawn({ npcId, x: tile.x + 0.5, z: tile.z + 0.5, wanderRange, aggressive })
+      const spawn = addNpcSpawn(spawnInput)
       selectedNpcSpawn = spawn
       if (typeof renderNpcInspector === 'function') renderNpcInspector()
       rebuildNpcSpawnMeshes()
