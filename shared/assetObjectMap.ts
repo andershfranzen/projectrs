@@ -66,6 +66,28 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'desert well': 27,
 };
 
+export interface AssetGroundItemSpawnDef {
+  itemId: number;
+  quantity?: number;
+  respawnTime?: number;
+}
+
+const BONES_GROUND_ITEM_SPAWN = { itemId: 1, quantity: 1, respawnTime: 40 } satisfies AssetGroundItemSpawnDef;
+
+/**
+ * Editor-placed assets that are represented in-game as ground items instead of
+ * static scenery. The server owns pickup/respawn state; the client skips the
+ * placed GLB and renders the spawned ground item entity.
+ */
+export const ASSET_TO_GROUND_ITEM_SPAWN: Record<string, AssetGroundItemSpawnDef> = {
+  'Bones': BONES_GROUND_ITEM_SPAWN,
+  'Bone': BONES_GROUND_ITEM_SPAWN,
+  'bones': BONES_GROUND_ITEM_SPAWN,
+  'bone': BONES_GROUND_ITEM_SPAWN,
+  'Bones.glb': BONES_GROUND_ITEM_SPAWN,
+  'bone.glb': BONES_GROUND_ITEM_SPAWN,
+};
+
 /**
  * Decoration assets that should block their tile but aren't interactable —
  * no right-click menu, no harvest, no WorldObject entity. Kept thin-instanced

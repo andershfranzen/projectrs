@@ -279,7 +279,7 @@
         "outputQuantity": 1,
         "skill": "smithing",
         "levelRequired": 31,
-        "xpReward": 30,
+        "xpReward": 23,
         "secondInputItemId": 35,
         "secondInputQuantity": 2
       },
@@ -290,7 +290,7 @@
         "outputQuantity": 1,
         "skill": "smithing",
         "levelRequired": 35,
-        "xpReward": 14,
+        "xpReward": 24,
         "secondInputItemId": 35,
         "secondInputQuantity": 1
       },
@@ -680,8 +680,8 @@
       120
     ],
     "skill": "mining",
-    "levelRequired": 55,
-    "xpReward": 80,
+    "levelRequired": 38,
+    "xpReward": 58,
     "harvestItemId": 45,
     "harvestQuantity": 1,
     "harvestTime": 7,

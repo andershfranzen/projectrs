@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -116,6 +116,18 @@ export interface GroundItem {
   despawnTimer: number;
   ownerPlayerId?: number;
   privateTicks?: number;
+  spawnKey?: string;
+}
+
+interface GroundItemRespawnSource {
+  itemId: number;
+  quantity: number;
+  x: number;
+  z: number;
+  floor: number;
+  mapLevel: string;
+  respawnTime: number;
+  respawnTimer: number;
 }
 
 interface RuntimeObjectSpawn {
@@ -139,6 +151,15 @@ interface RuntimeObjectSpawn {
   verticalLinks?: WorldObject['verticalLinks'];
   interactionTiles?: WorldObject['interactionTiles'];
   interactionSides?: number;
+}
+
+interface RuntimeGroundItemSpawn {
+  itemId: number;
+  quantity?: number;
+  x: number;
+  z: number;
+  y?: number;
+  floor?: number;
 }
 
 type SyncPacket = {
@@ -355,6 +376,10 @@ export class World {
 
   /** Ground items with active despawn timers (avoids iterating all permanent items) */
   private despawningItemIds: Set<number> = new Set();
+  /** Editor-authored ground item sources keyed by stable map/asset/position data. */
+  private groundItemRespawnSources: Map<string, GroundItemRespawnSource> = new Map();
+  /** Ground item source keys currently waiting to respawn. */
+  private activeGroundItemRespawnKeys: Set<string> = new Set();
 
   /** World objects currently depleted and awaiting respawn */
   private depletedObjectIds: Set<number> = new Set();
@@ -596,22 +621,9 @@ export class World {
         player.visibleEntityIds.delete(id);
       }
     }
-    for (const item of spawns.items ?? []) {
-      const id = this.allocateGroundItemId();
-      if (id === null) continue;
-      const groundItem: GroundItem = {
-        id,
-        itemId: item.itemId,
-        quantity: item.quantity ?? 1,
-        x: item.x,
-        z: item.z,
-        floor: this.resolveAuthoredFloor(gameMap, item.x, item.z, item.y, item.floor).floor,
-        mapLevel: mapId,
-        despawnTimer: -1,
-      };
-      this.groundItems.set(groundItem.id, groundItem);
-      cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
-    }
+    this.clearGroundItemRespawnSourcesForMap(mapId);
+    this.spawnStaticGroundItems(mapId, gameMap, spawns.items ?? []);
+    this.spawnPlacedGroundItems(mapId, gameMap);
 
     // Re-register players on this map
     for (const [id, player] of this.players) {
@@ -1263,26 +1275,103 @@ export class World {
     let itemCount = 0;
     for (const [mapId] of this.maps) {
       const spawns = this.data.loadSpawns(mapId);
-      for (const item of spawns.items ?? []) {
-        const id = this.allocateGroundItemId();
-        if (id === null) continue;
-        const groundItem: GroundItem = {
-          id,
-          itemId: item.itemId,
-          quantity: item.quantity ?? 1,
-          x: item.x,
-          z: item.z,
-          floor: this.resolveAuthoredFloor(this.maps.get(mapId)!, item.x, item.z, item.y, item.floor).floor,
-          mapLevel: mapId,
-          despawnTimer: -1, // permanent spawn
-        };
-        this.groundItems.set(groundItem.id, groundItem);
-        const cm = this.chunkManagers.get(mapId);
-        if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
-        itemCount++;
+      const gameMap = this.maps.get(mapId)!;
+      itemCount += this.spawnStaticGroundItems(mapId, gameMap, spawns.items ?? []);
+      itemCount += this.spawnPlacedGroundItems(mapId, gameMap);
+    }
+    if (itemCount > 0) console.log(`Spawned ${itemCount} ground items`);
+  }
+
+  private spawnStaticGroundItems(mapId: string, gameMap: GameMap, itemSpawns: ReadonlyArray<RuntimeGroundItemSpawn>): number {
+    let count = 0;
+    const cm = this.chunkManagers.get(mapId);
+    for (const item of itemSpawns) {
+      const id = this.allocateGroundItemId();
+      if (id === null) continue;
+      const quantity = Math.max(1, Math.floor(item.quantity ?? 1));
+      const groundItem: GroundItem = {
+        id,
+        itemId: item.itemId,
+        quantity,
+        x: item.x,
+        z: item.z,
+        floor: this.resolveAuthoredFloor(gameMap, item.x, item.z, item.y, item.floor).floor,
+        mapLevel: mapId,
+        despawnTimer: -1, // permanent spawn
+      };
+      this.groundItems.set(groundItem.id, groundItem);
+      if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
+      count++;
+    }
+    return count;
+  }
+
+  private spawnPlacedGroundItems(mapId: string, gameMap: GameMap): number {
+    let count = 0;
+    const placedObjects = gameMap.placedObjects ?? [];
+    for (let i = 0; i < placedObjects.length; i++) {
+      const placed = placedObjects[i];
+      const spawnDef = ASSET_TO_GROUND_ITEM_SPAWN[placed.assetId];
+      if (!spawnDef) continue;
+      if (!this.data.getItem(spawnDef.itemId)) {
+        console.warn(`Unknown item id ${spawnDef.itemId} for placed asset '${placed.assetId}' in ${mapId}`);
+        continue;
+      }
+      const resolved = this.resolveAuthoredFloor(gameMap, placed.position.x, placed.position.z, placed.position.y);
+      const source: GroundItemRespawnSource = {
+        itemId: spawnDef.itemId,
+        quantity: Math.max(1, Math.floor(spawnDef.quantity ?? 1)),
+        x: placed.position.x,
+        z: placed.position.z,
+        floor: resolved.floor,
+        mapLevel: mapId,
+        respawnTime: Math.max(1, Math.floor(spawnDef.respawnTime ?? GROUND_ITEM_DESPAWN_TICKS)),
+        respawnTimer: -1,
+      };
+      const spawnKey = this.placedGroundItemSpawnKey(mapId, placed.assetId, i, source.x, source.z, source.floor);
+      this.groundItemRespawnSources.set(spawnKey, source);
+      if (this.spawnRespawningGroundItem(spawnKey, source, false)) count++;
+    }
+    return count;
+  }
+
+  private placedGroundItemSpawnKey(mapId: string, assetId: string, index: number, x: number, z: number, floor: number): string {
+    return `${mapId}|${assetId}|${index}|${Math.floor(floor)}|${qPos(x)}|${qPos(z)}`;
+  }
+
+  private spawnRespawningGroundItem(spawnKey: string, source: GroundItemRespawnSource, broadcast: boolean): GroundItem | null {
+    const id = this.allocateGroundItemId();
+    if (id === null) return null;
+    const groundItem: GroundItem = {
+      id,
+      itemId: source.itemId,
+      quantity: source.quantity,
+      x: source.x,
+      z: source.z,
+      floor: source.floor,
+      mapLevel: source.mapLevel,
+      despawnTimer: -1,
+      spawnKey,
+    };
+    this.groundItems.set(groundItem.id, groundItem);
+    const cm = this.chunkManagers.get(source.mapLevel);
+    if (cm) cm.addEntity(groundItem.id, groundItem.x, groundItem.z, 'groundItem');
+    source.respawnTimer = -1;
+    this.activeGroundItemRespawnKeys.delete(spawnKey);
+    if (broadcast) {
+      this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
+        this.sendGroundItemUpdate(p, groundItem));
+    }
+    return groundItem;
+  }
+
+  private clearGroundItemRespawnSourcesForMap(mapId: string): void {
+    for (const [key, source] of this.groundItemRespawnSources) {
+      if (source.mapLevel === mapId) {
+        this.groundItemRespawnSources.delete(key);
+        this.activeGroundItemRespawnKeys.delete(key);
       }
     }
-    if (itemCount > 0) console.log(`Spawned ${itemCount} ground items from spawns`);
   }
 
   private collectObjectSpawns(
@@ -1292,6 +1381,7 @@ export class World {
   ): RuntimeObjectSpawn[] {
     const objectSpawns: RuntimeObjectSpawn[] = [];
     for (const placed of gameMap.placedObjects ?? []) {
+      if (ASSET_TO_GROUND_ITEM_SPAWN[placed.assetId]) continue;
       const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
       if (defId != null) {
         objectSpawns.push({
@@ -3316,6 +3406,11 @@ export class World {
     const added = player.addItem(item.itemId, item.quantity, this.data.itemDefs);
     if (added.completed > 0) {
       this.interruptPlayerAction(playerId, player);
+      const respawnSource = item.spawnKey ? this.groundItemRespawnSources.get(item.spawnKey) : undefined;
+      if (respawnSource && item.spawnKey) {
+        respawnSource.respawnTimer = respawnSource.respawnTime;
+        this.activeGroundItemRespawnKeys.add(item.spawnKey);
+      }
       this.groundItems.delete(groundItemId);
       this.despawningItemIds.delete(groundItemId);
       const itemCm = this.chunkManagers.get(item.mapLevel);
@@ -5959,6 +6054,7 @@ export class World {
     this.tickObjectRespawns();
     this.flushPendingObjectRespawnWrites();
     this.tickItemDespawns();
+    this.tickGroundItemRespawns();
     this.tickDialogueScheduledSteps();
     this.tickObjectSayScheduledLines();
     this.tickTransitions();
@@ -6852,6 +6948,21 @@ export class World {
           if (p.currentMapLevel !== item.mapLevel || p.currentFloor !== item.floor) continue;
           try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
         }
+      }
+    }
+  }
+
+  private tickGroundItemRespawns(): void {
+    for (const spawnKey of this.activeGroundItemRespawnKeys) {
+      const source = this.groundItemRespawnSources.get(spawnKey);
+      if (!source) {
+        this.activeGroundItemRespawnKeys.delete(spawnKey);
+        continue;
+      }
+      source.respawnTimer--;
+      if (source.respawnTimer > 0) continue;
+      if (!this.spawnRespawningGroundItem(spawnKey, source, true)) {
+        source.respawnTimer = 1;
       }
     }
   }

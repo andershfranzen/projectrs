@@ -12,7 +12,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -82,6 +82,14 @@ interface PlacedStairRamp {
   topY: number;
   direction: 'N' | 'S' | 'E' | 'W';
   halfLength: number;
+}
+
+interface PlacedObjectNodeMetadata {
+  assetId?: string;
+  placedX?: number;
+  placedY?: number;
+  placedZ?: number;
+  roofGridKeys?: string[];
 }
 
 export interface MinimapTileSnapshot {
@@ -2217,10 +2225,37 @@ export class ChunkManager {
     return this.findPlacedObjectNear(x, z, radius) !== null;
   }
 
+  private placedObjectAuthoredPosition(node: TransformNode): { x: number; y: number; z: number } {
+    const meta = node.metadata as PlacedObjectNodeMetadata | null;
+    const x = meta?.placedX;
+    const y = meta?.placedY;
+    const z = meta?.placedZ;
+    if (
+      typeof x === 'number' && Number.isFinite(x) &&
+      typeof y === 'number' && Number.isFinite(y) &&
+      typeof z === 'number' && Number.isFinite(z)
+    ) {
+      return { x, y, z };
+    }
+    const pos = node.getAbsolutePosition();
+    return { x: pos.x, y: pos.y, z: pos.z };
+  }
+
+  getPlacedObjectAuthoredPosition(node: TransformNode): { x: number; y: number; z: number } {
+    return this.placedObjectAuthoredPosition(node);
+  }
+
   /** Find the nearest placed GLB object (that maps to a game object) near a world position.
    *  Uses spatial grid for O(1) lookup, checking the tile and its neighbours.
    *  If defId is provided, only matches nodes whose assetId maps to that object definition. */
-  findPlacedObjectNear(x: number, z: number, radius: number, defId?: number, y?: number): TransformNode | null {
+  findPlacedObjectNear(
+    x: number,
+    z: number,
+    radius: number,
+    defId?: number,
+    y?: number,
+    acceptNode?: (node: TransformNode) => boolean,
+  ): TransformNode | null {
     const tx = Math.floor(x);
     const tz = Math.floor(z);
     let best: TransformNode | null = null;
@@ -2230,16 +2265,20 @@ export class ChunkManager {
         const nodes = this.placedObjectGrid.get(`${tx + dx},${tz + dz}`);
         if (!nodes) continue;
         for (const node of nodes) {
+          if (node.isDisposed()) continue;
+          if (acceptNode && !acceptNode(node)) continue;
           // Filter by defId if specified
           if (defId !== undefined) {
-            const assetId = node.metadata?.assetId;
+            const assetId = (node.metadata as PlacedObjectNodeMetadata | null)?.assetId;
             if (!assetId || ASSET_TO_OBJECT_DEF[assetId] !== defId) continue;
           }
-          const nx = node.position.x - x;
-          const nz = node.position.z - z;
+          const placed = this.placedObjectAuthoredPosition(node);
+          const nx = placed.x - x;
+          const nz = placed.z - z;
           const dist = Math.sqrt(nx * nx + nz * nz);
           if (dist >= radius) continue;
-          const yPenalty = Number.isFinite(y) ? Math.abs(node.position.y - (y as number)) : 0;
+          const yPenalty = Number.isFinite(y) ? Math.abs(placed.y - (y as number)) : 0;
+          if (yPenalty > 1.25) continue;
           const score = dist + yPenalty;
           if (score < bestScore) {
             bestScore = score;
@@ -2918,9 +2957,19 @@ export class ChunkManager {
     }
     if (this.isObjectLoadStale(generation)) return;
 
+    let renderableObjects = objects;
+    if (objects.some(obj => obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN)) {
+      renderableObjects = objects.filter(obj => !(obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN));
+    }
+    if (renderableObjects.length === 0) {
+      this.chunkPlacedNodes.set(chunkKey, []);
+      this.loadingObjectChunks.delete(chunkKey);
+      return;
+    }
+
     // Stamps tile blockers for decor that stays thin-instanced (no WorldObject).
     const decorKeys: number[] = [];
-    for (const obj of objects) {
+    for (const obj of renderableObjects) {
       if (!BLOCKING_DECOR_ASSETS.has(obj.assetId)) continue;
       const tx = Math.floor(obj.position.x);
       const tz = Math.floor(obj.position.z);
@@ -2934,7 +2983,7 @@ export class ChunkManager {
     // Split into thin-instanceable (static decorations) vs regular (interactable/animated/roofs/stairs).
     // Need to load templates first so canThinInstance can check for animations.
     const templatePromises = new Map<string, Promise<TransformNode | null>>();
-    for (const obj of objects) {
+    for (const obj of renderableObjects) {
       if (!templatePromises.has(obj.assetId)) {
         templatePromises.set(obj.assetId, this.loadGLBModel(obj.assetId, generation));
       }
@@ -2943,12 +2992,12 @@ export class ChunkManager {
     if (this.isObjectLoadStale(generation)) return;
 
     let groundY = Infinity;
-    for (const obj of objects) { if (obj.position.y < groundY) groundY = obj.position.y; }
+    for (const obj of renderableObjects) { if (obj.position.y < groundY) groundY = obj.position.y; }
     if (!isFinite(groundY)) groundY = 0;
 
     const regularObjects: PlacedObject[] = [];
     const thinGroups = new Map<string, PlacedObject[]>();
-    for (const obj of objects) {
+    for (const obj of renderableObjects) {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
       if (this.canThinInstance(obj, groundY)) {
         let group = thinGroups.get(obj.assetId);
@@ -3086,7 +3135,13 @@ export class ChunkManager {
       const assetDef = this.assetRegistry.get(obj.assetId);
       const treeBoost = assetDef?.path?.toLowerCase().includes('tree') ? 1.15 : 1.0;
       root.scaling = new Vector3(obj.scale.x * treeBoost, obj.scale.y * treeBoost, obj.scale.z * treeBoost);
-      root.metadata = { ...root.metadata, assetId: obj.assetId };
+      root.metadata = {
+        ...root.metadata,
+        assetId: obj.assetId,
+        placedX: obj.position.x,
+        placedY: obj.position.y,
+        placedZ: obj.position.z,
+      } satisfies PlacedObjectNodeMetadata;
 
       const hasAnims = !!templateAnims && templateAnims.length > 0;
       const isDoorAsset = obj.assetId === 'castleTruedoor' || obj.assetId === 'basicTruedoor';
@@ -3171,9 +3226,9 @@ export class ChunkManager {
     this.chunkPlacedEnabled.set(chunkKey, true);
     this.setChunkPlacedObjectsEnabled(chunkKey, this.desiredGameChunks.size === 0 || this.desiredGameChunks.has(chunkKey));
 
-    if (objects && objects.length > 0) {
-      this.addShadowsForObjects(objects);
-      this.queueGroundShadowRebuildsForObjects(objects);
+    if (renderableObjects.length > 0) {
+      this.addShadowsForObjects(renderableObjects);
+      this.queueGroundShadowRebuildsForObjects(renderableObjects);
     }
 
     this.onChunkObjectsLoaded?.(chunkKey);
@@ -3200,9 +3255,10 @@ export class ChunkManager {
     if (nodes) {
       for (const node of nodes) {
         // Remove from spatial grid
-        const assetId = node.metadata?.assetId;
+        const assetId = (node.metadata as PlacedObjectNodeMetadata | null)?.assetId;
         if (assetId && assetId in ASSET_TO_OBJECT_DEF) {
-          const gridKey = `${Math.floor(node.position.x)},${Math.floor(node.position.z)}`;
+          const placed = this.placedObjectAuthoredPosition(node);
+          const gridKey = `${Math.floor(placed.x)},${Math.floor(placed.z)}`;
           const nodesAtTile = this.placedObjectGrid.get(gridKey);
           if (nodesAtTile) {
             const idx = nodesAtTile.indexOf(node);
@@ -3473,6 +3529,7 @@ export class ChunkManager {
     let count = 0;
     for (const [, objects] of this.placedObjectsByChunk) {
       for (const obj of objects) {
+        if (obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN) continue;
         const cx = obj.position.x;
         const cz = obj.position.z;
         const name = obj.assetId.toLowerCase();
@@ -3514,6 +3571,7 @@ export class ChunkManager {
     }
     const w = this.mapWidth + 1;
     for (const obj of objects) {
+      if (obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN) continue;
       const cx = obj.position.x;
       const cz = obj.position.z;
       const name = obj.assetId.toLowerCase();
@@ -3547,6 +3605,7 @@ export class ChunkManager {
   /** Queue ground mesh rebuilds for chunks affected by newly loaded object shadows. */
   private queueGroundShadowRebuildsForObjects(objects: PlacedObject[]): void {
     for (const obj of objects) {
+      if (obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN) continue;
       const name = obj.assetId.toLowerCase();
       const isShadowCaster = name.includes('tree') || name.includes('bush') || name.includes('modular') || name.includes('wall') || name.includes('house') || name.includes('rock');
       if (!isShadowCaster) continue;

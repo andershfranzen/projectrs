@@ -1719,16 +1719,6 @@ export class GameManager {
       if (node.isDisposed()) {
         this.deleteWorldObjectModel(entityId);
         this.objectModels.deleteStump(entityId);
-        const doorEntry = this.doorPivots.get(entityId);
-        if (doorEntry) {
-          doorEntry.pivot.dispose();
-          this.doorPivots.delete(entityId);
-        }
-        const doorProxy = this.doorPickProxies.get(entityId);
-        if (doorProxy) {
-          doorProxy.dispose();
-          this.doorPickProxies.delete(entityId);
-        }
       }
     }
   }
@@ -1738,7 +1728,14 @@ export class GameManager {
     let linked = 0;
     for (const [objectEntityId, data] of this.worldObjectDefs) {
       if (this.worldObjectModels.has(objectEntityId)) continue;
-      const placedNode = this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId, data.y);
+      const placedNode = this.chunkManager.findPlacedObjectNear(
+        data.x,
+        data.z,
+        1.5,
+        data.defId,
+        data.y,
+        node => this.canLinkPlacedNodeToWorldObject(objectEntityId, node),
+      );
       if (placedNode) {
         this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
         linked++;
@@ -1750,6 +1747,36 @@ export class GameManager {
     return this.worldObjectIdByNode.get(node) ?? null;
   }
 
+  private canLinkPlacedNodeToWorldObject(objectEntityId: number, node: TransformNode): boolean {
+    const linkedEntityId = this.worldObjectIdByNode.get(node);
+    return linkedEntityId == null || linkedEntityId === objectEntityId;
+  }
+
+  private disposeDoorVisualState(objectEntityId: number): void {
+    const proxy = this.doorPickProxies.get(objectEntityId);
+    if (proxy) {
+      proxy.dispose();
+      this.doorPickProxies.delete(objectEntityId);
+    }
+
+    const entry = this.doorPivots.get(objectEntityId);
+    if (entry) {
+      const model = this.worldObjectModels.get(objectEntityId);
+      if (model && !model.isDisposed() && model.parent === entry.pivot) {
+        entry.pivot.rotation.y = 0;
+        entry.pivot.computeWorldMatrix(true);
+        model.computeWorldMatrix(true);
+        model.setParent(entry.pivot.parent);
+        model.rotationQuaternion = null;
+        model.rotation.set(0, entry.closedRotY, 0);
+      }
+      entry.pivot.dispose(true);
+      this.doorPivots.delete(objectEntityId);
+    }
+
+    this.doorTiles.delete(objectEntityId);
+  }
+
   private setWorldObjectModel(objectEntityId: number, node: TransformNode): void {
     const previous = this.worldObjectModels.get(objectEntityId);
     if (previous === node) {
@@ -1759,9 +1786,11 @@ export class GameManager {
     if (previous) {
       this.worldObjectIdByNode.delete(previous);
       this.worldObjectPickState.delete(previous);
+      this.disposeDoorVisualState(objectEntityId);
     }
     const currentEntityId = this.worldObjectIdByNode.get(node);
     if (currentEntityId != null && currentEntityId !== objectEntityId) {
+      this.disposeDoorVisualState(currentEntityId);
       this.worldObjectModels.delete(currentEntityId);
       this.worldObjectPickState.delete(node);
     }
@@ -1770,6 +1799,7 @@ export class GameManager {
   }
 
   private deleteWorldObjectModel(objectEntityId: number): void {
+    this.disposeDoorVisualState(objectEntityId);
     const node = this.worldObjectModels.get(objectEntityId);
     if (node) {
       this.worldObjectIdByNode.delete(node);
@@ -2926,10 +2956,7 @@ export class GameManager {
         const model = this.worldObjectModels.get(entityId);
         if (model) this.setWorldObjectPickTarget(entityId, false, model);
         this.objectModels.deleteStump(entityId);
-        this.doorPickProxies.get(entityId)?.dispose();
-        this.doorPickProxies.delete(entityId);
-        this.doorPivots.delete(entityId);
-        this.doorTiles.delete(entityId);
+        this.disposeDoorVisualState(entityId);
         if (model && this.chunkManager.isPlacedObjectNode(model) && !model.isDisposed()) {
           // Keep the placed-node association across floor/range visibility
           // churn. Re-entering a dense ground floor can resync hundreds of
@@ -3183,7 +3210,14 @@ export class GameManager {
       // pivot and wall-edge bookkeeping rebuilt after ENTITY_DEATH removed it.
       let model = this.worldObjectModels.get(objectEntityId);
       if (!model) {
-        const placedNode = this.chunkManager.findPlacedObjectNear(x, z, 1.5, objectDefId, y);
+        const placedNode = this.chunkManager.findPlacedObjectNear(
+          x,
+          z,
+          1.5,
+          objectDefId,
+          y,
+          node => this.canLinkPlacedNodeToWorldObject(objectEntityId, node),
+        );
         if (placedNode) {
           this.linkPlacedNodeToEntity(objectEntityId, { defId: objectDefId, x, z, floor, y, depleted: isDepleted, openDirection, locked }, placedNode);
           model = placedNode;
@@ -3265,7 +3299,14 @@ export class GameManager {
       } else {
         const model = this.worldObjectModels.get(objectEntityId);
         if (hasDepleteModel && data) {
-          const placedNode = model ?? this.chunkManager.findPlacedObjectNear(data.x, data.z, 1.5, data.defId, data.y);
+          const placedNode = model ?? this.chunkManager.findPlacedObjectNear(
+            data.x,
+            data.z,
+            1.5,
+            data.defId,
+            data.y,
+            node => this.canLinkPlacedNodeToWorldObject(objectEntityId, node),
+          );
           if (placedNode) {
             if (!model) this.setWorldObjectModel(objectEntityId, placedNode);
             this.setPlacedWorldObjectEnabled(placedNode, isDepleted === 0);
@@ -4474,8 +4515,9 @@ export class GameManager {
     if (!rootAssetId || !(rootAssetId in ASSET_TO_OBJECT_DEF)) return null;
 
     const expectedDefId = ASSET_TO_OBJECT_DEF[rootAssetId];
-    const px = rootNode.position.x;
-    const pz = rootNode.position.z;
+    const placed = this.chunkManager.getPlacedObjectAuthoredPosition(rootNode);
+    const px = placed.x;
+    const pz = placed.z;
     let bestEid = -1;
     let bestDist = 3.0;
     for (const [eid, data] of this.worldObjectDefs) {

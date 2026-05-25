@@ -6,6 +6,7 @@
     "stackable": false,
     "equippable": false,
     "value": 1,
+    "model": "/assets/models/Bones.glb",
     "icon": "Bones_20.png"
   },
   {
@@ -110,6 +111,7 @@
     "stackable": false,
     "equippable": false,
     "value": 5,
+    "model": "/assets/models/Bones.glb",
     "icon": "Big_Bones_413.png"
   },
   {
