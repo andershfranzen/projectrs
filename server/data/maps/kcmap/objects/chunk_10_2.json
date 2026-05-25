@@ -193,25 +193,6 @@
     "assetId": "SilverRock",
     "layerId": "layer_0",
     "position": {
-      "x": 334.5,
-      "y": -1.8814299058003137,
-      "z": 89.5
-    },
-    "rotation": {
-      "x": 0,
-      "y": -1.308996938995747,
-      "z": 0
-    },
-    "scale": {
-      "x": 0.7,
-      "y": 0.7,
-      "z": 0.7
-    }
-  },
-  {
-    "assetId": "SilverRock",
-    "layerId": "layer_0",
-    "position": {
       "x": 335.5,
       "y": -2.4799999999999986,
       "z": 90.5
@@ -352,6 +333,25 @@
     "rotation": {
       "x": 0,
       "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "SilverRock3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 333.5,
+      "y": -1.5604477067651141,
+      "z": 89.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
       "z": 0
     },
     "scale": {
