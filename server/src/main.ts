@@ -6,6 +6,7 @@ import type { FloorLayerData, KCMapFile, KCTile, MapMeta, WallsFile, SpawnsFile,
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, TileType } from '@projectrs/shared';
 import { World } from './World';
 import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
+import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
 import { audit } from './Audit';
@@ -2447,8 +2448,10 @@ const server = Bun.serve<SocketData>({
         // Walls + biomes: preserve existing if editor omitted the field
         // (partial-payload protection).
         const wallsPath = resolve(mapDir, 'walls.json');
+        const existingWalls = await loadJsonOrNull<WallsFile>(wallsPath);
         const wallsToSave: WallsFile = walls
-          ?? (await loadJsonOrNull<WallsFile>(wallsPath))
+          ? preserveExistingFloorLayerTiles(walls, existingWalls)
+          : existingWalls
           ?? { walls: {} };
 
         const biomesPath = resolve(mapDir, 'biomes.json');

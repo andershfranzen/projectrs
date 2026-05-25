@@ -70,6 +70,7 @@ const NPC_LOD_HYSTERESIS_TILES = 4;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
+const NPC_FACING_NONE = -32768;
 const TERMINAL_CLOSE_REASONS = new Set([
   'Idle timeout',
   'Logged out',
@@ -88,6 +89,21 @@ type InteractionOption = {
   action: () => void;
   /** False means right-click/touch-menu only, not primary left-click. */
   primary?: boolean;
+};
+
+type DoorPickProxyBounds = {
+  center: Vector3;
+  width: number;
+  depth: number;
+  height: number;
+};
+
+type DoorPivotEntry = {
+  pivot: TransformNode;
+  targetAngle: number;
+  currentAngle: number;
+  closedRotY: number;
+  openDirection: -1 | 1;
 };
 
 type MobilePanelMode = 'game' | 'map' | 'panel' | 'chat';
@@ -348,7 +364,7 @@ export class GameManager {
   /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
    *  of rice plants share a single VBO. */
   private cropProxyTemplate: Mesh | null = null;
-  private doorPivots: Map<number, { pivot: TransformNode; targetAngle: number; currentAngle: number; closedRotY: number; openDirection: -1 | 1 }> = new Map();
+  private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
   /** Tiles blocked by non-depleted world objects (key = `${floor},${tileX},${tileZ}`) */
@@ -1840,6 +1856,7 @@ export class GameManager {
     if (def?.category === 'door') {
       this.setWorldObjectPickTarget(objectEntityId, false, placedNode);
       const modelRotY = this.modelRotY(placedNode);
+      const pickBounds = this.computeDoorPickProxyBounds(placedNode, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
       const { tile: [tx, tz], edge: wallEdge } = doorEdgeFromPlacement(data.x, data.z, modelRotY);
       const floor = data.floor ?? 0;
       this.doorTiles.set(objectEntityId, [tx, tz]);
@@ -1856,7 +1873,7 @@ export class GameManager {
       this.chunkManager.setOpenDoorEdges(tx, tz, wallEdge, data.depleted, floor);
       if (nb) this.chunkManager.setOpenDoorEdges(tx + nb.dx, tz + nb.dz, nb.opposite, data.depleted, floor);
       this.setupDoorPivot(objectEntityId);
-      this.createDoorPickProxy(objectEntityId, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y);
+      this.createDoorPickProxy(objectEntityId, data.x, data.z, modelRotY, placedNode.getAbsolutePosition().y, pickBounds);
       // Doors stay visible regardless of depleted state
     } else {
       if (data.depleted) placedNode.setEnabled(false);
@@ -2765,8 +2782,12 @@ export class GameManager {
       const z = z10 / 10;
       const floor = v.length >= 7 ? Math.floor(v[6] ?? 0) : 0;
       const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      const facingQ = v.length >= 10 ? v[9] : NPC_FACING_NONE;
 
       this.entities.npcDefs.set(entityId, npcDefId);
+      if (Number.isFinite(facingQ) && facingQ !== NPC_FACING_NONE) {
+        this.entities.npcFacingAngles.set(entityId, facingQ / 1000);
+      }
 
       if (!this.entities.npcSprites.has(entityId)) {
         this.tryMaterializeNpc(entityId, npcDefId, x, z, floor, y);
@@ -2782,6 +2803,9 @@ export class GameManager {
       });
 
       const sprite = this.entities.npcSprites.get(entityId);
+      if (sprite && Number.isFinite(facingQ) && facingQ !== NPC_FACING_NONE && !sprite.isWalking()) {
+        this.entities.applyCachedNpcFacing(entityId, sprite);
+      }
       if (sprite && !this.pendingHealthApply.has(entityId)) {
         this.updateTransientHealthBar(entityId, sprite, health, maxHealth);
       }
@@ -2848,7 +2872,9 @@ export class GameManager {
       // classes expose setTargetFacing; the per-frame yaw lerp handles
       // the smooth turn.
       const [entityId, angleQ] = v;
-      this.entities.npcSprites.get(entityId)?.setTargetFacing(angleQ / 1000);
+      const angle = angleQ / 1000;
+      this.entities.npcFacingAngles.set(entityId, angle);
+      this.entities.npcSprites.get(entityId)?.setTargetFacing(angle);
     });
 
     this.network.on(ServerOpcode.GROUND_ITEM_SYNC, (_op, v) => {
@@ -7827,35 +7853,112 @@ export class GameManager {
     this.worldObjectPickState.set(target, { entityId: objectEntityId, interactive });
   }
 
-  private createDoorPickProxy(objectEntityId: number, x: number, z: number, rotY: number, baseY: number): void {
-    this.doorPickProxies.get(objectEntityId)?.dispose();
+  private fallbackDoorPickProxyBounds(x: number, z: number, rotY: number, baseY: number): DoorPickProxyBounds {
     const { tile: [tx, tz], edge, axis } = doorEdgeFromPlacement(x, z, rotY);
-    if (!this.doorPivots.has(objectEntityId)) this.setupDoorPivot(objectEntityId);
-    const proxy = MeshBuilder.CreateBox(`door_pickProxy_${objectEntityId}`, {
+    const center = new Vector3(tx + 0.5, baseY + 0.9, tz + 0.5);
+    if (edge === WallEdge.N) center.z = tz + 0.08;
+    else if (edge === WallEdge.S) center.z = tz + 0.92;
+    else if (edge === WallEdge.E) center.x = tx + 0.92;
+    else if (edge === WallEdge.W) center.x = tx + 0.08;
+
+    return {
+      center,
       width: axis === 'NS' ? 1.05 : 0.42,
       depth: axis === 'NS' ? 0.42 : 1.05,
       height: 2.15,
+    };
+  }
+
+  private computeDoorPickProxyBounds(
+    model: TransformNode,
+    x: number,
+    z: number,
+    rotY: number,
+    baseY: number,
+  ): DoorPickProxyBounds {
+    const fallback = this.fallbackDoorPickProxyBounds(x, z, rotY, baseY);
+    model.computeWorldMatrix(true);
+    let bounds: ReturnType<TransformNode['getHierarchyBoundingVectors']>;
+    try {
+      bounds = model.getHierarchyBoundingVectors(true);
+    } catch {
+      return fallback;
+    }
+
+    const width = bounds.max.x - bounds.min.x;
+    const depth = bounds.max.z - bounds.min.z;
+    const height = bounds.max.y - bounds.min.y;
+    if (!Number.isFinite(width) || !Number.isFinite(depth) || !Number.isFinite(height) || width <= 0 || depth <= 0 || height <= 0) {
+      return fallback;
+    }
+
+    // Use the closed mesh bounds when available so the invisible click target
+    // follows oversized/scaled door panels instead of the legacy one-tile box.
+    // Keep a small minimum thickness so very flat door planes remain easy to hit.
+    const margin = 0.12;
+    return {
+      center: new Vector3(
+        (bounds.min.x + bounds.max.x) / 2,
+        (bounds.min.y + bounds.max.y) / 2,
+        (bounds.min.z + bounds.max.z) / 2,
+      ),
+      width: Math.max(fallback.width, Math.min(width + margin, 3.5)),
+      depth: Math.max(fallback.depth, Math.min(depth + margin, 3.5)),
+      height: Math.max(1.2, Math.min(height + margin, 4.5)),
+    };
+  }
+
+  private createDoorPickProxy(
+    objectEntityId: number,
+    x: number,
+    z: number,
+    rotY: number,
+    baseY: number,
+    bounds?: DoorPickProxyBounds,
+  ): void {
+    this.doorPickProxies.get(objectEntityId)?.dispose();
+    const proxyBounds = bounds ?? this.fallbackDoorPickProxyBounds(x, z, rotY, baseY);
+    if (!this.doorPivots.has(objectEntityId)) this.setupDoorPivot(objectEntityId);
+    const doorEntry = this.doorPivots.get(objectEntityId) ?? null;
+    const proxy = MeshBuilder.CreateBox(`door_pickProxy_${objectEntityId}`, {
+      width: proxyBounds.width,
+      depth: proxyBounds.depth,
+      height: proxyBounds.height,
     }, this.scene);
 
-    const closedCenter = new Vector3(tx + 0.5, baseY + 0.9, tz + 0.5);
-    if (edge === WallEdge.N) closedCenter.z = tz + 0.08;
-    else if (edge === WallEdge.S) closedCenter.z = tz + 0.92;
-    else if (edge === WallEdge.E) closedCenter.x = tx + 0.92;
-    else if (edge === WallEdge.W) closedCenter.x = tx + 0.08;
-
-    // Keep the interaction target on the physical doorway, not on the
-    // animated panel. When this follows the pivot, default-open doors move
-    // the pick box away from the doorway and clicks fall through as ground
-    // movement.
-    proxy.position = closedCenter;
+    // The preferred bounds are sampled from the closed panel, then converted
+    // into pivot-local space. Parenting the proxy to the same pivot as the door
+    // panel makes the invisible click box follow default-open and newly opened
+    // doors without per-frame proxy work.
+    proxy.rotationQuaternion = null;
+    proxy.rotation.set(0, 0, 0);
+    if (doorEntry) {
+      proxy.parent = doorEntry.pivot;
+      proxy.position = this.closedDoorProxyLocalCenter(doorEntry, proxyBounds.center);
+    } else {
+      proxy.position = proxyBounds.center;
+    }
     proxy.isVisible = true;
     proxy.visibility = 0;
     proxy.isPickable = true;
     proxy.layerMask = 0;
     proxy.metadata = { kind: 'worldObject', objectEntityId };
-    proxy.freezeWorldMatrix();
+    proxy.computeWorldMatrix(true);
 
     this.doorPickProxies.set(objectEntityId, proxy);
+  }
+
+  private closedDoorProxyLocalCenter(entry: DoorPivotEntry, closedWorldCenter: Vector3): Vector3 {
+    const pivot = entry.pivot;
+    const restoreAngle = pivot.rotation.y;
+    pivot.rotation.y = 0;
+    pivot.computeWorldMatrix(true);
+    const invWorld = new Matrix();
+    pivot.getWorldMatrix().invertToRef(invWorld);
+    const localCenter = Vector3.TransformCoordinates(closedWorldCenter, invWorld);
+    pivot.rotation.y = restoreAngle;
+    pivot.computeWorldMatrix(true);
+    return localCenter;
   }
 
   private setupDoorPivot(objectEntityId: number): void {

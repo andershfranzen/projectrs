@@ -1638,5 +1638,33 @@
       80,
       45
     ]
+  },
+  {
+    "id": 32,
+    "name": "Pottery Wheel",
+    "category": "scenery",
+    "actions": [
+      "Shape",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1,
+    "color": [
+      120,
+      95,
+      70
+    ],
+    "recipes": [
+      {
+        "inputItemId": 243,
+        "inputQuantity": 1,
+        "outputItemId": 244,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 1,
+        "xpReward": 6
+      }
+    ]
   }
 ]

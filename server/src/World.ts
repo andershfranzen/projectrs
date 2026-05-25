@@ -22,6 +22,27 @@ import type { ServerWebSocket } from 'bun';
 const mapIdRegistry: Map<string, number> = new Map();
 
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
+type ItemQuantity = { itemId: number; quantity: number };
+type ItemOnItemRecipe = {
+  inputItemIds: readonly [number, number];
+  consume: readonly ItemQuantity[];
+  outputs: readonly ItemQuantity[];
+  message?: string;
+};
+const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
+  {
+    inputItemIds: [242, 246], // Clay + Pot of Water
+    consume: [{ itemId: 242, quantity: 1 }, { itemId: 246, quantity: 1 }],
+    outputs: [{ itemId: 243, quantity: 1 }, { itemId: 245, quantity: 1 }],
+    message: 'You soften the clay.',
+  },
+  {
+    inputItemIds: [242, 248], // Clay + Bucket of Water
+    consume: [{ itemId: 242, quantity: 1 }, { itemId: 248, quantity: 1 }],
+    outputs: [{ itemId: 243, quantity: 1 }, { itemId: 247, quantity: 1 }],
+    message: 'You soften the clay.',
+  },
+];
 let nextMapIdx = 0;
 function getMapIdx(mapId: string): number {
   let idx = mapIdRegistry.get(mapId);
@@ -42,6 +63,10 @@ const HITPOINTS_SKILL_INDEX = ALL_SKILLS.indexOf('hitpoints' as SkillId);
 const POSITION_SCALE = 10;
 /** Quantize a world coordinate to the int16 wire format (1 unit = 0.1 tile). */
 function qPos(coord: number): number { return Math.round(coord * POSITION_SCALE); }
+const NPC_FACING_NONE = -32768;
+function qFacing(angle: number | null | undefined): number {
+  return angle == null || !Number.isFinite(angle) ? NPC_FACING_NONE : Math.round(angle * 1000);
+}
 
 /** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
  *  At 600ms/tick this is ~2 minutes. */
@@ -541,7 +566,8 @@ export class World {
         spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null,
         effShop, effDialogue, spawn.name ?? null,
         spawn.stats ?? null, spawn.customColors ?? null,
-        spawn.attackAnim ?? null);
+        spawn.attackAnim ?? null,
+        spawn.facing ?? null);
       npc.currentMapLevel = mapId;
       npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
@@ -1185,6 +1211,7 @@ export class World {
           spawn.stats ?? null,
           spawn.customColors ?? null,
           spawn.attackAnim ?? null,
+          spawn.facing ?? null,
         );
         npc.currentMapLevel = mapId;
         npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
@@ -1445,6 +1472,11 @@ export class World {
     player.lastPositionPersistTick = this.currentTick;
   }
 
+  private savePlayerState(player: Player): void {
+    this.pendingPositionCheckpoints?.delete(player.accountId);
+    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+  }
+
   private flushPendingPositionCheckpoints(): void {
     if (!this.pendingPositionCheckpoints || this.pendingPositionCheckpoints.size === 0) return;
     const saves = [...this.pendingPositionCheckpoints.values()];
@@ -1528,8 +1560,7 @@ export class World {
     this.closeDialogueForPlayer(player, false);
     this.finalizePlayerLogoutSession(player);
 
-    this.pendingPositionCheckpoints?.delete(player.accountId);
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    this.savePlayerState(player);
     try {
       player.ws.close(1000, closeReason);
     } catch { /* ignore */ }
@@ -1897,7 +1928,7 @@ export class World {
       player.reconnectDeadlineTick = this.currentTick + RECONNECT_GRACE_TICKS;
       player.logoutDeadlineTick = 0;
     }
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    this.savePlayerState(player);
     console.log(`Player "${player.name}" disconnected — holding session for ${combatLogout ? 'combat logout' : 'reconnect'}`);
   }
 
@@ -1996,7 +2027,7 @@ export class World {
     player.requestIdleLogout = true;
     player.reconnectDeadlineTick = 0;
     player.logoutDeadlineTick = this.currentTick + DISCONNECTED_COMBAT_LOGOUT_TICKS;
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    this.savePlayerState(player);
     try {
       player.ws.close(1000, 'Idle timeout');
     } catch { /* ignore */ }
@@ -2289,6 +2320,7 @@ export class World {
   private broadcastNpcFacing(npc: Npc, dx: number, dz: number): void {
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     const angle = Math.atan2(dx, dz);
+    npc.facingAngle = angle;
     const q = Math.round(angle * 1000);
     this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, ServerOpcode.NPC_FACING, npc.id, q);
   }
@@ -3676,6 +3708,7 @@ export class World {
     this.teleportPlayer(player, link.to.x, link.to.z, link.to.y, link.to.floor);
     const map = this.getPlayerMap(player);
     player.lastFloorChangeTile = Math.floor(link.to.z) * map.width + Math.floor(link.to.x);
+    this.savePlayerState(player);
   }
 
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
@@ -3758,24 +3791,38 @@ export class World {
     const recipesToTry = (recipeIndex >= 0 && recipeIndex < recipes.length)
       ? [recipes[recipeIndex]]
       : recipes;
+    const shouldExplainFailure = recipesToTry.length === 1;
 
     for (const recipe of recipesToTry) {
       const skillId = recipe.skill as SkillId;
       const playerLevel = player.skills[skillId]?.level ?? 1;
-      if (playerLevel < recipe.levelRequired) continue;
+      if (playerLevel < recipe.levelRequired) {
+        if (shouldExplainFailure) {
+          this.sendChatSystem(player, `You need level ${recipe.levelRequired} ${SKILL_NAMES[skillId] ?? 'skill'} to do that.`);
+        }
+        continue;
+      }
 
       if (recipe.requiresTool) {
         const hasTool = player.inventory.some(slot =>
           slot !== null && this.data.getItem(slot.itemId)?.toolType === recipe.requiresTool
         );
-        if (!hasTool) continue;
+        if (!hasTool) {
+          if (shouldExplainFailure) this.sendChatSystem(player, `You need a ${recipe.requiresTool} to do that.`);
+          continue;
+        }
       }
       this.interruptPlayerAction(playerId, player);
 
       // removeItemById aggregates across slots, so unstackable multi-unit
       // inputs (e.g. 3 bars in 3 slots) consume correctly.
       const inputRemoval = player.removeItemById(recipe.inputItemId, recipe.inputQuantity);
-      if (inputRemoval.completed === 0) continue;
+      if (inputRemoval.completed === 0) {
+        if (shouldExplainFailure) {
+          this.sendChatSystem(player, `You need ${this.itemRequirementLabel(recipe.inputItemId, recipe.inputQuantity)} to do that.`);
+        }
+        continue;
+      }
 
       let secondRemoval: ReturnType<typeof player.removeItemById> | null = null;
       if (recipe.secondInputItemId !== undefined) {
@@ -3783,6 +3830,9 @@ export class World {
         secondRemoval = player.removeItemById(recipe.secondInputItemId, needed);
         if (secondRemoval.completed === 0) {
           player.revertRemove(inputRemoval);
+          if (shouldExplainFailure) {
+            this.sendChatSystem(player, `You need ${this.itemRequirementLabel(recipe.secondInputItemId, needed)} to do that.`);
+          }
           continue;
         }
       }
@@ -3815,6 +3865,11 @@ export class World {
       return true;
     }
     return false;
+  }
+
+  private itemRequirementLabel(itemId: number, quantity: number): string {
+    const name = this.data.getItem(itemId)?.name ?? `item ${itemId}`;
+    return quantity > 1 ? `${quantity} ${name}` : name;
   }
 
   private handleObeliskOffer(playerId: number, player: Player, obj: WorldObject): void {
@@ -3945,7 +4000,7 @@ export class World {
     this.sendInventory(player);
     this.sendEquipment(player);
     this.broadcastRemoteEquipment(player);
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    this.savePlayerState(player);
   }
 
   handlePlayerUnequip(playerId: number, equipSlotIndex: number): void {
@@ -3967,7 +4022,7 @@ export class World {
       this.sendInventory(player);
       this.sendEquipment(player);
       this.broadcastRemoteEquipment(player);
-      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+      this.savePlayerState(player);
     }
   }
 
@@ -4025,8 +4080,50 @@ export class World {
     if (toSlot < 0 || toSlot >= player.inventory.length) return;
     if (player.inventory[toSlot]?.itemId !== toItemId) return;
     this.interruptPlayerAction(playerId, player);
-    // No recipes wired yet — surface a generic reply so the protocol is exercised.
+    const recipe = this.findItemOnItemRecipe(fromItemId, toItemId);
+    if (recipe) {
+      this.handleItemOnItemRecipe(player, recipe);
+      return;
+    }
+
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
+  }
+
+  private findItemOnItemRecipe(fromItemId: number, toItemId: number): ItemOnItemRecipe | null {
+    return ITEM_ON_ITEM_RECIPES.find(recipe => {
+      const [a, b] = recipe.inputItemIds;
+      return (a === fromItemId && b === toItemId) || (a === toItemId && b === fromItemId);
+    }) ?? null;
+  }
+
+  private handleItemOnItemRecipe(player: Player, recipe: ItemOnItemRecipe): void {
+    const removals: ReturnType<Player['removeItemById']>[] = [];
+    const adds: ReturnType<Player['addItem']>[] = [];
+
+    for (const input of recipe.consume) {
+      const removed = player.removeItemById(input.itemId, input.quantity);
+      if (removed.completed === 0) {
+        for (let i = removals.length - 1; i >= 0; i--) player.revertRemove(removals[i]);
+        this.sendInventory(player);
+        return;
+      }
+      removals.push(removed);
+    }
+
+    for (const output of recipe.outputs) {
+      const added = player.addItem(output.itemId, output.quantity, this.data.itemDefs);
+      if (added.completed === 0) {
+        for (let i = adds.length - 1; i >= 0; i--) player.revertAdd(adds[i]);
+        for (let i = removals.length - 1; i >= 0; i--) player.revertRemove(removals[i]);
+        this.sendInventory(player);
+        this.sendChatSystem(player, 'You need more inventory space.');
+        return;
+      }
+      adds.push(added);
+    }
+
+    this.sendInventory(player);
+    if (recipe.message) this.sendChatSystem(player, recipe.message);
   }
 
   handlePlayerUseItemOnObject(
@@ -5628,7 +5725,7 @@ export class World {
       this.restoreDuelPlayer(player, side.startHealth);
       this.sendInventory(player);
       this.sendToPlayer(player, ServerOpcode.DUEL_FINISH, finalWinnerId ?? 0, finalLoserId ?? 0, reason);
-      this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+      this.savePlayerState(player);
     }
 
     const aName = aPlayer?.name ?? String(duel.a.id);
@@ -6995,7 +7092,7 @@ export class World {
     this.sendSkills(player);
     this.sendInventory(player);
     this.sendEquipment(player);
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    this.savePlayerState(player);
     const droppedCount = dropped.length;
     if (droppedCount > 0) {
       this.sendChatSystem(player, `Oh dear, you are dead. You dropped ${droppedCount} item${droppedCount === 1 ? '' : 's'}.`);
@@ -7170,7 +7267,7 @@ export class World {
     this.clearCombatReferencesTo(player.id);
 
     // Save player state
-    this.db.savePlayerState(player.accountId, player, this.computeEffectiveY(player));
+    this.savePlayerState(player);
 
     // Get nearby entities before removing from chunk manager (for cleanup)
     const oldCm = this.chunkManagers.get(oldMap);
@@ -7327,6 +7424,7 @@ export class World {
           npc.currentFloor,
           qPos(this.npcWorldY(npc)),
           this.npcWillContinueWalking(npc) ? 1 : 0,
+          qFacing(npc.facingAngle),
         ));
       }
     }
@@ -7549,6 +7647,7 @@ export class World {
       npc.currentFloor,
       qPos(this.npcWorldY(npc)),
       this.npcWillContinueWalking(npc) ? 1 : 0,
+      qFacing(npc.facingAngle),
     );
   }
 

@@ -314,9 +314,12 @@ function tuneModelLighting(model) {
 
   // --- NPC Spawn system ---
   let npcDefs = []           // loaded from /data/npcs.json
-  let npcSpawns = []         // { id, npcId, x, z, wanderRange }
+  let npcSpawns = []         // { id, npcId, x, z, wanderRange, facing? }
   let _npcSpawnNextId = 1
   let selectedNpcSpawn = null
+  let npcPlacementMode = 'place' // 'place' | 'select' | 'move'
+  let npcTypeResultsOpen = false
+  let npcTypeResultIndex = 0
   const npcSpawnGroup = new TransformNode('npcSpawnGroup', scene)
 
   // Per-spawn override fields and the predicates that decide whether they get
@@ -326,6 +329,7 @@ function tuneModelLighting(model) {
   // SpawnEntry shape in shared/types.ts.
   const NPC_SPAWN_OVERRIDE_FIELDS = {
     aggressive:   v => v === true || v === false,
+    facing:       v => typeof v === 'number' && Number.isFinite(v),
     appearance:   v => !!v,
     equipment:    v => Array.isArray(v) && v.length === 10,
     shop:         v => !!v,
@@ -358,16 +362,51 @@ function tuneModelLighting(model) {
     return `${def?.name || 'This NPC'} opens the bank. Bank-enabled spawns must be explicitly named "${BANK_ACCESS_SPAWN_NAME}".`
   }
 
+  function normalizeNpcFacing(value) {
+    if (!Number.isFinite(value)) return 0
+    let angle = value
+    while (angle > Math.PI) angle -= Math.PI * 2
+    while (angle < -Math.PI) angle += Math.PI * 2
+    return Math.abs(angle) < 0.0001 ? 0 : angle
+  }
+
+  function npcFacingAngle(spawn) {
+    return normalizeNpcFacing(spawn?.facing ?? 0)
+  }
+
+  function npcFacingDeg(spawn) {
+    return Math.round(npcFacingAngle(spawn) * 180 / Math.PI)
+  }
+
+  function npcFacingFromDeg(deg) {
+    const numeric = Number(deg)
+    return normalizeNpcFacing((Number.isFinite(numeric) ? numeric : 0) * Math.PI / 180)
+  }
+
+  function formatNpcFacing(angle) {
+    const deg = Math.round(normalizeNpcFacing(angle) * 180 / Math.PI)
+    if (deg === 0) return 'South (+Z)'
+    if (deg === 90) return 'East (+X)'
+    if (deg === -90) return 'West (-X)'
+    if (Math.abs(deg) === 180) return 'North (-Z)'
+    return `${deg}°`
+  }
+
+  function npcSpawnIsStationary(spawn, def = npcDefById(spawn?.npcId)) {
+    if (!spawn) return false
+    return def?.stationary === true || (spawn.wanderRange ?? def?.wanderRange ?? 0) <= 0
+  }
+
   function addNpcSpawn(input) {
     const { npcId, x, z, wanderRange, id } = input
     // `aggressive` is always present on the in-memory spawn (possibly null)
     // because some UI code reads it without a `in spawn` guard.
     const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: input.aggressive ?? null }
-    // Other override fields: only set if truthy so a fresh spawn doesn't carry
-    // empty values that would falsely flag the override toggles.
+    // Other override fields: only set if their save predicate accepts the
+    // value so a fresh spawn doesn't carry empty values.
     for (const field of Object.keys(NPC_SPAWN_OVERRIDE_FIELDS)) {
       if (field === 'aggressive') continue
-      if (input[field]) spawn[field] = input[field]
+      if (NPC_SPAWN_OVERRIDE_FIELDS[field](input[field])) spawn[field] = input[field]
     }
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
@@ -744,6 +783,7 @@ function tuneModelLighting(model) {
     }
     const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
     entry.entity.setPositionXYZ(spawn.x, y, spawn.z)
+    entry.entity.setFacingAngle(npcFacingAngle(spawn))
     maskPlacedObjectsForPreview(spawn, entry)
     // applyAppearance idempotently re-derives material colors + hair mesh
     // visibility from the appearance struct; safe to call on every edit.
@@ -751,6 +791,7 @@ function tuneModelLighting(model) {
     // palette indices — pass them through so the preview matches the live game.
     entry.entity.whenReady().then(() => {
       if (npcPreviews.get(spawn.id) !== entry) return
+      entry.entity.setFacingAngle(npcFacingAngle(spawn))
       entry.entity.applyAppearance(spawn.appearance, spawn.customColors ?? null)
       // Now load gear. Fire-and-forget — errors handled inside.
       void applyEquipmentToPreview(spawn, entry)
@@ -812,6 +853,34 @@ function tuneModelLighting(model) {
     refreshNpcSpawnList()
   }
 
+  function addNpcFacingArrow(spawn, y, color, isSelected) {
+    const angle = npcFacingAngle(spawn)
+    const dx = Math.sin(angle)
+    const dz = Math.cos(angle)
+    const length = isSelected ? 0.95 : 0.75
+    const headSize = isSelected ? 0.24 : 0.18
+    const py = y + 0.14
+    const tail = new Vector3(spawn.x, py, spawn.z)
+    const head = new Vector3(spawn.x + dx * length, py, spawn.z + dz * length)
+    const left = new Vector3(
+      head.x + Math.sin(angle + Math.PI * 0.75) * headSize,
+      py,
+      head.z + Math.cos(angle + Math.PI * 0.75) * headSize,
+    )
+    const right = new Vector3(
+      head.x + Math.sin(angle - Math.PI * 0.75) * headSize,
+      py,
+      head.z + Math.cos(angle - Math.PI * 0.75) * headSize,
+    )
+    const arrow = MeshBuilder.CreateLines(`npcFacing_${spawn.id}`, {
+      points: [tail, head, left, head, right],
+    }, scene)
+    arrow.color = color
+    arrow.alpha = isSelected ? 1 : 0.7
+    arrow.metadata = { npcSpawn: spawn }
+    arrow.parent = npcSpawnGroup
+  }
+
   function rebuildNpcSpawnMeshes() {
     // Dispose all children
     for (const child of [...npcSpawnGroup.getChildren()]) child.dispose()
@@ -836,6 +905,7 @@ function tuneModelLighting(model) {
       const aggressive = def?.aggressive
       const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
       const color = isSelected ? new Color3(1, 1, 0.2) : (aggressive ? new Color3(0.9, 0.2, 0.15) : new Color3(0.15, 0.7, 0.9))
+      const showFacing = isSelected || npcSpawnIsStationary(spawn, def) || Number.isFinite(spawn.facing)
 
       // Spawns with an appearance override render a full character preview
       // (ensureNpcPreview above) — the cylinder + top sphere would clip
@@ -898,10 +968,60 @@ function tuneModelLighting(model) {
         circle.isPickable = false
         circle.parent = npcSpawnGroup
       }
+      if (showFacing) addNpcFacingArrow(spawn, y, color, isSelected)
     }
 
     // Show/hide based on tool
     npcSpawnGroup.setEnabled(state.tool === ToolMode.NPC_SPAWN)
+  }
+
+  function selectNpcSpawn(spawn, focusCamera = false) {
+    selectedNpcSpawn = spawn || null
+    if (selectedNpcSpawn) {
+      const sel = sidebar.querySelector('#npcTypeSelect')
+      if (sel) sel.value = selectedNpcSpawn.npcId
+      if (focusCamera) {
+        camera.target = new Vector3(
+          selectedNpcSpawn.x,
+          map.getAverageTileHeight(Math.floor(selectedNpcSpawn.x), Math.floor(selectedNpcSpawn.z)),
+          selectedNpcSpawn.z,
+        )
+      }
+    }
+    syncNpcTypeInput()
+    if (typeof renderNpcInspector === 'function') renderNpcInspector()
+    rebuildNpcSpawnMeshes()
+    refreshNpcSpawnList()
+    updateNpcPlacementControls()
+    updateToolUI()
+  }
+
+  function updateNpcPlacementControls() {
+    if (npcPlacementMode === 'move' && !selectedNpcSpawn) npcPlacementMode = 'select'
+    const panel = sidebar?.querySelector?.('#ctx-npc-spawn')
+    if (!panel) return
+    for (const btn of panel.querySelectorAll('[data-npc-mode]')) {
+      const active = btn.dataset.npcMode === npcPlacementMode
+      btn.classList.toggle('active-tool', active)
+      btn.style.background = active ? '#2f4f7f' : '#262626'
+      btn.style.borderColor = active ? '#6f9ad8' : '#555'
+      btn.style.color = active ? '#fff' : '#ddd'
+    }
+    const selectedLabel = panel.querySelector('#npcSelectedLabel')
+    if (selectedLabel) {
+      if (selectedNpcSpawn) {
+        const def = npcDefById(selectedNpcSpawn.npcId)
+        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}`
+      } else {
+        selectedLabel.textContent = 'No spawn selected'
+      }
+    }
+    const moveBtn = panel.querySelector('#npcModeMoveBtn')
+    if (moveBtn) moveBtn.disabled = !selectedNpcSpawn
+    const dupBtn = panel.querySelector('#npcDuplicateSelectedBtn')
+    if (dupBtn) dupBtn.disabled = !selectedNpcSpawn
+    const delBtn = panel.querySelector('#npcDeleteSelectedBtn')
+    if (delBtn) delBtn.disabled = !selectedNpcSpawn
   }
 
   function refreshNpcSpawnList() {
@@ -911,29 +1031,51 @@ function tuneModelLighting(model) {
     if (countEl) countEl.textContent = npcSpawns.length
 
     listEl.innerHTML = ''
+    if (npcSpawns.length === 0) {
+      const empty = document.createElement('div')
+      empty.style.cssText = 'font-size:11px;color:rgba(255,255,255,0.4);padding:5px;background:#1b1b1b;border-radius:3px;'
+      empty.textContent = 'No NPC spawns'
+      listEl.appendChild(empty)
+      updateNpcPlacementControls()
+      return
+    }
     for (const spawn of npcSpawns) {
       const def = npcDefs.find(d => d.id === spawn.npcId)
       // Per-spawn name takes precedence in the list so renamed NPCs are
       // easy to spot among generic ones.
       const name = spawn.name || def?.name || `NPC ${spawn.npcId}`
       const row = document.createElement('div')
-      row.style.cssText = `display:flex;justify-content:space-between;align-items:center;padding:3px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;${spawn === selectedNpcSpawn ? 'background:#1a4faf;' : 'background:#222;'}`
-      row.innerHTML = `<span>${name} <span style="opacity:0.5;">(${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}</span></span>`
-      row.addEventListener('click', () => {
-        selectedNpcSpawn = spawn
-        // Type dropdown reflects the spawn's npcId; per-tab content is
-        // redrawn so the inspector reflects whichever spawn was just selected.
-        const sel = sidebar.querySelector('#npcTypeSelect')
-        if (sel) sel.value = spawn.npcId
-        if (typeof renderNpcInspector === 'function') renderNpcInspector()
-        // Focus camera on spawn
-        camera.target = new Vector3(spawn.x, map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z)), spawn.z)
+      row.style.cssText = `display:flex;justify-content:space-between;align-items:center;gap:5px;padding:4px 5px;font-size:11px;cursor:pointer;border-radius:3px;margin-bottom:2px;${spawn === selectedNpcSpawn ? 'background:#1a4faf;' : 'background:#222;'}`
+      const label = document.createElement('span')
+      label.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+      const facingText = npcSpawnIsStationary(spawn, def) || Number.isFinite(spawn.facing)
+        ? ` f=${formatNpcFacing(npcFacingAngle(spawn))}`
+        : ''
+      label.textContent = `${name} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}${facingText}`
+      row.appendChild(label)
+      const del = document.createElement('button')
+      del.type = 'button'
+      del.textContent = 'Delete'
+      del.title = 'Delete spawn'
+      del.style.cssText = 'flex:0 0 auto;font-size:10px;padding:2px 5px;background:#4a2222;color:#fff;border:1px solid #7a4444;border-radius:3px;cursor:pointer;'
+      del.addEventListener('click', (event) => {
+        event.stopPropagation()
+        pushUndoState('spawns')
+        removeNpcSpawn(spawn)
+        if (selectedNpcSpawn === spawn) selectedNpcSpawn = null
         rebuildNpcSpawnMeshes()
         refreshNpcSpawnList()
+        renderNpcInspector()
+        updateNpcPlacementControls()
         updateToolUI()
+      })
+      row.appendChild(del)
+      row.addEventListener('click', () => {
+        selectNpcSpawn(spawn, true)
       })
       listEl.appendChild(row)
     }
+    updateNpcPlacementControls()
   }
 
   function pickNpcSpawn(event) {
@@ -1066,7 +1208,8 @@ function tuneModelLighting(model) {
     wallHeights: {},  // "x,z" -> number
     floors: {},       // "x,z" -> number (elevated floor Y)
     stairs: {},       // "x,z" -> { direction, baseHeight, topHeight }
-    floorLayers: {}   // floorNum -> { walls, wallHeights, floors, stairs }
+    tiles: {},        // "x,z" -> walkable tile height override
+    floorLayers: {}   // floorNum -> { walls, wallHeights, floors, stairs, tiles }
   }
   let collisionMode = 'wall'  // 'wall' | 'block' | 'floor' | 'stair' | 'hole'
   let wallEraseMode = false
@@ -1114,10 +1257,30 @@ function tuneModelLighting(model) {
   }
   const collisionGroup = new TransformNode('collisionGroup', scene)
 
+  function createCollisionLayer(source = {}) {
+    return {
+      ...source,
+      walls: source.walls || {},
+      wallHeights: source.wallHeights || {},
+      floors: source.floors || {},
+      stairs: source.stairs || {},
+      tiles: source.tiles || {},
+      holes: source.holes || {},
+    }
+  }
+
+  function normalizeCollisionFloorLayers(layers = {}) {
+    const out = {}
+    for (const [floor, layer] of Object.entries(layers || {})) {
+      out[floor] = createCollisionLayer(layer)
+    }
+    return out
+  }
+
   function getCollisionLayer() {
     if (collisionFloor === 0) return collisionData
     if (!collisionData.floorLayers[collisionFloor]) {
-      collisionData.floorLayers[collisionFloor] = { walls: {}, wallHeights: {}, floors: {}, stairs: {}, holes: {} }
+      collisionData.floorLayers[collisionFloor] = createCollisionLayer()
     }
     return collisionData.floorLayers[collisionFloor]
   }
@@ -1166,12 +1329,14 @@ function tuneModelLighting(model) {
   }
 
   function loadCollisionData(data) {
-    collisionData.walls = data?.walls || {}
-    collisionData.wallHeights = data?.wallHeights || {}
-    collisionData.floors = data?.floors || {}
-    collisionData.stairs = data?.stairs || {}
-    collisionData.holes = data?.holes || {}
-    collisionData.floorLayers = data?.floorLayers || {}
+    const root = createCollisionLayer(data || {})
+    collisionData.walls = root.walls
+    collisionData.wallHeights = root.wallHeights
+    collisionData.floors = root.floors
+    collisionData.stairs = root.stairs
+    collisionData.tiles = root.tiles
+    collisionData.holes = root.holes
+    collisionData.floorLayers = normalizeCollisionFloorLayers(data?.floorLayers)
     rebuildCollisionMeshes()
   }
 
@@ -2145,7 +2310,25 @@ let paintBrushRadius = 1
 
     <div class="ctx-panel" id="ctx-npc-spawn" style="display:none">
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">NPC Type</div>
-      <select id="npcTypeSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;"></select>
+      <input id="npcTypeSearch" autocomplete="off" placeholder="Search NPC name or ID" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;" />
+      <div id="npcTypeResults" style="display:none;max-height:168px;overflow-y:auto;margin-top:4px;background:#181818;border:1px solid #444;border-radius:4px;"></div>
+      <select id="npcTypeSelect" style="display:none;"></select>
+      <div id="npcTypeSummary" style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:4px;min-height:13px;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+        <div style="font-size:11px;color:rgba(255,255,255,0.55);">NPC Library</div>
+        <div id="npcTypeLibraryCount" style="font-size:10px;color:rgba(255,255,255,0.35);"></div>
+      </div>
+      <div id="npcTypeLibrary" style="max-height:190px;overflow-y:auto;margin-top:4px;display:grid;grid-template-columns:1fr;gap:4px;"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:8px;">
+        <button id="npcModePlaceBtn" data-npc-mode="place" style="font-size:11px;padding:5px;background:#262626;color:#ddd;cursor:pointer;border:1px solid #555;border-radius:3px;">Place</button>
+        <button id="npcModeSelectBtn" data-npc-mode="select" style="font-size:11px;padding:5px;background:#262626;color:#ddd;cursor:pointer;border:1px solid #555;border-radius:3px;">Select</button>
+        <button id="npcModeMoveBtn" data-npc-mode="move" style="font-size:11px;padding:5px;background:#262626;color:#ddd;cursor:pointer;border:1px solid #555;border-radius:3px;">Move</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:5px;">
+        <button id="npcDuplicateSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#33334f;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;">Duplicate</button>
+        <button id="npcDeleteSelectedBtn" style="flex:1;font-size:11px;padding:5px;background:#4a2222;color:#fff;cursor:pointer;border:1px solid #744;border-radius:3px;">Delete</button>
+      </div>
+      <div id="npcSelectedLabel" style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:5px;min-height:13px;"></div>
       <!-- Tab bar — switches the content area below. Spawn tab shows
            per-instance controls (wander, aggression); the others edit the
            shared NpcDef or per-spawn overrides for the selected spawn. -->
@@ -2445,43 +2628,359 @@ let paintBrushRadius = 1
     return def ? `${def.name} (${def.id})` : (id > 0 ? String(id) : '')
   }
 
+  function formatNpcTypeDisplay(def) {
+    return def ? `${def.name} (ID ${def.id})` : ''
+  }
+
+  function parseNpcTypeDisplay(value) {
+    const text = String(value || '').trim()
+    if (!text) return 0
+    const exact = npcDefs.find(def => formatNpcTypeDisplay(def) === text)
+    if (exact) return exact.id
+    const idMatch = text.match(/\bID\s*(\d+)\b/i) || text.match(/\((\d+)\)\s*$/)
+    if (idMatch) return parseInt(idMatch[1])
+    const bareId = parseInt(text)
+    if (Number.isFinite(bareId) && npcDefs.some(def => def.id === bareId)) return bareId
+    const lower = text.toLowerCase()
+    return npcDefs.find(def => `${def.name || ''} ${def.id}`.toLowerCase().includes(lower))?.id ?? 0
+  }
+
+  function npcTypeMatches(query) {
+    const q = String(query || '').trim().toLowerCase()
+    const terms = q.split(/\s+/).filter(Boolean)
+    const scored = []
+    for (const def of npcDefs) {
+      const name = String(def.name || '').toLowerCase()
+      const id = String(def.id)
+      const haystack = `${name} ${id}`
+      let score = 0
+      if (terms.length > 0) {
+        if (id === q) score = -100
+        else if (name === q) score = -90
+        else if (name.startsWith(q)) score = -70
+        else if (terms.every(term => haystack.includes(term))) score = -40
+        else continue
+      }
+      scored.push({ def, score })
+    }
+    return scored
+      .sort((a, b) => a.score - b.score || (a.def.name || '').localeCompare(b.def.name || '') || a.def.id - b.def.id)
+      .slice(0, 16)
+      .map(row => row.def)
+  }
+
+  function renderNpcTypeResults(query = '') {
+    const results = sidebar?.querySelector?.('#npcTypeResults')
+    if (!results) return
+    if (!npcTypeResultsOpen) {
+      results.style.display = 'none'
+      return
+    }
+    results.innerHTML = ''
+    const matches = npcTypeMatches(query)
+    if (matches.length === 0) {
+      const empty = document.createElement('div')
+      empty.textContent = 'No matches'
+      empty.style.cssText = 'padding:6px;font-size:11px;color:rgba(255,255,255,0.45);'
+      results.appendChild(empty)
+      results.style.display = 'block'
+      return
+    }
+
+    const input = sidebar.querySelector('#npcTypeSearch')
+    const selectedId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value || '0')
+    if (npcTypeResultIndex < 0 || npcTypeResultIndex >= matches.length) npcTypeResultIndex = 0
+    matches.forEach((def, index) => {
+      const row = document.createElement('button')
+      row.type = 'button'
+      const active = document.activeElement === input ? index === npcTypeResultIndex : def.id === selectedId
+      row.style.cssText = `display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 7px;background:${active ? '#274b7a' : 'transparent'};color:#fff;border:0;border-bottom:1px solid #2a2a2a;cursor:pointer;font-size:11px;`
+      const name = document.createElement('span')
+      name.textContent = `${def.name} (${def.id})`
+      name.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+      const meta = document.createElement('span')
+      meta.textContent = `HP ${def.health}${def.bankAccess ? ' · Bank' : ''}`
+      meta.style.cssText = 'flex:0 0 auto;color:rgba(255,255,255,0.48);'
+      row.appendChild(name)
+      row.appendChild(meta)
+      row.addEventListener('mousedown', (event) => {
+        event.preventDefault()
+        setNpcTypeSelection(def.id)
+      })
+      results.appendChild(row)
+    })
+    results.style.display = 'block'
+  }
+
+  function npcTypeSpawnCounts() {
+    const counts = new Map()
+    for (const spawn of npcSpawns) {
+      counts.set(spawn.npcId, (counts.get(spawn.npcId) || 0) + 1)
+    }
+    return counts
+  }
+
+  function renderNpcTypeLibrary(query = '') {
+    const library = sidebar?.querySelector?.('#npcTypeLibrary')
+    const countEl = sidebar?.querySelector?.('#npcTypeLibraryCount')
+    if (!library) return
+    const matches = npcTypeMatches(query)
+    const counts = npcTypeSpawnCounts()
+    const selectedId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value || '0')
+    library.innerHTML = ''
+    if (countEl) countEl.textContent = query ? `${matches.length}/${npcDefs.length}` : `${npcDefs.length}`
+    if (matches.length === 0) {
+      const empty = document.createElement('div')
+      empty.textContent = 'No matching NPCs'
+      empty.style.cssText = 'padding:6px;font-size:11px;color:rgba(255,255,255,0.45);background:#1b1b1b;border-radius:3px;'
+      library.appendChild(empty)
+      return
+    }
+    for (const def of matches) {
+      const used = counts.get(def.id) || 0
+      const active = def.id === selectedId
+      const card = document.createElement('button')
+      card.type = 'button'
+      card.style.cssText = `width:100%;text-align:left;padding:6px;background:${active ? '#243f68' : '#1f1f1f'};color:#fff;border:1px solid ${active ? '#6f9ad8' : '#3a3a3a'};border-radius:4px;cursor:pointer;`
+      const top = document.createElement('div')
+      top.style.cssText = 'display:flex;justify-content:space-between;gap:8px;align-items:center;'
+      const name = document.createElement('div')
+      name.textContent = `${def.name || 'NPC'}`
+      name.style.cssText = 'font-size:11px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
+      const id = document.createElement('div')
+      id.textContent = `#${def.id}`
+      id.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.45);flex:0 0 auto;'
+      top.appendChild(name)
+      top.appendChild(id)
+      const meta = document.createElement('div')
+      meta.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.55);margin-top:3px;display:flex;gap:5px;flex-wrap:wrap;'
+      const badges = [
+        `HP ${def.health ?? 0}`,
+        `W ${def.wanderRange ?? 0}`,
+        used > 0 ? `Used ${used}` : 'Unused',
+        def.id >= 100 ? 'Custom' : '',
+        def.aggressive ? 'Aggro' : '',
+        def.bankAccess ? 'Bank' : '',
+      ].filter(Boolean)
+      meta.textContent = badges.join(' · ')
+      card.appendChild(top)
+      card.appendChild(meta)
+      card.addEventListener('click', () => setNpcTypeSelection(def.id))
+      library.appendChild(card)
+    }
+  }
+
+  function closeNpcTypeResultsSoon() {
+    setTimeout(() => {
+      if (document.activeElement === sidebar?.querySelector?.('#npcTypeSearch')) return
+      npcTypeResultsOpen = false
+      renderNpcTypeResults()
+    }, 120)
+  }
+
+  function populateNpcTypeControls(defs) {
+    const sel = sidebar.querySelector('#npcTypeSelect')
+    if (sel) {
+      sel.innerHTML = defs.map(d => {
+        const title = d.bankAccess ? ` title="Bank-enabled spawns must be named &quot;${BANK_ACCESS_SPAWN_NAME}&quot;."` : ''
+        const suffix = d.bankAccess ? ' — BANK' : ''
+        return `<option value="${d.id}"${title}>${d.name} (ID ${d.id}) — HP ${d.health}${suffix}</option>`
+      }).join('')
+      if (!sel.value && defs[0]) sel.value = defs[0].id
+    }
+    syncNpcTypeInput()
+  }
+
+  function syncNpcTypeInput() {
+    const sel = sidebar?.querySelector?.('#npcTypeSelect')
+    const input = sidebar?.querySelector?.('#npcTypeSearch')
+    const summary = sidebar?.querySelector?.('#npcTypeSummary')
+    const selectedTypeId = selectedNpcSpawn?.npcId ?? parseInt(sel?.value || '0')
+    const def = npcDefById(selectedTypeId)
+    if (input && def && document.activeElement !== input) input.value = formatNpcTypeDisplay(def)
+    renderNpcTypeResults(input?.value || '')
+    if (summary) {
+      summary.textContent = def
+        ? `HP ${def.health} · Wander ${def.wanderRange ?? 0}${def.aggressive ? ' · Aggressive' : ''}${def.bankAccess ? ' · Bank' : ''}`
+        : ''
+    }
+    renderNpcTypeLibrary(document.activeElement === input ? input?.value || '' : '')
+  }
+
+  function setNpcTypeSelection(npcId) {
+    const requestedDef = npcDefById(npcId)
+    if (!requestedDef) {
+      syncNpcTypeInput()
+      return false
+    }
+    const sel = sidebar.querySelector('#npcTypeSelect')
+    const input = sidebar.querySelector('#npcTypeSearch')
+    if (sel) sel.value = requestedDef.id
+    if (selectedNpcSpawn) {
+      if (requestedDef.bankAccess) {
+        const mapId = serverMapSelect?.value || ''
+        const candidate = { ...selectedNpcSpawn, npcId: requestedDef.id }
+        ensureBankAccessSpawnName(candidate, requestedDef)
+        if (!isAllowedBankAccessSpawn(mapId, candidate)) {
+          alert(bankAccessSpawnHint(requestedDef))
+          if (sel) sel.value = selectedNpcSpawn.npcId
+          syncNpcTypeInput()
+          return false
+        }
+        selectedNpcSpawn.name = candidate.name
+      }
+      selectedNpcSpawn.npcId = requestedDef.id
+      rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+    }
+    if (input) input.value = formatNpcTypeDisplay(requestedDef)
+    npcTypeResultsOpen = false
+    syncNpcTypeInput()
+    renderNpcInspector()
+    updateNpcPlacementControls()
+    updateToolUI()
+    return true
+  }
+
+  function setNpcPlacementMode(mode) {
+    if (!['place', 'select', 'move'].includes(mode)) return
+    if (mode === 'move' && !selectedNpcSpawn) mode = 'select'
+    npcPlacementMode = mode
+    updateNpcPlacementControls()
+    updateToolUI()
+  }
+
+  function currentNpcPlacementDefaults() {
+    const npcId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value)
+    if (!npcId) return null
+    const defForPlace = npcDefs.find(d => d.id === npcId)
+    const wanderSlider = sidebar.querySelector('#wanderRangeSlider')
+    const aggCb = sidebar.querySelector('#aggressiveCheckbox')
+    const wanderRange = wanderSlider ? (parseInt(wanderSlider.value) || (defForPlace?.wanderRange ?? 3)) : (defForPlace?.wanderRange ?? 3)
+    const aggressive = aggCb ? aggCb.checked : null
+    return { npcId, defForPlace, wanderRange, aggressive }
+  }
+
+  function createNpcSpawnAtTile(tile) {
+    const defaults = currentNpcPlacementDefaults()
+    if (!defaults) return null
+    const spawnInput = {
+      npcId: defaults.npcId,
+      x: tile.x + 0.5,
+      z: tile.z + 0.5,
+      wanderRange: defaults.wanderRange,
+      aggressive: defaults.aggressive,
+    }
+    ensureBankAccessSpawnName(spawnInput, defaults.defForPlace)
+    if (defaults.defForPlace?.bankAccess) {
+      const mapId = serverMapSelect?.value || ''
+      if (!isAllowedBankAccessSpawn(mapId, spawnInput)) {
+        alert(bankAccessSpawnHint(defaults.defForPlace))
+        return null
+      }
+    }
+    pushUndoState('spawns')
+    const spawn = addNpcSpawn(spawnInput)
+    selectNpcSpawn(spawn, false)
+    return spawn
+  }
+
+  function moveSelectedNpcSpawnToTile(tile) {
+    if (!selectedNpcSpawn) return false
+    pushUndoState('spawns')
+    selectedNpcSpawn.x = tile.x + 0.5
+    selectedNpcSpawn.z = tile.z + 0.5
+    selectNpcSpawn(selectedNpcSpawn, false)
+    return true
+  }
+
+  function deleteSelectedNpcSpawn() {
+    if (!selectedNpcSpawn) return
+    pushUndoState('spawns')
+    const removed = selectedNpcSpawn
+    removeNpcSpawn(removed)
+    selectedNpcSpawn = null
+    rebuildNpcSpawnMeshes()
+    refreshNpcSpawnList()
+    renderNpcInspector()
+    updateNpcPlacementControls()
+    updateToolUI()
+  }
+
   fetch('/data/npcs.json')
     .then(r => r.json())
     .then(defs => {
       npcDefs = defs
-      const sel = sidebar.querySelector('#npcTypeSelect')
-      if (sel) {
-        sel.innerHTML = defs.map(d => {
-          const title = d.bankAccess ? ` title="Bank-enabled spawns must be named &quot;${BANK_ACCESS_SPAWN_NAME}&quot;."` : ''
-          const suffix = d.bankAccess ? ' — BANK' : ''
-          return `<option value="${d.id}"${title}>${d.name} (ID ${d.id}) — HP ${d.health}${suffix}</option>`
-        }).join('')
-      }
+      populateNpcTypeControls(defs)
       renderNpcInspector()
     })
     .catch(e => console.warn('Failed to load NPC defs:', e))
 
   sidebar.querySelector('#npcTypeSelect')?.addEventListener('change', (e) => {
-    const requestedNpcId = parseInt(e.target.value)
-    const requestedDef = npcDefById(requestedNpcId)
-    if (selectedNpcSpawn) {
-      if (requestedDef?.bankAccess) {
-        const mapId = serverMapSelect?.value || ''
-        const candidate = { ...selectedNpcSpawn, npcId: requestedNpcId }
-        ensureBankAccessSpawnName(candidate, requestedDef)
-        if (!isAllowedBankAccessSpawn(mapId, candidate)) {
-          alert(bankAccessSpawnHint(requestedDef))
-          e.target.value = selectedNpcSpawn.npcId
-          return
-        }
-        selectedNpcSpawn.name = candidate.name
-      }
-      selectedNpcSpawn.npcId = requestedNpcId
-      rebuildNpcSpawnMeshes()
-      refreshNpcSpawnList()
-    }
-    renderNpcInspector()
+    setNpcTypeSelection(parseInt(e.target.value))
   })
+
+  sidebar.querySelector('#npcTypeSearch')?.addEventListener('change', (e) => {
+    const npcId = parseNpcTypeDisplay(e.target.value)
+    if (setNpcTypeSelection(npcId)) {
+      const def = npcDefById(npcId)
+      if (def) e.target.value = formatNpcTypeDisplay(def)
+    } else {
+      syncNpcTypeInput()
+    }
+  })
+
+  sidebar.querySelector('#npcTypeSearch')?.addEventListener('input', (e) => {
+    npcTypeResultsOpen = true
+    npcTypeResultIndex = 0
+    renderNpcTypeResults(e.target.value)
+    renderNpcTypeLibrary(e.target.value)
+  })
+
+  sidebar.querySelector('#npcTypeSearch')?.addEventListener('focus', (e) => {
+    npcTypeResultsOpen = true
+    npcTypeResultIndex = 0
+    const selectedDef = npcDefById(parseInt(sidebar.querySelector('#npcTypeSelect')?.value || '0'))
+    if (selectedDef && e.target.value === formatNpcTypeDisplay(selectedDef)) e.target.value = ''
+    renderNpcTypeResults(e.target.value)
+    renderNpcTypeLibrary(e.target.value)
+  })
+
+  sidebar.querySelector('#npcTypeSearch')?.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const matches = npcTypeMatches(e.target.value)
+      if (matches.length > 0) {
+        e.preventDefault()
+        npcTypeResultsOpen = true
+        npcTypeResultIndex = e.key === 'ArrowDown'
+          ? Math.min(matches.length - 1, npcTypeResultIndex + 1)
+          : Math.max(0, npcTypeResultIndex - 1)
+        renderNpcTypeResults(e.target.value)
+      }
+    } else if (e.key === 'Enter') {
+      const matches = npcTypeMatches(e.target.value)
+      const picked = matches[npcTypeResultIndex] || matches[0]
+      if (picked) {
+        e.preventDefault()
+        setNpcTypeSelection(picked.id)
+      }
+    } else if (e.key === 'Escape') {
+      npcTypeResultsOpen = false
+      renderNpcTypeResults()
+      syncNpcTypeInput()
+    }
+  })
+
+  sidebar.querySelector('#npcTypeSearch')?.addEventListener('blur', () => {
+    syncNpcTypeInput()
+    closeNpcTypeResultsSoon()
+  })
+
+  for (const btn of sidebar.querySelectorAll('[data-npc-mode]')) {
+    btn.addEventListener('click', () => setNpcPlacementMode(btn.dataset.npcMode))
+  }
+  sidebar.querySelector('#npcDuplicateSelectedBtn')?.addEventListener('click', duplicateSelectedNpcSpawn)
+  sidebar.querySelector('#npcDeleteSelectedBtn')?.addEventListener('click', deleteSelectedNpcSpawn)
 
   // Tab switcher
   for (const tabBtn of sidebar.querySelectorAll('.npc-tab')) {
@@ -2535,6 +3034,7 @@ let paintBrushRadius = 1
       const sel = sidebar.querySelector('#npcTypeSelect')
       if (sel) sel.value = selectedNpcSpawn.npcId
     }
+    syncNpcTypeInput()
 
     if (activeNpcTab === 'spawn') {
       renderSpawnTab(content)
@@ -2598,7 +3098,7 @@ let paintBrushRadius = 1
 
   function renderSpawnTab(root) {
     const spawn = selectedNpcSpawn
-    const def = findSelectedDef()
+    const def = findSelectedDef() || npcDefById(parseInt(sidebar.querySelector('#npcTypeSelect')?.value))
     const defaultWander = def?.wanderRange ?? 3
     const wander = spawn?.wanderRange ?? defaultWander
     const aggressiveEffective = spawn
@@ -2612,6 +3112,12 @@ let paintBrushRadius = 1
       .join('')
     const posX = spawn?.x ?? 0
     const posZ = spawn?.z ?? 0
+    const facingDeg = spawn ? npcFacingDeg(spawn) : 0
+    const facingLabel = formatNpcFacing(spawn ? npcFacingAngle(spawn) : 0)
+    const stationary = spawn ? npcSpawnIsStationary(spawn, def) : false
+    const facingHint = stationary
+      ? "Used as this stationary spawn's idle direction."
+      : 'Set wander range to 0 for this to remain visible after spawn.'
     root.innerHTML = `
       <label style="font-size:11px;color:rgba(255,255,255,0.45);">Name (override)</label>
       <input id="spawnNameInput" type="text" value="${nameValue.replace(/"/g, '&quot;')}" placeholder="${defName.replace(/"/g, '&quot;') || 'defaults to NPC type name'}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'} />
@@ -2629,6 +3135,15 @@ let paintBrushRadius = 1
       </div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">${wander}</span></label>
       <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="${wander}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
+      <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Facing <span id="npcFacingLabel">${facingLabel}</span></label>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:3px;margin-top:4px;">
+        <button type="button" data-facing-deg="180" style="font-size:10px;padding:4px;background:#262626;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;" ${spawn ? '' : 'disabled'}>N</button>
+        <button type="button" data-facing-deg="90" style="font-size:10px;padding:4px;background:#262626;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;" ${spawn ? '' : 'disabled'}>E</button>
+        <button type="button" data-facing-deg="0" style="font-size:10px;padding:4px;background:#262626;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;" ${spawn ? '' : 'disabled'}>S</button>
+        <button type="button" data-facing-deg="-90" style="font-size:10px;padding:4px;background:#262626;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;" ${spawn ? '' : 'disabled'}>W</button>
+      </div>
+      <input id="npcFacingSlider" type="range" min="-180" max="180" step="15" value="${facingDeg}" style="width:100%;margin-top:5px;" ${spawn ? '' : 'disabled'} />
+      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">${facingHint}</div>
       <label style="margin-top:8px;font-size:11px;color:rgba(255,255,255,0.45);display:flex;align-items:center;gap:6px;cursor:pointer;">
         <input id="aggressiveCheckbox" type="checkbox" ${aggressiveEffective ? 'checked' : ''} ${spawn ? '' : 'disabled'} />
         Aggressive (per-spawn override)
@@ -2639,12 +3154,9 @@ let paintBrushRadius = 1
         ${animOptions}
       </select>
       <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Forces a swing animation regardless of equipped weapon. Combat NPCs only.</div>
-      <button id="duplicateSpawnBtn" style="width:100%;margin-top:10px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" ${spawn ? '' : 'disabled'}>Duplicate spawn (Shift+D)</button>
+      <button id="duplicateSpawnBtn" style="width:100%;margin-top:10px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" ${spawn ? '' : 'disabled'}>Duplicate spawn</button>
       <button id="basicGuardPresetBtn" style="width:100%;margin-top:6px;font-size:11px;padding:5px;background:#2f3d33;color:#fff;cursor:pointer;border:1px solid #4c6a52;border-radius:3px;" ${spawn ? '' : 'disabled'}>Make basic guard</button>
-      <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">
-        ${spawn ? 'Editing the selected spawn.' : 'Click a placed NPC to edit its spawn.'}<br>
-        Click empty tile to place · Shift+click to remove · Ctrl+click to move selected.
-      </div>
+      <div class="hint" style="margin-top:4px;font-size:10px;color:rgba(255,255,255,0.35);">${spawn ? 'Selected spawn' : 'No spawn selected'}</div>
     `
     root.querySelector('#spawnNameInput')?.addEventListener('input', (e) => {
       if (selectedNpcSpawn) {
@@ -2664,6 +3176,22 @@ let paintBrushRadius = 1
         refreshNpcSpawnList()
       }
     })
+    const writeFacingDeg = (deg) => {
+      if (!selectedNpcSpawn) return
+      selectedNpcSpawn.facing = npcFacingFromDeg(deg)
+      const label = root.querySelector('#npcFacingLabel')
+      if (label) label.textContent = formatNpcFacing(selectedNpcSpawn.facing)
+      const slider = root.querySelector('#npcFacingSlider')
+      if (slider) slider.value = String(npcFacingDeg(selectedNpcSpawn))
+      ensureNpcPreview(selectedNpcSpawn)
+      rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+      updateNpcPlacementControls()
+    }
+    root.querySelector('#npcFacingSlider')?.addEventListener('input', (e) => writeFacingDeg(e.target.value))
+    for (const btn of root.querySelectorAll('[data-facing-deg]')) {
+      btn.addEventListener('click', () => writeFacingDeg(btn.dataset.facingDeg))
+    }
     root.querySelector('#aggressiveCheckbox')?.addEventListener('change', (e) => {
       if (selectedNpcSpawn) {
         selectedNpcSpawn.aggressive = e.target.checked
@@ -2715,17 +3243,11 @@ let paintBrushRadius = 1
     clone.id = nextId
     clone.name = `${srcDef.name} copy`
     npcDefs.push(clone)
-    // Refresh the type dropdown so the new id shows up immediately.
-    const sel = sidebar.querySelector('#npcTypeSelect')
-    if (sel) {
-      const opt = document.createElement('option')
-      opt.value = clone.id
-      opt.textContent = `${clone.name} (ID ${clone.id}) — HP ${clone.health}`
-      sel.appendChild(opt)
-    }
+    populateNpcTypeControls(npcDefs)
     // Switch the selected spawn to the new def so the inspector retargets.
     if (selectedNpcSpawn) {
       selectedNpcSpawn.npcId = clone.id
+      const sel = sidebar.querySelector('#npcTypeSelect')
       if (sel) sel.value = clone.id
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
@@ -4672,6 +5194,7 @@ let paintBrushRadius = 1
       const sel = sidebar.querySelector('#npcTypeSelect')
       const npcName = sel?.options[sel.selectedIndex]?.text || ''
       if (npcName) status += ` · ${npcName}`
+      status += ` · ${npcPlacementMode}`
       if (selectedNpcSpawn) status += ' · Spawn selected'
     }
     if (selectedTexturePlane) status += ` · Plane: ${selectedTexturePlane.textureId}`
@@ -4871,6 +5394,8 @@ let paintBrushRadius = 1
     if (mode === ToolMode.NPC_SPAWN) {
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
+      syncNpcTypeInput()
+      updateNpcPlacementControls()
     }
     // X-ray mode: make placed objects transparent in collision tool
     if (mode === ToolMode.COLLISION && !wasCollision) setPlacedObjectsXray(true)
@@ -11027,11 +11552,8 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       if (event.shiftKey) {
         const picked = pickNpcSpawn(event)
         if (picked) {
-          pushUndoState('spawns')
-          removeNpcSpawn(picked)
-          rebuildNpcSpawnMeshes()
-          refreshNpcSpawnList()
-          updateToolUI()
+          selectNpcSpawn(picked, false)
+          deleteSelectedNpcSpawn()
         }
         return
       }
@@ -11043,56 +11565,25 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         // If Ctrl+click lands ON a spawn, treat it as a normal select instead
         // of moving onto the clicked one.
         if (!picked) {
-          pushUndoState('spawns')
-          selectedNpcSpawn.x = tile.x + 0.5
-          selectedNpcSpawn.z = tile.z + 0.5
-          rebuildNpcSpawnMeshes()
-          refreshNpcSpawnList()
-          if (typeof renderNpcInspector === 'function') renderNpcInspector()
-          updateToolUI()
+          moveSelectedNpcSpawnToTile(tile)
           return
         }
       }
       // Normal click: check if clicking existing spawn first
       const picked = pickNpcSpawn(event)
       if (picked) {
-        selectedNpcSpawn = picked
-        const sel = sidebar.querySelector('#npcTypeSelect')
-        if (sel) sel.value = picked.npcId
-        if (typeof renderNpcInspector === 'function') renderNpcInspector()
-        rebuildNpcSpawnMeshes()
-        refreshNpcSpawnList()
-        updateToolUI()
+        selectNpcSpawn(picked, false)
         return
       }
-      // Place new spawn — pull wander/aggressive from the Spawn tab if it's
-      // currently rendered, otherwise fall through to the def defaults.
-      const npcId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value)
-      if (!npcId) return
-      const defForPlace = npcDefs.find(d => d.id === npcId)
-      const wanderSlider = sidebar.querySelector('#wanderRangeSlider')
-      const aggCb = sidebar.querySelector('#aggressiveCheckbox')
-      const wanderRange = wanderSlider ? (parseInt(wanderSlider.value) || (defForPlace?.wanderRange ?? 3)) : (defForPlace?.wanderRange ?? 3)
-      // Only treat the aggressive box as an override when the Spawn tab is
-      // visible AND the user has set it; otherwise leave it null so the spawn
-      // inherits the def's flag.
-      const aggressive = aggCb ? aggCb.checked : null
-      const spawnInput = { npcId, x: tile.x + 0.5, z: tile.z + 0.5, wanderRange, aggressive }
-      ensureBankAccessSpawnName(spawnInput, defForPlace)
-      if (defForPlace?.bankAccess) {
-        const mapId = serverMapSelect?.value || ''
-        if (!isAllowedBankAccessSpawn(mapId, spawnInput)) {
-          alert(bankAccessSpawnHint(defForPlace))
-          return
-        }
+      if (npcPlacementMode === 'move') {
+        if (moveSelectedNpcSpawnToTile(tile)) setNpcPlacementMode('select')
+        return
       }
-      pushUndoState('spawns')
-      const spawn = addNpcSpawn(spawnInput)
-      selectedNpcSpawn = spawn
-      if (typeof renderNpcInspector === 'function') renderNpcInspector()
-      rebuildNpcSpawnMeshes()
-      refreshNpcSpawnList()
-      updateToolUI()
+      if (npcPlacementMode === 'place') {
+        createNpcSpawnAtTile(tile)
+        return
+      }
+      selectNpcSpawn(null, false)
       return
     }
 

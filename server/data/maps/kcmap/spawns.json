@@ -795,6 +795,7 @@
       "wanderRange": 0,
       "aggressive": false,
       "appearance": {
+        "bodyType": 0,
         "shirtColor": 7,
         "pantsColor": 4,
         "shoesColor": 0,
@@ -1514,14 +1515,6 @@
       ]
     },
     {
-      "id": 92,
-      "npcId": 7,
-      "x": 64.5,
-      "z": 27.5,
-      "wanderRange": 3,
-      "aggressive": false
-    },
-    {
       "id": 93,
       "npcId": 18,
       "x": 222.5,
@@ -1568,6 +1561,58 @@
       "z": 156.5,
       "wanderRange": 3,
       "aggressive": false
+    },
+    {
+      "id": 103,
+      "npcId": 16,
+      "x": 354.5,
+      "z": 172.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 3.141592653589793,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 7,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 2,
+        "hairStyle": 1
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "name": "Banker"
+    },
+    {
+      "id": 104,
+      "npcId": 16,
+      "x": 353.5,
+      "z": 172.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 3.141592653589793,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 7,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 2,
+        "hairStyle": 1
+      },
+      "name": "Banker"
     }
   ],
   "objects": [],

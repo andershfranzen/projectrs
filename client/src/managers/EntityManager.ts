@@ -80,6 +80,9 @@ export class EntityManager {
    *  `getPlayerAttackAnimName` returns this string verbatim instead of
    *  deriving from the NPC's equipped weapon. */
   readonly npcAttackAnimOverrides: Map<number, string> = new Map();
+  /** Last server-authored yaw for each NPC. Stored separately from the
+   *  rendered entity so initial facing survives delayed/LOD materialization. */
+  readonly npcFacingAngles: Map<number, number> = new Map();
   /** Bitfield of non-combat interactions this NPC supports. Set from
    *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
    *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank. */
@@ -168,6 +171,7 @@ export class EntityManager {
       // multiple instances of the same GLB (every cow shares mesh names).
       npc3d.setEntityIdMetadata(entityId);
       this.npcSprites.set(entityId, npc3d);
+      this.applyCachedNpcFacing(entityId, npc3d);
       return npc3d;
     }
 
@@ -206,8 +210,23 @@ export class EntityManager {
     // shopkeeper's idle is now driven by the regular anim state machine,
     // which is fine perf-wise outside the worst-case 40-NPC mobile budget.
     this.npcSprites.set(entityId, character);
+    this.applyCachedNpcFacing(entityId, character);
     this.npc3dCount++;
     return character;
+  }
+
+  applyCachedNpcFacing(entityId: number, sprite: Npc3DEntity | CharacterEntity): void {
+    const angle = this.npcFacingAngles.get(entityId);
+    if (angle == null) return;
+    if (sprite instanceof CharacterEntity) {
+      const apply = () => {
+        if (this.npcSprites.get(entityId) === sprite) sprite.setFacingAngle(angle);
+      };
+      if (sprite.isReady) apply();
+      else void sprite.whenReady().then(apply);
+    } else {
+      sprite.setFacingAngle(angle);
+    }
   }
 
   private groundItemTileKey(x: number, z: number, floor: number): string {
@@ -417,6 +436,7 @@ export class EntityManager {
     this.npcEquipment.delete(entityId);
     this.npcCustomColors.delete(entityId);
     this.npcAttackAnimOverrides.delete(entityId);
+    this.npcFacingAngles.delete(entityId);
     this.npcInteractions.delete(entityId);
     this.npcOverrideNames.delete(entityId);
     this.npcCombatTargets.delete(entityId);
@@ -460,6 +480,7 @@ export class EntityManager {
     this.npcEquipment.delete(entityId);
     this.npcCustomColors.delete(entityId);
     this.npcAttackAnimOverrides.delete(entityId);
+    this.npcFacingAngles.delete(entityId);
     this.npcInteractions.delete(entityId);
     this.npcOverrideNames.delete(entityId);
     this.npcCombatTargets.delete(entityId);
@@ -730,6 +751,7 @@ export class EntityManager {
     this.npcEquipment.clear();
     this.npcCustomColors.clear();
     this.npcAttackAnimOverrides.clear();
+    this.npcFacingAngles.clear();
     this.npcInteractions.clear();
     this.npcOverrideNames.clear();
     this.npc3dCount = 0;

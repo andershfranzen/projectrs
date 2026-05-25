@@ -2,11 +2,21 @@ import { Entity } from './Entity';
 import { getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, normalizeAppearance } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
 
+function normalizeFacingAngle(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  let angle = value;
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
+
 export class Npc extends Entity {
   readonly npcId: number; // Definition ID
   readonly def: NpcDef;
   readonly spawnX: number;
   readonly spawnZ: number;
+  readonly spawnFacingAngle: number | null;
+  facingAngle: number | null;
 
   /** Per-spawn customization. When non-null, this NPC is eligible for 3D
    *  CharacterEntity rendering (subject to mobile LOD on the client). Static
@@ -85,6 +95,7 @@ export class Npc extends Entity {
     statsOverride?: NpcStatOverrides | null,
     customColors?: CustomColors | null,
     attackAnimOverride?: string | null,
+    facing?: number | null,
   ) {
     // Health override applies at construction so the Entity's maxHealth picks
     // it up. Stats override is positive integers; ignore non-finite or ≤0.
@@ -98,6 +109,8 @@ export class Npc extends Entity {
     this.def = def;
     this.spawnX = x;
     this.spawnZ = z;
+    this.spawnFacingAngle = normalizeFacingAngle(facing);
+    this.facingAngle = this.spawnFacingAngle;
     this.wanderRangeOverride = wanderRange;
     this.appearance = appearance ? normalizeAppearance(appearance) : null;
     this.equipment = equipment ?? null;
@@ -427,6 +440,7 @@ export class Npc extends Entity {
     this.wanderCooldown = Math.floor(Math.random() * 15);
     this.returning = false;
     this.pathQueue.length = 0;
+    this.facingAngle = this.spawnFacingAngle;
     this.heroPoints.clear();
     this.lastCombatTick = 0;
     this.lastAttackerId = -1;

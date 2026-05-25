@@ -375,6 +375,9 @@ export interface SpawnEntry {
   /** Optional authored world Y, used to infer floor when floor is omitted. */
   y?: number;
   wanderRange?: number;
+  /** Initial yaw in radians. 0 faces +Z, π/2 faces +X. Mainly used for
+   *  stationary NPCs; walking/combat can override it at runtime. */
+  facing?: number;
   /** Per-spawn display name override. When set, the editor + in-world UI
    *  use this instead of the NpcDef's name — so a single "Guard" def can
    *  spawn as "Captain Smith", "Sergeant Vex", etc. */

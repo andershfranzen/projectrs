@@ -36,6 +36,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'anvil': 19,       // Anvil (smithing)
   'BankBooth': 31,   // Bank booth
   'Altar': 8,         // Good magic altar — offer relics for goodmagic xp
+  'Pottery wheel': 32, // Pottery Wheel — shape soft clay
   // Doors (only Truedoor assets — other "door" assets are decorative door frames)
   'castleTruedoor': 13,
   'basicTruedoor': 13,
@@ -76,6 +77,7 @@ export const BLOCKING_DECOR_ASSETS: Set<string> = new Set([
   'bush1',
   'bush2',
   'bush3',
+  'Tanning Rack',
 ]);
 
 /**

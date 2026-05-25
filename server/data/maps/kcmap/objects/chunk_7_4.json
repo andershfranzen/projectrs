@@ -2046,31 +2046,27 @@
         "from": {
           "x": 224.5,
           "z": 158.5,
-          "floor": 1,
-          "y": 2.7285314812295938
+          "floor": 0
         },
         "to": {
           "x": 224.5,
           "z": 158.5,
-          "floor": 0,
-          "y": 0.19525016751140356
+          "floor": 1
         },
-        "fromAction": "Climb-down"
+        "fromAction": "Climb-up"
       },
       {
         "from": {
           "x": 224.5,
           "z": 158.5,
-          "floor": 0,
-          "y": 0.19525016751140356
+          "floor": 1
         },
         "to": {
           "x": 224.5,
           "z": 158.5,
-          "floor": 1,
-          "y": 2.7285314812295938
+          "floor": 0
         },
-        "fromAction": "Climb-up"
+        "fromAction": "Climb-down"
       }
     ],
     "interactionTiles": [

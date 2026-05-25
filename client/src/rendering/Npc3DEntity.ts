@@ -355,6 +355,12 @@ export class Npc3DEntity {
   /** Server-driven yaw target — fed by NPC_FACING so 3D NPCs (rat, cow,
    *  spider, camel) turn to face the player on talk/attack just like
    *  CharacterEntity NPCs do. updateAnimation handles the lerp. */
+  setFacingAngle(radians: number): void {
+    this._rotationY = radians;
+    this.targetRotationY = radians;
+    if (this.root) this.root.rotation.y = radians;
+  }
+
   setTargetFacing(radians: number): void {
     this.targetRotationY = radians;
   }

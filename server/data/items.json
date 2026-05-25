@@ -645,6 +645,9 @@
     "value": 68,
     "icon": "Bronze_Chain_Mail_Body_113.png",
     "model": "/assets/equipment/body/BronzeCuirass.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/BronzeCuirassWoman.glb"
+    },
     "stabDefence": 8,
     "slashDefence": 10,
     "crushDefence": 6,
@@ -2042,5 +2045,63 @@
     "equippable": false,
     "value": 3,
     "model": "/assets/models/grain.glb"
+  },
+  {
+    "id": 242,
+    "name": "Clay",
+    "description": "A lump of dry clay.",
+    "stackable": false,
+    "equippable": false,
+    "value": 2
+  },
+  {
+    "id": 243,
+    "name": "Soft Clay",
+    "description": "Clay softened with water, ready for shaping.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3
+  },
+  {
+    "id": 244,
+    "name": "Unfired Pot",
+    "description": "A shaped pot that still needs firing.",
+    "stackable": false,
+    "equippable": false,
+    "value": 4
+  },
+  {
+    "id": 245,
+    "name": "Pot",
+    "description": "An empty clay pot.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3
+  },
+  {
+    "id": 246,
+    "name": "Pot of Water",
+    "description": "A clay pot filled with water.",
+    "stackable": false,
+    "equippable": false,
+    "value": 4
+  },
+  {
+    "id": 247,
+    "name": "Bucket",
+    "description": "An empty wooden bucket.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "model": "/assets/models/Bucket2.glb"
+  },
+  {
+    "id": 248,
+    "name": "Bucket of Water",
+    "description": "A bucket filled with water.",
+    "stackable": false,
+    "equippable": false,
+    "value": 4,
+    "model": "/assets/models/Bucket2.glb"
   }
 ]

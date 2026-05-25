@@ -489,25 +489,41 @@ export class ChunkManager {
           if (x >= 0 && x < this.mapWidth && z >= 0 && z < this.mapHeight) return z * this.mapWidth + x;
           return null;
         };
-        for (const [key, mask] of Object.entries(wallsData.walls)) {
+        const loadNumberMap = (record: Record<string, unknown> | undefined, target: Map<number, number>): void => {
+          if (!record) return;
+          for (const [key, value] of Object.entries(record)) {
+            const idx = parseKey(key);
+            const n = Number(value);
+            if (idx !== null && Number.isFinite(n)) target.set(idx, n);
+          }
+        };
+        const loadValueMap = <T>(record: Record<string, T> | undefined, target: Map<number, T>): void => {
+          if (!record) return;
+          for (const [key, value] of Object.entries(record)) {
+            const idx = parseKey(key);
+            if (idx !== null) target.set(idx, value as T);
+          }
+        };
+        for (const [key, mask] of Object.entries(wallsData.walls ?? {})) {
           const idx = parseKey(key);
           if (idx !== null) this.walls[idx] = mask;
         }
-        if (wallsData.wallHeights) for (const [key, h] of Object.entries(wallsData.wallHeights)) { const idx = parseKey(key); if (idx !== null) this.wallHeights.set(idx, h); }
-        if (wallsData.floors) for (const [key, h] of Object.entries(wallsData.floors)) { const idx = parseKey(key); if (idx !== null) this.floorHeights.set(idx, h); }
-        if (wallsData.stairs) for (const [key, data] of Object.entries(wallsData.stairs)) { const idx = parseKey(key); if (idx !== null) this.stairData.set(idx, data); }
-        if (wallsData.roofs) for (const [key, data] of Object.entries(wallsData.roofs)) { const idx = parseKey(key); if (idx !== null) this.roofData.set(idx, data); }
+        loadNumberMap(wallsData.wallHeights, this.wallHeights);
+        loadNumberMap(wallsData.floors, this.floorHeights);
+        loadValueMap(wallsData.stairs, this.stairData);
+        loadValueMap(wallsData.roofs, this.roofData);
         if (wallsData.holes) for (const key of Object.keys(wallsData.holes)) { const idx = parseKey(key); if (idx !== null) this.holeTiles.add(idx); }
         if (wallsData.floorLayers) {
           for (const [floorStr, ld] of Object.entries(wallsData.floorLayers)) {
             const floorIdx = parseInt(floorStr as string);
             const layer: FloorLayerClientData = { walls: new Map(), wallHeights: new Map(), floors: new Map(), stairs: new Map(), roofs: new Map(), tiles: new Map() };
             const ldd = ld as FloorLayerData;
-            if (ldd.walls) for (const [k, v] of Object.entries(ldd.walls)) { const i = parseKey(k); if (i !== null) layer.walls.set(i, v); }
-            if (ldd.wallHeights) for (const [k, v] of Object.entries(ldd.wallHeights)) { const i = parseKey(k); if (i !== null) layer.wallHeights.set(i, v); }
-            if (ldd.floors) for (const [k, v] of Object.entries(ldd.floors)) { const i = parseKey(k); if (i !== null) layer.floors.set(i, v); }
-            if (ldd.stairs) for (const [k, v] of Object.entries(ldd.stairs)) { const i = parseKey(k); if (i !== null) layer.stairs.set(i, v as StairData); }
-            if (ldd.roofs) for (const [k, v] of Object.entries(ldd.roofs)) { const i = parseKey(k); if (i !== null) layer.roofs.set(i, v as RoofData); }
+            loadNumberMap(ldd.tiles, layer.tiles);
+            loadNumberMap(ldd.walls, layer.walls);
+            loadNumberMap(ldd.wallHeights, layer.wallHeights);
+            loadNumberMap(ldd.floors, layer.floors);
+            loadValueMap(ldd.stairs, layer.stairs);
+            loadValueMap(ldd.roofs, layer.roofs);
             this.floorLayerData.set(floorIdx, layer);
           }
         }

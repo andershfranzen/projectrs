@@ -3411,15 +3411,49 @@
       "z": 66.5
     },
     "rotation": {
-      "x": 0,
+      "x": -1.2201910133801422e-16,
       "y": -3.141592653589793,
-      "z": 0
+      "z": 0.10471975511965974
     },
     "scale": {
       "x": 0.85,
-      "y": 0.85,
+      "y": 0.9,
       "z": 0.85
-    }
+    },
+    "verticalLinks": [
+      {
+        "from": {
+          "x": 154.5,
+          "z": 66.5,
+          "floor": 0
+        },
+        "to": {
+          "x": 154.5,
+          "z": 66.5,
+          "floor": 1
+        },
+        "fromAction": "Climb-up"
+      },
+      {
+        "from": {
+          "x": 154.5,
+          "z": 66.5,
+          "floor": 1
+        },
+        "to": {
+          "x": 154.5,
+          "z": 66.5,
+          "floor": 0
+        },
+        "fromAction": "Climb-down"
+      }
+    ],
+    "interactionTiles": [
+      {
+        "x": 1,
+        "z": 0
+      }
+    ]
   },
   {
     "assetId": "wood pole",
@@ -4983,9 +5017,9 @@
     "assetId": "bush3",
     "layerId": "layer_0",
     "position": {
-      "x": 151,
+      "x": 151.5,
       "y": 0,
-      "z": 65
+      "z": 64.5
     },
     "rotation": {
       "x": 0,
