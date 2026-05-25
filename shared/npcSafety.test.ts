@@ -10,7 +10,7 @@ const bankerDef = { id: BANKER_NPC_ID, name: 'Banker', bankAccess: true };
 const ratDef = { id: 18, name: 'Rat', bankAccess: false };
 
 describe('bank-access NPC safety', () => {
-  test('allows only explicit banker spawn coordinates', () => {
+  test('allows explicitly named banker spawns at any coordinate', () => {
     expect(isAllowedBankAccessSpawn('kcmap', {
       npcId: BANKER_NPC_ID,
       name: 'Banker',
@@ -23,10 +23,16 @@ describe('bank-access NPC safety', () => {
       name: 'Banker',
       x: 345.5,
       z: 168.5,
+    })).toBe(true);
+
+    expect(isAllowedBankAccessSpawn('kcmap', {
+      npcId: BANKER_NPC_ID,
+      x: 345.5,
+      z: 168.5,
     })).toBe(false);
   });
 
-  test('reports bank-enabled spawns outside the allowlist', () => {
+  test('reports unnamed bank-enabled spawns', () => {
     expect(bankAccessSpawnViolation('kcmap', {
       id: 100,
       npcId: BANKER_NPC_ID,
@@ -45,6 +51,7 @@ describe('bank-access NPC safety', () => {
   test('validates a full spawn list', () => {
     const errors = validateBankAccessSpawns('kcmap', [
       { id: 67, npcId: BANKER_NPC_ID, name: 'Banker', x: 71.5, z: 25.5 },
+      { id: 68, npcId: BANKER_NPC_ID, name: 'Banker', x: 345.5, z: 168.5 },
       { id: 100, npcId: BANKER_NPC_ID, x: 345.5, z: 168.5 },
     ], id => id === BANKER_NPC_ID ? bankerDef : undefined);
 
