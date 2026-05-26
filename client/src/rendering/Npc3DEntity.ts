@@ -53,6 +53,38 @@ function disposeImportedMeshResult(result: ImportedMeshResult): void {
   for (const skeleton of result.skeletons) skeleton.dispose();
 }
 
+function normalizeAnimationName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    // Babylon auto-renames imported animation groups when several copies of a
+    // GLB are loaded into one scene. Keep config matching stable across that.
+    .replace(/\.\d+$/, '');
+}
+
+function animationNameMatchesRole(name: string, role: 'idle' | 'walk' | 'attack' | 'death'): boolean {
+  const normalized = normalizeAnimationName(name);
+  if (normalized === role) return true;
+  if (normalized.endsWith(`_${role}`) || normalized.endsWith(`|${role}`)) return true;
+  if (role === 'walk') return normalized.includes('walk') || normalized.includes('run');
+  if (role === 'death') return normalized.includes('death') || normalized.includes('die');
+  return normalized.includes(role);
+}
+
+function resolveAnimationGroup(
+  groups: AnimationGroup[],
+  requested: string | undefined,
+  role: 'idle' | 'walk' | 'attack' | 'death',
+): AnimationGroup | undefined {
+  if (requested) {
+    const requestedKey = normalizeAnimationName(requested);
+    const exact = groups.find((group) => normalizeAnimationName(group.name) === requestedKey);
+    if (exact) return exact;
+  }
+
+  return groups.find((group) => animationNameMatchesRole(group.name, role));
+}
+
 /**
  * 3D NPC entity — loads a GLB with embedded animations.
  * Exposes the same public interface as SpriteEntity so it can be used interchangeably.
@@ -198,13 +230,23 @@ export class Npc3DEntity {
       }
       this.yOffset = (maxY - minY) * this.modelScale / 2;
 
-      // Map animations by role
-      for (const group of result.animationGroups) {
-        group.stop();
-        if (group.name === animMap.idle) this.animGroups.set('idle', group);
-        if (group.name === animMap.walk) this.animGroups.set('walk', group);
-        if (group.name === animMap.attack) this.animGroups.set('attack', group);
-        if (group.name === animMap.death) this.animGroups.set('death', group);
+      // Map animations by role. Babylon may suffix group names when the same
+      // GLB is imported multiple times, so match by normalized name first and
+      // then by role token.
+      for (const group of result.animationGroups) group.stop();
+      const idleGroup = resolveAnimationGroup(result.animationGroups, animMap.idle, 'idle');
+      const walkGroup = resolveAnimationGroup(result.animationGroups, animMap.walk, 'walk');
+      const attackGroup = resolveAnimationGroup(result.animationGroups, animMap.attack, 'attack');
+      const deathGroup = resolveAnimationGroup(result.animationGroups, animMap.death, 'death');
+
+      if (idleGroup) this.animGroups.set('idle', idleGroup);
+      if (walkGroup) this.animGroups.set('walk', walkGroup);
+      if (attackGroup) this.animGroups.set('attack', attackGroup);
+      if (deathGroup) this.animGroups.set('death', deathGroup);
+
+      if (!idleGroup) {
+        const fallback = walkGroup ?? result.animationGroups[0];
+        if (fallback) this.animGroups.set('idle', fallback);
       }
 
       for (const [role, group] of this.animGroups) {

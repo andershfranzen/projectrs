@@ -185,7 +185,11 @@ export class EntityManager {
     // so authoring several guards/shopkeepers does not parse 15 GLBs per NPC.
     const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
     const combat = profile?.combat ?? false;
-    const stationary = stationaryFromDef || (profile?.stationary ?? false);
+    // Only skip walk animation when the authoritative NPC def says the NPC
+    // cannot move. Some legacy client profiles mark shop/smith NPCs as
+    // stationary for perf, but their server defs still have wanderRange > 0;
+    // skipping walk there makes them slide when the server wanders them.
+    const stationary = stationaryFromDef;
     const anims: { name: string; path: string }[] = combat
       ? [...NPC_COMBAT_ANIMATIONS]
       : stationary

@@ -46,6 +46,11 @@ const ANIM_SAMPLE_CURVES: Record<string, number[]> = {
   npc_death:    [0, 0.08, 0.20, 0.35, 0.55, 0.75, 0.90, 1.0],
 };
 
+const WALK_KNEE_EXAGGERATION: Record<string, { factor: number; minAngleDeg: number }> = {
+  'mixamorig:LeftLeg': { factor: 1.25, minAngleDeg: 20 },
+  'mixamorig:RightLeg': { factor: 1.25, minAngleDeg: 20 },
+};
+
 
 function lerpValue(a: any, b: any, t: number): any {
   if (typeof a === 'number') return a + (b - a) * t;
@@ -53,6 +58,18 @@ function lerpValue(a: any, b: any, t: number): any {
   if (a instanceof Vector3) return Vector3.Lerp(a, b, t);
   if (a.clone) return a.clone();
   return a;
+}
+
+function exaggerateRotationFromRest(value: any, rest: Quaternion, factor: number, minAngleDeg: number): any {
+  if (!(value instanceof Quaternion) || factor <= 1) return value;
+  const q = Quaternion.Dot(rest, value) < 0
+    ? new Quaternion(-value.x, -value.y, -value.z, -value.w)
+    : value;
+  const angle = 2 * Math.acos(Math.min(1, Math.abs(Quaternion.Dot(rest, q))));
+  if (angle * 180 / Math.PI < minAngleDeg) return value;
+  const delta = Quaternion.Inverse(rest).multiply(q);
+  const exaggerated = Quaternion.Slerp(Quaternion.Identity(), delta, factor);
+  return rest.multiply(exaggerated);
 }
 
 function sampleAnimationAt(keys: any[], frame: number): any {
@@ -157,6 +174,16 @@ export function quantizeAnimationGroup(
         : i / (frames - 1);
       const srcFrame = srcFrom + t * srcRange;
       sampledValues.push(sampleAnimationAt(keys, srcFrame));
+    }
+    if (animName === 'walk') {
+      const targetName = (ta.target as { name?: string })?.name ?? '';
+      const cfg = WALK_KNEE_EXAGGERATION[targetName];
+      const rest = (ta.target as { rotationQuaternion?: Quaternion | null })?.rotationQuaternion ?? Quaternion.Identity();
+      if (cfg) {
+        for (let i = 0; i < sampledValues.length; i++) {
+          sampledValues[i] = exaggerateRotationFromRest(sampledValues[i], rest, cfg.factor, cfg.minAngleDeg);
+        }
+      }
     }
     // For looping animations, force the last sample to equal the first so the
     // playback range's end pose matches its start pose — the wrap is then

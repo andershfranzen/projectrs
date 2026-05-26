@@ -44,10 +44,15 @@ const VIEW_RADIUS = 22;
 // Render buffer matches displaySize 1:1 for crisp pixels. Keep this in sync
 // with the displaySize passed to `new Minimap(...)` in GameManager.
 const RENDER_SIZE = 260;
+const COMPASS_SIZE = 72;
+const COMPASS_RADIUS = 30;
 
 export class Minimap {
+  private container: HTMLDivElement;
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
+  private compassCanvas: HTMLCanvasElement;
+  private compassCtx: CanvasRenderingContext2D;
 
   private offCanvas: HTMLCanvasElement;
   private offCtx: CanvasRenderingContext2D;
@@ -55,7 +60,7 @@ export class Minimap {
 
   private destX: number | null = null;
   private destZ: number | null = null;
-  private destBlinkTimer: number = 0;
+  private destAnimTime: number = 0;
 
   private onClickMove: ((worldX: number, worldZ: number) => void) | null = null;
 
@@ -76,8 +81,82 @@ export class Minimap {
   private heightBuf: Float32Array;
   private readonly tileSize: number;
 
+  private static compassStylesInstalled = false;
+
+  private static installCompassStyles(): void {
+    if (Minimap.compassStylesInstalled) return;
+    Minimap.compassStylesInstalled = true;
+
+    const style = document.createElement('style');
+    style.id = 'eq-compass-styles';
+    style.textContent = `
+      .eq-minimap-shell {
+        width: 100%;
+        flex: 0 0 auto;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 0 8px;
+        box-sizing: border-box;
+        position: relative;
+      }
+
+      .eq-minimap-compass-row {
+        position: absolute;
+        left: 2px;
+        top: 2px;
+        width: 48px;
+        height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        pointer-events: none;
+        z-index: 2;
+      }
+
+      .eq-compass {
+        width: 48px;
+        height: 48px;
+        flex: 0 0 48px;
+        pointer-events: none;
+        image-rendering: pixelated;
+        filter: drop-shadow(2px 3px 4px rgba(0,0,0,0.72));
+      }
+
+      @media (max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape) {
+        #game-frame.mobile-panel-open .eq-minimap-shell {
+          display: none !important;
+        }
+
+        .eq-minimap-shell {
+          gap: 5px;
+          padding: 6px 0;
+        }
+
+        .eq-minimap-compass-row {
+          left: 2px;
+          top: 2px;
+          width: 42px;
+          height: 42px;
+        }
+
+        .eq-compass {
+          width: 42px;
+          height: 42px;
+          flex-basis: 42px;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   constructor(displaySize: number = RENDER_SIZE) {
     this.tileSize = VIEW_RADIUS * 2;
+    Minimap.installCompassStyles();
+
+    this.container = document.createElement('div');
+    this.container.className = 'eq-minimap-shell';
 
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'eq-minimap';
@@ -104,8 +183,22 @@ export class Minimap {
     `;
 
     this.ctx = this.canvas.getContext('2d', { alpha: false })!;
+
+    this.compassCanvas = document.createElement('canvas');
+    this.compassCanvas.className = 'eq-compass';
+    this.compassCanvas.width = COMPASS_SIZE;
+    this.compassCanvas.height = COMPASS_SIZE;
+    this.compassCanvas.setAttribute('aria-hidden', 'true');
+    this.compassCtx = this.compassCanvas.getContext('2d')!;
+
+    const compassRow = document.createElement('div');
+    compassRow.className = 'eq-minimap-compass-row';
+    compassRow.appendChild(this.compassCanvas);
+    this.container.appendChild(compassRow);
+    this.container.appendChild(this.canvas);
+
     const mount = document.getElementById('ui-right-column');
-    (mount ?? document.body).appendChild(this.canvas);
+    (mount ?? document.body).appendChild(this.container);
 
     this.offCanvas = document.createElement('canvas');
     this.offCanvas.width = RENDER_SIZE;
@@ -130,7 +223,7 @@ export class Minimap {
   setDestination(worldX: number, worldZ: number): void {
     this.destX = worldX;
     this.destZ = worldZ;
-    this.destBlinkTimer = 0;
+    this.destAnimTime = 0;
   }
 
   clearDestination(): void {
@@ -139,7 +232,7 @@ export class Minimap {
   }
 
   dispose(): void {
-    this.canvas.remove();
+    this.container.remove();
   }
 
   private handleClick(e: MouseEvent): void {
@@ -150,6 +243,9 @@ export class Minimap {
     const px = (e.clientX - rect.left) * scaleX;
     const pz = (e.clientY - rect.top) * scaleY;
     const center = RENDER_SIZE / 2;
+    const circleDx = px - center;
+    const circleDz = pz - center;
+    if (circleDx * circleDx + circleDz * circleDz > (center - 2) * (center - 2)) return;
 
     const relX = -(px - center);
     const relZ = -(pz - center);
@@ -484,21 +580,12 @@ export class Minimap {
       ctx.fillRect((rp.x - startX) * scale - 2, (rp.z - startZ) * scale - 2.5, 4, 5);
     }
 
-    // Destination: red flag
+    // Destination marker
     if (this.destX !== null && this.destZ !== null) {
-      this.destBlinkTimer += dt;
-      if (Math.sin(this.destBlinkTimer * 6) > -0.3) {
-        const dx = (this.destX - startX) * scale;
-        const dz = (this.destZ - startZ) * scale;
-        ctx.fillStyle = '#ff2020';
-        ctx.fillRect(dx, dz - 8, 1.5, 9);
-        ctx.beginPath();
-        ctx.moveTo(dx + 1.5, dz - 8);
-        ctx.lineTo(dx + 7, dz - 5);
-        ctx.lineTo(dx + 1.5, dz - 2);
-        ctx.closePath();
-        ctx.fill();
-      }
+      this.destAnimTime += Math.min(dt, 0.1);
+      const dx = (this.destX - startX) * scale;
+      const dz = (this.destZ - startZ) * scale;
+      this.drawDestinationMarker(ctx, dx, dz);
     }
 
     ctx.restore();
@@ -519,6 +606,177 @@ export class Minimap {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    ctx.restore();
+
+    this.drawCompass(cameraAlpha);
+  }
+
+  private drawDestinationMarker(ctx: CanvasRenderingContext2D, x: number, y: number): void {
+    const t = this.destAnimTime;
+    const pulse = (Math.sin(t * 8) + 1) * 0.5;
+    const burst = Math.max(0, 1 - t / 0.55);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.lineJoin = 'round';
+
+    if (burst > 0) {
+      ctx.globalAlpha = 0.65 * burst;
+      ctx.strokeStyle = '#fff0b8';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 7 + (1 - burst) * 17, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.globalAlpha = 0.26 + pulse * 0.2;
+    ctx.strokeStyle = '#ffdf64';
+    ctx.lineWidth = 1.75;
+    ctx.shadowColor = 'rgba(255, 210, 80, 0.55)';
+    ctx.shadowBlur = 3 + pulse * 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 7.5 + pulse * 1.2, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.lineCap = 'square';
+
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.72)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, -17);
+    ctx.lineTo(0, 0);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#f7ead1';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -17);
+    ctx.lineTo(0, 0);
+    ctx.stroke();
+
+    ctx.fillStyle = '#d8372b';
+    ctx.strokeStyle = '#230b07';
+    ctx.lineWidth = 1.25;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+    ctx.shadowBlur = 2;
+    ctx.beginPath();
+    ctx.moveTo(1, -17);
+    ctx.lineTo(10, -14);
+    ctx.lineTo(1, -10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  private drawCompass(cameraAlpha: number): void {
+    const ctx = this.compassCtx;
+    const north = this.worldVectorToMinimapScreen(0, -1, cameraAlpha);
+    const len = Math.hypot(north.x, north.y) || 1;
+    const nx = north.x / len;
+    const ny = north.y / len;
+    const cx = COMPASS_SIZE / 2;
+    const cy = COMPASS_SIZE / 2;
+
+    ctx.save();
+    ctx.clearRect(0, 0, COMPASS_SIZE, COMPASS_SIZE);
+
+    ctx.fillStyle = '#090604';
+    ctx.fillRect(3, 3, COMPASS_SIZE - 6, COMPASS_SIZE - 6);
+    ctx.fillStyle = '#75613d';
+    ctx.fillRect(6, 6, COMPASS_SIZE - 12, COMPASS_SIZE - 12);
+    ctx.fillStyle = '#241a10';
+    ctx.fillRect(10, 10, COMPASS_SIZE - 20, COMPASS_SIZE - 20);
+
+    ctx.translate(cx, cy);
+
+    const face = ctx.createRadialGradient(-8, -10, 4, 0, 0, COMPASS_RADIUS);
+    face.addColorStop(0, '#fff1b8');
+    face.addColorStop(0.72, '#dfc274');
+    face.addColorStop(1, '#9d7337');
+    ctx.fillStyle = face;
+    ctx.strokeStyle = '#080503';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, 0, COMPASS_RADIUS, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = '#f7e4a3';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, COMPASS_RADIUS - 5, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#4b3218';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-COMPASS_RADIUS + 8, 0);
+    ctx.lineTo(COMPASS_RADIUS - 8, 0);
+    ctx.moveTo(0, -COMPASS_RADIUS + 8);
+    ctx.lineTo(0, COMPASS_RADIUS - 8);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#6f4a22';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-15, -15);
+    ctx.lineTo(15, 15);
+    ctx.moveTo(15, -15);
+    ctx.lineTo(-15, 15);
+    ctx.stroke();
+
+    ctx.save();
+    ctx.rotate(Math.atan2(nx, -ny));
+    ctx.lineJoin = 'miter';
+
+    ctx.fillStyle = '#fff2c8';
+    ctx.strokeStyle = '#080503';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 22);
+    ctx.lineTo(7, 2);
+    ctx.lineTo(0, 7);
+    ctx.lineTo(-7, 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#e01f18';
+    ctx.strokeStyle = '#080503';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(0, -24);
+    ctx.lineTo(9, 3);
+    ctx.lineTo(0, -5);
+    ctx.lineTo(-9, 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.fillStyle = '#080503';
+    ctx.beginPath();
+    ctx.arc(0, 0, 4.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffe79b';
+    ctx.beginPath();
+    ctx.arc(0, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#e01f18';
+    ctx.strokeStyle = '#080503';
+    ctx.lineWidth = 3.5;
+    ctx.font = '900 20px Georgia, "Times New Roman", serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const labelX = nx * 20;
+    const labelY = ny * 20;
+    ctx.strokeText('N', labelX, labelY);
+    ctx.fillText('N', labelX, labelY);
     ctx.restore();
   }
 

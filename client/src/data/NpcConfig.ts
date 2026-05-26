@@ -53,8 +53,8 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
 /** Per-defId profile for NPCs rendered as CharacterEntity (humanoid stand-in).
  *  Every NPC not present in NPC_3D_MODELS falls back to this path, so the
  *  profile doubles as the registry of "use the player rig for this NPC."
- *  `stationary` skips the walk anim load (shopkeepers/smiths). `combat` adds
- *  the punch attack anim for aggressive mobs. */
+ *  `stationary` is a legacy authoring hint; the client only skips walk anims
+ *  when the server NPC def has `stationary: true`. `combat` adds melee anims. */
 export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; combat?: boolean }> = {
   1:  { stationary: false },                // Chicken
   3:  { stationary: false, combat: true },  // Goblin
