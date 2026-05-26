@@ -12,6 +12,7 @@ const TREE_MODEL_CONFIG: { defId: number; files: string[]; targetHeight: number;
   { defId: 9, files: ['willow_tree.glb'], targetHeight: 4.6, stumpFile: 'willowstump.glb' },
   { defId: 10, files: ['DeadTreeLam.glb'], targetHeight: 2.875, stumpFile: 'stump2.glb' },
   { defId: 14, files: ['/assets/models/maple tree.glb'], targetHeight: 4.6, stumpFile: 'maplestump.glb' },
+  { defId: 38, files: ['/assets/models/yew tree.glb'], targetHeight: 4.6, stumpFile: 'maplestump.glb' },
 ];
 
 export class WorldObjectModels {
@@ -260,7 +261,11 @@ export class WorldObjectModels {
   }
 
   createDepletedModel(objectEntityId: number, defId: number, placedNode: TransformNode): TransformNode | undefined {
-    if (this.stumps.has(objectEntityId)) return this.stumps.get(objectEntityId)!;
+    const existing = this.stumps.get(objectEntityId);
+    if (existing) {
+      this.syncDepletedModelTransform(objectEntityId, placedNode);
+      return existing;
+    }
     const def = this.objectDefsCache.get(defId);
     let depletedModel: ModelTemplate | null = null;
     if (def?.category === 'tree') {
@@ -281,17 +286,28 @@ export class WorldObjectModels {
       const mat = child.material as any;
       if (mat && mat.transparencyMode !== undefined) mat.transparencyMode = 1;
     }
-    depleted.scaling.copyFrom(placedNode.scaling);
-    depleted.position.set(placedNode.position.x, placedNode.position.y, placedNode.position.z);
-    if (placedNode.rotationQuaternion) {
-      depleted.rotationQuaternion = placedNode.rotationQuaternion.clone();
-      depleted.rotation.set(0, 0, 0);
-    } else {
-      depleted.rotationQuaternion = null;
-      depleted.rotation.copyFrom(placedNode.rotation);
-    }
+    WorldObjectModels.copyNodeTransform(depleted, placedNode);
     this.stumps.set(objectEntityId, depleted);
     return depleted;
+  }
+
+  syncDepletedModelTransform(objectEntityId: number, placedNode: TransformNode): void {
+    const depleted = this.stumps.get(objectEntityId);
+    if (!depleted) return;
+    WorldObjectModels.copyNodeTransform(depleted, placedNode);
+  }
+
+  private static copyNodeTransform(target: TransformNode, source: TransformNode): void {
+    target.scaling.copyFrom(source.scaling);
+    target.position.copyFrom(source.position);
+    if (source.rotationQuaternion) {
+      if (target.rotationQuaternion) target.rotationQuaternion.copyFrom(source.rotationQuaternion);
+      else target.rotationQuaternion = source.rotationQuaternion.clone();
+      target.rotation.set(0, 0, 0);
+    } else {
+      target.rotationQuaternion = null;
+      target.rotation.copyFrom(source.rotation);
+    }
   }
 
   disposeStumps(): void {

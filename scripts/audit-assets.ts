@@ -17,6 +17,10 @@ const rootDir = join(import.meta.dir, '..');
 const publicDir = join(rootDir, 'client/public');
 const registryPath = join(publicDir, 'assets/assets.json');
 const mapsDir = join(rootDir, 'server/data/maps');
+const itemIconDirs = [
+  join(publicDir, 'items'),
+  join(publicDir, 'New items'),
+];
 const issues: AuditIssue[] = [];
 const warnings: AuditIssue[] = [];
 
@@ -44,6 +48,34 @@ function walkJsonFiles(dir: string): string[] {
     }
   }
   return files;
+}
+
+function walkPngFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...walkPngFiles(path));
+    else if (entry.isFile() && entry.name.toLowerCase().endsWith('.png')) files.push(path);
+  }
+  return files;
+}
+
+function readPngDimensions(path: string): { width: number; height: number } | null {
+  const bytes = readFileSync(path);
+  if (
+    bytes.length < 24 ||
+    bytes[0] !== 0x89 ||
+    bytes[1] !== 0x50 ||
+    bytes[2] !== 0x4e ||
+    bytes[3] !== 0x47
+  ) {
+    return null;
+  }
+  return {
+    width: bytes.readUInt32BE(16),
+    height: bytes.readUInt32BE(20),
+  };
 }
 
 function auditRegistry(): Set<string> {
@@ -95,8 +127,21 @@ function auditPlacedObjects(assetIds: Set<string>): void {
   }
 }
 
+function auditItemIconSizes(): void {
+  for (const dir of itemIconDirs) {
+    for (const file of walkPngFiles(dir)) {
+      const dimensions = readPngDimensions(file);
+      if (!dimensions) continue;
+      if (dimensions.width > 256 || dimensions.height > 256) {
+        addIssue(file, `item icon is ${dimensions.width}x${dimensions.height}; max allowed is 256x256`);
+      }
+    }
+  }
+}
+
 const assetIds = auditRegistry();
 auditPlacedObjects(assetIds);
+auditItemIconSizes();
 
 if (issues.length > 0) {
   console.error(`Asset audit failed with ${issues.length} issue(s):`);

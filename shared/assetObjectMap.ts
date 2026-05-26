@@ -22,6 +22,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'willow tree': 9,
   // Maple -> objectId 14 (Maple Tree)
   'maple tree': 14,
+  // Yew -> objectId 38 (Yew Tree)
+  'yew tree': 38,
   // Dead -> objectId 10 (Dead Tree)
   'DeadTreeLam': 10,
   // Rocks

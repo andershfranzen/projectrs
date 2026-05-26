@@ -624,6 +624,53 @@
     }
   },
   {
+    "id": 38,
+    "name": "Yew Tree",
+    "category": "tree",
+    "actions": [
+      "Chop",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 2,
+    "height": 2.6,
+    "color": [
+      35,
+      95,
+      35
+    ],
+    "skill": "woodcut",
+    "levelRequired": 60,
+    "xpReward": 175,
+    "harvestItemId": 40,
+    "harvestQuantity": 1,
+    "harvestTime": 4,
+    "depletionChance": 0.125,
+    "respawnTime": 50,
+    "successChances": {
+      "31": [
+        4,
+        13
+      ],
+      "32": [
+        6,
+        19
+      ],
+      "36": [
+        8,
+        25
+      ],
+      "37": [
+        10,
+        31
+      ],
+      "38": [
+        11,
+        34
+      ]
+    }
+  },
+  {
     "id": 13,
     "name": "Door",
     "category": "door",

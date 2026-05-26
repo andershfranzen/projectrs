@@ -338,6 +338,15 @@
     "icon": "Maple_Logs_634.png"
   },
   {
+    "id": 40,
+    "name": "Yew Logs",
+    "description": "Logs cut from a yew tree.",
+    "stackable": false,
+    "equippable": false,
+    "value": 30,
+    "icon": "Yew_Logs_635.png"
+  },
+  {
     "id": 42,
     "name": "Bronze Arrows",
     "description": "Arrows with bronze tips.",

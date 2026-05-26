@@ -1858,6 +1858,7 @@ export class GameManager {
         depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, model);
       }
       if (depleted) {
+        this.objectModels.syncDepletedModelTransform(objectEntityId, model);
         depleted.setEnabled(data.depleted);
         this.setWorldObjectPickTarget(objectEntityId, false, depleted);
       }
@@ -3249,6 +3250,7 @@ export class GameManager {
           depletedModel = this.objectModels.createDepletedModel(objectEntityId, objectDefId, model);
         }
         if (depletedModel) {
+          this.objectModels.syncDepletedModelTransform(objectEntityId, model);
           depletedModel.setEnabled(isDepleted);
           this.setWorldObjectPickTarget(objectEntityId, false, depletedModel);
         }
@@ -3317,6 +3319,7 @@ export class GameManager {
               depleted = this.objectModels.createDepletedModel(objectEntityId, data.defId, placedNode);
             }
             if (depleted) {
+              this.objectModels.syncDepletedModelTransform(objectEntityId, placedNode);
               depleted.setEnabled(isDepleted === 1);
               this.setWorldObjectPickTarget(objectEntityId, false, depleted);
             }
