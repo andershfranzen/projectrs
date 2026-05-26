@@ -1,5 +1,6 @@
 import { Scene } from '@babylonjs/core/scene';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
+import { Material } from '@babylonjs/core/Materials/material';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData';
@@ -13,10 +14,10 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
-import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit } from '@projectrs/shared';
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
-import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane } from '@projectrs/shared';
+import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane, WaterFlow, WaterFlowUvTransform } from '@projectrs/shared';
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
@@ -30,6 +31,10 @@ function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Re
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);
   return fetch(input, { ...init, headers, credentials: 'same-origin' });
+}
+
+function rgbToColor3(c: RGB): Color3 {
+  return new Color3(c.r, c.g, c.b);
 }
 
 // --- Building mesh types ---
@@ -547,10 +552,12 @@ export class ChunkManager {
     if (!this.waterMat) {
       this.waterMat = new StandardMaterial('chunkWaterMat', this.scene);
       this.waterMat.specularColor = new Color3(0, 0, 0);
-      this.waterMat.alpha = 0.88;
-      this.waterMat.diffuseColor = new Color3(0.83, 0.91, 1.0); // 0xd4e8ff tint
+      this.waterMat.alpha = WATER_TEXTURE_ALPHA;
+      this.waterMat.transparencyMode = Material.MATERIAL_ALPHABLEND;
+      this.waterMat.backFaceCulling = false;
+      this.waterMat.diffuseColor = rgbToColor3(WATER_TEXTURE_TINT);
       // Load water texture
-      this.waterTexture = new Texture('/assets/textures/1.png', this.scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR);
+      this.waterTexture = new Texture('/assets/textures/1.png', this.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE);
       this.waterTexture.anisotropicFilteringLevel = 1;
       this.waterTexture.uScale = 1;
       this.waterTexture.vScale = 1;
@@ -590,8 +597,9 @@ export class ChunkManager {
     if (!this.paddyWaterMat) {
       this.paddyWaterMat = new StandardMaterial('chunkPaddyWaterMat', this.scene);
       this.paddyWaterMat.specularColor = new Color3(0, 0, 0);
-      this.paddyWaterMat.diffuseColor = new Color3(0.88, 0.96, 0.97);
-      this.paddyWaterMat.alpha = 0.25;
+      this.paddyWaterMat.diffuseColor = rgbToColor3(SURFACE_WATER_TEXTURE_TINT);
+      this.paddyWaterMat.alpha = SURFACE_WATER_ALPHA;
+      this.paddyWaterMat.transparencyMode = Material.MATERIAL_ALPHABLEND;
       this.paddyWaterMat.backFaceCulling = false;
       this.paddyWaterMat.zOffset = -2;
       if (this.waterTexture) {
@@ -686,6 +694,25 @@ export class ChunkManager {
     const chunkZ = Math.floor(tileZ / EDITOR_CHUNK_SIZE);
     if (chunkX >= this.chunkCols || chunkZ >= this.chunkRows) return this.defaultWaterLevel;
     return levels[chunkZ * this.chunkCols + chunkX];
+  }
+
+  private getChunkWaterFlow(tileX: number, tileZ: number): WaterFlow {
+    if (!this.mapData || tileX < 0 || tileZ < 0) return normalizeWaterFlow(null);
+    const chunkX = Math.floor(tileX / EDITOR_CHUNK_SIZE);
+    const chunkZ = Math.floor(tileZ / EDITOR_CHUNK_SIZE);
+    return normalizeWaterFlow(this.mapData.chunkWaterFlows?.[`${chunkX},${chunkZ}`]);
+  }
+
+  private getWaterFlowTransform(tileX: number, tileZ: number, scale: number, cache: Map<string, WaterFlowUvTransform>): WaterFlowUvTransform {
+    const chunkX = Math.floor(tileX / EDITOR_CHUNK_SIZE);
+    const chunkZ = Math.floor(tileZ / EDITOR_CHUNK_SIZE);
+    const key = `${chunkX},${chunkZ}`;
+    let transform = cache.get(key);
+    if (!transform) {
+      transform = waterFlowUvTransform(this.getChunkWaterFlow(tileX, tileZ), scale);
+      cache.set(key, transform);
+    }
+    return transform;
   }
 
   private buildChunkWaterLevelCache(): void {
@@ -1241,11 +1268,10 @@ export class ChunkManager {
           const proxTR = this.getVertexWaterProximity(x + 1, z);
           const proxBL = this.getVertexWaterProximity(x, z + 1);
           const proxBR = this.getVertexWaterProximity(x + 1, z + 1);
-          const applyMud = (c: RGB, t: number) => {
-            if (t <= 0) return;
-            c.r *= 1 + t * 0.18; c.g *= 1 - t * 0.22; c.b *= 1 - t * 0.28;
-          };
-          applyMud(cTL, proxTL); applyMud(cTR, proxTR); applyMud(cBL, proxBL); applyMud(cBR, proxBR);
+          applyWaterEdgeMudTint(cTL, proxTL);
+          applyWaterEdgeMudTint(cTR, proxTR);
+          applyWaterEdgeMudTint(cBL, proxBL);
+          applyWaterEdgeMudTint(cBR, proxBR);
 
           // Underwater darkening
           const applyDepth = (c: RGB, vertH: number) => {
@@ -1326,7 +1352,7 @@ export class ChunkManager {
     let vertexIndex = 0;
     let hasWater = false;
 
-    const WATER_UV_SCALE = 5;
+    const waterFlowTransformCache = new Map<string, WaterFlowUvTransform>();
 
     for (let x = startX; x < endX; x++) {
       for (let z = startZ; z < endZ; z++) {
@@ -1337,10 +1363,7 @@ export class ChunkManager {
         const wY = this.getChunkWaterLevel(x, z) + 0.02;
         // CCW winding for RHS
         positions.push(x, wY, z, x + 1, wY, z, x + 1, wY, z + 1, x, wY, z + 1);
-        // World-space UVs for seamless water tiling
-        const u0 = x / WATER_UV_SCALE, u1 = (x + 1) / WATER_UV_SCALE;
-        const v0 = z / WATER_UV_SCALE, v1 = (z + 1) / WATER_UV_SCALE;
-        uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
+        pushWaterFlowQuadUvs(uvs, x, z, this.getWaterFlowTransform(x, z, WATER_UV_SCALE, waterFlowTransformCache), 'tl-tr-br-bl');
         for (let i = 0; i < 4; i++) normals.push(0, 1, 0);
         indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3);
         vertexIndex += 4;
@@ -1371,8 +1394,8 @@ export class ChunkManager {
     let vertexIndex = 0;
     let hasWater = false;
 
-    const WATER_UV_SCALE = 5;
     const LIFT = 0.05;
+    const waterFlowTransformCache = new Map<string, WaterFlowUvTransform>();
 
     for (let x = startX; x < endX; x++) {
       for (let z = startZ; z < endZ; z++) {
@@ -1386,9 +1409,7 @@ export class ChunkManager {
         const br = this.getVertexHeight(x + 1, z + 1) + LIFT;
 
         positions.push(x, tl, z, x + 1, tr, z, x + 1, br, z + 1, x, bl, z + 1);
-        const u0 = x / WATER_UV_SCALE, u1 = (x + 1) / WATER_UV_SCALE;
-        const v0 = z / WATER_UV_SCALE, v1 = (z + 1) / WATER_UV_SCALE;
-        uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
+        pushWaterFlowQuadUvs(uvs, x, z, this.getWaterFlowTransform(x, z, WATER_UV_SCALE, waterFlowTransformCache), 'tl-tr-br-bl');
         for (let i = 0; i < 4; i++) normals.push(0, 1, 0);
         indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3);
         vertexIndex += 4;

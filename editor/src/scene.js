@@ -63,6 +63,8 @@ import {
   BANK_ACCESS_SPAWN_NAME,
   isAllowedBankAccessSpawn,
   validateBankAccessSpawns,
+  DEFAULT_WATER_FLOW,
+  normalizeWaterFlow,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -153,7 +155,7 @@ function tuneModelLighting(model) {
   camera.detachControl() // Don't let Babylon.js attach any pointer handlers
 
   // Water texture
-  const waterTexture = new Texture('/assets/textures/1.png', scene, false, true, Texture.NEAREST_LINEAR_MIPLINEAR)
+  const waterTexture = new Texture('/assets/textures/1.png', scene, false, true, Texture.TRILINEAR_SAMPLINGMODE)
   waterTexture.anisotropicFilteringLevel = 1
   waterTexture.wrapU = Texture.WRAP_ADDRESSMODE
   waterTexture.wrapV = Texture.WRAP_ADDRESSMODE
@@ -1806,6 +1808,7 @@ const state = {
 
 let brushRadius = 3.2
 let paintBrushRadius = 1
+let selectedWaterFlowChunk = null
 
   // RAF dirty-flag: terrain edits mark this dirty; the actual rebuild happens once per animation frame.
   let _terrainDirty = false
@@ -1955,8 +1958,29 @@ let paintBrushRadius = 1
     <span class="top-label" id="mapSizeLabel">192 x 64</span>
     <button id="chunkGridBtn" title="Add/remove chunks">Chunks</button>
     <div id="chunkGridPopup" style="display:none;position:absolute;top:32px;background:#1a1a1a;border:1px solid #555;border-radius:6px;padding:8px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.5);">
-      <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Click to add · Shift+click to remove</div>
+      <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Click active chunk to edit water flow · Shift+click to remove</div>
       <div id="chunkGridContainer" style="display:inline-grid;gap:2px;"></div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid #333;">
+        <div id="chunkWaterFlowTitle" style="font-size:11px;color:#ddd;margin-bottom:5px;">Water flow: select a chunk</div>
+        <select id="chunkWaterFlowPreset" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:11px;">
+          <option value="default">Default</option>
+          <option value="n">North (-Z)</option>
+          <option value="ne">North-East</option>
+          <option value="e">East (+X)</option>
+          <option value="se">South-East</option>
+          <option value="s">South (+Z)</option>
+          <option value="sw">South-West</option>
+          <option value="w">West (-X)</option>
+          <option value="nw">North-West</option>
+          <option value="custom">Custom</option>
+        </select>
+        <div style="display:flex;gap:4px;margin-top:5px;align-items:center;">
+          <input id="chunkWaterFlowX" type="number" step="0.1" value="-1" title="Flow X: east is positive" style="width:58px;font-size:11px;" />
+          <input id="chunkWaterFlowZ" type="number" step="0.1" value="-0.5" title="Flow Z: south is positive" style="width:58px;font-size:11px;" />
+          <button id="chunkWaterFlowApply" style="width:auto;padding:4px 7px;font-size:11px;">Apply</button>
+          <button id="chunkWaterFlowClear" style="width:auto;padding:4px 7px;font-size:11px;">Clear</button>
+        </div>
+      </div>
     </div>
     <span class="top-sep"></span>
     <span class="top-label">World X</span>
@@ -5879,6 +5903,7 @@ let paintBrushRadius = 1
     saveFileHandle = null
 
     map = MapData.fromJSON(data.map)
+    selectedWaterFlowChunk = null
     selectedPlacedObject = null
     selectedPlacedObjects = []
     selectedTexturePlane = null
@@ -5934,6 +5959,7 @@ let paintBrushRadius = 1
       camera.target = new Vector3(cx, h, cz)
     }
     buildWallChunkDropdown()
+    if (typeof syncChunkWaterFlowControls === 'function') syncChunkWaterFlowControls()
   }
 
   async function importChunk(data, offsetX, offsetZ) {
@@ -10631,10 +10657,87 @@ function applyToolAtTile(tile, eventLike = null) {
   const chunkGridBtn = topBar.querySelector('#chunkGridBtn')
   const chunkGridPopup = topBar.querySelector('#chunkGridPopup')
   const chunkGridContainer = topBar.querySelector('#chunkGridContainer')
+  const chunkWaterFlowTitle = topBar.querySelector('#chunkWaterFlowTitle')
+  const chunkWaterFlowPreset = topBar.querySelector('#chunkWaterFlowPreset')
+  const chunkWaterFlowX = topBar.querySelector('#chunkWaterFlowX')
+  const chunkWaterFlowZ = topBar.querySelector('#chunkWaterFlowZ')
+  const chunkWaterFlowApply = topBar.querySelector('#chunkWaterFlowApply')
+  const chunkWaterFlowClear = topBar.querySelector('#chunkWaterFlowClear')
+
+  const WATER_FLOW_PRESETS = [
+    { id: 'n', label: 'North (-Z)', flow: { x: 0, z: -1 } },
+    { id: 'ne', label: 'North-East', flow: { x: 1, z: -1 } },
+    { id: 'e', label: 'East (+X)', flow: { x: 1, z: 0 } },
+    { id: 'se', label: 'South-East', flow: { x: 1, z: 1 } },
+    { id: 's', label: 'South (+Z)', flow: { x: 0, z: 1 } },
+    { id: 'sw', label: 'South-West', flow: { x: -1, z: 1 } },
+    { id: 'w', label: 'West (-X)', flow: { x: -1, z: 0 } },
+    { id: 'nw', label: 'North-West', flow: { x: -1, z: -1 } },
+  ]
+
+  function flowAlmostEqual(a, b) {
+    const af = normalizeWaterFlow(a)
+    const bf = normalizeWaterFlow(b)
+    return Math.abs(af.x - bf.x) < 0.01 && Math.abs(af.z - bf.z) < 0.01
+  }
+
+  function waterFlowLabel(flow) {
+    const normalized = normalizeWaterFlow(flow)
+    if (flowAlmostEqual(normalized, DEFAULT_WATER_FLOW)) return 'Default'
+    const preset = WATER_FLOW_PRESETS.find((p) => flowAlmostEqual(normalized, p.flow))
+    return preset ? preset.label : `${normalized.x.toFixed(2)}, ${normalized.z.toFixed(2)}`
+  }
+
+  function selectedFlowChunkKey() {
+    return selectedWaterFlowChunk ? `${selectedWaterFlowChunk.cx},${selectedWaterFlowChunk.cz}` : null
+  }
+
+  function syncChunkWaterFlowControls() {
+    const key = selectedFlowChunkKey()
+    const hasSelection = !!key && map.activeChunks.has(key)
+    const controls = [chunkWaterFlowPreset, chunkWaterFlowX, chunkWaterFlowZ, chunkWaterFlowApply, chunkWaterFlowClear]
+    for (const el of controls) if (el) el.disabled = !hasSelection
+    if (!hasSelection) {
+      if (chunkWaterFlowTitle) chunkWaterFlowTitle.textContent = 'Water flow: select a chunk'
+      return
+    }
+
+    const { cx, cz } = selectedWaterFlowChunk
+    const flow = map.getChunkWaterFlow(cx, cz)
+    const hasOverride = Object.prototype.hasOwnProperty.call(map.chunkWaterFlows, key)
+    const preset = hasOverride
+      ? WATER_FLOW_PRESETS.find((p) => flowAlmostEqual(flow, p.flow))
+      : null
+
+    if (chunkWaterFlowTitle) {
+      chunkWaterFlowTitle.textContent = `Water flow (${cx},${cz}): ${hasOverride ? waterFlowLabel(flow) : 'Default'}`
+    }
+    if (chunkWaterFlowPreset) {
+      chunkWaterFlowPreset.value = hasOverride ? (preset?.id || 'custom') : 'default'
+    }
+    if (chunkWaterFlowX) chunkWaterFlowX.value = flow.x.toFixed(2)
+    if (chunkWaterFlowZ) chunkWaterFlowZ.value = flow.z.toFixed(2)
+  }
+
+  function setSelectedChunkWaterFlow(flow, label) {
+    const key = selectedFlowChunkKey()
+    if (!key || !map.activeChunks.has(key)) return
+    pushUndoState('terrain')
+    const { cx, cz } = selectedWaterFlowChunk
+    if (flow) map.setChunkWaterFlow(cx, cz, flow)
+    else map.clearChunkWaterFlow(cx, cz)
+    replaceTerrainWaterMeshes()
+    rebuildChunkGrid()
+    syncChunkWaterFlowControls()
+    statusText.textContent = `Water flow ${label || waterFlowLabel(map.getChunkWaterFlow(cx, cz))} set for chunk (${cx},${cz})`
+  }
 
   chunkGridBtn.addEventListener('click', () => {
     chunkGridPopup.style.display = chunkGridPopup.style.display === 'none' ? 'block' : 'none'
-    if (chunkGridPopup.style.display === 'block') rebuildChunkGrid()
+    if (chunkGridPopup.style.display === 'block') {
+      rebuildChunkGrid()
+      syncChunkWaterFlowControls()
+    }
   })
 
   // Close popup when clicking outside
@@ -10667,6 +10770,7 @@ function applyToolAtTile(tile, eventLike = null) {
     for (let gz = gz0; gz <= gz1; gz++) {
       for (let gx = gx0; gx <= gx1; gx++) {
         const active = map.activeChunks.has(`${gx},${gz}`)
+        const selected = selectedFlowChunkKey() === `${gx},${gz}`
         // Only show inactive cells if they're adjacent to an active chunk
         const adjacent = !active && (
           map.activeChunks.has(`${gx-1},${gz}`) || map.activeChunks.has(`${gx+1},${gz}`) ||
@@ -10676,8 +10780,9 @@ function applyToolAtTile(tile, eventLike = null) {
         cell.style.cssText = `width:28px;height:28px;border-radius:3px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;`
         if (active) {
           cell.style.background = '#2d6cdf'
+          if (selected) cell.style.outline = '2px solid #8fd1ff'
           cell.textContent = `${gx},${gz}`
-          cell.title = `Chunk (${gx},${gz}) — Shift+click to remove`
+          cell.title = `Chunk (${gx},${gz}) - water flow: ${waterFlowLabel(map.getChunkWaterFlow(gx, gz))} - Shift+click to remove`
         } else if (adjacent) {
           cell.style.background = '#333'
           cell.style.border = '1px dashed #666'
@@ -10692,6 +10797,9 @@ function applyToolAtTile(tile, eventLike = null) {
           cell.addEventListener('click', (e) => {
             if (active && e.shiftKey) {
               removeChunk(cx, cz)
+            } else if (active) {
+              selectedWaterFlowChunk = { cx, cz }
+              syncChunkWaterFlowControls()
             } else if (!active && adjacent) {
               addChunk(cx, cz)
             }
@@ -10738,6 +10846,7 @@ function applyToolAtTile(tile, eventLike = null) {
     const finalCx = cx + Math.floor(ox / CHUNK)
     const finalCz = cz + Math.floor(oz / CHUNK)
     map.activeChunks.add(`${finalCx},${finalCz}`)
+    selectedWaterFlowChunk = { cx: finalCx, cz: finalCz }
     afterChunkChange()
   }
 
@@ -10745,6 +10854,8 @@ function applyToolAtTile(tile, eventLike = null) {
     if (map.activeChunks.size <= 1) return // keep at least one chunk
     pushUndoState('terrain')
     map.activeChunks.delete(`${cx},${cz}`)
+    map.clearChunkWaterFlow(cx, cz)
+    if (selectedFlowChunkKey() === `${cx},${cz}`) selectedWaterFlowChunk = null
     afterChunkChange()
   }
 
@@ -10761,8 +10872,32 @@ function applyToolAtTile(tile, eventLike = null) {
     rebuildTexturePlanesOnly()
     updateSelectionHelper()
     updateToolUI()
+    syncChunkWaterFlowControls()
     markTerrainDirty({ rebuildTexturePlanes: true, rebuildTextureOverlays: true })
   }
+
+  chunkWaterFlowPreset?.addEventListener('change', () => {
+    const id = chunkWaterFlowPreset.value
+    if (id === 'default') return setSelectedChunkWaterFlow(null, 'default')
+    if (id === 'custom') return
+    const preset = WATER_FLOW_PRESETS.find((p) => p.id === id)
+    if (preset) setSelectedChunkWaterFlow(preset.flow, preset.label)
+  })
+
+  chunkWaterFlowApply?.addEventListener('click', () => {
+    const x = Number(chunkWaterFlowX?.value)
+    const z = Number(chunkWaterFlowZ?.value)
+    if (!Number.isFinite(x) || !Number.isFinite(z) || Math.hypot(x, z) < 0.0001) {
+      statusText.textContent = 'Water flow needs a non-zero X/Z direction'
+      syncChunkWaterFlowControls()
+      return
+    }
+    setSelectedChunkWaterFlow({ x, z }, 'custom')
+  })
+
+  chunkWaterFlowClear?.addEventListener('click', () => {
+    setSelectedChunkWaterFlow(null, 'default')
+  })
 
   sidebar.querySelector('#toggleSplitLines').addEventListener('change', (e) => {
     state.showSplitLines = e.target.checked

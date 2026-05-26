@@ -1,4 +1,5 @@
-import { DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeCutAngle } from '@projectrs/shared'
+import { DEFAULT_CUT_ANGLE, DEFAULT_WATER_FLOW, legacyCutAngleFromSplit, normalizeCutAngle, normalizeWaterFlow } from '@projectrs/shared'
+import type { WaterFlow } from '@projectrs/shared'
 
 export interface Tile {
   ground: string
@@ -59,6 +60,7 @@ export interface MapDataJSON {
   worldOffset: { x: number; z: number }
   waterLevel: number
   chunkWaterLevels: Record<string, number>
+  chunkWaterFlows: Record<string, WaterFlow>
   selectedTexturePlaneId: string | null
   texturePlanes: TexturePlane[]
   tiles: Tile[][]
@@ -97,6 +99,7 @@ export class MapData {
   worldOffset: { x: number; z: number }
   waterLevel: number
   chunkWaterLevels: Record<string, number>
+  chunkWaterFlows: Record<string, WaterFlow>
   texturePlanes: TexturePlane[]
   selectedTexturePlaneId: string | null
   activeChunks: Set<string>
@@ -112,6 +115,7 @@ export class MapData {
     this.worldOffset = { x: 0, z: 0 }
     this.waterLevel = -2.5
     this.chunkWaterLevels = {}
+    this.chunkWaterFlows = {}
     this.texturePlanes = []
     this.selectedTexturePlaneId = null
     this.activeChunks = new Set<string>()
@@ -214,6 +218,34 @@ export class MapData {
     const chunkX = Math.floor(x / 64)
     const chunkZ = Math.floor(z / 64)
     return this.getChunkWaterLevel(chunkX, chunkZ)
+  }
+
+  getChunkWaterFlow(chunkX: number, chunkZ: number): WaterFlow {
+    const key = `${chunkX},${chunkZ}`
+    return Object.prototype.hasOwnProperty.call(this.chunkWaterFlows, key)
+      ? normalizeWaterFlow(this.chunkWaterFlows[key])
+      : { ...DEFAULT_WATER_FLOW }
+  }
+
+  setChunkWaterFlow(chunkX: number, chunkZ: number, flow: Partial<WaterFlow>): void {
+    const normalized = normalizeWaterFlow(flow)
+    const defaultFlow = normalizeWaterFlow(DEFAULT_WATER_FLOW)
+    const key = `${chunkX},${chunkZ}`
+    if (Math.abs(normalized.x - defaultFlow.x) < 0.0001 && Math.abs(normalized.z - defaultFlow.z) < 0.0001) {
+      delete this.chunkWaterFlows[key]
+      return
+    }
+    this.chunkWaterFlows[key] = normalized
+  }
+
+  clearChunkWaterFlow(chunkX: number, chunkZ: number): void {
+    delete this.chunkWaterFlows[`${chunkX},${chunkZ}`]
+  }
+
+  getTileWaterFlow(x: number, z: number): WaterFlow {
+    const chunkX = Math.floor(x / 64)
+    const chunkZ = Math.floor(z / 64)
+    return this.getChunkWaterFlow(chunkX, chunkZ)
   }
 
   shouldRenderWaterTile(x: number, z: number): boolean {
@@ -464,13 +496,19 @@ export class MapData {
     next.waterLevel = this.waterLevel
     // Shift chunk water level keys by the offset
     next.chunkWaterLevels = {}
+    next.chunkWaterFlows = {}
     if (offsetX !== 0 || offsetZ !== 0) {
       for (const [key, val] of Object.entries(this.chunkWaterLevels)) {
         const [kx, kz] = key.split(',').map(Number)
         next.chunkWaterLevels[`${kx + Math.floor(offsetX / CHUNK)},${kz + Math.floor(offsetZ / CHUNK)}`] = val
       }
+      for (const [key, val] of Object.entries(this.chunkWaterFlows)) {
+        const [kx, kz] = key.split(',').map(Number)
+        next.chunkWaterFlows[`${kx + Math.floor(offsetX / CHUNK)},${kz + Math.floor(offsetZ / CHUNK)}`] = normalizeWaterFlow(val)
+      }
     } else {
       Object.assign(next.chunkWaterLevels, this.chunkWaterLevels)
+      Object.assign(next.chunkWaterFlows, this.chunkWaterFlows)
     }
     next.texturePlanes = JSON.parse(JSON.stringify(this.texturePlanes))
     next.selectedTexturePlaneId = this.selectedTexturePlaneId
@@ -525,6 +563,7 @@ export class MapData {
       worldOffset: { ...this.worldOffset },
       waterLevel: this.waterLevel,
       chunkWaterLevels: { ...this.chunkWaterLevels },
+      chunkWaterFlows: { ...this.chunkWaterFlows },
       selectedTexturePlaneId: this.selectedTexturePlaneId,
       texturePlanes: this.texturePlanes,
       tiles: this.tiles,
@@ -546,6 +585,16 @@ export class MapData {
     map.chunkWaterLevels = (data.chunkWaterLevels && typeof data.chunkWaterLevels === 'object')
       ? { ...data.chunkWaterLevels }
       : {}
+    map.chunkWaterFlows = {}
+    if (data.chunkWaterFlows && typeof data.chunkWaterFlows === 'object') {
+      const defaultFlow = normalizeWaterFlow(DEFAULT_WATER_FLOW)
+      for (const [key, flow] of Object.entries(data.chunkWaterFlows)) {
+        const normalized = normalizeWaterFlow(flow)
+        const isDefault = Math.abs(normalized.x - defaultFlow.x) < 0.0001
+          && Math.abs(normalized.z - defaultFlow.z) < 0.0001
+        if (!isDefault) map.chunkWaterFlows[key] = normalized
+      }
+    }
     map.selectedTexturePlaneId = data.selectedTexturePlaneId || null
     map.texturePlanes = Array.isArray(data.texturePlanes)
       ? JSON.parse(JSON.stringify(data.texturePlanes))

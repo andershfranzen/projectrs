@@ -52,6 +52,7 @@ interface KCMapFile {
     height: number;
     waterLevel: number;
     chunkWaterLevels: Record<string, never>;
+    chunkWaterFlows: Record<string, never>;
     texturePlanes: never[];
     tiles: ReturnType<typeof tile>[][];
     heights: number[][];
@@ -229,6 +230,7 @@ function buildKCMapFile(
       height,
       waterLevel,
       chunkWaterLevels: {},
+      chunkWaterFlows: {},
       texturePlanes: [],
       tiles: kcTiles,
       heights,

@@ -499,6 +499,86 @@ export interface BiomesFile {
 export type GroundType = 'grass' | 'dirt' | 'sand' | 'path' | 'road' | 'water' | 'desert' | 'sandstone' | 'rock' | 'drysand' | 'dungeon-floor' | 'dungeon-rock';
 export type SplitDirection = 'forward' | 'back';
 
+/** Apparent world-space direction for animated water. X is east/west, Z is
+ *  south/north. The default preserves the legacy texture-scroll direction. */
+export interface WaterFlow {
+  x: number;
+  z: number;
+}
+
+export const DEFAULT_WATER_FLOW: WaterFlow = Object.freeze({ x: -1, z: -0.5 });
+
+export function normalizeWaterFlow(flow: Partial<WaterFlow> | null | undefined): WaterFlow {
+  const x = typeof flow?.x === 'number' && Number.isFinite(flow.x) ? flow.x : DEFAULT_WATER_FLOW.x;
+  const z = typeof flow?.z === 'number' && Number.isFinite(flow.z) ? flow.z : DEFAULT_WATER_FLOW.z;
+  const len = Math.hypot(x, z);
+  if (len < 0.0001) return { ...DEFAULT_WATER_FLOW };
+  return { x: x / len, z: z / len };
+}
+
+export interface WaterFlowUvTransform {
+  c: number;
+  s: number;
+  invScale: number;
+}
+
+export type WaterFlowQuadUvOrder = 'tl-tr-br-bl' | 'tl-tr-bl-br';
+
+/** Precompute the rotation used to make the shared animated water texture
+ *  appear to flow in a world-space direction. Build this once per flow/chunk. */
+export function waterFlowUvTransform(flow: Partial<WaterFlow> | null | undefined, scale: number = 5): WaterFlowUvTransform {
+  const desired = normalizeWaterFlow(flow);
+  const base = normalizeWaterFlow(DEFAULT_WATER_FLOW);
+  const theta = Math.atan2(desired.z, desired.x) - Math.atan2(base.z, base.x);
+  return { c: Math.cos(theta), s: Math.sin(theta), invScale: 1 / scale };
+}
+
+/** Rotate world-space UVs using a precomputed water flow transform. */
+export function waterFlowUvFromTransform(worldX: number, worldZ: number, transform: WaterFlowUvTransform): [number, number] {
+  const { c, s, invScale } = transform;
+  return [
+    (c * worldX + s * worldZ) * invScale,
+    (-s * worldX + c * worldZ) * invScale,
+  ];
+}
+
+/** Rotate world-space UVs so the shared water texture animation appears to
+ *  move in the selected world direction while keeping one animated texture. */
+export function waterFlowUv(worldX: number, worldZ: number, flow: Partial<WaterFlow> | null | undefined, scale: number = 5): [number, number] {
+  return waterFlowUvFromTransform(worldX, worldZ, waterFlowUvTransform(flow, scale));
+}
+
+/** Append UVs for one tile in the caller's vertex order. This avoids repeated
+ *  trig and temporary tuple allocation in water mesh builders. */
+export function pushWaterFlowQuadUvs(
+  out: number[],
+  worldX: number,
+  worldZ: number,
+  transform: WaterFlowUvTransform,
+  order: WaterFlowQuadUvOrder = 'tl-tr-br-bl',
+): void {
+  const { c, s, invScale } = transform;
+  const x0 = worldX;
+  const x1 = worldX + 1;
+  const z0 = worldZ;
+  const z1 = worldZ + 1;
+
+  const tlU = (c * x0 + s * z0) * invScale;
+  const tlV = (-s * x0 + c * z0) * invScale;
+  const trU = (c * x1 + s * z0) * invScale;
+  const trV = (-s * x1 + c * z0) * invScale;
+  const brU = (c * x1 + s * z1) * invScale;
+  const brV = (-s * x1 + c * z1) * invScale;
+  const blU = (c * x0 + s * z1) * invScale;
+  const blV = (-s * x0 + c * z1) * invScale;
+
+  if (order === 'tl-tr-bl-br') {
+    out.push(tlU, tlV, trU, trV, blU, blV, brU, brV);
+  } else {
+    out.push(tlU, tlV, trU, trV, brU, brV, blU, blV);
+  }
+}
+
 /** Numeric IDs for GroundType — used to pack ground type into a Uint8Array
  *  for the minimap snapshot. Order is stable; insert new types at the end. */
 export const GROUND_TYPES_BY_ID: readonly GroundType[] = [
@@ -658,6 +738,8 @@ export interface KCMapData {
   height: number;
   waterLevel: number;
   chunkWaterLevels: Record<string, number>;
+  /** "chunkX,chunkZ" -> normalized water flow direction for 64x64 editor chunks. */
+  chunkWaterFlows?: Record<string, WaterFlow>;
   texturePlanes: TexturePlane[];
   tiles: KCTile[][];       // [z][x]
   heights: number[][];     // [z][x] vertex heights, (height+1) x (width+1)

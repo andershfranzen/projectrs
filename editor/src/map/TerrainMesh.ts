@@ -3,17 +3,22 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
+import { Material } from '@babylonjs/core/Materials/material'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import type { Scene } from '@babylonjs/core/scene'
-import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit } from '@projectrs/shared'
-import type { RGB, GroundType, UVPoint } from '@projectrs/shared'
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_FALLBACK_TINT, SURFACE_WATER_FALLBACK_TINT, WATER_SURFACE_VERTEX_COLOR, SURFACE_WATER_VERTEX_COLOR, WATER_UV_SCALE } from '@projectrs/shared'
+import type { RGB, GroundType, UVPoint, WaterFlowUvTransform } from '@projectrs/shared'
 import type { MapData, TexturePlane } from './MapData'
 import type { TextureEntry } from '../assets-system/TextureRegistry'
 
 function colorMultiplyScalar(c: RGB, s: number): void {
   c.r *= s; c.g *= s; c.b *= s
+}
+
+function rgbToColor3(c: RGB): Color3 {
+  return new Color3(c.r, c.g, c.b)
 }
 
 function pushVertex(vertices: number[], colors: number[], uvs: number[], x: number, y: number, z: number, color: RGB, u: number, v: number): void {
@@ -29,8 +34,24 @@ function shouldRenderWater(map: MapData, x: number, z: number): boolean {
   return map.isWaterTile(x, z)
 }
 
+function getWaterFlowTransform(map: MapData, x: number, z: number, cache: Map<string, WaterFlowUvTransform>): WaterFlowUvTransform {
+  const chunkX = Math.floor(x / 64)
+  const chunkZ = Math.floor(z / 64)
+  const key = `${chunkX},${chunkZ}`
+  let transform = cache.get(key)
+  if (!transform) {
+    transform = waterFlowUvTransform(map.getChunkWaterFlow(chunkX, chunkZ), WATER_UV_SCALE)
+    cache.set(key, transform)
+  }
+  return transform
+}
+
+function pushWaterUvs(map: MapData, x: number, z: number, uvs: number[], cache: Map<string, WaterFlowUvTransform>): void {
+  pushWaterFlowQuadUvs(uvs, x, z, getWaterFlowTransform(map, x, z, cache), 'tl-tr-bl-br')
+}
+
 function getVertexWaterProximity(map: MapData, vx: number, vz: number): number {
-  return sharedGetVertexWaterProximity(vx, vz, (tx, tz) => shouldRenderWater(map, tx, tz))
+  return sharedGetVertexWaterProximity(vx, vz, (tx, tz) => _cvShouldRenderWater(map, tx, tz))
 }
 
 function getVertexCliffStrength(map: MapData, vx: number, vz: number): number {
@@ -99,6 +120,7 @@ let _vcWaterProx: Float32Array | null = null
 let _vcCliffStr: Float32Array | null = null
 let _vcAO: Float32Array | null = null
 let _vcSlopeShade: Float32Array | null = null
+let _vcRenderWater: Int8Array | null = null
 
 function _initVertexCache(map: MapData): void {
   const size = (map.width + 1) * (map.height + 1)
@@ -107,6 +129,18 @@ function _initVertexCache(map: MapData): void {
   _vcCliffStr   = new Float32Array(size).fill(-1)
   _vcAO         = new Float32Array(size).fill(-1)
   _vcSlopeShade = new Float32Array(size).fill(-1)
+  _vcRenderWater = new Int8Array(map.width * map.height).fill(-1)
+}
+
+function _cvShouldRenderWater(map: MapData, x: number, z: number): boolean {
+  if (x < 0 || z < 0 || x >= map.width || z >= map.height) return false
+  if (!_vcRenderWater) return shouldRenderWater(map, x, z)
+  const i = z * map.width + x
+  const cached = _vcRenderWater[i]
+  if (cached >= 0) return cached === 1
+  const result = shouldRenderWater(map, x, z)
+  _vcRenderWater[i] = result ? 1 : 0
+  return result
 }
 
 function _cvWaterProx(map: MapData, vx: number, vz: number): number {
@@ -177,16 +211,10 @@ function addTileGeometry(
     const proxBL = _cvWaterProx(map, x,     z + 1)
     const proxBR = _cvWaterProx(map, x + 1, z + 1)
 
-    const applyMud = (c: RGB, t: number): void => {
-      if (t <= 0) return
-      c.r *= 1 + t * 0.18
-      c.g *= 1 - t * 0.22
-      c.b *= 1 - t * 0.28
-    }
-    applyMud(cTL, proxTL)
-    applyMud(cTR, proxTR)
-    applyMud(cBL, proxBL)
-    applyMud(cBR, proxBR)
+    applyWaterEdgeMudTint(cTL, proxTL)
+    applyWaterEdgeMudTint(cTR, proxTR)
+    applyWaterEdgeMudTint(cBL, proxBL)
+    applyWaterEdgeMudTint(cBR, proxBR)
 
     const applyDepth = (c: RGB, vertH: number): void => {
       const depth = clamp((wLevel - vertH) / 2.5, 0, 1)
@@ -306,7 +334,10 @@ function createLambertMaterial(name: string, scene: Scene, opts: LambertOpts = {
   const mat = new StandardMaterial(name, scene)
   mat.specularColor = new Color3(0, 0, 0)
   mat.backFaceCulling = opts.backFaceCulling !== undefined ? opts.backFaceCulling : true
-  if (opts.alpha !== undefined) mat.alpha = opts.alpha
+  if (opts.alpha !== undefined) {
+    mat.alpha = opts.alpha
+    if (opts.alpha < 1) mat.transparencyMode = Material.MATERIAL_ALPHABLEND
+  }
   if (opts.zOffset !== undefined) mat.zOffset = opts.zOffset
   if (opts.diffuseColor) mat.diffuseColor = opts.diffuseColor
   if (opts.diffuseTexture) mat.diffuseTexture = opts.diffuseTexture
@@ -315,6 +346,7 @@ function createLambertMaterial(name: string, scene: Scene, opts: LambertOpts = {
 
 export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, shadowInf: number[][] | null, scene: Scene): TransformNode {
   _initVertexCache(map)
+  const waterFlowTransformCache = new Map<string, WaterFlowUvTransform>()
 
   const landVertices: number[] = []
   const landColors: number[] = []
@@ -343,17 +375,12 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
         landBase, landType, h, x, z, map, shadowInf
       )
 
-      if (shouldRenderWater(map, x, z)) {
+      if (_cvShouldRenderWater(map, x, z)) {
         const wY = map.getTileWaterLevel(x, z) + 0.02
-        const WATER_UV_SCALE = 5
-        const u0 = x / WATER_UV_SCALE
-        const u1 = (x + 1) / WATER_UV_SCALE
-        const v0 = z / WATER_UV_SCALE
-        const v1 = (z + 1) / WATER_UV_SCALE
-        const wc = groundColor('water', 1.0)
+        const wc = WATER_SURFACE_VERTEX_COLOR
         waterVertices.push(x, wY, z,  x+1, wY, z,  x, wY, z+1,  x+1, wY, z+1)
         waterColors.push(wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1)
-        waterUVs.push(u0, v0,  u1, v0,  u0, v1,  u1, v1)
+        pushWaterUvs(map, x, z, waterUVs, waterFlowTransformCache)
         waterIndices.push(waterBase, waterBase+2, waterBase+1, waterBase+2, waterBase+3, waterBase+1)
         waterBase += 4
       }
@@ -367,7 +394,6 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
   const swIndices: number[] = []
   let swBase = 0
 
-  const _swColor: RGB = { r: 0.55, g: 0.72, b: 0.78 }
   for (let z = 0; z < map.height; z++) {
     for (let x = 0; x < map.width; x++) {
       if (!map.isTileInActiveChunk(x, z)) continue
@@ -376,13 +402,10 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
 
       const h = map.getTileCornerHeights(x, z)
       const LIFT = 0.05
-      const WATER_UV_SCALE = 5
-      const u0 = x / WATER_UV_SCALE, u1 = (x + 1) / WATER_UV_SCALE
-      const v0 = z / WATER_UV_SCALE, v1 = (z + 1) / WATER_UV_SCALE
-      const wc = _swColor
+      const wc = SURFACE_WATER_VERTEX_COLOR
       swVertices.push(x, h.tl+LIFT, z,  x+1, h.tr+LIFT, z,  x, h.bl+LIFT, z+1,  x+1, h.br+LIFT, z+1)
       swColors.push(wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1)
-      swUVs.push(u0, v0,  u1, v0,  u0, v1,  u1, v1)
+      pushWaterUvs(map, x, z, swUVs, waterFlowTransformCache)
       swIndices.push(swBase, swBase+2, swBase+1, swBase+2, swBase+3, swBase+1)
       swBase += 4
     }
@@ -425,9 +448,9 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     const waterMesh = createMeshFromArrays('terrain-water', waterVertices, waterColors, waterUVs, waterIndices, scene)
     const waterMat = createLambertMaterial('terrain-water-mat', scene, {
       backFaceCulling: false,
-      alpha: 0.88,
+      alpha: WATER_TEXTURE_ALPHA,
       zOffset: -1,
-      diffuseColor: waterTexture ? new Color3(0.83, 0.91, 1.0) : new Color3(0.42, 0.52, 0.70),
+      diffuseColor: waterTexture ? rgbToColor3(WATER_TEXTURE_TINT) : rgbToColor3(WATER_FALLBACK_TINT),
     })
     if (waterTexture) {
       waterTexture.wrapU = Texture.WRAP_ADDRESSMODE
@@ -435,7 +458,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
       waterMat.diffuseTexture = waterTexture
     }
     waterMesh.material = waterMat
-    waterMesh.hasVertexAlpha = true
+    waterMesh.hasVertexAlpha = false
     waterMesh.isPickable = false
     waterMesh.parent = group
   }
@@ -450,13 +473,13 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     }
     const swMat = createLambertMaterial('terrain-sw-mat', scene, {
       backFaceCulling: false,
-      alpha: 0.25,
+      alpha: SURFACE_WATER_ALPHA,
       zOffset: -2,
-      diffuseColor: swTex ? new Color3(0.88, 0.96, 0.97) : new Color3(0.54, 0.78, 0.85),
+      diffuseColor: swTex ? rgbToColor3(SURFACE_WATER_TEXTURE_TINT) : rgbToColor3(SURFACE_WATER_FALLBACK_TINT),
     })
     if (swTex) swMat.diffuseTexture = swTex
     swMesh.material = swMat
-    swMesh.hasVertexAlpha = true
+    swMesh.hasVertexAlpha = false
     swMesh.isPickable = false
     swMesh.parent = group
   }
@@ -467,6 +490,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
 export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, scene: Scene): TransformNode {
   const group = new TransformNode('terrain-water-group', scene)
   group.setEnabled(false)
+  const waterFlowTransformCache = new Map<string, WaterFlowUvTransform>()
 
   const waterVertices: number[] = []
   const waterColors: number[] = []
@@ -479,13 +503,10 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
       if (!map.isTileInActiveChunk(x, z)) continue
       if (!shouldRenderWater(map, x, z)) continue
       const wY = map.getTileWaterLevel(x, z) + 0.02
-      const WATER_UV_SCALE = 5
-      const u0 = x / WATER_UV_SCALE, u1 = (x + 1) / WATER_UV_SCALE
-      const v0 = z / WATER_UV_SCALE, v1 = (z + 1) / WATER_UV_SCALE
-      const wc = groundColor('water', 1.0)
+      const wc = WATER_SURFACE_VERTEX_COLOR
       waterVertices.push(x, wY, z,  x+1, wY, z,  x, wY, z+1,  x+1, wY, z+1)
       waterColors.push(wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1)
-      waterUVs.push(u0, v0,  u1, v0,  u0, v1,  u1, v1)
+      pushWaterUvs(map, x, z, waterUVs, waterFlowTransformCache)
       waterIndices.push(waterBase, waterBase+2, waterBase+1, waterBase+2, waterBase+3, waterBase+1)
       waterBase += 4
     }
@@ -499,9 +520,9 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
     }
     const mat = createLambertMaterial('terrain-water-mat', scene, {
       backFaceCulling: false,
-      alpha: 0.88,
+      alpha: WATER_TEXTURE_ALPHA,
       zOffset: -1,
-      diffuseColor: waterTexture ? new Color3(0.83, 0.91, 1.0) : new Color3(0.42, 0.52, 0.70),
+      diffuseColor: waterTexture ? rgbToColor3(WATER_TEXTURE_TINT) : rgbToColor3(WATER_FALLBACK_TINT),
     })
     if (waterTexture) mat.diffuseTexture = waterTexture
     mesh.material = mat
@@ -512,20 +533,17 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
 
   const swVertices: number[] = [], swColors: number[] = [], swUVs: number[] = [], swIndices: number[] = []
   let swBase = 0
-  const _swColor: RGB = { r: 0.55, g: 0.72, b: 0.78 }
   for (let z = 0; z < map.height; z++) {
     for (let x = 0; x < map.width; x++) {
       if (!map.isTileInActiveChunk(x, z)) continue
       const tile = map.getTile(x, z)
       if (!tile?.waterSurface) continue
       const h = map.getTileCornerHeights(x, z)
-      const LIFT = 0.05, WATER_UV_SCALE = 5
-      const u0 = x / WATER_UV_SCALE, u1 = (x + 1) / WATER_UV_SCALE
-      const v0 = z / WATER_UV_SCALE, v1 = (z + 1) / WATER_UV_SCALE
-      const wc = _swColor
+      const LIFT = 0.05
+      const wc = SURFACE_WATER_VERTEX_COLOR
       swVertices.push(x, h.tl+LIFT, z,  x+1, h.tr+LIFT, z,  x, h.bl+LIFT, z+1,  x+1, h.br+LIFT, z+1)
       swColors.push(wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1)
-      swUVs.push(u0, v0,  u1, v0,  u0, v1,  u1, v1)
+      pushWaterUvs(map, x, z, swUVs, waterFlowTransformCache)
       swIndices.push(swBase, swBase+2, swBase+1, swBase+2, swBase+3, swBase+1)
       swBase += 4
     }
@@ -541,9 +559,9 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
     }
     const mat = createLambertMaterial('terrain-sw-mat', scene, {
       backFaceCulling: false,
-      alpha: 0.25,
+      alpha: SURFACE_WATER_ALPHA,
       zOffset: -2,
-      diffuseColor: swTex ? new Color3(0.88, 0.96, 0.97) : new Color3(0.54, 0.78, 0.85),
+      diffuseColor: swTex ? rgbToColor3(SURFACE_WATER_TEXTURE_TINT) : rgbToColor3(SURFACE_WATER_FALLBACK_TINT),
     })
     if (swTex) mat.diffuseTexture = swTex
     mesh.material = mat

@@ -2464,12 +2464,15 @@ const server = Bun.serve<SocketData>({
         const mapWidth = mapData.map?.width ?? meta.width;
         const mapHeight = mapData.map?.height ?? meta.height;
 
-        // Preserve existing texturePlanes if editor didn't include the field (partial-payload protection).
+        // Preserve existing metadata fields if editor didn't include them
+        // (partial-payload protection).
         const { placedObjects: _, ...mapDataWithoutObjects } = mapData;
         let preservedTexturePlanes = mapDataWithoutObjects.map?.texturePlanes;
-        if (preservedTexturePlanes === undefined) {
+        let preservedChunkWaterFlows = mapDataWithoutObjects.map?.chunkWaterFlows;
+        if (preservedTexturePlanes === undefined || preservedChunkWaterFlows === undefined) {
           const existingMap = await loadJsonOrNull<KCMapFile>(mapJsonPath);
-          preservedTexturePlanes = existingMap?.map?.texturePlanes ?? [];
+          if (preservedTexturePlanes === undefined) preservedTexturePlanes = existingMap?.map?.texturePlanes ?? [];
+          if (preservedChunkWaterFlows === undefined) preservedChunkWaterFlows = existingMap?.map?.chunkWaterFlows ?? {};
         }
         const mapFileToSave = {
           ...mapDataWithoutObjects,
@@ -2479,6 +2482,7 @@ const server = Bun.serve<SocketData>({
             tiles: [],    // stripped — stored in tiles/ chunks
             heights: [],  // stripped — stored in heights/ chunks
             texturePlanes: preservedTexturePlanes,
+            chunkWaterFlows: preservedChunkWaterFlows,
           },
         };
 
@@ -2749,6 +2753,7 @@ const server = Bun.serve<SocketData>({
             height,
             waterLevel: -0.3,
             chunkWaterLevels: {},
+            chunkWaterFlows: {},
             texturePlanes: [],
             tiles: [],    // metadata-only — no chunk files needed for default empty map
             heights: [],  // metadata-only — zeros are the default
