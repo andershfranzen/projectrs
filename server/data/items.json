@@ -231,7 +231,8 @@
     "stackable": false,
     "equippable": false,
     "value": 15,
-    "icon": "bronze_bar_169.png"
+    "icon": "bronze_bar_169.png",
+    "model": "/assets/models/bars/BronzeBar.glb"
   },
   {
     "id": 30,
@@ -240,7 +241,8 @@
     "stackable": false,
     "equippable": false,
     "value": 30,
-    "icon": "iron_bar_170.png"
+    "icon": "iron_bar_170.png",
+    "model": "/assets/models/bars/IronBar.glb"
   },
   {
     "id": 31,
@@ -432,7 +434,8 @@
     "stackable": false,
     "equippable": false,
     "value": 60,
-    "icon": "steel_bar_171.png"
+    "icon": "steel_bar_171.png",
+    "model": "/assets/models/bars/SteelBar.glb"
   },
   {
     "id": 49,
@@ -441,7 +444,8 @@
     "stackable": false,
     "equippable": false,
     "value": 120,
-    "icon": "mithril_bar_173.png"
+    "icon": "mithril_bar_173.png",
+    "model": "/assets/models/bars/MithrilBar.glb"
   },
   {
     "id": 50,
@@ -449,7 +453,8 @@
     "description": "A bar of black bronze.",
     "stackable": false,
     "equippable": false,
-    "value": 240
+    "value": 240,
+    "model": "/assets/models/bars/BlackBronzeBar.glb"
   },
   {
     "id": 52,
@@ -1590,7 +1595,8 @@
     "description": "A bar of silver.",
     "stackable": false,
     "equippable": false,
-    "value": 50
+    "value": 50,
+    "model": "/assets/models/bars/SilverBar.glb"
   },
   {
     "id": 200,
