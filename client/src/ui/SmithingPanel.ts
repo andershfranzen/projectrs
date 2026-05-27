@@ -176,6 +176,18 @@ export class SmithingPanel {
     this.gridEl.innerHTML = '';
     const itemCounts = this.countInventory(this.allInventory);
     const toolOk = !this.requiresTool || this.cachedHasHammer;
+    const visibleRecipes = this.allRecipes
+      .map((recipe, index) => ({
+        recipe,
+        index,
+        maxQuantity: this.maxQuantityForRecipe(recipe, itemCounts),
+      }))
+      .filter(({ maxQuantity }) => maxQuantity > 0);
+
+    if (visibleRecipes.length === 0) {
+      this.renderEmptyState(this.cachedHasHammer);
+      return;
+    }
 
     const grid = document.createElement('div');
     grid.style.cssText = `
@@ -185,12 +197,11 @@ export class SmithingPanel {
       align-items: stretch;
     `;
 
-    this.allRecipes.forEach((recipe, index) => {
+    visibleRecipes.forEach(({ recipe, index, maxQuantity }) => {
       const inputDef = this.cachedItemDefs.get(recipe.inputItemId);
       const outputDef = this.cachedItemDefs.get(recipe.outputItemId);
       const inputName = inputDef?.name ?? `Item ${recipe.inputItemId}`;
       const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
-      const maxQuantity = this.maxQuantityForRecipe(recipe, itemCounts);
       const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
       const hasSecondInput = recipe.secondInputItemId === undefined
         || (itemCounts.get(recipe.secondInputItemId) ?? 0) >= (recipe.secondInputQuantity ?? 1);

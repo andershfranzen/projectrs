@@ -2,12 +2,41 @@
   {
     "id": 1,
     "name": "Chicken",
-    "health": 5,
+    "health": 6,
     "attack": 1,
     "defence": 1,
     "strength": 1,
     "attackSpeed": 4,
-    "respawnTime": 15,
+    "respawnTime": 30,
+    "aggressive": false,
+    "wanderRange": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 11,
+        "quantity": 1,
+        "chance": 0.9
+      },
+      {
+        "itemId": 19,
+        "quantity": 3,
+        "chance": 1
+      }
+    ]
+  },
+  {
+    "id": 23,
+    "name": "Rooster",
+    "health": 7,
+    "attack": 2,
+    "defence": 1,
+    "strength": 2,
+    "attackSpeed": 4,
+    "respawnTime": 30,
     "aggressive": false,
     "wanderRange": 2,
     "lootTable": [
@@ -46,7 +75,7 @@
         "chance": 1
       },
       {
-        "itemId": 11,
+        "itemId": 263,
         "quantity": 1,
         "chance": 0.6
       }
@@ -171,13 +200,13 @@
   {
     "id": 6,
     "name": "Spider",
-    "health": 12,
+    "health": 15,
     "attack": 3,
     "defence": 2,
     "strength": 3,
     "attackSpeed": 3,
     "respawnTime": 18,
-    "aggressive": false,
+    "aggressive": true,
     "wanderRange": 3,
     "lootTable": [
       {

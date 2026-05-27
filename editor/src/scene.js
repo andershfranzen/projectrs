@@ -68,9 +68,11 @@ import {
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
-// exactly what we need for the editor's per-spawn preview. The GLB + idle anim
-// are served from editor/public/Character models (symlinked to client's copy).
+// exactly what we need for the editor's per-spawn preview. Runtime GLBs are
+// served through the editor dev server's client-public proxy.
 import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
+import { Npc3DEntity } from '@client/rendering/Npc3DEntity'
+import { NPC_3D_MODELS } from '@client/data/NpcConfig'
 import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
 import { resolveItemModelPath as resolveRuntimeItemModelPath } from '@client/rendering/ItemIcon'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
@@ -397,6 +399,25 @@ function tuneModelLighting(model) {
   function npcSpawnIsStationary(spawn, def = npcDefById(spawn?.npcId)) {
     if (!spawn) return false
     return def?.stationary === true || (spawn.wanderRange ?? def?.wanderRange ?? 0) <= 0
+  }
+
+  function npc3DModelConfig(spawn) {
+    return spawn ? NPC_3D_MODELS[spawn.npcId] : null
+  }
+
+  function shouldShowNpcPreview(spawn) {
+    return !!(npc3DModelConfig(spawn) || spawn?.appearance)
+  }
+
+  function npcPreviewKey(spawn) {
+    const modelCfg = npc3DModelConfig(spawn)
+    if (modelCfg) {
+      return `npc3d:${spawn.npcId}:${modelCfg.file}:${modelCfg.scale}`
+    }
+    if (spawn?.appearance) {
+      return `character:${getCharacterModelPath(spawn.appearance)}`
+    }
+    return ''
   }
 
   function addNpcSpawn(input) {
@@ -761,32 +782,50 @@ function tuneModelLighting(model) {
   }
 
   function ensureNpcPreview(spawn) {
-    if (!spawn || !spawn.appearance) {
+    if (!shouldShowNpcPreview(spawn)) {
       disposeNpcPreview(spawn)
       return
     }
-    const modelPath = getCharacterModelPath(spawn.appearance)
+    const previewKey = npcPreviewKey(spawn)
     let entry = npcPreviews.get(spawn.id)
-    if (entry && entry.entity.getModelPath && entry.entity.getModelPath() !== modelPath) {
+    if (entry && entry.key !== previewKey) {
       disposeNpcPreview(spawn)
       entry = null
     }
     if (!entry) {
-      const entity = new CharacterEntity(scene, {
-        name: `npcPreview_${spawn.id}`,
-        modelPath,
-        targetHeight: CHARACTER_TARGET_HEIGHT,
-        additionalAnimations: [
-          { name: 'idle', path: CHARACTER_IDLE_ANIM },
-        ],
-      })
-      entry = { entity, hiddenNodes: new Set() }
+      const modelCfg = npc3DModelConfig(spawn)
+      if (modelCfg) {
+        const def = npcDefById(spawn.npcId)
+        const label = spawn.name || def?.name || `NPC ${spawn.npcId}`
+        const entity = new Npc3DEntity(scene, modelCfg.file, modelCfg.scale, modelCfg.anims, {
+          label,
+          materialColors: modelCfg.materialColors,
+          originMode: modelCfg.originMode,
+          groundOffset: modelCfg.groundOffset,
+          animSpeedRatio: modelCfg.animSpeedRatio,
+          preserveAnimationRoles: modelCfg.preserveAnimationRoles,
+        })
+        entity.setEntityIdMetadata(spawn.id)
+        entry = { entity, hiddenNodes: new Set(), kind: 'npc3d', key: previewKey }
+      } else {
+        const modelPath = getCharacterModelPath(spawn.appearance)
+        const entity = new CharacterEntity(scene, {
+          name: `npcPreview_${spawn.id}`,
+          modelPath,
+          targetHeight: CHARACTER_TARGET_HEIGHT,
+          additionalAnimations: [
+            { name: 'idle', path: CHARACTER_IDLE_ANIM },
+          ],
+        })
+        entry = { entity, hiddenNodes: new Set(), kind: 'character', key: previewKey }
+      }
       npcPreviews.set(spawn.id, entry)
     }
     const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
     entry.entity.setPositionXYZ(spawn.x, y, spawn.z)
     entry.entity.setFacingAngle(npcFacingAngle(spawn))
     maskPlacedObjectsForPreview(spawn, entry)
+    if (entry.kind !== 'character') return
     // applyAppearance idempotently re-derives material colors + hair mesh
     // visibility from the appearance struct; safe to call on every edit.
     // Per-spawn raw RGB overrides (spawn.customColors) take precedence over
@@ -801,6 +840,7 @@ function tuneModelLighting(model) {
   }
 
   function disposeNpcPreview(spawn) {
+    if (!spawn) return
     const entry = npcPreviews.get(spawn.id)
     if (entry) {
       restorePlacedObjectsFromPreview(entry)
@@ -893,12 +933,17 @@ function tuneModelLighting(model) {
     const liveIds = new Set(npcSpawns.map(s => s.id))
     for (const id of [...npcPreviews.keys()]) {
       if (!liveIds.has(id)) {
-        npcPreviews.get(id).dispose()
+        const entry = npcPreviews.get(id)
+        if (entry) {
+          restorePlacedObjectsFromPreview(entry)
+          entry.entity.dispose()
+        }
         npcPreviews.delete(id)
       }
     }
     for (const spawn of npcSpawns) {
-      if (spawn.appearance) ensureNpcPreview(spawn)
+      if (shouldShowNpcPreview(spawn)) ensureNpcPreview(spawn)
+      else disposeNpcPreview(spawn)
     }
 
     for (const spawn of npcSpawns) {
@@ -909,13 +954,9 @@ function tuneModelLighting(model) {
       const color = isSelected ? new Color3(1, 1, 0.2) : (aggressive ? new Color3(0.9, 0.2, 0.15) : new Color3(0.15, 0.7, 0.9))
       const showFacing = isSelected || npcSpawnIsStationary(spawn, def) || Number.isFinite(spawn.facing)
 
-      // Spawns with an appearance override render a full character preview
-      // (ensureNpcPreview above) — the cylinder + top sphere would clip
-      // through it and hide the body the user is trying to design. For those
-      // we drop a thin ground disc as the selection affordance instead.
-      // Spawns without appearance still get the full marker so they stay
-      // visible from a distance.
-      if (spawn.appearance) {
+      // Spawns with a real 3D preview would be obscured by the full marker.
+      // Use a thin ground disc as the selection affordance instead.
+      if (shouldShowNpcPreview(spawn)) {
         const disc = MeshBuilder.CreateDisc(`npcSpawnDisc_${spawn.id}`, { radius: 0.45, tessellation: 24 }, scene)
         const discMat = new StandardMaterial(`npcSpawnDiscMat_${spawn.id}`, scene)
         discMat.diffuseColor = color
@@ -2689,7 +2730,7 @@ let selectedWaterFlowChunk = null
     }
     return scored
       .sort((a, b) => a.score - b.score || (a.def.name || '').localeCompare(b.def.name || '') || a.def.id - b.def.id)
-      .slice(0, 16)
+      .slice(0, terms.length > 0 ? 16 : scored.length)
       .map(row => row.def)
   }
 

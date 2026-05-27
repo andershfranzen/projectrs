@@ -7233,5 +7233,100 @@
       "y": 1.15,
       "z": 1.15
     }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 95.5,
+      "y": 0,
+      "z": 26
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 94.5,
+      "y": 0,
+      "z": 26
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 93.5,
+      "y": 0,
+      "z": 26
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 92.5,
+      "y": 0,
+      "z": 26
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 91.5,
+      "y": 0,
+      "z": 26
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

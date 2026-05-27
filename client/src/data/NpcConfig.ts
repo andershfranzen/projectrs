@@ -4,7 +4,7 @@ export const NPC_NAMES: Record<number, string> = {
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   16: 'Banker',
-  17: 'Snow Wolf', 18: 'Rat', 22: 'New Spider',
+  17: 'Snow Wolf', 18: 'Rat', 22: 'New Spider', 23: 'Rooster',
   // 100 was the Custom Humanoid template; it is now reused for in-editor
   // mob authoring (the first session edited it into Vampire). 101 is the
   // permanent blank baseline. To avoid the "lost my template" issue going
@@ -34,6 +34,8 @@ export interface Npc3DModelEntry {
 }
 
 export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
+  1:  { file: '/models/npcs/chicken_v2.glb', scale: 1.2, originMode: 'boundsCenter', animSpeedRatio: { walk: 1.85 }, preserveAnimationRoles: ['idle', 'walk', 'attack'], anims: { idle: 'Idle_Game', walk: 'Walk_Game', attack: 'Peck_Game' } },
+  23: { file: '/models/npcs/rooster_v1.glb', scale: 1.35, originMode: 'boundsCenter', animSpeedRatio: { walk: 1.85 }, preserveAnimationRoles: ['idle', 'walk', 'attack'], anims: { idle: 'Idle_Game', walk: 'Walk_Game', attack: 'Peck_Game' } },
   2:  { file: '/models/npcs/rat.glb', scale: 0.2, anims: { idle: 'RatArmature|RatArmature|Rat_Idle', walk: 'RatArmature|RatArmature|Rat_Walk', attack: 'RatArmature|RatArmature|Rat_Attack', death: 'RatArmature|RatArmature|Rat_Death' } },
   4:  { file: '/models/npcs/wolf.glb', scale: 0.4, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   6:  { file: '/models/npcs/spider.glb', scale: 0.2, anims: { idle: 'SpiderArmature|SpiderArmature|Spider_Idle', walk: 'SpiderArmature|SpiderArmature|Spider_Walk', attack: 'SpiderArmature|SpiderArmature|Spider_Attack', death: 'SpiderArmature|SpiderArmature|Spider_Death' } },
@@ -59,7 +61,6 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
  *  `stationary` is a legacy authoring hint; the client only skips walk anims
  *  when the server NPC def has `stationary: true`. `combat` adds melee anims. */
 export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; combat?: boolean }> = {
-  1:  { stationary: false },                // Chicken
   3:  { stationary: false, combat: true },  // Goblin
   5:  { stationary: false, combat: true },  // Skeleton
   7:  { stationary: false, combat: true },  // Guard

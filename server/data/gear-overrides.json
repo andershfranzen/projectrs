@@ -1834,16 +1834,16 @@
     "bodyTypeOverrides": {
       "1": {
         "localPosition": {
-          "x": 0,
-          "y": 0.034,
-          "z": 0.034
+          "x": -0.011,
+          "y": 0.159,
+          "z": 0.023
         },
         "localRotation": {
           "x": 0,
           "y": 0,
           "z": 0
         },
-        "scale": 0.889
+        "scale": 1.31
       }
     }
   },
@@ -2339,7 +2339,7 @@
       "1": {
         "localPosition": {
           "x": -0.739,
-          "y": 0.095,
+          "y": 0.057,
           "z": 0.02
         },
         "localRotation": {

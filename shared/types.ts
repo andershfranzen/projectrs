@@ -26,6 +26,9 @@ export interface NpcState extends EntityState {
   npcId: number;
 }
 
+export const HEAD_RENDER_MODES = ['helmet', 'hat', 'hairTuck'] as const;
+export type HeadRenderMode = typeof HEAD_RENDER_MODES[number];
+
 export interface ItemDef {
   id: number;
   name: string;
@@ -42,6 +45,15 @@ export interface ItemDef {
    *     neck stay visible (RuneScape-style chainbody/sleeveless aesthetic).
    */
   bodyHideStyle?: 'plate' | 'chain';
+  /**
+   * For `equipSlot === 'head'` items only — how the character head/hair should
+   * render while the gear is equipped.
+   *   - 'helmet' (default): hide head and hair; used by closed helmets.
+   *   - 'hat': keep the normal head and hair visible; used by open hats that
+   *     rest on top of the hairstyle.
+   *   - 'hairTuck': keep the face visible but tuck hair into a compact shape.
+   */
+  headRenderMode?: HeadRenderMode;
   attackSpeed?: number;
   weaponStyle?: 'stab' | 'slash' | 'crush' | 'bow' | 'crossbow';
   twoHanded?: boolean;

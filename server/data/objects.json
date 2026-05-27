@@ -343,6 +343,15 @@
         "xpReward": 30
       },
       {
+        "inputItemId": 263,
+        "inputQuantity": 1,
+        "outputItemId": 15,
+        "outputQuantity": 1,
+        "skill": "cooking",
+        "levelRequired": 1,
+        "xpReward": 30
+      },
+      {
         "inputItemId": 27,
         "inputQuantity": 1,
         "outputItemId": 28,

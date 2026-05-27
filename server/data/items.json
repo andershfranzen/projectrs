@@ -106,6 +106,7 @@
     "stackable": false,
     "equippable": false,
     "value": 2,
+    "model": "/assets/models/BeefRat.glb",
     "icon": "cookedmeat_132.png"
   },
   {
@@ -141,6 +142,7 @@
     "stackable": true,
     "equippable": false,
     "value": 1,
+    "model": "/assets/models/Feather.glb",
     "icon": "Feather_381.png"
   },
   {
@@ -1676,8 +1678,8 @@
   },
   {
     "id": 206,
-    "name": "Pointed Mage Hat",
-    "description": "A tall pointed wizard hat.",
+    "name": "Blue Wizard Hat",
+    "description": "A tall pointed blue wizard hat.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -1686,7 +1688,10 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 6,
-    "value": 90
+    "headRenderMode": "hat",
+    "value": 90,
+    "icon": "A_blue_wizards_hat_1264.png",
+    "model": "/assets/equipment/head/BlueWizardHat.glb"
   },
   {
     "id": 207,
@@ -2283,5 +2288,23 @@
     "equippable": false,
     "value": 260,
     "model": "/assets/models/gems/Onyx.glb"
+  },
+  {
+    "id": 262,
+    "name": "Unstrung Shortbow",
+    "description": "A shortbow carved from logs, ready for a bowstring.",
+    "stackable": false,
+    "equippable": false,
+    "value": 12,
+    "model": "/assets/models/Shortbow.glb"
+  },
+  {
+    "id": 263,
+    "name": "Raw Beef",
+    "description": "Raw beef from a cow.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "model": "/assets/models/Beef.glb"
   }
 ]

@@ -512,6 +512,10 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!Number.isInteger(quantity) || quantity === 0 || quantity < -1 || quantity > 1000) {
         return invalid('bad-use-item-quantity');
       }
+      const recipeIndex = values[5] ?? 0;
+      if (!Number.isInteger(recipeIndex) || recipeIndex < 0 || recipeIndex > 1000) {
+        return invalid('bad-use-item-recipe-index');
+      }
       return OK_PACKET;
     }
 
@@ -1158,7 +1162,8 @@ function handleDecryptedGameSocketMessage(
       const toSlot = values[2];
       const toItemId = values[3];
       const quantity = values[4] ?? 1;
-      world.handlePlayerUseItemOnItem(playerId, fromSlot, fromItemId, toSlot, toItemId, quantity);
+      const recipeIndex = values[5] ?? 0;
+      world.handlePlayerUseItemOnItem(playerId, fromSlot, fromItemId, toSlot, toItemId, quantity, recipeIndex);
       break;
     }
 

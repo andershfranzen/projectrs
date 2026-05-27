@@ -2,7 +2,7 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
-  BUCKET_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID,
+  BUCKET_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   spellReagentSummary, spellSchoolSkill,
   zeroBonuses,
@@ -42,6 +42,8 @@ import {
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape'];
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
+const LOG_CRAFT_BUCKET_RECIPE_INDEX = 0;
+const LOG_CRAFT_SHORTBOW_RECIPE_INDEX = 1;
 
 export interface SkillData {
   level: number;
@@ -2580,7 +2582,7 @@ export class SidePanel {
       if (index === using.slot) { this.clearUsingInvItem(); return; }
       const target = this.invSlots[index];
       if (!target) { this.clearUsingInvItem(); return; }
-      if (this.promptBucketCarvingQuantity(using.slot, using.itemId, index, target.itemId)) {
+      if (this.promptLogCraftingMenu(using.slot, using.itemId, index, target.itemId)) {
         this.clearUsingInvItem();
         return;
       }
@@ -2599,18 +2601,93 @@ export class SidePanel {
     firstOption?.action();
   }
 
-  private promptBucketCarvingQuantity(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
-    const max = this.maxBucketCarvingBatchQuantity(fromItemId, toItemId);
-    if (max <= 1) return false;
+  private promptLogCraftingMenu(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
+    if (!this.isLogCraftingRecipePair(fromItemId, toItemId)) return false;
     if (!this.requestQuantity) return false;
 
-    const outputName = this.itemDefs.get(BUCKET_ITEM_ID)?.name ?? 'Bucket';
+    const logsHeld = this.countInventoryItem(LOGS_ITEM_ID);
+    if (logsHeld <= 0) return false;
+
+    const bucketMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, 2);
+    const shortbowMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, 1);
+    const bucketName = this.itemDefs.get(BUCKET_ITEM_ID)?.name ?? 'Bucket';
+    const shortbowName = this.itemDefs.get(SHORTBOW_UNSTRUNG_ITEM_ID)?.name ?? 'Unstrung Shortbow';
     this.requestQuantity({
-      title: `Make ${outputName}`,
-      prompt: `Make how many ${outputName}s?`,
+      inputType: 'choice',
+      title: 'Carve Logs',
+      prompt: 'Choose what to carve from your logs.',
+      details: [
+        `You have ${this.formatLogs(logsHeld)}.`,
+      ],
+      choices: [
+        {
+          label: bucketName,
+          detail: bucketMax > 0
+            ? `Costs 2 logs each. You can make ${bucketMax} ${this.pluralizeItemName(bucketName, bucketMax).toLowerCase()}.`
+            : 'Costs 2 logs each.',
+          disabled: bucketMax <= 0,
+          onSelect: () => this.promptLogCraftingQuantity({
+            fromSlot,
+            fromItemId,
+            toSlot,
+            toItemId,
+            recipeIndex: LOG_CRAFT_BUCKET_RECIPE_INDEX,
+            outputItemId: BUCKET_ITEM_ID,
+            logCost: 2,
+            fallbackName: 'Bucket',
+          }),
+        },
+        {
+          label: shortbowName,
+          detail: `Costs 1 log each. You can make ${shortbowMax} ${this.pluralizeItemName(shortbowName, shortbowMax).toLowerCase()}.`,
+          disabled: shortbowMax <= 0,
+          onSelect: () => this.promptLogCraftingQuantity({
+            fromSlot,
+            fromItemId,
+            toSlot,
+            toItemId,
+            recipeIndex: LOG_CRAFT_SHORTBOW_RECIPE_INDEX,
+            outputItemId: SHORTBOW_UNSTRUNG_ITEM_ID,
+            logCost: 1,
+            fallbackName: 'Unstrung Shortbow',
+          }),
+        },
+      ],
+    });
+    return true;
+  }
+
+  private promptLogCraftingQuantity(opts: {
+    fromSlot: number;
+    fromItemId: number;
+    toSlot: number;
+    toItemId: number;
+    recipeIndex: number;
+    outputItemId: number;
+    logCost: number;
+    fallbackName: string;
+  }): void {
+    if (!this.requestQuantity) return;
+    const currentFrom = this.invSlots[opts.fromSlot];
+    const currentTo = this.invSlots[opts.toSlot];
+    if (!currentFrom || currentFrom.itemId !== opts.fromItemId) return;
+    if (!currentTo || currentTo.itemId !== opts.toItemId) return;
+
+    const max = this.maxLogCraftingBatchQuantity(opts.fromItemId, opts.toItemId, opts.logCost);
+    if (max <= 0) return;
+    const outputName = this.itemDefs.get(opts.outputItemId)?.name ?? opts.fallbackName;
+    const outputLabel = this.pluralizeItemName(outputName, max).toLowerCase();
+    const logsHeld = this.countInventoryItem(LOGS_ITEM_ID);
+    this.requestQuantity({
+      title: `Carve ${this.pluralizeItemName(outputName, max)}`,
+      prompt: `Choose how many ${outputLabel} to carve.`,
+      details: [
+        `Cost: ${this.formatLogs(opts.logCost)} per ${outputName}`,
+        `You have ${this.formatLogs(logsHeld)}, enough for ${max} ${outputLabel}.`,
+      ],
       max,
       defaultValue: max,
-      submitLabel: 'Make',
+      submitLabel: 'Carve',
       quickAmounts: [
         { label: '1', value: 1 },
         { label: '5', value: 5 },
@@ -2618,20 +2695,19 @@ export class SidePanel {
         { label: 'All', value: 'all' },
       ],
       onSubmit: (quantity) => {
-        const currentFrom = this.invSlots[fromSlot];
-        const currentTo = this.invSlots[toSlot];
-        if (!currentFrom || currentFrom.itemId !== fromItemId) return;
-        if (!currentTo || currentTo.itemId !== toItemId) return;
-        const currentMax = this.maxBucketCarvingBatchQuantity(fromItemId, toItemId);
+        const latestFrom = this.invSlots[opts.fromSlot];
+        const latestTo = this.invSlots[opts.toSlot];
+        if (!latestFrom || latestFrom.itemId !== opts.fromItemId) return;
+        if (!latestTo || latestTo.itemId !== opts.toItemId) return;
+        const currentMax = this.maxLogCraftingBatchQuantity(opts.fromItemId, opts.toItemId, opts.logCost);
         if (currentMax <= 0) return;
         const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
         this.network.sendRaw(encodePacket(
           ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
-          fromSlot, fromItemId, toSlot, toItemId, requested,
+          opts.fromSlot, opts.fromItemId, opts.toSlot, opts.toItemId, requested, opts.recipeIndex,
         ));
       },
     });
-    return true;
   }
 
   private promptSoftClayQuantity(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
@@ -2662,14 +2738,23 @@ export class SidePanel {
     return true;
   }
 
-  private maxBucketCarvingBatchQuantity(fromItemId: number, toItemId: number): number {
-    if (!this.isBucketCarvingRecipePair(fromItemId, toItemId)) return 0;
-    return Math.floor(this.countInventoryItem(LOGS_ITEM_ID) / 2);
+  private maxLogCraftingBatchQuantity(fromItemId: number, toItemId: number, logCost: number): number {
+    if (!this.isLogCraftingRecipePair(fromItemId, toItemId)) return 0;
+    return Math.floor(this.countInventoryItem(LOGS_ITEM_ID) / Math.max(1, logCost));
   }
 
-  private isBucketCarvingRecipePair(fromItemId: number, toItemId: number): boolean {
+  private isLogCraftingRecipePair(fromItemId: number, toItemId: number): boolean {
     return (fromItemId === KNIFE_ITEM_ID && toItemId === LOGS_ITEM_ID)
       || (toItemId === KNIFE_ITEM_ID && fromItemId === LOGS_ITEM_ID);
+  }
+
+  private formatLogs(quantity: number): string {
+    return `${quantity} ${quantity === 1 ? 'log' : 'logs'}`;
+  }
+
+  private pluralizeItemName(name: string, quantity: number): string {
+    if (quantity === 1 || name.endsWith('s')) return name;
+    return `${name}s`;
   }
 
   private maxSoftClayBatchQuantity(fromItemId: number, toItemId: number): number {

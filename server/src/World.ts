@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -75,6 +75,18 @@ const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
     message: 'You carve the logs into a bucket.',
     repeatable: true,
     startMessage: 'You start carving buckets.',
+    stopMessage: 'You run out of logs.',
+  },
+  {
+    inputItemIds: [KNIFE_ITEM_ID, LOGS_ITEM_ID],
+    consume: [{ itemId: LOGS_ITEM_ID, quantity: 1 }],
+    outputs: [{ itemId: SHORTBOW_UNSTRUNG_ITEM_ID, quantity: 1 }],
+    skill: 'crafting',
+    levelRequired: 1,
+    xpReward: 5,
+    message: 'You carve the logs into an unstrung shortbow.',
+    repeatable: true,
+    startMessage: 'You start carving unstrung shortbows.',
     stopMessage: 'You run out of logs.',
   },
 ];
@@ -4316,6 +4328,7 @@ export class World {
     toSlot: number,
     toItemId: number,
     quantity: number = 1,
+    recipeIndex: number = 0,
   ): void {
     if (fromSlot === toSlot) return;
     const player = this.validateInvUse(playerId, fromSlot, fromItemId);
@@ -4323,7 +4336,7 @@ export class World {
     if (toSlot < 0 || toSlot >= player.inventory.length) return;
     if (player.inventory[toSlot]?.itemId !== toItemId) return;
     this.interruptPlayerAction(playerId, player);
-    const recipe = this.findItemOnItemRecipe(fromItemId, toItemId);
+    const recipe = this.findItemOnItemRecipe(fromItemId, toItemId, recipeIndex);
     if (recipe) {
       if (recipe.repeatable && quantity !== 1) {
         this.startItemProduction(playerId, player, recipe, quantity);
@@ -4336,11 +4349,17 @@ export class World {
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
-  private findItemOnItemRecipe(fromItemId: number, toItemId: number): ItemOnItemRecipe | null {
-    return ITEM_ON_ITEM_RECIPES.find(recipe => {
+  private findItemOnItemRecipes(fromItemId: number, toItemId: number): ItemOnItemRecipe[] {
+    return ITEM_ON_ITEM_RECIPES.filter(recipe => {
       const [a, b] = recipe.inputItemIds;
       return (a === fromItemId && b === toItemId) || (a === toItemId && b === fromItemId);
-    }) ?? null;
+    });
+  }
+
+  private findItemOnItemRecipe(fromItemId: number, toItemId: number, recipeIndex: number = 0): ItemOnItemRecipe | null {
+    const recipes = this.findItemOnItemRecipes(fromItemId, toItemId);
+    const index = Number.isFinite(recipeIndex) ? Math.max(0, Math.trunc(recipeIndex)) : 0;
+    return recipes[index] ?? null;
   }
 
   private handleItemOnItemRecipe(

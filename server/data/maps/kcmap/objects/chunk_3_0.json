@@ -2392,5 +2392,119 @@
       "y": 1,
       "z": 1
     }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 31.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 30.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 29.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 28.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 27.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence3",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 26.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

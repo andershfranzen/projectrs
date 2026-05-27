@@ -38,6 +38,7 @@ const ITEM_THUMBNAIL_FAMILY_SUFFIXES: Array<{ label: string; aliases: string[] }
   { label: 'Battle Axe', aliases: ['battle axe', 'battleaxe'] },
   { label: 'Beret', aliases: ['beret'] },
   { label: 'Bishop Hat', aliases: ['bishop hat'] },
+  { label: 'Blue Wizard Hat', aliases: ['blue wizard hat', 'blue wizards hat'] },
   { label: 'Bycocket Hat', aliases: ['bycocket hat'] },
   { label: 'Camel Cape', aliases: ['camel cape'] },
   { label: 'Chain Mail Body', aliases: ['chain mail body', 'chainmail body', 'chainbody'] },

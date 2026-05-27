@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -187,6 +187,7 @@ const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck',
 const EQUIP_SKILLS = new Set(['accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
 const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
+const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);
 
 function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok: false; error: string } {
   if (!Array.isArray(items)) return { ok: false, error: 'Body must be { items: ItemDef[] }' };
@@ -211,6 +212,7 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
     if (item.equipSkill !== undefined && !EQUIP_SKILLS.has(String(item.equipSkill))) return { ok: false, error: `Item ${item.id} has invalid equipSkill` };
     if (item.weaponStyle !== undefined && !WEAPON_STYLES.has(String(item.weaponStyle))) return { ok: false, error: `Item ${item.id} has invalid weaponStyle` };
     if (item.toolType !== undefined && !TOOL_TYPES.has(String(item.toolType))) return { ok: false, error: `Item ${item.id} has invalid toolType` };
+    if (item.headRenderMode !== undefined && !HEAD_RENDER_MODE_SET.has(String(item.headRenderMode))) return { ok: false, error: `Item ${item.id} has invalid headRenderMode` };
     if (item.bodyTypeModels !== undefined) {
       if (!item.bodyTypeModels || typeof item.bodyTypeModels !== 'object' || Array.isArray(item.bodyTypeModels)) {
         return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels` };

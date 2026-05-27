@@ -300,22 +300,6 @@
       "name": "Farmer"
     },
     {
-      "id": 36,
-      "npcId": 20,
-      "x": 291.5,
-      "z": 137.5,
-      "wanderRange": 6,
-      "appearance": {
-        "shirtColor": 5,
-        "pantsColor": 2,
-        "shoesColor": 1,
-        "hairColor": 8,
-        "beltColor": 5,
-        "skinColor": 1,
-        "hairStyle": 5
-      }
-    },
-    {
       "id": 38,
       "npcId": 6,
       "x": 314.5,
@@ -1648,6 +1632,134 @@
       "x": 359.5,
       "z": 67.5,
       "wanderRange": 3
+    },
+    {
+      "id": 110,
+      "npcId": 1,
+      "x": 92.5,
+      "z": 29.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 111,
+      "npcId": 1,
+      "x": 94.5,
+      "z": 28.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 112,
+      "npcId": 1,
+      "x": 91.5,
+      "z": 27.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 113,
+      "npcId": 1,
+      "x": 91.5,
+      "z": 30.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 114,
+      "npcId": 23,
+      "x": 93.5,
+      "z": 27.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 115,
+      "npcId": 1,
+      "x": 211.5,
+      "z": 168.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 116,
+      "npcId": 1,
+      "x": 212.5,
+      "z": 169.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 117,
+      "npcId": 1,
+      "x": 213.5,
+      "z": 168.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 118,
+      "npcId": 1,
+      "x": 211.5,
+      "z": 170.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 119,
+      "npcId": 1,
+      "x": 323.5,
+      "z": 95.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 120,
+      "npcId": 1,
+      "x": 321.5,
+      "z": 94.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 121,
+      "npcId": 1,
+      "x": 320.5,
+      "z": 96.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 123,
+      "npcId": 23,
+      "x": 322.5,
+      "z": 96.5,
+      "wanderRange": 2,
+      "aggressive": false
+    },
+    {
+      "id": 124,
+      "npcId": 20,
+      "x": 290.5,
+      "z": 135.5,
+      "wanderRange": 3,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 4,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 0,
+        "hairStyle": 10
+      },
+      "customColors": {
+        "pantsColor": [
+          0.03137254901960784,
+          0.058823529411764705,
+          0.16862745098039217
+        ]
+      }
     }
   ],
   "objects": [],

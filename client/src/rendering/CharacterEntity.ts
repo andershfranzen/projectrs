@@ -13,7 +13,7 @@ import { MorphTargetManager } from '@babylonjs/core/Morph/morphTargetManager';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { type PlayerAppearance, type AppearanceColorSlot, type CustomColors, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
+import { type PlayerAppearance, type AppearanceColorSlot, type CustomColors, type HeadRenderMode, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { remapSkinningToSkeleton } from './skinnedArmor';
@@ -121,10 +121,6 @@ function smoothNormalsByPosition(mesh: AbstractMesh): void {
   mesh.setVerticesData(VertexBuffer.NormalKind, newNormals);
 }
 
-// Head items that show hair around/below the brim — wide-brimmed/open hats don't
-// fully enclose the skull, so suppressing hair under them looks bald, not helmeted.
-const HAIR_VISIBLE_HEAD_ITEMS = new Set<number>([202, 220]); // Kettle Hat, Kettle Hat (F)
-
 /**
  * Per-animation, per-bone rotation offsets applied during retargeting.
  * Outer key = animation name from additionalAnimations[].name ('idle', 'walk', …).
@@ -176,6 +172,7 @@ export enum AnimState {
 interface GearAttachment {
   itemId: number;
   node: TransformNode;
+  headRenderMode?: HeadRenderMode;
 }
 
 /** Cached gear template ready to be cloned and attached. */
@@ -189,6 +186,8 @@ export interface GearTemplate {
   localRotation: Vector3;
   /** Uniform scale */
   scale: number;
+  /** Head-slot visibility behavior. Defaults to `helmet`. */
+  headRenderMode?: HeadRenderMode;
 }
 
 /**
@@ -207,6 +206,8 @@ export interface GearDef {
   /** Optional tint for the "metal" material. The tool GLBs name their metal material
    *  `Material.002` (the handle is `Material.001`, which is left untouched). */
   metalColor?: [number, number, number];
+  /** Head-slot visibility behavior. Defaults to `helmet`. */
+  headRenderMode?: HeadRenderMode;
 }
 
 /**
@@ -1828,7 +1829,7 @@ export class CharacterEntity {
     const s = gearTemplate.scale;
     clone.scaling.set(s, s, s);
 
-    this.gearAttachments.set(slot, { itemId, node: clone });
+    this.gearAttachments.set(slot, { itemId, node: clone, headRenderMode: gearTemplate.headRenderMode });
     if (slot === 'head') this.setHeadVisible(false);
     // Newly attached gear meshes default to isPickable=true — re-route picks
     // through the proxy so a hat/pauldron AABB doesn't re-introduce the
@@ -2248,30 +2249,42 @@ export class CharacterEntity {
     }
   }
 
+  private equippedHeadRenderMode(): HeadRenderMode {
+    return this.gearAttachments.get('head')?.headRenderMode ?? 'helmet';
+  }
+
+  private showNormalHeadAndHair(): void {
+    for (const mesh of this.headMeshes) {
+      if (!mesh.name.startsWith('M_hair_')) mesh.setEnabled(true);
+    }
+    const hairStyle = this.lastAppearance?.hairStyle ?? 1;
+    for (let i = 1; i <= HAIR_STYLE_COUNT; i++) {
+      this.modularMeshes.get(`M_hair_${i}`)?.setEnabled(i === hairStyle);
+    }
+  }
+
+  private refreshHeadRenderState(): void {
+    this.setHeadVisible(this.getGearItemId('head') === -1);
+  }
+
   setHeadVisible(visible: boolean): void {
-    if (!visible) {
-      // Wide-brimmed/open hats (kettle hat, etc.) leave hair visible (compressed via morph).
-      if (HAIR_VISIBLE_HEAD_ITEMS.has(this.getGearItemId('head'))) {
-        this.setHelmetHairMorph(true);
-        return;
-      }
+    if (visible) {
+      this.showNormalHeadAndHair();
+      this.setHelmetHairMorph(false);
+      return;
+    }
+
+    const mode = this.equippedHeadRenderMode();
+    if (mode === 'helmet') {
       for (const mesh of this.headMeshes) {
         mesh.setEnabled(false);
       }
-    } else {
-      // Re-enable face / non-hair head meshes...
-      for (const mesh of this.headMeshes) {
-        if (!mesh.name.startsWith('M_hair_')) mesh.setEnabled(true);
-      }
-      // ...and exactly one hair style. Default to 1 if no appearance set yet
-      // — without this fallback, a no-appearance character was getting every
-      // M_hair_N enabled at once because headMeshes contains all of them.
-      const hairStyle = this.lastAppearance?.hairStyle ?? 1;
-      for (let i = 1; i <= HAIR_STYLE_COUNT; i++) {
-        this.modularMeshes.get(`M_hair_${i}`)?.setEnabled(i === hairStyle);
-      }
+      this.setHelmetHairMorph(false);
+      return;
     }
-    this.setHelmetHairMorph(false);
+
+    this.showNormalHeadAndHair();
+    this.setHelmetHairMorph(mode === 'hairTuck');
   }
 
   /**
@@ -2648,19 +2661,8 @@ export class CharacterEntity {
       }
     }
 
-    // Modular mesh show/hide — hair only (0 = bald, 1+ = M_hair_1 … M_hair_N).
-    // If a head gear (bone-attached or skinned) is equipped, suppress hair so it
-    // doesn't poke through the helmet on refresh / appearance update.
-    const headItemId = this.getGearItemId('head');
-    const headGearEquipped = headItemId !== -1;
-    const suppressHair = headGearEquipped && !HAIR_VISIBLE_HEAD_ITEMS.has(headItemId);
-    if (this.modularMeshes.size > 0) {
-      for (let i = 1; i <= HAIR_STYLE_COUNT; i++) {
-        this.modularMeshes.get(`M_hair_${i}`)?.setEnabled(
-          !suppressHair && appearance.hairStyle === i,
-        );
-      }
-    }
+    // Head gear decides whether hair is hidden, tucked, or left normal.
+    this.refreshHeadRenderState();
 
     // Hair show/hide may have re-enabled meshes; re-propagate layerMask so
     // any newly-enabled hair stays scoped to the right camera.
@@ -2823,6 +2825,7 @@ export async function loadGearTemplate(
         ? new Vector3(def.localRotation.x, def.localRotation.y, def.localRotation.z)
         : Vector3.Zero(),
       scale: def.scale ?? 1,
+      headRenderMode: def.headRenderMode,
     };
   } catch (e) {
     console.warn(`[GearTemplate] Failed to load '${def.file}':`, e);

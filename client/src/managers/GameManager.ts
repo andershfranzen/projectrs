@@ -2221,6 +2221,7 @@ export class GameManager {
     const buildDef = (): GearDef | null => {
       // gearOverrides is a shared rigging file; body type 0 uses the root fit,
       // while other body types can override only the fields they need.
+      const itemDef = this.itemDefsCache.get(itemId);
       const override = this.getGearOverrideForCharacter(itemId, target);
       const gearFile = this.getGearModelFileForCharacter(itemId, slotName, target);
       if (!gearFile) return null;
@@ -2233,6 +2234,7 @@ export class GameManager {
         scale: override?.scale ?? boneConfig.scale,
         centerOrigin: override?.centerOrigin ?? false,
         metalColor: TOOL_TIER_METAL_COLOR[itemId],
+        headRenderMode: itemDef?.headRenderMode,
       };
     };
 
@@ -2542,6 +2544,7 @@ export class GameManager {
         ? new Vector3(def.localRotation.x, def.localRotation.y, def.localRotation.z)
         : Vector3.Zero(),
       scale: def.scale ?? 1,
+      headRenderMode: def.headRenderMode,
     };
   }
 
