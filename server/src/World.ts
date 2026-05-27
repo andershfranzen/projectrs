@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -27,20 +27,69 @@ type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
   consume: readonly ItemQuantity[];
   outputs: readonly ItemQuantity[];
+  skill?: SkillId;
+  levelRequired?: number;
+  xpReward?: number;
   message?: string;
+  repeatable?: boolean;
+  startMessage?: string;
+  stopMessage?: string;
 };
+type ItemOnObjectRecipe = {
+  inputItemId: number;
+  outputItemId: number;
+  objectDefIds: readonly number[];
+  message: string;
+};
+type ItemProductionAction =
+  | { kind: 'itemOnItem'; recipe: ItemOnItemRecipe; remaining: number | null; nextTick: number }
+  | { kind: 'itemOnObject'; recipe: ItemOnObjectRecipe; objectEntityId: number; remaining: number | null; nextTick: number }
+  | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
+  | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number };
 const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
   {
-    inputItemIds: [242, 246], // Clay + Pot of Water
-    consume: [{ itemId: 242, quantity: 1 }, { itemId: 246, quantity: 1 }],
-    outputs: [{ itemId: 243, quantity: 1 }, { itemId: 245, quantity: 1 }],
+    inputItemIds: [CLAY_ITEM_ID, POT_OF_WATER_ITEM_ID], // Clay + Pot of Water
+    consume: [{ itemId: CLAY_ITEM_ID, quantity: 1 }, { itemId: POT_OF_WATER_ITEM_ID, quantity: 1 }],
+    outputs: [{ itemId: SOFT_CLAY_ITEM_ID, quantity: 1 }, { itemId: POT_ITEM_ID, quantity: 1 }],
     message: 'You soften the clay.',
+    repeatable: true,
+    startMessage: 'You start softening the clay.',
+    stopMessage: 'You run out of clay or water.',
   },
   {
-    inputItemIds: [242, 248], // Clay + Bucket of Water
-    consume: [{ itemId: 242, quantity: 1 }, { itemId: 248, quantity: 1 }],
-    outputs: [{ itemId: 243, quantity: 1 }, { itemId: 247, quantity: 1 }],
+    inputItemIds: [CLAY_ITEM_ID, BUCKET_OF_WATER_ITEM_ID], // Clay + Bucket of Water
+    consume: [{ itemId: CLAY_ITEM_ID, quantity: 1 }, { itemId: BUCKET_OF_WATER_ITEM_ID, quantity: 1 }],
+    outputs: [{ itemId: SOFT_CLAY_ITEM_ID, quantity: 1 }, { itemId: BUCKET_ITEM_ID, quantity: 1 }],
     message: 'You soften the clay.',
+    repeatable: true,
+    startMessage: 'You start softening the clay.',
+    stopMessage: 'You run out of clay or water.',
+  },
+  {
+    inputItemIds: [KNIFE_ITEM_ID, LOGS_ITEM_ID],
+    consume: [{ itemId: LOGS_ITEM_ID, quantity: 2 }],
+    outputs: [{ itemId: BUCKET_ITEM_ID, quantity: 1 }],
+    skill: 'crafting',
+    levelRequired: 1,
+    xpReward: 4,
+    message: 'You carve the logs into a bucket.',
+    repeatable: true,
+    startMessage: 'You start carving buckets.',
+    stopMessage: 'You run out of logs.',
+  },
+];
+const ITEM_ON_OBJECT_RECIPES: readonly ItemOnObjectRecipe[] = [
+  {
+    inputItemId: BUCKET_ITEM_ID,
+    outputItemId: BUCKET_OF_WATER_ITEM_ID,
+    objectDefIds: [WELL_OBJECT_DEF_ID],
+    message: 'You fill the bucket with water.',
+  },
+  {
+    inputItemId: POT_ITEM_ID,
+    outputItemId: POT_OF_WATER_ITEM_ID,
+    objectDefIds: [WELL_OBJECT_DEF_ID],
+    message: 'You fill the pot with water.',
   },
 ];
 let nextMapIdx = 0;
@@ -391,6 +440,7 @@ export class World {
   // cycleTime = inter-roll period in ticks (computed once at interaction start).
   // Per-player roll tick lives on Player.actionDelay (RS2 %action_delay varp).
   private skillingActions: Map<number, { objectId: number; action: string; cycleTime: number; toolItemId?: number; toolBonus?: number }> = new Map();
+  private itemProductionActions: Map<number, ItemProductionAction> = new Map();
 
   private static readonly DEFAULT_MINING_RATE = 7;
   private static readonly MINING_TOOL_SPEED_REDUCTION_BY_BONUS: Record<number, number> = {
@@ -1965,6 +2015,10 @@ export class World {
     }
   }
 
+  private cancelItemProduction(playerId: number): void {
+    this.itemProductionActions.delete(playerId);
+  }
+
   /** Interrupt the player's active or queued world action before another
    *  deliberate action mutates state. Movement has its own path because it is
    *  itself the cancel signal; this covers inventory/equipment/item actions
@@ -1978,6 +2032,7 @@ export class World {
       this.closeNpcUiContext(player);
     }
     this.cancelSkilling(playerId);
+    this.cancelItemProduction(playerId);
   }
 
   private clearPendingObjectIntents(player: Player): void {
@@ -2024,6 +2079,7 @@ export class World {
     this.players.delete(playerId);
     this.markEntityTileOccupantsDirty();
     this.skillingActions.delete(playerId);
+    this.itemProductionActions.delete(playerId);
     this.releasePrivateGroundItemsForPlayer(playerId);
     // Defensive sweep: catch any trade sessions whose other side already left.
     this.sweepOrphanTradeSessions();
@@ -2063,6 +2119,7 @@ export class World {
     this.clearPendingObjectIntents(player);
     player.delayedUntilTick = 0;
     this.cancelSkilling(playerId);
+    this.cancelItemProduction(playerId);
     this.clearCombatTarget(playerId);
     this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
     player.disconnected = true;
@@ -2166,6 +2223,7 @@ export class World {
     this.clearPendingObjectIntents(player);
     player.delayedUntilTick = 0;
     this.cancelSkilling(player.id);
+    this.cancelItemProduction(player.id);
     this.clearCombatTarget(player.id);
     this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
     player.disconnected = true;
@@ -2712,6 +2770,7 @@ export class World {
       player.clearMoveQueue();
       player.followTargetPlayerId = -1;
       this.clearPendingObjectIntents(player);
+      this.cancelItemProduction(playerId);
       return;
     }
 
@@ -2723,6 +2782,7 @@ export class World {
     player.pendingTalkRepathTicks = 0;
     player.followTargetPlayerId = -1;
     this.cancelSkilling(playerId);
+    this.cancelItemProduction(playerId);
     // Walking auto-closes any open modal interface (bank/trade) — mirrors
     // RS2 behavior where moving aborts the current dialog.
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
@@ -2934,6 +2994,7 @@ export class World {
     // handlePlayerTalkNpc: dialogue > shop > bank.
     if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
     this.cancelSkilling(playerId);
+    this.cancelItemProduction(playerId);
     if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
     this.closeNpcUiContext(player);
@@ -3540,7 +3601,14 @@ export class World {
     // No setDelay — reordering is a UI affordance, not a tick-consuming action.
   }
 
-  handlePlayerInteractObject(playerId: number, objectEntityId: number, actionIndex: number, recipeIndex: number = -1, expectedDoorOpen: boolean | null = null): void {
+  handlePlayerInteractObject(
+    playerId: number,
+    objectEntityId: number,
+    actionIndex: number,
+    recipeIndex: number = -1,
+    expectedDoorOpen: boolean | null = null,
+    recipeQuantity: number = 1,
+  ): void {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
@@ -3560,11 +3628,12 @@ export class World {
       return;
     }
     this.clearPendingObjectIntents(player);
+    this.cancelItemProduction(playerId);
 
     if (player.isBusy(this.currentTick)) {
       const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
       if (isQueuedObjectAction) {
-        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen };
+        player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen, recipeQuantity };
       }
       return;
     }
@@ -3624,7 +3693,7 @@ export class World {
           player.setMoveQueue(path);
         }
         if (player.hasMoveQueue()) {
-          player.pendingInteraction = { objectEntityId, actionIndex, swingSign, expectedDoorOpen };
+          player.pendingInteraction = { objectEntityId, actionIndex, swingSign, expectedDoorOpen, recipeQuantity };
         }
         // Empty path = unreachable (closed door is the only gap in the wall
         // and player is on the wrong side, OR maxSteps exhausted). Drop the
@@ -3643,7 +3712,7 @@ export class World {
         player.setMoveQueue(path);
       }
       if (player.hasMoveQueue()) {
-        player.pendingInteraction = { objectEntityId, actionIndex, recipeIndex };
+        player.pendingInteraction = { objectEntityId, actionIndex, recipeIndex, recipeQuantity };
       } else {
         this.sendChatSystem(player, "I can't reach that.");
       }
@@ -3673,6 +3742,11 @@ export class World {
 
     if (action === 'Examine') {
       this.sendChatSystem(player, this.objectExamineTextFor(player, obj));
+      return;
+    }
+
+    if ((action === 'Fill' || action === 'Use') && this.isWaterSourceObject(obj)) {
+      this.handleWaterSourceInteraction(playerId, player, obj);
       return;
     }
 
@@ -3723,16 +3797,28 @@ export class World {
     }
 
     if (obj.def.recipes && obj.def.recipes.length > 0) {
-      this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
+      if (recipeIndex >= 0 && recipeQuantity !== 1 && this.supportsObjectRecipeProduction(obj)) {
+        this.startObjectRecipeProduction(playerId, player, obj, recipeIndex, recipeQuantity);
+      } else {
+        this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
+      }
       return;
     }
+  }
+
+  private isWaterSourceObject(obj: WorldObject): boolean {
+    return obj.defId === WELL_OBJECT_DEF_ID;
+  }
+
+  private supportsObjectRecipeProduction(obj: WorldObject): boolean {
+    return BATCH_OBJECT_RECIPE_DEF_IDS.includes(obj.defId);
   }
 
   private shouldOpenRecipePicker(obj: WorldObject): boolean {
     const recipes = obj.def.recipes ?? [];
     if (recipes.length === 0) return false;
     if (recipes[0]?.requiresTool) return true;
-    return obj.def.category === 'furnace' && recipes.length > 1;
+    return recipes.length > 1;
   }
 
   private runObjectInteractionEffects(player: Player, obj: WorldObject, action: string): void {
@@ -3921,12 +4007,18 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.SKILLING_START, obj.id, toolItemId ?? 0);
   }
 
-  private handleCraftingInteraction(playerId: number, player: Player, obj: WorldObject, recipeIndex: number): boolean {
+  private handleCraftingInteraction(
+    playerId: number,
+    player: Player,
+    obj: WorldObject,
+    recipeIndex: number,
+    opts: { interrupt?: boolean; explainFailure?: boolean } = {},
+  ): boolean {
     const recipes = obj.def.recipes!;
     const recipesToTry = (recipeIndex >= 0 && recipeIndex < recipes.length)
       ? [recipes[recipeIndex]]
       : recipes;
-    const shouldExplainFailure = recipesToTry.length === 1;
+    const shouldExplainFailure = (opts.explainFailure ?? true) && recipesToTry.length === 1;
 
     for (const recipe of recipesToTry) {
       const skillId = recipe.skill as SkillId;
@@ -3947,7 +4039,7 @@ export class World {
           continue;
         }
       }
-      this.interruptPlayerAction(playerId, player);
+      if (opts.interrupt ?? true) this.interruptPlayerAction(playerId, player);
 
       // removeItemById aggregates across slots, so unstackable multi-unit
       // inputs (e.g. 3 bars in 3 slots) consume correctly.
@@ -4195,7 +4287,10 @@ export class World {
   private validateInvUse(playerId: number, slot: number, expectedItemId: number): Player | null {
     const player = this.players.get(playerId);
     if (!player) return null;
-    if (player.isBusy(this.currentTick)) return null;
+    if (player.isBusy(this.currentTick)) {
+      this.cancelItemProduction(playerId);
+      return null;
+    }
     if (player.isInterfaceOpen()) return null;
     if (slot < 0 || slot >= player.inventory.length) return null;
     if (player.inventory[slot]?.itemId !== expectedItemId) return null;
@@ -4208,6 +4303,7 @@ export class World {
     fromItemId: number,
     toSlot: number,
     toItemId: number,
+    quantity: number = 1,
   ): void {
     if (fromSlot === toSlot) return;
     const player = this.validateInvUse(playerId, fromSlot, fromItemId);
@@ -4217,7 +4313,11 @@ export class World {
     this.interruptPlayerAction(playerId, player);
     const recipe = this.findItemOnItemRecipe(fromItemId, toItemId);
     if (recipe) {
-      this.handleItemOnItemRecipe(player, recipe);
+      if (recipe.repeatable && quantity !== 1) {
+        this.startItemProduction(playerId, player, recipe, quantity);
+      } else {
+        this.handleItemOnItemRecipe(player, recipe);
+      }
       return;
     }
 
@@ -4231,16 +4331,31 @@ export class World {
     }) ?? null;
   }
 
-  private handleItemOnItemRecipe(player: Player, recipe: ItemOnItemRecipe): void {
+  private handleItemOnItemRecipe(
+    player: Player,
+    recipe: ItemOnItemRecipe,
+    opts: { sendMessage?: boolean } = {},
+  ): boolean {
     const removals: ReturnType<Player['removeItemById']>[] = [];
     const adds: ReturnType<Player['addItem']>[] = [];
+    const sendMessage = opts.sendMessage ?? true;
+
+    const skillId = recipe.skill;
+    if (skillId) {
+      const levelRequired = recipe.levelRequired ?? 1;
+      const playerLevel = player.skills[skillId]?.level ?? 1;
+      if (playerLevel < levelRequired) {
+        this.sendChatSystem(player, `You need level ${levelRequired} ${SKILL_NAMES[skillId] ?? 'skill'} to do that.`);
+        return false;
+      }
+    }
 
     for (const input of recipe.consume) {
       const removed = player.removeItemById(input.itemId, input.quantity);
       if (removed.completed === 0) {
         for (let i = removals.length - 1; i >= 0; i--) player.revertRemove(removals[i]);
         this.sendInventory(player);
-        return;
+        return false;
       }
       removals.push(removed);
     }
@@ -4252,13 +4367,126 @@ export class World {
         for (let i = removals.length - 1; i >= 0; i--) player.revertRemove(removals[i]);
         this.sendInventory(player);
         this.sendChatSystem(player, 'You need more inventory space.');
-        return;
+        return false;
       }
       adds.push(added);
     }
 
+    if (skillId && recipe.xpReward && recipe.xpReward > 0) {
+      this.grantXp(player, skillId, recipe.xpReward);
+    }
     this.sendInventory(player);
-    if (recipe.message) this.sendChatSystem(player, recipe.message);
+    if (sendMessage && recipe.message) this.sendChatSystem(player, recipe.message);
+    return true;
+  }
+
+  private startItemProduction(
+    playerId: number,
+    player: Player,
+    recipe: ItemOnItemRecipe,
+    quantity: number,
+  ): void {
+    if (!recipe.repeatable) {
+      this.handleItemOnItemRecipe(player, recipe);
+      return;
+    }
+    const remaining = quantity < 0 ? null : Math.max(1, Math.floor(quantity));
+    this.itemProductionActions.set(playerId, {
+      kind: 'itemOnItem',
+      recipe,
+      remaining,
+      nextTick: this.currentTick + 1,
+    });
+    player.setDelay(this.currentTick, 1);
+    if (recipe.startMessage) this.sendChatSystem(player, recipe.startMessage);
+  }
+
+  private startObjectRecipeProduction(
+    playerId: number,
+    player: Player,
+    obj: WorldObject,
+    recipeIndex: number,
+    quantity: number,
+  ): void {
+    if (!this.supportsObjectRecipeProduction(obj)) {
+      this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
+      return;
+    }
+    const recipes = obj.def.recipes ?? [];
+    if (recipeIndex < 0 || recipeIndex >= recipes.length) {
+      this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
+      return;
+    }
+    const remaining = quantity < 0 ? null : Math.max(1, Math.floor(quantity));
+    this.itemProductionActions.set(playerId, {
+      kind: 'objectRecipe',
+      objectEntityId: obj.id,
+      recipeIndex,
+      remaining,
+      nextTick: this.currentTick + 1,
+    });
+    player.setDelay(this.currentTick, 1);
+    this.sendChatSystem(player, 'You start crafting.');
+  }
+
+  private findItemOnObjectRecipe(itemId: number, obj: WorldObject): ItemOnObjectRecipe | null {
+    return ITEM_ON_OBJECT_RECIPES.find(recipe =>
+      recipe.inputItemId === itemId && recipe.objectDefIds.includes(obj.defId)
+    ) ?? null;
+  }
+
+  private handleItemOnObjectRecipe(
+    player: Player,
+    invSlot: number,
+    recipe: ItemOnObjectRecipe,
+    opts: { sendMessage?: boolean } = {},
+  ): boolean {
+    const slot = player.inventory[invSlot];
+    if (!slot || slot.itemId !== recipe.inputItemId) return false;
+    const sendMessage = opts.sendMessage ?? true;
+
+    if (slot.quantity > 1) {
+      slot.quantity -= 1;
+      const addResult = player.addItem(recipe.outputItemId, 1, this.data.itemDefs);
+      if (addResult.completed === 0) {
+        slot.quantity += 1;
+        this.sendInventory(player);
+        this.sendChatSystem(player, 'You need more inventory space.');
+        return false;
+      }
+    } else {
+      player.inventory[invSlot] = { itemId: recipe.outputItemId, quantity: 1 };
+    }
+
+    this.sendInventory(player);
+    if (sendMessage) this.sendChatSystem(player, recipe.message);
+    return true;
+  }
+
+  private handleWaterSourceInteraction(playerId: number, player: Player, obj: WorldObject): void {
+    this.interruptPlayerAction(playerId, player);
+    if (this.playerHasFillableContainer(player)) {
+      this.itemProductionActions.set(playerId, {
+        kind: 'waterSource',
+        objectEntityId: obj.id,
+        nextTick: this.currentTick + 1,
+      });
+      player.setDelay(this.currentTick, 1);
+      this.sendChatSystem(player, 'You start filling containers.');
+      return;
+    }
+
+    this.sendChatSystem(player, 'You need an empty bucket or pot to fill.');
+  }
+
+  private playerHasFillableContainer(player: Player): boolean {
+    return ITEM_ON_OBJECT_RECIPES.some(recipe =>
+      player.inventory.some(slot => slot?.itemId === recipe.inputItemId)
+    );
+  }
+
+  private countInventoryItem(player: Player, itemId: number): number {
+    return player.inventory.reduce((total, slot) => total + (slot?.itemId === itemId ? slot.quantity : 0), 0);
   }
 
   handlePlayerUseItemOnObject(
@@ -4291,6 +4519,24 @@ export class World {
     if (obj.def.category === 'door' && obj.doorLocked && !obj.doorOpen && itemId === obj.doorKeyItemId) {
       if (!this.canOpenLockedDoor(player, obj)) return;
       this.toggleDoor(obj, this.computeSwingSign(player, obj));
+      return;
+    }
+    const recipe = this.findItemOnObjectRecipe(itemId, obj);
+    if (recipe) {
+      const fillableCount = this.countInventoryItem(player, recipe.inputItemId);
+      if (fillableCount > 1) {
+        this.itemProductionActions.set(playerId, {
+          kind: 'itemOnObject',
+          recipe,
+          objectEntityId,
+          remaining: null,
+          nextTick: this.currentTick + 1,
+        });
+        player.setDelay(this.currentTick, 1);
+        this.sendChatSystem(player, 'You start filling containers.');
+      } else {
+        this.handleItemOnObjectRecipe(player, invSlot, recipe);
+      }
       return;
     }
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
@@ -4404,6 +4650,7 @@ export class World {
     }
 
     this.cancelSkilling(playerId);
+    this.cancelItemProduction(playerId);
     if (!keepCombatTarget) this.clearCombatTarget(playerId);   // single-cast cancels auto-attack
 
     // Magic combat roll. Mirrors the OSRS pattern in processPlayerCombat /
@@ -5652,6 +5899,7 @@ export class World {
     player.pendingTalkRepathTicks = 0;
     this.clearPendingObjectIntents(player);
     this.cancelSkilling(player.id);
+    this.cancelItemProduction(player.id);
     player.openShopNpcId = null;
     this.closeDialogueForPlayer(player);
   }
@@ -6090,6 +6338,7 @@ export class World {
     this.tickNpcCombat();
     this.tickPendingSpells();
     if (this.currentTick % 40 === 0) this.tickHealthRegen();
+    this.tickItemProductionActions();
     this.tickSkillingActions();
     this.tickObjectRespawns();
     this.flushPendingObjectRespawnWrites();
@@ -6220,7 +6469,7 @@ export class World {
         this.handlePlayerPickup(playerId, pickupId);
       }
       if (player.pendingInteraction && !player.hasMoveQueue()) {
-        const { objectEntityId, actionIndex, swingSign, recipeIndex, expectedDoorOpen } = player.pendingInteraction;
+        const { objectEntityId, actionIndex, swingSign, recipeIndex, recipeQuantity, expectedDoorOpen } = player.pendingInteraction;
         const obj = this.worldObjects.get(objectEntityId);
         // Doors fire instantly on arrival — toggling is visually
         // self-evident (the door swings) and the client already
@@ -6243,7 +6492,7 @@ export class World {
               // Forward the stashed recipeIndex so a deferred furnace craft
               // honours the player's picker choice instead of auto-picking
               // (which would fire the first matching recipe — iron, not steel).
-              this.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex ?? -1);
+              this.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex ?? -1, null, recipeQuantity ?? 1);
             }
           }
         }
@@ -6736,6 +6985,78 @@ export class World {
     }
   }
 
+  private tickItemProductionActions(): void {
+    for (const [playerId, action] of this.itemProductionActions) {
+      const player = this.players.get(playerId);
+      if (!player || player.disconnected || player.requestIdleLogout || !player.alive) {
+        this.itemProductionActions.delete(playerId);
+        continue;
+      }
+      if (player.isInterfaceOpen() || player.hasMoveQueue()) {
+        this.itemProductionActions.delete(playerId);
+        continue;
+      }
+      if (this.currentTick < action.nextTick) continue;
+
+      const produced = this.runItemProductionTick(playerId, player, action);
+      if (!produced) {
+        this.itemProductionActions.delete(playerId);
+        this.sendChatSystem(player, this.itemProductionStopMessage(action));
+        continue;
+      }
+
+      if ('remaining' in action && action.remaining !== null) {
+        action.remaining--;
+        if (action.remaining <= 0) {
+          this.itemProductionActions.delete(playerId);
+          continue;
+        }
+      }
+
+      action.nextTick = this.currentTick + 1;
+      player.setDelay(this.currentTick, 1);
+    }
+  }
+
+  private runItemProductionTick(playerId: number, player: Player, action: ItemProductionAction): boolean {
+    if (action.kind === 'itemOnItem') {
+      return this.handleItemOnItemRecipe(player, action.recipe, { sendMessage: false });
+    }
+
+    const obj = this.worldObjects.get(action.objectEntityId);
+    if (!obj || !this.canPlayerTargetObject(player, obj) || !this.isAdjacentToObject(player, obj)) return false;
+
+    if (action.kind === 'objectRecipe') {
+      return this.handleCraftingInteraction(playerId, player, obj, action.recipeIndex, {
+        interrupt: false,
+        explainFailure: false,
+      });
+    }
+
+    if (action.kind === 'itemOnObject') {
+      const invSlot = player.inventory.findIndex(slot => slot?.itemId === action.recipe.inputItemId);
+      if (invSlot < 0) return false;
+      return this.handleItemOnObjectRecipe(player, invSlot, action.recipe, { sendMessage: false });
+    }
+
+    if (action.kind === 'waterSource') {
+      if (!this.isWaterSourceObject(obj)) return false;
+      for (const recipe of ITEM_ON_OBJECT_RECIPES) {
+        const invSlot = player.inventory.findIndex(slot => slot?.itemId === recipe.inputItemId);
+        if (invSlot >= 0) return this.handleItemOnObjectRecipe(player, invSlot, recipe, { sendMessage: false });
+      }
+      return false;
+    }
+
+    return false;
+  }
+
+  private itemProductionStopMessage(action: ItemProductionAction): string {
+    if (action.kind === 'itemOnItem') return action.recipe.stopMessage ?? 'You stop producing items.';
+    if (action.kind === 'objectRecipe') return 'You stop crafting.';
+    return 'You stop filling containers.';
+  }
+
   private tickSkillingActions(): void {
     for (const [playerId, action] of this.skillingActions) {
       const player = this.players.get(playerId);
@@ -7146,6 +7467,7 @@ export class World {
     // Drop all transient combat / action state.
     this.clearCombatTarget(player.id);
     this.cancelSkilling(player.id);
+    this.cancelItemProduction(player.id);
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearPendingObjectIntents(player);
@@ -7312,6 +7634,7 @@ export class World {
     player.followTargetPlayerId = -1;
     player.actionDelay = 0;
     this.cancelSkilling(player.id);
+    this.cancelItemProduction(player.id);
     this.clearCombatTarget(player.id);
     player.currentChunkX = Math.floor(targetX / CHUNK_SIZE);
     player.currentChunkZ = Math.floor(targetZ / CHUNK_SIZE);

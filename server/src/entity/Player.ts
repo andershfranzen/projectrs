@@ -73,7 +73,14 @@ export class Player extends Entity {
   moveSpeed: number = 1;
   movementCredit: number = 0;
   pendingPickup: number = -1;
-  pendingInteraction: { objectEntityId: number; actionIndex: number; swingSign?: number; recipeIndex?: number; expectedDoorOpen?: boolean | null } | null = null;
+  pendingInteraction: {
+    objectEntityId: number;
+    actionIndex: number;
+    swingSign?: number;
+    recipeIndex?: number;
+    recipeQuantity?: number;
+    expectedDoorOpen?: boolean | null;
+  } | null = null;
   pendingUseItemOnObject: { invSlot: number; itemId: number; objectEntityId: number } | null = null;
   pendingUseItemOnNpc: { invSlot: number; itemId: number; npcEntityId: number } | null = null;
   animationKind: PlayerAnimationKind = PlayerAnimationKind.Idle;

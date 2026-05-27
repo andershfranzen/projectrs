@@ -1,4 +1,13 @@
 {
+  "1": {
+    "alpha": 0.6719517620178169,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
+  },
   "18": {
     "alpha": 1.8634073464102099,
     "beta": 1.3986433452497935,
@@ -7,6 +16,15 @@
     "rotationY": -0.431592653589793,
     "rotationZ": 0,
     "iconScale": 1
+  },
+  "20": {
+    "alpha": -1.684242728174528,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1.05
   },
   "31": {
     "alpha": -0.9424777960769379,
@@ -691,6 +709,60 @@
     "rotationY": 0,
     "rotationZ": 0,
     "iconScale": 0.85
+  },
+  "243": {
+    "alpha": 1.1082840750163994,
+    "beta": 0.8813912722571364,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "244": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.9512044423369096,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "245": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.9512044423369096,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "247": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.9948376736367679,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "248": {
+    "alpha": -0.7853981633974483,
+    "beta": 0.9948376736367679,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "251": {
+    "alpha": -0.5585053606381855,
+    "beta": 1.7715091907742444,
+    "distanceMult": 0.75,
+    "rotationX": 0.1832595714594046,
+    "rotationY": 2.1642082724729685,
+    "rotationZ": 2.4870941840919194,
+    "iconScale": 1
   },
   "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_thumbnail_manual_items": [

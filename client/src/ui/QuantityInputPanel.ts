@@ -8,6 +8,7 @@ export type QuantityInputRequest =
       max?: number;
       defaultValue?: number;
       submitLabel?: string;
+      quickAmounts?: Array<{ label: string; value: number | 'all' }>;
       onSubmit: (quantity: number) => void;
     }
   | {
@@ -32,6 +33,7 @@ export class QuantityInputPanel {
   private promptEl!: HTMLDivElement;
   private errorEl!: HTMLDivElement;
   private input!: HTMLInputElement;
+  private quickRow!: HTMLDivElement;
   private submitBtn!: HTMLButtonElement;
   private cancelBtn!: HTMLButtonElement;
   private hiddenChatPanel: HTMLElement | null = null;
@@ -59,6 +61,7 @@ export class QuantityInputPanel {
       this.input.maxLength = Math.max(1, Math.floor(request.maxLength ?? 12));
       this.input.placeholder = request.placeholder ?? '';
       this.input.value = request.defaultText ?? '';
+      this.renderQuickAmounts([]);
     } else {
       this.input.type = 'number';
       this.input.inputMode = 'numeric';
@@ -68,6 +71,7 @@ export class QuantityInputPanel {
       this.input.placeholder = '';
       this.input.value = String(Math.max(1, Math.floor(request.defaultValue ?? 1)));
       this.input.max = request.max && request.max > 0 ? String(Math.floor(request.max)) : '';
+      this.renderQuickAmounts(request.quickAmounts ?? []);
     }
     this.setVisible(true);
     window.setTimeout(() => {
@@ -152,6 +156,15 @@ export class QuantityInputPanel {
     row.appendChild(this.cancelBtn);
     panel.appendChild(row);
 
+    this.quickRow = document.createElement('div');
+    this.quickRow.style.cssText = `
+      display: none;
+      gap: 5px;
+      align-items: center;
+      flex-wrap: wrap;
+    `;
+    panel.appendChild(this.quickRow);
+
     this.errorEl = document.createElement('div');
     this.errorEl.style.cssText = `
       min-height: 14px;
@@ -194,6 +207,38 @@ export class QuantityInputPanel {
       action();
     });
     return button;
+  }
+
+  private renderQuickAmounts(amounts: Array<{ label: string; value: number | 'all' }>): void {
+    this.quickRow.innerHTML = '';
+    if (amounts.length === 0) {
+      this.quickRow.style.display = 'none';
+      return;
+    }
+
+    this.quickRow.style.display = 'flex';
+    for (const amount of amounts) {
+      const button = this.makeButton(amount.label, () => this.submitQuickAmount(amount.value));
+      button.style.flex = '1 1 42px';
+      button.style.minWidth = '42px';
+      button.style.height = '26px';
+      button.style.padding = '3px 6px';
+      this.quickRow.appendChild(button);
+    }
+  }
+
+  private submitQuickAmount(value: number | 'all'): void {
+    const request = this.request;
+    if (!request || request.inputType === 'text') return;
+    const max = request.max && request.max > 0 ? Math.floor(request.max) : 0;
+    let quantity = value === 'all' ? max : Math.floor(value);
+    if (max > 0) quantity = Math.min(quantity, max);
+    if (!Number.isSafeInteger(quantity) || quantity <= 0) {
+      this.errorEl.textContent = 'Enter a whole number greater than 0.';
+      return;
+    }
+    this.hide();
+    request.onSubmit(quantity);
   }
 
   private handleInputKeyDown(event: KeyboardEvent): void {

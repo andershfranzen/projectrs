@@ -1,6 +1,8 @@
 import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
+  CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
+  BUCKET_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   spellReagentSummary, spellSchoolSkill,
   zeroBonuses,
@@ -39,6 +41,7 @@ import {
 } from './clientSizeMode';
 
 const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape'];
+const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
 
 export interface SkillData {
   level: number;
@@ -2577,6 +2580,14 @@ export class SidePanel {
       if (index === using.slot) { this.clearUsingInvItem(); return; }
       const target = this.invSlots[index];
       if (!target) { this.clearUsingInvItem(); return; }
+      if (this.promptBucketCarvingQuantity(using.slot, using.itemId, index, target.itemId)) {
+        this.clearUsingInvItem();
+        return;
+      }
+      if (this.promptSoftClayQuantity(using.slot, using.itemId, index, target.itemId)) {
+        this.clearUsingInvItem();
+        return;
+      }
       this.network.sendRaw(encodePacket(
         ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
         using.slot, using.itemId, index, target.itemId,
@@ -2586,6 +2597,94 @@ export class SidePanel {
     }
     const [firstOption] = this.getInvSlotOptions(index);
     firstOption?.action();
+  }
+
+  private promptBucketCarvingQuantity(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
+    const max = this.maxBucketCarvingBatchQuantity(fromItemId, toItemId);
+    if (max <= 1) return false;
+    if (!this.requestQuantity) return false;
+
+    const outputName = this.itemDefs.get(BUCKET_ITEM_ID)?.name ?? 'Bucket';
+    this.requestQuantity({
+      title: `Make ${outputName}`,
+      prompt: `Make how many ${outputName}s?`,
+      max,
+      defaultValue: max,
+      submitLabel: 'Make',
+      quickAmounts: [
+        { label: '1', value: 1 },
+        { label: '5', value: 5 },
+        { label: '10', value: 10 },
+        { label: 'All', value: 'all' },
+      ],
+      onSubmit: (quantity) => {
+        const currentFrom = this.invSlots[fromSlot];
+        const currentTo = this.invSlots[toSlot];
+        if (!currentFrom || currentFrom.itemId !== fromItemId) return;
+        if (!currentTo || currentTo.itemId !== toItemId) return;
+        const currentMax = this.maxBucketCarvingBatchQuantity(fromItemId, toItemId);
+        if (currentMax <= 0) return;
+        const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
+        this.network.sendRaw(encodePacket(
+          ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+          fromSlot, fromItemId, toSlot, toItemId, requested,
+        ));
+      },
+    });
+    return true;
+  }
+
+  private promptSoftClayQuantity(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
+    const max = this.maxSoftClayBatchQuantity(fromItemId, toItemId);
+    if (max <= 1) return false;
+    if (!this.requestQuantity) return false;
+
+    this.requestQuantity({
+      title: 'Make Soft Clay',
+      prompt: `Make how many ${this.itemDefs.get(SOFT_CLAY_ITEM_ID)?.name ?? 'Soft Clay'}?`,
+      max,
+      defaultValue: max,
+      submitLabel: 'Make',
+      onSubmit: (quantity) => {
+        const currentFrom = this.invSlots[fromSlot];
+        const currentTo = this.invSlots[toSlot];
+        if (!currentFrom || currentFrom.itemId !== fromItemId) return;
+        if (!currentTo || currentTo.itemId !== toItemId) return;
+        const currentMax = this.maxSoftClayBatchQuantity(fromItemId, toItemId);
+        if (currentMax <= 0) return;
+        const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
+        this.network.sendRaw(encodePacket(
+          ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+          fromSlot, fromItemId, toSlot, toItemId, requested,
+        ));
+      },
+    });
+    return true;
+  }
+
+  private maxBucketCarvingBatchQuantity(fromItemId: number, toItemId: number): number {
+    if (!this.isBucketCarvingRecipePair(fromItemId, toItemId)) return 0;
+    return Math.floor(this.countInventoryItem(LOGS_ITEM_ID) / 2);
+  }
+
+  private isBucketCarvingRecipePair(fromItemId: number, toItemId: number): boolean {
+    return (fromItemId === KNIFE_ITEM_ID && toItemId === LOGS_ITEM_ID)
+      || (toItemId === KNIFE_ITEM_ID && fromItemId === LOGS_ITEM_ID);
+  }
+
+  private maxSoftClayBatchQuantity(fromItemId: number, toItemId: number): number {
+    if (!this.isSoftClayRecipePair(fromItemId, toItemId)) return 0;
+    const waterItemId = WATER_CONTAINER_ITEM_IDS.has(fromItemId) ? fromItemId : toItemId;
+    return Math.min(this.countInventoryItem(CLAY_ITEM_ID), this.countInventoryItem(waterItemId));
+  }
+
+  private isSoftClayRecipePair(fromItemId: number, toItemId: number): boolean {
+    return (fromItemId === CLAY_ITEM_ID && WATER_CONTAINER_ITEM_IDS.has(toItemId))
+      || (toItemId === CLAY_ITEM_ID && WATER_CONTAINER_ITEM_IDS.has(fromItemId));
+  }
+
+  private countInventoryItem(itemId: number): number {
+    return this.invSlots.reduce((total, slot) => total + (slot?.itemId === itemId ? slot.quantity : 0), 0);
   }
 
   private onInvSlotRightClick(index: number, event: MouseEvent): void {

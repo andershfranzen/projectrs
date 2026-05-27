@@ -493,6 +493,10 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!Number.isInteger(recipeIndex) || recipeIndex < -1 || recipeIndex > 1000) return invalid('bad-object-recipe-index');
       const expectedDoorOpen = values[3];
       if (expectedDoorOpen !== undefined && expectedDoorOpen !== 0 && expectedDoorOpen !== 1) return invalid('bad-door-state');
+      const recipeQuantity = values[4] ?? 1;
+      if (!Number.isInteger(recipeQuantity) || recipeQuantity === 0 || recipeQuantity < -1 || recipeQuantity > 1000) {
+        return invalid('bad-object-recipe-quantity');
+      }
       return OK_PACKET;
     }
 
@@ -504,6 +508,10 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!isSlot(fromSlot, INVENTORY_SIZE) || !isSlot(toSlot, INVENTORY_SIZE)) return invalid('bad-use-item-slot');
       if (player.inventory[fromSlot]?.itemId !== values[1]) return invalid('stale-use-source-slot');
       if (player.inventory[toSlot]?.itemId !== values[3]) return invalid('stale-use-target-slot');
+      const quantity = values[4] ?? 1;
+      if (!Number.isInteger(quantity) || quantity === 0 || quantity < -1 || quantity > 1000) {
+        return invalid('bad-use-item-quantity');
+      }
       return OK_PACKET;
     }
 
@@ -1138,7 +1146,8 @@ function handleDecryptedGameSocketMessage(
       const actionIndex = values[1] ?? 0;
       const recipeIndex = values[2] ?? -1;
       const expectedDoorOpen = values[3] === 0 || values[3] === 1 ? values[3] === 1 : null;
-      world.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex, expectedDoorOpen);
+      const recipeQuantity = values[4] ?? 1;
+      world.handlePlayerInteractObject(playerId, objectEntityId, actionIndex, recipeIndex, expectedDoorOpen, recipeQuantity);
       break;
     }
 
@@ -1148,7 +1157,8 @@ function handleDecryptedGameSocketMessage(
       const fromItemId = values[1];
       const toSlot = values[2];
       const toItemId = values[3];
-      world.handlePlayerUseItemOnItem(playerId, fromSlot, fromItemId, toSlot, toItemId);
+      const quantity = values[4] ?? 1;
+      world.handlePlayerUseItemOnItem(playerId, fromSlot, fromItemId, toSlot, toItemId, quantity);
       break;
     }
 

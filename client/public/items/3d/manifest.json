@@ -463,13 +463,13 @@
       "rendererVersion": 14
     },
     "247": {
-      "file": "/items/3d/247.png",
+      "file": "/items/3d/247.png?v=bucket-20260527",
       "poseKey": "thumb:v14|/assets/models/Bucket2.glb|id:item:247|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 14
     },
     "248": {
-      "file": "/items/3d/248.png",
-      "poseKey": "thumb:v14|/assets/models/Bucket2.glb|id:item:248|cam:-0.78540,1.20830,0.75000",
+      "file": "/items/3d/248.png?v=bucket-20260527-nohighlight",
+      "poseKey": "thumb:v14|/assets/models/BucketWater.glb|id:item:248|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 14
     }
   }

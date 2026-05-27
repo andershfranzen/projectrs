@@ -31,6 +31,23 @@ export const GAME_WS_PATH = '/ws/game';
 export const CHAT_WS_PATH = '/ws/chat';
 export const EDITOR_CHUNK_SIZE = 64;
 
+/** Object and item IDs used by inventory/object crafting flows. */
+export const WELL_OBJECT_DEF_ID = 27;
+export const POTTERY_WHEEL_OBJECT_DEF_ID = 32;
+export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [POTTERY_WHEEL_OBJECT_DEF_ID];
+export const CLAY_ITEM_ID = 242;
+export const SOFT_CLAY_ITEM_ID = 243;
+export const POT_ITEM_ID = 245;
+export const POT_OF_WATER_ITEM_ID = 246;
+export const BUCKET_ITEM_ID = 247;
+export const BUCKET_OF_WATER_ITEM_ID = 248;
+export const KNIFE_ITEM_ID = 251;
+export const LOGS_ITEM_ID = 23;
+export const SOFT_CLAY_WATER_CONTAINER_ITEM_IDS: readonly number[] = [
+  POT_OF_WATER_ITEM_ID,
+  BUCKET_OF_WATER_ITEM_ID,
+];
+
 /** Distance budget for materializing humanoid NPCs as skinned 3D characters. */
 export const NPC_3D_LOD_DISTANCE = 15;
 

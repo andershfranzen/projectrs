@@ -8,6 +8,12 @@ const INTERACTIVE_CATEGORIES = new Set([
 
 export interface MinimapObject { x: number; z: number; category: string; }
 export interface MinimapDrop { x: number; z: number; }
+type MinimapClickMoveHandler = (
+  worldX: number,
+  worldZ: number,
+  markerWorldX: number,
+  markerWorldZ: number,
+) => void;
 
 const TILE_COLORS: Record<number, [number, number, number]> = {
   [TileType.GRASS]: [0x3e, 0x8c, 0x2e],
@@ -62,7 +68,7 @@ export class Minimap {
   private destZ: number | null = null;
   private destAnimTime: number = 0;
 
-  private onClickMove: ((worldX: number, worldZ: number) => void) | null = null;
+  private onClickMove: MinimapClickMoveHandler | null = null;
 
   private lastPlayerX: number = 0;
   private lastPlayerZ: number = 0;
@@ -211,7 +217,7 @@ export class Minimap {
     this.canvas.addEventListener('click', (e) => this.handleClick(e));
   }
 
-  setClickMoveHandler(handler: (worldX: number, worldZ: number) => void): void {
+  setClickMoveHandler(handler: MinimapClickMoveHandler): void {
     this.onClickMove = handler;
   }
 
@@ -255,7 +261,7 @@ export class Minimap {
 
     const worldX = this.lastPlayerX + (relX * cosA - relZ * sinA) / this.lastScale;
     const worldZ = this.lastPlayerZ + (relX * sinA + relZ * cosA) / this.lastScale;
-    this.onClickMove(worldX, worldZ);
+    this.onClickMove(worldX, worldZ, worldX, worldZ);
   }
 
   update(

@@ -9,6 +9,7 @@
     },
     "waterLevel": -2.5,
     "chunkWaterLevels": {},
+    "chunkWaterFlows": {},
     "selectedTexturePlaneId": null,
     "texturePlanes": [
       {

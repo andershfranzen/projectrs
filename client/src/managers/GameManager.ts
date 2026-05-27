@@ -56,7 +56,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTTERY_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -79,9 +79,29 @@ const TERMINAL_CLOSE_REASONS = new Set([
 ]);
 const GEAR_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
 const PER_TARGET_GEAR_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet']);
+const RECIPE_INPUT_NOUN_BY_CATEGORY: Readonly<Record<string, string>> = {
+  furnace: 'ore',
+  cookingrange: 'food',
+};
 
 function devCacheBustGearFile(file: string): string {
   return GEAR_CACHE_BUST_TOKEN ? `${file}${GEAR_CACHE_BUST_TOKEN}` : file;
+}
+
+function recipePanelSkillFor(def: WorldObjectDef): SkillId {
+  const skill = def.recipes?.[0]?.skill;
+  return typeof skill === 'string' && (ALL_SKILLS as readonly string[]).includes(skill)
+    ? skill as SkillId
+    : 'smithing';
+}
+
+function recipePanelInputNounFor(def: WorldObjectDef): string {
+  if (def.id === POTTERY_WHEEL_OBJECT_DEF_ID) return 'soft clay';
+  return RECIPE_INPUT_NOUN_BY_CATEGORY[def.category] ?? 'bars';
+}
+
+function supportsBatchObjectRecipe(def: WorldObjectDef): boolean {
+  return BATCH_OBJECT_RECIPE_DEF_IDS.includes(def.id);
 }
 
 type InteractionOption = {
@@ -5524,6 +5544,7 @@ export class GameManager {
     if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return;
     // Doors can always be clicked (open/close toggle). Other objects can't when depleted.
     if (!this.isWorldObjectInteractable(def, data.depleted)) return;
+    if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     // Auto-interact with harvestable objects (trees, rocks), doors, ladders,
     // and crafting stations (furnace, anvil, range).
@@ -5576,7 +5597,8 @@ export class GameManager {
   private showSmithingUI(objectEntityId: number, def: WorldObjectDef): void {
     if (!this.smithingPanel || !this.sidePanel) return;
     const inventory = this.sidePanel.getInventory();
-    const smithingLevel = this.sidePanel.getSkillLevel('smithing');
+    const stationSkill = recipePanelSkillFor(def);
+    const skillLevel = this.sidePanel.getSkillLevel(stationSkill);
     const itemDefs = this.sidePanel.getItemDefs();
     // requiresTool comes from the first recipe; furnaces have no tool req,
     // anvils have 'hammer'. hasTool is moot when requiresTool is undefined,
@@ -5592,12 +5614,50 @@ export class GameManager {
     // against future shapes where it might be optional. inputNoun shapes the
     // back-button + empty-state copy in SmithingPanel.
     const stationLabel = def.name ?? 'Smithing';
-    const inputNoun = def.category === 'furnace' ? 'ore' : 'bars';
+    const inputNoun = recipePanelInputNounFor(def);
+    const supportsBatch = supportsBatchObjectRecipe(def);
 
-    this.smithingPanel.show(def.recipes ?? [], inventory, smithingLevel, hasTool, itemDefs, (recipeIndex) => {
-      // Walk to the anvil and send the crafting request with the specific recipe index
+    this.smithingPanel.show(def.recipes ?? [], inventory, skillLevel, hasTool, itemDefs, (recipeIndex) => {
+      const recipe = def.recipes?.[recipeIndex];
+      const maxQuantity = recipe ? this.maxObjectRecipeQuantity(recipe, inventory) : 0;
+      if (supportsBatch && recipe && maxQuantity > 1 && this.quantityInputPanel) {
+        const outputName = itemDefs.get(recipe.outputItemId)?.name ?? 'item';
+        this.quantityInputPanel.show({
+          title: `Make ${outputName}`,
+          prompt: `Make how many ${outputName}?`,
+          max: maxQuantity,
+          defaultValue: maxQuantity,
+          submitLabel: 'Make',
+          onSubmit: (quantity) => {
+            const currentMax = this.maxObjectRecipeQuantity(recipe, this.sidePanel?.getInventory() ?? []);
+            if (currentMax <= 0) return;
+            const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
+            this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested));
+          },
+        });
+        return;
+      }
+
+      // Walk to the station and send the crafting request with the specific recipe index.
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex));
     }, { stationLabel, inputNoun, requiresTool });
+  }
+
+  private maxObjectRecipeQuantity(
+    recipe: NonNullable<WorldObjectDef['recipes']>[number],
+    inventory: (InventorySlot | null)[],
+  ): number {
+    const itemCounts = new Map<number, number>();
+    for (const slot of inventory) {
+      if (slot) itemCounts.set(slot.itemId, (itemCounts.get(slot.itemId) ?? 0) + slot.quantity);
+    }
+
+    const primary = Math.floor((itemCounts.get(recipe.inputItemId) ?? 0) / Math.max(1, recipe.inputQuantity));
+    if (recipe.secondInputItemId === undefined) return primary;
+    const secondary = Math.floor(
+      (itemCounts.get(recipe.secondInputItemId) ?? 0) / Math.max(1, recipe.secondInputQuantity ?? 1),
+    );
+    return Math.min(primary, secondary);
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
@@ -6653,7 +6713,11 @@ export class GameManager {
     }
   }
 
-  private handleGroundClick(worldX: number, worldZ: number): void {
+  private handleGroundClick(
+    worldX: number,
+    worldZ: number,
+    markerTarget: { worldX: number; worldZ: number } | null = null,
+  ): void {
     if (this.duelActive) return;
     if (performance.now() < this.castingUntil) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
@@ -6725,14 +6789,14 @@ export class GameManager {
       const dest = path[path.length - 1];
       // Yellow ground destination disc removed in favor of the cursor burst.
       // Minimap arrow still indicates where you're heading.
-      this.minimap?.setDestination(dest.x, dest.z);
+      this.minimap?.setDestination(markerTarget?.worldX ?? dest.x, markerTarget?.worldZ ?? dest.z);
     }
   }
 
   private createHUD(): void {
     this.minimap = new Minimap(260);
-    this.minimap.setClickMoveHandler((worldX, worldZ) => {
-      this.handleGroundClick(worldX, worldZ);
+    this.minimap.setClickMoveHandler((worldX, worldZ, markerWorldX, markerWorldZ) => {
+      this.handleGroundClick(worldX, worldZ, { worldX: markerWorldX, worldZ: markerWorldZ });
     });
     this.chunkManager.setOnMinimapDataChanged(() => this.minimap?.invalidateTileCache());
   }

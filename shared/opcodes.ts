@@ -28,10 +28,16 @@ export enum ClientOpcode {
    *  the current node, runs the option's action, then advances to option.next
    *  or closes. */
   DIALOGUE_CHOOSE = 22,
+  /** Interact with a world object.
+   *  Values: [objectEntityId, actionIndex?, recipeIndex?, expectedDoorOpen?, quantity?].
+   *  quantity is optional; -1 means repeat until inputs run out for object
+   *  recipes that support batched production. */
   PLAYER_INTERACT_OBJECT = 40,
   /** Use inventory item on another inventory slot.
-   *  Values: [fromSlot, fromItemId, toSlot, toItemId]. Server validates both
+   *  Values: [fromSlot, fromItemId, toSlot, toItemId, quantity?]. Server validates both
    *  slots still hold the expected items, then attempts to combine them.
+   *  quantity is optional; -1 means repeat until ingredients run out for
+   *  recipes that support batched production.
    *  No matching recipe → "Nothing interesting happens." chat reply. */
   PLAYER_USE_ITEM_ON_ITEM = 41,
   /** Use inventory item on a world object.

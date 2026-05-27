@@ -1762,7 +1762,7 @@
     "name": "Well",
     "category": "scenery",
     "actions": [
-      "Use",
+      "Fill",
       "Examine"
     ],
     "blocking": true,
@@ -1878,11 +1878,29 @@
       {
         "inputItemId": 243,
         "inputQuantity": 1,
-        "outputItemId": 244,
+        "outputItemId": 245,
         "outputQuantity": 1,
         "skill": "crafting",
         "levelRequired": 1,
-        "xpReward": 6
+        "xpReward": 2
+      },
+      {
+        "inputItemId": 243,
+        "inputQuantity": 1,
+        "outputItemId": 249,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 4,
+        "xpReward": 3
+      },
+      {
+        "inputItemId": 243,
+        "inputQuantity": 1,
+        "outputItemId": 250,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 8,
+        "xpReward": 4
       }
     ]
   },
