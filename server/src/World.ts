@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -45,7 +45,7 @@ type ItemProductionAction =
   | { kind: 'itemOnItem'; recipe: ItemOnItemRecipe; remaining: number | null; nextTick: number }
   | { kind: 'itemOnObject'; recipe: ItemOnObjectRecipe; objectEntityId: number; remaining: number | null; nextTick: number }
   | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
-  | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number };
+  | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number };
 const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
   {
     inputItemIds: [CLAY_ITEM_ID, POT_OF_WATER_ITEM_ID], // Clay + Pot of Water
@@ -120,6 +120,7 @@ function qFacing(angle: number | null | undefined): number {
 /** Default respawn time (ticks) for world objects whose def omits `respawnTime`.
  *  At 600ms/tick this is ~2 minutes. */
 const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
+const COOKING_RECIPE_TICKS = 4;
 /** Despawn timer (ticks) applied to player-dropped items.
  *  ~2 minutes at 600ms/tick. */
 const GROUND_ITEM_DESPAWN_TICKS = 200;
@@ -1208,6 +1209,7 @@ export class World {
 
   private requiresClearObjectInteractionEdge(obj: WorldObject): boolean {
     return obj.def.category === 'chest'
+      || obj.def.category === 'cookingrange'
       || obj.defId === POTTERY_WHEEL_OBJECT_DEF_ID
       || obj.defId === KILN_OBJECT_DEF_ID;
   }
@@ -2123,7 +2125,7 @@ export class World {
     player.clearMoveQueue();
     player.pendingPickup = -1;
     this.clearPendingObjectIntents(player);
-    player.delayedUntilTick = 0;
+    player.clearDelay();
     this.cancelSkilling(playerId);
     this.cancelItemProduction(playerId);
     this.clearCombatTarget(playerId);
@@ -2227,7 +2229,7 @@ export class World {
     player.clearMoveQueue();
     player.pendingPickup = -1;
     this.clearPendingObjectIntents(player);
-    player.delayedUntilTick = 0;
+    player.clearDelay();
     this.cancelSkilling(player.id);
     this.cancelItemProduction(player.id);
     this.clearCombatTarget(player.id);
@@ -3539,7 +3541,7 @@ export class World {
   handlePlayerDrop(playerId: number, slotIndex: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
-    if (player.isBusy(this.currentTick)) return;
+    if (player.isBusyExceptDelayReason(this.currentTick, 'eat')) return;
     if (player.isInterfaceOpen()) return;
     // Explicit bounds. The expectedItemId guard below already rejects OOB
     // indices (inventory[-1]?.itemId is undefined, ≠ any int16), but make the
@@ -3803,7 +3805,7 @@ export class World {
     }
 
     if (obj.def.recipes && obj.def.recipes.length > 0) {
-      if (recipeIndex >= 0 && recipeQuantity !== 1 && this.supportsObjectRecipeProduction(obj)) {
+      if (recipeIndex >= 0 && this.supportsObjectRecipeProduction(obj) && (recipeQuantity !== 1 || obj.def.category === 'cookingrange')) {
         this.startObjectRecipeProduction(playerId, player, obj, recipeIndex, recipeQuantity);
       } else {
         this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
@@ -3818,6 +3820,10 @@ export class World {
 
   private supportsObjectRecipeProduction(obj: WorldObject): boolean {
     return BATCH_OBJECT_RECIPE_DEF_IDS.includes(obj.defId);
+  }
+
+  private objectRecipeProductionTicks(obj: WorldObject): number {
+    return obj.defId === COOKING_RANGE_OBJECT_DEF_ID ? COOKING_RECIPE_TICKS : 1;
   }
 
   private shouldOpenRecipePicker(obj: WorldObject): boolean {
@@ -4279,8 +4285,8 @@ export class World {
     player.heal(itemDef.healAmount);
     player.skills.hitpoints.currentLevel = player.health;
     player.removeItem(slotIndex, 1);
-    // RS2: 3-tick eat delay prevents stacking multiple foods per tick
-    player.setDelay(this.currentTick, 3);
+    // Food has a 3-tick cooldown, but dropping items is allowed through it.
+    player.setDelay(this.currentTick, 3, 'eat');
 
     this.sendInventory(player);
     this.sendToPlayer(player, ServerOpcode.PLAYER_STATS,
@@ -4424,15 +4430,17 @@ export class World {
       return;
     }
     const remaining = quantity < 0 ? null : Math.max(1, Math.floor(quantity));
+    const intervalTicks = this.objectRecipeProductionTicks(obj);
     this.itemProductionActions.set(playerId, {
       kind: 'objectRecipe',
       objectEntityId: obj.id,
       recipeIndex,
       remaining,
-      nextTick: this.currentTick + 1,
+      nextTick: this.currentTick + intervalTicks,
+      intervalTicks,
     });
-    player.setDelay(this.currentTick, 1);
-    this.sendChatSystem(player, 'You start crafting.');
+    player.setDelay(this.currentTick, intervalTicks);
+    this.sendChatSystem(player, obj.def.category === 'cookingrange' ? 'You start cooking.' : 'You start crafting.');
   }
 
   private findItemOnObjectRecipe(itemId: number, obj: WorldObject): ItemOnObjectRecipe | null {
@@ -6184,7 +6192,7 @@ export class World {
     player.pendingSpellCast = null;
     player.pendingPickup = -1;
     this.clearPendingObjectIntents(player);
-    player.delayedUntilTick = 0;
+    player.clearDelay();
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
     player.attackCooldown = 0;
@@ -7034,8 +7042,9 @@ export class World {
         }
       }
 
-      action.nextTick = this.currentTick + 1;
-      player.setDelay(this.currentTick, 1);
+      const intervalTicks = action.kind === 'objectRecipe' ? action.intervalTicks : 1;
+      action.nextTick = this.currentTick + intervalTicks;
+      player.setDelay(this.currentTick, intervalTicks);
     }
   }
 
@@ -7074,7 +7083,10 @@ export class World {
 
   private itemProductionStopMessage(action: ItemProductionAction): string {
     if (action.kind === 'itemOnItem') return action.recipe.stopMessage ?? 'You stop producing items.';
-    if (action.kind === 'objectRecipe') return 'You stop crafting.';
+    if (action.kind === 'objectRecipe') {
+      const obj = this.worldObjects.get(action.objectEntityId);
+      return obj?.def.category === 'cookingrange' ? 'You stop cooking.' : 'You stop crafting.';
+    }
     return 'You stop filling containers.';
   }
 
@@ -7497,7 +7509,7 @@ export class World {
     player.pendingTalkRepathTicks = 0;
     player.pendingPickup = -1;
     player.attackCooldown = 0;
-    player.delayedUntilTick = 0;
+    player.clearDelay();
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
     player.openShopNpcId = null;

@@ -56,7 +56,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -118,6 +118,16 @@ type DoorPickProxyBounds = {
   depth: number;
   height: number;
 };
+
+type CropPickProxyConfig = {
+  width: number;
+  depth: number;
+  height: number;
+  y: number;
+};
+
+const DEFAULT_CROP_PICK_PROXY: CropPickProxyConfig = { width: 1.2, depth: 1.2, height: 1.2, y: 0.6 };
+const POTATO_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.5, depth: 0.5, height: 0.5, y: 0.25 };
 
 type DoorPivotEntry = {
   pivot: TransformNode;
@@ -382,9 +392,8 @@ export class GameManager {
   private worldObjectIdByNode: WeakMap<TransformNode, number> = new WeakMap();
   private worldObjectPickState: WeakMap<TransformNode, { entityId: number; interactive: boolean }> = new WeakMap();
   private worldObjectDefs: Map<number, { defId: number; x: number; z: number; floor: number; y: number; depleted: boolean; interactionSides?: number; rotY?: number; openDirection?: -1 | 1; locked?: boolean; interactionTiles?: { x: number; z: number }[]; ladderActionMask?: number }> = new Map();
-  /** Shared geometry for crop pick proxies — cloned per crop so the ~hundreds
-   *  of rice plants share a single VBO. */
-  private cropProxyTemplate: Mesh | null = null;
+  /** Shared geometry for crop pick proxies, keyed by local proxy dimensions. */
+  private cropProxyTemplates: Map<string, Mesh> = new Map();
   private doorPivots: Map<number, DoorPivotEntry> = new Map();
   private doorPickProxies: Map<number, Mesh> = new Map();
   private doorTiles: Map<number, [number, number]> = new Map();
@@ -1935,30 +1944,50 @@ export class GameManager {
       }
     }
 
-    // Crops have tiny meshes (~0.6 tile) — give them a roomier invisible click
-    // proxy. Cloned from a shared template so N rice plants share one VBO.
     if (def?.category === 'crop') {
-      if (!this.cropProxyTemplate) {
-        const tmpl = MeshBuilder.CreateBox('crop_pickProxy_tmpl', {
-          width: 1.2, depth: 1.2, height: 1.2,
-        }, this.scene);
-        tmpl.isVisible = false;
-        tmpl.isPickable = false;
-        tmpl.setEnabled(false);
-        this.cropProxyTemplate = tmpl;
-      }
-      const proxy = this.cropProxyTemplate.clone(`crop_pickProxy_${objectEntityId}`, placedNode)!;
-      proxy.setEnabled(true);
-      proxy.position.y = 0.6;
-      proxy.isVisible = true;
-      proxy.visibility = 0;
-      proxy.isPickable = true;
-      proxy.layerMask = 0;
-      proxy.doNotSyncBoundingInfo = true;
-      proxy.freezeWorldMatrix();
-      proxy.metadata = { objectEntityId };
-      this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, data.depleted), proxy);
+      this.createCropPickProxy(objectEntityId, placedNode, def, data.depleted);
     }
+  }
+
+  private cropPickProxyConfig(def: WorldObjectDef): CropPickProxyConfig {
+    return def.id === POTATO_PLANT_OBJECT_DEF_ID ? POTATO_CROP_PICK_PROXY : DEFAULT_CROP_PICK_PROXY;
+  }
+
+  private cropProxyTemplateFor(config: CropPickProxyConfig): Mesh {
+    const key = `${config.width},${config.depth},${config.height}`;
+    let tmpl = this.cropProxyTemplates.get(key);
+    if (!tmpl) {
+      tmpl = MeshBuilder.CreateBox(`crop_pickProxy_tmpl_${this.cropProxyTemplates.size}`, {
+        width: config.width,
+        depth: config.depth,
+        height: config.height,
+      }, this.scene);
+      tmpl.isVisible = false;
+      tmpl.isPickable = false;
+      tmpl.setEnabled(false);
+      this.cropProxyTemplates.set(key, tmpl);
+    }
+    return tmpl;
+  }
+
+  private createCropPickProxy(
+    objectEntityId: number,
+    placedNode: TransformNode,
+    def: WorldObjectDef,
+    depleted: boolean,
+  ): void {
+    const config = this.cropPickProxyConfig(def);
+    const proxy = this.cropProxyTemplateFor(config).clone(`crop_pickProxy_${objectEntityId}`, placedNode)!;
+    proxy.setEnabled(true);
+    proxy.position.y = config.y;
+    proxy.isVisible = true;
+    proxy.visibility = 0;
+    proxy.isPickable = true;
+    proxy.layerMask = 0;
+    proxy.doNotSyncBoundingInfo = true;
+    proxy.freezeWorldMatrix();
+    proxy.metadata = { objectEntityId };
+    this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, depleted), proxy);
   }
 
   /** Create a depleted model (stump/depleted rock) at the placed node's position */
@@ -5490,6 +5519,7 @@ export class GameManager {
 
   private requiresClearObjectInteractionEdge(def: WorldObjectDef): boolean {
     return def.category === 'chest'
+      || def.category === 'cookingrange'
       || def.id === POTTERY_WHEEL_OBJECT_DEF_ID
       || def.id === KILN_OBJECT_DEF_ID;
   }
@@ -5646,10 +5676,17 @@ export class GameManager {
     const stationLabel = def.name ?? 'Smithing';
     const inputNoun = recipePanelInputNounFor(def);
     const supportsBatch = supportsBatchObjectRecipe(def);
+    const usesInlineQuantities = def.category === 'cookingrange';
 
-    this.smithingPanel.show(def.recipes ?? [], inventory, skillLevel, hasTool, itemDefs, (recipeIndex) => {
+    this.smithingPanel.show(def.recipes ?? [], inventory, skillLevel, hasTool, itemDefs, (recipeIndex, quantity = 1) => {
       const recipe = def.recipes?.[recipeIndex];
       const maxQuantity = recipe ? this.maxObjectRecipeQuantity(recipe, inventory) : 0;
+      if (usesInlineQuantities && supportsBatch && recipe) {
+        if (maxQuantity <= 0) return;
+        const requested = quantity < 0 ? -1 : Math.max(1, Math.min(quantity, maxQuantity));
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested));
+        return;
+      }
       if (supportsBatch && recipe && maxQuantity > 1 && this.quantityInputPanel) {
         const outputName = itemDefs.get(recipe.outputItemId)?.name ?? 'item';
         this.quantityInputPanel.show({
@@ -5670,7 +5707,21 @@ export class GameManager {
 
       // Walk to the station and send the crafting request with the specific recipe index.
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex));
-    }, { stationLabel, inputNoun, requiresTool });
+    }, {
+      stationLabel,
+      inputNoun,
+      requiresTool,
+      layout: usesInlineQuantities ? 'flat' : 'grouped',
+      actionVerb: usesInlineQuantities ? 'Cook' : 'Make',
+      actionButtons: usesInlineQuantities
+        ? [
+            { label: '1', value: 1 },
+            { label: '5', value: 5 },
+            { label: '10', value: 10 },
+            { label: 'All', value: 'all' },
+          ]
+        : undefined,
+    });
   }
 
   private maxObjectRecipeQuantity(

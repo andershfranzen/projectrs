@@ -3,7 +3,17 @@ import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
 import { renderItemSlot } from '../rendering/ItemIcon';
 
-export type SmithCallback = (recipeIndex: number) => void;
+export type RecipeQuantityButton = { label: string; value: number | 'all' };
+export type SmithCallback = (recipeIndex: number, quantity?: number) => void;
+
+export interface SmithingPanelOptions {
+  stationLabel?: string;
+  inputNoun?: string;
+  requiresTool?: boolean;
+  layout?: 'grouped' | 'flat';
+  actionButtons?: RecipeQuantityButton[];
+  actionVerb?: string;
+}
 
 /**
  * Popup panel showing available smithing recipes when interacting with an anvil.
@@ -31,6 +41,9 @@ export class SmithingPanel {
   private stationLabel: string = 'Anvil';
   private inputNoun: string = 'bars';
   private requiresTool: boolean = true;
+  private layout: 'grouped' | 'flat' = 'grouped';
+  private actionButtons: RecipeQuantityButton[] = [];
+  private actionVerb: string = 'Make';
 
   constructor() {
     const modal = createModalPanel({
@@ -59,7 +72,7 @@ export class SmithingPanel {
     hasHammer: boolean,
     itemDefs: Map<number, ItemDef>,
     onSmith: SmithCallback,
-    opts?: { stationLabel?: string; inputNoun?: string; requiresTool?: boolean },
+    opts?: SmithingPanelOptions,
   ): void {
     closeActiveContextMenu();
     this.onSmith = onSmith;
@@ -71,6 +84,9 @@ export class SmithingPanel {
     this.stationLabel = opts?.stationLabel ?? 'Anvil';
     this.inputNoun = opts?.inputNoun ?? 'bars';
     this.requiresTool = opts?.requiresTool ?? true;
+    this.layout = opts?.layout ?? 'grouped';
+    this.actionButtons = [...(opts?.actionButtons ?? [])];
+    this.actionVerb = opts?.actionVerb ?? 'Make';
 
     // Which bar types does the player actually hold?
     const itemCounts = this.countInventory(inventory);
@@ -85,6 +101,8 @@ export class SmithingPanel {
     if (availableBarIds.size === 0) {
       // Player has no bars at all — show empty state
       this.renderEmptyState(hasHammer);
+    } else if (this.layout === 'flat') {
+      this.renderFlatRecipeList();
     } else if (availableBarIds.size === 1) {
       // Single bar type — skip picker, show recipes directly
       const [barId] = availableBarIds;
@@ -142,6 +160,180 @@ export class SmithingPanel {
 
       this.gridEl.appendChild(row);
     }
+  }
+
+  private maxQuantityForRecipe(recipe: ObjectRecipe, itemCounts: Map<number, number>): number {
+    const primary = Math.floor((itemCounts.get(recipe.inputItemId) ?? 0) / Math.max(1, recipe.inputQuantity));
+    if (recipe.secondInputItemId === undefined) return primary;
+    const secondary = Math.floor(
+      (itemCounts.get(recipe.secondInputItemId) ?? 0) / Math.max(1, recipe.secondInputQuantity ?? 1),
+    );
+    return Math.min(primary, secondary);
+  }
+
+  private renderFlatRecipeList(): void {
+    this.titleEl.textContent = this.stationLabel;
+    this.gridEl.innerHTML = '';
+    const itemCounts = this.countInventory(this.allInventory);
+    const toolOk = !this.requiresTool || this.cachedHasHammer;
+
+    const grid = document.createElement('div');
+    grid.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    `;
+
+    this.allRecipes.forEach((recipe, index) => {
+      const inputDef = this.cachedItemDefs.get(recipe.inputItemId);
+      const outputDef = this.cachedItemDefs.get(recipe.outputItemId);
+      const inputName = inputDef?.name ?? `Item ${recipe.inputItemId}`;
+      const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
+      const maxQuantity = this.maxQuantityForRecipe(recipe, itemCounts);
+      const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
+      const hasSecondInput = recipe.secondInputItemId === undefined
+        || (itemCounts.get(recipe.secondInputItemId) ?? 0) >= (recipe.secondInputQuantity ?? 1);
+      const canMake = hasLevel && maxQuantity > 0 && hasSecondInput && toolOk;
+
+      const card = document.createElement('div');
+      card.style.cssText = `
+        position: relative;
+        min-height: 172px;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        padding: 9px;
+        box-sizing: border-box;
+        border-radius: 4px;
+        background:
+          linear-gradient(180deg, rgba(42, 34, 28, 0.92), rgba(22, 17, 14, 0.96)),
+          url('/ui/stone-dark.png') repeat;
+        border: 1px solid ${canMake ? '#6f604b' : '#3d342b'};
+        box-shadow: inset 0 1px 0 rgba(235, 205, 160, 0.08), 0 1px 0 rgba(0,0,0,0.55);
+        opacity: ${canMake ? '1' : '0.62'};
+      `;
+
+      const media = document.createElement('div');
+      media.style.cssText = 'display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 7px; min-height: 44px;';
+
+      const inputIcon = document.createElement('div');
+      inputIcon.style.cssText = 'width: 42px; height: 42px;';
+      if (inputDef) renderItemSlot(inputIcon, inputDef, this.cachedItemDefs, { size: 42 });
+      media.appendChild(inputIcon);
+
+      const arrow = document.createElement('div');
+      arrow.style.cssText = 'height: 1px; background: #6f604b; position: relative;';
+      const arrowHead = document.createElement('div');
+      arrowHead.style.cssText = `
+        position: absolute; right: -1px; top: -4px;
+        width: 0; height: 0;
+        border-top: 4px solid transparent;
+        border-bottom: 4px solid transparent;
+        border-left: 7px solid #6f604b;
+      `;
+      arrow.appendChild(arrowHead);
+      media.appendChild(arrow);
+
+      const outputIcon = document.createElement('div');
+      outputIcon.style.cssText = 'width: 42px; height: 42px;';
+      if (outputDef) renderItemSlot(outputIcon, outputDef, this.cachedItemDefs, { size: 42 });
+      media.appendChild(outputIcon);
+      card.appendChild(media);
+
+      const title = document.createElement('div');
+      title.style.cssText = `
+        min-height: 30px;
+        color: ${canMake ? '#f0ddd0' : '#9c8c81'};
+        font-size: 12px;
+        font-weight: bold;
+        line-height: 1.25;
+        text-align: center;
+        overflow: hidden;
+      `;
+      title.textContent = outputName;
+      card.appendChild(title);
+
+      const detail = document.createElement('div');
+      detail.style.cssText = `
+        min-height: 28px;
+        color: ${canMake ? '#c7b9a6' : '#81746a'};
+        font-size: 11px;
+        line-height: 1.25;
+        text-align: center;
+      `;
+      const held = itemCounts.get(recipe.inputItemId) ?? 0;
+      detail.textContent = `${inputName}: ${held} held`;
+      card.appendChild(detail);
+
+      const levelBadge = document.createElement('div');
+      levelBadge.style.cssText = `
+        position: absolute;
+        top: 5px;
+        right: 7px;
+        color: ${hasLevel ? '#b8c792' : '#d68a7d'};
+        font-size: 10px;
+        font-weight: bold;
+        text-shadow: 1px 1px 0 #000;
+      `;
+      levelBadge.textContent = `Lv ${recipe.levelRequired}`;
+      card.appendChild(levelBadge);
+
+      if (!canMake) {
+        const reason = document.createElement('div');
+        reason.style.cssText = 'min-height: 18px; color: #c38377; font-size: 11px; text-align: center; font-weight: bold;';
+        if (!hasLevel) reason.textContent = `Need level ${recipe.levelRequired}`;
+        else if (!toolOk) reason.textContent = 'Missing tool';
+        else reason.textContent = `No ${inputName}`;
+        card.appendChild(reason);
+      }
+
+      const buttonRow = document.createElement('div');
+      const buttonColumnCount = Math.max(1, this.actionButtons.length);
+      buttonRow.style.cssText = `display: grid; grid-template-columns: repeat(${buttonColumnCount}, minmax(0, 1fr)); gap: 4px; margin-top: auto;`;
+
+      for (const amount of this.actionButtons) {
+        const requested = amount.value === 'all' ? maxQuantity : Math.min(Math.floor(amount.value), maxQuantity);
+        const enabled = canMake && requested > 0 && (amount.value === 'all' || maxQuantity >= amount.value);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = amount.label;
+        button.title = enabled ? `${this.actionVerb} ${requested}` : '';
+        button.disabled = !enabled;
+        button.style.cssText = `
+          height: 25px;
+          min-width: 0;
+          padding: 2px 3px;
+          box-sizing: border-box;
+          border-radius: 3px;
+          border: 1px solid ${enabled ? '#8a6f47' : '#3b332b'};
+          background: ${enabled ? 'linear-gradient(180deg, #553821 0%, #2d1d14 100%)' : 'rgba(20, 17, 15, 0.85)'};
+          color: ${enabled ? '#f2d6b8' : '#6e6258'};
+          cursor: ${enabled ? 'pointer' : 'default'};
+          font-family: Arial, Helvetica, sans-serif;
+          font-size: 11px;
+          font-weight: bold;
+          text-shadow: 1px 1px 0 #000;
+          overflow: hidden;
+        `;
+        if (enabled) {
+          button.addEventListener('mouseenter', () => { button.style.background = 'linear-gradient(180deg, #704726 0%, #3a2518 100%)'; });
+          button.addEventListener('mouseleave', () => { button.style.background = 'linear-gradient(180deg, #553821 0%, #2d1d14 100%)'; });
+          button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.onSmith?.(index, amount.value === 'all' ? -1 : requested);
+            this.hide();
+          });
+        }
+        buttonRow.appendChild(button);
+      }
+
+      if (this.actionButtons.length > 0) card.appendChild(buttonRow);
+      grid.appendChild(card);
+    });
+
+    this.gridEl.appendChild(grid);
   }
 
   private renderRecipesForBar(barId: number): void {

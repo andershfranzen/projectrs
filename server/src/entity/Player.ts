@@ -10,6 +10,7 @@ import type { ServerWebSocket } from 'bun';
 
 export const EQUIP_SLOTS = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'] as const;
 export type EquipSlot = typeof EQUIP_SLOTS[number];
+export type PlayerDelayReason = 'generic' | 'eat';
 /** 17 ticks at 600ms is 10.2s, so the combat logout block is never shorter
  *  than the requested 10 seconds. */
 export const COMBAT_LOGOUT_BLOCK_TICKS = 17;
@@ -190,11 +191,13 @@ export class Player extends Entity {
   pendingSpellCast: { spellIndex: number; targetEntityId: number } | null = null;
 
   /** Tick on which the player is no longer busy. 0 = not busy.
-   *  While busy, state-mutating packet handlers (eat, equip, drop, pickup,
-   *  interact-object, buy/sell) reject the packet. Mirrors 2004scape's
-   *  `p_delay` / `Player.busy()`. Movement is intentionally NOT gated —
-   *  it's the cancel mechanism (and already clears skilling state). */
+   *  While busy, most state-mutating packet handlers reject the packet.
+   *  Handlers can explicitly allow selected delay reasons where old-game
+   *  behavior permits it, such as dropping through a food cooldown. Mirrors
+   *  2004scape's `p_delay` / `Player.busy()`. Movement is intentionally NOT
+   *  gated — it's the cancel mechanism (and already clears skilling state). */
   delayedUntilTick: number = 0;
+  private delayReason: PlayerDelayReason | null = null;
 
   /** Absolute tick of the next allowed skilling roll. 0 = stale, will
    *  bootstrap a fresh cycle on next eligible tick. Mirrors RS2's
@@ -243,7 +246,18 @@ export class Player extends Entity {
   get inDuel(): boolean { return this.openInterface === 'duel'; }
 
   isBusy(currentTick: number): boolean {
-    return currentTick < this.delayedUntilTick;
+    if (currentTick < this.delayedUntilTick) return true;
+    this.delayReason = null;
+    return false;
+  }
+
+  getActiveDelayReason(currentTick: number): PlayerDelayReason | null {
+    return this.isBusy(currentTick) ? this.delayReason : null;
+  }
+
+  isBusyExceptDelayReason(currentTick: number, allowedReason: PlayerDelayReason): boolean {
+    const activeReason = this.getActiveDelayReason(currentTick);
+    return activeReason !== null && activeReason !== allowedReason;
   }
 
   /** True if a modal interface is open. State-mutating handlers refuse while
@@ -255,9 +269,19 @@ export class Player extends Entity {
 
   /** Set or extend a delay. Always takes the max so a longer pending delay
    *  isn't shortened by a later short one. */
-  setDelay(currentTick: number, ticks: number): void {
+  setDelay(currentTick: number, ticks: number, reason: PlayerDelayReason = 'generic'): void {
     const until = currentTick + ticks;
-    if (until > this.delayedUntilTick) this.delayedUntilTick = until;
+    if (until > this.delayedUntilTick) {
+      this.delayedUntilTick = until;
+      this.delayReason = reason;
+    } else if (until === this.delayedUntilTick && reason === 'generic') {
+      this.delayReason = 'generic';
+    }
+  }
+
+  clearDelay(): void {
+    this.delayedUntilTick = 0;
+    this.delayReason = null;
   }
 
   isLogoutBlocked(currentTick: number): boolean {

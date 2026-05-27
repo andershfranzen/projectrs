@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 
@@ -12,7 +12,7 @@ function makePlayer(): Player {
   return new Player('wall_test', 10.5, 9.5, fakeWs, 1);
 }
 
-function makeObject(defId: number, name: string): any {
+function makeObject(defId: number, name: string, category: string = 'scenery'): any {
   return {
     id: 10000 + defId,
     defId,
@@ -26,17 +26,17 @@ function makeObject(defId: number, name: string): any {
     def: {
       id: defId,
       name,
-      category: 'scenery',
+      category,
       width: 1,
       height: 1,
     },
   };
 }
 
-function canUseWithWallBlocked(defId: number, name: string, wallBlocked: boolean): boolean {
+function canUseWithWallBlocked(defId: number, name: string, wallBlocked: boolean, category?: string): boolean {
   const world = Object.create(World.prototype) as any;
   const player = makePlayer();
-  const obj = makeObject(defId, name);
+  const obj = makeObject(defId, name, category);
   const map = {
     isWallBlocked: () => wallBlocked,
     isWallBlockedOnFloor: () => wallBlocked,
@@ -53,5 +53,10 @@ describe('wall-gated station interaction', () => {
   test('kilns cannot be used through a wall edge', () => {
     expect(canUseWithWallBlocked(KILN_OBJECT_DEF_ID, 'Kiln', true)).toBe(false);
     expect(canUseWithWallBlocked(KILN_OBJECT_DEF_ID, 'Kiln', false)).toBe(true);
+  });
+
+  test('cooking ranges cannot be used through a wall edge', () => {
+    expect(canUseWithWallBlocked(COOKING_RANGE_OBJECT_DEF_ID, 'Cooking Range', true, 'cookingrange')).toBe(false);
+    expect(canUseWithWallBlocked(COOKING_RANGE_OBJECT_DEF_ID, 'Cooking Range', false, 'cookingrange')).toBe(true);
   });
 });
