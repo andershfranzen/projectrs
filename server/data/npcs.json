@@ -227,26 +227,6 @@
       "name": "General Store",
       "items": [
         {
-          "itemId": 13,
-          "price": 5,
-          "stock": 10
-        },
-        {
-          "itemId": 12,
-          "price": 10,
-          "stock": 5
-        },
-        {
-          "itemId": 15,
-          "price": 12,
-          "stock": 5
-        },
-        {
-          "itemId": 28,
-          "price": 10,
-          "stock": 5
-        },
-        {
           "itemId": 31,
           "price": 20,
           "stock": 3
