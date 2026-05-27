@@ -2172,5 +2172,77 @@
     "equippable": false,
     "value": 4,
     "model": "/assets/models/Plate.glb"
+  },
+  {
+    "id": 254,
+    "name": "Sapphire",
+    "description": "A polished blue gemstone.",
+    "stackable": false,
+    "equippable": false,
+    "value": 160,
+    "model": "/assets/models/gems/Sapphire.glb"
+  },
+  {
+    "id": 255,
+    "name": "Emerald",
+    "description": "A polished green gemstone.",
+    "stackable": false,
+    "equippable": false,
+    "value": 240,
+    "model": "/assets/models/gems/Emerald.glb"
+  },
+  {
+    "id": 256,
+    "name": "Ruby",
+    "description": "A polished red gemstone.",
+    "stackable": false,
+    "equippable": false,
+    "value": 320,
+    "model": "/assets/models/gems/Ruby.glb"
+  },
+  {
+    "id": 257,
+    "name": "Diamond",
+    "description": "A clear gemstone cut to catch the light.",
+    "stackable": false,
+    "equippable": false,
+    "value": 500,
+    "model": "/assets/models/gems/Diamond.glb"
+  },
+  {
+    "id": 258,
+    "name": "Amethyst",
+    "description": "A purple gemstone cluster.",
+    "stackable": false,
+    "equippable": false,
+    "value": 120,
+    "model": "/assets/models/gems/Amethyst.glb"
+  },
+  {
+    "id": 259,
+    "name": "Topaz",
+    "description": "A golden gemstone with a warm glow.",
+    "stackable": false,
+    "equippable": false,
+    "value": 180,
+    "model": "/assets/models/gems/Topaz.glb"
+  },
+  {
+    "id": 260,
+    "name": "Opal",
+    "description": "A pale gemstone with shifting color flashes.",
+    "stackable": false,
+    "equippable": false,
+    "value": 220,
+    "model": "/assets/models/gems/Opal.glb"
+  },
+  {
+    "id": 261,
+    "name": "Onyx",
+    "description": "A dark gemstone with a glassy surface.",
+    "stackable": false,
+    "equippable": false,
+    "value": 260,
+    "model": "/assets/models/gems/Onyx.glb"
   }
 ]
