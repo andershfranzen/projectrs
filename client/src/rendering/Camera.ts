@@ -12,7 +12,7 @@ const WORLD_CAMERA_MASK = 0x0FFFFFFF;
 // RS2 also couples radius to pitch (`distance = pitch * 3 + 600`, game.ts:1697)
 // but at our world scale the 1.78× range reads as visibly aggressive zoom on
 // every pitch tweak — not what the original "felt" like. We keep the pitch
-// range + FOV + Y offset but fix the radius.
+// range + FOV + Y offset, and expose only a small player zoom range.
 //
 // Mapping to Babylon's ArcRotateCamera (beta = angle from +Y axis):
 //   beta = π/2 − rs_pitch_in_radians
@@ -27,7 +27,9 @@ const LOCKED_BETA_AT_PITCH_MIN = Math.PI / 2 - (RS_PITCH_MIN / 2048) * 2 * Math.
 const LOCKED_BETA_AT_PITCH_MAX = Math.PI / 2 - (RS_PITCH_MAX / 2048) * 2 * Math.PI;
 const LOCKED_TARGET_Y_OFFSET = RS_TARGET_Y_OFFSET_UNITS / RS_UNITS_PER_TILE;
 const LOCKED_DEFAULT_BETA = LOCKED_BETA_AT_PITCH_MIN;
-const LOCKED_RADIUS = 10;
+const LOCKED_MIN_RADIUS = 10;
+const LOCKED_MAX_RADIUS = 12;
+const LOCKED_DEFAULT_RADIUS = LOCKED_MAX_RADIUS;
 
 // Admin (free-camera) limits.
 const FREE_LOWER_BETA = 0.4;
@@ -42,7 +44,7 @@ export class GameCamera {
   private targetRadius: number = -1; // -1 = no active zoom transition
   private targetBeta: number = -1;  // -1 = no active beta transition
   private locked: boolean = true;
-  private lockedRadius: number = LOCKED_RADIUS;
+  private lockedRadiusScale: number = 1;
 
   constructor(scene: Scene, canvas: HTMLCanvasElement) {
     this.targetPosition = new Vector3(32, 0, 32);
@@ -51,7 +53,7 @@ export class GameCamera {
       'gameCamera',
       -Math.PI / 4,
       LOCKED_DEFAULT_BETA,
-      LOCKED_RADIUS,
+      LOCKED_DEFAULT_RADIUS,
       this.targetPosition.clone(),
       scene
     );
@@ -66,8 +68,8 @@ export class GameCamera {
     this.camera.inertia = 0.9;
     this.camera.panningInertia = 0.9;
 
-    // Panning disabled; wheel zoom precision keeps a usable feel in free mode
-    // (locked mode ignores wheel via lower===upper radius limits).
+    // Panning disabled; wheel zoom precision keeps the small locked-mode zoom
+    // range usable without making free-camera zoom too twitchy.
     this.camera.panningSensibility = 0;
     this.camera.wheelPrecision = 30;
 
@@ -83,9 +85,8 @@ export class GameCamera {
     this.applyLockState();
   }
 
-  /** Locked = 2004Scape/Client camera: 22.5°–67.3° pitch, pitch-coupled
-   *  radius, ~53° FOV, +0.39 tile look-at Y offset. Yaw via middle-mouse,
-   *  zoom is *not* user-controllable directly (changes with pitch). */
+  /** Locked = 2004Scape/Client camera: 22.5°–67.3° pitch, small player
+   *  zoom range, ~53° FOV, +0.39 tile look-at Y offset. Yaw via middle-mouse. */
   setLockedMode(locked: boolean): void {
     if (this.locked === locked) return;
     this.locked = locked;
@@ -94,16 +95,18 @@ export class GameCamera {
 
   private applyLockState(): void {
     if (this.locked) {
+      const lowerRadius = this.lockedMinRadius();
+      const upperRadius = this.lockedMaxRadius();
       this.camera.lowerBetaLimit = LOCKED_BETA_AT_PITCH_MAX;
       this.camera.upperBetaLimit = LOCKED_BETA_AT_PITCH_MIN;
-      this.camera.lowerRadiusLimit = this.lockedRadius;
-      this.camera.upperRadiusLimit = this.lockedRadius;
+      this.camera.lowerRadiusLimit = lowerRadius;
+      this.camera.upperRadiusLimit = upperRadius;
       this.camera.fov = LOCKED_FOV;
       this.camera.beta = Math.min(
         Math.max(this.camera.beta, LOCKED_BETA_AT_PITCH_MAX),
         LOCKED_BETA_AT_PITCH_MIN,
       );
-      this.camera.radius = this.lockedRadius;
+      this.camera.radius = Math.min(Math.max(this.camera.radius, lowerRadius), upperRadius);
     } else {
       this.camera.lowerBetaLimit = FREE_LOWER_BETA;
       this.camera.upperBetaLimit = FREE_UPPER_BETA;
@@ -115,13 +118,31 @@ export class GameCamera {
 
   setLockedRadiusScale(scale: number): void {
     if (!Number.isFinite(scale) || scale <= 0) return;
-    const nextRadius = LOCKED_RADIUS * scale;
-    if (Math.abs(nextRadius - this.lockedRadius) < 0.01) return;
-    this.lockedRadius = nextRadius;
+    if (Math.abs(scale - this.lockedRadiusScale) < 0.001) return;
+
+    const oldLower = this.lockedMinRadius();
+    const oldUpper = this.lockedMaxRadius();
+    const oldRange = oldUpper - oldLower;
+    const zoomRatio = oldRange > 0
+      ? Math.min(Math.max((this.camera.radius - oldLower) / oldRange, 0), 1)
+      : 1;
+
+    this.lockedRadiusScale = scale;
     if (this.locked) {
       this.targetRadius = -1;
       this.applyLockState();
+      const nextLower = this.lockedMinRadius();
+      const nextUpper = this.lockedMaxRadius();
+      this.camera.radius = nextLower + (nextUpper - nextLower) * zoomRatio;
     }
+  }
+
+  private lockedMinRadius(): number {
+    return LOCKED_MIN_RADIUS * this.lockedRadiusScale;
+  }
+
+  private lockedMaxRadius(): number {
+    return LOCKED_MAX_RADIUS * this.lockedRadiusScale;
   }
 
   followTarget(position: Vector3): void {
