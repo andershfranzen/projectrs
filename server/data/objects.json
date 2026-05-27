@@ -1878,7 +1878,7 @@
       {
         "inputItemId": 243,
         "inputQuantity": 1,
-        "outputItemId": 245,
+        "outputItemId": 244,
         "outputQuantity": 1,
         "skill": "crafting",
         "levelRequired": 1,
@@ -1887,7 +1887,7 @@
       {
         "inputItemId": 243,
         "inputQuantity": 1,
-        "outputItemId": 249,
+        "outputItemId": 252,
         "outputQuantity": 1,
         "skill": "crafting",
         "levelRequired": 4,
@@ -1896,7 +1896,7 @@
       {
         "inputItemId": 243,
         "inputQuantity": 1,
-        "outputItemId": 250,
+        "outputItemId": 253,
         "outputQuantity": 1,
         "skill": "crafting",
         "levelRequired": 8,
@@ -1950,5 +1950,51 @@
         400
       ]
     }
+  },
+  {
+    "id": 39,
+    "name": "Kiln",
+    "category": "scenery",
+    "actions": [
+      "Fire",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1.4,
+    "color": [
+      120,
+      85,
+      65
+    ],
+    "recipes": [
+      {
+        "inputItemId": 244,
+        "inputQuantity": 1,
+        "outputItemId": 245,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 1,
+        "xpReward": 1
+      },
+      {
+        "inputItemId": 252,
+        "inputQuantity": 1,
+        "outputItemId": 249,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 4,
+        "xpReward": 2
+      },
+      {
+        "inputItemId": 253,
+        "inputQuantity": 1,
+        "outputItemId": 250,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 8,
+        "xpReward": 2
+      }
+    ]
   }
 ]

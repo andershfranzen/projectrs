@@ -56,7 +56,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTTERY_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -97,6 +97,7 @@ function recipePanelSkillFor(def: WorldObjectDef): SkillId {
 
 function recipePanelInputNounFor(def: WorldObjectDef): string {
   if (def.id === POTTERY_WHEEL_OBJECT_DEF_ID) return 'soft clay';
+  if (def.id === KILN_OBJECT_DEF_ID) return 'unfired clay';
   return RECIPE_INPUT_NOUN_BY_CATEGORY[def.category] ?? 'bars';
 }
 
@@ -5486,14 +5487,36 @@ export class GameManager {
     return getObjectInteractionTiles(data.x, data.z, def, this.objectInteractionTileOptions(data, def));
   }
 
+  private requiresClearObjectInteractionEdge(def: WorldObjectDef): boolean {
+    return def.category === 'chest'
+      || def.id === POTTERY_WHEEL_OBJECT_DEF_ID
+      || def.id === KILN_OBJECT_DEF_ID;
+  }
+
+  private hasClearObjectInteractionEdge(
+    data: { x: number; z: number },
+    def: WorldObjectDef,
+    tileX: number,
+    tileZ: number,
+  ): boolean {
+    if (!this.requiresClearObjectInteractionEdge(def)) return true;
+    for (const footprintTile of getObjectFootprintTiles(data.x, data.z, def)) {
+      if (Math.abs(footprintTile.x - tileX) + Math.abs(footprintTile.z - tileZ) !== 1) continue;
+      if (!this.isWallBlockedForPath(tileX, tileZ, footprintTile.x, footprintTile.z)) return true;
+    }
+    return false;
+  }
+
   private isOnObjectInteractionTile(
     ptx: number,
     ptz: number,
     data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
     def: WorldObjectDef,
   ): boolean {
-    if (data.interactionTiles?.length) return data.interactionTiles.some(tile => tile.x === ptx && tile.z === ptz);
-    return isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, this.objectInteractionTileOptions(data, def));
+    const adjacent = data.interactionTiles?.length
+      ? data.interactionTiles.some(tile => tile.x === ptx && tile.z === ptz)
+      : isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, this.objectInteractionTileOptions(data, def));
+    return adjacent && this.hasClearObjectInteractionEdge(data, def, ptx, ptz);
   }
 
   /** Find the closest reachable adjacent tile of an object and start the
@@ -5502,6 +5525,7 @@ export class GameManager {
   private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number }, def: WorldObjectDef): boolean {
     const candidates = this.objectInteractionTiles(data, def)
       .filter(tile => !this.isTileBlocked(tile.x, tile.z))
+      .filter(tile => this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z))
       .map(tile => ({
         ax: tile.x,
         az: tile.z,

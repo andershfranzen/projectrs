@@ -34,7 +34,8 @@ export const EDITOR_CHUNK_SIZE = 64;
 /** Object and item IDs used by inventory/object crafting flows. */
 export const WELL_OBJECT_DEF_ID = 27;
 export const POTTERY_WHEEL_OBJECT_DEF_ID = 32;
-export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [POTTERY_WHEEL_OBJECT_DEF_ID];
+export const KILN_OBJECT_DEF_ID = 39;
+export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID];
 export const CLAY_ITEM_ID = 242;
 export const SOFT_CLAY_ITEM_ID = 243;
 export const POT_ITEM_ID = 245;

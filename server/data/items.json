@@ -2154,5 +2154,23 @@
     "equippable": false,
     "value": 8,
     "model": "/assets/models/FletchingKnife.glb"
+  },
+  {
+    "id": 252,
+    "name": "Unfired Bowl",
+    "description": "A shaped clay bowl that still needs firing.",
+    "stackable": false,
+    "equippable": false,
+    "value": 3,
+    "model": "/assets/models/Bowl.glb"
+  },
+  {
+    "id": 253,
+    "name": "Unfired Plate",
+    "description": "A shaped clay plate that still needs firing.",
+    "stackable": false,
+    "equippable": false,
+    "value": 4,
+    "model": "/assets/models/Plate.glb"
   }
 ]

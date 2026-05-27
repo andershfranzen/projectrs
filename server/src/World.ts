@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -1207,7 +1207,9 @@ export class World {
   }
 
   private requiresClearObjectInteractionEdge(obj: WorldObject): boolean {
-    return obj.def.category === 'chest';
+    return obj.def.category === 'chest'
+      || obj.defId === POTTERY_WHEEL_OBJECT_DEF_ID
+      || obj.defId === KILN_OBJECT_DEF_ID;
   }
 
   private hasClearObjectInteractionEdge(
@@ -4435,6 +4437,11 @@ export class World {
     ) ?? null;
   }
 
+  private findKilnRecipeIndex(itemId: number, obj: WorldObject): number {
+    if (obj.defId !== KILN_OBJECT_DEF_ID) return -1;
+    return obj.def.recipes?.findIndex(recipe => recipe.inputItemId === itemId) ?? -1;
+  }
+
   private handleItemOnObjectRecipe(
     player: Player,
     invSlot: number,
@@ -4536,6 +4543,16 @@ export class World {
         this.sendChatSystem(player, 'You start filling containers.');
       } else {
         this.handleItemOnObjectRecipe(player, invSlot, recipe);
+      }
+      return;
+    }
+    const kilnRecipeIndex = this.findKilnRecipeIndex(itemId, obj);
+    if (kilnRecipeIndex >= 0) {
+      const inputCount = this.countInventoryItem(player, itemId);
+      if (inputCount > 1) {
+        this.startObjectRecipeProduction(playerId, player, obj, kilnRecipeIndex, -1);
+      } else {
+        this.handleCraftingInteraction(playerId, player, obj, kilnRecipeIndex);
       }
       return;
     }
