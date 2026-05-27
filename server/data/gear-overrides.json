@@ -167,6 +167,34 @@
       }
     }
   },
+  "52": {
+    "localPosition": {
+      "x": -0.16,
+      "y": 0.125,
+      "z": 0.011
+    },
+    "localRotation": {
+      "x": -1.83,
+      "y": 0.11,
+      "z": -1.6
+    },
+    "scale": 0.72,
+    "bodyTypeOverrides": {
+      "1": {
+        "localPosition": {
+          "x": -0.193,
+          "y": 0.057,
+          "z": 0.034
+        },
+        "localRotation": {
+          "x": -1.83,
+          "y": 0.11,
+          "z": -1.6
+        },
+        "scale": 0.72
+      }
+    }
+  },
   "53": {
     "localPosition": {
       "x": -0.114,

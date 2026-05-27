@@ -7,7 +7,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { buildThumbnailOptionsForItem, resolveItemModelPath } from './ItemIcon';
+import { buildThumbnailOptionsForItem, resolveItemModelPath, stackModelScaleForItem } from './ItemIcon';
 import type { ThumbnailOptions } from './ThumbnailRenderer';
 import '@babylonjs/loaders/glTF';
 
@@ -125,11 +125,12 @@ function applyTint(meshes: AbstractMesh[], options: ThumbnailOptions): void {
   }
 }
 
-function targetModelSizeForItem(def: ItemDef): number {
-  return def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
+function targetModelSizeForItem(def: ItemDef, quantity: number = 1): number {
+  const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
+  return baseSize * stackModelScaleForItem(def, quantity);
 }
 
-function normalizeTemplate(root: TransformNode, def: ItemDef): number {
+function normalizeTemplate(root: TransformNode, def: ItemDef, quantity: number): number {
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
@@ -157,15 +158,15 @@ function normalizeTemplate(root: TransformNode, def: ItemDef): number {
   }
 
   const size = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-  return targetModelSizeForItem(def) / size;
+  return targetModelSizeForItem(def, quantity) / size;
 }
 
-async function loadTemplate(scene: Scene, def: ItemDef): Promise<GroundItemTemplate | null> {
-  const path = resolveItemModelPath(def);
+async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promise<GroundItemTemplate | null> {
+  const path = resolveItemModelPath(def, quantity);
   if (!path) return null;
 
   const options = await buildThumbnailOptionsForItem(def);
-  const targetSize = targetModelSizeForItem(def);
+  const targetSize = targetModelSizeForItem(def, quantity);
   const key = templateCacheKey(path, options, targetSize);
   let sceneCache = TEMPLATE_CACHE_BY_SCENE.get(scene);
   if (!sceneCache) {
@@ -191,7 +192,7 @@ async function loadTemplate(scene: Scene, def: ItemDef): Promise<GroundItemTempl
         }
         applyTint(result.meshes, options);
 
-        const baseScale = normalizeTemplate(root, def);
+        const baseScale = normalizeTemplate(root, def, quantity);
         const baseYaw = options.rotationY ?? 0;
         root.setEnabled(false);
         for (const child of root.getChildMeshes(false)) child.setEnabled(false);
@@ -228,7 +229,7 @@ export class GroundItemEntity {
     if (!primary) return null;
 
     const entity = new GroundItemEntity(scene, `groundItemStack_${tileKey}`, primary.x, y, primary.z, primary.id);
-    const primaryTemplate = await loadTemplate(scene, primary.def);
+    const primaryTemplate = await loadTemplate(scene, primary.def, primary.quantity);
     if (!primaryTemplate) {
       entity.dispose();
       return null;
@@ -237,7 +238,7 @@ export class GroundItemEntity {
 
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
-      const template = i === 0 ? primaryTemplate : await loadTemplate(scene, entry.def);
+      const template = i === 0 ? primaryTemplate : await loadTemplate(scene, entry.def, entry.quantity);
       if (!template) continue;
 
       const clone = template.root.instantiateHierarchy(null, undefined, (source, cloned) => {

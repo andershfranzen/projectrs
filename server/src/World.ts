@@ -1218,18 +1218,22 @@ export class World {
     tileX: number,
     tileZ: number,
     map?: GameMap,
+    allowAuthoredNonAdjacentTile: boolean = false,
   ): boolean {
     if (!this.requiresClearObjectInteractionEdge(obj)) return true;
     const gameMap = map ?? this.getPlayerMap(player);
+    let hasAdjacentFootprintTile = false;
     for (const footprintTile of getObjectFootprintTiles(obj.x, obj.z, obj.def)) {
       const dx = footprintTile.x - tileX;
       const dz = footprintTile.z - tileZ;
       if (Math.abs(dx) + Math.abs(dz) !== 1) continue;
+      hasAdjacentFootprintTile = true;
       const blocked = player.currentFloor === 0
         ? gameMap.isWallBlocked(tileX, tileZ, footprintTile.x, footprintTile.z, player.effectiveY)
         : gameMap.isWallBlockedOnFloor(tileX, tileZ, footprintTile.x, footprintTile.z, player.currentFloor);
       if (!blocked) return true;
     }
+    if (!hasAdjacentFootprintTile && allowAuthoredNonAdjacentTile) return true;
     return false;
   }
 
@@ -1253,7 +1257,7 @@ export class World {
             : undefined,
           includeCorners: this.usesCornerObjectInteraction(obj),
         });
-    return adjacent && this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map);
+    return adjacent && this.hasClearObjectInteractionEdge(player, obj, tileX, tileZ, map, explicit.length > 0);
   }
 
   private findPathToObjectInteraction(player: Player, obj: WorldObject): { x: number; z: number }[] {

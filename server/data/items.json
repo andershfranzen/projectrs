@@ -6,7 +6,7 @@
     "stackable": false,
     "equippable": false,
     "value": 1,
-    "model": "/assets/models/Bones.glb",
+    "model": "/assets/models/Bones_v2.glb",
     "icon": "Bones_20.png"
   },
   {
@@ -29,7 +29,46 @@
     "stackable": true,
     "equippable": false,
     "value": 1,
-    "icon": "Coins_10.png"
+    "model": "/assets/models/coins/Coin1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/coins/Coin1.glb",
+        "scale": 0.62
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/coins/Coin2.glb",
+        "scale": 0.68
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/coins/Coin3.glb",
+        "scale": 0.74
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/coins/Coin4.glb",
+        "scale": 0.8
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/coins/Coin5.glb",
+        "scale": 0.86
+      },
+      {
+        "minQuantity": 10,
+        "model": "/assets/models/coins/Coin10.glb"
+      },
+      {
+        "minQuantity": 100,
+        "model": "/assets/models/coins/Coin100.glb"
+      },
+      {
+        "minQuantity": 1000,
+        "model": "/assets/models/coins/Coin1000.glb"
+      }
+    ]
   },
   {
     "id": 11,
@@ -111,7 +150,7 @@
     "stackable": false,
     "equippable": false,
     "value": 5,
-    "model": "/assets/models/Bones.glb",
+    "model": "/assets/models/Bones_v2.glb",
     "icon": "Big_Bones_413.png"
   },
   {
@@ -418,7 +457,7 @@
     "equippable": false,
     "toolType": "hammer",
     "value": 5,
-    "icon": "hammer_168.png"
+    "model": "/assets/equipment/Tools/SmithingHammer_v2.glb"
   },
   {
     "id": 53,
@@ -2153,7 +2192,7 @@
     "stackable": false,
     "equippable": false,
     "value": 8,
-    "model": "/assets/models/FletchingKnife.glb"
+    "model": "/assets/models/Knife.glb"
   },
   {
     "id": 252,

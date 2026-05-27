@@ -165,6 +165,8 @@ export class EntityManager {
         tileSize,
         originMode: modelCfg.originMode,
         groundOffset: modelCfg.groundOffset,
+        animSpeedRatio: modelCfg.animSpeedRatio,
+        preserveAnimationRoles: modelCfg.preserveAnimationRoles,
       });
       npc3d.position = new Vector3(x, y ?? this.getHeight(x, z, floor, 0), z);
       // Stamp entityId on every mesh's metadata so picking can disambiguate
@@ -319,7 +321,7 @@ export class EntityManager {
   }
 
   private createGroundItemFallbackSprite(top: GroundItemStackEntry, tileKey: string): void {
-    const syncIcon = getItemIconSyncUrl(top.def);
+    const syncIcon = getItemIconSyncUrl(top.def, top.quantity);
     const sprite = new SpriteEntity(this.scene, {
       name: `gitem_${top.id}`,
       color: new Color3(0.8, 0.7, 0.2),
@@ -332,7 +334,7 @@ export class EntityManager {
     sprite.getMesh().metadata = { kind: 'groundItemVisual', groundItemId: top.id };
     this.groundItemSprites.set(top.id, sprite);
 
-    getItemIconUrl(top.def).then((url) => {
+    getItemIconUrl(top.def, top.quantity).then((url) => {
       if (!url) return;
       if (this.groundItemTileKey(top.x, top.z, top.floor) !== tileKey) return;
       if (this.groundItemSprites.get(top.id) !== sprite) return;

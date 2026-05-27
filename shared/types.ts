@@ -69,8 +69,8 @@ export interface ItemDef {
   // Equipment requirements
   equipSkill?: SkillId;
   levelRequired?: number;
-  // Tool properties (axes, pickaxes)
-  toolType?: 'axe' | 'pickaxe';
+  // Tool properties (axes, pickaxes, hammers)
+  toolType?: 'axe' | 'pickaxe' | 'hammer';
   toolLevel?: number;
   toolBonus?: number;
   // Visual
@@ -84,6 +84,16 @@ export interface ItemDef {
  * gear-overrides.json `file` still wins if present (legacy/per-instance).
  */
   model?: string;
+  /**
+   * Optional visual-only model variants for stackable items. The highest
+   * minQuantity not greater than the stack quantity is used for inventory
+   * thumbnails and ground-item models.
+   */
+  stackModels?: Array<{
+    minQuantity: number;
+    model: string;
+    scale?: number;
+  }>;
   /**
    * Optional visual-only equipment model variants by character body type.
    * The item id, stats, inventory icon, and server behavior stay unchanged;

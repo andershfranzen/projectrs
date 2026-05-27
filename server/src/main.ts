@@ -186,7 +186,7 @@ async function saveJsonWithBackup(opts: {
 const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape']);
 const EQUIP_SKILLS = new Set(['accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
-const TOOL_TYPES = new Set(['axe', 'pickaxe']);
+const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
 
 function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok: false; error: string } {
   if (!Array.isArray(items)) return { ok: false, error: 'Body must be { items: ItemDef[] }' };
@@ -218,6 +218,22 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
       for (const [bodyType, model] of Object.entries(item.bodyTypeModels as Record<string, unknown>)) {
         if (!/^\d+$/.test(bodyType) || typeof model !== 'string' || model.trim().length === 0) {
           return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels.${bodyType}` };
+        }
+      }
+    }
+    if (item.stackModels !== undefined) {
+      if (!Array.isArray(item.stackModels)) return { ok: false, error: `Item ${item.id} has invalid stackModels` };
+      for (const [index, variant] of item.stackModels.entries()) {
+        if (!variant || typeof variant !== 'object') return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}` };
+        const stackVariant = variant as Record<string, unknown>;
+        if (!Number.isInteger(stackVariant.minQuantity) || (stackVariant.minQuantity as number) <= 0) {
+          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.minQuantity` };
+        }
+        if (typeof stackVariant.model !== 'string' || stackVariant.model.trim().length === 0) {
+          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.model` };
+        }
+        if (stackVariant.scale !== undefined && (typeof stackVariant.scale !== 'number' || !Number.isFinite(stackVariant.scale) || stackVariant.scale <= 0)) {
+          return { ok: false, error: `Item ${item.id} has invalid stackModels.${index}.scale` };
         }
       }
     }

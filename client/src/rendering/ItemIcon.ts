@@ -404,26 +404,54 @@ export async function buildThumbnailOptionsForItem(def: ItemDef): Promise<Thumbn
   return buildThumbnailOptionsFromOverride(def, findThumbnailOverrideForItem(def, overrides));
 }
 
+function normalizeStackQuantity(quantity: number | undefined): number {
+  if (!Number.isFinite(quantity ?? 1)) return 1;
+  return Math.max(1, Math.floor(quantity ?? 1));
+}
+
+type StackModelVariant = NonNullable<ItemDef['stackModels']>[number];
+
+function resolveStackModelVariant(def: ItemDef, quantity: number | undefined): StackModelVariant | null {
+  if (!def.stackModels?.length) return null;
+  const stackQuantity = normalizeStackQuantity(quantity);
+  let best: StackModelVariant | null = null;
+  for (const variant of def.stackModels) {
+    if (!variant || typeof variant.model !== 'string') continue;
+    if (!Number.isFinite(variant.minQuantity) || variant.minQuantity > stackQuantity) continue;
+    if (!best || variant.minQuantity > best.minQuantity) best = variant;
+  }
+  return best;
+}
+
+export function stackModelScaleForItem(def: ItemDef, quantity: number = 1): number {
+  const scale = resolveStackModelVariant(def, quantity)?.scale;
+  return typeof scale === 'number' && Number.isFinite(scale) && scale > 0 ? scale : 1;
+}
+
 /** Resolve the GLB path from an ItemDef. Mirrors `loadGearSmart`'s fallback
  *  chain (see GameManager `buildDef`) for items that actually have a known
  *  model. Items without a known model return null so they can still use
  *  legacy 2D art. */
-export function resolveItemModelPath(def: ItemDef): string | null {
+export function resolveItemModelPath(def: ItemDef, quantity: number = 1): string | null {
+  const stackModel = resolveStackModelVariant(def, quantity)?.model;
+  if (stackModel) return resolveEquipmentModelPath({ ...def, model: stackModel }, 0);
   return resolveEquipmentModelPath(def, 0);
 }
 
-function uses3DIcon(def: ItemDef): boolean {
-  return resolveItemModelPath(def) !== null;
+function uses3DIcon(def: ItemDef, quantity: number = 1): boolean {
+  return resolveItemModelPath(def, quantity) !== null;
 }
 
 /** Best-effort async lookup. Returns the highest-quality icon URL available. */
-export async function getItemIconUrl(def: ItemDef): Promise<string | null> {
-  const modelPath = resolveItemModelPath(def);
+export async function getItemIconUrl(def: ItemDef, quantity: number = 1): Promise<string | null> {
+  const modelPath = resolveItemModelPath(def, quantity);
   if (modelPath) {
     const [manifest, opts] = await Promise.all([
       loadManifest(),
       buildThumbnailOptionsForItem(def),
     ]);
+    const stackScale = stackModelScaleForItem(def, quantity);
+    if (stackScale !== 1) opts.iconScale = (opts.iconScale ?? 1) * stackScale;
     const bakedUrl = resolveBakedThumbnailUrl(manifest, def.id, getThumbnailPoseKey(modelPath, opts));
     if (bakedUrl) return bakedUrl;
     const dataUrl = await getThumbnail(modelPath, opts);
@@ -439,8 +467,8 @@ export async function getItemIconUrl(def: ItemDef): Promise<string | null> {
 /** Synchronous URL — never triggers a render. Used as the immediate placeholder
  *  while `getItemIconUrl` resolves. Returns null for modeled items so legacy
  *  2D art never flashes before the 3D thumbnail lands. */
-export function getItemIconSyncUrl(def: ItemDef): string | null {
-  if (uses3DIcon(def)) return null;
+export function getItemIconSyncUrl(def: ItemDef, quantity: number = 1): string | null {
+  if (uses3DIcon(def, quantity)) return null;
   if (def.sprite) return `/sprites/items/${def.sprite}`;
   if (def.icon) return `/items/${def.icon}`;
   return null;
@@ -484,12 +512,13 @@ let _iconTokenSeq = 0;
  */
 export function buildItemIconHtml(def: ItemDef, opts: IconStyleOpts = {}): string {
   const dragAttr = opts.draggable === false ? ' draggable="false"' : '';
-  const syncUrl = getItemIconSyncUrl(def);
+  const quantity = normalizeStackQuantity((opts as RenderSlotOpts).quantity);
+  const syncUrl = getItemIconSyncUrl(def, quantity);
   const inner = syncUrl
     ? `<img src="${syncUrl}"${dragAttr} style="${buildImgStyle(opts, isSmoothUrl(syncUrl))}" />`
     : buildPlaceholderHtml(opts.size ?? 28);
   const token = `${def.id}-${++_iconTokenSeq}`;
-  return `<span class="item-icon" data-item-id="${def.id}" data-icon-token="${token}">${inner}</span>`;
+  return `<span class="item-icon" data-item-id="${def.id}" data-item-quantity="${quantity}" data-icon-token="${token}">${inner}</span>`;
 }
 
 /**
@@ -505,11 +534,12 @@ export function upgradeItemIcons(
   const wrappers = root.querySelectorAll<HTMLElement>('.item-icon[data-item-id]');
   for (const wrapper of wrappers) {
     const itemId = Number(wrapper.dataset.itemId);
+    const quantity = normalizeStackQuantity(Number(wrapper.dataset.itemQuantity ?? (opts as RenderSlotOpts).quantity ?? 1));
     const token = wrapper.dataset.iconToken;
     const def = defs.get(itemId);
     if (!def || !token) continue;
 
-    getItemIconUrl(def).then((url) => {
+    getItemIconUrl(def, quantity).then((url) => {
       if (!url) return;
       if (wrapper.dataset.iconToken !== token) return;
       const existing = wrapper.querySelector('img');
@@ -538,6 +568,7 @@ export interface RenderSlotOpts extends IconStyleOpts {
 
 const DEFAULT_BADGE_STYLE =
   'position:absolute;top:1px;left:3px;font-size:9px;font-weight:bold;color:#d8372b;text-shadow:1px 1px 0 #000;';
+const COINS_ITEM_ID = 10;
 
 export function renderItemSlot(
   el: HTMLElement,
@@ -552,8 +583,10 @@ export function renderItemSlot(
     return;
   }
   const iconHtml = buildItemIconHtml(def, opts);
-  const qtyHtml = (opts.quantity ?? 1) > 1
-    ? `<div style="${opts.badgeStyle ?? DEFAULT_BADGE_STYLE}">${opts.quantity}</div>`
+  const quantity = opts.quantity ?? 1;
+  const showQuantity = quantity > 1 || (def.id === COINS_ITEM_ID && opts.quantity !== undefined);
+  const qtyHtml = showQuantity
+    ? `<div style="${opts.badgeStyle ?? DEFAULT_BADGE_STYLE}">${quantity}</div>`
     : '';
   el.innerHTML = `${iconHtml}${qtyHtml}`;
   upgradeItemIcons(el, defs, opts);

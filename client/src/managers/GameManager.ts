@@ -2652,7 +2652,7 @@ export class GameManager {
       if (entityId === this.localPlayerId) {
         // While a COMBAT_HIT splat is pending for the local player, defer
         // applying the new HP so the bar/HUD drop in sync with the splat.
-        this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth });
+        this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth && health > this.playerHealth });
         // Server-position reconciliation. The client still predicts normal
         // walking locally, but production desyncs showed several legitimate
         // server-side path changes can happen without the local path matching
@@ -2758,7 +2758,7 @@ export class GameManager {
       this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
       this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
-      this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth });
+      this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth && health > this.playerHealth });
       if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
         this.applyLocalAppearance(syncAppearance);
       }
@@ -2778,7 +2778,7 @@ export class GameManager {
         : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
       if (maxAxisDelta <= reconcileDist) return;
 
-      this.reconcileLocalPlayerToServer(serverX, serverZ, false);
+      this.reconcileLocalPlayerToServer(serverX, serverZ, false, serverMoving);
     });
 
     this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
@@ -3410,7 +3410,7 @@ export class GameManager {
 
   private setupPlayerStateHandlers(): void {
     this.network.on(ServerOpcode.PLAYER_STATS, (_op, v) => {
-      this.applyLocalHealthFromServer(v[0], v[1], { clearPendingImpact: v[0] >= v[1] });
+      this.applyLocalHealthFromServer(v[0], v[1], { clearPendingImpact: v[0] >= v[1] && v[0] > this.playerHealth });
     });
 
     this.network.on(ServerOpcode.RENOWN_SYNC, (_op, v) => {
@@ -3566,7 +3566,7 @@ export class GameManager {
       }
       this.updateMobileMagicStatus(skillIndex, level, currentLevel);
       if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-        this.applyLocalHealthFromServer(currentLevel, level, { clearPendingImpact: currentLevel >= level });
+        this.applyLocalHealthFromServer(currentLevel, level, { clearPendingImpact: currentLevel >= level && currentLevel > this.playerHealth });
       }
     });
 
@@ -3579,7 +3579,7 @@ export class GameManager {
         this.sidePanel?.updateSkill(skillIndex, level, currentLevel, xp);
         this.updateMobileMagicStatus(skillIndex, level, currentLevel);
         if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
-          this.applyLocalHealthFromServer(currentLevel, level, { clearPendingImpact: currentLevel >= level });
+          this.applyLocalHealthFromServer(currentLevel, level, { clearPendingImpact: currentLevel >= level && currentLevel > this.playerHealth });
         }
       }
       this.noteLoginBootstrapPacket('skills');
@@ -5460,6 +5460,7 @@ export class GameManager {
       this.setTileFrom(this.playerX, this.playerZ);
     }
     this.pendingPath = null;
+    if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
   }
 
   private usesCornerObjectInteraction(def: WorldObjectDef, hasInteractionMask: boolean = false): boolean {
@@ -5498,12 +5499,16 @@ export class GameManager {
     def: WorldObjectDef,
     tileX: number,
     tileZ: number,
+    allowAuthoredNonAdjacentTile: boolean = false,
   ): boolean {
     if (!this.requiresClearObjectInteractionEdge(def)) return true;
+    let hasAdjacentFootprintTile = false;
     for (const footprintTile of getObjectFootprintTiles(data.x, data.z, def)) {
       if (Math.abs(footprintTile.x - tileX) + Math.abs(footprintTile.z - tileZ) !== 1) continue;
+      hasAdjacentFootprintTile = true;
       if (!this.isWallBlockedForPath(tileX, tileZ, footprintTile.x, footprintTile.z)) return true;
     }
+    if (!hasAdjacentFootprintTile && allowAuthoredNonAdjacentTile) return true;
     return false;
   }
 
@@ -5516,16 +5521,17 @@ export class GameManager {
     const adjacent = data.interactionTiles?.length
       ? data.interactionTiles.some(tile => tile.x === ptx && tile.z === ptz)
       : isTileAdjacentToObject(ptx, ptz, data.x, data.z, def, this.objectInteractionTileOptions(data, def));
-    return adjacent && this.hasClearObjectInteractionEdge(data, def, ptx, ptz);
+    return adjacent && this.hasClearObjectInteractionEdge(data, def, ptx, ptz, !!data.interactionTiles?.length);
   }
 
   /** Find the closest reachable adjacent tile of an object and start the
    *  predicted walk toward it. Returns true if a walk was started, false
    *  if no reachable adjacent tile exists. */
-  private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number }, def: WorldObjectDef): boolean {
+  private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }, def: WorldObjectDef): boolean {
+    const hasAuthoredTiles = !!data.interactionTiles?.length;
     const candidates = this.objectInteractionTiles(data, def)
       .filter(tile => !this.isTileBlocked(tile.x, tile.z))
-      .filter(tile => this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z))
+      .filter(tile => this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z, hasAuthoredTiles))
       .map(tile => ({
         ax: tile.x,
         az: tile.z,
@@ -7659,7 +7665,7 @@ export class GameManager {
     this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
   }
 
-  private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean): void {
+  private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean, serverMoving: boolean = false): void {
     const sTx = Math.floor(serverX);
     const sTz = Math.floor(serverZ);
     let foundIndex = -1;
@@ -7727,7 +7733,11 @@ export class GameManager {
       const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
       const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
       this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
-      this.localPlayer?.stopWalking();
+      if (serverMoving) {
+        if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+      } else {
+        this.localPlayer?.stopWalking();
+      }
     }
   }
 

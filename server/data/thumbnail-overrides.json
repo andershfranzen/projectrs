@@ -8,6 +8,15 @@
     "rotationZ": 0,
     "iconScale": 0.8
   },
+  "10": {
+    "alpha": -0.4537856055185257,
+    "beta": 1.1693705988362009,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0.1308996938995747,
+    "rotationZ": 0,
+    "iconScale": 0.9
+  },
   "18": {
     "alpha": 1.8634073464102099,
     "beta": 1.3986433452497935,
@@ -79,6 +88,15 @@
     "rotationY": 0,
     "rotationZ": 0,
     "iconScale": 1
+  },
+  "52": {
+    "alpha": -1.5446163880149817,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 1.6144295580947547,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
   },
   "53": {
     "alpha": -0.8726646259971648,
@@ -756,8 +774,8 @@
     "iconScale": 1
   },
   "251": {
-    "alpha": -0.5585053606381855,
-    "beta": 1.7715091907742444,
+    "alpha": 0.2007128639793479,
+    "beta": 2.530727415391778,
     "distanceMult": 0.75,
     "rotationX": 0.1832595714594046,
     "rotationY": 2.1642082724729685,

@@ -18,6 +18,8 @@ export interface Npc3DEntityOptions {
   originMode?: 'authored' | 'boundsCenter';
   /** World-space visual Y lift without changing gameplay/server position. */
   groundOffset?: number;
+  animSpeedRatio?: Partial<Record<'idle' | 'walk' | 'attack' | 'death', number>>;
+  preserveAnimationRoles?: Array<'idle' | 'walk' | 'attack' | 'death'>;
 }
 
 async function importMeshWithTimeout(
@@ -109,6 +111,8 @@ export class Npc3DEntity {
   private animGroups: Map<string, AnimationGroup> = new Map();
   private currentAnim: string = '';
   private currentAnimLoop: boolean = true;
+  private animSpeedRatio: Partial<Record<'idle' | 'walk' | 'attack' | 'death', number>> = {};
+  private preserveAnimationRoles = new Set<'idle' | 'walk' | 'attack' | 'death'>();
   private animationEnabled: boolean = true;
   private missingAnimationWarnings = new Set<string>();
   private _walking: boolean = false;
@@ -139,6 +143,8 @@ export class Npc3DEntity {
     this.modelScale = scale;
     this.originMode = options.originMode ?? 'authored';
     this.groundOffset = options.groundOffset ?? 0;
+    this.animSpeedRatio = options.animSpeedRatio ?? {};
+    this.preserveAnimationRoles = new Set(options.preserveAnimationRoles ?? []);
     this.renderOffset = 0;
     this.load(file, animMap, options.label, options.materialColors);
   }
@@ -250,7 +256,9 @@ export class Npc3DEntity {
       }
 
       for (const [role, group] of this.animGroups) {
-        quantizeAnimationGroup(group, `npc_${role}`);
+        if (!this.preserveAnimationRoles.has(role as 'idle' | 'walk' | 'attack' | 'death')) {
+          quantizeAnimationGroup(group, `npc_${role}`);
+        }
       }
 
       if (this._walking && this.animGroups.has('walk')) this.playAnim('walk', true);
@@ -288,8 +296,12 @@ export class Npc3DEntity {
     this.currentAnim = name;
     this.currentAnimLoop = loop;
     if (this.animationEnabled && this.renderEnabled) {
-      group.start(loop, 1.0, group.from, group.to, false);
+      group.start(loop, this.getAnimSpeedRatio(name), group.from, group.to, false);
     }
+  }
+
+  private getAnimSpeedRatio(name: string): number {
+    return this.animSpeedRatio[name as 'idle' | 'walk' | 'attack' | 'death'] ?? 1.0;
   }
 
   setAnimationEnabled(enabled: boolean): void {
@@ -299,7 +311,7 @@ export class Npc3DEntity {
     const group = this.currentAnim ? this.animGroups.get(this.currentAnim) : null;
     if (!group) return;
     if (enabled && this.renderEnabled) {
-      group.start(this.currentAnimLoop, 1.0, group.from, group.to, false);
+      group.start(this.currentAnimLoop, this.getAnimSpeedRatio(this.currentAnim), group.from, group.to, false);
     } else {
       group.stop();
     }
@@ -325,7 +337,7 @@ export class Npc3DEntity {
         this.chatBubbleEl.style.top = '-9999px';
       }
     } else if (group && this.animationEnabled) {
-      group.start(this.currentAnimLoop, 1.0, group.from, group.to, false);
+      group.start(this.currentAnimLoop, this.getAnimSpeedRatio(this.currentAnim), group.from, group.to, false);
     }
   }
 

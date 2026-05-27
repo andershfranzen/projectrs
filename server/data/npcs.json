@@ -188,6 +188,25 @@
     ]
   },
   {
+    "id": 22,
+    "name": "Black Spider",
+    "health": 28,
+    "attack": 22,
+    "defence": 10,
+    "strength": 10,
+    "attackSpeed": 3,
+    "respawnTime": 18,
+    "aggressive": true,
+    "wanderRange": 6,
+    "lootTable": [
+      {
+        "itemId": 10,
+        "quantity": 4,
+        "chance": 0.3
+      }
+    ]
+  },
+  {
     "id": 7,
     "name": "Guard",
     "health": 40,

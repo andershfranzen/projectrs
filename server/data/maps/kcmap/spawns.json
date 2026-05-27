@@ -1613,6 +1613,41 @@
         "hairStyle": 1
       },
       "name": "Banker"
+    },
+    {
+      "id": 105,
+      "npcId": 22,
+      "x": 359.5,
+      "z": 73.5,
+      "wanderRange": 3
+    },
+    {
+      "id": 106,
+      "npcId": 22,
+      "x": 362.5,
+      "z": 69.5,
+      "wanderRange": 3
+    },
+    {
+      "id": 107,
+      "npcId": 22,
+      "x": 366.5,
+      "z": 69.5,
+      "wanderRange": 3
+    },
+    {
+      "id": 108,
+      "npcId": 22,
+      "x": 365.5,
+      "z": 74.5,
+      "wanderRange": 3
+    },
+    {
+      "id": 109,
+      "npcId": 22,
+      "x": 359.5,
+      "z": 67.5,
+      "wanderRange": 3
     }
   ],
   "objects": [],

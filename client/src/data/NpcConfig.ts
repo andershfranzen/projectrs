@@ -4,7 +4,7 @@ export const NPC_NAMES: Record<number, string> = {
   9: 'Dark Knight', 10: 'Cow',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   16: 'Banker',
-  17: 'Snow Wolf', 18: 'Rat',
+  17: 'Snow Wolf', 18: 'Rat', 22: 'New Spider',
   // 100 was the Custom Humanoid template; it is now reused for in-editor
   // mob authoring (the first session edited it into Vampire). 101 is the
   // permanent blank baseline. To avoid the "lost my template" issue going
@@ -19,6 +19,8 @@ export interface Npc3DModelEntry {
   file: string;
   scale: number;
   anims: { idle: string; walk?: string; attack?: string; death?: string };
+  animSpeedRatio?: Partial<Record<'idle' | 'walk' | 'attack' | 'death', number>>;
+  preserveAnimationRoles?: Array<'idle' | 'walk' | 'attack' | 'death'>;
   /** How the imported GLB should be aligned to the NPC render origin.
    *  `boundsCenter` is for models whose authored origin is not at their
    *  visual X/Z center. */
@@ -36,9 +38,10 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   4:  { file: '/models/npcs/wolf.glb', scale: 0.4, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   6:  { file: '/models/npcs/spider.glb', scale: 0.2, anims: { idle: 'SpiderArmature|SpiderArmature|Spider_Idle', walk: 'SpiderArmature|SpiderArmature|Spider_Walk', attack: 'SpiderArmature|SpiderArmature|Spider_Attack', death: 'SpiderArmature|SpiderArmature|Spider_Death' } },
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', death: 'Armature|Armature|Death' } },
-  // Camel.glb only ships with idle/walk/eat — no attack or death tracks.
-  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk' }, originMode: 'boundsCenter' },
+  // Camel.glb ships with idle/walk/eat; use eat as the closest attack motion.
+  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk', attack: 'eat' } },
   18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', groundOffset: 0.2, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
+  22: { file: '/models/npcs/spider_v2.glb', scale: 0.75, originMode: 'boundsCenter', preserveAnimationRoles: ['walk'], anims: { idle: 'Idle', walk: 'WalkCycle', attack: 'Attack', death: 'Dead(just-pose)' } },
   17: {
     file: '/models/npcs/wolf.glb',
     scale: 0.4,
