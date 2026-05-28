@@ -57,6 +57,8 @@ import {
   getObjectFootprintMinTile,
   localAdjacentTilesOrdered,
   ASSET_TO_OBJECT_DEF,
+  BLOCKING_TILES,
+  classifyTileType,
   NPC_COMBAT_ANIMATIONS,
   deriveUpperFloorTilesFromPlanes,
   resolveEquipmentModelPath,
@@ -4459,6 +4461,37 @@ let selectedWaterFlowChunk = null
     else if (q === 3) { rx = -tile.z; rz = tile.x }
     return { x: baseX + rx, z: baseZ + rz }
   }
+
+  function ladderFloorTargetAt(tile, floor) {
+    if (!tile) return null
+    const tx = Math.floor(tile.x)
+    const tz = Math.floor(tile.z)
+    if (tx < 0 || tz < 0 || tx >= map.width || tz >= map.height) return null
+    const idx = tz * map.width + tx
+    if (floor <= 0) {
+      const tileData = map.getTile(tx, tz)
+      if (!tileData) return null
+      const tileType = classifyTileType(tileData, map.getTileCornerHeights(tx, tz), map.getTileWaterLevel(tx, tz))
+      const rootFloorH = collisionData.floors?.[`${tx},${tz}`]
+      if (!BLOCKING_TILES.has(tileType)) return { floor: 0, y: map.getAverageTileHeight(tx, tz) }
+      if (Number.isFinite(rootFloorH)) return { floor: 0, y: rootFloorH }
+      return null
+    }
+
+    const visualMaps = buildCollisionFloorVisualMaps()
+    const y =
+      visualMaps.explicit.get(floor)?.get(idx)
+      ?? visualMaps.derived.get(floor)?.get(idx)
+      ?? visualMaps.ranked.get(idx)?.[floor - 1]
+    return Number.isFinite(y) ? { floor, y } : null
+  }
+
+  function ladderEndpointForTileFloor(tile, floor) {
+    const target = ladderFloorTargetAt(tile, floor)
+    if (!target) return null
+    return { x: tile.x + 0.5, z: tile.z + 0.5, floor, y: target.y }
+  }
+
   // Returns null if the ladder is properly wired, otherwise a short reason.
   // "Properly wired" = every link's `to` resolves to a partner ladder that
   // has a matching reciprocal link back, OR a single-object bidirectional
@@ -4471,8 +4504,10 @@ let selectedWaterFlowChunk = null
       const to = link?.to
       if (!to || !Number.isFinite(to.x) || !Number.isFinite(to.z) || !Number.isFinite(to.floor)) return 'malformed link'
       const tx = Math.floor(to.x); const tz = Math.floor(to.z)
+      if (!ladderFloorTargetAt({ x: tx, z: tz }, to.floor)) return `floor ${to.floor} missing at destination`
       const frm = link.from
       if (!frm || !Number.isFinite(frm.x) || !Number.isFinite(frm.z) || !Number.isFinite(frm.floor)) return 'malformed link'
+      if (!ladderFloorTargetAt({ x: Math.floor(frm.x), z: Math.floor(frm.z) }, frm.floor)) return `floor ${frm.floor} missing at source`
       const reciprocal = ladders.some(L => (L.userData?.verticalLinks || []).some(rl =>
         rl?.from && Math.floor(rl.from.x) === tx && Math.floor(rl.from.z) === tz && rl.from.floor === to.floor
         && rl?.to && Math.floor(rl.to.x) === Math.floor(frm.x) && Math.floor(rl.to.z) === Math.floor(frm.z) && rl.to.floor === frm.floor
@@ -4559,19 +4594,21 @@ let selectedWaterFlowChunk = null
   function makeLadderSelfBidirectional(obj, fromFloor, toFloor) {
     if (!obj || fromFloor === toFloor) return false
     const tile = ladderInteractionTile(obj)
-    // y is intentionally omitted: the editor doesn't know the destination
-    // floor's elevation at this tile, and the server's vertical-endpoint
-    // walkability check doesn't require it. Leaving y undefined is the
-    // documented permissive form on ResolvedVerticalEndpoint.
+    const from = ladderEndpointForTileFloor(tile, fromFloor)
+    const to = ladderEndpointForTileFloor(tile, toFloor)
+    if (!from || !to) {
+      showEditorNotice(`No walkable floor ${!from ? fromFloor : toFloor} at this ladder's interaction tile.`, 'error')
+      return false
+    }
     obj.userData.verticalLinks = [
       {
-        from: { x: tile.x + 0.5, z: tile.z + 0.5, floor: fromFloor },
-        to:   { x: tile.x + 0.5, z: tile.z + 0.5, floor: toFloor },
+        from: { ...from },
+        to: { ...to },
         fromAction: fromFloor < toFloor ? 'Climb-up' : 'Climb-down',
       },
       {
-        from: { x: tile.x + 0.5, z: tile.z + 0.5, floor: toFloor },
-        to:   { x: tile.x + 0.5, z: tile.z + 0.5, floor: fromFloor },
+        from: { ...to },
+        to: { ...from },
         fromAction: toFloor < fromFloor ? 'Climb-up' : 'Climb-down',
       },
     ]
@@ -4583,9 +4620,9 @@ let selectedWaterFlowChunk = null
   // player can use either entry point.
   function wireLadderPair(a, b, fromFloor, toFloor) {
     if (!a || !b || fromFloor === toFloor) return false
-    makeLadderSelfBidirectional(a, fromFloor, toFloor)
-    if (b !== a) makeLadderSelfBidirectional(b, fromFloor, toFloor)
-    return true
+    const okA = makeLadderSelfBidirectional(a, fromFloor, toFloor)
+    const okB = b === a ? okA : makeLadderSelfBidirectional(b, fromFloor, toFloor)
+    return okA && okB
   }
 
   function cancelPendingLadderWire() {
@@ -4897,23 +4934,26 @@ let selectedWaterFlowChunk = null
   }
   // Update an already-wired ladder's link.from/to X/Z to match the current
   // interactionTiles, without touching the floor pairs already chosen.
-  // Also strips any stale `y` so the server re-derives the correct elevation
-  // per floor — preserving an old `y` from a previous broken wire would carry
-  // the source floor's height into the destination endpoint.
+  // Also refreshes each endpoint's `y` so the server can expose the climb
+  // action immediately after a save/reload.
   function rewireLadderInteractionTileInPlace(obj) {
     if (!obj) return
     const tile = ladderInteractionTile(obj)
     const links = obj.userData?.verticalLinks || []
     for (const link of links) {
       if (link?.from) {
+        const next = ladderEndpointForTileFloor(tile, link.from.floor)
         link.from.x = tile.x + 0.5
         link.from.z = tile.z + 0.5
-        delete link.from.y
+        if (next) link.from.y = next.y
+        else delete link.from.y
       }
       if (link?.to) {
+        const next = ladderEndpointForTileFloor(tile, link.to.floor)
         link.to.x = tile.x + 0.5
         link.to.z = tile.z + 0.5
-        delete link.to.y
+        if (next) link.to.y = next.y
+        else delete link.to.y
       }
     }
   }
@@ -7575,7 +7615,8 @@ function applyToolAtTile(tile, eventLike = null) {
     const asset = assetRegistry.find((a) => a.id === selectedAssetId)
     if (!asset) return
 
-    const model = await loadAssetModel(asset.path)
+    const model = await loadAssetModel(asset.path, { doNotInstantiate: true })
+    if (!model) return
     tuneModelLighting(model, asset.path)
 
     if (isStoneModularAsset(asset)) {
@@ -7584,6 +7625,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
     previewObject = makeGhostMaterial(model)
     model.dispose() // dispose the source instance — ghost is a separate clone
+    if (!previewObject) return
     previewObject.rotationQuaternion = null // use euler rotation instead of quaternion
     previewObject.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
     previewObject.scaling.set(previewScale, previewScale, previewScale)

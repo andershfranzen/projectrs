@@ -224,14 +224,24 @@ async function processQueue(): Promise<void> {
   processing = false
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('thumbnail render timeout')), ms)
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v) },
-      (e) => { clearTimeout(timer); reject(e) }
-    )
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('thumbnail render timeout')), ms)
   })
+  try {
+    return await Promise.race([promise, timeout])
+  } catch (err: unknown) {
+    // Thumbnail rendering shares one Babylon scene. If a render times out,
+    // drain that work before the next queued render starts so slow GLBs don't
+    // stack multiple live imports and stall the editor.
+    if ((err as Error)?.message === 'thumbnail render timeout') {
+      try { return await promise } catch { /* ignore */ }
+    }
+    throw err
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 async function renderOne(path: string, explicitOverride?: AssetThumbnailOverride): Promise<string | null> {

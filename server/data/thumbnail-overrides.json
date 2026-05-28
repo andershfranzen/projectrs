@@ -26,15 +26,6 @@
     "rotationZ": 0,
     "iconScale": 1
   },
-  "18": {
-    "alpha": 1.8634073464102099,
-    "beta": 1.3986433452497935,
-    "distanceMult": 1,
-    "rotationX": 0,
-    "rotationY": -0.431592653589793,
-    "rotationZ": 0,
-    "iconScale": 1
-  },
   "20": {
     "alpha": -1.684242728174528,
     "beta": 1.208304866765305,
@@ -668,6 +659,15 @@
   "127": {
     "alpha": 1.5969762655748114,
     "beta": 0.8813912722571364,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "206": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
     "distanceMult": 0.75,
     "rotationX": 0,
     "rotationY": 0,

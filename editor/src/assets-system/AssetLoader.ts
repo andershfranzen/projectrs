@@ -17,6 +17,10 @@ interface BoundsMetadata {
   bounds: { width: number; height: number; depth: number }
 }
 
+interface CloneAssetOptions {
+  doNotInstantiate?: boolean
+}
+
 const cache = new Map<string, CacheEntry>()
 
 let _scene: Scene | null = null
@@ -65,7 +69,7 @@ async function buildCenteredPivotTemplate(meshes: AbstractMesh[], root: Abstract
   return pivot
 }
 
-export async function loadAssetModel(path: string): Promise<TransformNode | null> {
+export async function loadAssetModel(path: string, options: CloneAssetOptions = {}): Promise<TransformNode | null> {
   if (!_scene) throw new Error('AssetLoader not initialized — call initAssetLoader(scene) first')
 
   if (!cache.has(path)) {
@@ -86,18 +90,19 @@ export async function loadAssetModel(path: string): Promise<TransformNode | null
     cache.set(path, { template, animGroups })
   }
 
-  return cloneFromCache(path)
+  return cloneFromCache(path, options)
 }
 
 /** Synchronous clone — only valid when the path is already cached (e.g. after warmAssetCache). */
-export function cloneAssetModelSync(path: string): TransformNode | null {
+export function cloneAssetModelSync(path: string, options: CloneAssetOptions = {}): TransformNode | null {
   if (!cache.has(path)) throw new Error(`cloneAssetModelSync: "${path}" not in cache`)
-  return cloneFromCache(path)
+  return cloneFromCache(path, options)
 }
 
-function cloneFromCache(path: string): TransformNode | null {
+function cloneFromCache(path: string, options: CloneAssetOptions = {}): TransformNode | null {
   const { template } = cache.get(path)!
-  const instance = template.instantiateHierarchy(null, undefined, (source, cloned) => {
+  const instantiateOptions = options.doNotInstantiate ? { doNotInstantiate: true } : undefined
+  const instance = template.instantiateHierarchy(null, instantiateOptions, (source, cloned) => {
     cloned.name = `placed_${source.name}`
   })
   if (instance) {
@@ -158,7 +163,7 @@ export function getAssetAnimations(path: string): AnimationGroup[] {
 export function makeGhostMaterial(sourceModel: TransformNode): TransformNode | null {
   if (!_scene) return null
 
-  const ghost = sourceModel.instantiateHierarchy(null, undefined, (source, cloned) => {
+  const ghost = sourceModel.instantiateHierarchy(null, { doNotInstantiate: true }, (source, cloned) => {
     cloned.name = `ghost_${source.name}`
   })
 

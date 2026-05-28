@@ -202,6 +202,7 @@ export class SmithingPanel {
       const outputDef = this.cachedItemDefs.get(recipe.outputItemId);
       const inputName = inputDef?.name ?? `Item ${recipe.inputItemId}`;
       const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
+      const outputLabel = recipe.outputQuantity > 1 ? `${outputName} x${recipe.outputQuantity}` : outputName;
       const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
       const hasSecondInput = recipe.secondInputItemId === undefined
         || (itemCounts.get(recipe.secondInputItemId) ?? 0) >= (recipe.secondInputQuantity ?? 1);
@@ -262,7 +263,7 @@ export class SmithingPanel {
         text-align: center;
         overflow: hidden;
       `;
-      title.textContent = outputName;
+      title.textContent = outputLabel;
       card.appendChild(title);
 
       const detail = document.createElement('div');
@@ -411,6 +412,7 @@ export class SmithingPanel {
 
       const outputDef = this.cachedItemDefs.get(recipe.outputItemId);
       const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
+      const outputLabel = recipe.outputQuantity > 1 ? `${recipe.outputQuantity} ${outputName}` : outputName;
       const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
       const hasBars = barCount >= recipe.inputQuantity;
       // Furnace recipes also have a secondInputItemId (coal, etc.). Without
@@ -433,7 +435,7 @@ export class SmithingPanel {
         cursor: ${canSmith ? 'pointer' : 'default'};
         transition: background 0.1s, border-color 0.1s;
       `;
-      tile.title = `${outputName} — ${recipe.inputQuantity} ${barName}${recipe.inputQuantity > 1 ? 's' : ''}, Lv ${recipe.levelRequired}`;
+      tile.title = `${outputLabel} — ${recipe.inputQuantity} ${barName}${recipe.inputQuantity > 1 ? 's' : ''}, Lv ${recipe.levelRequired}`;
 
       // Icon — 48px, readable at normal zoom
       if (outputDef) {
@@ -454,7 +456,7 @@ export class SmithingPanel {
         color: ${canSmith ? '#ddd' : '#777'};
         max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       `;
-      nameEl.textContent = shortName;
+      nameEl.textContent = recipe.outputQuantity > 1 ? `${shortName} x${recipe.outputQuantity}` : shortName;
       tile.appendChild(nameEl);
 
       // Level badge corner

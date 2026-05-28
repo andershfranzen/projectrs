@@ -79,12 +79,10 @@ export function forEachTileInPlaneFootprint(
 }
 
 /** Cluster the Y values of flat planes — adjacent values within `tol` group
- *  together. Each cluster also reports its `mode` (most common Y rounded to
- *  0.1) — we use that as the canonical floor-surface Y and reject planes
- *  outside a tight radius around it (window sills, steps, decorative ledges
- *  at intermediate heights would otherwise be marked walkable and produce
- *  weird paths). */
-function clusterYs(ys: number[], tol = 0.6): { min: number; max: number; mode: number }[] {
+ *  together. Each cluster represents a floor number; within the same floor
+ *  number, maps may still have buildings whose actual deck heights differ
+ *  (for example lower-walled houses). */
+function clusterYs(ys: number[], tol = 0.6): { min: number; max: number; modes: number[] }[] {
   if (ys.length === 0) return [];
   const sorted = ys.slice().sort((a, b) => a - b);
   const groups: number[][] = [[sorted[0]]];
@@ -93,17 +91,23 @@ function clusterYs(ys: number[], tol = 0.6): { min: number; max: number; mode: n
     if (sorted[i] - last[last.length - 1] < tol) last.push(sorted[i]);
     else groups.push([sorted[i]]);
   }
+  const SIGNIFICANT_BUCKET_COUNT = 8;
+
   return groups.map(g => {
     const buckets = new Map<number, number>();
     for (const y of g) {
       const k = Math.round(y * 10) / 10;
       buckets.set(k, (buckets.get(k) ?? 0) + 1);
     }
-    let mode = g[0], bestCount = 0;
+    let dominant = g[0], bestCount = 0;
     for (const [k, v] of buckets) {
-      if (v > bestCount) { bestCount = v; mode = k; }
+      if (v > bestCount) { bestCount = v; dominant = k; }
     }
-    return { min: g[0], max: g[g.length - 1], mode };
+    const modes = [...buckets.entries()]
+      .filter(([k, v]) => k === dominant || v >= SIGNIFICANT_BUCKET_COUNT)
+      .map(([k]) => k)
+      .sort((a, b) => a - b);
+    return { min: g[0], max: g[g.length - 1], modes };
   });
 }
 
@@ -130,14 +134,14 @@ export function deriveUpperFloorTilesFromPlanes(
 
   const ys = flat.map(p => p.position?.y ?? 0);
   const clusters = clusterYs(ys);
-  // Tight radius around each cluster's mode Y. Planes outside this band are
-  // treated as decorative (window sills, steps, ledges) and not registered as
-  // walkable on the cluster's floor.
+  // Tight radius around each significant surface Y. Planes outside these bands
+  // are treated as decorative (window sills, steps, ledges) and not registered
+  // as walkable on the cluster's floor.
   const MODE_RADIUS = 0.15;
 
   const yToFloor = (y: number): number => {
     for (let i = 0; i < clusters.length; i++) {
-      if (Math.abs(y - clusters[i].mode) <= MODE_RADIUS) return i;
+      if (clusters[i].modes.some(mode => Math.abs(y - mode) <= MODE_RADIUS)) return i;
     }
     return -1; // not on any canonical floor surface — skip
   };

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { ALL_SKILLS } from '../shared/index';
+import { ALL_SKILLS, GROUND_ITEM_SPAWN_ASSET_IDS } from '../shared/index';
+import { ASSET_TO_GROUND_ITEM_SPAWN } from '../server/src/data/AssetGroundItemSpawns';
 
 interface AuditIssue {
   file: string;
@@ -322,6 +323,23 @@ function auditGenericRefs(
   }
 }
 
+function auditGroundItemSpawnAssetIds(itemIds: Set<number>): void {
+  const sharedFile = join(rootDir, 'shared/assetObjectMap.ts');
+  const serverFile = join(rootDir, 'server/src/data/AssetGroundItemSpawns.ts');
+  const sharedIds = new Set(GROUND_ITEM_SPAWN_ASSET_IDS);
+  const serverIds = new Set(Object.keys(ASSET_TO_GROUND_ITEM_SPAWN));
+
+  for (const id of sharedIds) {
+    if (!serverIds.has(id)) addIssue(sharedFile, `ground item spawn asset "${id}" is missing server spawn data`);
+  }
+  for (const id of serverIds) {
+    if (!sharedIds.has(id)) addIssue(serverFile, `ground item spawn asset "${id}" is missing from the shared render filter`);
+  }
+  for (const [assetId, spawn] of Object.entries(ASSET_TO_GROUND_ITEM_SPAWN)) {
+    assertItemRef(serverFile, `ground item spawn asset "${assetId}"`, itemIds, spawn.itemId);
+  }
+}
+
 function auditStaticData(): void {
   const itemsPath = join(dataDir, 'items.json');
   const npcsPath = join(dataDir, 'npcs.json');
@@ -358,6 +376,7 @@ function auditStaticData(): void {
   auditItemAssets(itemsPath, items.filter(isRecord) as ItemDefLike[]);
   auditShopKeys(shopsPath, npcIds);
   auditThumbnailOverrides(thumbnailOverridesPath, itemIds);
+  auditGroundItemSpawnAssetIds(itemIds);
 
   const refs = { itemIds, npcIds, objectIds, questIds };
   for (const file of [npcsPath, objectsPath, questsPath, shopsPath]) {

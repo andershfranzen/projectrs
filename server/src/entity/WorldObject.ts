@@ -1,4 +1,4 @@
-import type { PlacedObjectInteraction, PlacedObjectVerticalLink, WorldObjectDef } from '@projectrs/shared';
+import { mergeObjectActionLabels, type PlacedObjectInteraction, type PlacedObjectVerticalLink, type WorldObjectDef } from '@projectrs/shared';
 
 let nextObjectEntityId = 10000; // Start high to avoid collision with NPC/player entity IDs
 
@@ -34,6 +34,8 @@ export class WorldObject {
   examineText?: string;
   /** Optional per-action effects from an editor placed object. */
   interactions?: PlacedObjectInteraction[];
+  private interactionActionLabels: readonly string[] = [];
+  private mergedActionCache: Map<readonly string[], readonly string[]> = new Map();
   /** Per-instance transition override from editor trigger data */
   trigger?: { type: string; destChunk: string; entryX: number; entryY: number; entryZ: number };
   /** Explicit vertical movement endpoints for ladder-like objects. */
@@ -55,16 +57,48 @@ export class WorldObject {
     this.mapLevel = mapLevel;
   }
 
-  /** Action labels that apply right now — doors flip Open/Close based on
-   *  doorOpen, everything else returns the def's static actions. The label
-   *  drives the dispatcher in handlePlayerInteractObject; replacing it via
-   *  this getter avoids the per-toggle def allocation that previous code did. */
-  get currentActions(): readonly string[] {
-    if (this.def.category === 'door') {
-      if (!this.doorOpen && this.doorLocked) return DOOR_ACTIONS_LOCKED;
-      return this.doorOpen ? DOOR_ACTIONS_OPEN : DOOR_ACTIONS_CLOSED;
+  setInteractions(interactions: PlacedObjectInteraction[] | undefined): void {
+    this.interactions = interactions && interactions.length > 0 ? interactions : undefined;
+    this.mergedActionCache.clear();
+
+    if (!this.interactions) {
+      this.interactionActionLabels = [];
+      return;
     }
-    return this.def.actions;
+
+    const labels: string[] = [];
+    for (const interaction of this.interactions) {
+      const action = interaction.action.trim();
+      if (!action || labels.includes(action)) continue;
+      labels.push(action);
+    }
+    this.interactionActionLabels = labels;
+  }
+
+  private actionsWithInteractionLabels(baseActions: readonly string[]): readonly string[] {
+    if (this.interactionActionLabels.length === 0) return baseActions;
+    let cached = this.mergedActionCache.get(baseActions);
+    if (!cached) {
+      cached = mergeObjectActionLabels(baseActions, this.interactionActionLabels);
+      this.mergedActionCache.set(baseActions, cached);
+    }
+    return cached;
+  }
+
+  /** Action labels that apply right now — doors flip Open/Close based on
+   *  doorOpen, and placed-object interactions can add per-instance actions.
+   *  The label drives the dispatcher in handlePlayerInteractObject; replacing
+   *  it via this getter avoids the per-toggle def allocation that previous
+   *  code did. */
+  get currentActions(): readonly string[] {
+    let actions: readonly string[];
+    if (this.def.category === 'door') {
+      if (!this.doorOpen && this.doorLocked) actions = DOOR_ACTIONS_LOCKED;
+      else actions = this.doorOpen ? DOOR_ACTIONS_OPEN : DOOR_ACTIONS_CLOSED;
+    } else {
+      actions = this.def.actions;
+    }
+    return this.actionsWithInteractionLabels(actions);
   }
 
   get displayName(): string {

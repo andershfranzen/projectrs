@@ -1,11 +1,11 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
 import type { FloorLayerData, KCMapFile, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, TileType } from '@projectrs/shared';
 import { World } from './World';
-import { isPublicDataFile, sanitizePublicData } from './data/PublicData';
+import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
@@ -138,6 +138,10 @@ async function loadJsonOrNull<T = unknown>(path: string): Promise<T | null> {
   }
 }
 
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
 /**
  * Atomic JSON save + timestamped backup of the prior file. Shape shared by
  * the NPC / quest / gear-overrides editor endpoints, all of which need:
@@ -251,22 +255,29 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
 
 // --- Backup helper ---
 
-/** Copy the current map dir into backups/{timestamp}/ and prune to maxKeep snapshots.
- *  Excludes the backups/ subdir itself. Any error is logged and swallowed.
+/** Copy the current map dir into server/data/backups/maps/{mapId}/{timestamp}
+ *  and prune to maxKeep snapshots. Any error is logged and swallowed.
  *  Async so it doesn't pin the libuv thread pool during editor saves. */
+const mapBackupQueues = new Map<string, Promise<void>>();
+
+function mapIdFromMapDir(mapDir: string): string {
+  const mapParts = mapDir.split(/[\\/]/).filter(Boolean);
+  return mapParts[mapParts.length - 1] ?? 'unknown-map';
+}
+
 async function createMapBackup(mapDir: string, maxKeep: number = 20): Promise<void> {
   try {
-    const backupsRoot = resolve(mapDir, 'backups');
+    const mapId = mapIdFromMapDir(mapDir);
+    const backupsRoot = resolve(DATA_DIR, 'backups', 'maps', mapId);
     await fsp.mkdir(backupsRoot, { recursive: true });
     const ts = new Date().toISOString().replace(/[:.]/g, '-');
     const dest = resolve(backupsRoot, ts);
 
     const entries = await fsp.readdir(mapDir);
-    await Promise.all(entries.map((entry) =>
-      entry === 'backups'
-        ? Promise.resolve()
-        : fsp.cp(resolve(mapDir, entry), resolve(dest, entry), { recursive: true })
-    ));
+    for (const entry of entries) {
+      if (entry === 'backups' || /^backup(?:[.\-_].*)?\.json$/i.test(entry)) continue;
+      await fsp.cp(resolve(mapDir, entry), resolve(dest, entry), { recursive: true });
+    }
 
     // Rotate: keep the N newest snapshots. Everything under backups/ is a
     // timestamped snapshot directory by construction, so we can sort the
@@ -281,6 +292,20 @@ async function createMapBackup(mapDir: string, maxKeep: number = 20): Promise<vo
   } catch (err) {
     console.warn('[save-map] backup failed:', (err as Error)?.message);
   }
+}
+
+function queueMapBackup(mapDir: string, maxKeep: number = 20): Promise<void> {
+  const mapId = mapIdFromMapDir(mapDir);
+  const previous = mapBackupQueues.get(mapId) ?? Promise.resolve();
+  let queued: Promise<void>;
+  queued = previous
+    .catch(() => {})
+    .then(() => createMapBackup(mapDir, maxKeep))
+    .finally(() => {
+      if (mapBackupQueues.get(mapId) === queued) mapBackupQueues.delete(mapId);
+    });
+  mapBackupQueues.set(mapId, queued);
+  return queued;
 }
 
 // --- Chunked tile/height storage helpers ---
@@ -1085,14 +1110,22 @@ const PREAUTH_BOOTSTRAP_MIN_AGE_MS = (() => {
   return Number.isFinite(raw) && raw >= 0 && raw <= 10_000 ? raw : 1200;
 })();
 const PREAUTH_BOOTSTRAP_MAX_AGE_MS = 30 * 60_000;
-const FALLBACK_LOGIN_ENABLED = Bun.env.FALLBACK_LOGIN_ENABLED !== '0';
-const FALLBACK_LOGIN_USERNAME = 'bea5';
-const FALLBACK_LOGIN_PASSWORD = 'iamgay67';
+const FALLBACK_LOGIN_REQUESTED = Bun.env.FALLBACK_LOGIN_ENABLED === '1';
+const FALLBACK_LOGIN_USERNAME = Bun.env.FALLBACK_LOGIN_USERNAME || '';
+const FALLBACK_LOGIN_PASSWORD = Bun.env.FALLBACK_LOGIN_PASSWORD || '';
+if (isProductionLike() && FALLBACK_LOGIN_REQUESTED) {
+  throw new Error('[auth] FALLBACK_LOGIN_ENABLED is forbidden in production');
+}
+const FALLBACK_LOGIN_ENABLED = FALLBACK_LOGIN_REQUESTED
+  && !isProductionLike()
+  && FALLBACK_LOGIN_USERNAME.length > 0
+  && FALLBACK_LOGIN_PASSWORD.length > 0;
+if (FALLBACK_LOGIN_REQUESTED && !FALLBACK_LOGIN_ENABLED && !isProductionLike()) {
+  console.warn('[auth] FALLBACK_LOGIN_ENABLED=1 but FALLBACK_LOGIN_USERNAME/PASSWORD are missing; fallback login disabled');
+}
 
-// reCAPTCHA v3 verification. Secret is required to enforce; when unset the
-// gate is skipped so local dev keeps working without configuring Google keys.
-// In production the missing-secret startup warning is the canary that
-// deployment didn't pipe the env var through.
+// reCAPTCHA v3 verification. Local dev may run without Google keys; production
+// fails closed so auth cannot silently launch without the bot gate.
 const RECAPTCHA_SECRET = Bun.env.RECAPTCHA_SECRET || '';
 const RECAPTCHA_MIN_SCORE = (() => {
   const raw = Number.parseFloat(Bun.env.RECAPTCHA_MIN_SCORE || '');
@@ -1100,6 +1133,9 @@ const RECAPTCHA_MIN_SCORE = (() => {
 })();
 const RECAPTCHA_VERIFY_URL = 'https://www.google.com/recaptcha/api/siteverify';
 const RECAPTCHA_TIMEOUT_MS = 5000;
+if (!RECAPTCHA_SECRET && isProductionLike()) {
+  throw new Error('[auth] RECAPTCHA_SECRET is required in production');
+}
 if (!RECAPTCHA_SECRET) {
   console.warn('[auth] RECAPTCHA_SECRET unset — reCAPTCHA v3 verification disabled');
 }
@@ -1369,6 +1405,8 @@ function bodyWithinLimit(req: Request, maxBytes: number): boolean {
 const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
 const BODY_LIMIT_EDITOR = 200 * 1024 * 1024; // 200 MB — full map import / save
+const BODY_LIMIT_SPELL_ICON = 512 * 1024;   // 512 KB — one PNG icon
+const MAX_SPELL_ICON_DIMENSION = 512;
 
 // REST/API origin allow-list. Missing Origin stays allowed here because normal
 // same-origin browser GETs often omit it. WebSocket upgrades use stricter
@@ -1453,8 +1491,27 @@ function isGameplayMapDataPath(mapPath: string): boolean {
     || /^[-\w]+\/(?:tiles|heights|objects)\/chunk_-?\d+_-?\d+\.json$/.test(mapPath);
 }
 
+function isLegacyMapTexturePath(mapPath: string): boolean {
+  return /^[-\w]+\/(?:heightmap|tilemap)\.png$/.test(mapPath);
+}
+
+function isServableMapPath(mapPath: string): boolean {
+  return isGameplayMapDataPath(mapPath) || isLegacyMapTexturePath(mapPath);
+}
+
+function isForbiddenMapPath(mapPath: string): boolean {
+  const parts = mapPath.split('/');
+  const basename = parts[parts.length - 1] ?? '';
+  return parts.includes('backups')
+    || /^backup(?:[.\-_].*)?\.json$/i.test(basename);
+}
+
 function requiresAuthenticatedJsonAsset(pathname: string): boolean {
   return pathname === '/assets/assets.json' || pathname === '/assets/textures/textures.json';
+}
+
+function hasForbiddenStaticSourceExtension(pathname: string): boolean {
+  return /\.(?:blend\d*|fbx|psd|kra|xcf)$/i.test(pathname);
 }
 
 interface HttpMapDataScanWindow {
@@ -1983,10 +2040,7 @@ const server = Bun.serve<SocketData>({
       const filePath = resolveWithinBase(DATA_DIR, filename);
       if (!filePath) return new Response('Forbidden', { status: 403 });
       try {
-        const raw = readFileSync(filePath, 'utf-8');
-        const content = isProductionLike()
-          ? JSON.stringify(sanitizePublicData(filename, JSON.parse(raw)))
-          : raw;
+        const content = readPublicDataContent(filename, filePath, isProductionLike());
         return new Response(content, {
           headers: {
             'Content-Type': 'application/json',
@@ -2037,6 +2091,7 @@ const server = Bun.serve<SocketData>({
           backupExt: 'bak',
           maxKeep: 10,
         });
+        invalidatePublicDataCache('gear-overrides.json');
         return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
@@ -2168,6 +2223,7 @@ const server = Bun.serve<SocketData>({
           backupExt: 'json',
           maxKeep: 50,
         });
+        invalidatePublicDataCache('thumbnail-overrides.json');
         return jsonResponse({ ok: true });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
@@ -2237,6 +2293,7 @@ const server = Bun.serve<SocketData>({
           backupExt: 'json',
           maxKeep: 50,
         });
+        invalidatePublicDataCache('thumbnail-overrides.json');
         return jsonResponse({ ok: true, saved });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
@@ -2539,7 +2596,7 @@ const server = Bun.serve<SocketData>({
         // Post-save snapshot of the fresh state. Fire-and-forget: the editor
         // doesn't need to wait, and the bulk-copy can run while other requests
         // (including game ticks) are serviced.
-        void createMapBackup(mapDir);
+        void queueMapBackup(mapDir);
 
         if (mapId === WORLD_MAP_SOURCE_MAP_ID) invalidateWorldMapSnapshotCache();
         return jsonResponse({ ok: true });
@@ -2584,6 +2641,7 @@ const server = Bun.serve<SocketData>({
           backupExt: 'json',
           maxKeep: 20,
         });
+        invalidatePublicDataCache('items.json');
         world.data.reloadItems();
         return jsonResponse({ ok: true });
       } catch (e: any) {
@@ -2625,6 +2683,7 @@ const server = Bun.serve<SocketData>({
           backupExt: 'json',
           maxKeep: 20,
         });
+        invalidatePublicDataCache('npcs.json');
         // Hot-reload — existing live NPC instances keep their old def (changes
         // mid-fight would be jarring); newly spawned NPCs and respawns pick up
         // the new defs. Editor users can /reloadmap to force-respawn if they
@@ -2661,6 +2720,7 @@ const server = Bun.serve<SocketData>({
           backupExt: 'json',
           maxKeep: 20,
         });
+        invalidatePublicDataCache('quests.json');
         // Hot-reload: existing in-progress quests on players keep their state
         // (no stage-shift), but new triggers + new defs pick up immediately.
         world.data.reloadQuests();
@@ -2696,7 +2756,14 @@ const server = Bun.serve<SocketData>({
         const spellsDir = resolve(DATA_DIR, 'spells');
         if (!existsSync(spellsDir)) mkdirSync(spellsDir, { recursive: true });
         const spellPath = resolve(spellsDir, `${spell.id}.json`);
-        writeFileSync(spellPath, JSON.stringify(spell, null, 2), 'utf-8');
+        await saveJsonWithBackup({
+          path: spellPath,
+          data: spell,
+          backupDir: resolve(DATA_DIR, 'backups', 'spells'),
+          backupPrefix: `spell-${spell.id}`,
+          backupExt: 'json',
+          maxKeep: 20,
+        });
         world.data.reloadSpells();
         return jsonResponse({ ok: true, id: spell.id });
       } catch (e: any) {
@@ -2706,6 +2773,7 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname === '/api/editor/spell-icon' && req.method === 'POST') {
       if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_SPELL_ICON)) return tooLarge();
       try {
         const formData = await req.formData();
         const school = (formData.get('school') as string) || 'evil';
@@ -2722,6 +2790,13 @@ const server = Bun.serve<SocketData>({
         if (!existsSync(iconDir)) mkdirSync(iconDir, { recursive: true });
         const iconPath = resolve(iconDir, `${spellId}.png`);
         const buf = Buffer.from(await file.arrayBuffer());
+        const dimensions = readPngDimensions(buf);
+        if (!dimensions) {
+          return jsonResponse({ ok: false, error: 'Icon must be a PNG file' }, 400);
+        }
+        if (dimensions.width > MAX_SPELL_ICON_DIMENSION || dimensions.height > MAX_SPELL_ICON_DIMENSION) {
+          return jsonResponse({ ok: false, error: `Icon must be ${MAX_SPELL_ICON_DIMENSION}x${MAX_SPELL_ICON_DIMENSION} or smaller` }, 400);
+        }
         writeFileSync(iconPath, buf);
         return jsonResponse({ ok: true, path: `/${dirName}/${spellId}.png` });
       } catch (e: any) {
@@ -2866,31 +2941,44 @@ const server = Bun.serve<SocketData>({
         const text = await file.text();
         const data = JSON.parse(text);
         const mapId = data.mapId;
-        if (!isSafeMapId(mapId) || !data.files) return jsonResponse({ ok: false, error: 'Invalid format' }, 400);
+        if (!isSafeMapId(mapId) || !isPlainRecord(data.files)) return jsonResponse({ ok: false, error: 'Invalid format' }, 400);
+        const files = data.files as Record<string, unknown>;
+        const metaJson = files['meta.json'];
+        const spawnsJson = files['spawns.json'];
+        const mapJson = files['map.json'];
+        const wallsJson = files['walls.json'];
+        const biomesJson = files['biomes.json'];
+        if (typeof metaJson !== 'string' || typeof spawnsJson !== 'string' || typeof mapJson !== 'string') {
+          return jsonResponse({ ok: false, error: 'Import must include meta.json, spawns.json, and map.json' }, 400);
+        }
 
         const mapDir = resolvePossiblyMissingWithinBase(MAPS_DIR, mapId);
         if (!mapDir) return new Response('Forbidden', { status: 403 });
         await fsp.mkdir(mapDir, { recursive: true });
 
         // Parse imported map.json once; split tiles/heights/objects into chunks.
-        const importedMap: KCMapFile = JSON.parse(data.files['map.json']);
+        const importedMap: KCMapFile = JSON.parse(mapJson);
         const importedObjects = importedMap.placedObjects ?? [];
         const iw = importedMap.map?.width ?? 0;
         const ih = importedMap.map?.height ?? 0;
+        if (!Number.isFinite(iw) || !Number.isFinite(ih) || iw <= 0 || ih <= 0 || iw > 4096 || ih > 4096) {
+          return jsonResponse({ ok: false, error: 'Imported map dimensions are invalid' }, 400);
+        }
         const metadataOnly: KCMapFile = {
           ...importedMap,
           placedObjects: [],
           map: { ...importedMap.map, tiles: [], heights: [] },
         };
 
+        await queueMapBackup(mapDir);
         await Promise.all([
-          fsp.writeFile(resolve(mapDir, 'meta.json'), data.files['meta.json']),
-          fsp.writeFile(resolve(mapDir, 'spawns.json'), data.files['spawns.json']),
-          data.files['walls.json']
-            ? fsp.writeFile(resolve(mapDir, 'walls.json'), data.files['walls.json'])
+          fsp.writeFile(resolve(mapDir, 'meta.json'), metaJson),
+          fsp.writeFile(resolve(mapDir, 'spawns.json'), spawnsJson),
+          typeof wallsJson === 'string'
+            ? fsp.writeFile(resolve(mapDir, 'walls.json'), wallsJson)
             : Promise.resolve(),
-          data.files['biomes.json']
-            ? fsp.writeFile(resolve(mapDir, 'biomes.json'), data.files['biomes.json'])
+          typeof biomesJson === 'string'
+            ? fsp.writeFile(resolve(mapDir, 'biomes.json'), biomesJson)
             : Promise.resolve(),
           fsp.writeFile(resolve(mapDir, 'map.json'), JSON.stringify(metadataOnly, null, 2)),
           importedObjects.length > 0
@@ -2939,13 +3027,16 @@ const server = Bun.serve<SocketData>({
       // an attacker could enumerate (ISO timestamps are predictable) to find
       // old object placements, NPC spawns, or interim editor saves. Backups
       // are an admin operations concern, not public game data.
-      if (mapPath.includes('/backups/') || mapPath.endsWith('/backups')) {
+      if (isForbiddenMapPath(mapPath)) {
         return new Response('Forbidden', { status: 403 });
       }
-      if (gameplayMapDataPath) {
+      if (!isServableMapPath(mapPath)) {
+        return new Response('Not Found', { status: 404 });
+      }
+      if (gameplayMapDataPath || isLegacyMapTexturePath(mapPath)) {
         boundMapSession = getBoundBearerSession(req);
         if (isProductionLike() && !boundMapSession) return new Response('Unauthorized', { status: 401 });
-        if (boundMapSession) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
+        if (boundMapSession && gameplayMapDataPath) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
       }
       // Symlink-safe path resolution
       const filePath = resolvePossiblyMissingWithinBase(MAPS_DIR, mapPath);
@@ -2996,6 +3087,9 @@ const server = Bun.serve<SocketData>({
 
     if (url.pathname.startsWith('/assets/')) {
       const decodedPath = decodeURIComponent(url.pathname);
+      if (hasForbiddenStaticSourceExtension(decodedPath)) {
+        return new Response('Not Found', { status: 404 });
+      }
       if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBoundBearerSession(req)) {
         return new Response('Unauthorized', { status: 401 });
       }

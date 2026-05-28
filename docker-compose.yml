@@ -18,8 +18,9 @@ services:
     environment:
       CLIENT_ORIGINS: "https://evilquest.net,https://www.evilquest.net"
       NODE_ENV: production
+      FALLBACK_LOGIN_ENABLED: "0"
       # Server-side reCAPTCHA secret. Sourced from host .env by compose.
-      # When unset the server logs a warning and skips verification.
+      # When unset the production server fails startup.
       RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
       RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-}
 

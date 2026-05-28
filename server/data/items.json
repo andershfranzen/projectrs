@@ -2312,5 +2312,234 @@
     "equippable": false,
     "value": 3,
     "model": "/assets/models/Beef.glb"
+  },
+  {
+    "id": 264,
+    "name": "Bronze Arrowheads",
+    "description": "Bronze arrowheads for fletching.",
+    "stackable": true,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrowheads/stacks/BronzeArrowheadStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 265,
+    "name": "Iron Arrowheads",
+    "description": "Iron arrowheads for fletching.",
+    "stackable": true,
+    "equippable": false,
+    "value": 2,
+    "model": "/assets/models/arrowheads/stacks/IronArrowheadStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrowheads/stacks/IronArrowheadStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 266,
+    "name": "Steel Arrowheads",
+    "description": "Steel arrowheads for fletching.",
+    "stackable": true,
+    "equippable": false,
+    "value": 4,
+    "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrowheads/stacks/SteelArrowheadStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 267,
+    "name": "Mithril Arrowheads",
+    "description": "Mithril arrowheads for fletching.",
+    "stackable": true,
+    "equippable": false,
+    "value": 8,
+    "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrowheads/stacks/MithrilArrowheadStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 268,
+    "name": "Black Bronze Arrowheads",
+    "description": "Black bronze arrowheads for fletching.",
+    "stackable": true,
+    "equippable": false,
+    "value": 16,
+    "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 269,
+    "name": "Low Quality Sinew",
+    "description": "A rough strand of sinew rendered from beef.",
+    "stackable": false,
+    "equippable": false,
+    "value": 2,
+    "icon": "bow_string_676.png"
+  },
+  {
+    "id": 270,
+    "name": "Arrow Shafts",
+    "description": "Wooden arrow shafts ready for feathers.",
+    "stackable": true,
+    "equippable": false,
+    "value": 1,
+    "icon": "arrow_shafts_280.png",
+    "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 271,
+    "name": "Magic Logs",
+    "description": "Logs cut from a magic tree.",
+    "stackable": false,
+    "equippable": false,
+    "value": 50,
+    "icon": "Magic_Logs_636.png"
   }
 ]

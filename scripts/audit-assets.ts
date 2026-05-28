@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { readPngDimensions } from '../shared/png';
 
 interface AssetRegistry {
   assets?: Array<{
@@ -23,6 +24,7 @@ const itemIconDirs = [
 ];
 const issues: AuditIssue[] = [];
 const warnings: AuditIssue[] = [];
+const FORBIDDEN_PUBLIC_SOURCE_EXTENSIONS = new Set(['.blend', '.blend1', '.fbx', '.psd', '.kra', '.xcf']);
 
 function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T;
@@ -61,21 +63,15 @@ function walkPngFiles(dir: string): string[] {
   return files;
 }
 
-function readPngDimensions(path: string): { width: number; height: number } | null {
-  const bytes = readFileSync(path);
-  if (
-    bytes.length < 24 ||
-    bytes[0] !== 0x89 ||
-    bytes[1] !== 0x50 ||
-    bytes[2] !== 0x4e ||
-    bytes[3] !== 0x47
-  ) {
-    return null;
+function walkFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) files.push(...walkFiles(path));
+    else if (entry.isFile()) files.push(path);
   }
-  return {
-    width: bytes.readUInt32BE(16),
-    height: bytes.readUInt32BE(20),
-  };
+  return files;
 }
 
 function auditRegistry(): Set<string> {
@@ -130,7 +126,7 @@ function auditPlacedObjects(assetIds: Set<string>): void {
 function auditItemIconSizes(): void {
   for (const dir of itemIconDirs) {
     for (const file of walkPngFiles(dir)) {
-      const dimensions = readPngDimensions(file);
+      const dimensions = readPngDimensions(readFileSync(file));
       if (!dimensions) continue;
       if (dimensions.width > 256 || dimensions.height > 256) {
         addIssue(file, `item icon is ${dimensions.width}x${dimensions.height}; max allowed is 256x256`);
@@ -139,9 +135,22 @@ function auditItemIconSizes(): void {
   }
 }
 
+function auditPublicSourceFiles(): void {
+  for (const file of walkFiles(publicDir)) {
+    const lower = file.toLowerCase();
+    for (const ext of FORBIDDEN_PUBLIC_SOURCE_EXTENSIONS) {
+      if (lower.endsWith(ext)) {
+        addIssue(file, `source/work asset ${ext} must not live under client/public`);
+        break;
+      }
+    }
+  }
+}
+
 const assetIds = auditRegistry();
 auditPlacedObjects(assetIds);
 auditItemIconSizes();
+auditPublicSourceFiles();
 
 if (issues.length > 0) {
   console.error(`Asset audit failed with ${issues.length} issue(s):`);

@@ -3425,12 +3425,14 @@
         "from": {
           "x": 154.5,
           "z": 66.5,
-          "floor": 0
+          "floor": 0,
+          "y": 0
         },
         "to": {
           "x": 154.5,
           "z": 66.5,
-          "floor": 1
+          "floor": 1,
+          "y": 2.12
         },
         "fromAction": "Climb-up"
       },
@@ -3438,12 +3440,14 @@
         "from": {
           "x": 154.5,
           "z": 66.5,
-          "floor": 1
+          "floor": 1,
+          "y": 2.12
         },
         "to": {
           "x": 154.5,
           "z": 66.5,
-          "floor": 0
+          "floor": 0,
+          "y": 0
         },
         "fromAction": "Climb-down"
       }

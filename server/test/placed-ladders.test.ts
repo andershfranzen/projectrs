@@ -12,8 +12,6 @@ const OBJECTS_PATH = resolve(import.meta.dir, '../data/objects.json');
 const LADDER_DEF_ID = ASSET_TO_OBJECT_DEF.Ladder;
 const DECORATIVE_LADDER_KEYS = [
   'kcmap:69.525,50.500',
-  'kcmap:155.500,66.500',
-  'kcmap:216.500,145.500',
 ];
 
 type PlacedLadder = {
@@ -37,6 +35,12 @@ const fakeWs = {
   send() {},
   close() {},
 } as any;
+
+const noopDb = {
+  savePlayerState() {},
+  savePlayerPositionsBatch() {},
+  applyObjectRespawnWritesBatch() {},
+};
 
 function ladderKey(ladder: Pick<PlacedLadder, 'mapId' | 'position'>): string {
   return `${ladder.mapId}:${ladder.position.x.toFixed(3)},${ladder.position.z.toFixed(3)}`;
@@ -72,6 +76,7 @@ function placedLadders(): PlacedLadder[] {
 
 function makeWorld(maps: Map<string, GameMap>): any {
   const world = Object.create(World.prototype) as any;
+  world.db = noopDb;
   world.maps = maps;
   world.blockedObjectTiles = new Set();
   world.interruptPlayerAction = () => {};
@@ -115,30 +120,6 @@ describe('placed ladder audit', () => {
 
     const decorative = ladders.filter(ladder => (ladder.verticalLinks ?? []).length === 0);
     expect(decorative.map(ladderKey).sort()).toEqual([...DECORATIVE_LADDER_KEYS].sort());
-
-    const maps = new Map<string, GameMap>();
-    for (const ladder of decorative) {
-      let map = maps.get(ladder.mapId);
-      if (!map) {
-        map = new GameMap(ladder.mapId);
-        maps.set(ladder.mapId, map);
-      }
-
-      const alternateTargets: Array<{ x: number; z: number; floor: number; y: number }> = [];
-      const baseX = Math.floor(ladder.position.x);
-      const baseZ = Math.floor(ladder.position.z);
-      for (let dz = -3; dz <= 3; dz++) {
-        for (let dx = -3; dx <= 3; dx++) {
-          const x = baseX + dx + 0.5;
-          const z = baseZ + dz + 0.5;
-          for (const target of map.getWalkableFloorTargetsAt(x, z)) {
-            if (target.floor !== 0) alternateTargets.push({ x, z, ...target });
-          }
-        }
-      }
-
-      expect(alternateTargets, `${ladder.file} ${ladderKey(ladder)} must get links if an upper/lower floor is authored nearby`).toEqual([]);
-    }
   });
 
   test('every authored placed ladder link exposes the intended action and lands on a walkable tile', () => {

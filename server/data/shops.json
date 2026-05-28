@@ -58,11 +58,6 @@
     "name": "Armor Shop — Head & Body",
     "items": [
       {
-        "itemId": 9,
-        "price": 20,
-        "stock": 5
-      },
-      {
         "itemId": 7,
         "price": 35,
         "stock": 5

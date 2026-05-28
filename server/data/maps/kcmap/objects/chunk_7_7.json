@@ -970,7 +970,7 @@
     "name": "Desert well",
     "interactions": [
       {
-        "action": "Use",
+        "action": "Throw sketch",
         "condition": {
           "type": "all",
           "conditions": [
@@ -1002,7 +1002,7 @@
         ]
       },
       {
-        "action": "Use",
+        "action": "Throw sketch",
         "condition": {
           "type": "not",
           "condition": {

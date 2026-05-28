@@ -125,12 +125,20 @@ function applyTint(meshes: AbstractMesh[], options: ThumbnailOptions): void {
   }
 }
 
-function targetModelSizeForItem(def: ItemDef, quantity: number = 1): number {
-  const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
-  return baseSize * stackModelScaleForItem(def, quantity);
+function clampGroundItemVisualScale(scale: number | undefined): number {
+  return typeof scale === 'number' && Number.isFinite(scale) ? Math.max(0.05, Math.min(2, scale)) : 1;
 }
 
-function normalizeTemplate(root: TransformNode, def: ItemDef, quantity: number): number {
+export function groundItemVisualScaleFromOptions(options: Pick<ThumbnailOptions, 'iconScale'>): number {
+  return clampGroundItemVisualScale(options.iconScale);
+}
+
+export function groundItemTargetModelSizeForItem(def: ItemDef, quantity: number = 1, visualScale: number = 1): number {
+  const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
+  return baseSize * stackModelScaleForItem(def, quantity) * clampGroundItemVisualScale(visualScale);
+}
+
+function normalizeTemplate(root: TransformNode, targetSize: number): number {
   let minX = Infinity, maxX = -Infinity;
   let minY = Infinity, maxY = -Infinity;
   let minZ = Infinity, maxZ = -Infinity;
@@ -158,7 +166,7 @@ function normalizeTemplate(root: TransformNode, def: ItemDef, quantity: number):
   }
 
   const size = Math.max(maxX - minX, maxY - minY, maxZ - minZ) || 1;
-  return targetModelSizeForItem(def, quantity) / size;
+  return targetSize / size;
 }
 
 async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promise<GroundItemTemplate | null> {
@@ -166,7 +174,7 @@ async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promi
   if (!path) return null;
 
   const options = await buildThumbnailOptionsForItem(def);
-  const targetSize = targetModelSizeForItem(def, quantity);
+  const targetSize = groundItemTargetModelSizeForItem(def, quantity, groundItemVisualScaleFromOptions(options));
   const key = templateCacheKey(path, options, targetSize);
   let sceneCache = TEMPLATE_CACHE_BY_SCENE.get(scene);
   if (!sceneCache) {
@@ -192,7 +200,7 @@ async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promi
         }
         applyTint(result.meshes, options);
 
-        const baseScale = normalizeTemplate(root, def, quantity);
+        const baseScale = normalizeTemplate(root, targetSize);
         const baseYaw = options.rotationY ?? 0;
         root.setEnabled(false);
         for (const child of root.getChildMeshes(false)) child.setEnabled(false);

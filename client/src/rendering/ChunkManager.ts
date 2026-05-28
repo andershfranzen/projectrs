@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, ASSET_TO_GROUND_ITEM_SPAWN, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -22,6 +22,10 @@ import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
 const CHUNK_RENDER_PADDING_TILES = 8;
+const OBJECT_RENDER_PADDING_TILES = 0;
+const OBJECT_PREFETCH_PADDING_TILES = 8;
+const OBJECT_RENDER_HYSTERESIS_TILES = 8;
+const OBJECT_VISIBILITY_BUCKET_TILES = 4;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 
@@ -94,6 +98,7 @@ interface PlacedObjectNodeMetadata {
   placedX?: number;
   placedY?: number;
   placedZ?: number;
+  interactionActions?: string[];
   roofGridKeys?: string[];
 }
 
@@ -161,6 +166,9 @@ export class ChunkManager {
   private lastChunkX: number = -999;
   private lastChunkZ: number = -999;
   private lastRenderDistanceBucket: number = -999;
+  private lastObjectBucketX: number = -999;
+  private lastObjectBucketZ: number = -999;
+  private lastObjectDistanceBucket: number = -999;
 
   // Shared materials
   private groundMat: StandardMaterial | null = null;
@@ -181,6 +189,8 @@ export class ChunkManager {
   private pendingGameChunks: Set<string> = new Set();
   private queuedGameChunks: Set<string> = new Set();
   private desiredGameChunks: Set<string> = new Set();
+  private desiredObjectChunks: Set<string> = new Set();
+  private objectLoadChunks: Set<string> = new Set();
   private keepGameChunks: Set<string> = new Set();
 
   // Water texture + animation
@@ -237,7 +247,9 @@ export class ChunkManager {
   /** Placed stair ramp zones for proximity-based height interpolation */
   private placedStairRamps: PlacedStairRamp[] = [];
   /** Spatial index of roof objects: "tileX,tileZ" → roof entries with floor tag + Y height */
-  private roofObjectGrid: Map<string, { node: TransformNode; floor: number; y: number }[]> = new Map();
+  private roofObjectGrid: Map<string, { node?: TransformNode; chunkKey?: string; floor: number; y: number }[]> = new Map();
+  /** Roof-grid tile keys stamped by each streamed placed-object chunk. */
+  private roofObjectGridKeysByChunk: Map<string, Set<string>> = new Map();
   /** Callback fired when a chunk's placed objects finish loading */
   private onChunkObjectsLoaded: ((chunkKey: string) => void) | null = null;
   private texturePlaneMeshes: Mesh[] = [];
@@ -264,6 +276,8 @@ export class ChunkManager {
   private overlayMatCache: Map<string, StandardMaterial> = new Map();
   private templateBaseMatrices: Map<string, { sourceMesh: Mesh; baseMatrix: Matrix }[]> = new Map();
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
+  private chunkRoofThinInstSources: Map<string, Mesh[]> = new Map();
+  private chunkElevatedThinInstSources: Map<string, { mesh: Mesh; minX: number; maxX: number; maxY: number; minZ: number; maxZ: number }[]> = new Map();
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -298,7 +312,7 @@ export class ChunkManager {
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
 
-  private getRenderDistanceTiles(): number {
+  private getVisibilityDistanceTiles(paddingTiles: number): number {
     const metaFogEnd = this.meta?.fogEnd ?? (CHUNK_LOAD_RADIUS + 1) * CHUNK_SIZE;
     const sceneFogEnd = Number.isFinite(this.scene.fogEnd) && this.scene.fogEnd > 0
       ? this.scene.fogEnd
@@ -306,11 +320,23 @@ export class ChunkManager {
     const cameraMaxZ = this.scene.activeCamera?.maxZ ?? Number.POSITIVE_INFINITY;
     const limitingDistance = Math.min(sceneFogEnd, cameraMaxZ);
     const baseDistance = Number.isFinite(limitingDistance) ? limitingDistance : sceneFogEnd;
-    return Math.max(CHUNK_MIN_RENDER_DISTANCE_TILES, baseDistance + CHUNK_RENDER_PADDING_TILES);
+    return Math.max(CHUNK_MIN_RENDER_DISTANCE_TILES, baseDistance + paddingTiles);
+  }
+
+  private getRenderDistanceTiles(): number {
+    return this.getVisibilityDistanceTiles(CHUNK_RENDER_PADDING_TILES);
+  }
+
+  private getObjectRenderDistanceTiles(): number {
+    return this.getVisibilityDistanceTiles(OBJECT_RENDER_PADDING_TILES);
   }
 
   private getRenderDistanceBucket(renderDistance: number): number {
     return Math.floor(renderDistance / CHUNK_RENDER_DISTANCE_BUCKET_TILES);
+  }
+
+  private getObjectVisibilityDistanceBucket(renderDistance: number): number {
+    return Math.floor(renderDistance / OBJECT_VISIBILITY_BUCKET_TILES);
   }
 
   private isChunkWithinRenderDistance(
@@ -800,6 +826,82 @@ export class ChunkManager {
 
   // --- Chunk update ---
 
+  private updateObjectChunkVisibility(
+    playerX: number,
+    playerZ: number,
+    centerChunkX: number,
+    centerChunkZ: number,
+    force: boolean = false,
+  ): boolean {
+    const objectRenderDistance = this.getObjectRenderDistanceTiles();
+    const bucketX = Math.floor(playerX / OBJECT_VISIBILITY_BUCKET_TILES);
+    const bucketZ = Math.floor(playerZ / OBJECT_VISIBILITY_BUCKET_TILES);
+    const distanceBucket = this.getObjectVisibilityDistanceBucket(objectRenderDistance);
+    if (
+      !force &&
+      bucketX === this.lastObjectBucketX &&
+      bucketZ === this.lastObjectBucketZ &&
+      distanceBucket === this.lastObjectDistanceBucket
+    ) {
+      return false;
+    }
+
+    this.lastObjectBucketX = bucketX;
+    this.lastObjectBucketZ = bucketZ;
+    this.lastObjectDistanceBucket = distanceBucket;
+
+    const objectDesired = new Set<string>();
+    const objectLoad = new Set<string>();
+    const maxCX = Math.ceil(this.mapWidth / CHUNK_SIZE);
+    const maxCZ = Math.ceil(this.mapHeight / CHUNK_SIZE);
+    for (let dx = -CHUNK_LOAD_RADIUS; dx <= CHUNK_LOAD_RADIUS; dx++) {
+      for (let dz = -CHUNK_LOAD_RADIUS; dz <= CHUNK_LOAD_RADIUS; dz++) {
+        const chunkX = centerChunkX + dx;
+        const chunkZ = centerChunkZ + dz;
+        if (chunkX < 0 || chunkX >= maxCX || chunkZ < 0 || chunkZ >= maxCZ) continue;
+        const key = `${chunkX},${chunkZ}`;
+
+        const visibleDistance = objectRenderDistance + (this.chunkPlacedEnabled.get(key) === true ? OBJECT_RENDER_HYSTERESIS_TILES : 0);
+        if (this.isChunkWithinRenderDistance(chunkX, chunkZ, playerX, playerZ, visibleDistance)) {
+          objectDesired.add(key);
+        }
+
+        const loadDistance = objectRenderDistance + OBJECT_PREFETCH_PADDING_TILES;
+        if (this.isChunkWithinRenderDistance(chunkX, chunkZ, playerX, playerZ, loadDistance)) {
+          objectLoad.add(key);
+        }
+      }
+    }
+
+    const centerKey = `${centerChunkX},${centerChunkZ}`;
+    objectDesired.add(centerKey);
+    objectLoad.add(centerKey);
+    this.desiredObjectChunks = objectDesired;
+    this.objectLoadChunks = objectLoad;
+
+    // Chunks inside keep-radius stay cached. Visibility is independent from
+    // terrain mesh visibility so fog-padding terrain does not force expensive
+    // placed objects on.
+    for (const key of this.chunkPlacedNodes.keys()) {
+      if (!this.keepGameChunks.has(key)) {
+        this.disposeChunkPlacedObjects(key);
+      } else {
+        this.setChunkPlacedObjectsEnabled(key, objectDesired.has(key));
+      }
+    }
+
+    // Hidden prefetch warms nearby object chunks once their terrain exists.
+    // This shifts one-time GLB instantiation away from the exact visibility
+    // edge and prevents walking back over that edge from reloading anything.
+    for (const key of objectLoad) {
+      if (this.chunks.has(key) && !this.chunkPlacedNodes.has(key) && !this.loadingObjectChunks.has(key)) {
+        this.queueChunkPlacedObjects(key);
+      }
+    }
+
+    return true;
+  }
+
   updatePlayerPosition(playerX: number, playerZ: number): boolean {
     if (!this.loaded) { return false; }
     const cx = Math.floor(playerX / CHUNK_SIZE);
@@ -807,8 +909,9 @@ export class ChunkManager {
     const renderDistance = this.getRenderDistanceTiles();
     const renderDistanceBucket = this.getRenderDistanceBucket(renderDistance);
     if (cx === this.lastChunkX && cz === this.lastChunkZ && renderDistanceBucket === this.lastRenderDistanceBucket) {
+      const objectChanged = this.updateObjectChunkVisibility(playerX, playerZ, cx, cz);
       this.buildQueuedGameChunks(cx, cz);
-      return false;
+      return objectChanged;
     }
     this.lastChunkX = cx;
     this.lastChunkZ = cz;
@@ -854,11 +957,9 @@ export class ChunkManager {
     for (const [key, meshes] of this.chunks) {
       if (desired.has(key)) {
         this.setChunkMeshesEnabled(meshes, true);
-        this.setChunkPlacedObjectsEnabled(key, true);
       } else if (keep.has(key)) {
         // Just hide — meshes stay allocated for fast re-show.
         this.setChunkMeshesEnabled(meshes, false);
-        this.setChunkPlacedObjectsEnabled(key, false);
       } else {
         this.disposeChunkMeshes(key, meshes);
       }
@@ -932,29 +1033,17 @@ export class ChunkManager {
     for (const key of this.queuedGameChunks) {
       if (!desired.has(key)) this.queuedGameChunks.delete(key);
     }
+    this.updateObjectChunkVisibility(playerX, playerZ, cx, cz, true);
     this.buildQueuedGameChunks(cx, cz);
-
-    // Unload placed objects for chunks beyond the keep-radius. Chunks inside
-    // keep-radius keep their objects loaded — walking back doesn't re-fetch.
-    for (const key of this.chunkPlacedNodes.keys()) {
-      if (!keep.has(key)) {
-        this.disposeChunkPlacedObjects(key);
-      } else {
-        this.setChunkPlacedObjectsEnabled(key, desired.has(key));
-      }
-    }
-    // Load placed objects for chunks entering radius
-    for (const key of desired) {
-      if (!this.chunkPlacedNodes.has(key) && !this.loadingObjectChunks.has(key)) {
-        this.queueChunkPlacedObjects(key);
-      }
-    }
     return true;
   }
 
   forceRefreshPlayerPosition(playerX: number, playerZ: number): boolean {
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
+    this.lastObjectBucketX = -999;
+    this.lastObjectBucketZ = -999;
+    this.lastObjectDistanceBucket = -999;
     return this.updatePlayerPosition(playerX, playerZ);
   }
 
@@ -1026,7 +1115,7 @@ export class ChunkManager {
     const [cx, cz] = bestKey.split(',').map(Number);
     const meshes = this.buildChunkMeshes(cx, cz);
     this.chunks.set(bestKey, meshes);
-    if (!this.chunkPlacedNodes.has(bestKey) && !this.loadingObjectChunks.has(bestKey)) {
+    if (this.objectLoadChunks.has(bestKey) && !this.chunkPlacedNodes.has(bestKey) && !this.loadingObjectChunks.has(bestKey)) {
       this.queueChunkPlacedObjects(bestKey);
     }
   }
@@ -2838,12 +2927,10 @@ export class ChunkManager {
     return entries;
   }
 
-  private canThinInstance(obj: PlacedObject, groundY: number): boolean {
+  private canThinInstance(obj: PlacedObject): boolean {
     if (obj.assetId in ASSET_TO_OBJECT_DEF) return false;
     if (obj.assetId in STAIR_ASSET_CONFIG) return false;
-    if (this.isRoofLikeAsset(obj.assetId)) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
-    if (obj.position.y > groundY + 2.0) return false;
     // Doors must be unique pickable nodes — clicking one looks up its
     // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
     // source meshes share one mesh per asset across all instances, so per-
@@ -2853,6 +2940,124 @@ export class ChunkManager {
     // 'stone wall door2' or 'stone_wall_door' don't — catch them by name.
     if (obj.assetId.toLowerCase().includes('door')) return false;
     return true;
+  }
+
+  private placedObjectInteractionActions(obj: PlacedObject): string[] | undefined {
+    if (!Array.isArray(obj.interactions) || obj.interactions.length === 0) return undefined;
+    const actions: string[] = [];
+    for (const interaction of obj.interactions) {
+      const action = interaction.action?.trim();
+      if (!action || actions.includes(action)) continue;
+      actions.push(action);
+    }
+    return actions.length > 0 ? actions : undefined;
+  }
+
+  private getPlacedObjectScaleBoost(assetId: string): number {
+    const assetDef = this.assetRegistry.get(assetId);
+    return assetDef?.path?.toLowerCase().includes('tree') ? 1.15 : 1.0;
+  }
+
+  private getThinVisibilityClass(obj: PlacedObject): 'ground' | 'elevated' | 'roof' {
+    if (this.isRoofLikeAsset(obj.assetId)) return 'roof';
+    const terrainY = this.getInterpolatedHeight(obj.position.x, obj.position.z);
+    return obj.position.y > terrainY + 1.5 ? 'elevated' : 'ground';
+  }
+
+  private composePlacedObjectMatrix(obj: PlacedObject, scaleBoost: number, out: Matrix): void {
+    const { x: orx, y: ory, z: orz } = obj.rotation;
+    const quat = Quaternion.FromEulerAngles(orx, ory, orz);
+    Matrix.ComposeToRef(
+      TmpVectors.Vector3[0].set(obj.scale.x * scaleBoost, obj.scale.y * scaleBoost, obj.scale.z * scaleBoost),
+      quat,
+      TmpVectors.Vector3[1].set(obj.position.x, obj.position.y, obj.position.z),
+      out,
+    );
+  }
+
+  private getPlacedObjectTemplateBounds(assetId: string, obj: PlacedObject): { min: Vector3; max: Vector3 } | null {
+    const template = this.loadedModelCache.get(assetId);
+    if (!template) return null;
+    const baseEntries = this.getTemplateBaseMatrices(assetId, template);
+    if (baseEntries.length === 0) return null;
+
+    const placement = Matrix.Identity();
+    const world = Matrix.Identity();
+    this.composePlacedObjectMatrix(obj, this.getPlacedObjectScaleBoost(assetId), placement);
+
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    const local = TmpVectors.Vector3[2];
+    const transformed = TmpVectors.Vector3[3];
+    for (const { sourceMesh, baseMatrix } of baseEntries) {
+      const box = sourceMesh.getBoundingInfo().boundingBox;
+      const bMin = box.minimum;
+      const bMax = box.maximum;
+      baseMatrix.multiplyToRef(placement, world);
+      for (let corner = 0; corner < 8; corner++) {
+        local.set(
+          (corner & 1) ? bMax.x : bMin.x,
+          (corner & 2) ? bMax.y : bMin.y,
+          (corner & 4) ? bMax.z : bMin.z,
+        );
+        Vector3.TransformCoordinatesToRef(local, world, transformed);
+        if (transformed.x < minX) minX = transformed.x;
+        if (transformed.y < minY) minY = transformed.y;
+        if (transformed.z < minZ) minZ = transformed.z;
+        if (transformed.x > maxX) maxX = transformed.x;
+        if (transformed.y > maxY) maxY = transformed.y;
+        if (transformed.z > maxZ) maxZ = transformed.z;
+      }
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(maxX)) return null;
+    return {
+      min: new Vector3(minX, minY, minZ),
+      max: new Vector3(maxX, maxY, maxZ),
+    };
+  }
+
+  private stampRoofObjectFootprint(chunkKey: string, obj: PlacedObject, bMin: Vector3, bMax: Vector3, node?: TransformNode): void {
+    const tx0 = Math.max(0, Math.floor(bMin.x));
+    const tx1 = Math.min(this.mapWidth - 1, Math.floor(bMax.x));
+    const tz0 = Math.max(0, Math.floor(bMin.z));
+    const tz1 = Math.min(this.mapHeight - 1, Math.floor(bMax.z));
+    if (tx0 > tx1 || tz0 > tz1) return;
+
+    const roofFloor = this.assignRoofFloor(obj.position.x, obj.position.z, obj.position.y);
+    let chunkKeys = this.roofObjectGridKeysByChunk.get(chunkKey);
+    if (!chunkKeys) {
+      chunkKeys = new Set();
+      this.roofObjectGridKeysByChunk.set(chunkKey, chunkKeys);
+    }
+
+    for (let tz = tz0; tz <= tz1; tz++) {
+      for (let tx = tx0; tx <= tx1; tx++) {
+        if (tx + 0.5 < bMin.x || tx + 0.5 > bMax.x) continue;
+        if (tz + 0.5 < bMin.z || tz + 0.5 > bMax.z) continue;
+        const rk = `${tx},${tz}`;
+        let arr = this.roofObjectGrid.get(rk);
+        if (!arr) {
+          arr = [];
+          this.roofObjectGrid.set(rk, arr);
+        }
+        arr.push({ node, chunkKey, floor: roofFloor, y: obj.position.y });
+        chunkKeys.add(rk);
+      }
+    }
+  }
+
+  private clearRoofObjectGridForChunk(chunkKey: string): void {
+    const roofKeys = this.roofObjectGridKeysByChunk.get(chunkKey);
+    if (!roofKeys) return;
+    for (const rk of roofKeys) {
+      const arr = this.roofObjectGrid.get(rk);
+      if (!arr) continue;
+      const next = arr.filter(entry => entry.chunkKey !== chunkKey);
+      if (next.length > 0) this.roofObjectGrid.set(rk, next);
+      else this.roofObjectGrid.delete(rk);
+    }
+    this.roofObjectGridKeysByChunk.delete(chunkKey);
   }
 
   /** Index placed objects by chunk key — no mesh instantiation, just data bucketing */
@@ -2916,7 +3121,7 @@ export class ChunkManager {
       const chunkKey = this.objectChunkQueue.shift()!;
       this.queuedObjectChunks.delete(chunkKey);
 
-      if (this.desiredGameChunks.size > 0 && !this.desiredGameChunks.has(chunkKey)) {
+      if (this.objectLoadChunks.size > 0 && !this.objectLoadChunks.has(chunkKey)) {
         this.loadingObjectChunks.delete(chunkKey);
         continue;
       }
@@ -2979,8 +3184,8 @@ export class ChunkManager {
     if (this.isObjectLoadStale(generation)) return;
 
     let renderableObjects = objects;
-    if (objects.some(obj => obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN)) {
-      renderableObjects = objects.filter(obj => !(obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN));
+    if (objects.some(obj => isGroundItemSpawnAssetId(obj.assetId))) {
+      renderableObjects = objects.filter(obj => !isGroundItemSpawnAssetId(obj.assetId));
     }
     if (renderableObjects.length === 0) {
       this.chunkPlacedNodes.set(chunkKey, []);
@@ -3001,7 +3206,8 @@ export class ChunkManager {
     }
     if (decorKeys.length > 0) this.decorBlockedTilesByChunk.set(chunkKey, decorKeys);
 
-    // Split into thin-instanceable (static decorations) vs regular (interactable/animated/roofs/stairs).
+    // Split into thin-instanceable static scenery vs regular interactable,
+    // animated, door, and stair hierarchies.
     // Need to load templates first so canThinInstance can check for animations.
     const templatePromises = new Map<string, Promise<TransformNode | null>>();
     for (const obj of renderableObjects) {
@@ -3012,18 +3218,26 @@ export class ChunkManager {
     await Promise.all(templatePromises.values());
     if (this.isObjectLoadStale(generation)) return;
 
-    let groundY = Infinity;
-    for (const obj of renderableObjects) { if (obj.position.y < groundY) groundY = obj.position.y; }
-    if (!isFinite(groundY)) groundY = 0;
+    for (const obj of renderableObjects) {
+      if (!this.isRoofLikeAsset(obj.assetId)) continue;
+      const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
+      if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max);
+    }
 
+    type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
     const regularObjects: PlacedObject[] = [];
-    const thinGroups = new Map<string, PlacedObject[]>();
+    const thinGroups = new Map<string, ThinGroup>();
     for (const obj of renderableObjects) {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
-      if (this.canThinInstance(obj, groundY)) {
-        let group = thinGroups.get(obj.assetId);
-        if (!group) { group = []; thinGroups.set(obj.assetId, group); }
-        group.push(obj);
+      if (this.canThinInstance(obj)) {
+        const visibility = this.getThinVisibilityClass(obj);
+        const groupKey = `${obj.assetId}\u0000${visibility}`;
+        let group = thinGroups.get(groupKey);
+        if (!group) {
+          group = { assetId: obj.assetId, visibility, placements: [] };
+          thinGroups.set(groupKey, group);
+        }
+        group.placements.push(obj);
       } else {
         regularObjects.push(obj);
       }
@@ -3031,16 +3245,17 @@ export class ChunkManager {
 
     // --- Thin instances: one source mesh per sub-mesh per asset per chunk ---
     const thinSources: Mesh[] = [];
+    const roofThinSources: Mesh[] = [];
+    const elevatedThinSources: { mesh: Mesh; minX: number; maxX: number; maxY: number; minZ: number; maxZ: number }[] = [];
     const _tmpMatrix = Matrix.Identity();
     const _placementMatrix = Matrix.Identity();
 
-    for (const [assetId, placements] of thinGroups) {
+    for (const { assetId, visibility, placements } of thinGroups.values()) {
       const template = this.loadedModelCache.get(assetId)!;
       const baseEntries = this.getTemplateBaseMatrices(assetId, template);
       if (baseEntries.length === 0) continue;
 
-      const assetDef = this.assetRegistry.get(assetId);
-      const treeBoost = assetDef?.path?.toLowerCase().includes('tree') ? 1.15 : 1.0;
+      const scaleBoost = this.getPlacedObjectScaleBoost(assetId);
 
       for (const { sourceMesh, baseMatrix } of baseEntries) {
         const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
@@ -3061,15 +3276,7 @@ export class ChunkManager {
         src.isPickable = false;
 
         for (const obj of placements) {
-          const { x: orx, y: ory, z: orz } = obj.rotation;
-          const quat = Quaternion.FromEulerAngles(orx, ory, orz);
-          const sx = obj.scale.x * treeBoost, sy = obj.scale.y * treeBoost, sz = obj.scale.z * treeBoost;
-          Matrix.ComposeToRef(
-            TmpVectors.Vector3[0].set(sx, sy, sz),
-            quat,
-            TmpVectors.Vector3[1].set(obj.position.x, obj.position.y, obj.position.z),
-            _placementMatrix
-          );
+          this.composePlacedObjectMatrix(obj, scaleBoost, _placementMatrix);
           baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
           src.thinInstanceAdd(_tmpMatrix);
         }
@@ -3095,11 +3302,17 @@ export class ChunkManager {
         }
         src.doNotSyncBoundingInfo = true;
         thinSources.push(src);
+        if (visibility === 'roof') roofThinSources.push(src);
+        else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX)) {
+          elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxY: bMaxY, minZ: bMinZ, maxZ: bMaxZ });
+        }
       }
     }
     this.chunkThinInstSources.set(chunkKey, thinSources);
+    if (roofThinSources.length > 0) this.chunkRoofThinInstSources.set(chunkKey, roofThinSources);
+    if (elevatedThinSources.length > 0) this.chunkElevatedThinInstSources.set(chunkKey, elevatedThinSources);
 
-    // --- Regular instances: interactable, animated, roofs, stairs ---
+    // --- Regular instances: interactable, animated, doors, stairs ---
     const nodes: TransformNode[] = [];
     const anims: AnimationGroup[] = [];
     let idx = 0;
@@ -3153,15 +3366,15 @@ export class ChunkManager {
       root.position = new Vector3(obj.position.x, obj.position.y, obj.position.z);
       const { x: orx, y: ory, z: orz } = obj.rotation;
       root.rotationQuaternion = Quaternion.FromEulerAngles(orx, ory, orz);
-      const assetDef = this.assetRegistry.get(obj.assetId);
-      const treeBoost = assetDef?.path?.toLowerCase().includes('tree') ? 1.15 : 1.0;
-      root.scaling = new Vector3(obj.scale.x * treeBoost, obj.scale.y * treeBoost, obj.scale.z * treeBoost);
+      const scaleBoost = this.getPlacedObjectScaleBoost(obj.assetId);
+      root.scaling = new Vector3(obj.scale.x * scaleBoost, obj.scale.y * scaleBoost, obj.scale.z * scaleBoost);
       root.metadata = {
         ...root.metadata,
         assetId: obj.assetId,
         placedX: obj.position.x,
         placedY: obj.position.y,
         placedZ: obj.position.z,
+        interactionActions: this.placedObjectInteractionActions(obj),
       } satisfies PlacedObjectNodeMetadata;
 
       const hasAnims = !!templateAnims && templateAnims.length > 0;
@@ -3187,35 +3400,6 @@ export class ChunkManager {
           this.placedObjectGrid.set(gridKey, nodesAtTile);
         }
         nodesAtTile.push(root);
-      }
-
-      if (this.isRoofLikeAsset(obj.assetId)) {
-        // Stamp every tile whose CENTER is inside the slab's AABB. Pure
-        // Math.floor(bMin)..Math.floor(bMax) over-stamps adjacent tiles
-        // whenever the bbox clips into a tile by <1 unit — kcmap slabs at
-        // sub-integer positions routinely bleed 0.01 unit into a neighbor
-        // tile and used to fire indoor mode there via Signal B.
-        // (The texture-plane stamp uses the same center-inside-footprint
-        // gate below.)
-        root.computeWorldMatrix(true);
-        const { min: bMin, max: bMax } = root.getHierarchyBoundingVectors(true);
-        const tx0 = Math.floor(bMin.x), tx1 = Math.floor(bMax.x);
-        const tz0 = Math.floor(bMin.z), tz1 = Math.floor(bMax.z);
-        const roofFloor = this.assignRoofFloor(obj.position.x, obj.position.z, obj.position.y);
-        const stampedKeys: string[] = [];
-        for (let tz = tz0; tz <= tz1; tz++) {
-          for (let tx = tx0; tx <= tx1; tx++) {
-            if (tx + 0.5 < bMin.x || tx + 0.5 > bMax.x) continue;
-            if (tz + 0.5 < bMin.z || tz + 0.5 > bMax.z) continue;
-            const rk = `${tx},${tz}`;
-            let arr = this.roofObjectGrid.get(rk);
-            if (!arr) { arr = []; this.roofObjectGrid.set(rk, arr); }
-            arr.push({ node: root, floor: roofFloor, y: obj.position.y });
-            stampedKeys.push(rk);
-          }
-        }
-        // Cached for O(footprint) cleanup in disposeChunkPlacedObjects.
-        root.metadata = { ...root.metadata, roofGridKeys: stampedKeys };
       }
 
       if (STAIR_ASSET_CONFIG[obj.assetId]) {
@@ -3245,7 +3429,7 @@ export class ChunkManager {
     this.chunkPlacedNodes.set(chunkKey, nodes);
     this.chunkAnimGroups.set(chunkKey, anims);
     this.chunkPlacedEnabled.set(chunkKey, true);
-    this.setChunkPlacedObjectsEnabled(chunkKey, this.desiredGameChunks.size === 0 || this.desiredGameChunks.has(chunkKey));
+    this.setChunkPlacedObjectsEnabled(chunkKey, this.desiredObjectChunks.size === 0 || this.desiredObjectChunks.has(chunkKey));
 
     if (renderableObjects.length > 0) {
       this.addShadowsForObjects(renderableObjects);
@@ -3256,6 +3440,7 @@ export class ChunkManager {
     } catch (e) {
       if (!this.isObjectLoadStale(generation)) {
         console.warn(`[ChunkManager] Failed to instantiate objects for chunk ${chunkKey}:`, e);
+        this.clearRoofObjectGridForChunk(chunkKey);
         this.chunkPlacedNodes.set(chunkKey, []);
         this.chunkThinInstSources.set(chunkKey, []);
       }
@@ -3266,6 +3451,8 @@ export class ChunkManager {
 
   /** Dispose placed objects for a chunk leaving the player's radius */
   private disposeChunkPlacedObjects(chunkKey: string): void {
+    this.clearRoofObjectGridForChunk(chunkKey);
+
     const decorKeys = this.decorBlockedTilesByChunk.get(chunkKey);
     if (decorKeys) {
       for (const k of decorKeys) this.decorBlockedTiles.delete(k);
@@ -3285,20 +3472,6 @@ export class ChunkManager {
             const idx = nodesAtTile.indexOf(node);
             if (idx >= 0) nodesAtTile.splice(idx, 1);
             if (nodesAtTile.length === 0) this.placedObjectGrid.delete(gridKey);
-          }
-        }
-        // Remove from roof grid using the cached footprint keys stamped at
-        // add time — bbox-derived, so the cleanup mirrors the stamp exactly.
-        if (assetId && this.isRoofLikeAsset(assetId)) {
-          const keys: string[] | undefined = node.metadata?.roofGridKeys;
-          if (keys) {
-            for (const rk of keys) {
-              const arr = this.roofObjectGrid.get(rk);
-              if (!arr) continue;
-              const ri = arr.findIndex(e => e.node === node);
-              if (ri >= 0) arr.splice(ri, 1);
-              if (arr.length === 0) this.roofObjectGrid.delete(rk);
-            }
           }
         }
         // Remove from flat list
@@ -3325,6 +3498,8 @@ export class ChunkManager {
       for (const m of thinSrcs) m.dispose();
       this.chunkThinInstSources.delete(chunkKey);
     }
+    this.chunkRoofThinInstSources.delete(chunkKey);
+    this.chunkElevatedThinInstSources.delete(chunkKey);
   }
 
   private disposeChunkTextureOverlays(chunkKey: string): void {
@@ -3439,6 +3614,7 @@ export class ChunkManager {
   getRoofNodesNear(x: number, z: number, radius: number, minY: number, _floor: number): TransformNode[] {
     const result: TransformNode[] = [];
     const seen = new Set<TransformNode>();
+    const seenRoofChunkKeys = new Set<string>();
     const tx = Math.floor(x);
     const tz = Math.floor(z);
     const r = Math.ceil(radius);
@@ -3450,9 +3626,24 @@ export class ChunkManager {
         const arr = this.roofObjectGrid.get(`${tx + dx},${tz + dz}`);
         if (arr) {
           for (const entry of arr) {
-            if (entry.y > minY && !seen.has(entry.node)) {
-              seen.add(entry.node);
-              result.push(entry.node);
+            if (entry.y <= minY) continue;
+            if (entry.node) {
+              if (!seen.has(entry.node)) {
+                seen.add(entry.node);
+                result.push(entry.node);
+              }
+              continue;
+            }
+            if (entry.chunkKey) {
+              if (seenRoofChunkKeys.has(entry.chunkKey)) continue;
+              seenRoofChunkKeys.add(entry.chunkKey);
+              const roofSources = this.chunkRoofThinInstSources.get(entry.chunkKey);
+              if (!roofSources) continue;
+              for (const node of roofSources) {
+                if (seen.has(node)) continue;
+                seen.add(node);
+                result.push(node);
+              }
             }
           }
         }
@@ -3463,9 +3654,9 @@ export class ChunkManager {
 
   /** Get all placed object nodes near a position that are above a given Y height.
    *  Excludes door objects so they remain clickable when indoors.
-   *  Also includes merged flat texture-plane meshes (the upper-floor surfaces)
-   *  that sit above the threshold — they're not in `chunkPlacedNodes` because
-   *  they're built by the merger, not the placed-object loader. */
+   *  Also includes elevated thin-instance groups and merged flat texture-plane
+   *  meshes that sit above the threshold — they're not in `chunkPlacedNodes`
+   *  because they are batched sources, not one node per placed object. */
   getNodesAboveHeight(x: number, z: number, radius: number, minY: number): TransformNode[] {
     const result: TransformNode[] = [];
     const tx = Math.floor(x);
@@ -3478,22 +3669,39 @@ export class ChunkManager {
     const maxChunkZ = Math.floor((tz + r) / CHUNK_SIZE);
     for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
       for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
-        const nodes = this.chunkPlacedNodes.get(`${chunkX},${chunkZ}`);
-        if (!nodes) continue;
-        for (const node of nodes) {
-          if (seen.has(node)) continue;
-          // Door panels remain visible while roofs/floor slabs are culled; only
-          // their interaction options are floor-gated by GameManager.
-          const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
-          if (assetId.includes('door')) continue;
+        const chunkKey = `${chunkX},${chunkZ}`;
+        const nodes = this.chunkPlacedNodes.get(chunkKey);
+        if (nodes) {
+          for (const node of nodes) {
+            if (seen.has(node)) continue;
+            // Door panels remain visible while roofs/floor slabs are culled; only
+            // their interaction options are floor-gated by GameManager.
+            const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
+            if (assetId.includes('door')) continue;
 
-          // Door/non-door placed objects can be reparented under pivots, so use
-          // absolute position rather than local transform when deciding height.
-          const ap = node.getAbsolutePosition();
-          if (ap.y <= minY) continue;
-          const dx = Math.floor(ap.x) - tx;
-          const dz = Math.floor(ap.z) - tz;
-          if (Math.abs(dx) <= r && Math.abs(dz) <= r) {
+            // Door/non-door placed objects can be reparented under pivots, so use
+            // absolute position rather than local transform when deciding height.
+            const ap = node.getAbsolutePosition();
+            if (ap.y <= minY) continue;
+            const dx = Math.floor(ap.x) - tx;
+            const dz = Math.floor(ap.z) - tz;
+            if (Math.abs(dx) <= r && Math.abs(dz) <= r) {
+              seen.add(node);
+              result.push(node);
+            }
+          }
+        }
+
+        const elevatedSources = this.chunkElevatedThinInstSources.get(chunkKey);
+        if (elevatedSources) {
+          const minX = tx - r;
+          const maxX = tx + r + 1;
+          const minZ = tz - r;
+          const maxZ = tz + r + 1;
+          for (const entry of elevatedSources) {
+            const node = entry.mesh;
+            if (seen.has(node) || entry.maxY <= minY) continue;
+            if (entry.maxX < minX || entry.minX > maxX || entry.maxZ < minZ || entry.minZ > maxZ) continue;
             seen.add(node);
             result.push(node);
           }
@@ -3550,7 +3758,7 @@ export class ChunkManager {
     let count = 0;
     for (const [, objects] of this.placedObjectsByChunk) {
       for (const obj of objects) {
-        if (obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN) continue;
+        if (isGroundItemSpawnAssetId(obj.assetId)) continue;
         const cx = obj.position.x;
         const cz = obj.position.z;
         const name = obj.assetId.toLowerCase();
@@ -3592,7 +3800,7 @@ export class ChunkManager {
     }
     const w = this.mapWidth + 1;
     for (const obj of objects) {
-      if (obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN) continue;
+      if (isGroundItemSpawnAssetId(obj.assetId)) continue;
       const cx = obj.position.x;
       const cz = obj.position.z;
       const name = obj.assetId.toLowerCase();
@@ -3626,7 +3834,7 @@ export class ChunkManager {
   /** Queue ground mesh rebuilds for chunks affected by newly loaded object shadows. */
   private queueGroundShadowRebuildsForObjects(objects: PlacedObject[]): void {
     for (const obj of objects) {
-      if (obj.assetId in ASSET_TO_GROUND_ITEM_SPAWN) continue;
+      if (isGroundItemSpawnAssetId(obj.assetId)) continue;
       const name = obj.assetId.toLowerCase();
       const isShadowCaster = name.includes('tree') || name.includes('bush') || name.includes('modular') || name.includes('wall') || name.includes('house') || name.includes('rock');
       if (!isShadowCaster) continue;
@@ -4068,6 +4276,8 @@ export class ChunkManager {
       for (const m of srcs) m.dispose();
     }
     this.chunkThinInstSources.clear();
+    this.chunkRoofThinInstSources.clear();
+    this.chunkElevatedThinInstSources.clear();
     this.objectChunkQueue = [];
     this.queuedObjectChunks.clear();
     this.objectChunkQueueScheduled = false;
@@ -4077,6 +4287,7 @@ export class ChunkManager {
     this.templateBaseMatrices.clear();
     this.loadingObjectChunks.clear();
     this.roofObjectGrid.clear();
+    this.roofObjectGridKeysByChunk.clear();
     this.placedStairRamps = [];
     this.elevatedFloorHeights.clear();
     this.bridgeFloorTiles.clear();
@@ -4137,10 +4348,15 @@ export class ChunkManager {
     this.pendingGameChunks.clear();
     this.queuedGameChunks.clear();
     this.desiredGameChunks.clear();
+    this.desiredObjectChunks.clear();
+    this.objectLoadChunks.clear();
     this.keepGameChunks.clear();
     this.loaded = false;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;
     this.lastRenderDistanceBucket = -999;
+    this.lastObjectBucketX = -999;
+    this.lastObjectBucketZ = -999;
+    this.lastObjectDistanceBucket = -999;
   }
 }

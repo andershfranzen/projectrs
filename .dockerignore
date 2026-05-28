@@ -7,6 +7,7 @@ node_modules
 **/.vite
 assets-sources
 pickaxeminingset_sourcefiles
+server/data/backups
 docs
 editor/public
 editor/src

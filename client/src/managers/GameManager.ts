@@ -56,7 +56,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -83,6 +83,7 @@ const RECIPE_INPUT_NOUN_BY_CATEGORY: Readonly<Record<string, string>> = {
   furnace: 'ore',
   cookingrange: 'food',
 };
+const NO_INTERACTION_ACTIONS: readonly string[] = [];
 
 function devCacheBustGearFile(file: string): string {
   return GEAR_CACHE_BUST_TOKEN ? `${file}${GEAR_CACHE_BUST_TOKEN}` : file;
@@ -103,6 +104,12 @@ function recipePanelInputNounFor(def: WorldObjectDef): string {
 
 function supportsBatchObjectRecipe(def: WorldObjectDef): boolean {
   return BATCH_OBJECT_RECIPE_DEF_IDS.includes(def.id);
+}
+
+function isHarvestObjectDef(def: WorldObjectDef): boolean {
+  return def.category === 'tree'
+    || def.category === 'rock'
+    || def.category === 'fishingspot';
 }
 
 type InteractionOption = {
@@ -4600,11 +4607,19 @@ export class GameManager {
 
     if (def.category === 'ladder') return this.getLadderInteractionOptions(objectEntityId, def, data);
 
-    return this.actionsForInstance(def, data.depleted, data).map((actionName, actionIdx) => ({
+    return this.actionsForInstance(def, data.depleted, data, this.worldObjectInteractionActions(objectEntityId)).map((actionName, actionIdx) => ({
       label: `${actionName} ${def.name}`,
       primary: actionName === 'Use-quickly' ? false : undefined,
       action: () => this.interactObject(objectEntityId, actionIdx),
     }));
+  }
+
+  private worldObjectInteractionActions(objectEntityId: number): readonly string[] {
+    const model = this.worldObjectModels.get(objectEntityId);
+    const actions = model?.metadata?.interactionActions;
+    return Array.isArray(actions) && actions.every(action => typeof action === 'string')
+      ? actions
+      : NO_INTERACTION_ACTIONS;
   }
 
   private getLadderInteractionOptions(
@@ -5611,7 +5626,7 @@ export class GameManager {
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     // Auto-interact with harvestable objects (trees, rocks), doors, ladders,
     // and crafting stations (furnace, anvil, range).
-    if ((def.skill && def.harvestItemId) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
+    if (isHarvestObjectDef(def) || def.category === 'crop' || def.category === 'door' || def.category === 'ladder' || def.category === 'bank' || (def.recipes && def.recipes.length > 0)) {
       const actionIndex = def.category === 'ladder'
         ? this.primaryLadderActionIndex(def, data)
         : 0;
@@ -5691,10 +5706,21 @@ export class GameManager {
         return;
       }
       if (supportsBatch && recipe && maxQuantity > 1 && this.quantityInputPanel) {
+        const inputName = itemDefs.get(recipe.inputItemId)?.name ?? 'item';
         const outputName = itemDefs.get(recipe.outputItemId)?.name ?? 'item';
+        const outputQuantityPerAction = Math.max(1, Math.floor(recipe.outputQuantity ?? 1));
+        const maxOutputQuantity = maxQuantity * outputQuantityPerAction;
         this.quantityInputPanel.show({
           title: `Make ${outputName}`,
-          prompt: `Make how many ${outputName}?`,
+          prompt: outputQuantityPerAction > 1
+            ? `Use how many ${inputName}?`
+            : `Make how many ${outputName}?`,
+          details: outputQuantityPerAction > 1
+            ? [
+                `Produces ${outputQuantityPerAction} ${outputName.toLowerCase()} each.`,
+                `You can make ${maxOutputQuantity} ${outputName.toLowerCase()}.`,
+              ]
+            : undefined,
           max: maxQuantity,
           defaultValue: maxQuantity,
           submitLabel: 'Make',
@@ -8026,21 +8052,27 @@ export class GameManager {
   }
 
   /** Per-instance action labels — doors flip Open ⇄ Close based on depleted
-   *  state, everything else uses the def's static actions. Mirrors
+   *  state, and placed-object interactions can add authored actions. Mirrors
    *  WorldObject.currentActions on the server so right-click labels stay
    *  truthful as the door toggles. */
   private actionsForInstance(
     def: WorldObjectDef,
     depleted: boolean,
     data?: { x: number; z: number; locked?: boolean },
+    interactionActions?: readonly string[],
   ): readonly string[] {
+    let actions: readonly string[];
     if (def.category === 'door') {
       if (!depleted && data?.locked) return DOOR_ACTIONS_LOCKED_CLIENT;
-      return depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
+      actions = depleted ? DOOR_ACTIONS_OPEN_CLIENT : DOOR_ACTIONS_CLOSED_CLIENT;
+    } else if (def.category === 'ladder') {
+      actions = def.actions;
+    } else if (depleted) {
+      return [];
+    } else {
+      actions = def.actions;
     }
-    if (def.category === 'ladder') return def.actions;
-    if (depleted) return [];
-    return def.actions;
+    return mergeObjectActionLabels(actions, interactionActions);
   }
 
   private isWorldObjectInteractable(def: WorldObjectDef | undefined | null, depleted: boolean): boolean {

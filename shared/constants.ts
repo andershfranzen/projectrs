@@ -46,7 +46,13 @@ export const BUCKET_ITEM_ID = 247;
 export const BUCKET_OF_WATER_ITEM_ID = 248;
 export const KNIFE_ITEM_ID = 251;
 export const LOGS_ITEM_ID = 23;
+export const OAK_LOGS_ITEM_ID = 24;
+export const MAPLE_LOGS_ITEM_ID = 39;
+export const YEW_LOGS_ITEM_ID = 40;
+export const WILLOW_LOGS_ITEM_ID = 235;
 export const SHORTBOW_UNSTRUNG_ITEM_ID = 262;
+export const ARROW_SHAFTS_ITEM_ID = 270;
+export const MAGIC_LOGS_ITEM_ID = 271;
 export const SOFT_CLAY_WATER_CONTAINER_ITEM_IDS: readonly number[] = [
   POT_OF_WATER_ITEM_ID,
   BUCKET_OF_WATER_ITEM_ID,

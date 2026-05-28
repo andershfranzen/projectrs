@@ -2,7 +2,9 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
-  BUCKET_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID,
+  BUCKET_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID,
+  YEW_LOGS_ITEM_ID, WILLOW_LOGS_ITEM_ID, MAGIC_LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID,
+  ARROW_SHAFTS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   spellReagentSummary, spellSchoolSkill,
   zeroBonuses,
@@ -44,6 +46,31 @@ const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'R
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
 const LOG_CRAFT_BUCKET_RECIPE_INDEX = 0;
 const LOG_CRAFT_SHORTBOW_RECIPE_INDEX = 1;
+const LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX = 2;
+const LOG_ITEM_IDS: ReadonlySet<number> = new Set([
+  LOGS_ITEM_ID,
+  OAK_LOGS_ITEM_ID,
+  WILLOW_LOGS_ITEM_ID,
+  MAPLE_LOGS_ITEM_ID,
+  YEW_LOGS_ITEM_ID,
+  MAGIC_LOGS_ITEM_ID,
+]);
+const ARROW_SHAFT_YIELD_BY_LOG_ITEM_ID: ReadonlyMap<number, number> = new Map([
+  [LOGS_ITEM_ID, 10],
+  [OAK_LOGS_ITEM_ID, 15],
+  [WILLOW_LOGS_ITEM_ID, 20],
+  [MAPLE_LOGS_ITEM_ID, 25],
+  [YEW_LOGS_ITEM_ID, 30],
+  [MAGIC_LOGS_ITEM_ID, 50],
+]);
+const ARROW_SHAFT_RECIPE_INDEX_BY_LOG_ITEM_ID: ReadonlyMap<number, number> = new Map([
+  [LOGS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX],
+  [OAK_LOGS_ITEM_ID, 0],
+  [WILLOW_LOGS_ITEM_ID, 0],
+  [MAPLE_LOGS_ITEM_ID, 0],
+  [YEW_LOGS_ITEM_ID, 0],
+  [MAGIC_LOGS_ITEM_ID, 0],
+]);
 
 export interface SkillData {
   level: number;
@@ -2602,22 +2629,43 @@ export class SidePanel {
   }
 
   private promptLogCraftingMenu(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
-    if (!this.isLogCraftingRecipePair(fromItemId, toItemId)) return false;
+    const logItemId = this.getLogCraftingLogItemId(fromItemId, toItemId);
+    if (logItemId === null) return false;
     if (!this.requestQuantity) return false;
 
-    const logsHeld = this.countInventoryItem(LOGS_ITEM_ID);
+    const logsHeld = this.countInventoryItem(logItemId);
     if (logsHeld <= 0) return false;
 
-    const bucketMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, 2);
-    const shortbowMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, 1);
+    const arrowShaftYield = ARROW_SHAFT_YIELD_BY_LOG_ITEM_ID.get(logItemId) ?? 0;
+    const arrowShaftRecipeIndex = ARROW_SHAFT_RECIPE_INDEX_BY_LOG_ITEM_ID.get(logItemId) ?? 0;
+    if (logItemId !== LOGS_ITEM_ID) {
+      this.promptLogCraftingQuantity({
+        fromSlot,
+        fromItemId,
+        toSlot,
+        toItemId,
+        recipeIndex: arrowShaftRecipeIndex,
+        outputItemId: ARROW_SHAFTS_ITEM_ID,
+        logItemId,
+        logCost: 1,
+        outputQuantityPerAction: arrowShaftYield,
+        fallbackName: 'Arrow Shafts',
+      });
+      return true;
+    }
+
+    const bucketMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 2);
+    const shortbowMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 1);
+    const arrowShaftMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 1);
     const bucketName = this.itemDefs.get(BUCKET_ITEM_ID)?.name ?? 'Bucket';
     const shortbowName = this.itemDefs.get(SHORTBOW_UNSTRUNG_ITEM_ID)?.name ?? 'Unstrung Shortbow';
+    const arrowShaftName = this.itemDefs.get(ARROW_SHAFTS_ITEM_ID)?.name ?? 'Arrow Shafts';
     this.requestQuantity({
       inputType: 'choice',
       title: 'Carve Logs',
       prompt: 'Choose what to carve from your logs.',
       details: [
-        `You have ${this.formatLogs(logsHeld)}.`,
+        `You have ${this.formatLogs(logsHeld, logItemId)}.`,
       ],
       choices: [
         {
@@ -2633,7 +2681,9 @@ export class SidePanel {
             toItemId,
             recipeIndex: LOG_CRAFT_BUCKET_RECIPE_INDEX,
             outputItemId: BUCKET_ITEM_ID,
+            logItemId,
             logCost: 2,
+            outputQuantityPerAction: 1,
             fallbackName: 'Bucket',
           }),
         },
@@ -2648,8 +2698,27 @@ export class SidePanel {
             toItemId,
             recipeIndex: LOG_CRAFT_SHORTBOW_RECIPE_INDEX,
             outputItemId: SHORTBOW_UNSTRUNG_ITEM_ID,
+            logItemId,
             logCost: 1,
+            outputQuantityPerAction: 1,
             fallbackName: 'Unstrung Shortbow',
+          }),
+        },
+        {
+          label: arrowShaftName,
+          detail: `Costs 1 log. Makes ${arrowShaftYield} ${arrowShaftName.toLowerCase()} per log.`,
+          disabled: arrowShaftMax <= 0 || arrowShaftYield <= 0,
+          onSelect: () => this.promptLogCraftingQuantity({
+            fromSlot,
+            fromItemId,
+            toSlot,
+            toItemId,
+            recipeIndex: LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX,
+            outputItemId: ARROW_SHAFTS_ITEM_ID,
+            logItemId,
+            logCost: 1,
+            outputQuantityPerAction: arrowShaftYield,
+            fallbackName: 'Arrow Shafts',
           }),
         },
       ],
@@ -2664,7 +2733,9 @@ export class SidePanel {
     toItemId: number;
     recipeIndex: number;
     outputItemId: number;
+    logItemId: number;
     logCost: number;
+    outputQuantityPerAction: number;
     fallbackName: string;
   }): void {
     if (!this.requestQuantity) return;
@@ -2673,17 +2744,25 @@ export class SidePanel {
     if (!currentFrom || currentFrom.itemId !== opts.fromItemId) return;
     if (!currentTo || currentTo.itemId !== opts.toItemId) return;
 
-    const max = this.maxLogCraftingBatchQuantity(opts.fromItemId, opts.toItemId, opts.logCost);
+    const max = this.maxLogCraftingBatchQuantity(opts.fromItemId, opts.toItemId, opts.logItemId, opts.logCost);
     if (max <= 0) return;
     const outputName = this.itemDefs.get(opts.outputItemId)?.name ?? opts.fallbackName;
-    const outputLabel = this.pluralizeItemName(outputName, max).toLowerCase();
-    const logsHeld = this.countInventoryItem(LOGS_ITEM_ID);
+    const outputQuantityPerAction = Math.max(1, opts.outputQuantityPerAction);
+    const maxOutputQuantity = max * outputQuantityPerAction;
+    const outputLabel = this.pluralizeItemName(outputName, maxOutputQuantity).toLowerCase();
+    const logsHeld = this.countInventoryItem(opts.logItemId);
+    const titleQuantity = outputQuantityPerAction === 1 ? max : maxOutputQuantity;
     this.requestQuantity({
-      title: `Carve ${this.pluralizeItemName(outputName, max)}`,
-      prompt: `Choose how many ${outputLabel} to carve.`,
+      title: `Carve ${this.pluralizeItemName(outputName, titleQuantity)}`,
+      prompt: outputQuantityPerAction === 1
+        ? `Choose how many ${outputLabel} to carve.`
+        : `Choose how many ${this.pluralizeItemName(this.itemDefs.get(opts.logItemId)?.name ?? 'log', max).toLowerCase()} to carve into ${outputLabel}.`,
       details: [
-        `Cost: ${this.formatLogs(opts.logCost)} per ${outputName}`,
-        `You have ${this.formatLogs(logsHeld)}, enough for ${max} ${outputLabel}.`,
+        `Cost: ${this.formatLogs(opts.logCost, opts.logItemId)} per action`,
+        outputQuantityPerAction === 1
+          ? `Produces: 1 ${outputName} per action.`
+          : `Produces: ${outputQuantityPerAction} ${outputName.toLowerCase()} per log.`,
+        `You have ${this.formatLogs(logsHeld, opts.logItemId)}, enough for ${maxOutputQuantity} ${outputLabel}.`,
       ],
       max,
       defaultValue: max,
@@ -2699,7 +2778,7 @@ export class SidePanel {
         const latestTo = this.invSlots[opts.toSlot];
         if (!latestFrom || latestFrom.itemId !== opts.fromItemId) return;
         if (!latestTo || latestTo.itemId !== opts.toItemId) return;
-        const currentMax = this.maxLogCraftingBatchQuantity(opts.fromItemId, opts.toItemId, opts.logCost);
+        const currentMax = this.maxLogCraftingBatchQuantity(opts.fromItemId, opts.toItemId, opts.logItemId, opts.logCost);
         if (currentMax <= 0) return;
         const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
         this.network.sendRaw(encodePacket(
@@ -2738,18 +2817,24 @@ export class SidePanel {
     return true;
   }
 
-  private maxLogCraftingBatchQuantity(fromItemId: number, toItemId: number, logCost: number): number {
-    if (!this.isLogCraftingRecipePair(fromItemId, toItemId)) return 0;
-    return Math.floor(this.countInventoryItem(LOGS_ITEM_ID) / Math.max(1, logCost));
+  private maxLogCraftingBatchQuantity(fromItemId: number, toItemId: number, logItemId: number, logCost: number): number {
+    if (this.getLogCraftingLogItemId(fromItemId, toItemId) !== logItemId) return 0;
+    return Math.floor(this.countInventoryItem(logItemId) / Math.max(1, logCost));
   }
 
-  private isLogCraftingRecipePair(fromItemId: number, toItemId: number): boolean {
-    return (fromItemId === KNIFE_ITEM_ID && toItemId === LOGS_ITEM_ID)
-      || (toItemId === KNIFE_ITEM_ID && fromItemId === LOGS_ITEM_ID);
+  private getLogCraftingLogItemId(fromItemId: number, toItemId: number): number | null {
+    if (fromItemId === KNIFE_ITEM_ID && LOG_ITEM_IDS.has(toItemId)) return toItemId;
+    if (toItemId === KNIFE_ITEM_ID && LOG_ITEM_IDS.has(fromItemId)) return fromItemId;
+    return null;
   }
 
-  private formatLogs(quantity: number): string {
-    return `${quantity} ${quantity === 1 ? 'log' : 'logs'}`;
+  private formatLogs(quantity: number, itemId: number = LOGS_ITEM_ID): string {
+    const itemName = this.itemDefs.get(itemId)?.name ?? 'Logs';
+    if (quantity === 1) {
+      if (itemName === 'Logs') return '1 log';
+      if (itemName.endsWith(' Logs')) return `1 ${itemName.slice(0, -1).toLowerCase()}`;
+    }
+    return `${quantity} ${this.pluralizeItemName(itemName, quantity).toLowerCase()}`;
   }
 
   private pluralizeItemName(name: string, quantity: number): string {

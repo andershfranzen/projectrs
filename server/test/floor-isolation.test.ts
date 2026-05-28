@@ -68,6 +68,12 @@ const doorDef: WorldObjectDef = {
   color: [1, 1, 1],
 };
 
+const noopDb = {
+  savePlayerState() {},
+  savePlayerPositionsBatch() {},
+  applyObjectRespawnWritesBatch() {},
+};
+
 function makePlayer(name: string, accountId: number, floor = 0): Player {
   const player = new Player(name, 5.5, 5.5, fakeWs, accountId);
   player.currentMapLevel = 'kcmap';
@@ -78,6 +84,7 @@ function makePlayer(name: string, accountId: number, floor = 0): Player {
 function makeWorld(): any {
   const packets = new Map<number, Array<{ opcode: ServerOpcode; values: number[] }>>();
   const world = Object.create(World.prototype) as any;
+  world.db = noopDb;
   world.players = new Map();
   world.npcs = new Map();
   world.groundItems = new Map();

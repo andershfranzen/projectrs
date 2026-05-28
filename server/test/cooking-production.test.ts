@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { COOKING_RANGE_OBJECT_DEF_ID } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
@@ -45,6 +47,23 @@ function makeCookingRange(): any {
 }
 
 describe('cooking range production', () => {
+  test('actual cooking range data exposes beef sinew as a separate option', () => {
+    const dataDir = join(import.meta.dir, '..', 'data');
+    const items = JSON.parse(readFileSync(join(dataDir, 'items.json'), 'utf8')) as Array<{ id: number; name: string }>;
+    const objects = JSON.parse(readFileSync(join(dataDir, 'objects.json'), 'utf8')) as Array<{
+      id: number;
+      recipes?: Array<{ inputItemId: number; outputItemId: number; xpReward: number }>;
+    }>;
+
+    const sinew = items.find((item) => item.id === 269);
+    const range = objects.find((object) => object.id === COOKING_RANGE_OBJECT_DEF_ID);
+    const beefRecipes = range?.recipes?.filter((recipe) => recipe.inputItemId === 263) ?? [];
+
+    expect(sinew?.name).toBe('Low Quality Sinew');
+    expect(beefRecipes.map((recipe) => recipe.outputItemId)).toEqual([15, 269]);
+    expect(beefRecipes.map((recipe) => recipe.xpReward)).toEqual([30, 5]);
+  });
+
   test('starts cooking with a 4-tick interval per item', () => {
     const world = Object.create(World.prototype) as any;
     const player = makePlayer();

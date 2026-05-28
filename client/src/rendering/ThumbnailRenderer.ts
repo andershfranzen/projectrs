@@ -391,14 +391,24 @@ async function processQueue(): Promise<void> {
   processing = false;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('thumbnail render timeout')), ms);
-    promise.then(
-      (v) => { clearTimeout(timer); resolve(v); },
-      (e) => { clearTimeout(timer); reject(e); },
-    );
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('thumbnail render timeout')), ms);
   });
+  try {
+    return await Promise.race([promise, timeout]);
+  } catch (err) {
+    // Do not let a timed-out render continue in parallel with the next queued
+    // render. Babylon thumbnail rendering uses a singleton scene, so overlap
+    // can flood warnings and lock the editor/game tab.
+    if ((err as Error)?.message === 'thumbnail render timeout') {
+      try { return await promise; } catch {}
+    }
+    throw err;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Trim transparent edges off a rendered PNG and resize so the opaque content
