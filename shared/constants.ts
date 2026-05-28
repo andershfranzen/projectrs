@@ -25,7 +25,7 @@ export const MAX_STACK = 0x7FFFFFFF;
  *  disconnects on mismatch with a "please refresh" prompt. Without this
  *  guard, a tab from yesterday's build silently misinterprets new opcodes
  *  and corrupts state — exactly what dupe surfaces are made of. */
-export const PROTOCOL_VERSION = 16;
+export const PROTOCOL_VERSION = 17;
 export const SERVER_PORT = 4000;
 export const GAME_WS_PATH = '/ws/game';
 export const CHAT_WS_PATH = '/ws/chat';
@@ -45,6 +45,7 @@ export const POT_OF_WATER_ITEM_ID = 246;
 export const BUCKET_ITEM_ID = 247;
 export const BUCKET_OF_WATER_ITEM_ID = 248;
 export const KNIFE_ITEM_ID = 251;
+export const FEATHER_ITEM_ID = 19;
 export const LOGS_ITEM_ID = 23;
 export const OAK_LOGS_ITEM_ID = 24;
 export const MAPLE_LOGS_ITEM_ID = 39;
@@ -53,6 +54,7 @@ export const WILLOW_LOGS_ITEM_ID = 235;
 export const SHORTBOW_UNSTRUNG_ITEM_ID = 262;
 export const ARROW_SHAFTS_ITEM_ID = 270;
 export const MAGIC_LOGS_ITEM_ID = 271;
+export const HEADLESS_ARROWS_ITEM_ID = 272;
 export const SOFT_CLAY_WATER_CONTAINER_ITEM_IDS: readonly number[] = [
   POT_OF_WATER_ITEM_ID,
   BUCKET_OF_WATER_ITEM_ID,

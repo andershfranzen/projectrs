@@ -290,6 +290,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.BANK_DEPOSIT:
     case ClientOpcode.BANK_WITHDRAW:
     case ClientOpcode.BANK_CLOSE:
+    case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
     case ClientOpcode.TRADE_ACCEPT_REQUEST:
     case ClientOpcode.TRADE_DECLINE:
@@ -335,6 +336,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.BANK_DEPOSIT:
     case ClientOpcode.BANK_WITHDRAW:
     case ClientOpcode.BANK_CLOSE:
+    case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
     case ClientOpcode.TRADE_ACCEPT_REQUEST:
     case ClientOpcode.TRADE_DECLINE:
@@ -610,6 +612,11 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (appearance.hairStyle > HAIR_STYLE_COUNT) return invalid('bad-hair-style');
       return OK_PACKET;
     }
+
+    case ClientOpcode.APPEARANCE_CLOSE:
+      if (!player.appearanceEditorOpen) return invalid('appearance-editor-not-open');
+      if (player.appearance === null) return invalid('appearance-required');
+      return OK_PACKET;
 
     case ClientOpcode.BANK_REQUEST_OPEN:
       return OK_PACKET;
@@ -1258,6 +1265,11 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, APPEARANCE_WIRE_FIELD_COUNT)) return;
       const appearance = appearanceFromWireValues(values);
       world.handleSetAppearance(playerId, appearance);
+      break;
+    }
+
+    case ClientOpcode.APPEARANCE_CLOSE: {
+      world.handleAppearanceClose(playerId);
       break;
     }
 

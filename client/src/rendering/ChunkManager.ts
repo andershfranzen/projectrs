@@ -22,10 +22,17 @@ import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
 const CHUNK_RENDER_PADDING_TILES = 8;
+const CHUNK_RESIDENT_RADIUS = CHUNK_LOAD_RADIUS;
+const CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 3;
+const CHUNK_MESH_CACHE_MAX_CHUNKS = 64;
+const HIDDEN_CHUNK_BUILD_INTERVAL_MS = 80;
 const OBJECT_RENDER_PADDING_TILES = 0;
 const OBJECT_PREFETCH_PADDING_TILES = 8;
+const OBJECT_CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 2;
+const OBJECT_CHUNK_CACHE_MAX_CHUNKS = 40;
 const OBJECT_RENDER_HYSTERESIS_TILES = 8;
 const OBJECT_VISIBILITY_BUCKET_TILES = 4;
+const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 120;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 
@@ -62,6 +69,11 @@ interface ChunkMeshes {
   floor: Mesh | null;
   stairs: Mesh | null;
   upperFloors: Map<number, FloorMeshSet>;
+}
+
+interface ChunkBuildResult {
+  built: boolean;
+  visible: boolean;
 }
 
 interface FlatTexturePickPlane {
@@ -189,9 +201,16 @@ export class ChunkManager {
   private pendingGameChunks: Set<string> = new Set();
   private queuedGameChunks: Set<string> = new Set();
   private desiredGameChunks: Set<string> = new Set();
+  private residentGameChunks: Set<string> = new Set();
   private desiredObjectChunks: Set<string> = new Set();
   private objectLoadChunks: Set<string> = new Set();
-  private keepGameChunks: Set<string> = new Set();
+  private chunkCacheTick: number = 0;
+  private chunkLastUsed: Map<string, number> = new Map();
+  private chunkMeshesEnabled: Map<string, boolean> = new Map();
+  private objectChunkLastUsed: Map<string, number> = new Map();
+  private lastHiddenGameChunkBuildAt: number = 0;
+  private lastUpdateTerrainChanged: boolean = false;
+  private lastUpdateObjectsChanged: boolean = false;
 
   // Water texture + animation
   private waterTexture: Texture | null = null;
@@ -210,6 +229,9 @@ export class ChunkManager {
   /** Tile-index blockers for thin-instanced decor (bushes); mirrored server-side. */
   private decorBlockedTiles: Set<number> = new Set();
   private decorBlockedTilesByChunk: Map<string, number[]> = new Map();
+  /** Object chunk keys known to exist from the server manifest. Null means the
+   *  map/server did not provide a manifest, so fall back to probing chunks. */
+  private objectChunkManifest: Set<string> | null = null;
   /** Instantiated placed object nodes per chunk */
   private chunkPlacedNodes: Map<string, TransformNode[]> = new Map();
   /** Animation groups per chunk */
@@ -224,6 +246,7 @@ export class ChunkManager {
   private queuedObjectChunks: Set<string> = new Set();
   private objectChunkQueueScheduled: boolean = false;
   private objectLoadGeneration: number = 0;
+  private lastHiddenObjectChunkLoadAt: number = 0;
   private readonly objectChunkFrameBudgetMs: number = 6;
   private pendingShadowGroundRebuildChunks: Set<string> = new Set();
   private shadowGroundRebuildScheduled: boolean = false;
@@ -255,9 +278,11 @@ export class ChunkManager {
   private texturePlaneMeshes: Mesh[] = [];
   private flatTexturePickPlanes: FlatTexturePickPlane[] = [];
   private texturePlanesByChunk: Map<string, Mesh[]> = new Map();
+  private texturePlaneChunksEnabled: Map<string, boolean> = new Map();
   private textureOverlayMeshesByChunk: Map<string, Mesh[]> = new Map();
   private assetRegistry: Map<string, { path: string }> = new Map();
   private loadedModelCache: Map<string, TransformNode | null> = new Map();
+  private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
   private activeAnimationGroups: AnimationGroup[] = [];
   private textureCache: Map<string, Texture> = new Map();
@@ -355,7 +380,33 @@ export class ChunkManager {
     return dx * dx + dz * dz <= renderDistance * renderDistance;
   }
 
-  private setChunkMeshesEnabled(meshes: ChunkMeshes, enabled: boolean): void {
+  private chunkDistanceFromCenter(key: string, centerChunkX: number, centerChunkZ: number): number {
+    const comma = key.indexOf(',');
+    const chunkX = Number(key.slice(0, comma));
+    const chunkZ = Number(key.slice(comma + 1));
+    return Math.max(Math.abs(chunkX - centerChunkX), Math.abs(chunkZ - centerChunkZ));
+  }
+
+  private touchTerrainChunk(key: string): void {
+    this.chunkLastUsed.set(key, this.chunkCacheTick);
+  }
+
+  private touchObjectChunk(key: string): void {
+    this.objectChunkLastUsed.set(key, this.chunkCacheTick);
+  }
+
+  private isHeavyObjectChunk(key: string): boolean {
+    const nodes = this.chunkPlacedNodes.get(key);
+    const thinSources = this.chunkThinInstSources.get(key);
+    const anims = this.chunkAnimGroups.get(key);
+    return (nodes?.length ?? 0) > 0
+      || (thinSources?.length ?? 0) > 0
+      || (anims?.length ?? 0) > 0;
+  }
+
+  private setChunkMeshesEnabled(chunkKey: string, meshes: ChunkMeshes, enabled: boolean): boolean {
+    if (this.chunkMeshesEnabled.get(chunkKey) === enabled) return false;
+    this.chunkMeshesEnabled.set(chunkKey, enabled);
     meshes.ground.setEnabled(enabled);
     for (const overlay of meshes.overlays) overlay.setEnabled(enabled);
     meshes.water?.setEnabled(enabled);
@@ -375,6 +426,14 @@ export class ChunkManager {
         floorSet.stairs?.setEnabled(false);
       }
     }
+    return true;
+  }
+
+  private setTexturePlaneChunkEnabled(chunkKey: string, planes: Mesh[], enabled: boolean): boolean {
+    if (this.texturePlaneChunksEnabled.get(chunkKey) === enabled) return false;
+    this.texturePlaneChunksEnabled.set(chunkKey, enabled);
+    for (const m of planes) m.setEnabled(enabled);
+    return planes.length > 0;
   }
 
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
@@ -395,7 +454,10 @@ export class ChunkManager {
       floorSet.stairs?.dispose();
     }
     this.chunks.delete(key);
+    this.chunkLastUsed.delete(key);
+    this.chunkMeshesEnabled.delete(key);
     this.pendingShadowGroundRebuildChunks.delete(key);
+    this.disposeChunkPlacedObjects(key);
   }
 
   /** Resolves once map.json is parsed AND the spawn chunk's terrain data +
@@ -644,6 +706,10 @@ export class ChunkManager {
     // Load asset/texture registry before marking loaded so chunk texture overlays work immediately
     await this.loadAssetRegistry();
     if (isStale()) return;
+    if (!hasFullTiles) {
+      await this.loadObjectChunkManifest(mapId, cacheBust);
+      if (isStale()) return;
+    }
 
     // Register horizontal texture planes as walkable floors (bridges, platforms)
     // Only run if we have tile data loaded (legacy mode) — in chunked mode this runs after chunks load
@@ -879,15 +945,13 @@ export class ChunkManager {
     this.desiredObjectChunks = objectDesired;
     this.objectLoadChunks = objectLoad;
 
-    // Chunks inside keep-radius stay cached. Visibility is independent from
-    // terrain mesh visibility so fog-padding terrain does not force expensive
-    // placed objects on.
+    let changed = false;
+    // Visibility is independent from terrain mesh visibility so fog-padding
+    // terrain does not force expensive placed objects on. Chunks outside the
+    // active object window stay cached until the object LRU evicts them.
     for (const key of this.chunkPlacedNodes.keys()) {
-      if (!this.keepGameChunks.has(key)) {
-        this.disposeChunkPlacedObjects(key);
-      } else {
-        this.setChunkPlacedObjectsEnabled(key, objectDesired.has(key));
-      }
+      if (objectLoad.has(key) || objectDesired.has(key)) this.touchObjectChunk(key);
+      changed = this.setChunkPlacedObjectsEnabled(key, objectDesired.has(key)) || changed;
     }
 
     // Hidden prefetch warms nearby object chunks once their terrain exists.
@@ -895,88 +959,92 @@ export class ChunkManager {
     // edge and prevents walking back over that edge from reloading anything.
     for (const key of objectLoad) {
       if (this.chunks.has(key) && !this.chunkPlacedNodes.has(key) && !this.loadingObjectChunks.has(key)) {
+        this.touchObjectChunk(key);
         this.queueChunkPlacedObjects(key);
       }
     }
 
-    return true;
+    changed = this.evictObjectChunkCache(centerChunkX, centerChunkZ, objectLoad) || changed;
+
+    return changed;
   }
 
   updatePlayerPosition(playerX: number, playerZ: number): boolean {
+    this.lastUpdateTerrainChanged = false;
+    this.lastUpdateObjectsChanged = false;
     if (!this.loaded) { return false; }
+    this.chunkCacheTick++;
     const cx = Math.floor(playerX / CHUNK_SIZE);
     const cz = Math.floor(playerZ / CHUNK_SIZE);
     const renderDistance = this.getRenderDistanceTiles();
     const renderDistanceBucket = this.getRenderDistanceBucket(renderDistance);
-    if (cx === this.lastChunkX && cz === this.lastChunkZ && renderDistanceBucket === this.lastRenderDistanceBucket) {
+    if (
+      cx === this.lastChunkX &&
+      cz === this.lastChunkZ &&
+      renderDistanceBucket === this.lastRenderDistanceBucket
+    ) {
       const objectChanged = this.updateObjectChunkVisibility(playerX, playerZ, cx, cz);
-      this.buildQueuedGameChunks(cx, cz);
-      return objectChanged;
+      const buildResult = this.buildQueuedGameChunks(cx, cz);
+      const evictedObjects = buildResult.built ? this.evictTerrainChunkCache(cx, cz, this.residentGameChunks) : false;
+      this.lastUpdateTerrainChanged = buildResult.visible;
+      this.lastUpdateObjectsChanged = objectChanged || evictedObjects;
+      return this.lastUpdateTerrainChanged || this.lastUpdateObjectsChanged;
     }
     this.lastChunkX = cx;
     this.lastChunkZ = cz;
     this.lastRenderDistanceBucket = renderDistanceBucket;
 
-    // `stream`  = chunks whose tile/height data should be available for
-    //             pathing and near-future movement.
+    // `resident` = stable local scene window whose tile/height data and meshes
+    //              should exist, even if some meshes stay hidden by fog range.
     // `desired` = chunks whose meshes should be visible now. This is clipped
     //             by fog/camera distance so fully fog-hidden scenery doesn't
     //             spend active-mesh, draw-call, or instantiation budget.
-    // `keep`    = chunks worth keeping in memory even when the player walks
-    //             out of range, so a quick step back doesn't trigger a
-    //             rebuild from scratch (which causes visible lag spikes).
-    const KEEP_RADIUS = CHUNK_LOAD_RADIUS + 2;
-    const stream = new Set<string>();
+    const resident = new Set<string>();
     const desired = new Set<string>();
-    const keep = new Set<string>();
     const maxCX = Math.ceil(this.mapWidth / CHUNK_SIZE);
     const maxCZ = Math.ceil(this.mapHeight / CHUNK_SIZE);
-    for (let dx = -KEEP_RADIUS; dx <= KEEP_RADIUS; dx++) {
-      for (let dz = -KEEP_RADIUS; dz <= KEEP_RADIUS; dz++) {
+    for (let dx = -CHUNK_RESIDENT_RADIUS; dx <= CHUNK_RESIDENT_RADIUS; dx++) {
+      for (let dz = -CHUNK_RESIDENT_RADIUS; dz <= CHUNK_RESIDENT_RADIUS; dz++) {
         const chunkX = cx + dx;
         const chunkZ = cz + dz;
         if (chunkX < 0 || chunkX >= maxCX || chunkZ < 0 || chunkZ >= maxCZ) continue;
         const key = `${chunkX},${chunkZ}`;
-        keep.add(key);
-        if (Math.abs(dx) <= CHUNK_LOAD_RADIUS && Math.abs(dz) <= CHUNK_LOAD_RADIUS) {
-          stream.add(key);
-          if (this.isChunkWithinRenderDistance(chunkX, chunkZ, playerX, playerZ, renderDistance)) {
-            desired.add(key);
-          }
+        resident.add(key);
+        if (this.isChunkWithinRenderDistance(chunkX, chunkZ, playerX, playerZ, renderDistance)) {
+          desired.add(key);
         }
       }
     }
     const centerKey = `${cx},${cz}`;
-    if (stream.has(centerKey)) desired.add(centerKey);
+    if (resident.has(centerKey)) desired.add(centerKey);
     this.desiredGameChunks = desired;
-    this.keepGameChunks = keep;
+    this.residentGameChunks = resident;
+    for (const key of resident) this.touchTerrainChunk(key);
 
-    // Hide chunks that left the active radius but are still in keep-radius —
-    // their meshes stay allocated for instant re-show next time the player
-    // wanders back. Only fully dispose chunks beyond keep-radius.
+    let terrainChanged = false;
+
+    // Keep cached chunk meshes allocated. Visibility changes are cheap; actual
+    // disposal is handled by evictTerrainChunkCache below.
     for (const [key, meshes] of this.chunks) {
       if (desired.has(key)) {
-        this.setChunkMeshesEnabled(meshes, true);
-      } else if (keep.has(key)) {
-        // Just hide — meshes stay allocated for fast re-show.
-        this.setChunkMeshesEnabled(meshes, false);
+        terrainChanged = this.setChunkMeshesEnabled(key, meshes, true) || terrainChanged;
+        this.touchTerrainChunk(key);
       } else {
-        this.disposeChunkMeshes(key, meshes);
+        terrainChanged = this.setChunkMeshesEnabled(key, meshes, false) || terrainChanged;
       }
     }
 
     // Toggle texture planes by chunk — these are loaded globally so may exist
     // in chunks that don't have terrain meshes in this.chunks.
     for (const [key, planes] of this.texturePlanesByChunk) {
-      const show = desired.has(key);
-      for (const m of planes) m.setEnabled(show);
+      terrainChanged = this.setTexturePlaneChunkEnabled(key, planes, desired.has(key)) || terrainChanged;
     }
 
     // In chunked mode, trigger on-demand loading of needed editor chunks
     if (this.chunkedMode) {
       const ECHUNK = EDITOR_CHUNK_SIZE;
       const neededEditorChunks = new Set<string>();
-      for (const key of stream) {
+      for (const key of resident) {
         const [gcx, gcz] = key.split(',').map(Number);
         const sx = Math.floor((gcx * CHUNK_SIZE) / ECHUNK);
         const sz = Math.floor((gcz * CHUNK_SIZE) / ECHUNK);
@@ -999,7 +1067,7 @@ export class ChunkManager {
       }
     }
 
-    for (const key of desired) {
+    for (const key of resident) {
       if (!this.chunks.has(key)) {
         const [chunkX, chunkZ] = key.split(',').map(Number);
         // Skip if entire game chunk falls in an inactive editor chunk
@@ -1026,16 +1094,19 @@ export class ChunkManager {
         }
       }
     }
-    // Clean up pending chunks no longer desired
+    // Clean up pending chunks outside the stable resident window.
     for (const key of this.pendingGameChunks) {
-      if (!desired.has(key)) this.pendingGameChunks.delete(key);
+      if (!resident.has(key)) this.pendingGameChunks.delete(key);
     }
     for (const key of this.queuedGameChunks) {
-      if (!desired.has(key)) this.queuedGameChunks.delete(key);
+      if (!resident.has(key)) this.queuedGameChunks.delete(key);
     }
-    this.updateObjectChunkVisibility(playerX, playerZ, cx, cz, true);
-    this.buildQueuedGameChunks(cx, cz);
-    return true;
+    const objectChanged = this.updateObjectChunkVisibility(playerX, playerZ, cx, cz, true);
+    const buildResult = this.buildQueuedGameChunks(cx, cz);
+    const evictedObjects = this.evictTerrainChunkCache(cx, cz, resident);
+    this.lastUpdateTerrainChanged = terrainChanged || buildResult.visible;
+    this.lastUpdateObjectsChanged = objectChanged || evictedObjects;
+    return this.lastUpdateTerrainChanged || this.lastUpdateObjectsChanged;
   }
 
   forceRefreshPlayerPosition(playerX: number, playerZ: number): boolean {
@@ -1047,6 +1118,14 @@ export class ChunkManager {
     return this.updatePlayerPosition(playerX, playerZ);
   }
 
+  didLastUpdateChangeTerrain(): boolean {
+    return this.lastUpdateTerrainChanged;
+  }
+
+  didLastUpdateChangeObjects(): boolean {
+    return this.lastUpdateObjectsChanged;
+  }
+
   // --- On-demand editor chunk loading ---
 
   /** Check if all editor chunks needed by a game chunk are loaded */
@@ -1054,21 +1133,21 @@ export class ChunkManager {
     // Legacy mode: all data was loaded upfront, always ready
     if (!this.chunkedMode) return true;
     const ECHUNK = EDITOR_CHUNK_SIZE;
-    // Check all editor chunks this game chunk overlaps (including +1 margin for vertex blending)
-    const startX = gcx * CHUNK_SIZE - 1;
-    const endX = (gcx + 1) * CHUNK_SIZE;
-    const startZ = gcz * CHUNK_SIZE - 1;
-    const endZ = (gcz + 1) * CHUNK_SIZE;
-    const neededECs = new Set<string>();
-    for (let x = startX; x <= endX; x++) {
-      for (let z = startZ; z <= endZ; z++) {
-        if (x >= 0 && z >= 0 && x < this.mapWidth && z < this.mapHeight) {
-          neededECs.add(`${Math.floor(x / ECHUNK)},${Math.floor(z / ECHUNK)}`);
-        }
+    // Check the small editor-chunk range this game chunk overlaps, including
+    // the +1 vertex-blending margin. Avoid scanning every tile in the game
+    // chunk; this runs from the streaming queue hot path.
+    const startX = Math.max(0, gcx * CHUNK_SIZE - 1);
+    const endX = Math.min(this.mapWidth - 1, (gcx + 1) * CHUNK_SIZE);
+    const startZ = Math.max(0, gcz * CHUNK_SIZE - 1);
+    const endZ = Math.min(this.mapHeight - 1, (gcz + 1) * CHUNK_SIZE);
+    const minECX = Math.floor(startX / ECHUNK);
+    const maxECX = Math.floor(endX / ECHUNK);
+    const minECZ = Math.floor(startZ / ECHUNK);
+    const maxECZ = Math.floor(endZ / ECHUNK);
+    for (let ecz = minECZ; ecz <= maxECZ; ecz++) {
+      for (let ecx = minECX; ecx <= maxECX; ecx++) {
+        if (!this.loadedEditorChunks.has(`${ecx},${ecz}`)) return false;
       }
-    }
-    for (const ec of neededECs) {
-      if (!this.loadedEditorChunks.has(ec)) return false;
     }
     return true;
   }
@@ -1079,24 +1158,32 @@ export class ChunkManager {
       const [cx, cz] = key.split(',').map(Number);
       if (this.isGameChunkReady(cx, cz)) {
         this.pendingGameChunks.delete(key);
-        if (this.desiredGameChunks.size === 0 || this.desiredGameChunks.has(key)) {
+        if (this.residentGameChunks.size === 0 || this.residentGameChunks.has(key)) {
           this.queuedGameChunks.add(key);
         }
       }
     }
-    this.buildQueuedGameChunks(this.lastChunkX, this.lastChunkZ);
+    const buildResult = this.buildQueuedGameChunks(this.lastChunkX, this.lastChunkZ);
+    if (buildResult.built && this.residentGameChunks.size > 0) {
+      this.evictTerrainChunkCache(this.lastChunkX, this.lastChunkZ, this.residentGameChunks);
+    }
   }
 
-  private buildQueuedGameChunks(centerChunkX: number, centerChunkZ: number): void {
-    if (this.queuedGameChunks.size === 0) return;
-    let bestKey: string | null = null;
-    let bestDist = Infinity;
+  private buildQueuedGameChunks(centerChunkX: number, centerChunkZ: number): ChunkBuildResult {
+    if (this.queuedGameChunks.size === 0) return { built: false, visible: false };
+    let bestVisibleKey: string | null = null;
+    let bestVisibleDist = Infinity;
+    let bestHiddenKey: string | null = null;
+    let bestHiddenDist = Infinity;
     for (const key of this.queuedGameChunks) {
       if (this.chunks.has(key)) {
         this.queuedGameChunks.delete(key);
         continue;
       }
-      if (this.desiredGameChunks.size > 0 && !this.desiredGameChunks.has(key)) continue;
+      if (this.residentGameChunks.size > 0 && !this.residentGameChunks.has(key)) {
+        this.queuedGameChunks.delete(key);
+        continue;
+      }
       const [cx, cz] = key.split(',').map(Number);
       if (!this.isGameChunkReady(cx, cz)) {
         this.pendingGameChunks.add(key);
@@ -1104,20 +1191,119 @@ export class ChunkManager {
         continue;
       }
       const dist = Math.max(Math.abs(cx - centerChunkX), Math.abs(cz - centerChunkZ));
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestKey = key;
+      const visible = this.desiredGameChunks.size === 0 || this.desiredGameChunks.has(key);
+      if (visible) {
+        if (dist < bestVisibleDist) {
+          bestVisibleDist = dist;
+          bestVisibleKey = key;
+        }
+      } else if (dist < bestHiddenDist) {
+        bestHiddenDist = dist;
+        bestHiddenKey = key;
       }
     }
-    if (!bestKey) return;
+
+    let bestKey = bestVisibleKey;
+    if (!bestKey && bestHiddenKey) {
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now - this.lastHiddenGameChunkBuildAt < HIDDEN_CHUNK_BUILD_INTERVAL_MS) return { built: false, visible: false };
+      this.lastHiddenGameChunkBuildAt = now;
+      bestKey = bestHiddenKey;
+    }
+    if (!bestKey) return { built: false, visible: false };
 
     this.queuedGameChunks.delete(bestKey);
     const [cx, cz] = bestKey.split(',').map(Number);
     const meshes = this.buildChunkMeshes(cx, cz);
     this.chunks.set(bestKey, meshes);
+    this.touchTerrainChunk(bestKey);
+    const visible = this.desiredGameChunks.size === 0 || this.desiredGameChunks.has(bestKey);
+    this.setChunkMeshesEnabled(bestKey, meshes, visible);
     if (this.objectLoadChunks.has(bestKey) && !this.chunkPlacedNodes.has(bestKey) && !this.loadingObjectChunks.has(bestKey)) {
+      this.touchObjectChunk(bestKey);
       this.queueChunkPlacedObjects(bestKey);
     }
+    return { built: true, visible };
+  }
+
+  private evictTerrainChunkCache(centerChunkX: number, centerChunkZ: number, resident: Set<string>): boolean {
+    let evictedObjectContent = false;
+    const evictKeys: string[] = [];
+    for (const key of this.chunks.keys()) {
+      if (resident.has(key)) continue;
+      if (this.chunkDistanceFromCenter(key, centerChunkX, centerChunkZ) > CHUNK_CACHE_RADIUS) {
+        evictKeys.push(key);
+      }
+    }
+
+    for (const key of evictKeys) {
+      const meshes = this.chunks.get(key);
+      if (meshes) {
+        evictedObjectContent = this.isHeavyObjectChunk(key) || evictedObjectContent;
+        this.disposeChunkMeshes(key, meshes);
+      }
+    }
+
+    if (this.chunks.size <= CHUNK_MESH_CACHE_MAX_CHUNKS) return evictedObjectContent;
+    const candidates = [...this.chunks.keys()]
+      .filter(key => !resident.has(key))
+      .sort((a, b) => {
+        const lastA = this.chunkLastUsed.get(a) ?? 0;
+        const lastB = this.chunkLastUsed.get(b) ?? 0;
+        if (lastA !== lastB) return lastA - lastB;
+        return this.chunkDistanceFromCenter(b, centerChunkX, centerChunkZ) - this.chunkDistanceFromCenter(a, centerChunkX, centerChunkZ);
+      });
+
+    for (const key of candidates) {
+      if (this.chunks.size <= CHUNK_MESH_CACHE_MAX_CHUNKS) break;
+      const meshes = this.chunks.get(key);
+      if (meshes) {
+        evictedObjectContent = this.isHeavyObjectChunk(key) || evictedObjectContent;
+        this.disposeChunkMeshes(key, meshes);
+      }
+    }
+
+    return evictedObjectContent;
+  }
+
+  private evictObjectChunkCache(centerChunkX: number, centerChunkZ: number, protectedChunks: Set<string>): boolean {
+    let evicted = false;
+    const evictKeys: string[] = [];
+    for (const key of this.chunkPlacedNodes.keys()) {
+      if (protectedChunks.has(key) || this.loadingObjectChunks.has(key) || this.queuedObjectChunks.has(key)) continue;
+      if (this.chunkDistanceFromCenter(key, centerChunkX, centerChunkZ) > OBJECT_CHUNK_CACHE_RADIUS) {
+        evictKeys.push(key);
+      }
+    }
+
+    for (const key of evictKeys) {
+      evicted = true;
+      this.disposeChunkPlacedObjects(key);
+    }
+
+    let heavyCount = 0;
+    for (const key of this.chunkPlacedNodes.keys()) {
+      if (this.isHeavyObjectChunk(key)) heavyCount++;
+    }
+    if (heavyCount <= OBJECT_CHUNK_CACHE_MAX_CHUNKS) return evicted;
+
+    const candidates = [...this.chunkPlacedNodes.keys()]
+      .filter(key => !protectedChunks.has(key) && !this.loadingObjectChunks.has(key) && !this.queuedObjectChunks.has(key) && this.isHeavyObjectChunk(key))
+      .sort((a, b) => {
+        const lastA = this.objectChunkLastUsed.get(a) ?? 0;
+        const lastB = this.objectChunkLastUsed.get(b) ?? 0;
+        if (lastA !== lastB) return lastA - lastB;
+        return this.chunkDistanceFromCenter(b, centerChunkX, centerChunkZ) - this.chunkDistanceFromCenter(a, centerChunkX, centerChunkZ);
+      });
+
+    for (const key of candidates) {
+      if (heavyCount <= OBJECT_CHUNK_CACHE_MAX_CHUNKS) break;
+      if (this.isHeavyObjectChunk(key)) heavyCount--;
+      evicted = true;
+      this.disposeChunkPlacedObjects(key);
+    }
+
+    return evicted;
   }
 
   /** Load tile/height data for a single 64x64 editor chunk from the server */
@@ -2376,6 +2562,7 @@ export class ChunkManager {
         if (!nodes) continue;
         for (const node of nodes) {
           if (node.isDisposed()) continue;
+          if (!node.isEnabled()) continue;
           if (acceptNode && !acceptNode(node)) continue;
           // Filter by defId if specified
           if (defId !== undefined) {
@@ -2649,7 +2836,7 @@ export class ChunkManager {
     this.currentFloor = floor;
     for (const [key, chunk] of this.chunks) {
       if (this.desiredGameChunks.size > 0 && !this.desiredGameChunks.has(key)) {
-        this.setChunkMeshesEnabled(chunk, false);
+        this.setChunkMeshesEnabled(key, chunk, false);
         continue;
       }
       if (chunk.roof) chunk.roof.setEnabled(floor === 0);
@@ -2804,8 +2991,35 @@ export class ChunkManager {
     }
   }
 
+  private async loadObjectChunkManifest(mapId: string, cacheBust: string): Promise<void> {
+    this.objectChunkManifest = null;
+    try {
+      const res = await authFetch(`/maps/${mapId}/objects/manifest.json${cacheBust}`);
+      if (!res.ok) return;
+      const data = await res.json() as { chunks?: Record<string, unknown> };
+      if (!data || !data.chunks || typeof data.chunks !== 'object') return;
+      const manifest = new Set<string>();
+      for (const [chunkKey, rawAssetIds] of Object.entries(data.chunks)) {
+        if (!Array.isArray(rawAssetIds)) continue;
+        manifest.add(chunkKey);
+      }
+      this.objectChunkManifest = manifest;
+      if (import.meta.env.DEV) console.log(`[ChunkManager] Loaded object manifest for ${manifest.size} chunks`);
+    } catch {
+      this.objectChunkManifest = null;
+    }
+  }
+
   private isObjectLoadStale(generation: number): boolean {
     return generation !== this.objectLoadGeneration || this.scene.isDisposed;
+  }
+
+  private shouldLoadObjectChunkNow(chunkKey: string): boolean {
+    return this.objectLoadChunks.size === 0 || this.objectLoadChunks.has(chunkKey);
+  }
+
+  private isObjectChunkVisibleNow(chunkKey: string): boolean {
+    return this.desiredObjectChunks.size === 0 || this.desiredObjectChunks.has(chunkKey);
   }
 
   private async loadGLBModel(assetId: string, generation: number = this.objectLoadGeneration): Promise<TransformNode | null> {
@@ -2813,6 +3027,19 @@ export class ChunkManager {
     if (this.loadedModelCache.has(assetId)) {
       return this.loadedModelCache.get(assetId)!;
     }
+    const loading = this.loadingModelPromises.get(assetId);
+    if (loading) return loading;
+    const promise = this.loadGLBModelUncached(assetId, generation).finally(() => {
+      if (this.loadingModelPromises.get(assetId) === promise) {
+        this.loadingModelPromises.delete(assetId);
+      }
+    });
+    this.loadingModelPromises.set(assetId, promise);
+    return promise;
+  }
+
+  private async loadGLBModelUncached(assetId: string, generation: number): Promise<TransformNode | null> {
+    if (this.isObjectLoadStale(generation)) return null;
     const assetDef = this.assetRegistry.get(assetId);
     if (!assetDef) {
       console.warn(`[ChunkManager] Unknown asset: ${assetId}`);
@@ -3078,6 +3305,12 @@ export class ChunkManager {
 
   private queueChunkPlacedObjects(chunkKey: string): void {
     if (this.chunkPlacedNodes.has(chunkKey) || this.loadingObjectChunks.has(chunkKey) || this.queuedObjectChunks.has(chunkKey)) return;
+    this.touchObjectChunk(chunkKey);
+    if (this.objectChunkManifest && !this.objectChunkManifest.has(chunkKey)) {
+      this.chunksKnownEmpty.add(chunkKey);
+      this.chunkPlacedNodes.set(chunkKey, []);
+      return;
+    }
     // Skip the network round-trip if we already know this chunk has no objects.
     if (this.chunksKnownEmpty.has(chunkKey)) {
       this.chunkPlacedNodes.set(chunkKey, []);
@@ -3108,6 +3341,9 @@ export class ChunkManager {
     const generation = this.objectLoadGeneration;
     if (this.objectChunkQueue.length > 1) {
       this.objectChunkQueue.sort((a, b) => {
+        const visibleA = this.isObjectChunkVisibleNow(a);
+        const visibleB = this.isObjectChunkVisibleNow(b);
+        if (visibleA !== visibleB) return visibleA ? -1 : 1;
         const [ax, az] = a.split(',').map(Number);
         const [bx, bz] = b.split(',').map(Number);
         const da = Math.max(Math.abs(ax - this.lastChunkX), Math.abs(az - this.lastChunkZ));
@@ -3119,12 +3355,22 @@ export class ChunkManager {
     while (this.objectChunkQueue.length > 0) {
       if (this.isObjectLoadStale(generation)) return;
       const chunkKey = this.objectChunkQueue.shift()!;
-      this.queuedObjectChunks.delete(chunkKey);
-
-      if (this.objectLoadChunks.size > 0 && !this.objectLoadChunks.has(chunkKey)) {
+      if (!this.shouldLoadObjectChunkNow(chunkKey)) {
+        this.queuedObjectChunks.delete(chunkKey);
         this.loadingObjectChunks.delete(chunkKey);
         continue;
       }
+      const visible = this.isObjectChunkVisibleNow(chunkKey);
+      if (!visible) {
+        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        if (now - this.lastHiddenObjectChunkLoadAt < HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS) {
+          this.objectChunkQueue.unshift(chunkKey);
+          this.scheduleObjectChunkQueue();
+          return;
+        }
+        this.lastHiddenObjectChunkLoadAt = now;
+      }
+      this.queuedObjectChunks.delete(chunkKey);
 
       if (!this.chunkPlacedNodes.has(chunkKey)) {
         await this.loadChunkPlacedObjects(chunkKey, generation);
@@ -3150,10 +3396,15 @@ export class ChunkManager {
     if (this.chunksKnownEmpty.has(chunkKey)) {
       this.chunkPlacedNodes.set(chunkKey, []);
       this.loadingObjectChunks.delete(chunkKey);
+      this.touchObjectChunk(chunkKey);
       return;
     }
     try {
-    let objects = this.placedObjectsByChunk.get(chunkKey);
+      if (!this.shouldLoadObjectChunkNow(chunkKey)) {
+        this.loadingObjectChunks.delete(chunkKey);
+        return;
+      }
+      let objects = this.placedObjectsByChunk.get(chunkKey);
     // If no pre-indexed objects, try fetching per-chunk file from server
     if (!objects || objects.length === 0) {
       try {
@@ -3179,9 +3430,15 @@ export class ChunkManager {
     if (!objects || objects.length === 0) {
       this.chunkPlacedNodes.set(chunkKey, []);
       this.loadingObjectChunks.delete(chunkKey);
+      this.touchObjectChunk(chunkKey);
       return;
     }
     if (this.isObjectLoadStale(generation)) return;
+    if (!this.shouldLoadObjectChunkNow(chunkKey)) {
+      this.disposeChunkPlacedObjects(chunkKey);
+      this.loadingObjectChunks.delete(chunkKey);
+      return;
+    }
 
     let renderableObjects = objects;
     if (objects.some(obj => isGroundItemSpawnAssetId(obj.assetId))) {
@@ -3190,6 +3447,7 @@ export class ChunkManager {
     if (renderableObjects.length === 0) {
       this.chunkPlacedNodes.set(chunkKey, []);
       this.loadingObjectChunks.delete(chunkKey);
+      this.touchObjectChunk(chunkKey);
       return;
     }
 
@@ -3217,6 +3475,11 @@ export class ChunkManager {
     }
     await Promise.all(templatePromises.values());
     if (this.isObjectLoadStale(generation)) return;
+    if (!this.shouldLoadObjectChunkNow(chunkKey)) {
+      this.disposeChunkPlacedObjects(chunkKey);
+      this.loadingObjectChunks.delete(chunkKey);
+      return;
+    }
 
     for (const obj of renderableObjects) {
       if (!this.isRoofLikeAsset(obj.assetId)) continue;
@@ -3427,21 +3690,23 @@ export class ChunkManager {
     }
 
     this.chunkPlacedNodes.set(chunkKey, nodes);
+    this.touchObjectChunk(chunkKey);
     this.chunkAnimGroups.set(chunkKey, anims);
-    this.chunkPlacedEnabled.set(chunkKey, true);
-    this.setChunkPlacedObjectsEnabled(chunkKey, this.desiredObjectChunks.size === 0 || this.desiredObjectChunks.has(chunkKey));
+    const visible = this.isObjectChunkVisibleNow(chunkKey);
+    this.setChunkPlacedObjectsEnabled(chunkKey, visible);
 
     if (renderableObjects.length > 0) {
       this.addShadowsForObjects(renderableObjects);
       this.queueGroundShadowRebuildsForObjects(renderableObjects);
     }
 
-    this.onChunkObjectsLoaded?.(chunkKey);
+    if (visible) this.onChunkObjectsLoaded?.(chunkKey);
     } catch (e) {
       if (!this.isObjectLoadStale(generation)) {
         console.warn(`[ChunkManager] Failed to instantiate objects for chunk ${chunkKey}:`, e);
         this.clearRoofObjectGridForChunk(chunkKey);
         this.chunkPlacedNodes.set(chunkKey, []);
+        this.touchObjectChunk(chunkKey);
         this.chunkThinInstSources.set(chunkKey, []);
       }
     } finally {
@@ -3484,6 +3749,7 @@ export class ChunkManager {
     }
     this.placedStairRamps = this.placedStairRamps.filter(ramp => ramp.chunkKey !== chunkKey);
     this.chunkPlacedEnabled.delete(chunkKey);
+    this.objectChunkLastUsed.delete(chunkKey);
     const anims = this.chunkAnimGroups.get(chunkKey);
     if (anims) {
       for (const ag of anims) {
@@ -3511,27 +3777,32 @@ export class ChunkManager {
       mesh.dispose();
     }
     this.textureOverlayMeshesByChunk.delete(chunkKey);
+    this.texturePlaneChunksEnabled.delete(chunkKey);
   }
 
-  private setChunkPlacedObjectsEnabled(chunkKey: string, enabled: boolean): void {
-    if (this.chunkPlacedEnabled.get(chunkKey) === enabled) return;
-    this.chunkPlacedEnabled.set(chunkKey, enabled);
+  private setChunkPlacedObjectsEnabled(chunkKey: string, enabled: boolean): boolean {
+    if (this.chunkPlacedEnabled.get(chunkKey) === enabled) return false;
 
     const nodes = this.chunkPlacedNodes.get(chunkKey);
+    const thinSrcs = this.chunkThinInstSources.get(chunkKey);
+    const anims = this.chunkAnimGroups.get(chunkKey);
+    const hasRenderableContent = (nodes?.length ?? 0) > 0 || (thinSrcs?.length ?? 0) > 0 || (anims?.length ?? 0) > 0;
+
+    this.chunkPlacedEnabled.set(chunkKey, enabled);
     if (nodes) {
       for (const node of nodes) node.setEnabled(enabled);
     }
-    const thinSrcs = this.chunkThinInstSources.get(chunkKey);
     if (thinSrcs) {
       for (const m of thinSrcs) m.setEnabled(enabled);
     }
-    const anims = this.chunkAnimGroups.get(chunkKey);
     if (anims) {
       for (const ag of anims) {
         if (enabled) ag.play(true);
         else ag.stop();
       }
     }
+
+    return hasRenderableContent;
   }
 
   /** Determine which floor a roof/ceiling at a given Y belongs to by checking
@@ -4269,6 +4540,7 @@ export class ChunkManager {
     this.placedObjectsByChunk.clear();
     this.decorBlockedTiles.clear();
     this.decorBlockedTilesByChunk.clear();
+    this.objectChunkManifest = null;
     this.chunkPlacedNodes.clear();
     this.chunkAnimGroups.clear();
     this.chunkPlacedEnabled.clear();
@@ -4281,6 +4553,7 @@ export class ChunkManager {
     this.objectChunkQueue = [];
     this.queuedObjectChunks.clear();
     this.objectChunkQueueScheduled = false;
+    this.lastHiddenObjectChunkLoadAt = 0;
     this.chunksKnownEmpty.clear();
     this.pendingShadowGroundRebuildChunks.clear();
     this.shadowGroundRebuildScheduled = false;
@@ -4297,6 +4570,7 @@ export class ChunkManager {
     this.texturePlaneMeshes = [];
     this.flatTexturePickPlanes = [];
     this.texturePlanesByChunk.clear();
+    this.texturePlaneChunksEnabled.clear();
     this.tilePaintedEntries.clear();
     this.flatPlanesByTexture.clear();
     this.textureAvgColors.clear();
@@ -4304,6 +4578,7 @@ export class ChunkManager {
     this.textureOverlayMeshesByChunk.clear();
     for (const [, m] of this.loadedModelCache) m?.dispose();
     this.loadedModelCache.clear();
+    this.loadingModelPromises.clear();
     for (const [, t] of this.textureCache) t.dispose();
     this.textureCache.clear();
     for (const [, m] of this.overlayMatCache) m.dispose();
@@ -4348,9 +4623,16 @@ export class ChunkManager {
     this.pendingGameChunks.clear();
     this.queuedGameChunks.clear();
     this.desiredGameChunks.clear();
+    this.residentGameChunks.clear();
     this.desiredObjectChunks.clear();
     this.objectLoadChunks.clear();
-    this.keepGameChunks.clear();
+    this.chunkCacheTick = 0;
+    this.chunkLastUsed.clear();
+    this.chunkMeshesEnabled.clear();
+    this.objectChunkLastUsed.clear();
+    this.lastHiddenGameChunkBuildAt = 0;
+    this.lastUpdateTerrainChanged = false;
+    this.lastUpdateObjectsChanged = false;
     this.loaded = false;
     this.lastChunkX = -999;
     this.lastChunkZ = -999;

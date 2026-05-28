@@ -70,6 +70,28 @@ function loadChunkedObjects(mapDir: string): PlacedObject[] | null {
   return objects.length > 0 ? objects : null;
 }
 
+function buildObjectChunkManifest(mapDir: string): { chunks: Record<string, string[]> } {
+  const objectsDir = resolve(mapDir, 'objects');
+  const chunks: Record<string, string[]> = {};
+  if (!existsSync(objectsDir)) return { chunks };
+  try {
+    for (const file of readdirSync(objectsDir)) {
+      const match = file.match(/^chunk_(-?\d+)_(-?\d+)\.json$/);
+      if (!match) continue;
+      const objects: PlacedObject[] = JSON.parse(readFileSync(resolve(objectsDir, file), 'utf-8'));
+      if (!Array.isArray(objects) || objects.length === 0) continue;
+      const assetIds = new Set<string>();
+      for (const obj of objects) {
+        if (typeof obj?.assetId === 'string' && obj.assetId) assetIds.add(obj.assetId);
+      }
+      chunks[`${match[1]},${match[2]}`] = [...assetIds];
+    }
+  } catch {
+    return { chunks: {} };
+  }
+  return { chunks };
+}
+
 function detectUniformNpcSpawnOffset(existing: SpawnsFile | null, incoming: SpawnsFile | undefined): { dx: number; dz: number; count: number; matched: number } | null {
   const oldNpcs = existing?.npcs ?? [];
   const newNpcs = incoming?.npcs ?? [];
@@ -1488,6 +1510,7 @@ function validateDevicePublicKey(raw: unknown): JsonWebKey | null {
 
 function isGameplayMapDataPath(mapPath: string): boolean {
   return /^[-\w]+\/(?:meta\.json|map\.json|walls\.json|biomes\.json)$/.test(mapPath)
+    || /^[-\w]+\/objects\/manifest\.json$/.test(mapPath)
     || /^[-\w]+\/(?:tiles|heights|objects)\/chunk_-?\d+_-?\d+\.json$/.test(mapPath);
 }
 
@@ -3044,6 +3067,11 @@ const server = Bun.serve<SocketData>({
         return new Response('Forbidden', { status: 403 });
       }
       try {
+        if (/^[-\w]+\/objects\/manifest\.json$/.test(mapPath)) {
+          return new Response(JSON.stringify(buildObjectChunkManifest(resolve(filePath, '..', '..'))), {
+            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          });
+        }
         if (/^[-\w]+\/objects\/chunk_-?\d+_-?\d+\.json$/.test(mapPath) && !existsSync(filePath)) {
           return new Response('[]', {
             headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },

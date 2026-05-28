@@ -4,6 +4,7 @@ import {
   ServerOpcode,
   decodePacket,
   hairStyleChoicesForBodyType,
+  hairStyleName,
   isValidAppearance,
   normalizeAppearance,
   type PlayerAppearance,
@@ -39,6 +40,8 @@ function makePlayer(name: string, accountId: number, appearance: PlayerAppearanc
 describe('player appearance sync', () => {
   test('female appearances only allow the authored female hair meshes', () => {
     expect(hairStyleChoicesForBodyType(1)).toEqual(FEMALE_HAIR_STYLE_CHOICES);
+    expect(hairStyleName(10, 1)).toBe('Style 1');
+    expect(hairStyleName(14, 1)).toBe('Style 5');
     expect(normalizeAppearance({ bodyType: 1, hairStyle: 1 }).hairStyle).toBe(10);
     expect(isValidAppearance(normalizeAppearance({ bodyType: 1, hairStyle: 12 }))).toBe(true);
     expect(isValidAppearance({ ...normalizeAppearance({ bodyType: 1, hairStyle: 12 }), hairStyle: 9 })).toBe(false);
@@ -100,5 +103,21 @@ describe('player appearance sync', () => {
       (packet) => packet.opcode === ServerOpcode.PLAYER_SYNC && packet.values[0] === subject.player.id,
     );
     expect(remoteSync?.values.slice(5, 13)).toEqual(selfSync?.values.slice(6, 14));
+  });
+
+  test('appearance editor close keeps first-login creation mandatory', () => {
+    const appearance = normalizeAppearance({ bodyType: 0, hairStyle: 1 });
+    const { player } = makePlayer('viewer', 1, appearance);
+    const world = Object.create(World.prototype) as any;
+    world.players = new Map([[player.id, player]]);
+
+    player.appearanceEditorOpen = true;
+    world.handleAppearanceClose(player.id);
+    expect(player.appearanceEditorOpen).toBe(false);
+
+    player.appearance = null;
+    player.appearanceEditorOpen = true;
+    world.handleAppearanceClose(player.id);
+    expect(player.appearanceEditorOpen).toBe(true);
   });
 });

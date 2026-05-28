@@ -60,6 +60,9 @@ export enum ClientOpcode {
   PLAYER_SET_AUTOCAST = 45,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
+  /** Close the appearance editor without saving changes.
+   *  Only accepted for players who already have an appearance. */
+  APPEARANCE_CLOSE = 61,
   /** Client tells server which floor the player is visually on. Sent when
    *  the player's visual Y crosses a floor boundary — covers cases where
    *  there's no real stair object (e.g. the player walks up auto-derived
@@ -195,6 +198,8 @@ export enum ServerOpcode {
    *  server-authoritative so the client does not have to infer transition
    *  height from streamed chunk cache. */
   FLOOR_CHANGE = 61,
+  /** Open the appearance editor. Values: [canCancel], where canCancel=1 means
+   *  this is an in-game edit for a player who already has an appearance. */
   SHOW_CHARACTER_CREATOR = 70,
   /** Same-map teleport: snap the local player to (x, y, z, floor) without
    *  reloading chunks/entities/map data. Used by admin shift-click and any

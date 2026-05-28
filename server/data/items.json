@@ -2541,5 +2541,41 @@
     "equippable": false,
     "value": 50,
     "icon": "Magic_Logs_636.png"
+  },
+  {
+    "id": 272,
+    "name": "Headless Arrows",
+    "description": "Arrow shafts with feathers attached, ready for arrowheads.",
+    "stackable": true,
+    "equippable": false,
+    "value": 1,
+    "icon": "Headless_Arrows_637.png",
+    "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack6Plus.glb"
+      }
+    ]
   }
 ]

@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID, YEW_LOGS_ITEM_ID, WILLOW_LOGS_ITEM_ID, MAGIC_LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID, ARROW_SHAFTS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID, YEW_LOGS_ITEM_ID, WILLOW_LOGS_ITEM_ID, MAGIC_LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -31,6 +31,7 @@ type ItemOnItemRecipe = {
   skill?: SkillId;
   levelRequired?: number;
   xpReward?: number;
+  intervalTicks?: number;
   message?: string;
   repeatable?: boolean;
   startMessage?: string;
@@ -43,10 +44,11 @@ type ItemOnObjectRecipe = {
   message: string;
 };
 type ItemProductionAction =
-  | { kind: 'itemOnItem'; recipe: ItemOnItemRecipe; remaining: number | null; nextTick: number }
+  | { kind: 'itemOnItem'; recipe: ItemOnItemRecipe; remaining: number | null; nextTick: number; intervalTicks: number }
   | { kind: 'itemOnObject'; recipe: ItemOnObjectRecipe; objectEntityId: number; remaining: number | null; nextTick: number }
   | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
   | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number };
+const LOG_CRAFT_INTERVAL_TICKS = 3;
 const ARROW_SHAFT_LOG_RECIPES: readonly { logItemId: number; shaftQuantity: number; label: string }[] = [
   { logItemId: LOGS_ITEM_ID, shaftQuantity: 10, label: 'logs' },
   { logItemId: OAK_LOGS_ITEM_ID, shaftQuantity: 15, label: 'oak logs' },
@@ -63,6 +65,7 @@ function createArrowShaftRecipe(logItemId: number, shaftQuantity: number, label:
     skill: 'crafting',
     levelRequired: 1,
     xpReward: 5,
+    intervalTicks: LOG_CRAFT_INTERVAL_TICKS,
     message: `You carve the ${label} into ${shaftQuantity} arrow shafts.`,
     repeatable: true,
     startMessage: 'You start carving arrow shafts.',
@@ -89,12 +92,25 @@ const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
     stopMessage: 'You run out of clay or water.',
   },
   {
+    inputItemIds: [FEATHER_ITEM_ID, ARROW_SHAFTS_ITEM_ID],
+    consume: [{ itemId: FEATHER_ITEM_ID, quantity: 1 }, { itemId: ARROW_SHAFTS_ITEM_ID, quantity: 1 }],
+    outputs: [{ itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 }],
+    skill: 'crafting',
+    levelRequired: 1,
+    xpReward: 1,
+    message: 'You attach a feather to the arrow shaft.',
+    repeatable: true,
+    startMessage: 'You start making headless arrows.',
+    stopMessage: 'You run out of feathers or arrow shafts.',
+  },
+  {
     inputItemIds: [KNIFE_ITEM_ID, LOGS_ITEM_ID],
     consume: [{ itemId: LOGS_ITEM_ID, quantity: 2 }],
     outputs: [{ itemId: BUCKET_ITEM_ID, quantity: 1 }],
     skill: 'crafting',
     levelRequired: 1,
     xpReward: 4,
+    intervalTicks: LOG_CRAFT_INTERVAL_TICKS * 2,
     message: 'You carve the logs into a bucket.',
     repeatable: true,
     startMessage: 'You start carving buckets.',
@@ -107,6 +123,7 @@ const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
     skill: 'crafting',
     levelRequired: 1,
     xpReward: 5,
+    intervalTicks: LOG_CRAFT_INTERVAL_TICKS,
     message: 'You carve the logs into an unstrung shortbow.',
     repeatable: true,
     startMessage: 'You start carving unstrung shortbows.',
@@ -3875,23 +3892,32 @@ export class World {
   }
 
   private runObjectInteractionEffects(player: Player, obj: WorldObject, action: string): void {
-    const effects = obj.interactions?.filter(effect => effect.action === action) ?? [];
-    for (const effect of effects) {
-      if (effect.condition && !this.quests.questConditionMet(player, effect.condition)) continue;
-      if (effect.conditions?.some(condition => !this.quests.questConditionMet(player, condition))) continue;
-      if (Array.isArray(effect.saySequence) && effect.saySequence.length > 0) {
-        this.queueObjectSaySequence(player, effect.saySequence);
-      } else if (typeof effect.say === 'string') {
-        const say = effect.say.trim();
-        if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId);
-      }
-      const message = typeof effect.message === 'string' ? effect.message.trim() : '';
-      if (message) this.sendChatSystem(player, message.slice(0, 300));
-      const actionsSucceeded = this.quests.runQuestActions(player, effect.effects || [], 'object');
-      if (effect.depleteObject && actionsSucceeded) {
-        this.depleteObjectFromInteractionEffect(obj, effect.depleteRespawnTicks);
-      }
+    const effect = obj.interactions?.find(candidate =>
+      candidate.action === action && this.objectInteractionEffectMatches(player, candidate)
+    );
+    if (!effect) return;
+
+    if (Array.isArray(effect.saySequence) && effect.saySequence.length > 0) {
+      this.queueObjectSaySequence(player, effect.saySequence);
+    } else if (typeof effect.say === 'string') {
+      const say = effect.say.trim();
+      if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId);
     }
+    const message = typeof effect.message === 'string' ? effect.message.trim() : '';
+    if (message) this.sendChatSystem(player, message.slice(0, 300));
+    const actionsSucceeded = this.quests.runQuestActions(player, effect.effects || [], 'object');
+    if (effect.depleteObject && actionsSucceeded) {
+      this.depleteObjectFromInteractionEffect(obj, effect.depleteRespawnTicks);
+    }
+  }
+
+  private objectInteractionEffectMatches(
+    player: Player,
+    effect: NonNullable<WorldObject['interactions']>[number],
+  ): boolean {
+    if (effect.condition && !this.quests.questConditionMet(player, effect.condition)) return false;
+    if (effect.conditions?.some(condition => !this.quests.questConditionMet(player, condition))) return false;
+    return true;
   }
 
   private objectExamineTextFor(player: Player, obj: WorldObject): string {
@@ -4367,7 +4393,7 @@ export class World {
     this.interruptPlayerAction(playerId, player);
     const recipe = this.findItemOnItemRecipe(fromItemId, toItemId, recipeIndex);
     if (recipe) {
-      if (recipe.repeatable && quantity !== 1) {
+      if (recipe.repeatable && (quantity !== 1 || (recipe.intervalTicks ?? 1) > 1)) {
         this.startItemProduction(playerId, player, recipe, quantity);
       } else {
         this.handleItemOnItemRecipe(player, recipe);
@@ -4451,13 +4477,15 @@ export class World {
       return;
     }
     const remaining = quantity < 0 ? null : Math.max(1, Math.floor(quantity));
+    const intervalTicks = Math.max(1, Math.trunc(recipe.intervalTicks ?? 1));
     this.itemProductionActions.set(playerId, {
       kind: 'itemOnItem',
       recipe,
       remaining,
-      nextTick: this.currentTick + 1,
+      intervalTicks,
+      nextTick: this.currentTick + intervalTicks,
     });
-    player.setDelay(this.currentTick, 1);
+    player.setDelay(this.currentTick, intervalTicks);
     if (recipe.startMessage) this.sendChatSystem(player, recipe.startMessage);
   }
 
@@ -4814,6 +4842,16 @@ export class World {
     player.syncDirty = true;
   }
 
+  handleAppearanceClose(playerId: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (!player.appearanceEditorOpen) return;
+    // First-login character creation is mandatory; only in-game edits can be
+    // dismissed without saving a new appearance.
+    if (player.appearance === null) return;
+    player.appearanceEditorOpen = false;
+  }
+
   // ==========================================================================
   // BANK
   // ==========================================================================
@@ -4868,7 +4906,7 @@ export class World {
    *  action, and the /appearance admin chat command. */
   openCharacterCreatorFor(player: Player): void {
     player.appearanceEditorOpen = true;
-    this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, 0);
+    this.sendToPlayer(player, ServerOpcode.SHOW_CHARACTER_CREATOR, player.appearance ? 1 : 0);
   }
 
   /** Server-side entry point: open the bank for a player. Called from the
@@ -7093,7 +7131,7 @@ export class World {
         }
       }
 
-      const intervalTicks = action.kind === 'objectRecipe' ? action.intervalTicks : 1;
+      const intervalTicks = 'intervalTicks' in action ? action.intervalTicks : 1;
       action.nextTick = this.currentTick + intervalTicks;
       player.setDelay(this.currentTick, intervalTicks);
     }
@@ -8289,7 +8327,7 @@ export class World {
         npc.id,
         a.shirtColor, a.pantsColor, a.shoesColor,
         a.hairColor, a.beltColor, a.skinColor,
-        a.hairStyle,
+        a.hairStyle, a.bodyType,
       );
     }
     const eq = npc.equipment;

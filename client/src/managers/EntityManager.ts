@@ -10,7 +10,7 @@ import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, getCharacterModelPath, type ItemDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, getCharacterModelPath, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -36,6 +36,7 @@ export class EntityManager {
   private scene: Scene;
   private getHeight: (x: number, z: number, floor?: number, currentY?: number) => number;
   private itemDefsCache: Map<number, ItemDef>;
+  private npcDefsCache: Map<number, NpcDef>;
 
   // Remote players — 3D CharacterEntities. Equipment is loaded by GameManager
   // on PLAYER_REMOTE_EQUIPMENT (cached in remoteEquipment until the entity is
@@ -87,9 +88,8 @@ export class EntityManager {
    *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
    *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank. */
   readonly npcInteractions: Map<number, number> = new Map();
-  /** Per-spawn display name override (NPC_NAME opcode). When absent the
-   *  display path falls back to NPC_NAMES[defId]. Used in right-click menu,
-   *  tooltip, and shop title. */
+  /** Per-spawn display name override (NPC_NAME opcode). When absent, display
+   *  names fall back to loaded npc defs, then the legacy NPC_NAMES table. */
   readonly npcOverrideNames: Map<number, string> = new Map();
   /** Count of NPCs currently rendered as CharacterEntity. Kept for diagnostics
    *  and possible future adaptive quality, but not used to hide humanoid NPCs:
@@ -106,10 +106,16 @@ export class EntityManager {
   private groundItemRefreshQueued = false;
   private groundItemIdsByTile: Map<string, Set<number>> = new Map();
 
-  constructor(scene: Scene, getHeight: (x: number, z: number, floor?: number, currentY?: number) => number, itemDefsCache: Map<number, ItemDef>) {
+  constructor(
+    scene: Scene,
+    getHeight: (x: number, z: number, floor?: number, currentY?: number) => number,
+    itemDefsCache: Map<number, ItemDef>,
+    npcDefsCache: Map<number, NpcDef>,
+  ) {
     this.scene = scene;
     this.getHeight = getHeight;
     this.itemDefsCache = itemDefsCache;
+    this.npcDefsCache = npcDefsCache;
   }
 
   // --- Entity creation ---
@@ -153,7 +159,10 @@ export class EntityManager {
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
     // floating label is correct from frame 1.
-    const name = this.npcOverrideNames.get(entityId) || NPC_NAMES[defId] || `NPC${defId}`;
+    const name = this.npcOverrideNames.get(entityId)
+      || this.npcDefsCache.get(defId)?.name
+      || NPC_NAMES[defId]
+      || `NPC${defId}`;
 
     // Dedicated 3D model path (rat, spider, cow, camel). Always preferred when
     // available — these have purpose-built animations.

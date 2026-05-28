@@ -28,6 +28,7 @@ import { createModalPanel } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
+type CharacterCreatorCancelCallback = () => void;
 type AppearanceIndexKey =
   | 'shirtColor'
   | 'pantsColor'
@@ -170,7 +171,7 @@ interface StepperRow {
   /** Write a new index back to the appearance struct (mutates). */
   set: (a: PlayerAppearance, idx: number) => void;
   /** Display name for the current index (e.g. "Dark Blue", "Style 3"). */
-  name: (idx: number) => string;
+  name: (idx: number, appearance: PlayerAppearance) => string;
   /** Optional swatch color (RGB 0-1 linear). Slots without a colored swatch
    *  (hair style, gear color) return null. */
   swatch: (idx: number) => [number, number, number] | null;
@@ -189,6 +190,7 @@ interface StepperRow {
 export class CharacterCreator {
   private container: HTMLDivElement;
   private onConfirm: CharacterCreatorCallback;
+  private onCancel?: CharacterCreatorCancelCallback;
   private appearance: PlayerAppearance;
 
   private previewCanvas: HTMLCanvasElement | null = null;
@@ -224,6 +226,12 @@ export class CharacterCreator {
     if (this.destroyed) return;
     this.previewEngine?.resize();
   };
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.onCancel) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.onCancel();
+  };
 
   /**
    * @param _gameScene Main Babylon scene retained in the constructor signature
@@ -233,6 +241,8 @@ export class CharacterCreator {
    * @param opts       Optional:
    *   - `initial`: starting appearance — `/appearance` edits should pass the
    *     player's current appearance so the stepper opens on existing values.
+   *   - `onCancel`: closes in-game edits without saving. Omitted for first
+   *     login so a new character must still choose an appearance.
    *   - `localPlayer`: player's CharacterEntity. While the creator is open,
    *     the local player is hidden and the isolated preview scene displays a
    *     separate copy so the gameplay camera/world cannot affect framing.
@@ -240,15 +250,17 @@ export class CharacterCreator {
   constructor(
     _gameScene: Scene,
     onConfirm: CharacterCreatorCallback,
-    opts?: { initial?: PlayerAppearance; localPlayer?: CharacterEntity | null },
+    opts?: { initial?: PlayerAppearance; onCancel?: CharacterCreatorCancelCallback; localPlayer?: CharacterEntity | null },
   ) {
     closeActiveContextMenu();
     this.onConfirm = onConfirm;
+    this.onCancel = opts?.onCancel;
     this.appearance = normalizeAppearance(opts?.initial ?? DEFAULT_APPEARANCE);
     this.localPlayer = opts?.localPlayer ?? null;
     this.rowSpecs = this.buildRowSpecs();
     this.container = this.buildUI();
     document.body.appendChild(this.container);
+    if (this.onCancel) document.addEventListener('keydown', this.handleKeyDown, true);
 
     // Hide the local player while the creator is open so the preview char
     // doesn't double up with the world-rendered character. The character GLB
@@ -296,7 +308,7 @@ export class CharacterCreator {
       { label: 'Hair',       min: 0, max: HAIR_STYLE_COUNT,
         choices: (a) => hairStyleChoicesForBodyType(a.bodyType),
         get: (a) => a.hairStyle, set: (a, i) => { a.hairStyle = i; },
-        name: hairStyleName,
+        name: (i, a) => hairStyleName(i, a.bodyType),
         swatch: () => null },
       { label: 'Hair Color', min: 0, max: HAIR_COLORS.length - 1,
         get: (a) => a.hairColor, set: (a, i) => { a.hairColor = i; },
@@ -325,7 +337,8 @@ export class CharacterCreator {
         zIndex: 10000,
       },
       chrome: 'stone',
-      closeButton: false,
+      closeButton: !!this.onCancel,
+      onClose: () => this.onCancel?.(),
       display: 'flex',
     });
     panel.classList.add('eq-character-creator');
@@ -417,6 +430,7 @@ export class CharacterCreator {
     });
     footer.appendChild(randomize);
     footer.appendChild(spacer);
+    if (this.onCancel) footer.appendChild(this.makeFooterBtn('Cancel', () => this.onCancel?.()));
     footer.appendChild(confirm);
     panel.appendChild(footer);
 
@@ -587,7 +601,7 @@ export class CharacterCreator {
     } else if (swatchEl) {
       swatchEl.style.display = 'none';
     }
-    if (valueEl) valueEl.textContent = spec.name(idx);
+    if (valueEl) valueEl.textContent = spec.name(idx, this.appearance);
   }
 
   private refreshAllRows(): void {
@@ -726,6 +740,7 @@ export class CharacterCreator {
     }
     window.removeEventListener('resize', this.resizePreview);
     window.removeEventListener('evilquest:viewportchange', this.resizePreview);
+    document.removeEventListener('keydown', this.handleKeyDown, true);
     if (this.previewCamera) {
       this.previewCamera.dispose();
       this.previewCamera = null;

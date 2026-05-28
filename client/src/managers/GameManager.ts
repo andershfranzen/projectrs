@@ -56,7 +56,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -383,6 +383,7 @@ export class GameManager {
   // Character creator
   private characterCreator: CharacterCreator | null = null;
   private characterCreatorOpenPending: boolean = false;
+  private characterCreatorCanCancel: boolean = false;
   private localAppearance: PlayerAppearance | null = null;
   /** The server sends MAP_CHANGE as part of login/session placement. That
    *  first map load is not player-facing travel, so don't spam chat with
@@ -794,9 +795,9 @@ export class GameManager {
     // mesh wasn't in hiddenRoofNodes and renders un-hidden until the player
     // walks to a new tile. Resetting the indoor tile cursor makes the next
     // frame recompute the hidden set.
-    this.chunkManager.setOnChunkObjectsLoaded(() => {
+    this.chunkManager.setOnChunkObjectsLoaded((chunkKey) => {
       this.cleanupDisposedWorldObjects();
-      this.linkPlacedObjectsToWorldObjects();
+      this.linkPlacedObjectsToWorldObjectsForChunk(chunkKey);
       // Force the next frame to recompute hiddenRoofNodes — covers a roof's
       // chunk loading after the player has already settled on a tile.
       this._lastIndoorTileX = -9999;
@@ -829,7 +830,12 @@ export class GameManager {
     this._defsReady = this.loadObjectDefs();
     this.objectModels = new WorldObjectModels(this.scene, (x, z) => this.getHeight(x, z), this.objectDefsCache);
     this._objectModelsReady = this.objectModels.loadAll();
-    this.entities = new EntityManager(this.scene, (x, z, floor = 0, cy) => this.getHeightAtFloor(x, z, floor, cy), this.itemDefsCache);
+    this.entities = new EntityManager(
+      this.scene,
+      (x, z, floor = 0, cy) => this.getHeightAtFloor(x, z, floor, cy),
+      this.itemDefsCache,
+      this.npcDefsCache,
+    );
     // Dev-only console hook for triage (NPC name overrides, entity sprites).
     // Tree-shaken Babylon imports remove the global namespace, so without
     // this the only way to inspect runtime entity state is to hack imports.
@@ -1762,9 +1768,30 @@ export class GameManager {
 
   /** Link placed GLB objects to server world objects after map finishes loading */
   private linkPlacedObjectsToWorldObjects(): void {
-    let linked = 0;
+    this.linkPlacedObjectsToWorldObjectsInBounds(-Infinity, Infinity, -Infinity, Infinity);
+  }
+
+  private linkPlacedObjectsToWorldObjectsForChunk(chunkKey: string): void {
+    const comma = chunkKey.indexOf(',');
+    const chunkX = Number(chunkKey.slice(0, comma));
+    const chunkZ = Number(chunkKey.slice(comma + 1));
+    if (!Number.isFinite(chunkX) || !Number.isFinite(chunkZ)) {
+      this.linkPlacedObjectsToWorldObjects();
+      return;
+    }
+    const margin = 2;
+    this.linkPlacedObjectsToWorldObjectsInBounds(
+      chunkX * CHUNK_SIZE - margin,
+      (chunkX + 1) * CHUNK_SIZE + margin,
+      chunkZ * CHUNK_SIZE - margin,
+      (chunkZ + 1) * CHUNK_SIZE + margin,
+    );
+  }
+
+  private linkPlacedObjectsToWorldObjectsInBounds(minX: number, maxX: number, minZ: number, maxZ: number): void {
     for (const [objectEntityId, data] of this.worldObjectDefs) {
       if (this.worldObjectModels.has(objectEntityId)) continue;
+      if (data.x < minX || data.x > maxX || data.z < minZ || data.z > maxZ) continue;
       const placedNode = this.chunkManager.findPlacedObjectNear(
         data.x,
         data.z,
@@ -1775,7 +1802,6 @@ export class GameManager {
       );
       if (placedNode) {
         this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
-        linked++;
       }
     }
   }
@@ -2655,8 +2681,8 @@ export class GameManager {
       void this.tryResolveLoginReady(loginSeq);
     });
 
-    this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, () => {
-      this.openCharacterCreatorWhenReady();
+    this.network.on(ServerOpcode.SHOW_CHARACTER_CREATOR, (_op, v) => {
+      this.openCharacterCreatorWhenReady((v[0] ?? 0) === 1);
     });
 
     this.network.on(ServerOpcode.ADMIN_FLAGS, (_op, v) => {
@@ -3842,13 +3868,14 @@ export class GameManager {
     });
   }
 
-  /** Display name for an NPC entity: per-spawn override wins, else the
-   *  hardcoded NPC_NAMES[defId] table, else 'NPC'. Used by right-click,
-   *  tooltip, and shop title. */
+  /** Display name for an NPC entity: per-spawn override wins, then loaded
+   *  npc defs, then the legacy NPC_NAMES table, else 'NPC'. Used by
+   *  right-click, tooltip, and shop title. */
   private npcDisplayName(entityId: number, defId: number | undefined): string {
     const override = this.entities.npcOverrideNames.get(entityId);
     if (override) return override;
-    return NPC_NAMES[defId || 0] || 'NPC';
+    if (defId !== undefined) return this.npcDefsCache.get(defId)?.name || NPC_NAMES[defId] || 'NPC';
+    return 'NPC';
   }
 
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
@@ -6204,20 +6231,21 @@ export class GameManager {
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, nearest.entityId));
   }
 
-  private openCharacterCreatorWhenReady(): void {
+  private openCharacterCreatorWhenReady(canCancel: boolean = false): void {
+    this.characterCreatorCanCancel = canCancel;
     if (this.characterCreator || this.characterCreatorOpenPending) return;
     if (!this.localPlayer) {
       this.characterCreatorOpenPending = true;
       requestAnimationFrame(() => {
         this.characterCreatorOpenPending = false;
-        this.openCharacterCreatorWhenReady();
+        this.openCharacterCreatorWhenReady(this.characterCreatorCanCancel);
       });
       return;
     }
     this.characterCreatorOpenPending = true;
     void this.localPlayer.whenReady().then(() => {
       this.characterCreatorOpenPending = false;
-      if (!this.characterCreator) this.openCharacterCreator();
+      if (!this.characterCreator) this.openCharacterCreator(this.characterCreatorCanCancel);
     });
   }
 
@@ -6469,19 +6497,29 @@ export class GameManager {
     return token ? { Authorization: `Bearer ${token}` } : undefined;
   }
 
-  private openCharacterCreator(): void {
+  private openCharacterCreator(canCancel: boolean = false): void {
     if (this.characterCreator) return;
     // Pass the player's current appearance as the starting state so /appearance
     // re-edits open on the current values rather than the global default.
     // For brand-new characters with no appearance set yet, localAppearance is
     // null and the creator falls back to DEFAULT_APPEARANCE.
-    this.characterCreator = new CharacterCreator(this.scene, (appearance) => {
-      this.characterCreator!.destroy();
+    const closeCreator = (): void => {
+      const creator = this.characterCreator;
+      if (!creator) return;
+      creator.destroy();
       this.characterCreator = null;
+      this.characterCreatorCanCancel = false;
+    };
+    this.characterCreator = new CharacterCreator(this.scene, (appearance) => {
+      closeCreator();
       this.sendAppearance(appearance);
       this.applyLocalAppearance(appearance);
     }, {
       initial: this.localAppearance ?? undefined,
+      onCancel: canCancel ? () => {
+        closeCreator();
+        this.network.sendRaw(encodePacket(ClientOpcode.APPEARANCE_CLOSE));
+      } : undefined,
       // Pass the local player so the creator hides them while open and spawns
       // the preview character at their world position (so the preview canvas
       // shows them in their actual environment instead of on a flat backdrop).
@@ -7442,12 +7480,17 @@ export class GameManager {
     const camPos = this.scene.activeCamera?.position ?? null;
 
     if (this.chunkManager.updatePlayerPosition(this.playerX, this.playerZ)) {
-      this.cleanupDisposedWorldObjects();
-      this.linkPlacedObjectsToWorldObjects();
-      this.reapplyWorldObjectVisualStates();
+      const objectsChanged = this.chunkManager.didLastUpdateChangeObjects();
+      if (objectsChanged) {
+        this.cleanupDisposedWorldObjects();
+        this.linkPlacedObjectsToWorldObjects();
+        this.reapplyWorldObjectVisualStates();
+      }
       // Chunk visibility flips can re-enable placed nodes; re-hide only on
       // those events instead of walking the hidden roof list every frame.
-      this.reapplyHiddenRoofStates();
+      if (objectsChanged || this.chunkManager.didLastUpdateChangeTerrain()) {
+        this.reapplyHiddenRoofStates();
+      }
     }
     this.chunkManager.updateAnimations();
     this.updateFog(dt);

@@ -2,9 +2,9 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
-  BUCKET_ITEM_ID, KNIFE_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID,
+  BUCKET_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID,
   YEW_LOGS_ITEM_ID, WILLOW_LOGS_ITEM_ID, MAGIC_LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID,
-  ARROW_SHAFTS_ITEM_ID,
+  ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   spellReagentSummary, spellSchoolSkill,
   zeroBonuses,
@@ -2613,6 +2613,10 @@ export class SidePanel {
         this.clearUsingInvItem();
         return;
       }
+      if (this.promptHeadlessArrowQuantity(using.slot, using.itemId, index, target.itemId)) {
+        this.clearUsingInvItem();
+        return;
+      }
       if (this.promptSoftClayQuantity(using.slot, using.itemId, index, target.itemId)) {
         this.clearUsingInvItem();
         return;
@@ -2817,6 +2821,45 @@ export class SidePanel {
     return true;
   }
 
+  private promptHeadlessArrowQuantity(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
+    const max = this.maxHeadlessArrowBatchQuantity(fromItemId, toItemId);
+    if (max <= 1) return false;
+    if (!this.requestQuantity) return false;
+
+    const outputName = this.itemDefs.get(HEADLESS_ARROWS_ITEM_ID)?.name ?? 'Headless Arrows';
+    this.requestQuantity({
+      title: `Make ${outputName}`,
+      prompt: `Make how many ${outputName.toLowerCase()}?`,
+      details: [
+        'Cost: 1 feather + 1 arrow shaft each',
+        `You have enough materials for ${max} ${outputName.toLowerCase()}.`,
+      ],
+      max,
+      defaultValue: max,
+      submitLabel: 'Make',
+      quickAmounts: [
+        { label: '1', value: 1 },
+        { label: '5', value: 5 },
+        { label: '10', value: 10 },
+        { label: 'All', value: 'all' },
+      ],
+      onSubmit: (quantity) => {
+        const currentFrom = this.invSlots[fromSlot];
+        const currentTo = this.invSlots[toSlot];
+        if (!currentFrom || currentFrom.itemId !== fromItemId) return;
+        if (!currentTo || currentTo.itemId !== toItemId) return;
+        const currentMax = this.maxHeadlessArrowBatchQuantity(fromItemId, toItemId);
+        if (currentMax <= 0) return;
+        const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
+        this.network.sendRaw(encodePacket(
+          ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+          fromSlot, fromItemId, toSlot, toItemId, requested,
+        ));
+      },
+    });
+    return true;
+  }
+
   private maxLogCraftingBatchQuantity(fromItemId: number, toItemId: number, logItemId: number, logCost: number): number {
     if (this.getLogCraftingLogItemId(fromItemId, toItemId) !== logItemId) return 0;
     return Math.floor(this.countInventoryItem(logItemId) / Math.max(1, logCost));
@@ -2846,6 +2889,16 @@ export class SidePanel {
     if (!this.isSoftClayRecipePair(fromItemId, toItemId)) return 0;
     const waterItemId = WATER_CONTAINER_ITEM_IDS.has(fromItemId) ? fromItemId : toItemId;
     return Math.min(this.countInventoryItem(CLAY_ITEM_ID), this.countInventoryItem(waterItemId));
+  }
+
+  private maxHeadlessArrowBatchQuantity(fromItemId: number, toItemId: number): number {
+    if (!this.isHeadlessArrowRecipePair(fromItemId, toItemId)) return 0;
+    return Math.min(this.countInventoryItem(FEATHER_ITEM_ID), this.countInventoryItem(ARROW_SHAFTS_ITEM_ID));
+  }
+
+  private isHeadlessArrowRecipePair(fromItemId: number, toItemId: number): boolean {
+    return (fromItemId === FEATHER_ITEM_ID && toItemId === ARROW_SHAFTS_ITEM_ID)
+      || (toItemId === FEATHER_ITEM_ID && fromItemId === ARROW_SHAFTS_ITEM_ID);
   }
 
   private isSoftClayRecipePair(fromItemId: number, toItemId: number): boolean {

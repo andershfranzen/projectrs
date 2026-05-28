@@ -145,8 +145,15 @@ export const HAIR_COLOR_NAMES: string[] = [
   'Grey', 'Dark Red', 'Dark Brown', 'White', 'Light Blonde',
 ];
 
-/** Hair styles: 0 = bald, 1..HAIR_STYLE_COUNT = M_hair_N. Names are generic. */
-export function hairStyleName(idx: number): string {
+/** Hair styles: 0 = bald, 1..HAIR_STYLE_COUNT = M_hair_N. Names are generic.
+ *  Female styles are stored as their authored mesh ids (10..14), but shown to
+ *  players as a compact 1-based list so the UI doesn't look like styles 1..9
+ *  are broken. */
+export function hairStyleName(idx: number, bodyType: number = 0): string {
+  if (bodyType === FEMALE_BODY_TYPE) {
+    const femaleIdx = FEMALE_HAIR_STYLE_CHOICES.indexOf(idx);
+    if (femaleIdx >= 0) return `Style ${femaleIdx + 1}`;
+  }
   if (idx === 0) return 'Bald';
   return `Style ${idx}`;
 }
