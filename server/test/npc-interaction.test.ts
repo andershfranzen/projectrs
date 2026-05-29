@@ -542,6 +542,26 @@ describe('NPC interaction reachability', () => {
     expect(decoded.values[10]).toBe(player.id);
   });
 
+  test('NPC sync keeps walk hint while adjacent combat target is still moving away', () => {
+    const player = new Player('runner', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 2 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.setCombatTarget(player);
+    player.setMoveQueue([{ x: 8.5, z: 10.5 }]);
+    const { world } = makeCombatWorld(player, npc);
+    world.npcWorldY = () => 0;
+
+    const packet = world.encodeNpcUpdate(npc);
+    const decoded = decodePacket(packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer);
+    expect(decoded.values[8]).toBe(1);
+
+    player.clearMoveQueue();
+    const stoppedPacket = world.encodeNpcUpdate(npc);
+    const stoppedDecoded = decodePacket(stoppedPacket.buffer.slice(stoppedPacket.byteOffset, stoppedPacket.byteOffset + stoppedPacket.byteLength) as ArrayBuffer);
+    expect(stoppedDecoded.values[8]).toBe(0);
+  });
+
   test('ranged attacks inside maxrange interrupt retreat and make the NPC retaliate', () => {
     const player = new Player('archer', 17.5, 10.5, fakeWs, 1);
     const npc = new Npc({ ...npcDef, wanderRange: 2 }, 10.5, 10.5);

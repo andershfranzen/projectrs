@@ -379,7 +379,7 @@ export function findThumbnailOverrideForItem(
 export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride): ThumbnailOptions {
   const modelPath = def.model ?? '';
   const bowColorRevision = /(?:^|\/)(?:Shortbow|OakShortbow|WillowShortbow|MapleShortbow|YewShortbow|MysticShortbow|MagicShortbow)\.glb$/i.test(modelPath)
-    ? ':bow-colors-v2'
+    ? ':bow-colors-v5'
     : '';
   const opts: ThumbnailOptions = { cacheIdentity: `item:${def.id}${bowColorRevision}` };
   const tint = TOOL_TIER_METAL_COLOR[def.id];

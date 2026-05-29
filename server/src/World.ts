@@ -8556,6 +8556,12 @@ export class World {
     if (npc.pathQueue.length > 0) return true;
     if (npc.retreatTarget) return true;
     if (!npc.combatTarget) return false;
+    if (npc.combatTarget instanceof Player) {
+      const nextTargetStep = npc.combatTarget.peekNextMove();
+      if (nextTargetStep && !npc.isInteractionTile(Math.floor(nextTargetStep.x), Math.floor(nextTargetStep.z))) {
+        return true;
+      }
+    }
     const fp = npc.distToFootprint(npc.combatTarget.position.x, npc.combatTarget.position.y);
     return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE;
   }
