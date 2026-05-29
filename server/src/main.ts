@@ -11,6 +11,12 @@ import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike,
 import { requestClientIp } from './network/clientIp';
 import { audit } from './Audit';
 
+// Mob-kill leaderboard display tweaks — scoped to the hiscores only; these do
+// NOT rename or remove the NPC in-world. Override placeholder/dev names and
+// keep non-public mobs out of the picker.
+const MOB_KILL_NAME_OVERRIDES: Record<number, string> = { 102: 'Man' };
+const MOB_KILL_HIDDEN_IDS = new Set<number>([19]);
+
 // --- Chunked object storage helpers ---
 
 /** Split placed objects into per-chunk buckets keyed by "chunk_{cx}_{cz}" */
@@ -1715,8 +1721,8 @@ const server = Bun.serve<SocketData>({
       // bankAccess / dialogue) are not killable, so they never appear in the
       // picker. Derived live from the NPC defs so editor changes flow through.
       const mobs = world.data.getAllNpcs()
-        .filter((def) => !def.shop && !def.bankAccess && !def.dialogue)
-        .map((def) => ({ id: def.id, name: def.name }));
+        .filter((def) => !def.shop && !def.bankAccess && !def.dialogue && !MOB_KILL_HIDDEN_IDS.has(def.id))
+        .map((def) => ({ id: def.id, name: MOB_KILL_NAME_OVERRIDES[def.id] ?? def.name }));
       const npcParam = url.searchParams.get('npc');
       return jsonResponse(db.getMobKillHiscores(
         npcParam ? Number(npcParam) : null,
