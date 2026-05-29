@@ -3,7 +3,7 @@ import { StaticModel } from './StaticModel';
 
 export const metadata = {
   title: 'Hiscores - EvilQuest',
-  description: 'EvilQuest player rankings by overall progress, combat level, and individual skills.',
+  description: 'EvilQuest player rankings by overall progress, combat level, individual skills, and mob kills.',
 };
 
 export default function HiscoresPage() {

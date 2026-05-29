@@ -215,6 +215,31 @@ export interface SocialLists {
   ignore: SocialEntry[];
 }
 
+/** A mob the player can be ranked by kills of. id is the canonical NpcDef.id;
+ *  name is display-only. Supplied by the caller (from NPC defs) so the DB layer
+ *  stays decoupled from DataLoader. */
+export interface MobKillMob {
+  id: number;
+  name: string;
+}
+
+export interface MobKillRow {
+  rank: number;
+  username: string;
+  kills: number;
+}
+
+export interface MobKillResponse {
+  npcDefId: number;
+  mobName: string;
+  mobs: MobKillMob[];
+  rows: MobKillRow[];
+  page: number;
+  pageSize: number;
+  totalRows: number;
+  totalPages: number;
+}
+
 interface RankedHiscoreRow extends HiscoreRow {
   accountId: number;
 }
@@ -873,6 +898,23 @@ export class GameDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_hiscore_snapshots_category_bucket
         ON hiscore_snapshots(category, bucket_start);
+    `);
+
+    // Per-player, per-mob kill tally. One row per (account, npc def id),
+    // incremented by a single atomic UPSERT on the NPC-death hot path
+    // (recordMobKill) — deliberately NOT a JSON column on player_state so it
+    // never races the batched 15s save and persists immediately on each kill.
+    // The (npc_def_id, kills DESC) index backs the per-mob leaderboard query.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mob_kills (
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        npc_def_id INTEGER NOT NULL,
+        kills INTEGER NOT NULL DEFAULT 0,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (account_id, npc_def_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mob_kills_npc
+        ON mob_kills(npc_def_id, kills DESC);
     `);
   }
 
@@ -1816,6 +1858,81 @@ export class GameDatabase {
     return {
       username: target.username,
       rows,
+    };
+  }
+
+  /** Credit one kill of a given mob to an account. Called on the NPC-death hot
+   *  path, so it's a single indexed UPSERT — no read-modify-write, no contention
+   *  with the batched player_state save, and it persists immediately (crash-safe
+   *  between saves). Banned/excluded accounts are filtered at read time, so we
+   *  always record here and keep the hot path branch-free. */
+  recordMobKill(accountId: number, npcDefId: number, delta: number = 1): void {
+    this.db.query(`
+      INSERT INTO mob_kills (account_id, npc_def_id, kills)
+      VALUES (?, ?, ?)
+      ON CONFLICT(account_id, npc_def_id) DO UPDATE SET
+        kills = kills + excluded.kills,
+        updated_at = unixepoch()
+    `).run(accountId, npcDefId, delta);
+  }
+
+  /** Per-mob kill leaderboard. `mobs` is the selectable mob list (id+name)
+   *  supplied by the caller from the NPC defs; the response echoes it so the
+   *  client can build its mob picker from one request. When `npcDefId` is null
+   *  or not a known mob, falls back to the first mob in the (name-sorted) list.
+   *  Reuses the same ban + excluded-username filtering as the skill hiscores so
+   *  test/banned accounts never leak into public rankings. */
+  getMobKillHiscores(
+    npcDefId: number | null,
+    limit: number = 25,
+    page: number = 1,
+    query: string = '',
+    mobs: MobKillMob[] = [],
+  ): MobKillResponse {
+    const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
+    const currentPage = Math.max(1, Math.floor(page) || 1);
+    const sortedMobs = [...mobs].sort((a, b) => a.name.localeCompare(b.name));
+    const effectiveId =
+      npcDefId != null && sortedMobs.some((m) => m.id === npcDefId)
+        ? npcDefId
+        : sortedMobs[0]?.id ?? npcDefId ?? 0;
+    const mobName = sortedMobs.find((m) => m.id === effectiveId)?.name ?? `NPC ${effectiveId}`;
+
+    const rows = this.db.query(`
+      SELECT a.username, mk.kills
+      FROM mob_kills mk
+      JOIN accounts a ON a.id = mk.account_id
+      LEFT JOIN account_bans ab
+        ON ab.account_id = a.id
+       AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      WHERE mk.npc_def_id = ? AND ab.account_id IS NULL AND mk.kills > 0
+    `).all(effectiveId) as Array<{ username: string; kills: number }>;
+
+    const ranked = rows
+      // Same anti-bot/test-account exclusion the skill hiscores apply.
+      .filter((row) => !isHiscoreExcludedUsername(row.username))
+      .sort((a, b) => b.kills - a.kills || a.username.localeCompare(b.username))
+      .map((row, idx) => ({ rank: idx + 1, username: row.username, kills: row.kills }));
+
+    const normalizedQuery = query.trim().toLowerCase();
+    const filtered = normalizedQuery
+      ? ranked.filter((row) => row.username.toLowerCase().includes(normalizedQuery))
+      : ranked;
+
+    const totalRows = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(totalRows / cappedLimit));
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * cappedLimit;
+
+    return {
+      npcDefId: effectiveId,
+      mobName,
+      mobs: sortedMobs,
+      rows: filtered.slice(start, start + cappedLimit),
+      page: safePage,
+      pageSize: cappedLimit,
+      totalRows,
+      totalPages,
     };
   }
 

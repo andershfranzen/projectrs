@@ -7241,12 +7241,30 @@ export class World {
 
           this.handleNpcDeath(npc);
 
+          // Tally the kill for the per-mob hiscores (credits the top damager).
+          this.creditMobKill(npc);
+
           // Drop where the NPC actually died, not at its spawn tile. Loot is
           // private to the highest damager first, then becomes public.
           this.spawnNpcLoot(npc, npc.getTopDamager());
         }
       }
     }
+  }
+
+  /** Credit one kill of this mob to the player who dealt the most cumulative
+   *  damage — matching loot ownership (spawnNpcLoot also uses getTopDamager).
+   *  Called from BOTH NPC-death paths (melee/ranged and queued-spell impact) so
+   *  magic kills count too. Persists immediately via an atomic UPSERT
+   *  (GameDatabase.recordMobKill); banned/excluded accounts are filtered out at
+   *  read time, so no gating is needed here. getTopDamager() returns an entity
+   *  id (players + NPCs share the id space), so resolve it to a Player first. */
+  private creditMobKill(npc: Npc): void {
+    const killerId = npc.getTopDamager();
+    if (killerId == null) return;
+    const killer = this.players.get(killerId);
+    if (!killer) return;
+    this.db.recordMobKill(killer.accountId, npc.def.id);
   }
 
   /**
@@ -7312,6 +7330,10 @@ export class World {
         npc.die();
         this.clearCombatTarget(imp.attackerId);
         this.handleNpcDeath(npc);
+
+        // Tally magic kills too — the melee/ranged path's quest hook is absent
+        // here, but kill counting must stay consistent across both paths.
+        this.creditMobKill(npc);
 
         this.spawnNpcLoot(npc, npc.getTopDamager());
       }

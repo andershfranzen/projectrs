@@ -983,6 +983,38 @@ a:hover {
   color: #cfc8bd;
 }
 
+.hiscores-mob-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.hiscores-mob-picker select {
+  min-width: 220px;
+  height: 40px;
+  padding: 8px 10px;
+  color: #fff;
+  font: 900 16px/1 Arial, Helvetica, sans-serif;
+  text-shadow: 2px 2px 0 #000;
+  background: #080808;
+  border: 2px solid #3b3b3b;
+  outline: 1px solid #000;
+  cursor: pointer;
+}
+
+.hiscores-mob-picker select:focus {
+  border-color: #8d3932;
+}
+
+.hiscores-mob-picker select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .table-state {
   margin: 24px 0;
   color: #fff;

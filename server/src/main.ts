@@ -1710,6 +1710,23 @@ const server = Bun.serve<SocketData>({
       return jsonResponse(profile);
     }
 
+    if (url.pathname === '/api/hiscores/kills' && req.method === 'GET') {
+      // Selectable mobs = attackable NPCs only. Vendors/bankers (shop /
+      // bankAccess / dialogue) are not killable, so they never appear in the
+      // picker. Derived live from the NPC defs so editor changes flow through.
+      const mobs = world.data.getAllNpcs()
+        .filter((def) => !def.shop && !def.bankAccess && !def.dialogue)
+        .map((def) => ({ id: def.id, name: def.name }));
+      const npcParam = url.searchParams.get('npc');
+      return jsonResponse(db.getMobKillHiscores(
+        npcParam ? Number(npcParam) : null,
+        Number(url.searchParams.get('limit') ?? 25),
+        Number(url.searchParams.get('page') ?? 1),
+        url.searchParams.get('q') ?? '',
+        mobs,
+      ));
+    }
+
     if (url.pathname === '/api/world-map' && req.method === 'GET') {
       return jsonResponse(getWorldMapSnapshot(world), 200, { 'Cache-Control': 'public, max-age=60' });
     }
