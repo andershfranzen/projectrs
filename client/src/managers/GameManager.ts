@@ -596,12 +596,6 @@ export class GameManager {
       this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ffe040');
       this.handleGroundClick(worldX, worldZ);
     });
-    if (import.meta.env.DEV) {
-      this.inputManager.setTeleportClickHandler((worldX, worldZ) => {
-        console.log(`[DEBUG] Shift+click teleport to ${worldX.toFixed(1)}, ${worldZ.toFixed(1)}`);
-        this.network.sendChat(`/tp ${worldX.toFixed(1)} ${worldZ.toFixed(1)}`);
-      });
-    }
     this.inputManager.setObjectClickHandler((objectEntityId) => {
       this.handleObjectClick(objectEntityId);
     });
@@ -4218,6 +4212,9 @@ export class GameManager {
 
   private updateAdminSurfaces(): void {
     if (this.isAdmin) {
+      this.inputManager.setTeleportClickHandler((worldX, worldZ) => {
+        this.network.sendChat(`/tp ${worldX.toFixed(1)} ${worldZ.toFixed(1)}`);
+      });
       this.sidePanel?.setAdminControls(false, () => {});
       this.chatPanel?.setAdminControls(true, () => this.openAdminPanel());
       this.mobileAdminButton?.remove();
@@ -4225,6 +4222,7 @@ export class GameManager {
       return;
     }
 
+    this.inputManager.setTeleportClickHandler(null);
     this.sidePanel?.setAdminControls(false, () => {});
     this.chatPanel?.setAdminControls(false, () => {});
     this.mobileAdminButton?.remove();
@@ -5646,8 +5644,7 @@ export class GameManager {
     return def.category === 'chest'
       || def.category === 'cookingrange'
       || def.id === POTTERY_WHEEL_OBJECT_DEF_ID
-      || def.id === KILN_OBJECT_DEF_ID
-      || def.id === SPINNING_WHEEL_OBJECT_DEF_ID;
+      || def.id === KILN_OBJECT_DEF_ID;
   }
 
   private hasClearObjectInteractionEdge(

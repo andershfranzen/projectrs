@@ -22779,6 +22779,80 @@
           "z": 0.3999999999999999
         },
         "uvRepeat": 1
+      },
+      {
+        "id": "plane_1780017446311_90388",
+        "textureId": "tex90",
+        "width": 1.2999999999999998,
+        "height": 1,
+        "vertical": true,
+        "doubleSided": true,
+        "position": {
+          "x": 341.35,
+          "y": 2.2199999999999998,
+          "z": 168.5
+        },
+        "rotation": {
+          "x": -1.5707963267948966,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "uvRepeat": 1,
+        "texRotation": 0
+      },
+      {
+        "id": "plane_1780017448185_20313",
+        "textureId": "tex90",
+        "width": 1.2999999999999998,
+        "height": 1,
+        "vertical": true,
+        "doubleSided": true,
+        "position": {
+          "x": 341.35,
+          "y": 2.2199999999999998,
+          "z": 169.5
+        },
+        "rotation": {
+          "x": -1.5707963267948966,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1
+        },
+        "uvRepeat": 1,
+        "texRotation": 0
+      },
+      {
+        "id": "plane_1780017540207_16770",
+        "textureId": "tex90",
+        "width": 0.9999999999999999,
+        "height": 0.9999999999999999,
+        "vertical": true,
+        "doubleSided": true,
+        "position": {
+          "x": 344.5,
+          "y": 2.34,
+          "z": 177.5
+        },
+        "rotation": {
+          "x": 1.5707963267948966,
+          "y": 0,
+          "z": 0
+        },
+        "scale": {
+          "x": 1,
+          "y": 1,
+          "z": 1.2999999999999998
+        },
+        "uvRepeat": 1
       }
     ],
     "tiles": [],

@@ -2,6 +2,7 @@ import { World } from '../World';
 import { ALL_SKILLS, SKILL_NAMES, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 import type { SocialEntry, SocialListKind, SocialLists } from '../Database';
+import type { Player } from '../entity/Player';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
 
@@ -93,6 +94,37 @@ function sendSocialList(ws: ServerWebSocket<ChatSocketData>, world: World): void
     friends: lists.friends.map(entryWithPresence),
     ignore: lists.ignore.map(entryWithPresence),
   }));
+}
+
+function preparePlayerForAdminTeleport(player: Player, world: World): void {
+  if (player.openInterface === 'trade') world.abortTrade(player.id, 2);
+  player.openInterface = null;
+  player.openShopNpcId = null;
+  player.openShopNpcEntityId = null;
+  world.closeDialogueForPlayer(player);
+  player.pendingInteraction = null;
+}
+
+function adminTeleportPlayerToPlayer(world: World, traveler: Player, destination: Player): void {
+  preparePlayerForAdminTeleport(traveler, world);
+  if (traveler.currentMapLevel === destination.currentMapLevel) {
+    world.teleportPlayer(
+      traveler,
+      destination.position.x,
+      destination.position.y,
+      destination.effectiveY,
+      destination.currentFloor,
+    );
+    return;
+  }
+
+  world.handleMapTransition(traveler, {
+    targetMap: destination.currentMapLevel,
+    targetX: destination.position.x,
+    targetZ: destination.position.y,
+    targetFloor: destination.currentFloor,
+    targetY: destination.effectiveY,
+  });
 }
 
 function sendSocialPresence(accountId: number, username: string, online: boolean): void {
@@ -329,6 +361,7 @@ function handleCommand(
           sendSystem(ws, 'Usage: /tp <x> <z> [floor]');
           return;
         }
+        preparePlayerForAdminTeleport(player, world);
         world.teleportPlayer(player, x, z, undefined, floor);
       }
       break;
@@ -348,6 +381,7 @@ function handleCommand(
           sendSystem(ws, `Map "${mapId}" not found`);
           return;
         }
+        preparePlayerForAdminTeleport(player, world);
         world.handleMapTransition(player, {
           targetMap: mapId,
           targetX: targetMap.meta.spawnPoint.x,
@@ -358,12 +392,64 @@ function handleCommand(
       break;
     }
 
+    case '/tpto':
+    case '/teleportto': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts.slice(1).join(' ').trim();
+      if (!targetName) {
+        sendSystem(ws, 'Usage: /tpto <player>');
+        return;
+      }
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      const target = findPlayerByUsername(targetName, world);
+      if (!target) {
+        sendSystem(ws, `Player "${targetName}" not online.`);
+        return;
+      }
+      adminTeleportPlayerToPlayer(world, player, target);
+      sendSystem(ws, `Teleported to ${target.name}.`);
+      break;
+    }
+
+    case '/summon':
+    case '/bring': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const targetName = parts.slice(1).join(' ').trim();
+      if (!targetName) {
+        sendSystem(ws, 'Usage: /summon <player>');
+        return;
+      }
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      const target = findPlayerByUsername(targetName, world);
+      if (!target) {
+        sendSystem(ws, `Player "${targetName}" not online.`);
+        return;
+      }
+      if (target.id === player.id) {
+        sendSystem(ws, 'You cannot summon yourself.');
+        return;
+      }
+      adminTeleportPlayerToPlayer(world, target, player);
+      sendSystem(ws, `Summoned ${target.name}.`);
+      sendSystemMessageToUser(target.name, `Admin ${player.name} summoned you.`);
+      break;
+    }
+
     case '/spawn': {
       if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);
       if (player) {
         const map = world.getMap(player.currentMapLevel);
         if (map) {
+          preparePlayerForAdminTeleport(player, world);
           world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z, undefined, 0);
           sendSystem(ws, 'Teleported to spawn');
         }

@@ -257,7 +257,7 @@ export class InputManager {
     this.onGroundClick = callback;
   }
 
-  setTeleportClickHandler(callback: TeleportClickCallback): void {
+  setTeleportClickHandler(callback: TeleportClickCallback | null): void {
     this.onTeleportClick = callback;
   }
 
