@@ -36,7 +36,7 @@ export function encodeQuantityPacket(opcode: number, slot: number, expectedItemI
     opcode,
     slot,
     expectedItemId,
-    (normalized >>> 16) & 0x7FFF,
+    (normalized >>> 16) & 0xFFFF,
     normalized & 0xFFFF,
   );
 }

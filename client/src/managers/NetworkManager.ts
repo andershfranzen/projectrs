@@ -83,6 +83,9 @@ function hostForWsUrl(hostname: string): string {
 }
 
 export class NetworkManager {
+  /** Tear down + reconnect the game socket if the browser send buffer exceeds
+   *  this (a stuck connection accumulating unsent frames). */
+  private static readonly MAX_SEND_BUFFER_BYTES = 1_000_000;
   private gameSocket: WebSocket | null = null;
   private chatSocket: WebSocket | null = null;
   private handlers: Map<ServerOpcode, MessageHandler[]> = new Map();
@@ -271,6 +274,15 @@ export class NetworkManager {
 
     this.handlePlainGameMessage = handlePlainMessage;
 
+    gameSocket.onerror = (event) => {
+      if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
+      console.warn('[net] Game socket error:', event);
+      // Don't rely solely on onclose firing — drive teardown + reconnect here
+      // too. failGameSocket bumps the generation and nulls gameSocket, so the
+      // subsequent onclose no-ops (its guard fails): no double reconnect.
+      this.failGameSocket(gameSocket, 4010, 'socket error');
+    };
+
     gameSocket.onclose = (event) => {
       if (generation !== this.socketGeneration || this.gameSocket !== gameSocket) return;
       if (import.meta.env.DEV) console.log('[net] Game socket disconnected');
@@ -307,6 +319,11 @@ export class NetworkManager {
           handler(data);
         }
       } catch { /* ignore */ }
+    };
+
+    chatSocket.onerror = (event) => {
+      if (generation !== this.socketGeneration || this.chatSocket !== chatSocket) return;
+      console.warn('[net] Chat socket error:', event);
     };
 
     chatSocket.onclose = () => {
@@ -431,6 +448,15 @@ export class NetworkManager {
       if (this.gameSocket !== socket || socket.readyState !== WebSocket.OPEN) return;
       if (!this.gameCipherKeys) throw new Error('crypto handshake not ready');
       if (!this.opcodeMappingReady || !this.opcodeMapping) throw new Error('opcode mapping not ready');
+      // Backpressure guard: if the browser's send buffer has grown unbounded
+      // (stuck/slow connection + rapid input like spam-clicking), the socket is
+      // effectively dead. Tear it down and reconnect for a fresh authoritative
+      // snapshot rather than queueing megabytes the server will never see in
+      // order. 1 MB ≈ thousands of queued packets — far beyond any real burst.
+      if (socket.bufferedAmount > NetworkManager.MAX_SEND_BUFFER_BYTES) {
+        this.failGameSocket(socket, 4008, 'send buffer overflow');
+        return;
+      }
       const wirePacket = rewritePacketOpcode(packet, this.opcodeMapping.clientLogicalToWire, true);
       const frame = await encryptGamePacketV2(this.gameCipherKeys, 'client-to-server', this.sendCipherCounter++, wirePacket);
       socket.send(frame as BufferSource);
@@ -475,7 +501,15 @@ export class NetworkManager {
     const handlers = this.handlers.get(opcode);
     if (handlers) {
       for (const handler of handlers) {
-        handler(opcode, values);
+        // Isolate handler failures: a throw in one opcode handler must not
+        // bubble into the recv cipher-queue's .catch, which would tear down
+        // the whole socket and (misleadingly) report it as "packet decrypt
+        // failed". Log and keep the connection alive.
+        try {
+          handler(opcode, values);
+        } catch (e) {
+          console.error(`[net] handler for opcode ${opcode} threw:`, e);
+        }
       }
     }
   }
@@ -484,6 +518,13 @@ export class NetworkManager {
     if (!this.gameSocket) return false;
     if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
       this.failGameSocket(this.gameSocket, 4002, 'move send while disconnected');
+      return false;
+    }
+    // Synchronous backpressure pre-check so a stuck connection rejects before
+    // we spend CPU encrypting a frame it can't drain (the same cap is enforced
+    // inside sendFrame for all other senders).
+    if (this.gameSocket.bufferedAmount > NetworkManager.MAX_SEND_BUFFER_BYTES) {
+      this.failGameSocket(this.gameSocket, 4008, 'send buffer overflow');
       return false;
     }
 
@@ -507,6 +548,10 @@ export class NetworkManager {
     if (!this.gameSocket) return false;
     if (!this.connected || this.gameSocket.readyState !== WebSocket.OPEN) {
       this.failGameSocket(this.gameSocket, 4004, 'packet send while disconnected');
+      return false;
+    }
+    if (this.gameSocket.bufferedAmount > NetworkManager.MAX_SEND_BUFFER_BYTES) {
+      this.failGameSocket(this.gameSocket, 4008, 'send buffer overflow');
       return false;
     }
     try {

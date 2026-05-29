@@ -470,7 +470,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
 
     case ClientOpcode.PLAYER_CAST_SPELL: {
       if (!hasValues(values, 2)) return invalid('missing-spell-target');
-      if (!Number.isInteger(values[0]) || values[0] < 0) return invalid('bad-spell-index');
+      if (!Number.isInteger(values[0]) || values[0] < 0 || !world.data.getSpellByIndex(values[0])) return invalid('bad-spell-index');
       const target = world.npcs.get(values[1]);
       if (!target || target.dead) return invalid('stale-spell-target');
       if (!world.canPlayerTargetNpc(player, target)) return invalid('unreachable-spell-target');
@@ -479,7 +479,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
 
     case ClientOpcode.PLAYER_SET_AUTOCAST: {
       if (!hasValues(values, 1)) return invalid('missing-autocast-spell');
-      if (!Number.isInteger(values[0]) || values[0] < -1) return invalid('bad-autocast-spell');
+      if (!Number.isInteger(values[0]) || values[0] < -1 || (values[0] >= 0 && !world.data.getSpellByIndex(values[0]))) return invalid('bad-autocast-spell');
       return OK_PACKET;
     }
 
@@ -982,6 +982,10 @@ function completeGameSocketLogin(
   world.addPlayer(player);
 }
 
+/** Hard ceiling on a single inbound game frame. Anything larger is hostile —
+ *  reject before spending CPU on decryption. */
+const MAX_GAME_FRAME_BYTES = 4096;
+
 function applyClientOpcodeMapping(
   ws: ServerWebSocket<GameSocketData>,
   message: ArrayBuffer,
@@ -997,6 +1001,14 @@ export function handleGameSocketMessage(
   world: World
 ): void {
   if (typeof message === 'string') return;
+  // Drop oversized frames BEFORE the (expensive) decrypt queue / handshake
+  // decode. Legitimate frames are tiny — PLAYER_MOVE (the largest) is ~240B
+  // encrypted; 4 KB is a generous ceiling that still bounds a decrypt-CPU flood.
+  if (message.byteLength > MAX_GAME_FRAME_BYTES) {
+    console.warn(`[ws] oversized game frame ${message.byteLength}B account=${ws.data.accountId}`);
+    try { ws.close(1009, 'frame too large'); } catch {}
+    return;
+  }
   const cryptoState = ws.data.crypto;
   if (cryptoState) {
     cryptoState.recvQueue = cryptoState.recvQueue

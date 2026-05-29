@@ -2608,12 +2608,18 @@ export class World {
     const cm = this.chunkManagers.get(obj.mapLevel);
     if (!cm) return;
     const eventPacket = encodePacket(ServerOpcode.WORLD_OBJECT_DEPLETED, obj.id, obj.depleted ? 1 : 0, swingSign);
+    // The WORLD_OBJECT_SYNC update is viewer-specific ONLY for ladders (their
+    // interaction tiles + action mask depend on the viewer's floor/links).
+    // Every other object encodes identically for all viewers, so encode once
+    // and reuse instead of re-allocating per nearby player.
+    const isLadder = obj.def.category === 'ladder' && !!obj.verticalLinks?.length;
+    const sharedUpdate = isLadder ? null : this.encodeWorldObjectUpdate(obj);
     cm.forEachPlayerNear(obj.x, obj.z, (pid) => {
       const player = this.players.get(pid);
       if (!player || player.disconnected || player.currentMapLevel !== obj.mapLevel || player.currentFloor !== obj.floor) return;
       try {
         player.ws.sendBinary(eventPacket);
-        player.ws.sendBinary(this.encodeWorldObjectUpdate(obj, player));
+        player.ws.sendBinary(sharedUpdate ?? this.encodeWorldObjectUpdate(obj, player));
       } catch { /* connection closed */ }
     });
   }
@@ -8625,21 +8631,26 @@ export class World {
    *  about to see this NPC for the first time (map load, chunk entry, or
    *  respawn). No-op when the NPC has no customization — sprite/built-in
    *  3D NPCs (rat, cow, chicken, …) skip this entirely. */
-  private sendNpcStaticData(viewer: Player, npc: Npc): void {
+  /** Encode the (static) per-NPC packets ONCE. encodePacket/encodeStringPacket
+   *  each return an independent buffer, so the returned array is safe to reuse
+   *  across many viewers — a broadcast no longer re-encodes (and re-allocates,
+   *  esp. the UTF-8 name/attack-anim string packets) per viewer. */
+  private buildNpcStaticPackets(npc: Npc): Uint8Array[] {
+    const packets: Uint8Array[] = [];
     const a = npc.appearance;
     if (a) {
-      this.sendToPlayer(viewer, ServerOpcode.NPC_APPEARANCE,
+      packets.push(encodePacket(ServerOpcode.NPC_APPEARANCE,
         npc.id,
         a.shirtColor, a.pantsColor, a.shoesColor,
         a.hairColor, a.beltColor, a.skinColor,
         a.hairStyle, a.bodyType,
-      );
+      ));
     }
     const eq = npc.equipment;
     if (eq && eq.length >= 10) {
       const values = [npc.id];
       for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) values.push(eq[i] ?? 0);
-      this.sendToPlayer(viewer, ServerOpcode.NPC_EQUIPMENT, ...values);
+      packets.push(encodePacket(ServerOpcode.NPC_EQUIPMENT, ...values));
     }
     const cc = npc.customColors;
     if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
@@ -8658,7 +8669,7 @@ export class World {
           payload.push(-1, 0, 0);
         }
       }
-      this.sendToPlayer(viewer, ServerOpcode.NPC_CUSTOM_COLORS, ...payload);
+      packets.push(encodePacket(ServerOpcode.NPC_CUSTOM_COLORS, ...payload));
     }
     // Tell the client which non-combat actions this NPC supports, so its
     // right-click menu can offer Talk-to / Trade / Bank without the client
@@ -8666,19 +8677,29 @@ export class World {
     // would be 0 and the client's default (attackable mob) is correct.
     const flags = npc.interactionFlags();
     if (flags !== 0) {
-      this.sendToPlayer(viewer, ServerOpcode.NPC_INTERACTIONS, npc.id, flags);
+      packets.push(encodePacket(ServerOpcode.NPC_INTERACTIONS, npc.id, flags));
     }
     // Custom per-spawn display name. Most NPCs don't have one — skip the
     // packet so we're not spamming the wire with default names.
     if (npc.nameOverride) {
-      const packet = encodeStringPacket(ServerOpcode.NPC_NAME, npc.nameOverride, npc.id);
-      try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
+      packets.push(encodeStringPacket(ServerOpcode.NPC_NAME, npc.nameOverride, npc.id));
     }
     // Forced-swing animation override. Same string-packet shape as NPC_NAME.
     if (npc.attackAnimOverride) {
-      const packet = encodeStringPacket(ServerOpcode.NPC_ATTACK_ANIM, npc.attackAnimOverride, npc.id);
+      packets.push(encodeStringPacket(ServerOpcode.NPC_ATTACK_ANIM, npc.attackAnimOverride, npc.id));
+    }
+    return packets;
+  }
+
+  private sendEncodedPackets(viewer: Player, packets: readonly Uint8Array[]): void {
+    if (viewer.disconnected) return;
+    for (const packet of packets) {
       try { viewer.ws.sendBinary(packet); } catch { /* connection closed */ }
     }
+  }
+
+  private sendNpcStaticData(viewer: Player, npc: Npc): void {
+    this.sendEncodedPackets(viewer, this.buildNpcStaticPackets(npc));
   }
 
   private queueNpcStaticData(out: SyncPacket[], npc: Npc): void {
@@ -8829,7 +8850,7 @@ export class World {
       values.push(player.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
     const ammoQuantity = player.getEquipmentQuantity('ammo');
-    values.push((ammoQuantity >>> 16) & 0x7FFF, ammoQuantity & 0xFFFF);
+    values.push((ammoQuantity >>> 16) & 0xFFFF, ammoQuantity & 0xFFFF);
     this.sendToPlayer(player, ServerOpcode.PLAYER_EQUIPMENT_BATCH, ...values);
   }
 
@@ -9063,10 +9084,13 @@ export class World {
   private broadcastNpcStaticData(npc: Npc): void {
     const cm = this.chunkManagers.get(npc.currentMapLevel);
     if (!cm) return;
+    // Encode once, reuse the buffers for every nearby viewer.
+    const packets = this.buildNpcStaticPackets(npc);
+    if (packets.length === 0) return;
     cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
       const viewer = this.players.get(pid);
       if (!viewer || viewer.disconnected || viewer.currentMapLevel !== npc.currentMapLevel) return;
-      this.sendNpcStaticData(viewer, npc);
+      this.sendEncodedPackets(viewer, packets);
     });
   }
 

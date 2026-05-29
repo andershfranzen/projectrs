@@ -2883,7 +2883,11 @@ export class GameManager {
 
       const hiddenCatchup = this.isHiddenCatchupActive();
       if (hiddenCatchup && (document.visibilityState === 'hidden' || this.pathIndex >= this.path.length)) {
-        this.acceptLocalAuthorityPosition(serverX, serverZ, { hardSnap: document.visibilityState === 'hidden' });
+        // Catch-up reconciles onto the predicted path (fast-forward + keep
+        // predicting) when the server is on it, and hard-snaps only on a real
+        // divergence — never the per-tick slide that caused back-and-forth
+        // jitter on tab return.
+        this.reconcileLocalPlayerToServer(serverX, serverZ, true, serverMoving);
         return;
       }
 
@@ -3556,14 +3560,14 @@ export class GameManager {
       for (let i = 0; i < count; i++) {
         const base = 1 + i * 4;
         if (base + 3 >= v.length) break;
-        const qty = (v[base + 2] << 16) | (v[base + 3] & 0xFFFF);
+        const qty = (v[base + 2] & 0xFFFF) * 0x10000 + (v[base + 3] & 0xFFFF);
         filled.push({ slot: v[base], itemId: v[base + 1], quantity: qty });
       }
       this.bankPanel?.openWithContents(filled);
     });
     this.network.on(ServerOpcode.BANK_UPDATE_SLOT, (_op, v) => {
       const [slot, itemId, qtyHi, qtyLo] = v;
-      const qty = (qtyHi << 16) | (qtyLo & 0xFFFF);
+      const qty = (qtyHi & 0xFFFF) * 0x10000 + (qtyLo & 0xFFFF);
       this.bankPanel?.updateBankSlot(slot, itemId, qty);
     });
     this.network.on(ServerOpcode.BANK_CLOSE, () => {
@@ -3590,7 +3594,7 @@ export class GameManager {
     });
     this.network.on(ServerOpcode.TRADE_OFFER_UPDATE, (_op, v) => {
       const [side, slot, itemId, qtyHi, qtyLo] = v;
-      const qty = (qtyHi << 16) | (qtyLo & 0xFFFF);
+      const qty = (qtyHi & 0xFFFF) * 0x10000 + (qtyLo & 0xFFFF);
       this.tradePanel?.updateOffer(side, slot, itemId, qty);
     });
     this.network.on(ServerOpcode.TRADE_ACCEPT_STATE, (_op, v) => {
@@ -3632,7 +3636,7 @@ export class GameManager {
     });
     this.network.on(ServerOpcode.DUEL_STAKE_UPDATE, (_op, v) => {
       const [side, slot, itemId, qtyHi, qtyLo] = v;
-      const qty = (qtyHi << 16) | (qtyLo & 0xFFFF);
+      const qty = (qtyHi & 0xFFFF) * 0x10000 + (qtyLo & 0xFFFF);
       this.duelPanel?.updateStake(side, slot, itemId, qty);
     });
     this.network.on(ServerOpcode.DUEL_ACCEPT_STATE, (_op, v) => {
@@ -3679,7 +3683,7 @@ export class GameManager {
 
     this.network.on(ServerOpcode.PLAYER_SKILLS, (_op, v) => {
       const [skillIndex, level, currentLevel, xpHigh, xpLow] = v;
-      const xp = (xpHigh << 16) | (xpLow & 0xFFFF);
+      const xp = (xpHigh & 0xFFFF) * 0x10000 + (xpLow & 0xFFFF);
       if (this.sidePanel) {
         this.sidePanel.updateSkill(skillIndex, level, currentLevel, xp);
       }
@@ -3694,7 +3698,7 @@ export class GameManager {
       for (let i = 0; i < v.length; i += 4) {
         const skillIndex = i / 4;
         const level = v[i], currentLevel = v[i + 1];
-        const xp = (v[i + 2] << 16) | (v[i + 3] & 0xFFFF);
+        const xp = (v[i + 2] & 0xFFFF) * 0x10000 + (v[i + 3] & 0xFFFF);
         this.sidePanel?.updateSkill(skillIndex, level, currentLevel, xp);
         this.updateMobileMagicStatus(skillIndex, level, currentLevel);
         if (skillIndex === ALL_SKILLS.indexOf('hitpoints')) {
@@ -7498,7 +7502,11 @@ export class GameManager {
     this.lastSelfSyncTickLow = tickLow;
     this.lastSelfSyncReceivedAt = now;
 
-    if (this.bufferedSelfSyncReplayCount < 8 || this.reconnecting || !this._loginSettled || !this.network.isConnected()) {
+    // 3 consecutive buffered-looking syncs (each <150ms apart while the
+    // catch-up window is armed — normal syncs are 600ms apart) is a genuine
+    // hidden-tab replay burst, not jitter. Reconnect early to discard the
+    // backlog before it can rewind position via out-of-order tiles.
+    if (this.bufferedSelfSyncReplayCount < 3 || this.reconnecting || !this._loginSettled || !this.network.isConnected()) {
       return false;
     }
 
@@ -7551,6 +7559,7 @@ export class GameManager {
     this.chunkManager.updateAnimations();
     this.updateFog(dt);
 
+    this.expireFinishedSlide();
     this.updatePlayerFollowPrediction(dt);
     this.updateCombatFollow(dt);
     this.updateLocalPlayerMovement(dt, camPos);
@@ -7688,19 +7697,28 @@ export class GameManager {
 
   /** Current slide-offset effect on the rendered local-player position.
    *  Linearly decays from the initial offset to (0, 0) over slideDurationMs.
-   *  Side effect: zeroes the cached offset once expired so subsequent calls
-   *  are a fast early-out. */
+   *  PURE: no side effects — it can be called multiple times per frame (and
+   *  mid-frame from packet handlers) without mutating slide state, which
+   *  previously let an expiry-zeroing side effect leak between same-frame
+   *  reads and produce sub-frame position discontinuities. Expiry cleanup is
+   *  done once per frame in `expireFinishedSlide()`. */
   private getSlideOffset(): { x: number; z: number } {
     if (this.slideStartMs === 0) return { x: 0, z: 0 };
     const age = performance.now() - this.slideStartMs;
-    if (age >= this.slideDurationMs) {
-      this.slideOffsetX = 0;
-      this.slideOffsetZ = 0;
-      this.slideStartMs = 0;
-      return { x: 0, z: 0 };
-    }
+    if (age >= this.slideDurationMs) return { x: 0, z: 0 };
     const factor = 1 - age / this.slideDurationMs;
     return { x: this.slideOffsetX * factor, z: this.slideOffsetZ * factor };
+  }
+
+  /** Deterministic once-per-frame slide expiry. Replaces the old read-time
+   *  side effect in getSlideOffset so reads stay pure. */
+  private expireFinishedSlide(): void {
+    if (this.slideStartMs === 0) return;
+    if (performance.now() - this.slideStartMs >= this.slideDurationMs) {
+      this.slideStartMs = 0;
+      this.slideOffsetX = 0;
+      this.slideOffsetZ = 0;
+    }
   }
 
   private isHiddenCatchupActive(now: number = performance.now()): boolean {
@@ -7750,7 +7768,13 @@ export class GameManager {
     this.scheduleHiddenCatchupDisarm();
     this.entities.snapDynamicEntitiesToTargets();
     if (this.latestSelfSync) {
-      this.acceptLocalAuthorityPosition(this.latestSelfSync.x, this.latestSelfSync.z, { hardSnap: true });
+      // Reconcile onto the still-valid predicted path instead of clearing it.
+      // If the server is on our path (the common case — we predicted the same
+      // route the server walks), this fast-forwards pathIndex and prediction
+      // resumes smooth forward-animated movement. Only a genuine divergence
+      // hard-snaps. Previously we cleared the path and slid to authority on
+      // every sync, which lurched backward each tick (visible jitter).
+      this.reconcileLocalPlayerToServer(this.latestSelfSync.x, this.latestSelfSync.z, true, this.latestSelfSync.moving);
     }
     if (this._loginSettled && this.network.isConnected()) {
       this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
@@ -7809,39 +7833,6 @@ export class GameManager {
     window.addEventListener('pointerdown', cursorHandler, true);
     this._activityHandler = handler;
     this._cursorTelemetryHandler = cursorHandler;
-  }
-
-  private acceptLocalAuthorityPosition(
-    serverX: number,
-    serverZ: number,
-    opts: { hardSnap?: boolean } = {},
-  ): void {
-    const prevLogicalX = this.playerX;
-    const prevLogicalZ = this.playerZ;
-    this.playerX = serverX;
-    this.playerZ = serverZ;
-    this.clearPredictedPath();
-    this.setTileFrom(serverX, serverZ);
-    if (this.destMarker) this.destMarker.isVisible = false;
-    this.minimap?.clearDestination();
-
-    if (opts.hardSnap) {
-      this.slideOffsetX = 0;
-      this.slideOffsetZ = 0;
-      this.slideStartMs = 0;
-      if (this.localPlayer) {
-        this.localPlayer.setPositionXYZ(serverX, this.getHeight(serverX, serverZ), serverZ);
-        this.localPlayer.stopWalking();
-      }
-    } else {
-      const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
-      const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
-      this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
-      this.renderLocalPlayerWithSlide();
-      this.localPlayer?.stopWalking();
-    }
-
-    this.inputManager.setPlayerY(this.getHeight(this.playerX, this.playerZ));
   }
 
   private reconcileLocalPlayerToServer(serverX: number, serverZ: number, hiddenCatchup: boolean, serverMoving: boolean = false): void {
@@ -7908,6 +7899,7 @@ export class GameManager {
         this.localPlayer.setPositionXYZ(serverX, this.getHeight(serverX, serverZ), serverZ);
         this.localPlayer.stopWalking();
       }
+      this.inputManager.setPlayerY(this.getHeight(serverX, serverZ));
     } else {
       const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
       const slideMs = Math.min(Math.max(dragDist / 3.0 * 1000, 200), 800);
