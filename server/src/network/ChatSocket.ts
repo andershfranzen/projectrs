@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ALL_SKILLS, type QuestDef, type SkillId } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 import type { SocialEntry, SocialListKind, SocialLists } from '../Database';
 
@@ -23,6 +23,17 @@ const chatSockets: Set<ServerWebSocket<ChatSocketData>> = new Set();
 const chatSocketsByUsername: Map<string, ServerWebSocket<ChatSocketData>> = new Map();
 const chatSocketsByAccountId: Map<number, ServerWebSocket<ChatSocketData>> = new Map();
 const ignoredAccountIdsByAccountId: Map<number, Set<number>> = new Map();
+
+function parseSkillId(raw: string): SkillId | null {
+  const normalized = raw.toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'ranging') return 'archery';
+  for (const skill of ALL_SKILLS) {
+    if (skill.toLowerCase() === raw.toLowerCase() || SKILL_NAMES[skill].toLowerCase().replace(/[\s_-]+/g, '') === normalized) {
+      return skill;
+    }
+  }
+  return null;
+}
 
 // --- Per-socket rate limit ---
 // Game socket has its own rate limit (Player.checkRateLimit, 30/sec). Chat
@@ -400,16 +411,16 @@ function handleCommand(
 
     case '/xp': {
       if (denyIfNotAdmin(ws, from)) return;
-      const skillName = (parts[1] ?? '').toLowerCase();
+      const skillId = parseSkillId(parts[1] ?? '');
       const amount = parseInt(parts[2]);
-      if (!ALL_SKILLS.includes(skillName as SkillId) || !isFinite(amount) || amount <= 0) {
-        sendSystem(ws, `Usage: /xp <skill> <amount>. Skills: ${ALL_SKILLS.join(', ')}`);
+      if (!skillId || !isFinite(amount) || amount <= 0) {
+        sendSystem(ws, `Usage: /xp <skill> <amount>. Skills: ${ALL_SKILLS.map(id => SKILL_NAMES[id]).join(', ')}`);
         return;
       }
       const player = findPlayerByUsername(from, world);
       if (player) {
-        world.grantXp(player, skillName as SkillId, amount);
-        sendSystem(ws, `Granted ${amount} ${skillName} XP`);
+        world.grantXp(player, skillId, amount);
+        sendSystem(ws, `Granted ${amount} ${SKILL_NAMES[skillId]} XP`);
       }
       break;
     }

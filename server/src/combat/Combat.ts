@@ -173,7 +173,7 @@ export const RANGED_ATTACK_DISTANCE = 7;
 
 /**
  * Ranged combat: player attacks NPC with a bow + arrows.
- * Same dual-roll hit check as melee but uses archery/ranged stats.
+ * Same dual-roll hit check as melee but uses ranging stats.
  * Arrow rangedStrength is passed in separately since arrows aren't equipped.
  */
 export function processPlayerRangedCombat(
@@ -196,7 +196,7 @@ export function processPlayerRangedCombat(
   // Compute equipment bonuses
   const bonuses = player.computeBonuses(itemDefs);
 
-  // Effective ranged level (archery skill + 8, no stance bonus for v1)
+  // Effective ranged level (ranging skill + 8, no stance bonus for v1)
   const effRanged = player.skills.archery.currentLevel + 8;
 
   // Attack roll uses ranged accuracy
@@ -230,7 +230,7 @@ export function processPlayerRangedCombat(
     }
   }
 
-  // Award archery XP (4 XP per damage dealt)
+  // Award ranging XP (4 XP per damage dealt)
   const xpDrops: XpDrop[] = [];
   const levelUps: { skill: string; level: number }[] = [];
 

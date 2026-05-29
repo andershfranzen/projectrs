@@ -17,7 +17,7 @@ export const SKILL_NAMES: Record<SkillId, string> = {
   defence: 'Defence',
   goodmagic: 'Good Magic',
   evilmagic: 'Evil Magic',
-  archery: 'Archery',
+  archery: 'Ranging',
   hitpoints: 'Hitpoints',
   woodcut: 'Woodcut',
   fishing: 'Fishing',
