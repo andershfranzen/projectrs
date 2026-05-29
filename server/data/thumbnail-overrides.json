@@ -863,6 +863,15 @@
     "rotationZ": 2.722713633111154,
     "iconScale": 1
   },
+  "269": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.9
+  },
   "270": {
     "alpha": -1.1257373675363425,
     "beta": 1.208304866765305,

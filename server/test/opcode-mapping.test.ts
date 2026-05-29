@@ -11,7 +11,33 @@ import {
   ROTATABLE_SERVER_OPCODE_VALUES,
 } from '@projectrs/shared';
 
+function enumOpcodeEntries(value: Record<string, string | number>): Array<[string, number]> {
+  const entries: Array<[string, number]> = [];
+  for (const [name, opcode] of Object.entries(value)) {
+    if (!Number.isNaN(Number(name)) || typeof opcode !== 'number') continue;
+    entries.push([name, opcode]);
+  }
+  return entries;
+}
+
+function duplicateOpcodeLabels(entries: Array<[string, number]>): string[] {
+  const namesByOpcode = new Map<number, string[]>();
+  for (const [name, opcode] of entries) {
+    const names = namesByOpcode.get(opcode) ?? [];
+    names.push(name);
+    namesByOpcode.set(opcode, names);
+  }
+  return [...namesByOpcode.entries()]
+    .filter(([, names]) => names.length > 1)
+    .map(([opcode, names]) => `${opcode}: ${names.join(', ')}`);
+}
+
 describe('per-session opcode mapping', () => {
+  test('logical opcode enum values are unique', () => {
+    expect(duplicateOpcodeLabels(enumOpcodeEntries(ClientOpcode))).toEqual([]);
+    expect(duplicateOpcodeLabels(enumOpcodeEntries(ServerOpcode))).toEqual([]);
+  });
+
   test('shuffles every gameplay opcode away from its enum value', () => {
     const mapping = createOpcodeMapping();
 

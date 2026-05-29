@@ -28,13 +28,26 @@ export const CHARACTER_ANIM_DIR = '/Character models/new animations';
 /** Idle animation path. Used by every place that loads a CharacterEntity. */
 export const CHARACTER_IDLE_ANIM = `${CHARACTER_ANIM_DIR}/idle.glb`;
 
+export interface CharacterAnimationDef {
+  name: string;
+  path: string;
+  /** Optional action name inside the GLB when a file contains multiple actions. */
+  animName?: string;
+}
+
+export const BOW_ATTACK_ANIMATION: CharacterAnimationDef = {
+  name: 'bow_attack',
+  path: `${CHARACTER_ANIM_DIR}/ranging.glb`,
+  animName: 'Armature.001Action',
+};
+
 /** Animations every CharacterEntity loads — single source of truth so
  *  EntityManager (remote players, customizable NPCs) and GameManager (the
  *  local player) stay in lock-step. Add new files here once; both load
  *  paths pick them up. Keep names matching what the picker in
  *  GameManager.getPlayerAttackAnimName + CharacterEntity.playAnimByState
  *  look up. */
-export const PLAYER_ANIMATIONS: readonly { name: string; path: string }[] = [
+export const PLAYER_ANIMATIONS: readonly CharacterAnimationDef[] = [
   { name: 'idle',                    path: `${CHARACTER_ANIM_DIR}/idle.glb` },
   { name: 'walk',                    path: `${CHARACTER_ANIM_DIR}/walk.glb` },
   // 2004scape-style 7-slot movement set. Server emits step direction + face
@@ -56,6 +69,7 @@ export const PLAYER_ANIMATIONS: readonly { name: string; path: string }[] = [
   { name: 'kick',                    path: `${CHARACTER_ANIM_DIR}/kick.glb` },
   { name: 'stab',                    path: `${CHARACTER_ANIM_DIR}/stab.glb` },
   { name: 'attack_1h_slash',         path: `${CHARACTER_ANIM_DIR}/one handed slash.glb` },
+  BOW_ATTACK_ANIMATION,
   { name: 'chop',                    path: `${CHARACTER_ANIM_DIR}/woodcutting.glb` },
   { name: 'mine',                    path: `${CHARACTER_ANIM_DIR}/mining.glb` },
   // Two-handed spell cast — driven by spell-system playSpellEffect()
@@ -66,16 +80,18 @@ export const PLAYER_ANIMATIONS: readonly { name: string; path: string }[] = [
 /** Curated subset for combat-only NPCs (Custom Humanoid, Guard, Goblin, etc.).
  *  Loading all PLAYER_ANIMATIONS per NPC would ImportMeshAsync ~15 GLBs each
  *  — bandwidth + Babylon parse cost adds up fast with several visible NPCs.
- *  Skips player-only tracks: chop/mine/spell_cast (skill anims), sidesteps +
- *  turn-in-place (player-only state machine), one_handed_slash is folded in
- *  via the weapon picker. Idle + walk + the seven attack variants is enough
- *  for the weapon-driven picker to resolve every melee branch.
+ *  Skips player-only tracks: chop/mine/spell_cast (skill anims). Idle, walk,
+ *  sidesteps, turn-in-place, and attack variants cover RS2-style combat
+ *  movement without loading every player action.
  *
  *  NPCs that need extra anims (ranged, magic) can extend this list rather
  *  than fall back to PLAYER_ANIMATIONS — keep this the cheap default. */
-export const NPC_COMBAT_ANIMATIONS: readonly { name: string; path: string }[] = [
+export const NPC_COMBAT_ANIMATIONS: readonly CharacterAnimationDef[] = [
   { name: 'idle',             path: `${CHARACTER_ANIM_DIR}/idle.glb` },
   { name: 'walk',             path: `${CHARACTER_ANIM_DIR}/walk.glb` },
+  { name: 'walk_l',           path: `${CHARACTER_ANIM_DIR}/sidestep A.glb` },
+  { name: 'walk_r',           path: `${CHARACTER_ANIM_DIR}/sidestep B.glb` },
+  { name: 'turn',             path: `${CHARACTER_ANIM_DIR}/turn in place.glb` },
   { name: 'attack_slash',     path: `${CHARACTER_ANIM_DIR}/attack_slash.glb` },
   { name: 'attack_1h_slash',  path: `${CHARACTER_ANIM_DIR}/one handed slash.glb` },
   { name: 'attack_2h_slash',  path: `${CHARACTER_ANIM_DIR}/2h slash.glb` },

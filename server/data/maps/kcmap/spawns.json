@@ -286,7 +286,7 @@
       "npcId": 20,
       "x": 284.5,
       "z": 133.5,
-      "wanderRange": 8,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 4,
@@ -304,7 +304,7 @@
       "npcId": 6,
       "x": 314.5,
       "z": 157.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false
     },
     {
@@ -312,7 +312,7 @@
       "npcId": 6,
       "x": 311.5,
       "z": 157.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false
     },
     {
@@ -336,7 +336,7 @@
       "npcId": 6,
       "x": 308.5,
       "z": 152.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false
     },
     {
@@ -344,7 +344,7 @@
       "npcId": 6,
       "x": 318.5,
       "z": 160.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false
     },
     {
@@ -352,7 +352,7 @@
       "npcId": 6,
       "x": 313.5,
       "z": 152.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false
     },
     {
@@ -402,7 +402,7 @@
       "npcId": 100,
       "x": 326.5,
       "z": 134.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 15,
@@ -433,7 +433,7 @@
       "npcId": 100,
       "x": 330.5,
       "z": 134.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 15,
@@ -464,7 +464,7 @@
       "npcId": 100,
       "x": 322.5,
       "z": 135.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 15,
@@ -495,7 +495,7 @@
       "npcId": 100,
       "x": 335.5,
       "z": 137.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 15,
@@ -526,7 +526,7 @@
       "npcId": 100,
       "x": 319.5,
       "z": 137.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 15,
@@ -661,7 +661,7 @@
       "npcId": 100,
       "x": 327.5,
       "z": 134.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 15,
@@ -692,7 +692,7 @@
       "npcId": 101,
       "x": 310.5,
       "z": 136.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 0,
@@ -795,7 +795,7 @@
       "npcId": 13,
       "x": 81.5,
       "z": 40.5,
-      "wanderRange": 3,
+      "wanderRange": 2,
       "aggressive": false,
       "appearance": {
         "shirtColor": 4,
@@ -854,7 +854,7 @@
       "npcId": 7,
       "x": 70.5,
       "z": 33.5,
-      "wanderRange": 4,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,
@@ -883,7 +883,7 @@
       "npcId": 7,
       "x": 87.5,
       "z": 52.5,
-      "wanderRange": 4,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,
@@ -912,7 +912,7 @@
       "npcId": 7,
       "x": 82.5,
       "z": 51.5,
-      "wanderRange": 4,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,
@@ -941,7 +941,7 @@
       "npcId": 7,
       "x": 84.5,
       "z": 14.5,
-      "wanderRange": 4,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,
@@ -970,7 +970,7 @@
       "npcId": 7,
       "x": 87.5,
       "z": 14.5,
-      "wanderRange": 4,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 8,
@@ -1040,7 +1040,7 @@
       "npcId": 102,
       "x": 69.5,
       "z": 38.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "appearance": {
         "shirtColor": 2,
         "pantsColor": 12,
@@ -1081,7 +1081,7 @@
       "npcId": 102,
       "x": 77.5,
       "z": 37.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "appearance": {
         "shirtColor": 11,
         "pantsColor": 12,
@@ -1315,7 +1315,7 @@
       "npcId": 102,
       "x": 242.5,
       "z": 152.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "appearance": {
         "shirtColor": 11,
         "pantsColor": 12,
@@ -1397,7 +1397,7 @@
       "npcId": 102,
       "x": 352.5,
       "z": 177.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "appearance": {
         "shirtColor": 11,
         "pantsColor": 12,
@@ -1438,7 +1438,7 @@
       "npcId": 20,
       "x": 100.5,
       "z": 37.5,
-      "wanderRange": 8,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 4,
@@ -1456,7 +1456,7 @@
       "npcId": 20,
       "x": 94.5,
       "z": 30.5,
-      "wanderRange": 8,
+      "wanderRange": 6,
       "aggressive": false,
       "appearance": {
         "shirtColor": 4,
@@ -1603,35 +1603,35 @@
       "npcId": 22,
       "x": 359.5,
       "z": 73.5,
-      "wanderRange": 3
+      "wanderRange": 6
     },
     {
       "id": 106,
       "npcId": 22,
       "x": 362.5,
       "z": 69.5,
-      "wanderRange": 3
+      "wanderRange": 6
     },
     {
       "id": 107,
       "npcId": 22,
       "x": 366.5,
       "z": 69.5,
-      "wanderRange": 3
+      "wanderRange": 6
     },
     {
       "id": 108,
       "npcId": 22,
       "x": 365.5,
       "z": 74.5,
-      "wanderRange": 3
+      "wanderRange": 6
     },
     {
       "id": 109,
       "npcId": 22,
       "x": 359.5,
       "z": 67.5,
-      "wanderRange": 3
+      "wanderRange": 6
     },
     {
       "id": 110,
@@ -1742,7 +1742,7 @@
       "npcId": 20,
       "x": 290.5,
       "z": 135.5,
-      "wanderRange": 3,
+      "wanderRange": 6,
       "appearance": {
         "bodyType": 1,
         "shirtColor": 4,
@@ -1760,6 +1760,41 @@
           0.16862745098039217
         ]
       }
+    },
+    {
+      "id": 128,
+      "npcId": 6,
+      "x": 308.5,
+      "z": 154.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 129,
+      "npcId": 6,
+      "x": 312.5,
+      "z": 154.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 130,
+      "npcId": 8,
+      "x": 68.5,
+      "z": 47.5,
+      "wanderRange": 1,
+      "aggressive": false,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 1,
+        "pantsColor": 6,
+        "shoesColor": 5,
+        "hairColor": 7,
+        "beltColor": 4,
+        "skinColor": 0,
+        "hairStyle": 13
+      },
+      "name": "Tilda Goosefeather"
     }
   ],
   "objects": [],

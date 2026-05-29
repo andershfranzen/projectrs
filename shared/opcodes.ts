@@ -162,6 +162,10 @@ export enum ServerOpcode {
    *  shuffled wire values instead of the enum constants below. */
   OPCODE_MAPPING = 3,
   PLAYER_SYNC = 10,
+  /** NPC state. Layout:
+   *  [entityId, npcDefId, x10, z10, health, maxHealth, floor, y10,
+   *   continueWalking, facingQ1000, faceTargetEntityId?].
+   *  faceTargetEntityId covers both combat chase and retreat backpedal. */
   NPC_SYNC = 11,
   GROUND_ITEM_SYNC = 12,
   PLAYER_STATS = 21,
@@ -206,7 +210,7 @@ export enum ServerOpcode {
    *  future in-map TP (spell, debug). For cross-map jumps use MAP_CHANGE. */
   PLAYER_TELEPORT = 71,
   /** Equipment of a remote player (not the receiver). Layout:
-   *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape].
+   *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo].
    *  Sent on equip/unequip changes and on chunk-entry resync so remote
    *  CharacterEntities can render gear. itemId=0 for empty slots. */
   PLAYER_REMOTE_EQUIPMENT = 72,
@@ -218,7 +222,7 @@ export enum ServerOpcode {
   NPC_APPEARANCE = 73,
   /** Per-spawn equipment for a customizable NPC. Layout matches
    *  PLAYER_REMOTE_EQUIPMENT:
-   *  [npcEntityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape].
+   *  [npcEntityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo].
    *  itemId=0 → empty slot. Broadcast on chunk-entry only. */
   NPC_EQUIPMENT = 74,
   /** Combat stance of a remote player. Layout: [entityId, stanceIdx]
@@ -276,6 +280,10 @@ export enum ServerOpcode {
   /** Current total player renown. Values: [renown]. Sent on login and when
    *  quest completion grants renown. */
   RENOWN_SYNC = 88,
+  /** Play a one-shot animation on a world object's placed GLB model.
+   *  Values: [objectEntityId]. Used by animated crafting stations whose
+   *  mesh animation should fire per successful production tick. */
+  WORLD_OBJECT_ANIMATION = 89,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].

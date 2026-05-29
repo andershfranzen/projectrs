@@ -157,6 +157,7 @@ export interface SavedPlayerState {
   skills: SkillBlock;
   inventory: ({ itemId: number; quantity: number } | null)[];
   equipment: Map<EquipSlot, number>;
+  equipmentQuantities: Map<EquipSlot, number>;
   stance: MeleeStance;
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
@@ -285,8 +286,13 @@ function removeItemsFromSavedEquipment(rawJson: string | null, itemIds: readonly
     const retired = new Set<number>(itemIds);
     const equipment = parsed as Record<string, unknown>;
     let changed = false;
-    for (const [slot, itemId] of Object.entries(equipment)) {
-      if (typeof itemId !== 'number' || !retired.has(itemId)) continue;
+    for (const [slot, value] of Object.entries(equipment)) {
+      const itemId = typeof value === 'number'
+        ? value
+        : value && typeof value === 'object' && typeof (value as { itemId?: unknown }).itemId === 'number'
+          ? (value as { itemId: number }).itemId
+          : null;
+      if (itemId === null || !retired.has(itemId)) continue;
       delete equipment[slot];
       changed = true;
     }
@@ -1320,9 +1326,12 @@ export class GameDatabase {
       };
     }
 
-    const equipment: Record<string, number> = {};
+    const equipment: Record<string, number | { itemId: number; quantity: number }> = {};
     for (const [slot, itemId] of player.equipment) {
-      equipment[slot] = itemId;
+      const quantity = player.getEquipmentQuantity(slot);
+      equipment[slot] = slot === 'ammo' || quantity !== 1
+        ? { itemId, quantity }
+        : itemId;
     }
 
     this.db.query(`
@@ -1482,17 +1491,29 @@ export class GameDatabase {
 
     // Parse equipment — same validation
     let equipment: Map<EquipSlot, number>;
+    let equipmentQuantities: Map<EquipSlot, number>;
     try {
       const saved = JSON.parse(row.equipment) as Record<string, unknown>;
       equipment = new Map();
-      const validSlots: Set<string> = new Set(['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape']);
-      for (const [slot, itemId] of Object.entries(saved)) {
+      equipmentQuantities = new Map();
+      const validSlots: Set<string> = new Set(['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
+      for (const [slot, value] of Object.entries(saved)) {
         if (!validSlots.has(slot)) continue;
+        let itemId: unknown = value;
+        let quantity: unknown = 1;
+        if (value && typeof value === 'object') {
+          const entry = value as { itemId?: unknown; quantity?: unknown };
+          itemId = entry.itemId;
+          quantity = entry.quantity ?? 1;
+        }
         if (typeof itemId !== 'number' || !Number.isInteger(itemId) || itemId <= 0) continue;
+        if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_STACK) continue;
         equipment.set(slot as EquipSlot, itemId);
+        if (slot === 'ammo' || quantity !== 1) equipmentQuantities.set(slot as EquipSlot, quantity);
       }
     } catch {
       equipment = new Map();
+      equipmentQuantities = new Map();
     }
 
     // Parse stance
@@ -1548,6 +1569,7 @@ export class GameDatabase {
       skills,
       inventory,
       equipment,
+      equipmentQuantities,
       stance,
       appearance,
       bank,

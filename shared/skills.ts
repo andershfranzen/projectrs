@@ -156,6 +156,21 @@ export const STANCE_XP: Record<MeleeStance, { accuracy: number; strength: number
   controlled: { accuracy: 1.33, strength: 1.33, defence: 1.33 },
 };
 
+export const BOW_ACCURATE_ATTACK_SPEED = 4;
+export const BOW_RAPID_ATTACK_SPEED = 3;
+export const BOW_ACCURATE_ATTACK_ROLL_MULTIPLIER = 1.2;
+
+/** Bow combat reuses the existing stance wire values: accurate = Accurate,
+ *  aggressive = Rapid. Defensive/controlled fall back to accurate-speed bow
+ *  pacing until the client/server grow a dedicated ranged-style protocol. */
+export function bowAttackSpeedForStance(stance: MeleeStance): number {
+  return stance === 'aggressive' ? BOW_RAPID_ATTACK_SPEED : BOW_ACCURATE_ATTACK_SPEED;
+}
+
+export function bowAttackRollMultiplierForStance(stance: MeleeStance): number {
+  return stance === 'accurate' ? BOW_ACCURATE_ATTACK_ROLL_MULTIPLIER : 1.0;
+}
+
 // OSRS combat formulas
 export const ACC_BASE = 64;
 

@@ -26,6 +26,7 @@ import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
+import { ArrowProjectileManager, arrowProjectileTravelMs } from '../rendering/ArrowProjectile';
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import type { Targetable } from '../rendering/Targetable';
@@ -56,7 +57,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -99,6 +100,7 @@ function recipePanelSkillFor(def: WorldObjectDef): SkillId {
 function recipePanelInputNounFor(def: WorldObjectDef): string {
   if (def.id === POTTERY_WHEEL_OBJECT_DEF_ID) return 'soft clay';
   if (def.id === KILN_OBJECT_DEF_ID) return 'unfired clay';
+  if (def.id === SPINNING_WHEEL_OBJECT_DEF_ID) return 'sinew';
   return RECIPE_INPUT_NOUN_BY_CATEGORY[def.category] ?? 'bars';
 }
 
@@ -209,6 +211,7 @@ export class GameManager {
   private scene: Scene;
   private camera: GameCamera;
   private chunkManager: ChunkManager;
+  private arrowProjectiles: ArrowProjectileManager;
   private inputManager: InputManager;
   private network: NetworkManager;
   private readonly onFatalDisconnect?: () => void;
@@ -544,6 +547,7 @@ export class GameManager {
     this.scene = new Scene(this.engine);
     this.scene.useRightHandedSystem = true; // Match Three.js coordinate system (KC editor)
     this.scene.clearColor = new Color4(0, 0, 0, 1);
+    this.arrowProjectiles = new ArrowProjectileManager(this.scene);
     GameManager.preloadHitSplatAssets();
     // Groups 1 (water) and 2 (texture planes) must NOT clear depth — they need terrain depth from group 0
     this.scene.setRenderingAutoClearDepthStencil(1, false, false, false);
@@ -1565,7 +1569,7 @@ export class GameManager {
       // Depleted ores/stumps stay blocking — they still physically occupy
       // the tile. setObjectTilesBlocked is a no-op for doors.
       if (def?.blocking) {
-        this.setObjectTilesBlocked(data.x, data.z, def, true, data.floor);
+        this.setObjectTilesBlocked(data.x, data.z, def, true, data.floor, data.interactionTiles);
       }
     }
   }
@@ -1574,10 +1578,25 @@ export class GameManager {
     return `${Math.floor(floor)},${Math.floor(tileX)},${Math.floor(tileZ)}`;
   }
 
-  private setObjectTilesBlocked(x: number, z: number, def: WorldObjectDef, blocked: boolean, floor: number = 0): void {
-    if (!def.blocking || def.category === 'door') return;
+  private setObjectTilesBlocked(
+    x: number,
+    z: number,
+    def: WorldObjectDef,
+    blocked: boolean,
+    floor: number = 0,
+    interactionTiles?: ReadonlyArray<{ x: number; z: number }>,
+  ): void {
+    if (!def.blocking || def.category === 'door' || usesMapAuthoredObjectCollision(def)) return;
+    let interactionTileKeys: Set<string> | null = null;
+    if (interactionTiles?.length) {
+      interactionTileKeys = new Set();
+      for (const tile of interactionTiles) {
+        interactionTileKeys.add(this.blockedObjectKey(floor, tile.x, tile.z));
+      }
+    }
     for (const tile of getObjectFootprintTiles(x, z, def)) {
       const key = this.blockedObjectKey(floor, tile.x, tile.z);
+      if (interactionTileKeys?.has(key)) continue;
       if (blocked) this.blockedObjectTiles.add(key);
       else this.blockedObjectTiles.delete(key);
     }
@@ -1596,6 +1615,7 @@ export class GameManager {
     stab:                    0.5,
     bow_attack:              0.6,
   };
+  private static readonly RANGED_PROJECTILE_RELEASE_FRACTION = 0.42;
 
   private static readonly TWO_HANDED_WEAPON_RE = /\b(?:2h|2-handed|two-handed)\b/i;
 
@@ -1666,6 +1686,47 @@ export class GameManager {
     return 'attack_punch';
   }
 
+  private getAttackAnimationDurationMs(attacker: Targetable | null | undefined, animName: string): number {
+    const liveDuration = asAttackAnimationHost(attacker)?.getAnimationDurationMs?.(animName) ?? 0;
+    return liveDuration > 0 ? liveDuration : 1200;
+  }
+
+  private getAttackFaceLockDurationMs(attacker: Targetable | null | undefined, animName: string): number {
+    const durationMs = this.getAttackAnimationDurationMs(attacker, animName);
+    const fraction = animName === 'bow_attack'
+      ? GameManager.RANGED_PROJECTILE_RELEASE_FRACTION + 0.03
+      : 0.45;
+    return Math.max(260, Math.min(540, durationMs * fraction));
+  }
+
+  private lockCharacterAttackFacing(attacker: CharacterEntity | null | undefined, targetId: number, animName: string): void {
+    if (!attacker || targetId <= 0) return;
+    const target = this.resolveTargetableIncludingLocal(targetId);
+    if (!target) return;
+    attacker.lockAttackFaceTowardXZ(
+      target.position.x,
+      target.position.z,
+      this.getAttackFaceLockDurationMs(attacker, animName),
+    );
+  }
+
+  private getRangedProjectileReleaseMs(attacker: Targetable | null | undefined): number {
+    return this.getAttackAnimationDurationMs(attacker, 'bow_attack') * GameManager.RANGED_PROJECTILE_RELEASE_FRACTION;
+  }
+
+  private getProjectileLaunchPreview(attacker: Targetable): Vector3 {
+    const withOrigin = attacker as Targetable & { getCastOrigin?: () => Vector3 };
+    if (typeof withOrigin.getCastOrigin === 'function') return withOrigin.getCastOrigin();
+    const anchor = attacker.getTargetAnchor();
+    return new Vector3(anchor.x, anchor.y + 0.15, anchor.z);
+  }
+
+  private getRangedProjectileImpactMs(attacker: Targetable, target: Targetable): number {
+    const from = this.getProjectileLaunchPreview(attacker);
+    const to = target.getTargetAnchor();
+    return this.getRangedProjectileReleaseMs(attacker) + arrowProjectileTravelMs(from, to);
+  }
+
   private applyRemotePlayerAnimation(
     entityId: number,
     kind: PlayerAnimationKind,
@@ -1722,11 +1783,11 @@ export class GameManager {
     }
 
     if (kind === PlayerAnimationKind.Attack) {
-      remote.playAttackAnimation(this.getPlayerAttackAnimName(entityId));
+      const animName = this.getPlayerAttackAnimName(entityId);
+      this.lockCharacterAttackFacing(remote, targetId, animName);
+      remote.playAttackAnimation(animName);
       if (targetId > 0) {
         this.entities.remoteCombatTargets.set(entityId, targetId);
-        const target = this.resolveTargetableIncludingLocal(targetId);
-        if (target) remote.faceToward(target.position);
       }
     }
   }
@@ -2053,10 +2114,8 @@ export class GameManager {
    *  to a CharacterEntity. Each slot is loaded asynchronously; ordering
    *  doesn't matter since slots don't depend on each other. */
   private applyRemoteEquipmentArray(target: CharacterEntity, slots: number[], entityId?: number): void {
-    // Order matches EQUIP_SLOT_NAMES on the server-side encoder.
-    const SLOT_ORDER: string[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
-    for (let i = 0; i < SLOT_ORDER.length; i++) {
-      const slotName = SLOT_ORDER[i];
+    for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) {
+      const slotName = EQUIP_SLOT_NAMES[i];
       const itemId = slots[i] ?? 0;
       // Fire-and-forget — failures are logged inside loadGearSmart.
       void this.applyGearToCharacter(target, slotName, itemId, /* isLocal */ false, entityId);
@@ -2847,9 +2906,9 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PLAYER_REMOTE_EQUIPMENT, (_op, v) => {
-      // Layout: [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape]
+      // Layout: [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]
       const entityId = v[0];
-      const slots = v.slice(1, 11);
+      const slots = v.slice(1, 1 + EQUIP_SLOT_NAMES.length);
       // Cache so the apply re-runs if/when the entity is (re)created.
       this.entities.remoteEquipment.set(entityId, slots);
       const remote = this.entities.remotePlayers.get(entityId);
@@ -2878,13 +2937,18 @@ export class GameManager {
       const toolItemId = v[4] ?? 0;
 
       if (entityId === this.localPlayerId) {
-        if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
-          this.localPlayer.playAttackAnimation(this.getPlayerAttackAnimName(entityId), true);
+          const animName = this.getPlayerAttackAnimName(entityId);
+          this.lockCharacterAttackFacing(this.localPlayer, targetId, animName);
+          this.localPlayer.playAttackAnimation(animName, true);
         } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
+          if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
           this.localPlayer.playNamedOneShot('spell_cast_2h');
         } else if (kind === PlayerAnimationKind.Idle && this.localPlayer) {
+          if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
           if (!this.localPlayer.isAttackAnimationPlaying()) this.localPlayer.resetTransientAnimation();
+        } else if (targetId > 0) {
+          this.faceLocalPlayerTowardTarget(targetId);
         }
         return;
       }
@@ -2900,8 +2964,13 @@ export class GameManager {
       const floor = v.length >= 7 ? Math.floor(v[6] ?? 0) : 0;
       const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       const facingQ = v.length >= 10 ? v[9] : NPC_FACING_NONE;
+      const faceTargetId = v.length >= 11 ? (v[10] ?? 0) : 0;
 
       this.entities.npcDefs.set(entityId, npcDefId);
+      if (v.length >= 11) {
+        if (faceTargetId > 0) this.entities.npcCombatTargets.set(entityId, faceTargetId);
+        else this.entities.npcCombatTargets.delete(entityId);
+      }
       if (Number.isFinite(facingQ) && facingQ !== NPC_FACING_NONE) {
         this.entities.npcFacingAngles.set(entityId, facingQ / 1000);
       }
@@ -2968,9 +3037,9 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.NPC_EQUIPMENT, (_op, v) => {
-      // Layout: [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape]
+      // Layout: [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]
       const entityId = v[0];
-      const slots = v.slice(1, 11);
+      const slots = v.slice(1, 1 + EQUIP_SLOT_NAMES.length);
       this.entities.npcEquipment.set(entityId, slots);
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
@@ -3039,7 +3108,7 @@ export class GameManager {
       const objectData = this.worldObjectDefs.get(entityId);
       if (objectData) {
         const def = this.objectDefsCache.get(objectData.defId);
-        if (def) this.setObjectTilesBlocked(objectData.x, objectData.z, def, false, objectData.floor);
+        if (def) this.setObjectTilesBlocked(objectData.x, objectData.z, def, false, objectData.floor, objectData.interactionTiles);
         const model = this.worldObjectModels.get(entityId);
         if (model) this.setWorldObjectPickTarget(entityId, false, model);
         this.objectModels.deleteStump(entityId);
@@ -3070,6 +3139,7 @@ export class GameManager {
         return;
       }
 
+      const targetEntity = this.resolveTargetableIncludingLocal(targetId);
       const targetSprite = this.entities.npcSprites.get(targetId) || this.entities.remotePlayers.get(targetId);
 
       if (this.entities.npcSprites.has(attackerId)) {
@@ -3109,7 +3179,9 @@ export class GameManager {
       // Prefer the actual loaded anim duration (local player has a CharacterEntity).
       // Fall back to a fixed estimate for sprites/NPCs that don't expose durations.
       const liveDuration = asAttackAnimationHost(attackerEntity)?.getAnimationDurationMs?.(animName) ?? 0;
-      const impactMs = (liveDuration > 0 ? liveDuration : 800) * fraction;
+      const impactMs = animName === 'bow_attack' && attackerEntity && targetEntity
+        ? this.getRangedProjectileImpactMs(attackerEntity, targetEntity)
+        : (liveDuration > 0 ? liveDuration : 800) * fraction;
       if (targetId === this.localPlayerId) this.clearPendingLocalHealthSync();
       const splatAtTarget = () => {
         if (this.destroyed) {
@@ -3142,27 +3214,10 @@ export class GameManager {
     // Ranged projectile visual
     this.network.on(ServerOpcode.COMBAT_PROJECTILE, (_op, v) => {
       const [attackerId, targetId, _projectileType] = v;
-
-      // Get attacker and target positions
-      let fromPos: Vector3 | null = null;
-      let toPos: Vector3 | null = null;
-
-      if (attackerId === this.localPlayerId && this.localPlayer) {
-        fromPos = this.localPlayer.position.clone();
-      } else {
-        const sprite = this.entities.remotePlayers.get(attackerId) || this.entities.npcSprites.get(attackerId);
-        if (sprite) fromPos = sprite.position.clone();
-      }
-
-      const targetSprite = this.entities.npcSprites.get(targetId) || this.entities.remotePlayers.get(targetId);
-      if (targetSprite) toPos = targetSprite.position.clone();
-      if (targetId === this.localPlayerId && this.localPlayer) {
-        toPos = this.localPlayer.position.clone();
-      }
-
-      if (fromPos && toPos) {
-        this.spawnProjectile(fromPos, toPos);
-      }
+      const attacker = this.resolveTargetableIncludingLocal(attackerId);
+      const target = this.resolveTargetableIncludingLocal(targetId);
+      if (!attacker || !target) return;
+      this.arrowProjectiles.spawn(attacker, target, this.getRangedProjectileReleaseMs(attacker));
     });
 
     // Spell cast — server broadcasts [casterId, targetId, spellIndex] when any
@@ -3289,7 +3344,7 @@ export class GameManager {
       } else if (def) {
         // Depleted state intentionally ignored — depleted ores/stumps still
         // occupy their tile (matches server policy at the depletion site).
-        this.setObjectTilesBlocked(x, z, def, true, floor);
+        this.setObjectTilesBlocked(x, z, def, true, floor, interactionTiles.length ? interactionTiles : undefined);
       }
 
       // Try to link to an editor-placed GLB model. Cached placed-node links are
@@ -3415,6 +3470,11 @@ export class GameManager {
           this.setWorldObjectPickTarget(objectEntityId, this.isWorldObjectInteractable(def, isDepleted === 1), model);
         }
       }
+    });
+
+    this.network.on(ServerOpcode.WORLD_OBJECT_ANIMATION, (_op, v) => {
+      const objectEntityId = v[0] ?? -1;
+      this.playWorldObjectAnimation(objectEntityId);
     });
 
     this.network.on(ServerOpcode.SKILLING_START, (_op, v) => {
@@ -3653,26 +3713,35 @@ export class GameManager {
     this.network.on(ServerOpcode.PLAYER_EQUIPMENT, (_op, v) => {
       if (this.isSkilling) this.endLocalSkilling();
       const [slotIndex, itemId] = v;
+      const quantity = decodeQuantityValues(v, 2, itemId ? 1 : 0);
       this.localEquipment.set(slotIndex, itemId);
       if (this.sidePanel) {
-        this.sidePanel.updateEquipSlot(slotIndex, itemId);
+        this.sidePanel.updateEquipSlot(slotIndex, itemId, quantity);
       }
       // Attach/detach 3D gear on local player
       const gearLoad = this.equipGear(slotIndex, itemId);
       if (this._loginBootstrapPending) this._pendingLoginGearLoads.push(gearLoad);
     });
 
-    // Batch equipment: [slot0_itemId, slot1_itemId, ...]
+    // Batch equipment: [slot0_itemId, slot1_itemId, ..., ammoQtyHigh, ammoQtyLow]
     this.network.on(ServerOpcode.PLAYER_EQUIPMENT_BATCH, (_op, v) => {
+      const slotCount = EQUIP_SLOT_NAMES.length;
+      const ammoSlotIndex = EQUIP_SLOT_NAMES.indexOf('ammo');
+      const ammoItemId = ammoSlotIndex >= 0 ? (v[ammoSlotIndex] ?? 0) : 0;
+      const ammoQuantity = ammoSlotIndex >= 0
+        ? decodeQuantityValues(v, slotCount, ammoItemId ? 1 : 0)
+        : 0;
       if (this.sidePanel) {
-        for (let i = 0; i < v.length; i++) {
-          this.sidePanel.updateEquipSlot(i, v[i]);
-          this.localEquipment.set(i, v[i]);
+        for (let i = 0; i < slotCount; i++) {
+          const itemId = v[i] ?? 0;
+          const quantity = i === ammoSlotIndex ? ammoQuantity : (itemId ? 1 : 0);
+          this.sidePanel.updateEquipSlot(i, itemId, quantity);
+          this.localEquipment.set(i, itemId);
         }
       }
       // Attach/detach 3D gear on local player
-      for (let i = 0; i < v.length; i++) {
-        const gearLoad = this.equipGear(i, v[i]);
+      for (let i = 0; i < slotCount; i++) {
+        const gearLoad = this.equipGear(i, v[i] ?? 0);
         if (this._loginBootstrapPending) this._pendingLoginGearLoads.push(gearLoad);
       }
       this.noteLoginBootstrapPacket('equipment');
@@ -5483,6 +5552,17 @@ export class GameManager {
         if (requiredRange <= NPC_INTERACTION_RANGE && reachesInteractionTile) {
           return result;
         }
+        if (requiredRange > NPC_INTERACTION_RANGE) {
+          for (let i = 0; i < result.path.length; i++) {
+            const step = result.path[i];
+            if (this.isPointInNpcInteractionRange(npcEntityId, target, step.x, step.z, requiredRange, rangeMode)) {
+              return {
+                path: result.path.slice(0, i + 1),
+                preserveCurrentStep: result.preserveCurrentStep,
+              };
+            }
+          }
+        }
         // findPath() falls back to a closest-approach tile when the exact
         // adjacent tile is unreachable. For large NPCs, accepting that here
         // can walk the player near the body but still outside attack/talk
@@ -5566,7 +5646,8 @@ export class GameManager {
     return def.category === 'chest'
       || def.category === 'cookingrange'
       || def.id === POTTERY_WHEEL_OBJECT_DEF_ID
-      || def.id === KILN_OBJECT_DEF_ID;
+      || def.id === KILN_OBJECT_DEF_ID
+      || def.id === SPINNING_WHEEL_OBJECT_DEF_ID;
   }
 
   private hasClearObjectInteractionEdge(
@@ -5721,13 +5802,27 @@ export class GameManager {
     const stationLabel = def.name ?? 'Smithing';
     const inputNoun = recipePanelInputNounFor(def);
     const supportsBatch = supportsBatchObjectRecipe(def);
-    const usesInlineQuantities = def.category === 'cookingrange';
+    const usesInlineQuantities = def.category === 'cookingrange'
+      || def.id === SPINNING_WHEEL_OBJECT_DEF_ID;
+    const actionVerb = def.id === SPINNING_WHEEL_OBJECT_DEF_ID
+      ? 'Spin'
+      : usesInlineQuantities ? 'Cook' : 'Make';
 
     this.smithingPanel.show(def.recipes ?? [], inventory, skillLevel, hasTool, itemDefs, (recipeIndex, quantity = 1) => {
       const recipe = def.recipes?.[recipeIndex];
       const maxQuantity = recipe ? this.maxObjectRecipeQuantity(recipe, inventory) : 0;
       if (usesInlineQuantities && supportsBatch && recipe) {
         if (maxQuantity <= 0) return;
+        const data = this.worldObjectDefs.get(objectEntityId);
+        if (data) {
+          const ptx = Math.floor(this.playerX);
+          const ptz = Math.floor(this.playerZ);
+          if (!this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
+            this.walkToAdjacentTileOf(data, def);
+            return;
+          }
+          this.stopLocalWalkForImmediateObjectInteraction(data);
+        }
         const requested = quantity < 0 ? -1 : Math.max(1, Math.min(quantity, maxQuantity));
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested));
         return;
@@ -5768,7 +5863,7 @@ export class GameManager {
       inputNoun,
       requiresTool,
       layout: usesInlineQuantities ? 'flat' : 'grouped',
-      actionVerb: usesInlineQuantities ? 'Cook' : 'Make',
+      actionVerb,
       actionButtons: usesInlineQuantities
         ? [
             { label: '1', value: 1 },
@@ -6572,41 +6667,6 @@ export class GameManager {
     this.chatPanel?.addMessage(this.username || 'You', message, '#f4ded5');
   }
 
-  /** Spawn a simple arrow projectile that flies from→to over 300ms */
-  private spawnProjectile(from: Vector3, to: Vector3): void {
-    // Create a thin cylinder as the arrow
-    const arrow = MeshBuilder.CreateCylinder('projectile', { height: 0.6, diameter: 0.04 }, this.scene);
-    const mat = new StandardMaterial('projMat', this.scene);
-    mat.diffuseColor = new Color3(0.4, 0.25, 0.1); // brown
-    mat.emissiveColor = new Color3(0.2, 0.12, 0.05);
-    arrow.material = mat;
-
-    // Position at start, elevated slightly
-    from.y += 1.0;
-    to.y += 0.8;
-    arrow.position = from.clone();
-
-    // Orient toward target
-    const dir = to.subtract(from).normalize();
-    const up = Vector3.Up();
-    const right = Vector3.Cross(up, dir).normalize();
-    const correctedUp = Vector3.Cross(dir, right);
-    arrow.rotationQuaternion = Quaternion.FromLookDirectionLH(dir, correctedUp);
-
-    // Animate over 300ms
-    const duration = 300;
-    const startTime = performance.now();
-    const obs = this.scene.onBeforeRenderObservable.add(() => {
-      const t = Math.min(1, (performance.now() - startTime) / duration);
-      arrow.position = Vector3.Lerp(from, to, t);
-      if (t >= 1) {
-        this.scene.onBeforeRenderObservable.remove(obs);
-        arrow.dispose();
-        mat.dispose();
-      }
-    });
-  }
-
   private showHitSplat(pos: Vector3, damage: number): void {
     const didDamage = damage > 0;
     const worldPos = new Vector3(
@@ -6869,18 +6929,19 @@ export class GameManager {
     if (this.duelActive) return;
     if (performance.now() < this.castingUntil) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
+    const tx = Math.floor(worldX), tz = Math.floor(worldZ);
+    const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);
     this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
     // Walking elsewhere cancels the queued face-NPC — we'd look weird
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;
     // Release any face-lock so the body re-aims along the new travel
     // direction rather than continuing to strafe toward the previous target.
-    this.localPlayer?.clearFaceLock();
+    this.localPlayer?.clearFaceLock(clickedOwnTile, clickedOwnTile);
     if (this.isSkilling) {
       this.isSkilling = false;
       this.skillingObjectId = -1;
       // Clicking on own tile — delay the cancel so you can't spam restart
-      const clickedOwnTile = Math.floor(worldX) === Math.floor(this.playerX) && Math.floor(worldZ) === Math.floor(this.playerZ);
       if (clickedOwnTile) {
         this.skillCancelTime = performance.now();
         setTimeout(() => {
@@ -6893,14 +6954,11 @@ export class GameManager {
     }
     if (this.interactMarker) this.interactMarker.isVisible = false;
 
-    const tx = Math.floor(worldX), tz = Math.floor(worldZ);
-
     // Clicking your own tile while walking should halt on that tile.
     // findPath returns an empty path when start tile == end tile, which the
     // length-check below silently ignored — so the previous walk kept going.
     // Treat the click as a stop: end the path at the current tile center,
     // tell the server to halt too.
-    const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);
     if (clickedOwnTile) {
       this.pendingPath = null;
       this.minimap?.clearDestination();
@@ -7011,6 +7069,7 @@ export class GameManager {
       this.engine.getRenderingCanvas()?.removeEventListener('pointermove', this._npcTooltipHandler);
       this._npcTooltipHandler = null;
     }
+    this.arrowProjectiles.dispose();
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();
@@ -8144,6 +8203,28 @@ export class GameManager {
     for (const child of target.getChildMeshes(false)) apply(child);
     for (const child of target.getChildTransformNodes(false)) apply(child);
     this.worldObjectPickState.set(target, { entityId: objectEntityId, interactive });
+  }
+
+  private playWorldObjectAnimation(objectEntityId: number): void {
+    let model = this.worldObjectModels.get(objectEntityId);
+    if (!model) {
+      const data = this.worldObjectDefs.get(objectEntityId);
+      if (data) {
+        const placedNode = this.chunkManager.findPlacedObjectNear(
+          data.x,
+          data.z,
+          1.5,
+          data.defId,
+          data.y,
+          node => this.canLinkPlacedNodeToWorldObject(objectEntityId, node),
+        );
+        if (placedNode) {
+          this.linkPlacedNodeToEntity(objectEntityId, data, placedNode);
+          model = placedNode;
+        }
+      }
+    }
+    if (model) this.chunkManager.playPlacedObjectAnimation(model);
   }
 
   private fallbackDoorPickProxyBounds(x: number, z: number, rotY: number, baseY: number): DoorPickProxyBounds {

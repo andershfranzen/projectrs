@@ -209,7 +209,7 @@ async function saveJsonWithBackup(opts: {
   await fsp.rename(tmpPath, path);
 }
 
-const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape']);
+const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
 const EQUIP_SKILLS = new Set(['accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
 const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);

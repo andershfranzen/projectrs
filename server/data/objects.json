@@ -2064,5 +2064,33 @@
         "xpReward": 2
       }
     ]
+  },
+  {
+    "id": 40,
+    "name": "Spinning Wheel",
+    "category": "scenery",
+    "actions": [
+      "Spin",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 1,
+    "height": 1.2,
+    "color": [
+      150,
+      120,
+      80
+    ],
+    "recipes": [
+      {
+        "inputItemId": 269,
+        "inputQuantity": 1,
+        "outputItemId": 273,
+        "outputQuantity": 1,
+        "skill": "crafting",
+        "levelRequired": 1,
+        "xpReward": 5
+      }
+    ]
   }
 ]

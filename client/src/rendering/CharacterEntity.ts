@@ -16,6 +16,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, type CustomColors, type HeadRenderMode, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
+import { bindHumanoidAnimationTemplate, buildHumanoidRigContext, getHumanoidAnimationTemplate } from './HumanoidAnimationTemplateCache';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
@@ -120,15 +121,6 @@ function smoothNormalsByPosition(mesh: AbstractMesh): void {
 
   mesh.setVerticesData(VertexBuffer.NormalKind, newNormals);
 }
-
-/**
- * Per-animation, per-bone rotation offsets applied during retargeting.
- * Outer key = animation name from additionalAnimations[].name ('idle', 'walk', …).
- * Use '*' to apply to every animation.
- * Inner values are Euler offsets (radians) post-multiplied onto every keyframe.
- * ~0.087 rad = 5°.
- */
-const BONE_ROTATION_OFFSETS: Record<string, Record<string, { x: number; y: number; z: number }>> = {};
 
 /**
  * In dev mode, append a cache-busting query param to GLB filenames so the
@@ -272,6 +264,7 @@ export class CharacterEntity {
 
   // Animations — keyed by name as exported from Blender NLA strips
   private animGroups: Map<string, AnimationGroup> = new Map();
+  private templateBackedAnimGroups = new Set<string>();
   private currentState: AnimState = AnimState.Idle;
   private currentAnimName: string = '';
   private currentAnimLoop: boolean = true;
@@ -298,6 +291,7 @@ export class CharacterEntity {
   private travelYaw: number = 0;
   private hasTravelDir: boolean = false;
   private faceLocked: boolean = false;
+  private attackFaceLockUntilMs: number = 0;
 
   // Wall-clock ms when the current walk cycle began. Lets
   // swapWalkSeqPreservingPhase resume a strafe variant at the same cycle
@@ -659,6 +653,7 @@ export class CharacterEntity {
       }
 
       for (const [name, group] of this.animGroups) {
+        if (this.templateBackedAnimGroups.has(name)) continue;
         quantizeAnimationGroup(group, name);
       }
 
@@ -667,10 +662,11 @@ export class CharacterEntity {
       // GLBs already does this, but the main GLB's bundled animations slip
       // past that path and were dropping the character into the ground at
       // idle. Doing it here as a final pass covers both sources.
-      for (const [, group] of this.animGroups) {
+      for (const [name, group] of this.animGroups) {
+        if (this.templateBackedAnimGroups.has(name)) continue;
         for (const ta of group.targetedAnimations) {
           const target = ta.target as any;
-          if (target?.name !== 'mixamorig:Hips') continue;
+          if (target?.name?.replace(/\.\d+$/, '') !== 'mixamorig:Hips') continue;
           const prop = ta.animation.targetProperty;
           if (prop !== 'position' && !prop.startsWith('position')) continue;
           for (const k of ta.animation.getKeys()) {
@@ -742,8 +738,9 @@ export class CharacterEntity {
   /**
    * Load Mixamo animations from separate GLB files and retarget onto this skeleton.
    *
-   * Only rotation tracks are transferred — position/scale tracks are discarded
-   * because FBX→GLB exports use centimeter units that don't match our model.
+   * Rotation tracks are transferred by default. Small hips/spine translation
+   * tracks are kept for hand-authored motion; centimeter-scale bind tracks
+   * from FBX exports are discarded.
    *
    * Rest-pose correction: FBX→GLB conversion can leave axis-compensation rotations
    * on bones (especially Hips). For each bone, if the source rest rotation differs
@@ -753,253 +750,26 @@ export class CharacterEntity {
    * in the correct orientation regardless of how the GLB was exported.
    */
   private async loadAdditionalAnimations(anims: AdditionalAnimation[]): Promise<void> {
-    // Map bone names → our TransformNodes + their rest rotations
-    const ourNodesByName = new Map<string, TransformNode>();
-    const ourRestRotations = new Map<string, Quaternion>();
+    const rig = buildHumanoidRigContext(this.skeleton, this.root);
 
-    if (this.skeleton) {
-      for (const bone of this.skeleton.bones) {
-        const tn = bone.getTransformNode();
-        if (tn) {
-          ourNodesByName.set(bone.name, tn);
-          ourNodesByName.set(tn.name, tn);
-          const rest = tn.rotationQuaternion?.clone() ?? Quaternion.Identity();
-          ourRestRotations.set(bone.name, rest);
-          ourRestRotations.set(tn.name, rest);
-        }
-      }
-    }
-    if (this.root) {
-      for (const node of this.root.getDescendants(false)) {
-        if (node instanceof TransformNode) {
-          ourNodesByName.set(node.name, node);
-        }
-      }
-    }
-
-    interface LoadedFile {
-      animationGroups: AnimationGroup[];
-      skeletons: Skeleton[];
-      meshes: AbstractMesh[];
-      transformNodes: TransformNode[];
-      srcRestRotations: Map<string, Quaternion>;
-    }
-    const loadedFiles = new Map<string, LoadedFile>();
-
-    // Phase 1: import every unique GLB in parallel. Previously this happened
-    // serially inside the per-anim loop, which made first-time character load
-    // O(N) over the network for N animation files (~2–5s for the 10 we ship).
-    // Babylon's SceneLoader is single-threaded but its imports don't conflict
-    // with each other — each one adds nodes to the scene with unique auto-
-    // renamed names, and we capture per-file source rest rotations into
-    // separately-scoped Maps before any retarget pass runs.
-    const uniquePaths = Array.from(new Set(anims.map((a) => a.path)));
-    await Promise.all(
-      uniquePaths.map(async (animPath) => {
-        try {
-          const lastSlash = animPath.lastIndexOf('/');
-          const dir = animPath.substring(0, lastSlash + 1);
-          const file = devCacheBust(animPath.substring(lastSlash + 1));
-          const imported = await importMeshWithTimeout(this.scene, dir, file);
-          if (this.disposed || this.scene.isDisposed) {
-            disposeImportedMeshResult(imported);
-            return;
-          }
-
-          // Capture source bone rest rotations from TransformNodes
-          // (animation GLBs have no Skeleton — bones are just TransformNodes)
-          const srcRestRotations = new Map<string, Quaternion>();
-          for (const tn of imported.transformNodes) {
-            if (tn.rotationQuaternion) {
-              srcRestRotations.set(tn.name, tn.rotationQuaternion.clone());
-            }
-          }
-
-          const result: LoadedFile = {
-            animationGroups: imported.animationGroups,
-            skeletons: imported.skeletons,
-            meshes: imported.meshes,
-            transformNodes: imported.transformNodes,
-            srcRestRotations,
-          };
-          loadedFiles.set(animPath, result);
-          for (const g of result.animationGroups) g.stop();
-        } catch {
-          if (!this.disposed && !this.scene.isDisposed) {
-            console.warn(`[CharacterEntity] Failed to load animation file ${animPath}`);
-          }
-        }
-      }),
+    const templates = await Promise.all(
+      anims.map((anim) => getHumanoidAnimationTemplate(this.scene, anim, rig)),
     );
-    if (this.disposed || this.scene.isDisposed) {
-      for (const [, result] of loadedFiles) {
-        for (const ag of result.animationGroups) ag.dispose();
-        for (const sk of result.skeletons) sk.dispose();
-        for (const mesh of result.meshes) mesh.dispose();
-        for (const node of result.transformNodes) {
-          if (!node.isDisposed()) node.dispose();
-        }
+    if (this.disposed || this.scene.isDisposed) return;
+
+    for (const template of templates) {
+      if (!template) continue;
+
+      const group = bindHumanoidAnimationTemplate(this.scene, template, rig.nodesByName);
+      if (!group) {
+        console.warn(`[CharacterEntity] Retargeting failed for '${template.name}' — 0 tracks matched`);
+        continue;
       }
-      loadedFiles.clear();
-      return;
-    }
 
-    // Phase 2: retarget each declared animation onto our skeleton. Synchronous
-    // and fast — pure data transforms over already-loaded keyframes.
-    for (const anim of anims) {
-      try {
-        const result = loadedFiles.get(anim.path);
-        if (!result) continue;
-
-        // Find the animation group. If animName is set, prefer that — but fall
-        // back to the first action if the lookup fails. Mixamo-exported GLBs
-        // with only one action often come out with a default Blender name like
-        // 'Armature.001Action' that changes between re-exports, so requiring an
-        // exact name match is brittle. The fallback covers the common case of
-        // single-action anim GLBs without forcing the author to rename.
-        let group: AnimationGroup | undefined;
-        if (anim.animName) {
-          group = result.animationGroups.find(g => g.name === anim.animName);
-          if (!group && result.animationGroups.length === 1) {
-            group = result.animationGroups[0];
-          } else if (!group) {
-            console.warn(`[CharacterEntity] '${anim.name}': animName '${anim.animName}' not found in '${anim.path}'. Available: ${result.animationGroups.map(g => g.name).join(', ')}`);
-            continue;
-          }
-        } else {
-          group = result.animationGroups[0];
-        }
-        if (!group) continue;
-
-        const retargetedAnims = [];
-        let missCount = 0;
-
-        for (const ta of group.targetedAnimations) {
-          const target = ta.target as TransformNode;
-          if (!target?.name) continue;
-
-          // Rotation tracks are always allowed.
-          // Translation tracks are normally skipped because Mixamo bakes cm-scale
-          // bone-bind offsets into them — replaying those on our meter-scale rig
-          // blows the skin out into a giant plane. For spine-chain bones we
-          // allow translation so hand-authored breathing (subtle vertical lift)
-          // reads correctly, but only when the values are sub-meter — that
-          // catches Blender-authored anims (m-scale, ~1cm magnitude) and rejects
-          // Mixamo FBX→GLB exports (cm-scale, ~1000-magnitude bind data).
-          const prop = ta.animation.targetProperty;
-          const isRotation = prop === 'rotationQuaternion' || prop.startsWith('rotationQuaternion');
-          const isTranslation = prop === 'position' || prop.startsWith('position');
-          const TRANSLATION_BONE_WHITELIST = new Set([
-            'mixamorig:Hips',
-            'mixamorig:Spine',
-            'mixamorig:Spine1',
-            'mixamorig:Spine2',
-          ]);
-          if (!isRotation && !isTranslation) continue;
-          if (isTranslation) {
-            if (!TRANSLATION_BONE_WHITELIST.has(target.name)) continue;
-            // Reject cm-scale Mixamo bind tracks — anything > 1m on any axis is
-            // not real animation, it's bind-pose data exported in cm.
-            const keys = ta.animation.getKeys();
-            let maxMag = 0;
-            for (const k of keys) {
-              const v = k.value as any;
-              if (v && typeof v.x === 'number') {
-                const m = Math.max(Math.abs(v.x), Math.abs(v.y), Math.abs(v.z));
-                if (m > maxMag) maxMag = m;
-              }
-            }
-            if (maxMag > 1.0) continue;
-            // Strip Y on Hips for all anims (Mixamo attack windups bake a
-            // root dip that drops us below the floor); strip XZ too on the
-            // in-place locomotion cycles, otherwise Mixamo sidestep sources
-            // drift the character ~0.5m sideways per step on top of the
-            // engine's movement.
-            if (target.name === 'mixamorig:Hips') {
-              const isInPlaceCycle = isWalkVariant(anim.name);
-              for (const k of keys) {
-                const v = k.value as any;
-                if (v && typeof v.y === 'number') v.y = 0;
-                if (isInPlaceCycle && v) {
-                  if (typeof v.x === 'number') v.x = 0;
-                  if (typeof v.z === 'number') v.z = 0;
-                }
-              }
-            }
-          }
-
-          // Match source bone → our bone by name
-          let ourTarget = ourNodesByName.get(target.name) ?? null;
-          if (!ourTarget) {
-            const stripped = target.name.replace(/\.\d+$/, '');
-            ourTarget = ourNodesByName.get(stripped) ?? null;
-          }
-
-          if (!ourTarget) {
-            // Thumb bones are intentionally absent on our 57-bone rig (we use
-            // Mixamo's 32-bone skeleton plus Polysplit's Index/Middle/Ring/Pinky
-            // fingers — no thumbs).
-            if (!target.name.includes('Thumb')) missCount++;
-            continue;
-          }
-
-          // Rest-pose correction: if source and target rest rotations differ,
-          // transform each keyframe so it plays correctly on our skeleton.
-          const srcRest = result.srcRestRotations.get(target.name);
-          const ourRest = ourRestRotations.get(ourTarget.name);
-          if (srcRest && ourRest) {
-            const dot = Math.abs(Quaternion.Dot(srcRest, ourRest));
-            if (dot < 0.999) {
-              const srcRestInv = Quaternion.Inverse(srcRest);
-              const keys = ta.animation.getKeys();
-              for (const key of keys) {
-                if (key.value && key.value.w !== undefined) {
-                  key.value = ourRest.multiply(srcRestInv.multiply(key.value));
-                }
-              }
-            }
-          }
-
-          // Apply constant bone rotation offsets (e.g. pull shoulders back).
-          // Per-animation entries take priority; '*' applies to all.
-          const offset = BONE_ROTATION_OFFSETS[anim.name]?.[ourTarget.name]
-            ?? BONE_ROTATION_OFFSETS['*']?.[ourTarget.name];
-          if (offset && (offset.x !== 0 || offset.y !== 0 || offset.z !== 0)) {
-            const offsetQuat = Quaternion.FromEulerAngles(offset.x, offset.y, offset.z);
-            const keys = ta.animation.getKeys();
-            for (const key of keys) {
-              if (key.value && key.value.w !== undefined) {
-                key.value = key.value.multiply(offsetQuat);
-              }
-            }
-          }
-
-          retargetedAnims.push({ animation: ta.animation, target: ourTarget });
-        }
-
-        if (retargetedAnims.length > 0) {
-          const newGroup = new AnimationGroup(anim.name, this.scene);
-          for (const ra of retargetedAnims) {
-            newGroup.addTargetedAnimation(ra.animation, ra.target);
-          }
-          this.animGroups.set(anim.name, newGroup);
-          newGroup.stop();
-        } else {
-          console.warn(`[CharacterEntity] Retargeting failed for '${anim.name}' — 0 tracks matched`);
-        }
-      } catch (e) {
-        if (!this.disposed) console.warn(`[CharacterEntity] Failed to load '${anim.name}' from '${anim.path}':`, e);
-      }
-    }
-
-    // Clean up loaded GLB resources
-    for (const [, result] of loadedFiles) {
-      for (const ag of result.animationGroups) ag.dispose();
-      for (const sk of result.skeletons) sk.dispose();
-      for (const mesh of result.meshes) mesh.dispose();
-      for (const node of result.transformNodes) {
-        if (!node.isDisposed()) node.dispose();
-      }
+      const existing = this.animGroups.get(template.name);
+      if (existing) existing.dispose();
+      this.animGroups.set(template.name, group);
+      this.templateBackedAnimGroups.add(template.name);
     }
   }
 
@@ -1145,6 +915,45 @@ export class CharacterEntity {
     this.currentState = AnimState.Walk;
   }
 
+  private walkCyclePhase(name: string, now: number = performance.now()): number {
+    if (this.walkCycleStartMs <= 0) return 0;
+    const group = this.animGroups.get(name);
+    if (!group) return 0;
+    const range = group.to - group.from;
+    const fps = group.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+    const speed = Math.max(this.getAnimationSpeed(name), 0.001);
+    const cycleSec = range > 0 && fps > 0 ? range / (fps * speed) : 1;
+    const elapsedSec = (now - this.walkCycleStartMs) / 1000;
+    return cycleSec > 0 ? (elapsedSec % cycleSec) / cycleSec : 0;
+  }
+
+  private seekAnimationGroupToPhase(group: AnimationGroup, phase: number): void {
+    const range = group.to - group.from;
+    group.goToFrame(group.from + Math.max(0, Math.min(1, phase)) * range);
+  }
+
+  private startWalkCyclePreservingPhase(name: string): boolean {
+    const walkName = isWalkVariant(name)
+      ? name
+      : (isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
+    const group = this.animGroups.get(walkName);
+    if (!group) return false;
+
+    const phase = this.walkCyclePhase(walkName);
+    const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
+    if (oldGroup && oldGroup !== group) oldGroup.stop();
+
+    this.currentAnimName = walkName;
+    this.currentAnimLoop = true;
+    this.oneShotCallback = null;
+    if (this.renderEnabled) {
+      group.start(true, this.getAnimationSpeed(walkName), group.from, group.to, false);
+      this.seekAnimationGroupToPhase(group, phase);
+    }
+    this.currentState = AnimState.Walk;
+    return true;
+  }
+
   /** Play the best matching animation for a given state. */
   private playAnimByState(state: AnimState, variant?: string, loop?: boolean): void {
     if (state === AnimState.Walk) {
@@ -1265,7 +1074,8 @@ export class CharacterEntity {
   }
 
   private getAnimationSpeed(name: string): number {
-    return ANIM_SPEED_RATIO[name] ?? 1.0;
+    const baseName = name.replace(/_(upper|lower)$/, '');
+    return ANIM_SPEED_RATIO[isWalkVariant(baseName) ? 'walk' : baseName] ?? 1.0;
   }
 
   // ---------------------------------------------------------------------------
@@ -1279,12 +1089,18 @@ export class CharacterEntity {
       this.queuedAnimName = '';
       return;
     }
+    this.queuedState = AnimState.Walk;
+    this.queuedAnimName = '';
+    if (this.currentState === AnimState.Walk && !this.attackIsLayered) {
+      const activeGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
+      if (!this.renderEnabled || activeGroup?.isPlaying) return;
+      if (this.startWalkCyclePreservingPhase(this.currentAnimName)) return;
+    }
     // Layered-attack in progress: re-attach the active walk variant's
     // _lower behind the still-running attack_upper. Called every frame
     // while a path is active, so the steady-state path (lower already
     // playing) early-returns after the cached group's isPlaying check.
     if (this.attackIsLayered) {
-      this.queuedState = AnimState.Walk;
       const walkLower = this.activeWalkLowerGroup;
       if (walkLower?.isPlaying) return;
       this.animGroups.get(`${this.activeAttackBase}_lower`)?.stop();
@@ -1295,16 +1111,12 @@ export class CharacterEntity {
       return;
     }
     if (this.currentState >= AnimState.Attack) {
-      this.queuedState = AnimState.Walk;
-      this.queuedAnimName = '';
       this.convertActiveAttackToWalkLayer();
       return;
     }
-    this.queuedState = AnimState.Walk;
-    this.queuedAnimName = '';
     // Walk preempts Skill (matches RS2 seq `postanim_move=abortanim`) so
     // clicking another rock while mining instantly aborts the swing.
-    if (this.currentState <= AnimState.Skill) this.startWalkCycle();
+    if (this.currentState === AnimState.Idle || this.currentState === AnimState.Skill) this.startWalkCycle();
   }
 
   /** Stop walking, return to idle. */
@@ -1413,6 +1225,7 @@ export class CharacterEntity {
    *  keeps strafing on the legs instead of snapping to forward. */
   private playLayeredAttack(baseName: string): void {
     const walkVariant = this.activeWalkVariant();
+    const walkPhase = this.walkCyclePhase(walkVariant);
     // Stop whichever walk variant is currently driving the body so it
     // doesn't fight attack_upper for upper-body bones.
     const currentWalk = this.animGroups.get(walkVariant);
@@ -1422,6 +1235,7 @@ export class CharacterEntity {
     const walkLower = this.animGroups.get(lowerName) ?? null;
     if (walkLower) {
       walkLower.start(true, this.getAnimationSpeed(lowerName), walkLower.from, walkLower.to, false);
+      this.seekAnimationGroupToPhase(walkLower, walkPhase);
     }
 
     const upper = this.animGroups.get(`${baseName}_upper`);
@@ -1430,7 +1244,7 @@ export class CharacterEntity {
       this.playAnimByState(AnimState.Attack, undefined, false);
       return;
     }
-    upper.start(false, ANIM_SPEED_RATIO[baseName] ?? 1.0, upper.from, upper.to, false);
+    upper.start(false, this.getAnimationSpeed(baseName), upper.from, upper.to, false);
 
     this.attackIsLayered = true;
     this.activeAttackBase = baseName;
@@ -1442,13 +1256,21 @@ export class CharacterEntity {
     this.currentAnimName = `${baseName}_upper`;
 
     upper.onAnimationGroupEndObservable.addOnce(() => {
-      // Could already have been torn down by clearLayeredAttack() if the
-      // caller stacked another action; guard against double-cleanup.
-      if (!this.attackIsLayered || this.activeAttackBase !== baseName) return;
-      this.clearLayeredAttack();
-      this.currentState = AnimState.Idle;
-      this.playAnimByState(this.queuedState, this.queuedAnimName, undefined);
+      this.finishLayeredAttack(baseName);
     });
+  }
+
+  private finishLayeredAttack(baseName: string): void {
+    // Could already have been torn down by clearLayeredAttack() if the
+    // caller stacked another action; guard against double-cleanup.
+    if (!this.attackIsLayered || this.activeAttackBase !== baseName) return;
+    const queuedState = this.queuedState;
+    const queuedAnimName = this.queuedAnimName;
+    const walkVariant = this.activeWalkBase;
+    this.clearLayeredAttack();
+    this.currentState = AnimState.Idle;
+    if (queuedState === AnimState.Walk && this.startWalkCyclePreservingPhase(walkVariant)) return;
+    this.playAnimByState(queuedState, queuedAnimName, undefined);
   }
 
   /** If movement starts during a full-body attack, keep the attack's upper
@@ -1467,10 +1289,11 @@ export class CharacterEntity {
     const walkLower = this.animGroups.get(`${walkVariant}_lower`) ?? null;
     if (!upper) return;
 
-    const speed = ANIM_SPEED_RATIO[baseName] ?? 1.0;
+    const speed = this.getAnimationSpeed(baseName);
     const fps = upper.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
     const elapsedMs = Math.max(0, performance.now() - this.attackStartMs);
     const frame = Math.min(upper.from + (elapsedMs / 1000) * fps * speed, upper.to);
+    this.walkCycleStartMs = performance.now();
 
     // Stopping the old full-body group can fire its previous one-shot end
     // callback. Clear it first so movement cannot cancel the attack handoff.
@@ -1478,6 +1301,7 @@ export class CharacterEntity {
     fullBody?.stop();
     if (walkLower) {
       walkLower.start(true, this.getAnimationSpeed(`${walkVariant}_lower`), walkLower.from, walkLower.to, false);
+      this.seekAnimationGroupToPhase(walkLower, 0);
     }
     upper.start(false, speed, frame, upper.to, false);
 
@@ -1489,10 +1313,7 @@ export class CharacterEntity {
     this.currentAnimName = `${baseName}_upper`;
 
     upper.onAnimationGroupEndObservable.addOnce(() => {
-      if (!this.attackIsLayered || this.activeAttackBase !== baseName) return;
-      this.clearLayeredAttack();
-      this.currentState = AnimState.Idle;
-      this.playAnimByState(this.queuedState, this.queuedAnimName, undefined);
+      this.finishLayeredAttack(baseName);
     });
   }
 
@@ -1555,6 +1376,7 @@ export class CharacterEntity {
   // ---------------------------------------------------------------------------
 
   setFacingAngle(radians: number): void {
+    this.attackFaceLockUntilMs = 0;
     this._rotationY = radians;
     this.targetRotationY = radians;
     this.faceLocked = false;
@@ -1564,6 +1386,7 @@ export class CharacterEntity {
   }
 
   setTargetFacing(radians: number): void {
+    this.attackFaceLockUntilMs = 0;
     this.targetRotationY = radians;
     this.faceLocked = false;
   }
@@ -1578,6 +1401,7 @@ export class CharacterEntity {
     const dx = x - this._position.x;
     const dz = z - this._position.z;
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
+    this.attackFaceLockUntilMs = 0;
     this.targetRotationY = Math.atan2(dx, dz);
     this.faceLocked = false;
   }
@@ -1598,8 +1422,30 @@ export class CharacterEntity {
     this.faceLocked = true;
   }
 
-  clearFaceLock(): void {
+  /** Temporarily keep the body aimed at an attack target even while movement
+   *  continues. This prevents local walk prediction from immediately pulling
+   *  bow shots back toward travel direction. */
+  lockAttackFaceTowardXZ(x: number, z: number, durationMs: number): void {
+    const dx = x - this._position.x;
+    const dz = z - this._position.z;
+    if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
+    this.targetRotationY = Math.atan2(dx, dz);
+    this.faceLocked = true;
+    this.attackFaceLockUntilMs = Math.max(
+      this.attackFaceLockUntilMs,
+      performance.now() + Math.max(0, durationMs),
+    );
+  }
+
+  private attackFaceLockActive(now: number = performance.now()): boolean {
+    return this.attackFaceLockUntilMs > now;
+  }
+
+  private unlockFaceLock(resetToTravel: boolean = false): void {
     this.faceLocked = false;
+    if (resetToTravel && this.hasTravelDir) {
+      this.targetRotationY = this.travelYaw;
+    }
     if (
       this.currentState === AnimState.Walk
       && !this.attackIsLayered
@@ -1608,6 +1454,19 @@ export class CharacterEntity {
     ) {
       this.swapWalkSeqPreservingPhase(isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
     }
+  }
+
+  private releaseExpiredAttackFaceLock(now: number): void {
+    if (this.attackFaceLockUntilMs <= 0 || now < this.attackFaceLockUntilMs) return;
+    this.attackFaceLockUntilMs = 0;
+    this.unlockFaceLock(true);
+  }
+
+  clearFaceLock(force: boolean = false, preserveCurrentFacing: boolean = false): void {
+    if (!force && this.attackFaceLockActive()) return;
+    this.attackFaceLockUntilMs = 0;
+    if (preserveCurrentFacing) this.targetRotationY = this._rotationY;
+    this.unlockFaceLock();
   }
 
   updateMovementDirection(dx: number, dz: number, _cameraPos?: Vector3): void {
@@ -1643,15 +1502,9 @@ export class CharacterEntity {
     const oldGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
     if (oldGroup) oldGroup.stop();
 
-    const range = newGroup.to - newGroup.from;
-    const fps = newGroup.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
-    const cycleSec = range / fps;
-    const elapsedSec = (performance.now() - this.walkCycleStartMs) / 1000;
-    const phase = cycleSec > 0 ? (elapsedSec % cycleSec) / cycleSec : 0;
-    const startFrame = newGroup.from + phase * range;
-
+    const phase = this.walkCyclePhase(name);
     newGroup.start(true, this.getAnimationSpeed(name), newGroup.from, newGroup.to, false);
-    newGroup.goToFrame(startFrame);
+    this.seekAnimationGroupToPhase(newGroup, phase);
     this.currentAnimName = name;
   }
 
@@ -1688,6 +1541,8 @@ export class CharacterEntity {
 
   updateAnimation(dt: number): void {
     if (!this.root) return;
+
+    this.releaseExpiredAttackFaceLock(performance.now());
 
     const newYaw = rs2Rotation(this._rotationY, this.targetRotationY, dt);
     if (newYaw !== this._rotationY) {
@@ -1739,12 +1594,7 @@ export class CharacterEntity {
       const walkName = this.attackIsLayered
         ? this.activeWalkBase
         : (isWalkVariant(this.currentAnimName) ? this.currentAnimName : this.walkanim);
-      const group = this.animGroups.get(walkName);
-      const range = group ? group.to - group.from : 0;
-      const fps = group?.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
-      const cycleSec = range > 0 ? range / fps : 1;
-      const elapsedSec = (performance.now() - this.walkCycleStartMs) / 1000;
-      const phase = cycleSec > 0 ? (elapsedSec % cycleSec) / cycleSec : 0;
+      const phase = this.walkCyclePhase(walkName);
       const stride = Math.sin(phase * Math.PI * 2);
       const push = (1 - Math.cos(phase * Math.PI * 4)) * 0.5;
       back = 0.55 + push * 0.35;
@@ -2704,6 +2554,7 @@ export class CharacterEntity {
       group.dispose();
     }
     this.animGroups.clear();
+    this.templateBackedAnimGroups.clear();
 
     // Dispose meshes
     for (const mesh of this.meshes) {

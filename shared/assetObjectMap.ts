@@ -55,6 +55,10 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'Altar': 8,         // Good magic altar — offer relics for goodmagic xp
   'Pottery wheel': 32, // Pottery Wheel — shape soft clay
   'Kiln': 39,         // Kiln — fire unfired clay items
+  'Spinning Wheel': 40, // Spinning Wheel — spin sinew into bowstring
+  'Spinning wheel': 40,
+  'SpinningWheel': 40,
+  'spinning wheel': 40,
   // Doors (only Truedoor assets — other "door" assets are decorative door frames)
   'castleTruedoor': 13,
   'basicTruedoor': 13,

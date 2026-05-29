@@ -535,6 +535,7 @@ function handleCommand(
       if (player.openInterface === 'trade') world.abortTrade(player.id, 2);
       player.openInterface = null;
       player.openShopNpcId = null;
+      player.openShopNpcEntityId = null;
       world.closeDialogueForPlayer(player);
       player.pendingInteraction = null;
       // teleportPlayer clears moveQueue + attackTarget + combat target.

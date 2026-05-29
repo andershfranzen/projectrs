@@ -270,26 +270,52 @@
       "name": "General Store",
       "items": [
         {
-          "itemId": 31,
-          "price": 20,
-          "stock": 3
-        },
-        {
-          "itemId": 33,
-          "price": 20,
-          "stock": 3
-        },
-        {
-          "itemId": 52,
-          "price": 5,
-          "stock": 8
-        },
-        {
           "itemId": 251,
           "price": 8,
           "stock": 10
+        },
+        {
+          "itemId": 19,
+          "price": 2,
+          "stock": 100
+        },
+        {
+          "itemId": 264,
+          "price": 2,
+          "stock": 200
+        },
+        {
+          "itemId": 265,
+          "price": 4,
+          "stock": 200
+        },
+        {
+          "itemId": 266,
+          "price": 10,
+          "stock": 200
+        },
+        {
+          "itemId": 274,
+          "price": 20,
+          "stock": 5
+        },
+        {
+          "itemId": 280,
+          "price": 90,
+          "stock": 5
+        },
+        {
+          "itemId": 281,
+          "price": 150,
+          "stock": 5
+        },
+        {
+          "itemId": 270,
+          "price": 2,
+          "stock": 300
         }
-      ]
+      ],
+      "restockTicks": 30
     },
     "dialogue": {
       "root": "greet",

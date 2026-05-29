@@ -23,16 +23,17 @@ import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 const EDITOR_CHUNK_SIZE = 64;
 const CHUNK_RENDER_PADDING_TILES = 8;
 const CHUNK_RESIDENT_RADIUS = CHUNK_LOAD_RADIUS;
-const CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 3;
-const CHUNK_MESH_CACHE_MAX_CHUNKS = 64;
-const HIDDEN_CHUNK_BUILD_INTERVAL_MS = 80;
+const CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 4;
+const CHUNK_MESH_CACHE_MAX_CHUNKS = 96;
+const VISIBLE_CHUNK_BUILD_INTERVAL_MS = 12;
+const HIDDEN_CHUNK_BUILD_INTERVAL_MS = 180;
 const OBJECT_RENDER_PADDING_TILES = 0;
 const OBJECT_PREFETCH_PADDING_TILES = 8;
-const OBJECT_CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 2;
-const OBJECT_CHUNK_CACHE_MAX_CHUNKS = 40;
+const OBJECT_CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 4;
+const OBJECT_CHUNK_CACHE_MAX_CHUNKS = 96;
 const OBJECT_RENDER_HYSTERESIS_TILES = 8;
 const OBJECT_VISIBILITY_BUCKET_TILES = 4;
-const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 120;
+const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 
@@ -245,16 +246,19 @@ export class ChunkManager {
   private objectChunkQueue: string[] = [];
   private queuedObjectChunks: Set<string> = new Set();
   private objectChunkQueueScheduled: boolean = false;
+  private objectChunkQueueProcessing: boolean = false;
   private objectLoadGeneration: number = 0;
   private lastHiddenObjectChunkLoadAt: number = 0;
-  private readonly objectChunkFrameBudgetMs: number = 6;
+  private readonly objectChunkFrameBudgetMs: number = 3;
   private pendingShadowGroundRebuildChunks: Set<string> = new Set();
   private shadowGroundRebuildScheduled: boolean = false;
-  private readonly shadowGroundRebuildFrameBudgetMs: number = 4;
+  private readonly shadowGroundRebuildFrameBudgetMs: number = 2;
   /** Chunks the server has confirmed have no placed objects (404 from per-chunk
    *  fetch). Persists across chunk eviction so we never re-fetch a known-empty
    *  chunk in the same session. */
   private chunksKnownEmpty: Set<string> = new Set();
+  private editorChunkApplyTail: Promise<void> = Promise.resolve();
+  private lastVisibleGameChunkBuildAt: number = 0;
   /** Elevated texture plane floor heights (only applied when player is already at that height via stairs) */
   private elevatedFloorHeights: Map<number, number> = new Map();
   /** Bridge tiles — elevated texture planes over originally-blocking terrain (always snap to height) */
@@ -284,6 +288,8 @@ export class ChunkManager {
   private loadedModelCache: Map<string, TransformNode | null> = new Map();
   private loadingModelPromises: Map<string, Promise<TransformNode | null>> = new Map();
   private modelAnimationGroups: Map<string, AnimationGroup[]> = new Map();
+  private placedObjectAnimationGroups: WeakMap<TransformNode, AnimationGroup[]> = new WeakMap();
+  private oneShotPlacedAnimationGroups: WeakSet<AnimationGroup> = new WeakSet();
   private activeAnimationGroups: AnimationGroup[] = [];
   private textureCache: Map<string, Texture> = new Map();
   private textureRegistry: Map<string, { path: string }> = new Map();
@@ -306,6 +312,10 @@ export class ChunkManager {
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
+  }
+
+  private isOneShotPlacedAnimationAsset(assetId: string): boolean {
+    return assetId.toLowerCase().replace(/\s+/g, '') === 'spinningwheel';
   }
 
   private ensureFloorLayer(floor: number): FloorLayerClientData {
@@ -336,6 +346,33 @@ export class ChunkManager {
   getMeta(): MapMeta | null { return this.meta; }
   getMapWidth(): number { return this.mapWidth; }
   getMapHeight(): number { return this.mapHeight; }
+
+  private scheduleNextFrame(callback: FrameRequestCallback): void {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(callback);
+      return;
+    }
+    window.setTimeout(() => callback(performance.now()), 16);
+  }
+
+  private waitForNextFrame(): Promise<void> {
+    return new Promise(resolve => this.scheduleNextFrame(() => resolve()));
+  }
+
+  private async yieldIfFrameBudgetSpent(slice: { start: number }, budgetMs: number = this.objectChunkFrameBudgetMs): Promise<void> {
+    if (performance.now() - slice.start < budgetMs) return;
+    await this.waitForNextFrame();
+    slice.start = performance.now();
+  }
+
+  private enqueueEditorChunkApply(work: () => Promise<void>): Promise<void> {
+    const run = this.editorChunkApplyTail.then(async () => {
+      await this.waitForNextFrame();
+      await work();
+    });
+    this.editorChunkApplyTail = run.catch(() => {});
+    return run;
+  }
 
   private getVisibilityDistanceTiles(paddingTiles: number): number {
     const metaFogEnd = this.meta?.fogEnd ?? (CHUNK_LOAD_RADIUS + 1) * CHUNK_SIZE;
@@ -1163,10 +1200,6 @@ export class ChunkManager {
         }
       }
     }
-    const buildResult = this.buildQueuedGameChunks(this.lastChunkX, this.lastChunkZ);
-    if (buildResult.built && this.residentGameChunks.size > 0) {
-      this.evictTerrainChunkCache(this.lastChunkX, this.lastChunkZ, this.residentGameChunks);
-    }
   }
 
   private buildQueuedGameChunks(centerChunkX: number, centerChunkZ: number): ChunkBuildResult {
@@ -1203,9 +1236,16 @@ export class ChunkManager {
       }
     }
 
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     let bestKey = bestVisibleKey;
+    if (bestKey) {
+      const centerKey = `${centerChunkX},${centerChunkZ}`;
+      if (bestKey !== centerKey && now - this.lastVisibleGameChunkBuildAt < VISIBLE_CHUNK_BUILD_INTERVAL_MS) {
+        return { built: false, visible: false };
+      }
+      this.lastVisibleGameChunkBuildAt = now;
+    }
     if (!bestKey && bestHiddenKey) {
-      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
       if (now - this.lastHiddenGameChunkBuildAt < HIDDEN_CHUNK_BUILD_INTERVAL_MS) return { built: false, visible: false };
       this.lastHiddenGameChunkBuildAt = now;
       bestKey = bestHiddenKey;
@@ -1318,79 +1358,89 @@ export class ChunkManager {
     this.loadingEditorChunks.add(key);
 
     const ECHUNK = EDITOR_CHUNK_SIZE;
+    const mapId = this.mapId;
+    const generation = this.loadMapToken;
 
     try {
       // Fetch tiles and heights in parallel (missing chunks return 404 — that's OK)
       const [tilesRes, heightsRes] = await Promise.all([
-        authFetch(`/maps/${this.mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
-        authFetch(`/maps/${this.mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
+        authFetch(`/maps/${mapId}/tiles/chunk_${ecx}_${ecz}.json`).catch(() => null),
+        authFetch(`/maps/${mapId}/heights/chunk_${ecx}_${ecz}.json`).catch(() => null),
       ]);
       const startX = ecx * ECHUNK, startZ = ecz * ECHUNK;
       const endX = Math.min(startX + ECHUNK, this.mapWidth);
       const endZ = Math.min(startZ + ECHUNK, this.mapHeight);
-      if (!this.mapData || !this.tileTypes) return;
 
-      // Populate heights
-      if (heightsRes?.ok) {
-        const hData: Record<string, number> = await heightsRes.json();
-        const vw = this.mapWidth + 1;
-        for (const [k, val] of Object.entries(hData)) {
-          const [lz, lx] = k.split(',').map(Number);
-          const gx = startX + lx, gz = startZ + lz;
-          if (gx <= this.mapWidth && gz <= this.mapHeight && this.heights) {
-            this.heights[gz * vw + gx] = val;
+      await this.enqueueEditorChunkApply(async () => {
+        if (generation !== this.loadMapToken || mapId !== this.mapId) return;
+        if (!this.mapData || !this.tileTypes) return;
+
+        // Populate heights
+        if (heightsRes?.ok) {
+          const hData: Record<string, number> = await heightsRes.json();
+          if (generation !== this.loadMapToken || mapId !== this.mapId) return;
+          const vw = this.mapWidth + 1;
+          for (const [k, val] of Object.entries(hData)) {
+            const [lz, lx] = k.split(',').map(Number);
+            const gx = startX + lx, gz = startZ + lz;
+            if (gx <= this.mapWidth && gz <= this.mapHeight && this.heights) {
+              this.heights[gz * vw + gx] = val;
+            }
           }
         }
-      }
 
-      // Populate tiles — fill entire chunk region with defaults, then overlay sparse data
-      for (let gz = startZ; gz < endZ; gz++) {
-        if (!this.mapData.tiles[gz]) this.mapData.tiles[gz] = [];
-        for (let gx = startX; gx < endX; gx++) {
-          if (!this.mapData.tiles[gz][gx]) {
-            this.mapData.tiles[gz][gx] = this.expandTile({});
+        // Populate tiles — fill entire chunk region with defaults, then overlay sparse data
+        for (let gz = startZ; gz < endZ; gz++) {
+          if (!this.mapData.tiles[gz]) this.mapData.tiles[gz] = [];
+          for (let gx = startX; gx < endX; gx++) {
+            if (!this.mapData.tiles[gz][gx]) {
+              this.mapData.tiles[gz][gx] = this.expandTile({});
+            }
           }
         }
-      }
-      if (tilesRes?.ok) {
-        const tData: Record<string, Partial<KCTile>> = await tilesRes.json();
-        for (const [k, partial] of Object.entries(tData)) {
-          const [lz, lx] = k.split(',').map(Number);
-          const gx = startX + lx, gz = startZ + lz;
-          if (gx < this.mapWidth && gz < this.mapHeight) {
-            this.mapData.tiles[gz][gx] = this.expandTile(partial);
+        if (tilesRes?.ok) {
+          const tData: Record<string, Partial<KCTile>> = await tilesRes.json();
+          if (generation !== this.loadMapToken || mapId !== this.mapId) return;
+          for (const [k, partial] of Object.entries(tData)) {
+            const [lz, lx] = k.split(',').map(Number);
+            const gx = startX + lx, gz = startZ + lz;
+            if (gx < this.mapWidth && gz < this.mapHeight) {
+              this.mapData.tiles[gz][gx] = this.expandTile(partial);
+            }
           }
         }
-      }
 
-      // Populate tileTypes for this region
-      for (let z = startZ; z < endZ; z++) {
-        for (let x = startX; x < endX; x++) {
-          if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) {
-            this.tileTypes[z * this.mapWidth + x] = TileType.WALL;
-            continue;
+        // Populate tileTypes for this region
+        for (let z = startZ; z < endZ; z++) {
+          for (let x = startX; x < endX; x++) {
+            if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) {
+              this.tileTypes[z * this.mapWidth + x] = TileType.WALL;
+              continue;
+            }
+            const tile = this.getTileRaw(x, z);
+            if (!tile) { this.tileTypes[z * this.mapWidth + x] = TileType.GRASS; continue; }
+            const corners = this.getTileCornerHeights(x, z);
+            const wl = this.getChunkWaterLevel(x, z);
+            this.tileTypes[z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
           }
-          const tile = this.getTileRaw(x, z);
-          if (!tile) { this.tileTypes[z * this.mapWidth + x] = TileType.GRASS; continue; }
-          const corners = this.getTileCornerHeights(x, z);
-          const wl = this.getChunkWaterLevel(x, z);
-          this.tileTypes[z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
         }
-      }
 
-      this.loadedEditorChunks.add(key);
+        this.loadedEditorChunks.add(key);
 
-      // Re-register texture plane bridges for tiles in this chunk only
-      // (chunk loading may set WATER tile types that need bridge override)
-      this.registerTexturePlaneFloorsInRegion(startX, startZ, endX, endZ);
+        // Re-register texture plane bridges for tiles in this chunk only
+        // (chunk loading may set WATER tile types that need bridge override)
+        this.registerTexturePlaneFloorsInRegion(startX, startZ, endX, endZ);
+
+        // Mark dependent game chunks as buildable; actual mesh creation is
+        // left to the render-loop queue so fetch completions cannot stack
+        // multiple terrain builds into one frame.
+        this.buildPendingGameChunks();
+      });
     } catch (e) {
       console.warn(`[ChunkManager] Failed to load editor chunk ${key}:`, e);
     } finally {
       this.loadingEditorChunks.delete(key);
     }
-
-    // After loading, try to build any pending game chunks that may now be ready
-    this.buildPendingGameChunks();
   }
 
   /** Expand a sparse/partial tile object into a full KCTile */
@@ -3323,12 +3373,9 @@ export class ChunkManager {
   }
 
   private scheduleObjectChunkQueue(): void {
-    if (this.objectChunkQueueScheduled) return;
+    if (this.objectChunkQueueScheduled || this.objectChunkQueueProcessing) return;
     this.objectChunkQueueScheduled = true;
-    const schedule = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: FrameRequestCallback) => window.setTimeout(() => cb(performance.now()), 16);
-    schedule(() => {
+    this.scheduleNextFrame(() => {
       this.processObjectChunkQueue().catch(e => {
         console.warn('[ChunkManager] Failed while processing object chunk queue:', e);
       });
@@ -3337,52 +3384,56 @@ export class ChunkManager {
 
   private async processObjectChunkQueue(): Promise<void> {
     this.objectChunkQueueScheduled = false;
-    const start = performance.now();
-    const generation = this.objectLoadGeneration;
-    if (this.objectChunkQueue.length > 1) {
-      this.objectChunkQueue.sort((a, b) => {
-        const visibleA = this.isObjectChunkVisibleNow(a);
-        const visibleB = this.isObjectChunkVisibleNow(b);
-        if (visibleA !== visibleB) return visibleA ? -1 : 1;
-        const [ax, az] = a.split(',').map(Number);
-        const [bx, bz] = b.split(',').map(Number);
-        const da = Math.max(Math.abs(ax - this.lastChunkX), Math.abs(az - this.lastChunkZ));
-        const db = Math.max(Math.abs(bx - this.lastChunkX), Math.abs(bz - this.lastChunkZ));
-        return da - db;
-      });
-    }
-
-    while (this.objectChunkQueue.length > 0) {
-      if (this.isObjectLoadStale(generation)) return;
-      const chunkKey = this.objectChunkQueue.shift()!;
-      if (!this.shouldLoadObjectChunkNow(chunkKey)) {
-        this.queuedObjectChunks.delete(chunkKey);
-        this.loadingObjectChunks.delete(chunkKey);
-        continue;
+    if (this.objectChunkQueueProcessing) return;
+    this.objectChunkQueueProcessing = true;
+    try {
+      const start = performance.now();
+      const generation = this.objectLoadGeneration;
+      if (this.objectChunkQueue.length > 1) {
+        this.objectChunkQueue.sort((a, b) => {
+          const visibleA = this.isObjectChunkVisibleNow(a);
+          const visibleB = this.isObjectChunkVisibleNow(b);
+          if (visibleA !== visibleB) return visibleA ? -1 : 1;
+          const [ax, az] = a.split(',').map(Number);
+          const [bx, bz] = b.split(',').map(Number);
+          const da = Math.max(Math.abs(ax - this.lastChunkX), Math.abs(az - this.lastChunkZ));
+          const db = Math.max(Math.abs(bx - this.lastChunkX), Math.abs(bz - this.lastChunkZ));
+          return da - db;
+        });
       }
-      const visible = this.isObjectChunkVisibleNow(chunkKey);
-      if (!visible) {
-        const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
-        if (now - this.lastHiddenObjectChunkLoadAt < HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS) {
-          this.objectChunkQueue.unshift(chunkKey);
-          this.scheduleObjectChunkQueue();
-          return;
+
+      while (this.objectChunkQueue.length > 0) {
+        if (this.isObjectLoadStale(generation)) return;
+        const chunkKey = this.objectChunkQueue.shift()!;
+        if (!this.shouldLoadObjectChunkNow(chunkKey)) {
+          this.queuedObjectChunks.delete(chunkKey);
+          this.loadingObjectChunks.delete(chunkKey);
+          continue;
         }
-        this.lastHiddenObjectChunkLoadAt = now;
-      }
-      this.queuedObjectChunks.delete(chunkKey);
+        const visible = this.isObjectChunkVisibleNow(chunkKey);
+        if (!visible) {
+          const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+          if (now - this.lastHiddenObjectChunkLoadAt < HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS) {
+            this.objectChunkQueue.unshift(chunkKey);
+            return;
+          }
+          this.lastHiddenObjectChunkLoadAt = now;
+        }
+        this.queuedObjectChunks.delete(chunkKey);
 
-      if (!this.chunkPlacedNodes.has(chunkKey)) {
-        await this.loadChunkPlacedObjects(chunkKey, generation);
-      } else {
-        this.loadingObjectChunks.delete(chunkKey);
-      }
+        if (!this.chunkPlacedNodes.has(chunkKey)) {
+          await this.loadChunkPlacedObjects(chunkKey, generation);
+        } else {
+          this.loadingObjectChunks.delete(chunkKey);
+        }
 
-      if (this.isObjectLoadStale(generation)) return;
-      if (performance.now() - start >= this.objectChunkFrameBudgetMs) break;
+        if (this.isObjectLoadStale(generation)) return;
+        if (performance.now() - start >= this.objectChunkFrameBudgetMs) break;
+      }
+    } finally {
+      this.objectChunkQueueProcessing = false;
+      if (this.objectChunkQueue.length > 0) this.scheduleObjectChunkQueue();
     }
-
-    if (this.objectChunkQueue.length > 0) this.scheduleObjectChunkQueue();
   }
 
   /** Load and instantiate placed objects for a single chunk */
@@ -3450,6 +3501,7 @@ export class ChunkManager {
       this.touchObjectChunk(chunkKey);
       return;
     }
+    const workSlice = { start: performance.now() };
 
     // Stamps tile blockers for decor that stays thin-instanced (no WorldObject).
     const decorKeys: number[] = [];
@@ -3463,18 +3515,31 @@ export class ChunkManager {
       decorKeys.push(key);
     }
     if (decorKeys.length > 0) this.decorBlockedTilesByChunk.set(chunkKey, decorKeys);
+    const cleanupDecorAndRoofStamps = () => {
+      this.clearRoofObjectGridForChunk(chunkKey);
+      const stampedDecor = this.decorBlockedTilesByChunk.get(chunkKey) ?? decorKeys;
+      for (const k of stampedDecor) this.decorBlockedTiles.delete(k);
+      this.decorBlockedTilesByChunk.delete(chunkKey);
+    };
+    const abortEarlyObjectLoadIfStopped = (): boolean => {
+      if (!this.isObjectLoadStale(generation) && this.shouldLoadObjectChunkNow(chunkKey)) return false;
+      cleanupDecorAndRoofStamps();
+      return true;
+    };
 
     // Split into thin-instanceable static scenery vs regular interactable,
     // animated, door, and stair hierarchies.
     // Need to load templates first so canThinInstance can check for animations.
-    const templatePromises = new Map<string, Promise<TransformNode | null>>();
+    const templateAssetIds = new Set<string>();
     for (const obj of renderableObjects) {
-      if (!templatePromises.has(obj.assetId)) {
-        templatePromises.set(obj.assetId, this.loadGLBModel(obj.assetId, generation));
-      }
+      templateAssetIds.add(obj.assetId);
     }
-    await Promise.all(templatePromises.values());
-    if (this.isObjectLoadStale(generation)) return;
+    for (const assetId of templateAssetIds) {
+      await this.loadGLBModel(assetId, generation);
+      await this.yieldIfFrameBudgetSpent(workSlice);
+      if (abortEarlyObjectLoadIfStopped()) return;
+    }
+    if (abortEarlyObjectLoadIfStopped()) return;
     if (!this.shouldLoadObjectChunkNow(chunkKey)) {
       this.disposeChunkPlacedObjects(chunkKey);
       this.loadingObjectChunks.delete(chunkKey);
@@ -3485,6 +3550,8 @@ export class ChunkManager {
       if (!this.isRoofLikeAsset(obj.assetId)) continue;
       const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
       if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max);
+      await this.yieldIfFrameBudgetSpent(workSlice);
+      if (abortEarlyObjectLoadIfStopped()) return;
     }
 
     type ThinGroup = { assetId: string; visibility: 'ground' | 'elevated' | 'roof'; placements: PlacedObject[] };
@@ -3504,12 +3571,58 @@ export class ChunkManager {
       } else {
         regularObjects.push(obj);
       }
+      await this.yieldIfFrameBudgetSpent(workSlice);
+      if (abortEarlyObjectLoadIfStopped()) return;
     }
 
     // --- Thin instances: one source mesh per sub-mesh per asset per chunk ---
     const thinSources: Mesh[] = [];
     const roofThinSources: Mesh[] = [];
     const elevatedThinSources: { mesh: Mesh; minX: number; maxX: number; maxY: number; minZ: number; maxZ: number }[] = [];
+    const nodes: TransformNode[] = [];
+    const anims: AnimationGroup[] = [];
+    const cleanupPartialChunkLoad = () => {
+      cleanupDecorAndRoofStamps();
+      for (const m of thinSources) {
+        if (!m.isDisposed()) m.dispose();
+      }
+      thinSources.length = 0;
+      roofThinSources.length = 0;
+      elevatedThinSources.length = 0;
+      for (const ag of anims) {
+        const aidx = this.activeAnimationGroups.indexOf(ag);
+        if (aidx >= 0) this.activeAnimationGroups.splice(aidx, 1);
+        ag.dispose();
+      }
+      anims.length = 0;
+      for (const node of nodes) {
+        const idx = this.placedObjectNodes.indexOf(node);
+        if (idx >= 0) this.placedObjectNodes.splice(idx, 1);
+        this.placedObjectNodeSet.delete(node);
+        const assetId = (node.metadata as PlacedObjectNodeMetadata | null)?.assetId;
+        if (assetId && assetId in ASSET_TO_OBJECT_DEF) {
+          const placed = this.placedObjectAuthoredPosition(node);
+          const gridKey = `${Math.floor(placed.x)},${Math.floor(placed.z)}`;
+          const nodesAtTile = this.placedObjectGrid.get(gridKey);
+          if (nodesAtTile) {
+            const nidx = nodesAtTile.indexOf(node);
+            if (nidx >= 0) nodesAtTile.splice(nidx, 1);
+            if (nodesAtTile.length === 0) this.placedObjectGrid.delete(gridKey);
+          }
+        }
+        if (!node.isDisposed()) node.dispose();
+      }
+      nodes.length = 0;
+      this.placedStairRamps = this.placedStairRamps.filter(ramp => ramp.chunkKey !== chunkKey);
+      this.chunkThinInstSources.delete(chunkKey);
+      this.chunkRoofThinInstSources.delete(chunkKey);
+      this.chunkElevatedThinInstSources.delete(chunkKey);
+    };
+    const abortPartialLoadIfStopped = (): boolean => {
+      if (!this.isObjectLoadStale(generation) && this.shouldLoadObjectChunkNow(chunkKey)) return false;
+      cleanupPartialChunkLoad();
+      return true;
+    };
     const _tmpMatrix = Matrix.Identity();
     const _placementMatrix = Matrix.Identity();
 
@@ -3527,7 +3640,7 @@ export class ChunkManager {
         src.rotation.set(0, 0, 0);
         src.rotationQuaternion = null;
         src.scaling.set(1, 1, 1);
-        src.setEnabled(true);
+        src.setEnabled(false);
         if (src instanceof Mesh) src.makeGeometryUnique();
         const mat = src.material;
         if (mat) {
@@ -3542,6 +3655,8 @@ export class ChunkManager {
           this.composePlacedObjectMatrix(obj, scaleBoost, _placementMatrix);
           baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
           src.thinInstanceAdd(_tmpMatrix);
+          await this.yieldIfFrameBudgetSpent(workSlice);
+          if (abortPartialLoadIfStopped()) return;
         }
         // Compute AABB from instance translations + generous padding
         const pad = 5;
@@ -3569,6 +3684,8 @@ export class ChunkManager {
         else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX)) {
           elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxY: bMaxY, minZ: bMinZ, maxZ: bMaxZ });
         }
+        await this.yieldIfFrameBudgetSpent(workSlice);
+        if (abortPartialLoadIfStopped()) return;
       }
     }
     this.chunkThinInstSources.set(chunkKey, thinSources);
@@ -3576,8 +3693,6 @@ export class ChunkManager {
     if (elevatedThinSources.length > 0) this.chunkElevatedThinInstSources.set(chunkKey, elevatedThinSources);
 
     // --- Regular instances: interactable, animated, doors, stairs ---
-    const nodes: TransformNode[] = [];
-    const anims: AnimationGroup[] = [];
     let idx = 0;
     for (const obj of regularObjects) {
       const template = this.loadedModelCache.get(obj.assetId)!;
@@ -3586,7 +3701,7 @@ export class ChunkManager {
         cloned.name = `placed_${chunkKey}_${idx}_${source.name}`;
       });
       if (!instance) continue;
-      instance.setEnabled(true);
+      instance.setEnabled(false);
       for (const child of instance.getChildMeshes()) {
         child.setEnabled(true);
         child.isPickable = false;
@@ -3599,7 +3714,9 @@ export class ChunkManager {
       const root = instance;
 
       const templateAnims = this.modelAnimationGroups.get(obj.assetId);
+      const instanceAnims: AnimationGroup[] = [];
       if (templateAnims) {
+        const oneShotAnimation = this.isOneShotPlacedAnimationAsset(obj.assetId);
         const clonedNodes = new Map<string, any>();
         instance.getChildMeshes(false).forEach(m => clonedNodes.set(m.name, m));
         instance.getChildTransformNodes(false).forEach(n => clonedNodes.set(n.name, n));
@@ -3617,8 +3734,14 @@ export class ChunkManager {
             }
           }
           if (clonedGroup.targetedAnimations.length > 0) {
-            clonedGroup.play(true);
+            if (oneShotAnimation) {
+              clonedGroup.stop();
+              this.oneShotPlacedAnimationGroups.add(clonedGroup);
+            } else {
+              clonedGroup.stop();
+            }
             anims.push(clonedGroup);
+            instanceAnims.push(clonedGroup);
             this.activeAnimationGroups.push(clonedGroup);
           } else {
             clonedGroup.dispose();
@@ -3652,6 +3775,7 @@ export class ChunkManager {
       }
 
       nodes.push(root);
+      if (instanceAnims.length > 0) this.placedObjectAnimationGroups.set(root, instanceAnims);
       this.placedObjectNodes.push(root);
       this.placedObjectNodeSet.add(root);
 
@@ -3687,6 +3811,14 @@ export class ChunkManager {
       }
 
       idx++;
+      await this.yieldIfFrameBudgetSpent(workSlice);
+      if (abortPartialLoadIfStopped()) return;
+    }
+
+    if (renderableObjects.length > 0) {
+      await this.addShadowsForObjects(renderableObjects, workSlice);
+      if (abortPartialLoadIfStopped()) return;
+      this.queueGroundShadowRebuildsForObjects(renderableObjects);
     }
 
     this.chunkPlacedNodes.set(chunkKey, nodes);
@@ -3694,11 +3826,6 @@ export class ChunkManager {
     this.chunkAnimGroups.set(chunkKey, anims);
     const visible = this.isObjectChunkVisibleNow(chunkKey);
     this.setChunkPlacedObjectsEnabled(chunkKey, visible);
-
-    if (renderableObjects.length > 0) {
-      this.addShadowsForObjects(renderableObjects);
-      this.queueGroundShadowRebuildsForObjects(renderableObjects);
-    }
 
     if (visible) this.onChunkObjectsLoaded?.(chunkKey);
     } catch (e) {
@@ -3797,12 +3924,28 @@ export class ChunkManager {
     }
     if (anims) {
       for (const ag of anims) {
-        if (enabled) ag.play(true);
+        if (enabled && !this.oneShotPlacedAnimationGroups.has(ag)) ag.play(true);
         else ag.stop();
       }
     }
 
     return hasRenderableContent;
+  }
+
+  playPlacedObjectAnimation(node: TransformNode): boolean {
+    let root: TransformNode | null = node;
+    while (root && !this.placedObjectNodeSet.has(root)) root = root.parent as TransformNode | null;
+    if (!root) return false;
+
+    const groups = this.placedObjectAnimationGroups.get(root);
+    if (!groups || groups.length === 0) return false;
+
+    for (const group of groups) {
+      group.stop();
+      group.reset();
+      group.play(false);
+    }
+    return true;
   }
 
   /** Determine which floor a roof/ceiling at a given Y belongs to by checking
@@ -4064,7 +4207,7 @@ export class ChunkManager {
   }
 
   /** Add shadow contribution from a set of placed objects (used in chunked mode) */
-  private addShadowsForObjects(objects: PlacedObject[]): void {
+  private async addShadowsForObjects(objects: PlacedObject[], workSlice: { start: number }): Promise<void> {
     if (!this.shadowInf || !this.mapWidth) {
       if (import.meta.env.DEV) console.log(`[ChunkManager] addShadowsForObjects: no shadowInf or mapWidth`);
       return;
@@ -4099,6 +4242,7 @@ export class ChunkManager {
           if (factor < this.shadowInf[idx]) this.shadowInf[idx] = factor;
         }
       }
+      await this.yieldIfFrameBudgetSpent(workSlice);
     }
   }
 
@@ -4127,10 +4271,7 @@ export class ChunkManager {
   private scheduleShadowGroundRebuilds(): void {
     if (this.shadowGroundRebuildScheduled || this.pendingShadowGroundRebuildChunks.size === 0) return;
     this.shadowGroundRebuildScheduled = true;
-    const schedule = typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (cb: FrameRequestCallback) => window.setTimeout(() => cb(performance.now()), 16);
-    schedule(() => this.processShadowGroundRebuilds());
+    this.scheduleNextFrame(() => this.processShadowGroundRebuilds());
   }
 
   private processShadowGroundRebuilds(): void {
@@ -4553,6 +4694,7 @@ export class ChunkManager {
     this.objectChunkQueue = [];
     this.queuedObjectChunks.clear();
     this.objectChunkQueueScheduled = false;
+    this.objectChunkQueueProcessing = false;
     this.lastHiddenObjectChunkLoadAt = 0;
     this.chunksKnownEmpty.clear();
     this.pendingShadowGroundRebuildChunks.clear();
@@ -4630,6 +4772,8 @@ export class ChunkManager {
     this.chunkLastUsed.clear();
     this.chunkMeshesEnabled.clear();
     this.objectChunkLastUsed.clear();
+    this.editorChunkApplyTail = Promise.resolve();
+    this.lastVisibleGameChunkBuildAt = 0;
     this.lastHiddenGameChunkBuildAt = 0;
     this.lastUpdateTerrainChanged = false;
     this.lastUpdateObjectsChanged = false;

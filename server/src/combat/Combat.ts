@@ -1,8 +1,8 @@
 import type { Player } from '../entity/Player';
-import { Npc } from '../entity/Npc';
+import type { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
-  osrsMeleeMaxHit, rollHit, npcCombatLevel,
+  osrsMeleeMaxHit, rollHit, npcCombatLevel, bowAttackRollMultiplierForStance,
   relicDropPoolForCombatLevel,
   type ItemDef,
 } from '@projectrs/shared';
@@ -109,7 +109,7 @@ export function processPlayerCombat(
   // NPC retaliates with flinch (half attack speed for first counter-attack)
   if (npc.alive) {
     const wasInCombat = npc.combatTarget != null;
-    npc.combatTarget = player;
+    npc.setCombatTarget(player);
     if (!wasInCombat) {
       // Flinch: first retaliation at half attack speed
       npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
@@ -184,10 +184,10 @@ export function processPlayerRangedCombat(
 ): { hit: CombatHit; xpDrops: XpDrop[]; levelUps: { skill: string; level: number }[]; isRanged: true } | null {
   if (npc.dead || !player.alive) return null;
 
-  // Check distance — must be within ranged distance
-  const dx = Math.abs(player.position.x - npc.position.x);
-  const dz = Math.abs(player.position.y - npc.position.y);
-  if (dx > RANGED_ATTACK_DISTANCE || dz > RANGED_ATTACK_DISTANCE) return null;
+  // Check distance against the nearest footprint tile so large NPCs can be
+  // ranged from their body edge, not only from their anchor coordinate.
+  const fp = npc.distToFootprint(player.position.x, player.position.y);
+  if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > RANGED_ATTACK_DISTANCE) return null;
 
   // Cooldown gate. Decrement is global; see processPlayerCombat for rationale.
   if (player.attackCooldown > 0) return null;
@@ -200,7 +200,11 @@ export function processPlayerRangedCombat(
   const effRanged = player.skills.archery.currentLevel + 8;
 
   // Attack roll uses ranged accuracy
-  const attackRoll = effRanged * (bonuses.rangedAccuracy + ACC_BASE);
+  const weaponStyle = player.getWeaponStyle(itemDefs);
+  const attackRollMultiplier = weaponStyle === 'bow'
+    ? bowAttackRollMultiplierForStance(player.stance)
+    : 1.0;
+  const attackRoll = Math.floor(effRanged * (bonuses.rangedAccuracy + ACC_BASE) * attackRollMultiplier);
 
   // NPC defence roll
   const npcDefLevel = npc.defence + 8;
@@ -220,7 +224,7 @@ export function processPlayerRangedCombat(
   // NPC retaliates — tries to chase the player
   if (npc.alive) {
     const wasInCombat = npc.combatTarget != null;
-    npc.combatTarget = player;
+    npc.setCombatTarget(player);
     if (!wasInCombat) {
       npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
     }
@@ -268,7 +272,7 @@ export function processNpcCombat(
   itemDefs: Map<number, ItemDef>
 ): CombatHit | null {
   if (npc.dead || !target.alive) {
-    npc.combatTarget = null;
+    npc.setCombatTarget(null);
     return null;
   }
 
@@ -277,11 +281,9 @@ export function processNpcCombat(
   // first-retaliation cooldown until the NPC reaches melee range.
   if (npc.attackCooldown > 0) npc.attackCooldown--;
 
-  // Check distance to the NPC's body, not only its anchor tile.
-  const fp = npc.distToFootprint(target.position.x, target.position.y);
-  if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE) {
-    return null;
-  }
+  // NPC melee uses the same cardinal interaction surface as player melee.
+  // Chebyshev distance would allow diagonal corner attacks.
+  if (!npc.isInteractionTile(Math.floor(target.position.x), Math.floor(target.position.y))) return null;
 
   // Check cooldown
   if (npc.attackCooldown > 0) return null;

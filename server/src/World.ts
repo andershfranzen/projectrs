@@ -1,10 +1,10 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID, YEW_LOGS_ITEM_ID, WILLOW_LOGS_ITEM_ID, MAGIC_LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
-import { addXp, statRandom, npcCombatLevel, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill } from '@projectrs/shared';
+import { addXp, statRandom, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill, bowAttackRollMultiplierForStance } from '@projectrs/shared';
 import { GameMap } from './GameMap';
-import { Player, type EquipSlot } from './entity/Player';
+import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc } from './entity/Npc';
 import { WorldObject } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
@@ -49,15 +49,11 @@ type ItemProductionAction =
   | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
   | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number };
 const LOG_CRAFT_INTERVAL_TICKS = 3;
-const ARROW_SHAFT_LOG_RECIPES: readonly { logItemId: number; shaftQuantity: number; label: string }[] = [
-  { logItemId: LOGS_ITEM_ID, shaftQuantity: 10, label: 'logs' },
-  { logItemId: OAK_LOGS_ITEM_ID, shaftQuantity: 15, label: 'oak logs' },
-  { logItemId: WILLOW_LOGS_ITEM_ID, shaftQuantity: 20, label: 'willow logs' },
-  { logItemId: MAPLE_LOGS_ITEM_ID, shaftQuantity: 25, label: 'maple logs' },
-  { logItemId: YEW_LOGS_ITEM_ID, shaftQuantity: 30, label: 'yew logs' },
-  { logItemId: MAGIC_LOGS_ITEM_ID, shaftQuantity: 50, label: 'magic logs' },
-];
-function createArrowShaftRecipe(logItemId: number, shaftQuantity: number, label: string): ItemOnItemRecipe {
+function indefiniteArticle(noun: string): 'a' | 'an' {
+  return /^[aeiou]/i.test(noun.trim()) ? 'an' : 'a';
+}
+
+function createArrowShaftRecipe(logItemId: number, shaftQuantity: number, logLabel: string): ItemOnItemRecipe {
   return {
     inputItemIds: [KNIFE_ITEM_ID, logItemId],
     consume: [{ itemId: logItemId, quantity: 1 }],
@@ -66,10 +62,55 @@ function createArrowShaftRecipe(logItemId: number, shaftQuantity: number, label:
     levelRequired: 1,
     xpReward: 5,
     intervalTicks: LOG_CRAFT_INTERVAL_TICKS,
-    message: `You carve the ${label} into ${shaftQuantity} arrow shafts.`,
+    message: `You carve the ${logLabel} into ${shaftQuantity} arrow shafts.`,
     repeatable: true,
     startMessage: 'You start carving arrow shafts.',
     stopMessage: 'You run out of logs.',
+  };
+}
+
+function createShortbowCarvingRecipe(recipe: typeof LOG_CRAFT_SHORTBOW_RECIPES[number]): ItemOnItemRecipe {
+  const outputLabel = `unstrung ${recipe.bowLabel}`;
+  return {
+    inputItemIds: [KNIFE_ITEM_ID, recipe.logItemId],
+    consume: [{ itemId: recipe.logItemId, quantity: 1 }],
+    outputs: [{ itemId: recipe.unstrungItemId, quantity: 1 }],
+    skill: 'crafting',
+    levelRequired: recipe.levelRequired,
+    xpReward: recipe.carveXpReward,
+    intervalTicks: LOG_CRAFT_INTERVAL_TICKS,
+    message: `You carve the ${recipe.logLabel} into ${indefiniteArticle(outputLabel)} ${outputLabel}.`,
+    repeatable: true,
+    startMessage: `You start carving ${outputLabel}s.`,
+    stopMessage: 'You run out of logs.',
+  };
+}
+
+function createShortbowStringingRecipe(recipe: typeof LOG_CRAFT_SHORTBOW_RECIPES[number]): ItemOnItemRecipe {
+  return {
+    inputItemIds: [BOWSTRING_ITEM_ID, recipe.unstrungItemId],
+    consume: [{ itemId: BOWSTRING_ITEM_ID, quantity: 1 }, { itemId: recipe.unstrungItemId, quantity: 1 }],
+    outputs: [{ itemId: recipe.strungItemId, quantity: 1 }],
+    skill: 'crafting',
+    levelRequired: recipe.levelRequired,
+    xpReward: recipe.stringXpReward,
+    message: `You string the ${recipe.bowLabel}.`,
+  };
+}
+
+function createArrowFletchingRecipe(recipe: typeof ARROWHEAD_FLETCHING_RECIPES[number]): ItemOnItemRecipe {
+  const arrowName = `${recipe.arrowLabel} arrow`;
+  return {
+    inputItemIds: [HEADLESS_ARROWS_ITEM_ID, recipe.arrowheadItemId],
+    consume: [{ itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 }, { itemId: recipe.arrowheadItemId, quantity: 1 }],
+    outputs: [{ itemId: recipe.arrowItemId, quantity: 1 }],
+    skill: 'crafting',
+    levelRequired: recipe.levelRequired,
+    xpReward: recipe.xpReward,
+    message: `You make ${indefiniteArticle(arrowName)} ${arrowName}.`,
+    repeatable: true,
+    startMessage: `You start making ${recipe.arrowLabel} arrows.`,
+    stopMessage: 'You run out of headless arrows or arrowheads.',
   };
 }
 const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
@@ -103,6 +144,7 @@ const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
     startMessage: 'You start making headless arrows.',
     stopMessage: 'You run out of feathers or arrow shafts.',
   },
+  ...ARROWHEAD_FLETCHING_RECIPES.map(createArrowFletchingRecipe),
   {
     inputItemIds: [KNIFE_ITEM_ID, LOGS_ITEM_ID],
     consume: [{ itemId: LOGS_ITEM_ID, quantity: 2 }],
@@ -116,20 +158,9 @@ const ITEM_ON_ITEM_RECIPES: readonly ItemOnItemRecipe[] = [
     startMessage: 'You start carving buckets.',
     stopMessage: 'You run out of logs.',
   },
-  {
-    inputItemIds: [KNIFE_ITEM_ID, LOGS_ITEM_ID],
-    consume: [{ itemId: LOGS_ITEM_ID, quantity: 1 }],
-    outputs: [{ itemId: SHORTBOW_UNSTRUNG_ITEM_ID, quantity: 1 }],
-    skill: 'crafting',
-    levelRequired: 1,
-    xpReward: 5,
-    intervalTicks: LOG_CRAFT_INTERVAL_TICKS,
-    message: 'You carve the logs into an unstrung shortbow.',
-    repeatable: true,
-    startMessage: 'You start carving unstrung shortbows.',
-    stopMessage: 'You run out of logs.',
-  },
-  ...ARROW_SHAFT_LOG_RECIPES.map(({ logItemId, shaftQuantity, label }) => createArrowShaftRecipe(logItemId, shaftQuantity, label)),
+  ...LOG_CRAFT_SHORTBOW_RECIPES.map(createShortbowCarvingRecipe),
+  ...LOG_CRAFT_SHORTBOW_RECIPES.map(createShortbowStringingRecipe),
+  ...LOG_CRAFT_ARROW_SHAFT_RECIPES.map(({ logItemId, shaftQuantity, logLabel }) => createArrowShaftRecipe(logItemId, shaftQuantity, logLabel)),
 ];
 const ITEM_ON_OBJECT_RECIPES: readonly ItemOnObjectRecipe[] = [
   {
@@ -174,6 +205,7 @@ function qFacing(angle: number | null | undefined): number {
  *  At 600ms/tick this is ~2 minutes. */
 const DEFAULT_OBJECT_RESPAWN_TICKS = 200;
 const COOKING_RECIPE_TICKS = 4;
+const SPINNING_WHEEL_RECIPE_TICKS = 3;
 /** Despawn timer (ticks) applied to player-dropped items.
  *  ~2 minutes at 600ms/tick. */
 const GROUND_ITEM_DESPAWN_TICKS = 200;
@@ -205,7 +237,7 @@ const PLAYER_FOLLOW_PATH_SEARCH_STEPS = 800;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
-const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+const EQUIPMENT_SLOT_NAMES: EquipSlot[] = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'];
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 
 export interface GroundItem {
@@ -394,6 +426,7 @@ interface ActiveDuel {
 
 const GROUND_ITEM_ENTITY_ID_MIN = 20000;
 const GROUND_ITEM_ENTITY_ID_MAX = 32760;
+const DEFAULT_SHOP_RESTOCK_TICKS = 100;
 let nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
 
 export class World {
@@ -461,6 +494,7 @@ export class World {
   // entities, but player movement intentionally ignores player occupancy:
   // players are allowed to walk through and stand on the same tile.
   private entityTileOccupants: Set<number> = new Set();
+  private playerTileOccupants: Set<number> = new Set();
   private entityTileOccupantsDirty: boolean = true;
 
   private currentTick: number = 0;
@@ -683,7 +717,7 @@ export class World {
     }
     for (const [id, obj] of this.worldObjects) {
       if (obj.mapLevel === mapId) {
-        this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false, obj.floor);
+        this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false, obj.floor, obj.interactionTiles, obj.rotationY);
         this.worldObjects.delete(id);
       }
     }
@@ -707,7 +741,9 @@ export class World {
         effShop, effDialogue, spawn.name ?? null,
         spawn.stats ?? null, spawn.customColors ?? null,
         spawn.attackAnim ?? null,
-        spawn.facing ?? null);
+        spawn.facing ?? null,
+        spawn.maxRange ?? null, spawn.huntRange ?? null,
+        spawn.attackRange ?? null, spawn.retreatHealth ?? null);
       npc.currentMapLevel = mapId;
       npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
@@ -719,7 +755,7 @@ export class World {
       if (!objDef) continue;
       const obj = this.createWorldObject(objDef, spawn, mapId);
       this.worldObjects.set(obj.id, obj);
-      this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true, obj.floor);
+      this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, true, obj.floor, obj.interactionTiles, obj.rotationY);
       if (objDef.category === 'door') {
         this.initializeDoorObject(obj, gameMap);
       }
@@ -1165,14 +1201,19 @@ export class World {
     return null;
   }
 
-  private queuePlayerPathToNpcRange(player: Player, npc: Npc, range: number): boolean {
+  private isPointInNpcFootprintRange(npc: Npc, x: number, z: number, range: number, mode: 'euclidean' | 'chebyshev'): boolean {
+    const fp = npc.distToFootprint(x, z);
+    if (mode === 'chebyshev') return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
+    return Math.hypot(fp.dx, fp.dz) <= range;
+  }
+
+  private queuePlayerPathToNpcRange(player: Player, npc: Npc, range: number, mode: 'euclidean' | 'chebyshev' = 'euclidean'): boolean {
     const path = this.findPlayerPathToNpc(player, npc);
     if (path.length === 0) return false;
 
     let cutIdx = path.length;
     for (let i = 0; i < path.length; i++) {
-      const fp = npc.distToFootprint(path[i].x, path[i].z);
-      if (Math.hypot(fp.dx, fp.dz) <= range) {
+      if (this.isPointInNpcFootprintRange(npc, path[i].x, path[i].z, range, mode)) {
         cutIdx = i + 1;
         break;
       }
@@ -1184,18 +1225,37 @@ export class World {
     return true;
   }
 
-  private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic'): boolean {
-    if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
-    const fp = npc.distToFootprint(player.position.x, player.position.y);
-    const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
-    const range = mode === 'magic' ? SPELL_CAST_DISTANCE : RANGED_ATTACK_DISTANCE;
-    return dist <= range;
+  private trimPlayerPathToNpcRange(player: Player, npc: Npc, range: number, mode: 'euclidean' | 'chebyshev'): boolean {
+    return player.trimMoveQueueToFirst(step => this.isPointInNpcFootprintRange(npc, step.x, step.z, range, mode));
   }
 
-  private setObjectTilesBlocked(mapId: string, x: number, z: number, def: WorldObjectDef, blocked: boolean, floor: number = 0): void {
-    if (!def.blocking || def.category === 'door') return;
+  private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic'): boolean {
+    if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
+    if (mode === 'ranged') return this.isPointInNpcFootprintRange(npc, player.position.x, player.position.y, RANGED_ATTACK_DISTANCE, 'chebyshev');
+    return this.isPointInNpcFootprintRange(npc, player.position.x, player.position.y, SPELL_CAST_DISTANCE, 'euclidean');
+  }
+
+  private setObjectTilesBlocked(
+    mapId: string,
+    x: number,
+    z: number,
+    def: WorldObjectDef,
+    blocked: boolean,
+    floor: number = 0,
+    interactionTiles?: ReadonlyArray<{ x: number; z: number }>,
+    rotY: number = 0,
+  ): void {
+    if (!def.blocking || def.category === 'door' || usesMapAuthoredObjectCollision(def)) return;
+    let interactionTileKeys: Set<string> | null = null;
+    if (interactionTiles?.length) {
+      interactionTileKeys = new Set();
+      for (const tile of this.explicitObjectInteractionTilesForPlacement(x, z, rotY, interactionTiles)) {
+        interactionTileKeys.add(this.blockedKeyFor(mapId, tile.x, tile.z, floor));
+      }
+    }
     for (const tile of getObjectFootprintTiles(x, z, def)) {
       const key = this.blockedKeyFor(mapId, tile.x, tile.z, floor);
+      if (interactionTileKeys?.has(key)) continue;
       if (blocked) this.blockedObjectTiles.add(key);
       else this.blockedObjectTiles.delete(key);
     }
@@ -1235,15 +1295,20 @@ export class World {
     return { x: tile.x, z: tile.z };
   }
 
-  private explicitObjectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
-    if (!obj.interactionTiles?.length) return [];
-    const baseX = Math.floor(obj.x);
-    const baseZ = Math.floor(obj.z);
+  private explicitObjectInteractionTilesForPlacement(
+    x: number,
+    z: number,
+    rotY: number,
+    interactionTiles?: ReadonlyArray<{ x: number; z: number }>,
+  ): { x: number; z: number }[] {
+    if (!interactionTiles?.length) return [];
+    const baseX = Math.floor(x);
+    const baseZ = Math.floor(z);
     const seen = new Set<string>();
     const out: { x: number; z: number }[] = [];
-    for (const local of obj.interactionTiles) {
+    for (const local of interactionTiles) {
       if (!Number.isFinite(local.x) || !Number.isFinite(local.z)) continue;
-      const rotated = this.rotateLocalInteractionTile({ x: Math.round(local.x), z: Math.round(local.z) }, obj.rotationY);
+      const rotated = this.rotateLocalInteractionTile({ x: Math.round(local.x), z: Math.round(local.z) }, rotY);
       const tile = { x: baseX + rotated.x, z: baseZ + rotated.z };
       const key = `${tile.x},${tile.z}`;
       if (seen.has(key)) continue;
@@ -1251,6 +1316,10 @@ export class World {
       out.push(tile);
     }
     return out;
+  }
+
+  private explicitObjectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
+    return this.explicitObjectInteractionTilesForPlacement(obj.x, obj.z, obj.rotationY, obj.interactionTiles);
   }
 
   private objectInteractionTiles(obj: WorldObject): { x: number; z: number }[] {
@@ -1395,6 +1464,10 @@ export class World {
           spawn.customColors ?? null,
           spawn.attackAnim ?? null,
           spawn.facing ?? null,
+          spawn.maxRange ?? null,
+          spawn.huntRange ?? null,
+          spawn.attackRange ?? null,
+          spawn.retreatHealth ?? null,
         );
         npc.currentMapLevel = mapId;
         npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
@@ -1431,7 +1504,7 @@ export class World {
         }
         const obj = this.createWorldObject(objDef, spawn, mapId);
         this.worldObjects.set(obj.id, obj);
-        this.setObjectTilesBlocked(mapId, spawn.x, spawn.z, objDef, true, obj.floor);
+        this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, true, obj.floor, obj.interactionTiles, obj.rotationY);
         if (objDef.category === 'door') {
           this.initializeDoorObject(obj, gameMap);
         }
@@ -1813,7 +1886,7 @@ export class World {
     if (player.openInterface === 'trade') this.abortTrade(id, 2);
     if (player.openInterface === 'duel') this.abortDuelStake(id, 2);
     if (player.openInterface === 'bank') player.openInterface = null;
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     player.requestIdleLogout = false;
     player.disconnected = false;
     player.reconnectDeadlineTick = 0;
@@ -2108,7 +2181,7 @@ export class World {
   }
 
   private closeNpcUiContext(player: Player): void {
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     if (player.openDialogueState) this.sendDialogueClose(player);
   }
 
@@ -2178,7 +2251,7 @@ export class World {
     // Bank just gets closed — its contents are already in player.bank and
     // will be saved by the call below.
     if (player.openInterface === 'bank') player.openInterface = null;
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     this.closeDialogueForPlayer(player, false);
     player.clearMoveQueue();
     player.pendingPickup = -1;
@@ -2572,11 +2645,7 @@ export class World {
   private npcHasInteractionAudience(npc: Npc): boolean {
     for (const [, player] of this.players) {
       if (player.openDialogueState?.npcEntityId === npc.id && player.currentMapLevel === npc.currentMapLevel && player.currentFloor === npc.currentFloor) return true;
-      // openShopNpcId is keyed by def id, not entity id — two NPCs of the
-      // same def in the same area would both freeze when one is shopped at,
-      // which is acceptable (rare, and the wrong-direction facing risk is
-      // worse than the standing-still cost).
-      if (player.openShopNpcId === npc.npcId && player.currentMapLevel === npc.currentMapLevel && player.currentFloor === npc.currentFloor) return true;
+      if (player.openShopNpcEntityId === npc.id && player.currentMapLevel === npc.currentMapLevel && player.currentFloor === npc.currentFloor) return true;
     }
     return false;
   }
@@ -2695,9 +2764,10 @@ export class World {
     }
     for (const [, npc] of this.npcs) {
       if (npc.combatTarget?.id === playerId) {
-        npc.combatTarget = null;
+        npc.setCombatTarget(null);
         npc.pathQueue.length = 0;
       }
+      npc.clearRetreatTarget(playerId);
     }
     for (const [npcId, set] of this.npcTargetedBy) {
       if (set.delete(playerId) && set.size === 0) {
@@ -2787,10 +2857,12 @@ export class World {
     if (this.entityTileOccupantsDirty === false && this.entityTileOccupants) return;
     if (!this.entityTileOccupants) this.entityTileOccupants = new Set();
     this.entityTileOccupants.clear();
+    this.playerTileOccupants.clear();
     for (const [, player] of this.players) {
       if (player.disconnected) continue;
       const key = this.entityTileKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor);
       this.entityTileOccupants.add(key);
+      this.playerTileOccupants.add(key);
     }
     for (const [, npc] of this.npcs) {
       if (npc.dead) continue;
@@ -2833,9 +2905,12 @@ export class World {
       return;
     }
     if (path.length === 0) {
+      this.clearCombatTarget(playerId);
+      player.attackTarget = null;
       player.clearMoveQueue();
       player.followTargetPlayerId = -1;
       this.clearPendingObjectIntents(player);
+      player.pendingSpellCast = null;
       this.cancelItemProduction(playerId);
       return;
     }
@@ -2854,7 +2929,7 @@ export class World {
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     // Shops aren't a modal interface but they're context-tied to standing at
     // the shopkeeper. Walking away invalidates the scope.
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     if (player.openDialogueState) this.sendDialogueClose(player);
 
     const map = this.getPlayerMap(player);
@@ -2986,7 +3061,7 @@ export class World {
     player.followTargetPlayerId = target.id;
     player.nextFollowRepathTick = 0;
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     if (player.openDialogueState) this.sendDialogueClose(player);
     target.followAnchorX = target.position.x;
     target.followAnchorZ = target.position.y;
@@ -3091,24 +3166,18 @@ export class World {
       // for wall validation — fall back to server-side pathfinding so the
       // chase still happens. tickPlayerCombat re-pathfinds every tick once
       // engaged, so any subsequent NPC movement is handled there.
-      if (!player.hasMoveQueue()) {
+      if (isMagicAutocast && player.hasMoveQueue()) {
+        this.trimPlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE, 'euclidean');
+      } else if (isRanged && player.hasMoveQueue()) {
+        this.trimPlayerPathToNpcRange(player, npc, attackDist, 'chebyshev');
+      } else if (!player.hasMoveQueue()) {
         if (isMagicAutocast) {
           this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
         } else if (!isRanged) {
           const path = this.findPlayerPathToNpc(player, npc);
           player.setMoveQueue(path);
         } else {
-          const path = this.findPlayerPathToNpc(player, npc);
-          // Ranged: walk until within range of the nearest footprint tile.
-          let cutIdx = path.length;
-          for (let i = 0; i < path.length; i++) {
-            const pf = npc.distToFootprint(path[i].x, path[i].z);
-            if (Math.abs(pf.dx) <= attackDist && Math.abs(pf.dz) <= attackDist) {
-              cutIdx = i + 1;
-              break;
-            }
-          }
-          player.setMoveQueue(path.slice(0, cutIdx));
+          this.queuePlayerPathToNpcRange(player, npc, attackDist, 'chebyshev');
         }
       }
     } else {
@@ -3181,28 +3250,108 @@ export class World {
     }
   }
 
-  /** Open the shop UI for this player against this NPC. Extracted so the
-   *  dialogue `openShop` action can reuse it. */
-  private openShopFor(player: Player, npc: Npc): void {
+  private shopItemCurrentStock(npc: Npc, item: ShopItem): number {
+    const stock = npc.shopStock.get(item.itemId);
+    return Math.max(0, Math.min(item.stock, Math.floor(stock ?? item.stock)));
+  }
+
+  private shopItemPrice(item: ShopItem, currentStock: number): number {
+    const basePrice = Math.max(0, Math.floor(item.price));
+    const baseStock = Math.max(0, Math.floor(item.stock));
+    if (basePrice <= 0 || baseStock <= 0) return basePrice;
+    const missingStock = Math.max(0, Math.min(baseStock, baseStock - currentStock));
+    return Math.ceil((basePrice * (baseStock * 2 + missingStock)) / (baseStock * 2));
+  }
+
+  private shopPurchaseCost(item: ShopItem, currentStock: number, quantity: number): number {
+    let total = 0;
+    for (let i = 0; i < quantity; i++) {
+      total += this.shopItemPrice(item, currentStock - i);
+    }
+    return total;
+  }
+
+  private shopRestockTicks(shop: ShopDef): number {
+    const value = Math.floor(shop.restockTicks ?? DEFAULT_SHOP_RESTOCK_TICKS);
+    return Math.max(0, value);
+  }
+
+  private sendShopOpen(player: Player, npc: Npc): void {
     const shop = npc.effectiveShop;
     if (!shop) return;
-    player.openShopNpcId = npc.npcId;
     const values: number[] = [npc.id, shop.items.length];
     for (const si of shop.items) {
-      values.push(si.itemId, si.price, si.stock);
+      const currentStock = this.shopItemCurrentStock(npc, si);
+      values.push(si.itemId, this.shopItemPrice(si, currentStock), currentStock);
     }
     this.sendToPlayer(player, ServerOpcode.SHOP_OPEN, ...values);
   }
 
-  private playerStillNearShop(player: Player): boolean {
-    const shopNpcId = player.openShopNpcId;
-    if (shopNpcId === null) return false;
-    for (const [, npc] of this.npcs) {
-      if (npc.npcId !== shopNpcId || npc.dead) continue;
-      if (!this.canPlayerTargetNpc(player, npc)) continue;
-      if (this.isPlayerNpcInteractionReachable(player, npc)) return true;
+  /** Open the shop UI for this player against this NPC. Extracted so the
+   *  dialogue `openShop` action can reuse it. */
+  private openShopFor(player: Player, npc: Npc): void {
+    if (!npc.effectiveShop) return;
+    player.openShopNpcId = npc.npcId;
+    player.openShopNpcEntityId = npc.id;
+    this.sendShopOpen(player, npc);
+  }
+
+  private findOpenShopNpc(player: Player): Npc | null {
+    if (player.openShopNpcEntityId !== null) {
+      const npc = this.npcs.get(player.openShopNpcEntityId);
+      if (npc?.effectiveShop && !npc.dead) return npc;
     }
-    return false;
+    if (player.openShopNpcId === null) return null;
+    for (const [, npc] of this.npcs) {
+      if (npc.npcId === player.openShopNpcId && npc.effectiveShop && !npc.dead) return npc;
+    }
+    return null;
+  }
+
+  private playerStillNearShop(player: Player): boolean {
+    const npc = this.findOpenShopNpc(player);
+    return !!npc
+      && this.canPlayerTargetNpc(player, npc)
+      && this.isPlayerNpcInteractionReachable(player, npc);
+  }
+
+  private closeShopForPlayer(player: Player): void {
+    player.openShopNpcId = null;
+    player.openShopNpcEntityId = null;
+  }
+
+  private refreshShopViewers(npc: Npc): void {
+    for (const [, player] of this.players) {
+      if (player.openShopNpcEntityId !== npc.id) continue;
+      if (
+        player.disconnected
+        || player.currentMapLevel !== npc.currentMapLevel
+        || player.currentFloor !== npc.currentFloor
+        || !this.isPlayerNpcInteractionReachable(player, npc)
+      ) {
+        this.closeShopForPlayer(player);
+        continue;
+      }
+      this.sendShopOpen(player, npc);
+    }
+  }
+
+  private scheduleShopRestock(npc: Npc, item: ShopItem): void {
+    const shop = npc.effectiveShop;
+    if (!shop) return;
+    const restockTicks = this.shopRestockTicks(shop);
+    if (restockTicks <= 0) {
+      npc.shopNextRestockTick.delete(item.itemId);
+      return;
+    }
+    const currentStock = this.shopItemCurrentStock(npc, item);
+    if (currentStock >= item.stock) {
+      npc.shopNextRestockTick.delete(item.itemId);
+      return;
+    }
+    if (!npc.shopNextRestockTick.has(item.itemId)) {
+      npc.shopNextRestockTick.set(item.itemId, this.currentTick + restockTicks);
+    }
   }
 
   private allocateDialogueSessionId(): number {
@@ -3441,11 +3590,14 @@ export class World {
     // Must be talking to a specific shop. Closes the "send PLAYER_BUY_ITEM
     // without ever clicking a shopkeeper" exploit and the "buy items from
     // shop B while only shop A's panel is open" exploit.
-    if (player.openShopNpcId === null) return;
-    const shop = this.data.getShop(player.openShopNpcId);
-    if (!shop) return;
+    const npc = this.findOpenShopNpc(player);
+    const shop = npc?.effectiveShop ?? null;
+    if (!npc || !shop) {
+      this.closeShopForPlayer(player);
+      return;
+    }
     if (!this.playerStillNearShop(player)) {
-      player.openShopNpcId = null;
+      this.closeShopForPlayer(player);
       return;
     }
     const shopItem = shop.items.find(s => s.itemId === itemId);
@@ -3453,8 +3605,9 @@ export class World {
 
     const itemDef = this.data.getItem(itemId);
     if (!itemDef) return;
-    const price = shopItem.price;
-    const totalCost = price * quantity;
+    const currentStock = this.shopItemCurrentStock(npc, shopItem);
+    if (currentStock <= 0 || quantity > currentStock) return;
+    const totalCost = this.shopPurchaseCost(shopItem, currentStock, quantity);
 
     // Check coin balance against current inventory.
     const coinSlot = player.inventory.findIndex(s => s?.itemId === 10);
@@ -3484,9 +3637,12 @@ export class World {
       return;
     }
 
+    npc.shopStock.set(itemId, currentStock - quantity);
+    this.scheduleShopRestock(npc, shopItem);
     this.interruptPlayerAction(playerId, player, true);
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
+    this.refreshShopViewers(npc);
   }
 
   handlePlayerSellItem(playerId: number, slot: number, quantity: number, expectedItemId: number): void {
@@ -3499,10 +3655,14 @@ export class World {
     // Must be at an open shop. Without this anyone could send PLAYER_SELL_ITEM
     // anywhere and get coins for items at half-value. Open-shop scoping also
     // makes the "you must travel to find a vendor" loop matter for authenticity.
-    if (player.openShopNpcId === null) return;
-    if (!this.data.getShop(player.openShopNpcId)) return;
+    const npc = this.findOpenShopNpc(player);
+    const shop = npc?.effectiveShop ?? null;
+    if (!npc || !shop) {
+      this.closeShopForPlayer(player);
+      return;
+    }
     if (!this.playerStillNearShop(player)) {
-      player.openShopNpcId = null;
+      this.closeShopForPlayer(player);
       return;
     }
 
@@ -3535,8 +3695,18 @@ export class World {
     }
 
     this.interruptPlayerAction(playerId, player, true);
+    const shopItem = shop.items.find(s => s.itemId === invItem.itemId);
+    if (shopItem) {
+      const currentStock = this.shopItemCurrentStock(npc, shopItem);
+      const nextStock = Math.min(shopItem.stock, currentStock + actualQty);
+      if (nextStock !== currentStock) {
+        npc.shopStock.set(invItem.itemId, nextStock);
+        this.scheduleShopRestock(npc, shopItem);
+      }
+    }
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
+    this.refreshShopViewers(npc);
   }
 
   handlePlayerPickup(playerId: number, groundItemId: number): void {
@@ -3863,7 +4033,15 @@ export class World {
     }
 
     if (obj.def.recipes && obj.def.recipes.length > 0) {
-      if (recipeIndex >= 0 && this.supportsObjectRecipeProduction(obj) && (recipeQuantity !== 1 || obj.def.category === 'cookingrange')) {
+      if (
+        recipeIndex >= 0
+        && this.supportsObjectRecipeProduction(obj)
+        && (
+          recipeQuantity !== 1
+          || obj.def.category === 'cookingrange'
+          || obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID
+        )
+      ) {
         this.startObjectRecipeProduction(playerId, player, obj, recipeIndex, recipeQuantity);
       } else {
         this.handleCraftingInteraction(playerId, player, obj, recipeIndex);
@@ -3881,12 +4059,15 @@ export class World {
   }
 
   private objectRecipeProductionTicks(obj: WorldObject): number {
-    return obj.defId === COOKING_RANGE_OBJECT_DEF_ID ? COOKING_RECIPE_TICKS : 1;
+    if (obj.defId === COOKING_RANGE_OBJECT_DEF_ID) return COOKING_RECIPE_TICKS;
+    if (obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return SPINNING_WHEEL_RECIPE_TICKS;
+    return 1;
   }
 
   private shouldOpenRecipePicker(obj: WorldObject): boolean {
     const recipes = obj.def.recipes ?? [];
     if (recipes.length === 0) return false;
+    if (obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return true;
     if (recipes[0]?.requiresTool) return true;
     return recipes.length > 1;
   }
@@ -4166,6 +4347,14 @@ export class World {
         }
       }
 
+      if (
+        obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID
+        && recipe.inputItemId === LOW_QUALITY_SINEW_ITEM_ID
+        && recipe.outputItemId === BOWSTRING_ITEM_ID
+      ) {
+        this.broadcastWorldObjectAnimation(obj);
+      }
+
       this.sendInventory(player);
       if (skillIdx >= 0) this.sendSingleSkill(player, skillIdx);
       return true;
@@ -4244,13 +4433,50 @@ export class World {
 
     const equipSlot = itemDef.equipSlot as EquipSlot;
     const requiredLevel = itemDef.levelRequired ?? 1;
-    const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'accuracy' : 'defence');
-    if (requiredLevel > 1 && (player.skills[requiredSkill]?.level ?? 1) < requiredLevel) {
+    const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'accuracy' : equipSlot === 'ammo' ? undefined : 'defence');
+    if (requiredSkill && requiredLevel > 1 && (player.skills[requiredSkill]?.level ?? 1) < requiredLevel) {
       this.sendChatSystem(player, `You need level ${requiredLevel} ${SKILL_NAMES[requiredSkill] ?? 'skill'} to equip ${itemDef.name}.`);
       return;
     }
 
     const currentEquipped = player.equipment.get(equipSlot);
+
+    if (equipSlot === 'ammo') {
+      if (!itemDef.isAmmo) return;
+      const sourceQuantity = Math.min(MAX_STACK, Math.max(1, Math.floor(slot.quantity)));
+      this.interruptPlayerAction(playerId, player);
+
+      if (currentEquipped === slot.itemId) {
+        const currentQuantity = player.getEquipmentQuantity('ammo');
+        const room = MAX_STACK - currentQuantity;
+        if (room <= 0) {
+          this.sendChatSystem(player, 'Your ammo slot is full.');
+          return;
+        }
+        const movedQuantity = Math.min(sourceQuantity, room);
+        player.setEquipment('ammo', slot.itemId, currentQuantity + movedQuantity);
+        if (movedQuantity >= slot.quantity) {
+          player.inventory[slotIndex] = null;
+        } else {
+          slot.quantity -= movedQuantity;
+        }
+      } else {
+        const currentQuantity = player.getEquipmentQuantity('ammo');
+        if (currentEquipped !== undefined) {
+          player.inventory[slotIndex] = { itemId: currentEquipped, quantity: currentQuantity };
+        } else {
+          player.inventory[slotIndex] = null;
+        }
+        player.setEquipment('ammo', slot.itemId, sourceQuantity);
+      }
+
+      player.setDelay(this.currentTick, 1);
+      this.sendInventory(player);
+      this.sendEquipment(player);
+      this.broadcastRemoteEquipment(player);
+      this.savePlayerState(player);
+      return;
+    }
 
     // Pre-flight: figure out if any side-unequips (2H↔shield) will displace
     // an item into the inventory, and reject the swap if there's no room.
@@ -4286,19 +4512,19 @@ export class World {
 
     // Source slot: receives displaced equipment if any, else cleared.
     if (currentEquipped !== undefined) {
-      player.inventory[slotIndex] = { itemId: currentEquipped, quantity: 1 };
+      player.inventory[slotIndex] = { itemId: currentEquipped, quantity: player.getEquipmentQuantity(equipSlot) };
     } else {
       player.removeItem(slotIndex);
     }
 
-    player.equipment.set(equipSlot, slot.itemId);
+    player.setEquipment(equipSlot, slot.itemId);
 
     if (sideUnequipId !== undefined) {
       // Pre-flight guarantees this fits, but use the transaction return to
       // catch any future drift in canFit logic.
       const addResult = player.addItem(sideUnequipId, 1, this.data.itemDefs);
       if (addResult.completed > 0) {
-        player.equipment.delete(equipSlot === 'weapon' ? 'shield' : 'weapon');
+        player.deleteEquipment(equipSlot === 'weapon' ? 'shield' : 'weapon');
       }
     }
 
@@ -4320,10 +4546,11 @@ export class World {
 
     const itemId = player.equipment.get(slotName);
     if (itemId === undefined) return;
+    const quantity = player.getEquipmentQuantity(slotName);
 
-    if (player.addItem(itemId, 1, this.data.itemDefs).completed > 0) {
+    if (player.addItem(itemId, quantity, this.data.itemDefs).completed === quantity) {
       this.interruptPlayerAction(playerId, player);
-      player.equipment.delete(slotName);
+      player.deleteEquipment(slotName);
       player.setDelay(this.currentTick, 1);
       this.sendInventory(player);
       this.sendEquipment(player);
@@ -4516,7 +4743,13 @@ export class World {
       intervalTicks,
     });
     player.setDelay(this.currentTick, intervalTicks);
-    this.sendChatSystem(player, obj.def.category === 'cookingrange' ? 'You start cooking.' : 'You start crafting.');
+    this.sendChatSystem(player, this.itemProductionStartMessage(obj));
+  }
+
+  private itemProductionStartMessage(obj: WorldObject): string {
+    if (obj.def.category === 'cookingrange') return 'You start cooking.';
+    if (obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return 'You start spinning.';
+    return 'You start crafting.';
   }
 
   private findItemOnObjectRecipe(itemId: number, obj: WorldObject): ItemOnObjectRecipe | null {
@@ -4527,6 +4760,11 @@ export class World {
 
   private findKilnRecipeIndex(itemId: number, obj: WorldObject): number {
     if (obj.defId !== KILN_OBJECT_DEF_ID) return -1;
+    return obj.def.recipes?.findIndex(recipe => recipe.inputItemId === itemId) ?? -1;
+  }
+
+  private findSpinningWheelRecipeIndex(itemId: number, obj: WorldObject): number {
+    if (obj.defId !== SPINNING_WHEEL_OBJECT_DEF_ID) return -1;
     return obj.def.recipes?.findIndex(recipe => recipe.inputItemId === itemId) ?? -1;
   }
 
@@ -4644,6 +4882,16 @@ export class World {
       }
       return;
     }
+    const spinningWheelRecipeIndex = this.findSpinningWheelRecipeIndex(itemId, obj);
+    if (spinningWheelRecipeIndex >= 0) {
+      const inputCount = this.countInventoryItem(player, itemId);
+      if (inputCount > 1) {
+        this.sendToPlayer(player, ServerOpcode.SMITHING_OPEN, obj.id);
+      } else {
+        this.startObjectRecipeProduction(playerId, player, obj, spinningWheelRecipeIndex, 1);
+      }
+      return;
+    }
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
@@ -4747,10 +4995,6 @@ export class World {
     if (dist > SPELL_CAST_DISTANCE) {
       if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
       if (player.hasMoveQueue()) player.pendingSpellCast = { spellIndex, targetEntityId };
-      return;
-    }
-    if (npc.shouldDisengageFromTarget(player.position.x, player.position.y)) {
-      this.disengageLeashedNpcCombat(player, npc);
       return;
     }
 
@@ -5256,9 +5500,9 @@ export class World {
     // Shops are non-modal but conceptually exclusive with trade — clear any
     // open shop scope so a player can't trade-confirm and shop-sell on the
     // same tick. Shop close UI on the client is incidental; the server-side
-    // openShopNpcId is what gates buy/sell handlers.
-    a.openShopNpcId = null;
-    b.openShopNpcId = null;
+    // openShopNpcId/openShopNpcEntityId are what gate buy/sell handlers.
+    this.closeShopForPlayer(a);
+    this.closeShopForPlayer(b);
     if (a.openDialogueState) this.sendDialogueClose(a);
     if (b.openDialogueState) this.sendDialogueClose(b);
     this.sendToPlayer(a, ServerOpcode.TRADE_OPEN, b.id);
@@ -5740,8 +5984,8 @@ export class World {
     this.duelStakeSessions.set(b.id, session);
     a.openInterface = 'duel';
     b.openInterface = 'duel';
-    a.openShopNpcId = null;
-    b.openShopNpcId = null;
+    this.closeShopForPlayer(a);
+    this.closeShopForPlayer(b);
     if (a.openDialogueState) this.sendDialogueClose(a);
     if (b.openDialogueState) this.sendDialogueClose(b);
     this.sendToPlayer(a, ServerOpcode.DUEL_OPEN, b.id);
@@ -6001,9 +6245,10 @@ export class World {
     this.clearPendingSpellImpactsFor(player.id);
     for (const [, npc] of this.npcs) {
       if (npc.combatTarget?.id === player.id) {
-        npc.combatTarget = null;
+        npc.setCombatTarget(null);
         npc.pathQueue.length = 0;
       }
+      npc.clearRetreatTarget(player.id);
     }
     player.attackTarget = null;
     player.clearMoveQueue();
@@ -6015,7 +6260,7 @@ export class World {
     this.clearPendingObjectIntents(player);
     this.cancelSkilling(player.id);
     this.cancelItemProduction(player.id);
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     this.closeDialogueForPlayer(player);
   }
 
@@ -6062,6 +6307,38 @@ export class World {
     return this.tileChebyshev(a, b) <= 1;
   }
 
+  private ammoStrengthForRangedRoll(_ammo: PlayerAmmo): number {
+    // Equipped ammo is already included in computeBonuses().
+    return 0;
+  }
+
+  private playerRangedAmmoFailureMessage(player: Player): string {
+    const itemDefs = this.data.itemDefs;
+    const weaponId = player.equipment.get('weapon');
+    const weaponDef = weaponId ? itemDefs.get(weaponId) : undefined;
+    const ammoType = weaponDef?.ammoType ?? 'arrow';
+    const ammoName = ammoType === 'arrow' ? 'arrows' : 'ammunition';
+    const equippedAmmoId = player.equipment.get('ammo');
+    if (equippedAmmoId === undefined || player.getEquipmentQuantity('ammo') <= 0) {
+      return `You don't have any ${ammoName} equipped.`;
+    }
+    const ammoDef = itemDefs.get(equippedAmmoId);
+    if (!ammoDef?.isAmmo || ammoDef.ammoType !== ammoType) {
+      return `You don't have any ${ammoName} equipped.`;
+    }
+    if (!player.canFireAmmo(itemDefs, ammoDef)) {
+      return `Your bow can't fire those ${ammoName}.`;
+    }
+    return `You don't have any ${ammoName} equipped.`;
+  }
+
+  private consumePlayerAmmo(player: Player, ammo: PlayerAmmo): void {
+    const beforeItemId = player.equipment.get(ammo.equipSlot);
+    player.decrementEquipment(ammo.equipSlot, 1);
+    this.sendEquipment(player);
+    if (beforeItemId !== player.equipment.get(ammo.equipSlot)) this.broadcastRemoteEquipment(player);
+  }
+
   private processDuelAttack(duel: ActiveDuel, attacker: Player, defender: Player): void {
     if (!attacker.alive || !defender.alive || attacker.attackCooldown > 0) return;
     if (attacker.autocastSpellIndex >= 0) {
@@ -6073,13 +6350,12 @@ export class World {
       const ammo = attacker.findAmmo(this.data.itemDefs);
       if (!ammo) {
         attacker.attackCooldown = Math.max(1, attacker.getAttackSpeed(this.data.itemDefs));
-        this.sendChatSystem(attacker, 'You have no arrows left.');
+        this.sendChatSystem(attacker, this.playerRangedAmmoFailureMessage(attacker));
         return;
       }
-      const hit = this.rollDuelRangedHit(attacker, defender, ammo.itemDef.rangedStrength ?? 0);
+      const hit = this.rollDuelRangedHit(attacker, defender, this.ammoStrengthForRangedRoll(ammo));
       attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
-      attacker.removeItemFromSlot(ammo.slotIndex, 1);
-      this.sendInventory(attacker);
+      this.consumePlayerAmmo(attacker, ammo);
       this.broadcastProjectile(attacker.id, defender.id, 1, attacker.currentMapLevel, duel.floor, attacker.position.x, attacker.position.y);
       this.applyDuelHit(duel, attacker, defender, hit, false);
       return;
@@ -6119,7 +6395,10 @@ export class World {
     const defenceBonuses = defender.computeBonuses(itemDefs);
     const defenceStance = STANCE_BONUSES[defender.stance];
     const effRanged = attacker.skills.archery.currentLevel + 8;
-    const attackRoll = effRanged * (attackBonuses.rangedAccuracy + ACC_BASE);
+    const attackRollMultiplier = attacker.getWeaponStyle(itemDefs) === 'bow'
+      ? bowAttackRollMultiplierForStance(attacker.stance)
+      : 1.0;
+    const attackRoll = Math.floor(effRanged * (attackBonuses.rangedAccuracy + ACC_BASE) * attackRollMultiplier);
     const defRoll = (defender.skills.defence.currentLevel + defenceStance.defence + 8) * (defenceBonuses.rangedDefence + ACC_BASE);
     const maxHit = osrsMeleeMaxHit(effRanged, attackBonuses.rangedStrength + arrowStrength);
     return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
@@ -6282,7 +6561,7 @@ export class World {
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
     player.attackCooldown = 0;
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     const restored = Math.max(1, Math.min(player.maxHealth, Math.floor(startHealth)));
     player.health = restored;
     player.skills.hitpoints.currentLevel = restored;
@@ -6457,6 +6736,7 @@ export class World {
     this.tickSkillingActions();
     this.tickObjectRespawns();
     this.flushPendingObjectRespawnWrites();
+    this.tickShopRestocks();
     this.tickItemDespawns();
     this.tickGroundItemRespawns();
     this.tickDialogueScheduledSteps();
@@ -6676,29 +6956,22 @@ export class World {
       const oldNpcX = npc.position.x;
       const oldNpcZ = npc.position.y;
 
-      if (npc.aggressive && !npc.combatTarget) {
+      if (npc.aggressive && !npc.combatTarget && !npc.retreatTarget) {
         const cm = this.chunkManagers.get(npc.currentMapLevel);
         if (cm) {
-          // Aggression radius is 3 tiles (Chebyshev). NPCs lose interest in
-          // players more than 20% above their own combat level — that lets
-          // the level scale work both ways: low-level players get hunted,
-          // high-level players walk past without aggro. The level cap fires
-          // *before* the proximity check so we don't waste a player lookup
-          // on someone we wouldn't aggro anyway. NPC level is derived from
-          // the def (health + flat combat stats) via npcCombatLevel; player
-          // level uses the standard SkillBlock formula.
-          const npcLvl = npcCombatLevel(npc.def);
-          const dropoffLvl = npcLvl * 1.2;
+          // 2004Scape separates current-position acquisition (`huntRange`)
+          // from the spawn-anchored combat leash (`maxRange`).
+          const huntRange = npc.effectiveAggroRange;
           cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
             if (npc.combatTarget) return;
             const player = this.players.get(pid);
             if (!player) return;
             if (player.currentMapLevel !== npc.currentMapLevel || player.currentFloor !== npc.currentFloor) return;
             if (player.openInterface !== null || this.activeDuels?.has(player.id)) return;
-            if (player.combatLevel > dropoffLvl) return;
+            if (!npc.isTargetWithinAggroRange(player.position.x, player.position.y)) return;
             const fp = npc.distToFootprint(player.position.x, player.position.y);
-            if (Math.abs(fp.dx) <= 3 && Math.abs(fp.dz) <= 3) {
-              npc.combatTarget = player;
+            if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= huntRange) {
+              npc.setCombatTarget(player);
             }
           });
         }
@@ -6718,16 +6991,20 @@ export class World {
         const size = npc.size;
         const npcFloor = npc.currentFloor;
         // Self-footprint exclusion: an NPC must not block its own movement
-        // via the entity-tile-occupants set. Compute the current footprint
-        // keys once so the hot blocker can check membership in O(1).
+        // via the entity-tile-occupants set. Size-1 NPCs use a single key;
+        // larger footprints build a set for O(1) membership checks.
         const selfAx = Math.floor(npc.position.x);
         const selfAz = Math.floor(npc.position.y);
         const selfMinX = selfAx - Math.floor((size - 1) / 2);
         const selfMinZ = selfAz - Math.floor((size - 1) / 2);
-        const selfFootprintKeys = new Set<number>();
-        for (let i = 0; i < size; i++) {
-          for (let j = 0; j < size; j++) {
-            selfFootprintKeys.add(this.entityTileKeyFor(mapId, selfMinX + i, selfMinZ + j, npcFloor));
+        const selfEntityKey = this.entityTileKeyFor(mapId, selfAx, selfAz, npcFloor);
+        let selfFootprintKeys: Set<number> | null = null;
+        if (size > 1) {
+          selfFootprintKeys = new Set<number>();
+          for (let i = 0; i < size; i++) {
+            for (let j = 0; j < size; j++) {
+              selfFootprintKeys.add(this.entityTileKeyFor(mapId, selfMinX + i, selfMinZ + j, npcFloor));
+            }
           }
         }
         // For size-1 NPCs the callbacks reduce to the original single-tile
@@ -6741,12 +7018,19 @@ export class World {
               const entityKey = this.entityTileKeyFor(mapId, x, z, npcFloor);
               if (map.isTileBlockedOnFloor(x, z, npcFloor)) return true;
               if (this.blockedObjectTiles.has(objectKey)) return true;
+              const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
               // Refuse to step onto another entity. Self-occupancy is
-              // filtered so the NPC never blocks its own current tile.
-              if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfFootprintKeys.has(entityKey)) return true;
+              // filtered so the NPC never blocks its own current tile. During
+              // combat movement, ignore other NPCs so a cluster of attackers
+              // does not pin the front NPC at its wander edge; player tiles
+              // still block so NPCs do not walk onto players.
+              if ((this.entityTileOccupants?.has(entityKey) ?? false) && entityKey !== selfEntityKey) {
+                if (!combatMotion || this.playerTileOccupants.has(entityKey)) return true;
+              }
               return false;
             }
           : (x: number, z: number) => {
+              const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
               const minX = Math.floor(x) - Math.floor((size - 1) / 2);
               const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
               for (let i = 0; i < size; i++) {
@@ -6759,7 +7043,9 @@ export class World {
                   const objectKey = this.blockedKeyFor(mapId, minX + i, minZ + j, npcFloor);
                   if (this.blockedObjectTiles.has(objectKey)) return true;
                   const entityKey = this.entityTileKeyFor(mapId, minX + i, minZ + j, npcFloor);
-                  if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfFootprintKeys.has(entityKey)) return true;
+                  if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfFootprintKeys?.has(entityKey)) {
+                    if (!combatMotion || this.playerTileOccupants.has(entityKey)) return true;
+                  }
                 }
               }
               return false;
@@ -6851,10 +7137,6 @@ export class World {
           if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
           continue;
         }
-        if (npc.shouldDisengageFromTarget(player.position.x, player.position.y)) {
-          this.disengageLeashedNpcCombat(player, npc);
-          continue;
-        }
         if (player.attackCooldown <= 0) {
           this.handlePlayerCastSpell(playerId, player.autocastSpellIndex, npcId, true);
         }
@@ -6875,55 +7157,51 @@ export class World {
         // queue alone while it's being walked keeps client + server in sync;
         // the chase resumes when the queue runs dry.
         if (!player.hasMoveQueue()) {
-          const path = this.findPlayerPathToNpc(player, npc);
-          if (path.length > 0) {
-            if (!isRanged) {
+          if (!isRanged) {
+            const path = this.findPlayerPathToNpc(player, npc);
+            if (path.length > 0) {
               player.setMoveQueue(path);
-            } else {
-              // Ranged: walk only as far as needed to be in attack distance.
-              let cutIdx = path.length;
-              for (let i = 0; i < path.length; i++) {
-                const pf = npc.distToFootprint(path[i].x, path[i].z);
-                if (Math.abs(pf.dx) <= RANGED_ATTACK_DISTANCE && Math.abs(pf.dz) <= RANGED_ATTACK_DISTANCE) {
-                  cutIdx = i + 1;
-                  break;
-                }
-              }
-              player.setMoveQueue(path.slice(0, cutIdx));
             }
+          } else {
+            this.queuePlayerPathToNpcRange(player, npc, RANGED_ATTACK_DISTANCE, 'chebyshev');
           }
+        } else if (isRanged) {
+          this.trimPlayerPathToNpcRange(player, npc, RANGED_ATTACK_DISTANCE, 'chebyshev');
         }
         // Out of range this tick — defer the swing. Cooldown still ticks
         // globally so the next adjacency-tick can fire immediately if ready.
         continue;
       }
-      if (npc.shouldDisengageFromTarget(player.position.x, player.position.y)) {
-        this.disengageLeashedNpcCombat(player, npc);
-        continue;
-      }
-
       let result: any = null;
       if (isRanged) {
         const ammo = player.findAmmo(itemDefs);
         if (ammo) {
-          const arrowStr = ammo.itemDef.rangedStrength ?? 0;
+          const arrowStr = this.ammoStrengthForRangedRoll(ammo);
           result = processPlayerRangedCombat(player, npc, itemDefs, arrowStr);
           if (result) {
-            player.removeItemFromSlot(ammo.slotIndex, 1);
-            this.sendInventory(player);
+            this.consumePlayerAmmo(player, ammo);
             this.broadcastProjectile(player.id, npc.id, 1, player.currentMapLevel, player.currentFloor, player.position.x, player.position.y);
           }
         } else {
           this.clearCombatTarget(playerId);
-          this.sendChatSystem(player, 'You have no arrows left.');
+          this.sendChatSystem(player, this.playerRangedAmmoFailureMessage(player));
           continue;
         }
       } else {
         result = processPlayerCombat(player, npc, itemDefs);
       }
       if (result) {
+        const shouldNpcFlee = npc.alive && npc.shouldFleeFromCombat();
+        const canNpcRetaliate = !npc.shouldDisengageFromTarget(player.position.x, player.position.y);
         this.setPlayerAnimation(player, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, npc.id, true);
-        this.broadcastNpcFacingPlayer(npc, player);
+        if (shouldNpcFlee) {
+          npc.startRetreatFromTarget(player);
+        } else if (npc.alive && canNpcRetaliate) {
+          npc.clearRetreat();
+          this.broadcastNpcFacingPlayer(npc, player);
+        } else if (npc.alive) {
+          npc.startRetreatFromTarget(player);
+        }
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
         player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
@@ -6991,17 +7269,20 @@ export class World {
       if (player.currentMapLevel !== imp.mapLevel || player.currentFloor !== imp.floor) continue;
 
       const actual = npc.takeDamage(imp.damage);
+      const shouldNpcFlee = npc.alive && npc.shouldFleeFromCombat();
       const canNpcRetaliate = !npc.shouldDisengageFromTarget(player.position.x, player.position.y);
 
-      if (npc.alive && canNpcRetaliate) {
+      if (shouldNpcFlee) {
+        npc.startRetreatFromTarget(player);
+      } else if (npc.alive && canNpcRetaliate) {
+        npc.clearRetreat();
         const wasInCombat = npc.combatTarget != null;
-        npc.combatTarget = player;
+        npc.setCombatTarget(player);
         if (!wasInCombat) {
           npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
         }
       } else if (npc.alive) {
-        this.clearPlayerCombatTargetForNpc(player.id, npc.id);
-        if (npc.combatTarget?.id === player.id) npc.disengageAndReturnHome();
+        if (!npc.combatTarget || npc.combatTarget.id === player.id) npc.startRetreatFromTarget(player);
       }
 
       // XP: 4 per damage to the spell's school (locked in at cast time).
@@ -7024,7 +7305,7 @@ export class World {
         player.syncHealthFromSkills();
       }
 
-      if (canNpcRetaliate) this.broadcastNpcFacingPlayer(npc, player);
+      if (canNpcRetaliate && !shouldNpcFlee) this.broadcastNpcFacingPlayer(npc, player);
       this.broadcastCombatHit(player.id, npc.id, actual, npc.health, npc.maxHealth, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y);
 
       if (!npc.alive) {
@@ -7045,11 +7326,11 @@ export class World {
       if (npc.dead || !npc.combatTarget) continue;
       const target = npc.combatTarget as Player;
       if (!target.alive || !this.players.has(target.id) || target.currentMapLevel !== npc.currentMapLevel || target.currentFloor !== npc.currentFloor) {
-        npc.combatTarget = null;
+        npc.setCombatTarget(null);
         continue;
       }
       if (this.activeDuels?.has(target.id) || target.openInterface === 'duel') {
-        npc.combatTarget = null;
+        npc.setCombatTarget(null);
         npc.pathQueue.length = 0;
         continue;
       }
@@ -7067,7 +7348,7 @@ export class World {
         this.sendSingleSkill(target, HITPOINTS_SKILL_INDEX);
 
         if (!target.alive) {
-          npc.combatTarget = null;
+          npc.setCombatTarget(null);
           this.handlePlayerDeath(target);
         }
       }
@@ -7174,7 +7455,9 @@ export class World {
     if (action.kind === 'itemOnItem') return action.recipe.stopMessage ?? 'You stop producing items.';
     if (action.kind === 'objectRecipe') {
       const obj = this.worldObjects.get(action.objectEntityId);
-      return obj?.def.category === 'cookingrange' ? 'You stop cooking.' : 'You stop crafting.';
+      if (obj?.def.category === 'cookingrange') return 'You stop cooking.';
+      if (obj?.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return 'You stop spinning.';
+      return 'You stop crafting.';
     }
     return 'You stop filling containers.';
   }
@@ -7391,13 +7674,50 @@ export class World {
         // blockedObjectTiles. Without this, the door tile becomes pathing-
         // blocked after the first auto-close and silently breaks every
         // subsequent click.
-        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true, obj.floor);
+        this.setObjectTilesBlocked(obj.mapLevel, obj.x, obj.z, obj.def, true, obj.floor, obj.interactionTiles, obj.rotationY);
         // Skilling object respawned — drop the persisted target.
         this.queueObjectRespawnClear(obj);
         // Pass swingSign=0 to match the toggle path's packet shape — auto-
         // close doesn't need a direction (the close animation ignores it).
         this.broadcastWorldObjectStateChange(obj);
       }
+    }
+  }
+
+  private tickShopRestocks(): void {
+    for (const [, npc] of this.npcs) {
+      const shop = npc.effectiveShop;
+      if (!shop) continue;
+      const restockTicks = this.shopRestockTicks(shop);
+      if (restockTicks <= 0) continue;
+
+      let changed = false;
+      for (const item of shop.items) {
+        const baseStock = Math.max(0, Math.floor(item.stock));
+        if (baseStock <= 0) continue;
+        const currentStock = this.shopItemCurrentStock(npc, item);
+        if (currentStock >= baseStock) {
+          npc.shopNextRestockTick.delete(item.itemId);
+          continue;
+        }
+
+        const nextTick = npc.shopNextRestockTick.get(item.itemId);
+        if (nextTick === undefined) {
+          npc.shopNextRestockTick.set(item.itemId, this.currentTick + restockTicks);
+          continue;
+        }
+        if (this.currentTick < nextTick) continue;
+
+        const nextStock = currentStock + 1;
+        npc.shopStock.set(item.itemId, nextStock);
+        if (nextStock >= baseStock) {
+          npc.shopNextRestockTick.delete(item.itemId);
+        } else {
+          npc.shopNextRestockTick.set(item.itemId, this.currentTick + restockTicks);
+        }
+        changed = true;
+      }
+      if (changed) this.refreshShopViewers(npc);
     }
   }
 
@@ -7605,7 +7925,7 @@ export class World {
     player.clearDelay();
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     this.closeDialogueForPlayer(player);
 
     // OSRS-style death drop: keep the 3 most valuable items (sorted by
@@ -7622,10 +7942,11 @@ export class World {
       const v = (def?.value ?? 0) * s.quantity;
       pool.push({ itemId: s.itemId, quantity: s.quantity, totalValue: v });
     }
-    for (const [, itemId] of player.equipment) {
+    for (const [slot, itemId] of player.equipment) {
+      const quantity = player.getEquipmentQuantity(slot);
       const def = itemDefs.get(itemId);
-      const v = def?.value ?? 0;
-      pool.push({ itemId, quantity: 1, totalValue: v });
+      const v = (def?.value ?? 0) * quantity;
+      pool.push({ itemId, quantity, totalValue: v });
     }
     pool.sort((a, b) => b.totalValue - a.totalValue);
     const kept = pool.slice(0, 3);
@@ -7637,7 +7958,7 @@ export class World {
     // per-itemId stacking. We're just placing each kept entry into the first
     // empty slot, no merge math needed.
     for (let i = 0; i < player.inventory.length; i++) player.inventory[i] = null;
-    player.equipment.clear();
+    player.clearEquipment();
     for (let i = 0; i < kept.length; i++) {
       player.inventory[i] = { itemId: kept[i].itemId, quantity: kept[i].quantity };
     }
@@ -7848,7 +8169,7 @@ export class World {
     // could be admin-teleported with bank state still flagged open, then
     // pick it back up on the other map and double-deposit.
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
-    player.openShopNpcId = null;
+    this.closeShopForPlayer(player);
     this.closeDialogueForPlayer(player);
 
     // Clear all cross-entity combat / trade references BEFORE we mutate the
@@ -8011,7 +8332,7 @@ export class World {
       if (npc.dead) continue;
       const sx = qPos(npc.position.x);
       const sz = qPos(npc.position.y);
-      if (sx !== npc.lastSyncX || sz !== npc.lastSyncZ || npc.health !== npc.lastSyncHealth) {
+      if (npc.syncDirty || sx !== npc.lastSyncX || sz !== npc.lastSyncZ || npc.health !== npc.lastSyncHealth) {
         npc.lastSyncX = sx;
         npc.lastSyncZ = sz;
         npc.lastSyncHealth = npc.health;
@@ -8022,6 +8343,7 @@ export class World {
           qPos(this.npcWorldY(npc)),
           this.npcWillContinueWalking(npc) ? 1 : 0,
           qFacing(npc.facingAngle),
+          this.npcFaceTargetId(npc),
         ));
       }
     }
@@ -8159,6 +8481,10 @@ export class World {
     this.broadcastNearbyOnFloor(mapLevel, floor, worldX, worldZ, ServerOpcode.COMBAT_PROJECTILE, attackerId, targetId, projectileType);
   }
 
+  private broadcastWorldObjectAnimation(obj: WorldObject): void {
+    this.broadcastNearbyOnFloor(obj.mapLevel, obj.floor ?? 0, obj.x, obj.z, ServerOpcode.WORLD_OBJECT_ANIMATION, obj.id);
+  }
+
   private sendChatSystem(player: Player, message: string): void {
     // System messages travel over the JSON chat socket, looked up by username.
     // The binary CHAT_SYSTEM opcode is reserved for future use (e.g. ping the
@@ -8228,9 +8554,17 @@ export class World {
 
   private npcWillContinueWalking(npc: Npc): boolean {
     if (npc.pathQueue.length > 0) return true;
+    if (npc.retreatTarget) return true;
     if (!npc.combatTarget) return false;
     const fp = npc.distToFootprint(npc.combatTarget.position.x, npc.combatTarget.position.y);
     return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > Npc.MELEE_RANGE;
+  }
+
+  private npcFaceTargetId(npc: Npc): number {
+    // Combat chase and retreat both use RS2-style face-lock on the client:
+    // chase sidesteps around the target, retreat backpedals away from it.
+    const target = npc.combatTarget ?? npc.retreatTarget;
+    return target?.alive ? target.id : 0;
   }
 
   private encodeNpcUpdate(npc: Npc): Uint8Array {
@@ -8245,6 +8579,7 @@ export class World {
       qPos(this.npcWorldY(npc)),
       this.npcWillContinueWalking(npc) ? 1 : 0,
       qFacing(npc.facingAngle),
+      this.npcFaceTargetId(npc),
     );
   }
 
@@ -8273,12 +8608,10 @@ export class World {
       );
     }
     const eq = npc.equipment;
-    if (eq && eq.length === 10) {
-      this.sendToPlayer(viewer, ServerOpcode.NPC_EQUIPMENT,
-        npc.id,
-        eq[0], eq[1], eq[2], eq[3], eq[4],
-        eq[5], eq[6], eq[7], eq[8], eq[9],
-      );
+    if (eq && eq.length >= 10) {
+      const values = [npc.id];
+      for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) values.push(eq[i] ?? 0);
+      this.sendToPlayer(viewer, ServerOpcode.NPC_EQUIPMENT, ...values);
     }
     const cc = npc.customColors;
     if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
@@ -8331,12 +8664,10 @@ export class World {
       );
     }
     const eq = npc.equipment;
-    if (eq && eq.length === 10) {
-      this.queueSyncPacket(out, ServerOpcode.NPC_EQUIPMENT,
-        npc.id,
-        eq[0], eq[1], eq[2], eq[3], eq[4],
-        eq[5], eq[6], eq[7], eq[8], eq[9],
-      );
+    if (eq && eq.length >= 10) {
+      const values = [npc.id];
+      for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) values.push(eq[i] ?? 0);
+      this.queueSyncPacket(out, ServerOpcode.NPC_EQUIPMENT, ...values);
     }
     const cc = npc.customColors;
     if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
@@ -8464,16 +8795,18 @@ export class World {
   }
 
   sendEquipment(player: Player): void {
-    // Batch: [slot0_itemId, slot1_itemId, ...] — 1 packet instead of 10
+    // Batch: [slot0_itemId, slot1_itemId, ..., ammoQtyHigh, ammoQtyLow].
     const values: number[] = [];
     for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) {
       values.push(player.equipment.get(EQUIPMENT_SLOT_NAMES[i]) ?? 0);
     }
+    const ammoQuantity = player.getEquipmentQuantity('ammo');
+    values.push((ammoQuantity >>> 16) & 0x7FFF, ammoQuantity & 0xFFFF);
     this.sendToPlayer(player, ServerOpcode.PLAYER_EQUIPMENT_BATCH, ...values);
   }
 
   /** Build PLAYER_REMOTE_EQUIPMENT packet for a subject player. Layout:
-   *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape] */
+   *  [entityId, weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo] */
   private encodeRemoteEquipment(subject: Player): Uint8Array {
     const values: number[] = [subject.id];
     for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) {

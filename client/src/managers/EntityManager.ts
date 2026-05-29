@@ -10,7 +10,7 @@ import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, getCharacterModelPath, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -53,7 +53,7 @@ export class EntityManager {
   readonly nameToEntityId: Map<string, number> = new Map();
   readonly remoteAppearances: Map<number, PlayerAppearance> = new Map();
   readonly remoteCombatLevels: Map<number, number> = new Map();
-  /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape]. */
+  /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]. */
   readonly remoteEquipment: Map<number, number[]> = new Map();
   /** Combat stance per remote entityId. Used by GameManager.getPlayerAttackAnimName
    *  to pick the correct attack anim (e.g. 2H + aggressive → smash). Stored as
@@ -201,8 +201,10 @@ export class EntityManager {
     // stationary for perf, but their server defs still have wanderRange > 0;
     // skipping walk there makes them slide when the server wanders them.
     const stationary = stationaryFromDef;
-    const anims: { name: string; path: string }[] = combat
-      ? [...NPC_COMBAT_ANIMATIONS]
+    const anims: CharacterAnimationDef[] = combat
+      ? this.npcUsesBowAttack(entityId)
+        ? [...NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION]
+        : [...NPC_COMBAT_ANIMATIONS]
       : stationary
         ? [{ name: 'idle', path: `${CHARACTER_ANIM_DIR}/idle.glb` }]
         : [
@@ -228,6 +230,14 @@ export class EntityManager {
     this.applyCachedNpcFacing(entityId, character);
     this.npc3dCount++;
     return character;
+  }
+
+  private npcUsesBowAttack(entityId: number): boolean {
+    if (this.npcAttackAnimOverrides.get(entityId) === BOW_ATTACK_ANIMATION.name) return true;
+    const weaponId = this.npcEquipment.get(entityId)?.[0] ?? 0;
+    if (weaponId <= 0) return false;
+    const weaponDef = this.itemDefsCache.get(weaponId);
+    return weaponDef?.weaponStyle === 'bow' || weaponDef?.weaponStyle === 'crossbow';
   }
 
   applyCachedNpcFacing(entityId: number, sprite: Npc3DEntity | CharacterEntity): void {

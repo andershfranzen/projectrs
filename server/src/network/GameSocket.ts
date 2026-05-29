@@ -89,7 +89,7 @@ interface PacketValidationResult {
   reason?: string;
 }
 
-const EQUIP_SLOT_COUNT = 10;
+const EQUIP_SLOT_COUNT = 11;
 const INVALID_PACKET_CLOSE_THRESHOLD = 50;
 const INVALID_PACKET_AUDIT_COUNTS = new Set([1, 5, 10, 25, INVALID_PACKET_CLOSE_THRESHOLD]);
 const BROWSER_INPUT_MAX_AGE_MS = 15_000;
@@ -568,7 +568,8 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     case ClientOpcode.PLAYER_BUY_ITEM: {
       if (!hasValues(values, 1)) return invalid('missing-buy-item');
       if (player.openShopNpcId === null) return invalid('shop-not-open');
-      const shop = world.data.getShop(player.openShopNpcId);
+      const shopNpc = player.openShopNpcEntityId !== null ? world.npcs.get(player.openShopNpcEntityId) : undefined;
+      const shop = shopNpc?.effectiveShop ?? world.data.getShop(player.openShopNpcId);
       if (!shop) return invalid('shop-not-found');
       if (!shop.items.some((item) => item.itemId === values[0])) return invalid('shop-does-not-sell-item');
       const quantity = values[1] ?? 1;
@@ -579,7 +580,8 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     case ClientOpcode.PLAYER_SELL_ITEM: {
       if (!hasValues(values, 3)) return invalid('missing-sell-values');
       if (player.openShopNpcId === null) return invalid('shop-not-open');
-      if (!world.data.getShop(player.openShopNpcId)) return invalid('shop-not-found');
+      const shopNpc = player.openShopNpcEntityId !== null ? world.npcs.get(player.openShopNpcEntityId) : undefined;
+      if (!(shopNpc?.effectiveShop ?? world.data.getShop(player.openShopNpcId))) return invalid('shop-not-found');
       if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-sell-slot');
       if (!Number.isInteger(values[1]) || values[1] <= 0 || values[1] > 1000) return invalid('bad-sell-quantity');
       if (player.inventory[values[0]]?.itemId !== values[2]) return invalid('stale-sell-slot');
@@ -896,6 +898,7 @@ function completeGameSocketLogin(
     while (inv.length < 30) inv.push(null);
     player.inventory = inv;
     player.equipment = saved.equipment;
+    player.equipmentQuantities = saved.equipmentQuantities;
     player.stance = saved.stance;
     player.appearance = saved.appearance;
     // Pad bank to BANK_SIZE — older saves may have a shorter or empty array

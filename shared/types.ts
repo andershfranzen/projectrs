@@ -35,7 +35,7 @@ export interface ItemDef {
   description: string;
   stackable: boolean;
   equippable: boolean;
-  equipSlot?: 'weapon' | 'head' | 'body' | 'legs' | 'shield' | 'neck' | 'ring' | 'hands' | 'feet' | 'cape';
+  equipSlot?: 'weapon' | 'head' | 'body' | 'legs' | 'shield' | 'neck' | 'ring' | 'hands' | 'feet' | 'cape' | 'ammo';
   /**
    * For `equipSlot === 'body'` items only — how much of the character's bare
    * skin to hide while equipped.
@@ -126,6 +126,17 @@ export interface NpcDef {
   respawnTime: number; // ticks
   aggressive: boolean;
   wanderRange: number; // tiles from spawn
+  /** Spawn-anchored combat leash. Defaults to wanderRange + 2, matching the
+   *  common 2004Scape data pattern. */
+  maxRange?: number;
+  /** Proactive acquisition radius around the NPC. Defaults to maxRange. */
+  huntRange?: number;
+  /** NPC attack approach range for AP-style ranged/magic modes. Melee NPCs
+   *  leave this at 0 and use maxRange + 1 for leash validation. */
+  attackRange?: number;
+  /** Low-HP flee threshold. When > 0 and current HP is at/below this value,
+   *  retaliation switches to PLAYERESCAPE-style fleeing. */
+  retreatHealth?: number;
   lootTable: LootDrop[];
   /** This NPC offers banking when talked to (right-click → Bank). */
   bankAccess?: boolean;
@@ -155,6 +166,9 @@ export interface ShopItem {
 
 export interface ShopDef {
   name: string;
+  /** Ticks between restoring one missing stock unit. Defaults server-side
+   *  when omitted; 0 disables automatic restock. */
+  restockTicks?: number;
   items: ShopItem[];
 }
 
@@ -397,6 +411,10 @@ export interface SpawnEntry {
   /** Optional authored world Y, used to infer floor when floor is omitted. */
   y?: number;
   wanderRange?: number;
+  maxRange?: number;
+  huntRange?: number;
+  attackRange?: number;
+  retreatHealth?: number;
   /** Initial yaw in radians. 0 faces +Z, π/2 faces +X. Mainly used for
    *  stationary NPCs; walking/combat can override it at runtime. */
   facing?: number;
@@ -407,15 +425,16 @@ export interface SpawnEntry {
   /** Per-spawn aggression override. When omitted, the NpcDef's `aggressive`
    *  flag is used. When set on the spawn, it overrides the def — so a single
    *  map can have a "hostile" Goblin in one biome and a "tame" Goblin in
-   *  another from the same NpcDef. Aggressive NPCs auto-target any player
-   *  within 3 tiles whose combat level isn't more than 1.2× the NPC's. */
+   *  another from the same NpcDef. Aggressive NPCs hunt within `huntRange`
+   *  and stay leashed by spawn-anchored `maxRange`; unset ranges use the
+   *  2004Scape-style defaults from the NPC definition. */
   aggressive?: boolean;
   /** Per-spawn appearance override. When set, this NPC renders as a 3D
    *  CharacterEntity (subject to LOD + concurrent caps) using these colors,
    *  hair, and skin. Two NPCs of the same npcId can look different. */
   appearance?: PlayerAppearance;
-  /** Per-spawn equipment. 10-slot array matching PLAYER_REMOTE_EQUIPMENT
-   *  layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape].
+  /** Per-spawn equipment. 11-slot array matching PLAYER_REMOTE_EQUIPMENT
+   *  layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo].
    *  0 = empty slot. Only meaningful when `appearance` is also set (the GLB
    *  gear pipeline only runs on CharacterEntity-rendered NPCs). */
   equipment?: number[];

@@ -2,9 +2,9 @@ import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
   ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
-  BUCKET_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, OAK_LOGS_ITEM_ID, MAPLE_LOGS_ITEM_ID,
-  YEW_LOGS_ITEM_ID, WILLOW_LOGS_ITEM_ID, MAGIC_LOGS_ITEM_ID, SHORTBOW_UNSTRUNG_ITEM_ID,
-  ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
+  BUCKET_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID,
+  LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES,
+  ARROWHEAD_FLETCHING_RECIPES, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   spellReagentSummary, spellSchoolSkill,
   zeroBonuses,
@@ -42,35 +42,40 @@ import {
   type ClientSizeMode,
 } from './clientSizeMode';
 
-const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape'];
+const EQUIP_SLOT_NAMES = ['Weapon', 'Shield', 'Head', 'Body', 'Legs', 'Neck', 'Ring', 'Hands', 'Feet', 'Cape', 'Ammo'];
 const WATER_CONTAINER_ITEM_IDS: ReadonlySet<number> = new Set(SOFT_CLAY_WATER_CONTAINER_ITEM_IDS);
 const LOG_CRAFT_BUCKET_RECIPE_INDEX = 0;
 const LOG_CRAFT_SHORTBOW_RECIPE_INDEX = 1;
 const LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX = 2;
-const LOG_ITEM_IDS: ReadonlySet<number> = new Set([
-  LOGS_ITEM_ID,
-  OAK_LOGS_ITEM_ID,
-  WILLOW_LOGS_ITEM_ID,
-  MAPLE_LOGS_ITEM_ID,
-  YEW_LOGS_ITEM_ID,
-  MAGIC_LOGS_ITEM_ID,
-]);
-const ARROW_SHAFT_YIELD_BY_LOG_ITEM_ID: ReadonlyMap<number, number> = new Map([
-  [LOGS_ITEM_ID, 10],
-  [OAK_LOGS_ITEM_ID, 15],
-  [WILLOW_LOGS_ITEM_ID, 20],
-  [MAPLE_LOGS_ITEM_ID, 25],
-  [YEW_LOGS_ITEM_ID, 30],
-  [MAGIC_LOGS_ITEM_ID, 50],
-]);
-const ARROW_SHAFT_RECIPE_INDEX_BY_LOG_ITEM_ID: ReadonlyMap<number, number> = new Map([
-  [LOGS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX],
-  [OAK_LOGS_ITEM_ID, 0],
-  [WILLOW_LOGS_ITEM_ID, 0],
-  [MAPLE_LOGS_ITEM_ID, 0],
-  [YEW_LOGS_ITEM_ID, 0],
-  [MAGIC_LOGS_ITEM_ID, 0],
-]);
+const LOG_ITEM_IDS: ReadonlySet<number> = new Set(LOG_CRAFT_SHORTBOW_RECIPES.map(recipe => recipe.logItemId));
+const SHORTBOW_RECIPE_BY_LOG_ITEM_ID: ReadonlyMap<number, typeof LOG_CRAFT_SHORTBOW_RECIPES[number]> = new Map(
+  LOG_CRAFT_SHORTBOW_RECIPES.map(recipe => [recipe.logItemId, recipe]),
+);
+const ARROW_SHAFT_RECIPE_BY_LOG_ITEM_ID: ReadonlyMap<number, typeof LOG_CRAFT_ARROW_SHAFT_RECIPES[number]> = new Map(
+  LOG_CRAFT_ARROW_SHAFT_RECIPES.map(recipe => [recipe.logItemId, recipe]),
+);
+const ARROWHEAD_RECIPE_BY_ITEM_ID: ReadonlyMap<number, typeof ARROWHEAD_FLETCHING_RECIPES[number]> = new Map(
+  ARROWHEAD_FLETCHING_RECIPES.map(recipe => [recipe.arrowheadItemId, recipe]),
+);
+const STANCE_KEYS: readonly MeleeStance[] = ['accurate', 'aggressive', 'defensive', 'controlled'];
+const MELEE_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
+  accurate: { label: 'Accurate', desc: 'Measured attacks' },
+  aggressive: { label: 'Aggressive', desc: 'Heavy attacks' },
+  defensive: { label: 'Defensive', desc: 'Guarded attacks' },
+  controlled: { label: 'Controlled', desc: 'Balanced attacks' },
+};
+const BOW_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
+  accurate: { label: 'Accurate', desc: 'Careful shots' },
+  aggressive: { label: 'Rapid', desc: 'Quick shots' },
+  defensive: { label: 'Unavailable', desc: 'Use Accurate or Rapid' },
+  controlled: { label: 'Unavailable', desc: 'Use Accurate or Rapid' },
+};
+function shortbowRecipeIndexForLog(logItemId: number): number {
+  return logItemId === LOGS_ITEM_ID ? LOG_CRAFT_SHORTBOW_RECIPE_INDEX : 0;
+}
+function arrowShaftRecipeIndexForLog(logItemId: number): number {
+  return logItemId === LOGS_ITEM_ID ? LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX : 1;
+}
 
 export interface SkillData {
   level: number;
@@ -121,12 +126,15 @@ export class SidePanel {
 
   // Equipment state
   private equipment: Map<number, number> = new Map(); // slotIndex -> itemId
+  private equipmentQuantities: Map<number, number> = new Map(); // slotIndex -> stack quantity
   private equipContent: HTMLDivElement | null = null;
   private equipmentTooltip: HoverTooltip | null = null;
 
   // Stance
   private currentStance: MeleeStance = 'accurate';
   private stanceButtons: HTMLButtonElement[] = [];
+  private stanceButtonLabels: HTMLDivElement[] = [];
+  private stanceButtonDescs: HTMLDivElement[] = [];
   private equipmentBonusValues: Partial<Record<keyof CombatBonuses, HTMLSpanElement>> = {};
 
   // Item definitions
@@ -2083,7 +2091,7 @@ export class SidePanel {
 
     const positions: Array<{ slot: number | null; label: string; column: string; row: string }> = [
       { slot: 2, label: 'Head', column: '2', row: '1' },
-      { slot: null, label: 'Quiver', column: '3', row: '1' },
+      { slot: 10, label: 'Ammo', column: '3', row: '1' },
       { slot: 9, label: 'Cape', column: '1', row: '2' },
       { slot: 5, label: 'Neck', column: '2', row: '2' },
       { slot: 0, label: 'Weapon', column: '1', row: '3' },
@@ -2188,21 +2196,18 @@ export class SidePanel {
 	      overflow-y: auto;
 	    `;
 
-    const stances: { key: MeleeStance; label: string; desc: string }[] = [
-      { key: 'accurate', label: 'Accurate', desc: '+3 Accuracy' },
-      { key: 'aggressive', label: 'Aggressive', desc: '+3 Strength' },
-      { key: 'defensive', label: 'Defensive', desc: '+3 Defence' },
-      { key: 'controlled', label: 'Controlled', desc: '+1 All' },
-    ];
-
     this.stanceButtons = [];
+    this.stanceButtonLabels = [];
+    this.stanceButtonDescs = [];
     const setStance = (i: number) => {
-      this.currentStance = stances[i].key;
+      const stance = STANCE_KEYS[i];
+      if (!stance) return;
+      this.currentStance = stance;
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_STANCE, i));
       this.updateStanceUI();
     };
 
-    for (let i = 0; i < stances.length; i++) {
+    for (let i = 0; i < STANCE_KEYS.length; i++) {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'stance-btn';
@@ -2212,17 +2217,17 @@ export class SidePanel {
       `;
       const nameEl = document.createElement('div');
       nameEl.style.cssText = `font-size: 13px;`;
-      nameEl.textContent = stances[i].label;
       btn.appendChild(nameEl);
       const descEl = document.createElement('div');
       descEl.style.cssText = `font-size: 10px; opacity: 0.7; margin-top: 2px;`;
-      descEl.textContent = stances[i].desc;
       btn.appendChild(descEl);
       btn.addEventListener('click', () => {
         setStance(i);
       });
       wrap.appendChild(btn);
       this.stanceButtons.push(btn);
+      this.stanceButtonLabels.push(nameEl);
+      this.stanceButtonDescs.push(descEl);
     }
 
     this.updateStanceUI();
@@ -2326,11 +2331,13 @@ export class SidePanel {
     const slotIndexText = slot.dataset.equipSlot;
     const slotIndex = slotIndexText != null ? Number(slotIndexText) : null;
     const itemId = slotIndex != null && Number.isFinite(slotIndex) ? this.equipment.get(slotIndex) : undefined;
+    const quantity = slotIndex != null && Number.isFinite(slotIndex) ? (this.equipmentQuantities.get(slotIndex) ?? 0) : 0;
     const itemName = itemId ? (this.itemDefs.get(itemId)?.name || `Item ${itemId}`) : 'Empty';
+    const body = itemId && quantity > 1 ? `${slotName} x${quantity.toLocaleString()}` : slotName;
 
     this.equipmentTooltip = new HoverTooltip({
       title: itemName,
-      body: slotName,
+      body,
       x,
       y,
       titleColor: itemId ? '#f4ded5' : '#b8b0a0',
@@ -2374,6 +2381,7 @@ export class SidePanel {
     for (let i = 0; i < this.invSlots.length; i++) this.renderInvSlot(i);
     for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) this.renderEquipSlot(i);
     this.updateEquipmentBonuses();
+    this.updateStanceUI();
   }
 
   updateInvSlot(index: number, itemId: number, quantity: number): void {
@@ -2617,6 +2625,10 @@ export class SidePanel {
         this.clearUsingInvItem();
         return;
       }
+      if (this.promptFinishedArrowQuantity(using.slot, using.itemId, index, target.itemId)) {
+        this.clearUsingInvItem();
+        return;
+      }
       if (this.promptSoftClayQuantity(using.slot, using.itemId, index, target.itemId)) {
         this.clearUsingInvItem();
         return;
@@ -2640,30 +2652,79 @@ export class SidePanel {
     const logsHeld = this.countInventoryItem(logItemId);
     if (logsHeld <= 0) return false;
 
-    const arrowShaftYield = ARROW_SHAFT_YIELD_BY_LOG_ITEM_ID.get(logItemId) ?? 0;
-    const arrowShaftRecipeIndex = ARROW_SHAFT_RECIPE_INDEX_BY_LOG_ITEM_ID.get(logItemId) ?? 0;
-    if (logItemId !== LOGS_ITEM_ID) {
-      this.promptLogCraftingQuantity({
-        fromSlot,
-        fromItemId,
-        toSlot,
-        toItemId,
-        recipeIndex: arrowShaftRecipeIndex,
-        outputItemId: ARROW_SHAFTS_ITEM_ID,
-        logItemId,
-        logCost: 1,
-        outputQuantityPerAction: arrowShaftYield,
-        fallbackName: 'Arrow Shafts',
-      });
-      return true;
-    }
+    const shortbowRecipe = SHORTBOW_RECIPE_BY_LOG_ITEM_ID.get(logItemId);
+    const arrowShaftRecipe = ARROW_SHAFT_RECIPE_BY_LOG_ITEM_ID.get(logItemId);
+    if (!shortbowRecipe || !arrowShaftRecipe) return false;
 
-    const bucketMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 2);
+    const arrowShaftYield = arrowShaftRecipe.shaftQuantity;
+    const arrowShaftRecipeIndex = arrowShaftRecipeIndexForLog(logItemId);
+    const shortbowRecipeIndex = shortbowRecipeIndexForLog(logItemId);
     const shortbowMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 1);
     const arrowShaftMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 1);
-    const bucketName = this.itemDefs.get(BUCKET_ITEM_ID)?.name ?? 'Bucket';
-    const shortbowName = this.itemDefs.get(SHORTBOW_UNSTRUNG_ITEM_ID)?.name ?? 'Unstrung Shortbow';
+    const shortbowName = this.itemDefs.get(shortbowRecipe.unstrungItemId)?.name ?? `Unstrung ${shortbowRecipe.bowLabel}`;
     const arrowShaftName = this.itemDefs.get(ARROW_SHAFTS_ITEM_ID)?.name ?? 'Arrow Shafts';
+
+    const choices = [
+      {
+        label: shortbowName,
+        detail: `Requires level ${shortbowRecipe.levelRequired} crafting. Costs 1 log each. You can make ${shortbowMax} ${this.pluralizeItemName(shortbowName, shortbowMax).toLowerCase()}.`,
+        disabled: shortbowMax <= 0,
+        onSelect: () => this.promptLogCraftingQuantity({
+          fromSlot,
+          fromItemId,
+          toSlot,
+          toItemId,
+          recipeIndex: shortbowRecipeIndex,
+          outputItemId: shortbowRecipe.unstrungItemId,
+          logItemId,
+          logCost: 1,
+          outputQuantityPerAction: 1,
+          fallbackName: `Unstrung ${shortbowRecipe.bowLabel}`,
+        }),
+      },
+      {
+        label: arrowShaftName,
+        detail: `Costs 1 log. Makes ${arrowShaftYield} ${arrowShaftName.toLowerCase()} per log.`,
+        disabled: arrowShaftMax <= 0 || arrowShaftYield <= 0,
+        onSelect: () => this.promptLogCraftingQuantity({
+          fromSlot,
+          fromItemId,
+          toSlot,
+          toItemId,
+          recipeIndex: arrowShaftRecipeIndex,
+          outputItemId: ARROW_SHAFTS_ITEM_ID,
+          logItemId,
+          logCost: 1,
+          outputQuantityPerAction: arrowShaftYield,
+          fallbackName: 'Arrow Shafts',
+        }),
+      },
+    ];
+
+    if (logItemId === LOGS_ITEM_ID) {
+      const bucketMax = this.maxLogCraftingBatchQuantity(fromItemId, toItemId, logItemId, 2);
+      const bucketName = this.itemDefs.get(BUCKET_ITEM_ID)?.name ?? 'Bucket';
+      choices.unshift({
+        label: bucketName,
+        detail: bucketMax > 0
+          ? `Costs 2 logs each. You can make ${bucketMax} ${this.pluralizeItemName(bucketName, bucketMax).toLowerCase()}.`
+          : 'Costs 2 logs each.',
+        disabled: bucketMax <= 0,
+        onSelect: () => this.promptLogCraftingQuantity({
+          fromSlot,
+          fromItemId,
+          toSlot,
+          toItemId,
+          recipeIndex: LOG_CRAFT_BUCKET_RECIPE_INDEX,
+          outputItemId: BUCKET_ITEM_ID,
+          logItemId,
+          logCost: 2,
+          outputQuantityPerAction: 1,
+          fallbackName: 'Bucket',
+        }),
+      });
+    }
+
     this.requestQuantity({
       inputType: 'choice',
       title: 'Carve Logs',
@@ -2671,61 +2732,7 @@ export class SidePanel {
       details: [
         `You have ${this.formatLogs(logsHeld, logItemId)}.`,
       ],
-      choices: [
-        {
-          label: bucketName,
-          detail: bucketMax > 0
-            ? `Costs 2 logs each. You can make ${bucketMax} ${this.pluralizeItemName(bucketName, bucketMax).toLowerCase()}.`
-            : 'Costs 2 logs each.',
-          disabled: bucketMax <= 0,
-          onSelect: () => this.promptLogCraftingQuantity({
-            fromSlot,
-            fromItemId,
-            toSlot,
-            toItemId,
-            recipeIndex: LOG_CRAFT_BUCKET_RECIPE_INDEX,
-            outputItemId: BUCKET_ITEM_ID,
-            logItemId,
-            logCost: 2,
-            outputQuantityPerAction: 1,
-            fallbackName: 'Bucket',
-          }),
-        },
-        {
-          label: shortbowName,
-          detail: `Costs 1 log each. You can make ${shortbowMax} ${this.pluralizeItemName(shortbowName, shortbowMax).toLowerCase()}.`,
-          disabled: shortbowMax <= 0,
-          onSelect: () => this.promptLogCraftingQuantity({
-            fromSlot,
-            fromItemId,
-            toSlot,
-            toItemId,
-            recipeIndex: LOG_CRAFT_SHORTBOW_RECIPE_INDEX,
-            outputItemId: SHORTBOW_UNSTRUNG_ITEM_ID,
-            logItemId,
-            logCost: 1,
-            outputQuantityPerAction: 1,
-            fallbackName: 'Unstrung Shortbow',
-          }),
-        },
-        {
-          label: arrowShaftName,
-          detail: `Costs 1 log. Makes ${arrowShaftYield} ${arrowShaftName.toLowerCase()} per log.`,
-          disabled: arrowShaftMax <= 0 || arrowShaftYield <= 0,
-          onSelect: () => this.promptLogCraftingQuantity({
-            fromSlot,
-            fromItemId,
-            toSlot,
-            toItemId,
-            recipeIndex: LOG_CRAFT_ARROW_SHAFT_RECIPE_INDEX,
-            outputItemId: ARROW_SHAFTS_ITEM_ID,
-            logItemId,
-            logCost: 1,
-            outputQuantityPerAction: arrowShaftYield,
-            fallbackName: 'Arrow Shafts',
-          }),
-        },
-      ],
+      choices,
     });
     return true;
   }
@@ -2860,6 +2867,49 @@ export class SidePanel {
     return true;
   }
 
+  private promptFinishedArrowQuantity(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
+    const recipe = this.getArrowheadFletchingRecipe(fromItemId, toItemId);
+    if (!recipe) return false;
+    const max = this.maxFinishedArrowBatchQuantity(fromItemId, toItemId);
+    if (max <= 1) return false;
+    if (!this.requestQuantity) return false;
+
+    const outputName = this.itemDefs.get(recipe.arrowItemId)?.name ?? `${recipe.arrowLabel} arrows`;
+    const arrowheadName = this.itemDefs.get(recipe.arrowheadItemId)?.name ?? `${recipe.arrowLabel} arrowheads`;
+    this.requestQuantity({
+      title: `Make ${outputName}`,
+      prompt: `Make how many ${outputName.toLowerCase()}?`,
+      details: [
+        `Cost: 1 headless arrow + 1 ${arrowheadName.toLowerCase()} each`,
+        `Requires level ${recipe.levelRequired} crafting.`,
+        `You have enough materials for ${max} ${outputName.toLowerCase()}.`,
+      ],
+      max,
+      defaultValue: max,
+      submitLabel: 'Make',
+      quickAmounts: [
+        { label: '1', value: 1 },
+        { label: '5', value: 5 },
+        { label: '10', value: 10 },
+        { label: 'All', value: 'all' },
+      ],
+      onSubmit: (quantity) => {
+        const currentFrom = this.invSlots[fromSlot];
+        const currentTo = this.invSlots[toSlot];
+        if (!currentFrom || currentFrom.itemId !== fromItemId) return;
+        if (!currentTo || currentTo.itemId !== toItemId) return;
+        const currentMax = this.maxFinishedArrowBatchQuantity(fromItemId, toItemId);
+        if (currentMax <= 0) return;
+        const requested = quantity >= currentMax ? -1 : Math.max(1, Math.min(quantity, currentMax));
+        this.network.sendRaw(encodePacket(
+          ClientOpcode.PLAYER_USE_ITEM_ON_ITEM,
+          fromSlot, fromItemId, toSlot, toItemId, requested,
+        ));
+      },
+    });
+    return true;
+  }
+
   private maxLogCraftingBatchQuantity(fromItemId: number, toItemId: number, logItemId: number, logCost: number): number {
     if (this.getLogCraftingLogItemId(fromItemId, toItemId) !== logItemId) return 0;
     return Math.floor(this.countInventoryItem(logItemId) / Math.max(1, logCost));
@@ -2896,9 +2946,21 @@ export class SidePanel {
     return Math.min(this.countInventoryItem(FEATHER_ITEM_ID), this.countInventoryItem(ARROW_SHAFTS_ITEM_ID));
   }
 
+  private maxFinishedArrowBatchQuantity(fromItemId: number, toItemId: number): number {
+    const recipe = this.getArrowheadFletchingRecipe(fromItemId, toItemId);
+    if (!recipe) return 0;
+    return Math.min(this.countInventoryItem(HEADLESS_ARROWS_ITEM_ID), this.countInventoryItem(recipe.arrowheadItemId));
+  }
+
   private isHeadlessArrowRecipePair(fromItemId: number, toItemId: number): boolean {
     return (fromItemId === FEATHER_ITEM_ID && toItemId === ARROW_SHAFTS_ITEM_ID)
       || (toItemId === FEATHER_ITEM_ID && fromItemId === ARROW_SHAFTS_ITEM_ID);
+  }
+
+  private getArrowheadFletchingRecipe(fromItemId: number, toItemId: number): typeof ARROWHEAD_FLETCHING_RECIPES[number] | null {
+    if (fromItemId === HEADLESS_ARROWS_ITEM_ID) return ARROWHEAD_RECIPE_BY_ITEM_ID.get(toItemId) ?? null;
+    if (toItemId === HEADLESS_ARROWS_ITEM_ID) return ARROWHEAD_RECIPE_BY_ITEM_ID.get(fromItemId) ?? null;
+    return null;
   }
 
   private isSoftClayRecipePair(fromItemId: number, toItemId: number): boolean {
@@ -3151,10 +3213,24 @@ export class SidePanel {
   }
 
   private updateStanceUI(): void {
-    const stanceNames: MeleeStance[] = ['accurate', 'aggressive', 'defensive', 'controlled'];
+    const bowEquipped = this.isBowEquipped();
+    const labels = bowEquipped ? BOW_STANCE_LABELS : MELEE_STANCE_LABELS;
     for (let i = 0; i < this.stanceButtons.length; i++) {
-      this.stanceButtons[i].classList.toggle('selected', stanceNames[i] === this.currentStance);
+      const stance = STANCE_KEYS[i];
+      const unavailableBowStyle = bowEquipped && (stance === 'defensive' || stance === 'controlled');
+      this.stanceButtons[i].classList.toggle('selected', stance === this.currentStance);
+      this.stanceButtons[i].disabled = unavailableBowStyle;
+      this.stanceButtons[i].style.opacity = unavailableBowStyle ? '0.45' : '';
+      this.stanceButtons[i].title = unavailableBowStyle ? 'Bows currently use Accurate or Rapid.' : '';
+      const label = labels[stance];
+      if (this.stanceButtonLabels[i]) this.stanceButtonLabels[i].textContent = label.label;
+      if (this.stanceButtonDescs[i]) this.stanceButtonDescs[i].textContent = label.desc;
     }
+  }
+
+  private isBowEquipped(): boolean {
+    const weaponId = this.equipment.get(0);
+    return weaponId !== undefined && this.itemDefs.get(weaponId)?.weaponStyle === 'bow';
   }
 
   /** Get the current melee stance */
@@ -3223,14 +3299,17 @@ export class SidePanel {
 
   // === Equipment methods ===
 
-  updateEquipSlot(slotIndex: number, itemId: number): void {
+  updateEquipSlot(slotIndex: number, itemId: number, quantity: number = itemId === 0 ? 0 : 1): void {
     if (itemId === 0) {
       this.equipment.delete(slotIndex);
+      this.equipmentQuantities.delete(slotIndex);
     } else {
       this.equipment.set(slotIndex, itemId);
+      this.equipmentQuantities.set(slotIndex, Math.max(1, Math.floor(quantity)));
     }
     this.renderEquipSlot(slotIndex);
     this.updateEquipmentBonuses();
+    if (slotIndex === 0) this.updateStanceUI();
   }
 
   private updateEquipmentBonuses(): void {
@@ -3272,7 +3351,8 @@ export class SidePanel {
     if (itemId) {
       const def = this.itemDefs.get(itemId);
       const name = def?.name || `Item ${itemId}`;
-      itemEl.textContent = name;
+      const quantity = this.equipmentQuantities.get(slotIndex) ?? 1;
+      itemEl.textContent = quantity > 1 ? `${name} x${quantity.toLocaleString()}` : name;
       itemEl.style.color = '#d8c6a3';
       if (iconEl && def) {
         renderItemSlot(iconEl, def, this.itemDefs, {

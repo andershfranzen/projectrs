@@ -25,7 +25,7 @@ export const MAX_STACK = 0x7FFFFFFF;
  *  disconnects on mismatch with a "please refresh" prompt. Without this
  *  guard, a tab from yesterday's build silently misinterprets new opcodes
  *  and corrupts state — exactly what dupe surfaces are made of. */
-export const PROTOCOL_VERSION = 17;
+export const PROTOCOL_VERSION = 20;
 export const SERVER_PORT = 4000;
 export const GAME_WS_PATH = '/ws/game';
 export const CHAT_WS_PATH = '/ws/chat';
@@ -37,7 +37,13 @@ export const COOKING_RANGE_OBJECT_DEF_ID = 7;
 export const POTATO_PLANT_OBJECT_DEF_ID = 28;
 export const POTTERY_WHEEL_OBJECT_DEF_ID = 32;
 export const KILN_OBJECT_DEF_ID = 39;
-export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID];
+export const SPINNING_WHEEL_OBJECT_DEF_ID = 40;
+export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [
+  COOKING_RANGE_OBJECT_DEF_ID,
+  POTTERY_WHEEL_OBJECT_DEF_ID,
+  KILN_OBJECT_DEF_ID,
+  SPINNING_WHEEL_OBJECT_DEF_ID,
+];
 export const CLAY_ITEM_ID = 242;
 export const SOFT_CLAY_ITEM_ID = 243;
 export const POT_ITEM_ID = 245;
@@ -50,14 +56,73 @@ export const LOGS_ITEM_ID = 23;
 export const OAK_LOGS_ITEM_ID = 24;
 export const MAPLE_LOGS_ITEM_ID = 39;
 export const YEW_LOGS_ITEM_ID = 40;
+export const BRONZE_ARROWS_ITEM_ID = 42;
+export const IRON_ARROWS_ITEM_ID = 43;
 export const WILLOW_LOGS_ITEM_ID = 235;
 export const SHORTBOW_UNSTRUNG_ITEM_ID = 262;
+export const BRONZE_ARROWHEADS_ITEM_ID = 264;
+export const IRON_ARROWHEADS_ITEM_ID = 265;
+export const LOW_QUALITY_SINEW_ITEM_ID = 269;
 export const ARROW_SHAFTS_ITEM_ID = 270;
 export const MAGIC_LOGS_ITEM_ID = 271;
 export const HEADLESS_ARROWS_ITEM_ID = 272;
+export const BOWSTRING_ITEM_ID = 273;
+export const SHORTBOW_ITEM_ID = 274;
+export const OAK_SHORTBOW_UNSTRUNG_ITEM_ID = 275;
+export const WILLOW_SHORTBOW_UNSTRUNG_ITEM_ID = 276;
+export const MAPLE_SHORTBOW_UNSTRUNG_ITEM_ID = 277;
+export const YEW_SHORTBOW_UNSTRUNG_ITEM_ID = 278;
+export const MAGIC_SHORTBOW_UNSTRUNG_ITEM_ID = 279;
+export const OAK_SHORTBOW_ITEM_ID = 280;
+export const WILLOW_SHORTBOW_ITEM_ID = 281;
+export const MAPLE_SHORTBOW_ITEM_ID = 282;
+export const YEW_SHORTBOW_ITEM_ID = 283;
+export const MAGIC_SHORTBOW_ITEM_ID = 284;
 export const SOFT_CLAY_WATER_CONTAINER_ITEM_IDS: readonly number[] = [
   POT_OF_WATER_ITEM_ID,
   BUCKET_OF_WATER_ITEM_ID,
+];
+
+export const LOG_CRAFT_ARROW_SHAFT_RECIPES: readonly {
+  logItemId: number;
+  shaftQuantity: number;
+  logLabel: string;
+}[] = [
+  { logItemId: LOGS_ITEM_ID, shaftQuantity: 10, logLabel: 'logs' },
+  { logItemId: OAK_LOGS_ITEM_ID, shaftQuantity: 15, logLabel: 'oak logs' },
+  { logItemId: WILLOW_LOGS_ITEM_ID, shaftQuantity: 20, logLabel: 'willow logs' },
+  { logItemId: MAPLE_LOGS_ITEM_ID, shaftQuantity: 25, logLabel: 'maple logs' },
+  { logItemId: YEW_LOGS_ITEM_ID, shaftQuantity: 30, logLabel: 'yew logs' },
+  { logItemId: MAGIC_LOGS_ITEM_ID, shaftQuantity: 50, logLabel: 'mystic logs' },
+];
+
+export const LOG_CRAFT_SHORTBOW_RECIPES: readonly {
+  logItemId: number;
+  unstrungItemId: number;
+  strungItemId: number;
+  logLabel: string;
+  bowLabel: string;
+  levelRequired: number;
+  carveXpReward: number;
+  stringXpReward: number;
+}[] = [
+  { logItemId: LOGS_ITEM_ID, unstrungItemId: SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: SHORTBOW_ITEM_ID, logLabel: 'logs', bowLabel: 'shortbow', levelRequired: 1, carveXpReward: 6, stringXpReward: 7 },
+  { logItemId: OAK_LOGS_ITEM_ID, unstrungItemId: OAK_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: OAK_SHORTBOW_ITEM_ID, logLabel: 'oak logs', bowLabel: 'oak shortbow', levelRequired: 5, carveXpReward: 8, stringXpReward: 9 },
+  { logItemId: WILLOW_LOGS_ITEM_ID, unstrungItemId: WILLOW_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: WILLOW_SHORTBOW_ITEM_ID, logLabel: 'willow logs', bowLabel: 'willow shortbow', levelRequired: 18, carveXpReward: 16, stringXpReward: 17 },
+  { logItemId: MAPLE_LOGS_ITEM_ID, unstrungItemId: MAPLE_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: MAPLE_SHORTBOW_ITEM_ID, logLabel: 'maple logs', bowLabel: 'maple shortbow', levelRequired: 32, carveXpReward: 25, stringXpReward: 25 },
+  { logItemId: YEW_LOGS_ITEM_ID, unstrungItemId: YEW_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: YEW_SHORTBOW_ITEM_ID, logLabel: 'yew logs', bowLabel: 'yew shortbow', levelRequired: 46, carveXpReward: 34, stringXpReward: 34 },
+  { logItemId: MAGIC_LOGS_ITEM_ID, unstrungItemId: MAGIC_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: MAGIC_SHORTBOW_ITEM_ID, logLabel: 'mystic logs', bowLabel: 'mystic shortbow', levelRequired: 60, carveXpReward: 41, stringXpReward: 42 },
+];
+
+export const ARROWHEAD_FLETCHING_RECIPES: readonly {
+  arrowheadItemId: number;
+  arrowItemId: number;
+  arrowLabel: string;
+  levelRequired: number;
+  xpReward: number;
+}[] = [
+  { arrowheadItemId: BRONZE_ARROWHEADS_ITEM_ID, arrowItemId: BRONZE_ARROWS_ITEM_ID, arrowLabel: 'bronze', levelRequired: 1, xpReward: 1 },
+  { arrowheadItemId: IRON_ARROWHEADS_ITEM_ID, arrowItemId: IRON_ARROWS_ITEM_ID, arrowLabel: 'iron', levelRequired: 15, xpReward: 2 },
 ];
 
 /** Distance budget for materializing humanoid NPCs as skinned 3D characters. */

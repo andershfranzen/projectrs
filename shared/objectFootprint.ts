@@ -1,4 +1,12 @@
+import {
+  COOKING_RANGE_OBJECT_DEF_ID,
+  KILN_OBJECT_DEF_ID,
+  POTTERY_WHEEL_OBJECT_DEF_ID,
+  SPINNING_WHEEL_OBJECT_DEF_ID,
+} from './constants.js';
+
 export interface ObjectFootprintDef {
+  id?: number;
   category?: string;
   width?: number;
 }
@@ -131,6 +139,16 @@ export interface InteractionTileOptions {
 
 export function usesCornerInteractionTiles(def: ObjectFootprintDef, hasInteractionSides: boolean = false): boolean {
   return !hasInteractionSides && def.category === 'tree' && normalizeWidth(def.width) <= 1;
+}
+
+/** Crafting stations rely on map-authored collision, not their interaction footprint. */
+export function usesMapAuthoredObjectCollision(def: ObjectFootprintDef): boolean {
+  return def.category === 'furnace'
+    || def.category === 'cookingrange'
+    || def.id === COOKING_RANGE_OBJECT_DEF_ID
+    || def.id === POTTERY_WHEEL_OBJECT_DEF_ID
+    || def.id === KILN_OBJECT_DEF_ID
+    || def.id === SPINNING_WHEEL_OBJECT_DEF_ID;
 }
 
 /** Map a (dx, dz) cardinal offset from a footprint tile at (ftX, ftZ) to a

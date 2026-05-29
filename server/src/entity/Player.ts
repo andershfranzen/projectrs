@@ -2,13 +2,16 @@ import { Entity } from './Entity';
 import {
   InventorySlot, INVENTORY_SIZE, BANK_SIZE, MAX_STACK,
   SkillBlock, MeleeStance, CombatBonuses,
-  initSkills, combatLevel, zeroBonuses,
+  initSkills, combatLevel, zeroBonuses, bowAttackSpeedForStance,
   PlayerAnimationKind, PlayerSkillAnimationVariant,
+  BRONZE_ARROWS_ITEM_ID, IRON_ARROWS_ITEM_ID,
+  SHORTBOW_ITEM_ID, OAK_SHORTBOW_ITEM_ID, WILLOW_SHORTBOW_ITEM_ID,
+  MAPLE_SHORTBOW_ITEM_ID, YEW_SHORTBOW_ITEM_ID, MAGIC_SHORTBOW_ITEM_ID,
   type PlayerAppearance, type ItemDef,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
-export const EQUIP_SLOTS = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'] as const;
+export const EQUIP_SLOTS = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'] as const;
 export type EquipSlot = typeof EQUIP_SLOTS[number];
 export type PlayerDelayReason = 'generic' | 'eat';
 /** 17 ticks at 600ms is 10.2s, so the combat logout block is never shorter
@@ -18,6 +21,35 @@ export const COMBAT_LOGOUT_BLOCK_TICKS = 17;
 export interface EquippedItem {
   itemId: number;
   slot: EquipSlot;
+}
+
+export type PlayerAmmo =
+  | { source: 'equipment'; equipSlot: 'ammo'; itemDef: ItemDef };
+
+const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
+  [BRONZE_ARROWS_ITEM_ID]: 1,
+  [IRON_ARROWS_ITEM_ID]: 2,
+};
+
+const MAX_ARROW_TIER_BY_BOW_ITEM_ID: Record<number, number> = {
+  [SHORTBOW_ITEM_ID]: 2,        // bronze, iron
+  [OAK_SHORTBOW_ITEM_ID]: 3,    // + steel
+  [WILLOW_SHORTBOW_ITEM_ID]: 4, // + mithril
+  [MAPLE_SHORTBOW_ITEM_ID]: 5,  // + black bronze
+  [YEW_SHORTBOW_ITEM_ID]: Infinity,
+  [MAGIC_SHORTBOW_ITEM_ID]: Infinity,
+};
+
+function arrowTier(itemDef: ItemDef): number {
+  const explicit = ARROW_TIER_BY_ITEM_ID[itemDef.id];
+  if (explicit !== undefined) return explicit;
+  const name = itemDef.name.toLowerCase();
+  if (name.includes('black bronze')) return 5;
+  if (name.includes('mithril')) return 4;
+  if (name.includes('steel')) return 3;
+  if (name.includes('iron')) return 2;
+  if (name.includes('bronze')) return 1;
+  return 1;
 }
 
 /** Result of an inventory add. Mirrors 2004scape's InventoryTransaction —
@@ -44,6 +76,7 @@ export class Player extends Entity {
   isAdmin: boolean = false;
   inventory: (InventorySlot | null)[];
   equipment: Map<EquipSlot, number> = new Map(); // slot -> itemId
+  equipmentQuantities: Map<EquipSlot, number> = new Map(); // stack quantity for ammo and any future stackable equipment
   skills: SkillBlock;
   stance: MeleeStance = 'accurate';
   appearance: PlayerAppearance | null = null;
@@ -94,13 +127,11 @@ export class Player extends Entity {
    *  mid-swing sees the axe in the chopper's hand. */
   animationToolItemId: number = 0;
   /** NPC def-id of the shopkeeper this player is currently talking to, or
-   *  null. Set on talk-shopkeeper, cleared on movement / transition / death
-   *  / disconnect. Buy + sell handlers require it to match a valid shop so
-   *  a malicious client can't sell items by sending PLAYER_SELL_ITEM without
-   *  ever opening a shop, or buy across shops. Not a modal interface (the
-   *  player can still attack/skill/etc. — matches RS where shops auto-close
-   *  on distance). */
+   *  null. Kept for legacy shop validation; openShopNpcEntityId points at
+   *  the exact spawned NPC so per-spawn shops and runtime stock work. */
   openShopNpcId: number | null = null;
+  /** Spawned NPC entity id for the currently open shop, or null. */
+  openShopNpcEntityId: number | null = null;
   /** Currently open dialogue, or null. Tracks which NPC entity the player is
    *  talking to, which server-issued session is active, which node they're
    *  parked on, AND the indices of the options the client was actually shown
@@ -362,6 +393,51 @@ export class Player extends Entity {
     return combatLevel(this.skills);
   }
 
+  getEquipmentQuantity(slot: EquipSlot): number {
+    if (!this.equipment.has(slot)) return 0;
+    const quantity = this.equipmentQuantities.get(slot) ?? 1;
+    return Math.min(MAX_STACK, Math.max(1, Math.floor(quantity)));
+  }
+
+  setEquipment(slot: EquipSlot, itemId: number, quantity: number = 1): void {
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      this.deleteEquipment(slot);
+      return;
+    }
+    const normalizedQuantity = Math.min(MAX_STACK, Math.max(1, Math.floor(quantity)));
+    this.equipment.set(slot, itemId);
+    if (slot === 'ammo' || normalizedQuantity !== 1) {
+      this.equipmentQuantities.set(slot, normalizedQuantity);
+    } else {
+      this.equipmentQuantities.delete(slot);
+    }
+  }
+
+  deleteEquipment(slot: EquipSlot): void {
+    this.equipment.delete(slot);
+    this.equipmentQuantities.delete(slot);
+  }
+
+  clearEquipment(): void {
+    this.equipment.clear();
+    this.equipmentQuantities.clear();
+  }
+
+  decrementEquipment(slot: EquipSlot, quantity: number): boolean {
+    if (!this.equipment.has(slot)) return false;
+    const currentQuantity = this.getEquipmentQuantity(slot);
+    if (quantity <= 0 || currentQuantity < quantity) return false;
+    const nextQuantity = currentQuantity - quantity;
+    if (nextQuantity <= 0) {
+      this.deleteEquipment(slot);
+    } else {
+      const itemId = this.equipment.get(slot);
+      if (itemId === undefined) return false;
+      this.setEquipment(slot, itemId, nextQuantity);
+    }
+    return true;
+  }
+
   // Recompute bonuses from all equipped items
   computeBonuses(itemDefs: Map<number, ItemDef>): CombatBonuses {
     const b = zeroBonuses();
@@ -388,6 +464,7 @@ export class Player extends Entity {
     const weaponId = this.equipment.get('weapon');
     if (weaponId) {
       const def = itemDefs.get(weaponId);
+      if (def?.weaponStyle === 'bow') return bowAttackSpeedForStance(this.stance);
       if (def?.attackSpeed) return def.attackSpeed;
     }
     return 4; // Unarmed
@@ -407,19 +484,34 @@ export class Player extends Entity {
     return style === 'bow' || style === 'crossbow';
   }
 
-  /** Find the first matching ammo in inventory. Returns slot index + item def, or null. */
-  findAmmo(itemDefs: Map<number, ItemDef>): { slotIndex: number; itemDef: ItemDef } | null {
+  canFireAmmo(itemDefs: Map<number, ItemDef>, ammoDef: ItemDef): boolean {
+    const weaponId = this.equipment.get('weapon');
+    if (!weaponId) return false;
+    const weaponDef = itemDefs.get(weaponId);
+    if (!weaponDef?.ammoType || !ammoDef.isAmmo || ammoDef.ammoType !== weaponDef.ammoType) return false;
+    if (weaponDef.ammoType !== 'arrow') return true;
+    const maxTier = MAX_ARROW_TIER_BY_BOW_ITEM_ID[weaponId] ?? Infinity;
+    return arrowTier(ammoDef) <= maxTier;
+  }
+
+  /** Find matching ammo for the equipped weapon. Combat intentionally requires
+   *  arrows to be equipped in the ammo slot; inventory arrows are crafting/
+   *  bank contents, not combat-ready ammunition. */
+  findAmmo(itemDefs: Map<number, ItemDef>): PlayerAmmo | null {
     const weaponId = this.equipment.get('weapon');
     if (!weaponId) return null;
     const weaponDef = itemDefs.get(weaponId);
-    if (!weaponDef?.ammoType) return null;
+    const ammoType = weaponDef?.ammoType;
+    if (!ammoType) return null;
 
-    for (let i = 0; i < this.inventory.length; i++) {
-      const slot = this.inventory[i];
-      if (!slot) continue;
-      const def = itemDefs.get(slot.itemId);
-      if (def?.isAmmo) return { slotIndex: i, itemDef: def };
+    const equippedAmmoId = this.equipment.get('ammo');
+    if (equippedAmmoId !== undefined && this.getEquipmentQuantity('ammo') > 0) {
+      const def = itemDefs.get(equippedAmmoId);
+      if (def?.isAmmo && def.ammoType === ammoType && this.canFireAmmo(itemDefs, def)) {
+        return { source: 'equipment', equipSlot: 'ammo', itemDef: def };
+      }
     }
+
     return null;
   }
 
@@ -659,6 +751,15 @@ export class Player extends Entity {
 
   getMoveDestination(): { x: number; z: number } | null {
     return this.hasMoveQueue() ? this.moveQueue[this.moveQueue.length - 1] ?? null : null;
+  }
+
+  trimMoveQueueToFirst(predicate: (step: { x: number; z: number }) => boolean): boolean {
+    for (let i = this.moveQueueIndex; i < this.moveQueue.length; i++) {
+      if (!predicate(this.moveQueue[i]!)) continue;
+      this.moveQueue.length = i + 1;
+      return true;
+    }
+    return false;
   }
 
   syncHealthFromSkills(): void {

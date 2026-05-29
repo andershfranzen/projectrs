@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
-import { processNpcCombat, processPlayerCombat } from '../src/combat/Combat';
-import { ServerOpcode, decodePacket, type DialogueTree, type NpcDef } from '@projectrs/shared';
+import { processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
+import { ServerOpcode, decodePacket, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -22,6 +22,32 @@ const npcDef: NpcDef = {
   aggressive: false,
   wanderRange: 0,
   lootTable: [],
+};
+
+const bowItemDef: ItemDef = {
+  id: 1000,
+  name: 'Test bow',
+  description: '',
+  value: 0,
+  stackable: false,
+  equippable: true,
+  equipSlot: 'weapon',
+  weaponStyle: 'bow',
+  ammoType: 'arrow',
+  attackSpeed: 4,
+};
+
+const arrowItemDef: ItemDef = {
+  id: 1001,
+  name: 'Test arrow',
+  description: '',
+  value: 0,
+  stackable: true,
+  equippable: true,
+  equipSlot: 'ammo',
+  isAmmo: true,
+  ammoType: 'arrow',
+  rangedStrength: 0,
 };
 
 function makeWorld(): any {
@@ -56,6 +82,8 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
     getSpellByIndex: () => null,
   };
   world.cancelSkilling = () => {};
+  world.cancelItemProduction = () => {};
+  world.clearPendingObjectIntents = () => {};
   world.closeNpcUiContext = () => {};
   world.sendChatSystem = () => {};
   world.sendInventory = () => {};
@@ -64,7 +92,9 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   world.setPlayerAnimation = () => {};
   world.broadcastPlayerAnimationEvent = () => {};
   world.broadcastCombatHit = () => {};
-  world.broadcastProjectile = () => {};
+  world.broadcastProjectile = (attackerId: number, targetId: number, projectileType: number) => {
+    broadcasts.push({ opcode: ServerOpcode.COMBAT_PROJECTILE, values: [attackerId, targetId, projectileType] });
+  };
   world.broadcastNearby = (_map: string, _x: number, _z: number, opcode: ServerOpcode, ...values: number[]) => {
     broadcasts.push({ opcode, values });
   };
@@ -174,6 +204,44 @@ describe('NPC interaction reachability', () => {
     expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
   });
 
+  test('ranged attack trims an existing client path to the first in-range tile', () => {
+    const player = new Player('archer', 1.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setMoveQueue([
+      { x: 2.5, z: 10.5 },
+      { x: 3.5, z: 10.5 },
+      { x: 4.5, z: 10.5 },
+      { x: 9.5, z: 10.5 },
+    ]);
+    const { world } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+
+    expect(player.getMoveDestination()).toEqual({ x: 3.5, z: 10.5 });
+  });
+
+  test('empty movement packet cancels active NPC combat', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+    expect(player.attackTarget).toBe(npc);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+
+    world.handlePlayerMove(player.id, []);
+
+    expect(player.attackTarget).toBeNull();
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+    expect(world.npcTargetedBy.has(npc.id)).toBe(false);
+  });
+
   test('NPC turns toward the player when the first combat hit resolves', () => {
     const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);
@@ -189,6 +257,109 @@ describe('NPC interaction reachability', () => {
     expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(true);
   });
 
+  test('aggressive NPCs use wander plus two as their default hunt and max range', () => {
+    const player = new Player('tester', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, aggressive: true, wanderRange: 5, health: 50, attack: 50, defence: 50, strength: 50 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.skills.accuracy.level = 99;
+    player.skills.strength.level = 99;
+    player.skills.defence.level = 99;
+    player.skills.hitpoints.level = 99;
+    const { world } = makeCombatWorld(player, npc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(npc.maxRange).toBe(7);
+    expect(npc.aggroRange).toBe(7);
+    expect(npc.combatTarget).toBe(player);
+  });
+
+  test('aggressive NPCs keep returning instead of reacquiring players outside max range', () => {
+    const player = new Player('tester', 19.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, aggressive: true, wanderRange: 5 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.position.x = 16.5;
+    npc.returning = true;
+    const { world } = makeCombatWorld(player, npc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(npc.combatTarget).toBeNull();
+    expect(npc.returning).toBe(true);
+    expect(npc.position.x).toBeLessThan(16.5);
+  });
+
+  test('NPCs return when their combat target leaves max range', () => {
+    const player = new Player('tester', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, aggressive: true, wanderRange: 5 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.combatTarget = player;
+    const { world } = makeCombatWorld(player, npc);
+
+    player.position.x = 19.5;
+    world.tickNpcAI();
+
+    expect(npc.combatTarget).toBeNull();
+    expect(npc.returning).toBe(true);
+  });
+
+  test('aggressive NPCs ignore players outside default hunt range', () => {
+    const player = new Player('tester', 18.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, aggressive: true, wanderRange: 5, health: 50, attack: 50, defence: 50, strength: 50 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(npc.aggroRange).toBe(7);
+    expect(npc.combatTarget).toBeNull();
+  });
+
+  test('NPC combat chase can step beyond idle wander range', () => {
+    const player = new Player('tester', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 5 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.combatTarget = player;
+    const { world } = makeCombatWorld(player, npc);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    for (let i = 0; i < 6; i++) world.tickNpcAI();
+
+    expect(Math.abs(npc.position.x - npc.spawnX)).toBeGreaterThan(npc.wanderRange);
+    expect(Math.abs(npc.position.x - npc.spawnX)).toBeLessThanOrEqual(npc.combatFollowRange);
+    expect(npc.combatTarget).toBe(player);
+    expect(npc.returning).toBe(false);
+  });
+
+  test('NPC combat chase keeps moving until it reaches a cardinal interaction tile', () => {
+    const player = new Player('tester', 9.5, 9.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 5 }, 10.5, 10.5);
+    npc.combatTarget = player;
+
+    npc.processAI((x, z) => Math.floor(x) === 9 && Math.floor(z) === 9);
+
+    expect(npc.isInteractionTile(Math.floor(player.position.x), Math.floor(player.position.y))).toBe(true);
+    expect(npc.position.x === 9.5 || npc.position.y === 9.5).toBe(true);
+  });
+
   test('melee combat requires a cardinal NPC interaction tile', () => {
     const diagonal = new Player('diagonal', 9.5, 9.5, fakeWs, 1);
     const cardinal = new Player('cardinal', 9.5, 10.5, fakeWs, 2);
@@ -196,6 +367,23 @@ describe('NPC interaction reachability', () => {
 
     expect(processPlayerCombat(diagonal, npc, new Map())).toBeNull();
     expect(processPlayerCombat(cardinal, npc, new Map())).not.toBeNull();
+  });
+
+  test('NPC melee combat requires a cardinal NPC interaction tile', () => {
+    const diagonal = new Player('diagonal', 9.5, 9.5, fakeWs, 1);
+    const cardinal = new Player('cardinal', 9.5, 10.5, fakeWs, 2);
+
+    expect(processNpcCombat(new Npc(npcDef, 10.5, 10.5), diagonal, new Map())).toBeNull();
+    expect(processNpcCombat(new Npc(npcDef, 10.5, 10.5), cardinal, new Map())).not.toBeNull();
+  });
+
+  test('ranged combat uses Chebyshev distance to the NPC footprint', () => {
+    const player = new Player('archer', 17.5, 17.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    const world = makeWorld();
+
+    expect(world.isPlayerInNpcAttackRange(player, npc, 'ranged')).toBe(true);
+    expect(processPlayerRangedCombat(player, npc, new Map(), 0)).not.toBeNull();
   });
 
   test('NPC leash disengage also clears the player combat target', () => {
@@ -218,32 +406,198 @@ describe('NPC interaction reachability', () => {
     expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_HIT && b.values[0] === npc.id && b.values[1] === -1)).toBe(true);
   });
 
-  test('autocast cannot keep damaging an NPC that is outside its retaliation leash', () => {
-    const player = new Player('caster', 25.5, 10.5, fakeWs, 1);
+  test('NPC leash disengages even when the target is currently adjacent', () => {
+    const player = new Player('tester', 20.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);
     player.currentMapLevel = 'kcmap';
     npc.currentMapLevel = 'kcmap';
-    npc.position.x = 18.5;
-    player.autocastSpellIndex = 0;
-    const { world } = makeCombatWorld(player, npc);
-    world.data.getSpellByIndex = () => ({ id: 'test-spell' });
+    npc.position.x = 19.5;
+    npc.position.y = 10.5;
+    npc.combatTarget = player;
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    world.tickNpcAI();
+
+    expect(npc.combatTarget).toBeNull();
+    expect(npc.returning).toBe(true);
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+    expect(world.npcTargetedBy.has(npc.id)).toBe(false);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_HIT && b.values[0] === npc.id && b.values[1] === -1)).toBe(true);
+  });
+
+  test('ranged attacks outside wander range but inside maxrange edge can make the NPC retaliate', () => {
+    const player = new Player('archer', 16.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 3 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
     world.playerCombatTargets.set(player.id, npc.id);
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
     world.tickPlayerCombat();
 
-    expect(npc.health).toBe(npc.maxHealth);
+    expect(player.attackCooldown).toBe(4);
+    expect(player.getEquipmentQuantity('ammo')).toBe(4);
+    expect(npc.combatTarget).toBe(player);
+    expect(npc.returning).toBe(false);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_PROJECTILE)).toBe(true);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(true);
+  });
+
+  test('ranged retaliation chase moves beyond idle wander range', () => {
+    const player = new Player('archer', 16.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 3 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    world.tickPlayerCombat();
+    for (let i = 0; i < 5; i++) world.tickNpcAI();
+
+    expect(Math.abs(npc.position.x - npc.spawnX)).toBeGreaterThan(npc.wanderRange);
+    expect(Math.abs(npc.position.x - npc.spawnX)).toBeLessThanOrEqual(npc.combatFollowRange);
+    expect(npc.combatTarget).toBe(player);
+    expect(npc.retreatTarget).toBeNull();
+  });
+
+  test('NPC combat chase is not pinned by another NPC on the next step', () => {
+    const player = new Player('archer', 16.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 3 }, 10.5, 10.5);
+    const blocker = new Npc({ ...npcDef, wanderRange: 0 }, 14.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    blocker.currentMapLevel = 'kcmap';
+    npc.combatTarget = player;
+    const { world } = makeCombatWorld(player, npc);
+    world.npcs.set(blocker.id, blocker);
+    world.entityTileOccupants = new Set([
+      world.entityTileKeyFor('kcmap', blocker.position.x, blocker.position.y, blocker.currentFloor),
+    ]);
+    world.playerTileOccupants = new Set();
+
+    for (let i = 0; i < 4; i++) world.tickNpcAI();
+
+    expect(npc.position.x).toBe(14.5);
+    expect(Math.abs(npc.position.x - npc.spawnX)).toBeGreaterThan(npc.wanderRange);
+    expect(npc.combatTarget).toBe(player);
+  });
+
+  test('ranged attacks outside maxrange edge can hit and make the NPC retreat for a long time', () => {
+    const player = new Player('archer', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 2 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    world.tickPlayerCombat();
+
+    expect(player.attackCooldown).toBe(4);
+    expect(player.getEquipmentQuantity('ammo')).toBe(4);
     expect(npc.combatTarget).toBeNull();
-    expect(npc.returning).toBe(true);
-    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+    expect(npc.retreatTarget).toBe(player);
+    expect(npc.returning).toBe(false);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_PROJECTILE)).toBe(true);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
+
+    for (let i = 0; i < 8; i++) world.tickNpcAI();
+
+    expect(npc.position.x).toBeLessThan(npc.spawnX);
+    expect(npc.retreatTarget).toBe(player);
+    expect(npc.returning).toBe(false);
+  });
+
+  test('NPC sync exposes retreat target so clients can render backpedal facing', () => {
+    const player = new Player('archer', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 2 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.startRetreatFromTarget(player);
+    const { world } = makeCombatWorld(player, npc);
+    world.npcWorldY = () => 0;
+
+    const packet = world.encodeNpcUpdate(npc);
+    const decoded = decodePacket(packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer);
+
+    expect(decoded.opcode).toBe(ServerOpcode.NPC_SYNC);
+    expect(decoded.values[10]).toBe(player.id);
+  });
+
+  test('ranged attacks inside maxrange interrupt retreat and make the NPC retaliate', () => {
+    const player = new Player('archer', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 2 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    world.tickPlayerCombat();
+    player.attackCooldown = 0;
+    player.position.x = 14.5;
+
+    world.tickPlayerCombat();
+
+    expect(npc.retreatTarget).toBeNull();
+    expect(npc.combatTarget).toBe(player);
+  });
+
+  test('low-health NPCs use playerescape retreat instead of retaliating', () => {
+    const player = new Player('archer', 16.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 3, health: 10, retreatHealth: 10 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    world.tickPlayerCombat();
+
+    expect(npc.combatTarget).toBeNull();
+    expect(npc.retreatTarget).toBe(player);
+    expect(npc.returning).toBe(false);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
+
+    world.tickNpcAI();
+
+    expect(npc.position.x).toBeLessThan(npc.spawnX);
+    expect(npc.position.y).toBeLessThan(npc.spawnZ);
   });
 
   test('NPC melee retaliation uses the NPC footprint, not only its anchor tile', () => {
     const largeNpcDef: NpcDef = { ...npcDef, size: 2 };
-    const player = new Player('tester', 8.5, 9.5, fakeWs, 1);
-    const npc = new Npc(largeNpcDef, 10.5, 10.5);
+    const cardinal = new Player('cardinal', 8.5, 9.5, fakeWs, 1);
+    const diagonal = new Player('diagonal', 8.5, 8.5, fakeWs, 2);
 
-    expect(processNpcCombat(npc, player, new Map())).not.toBeNull();
+    expect(processNpcCombat(new Npc(largeNpcDef, 10.5, 10.5), cardinal, new Map())).not.toBeNull();
+    expect(processNpcCombat(new Npc(largeNpcDef, 10.5, 10.5), diagonal, new Map())).toBeNull();
   });
 
   test('NPC first-retaliation cooldown keeps ticking while chasing', () => {

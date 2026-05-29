@@ -320,7 +320,7 @@ function tuneModelLighting(model) {
 
   // --- NPC Spawn system ---
   let npcDefs = []           // loaded from /data/npcs.json
-  let npcSpawns = []         // { id, npcId, x, z, wanderRange, facing? }
+  let npcSpawns = []         // { id, npcId, x, z, wanderRange, maxRange?, huntRange?, facing? }
   let _npcSpawnNextId = 1
   let selectedNpcSpawn = null
   let npcPlacementMode = 'place' // 'place' | 'select' | 'move'
@@ -335,9 +335,13 @@ function tuneModelLighting(model) {
   // SpawnEntry shape in shared/types.ts.
   const NPC_SPAWN_OVERRIDE_FIELDS = {
     aggressive:   v => v === true || v === false,
+    maxRange:     v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+    huntRange:    v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+    attackRange:  v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+    retreatHealth: v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
     facing:       v => typeof v === 'number' && Number.isFinite(v),
     appearance:   v => !!v,
-    equipment:    v => Array.isArray(v) && v.length === 10,
+    equipment:    v => Array.isArray(v) && (v.length === 10 || v.length === 11),
     shop:         v => !!v,
     dialogue:     v => !!v,
     name:         v => !!v,
@@ -2587,6 +2591,9 @@ let selectedWaterFlowChunk = null
   // npcDefsDirty gates the "Save NPC defs" button and is set by any def edit.
   let activeNpcTab = 'spawn'
   let npcDefsDirty = false
+  const DEFAULT_SHOP_RESTOCK_TICKS = 100
+  const SHOP_EDITOR_ITEMS_PER_PAGE = 6
+  let shopEditorPageIndex = 0
 
   function findSelectedDef() {
     if (!selectedNpcSpawn) return null
@@ -3690,8 +3697,8 @@ let selectedWaterFlowChunk = null
     spawn.wanderRange = spawn.wanderRange ?? guardDef?.wanderRange ?? 2
     spawn.appearance = { ...DEFAULT_APPEARANCE, hairStyle: 1 }
     // PLAYER_REMOTE_EQUIPMENT order:
-    // [weapon, shield, head, body, legs, neck, ring, hands, feet, cape]
-    spawn.equipment = [87, 97, 94, 99, 98, 0, 0, 0, 0, 0]
+    // [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]
+    spawn.equipment = [87, 97, 94, 99, 98, 0, 0, 0, 0, 0, 0]
     delete spawn.attackAnim
 
     const sel = sidebar.querySelector('#npcTypeSelect')
@@ -3843,8 +3850,8 @@ let selectedWaterFlowChunk = null
         if (spawn && !spawn.shop) {
           // Seed override from the def so the user has a starting point.
           spawn.shop = def.shop
-            ? { name: def.shop.name, items: def.shop.items.map(i => ({ ...i })) }
-            : { name: `${def.name}'s Shop`, items: [] }
+            ? { name: def.shop.name, restockTicks: def.shop.restockTicks ?? DEFAULT_SHOP_RESTOCK_TICKS, items: def.shop.items.map(i => ({ ...i })) }
+            : { name: `${def.name}'s Shop`, restockTicks: DEFAULT_SHOP_RESTOCK_TICKS, items: [] }
         }
         renderShopTab(root, def)
       },
@@ -3865,7 +3872,7 @@ let selectedWaterFlowChunk = null
     root.appendChild(toggleRow)
     cb.addEventListener('change', () => {
       if (cb.checked) {
-        const blank = { name: `${def.name}'s Shop`, items: [] }
+        const blank = { name: `${def.name}'s Shop`, restockTicks: DEFAULT_SHOP_RESTOCK_TICKS, items: [] }
         if (targetIsOverride) spawn.shop = blank
         else { def.shop = blank; markDefsDirty() }
       } else {
@@ -3890,12 +3897,25 @@ let selectedWaterFlowChunk = null
     })
     root.appendChild(nameRow)
 
+    const restockRow = document.createElement('div')
+    restockRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;'
+    restockRow.innerHTML = `
+      <span style="flex:0;font-size:11px;color:rgba(255,255,255,0.65);white-space:nowrap;">Restock ticks</span>
+      <input type="number" min="0" step="1" value="${target.restockTicks ?? DEFAULT_SHOP_RESTOCK_TICKS}" style="width:72px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
+    `
+    restockRow.querySelector('input').addEventListener('change', (e) => {
+      target.restockTicks = Math.max(0, parseInt(e.target.value) || 0)
+      e.target.value = String(target.restockTicks)
+      if (!targetIsOverride) markDefsDirty()
+    })
+    root.appendChild(restockRow)
+
     // Items list — two rows per item to fit the narrow sidebar without
     // truncating item names. Row 1: searchable item picker + delete; row 2:
     // labelled Price + Stock inputs.
     const items = target.items || (target.items = [])
     const list = document.createElement('div')
-    list.style.cssText = 'border:1px solid #333;border-radius:3px;padding:6px;background:#161616;max-height:60vh;overflow-y:auto;'
+    list.style.cssText = 'border:1px solid #333;border-radius:3px;padding:6px;background:#161616;'
 
     const needsItemDefs = itemDefs.length === 0
     if (needsItemDefs) {
@@ -3914,7 +3934,12 @@ let selectedWaterFlowChunk = null
     }
     ensureShopItemDatalist()
 
-    for (let i = 0; i < items.length; i++) {
+    const pageCount = Math.max(1, Math.ceil(items.length / SHOP_EDITOR_ITEMS_PER_PAGE))
+    shopEditorPageIndex = Math.max(0, Math.min(shopEditorPageIndex, pageCount - 1))
+    const startIndex = shopEditorPageIndex * SHOP_EDITOR_ITEMS_PER_PAGE
+    const endIndex = Math.min(items.length, startIndex + SHOP_EDITOR_ITEMS_PER_PAGE)
+
+    for (let i = startIndex; i < endIndex; i++) {
       const idx = i
       const item = items[i]
       const entry = document.createElement('div')
@@ -3984,6 +4009,32 @@ let selectedWaterFlowChunk = null
     }
     root.appendChild(list)
 
+    if (items.length > SHOP_EDITOR_ITEMS_PER_PAGE) {
+      const pager = document.createElement('div')
+      pager.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;margin-top:6px;'
+      const prev = document.createElement('button')
+      prev.textContent = '<'
+      prev.disabled = shopEditorPageIndex <= 0
+      prev.style.cssText = 'min-width:32px;font-size:11px;padding:4px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;cursor:pointer;'
+      prev.addEventListener('click', () => {
+        shopEditorPageIndex--
+        renderShopTab(root, def)
+      })
+      const label = document.createElement('span')
+      label.textContent = `${shopEditorPageIndex + 1}/${pageCount}`
+      label.style.cssText = 'font-size:11px;color:#bbb;min-width:40px;text-align:center;'
+      const next = document.createElement('button')
+      next.textContent = '>'
+      next.disabled = shopEditorPageIndex >= pageCount - 1
+      next.style.cssText = 'min-width:32px;font-size:11px;padding:4px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:3px;cursor:pointer;'
+      next.addEventListener('click', () => {
+        shopEditorPageIndex++
+        renderShopTab(root, def)
+      })
+      pager.append(prev, label, next)
+      root.appendChild(pager)
+    }
+
     const addBtn = document.createElement('button')
     addBtn.textContent = '+ Add item'
     addBtn.style.cssText = 'width:100%;margin-top:6px;font-size:11px;padding:6px;background:#2a3a4a;color:#fff;border:1px solid #555;border-radius:3px;cursor:pointer;'
@@ -3992,6 +4043,7 @@ let selectedWaterFlowChunk = null
       // knows they need to choose one. The validation border (#aa5544) makes
       // unset rows visually loud.
       items.push({ itemId: 0, price: 1, stock: 1 })
+      shopEditorPageIndex = Math.floor((items.length - 1) / SHOP_EDITOR_ITEMS_PER_PAGE)
       if (!targetIsOverride) markDefsDirty()
       renderShopTab(root, def)
     })

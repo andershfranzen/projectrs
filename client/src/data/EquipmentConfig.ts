@@ -114,7 +114,7 @@ export const EQUIP_SLOT_BONES: Record<string, { boneName: string; localPosition:
   cape:    { boneName: 'mixamorig:Spine1',        localPosition: { x: 0, y: -0.1, z: -0.1 }, localRotation: { x: 0, y: 0, z: 0 }, scale: 1 },
 };
 
-export const EQUIP_SLOT_NAMES = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
+export const EQUIP_SLOT_NAMES = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'];
 
 export const METAL_TIER_THUMBNAIL_COLOR = {
   bronze: [0.45, 0.28, 0.12],
