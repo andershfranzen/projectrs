@@ -267,7 +267,7 @@ export function HiscoresTable() {
     };
   }, [selectedPlayer]);
 
-  const categories = useMemo(() => [...skillCategories, MOB_KILLS_CATEGORY], [skillCategories]);
+  const categories = useMemo(() => [MOB_KILLS_CATEGORY, ...skillCategories], [skillCategories]);
   const activeData = isKillsMode ? killData : data;
   const rowCount = activeData?.rows.length ?? 0;
   const totalRows = activeData?.totalRows ?? rowCount;
