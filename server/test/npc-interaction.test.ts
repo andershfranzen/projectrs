@@ -58,6 +58,8 @@ function makeWorld(): any {
       isWallBlocked: () => false,
       isWallBlockedOnFloor: () => false,
       findPathOnFloor: (_sx: number, _sz: number, gx: number, gz: number) => [{ x: gx, z: gz }],
+      getEffectiveHeightOnFloor: () => 0,
+      hasProjectileLineOfSight: () => true,
     },
   ]]);
   world.getPlayerMap = (player: Player) => world.maps.get(player.currentMapLevel);
@@ -224,6 +226,70 @@ describe('NPC interaction reachability', () => {
     expect(player.getMoveDestination()).toEqual({ x: 3.5, z: 10.5 });
   });
 
+  test('ranged attack keeps walking when the first in-range tile has no clear shot', () => {
+    const player = new Player('archer', 1.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setMoveQueue([
+      { x: 2.5, z: 10.5 },
+      { x: 3.5, z: 10.5 },
+      { x: 4.5, z: 10.5 },
+      { x: 9.5, z: 10.5 },
+    ]);
+    const { world } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.maps.get('kcmap').hasProjectileLineOfSight = (fromX: number) => fromX >= 9;
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+
+    expect(player.getMoveDestination()).toEqual({ x: 9.5, z: 10.5 });
+  });
+
+  test('active ranged combat queue is not trimmed every combat tick', () => {
+    const player = new Player('archer', 1.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setMoveQueue([
+      { x: 2.5, z: 10.5 },
+      { x: 3.5, z: 10.5 },
+      { x: 9.5, z: 10.5 },
+    ]);
+    const { world } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+    world.maps.get('kcmap').hasProjectileLineOfSight = (fromX: number) => fromX >= 3;
+
+    world.tickPlayerCombat();
+
+    expect(player.getMoveDestination()).toEqual({ x: 9.5, z: 10.5 });
+  });
+
+  test('ranged combat does not consume ammo or fire through blocked line of sight', () => {
+    const player = new Player('archer', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 12.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+    world.maps.get('kcmap').hasProjectileLineOfSight = () => false;
+
+    world.tickPlayerCombat();
+
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_PROJECTILE)).toBe(false);
+    expect(player.getEquipmentQuantity('ammo')).toBe(5);
+    expect(npc.health).toBe(npc.maxHealth);
+  });
+
   test('empty movement packet cancels active NPC combat', () => {
     const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);
@@ -375,6 +441,25 @@ describe('NPC interaction reachability', () => {
 
     expect(processNpcCombat(new Npc(npcDef, 10.5, 10.5), diagonal, new Map())).toBeNull();
     expect(processNpcCombat(new Npc(npcDef, 10.5, 10.5), cardinal, new Map())).not.toBeNull();
+  });
+
+  test('NPC melee combat cannot hit through a wall edge', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.setCombatTarget(player);
+    npc.attackCooldown = 0;
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.maps.get('kcmap').isWallBlocked = () => true;
+    world.broadcastCombatHit = (attackerId: number, targetId: number, damage: number) => {
+      broadcasts.push({ opcode: ServerOpcode.COMBAT_HIT, values: [attackerId, targetId, damage] });
+    };
+
+    world.tickNpcCombat();
+
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_HIT)).toBe(false);
+    expect(npc.attackCooldown).toBe(0);
   });
 
   test('ranged combat uses Chebyshev distance to the NPC footprint', () => {

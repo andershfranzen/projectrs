@@ -138,6 +138,13 @@ export const NPC_INTERACTION_RANGE = 2;
 /** Max distance in tiles a player can cast a targeted spell from. Shared so
  *  client prediction and server validation use the same range. */
 export const SPELL_CAST_DISTANCE = 10;
+/** Projectile eye/target offsets used by ranged attacks. Shared so client
+ *  path prediction and server combat validation test the same line segment. */
+export const RANGED_PROJECTILE_SOURCE_HEIGHT = 1.35;
+export const RANGED_PROJECTILE_TARGET_HEIGHT = 1.0;
+/** Walls below this visual height do not block arrows unless explicitly
+ *  authored as full-height projectile blockers. */
+export const PROJECTILE_BLOCKING_WALL_HEIGHT = 1.5;
 
 /** Radius around a ground-floor stair where an upper-floor click may resolve
  *  as a descent onto floor 0. Kept shared so client prediction and server

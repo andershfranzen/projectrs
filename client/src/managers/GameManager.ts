@@ -57,7 +57,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -5065,8 +5065,9 @@ export class GameManager {
     if (target) {
       const attackRange = this.getLocalNpcAttackRange();
       const rangeMode = this.getLocalNpcAttackRangeMode();
+      const requireRangedLineOfSight = this.isLocalRangedWeapon();
       const walkingToTile = this.pathIndex < this.path.length;
-      if (this.isPointInNpcInteractionRange(npcEntityId, target, this.playerX, this.playerZ, attackRange, rangeMode)) {
+      if (this.isPointInNpcInteractionRange(npcEntityId, target, this.playerX, this.playerZ, attackRange, rangeMode, requireRangedLineOfSight)) {
         if (walkingToTile) {
           this.trimPredictedPathToCurrentTileStep();
         } else {
@@ -5075,7 +5076,7 @@ export class GameManager {
           this.faceLocalPlayerToward(target.x, target.z);
         }
       } else {
-        const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode);
+        const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode, requireRangedLineOfSight);
         const path = pathResult.path;
         if (path.length > 0) {
           this.startPredictedPath(path, pathResult.preserveCurrentStep);
@@ -5431,6 +5432,52 @@ export class GameManager {
     return { dx: x - nearestX, dz: z - nearestZ };
   }
 
+  private hasRangedLineOfSightToNpc(
+    npcEntityId: number,
+    target: { x: number; z: number; floor: number; y: number },
+    fromX: number,
+    fromZ: number,
+  ): boolean {
+    const sameTile = Math.floor(fromX) === Math.floor(this.playerX)
+      && Math.floor(fromZ) === Math.floor(this.playerZ);
+    const currentY = this.localPlayer?.position.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const sourceBaseY = sameTile
+      ? currentY
+      : this.getHeightAtFloor(fromX, fromZ, this.currentFloor, currentY);
+    const sourceY = sourceBaseY + RANGED_PROJECTILE_SOURCE_HEIGHT;
+    const targetY = target.y + RANGED_PROJECTILE_TARGET_HEIGHT;
+    const size = this.getNpcTileSize(npcEntityId);
+    if (size <= 1) {
+      return this.chunkManager.hasProjectileLineOfSight(
+        fromX,
+        fromZ,
+        target.x,
+        target.z,
+        this.currentFloor,
+        sourceY,
+        targetY,
+      );
+    }
+    const minTileX = getObjectFootprintMinTile(target.x, size);
+    const minTileZ = getObjectFootprintMinTile(target.z, size);
+    for (let dz = 0; dz < size; dz++) {
+      for (let dx = 0; dx < size; dx++) {
+        if (this.chunkManager.hasProjectileLineOfSight(
+          fromX,
+          fromZ,
+          minTileX + dx + 0.5,
+          minTileZ + dz + 0.5,
+          this.currentFloor,
+          sourceY,
+          targetY,
+        )) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private isPlayerInNpcInteractionRange(npcEntityId: number, target: { x: number; z: number }, range: number): boolean {
     const fp = this.distToNpcFootprint(npcEntityId, target, this.playerX, this.playerZ);
     if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > range) return false;
@@ -5515,25 +5562,30 @@ export class GameManager {
 
   private isPointInNpcInteractionRange(
     npcEntityId: number,
-    target: { x: number; z: number },
+    target: { x: number; z: number; floor: number; y: number },
     x: number,
     z: number,
     range: number,
     mode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
+    requireRangedLineOfSight: boolean = false,
   ): boolean {
     if (mode === 'cardinal') {
       return this.isPointOnNpcInteractionTile(npcEntityId, target, x, z);
     }
     const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
-    if (mode === 'chebyshev') return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
-    return Math.hypot(fp.dx, fp.dz) <= range;
+    const inRange = mode === 'chebyshev'
+      ? Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range
+      : Math.hypot(fp.dx, fp.dz) <= range;
+    if (!inRange) return false;
+    return !requireRangedLineOfSight || this.hasRangedLineOfSightToNpc(npcEntityId, target, x, z);
   }
 
   private findPathToNpcInteraction(
     npcEntityId: number,
-    target: { x: number; z: number },
+    target: { x: number; z: number; floor: number; y: number },
     requiredRange: number = NPC_INTERACTION_RANGE,
     rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
+    requireRangedLineOfSight: boolean = false,
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const candidates = this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
       .map(tile => ({
@@ -5557,7 +5609,7 @@ export class GameManager {
         if (requiredRange > NPC_INTERACTION_RANGE) {
           for (let i = 0; i < result.path.length; i++) {
             const step = result.path[i];
-            if (this.isPointInNpcInteractionRange(npcEntityId, target, step.x, step.z, requiredRange, rangeMode)) {
+            if (this.isPointInNpcInteractionRange(npcEntityId, target, step.x, step.z, requiredRange, rangeMode, requireRangedLineOfSight)) {
               return {
                 path: result.path.slice(0, i + 1),
                 preserveCurrentStep: result.preserveCurrentStep,
@@ -5569,7 +5621,7 @@ export class GameManager {
         // adjacent tile is unreachable. For large NPCs, accepting that here
         // can walk the player near the body but still outside attack/talk
         // range, so keep trying other sides unless the terminal tile works.
-        if (requiredRange > NPC_INTERACTION_RANGE && this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange, rangeMode)) {
+        if (requiredRange > NPC_INTERACTION_RANGE && this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange, rangeMode, requireRangedLineOfSight)) {
           return result;
         }
       }
@@ -5602,7 +5654,7 @@ export class GameManager {
   private startLocalPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
     if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
-    this.localPlayer?.clearFaceLock();
+    this.localPlayer?.clearFaceLock(true);
     if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
     this.path = path;
     this.pathIndex = 0;
@@ -6938,7 +6990,7 @@ export class GameManager {
     this.pendingFaceTargetEntityId = -1;
     // Release any face-lock so the body re-aims along the new travel
     // direction rather than continuing to strafe toward the previous target.
-    this.localPlayer?.clearFaceLock(clickedOwnTile, clickedOwnTile);
+    this.localPlayer?.clearFaceLock(true, clickedOwnTile);
     if (this.isSkilling) {
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -7635,7 +7687,8 @@ export class GameManager {
     if (!npcTarget) return;
     const attackRange = this.getLocalNpcAttackRange();
     const rangeMode = this.getLocalNpcAttackRangeMode();
-    const inRange = this.isPointInNpcInteractionRange(this.combatTargetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode);
+    const requireRangedLineOfSight = this.isLocalRangedWeapon();
+    const inRange = this.isPointInNpcInteractionRange(this.combatTargetId, npcTarget, this.playerX, this.playerZ, attackRange, rangeMode, requireRangedLineOfSight);
     if (inRange) {
       if (this.trimPredictedPathToCurrentTileStep()) {
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
@@ -7645,7 +7698,7 @@ export class GameManager {
     if (this.pathIndex < this.path.length) return;
     if (this._combatPathTimer > 0) return;
     this._combatPathTimer = 0.6;
-    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, attackRange, rangeMode);
+    const pathResult = this.findPathToNpcInteraction(this.combatTargetId, npcTarget, attackRange, rangeMode, requireRangedLineOfSight);
     const newPath = pathResult.path;
     if (newPath.length > 0) {
       this.startPredictedPath(newPath, pathResult.preserveCurrentStep);

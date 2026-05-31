@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -1097,6 +1097,47 @@ export class World {
     return false;
   }
 
+  private isNpcMeleeReachableToPlayer(npc: Npc, player: Player): boolean {
+    if (!this.canPlayerTargetNpc(player, npc)) return false;
+    const ptx = Math.floor(player.position.x);
+    const ptz = Math.floor(player.position.y);
+    if (!npc.isInteractionTile(ptx, ptz)) return false;
+
+    const map = this.getPlayerMap(player);
+    const floor = player.currentFloor;
+    const size = Math.max(1, Math.round(npc.size));
+    if (size <= 1) {
+      const ntx = Math.floor(npc.position.x);
+      const ntz = Math.floor(npc.position.y);
+      return floor === 0
+        ? !map.isWallBlocked(ptx, ptz, ntx, ntz, player.effectiveY)
+        : !map.isWallBlockedOnFloor(ptx, ptz, ntx, ntz, floor);
+    }
+
+    const minX = getObjectFootprintMinTile(npc.position.x, size);
+    const minZ = getObjectFootprintMinTile(npc.position.y, size);
+    if (floor === 0) {
+      for (let dz = 0; dz < size; dz++) {
+        const footZ = minZ + dz;
+        for (let dx = 0; dx < size; dx++) {
+          const footX = minX + dx;
+          if (Math.abs(footX - ptx) + Math.abs(footZ - ptz) !== 1) continue;
+          if (!map.isWallBlocked(ptx, ptz, footX, footZ, player.effectiveY)) return true;
+        }
+      }
+    } else {
+      for (let dz = 0; dz < size; dz++) {
+        const footZ = minZ + dz;
+        for (let dx = 0; dx < size; dx++) {
+          const footX = minX + dx;
+          if (Math.abs(footX - ptx) + Math.abs(footZ - ptz) !== 1) continue;
+          if (!map.isWallBlockedOnFloor(ptx, ptz, footX, footZ, floor)) return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private findBankBoothAt(player: Player, tileX: number, tileZ: number): WorldObject | null {
     for (const obj of this.worldObjects.values()) {
       if (obj.def.category !== 'bank') continue;
@@ -1207,13 +1248,87 @@ export class World {
     return Math.hypot(fp.dx, fp.dz) <= range;
   }
 
-  private queuePlayerPathToNpcRange(player: Player, npc: Npc, range: number, mode: 'euclidean' | 'chebyshev' = 'euclidean'): boolean {
+  private hasRangedLineOfSightFrom(player: Player, npc: Npc, fromX: number, fromZ: number): boolean {
+    if (!this.canPlayerTargetNpc(player, npc)) return false;
+    const map = this.getPlayerMap(player);
+    const sameTile = Math.floor(fromX) === Math.floor(player.position.x)
+      && Math.floor(fromZ) === Math.floor(player.position.y);
+    const sourceBaseY = sameTile
+      ? player.effectiveY
+      : map.getEffectiveHeightOnFloor(fromX, fromZ, player.currentFloor, player.effectiveY);
+    const sourceY = sourceBaseY + RANGED_PROJECTILE_SOURCE_HEIGHT;
+    const targetY = this.npcWorldY(npc) + RANGED_PROJECTILE_TARGET_HEIGHT;
+    const size = npc.size;
+    if (size <= 1) {
+      return map.hasProjectileLineOfSight(
+        fromX,
+        fromZ,
+        npc.position.x,
+        npc.position.y,
+        player.currentFloor,
+        sourceY,
+        targetY,
+      );
+    }
+    const minTileX = getObjectFootprintMinTile(npc.position.x, size);
+    const minTileZ = getObjectFootprintMinTile(npc.position.y, size);
+    for (let dz = 0; dz < size; dz++) {
+      for (let dx = 0; dx < size; dx++) {
+        if (map.hasProjectileLineOfSight(
+          fromX,
+          fromZ,
+          minTileX + dx + 0.5,
+          minTileZ + dz + 0.5,
+          player.currentFloor,
+          sourceY,
+          targetY,
+        )) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private isPointInNpcRangedAttackRange(player: Player, npc: Npc, x: number, z: number, range: number = RANGED_ATTACK_DISTANCE): boolean {
+    return this.isPointInNpcFootprintRange(npc, x, z, range, 'chebyshev')
+      && this.hasRangedLineOfSightFrom(player, npc, x, z);
+  }
+
+  private isPointInNpcAttackRangeFrom(
+    player: Player,
+    npc: Npc,
+    x: number,
+    z: number,
+    range: number,
+    mode: 'euclidean' | 'chebyshev',
+    requireRangedLineOfSight: boolean,
+  ): boolean {
+    if (requireRangedLineOfSight) return this.isPointInNpcRangedAttackRange(player, npc, x, z, range);
+    return this.isPointInNpcFootprintRange(npc, x, z, range, mode);
+  }
+
+  private queuePlayerPathToNpcRange(
+    player: Player,
+    npc: Npc,
+    range: number,
+    mode: 'euclidean' | 'chebyshev' = 'euclidean',
+    requireRangedLineOfSight: boolean = false,
+  ): boolean {
     const path = this.findPlayerPathToNpc(player, npc);
     if (path.length === 0) return false;
 
     let cutIdx = path.length;
     for (let i = 0; i < path.length; i++) {
-      if (this.isPointInNpcFootprintRange(npc, path[i].x, path[i].z, range, mode)) {
+      if (this.isPointInNpcAttackRangeFrom(
+        player,
+        npc,
+        path[i].x,
+        path[i].z,
+        range,
+        mode,
+        requireRangedLineOfSight,
+      )) {
         cutIdx = i + 1;
         break;
       }
@@ -1225,13 +1340,35 @@ export class World {
     return true;
   }
 
-  private trimPlayerPathToNpcRange(player: Player, npc: Npc, range: number, mode: 'euclidean' | 'chebyshev'): boolean {
-    return player.trimMoveQueueToFirst(step => this.isPointInNpcFootprintRange(npc, step.x, step.z, range, mode));
+  private trimPlayerPathToNpcRange(
+    player: Player,
+    npc: Npc,
+    range: number,
+    mode: 'euclidean' | 'chebyshev',
+    requireRangedLineOfSight: boolean = false,
+  ): boolean {
+    return player.trimMoveQueueToFirst(step => this.isPointInNpcAttackRangeFrom(
+      player,
+      npc,
+      step.x,
+      step.z,
+      range,
+      mode,
+      requireRangedLineOfSight,
+    ));
+  }
+
+  private notifyClientIfMoveDestinationChanged(player: Player, before: { x: number; z: number } | null): void {
+    if (!before) return;
+    const after = player.getMoveDestination();
+    if (!after) return;
+    if (Math.floor(before.x) === Math.floor(after.x) && Math.floor(before.z) === Math.floor(after.z)) return;
+    this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(after.x), qPos(after.z));
   }
 
   private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic'): boolean {
     if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
-    if (mode === 'ranged') return this.isPointInNpcFootprintRange(npc, player.position.x, player.position.y, RANGED_ATTACK_DISTANCE, 'chebyshev');
+    if (mode === 'ranged') return this.isPointInNpcRangedAttackRange(player, npc, player.position.x, player.position.y);
     return this.isPointInNpcFootprintRange(npc, player.position.x, player.position.y, SPELL_CAST_DISTANCE, 'euclidean');
   }
 
@@ -3170,12 +3307,18 @@ export class World {
       // snap-on-divergence (visible as a mid-walk teleport). If moveQueue
       // is empty — e.g. the client didn't send a path, or it got rejected
       // for wall validation — fall back to server-side pathfinding so the
-      // chase still happens. tickPlayerCombat re-pathfinds every tick once
-      // engaged, so any subsequent NPC movement is handled there.
+      // chase still happens. tickPlayerCombat only re-pathfinds after the
+      // current queue is consumed, keeping client prediction stable mid-walk.
       if (isMagicAutocast && player.hasMoveQueue()) {
-        this.trimPlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE, 'euclidean');
+        const beforeDest = player.getMoveDestination();
+        if (this.trimPlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE, 'euclidean')) {
+          this.notifyClientIfMoveDestinationChanged(player, beforeDest);
+        }
       } else if (isRanged && player.hasMoveQueue()) {
-        this.trimPlayerPathToNpcRange(player, npc, attackDist, 'chebyshev');
+        const beforeDest = player.getMoveDestination();
+        if (this.trimPlayerPathToNpcRange(player, npc, attackDist, 'chebyshev', true)) {
+          this.notifyClientIfMoveDestinationChanged(player, beforeDest);
+        }
       } else if (!player.hasMoveQueue()) {
         if (isMagicAutocast) {
           this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
@@ -3183,7 +3326,7 @@ export class World {
           const path = this.findPlayerPathToNpc(player, npc);
           player.setMoveQueue(path);
         } else {
-          this.queuePlayerPathToNpcRange(player, npc, attackDist, 'chebyshev');
+          this.queuePlayerPathToNpcRange(player, npc, attackDist, 'chebyshev', true);
         }
       }
     } else {
@@ -7169,10 +7312,8 @@ export class World {
               player.setMoveQueue(path);
             }
           } else {
-            this.queuePlayerPathToNpcRange(player, npc, RANGED_ATTACK_DISTANCE, 'chebyshev');
+            this.queuePlayerPathToNpcRange(player, npc, RANGED_ATTACK_DISTANCE, 'chebyshev', true);
           }
-        } else if (isRanged) {
-          this.trimPlayerPathToNpcRange(player, npc, RANGED_ATTACK_DISTANCE, 'chebyshev');
         }
         // Out of range this tick — defer the swing. Cooldown still ticks
         // globally so the next adjacency-tick can fire immediately if ready.
@@ -7360,6 +7501,12 @@ export class World {
       if (this.activeDuels?.has(target.id) || target.openInterface === 'duel') {
         npc.setCombatTarget(null);
         npc.pathQueue.length = 0;
+        continue;
+      }
+      if (!this.isNpcMeleeReachableToPlayer(npc, target)) {
+        // Keep the NPC swing timer moving while chasing or blocked by a wall,
+        // matching processNpcCombat's cooldown behavior before adjacency.
+        if (npc.attackCooldown > 0) npc.attackCooldown--;
         continue;
       }
 

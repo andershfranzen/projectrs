@@ -20,3 +20,4 @@ export * from './secureChannel.js';
 export * from './opcodeMapping.js';
 export * from './npcSafety.js';
 export * from './png.js';
+export * from './projectile.js';

@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, type StairAssetConfig } from '@projectrs/shared';
+import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, type StairAssetConfig } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, KCMapFile, KCMapData, KCTile, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
@@ -34,6 +34,8 @@ export class GameMap {
   private walls: Uint8Array;
   /** Per-tile wall height overrides (sparse — only stores non-default) */
   private wallHeights: Map<number, number> = new Map();
+  /** Wall edges whose visual asset is a low fence: blocks walking, not arrows. */
+  private shootOverProjectileWallEdges: Uint8Array;
   /** Elevated floor heights (sparse) — covers heights from explicit walls.json
    *  data + texture-plane bridges over BLOCKING terrain (water/walls). */
   private floorHeights: Map<number, number> = new Map();
@@ -205,6 +207,7 @@ export class GameMap {
 
     // Load walls and building data
     this.walls = new Uint8Array(this.width * this.height);
+    this.shootOverProjectileWallEdges = new Uint8Array(this.width * this.height);
     const wallsPath = resolve(dir, 'walls.json');
     if (existsSync(wallsPath)) {
       const wallsData: WallsFile = JSON.parse(readFileSync(wallsPath, 'utf-8'));
@@ -272,6 +275,8 @@ export class GameMap {
       }
     }
 
+    this.registerShootOverFenceWalls();
+
     // Register horizontal texture planes as walkable floors (bridges, platforms)
     this.registerTexturePlaneFloors(mapFile);
 
@@ -324,6 +329,27 @@ export class GameMap {
     this.isWallBlockedCb = (fx: number, fz: number, tx: number, tz: number) => this.isWallBlocked(fx, fz, tx, tz);
 
     console.log(`Loaded map '${mapId}': ${this.width}x${this.height} tiles, waterLevel=${this.mapData.waterLevel}, ${this.floorLayers.size} upper floors`);
+  }
+
+  private markShootOverProjectileWallTile(x: number, z: number): void {
+    if (x < 0 || x >= this.width || z < 0 || z >= this.height) return;
+    const idx = z * this.width + x;
+    const mask = this.walls[idx];
+    if (mask === 0 || this.wallHeights.has(idx)) return;
+    this.shootOverProjectileWallEdges[idx] |= mask;
+  }
+
+  private registerShootOverFenceWalls(): void {
+    for (const placed of this.placedObjects) {
+      if (!isShootOverProjectileFenceAssetId(placed.assetId)) continue;
+      const tx = Math.floor(placed.position.x);
+      const tz = Math.floor(placed.position.z);
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          this.markShootOverProjectileWallTile(tx + dx, tz + dz);
+        }
+      }
+    }
   }
 
   private resolvePlacedStairDirection(
@@ -610,6 +636,79 @@ export class GameMap {
   getWallHeight(x: number, z: number): number {
     const idx = z * this.width + x;
     return this.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
+  }
+
+  private static projectileWallBlocksAtCallback(
+    map: GameMap,
+    x: number,
+    z: number,
+    edge: number,
+    floor: number,
+    projectileY: number,
+  ): boolean {
+    return map.projectileWallBlocksAt(x, z, edge, floor, projectileY);
+  }
+
+  private projectileWallBlocksAt(
+    x: number,
+    z: number,
+    edge: number,
+    floor: number,
+    projectileY: number,
+  ): boolean {
+    if (x < 0 || x >= this.width || z < 0 || z >= this.height) return false;
+    const floorIdx = Math.floor(floor);
+    const idx = z * this.width + x;
+    if (((this.openDoorEdges.get(this.doorEdgeKey(floorIdx, idx)) ?? 0) & edge) !== 0) return false;
+
+    if (floorIdx === 0) {
+      if ((this.walls[idx] & edge) === 0) return false;
+      const explicitWallH = this.wallHeights.get(idx);
+      if (explicitWallH === undefined && (this.shootOverProjectileWallEdges[idx] & edge) !== 0) return false;
+      const wallH = explicitWallH ?? DEFAULT_WALL_HEIGHT;
+      if (wallH < PROJECTILE_BLOCKING_WALL_HEIGHT) return false;
+      const wallBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+      return projectileY < wallBaseH + wallH;
+    }
+
+    const layer = this.floorLayers.get(floorIdx);
+    if (!layer || ((layer.walls.get(idx) ?? 0) & edge) === 0) return false;
+    const wallH = layer.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
+    if (wallH < PROJECTILE_BLOCKING_WALL_HEIGHT) return false;
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
+    const nIdx = (z + nb.dz) * this.width + (x + nb.dx);
+    const wallBaseH = layer.floors.get(idx)
+      ?? layer.tiles.get(idx)
+      ?? layer.floors.get(nIdx)
+      ?? layer.tiles.get(nIdx)
+      ?? this.elevatedFloorHeights.get(idx)
+      ?? this.elevatedFloorHeights.get(nIdx)
+      ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+    return projectileY < wallBaseH + wallH;
+  }
+
+  /** Straight projectile LOS against wall edges. Unlike movement collision,
+   *  low fence-height walls are clear so arrows can be shot over them. */
+  hasProjectileLineOfSight(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floor: number,
+    fromY: number,
+    toY: number,
+  ): boolean {
+    return hasProjectileGridLineOfSight(
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floor,
+      fromY,
+      toY,
+      this,
+      GameMap.projectileWallBlocksAtCallback,
+    );
   }
 
   getFloorHeight(x: number, z: number): number | null {

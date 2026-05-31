@@ -12,8 +12,8 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
-import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE } from '@projectrs/shared';
+import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -160,6 +160,7 @@ export class ChunkManager {
   // Building data
   private walls: Uint8Array | null = null;
   private wallHeights: Map<number, number> = new Map();
+  private shootOverProjectileWallEdges: Uint8Array | null = null;
   private floorHeights: Map<number, number> = new Map();
   private stairData: Map<number, StairData> = new Map();
   private roofData: Map<number, RoofData> = new Map();
@@ -607,6 +608,7 @@ export class ChunkManager {
 
     // Fetch walls data
     this.walls = new Uint8Array(this.mapWidth * this.mapHeight);
+    this.shootOverProjectileWallEdges = new Uint8Array(this.mapWidth * this.mapHeight);
     this.wallHeights.clear();
     this.floorHeights.clear();
     this.stairData.clear();
@@ -2772,6 +2774,77 @@ export class ChunkManager {
     return false;
   }
 
+  private static projectileWallBlocksAtCallback(
+    chunkManager: ChunkManager,
+    x: number,
+    z: number,
+    edge: number,
+    floor: number,
+    projectileY: number,
+  ): boolean {
+    return chunkManager.projectileWallBlocksAt(x, z, edge, floor, projectileY);
+  }
+
+  private projectileWallBlocksAt(
+    x: number,
+    z: number,
+    edge: number,
+    floor: number,
+    projectileY: number,
+  ): boolean {
+    if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return false;
+    const floorIdx = Math.floor(floor);
+    const idx = z * this.mapWidth + x;
+    if (((this.openDoorEdges.get(this.doorEdgeKey(floorIdx, idx)) ?? 0) & edge) !== 0) return false;
+
+    if (floorIdx === 0) {
+      if (!this.walls || (this.walls[idx] & edge) === 0) return false;
+      const explicitWallH = this.wallHeights.get(idx);
+      if (explicitWallH === undefined && ((this.shootOverProjectileWallEdges?.[idx] ?? 0) & edge) !== 0) return false;
+      const wallH = explicitWallH ?? DEFAULT_WALL_HEIGHT;
+      if (wallH < PROJECTILE_BLOCKING_WALL_HEIGHT) return false;
+      const wallBaseH = this.floorHeights.get(idx) ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+      return projectileY < wallBaseH + wallH;
+    }
+
+    const layer = this.floorLayerData.get(floorIdx);
+    if (!layer || ((layer.walls.get(idx) ?? 0) & edge) === 0) return false;
+    const wallH = layer.wallHeights.get(idx) ?? DEFAULT_WALL_HEIGHT;
+    if (wallH < PROJECTILE_BLOCKING_WALL_HEIGHT) return false;
+    const nb = DOOR_EDGE_NEIGHBOR[edge];
+    const nIdx = (z + nb.dz) * this.mapWidth + (x + nb.dx);
+    const wallBaseH = layer.floors.get(idx)
+      ?? layer.tiles.get(idx)
+      ?? layer.floors.get(nIdx)
+      ?? layer.tiles.get(nIdx)
+      ?? this.elevatedFloorHeights.get(idx)
+      ?? this.elevatedFloorHeights.get(nIdx)
+      ?? this.getInterpolatedHeight(x + 0.5, z + 0.5);
+    return projectileY < wallBaseH + wallH;
+  }
+
+  hasProjectileLineOfSight(
+    fromX: number,
+    fromZ: number,
+    toX: number,
+    toZ: number,
+    floor: number,
+    fromY: number,
+    toY: number,
+  ): boolean {
+    return hasProjectileGridLineOfSight(
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floor,
+      fromY,
+      toY,
+      this,
+      ChunkManager.projectileWallBlocksAtCallback,
+    );
+  }
+
   getTilesForMinimap(centerX: number, centerZ: number, radius: number): MinimapTileSnapshot {
     const size = radius * 2;
     const startX = Math.floor(centerX) - radius;
@@ -3340,6 +3413,7 @@ export class ChunkManager {
   /** Index placed objects by chunk key — no mesh instantiation, just data bucketing */
   private indexPlacedObjectsByChunk(objects: PlacedObject[]): void {
     this.placedObjectsByChunk.clear();
+    this.registerShootOverFenceWalls(objects);
     for (const obj of objects) {
       const cx = Math.floor(obj.position.x / CHUNK_SIZE);
       const cz = Math.floor(obj.position.z / CHUNK_SIZE);
@@ -3350,6 +3424,29 @@ export class ChunkManager {
         this.placedObjectsByChunk.set(key, bucket);
       }
       bucket.push(obj);
+    }
+  }
+
+  private markShootOverProjectileWallTile(x: number, z: number): void {
+    if (!this.walls || !this.shootOverProjectileWallEdges) return;
+    if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return;
+    const idx = z * this.mapWidth + x;
+    const mask = this.walls[idx];
+    if (mask === 0 || this.wallHeights.has(idx)) return;
+    this.shootOverProjectileWallEdges[idx] |= mask;
+  }
+
+  private registerShootOverFenceWalls(objects: readonly PlacedObject[]): void {
+    if (!this.walls || !this.shootOverProjectileWallEdges) return;
+    for (const placed of objects) {
+      if (!isShootOverProjectileFenceAssetId(placed.assetId)) continue;
+      const tx = Math.floor(placed.position.x);
+      const tz = Math.floor(placed.position.z);
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          this.markShootOverProjectileWallTile(tx + dx, tz + dz);
+        }
+      }
     }
   }
 
@@ -3484,6 +3581,7 @@ export class ChunkManager {
       this.touchObjectChunk(chunkKey);
       return;
     }
+    this.registerShootOverFenceWalls(objects);
     if (this.isObjectLoadStale(generation)) return;
     if (!this.shouldLoadObjectChunkNow(chunkKey)) {
       this.disposeChunkPlacedObjects(chunkKey);
@@ -4752,6 +4850,7 @@ export class ChunkManager {
     this.defaultWaterLevel = -0.3;
     this.chunkWaterLevelCache = null;
     this.walls = null;
+    this.shootOverProjectileWallEdges = null;
     this.wallHeights.clear();
     this.floorHeights.clear();
     this.texturePlaneFloorTiles.clear();
