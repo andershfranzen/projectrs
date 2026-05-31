@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { MonsterPreview, type NpcVisualProfile } from './MonsterPreview';
 
 type HiscoreCategory = {
   id: string;
@@ -45,6 +46,7 @@ type HiscoreProfileResponse = {
 type MobKillMob = {
   id: number;
   name: string;
+  visual?: NpcVisualProfile;
 };
 
 type MobKillRow = {
@@ -56,6 +58,7 @@ type MobKillRow = {
 type MobKillResponse = {
   npcDefId: number;
   mobName: string;
+  visual?: NpcVisualProfile;
   mobs: MobKillMob[];
   rows: MobKillRow[];
   page: number;
@@ -69,11 +72,11 @@ const fallbackCategories: HiscoreCategory[] = [
   { id: 'combat', name: 'Combat', hasXp: true },
 ];
 
-// Synthetic category for the Mob Kills view. It is NOT a server skill category
+// Synthetic category for the Monster Kills view. It is NOT a server skill category
 // (that list comes from /api/hiscores); it is appended client-side and routes
 // to the dedicated /api/hiscores/kills endpoint. hasXp:true keeps it styled as
 // a normal active tab rather than a greyed "no XP yet" skill.
-const MOB_KILLS_CATEGORY: HiscoreCategory = { id: 'mobkills', name: 'Mob Kills', hasXp: true };
+const MOB_KILLS_CATEGORY: HiscoreCategory = { id: 'mobkills', name: 'Monster Kills', hasXp: true };
 
 const formatNumber = new Intl.NumberFormat('en-US');
 const PAGE_SIZE = 25;
@@ -214,7 +217,7 @@ export function HiscoresTable() {
     };
   }, [selectedMob, page, search, isKillsMode, urlReady]);
 
-  // When the page is opened directly in Mob Kills mode, the skill data fetch is
+  // When the page is opened directly in Monster Kills mode, the skill data fetch is
   // skipped — so pull the category list once to keep the full nav populated.
   useEffect(() => {
     if (!urlReady || !isKillsMode || skillCategoriesLoaded) return;
@@ -277,7 +280,7 @@ export function HiscoresTable() {
   const firstRow = rowCount > 0 ? (responsePage - 1) * pageSize + 1 : 0;
   const lastRow = rowCount > 0 ? firstRow + rowCount - 1 : 0;
   const hasSearch = search.trim().length > 0;
-  const rankingTitle = isKillsMode ? (killData?.mobName ?? 'Mob Kills') : (data?.category.name ?? 'Overall');
+  const rankingTitle = isKillsMode ? (killData?.mobName ?? 'Monster Kills') : (data?.category.name ?? 'Overall');
 
   const selectCategory = (categoryId: string) => {
     setSelected(categoryId);
@@ -401,19 +404,22 @@ export function HiscoresTable() {
               </div>
 
               {isKillsMode ? (
-                <form className="hiscores-mob-picker" onSubmit={(event) => event.preventDefault()}>
-                  <label htmlFor="hiscores-mob-select">Mob</label>
-                  <select
-                    id="hiscores-mob-select"
-                    value={String(killData?.npcDefId ?? selectedMob ?? '')}
-                    onChange={(event) => { setSelectedMob(event.target.value); setPage(1); }}
-                    disabled={!killData || killData.mobs.length === 0}
-                  >
-                    {(killData?.mobs ?? []).map((mob) => (
-                      <option key={mob.id} value={String(mob.id)}>{mob.name}</option>
-                    ))}
-                  </select>
-                </form>
+                <div className="monster-kills-controls">
+                  <MonsterPreview npcId={killData?.npcDefId ?? null} name={killData?.mobName ?? 'Monster'} visual={killData?.visual ?? null} />
+                  <form className="hiscores-mob-picker" onSubmit={(event) => event.preventDefault()}>
+                    <label htmlFor="hiscores-mob-select">Monster</label>
+                    <select
+                      id="hiscores-mob-select"
+                      value={String(killData?.npcDefId ?? selectedMob ?? '')}
+                      onChange={(event) => { setSelectedMob(event.target.value); setPage(1); }}
+                      disabled={!killData || killData.mobs.length === 0}
+                    >
+                      {(killData?.mobs ?? []).map((mob) => (
+                        <option key={mob.id} value={String(mob.id)}>{mob.name}</option>
+                      ))}
+                    </select>
+                  </form>
+                </div>
               ) : null}
 
               {error ? <p className="table-state">{error}</p> : null}

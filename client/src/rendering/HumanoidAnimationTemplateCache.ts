@@ -41,7 +41,7 @@ export interface HumanoidAnimationTemplate {
  */
 export const BONE_ROTATION_OFFSETS: Record<string, Record<string, { x: number; y: number; z: number }>> = {};
 
-const CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
+const CACHE_BUST_TOKEN: string = (import.meta as any).env?.DEV ? `?v=${Date.now()}` : '';
 const TRANSLATION_BONE_WHITELIST = new Set([
   'mixamorig:Hips',
   'mixamorig:Spine',

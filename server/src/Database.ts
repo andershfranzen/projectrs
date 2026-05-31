@@ -218,9 +218,16 @@ export interface SocialLists {
 /** A mob the player can be ranked by kills of. id is the canonical NpcDef.id;
  *  name is display-only. Supplied by the caller (from NPC defs) so the DB layer
  *  stays decoupled from DataLoader. */
+export interface MobKillVisual {
+  appearance?: import('@projectrs/shared').PlayerAppearance;
+  equipment?: number[];
+  customColors?: import('@projectrs/shared').CustomColors;
+}
+
 export interface MobKillMob {
   id: number;
   name: string;
+  visual?: MobKillVisual;
 }
 
 export interface MobKillRow {
@@ -232,6 +239,7 @@ export interface MobKillRow {
 export interface MobKillResponse {
   npcDefId: number;
   mobName: string;
+  visual?: MobKillVisual;
   mobs: MobKillMob[];
   rows: MobKillRow[];
   page: number;
@@ -1902,7 +1910,8 @@ export class GameDatabase {
       npcDefId != null && sortedMobs.some((m) => m.id === npcDefId)
         ? npcDefId
         : sortedMobs[0]?.id ?? npcDefId ?? 0;
-    const mobName = sortedMobs.find((m) => m.id === effectiveId)?.name ?? `NPC ${effectiveId}`;
+    const selectedMob = sortedMobs.find((m) => m.id === effectiveId);
+    const mobName = selectedMob?.name ?? `NPC ${effectiveId}`;
 
     const rows = this.db.query(`
       SELECT a.username, mk.kills
@@ -1933,6 +1942,7 @@ export class GameDatabase {
     return {
       npcDefId: effectiveId,
       mobName,
+      visual: selectedMob?.visual,
       mobs: sortedMobs,
       rows: filtered.slice(start, start + cappedLimit),
       page: safePage,

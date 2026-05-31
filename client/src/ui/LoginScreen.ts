@@ -3,11 +3,12 @@ import { PASSWORD_MAX_LENGTH } from '@projectrs/shared';
 import { getRecaptchaToken, preloadRecaptcha } from '../recaptcha';
 
 export type LoginCallback = (token: string, username: string) => void | Promise<void>;
+type LoginMode = 'login' | 'signup';
 
 export class LoginScreen {
   private container: HTMLDivElement;
   private onLogin: LoginCallback;
-  private activeMode: 'login' | 'signup' = 'login';
+  private activeMode: LoginMode = this.getInitialMode();
   private errorEl: HTMLDivElement | null = null;
   private submitBtn: HTMLButtonElement | null = null;
   private rememberUsernameRow: HTMLLabelElement | null = null;
@@ -19,6 +20,7 @@ export class LoginScreen {
     this.onLogin = onLogin;
     this.container = this.buildUI();
     document.body.appendChild(this.container);
+    this.switchMode(this.activeMode);
     preloadRecaptcha();
   }
 
@@ -51,7 +53,7 @@ export class LoginScreen {
     tabs.className = 'eq-login-tabs';
 
     const loginTab = this.createTab('Login', 'login');
-    const signupTab = this.createTab('Sign Up', 'signup');
+    const signupTab = this.createTab('Create Account', 'signup');
     tabs.appendChild(loginTab);
     tabs.appendChild(signupTab);
     card.appendChild(tabs);
@@ -157,7 +159,13 @@ export class LoginScreen {
     }
   }
 
-  private createTab(label: string, mode: 'login' | 'signup'): HTMLDivElement {
+  private getInitialMode(): LoginMode {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get('mode') || params.get('auth');
+    return requested === 'signup' || window.location.hash === '#signup' ? 'signup' : 'login';
+  }
+
+  private createTab(label: string, mode: LoginMode): HTMLDivElement {
     const btn = document.createElement('div');
     btn.textContent = label;
     btn.dataset.mode = mode;
@@ -231,7 +239,7 @@ export class LoginScreen {
     localStorage.removeItem('evilquest_saved_username');
   }
 
-  private switchMode(mode: 'login' | 'signup'): void {
+  private switchMode(mode: LoginMode): void {
     this.activeMode = mode;
     this.hideError();
 
@@ -254,7 +262,7 @@ export class LoginScreen {
 
     const btn = this.submitBtn;
     if (btn) {
-      btn.textContent = mode === 'login' ? 'Login' : 'Sign Up';
+      btn.textContent = mode === 'login' ? 'Login' : 'Create Account';
       btn.style.display = '';
     }
     if (this.rememberUsernameRow) {
@@ -298,8 +306,8 @@ export class LoginScreen {
 
       if (data.ok) {
         this.syncRememberedUsername(data.username || username);
-        localStorage.setItem('projectrs_token', data.token);
-        localStorage.setItem('projectrs_username', data.username || username);
+        localStorage.setItem('evilquest_token', data.token);
+        localStorage.setItem('evilquest_username', data.username || username);
         if (btn) btn.textContent = 'Entering world...';
         await this.onLogin(data.token, data.username || username);
       } else {
@@ -309,7 +317,7 @@ export class LoginScreen {
       this.showError(this.formatSubmitError(err));
     } finally {
       if (btn && this.container.isConnected) {
-        btn.textContent = this.activeMode === 'login' ? 'Login' : 'Sign Up';
+        btn.textContent = this.activeMode === 'login' ? 'Login' : 'Create Account';
         btn.disabled = false;
       }
     }

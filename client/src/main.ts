@@ -11,6 +11,10 @@ import type { GameManager as GameManagerType } from './managers/GameManager';
 
 const WEBGL_STARTUP_ERROR_PREFIX = 'USER_VISIBLE:';
 const WEBGL_STARTUP_MESSAGE = 'EvilQuest could not start WebGL on this device. Enable hardware acceleration, update your graphics drivers, then reload.';
+const AUTH_TOKEN_KEY = 'evilquest_token';
+const AUTH_USERNAME_KEY = 'evilquest_username';
+const LEGACY_AUTH_TOKEN_KEY = 'projectrs_token';
+const LEGACY_AUTH_USERNAME_KEY = 'projectrs_username';
 
 const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
 const gameFrame = document.getElementById('game-frame') as HTMLDivElement;
@@ -18,6 +22,28 @@ installGlobalScrollbars();
 installSafeDynamicTextureUpdate();
 installClientSizeModeController();
 startupTrace.mark('entry');
+
+function migrateSavedAuth(): void {
+  const legacyToken = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY);
+  const legacyUsername = localStorage.getItem(LEGACY_AUTH_USERNAME_KEY);
+  if (legacyToken && !localStorage.getItem(AUTH_TOKEN_KEY)) {
+    localStorage.setItem(AUTH_TOKEN_KEY, legacyToken);
+  }
+  if (legacyUsername && !localStorage.getItem(AUTH_USERNAME_KEY)) {
+    localStorage.setItem(AUTH_USERNAME_KEY, legacyUsername);
+  }
+  if (legacyToken || legacyUsername) {
+    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+    localStorage.removeItem(LEGACY_AUTH_USERNAME_KEY);
+  }
+}
+
+function clearSavedAuth(): void {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_USERNAME_KEY);
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  localStorage.removeItem(LEGACY_AUTH_USERNAME_KEY);
+}
 
 function getBrowserPageScale(): number {
   const scale = window.visualViewport?.scale ?? 1;
@@ -262,8 +288,7 @@ function handleDisconnect() {
   gamePrepPromise = null;
   lastPrepProgress = { pct: 0, status: 'Preparing game' };
   // Clear stored session so we don't auto-login with a dead token
-  localStorage.removeItem('projectrs_token');
-  localStorage.removeItem('projectrs_username');
+  clearSavedAuth();
   showLoginScreen();
 }
 
@@ -330,8 +355,9 @@ function showLoginScreen() {
 
 async function validateSavedToken(): Promise<{ token: string; username: string } | null> {
   startupTrace.mark('token_validate_start');
-  const savedToken = localStorage.getItem('projectrs_token');
-  const savedUsername = localStorage.getItem('projectrs_username');
+  migrateSavedAuth();
+  const savedToken = localStorage.getItem(AUTH_TOKEN_KEY);
+  const savedUsername = localStorage.getItem(AUTH_USERNAME_KEY);
   if (!savedToken || !savedUsername) {
     startupTrace.mark('token_missing');
     return null;
@@ -353,8 +379,7 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
     // to the login screen, where the user can retry once the server is
     // reachable. No need to flag the error explicitly.
   }
-  localStorage.removeItem('projectrs_token');
-  localStorage.removeItem('projectrs_username');
+  clearSavedAuth();
   startupTrace.mark('token_invalid');
   return null;
 }

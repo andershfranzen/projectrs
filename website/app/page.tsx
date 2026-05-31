@@ -9,8 +9,9 @@ const mainFeatures = [
     title: 'Play Now',
     subtitle: 'Existing Adventurer',
     body: 'Return to EvilQuest and continue your character.',
-    cta: 'Launch Game',
+    cta: 'Start Playing',
     href: '/play',
+    featureImage: '/ui/sword_feature.png',
   },
   {
     image: '/items/Medium_Bronze_Helmet_104.png',
@@ -18,7 +19,8 @@ const mainFeatures = [
     subtitle: 'New Adventurer',
     body: 'Open the game client and create your account from the login screen.',
     cta: 'Start Here',
-    href: '/play',
+    href: '/play?mode=signup',
+    featureImage: '/ui/knight_feature.png',
   },
   {
     image: '/items/Staff_of_fire_197.png',
@@ -27,6 +29,7 @@ const mainFeatures = [
     body: 'Compare overall progress, skills, and daily gains.',
     cta: 'View Rankings',
     href: '/hiscores',
+    featureImage: '/ui/hiscores_feature.png',
   },
 ] as const;
 
@@ -74,14 +77,22 @@ const otherFeatures = [
 const usefulLinks = [...secureServices, ...otherFeatures] as const;
 
 function FeatureCard({ item }: { item: (typeof mainFeatures)[number] }) {
+  const isRedTinted = item.title === 'Play Now' || item.title === 'Create Account';
+  const featureImage = 'featureImage' in item ? item.featureImage : undefined;
+
   return (
     <article className="feature">
       <div>
-        <a className="button" href={item.href}>
-          {item.title}
-          <br />
-          <span>{item.subtitle}</span>
-        </a>
+        <div className={featureImage ? 'feature-action has-art' : 'feature-action'}>
+          {featureImage ? (
+            <img className="feature-art" src={featureImage} alt="" aria-hidden="true" />
+          ) : null}
+          <a className={`button${isRedTinted ? ' red-tint-button' : ''}`} href={item.href}>
+            {item.title}
+            <br />
+            <span>{item.subtitle}</span>
+          </a>
+        </div>
         <p>
           {item.body}
           <br />
@@ -120,7 +131,7 @@ export default function Home() {
   const newsItems = getLatestNewsPosts(5);
 
   return (
-    <main className="page">
+    <main className="page home-page">
       <section className="top" aria-label="EvilQuest overview">
         <div className="brand">
           <div className="logo">EvilQuest</div>
@@ -133,17 +144,20 @@ export default function Home() {
           </h1>
           {newsItems.length > 0 ? (
             <div className="news-grid">
-              <ol>
-                {newsItems.map(({ slug, title, date, formattedDate }) => (
-                  <li key={slug}>
-                    <a href={`/news/${slug}`}>{title}</a>
-                    <time dateTime={date}>{formattedDate}</time>
-                  </li>
-                ))}
-              </ol>
-              <a className="news-index-link" href="/news">
-                View All News
-              </a>
+              <img className="news-parchment" src="/ui/parchment_news.png" alt="" aria-hidden="true" />
+              <div className="news-list-wrap">
+                <ol>
+                  {newsItems.map(({ slug, title, date, formattedDate }) => (
+                    <li key={slug}>
+                      <a href={`/news/${slug}`}>{title}</a>
+                      <time dateTime={date}>{formattedDate}</time>
+                    </li>
+                  ))}
+                </ol>
+                <a className="news-index-link" href="/news">
+                  View All News
+                </a>
+              </div>
             </div>
           ) : null}
         </section>

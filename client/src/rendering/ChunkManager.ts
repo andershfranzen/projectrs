@@ -38,7 +38,7 @@ const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 
 function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
-  const token = localStorage.getItem('projectrs_token') || '';
+  const token = localStorage.getItem('evilquest_token') || '';
   if (!token) return fetch(input, init);
   const headers = new Headers(init.headers);
   headers.set('Authorization', `Bearer ${token}`);

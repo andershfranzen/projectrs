@@ -13,7 +13,8 @@ import { MorphTargetManager } from '@babylonjs/core/Morph/morphTargetManager';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { type PlayerAppearance, type AppearanceColorSlot, type CustomColors, type HeadRenderMode, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '@projectrs/shared';
+import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '../../../shared/appearance';
+import type { CustomColors, HeadRenderMode } from '../../../shared/types';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { bindHumanoidAnimationTemplate, buildHumanoidRigContext, getHumanoidAnimationTemplate } from './HumanoidAnimationTemplateCache';
@@ -131,7 +132,7 @@ function smoothNormalsByPosition(mesh: AbstractMesh): void {
  * Per-page-load timestamp (not per-call) so multiple loads of the same anim
  * within one session share the same cache entry.
  */
-const CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
+const CACHE_BUST_TOKEN: string = (import.meta as any).env?.DEV ? `?v=${Date.now()}` : '';
 function devCacheBust(file: string): string {
   return CACHE_BUST_TOKEN ? `${file}${CACHE_BUST_TOKEN}` : file;
 }

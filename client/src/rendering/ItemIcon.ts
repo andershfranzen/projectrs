@@ -290,7 +290,7 @@ function loadOverrides(): Promise<ThumbnailOverrideStore> {
   if (_overridesPromise) return _overridesPromise;
   _overridesPromise = (async () => {
     try {
-      const token = localStorage.getItem('projectrs_token') || '';
+      const token = localStorage.getItem('evilquest_token') || '';
       const res = await fetch('/data/thumbnail-overrides.json', {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         credentials: 'same-origin',

@@ -849,7 +849,7 @@ export class GameManager {
     // not send MAP_READY: the server's authoritative placement arrives after
     // LOGIN_OK via MAP_CHANGE, and only that final placement should trigger
     // entity bootstrap packets.
-    const warmStartToken = this.token || localStorage.getItem('projectrs_token') || '';
+    const warmStartToken = this.token || localStorage.getItem('evilquest_token') || '';
     if (warmStartToken) {
       this.chunkManager.loadMap('kcmap').then(async () => {
         await this.loadBiomes('kcmap');
@@ -1355,7 +1355,7 @@ export class GameManager {
     this.reconnectAttempt = 0;
     this.setConnectionFrozen(true);
 
-    const token = this.token || localStorage.getItem('projectrs_token') || '';
+    const token = this.token || localStorage.getItem('evilquest_token') || '';
     if (!token) {
       this.finishReconnectFailure();
       return;
@@ -1448,7 +1448,7 @@ export class GameManager {
     this._lastBiomeCZ = -9999;
     this._lastBiomeDef = undefined;
     try {
-      const token = this.token || localStorage.getItem('projectrs_token') || '';
+      const token = this.token || localStorage.getItem('evilquest_token') || '';
       const res = await fetch(`/maps/${mapId}/biomes.json`, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         credentials: 'same-origin',
@@ -2217,7 +2217,7 @@ export class GameManager {
   private async saveGearOverridesToServer(): Promise<void> {
     const all: Record<string, GearOverride> = {};
     for (const [id, ov] of this.gearOverrides) all[String(id)] = ov;
-    const token = this.token || localStorage.getItem('projectrs_token') || '';
+    const token = this.token || localStorage.getItem('evilquest_token') || '';
     const res = await fetch('/api/dev/gear-overrides', {
       method: 'POST',
       headers: {
@@ -4227,8 +4227,8 @@ export class GameManager {
         window.setTimeout(() => { button.textContent = 'Logout'; }, 1800);
         return;
       }
-      localStorage.removeItem('projectrs_token');
-      localStorage.removeItem('projectrs_username');
+      localStorage.removeItem('evilquest_token');
+      localStorage.removeItem('evilquest_username');
       location.reload();
     });
 
@@ -6150,7 +6150,7 @@ export class GameManager {
           });
           this.gearDebugPanel.setOverrideGetter((itemId) => this.getGearOverrideForCharacter(itemId, this.getGearDebugCharacter()));
           this.gearDebugPanel.setSkinnedChecker((slot) => this.getGearDebugCharacter()?.getSkinnedArmorMeshes?.(slot) != null);
-          this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('projectrs_token') || '');
+          this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('evilquest_token') || '');
           this.gearDebugPanel.setBodyTypeGetter(() => this.getCharacterBodyType(this.getGearDebugCharacter()));
           this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
             const target = this.getGearDebugCharacter();
@@ -6691,7 +6691,7 @@ export class GameManager {
   }
 
   private authHeaders(): HeadersInit | undefined {
-    const token = this.token || localStorage.getItem('projectrs_token') || '';
+    const token = this.token || localStorage.getItem('evilquest_token') || '';
     return token ? { Authorization: `Bearer ${token}` } : undefined;
   }
 

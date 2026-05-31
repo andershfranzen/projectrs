@@ -930,8 +930,8 @@ export class SidePanel {
         }, 1800);
         return;
       }
-      localStorage.removeItem('projectrs_token');
-      localStorage.removeItem('projectrs_username');
+      localStorage.removeItem('evilquest_token');
+      localStorage.removeItem('evilquest_username');
       location.reload();
     });
     accountActions.appendChild(logoutBtn);

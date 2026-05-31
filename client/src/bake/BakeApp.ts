@@ -115,7 +115,7 @@ export async function runBake(): Promise<void> {
 
   let defs: ItemDef[];
   try {
-    const token = localStorage.getItem('projectrs_token') || '';
+    const token = localStorage.getItem('evilquest_token') || '';
     const res = await fetch('/data/items.json', {
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       credentials: 'same-origin',

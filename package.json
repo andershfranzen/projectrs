@@ -9,6 +9,8 @@
   "scripts": {
     "dev:client": "cd client && bunx vite --port 5173",
     "dev:server": "bun --watch server/src/main.ts",
+    "dev:server:website": "WEBSITE_DEV_ORIGIN=http://localhost:3000 bun --watch server/src/main.ts",
+    "dev:website": "cd website && bunx next dev --port 3000",
     "dev:editor": "cd editor && bunx vite --port 5174",
     "dev:enchant": "bun -e \"Bun.serve({ port: 8080, fetch(req) { const url = new URL(req.url); let path = '.' + decodeURIComponent(url.pathname); if (path === './') path = './enchant-prototype.html'; return new Response(Bun.file(path)); } }); console.log('Enchant editor: http://localhost:8080')\"",
     "dev:spell-editor": "bun -e \"Bun.serve({ port: 8081, fetch(req) { const url = new URL(req.url); let path = '.' + decodeURIComponent(url.pathname); if (path === './') path = './spell-editor.html'; return new Response(Bun.file(path)); } }); console.log('Spell editor: http://localhost:8081')\"",

@@ -20,7 +20,7 @@ export interface PreloadProgress {
 export type PreloadCallback = (p: PreloadProgress) => void;
 
 const DEFAULT_MAP = 'kcmap';
-const TOKEN_KEY = 'projectrs_token';
+const TOKEN_KEY = 'evilquest_token';
 
 const DEF_FILES = [
   '/data/objects.json',

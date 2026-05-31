@@ -1,8 +1,8 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
-import type { FloorLayerData, KCMapFile, KCTile, MapMeta, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
+import type { CustomColors, FloorLayerData, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, TileType } from '@projectrs/shared';
 import { World } from './World';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
@@ -16,6 +16,114 @@ import { audit } from './Audit';
 // keep non-public mobs out of the picker.
 const MOB_KILL_NAME_OVERRIDES: Record<number, string> = { 102: 'Man' };
 const MOB_KILL_HIDDEN_IDS = new Set<number>([19]);
+
+type MobKillVisual = {
+  appearance?: PlayerAppearance;
+  equipment?: number[];
+  customColors?: CustomColors;
+};
+
+const MOB_KILL_VISUAL_CACHE_TTL_MS = 30_000;
+const MOB_KILL_EQUIPMENT_SLOT_COUNT = 11;
+let mobKillVisualCache: { expiresAt: number; profiles: Map<number, MobKillVisual> } | null = null;
+
+function sanitizeRgbTriplet(value: unknown): [number, number, number] | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined;
+  const rgb = value.slice(0, 3);
+  if (!rgb.every((channel) => typeof channel === 'number' && Number.isFinite(channel))) return undefined;
+  return [
+    Math.max(0, Math.min(1, rgb[0])),
+    Math.max(0, Math.min(1, rgb[1])),
+    Math.max(0, Math.min(1, rgb[2])),
+  ];
+}
+
+function sanitizeCustomColors(value: unknown): CustomColors | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const customColors: CustomColors = {};
+  for (const slot of CUSTOM_COLOR_SLOTS) {
+    const rgb = sanitizeRgbTriplet(value[slot]);
+    if (rgb) customColors[slot] = rgb;
+  }
+  return Object.keys(customColors).length > 0 ? customColors : undefined;
+}
+
+function sanitizeAppearance(value: unknown): PlayerAppearance | undefined {
+  if (!isPlainRecord(value)) return undefined;
+  const appearance = normalizeAppearance(value as Partial<PlayerAppearance>);
+  return isValidAppearance(appearance) ? appearance : undefined;
+}
+
+function sanitizeEquipment(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const equipment = value.slice(0, MOB_KILL_EQUIPMENT_SLOT_COUNT).map((itemId) => (
+    Number.isInteger(itemId) && itemId > 0 && itemId < 100_000 ? itemId : 0
+  ));
+  // Public hiscores thumbnails intentionally omit hand gear/ammo. It avoids
+  // exposing weapon loadouts through this API and mirrors the preview renderer,
+  // which only needs outfit pieces such as helmet/body/legs.
+  equipment[0] = 0;  // weapon
+  equipment[1] = 0;  // shield
+  equipment[10] = 0; // ammo
+  return equipment.some((itemId) => itemId > 0) ? equipment : undefined;
+}
+
+function sanitizeMobKillVisual(spawn: unknown): { npcId: number; visual: MobKillVisual } | undefined {
+  if (!isPlainRecord(spawn)) return undefined;
+  const rawNpcId = spawn.npcId;
+  if (!Number.isInteger(rawNpcId) || (rawNpcId as number) < 0) return undefined;
+  const npcId = rawNpcId as number;
+  const visual: MobKillVisual = {};
+  const appearance = sanitizeAppearance(spawn.appearance);
+  const equipment = sanitizeEquipment(spawn.equipment);
+  const customColors = sanitizeCustomColors(spawn.customColors);
+  if (appearance) visual.appearance = appearance;
+  if (equipment) visual.equipment = equipment;
+  if (customColors) visual.customColors = customColors;
+  return hasMobKillVisual(visual) ? { npcId, visual } : undefined;
+}
+
+function hasMobKillVisual(visual: MobKillVisual | undefined): boolean {
+  return !!visual?.appearance || !!visual?.equipment?.some((itemId) => itemId > 0) || !!visual?.customColors;
+}
+
+function visualScore(visual: MobKillVisual): number {
+  let score = 0;
+  if (visual.appearance) score += 10;
+  if (visual.customColors) score += 5;
+  score += visual.equipment?.filter((itemId) => itemId > 0).length ?? 0;
+  return score;
+}
+
+function getMobKillVisualProfiles(): Map<number, MobKillVisual> {
+  const now = Date.now();
+  if (mobKillVisualCache && mobKillVisualCache.expiresAt > now) {
+    return mobKillVisualCache.profiles;
+  }
+
+  const profiles = new Map<number, MobKillVisual>();
+  try {
+    for (const entry of readdirSync(MAPS_DIR, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const spawnsPath = resolve(MAPS_DIR, entry.name, 'spawns.json');
+      if (!existsSync(spawnsPath)) continue;
+      const spawns = JSON.parse(readFileSync(spawnsPath, 'utf-8')) as Partial<SpawnsFile>;
+      for (const spawn of Array.isArray(spawns.npcs) ? spawns.npcs : []) {
+        const sanitized = sanitizeMobKillVisual(spawn);
+        if (!sanitized) continue;
+
+        const current = profiles.get(sanitized.npcId);
+        if (!current || visualScore(sanitized.visual) > visualScore(current)) {
+          profiles.set(sanitized.npcId, sanitized.visual);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('[hiscores] Failed to read mob visual profiles:', error);
+  }
+  mobKillVisualCache = { expiresAt: now + MOB_KILL_VISUAL_CACHE_TTL_MS, profiles };
+  return profiles;
+}
 
 // --- Chunked object storage helpers ---
 
@@ -904,8 +1012,19 @@ import {
 
 const CLIENT_DIST = resolve(import.meta.dir, '../../client/dist');
 const WEBSITE_DIST = resolve(import.meta.dir, '../../website/dist');
+const WEBSITE_PUBLIC = resolve(import.meta.dir, '../../website/public');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
+const WEBSITE_DEV_ORIGIN = (() => {
+  const raw = (process.env.WEBSITE_DEV_ORIGIN || '').trim();
+  if (!raw || isProductionLike()) return null;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    console.warn(`[website-dev] Ignoring invalid WEBSITE_DEV_ORIGIN=${JSON.stringify(raw)}`);
+    return null;
+  }
+})();
 
 /** Resolve `child` against `base` and verify the *real* path (symlinks
  *  followed) still lives under `base`. Without realpath, an attacker who
@@ -1100,6 +1219,88 @@ function serveWebsite(req: Request, pathname: string): Response | null {
   } catch {
     return null;
   }
+}
+
+function serveWebsitePublic(pathname: string): Response | null {
+  const decoded = decodeURIComponent(pathname);
+  const normalizedPath = decoded.startsWith('/') ? decoded.slice(1) : decoded;
+  const publicPath = resolvePossiblyMissingWithinBase(WEBSITE_PUBLIC, normalizedPath);
+  const exportedPath = resolvePossiblyMissingWithinBase(WEBSITE_DIST, normalizedPath);
+
+  for (const filePath of [publicPath, exportedPath]) {
+    if (!filePath) continue;
+    try {
+      const stat = statSync(filePath);
+      if (!stat.isFile()) continue;
+      return new Response(readCachedStaticFile(filePath), {
+        headers: {
+          'Content-Type': getMimeType(filePath),
+          'Cache-Control': 'no-cache, must-revalidate',
+        },
+      });
+    } catch {
+      // Try the next possible website asset location.
+    }
+  }
+
+  return null;
+}
+
+function isWebsiteDevProxyRoute(pathname: string): boolean {
+  const decoded = decodeURIComponent(pathname);
+  const normalized = decoded !== '/' && decoded.endsWith('/') ? decoded.slice(0, -1) : decoded;
+  return normalized === '/'
+    || normalized === '/hiscores'
+    || normalized === '/world-map'
+    || normalized === '/news'
+    || normalized.startsWith('/news/')
+    || normalized.startsWith('/_next/');
+}
+
+async function serveWebsiteDev(req: Request, pathname: string): Promise<Response | null> {
+  if (!WEBSITE_DEV_ORIGIN || !isWebsiteDevProxyRoute(pathname)) return null;
+
+  const target = new URL(req.url);
+  const origin = new URL(WEBSITE_DEV_ORIGIN);
+  target.protocol = origin.protocol;
+  target.host = origin.host;
+
+  const headers = new Headers(req.headers);
+  headers.set('host', origin.host);
+  headers.set('x-forwarded-host', req.headers.get('host') ?? `localhost:${SERVER_PORT}`);
+  headers.set('x-forwarded-proto', new URL(req.url).protocol.replace(':', ''));
+
+  try {
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers,
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : req.body,
+      redirect: 'manual',
+    });
+    const responseHeaders = new Headers(upstream.headers);
+    // Bun's fetch can hand us a decoded body while preserving upstream
+    // compression headers. Strip size/encoding metadata so browsers consume
+    // the dev proxy response exactly as sent by this server.
+    responseHeaders.delete('content-encoding');
+    responseHeaders.delete('content-length');
+    responseHeaders.delete('transfer-encoding');
+    return new Response(upstream.body, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function getWebsiteDevWebSocketUrl(reqUrl: string): string | null {
+  if (!WEBSITE_DEV_ORIGIN) return null;
+  const target = new URL(reqUrl);
+  const origin = new URL(WEBSITE_DEV_ORIGIN);
+  target.protocol = origin.protocol === 'https:' ? 'wss:' : 'ws:';
+  target.host = origin.host;
+  return target.toString();
 }
 
 function jsonResponse(data: any, status: number = 200, headers: Record<string, string> = {}): Response {
@@ -1655,7 +1856,15 @@ const shutdown = (signal: string) => {
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-type SocketData = GameSocketData | ChatSocketData;
+type WebsiteDevSocketData = {
+  type: 'website-dev';
+  targetUrl: string;
+  upstream?: WebSocket;
+  upstreamOpen?: boolean;
+  pendingMessages: string[];
+};
+
+type SocketData = GameSocketData | ChatSocketData | WebsiteDevSocketData;
 
 const server = Bun.serve<SocketData>({
   port: SERVER_PORT,
@@ -1720,9 +1929,14 @@ const server = Bun.serve<SocketData>({
       // Selectable mobs = attackable NPCs only. Vendors/bankers (shop /
       // bankAccess / dialogue) are not killable, so they never appear in the
       // picker. Derived live from the NPC defs so editor changes flow through.
+      const visualProfiles = getMobKillVisualProfiles();
       const mobs = world.data.getAllNpcs()
         .filter((def) => !def.shop && !def.bankAccess && !def.dialogue && !MOB_KILL_HIDDEN_IDS.has(def.id))
-        .map((def) => ({ id: def.id, name: MOB_KILL_NAME_OVERRIDES[def.id] ?? def.name }));
+        .map((def) => ({
+          id: def.id,
+          name: MOB_KILL_NAME_OVERRIDES[def.id] ?? def.name,
+          visual: visualProfiles.get(def.id),
+        }));
       const npcParam = url.searchParams.get('npc');
       return jsonResponse(db.getMobKillHiscores(
         npcParam ? Number(npcParam) : null,
@@ -1885,6 +2099,21 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    if (url.pathname === '/api/session' && req.method === 'GET') {
+      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
+      const session = getBoundBearerSession(req);
+      if (!session) return jsonResponse({ ok: false }, 401, { 'Cache-Control': 'no-store' });
+      const ip = requestClientIp(req, server);
+      if (db.isAccountBanned(session.accountId) || db.isIpBanned(ip)) {
+        return jsonResponse({ ok: false }, 403, { 'Cache-Control': 'no-store' });
+      }
+      return jsonResponse(
+        { ok: true, username: session.username, isAdmin: session.isAdmin },
+        200,
+        { 'Cache-Control': 'no-store' },
+      );
+    }
+
     if (url.pathname === '/api/device-key' && req.method === 'POST') {
       if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
@@ -2011,6 +2240,18 @@ const server = Bun.serve<SocketData>({
       } catch {
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
       }
+    }
+
+    // --- Website Dev WebSocket Proxy (Next HMR) ---
+
+    if (WEBSITE_DEV_ORIGIN && url.pathname === '/_next/webpack-hmr') {
+      const targetUrl = getWebsiteDevWebSocketUrl(req.url);
+      if (!targetUrl) return new Response('Website dev proxy unavailable', { status: 503 });
+      const upgraded = server.upgrade(req, {
+        data: { type: 'website-dev', targetUrl, pendingMessages: [] } as WebsiteDevSocketData,
+      });
+      if (upgraded) return undefined as unknown as Response;
+      return new Response('Website dev WebSocket upgrade failed', { status: 400 });
     }
 
     // --- WebSocket Upgrades (with token auth) ---
@@ -3192,6 +3433,12 @@ const server = Bun.serve<SocketData>({
 
     // --- Static File Serving ---
 
+    const websitePublicResponse = serveWebsitePublic(url.pathname);
+    if (websitePublicResponse) return websitePublicResponse;
+
+    const websiteDevResponse = await serveWebsiteDev(req, url.pathname);
+    if (websiteDevResponse) return websiteDevResponse;
+
     const websiteResponse = serveWebsite(req, url.pathname);
     if (websiteResponse) return websiteResponse;
 
@@ -3213,19 +3460,41 @@ const server = Bun.serve<SocketData>({
     // ever run.
     maxPayloadLength: 16 * 1024,
     open(ws: import('bun').ServerWebSocket<SocketData>) {
+      if (ws.data.type === 'website-dev') {
+        const data = ws.data;
+        const upstream = new WebSocket(data.targetUrl);
+        data.upstream = upstream;
+        upstream.addEventListener('open', () => {
+          data.upstreamOpen = true;
+          for (const pending of data.pendingMessages.splice(0)) upstream.send(pending);
+        });
+        upstream.addEventListener('message', (event) => {
+          try { ws.send(event.data as string | ArrayBuffer); } catch {}
+        });
+        upstream.addEventListener('close', (event) => {
+          try { ws.close(event.code || 1000, event.reason); } catch {}
+        });
+        upstream.addEventListener('error', () => {
+          try { ws.close(1011, 'Website dev proxy error'); } catch {}
+        });
+        return;
+      }
+
+      const socketData = ws.data;
       // Per-account cap: refuse + close if this account already has too many
       // sockets in flight. Mark the slot as "reserved" via a flag on ws.data
       // so close() knows whether to release.
-      if (!tryReserveWsSlot(ws.data.accountId)) {
-        console.warn(`[ws] Refusing ${ws.data.type} socket for account=${ws.data.accountId}: too many open sockets`);
+      if (!tryReserveWsSlot(socketData.accountId)) {
+        console.warn(`[ws] Refusing ${socketData.type} socket for account=${socketData.accountId}: too many open sockets`);
         try { ws.close(1008, 'Too many connections for this account'); } catch {}
         return;
       }
       (ws.data as SocketData & { _slotHeld?: boolean })._slotHeld = true;
       if (ws.data.type === 'game') {
+        const gameData = ws.data;
         void handleGameSocketOpen(ws as import('bun').ServerWebSocket<GameSocketData>, world)
           .catch((e) => {
-            console.warn(`[ws] game socket open failed account=${ws.data.accountId}:`, e instanceof Error ? e.message : e);
+            console.warn(`[ws] game socket open failed account=${gameData.accountId}:`, e instanceof Error ? e.message : e);
             try { ws.close(1011, 'handshake setup failed'); } catch {}
           });
       } else {
@@ -3233,6 +3502,17 @@ const server = Bun.serve<SocketData>({
       }
     },
     message(ws: import('bun').ServerWebSocket<SocketData>, message: string | Buffer) {
+      if (ws.data.type === 'website-dev') {
+        const payload = typeof message === 'string' ? message : message.toString();
+        const upstream = ws.data.upstream;
+        if (upstream && ws.data.upstreamOpen && upstream.readyState === WebSocket.OPEN) {
+          upstream.send(payload);
+        } else {
+          ws.data.pendingMessages.push(payload);
+        }
+        return;
+      }
+
       if (ws.data.type === 'game') {
         const buf = message instanceof ArrayBuffer
           ? message
@@ -3246,6 +3526,11 @@ const server = Bun.serve<SocketData>({
       }
     },
     close(ws: import('bun').ServerWebSocket<SocketData>) {
+      if (ws.data.type === 'website-dev') {
+        try { ws.data.upstream?.close(); } catch {}
+        return;
+      }
+
       // Only release a slot we actually reserved (close fires even when the
       // cap-refusal path closed the socket, but _slotHeld won't be set there).
       if ((ws.data as SocketData & { _slotHeld?: boolean })._slotHeld) {
@@ -3263,4 +3548,7 @@ const server = Bun.serve<SocketData>({
 console.log(`ProjectRS server running on http://localhost:${server.port}`);
 console.log(`Game WebSocket: ws://localhost:${server.port}${GAME_WS_PATH}`);
 console.log(`Chat WebSocket: ws://localhost:${server.port}${CHAT_WS_PATH}`);
+if (WEBSITE_DEV_ORIGIN) {
+  console.log(`Website dev proxy: http://localhost:${server.port} -> ${WEBSITE_DEV_ORIGIN}`);
+}
 console.log(`World tick rate: ${600}ms — ${world.players.size} players online`);
