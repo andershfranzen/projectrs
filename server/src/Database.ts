@@ -544,6 +544,12 @@ export class GameDatabase {
 
   constructor(dbPath: string = 'projectrs.db') {
     this.db = new SQLiteDB(dbPath);
+    // Set busy_timeout FIRST so every subsequent statement — including the WAL
+    // switch below and all hot-path writes (kill counts, batched player saves,
+    // hiscore snapshots) — waits for a contended lock (up to 5s) instead of
+    // immediately throwing "database is locked" (SQLITE_BUSY) into the caller
+    // (e.g. the combat tick, or a --watch restart racing the old instance).
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.db.exec('PRAGMA journal_mode = WAL');
     this.db.exec('PRAGMA foreign_keys = ON');
     this.createTables();

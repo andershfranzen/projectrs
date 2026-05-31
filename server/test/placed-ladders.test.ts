@@ -10,9 +10,7 @@ import { GameMap } from '../src/GameMap';
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const OBJECTS_PATH = resolve(import.meta.dir, '../data/objects.json');
 const LADDER_DEF_ID = ASSET_TO_OBJECT_DEF.Ladder;
-const DECORATIVE_LADDER_KEYS = [
-  'kcmap:69.525,50.500',
-];
+const DECORATIVE_LADDER_KEYS: string[] = [];
 
 type PlacedLadder = {
   mapId: string;
@@ -116,7 +114,7 @@ function endpointIsWalkable(map: GameMap, endpoint: { x: number; z: number; floo
 describe('placed ladder audit', () => {
   test('every placed Ladder is either linked or an intentional decorative placement', () => {
     const ladders = placedLadders();
-    expect(ladders).toHaveLength(9);
+    expect(ladders).toHaveLength(11);
 
     const decorative = ladders.filter(ladder => (ladder.verticalLinks ?? []).length === 0);
     expect(decorative.map(ladderKey).sort()).toEqual([...DECORATIVE_LADDER_KEYS].sort());

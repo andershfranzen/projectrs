@@ -33,6 +33,9 @@ const LOCKED_MAX_RADIUS = 12;
 const LOCKED_DEFAULT_RADIUS = LOCKED_MIN_RADIUS;
 const LOCKED_PITCH_RADIUS_LERP = 0.18;
 const LOCKED_RADIUS_EPSILON = 0.001;
+const NORTH_ALPHA = Math.PI / 2;
+const TARGET_ALPHA_LERP = 0.16;
+const TARGET_ALPHA_EPSILON = 0.01;
 
 // Admin (free-camera) limits.
 const FREE_LOWER_BETA = 0.4;
@@ -46,6 +49,7 @@ export class GameCamera {
   private targetPosition: Vector3;
   private targetRadius: number = -1; // -1 = no active zoom transition
   private targetBeta: number = -1;  // -1 = no active beta transition
+  private targetAlpha: number | null = null;
   private locked: boolean = true;
   private lockedRadiusScale: number = 1;
   private lockedZoomOffset: number = 0;
@@ -230,6 +234,16 @@ export class GameCamera {
       }
     }
 
+    if (this.targetAlpha !== null) {
+      const diff = GameCamera.wrapAnglePi(this.targetAlpha - this.camera.alpha);
+      if (Math.abs(diff) > TARGET_ALPHA_EPSILON) {
+        this.camera.alpha += diff * TARGET_ALPHA_LERP;
+      } else {
+        this.camera.alpha = this.targetAlpha;
+        this.targetAlpha = null;
+      }
+    }
+
     this.syncLockedRadiusToPitch();
   }
 
@@ -257,6 +271,7 @@ export class GameCamera {
   }
 
   rotate(deltaAlpha: number, deltaBeta: number = 0): void {
+    if (deltaAlpha !== 0) this.targetAlpha = null;
     this.camera.alpha += deltaAlpha;
     if (deltaBeta !== 0) {
       const lower = this.camera.lowerBetaLimit ?? FREE_LOWER_BETA;
@@ -265,6 +280,20 @@ export class GameCamera {
       this.targetBeta = -1;
       this.syncLockedRadiusToPitch();
     }
+  }
+
+  rotateNorth(): void {
+    this.targetAlpha = this.nearestEquivalentAlpha(NORTH_ALPHA);
+  }
+
+  private nearestEquivalentAlpha(target: number): number {
+    return this.camera.alpha + GameCamera.wrapAnglePi(target - this.camera.alpha);
+  }
+
+  private static wrapAnglePi(angle: number): number {
+    while (angle > Math.PI) angle -= Math.PI * 2;
+    while (angle < -Math.PI) angle += Math.PI * 2;
+    return angle;
   }
 
   enterDebugZoom(): void {

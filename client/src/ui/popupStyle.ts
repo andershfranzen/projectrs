@@ -139,6 +139,7 @@ const DEFAULT_TOUCH_CONTEXT_MENU_MS = 450;
 const DEFAULT_TOUCH_CONTEXT_MENU_MOVE_CANCEL_PX = 12;
 const DEFAULT_CONTEXT_MENU_CLICK_SUPPRESS_MS = 900;
 const CONTEXT_MENU_CLICK_SUPPRESS_RADIUS_PX = 24;
+const CONTEXT_MENU_FOLD_MS = 150;
 
 export function contextMenuCss(opts: ContextMenuOpts): string {
   return `
@@ -165,10 +166,12 @@ export interface HoverTooltipOpts {
 
 export class HoverTooltip {
   readonly el: HTMLDivElement;
+  private removed = false;
 
   constructor(opts: HoverTooltipOpts) {
+    ensureContextMenuGlobalListeners();
     const tooltip = document.createElement('div');
-    tooltip.className = 'eq-context-menu';
+    tooltip.className = 'eq-context-menu eq-hover-tooltip';
     tooltip.style.cssText = contextMenuCss({
       x: opts.x + 12,
       y: opts.y + 12,
@@ -209,10 +212,12 @@ export class HoverTooltip {
 
     document.body.appendChild(tooltip);
     this.el = tooltip;
+    activeHoverTooltips.add(this);
     this.move(opts.x, opts.y);
   }
 
   move(x: number, y: number): void {
+    if (this.removed) return;
     this.el.style.left = `${x + 12}px`;
     this.el.style.top = `${y + 12}px`;
     const visualViewport = window.visualViewport;
@@ -229,10 +234,14 @@ export class HoverTooltip {
   }
 
   remove(): void {
+    if (this.removed) return;
+    this.removed = true;
+    activeHoverTooltips.delete(this);
     this.el.remove();
   }
 }
 
+const activeHoverTooltips = new Set<HoverTooltip>();
 let activeContextMenu: { el: HTMLDivElement; close: () => void } | null = null;
 let contextMenuGlobalsInstalled = false;
 let suppressedContextMenuClick: {
@@ -272,6 +281,7 @@ function ensureContextMenuGlobalListeners(): void {
   document.addEventListener('contextmenu', (event) => {
     if (consumeSuppressedContextMenuFollowup(event)) return;
     closeActiveContextMenu();
+    closeActiveHoverTooltips();
   }, true);
 
   document.addEventListener('contextmenu', (event) => {
@@ -303,14 +313,23 @@ export function closeActiveContextMenu(menu?: HTMLDivElement): void {
   }
 }
 
+export function closeActiveHoverTooltips(): void {
+  for (const tooltip of Array.from(activeHoverTooltips)) {
+    tooltip.remove();
+  }
+}
+
 export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpts): HTMLDivElement {
   ensureContextMenuGlobalListeners();
   closeActiveContextMenu();
+  closeActiveHoverTooltips();
 
   const menu = document.createElement('div');
   menu.className = 'eq-context-menu';
   menu.setAttribute('role', 'menu');
   menu.style.cssText = contextMenuCss(opts);
+  menu.style.overflow = 'hidden';
+  menu.style.visibility = 'hidden';
   let closed = false;
 
   const close = () => {
@@ -336,6 +355,12 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
   `;
   menu.appendChild(title);
 
+  const optionsWrap = document.createElement('div');
+  optionsWrap.style.cssText = `
+    overflow: hidden;
+    transform-origin: 50% 0%;
+  `;
+
   for (const opt of items) {
     const item = document.createElement('div');
     item.textContent = opt.label;
@@ -347,8 +372,9 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
       opt.action(event);
       close();
     });
-    menu.appendChild(item);
+    optionsWrap.appendChild(item);
   }
+  menu.appendChild(optionsWrap);
 
   document.body.appendChild(menu);
   const margin = 4;
@@ -365,6 +391,38 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
   ));
   activeContextMenu = { el: menu, close };
   setTimeout(() => document.addEventListener('click', close), 0);
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  const optionsHeight = optionsWrap.scrollHeight;
+  if (reduceMotion || optionsHeight <= 0) {
+    menu.style.visibility = 'visible';
+  } else {
+    window.requestAnimationFrame(() => {
+      if (closed) return;
+      optionsWrap.style.maxHeight = '0px';
+      optionsWrap.style.opacity = '0';
+      optionsWrap.style.transform = 'scaleY(0.82)';
+      optionsWrap.style.willChange = 'max-height, opacity, transform';
+      optionsWrap.style.transition = `
+        max-height ${CONTEXT_MENU_FOLD_MS}ms cubic-bezier(0.18, 0.9, 0.24, 1),
+        opacity ${Math.round(CONTEXT_MENU_FOLD_MS * 0.75)}ms ease-out,
+        transform ${CONTEXT_MENU_FOLD_MS}ms cubic-bezier(0.18, 0.9, 0.24, 1)
+      `;
+      menu.style.visibility = 'visible';
+
+      window.requestAnimationFrame(() => {
+        if (closed) return;
+        optionsWrap.style.maxHeight = `${optionsHeight}px`;
+        optionsWrap.style.opacity = '1';
+        optionsWrap.style.transform = 'scaleY(1)';
+        window.setTimeout(() => {
+          if (closed) return;
+          optionsWrap.style.maxHeight = '';
+          optionsWrap.style.transition = '';
+          optionsWrap.style.willChange = '';
+        }, CONTEXT_MENU_FOLD_MS + 40);
+      });
+    });
+  }
   return menu;
 }
 

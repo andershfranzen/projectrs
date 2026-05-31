@@ -5260,6 +5260,22 @@ export class World {
   // state-mutating handler, so a click leaking from the inventory panel can't
   // dupe via deposit-while-trading or similar.
 
+  /** Emit fake XP_GAIN packets for client-side popup testing without mutating skills. */
+  simulateBigXpDrop(player: Player): number {
+    const simulatedDrops: Array<{ skillId: SkillId; amount: number }> = [
+      { skillId: 'strength', amount: 80 },
+      { skillId: 'hitpoints', amount: 44 },
+    ];
+    let total = 0;
+    for (const drop of simulatedDrops) {
+      const skillIdx = ALL_SKILLS.indexOf(drop.skillId);
+      if (skillIdx < 0) continue;
+      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, drop.amount);
+      total += drop.amount;
+    }
+    return total;
+  }
+
   /**
    * Award XP to a single skill on a player. Handles the full payload the
    * combat / skilling paths emit: XP_GAIN packet, optional LEVEL_UP, full
@@ -7411,7 +7427,16 @@ export class World {
     if (killerId == null) return;
     const killer = this.players.get(killerId);
     if (!killer) return;
-    this.db.recordMobKill(killer.accountId, npc.def.id);
+    try {
+      this.db.recordMobKill(killer.accountId, npc.def.id);
+    } catch (e) {
+      // Hiscore bookkeeping must NEVER crash the combat tick. Before per-mob
+      // kill tracking the combat death path did no DB writes, so a transient
+      // "database is locked" (SQLITE_BUSY under write contention) here would
+      // otherwise abort tickPlayerCombat / tickPendingSpells mid-kill and skip
+      // the rest of that tick (incl. broadcastSync) — read as broken combat.
+      console.warn(`[mobkill] recordMobKill failed acct=${killer.accountId} npc=${npc.def.id}:`, e instanceof Error ? e.message : e);
+    }
   }
 
   /**

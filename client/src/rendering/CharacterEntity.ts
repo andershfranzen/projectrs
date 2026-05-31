@@ -1375,6 +1375,10 @@ export class CharacterEntity {
   // Facing / rotation
   // ---------------------------------------------------------------------------
 
+  getFacingAngle(): number {
+    return this._rotationY;
+  }
+
   setFacingAngle(radians: number): void {
     this.attackFaceLockUntilMs = 0;
     this._rotationY = radians;

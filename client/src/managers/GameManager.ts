@@ -121,6 +121,8 @@ type InteractionOption = {
   primary?: boolean;
 };
 
+type MinimapEntityPoint = { x: number; z: number };
+
 type DoorPickProxyBounds = {
   center: Vector3;
   width: number;
@@ -176,6 +178,26 @@ type HitSplatOverlay = {
   worldPos: Vector3;
   el: HTMLDivElement;
   timer: number;
+};
+
+type XpDropOverlay = {
+  worldPos: Vector3;
+  el: HTMLDivElement;
+  timer: number;
+  lifetime: number;
+  screenOffsetX: number;
+  driftX: number;
+  riseSpeed: number;
+  popScale: number;
+  glowStrength: number;
+};
+
+type XpDropImpact = {
+  fontSize: number;
+  lifetime: number;
+  riseSpeed: number;
+  popScale: number;
+  glowStrength: number;
 };
 
 type AttackAnimationHost = Targetable & {
@@ -316,6 +338,11 @@ export class GameManager {
   private static readonly HIDDEN_RECONCILE_DIST = 2.5;
   private static readonly VISIBLE_RECONCILE_DIST = 2.25;
   private static readonly MINIMAP_LIST_REFRESH_INTERVAL_MS = 50;
+  private static readonly MINIMAP_ENTITY_TILES_PER_SEC = 1000 / TICK_RATE;
+  private static readonly MINIMAP_ENTITY_SNAP_DISTANCE_TILES = 3;
+  private static readonly XP_DROP_AGGREGATE_MS = 90;
+  private static readonly XP_DROP_RECENT_HISTORY_SIZE = 10;
+  private static readonly XP_DROP_SIDE_SPREAD_PX = 26;
   // Hidden-tab catch-up state. While hidden, RAF can stop while the server
   // keeps ticking; after resume we briefly trust authoritative sync over
   // stale local prediction, then disarm for normal visible play.
@@ -329,6 +356,8 @@ export class GameManager {
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
+  private _minimapRemotePositions: Map<number, MinimapEntityPoint> = new Map();
+  private _minimapNpcPositions: Map<number, MinimapEntityPoint> = new Map();
   private _minimapObjects: { x: number; z: number; category: string }[] = [];
   private _minimapDrops: { x: number; z: number }[] = [];
   private _lastMinimapListRefreshMs: number = 0;
@@ -507,6 +536,10 @@ export class GameManager {
 
   // Combat hit splats (HTML overlay)
   private hitSplats: HitSplatOverlay[] = [];
+  private xpDrops: XpDropOverlay[] = [];
+  private xpDropRecentAmounts: number[] = [];
+  private pendingXpDropAmount: number = 0;
+  private pendingXpDropTimer: number | null = null;
   private transientHealthBars: Map<number, number> = new Map();
   private pendingLocalHealthSync: { health: number; maxHealth: number; timer: number } | null = null;
   private fpsCounterEl: HTMLDivElement | null = null;
@@ -3752,7 +3785,10 @@ export class GameManager {
       this.noteLoginBootstrapPacket('equipment');
     });
 
-    this.network.on(ServerOpcode.XP_GAIN, () => {});
+    this.network.on(ServerOpcode.XP_GAIN, (_op, v) => {
+      const amount = Math.floor(decodeQuantityValues(v, 1, 0));
+      if (amount > 0) this.queueXpDrop(amount);
+    });
 
     this.network.on(ServerOpcode.LEVEL_UP, (_op, v) => {
       const [skillIndex, newLevel] = v;
@@ -6798,6 +6834,131 @@ export class GameManager {
     splat.el.style.top = visible ? `${sp.y}px` : '-9999px';
   }
 
+  private queueXpDrop(amount: number): void {
+    this.pendingXpDropAmount += amount;
+    if (this.pendingXpDropTimer !== null) {
+      window.clearTimeout(this.pendingXpDropTimer);
+    }
+    this.pendingXpDropTimer = window.setTimeout(() => {
+      this.pendingXpDropTimer = null;
+      this.flushPendingXpDrop();
+    }, GameManager.XP_DROP_AGGREGATE_MS);
+  }
+
+  private flushPendingXpDrop(): void {
+    const amount = this.pendingXpDropAmount;
+    this.pendingXpDropAmount = 0;
+    if (amount > 0) this.showXpDrop(amount);
+  }
+
+  private recentXpDropAverage(): number | null {
+    if (this.xpDropRecentAmounts.length === 0) return null;
+    let total = 0;
+    for (const amount of this.xpDropRecentAmounts) total += amount;
+    return total / this.xpDropRecentAmounts.length;
+  }
+
+  private rememberXpDropAmount(amount: number): void {
+    this.xpDropRecentAmounts.push(amount);
+    while (this.xpDropRecentAmounts.length > GameManager.XP_DROP_RECENT_HISTORY_SIZE) {
+      this.xpDropRecentAmounts.shift();
+    }
+  }
+
+  private getXpDropImpact(amount: number): XpDropImpact {
+    const recentAverage = this.recentXpDropAverage();
+    const relativeLift = recentAverage === null ? 0.45 : (amount - recentAverage) / Math.max(recentAverage, 1);
+    const boost = Math.min(Math.max(relativeLift / 1.5, 0), 1);
+    return {
+      fontSize: 11 + boost,
+      lifetime: 1.15 + boost * 0.2,
+      riseSpeed: 0.42 + boost * 0.06,
+      popScale: 1.1 + boost * 0.14,
+      glowStrength: 0.24 + boost * 0.36,
+    };
+  }
+
+  private showXpDrop(amount: number): void {
+    if (!this.localPlayer) return;
+    const base = this.localPlayer.position;
+    const impact = this.getXpDropImpact(amount);
+    this.rememberXpDropAmount(amount);
+    const worldPos = new Vector3(
+      base.x + (Math.random() - 0.5) * 0.22,
+      base.y + 2.35,
+      base.z + (Math.random() - 0.5) * 0.14,
+    );
+    const el = document.createElement('div');
+    el.textContent = `+${amount}xp`;
+    el.style.cssText = `
+      position: absolute; pointer-events: none; z-index: 260;
+      transform: translate(-50%, -100%) scale(0.85);
+      transform-origin: 50% 100%;
+      color: #fff;
+      font-family: Verdana, Arial, Helvetica, sans-serif;
+      font-size: ${impact.fontSize}px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+      opacity: 0;
+      will-change: transform, opacity, text-shadow;
+      text-shadow: 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+    `;
+    mountWorldOverlayElement(el);
+
+    const drop: XpDropOverlay = {
+      worldPos,
+      el,
+      timer: impact.lifetime,
+      lifetime: impact.lifetime,
+      screenOffsetX: (Math.random() - 0.5) * GameManager.XP_DROP_SIDE_SPREAD_PX,
+      driftX: (Math.random() - 0.5) * 10,
+      riseSpeed: impact.riseSpeed,
+      popScale: impact.popScale,
+      glowStrength: impact.glowStrength,
+    };
+    this.positionXpDrop(drop);
+    this.xpDrops.push(drop);
+  }
+
+  private xpDropScale(progress: number, drop: XpDropOverlay): number {
+    const startScale = 0.85;
+    if (progress < 0.16) {
+      const t = 1 - Math.pow(1 - progress / 0.16, 3);
+      return startScale + (drop.popScale - startScale) * t;
+    }
+    if (progress < 0.36) {
+      const t = 1 - Math.pow(1 - (progress - 0.16) / 0.2, 3);
+      return drop.popScale + (1 - drop.popScale) * t;
+    }
+    return 1;
+  }
+
+  private positionXpDrop(drop: XpDropOverlay): void {
+    if (!this.ensureOverlayTransform()) return;
+    const cam = this.scene.activeCamera;
+    if (!cam) return;
+    const sp = this._overlayScreenPos;
+    Vector3.ProjectToRef(drop.worldPos, GameManager.IDENTITY, this._overlayTransform, this._overlayVp, sp);
+    const fogOpacity = this.overlayFogOpacity(drop.worldPos, cam.position);
+    const progress = 1 - drop.timer / drop.lifetime;
+    const fadeIn = Math.min(progress / 0.12, 1);
+    const fadeOut = Math.min(drop.timer / 0.32, 1);
+    const visible = sp.z > 0 && sp.z < 1 && fogOpacity > 0.01;
+    const scale = this.xpDropScale(progress, drop);
+    const primaryGlow = Math.max(0, 1 - progress / 0.28) * drop.glowStrength;
+    const glow = Math.min(primaryGlow, 1.1);
+    const baseShadow = '1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000';
+
+    drop.el.style.opacity = visible ? (fadeIn * fadeOut * fogOpacity).toString() : '0';
+    drop.el.style.left = visible ? `${sp.x + drop.screenOffsetX + drop.driftX * progress}px` : '-9999px';
+    drop.el.style.top = visible ? `${sp.y}px` : '-9999px';
+    drop.el.style.transform = `translate(-50%, -100%) scale(${scale.toFixed(3)})`;
+    drop.el.style.textShadow = glow > 0.01
+      ? `${baseShadow}, 0 0 ${(3 + glow * 5).toFixed(1)}px rgba(255,255,255,${(0.16 + glow * 0.28).toFixed(2)})`
+      : baseShadow;
+  }
+
   private playHitSplatDebugPreview(): void {
     if (!this.localPlayer) {
       this.chatPanel?.addSystemMessage('No local player yet.');
@@ -7071,6 +7232,7 @@ export class GameManager {
     this.minimap.setClickMoveHandler((worldX, worldZ, markerWorldX, markerWorldZ) => {
       this.handleGroundClick(worldX, worldZ, { worldX: markerWorldX, worldZ: markerWorldZ });
     });
+    this.minimap.setCompassClickHandler(() => this.camera.rotateNorth());
     this.chunkManager.setOnMinimapDataChanged(() => this.minimap?.invalidateTileCache());
   }
 
@@ -7153,6 +7315,14 @@ export class GameManager {
     document.getElementById('side-panel')?.remove();
     for (const splat of this.hitSplats) splat.el.remove();
     this.hitSplats = [];
+    if (this.pendingXpDropTimer !== null) {
+      window.clearTimeout(this.pendingXpDropTimer);
+      this.pendingXpDropTimer = null;
+    }
+    this.pendingXpDropAmount = 0;
+    for (const drop of this.xpDrops) drop.el.remove();
+    this.xpDrops = [];
+    this.xpDropRecentAmounts = [];
     this.transientHealthBars.clear();
     document.querySelectorAll('.chat-bubble-overlay').forEach(el => el.remove());
     document.querySelectorAll('.entity-health-bar').forEach(el => el.remove());
@@ -7664,14 +7834,17 @@ export class GameManager {
     this.updateTransientHealthBars();
     this.updateOverlayPositions();
     this.updateHitSplats(dt);
+    this.updateXpDrops(dt);
     this.updateMinimap(dt);
   }
 
   private updateCameraKeys(dt: number): void {
     const camSpeed = 2.0 * dt;
     const cam = this.camera.getCamera();
-    if (this.keysDown.has('a') || this.keysDown.has('arrowleft')) cam.alpha += camSpeed;
-    if (this.keysDown.has('d') || this.keysDown.has('arrowright')) cam.alpha -= camSpeed;
+    let yawDelta = 0;
+    if (this.keysDown.has('a') || this.keysDown.has('arrowleft')) yawDelta += camSpeed;
+    if (this.keysDown.has('d') || this.keysDown.has('arrowright')) yawDelta -= camSpeed;
+    if (yawDelta !== 0) this.camera.rotate(yawDelta);
     if (this.keysDown.has('w') || this.keysDown.has('arrowup')) cam.beta = Math.max(0.2, cam.beta - camSpeed);
     if (this.keysDown.has('s') || this.keysDown.has('arrowdown')) cam.beta = Math.min(Math.PI / 2.2, cam.beta + camSpeed);
   }
@@ -8101,6 +8274,24 @@ export class GameManager {
     this.hitSplats.length = writeIdx;
   }
 
+  private updateXpDrops(dt: number): void {
+    if (this.xpDrops.length === 0) return;
+
+    let writeIdx = 0;
+    for (let i = 0; i < this.xpDrops.length; i++) {
+      const drop = this.xpDrops[i];
+      drop.timer -= dt;
+      drop.worldPos.y += dt * drop.riseSpeed;
+      if (drop.timer <= 0) {
+        drop.el.remove();
+      } else {
+        this.positionXpDrop(drop);
+        this.xpDrops[writeIdx++] = drop;
+      }
+    }
+    this.xpDrops.length = writeIdx;
+  }
+
   private _lastSentY: number = -9999;
   private _ySendCooldown: number = 0;
   private reportYToServer(): void {
@@ -8471,22 +8662,99 @@ export class GameManager {
     }
   }
 
+  private pruneMinimapEntityPositions(
+    positions: Map<number, MinimapEntityPoint>,
+    liveTargets: Map<number, unknown>,
+  ): void {
+    for (const entityId of positions.keys()) {
+      if (!liveTargets.has(entityId)) positions.delete(entityId);
+    }
+  }
+
+  private updateMinimapEntityPoint(
+    positions: Map<number, MinimapEntityPoint>,
+    entityId: number,
+    targetX: number,
+    targetZ: number,
+    dt: number,
+    visualPosition: MinimapEntityPoint | null,
+  ): MinimapEntityPoint {
+    let point = positions.get(entityId);
+    if (!point) {
+      point = {
+        x: visualPosition?.x ?? targetX,
+        z: visualPosition?.z ?? targetZ,
+      };
+      positions.set(entityId, point);
+      return point;
+    }
+
+    if (visualPosition) {
+      point.x = visualPosition.x;
+      point.z = visualPosition.z;
+      return point;
+    }
+
+    const dx = targetX - point.x;
+    const dz = targetZ - point.z;
+    const distance = Math.max(Math.abs(dx), Math.abs(dz));
+    if (
+      distance <= 0.001
+      || distance > GameManager.MINIMAP_ENTITY_SNAP_DISTANCE_TILES
+    ) {
+      point.x = targetX;
+      point.z = targetZ;
+      return point;
+    }
+
+    const step = GameManager.MINIMAP_ENTITY_TILES_PER_SEC * Math.min(dt, MAX_FRAME_DT_SECONDS);
+    const ratio = Math.min(step / distance, 1);
+    point.x += dx * ratio;
+    point.z += dz * ratio;
+    return point;
+  }
+
+  private collectMinimapDynamicEntities(dt: number): void {
+    this._minimapRemotes.length = 0;
+    this.pruneMinimapEntityPositions(this._minimapRemotePositions, this.entities.remoteTargets);
+    for (const [entityId, target] of this.entities.remoteTargets) {
+      const remote = this.entities.remotePlayers.get(entityId);
+      const visualPosition = remote && remote.isRenderEnabled() ? remote.position : null;
+      this._minimapRemotes.push(this.updateMinimapEntityPoint(
+        this._minimapRemotePositions,
+        entityId,
+        target.x,
+        target.z,
+        dt,
+        visualPosition,
+      ));
+    }
+
+    this._minimapNpcs.length = 0;
+    this.pruneMinimapEntityPositions(this._minimapNpcPositions, this.entities.npcTargets);
+    for (const [entityId, target] of this.entities.npcTargets) {
+      const sprite = this.entities.npcSprites.get(entityId);
+      const visualPosition = sprite?.isRenderEnabled() ? sprite.position : null;
+      this._minimapNpcs.push(this.updateMinimapEntityPoint(
+        this._minimapNpcPositions,
+        entityId,
+        target.x,
+        target.z,
+        dt,
+        visualPosition,
+      ));
+    }
+  }
+
   private updateMinimap(dt: number): void {
     if (!this.minimap || !this.chunkManager.isLoaded()) return;
     const now = performance.now();
     const shouldRefreshLists = this._lastMinimapListRefreshMs === 0
       || now - this._lastMinimapListRefreshMs >= GameManager.MINIMAP_LIST_REFRESH_INTERVAL_MS;
+    this.collectMinimapDynamicEntities(dt);
     if (shouldRefreshLists) {
       this._lastMinimapListRefreshMs = now;
 
-      this._minimapRemotes.length = 0;
-      for (const [, target] of this.entities.remoteTargets) {
-        this._minimapRemotes.push(target);
-      }
-      this._minimapNpcs.length = 0;
-      for (const [, target] of this.entities.npcTargets) {
-        this._minimapNpcs.push(target);
-      }
       this._minimapObjects.length = 0;
       for (const [, data] of this.worldObjectDefs) {
         if (data.depleted) continue;
@@ -8509,6 +8777,7 @@ export class GameManager {
       this._minimapObjects,
       this._minimapDrops,
       dt,
+      this.localPlayer?.getFacingAngle() ?? null,
     );
   }
 }

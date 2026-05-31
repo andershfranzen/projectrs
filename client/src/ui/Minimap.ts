@@ -14,6 +14,7 @@ type MinimapClickMoveHandler = (
   markerWorldX: number,
   markerWorldZ: number,
 ) => void;
+type MinimapCompassClickHandler = () => void;
 
 const TILE_COLORS: Record<number, [number, number, number]> = {
   [TileType.GRASS]: [0x3e, 0x8c, 0x2e],
@@ -52,6 +53,14 @@ const VIEW_RADIUS = 22;
 const RENDER_SIZE = 260;
 const COMPASS_SIZE = 72;
 const COMPASS_RADIUS = 30;
+const PLAYER_ARROW_TURN_RATE = Math.PI * 2.5;
+const PLAYER_ARROW_SNAP_EPSILON = 0.004;
+
+function wrapAnglePi(angle: number): number {
+  while (angle > Math.PI) angle -= Math.PI * 2;
+  while (angle < -Math.PI) angle += Math.PI * 2;
+  return angle;
+}
 
 export class Minimap {
   private container: HTMLDivElement;
@@ -69,12 +78,15 @@ export class Minimap {
   private destAnimTime: number = 0;
 
   private onClickMove: MinimapClickMoveHandler | null = null;
+  private onCompassClick: MinimapCompassClickHandler | null = null;
 
   private lastPlayerX: number = 0;
   private lastPlayerZ: number = 0;
   private hasLastPlayerPosition: boolean = false;
   private headingDx: number = 0;
   private headingDz: number = -1;
+  private playerArrowAngle: number = 0;
+  private hasPlayerArrowAngle: boolean = false;
   private lastScale: number = 1;
   private lastAlpha: number = 0;
 
@@ -117,7 +129,7 @@ export class Minimap {
         display: flex;
         align-items: center;
         justify-content: center;
-        pointer-events: none;
+        pointer-events: auto;
         z-index: 2;
       }
 
@@ -125,7 +137,8 @@ export class Minimap {
         width: 48px;
         height: 48px;
         flex: 0 0 48px;
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: pointer;
         image-rendering: pixelated;
         filter: drop-shadow(2px 3px 4px rgba(0,0,0,0.72));
       }
@@ -194,7 +207,9 @@ export class Minimap {
     this.compassCanvas.className = 'eq-compass';
     this.compassCanvas.width = COMPASS_SIZE;
     this.compassCanvas.height = COMPASS_SIZE;
-    this.compassCanvas.setAttribute('aria-hidden', 'true');
+    this.compassCanvas.setAttribute('role', 'button');
+    this.compassCanvas.setAttribute('aria-label', 'Face north');
+    this.compassCanvas.tabIndex = 0;
     this.compassCtx = this.compassCanvas.getContext('2d')!;
 
     const compassRow = document.createElement('div');
@@ -215,10 +230,16 @@ export class Minimap {
     this.heightBuf = new Float32Array((this.tileSize + 1) * (this.tileSize + 1));
 
     this.canvas.addEventListener('click', (e) => this.handleClick(e));
+    this.compassCanvas.addEventListener('click', (e) => this.handleCompassClick(e));
+    this.compassCanvas.addEventListener('keydown', (e) => this.handleCompassKeydown(e));
   }
 
   setClickMoveHandler(handler: MinimapClickMoveHandler): void {
     this.onClickMove = handler;
+  }
+
+  setCompassClickHandler(handler: MinimapCompassClickHandler): void {
+    this.onCompassClick = handler;
   }
 
   invalidateTileCache(): void {
@@ -264,6 +285,19 @@ export class Minimap {
     this.onClickMove(worldX, worldZ, worldX, worldZ);
   }
 
+  private handleCompassClick(e: MouseEvent): void {
+    e.preventDefault();
+    e.stopPropagation();
+    this.onCompassClick?.();
+  }
+
+  private handleCompassKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.onCompassClick?.();
+  }
+
   update(
     playerX: number,
     playerZ: number,
@@ -274,6 +308,7 @@ export class Minimap {
     worldObjects: MinimapObject[] = [],
     groundItems: MinimapDrop[] = [],
     dt: number = 1 / 60,
+    playerFacingYaw: number | null = null,
   ): void {
     const tileSize = this.tileSize;
     const pxPerTile = RENDER_SIZE / tileSize;
@@ -586,21 +621,24 @@ export class Minimap {
       ctx.fillRect((rp.x - startX) * scale - 2, (rp.z - startZ) * scale - 2.5, 4, 5);
     }
 
-    // Destination marker
+    ctx.restore();
+
+    // Destination marker — position follows the rotated map, but the flag
+    // itself is drawn in screen space so it always points upward.
     if (this.destX !== null && this.destZ !== null) {
       this.destAnimTime += Math.min(dt, 0.1);
-      const dx = (this.destX - startX) * scale;
-      const dz = (this.destZ - startZ) * scale;
-      this.drawDestinationMarker(ctx, dx, dz);
+      const destScreen = this.worldVectorToMinimapScreen(this.destX - playerX, this.destZ - playerZ, cameraAlpha);
+      this.drawDestinationMarker(ctx, center + destScreen.x * scale, center + destScreen.y * scale);
     }
-
-    ctx.restore();
 
     // Player arrow (always centered)
     ctx.save();
     ctx.translate(center, center);
-    const headingScreen = this.worldVectorToMinimapScreen(this.headingDx, this.headingDz, cameraAlpha);
-    ctx.rotate(Math.atan2(headingScreen.x, -headingScreen.y));
+    const headingDx = playerFacingYaw == null ? this.headingDx : Math.sin(playerFacingYaw);
+    const headingDz = playerFacingYaw == null ? this.headingDz : Math.cos(playerFacingYaw);
+    const headingScreen = this.worldVectorToMinimapScreen(headingDx, headingDz, cameraAlpha);
+    const targetArrowAngle = Math.atan2(headingScreen.x, -headingScreen.y);
+    ctx.rotate(this.smoothPlayerArrowAngle(targetArrowAngle, dt));
     ctx.fillStyle = '#ffffff';
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1.5;
@@ -615,6 +653,24 @@ export class Minimap {
     ctx.restore();
 
     this.drawCompass(cameraAlpha);
+  }
+
+  private smoothPlayerArrowAngle(targetAngle: number, dt: number): number {
+    if (!this.hasPlayerArrowAngle) {
+      this.playerArrowAngle = targetAngle;
+      this.hasPlayerArrowAngle = true;
+      return this.playerArrowAngle;
+    }
+
+    const diff = wrapAnglePi(targetAngle - this.playerArrowAngle);
+    if (Math.abs(diff) <= PLAYER_ARROW_SNAP_EPSILON) {
+      this.playerArrowAngle = targetAngle;
+      return this.playerArrowAngle;
+    }
+
+    const step = PLAYER_ARROW_TURN_RATE * Math.min(Math.max(dt, 0), 0.1);
+    this.playerArrowAngle = wrapAnglePi(this.playerArrowAngle + Math.sign(diff) * Math.min(step, Math.abs(diff)));
+    return this.playerArrowAngle;
   }
 
   private drawDestinationMarker(ctx: CanvasRenderingContext2D, x: number, y: number): void {

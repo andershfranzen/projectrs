@@ -511,6 +511,18 @@ function handleCommand(
       break;
     }
 
+    case '/simulatebigdrop': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      const total = world.simulateBigXpDrop(player);
+      sendSystem(ws, `Simulated a ${total} XP popup without changing your skills.`);
+      break;
+    }
+
     case '/appearance': {
       if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);

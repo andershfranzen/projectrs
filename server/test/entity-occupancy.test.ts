@@ -32,6 +32,7 @@ function makeWorldHarness(): any {
   world.worldObjects = new Map();
   world.blockedObjectTiles = new Set();
   world.entityTileOccupants = new Set();
+  world.playerTileOccupants = new Set();
   world.currentTick = 0;
   world.currentTickStartMs = 0;
   world.lastBotStatsCheckpointTick = 0;
