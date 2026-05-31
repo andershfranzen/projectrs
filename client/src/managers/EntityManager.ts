@@ -174,6 +174,7 @@ export class EntityManager {
         tileSize,
         originMode: modelCfg.originMode,
         groundOffset: modelCfg.groundOffset,
+        facingOffsetY: modelCfg.facingOffsetY,
         animSpeedRatio: modelCfg.animSpeedRatio,
         preserveAnimationRoles: modelCfg.preserveAnimationRoles,
       });

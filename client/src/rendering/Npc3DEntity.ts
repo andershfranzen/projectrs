@@ -18,6 +18,8 @@ export interface Npc3DEntityOptions {
   originMode?: 'authored' | 'boundsCenter';
   /** World-space visual Y lift without changing gameplay/server position. */
   groundOffset?: number;
+  /** Visual yaw offset for models whose authored forward axis differs from the game forward axis. */
+  facingOffsetY?: number;
   animSpeedRatio?: Partial<Record<'idle' | 'walk' | 'attack' | 'death', number>>;
   preserveAnimationRoles?: Array<'idle' | 'walk' | 'attack' | 'death'>;
 }
@@ -107,6 +109,7 @@ export class Npc3DEntity {
   private modelScale: number = 1;
   private originMode: Npc3DEntityOptions['originMode'] = 'authored';
   private groundOffset: number = 0;
+  private facingOffsetY: number = 0;
   private renderEnabled: boolean = true;
   /** Server positions are already centered on the NPC footprint. Kept as a
    *  field so existing position/facing code can share one render anchor. */
@@ -148,6 +151,7 @@ export class Npc3DEntity {
     this.modelScale = scale;
     this.originMode = options.originMode ?? 'authored';
     this.groundOffset = options.groundOffset ?? 0;
+    this.facingOffsetY = options.facingOffsetY ?? 0;
     this.animSpeedRatio = options.animSpeedRatio ?? {};
     this.preserveAnimationRoles = new Set(options.preserveAnimationRoles ?? []);
     this.renderOffset = 0;
@@ -156,6 +160,10 @@ export class Npc3DEntity {
 
   private visualY(y: number): number {
     return y + this.groundOffset;
+  }
+
+  private applyRootRotation(): void {
+    if (this.root) this.root.rotation.y = this._rotationY + this.facingOffsetY;
   }
 
   private async load(
@@ -208,6 +216,7 @@ export class Npc3DEntity {
       const glbRoot = result.meshes[0]; // __root__ node with coordinate transforms
       this.root = new TransformNode(`npc3d_${label ?? ''}`, this.scene);
       glbRoot.parent = this.root;
+      this.applyRootRotation();
 
       this.meshes = result.meshes.filter(m => m.getTotalVertices() > 0);
 
@@ -430,7 +439,7 @@ export class Npc3DEntity {
     const newYaw = rs2Rotation(this._rotationY, this.targetRotationY, dt);
     if (newYaw !== this._rotationY) {
       this._rotationY = newYaw;
-      this.root.rotation.y = newYaw;
+      this.applyRootRotation();
     }
   }
 
@@ -445,7 +454,7 @@ export class Npc3DEntity {
   setFacingAngle(radians: number): void {
     this._rotationY = radians;
     this.targetRotationY = radians;
-    if (this.root) this.root.rotation.y = radians;
+    this.applyRootRotation();
   }
 
   setTargetFacing(radians: number): void {

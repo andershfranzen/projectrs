@@ -87,7 +87,7 @@
     "health": 22,
     "attack": 6,
     "defence": 4,
-    "strength": 7,
+    "strength": 13,
     "attackSpeed": 5,
     "respawnTime": 30,
     "aggressive": false,

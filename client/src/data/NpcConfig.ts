@@ -1,7 +1,7 @@
 export const NPC_NAMES: Record<number, string> = {
   1: 'Chicken', 2: 'Giant Rat', 3: 'Goblin', 4: 'Wolf',
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
-  9: 'Dark Knight', 10: 'Cow',
+  9: 'Dark Knight', 10: 'Cow', 15: 'Camel',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   16: 'Banker',
   21: 'Bill the Stylist',
@@ -32,6 +32,8 @@ export interface Npc3DModelEntry {
   materialColors?: Record<string, [number, number, number]>;
   /** World-space visual lift for models whose authored bounds clip into terrain. */
   groundOffset?: number;
+  /** Visual yaw offset for models whose authored forward axis differs from the game forward axis. */
+  facingOffsetY?: number;
 }
 
 export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
@@ -44,8 +46,9 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   // authored full-cycle walk loop. Jump is the closest one-shot combat motion.
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
   24: { file: '/models/npcs/bull.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
-  // Camel.glb ships with idle/walk/eat; use eat as the closest attack motion.
-  15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk', attack: 'eat' } },
+  // Camel.glb is authored in centimeters and exported with the final flat-color
+  // mesh plus the four gameplay clips.
+  15: { file: '/models/npcs/Camel.glb', scale: 0.01, originMode: 'boundsCenter', facingOffsetY: Math.PI, preserveAnimationRoles: ['idle'], anims: { idle: 'Idle_01', walk: 'Walk', attack: 'Attack', death: 'Die' } },
   18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', groundOffset: 0.2, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   22: { file: '/models/npcs/spider_v2.glb', scale: 0.75, originMode: 'boundsCenter', preserveAnimationRoles: ['walk'], anims: { idle: 'Idle', walk: 'WalkCycle', attack: 'Attack', death: 'Dead(just-pose)' } },
   17: {

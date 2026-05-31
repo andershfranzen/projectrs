@@ -1795,6 +1795,14 @@
         "hairStyle": 13
       },
       "name": "Tilda Goosefeather"
+    },
+    {
+      "id": 131,
+      "npcId": 24,
+      "x": 183.5,
+      "z": 174.5,
+      "wanderRange": 3,
+      "aggressive": false
     }
   ],
   "objects": [],
