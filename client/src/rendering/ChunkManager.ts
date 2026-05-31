@@ -77,6 +77,15 @@ interface ChunkBuildResult {
   visible: boolean;
 }
 
+interface ElevatedThinInstanceSource {
+  mesh: Mesh;
+  minX: number;
+  maxX: number;
+  maxOriginY: number;
+  minZ: number;
+  maxZ: number;
+}
+
 interface FlatTexturePickPlane {
   invWorld: Matrix;
   halfWidth: number;
@@ -309,7 +318,7 @@ export class ChunkManager {
   private templateBaseMatrices: Map<string, { sourceMesh: Mesh; baseMatrix: Matrix }[]> = new Map();
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
   private chunkRoofThinInstSources: Map<string, Mesh[]> = new Map();
-  private chunkElevatedThinInstSources: Map<string, { mesh: Mesh; minX: number; maxX: number; maxY: number; minZ: number; maxZ: number }[]> = new Map();
+  private chunkElevatedThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -3676,7 +3685,7 @@ export class ChunkManager {
     // --- Thin instances: one source mesh per sub-mesh per asset per chunk ---
     const thinSources: Mesh[] = [];
     const roofThinSources: Mesh[] = [];
-    const elevatedThinSources: { mesh: Mesh; minX: number; maxX: number; maxY: number; minZ: number; maxZ: number }[] = [];
+    const elevatedThinSources: ElevatedThinInstanceSource[] = [];
     const nodes: TransformNode[] = [];
     const anims: AnimationGroup[] = [];
     const cleanupPartialChunkLoad = () => {
@@ -3749,10 +3758,12 @@ export class ChunkManager {
         }
         src.isPickable = false;
 
+        let maxOriginY = -Infinity;
         for (const obj of placements) {
           this.composePlacedObjectMatrix(obj, scaleBoost, _placementMatrix);
           baseMatrix.multiplyToRef(_placementMatrix, _tmpMatrix);
           src.thinInstanceAdd(_tmpMatrix);
+          if (obj.position.y > maxOriginY) maxOriginY = obj.position.y;
           await this.yieldIfFrameBudgetSpent(workSlice);
           if (abortPartialLoadIfStopped()) return;
         }
@@ -3779,8 +3790,8 @@ export class ChunkManager {
         src.doNotSyncBoundingInfo = true;
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
-        else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX)) {
-          elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxY: bMaxY, minZ: bMinZ, maxZ: bMaxZ });
+        else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
+          elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ });
         }
         await this.yieldIfFrameBudgetSpent(workSlice);
         if (abortPartialLoadIfStopped()) return;
@@ -4212,7 +4223,11 @@ export class ChunkManager {
           const maxZ = tz + r + 1;
           for (const entry of elevatedSources) {
             const node = entry.mesh;
-            if (seen.has(node) || entry.maxY <= minY) continue;
+            // Match regular placed-node culling: height tests use placement
+            // origin, not the generously padded render AABB. Otherwise tall
+            // bridge posts can be hidden with the roof while the player is
+            // walking beside or over them.
+            if (seen.has(node) || entry.maxOriginY <= minY) continue;
             if (entry.maxX < minX || entry.minX > maxX || entry.maxZ < minZ || entry.minZ > maxZ) continue;
             seen.add(node);
             result.push(node);
