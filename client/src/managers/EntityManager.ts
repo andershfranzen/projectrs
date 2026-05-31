@@ -465,6 +465,13 @@ export class EntityManager {
     this.npcInteractions.delete(entityId);
     this.npcOverrideNames.delete(entityId);
     this.npcCombatTargets.delete(entityId);
+    if (npc instanceof Npc3DEntity) {
+      npc.hideHealthBar();
+      npc.hideChatBubble();
+      if (npc.playDeathAnimation(() => DeathPortalEffect.play(this.scene, npc, { onDone: () => npc.dispose() }))) {
+        return true;
+      }
+    }
     DeathPortalEffect.play(this.scene, npc, { onDone: () => npc.dispose() });
     return true;
   }

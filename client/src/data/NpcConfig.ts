@@ -5,7 +5,7 @@ export const NPC_NAMES: Record<number, string> = {
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   16: 'Banker',
   21: 'Bill the Stylist',
-  17: 'Snow Wolf', 18: 'Rat', 22: 'New Spider', 23: 'Rooster',
+  17: 'Snow Wolf', 18: 'Rat', 22: 'New Spider', 23: 'Rooster', 24: 'Bull',
   // 100 was the Custom Humanoid template; it is now reused for in-editor
   // mob authoring (the first session edited it into Vampire). 101 is the
   // permanent blank baseline. To avoid the "lost my template" issue going
@@ -40,7 +40,10 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   2:  { file: '/models/npcs/rat.glb', scale: 0.2, anims: { idle: 'RatArmature|RatArmature|Rat_Idle', walk: 'RatArmature|RatArmature|Rat_Walk', attack: 'RatArmature|RatArmature|Rat_Attack', death: 'RatArmature|RatArmature|Rat_Death' } },
   4:  { file: '/models/npcs/wolf.glb', scale: 0.4, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   6:  { file: '/models/npcs/spider.glb', scale: 0.2, anims: { idle: 'SpiderArmature|SpiderArmature|Spider_Idle', walk: 'SpiderArmature|SpiderArmature|Spider_Walk', attack: 'SpiderArmature|SpiderArmature|Spider_Attack', death: 'SpiderArmature|SpiderArmature|Spider_Death' } },
-  10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', death: 'Armature|Armature|Death' } },
+  // Cow.glb's Walk clip returns to rest halfway through; WalkSlow is the
+  // authored full-cycle walk loop. Jump is the closest one-shot combat motion.
+  10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
+  24: { file: '/models/npcs/bull.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
   // Camel.glb ships with idle/walk/eat; use eat as the closest attack motion.
   15: { file: '/models/npcs/Camel.glb', scale: 1.0, anims: { idle: 'idle', walk: 'walk', attack: 'eat' } },
   18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', groundOffset: 0.2, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
@@ -72,6 +75,7 @@ export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; com
   13: { stationary: false },                // Leg Armorer
   14: { stationary: true },                 // Shield Smith
   16: { stationary: true },                 // Banker
+  20: { stationary: false, combat: true },  // Farmer
   // Editor-spawned customizable humanoid. `combat: true` pulls the full
   // PLAYER_ANIMATIONS set so weapon-driven attack-anim picking resolves
   // 1H/2H/stab/punch/kick on the spawn's equipped weapon.

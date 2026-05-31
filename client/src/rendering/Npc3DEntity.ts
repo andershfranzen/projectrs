@@ -82,6 +82,11 @@ function resolveAnimationGroup(
     const requestedKey = normalizeAnimationName(requested);
     const exact = groups.find((group) => normalizeAnimationName(group.name) === requestedKey);
     if (exact) return exact;
+    const suffix = groups.find((group) => {
+      const normalized = normalizeAnimationName(group.name);
+      return normalized.endsWith(`|${requestedKey}`) || normalized.endsWith(`_${requestedKey}`);
+    });
+    if (suffix) return suffix;
   }
 
   return groups.find((group) => animationNameMatchesRole(group.name, role));
@@ -304,6 +309,26 @@ export class Npc3DEntity {
     return this.animSpeedRatio[name as 'idle' | 'walk' | 'attack' | 'death'] ?? 1.0;
   }
 
+  private resolveAnimRole(name: string): string {
+    if (this.animGroups.has(name)) return name;
+    const normalized = normalizeAnimationName(name);
+    if (normalized.includes('attack')) return 'attack';
+    if (normalized.includes('death') || normalized.includes('die')) return 'death';
+    if (normalized.includes('walk') || normalized.includes('run')) return 'walk';
+    if (normalized.includes('idle')) return 'idle';
+    return name;
+  }
+
+  /** Wall-clock duration of a loaded role animation in milliseconds. */
+  getAnimationDurationMs(name: string): number {
+    const role = this.resolveAnimRole(name);
+    const group = this.animGroups.get(role);
+    if (!group) return 0;
+    const fps = group.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
+    if (fps <= 0) return 0;
+    return ((group.to - group.from) / fps) * 1000 / this.getAnimSpeedRatio(role);
+  }
+
   setAnimationEnabled(enabled: boolean): void {
     if (this.animationEnabled === enabled) return;
     if (!enabled && !this.currentAnimLoop) return;
@@ -390,6 +415,14 @@ export class Npc3DEntity {
         else this.playAnim('idle', true);
       });
     }
+  }
+
+  playDeathAnimation(onDone?: () => void): boolean {
+    const group = this.animGroups.get('death');
+    if (!group || !this.animationEnabled || !this.renderEnabled) return false;
+    if (this.currentAnim !== 'death') this.playAnim('death', false);
+    group.onAnimationGroupEndObservable.addOnce(() => onDone?.());
+    return true;
   }
 
   updateAnimation(dt: number): void {

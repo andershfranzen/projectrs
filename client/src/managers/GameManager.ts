@@ -1129,7 +1129,7 @@ export class GameManager {
       closeActiveContextMenu();
       this.hideContextMenu();
       this.clearPredictedPath();
-      this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      this.clearLocalNpcCombatState();
       this.duelActive = false;
       this.isSkilling = false;
       this.skillingObjectId = -1;
@@ -3080,8 +3080,15 @@ export class GameManager {
       const deathKind = (v[1] ?? EntityDeathKind.Despawn) as EntityDeathKind;
       const isTrueDeath = deathKind === EntityDeathKind.Death;
 
-      if (entityId === this.combatTargetId || entityId === this.magicTargetId) {
-        this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      const wasLocalCombatTarget = entityId === this.combatTargetId || entityId === this.magicTargetId;
+      if (wasLocalCombatTarget) {
+        this.clearLocalNpcCombatState();
+        this.pendingFaceTargetEntityId = -1;
+        this._combatPathTimer = 0;
+        // The server clears combat target with an Idle packet that excludes
+        // the attacker. Clear the local bow/melee face-lock here so its timer
+        // cannot expire back to an old travel yaw after the target is gone.
+        this.localPlayer?.clearFaceLock(true);
       }
 
       this.entities.cleanupCombatTargetsFor(entityId);
@@ -3780,7 +3787,7 @@ export class GameManager {
       this.playerZ = newZ;
       this.clearPredictedPath();
       this.setTileFrom(newX, newZ);
-      this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+      this.clearLocalNpcCombatState();
       this.isSkilling = false;
       this.skillingObjectId = -1;
       if (this.localPlayer) {
@@ -3960,7 +3967,7 @@ export class GameManager {
     this.currentFloor = 0;
     this.chunkManager.setCurrentFloor(0);
     if (this.localPlayer) this.localPlayer.stopWalking();
-    this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+    this.clearLocalNpcCombatState();
     this.isSkilling = false;
     this.skillingObjectId = -1;
 
@@ -4843,6 +4850,13 @@ export class GameManager {
     }
     const target = this.resolveTargetableIncludingLocal(targetId);
     if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+  }
+
+  private clearLocalNpcCombatState(): void {
+    this.combatTargetId = -1;
+    this.magicTargetId = -1;
+    this.autoCastSpellIndex = -1;
+    this.pendingSingleCastSpell = -1;
   }
 
   /** scene.pick returns the closest hit; that lets placed scenery (anvils,
@@ -6984,7 +6998,7 @@ export class GameManager {
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
     const tx = Math.floor(worldX), tz = Math.floor(worldZ);
     const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);
-    this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1; this.pendingSingleCastSpell = -1;
+    this.clearLocalNpcCombatState();
     // Walking elsewhere cancels the queued face-NPC — we'd look weird
     // turning toward a Shopkeeper after the player has already moved on.
     this.pendingFaceTargetEntityId = -1;

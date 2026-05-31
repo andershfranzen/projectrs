@@ -82,6 +82,30 @@
     ]
   },
   {
+    "id": 24,
+    "name": "Bull",
+    "health": 22,
+    "attack": 6,
+    "defence": 4,
+    "strength": 7,
+    "attackSpeed": 5,
+    "respawnTime": 30,
+    "aggressive": false,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 263,
+        "quantity": 1,
+        "chance": 0.8
+      }
+    ]
+  },
+  {
     "id": 2,
     "name": "Giant Rat",
     "health": 15,
