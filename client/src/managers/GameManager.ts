@@ -478,6 +478,7 @@ export class GameManager {
   // so there's never more than one on screen at a time.
   private activeClickEffect: { el: HTMLElement; anim: Animation } | null = null;
   private contextMenu: HTMLDivElement | null = null;
+  private suppressContextMenuUntil = 0;
   private sidePanel: SidePanel | null = null;
   private chatPanel: ChatPanel | null = null;
   private minimap: Minimap | null = null;
@@ -642,6 +643,14 @@ export class GameManager {
     // which would otherwise pick + dispatch using stale lastClickX/Y from the
     // previous click.
     canvas.addEventListener('pointerdown', (e) => {
+      if (e.button === 2 && !this.isTouchPointer(e)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.hideContextMenu();
+        this.openWorldContextMenuAt(e.clientX, e.clientY);
+        this.suppressContextMenuUntil = performance.now() + 500;
+        return;
+      }
       if (e.button !== 0) return;
       this.lastClickX = e.clientX;
       this.lastClickY = e.clientY;
@@ -4089,16 +4098,21 @@ export class GameManager {
   private setupContextMenu(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      if (performance.now() < this.suppressContextMenuUntil) return;
       this.hideContextMenu();
+      this.openWorldContextMenuAt(e.clientX, e.clientY);
+    });
+  }
+
+  private openWorldContextMenuAt(clientX: number, clientY: number): void {
       // Same gate as left-click: don't surface interaction options against a
       // half-streamed world.
       if (!this.inputManager.isEnabled() || this.duelActive) return;
 
-      const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
+      const options = this.getWorldInteractionOptionsAt(clientX, clientY);
       if (options.length > 0) {
-        this.showContextMenu(e.clientX, e.clientY, options);
+        this.showContextMenu(clientX, clientY, options);
       }
-    });
   }
 
   private setupNativeContextMenuBlocker(): void {
