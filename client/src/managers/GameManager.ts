@@ -52,7 +52,7 @@ import { AdminPanel } from '../ui/AdminPanel';
 import { CharacterCreator } from '../ui/CharacterCreator';
 import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
-import { closeActiveContextMenu, createContextMenu } from '../ui/popupStyle';
+import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
@@ -478,7 +478,6 @@ export class GameManager {
   // so there's never more than one on screen at a time.
   private activeClickEffect: { el: HTMLElement; anim: Animation } | null = null;
   private contextMenu: HTMLDivElement | null = null;
-  private suppressContextMenuUntil = 0;
   private sidePanel: SidePanel | null = null;
   private chatPanel: ChatPanel | null = null;
   private minimap: Minimap | null = null;
@@ -646,9 +645,9 @@ export class GameManager {
       if (e.button === 2 && !this.isTouchPointer(e)) {
         e.preventDefault();
         e.stopImmediatePropagation();
+        suppressNextContextMenuClick(canvas, e.clientX, e.clientY);
         this.hideContextMenu();
         this.openWorldContextMenuAt(e.clientX, e.clientY);
-        this.suppressContextMenuUntil = performance.now() + 500;
         return;
       }
       if (e.button !== 0) return;
@@ -4098,7 +4097,6 @@ export class GameManager {
   private setupContextMenu(canvas: HTMLCanvasElement): void {
     canvas.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      if (performance.now() < this.suppressContextMenuUntil) return;
       this.hideContextMenu();
       this.openWorldContextMenuAt(e.clientX, e.clientY);
     });
