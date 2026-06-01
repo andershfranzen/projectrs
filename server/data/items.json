@@ -468,6 +468,123 @@
     ]
   },
   {
+    "id": 285,
+    "name": "Steel Arrows",
+    "description": "Arrows with steel tips.",
+    "stackable": true,
+    "equippable": true,
+    "equipSlot": "ammo",
+    "isAmmo": true,
+    "ammoType": "arrow",
+    "rangedStrength": 16,
+    "value": 10,
+    "model": "/assets/models/arrows/stacks/SteelArrowStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrows/stacks/SteelArrowStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrows/stacks/SteelArrowStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrows/stacks/SteelArrowStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrows/stacks/SteelArrowStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrows/stacks/SteelArrowStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrows/stacks/SteelArrowStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 286,
+    "name": "Mithril Arrows",
+    "description": "Arrows with mithril tips.",
+    "stackable": true,
+    "equippable": true,
+    "equipSlot": "ammo",
+    "isAmmo": true,
+    "ammoType": "arrow",
+    "rangedStrength": 22,
+    "value": 20,
+    "model": "/assets/models/arrows/stacks/MithrilArrowStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrows/stacks/MithrilArrowStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrows/stacks/MithrilArrowStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrows/stacks/MithrilArrowStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrows/stacks/MithrilArrowStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrows/stacks/MithrilArrowStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrows/stacks/MithrilArrowStack6Plus.glb"
+      }
+    ]
+  },
+  {
+    "id": 287,
+    "name": "Black Bronze Arrows",
+    "description": "Arrows with black bronze tips.",
+    "stackable": true,
+    "equippable": true,
+    "equipSlot": "ammo",
+    "isAmmo": true,
+    "ammoType": "arrow",
+    "rangedStrength": 28,
+    "value": 35,
+    "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrows/stacks/BlackBronzeArrowStack6Plus.glb"
+      }
+    ]
+  },
+  {
     "id": 44,
     "name": "Steel Ore",
     "description": "A lump of steel ore.",

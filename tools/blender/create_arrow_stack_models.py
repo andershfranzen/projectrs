@@ -13,6 +13,9 @@ OUT_ROOT = PROJECT_ROOT / "client/public/assets/models/arrows"
 TIERS = {
     "Bronze": (0.52, 0.30, 0.12, 1.0),
     "Iron": (0.58, 0.58, 0.55, 1.0),
+    "Steel": (0.38, 0.40, 0.41, 1.0),
+    "Mithril": (0.10, 0.46, 0.60, 1.0),
+    "BlackBronze": (0.15, 0.08, 0.035, 1.0),
 }
 
 

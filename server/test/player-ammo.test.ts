@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
   BRONZE_ARROWS_ITEM_ID,
   IRON_ARROWS_ITEM_ID,
+  STEEL_ARROWS_ITEM_ID,
+  MITHRIL_ARROWS_ITEM_ID,
+  BLACK_BRONZE_ARROWS_ITEM_ID,
   OAK_SHORTBOW_ITEM_ID,
   WILLOW_SHORTBOW_ITEM_ID,
   MAPLE_SHORTBOW_ITEM_ID,
@@ -212,9 +215,6 @@ describe('player ammo selection', () => {
   });
 
   test('enforces shortbow arrow tier limits', () => {
-    const STEEL_ARROWS_ITEM_ID = 9001;
-    const MITHRIL_ARROWS_ITEM_ID = 9002;
-    const BLACK_BRONZE_ARROWS_ITEM_ID = 9003;
     const defs = new Map<number, ItemDef>([
       [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {
         equippable: true,
@@ -298,7 +298,6 @@ describe('player ammo selection', () => {
   });
 
   test('reports useful ranged ammo failures', () => {
-    const STEEL_ARROWS_ITEM_ID = 9001;
     const player = makePlayer();
     const defs = new Map<number, ItemDef>([
       [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {

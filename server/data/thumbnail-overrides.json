@@ -926,6 +926,51 @@
     "rotationZ": 2.722713633111154,
     "iconScale": 1
   },
+  "264": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.7
+  },
+  "265": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.7
+  },
+  "266": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.7
+  },
+  "267": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.7
+  },
+  "268": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.7
+  },
   "269": {
     "alpha": -1.1257373675363425,
     "beta": 1.208304866765305,
@@ -961,6 +1006,33 @@
     "rotationY": 0,
     "rotationZ": 0,
     "iconScale": 0.8
+  },
+  "285": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.82
+  },
+  "286": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.82
+  },
+  "287": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.82
   },
   "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_thumbnail_manual_items": [

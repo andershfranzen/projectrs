@@ -84,7 +84,7 @@ describe('item thumbnail families', () => {
 
   test('arrow items resolve to 3D thumbnails instead of RS Classic PNGs', () => {
     const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
-    for (const id of [42, 43, 270, 272]) {
+    for (const id of [42, 43, 285, 286, 287, 270, 272]) {
       const def = defs.get(id);
       expect(def?.icon).toBeUndefined();
       expect(def?.sprite).toBeUndefined();

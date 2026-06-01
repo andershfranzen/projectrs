@@ -58,10 +58,16 @@ export const MAPLE_LOGS_ITEM_ID = 39;
 export const YEW_LOGS_ITEM_ID = 40;
 export const BRONZE_ARROWS_ITEM_ID = 42;
 export const IRON_ARROWS_ITEM_ID = 43;
+export const STEEL_ARROWS_ITEM_ID = 285;
+export const MITHRIL_ARROWS_ITEM_ID = 286;
+export const BLACK_BRONZE_ARROWS_ITEM_ID = 287;
 export const WILLOW_LOGS_ITEM_ID = 235;
 export const SHORTBOW_UNSTRUNG_ITEM_ID = 262;
 export const BRONZE_ARROWHEADS_ITEM_ID = 264;
 export const IRON_ARROWHEADS_ITEM_ID = 265;
+export const STEEL_ARROWHEADS_ITEM_ID = 266;
+export const MITHRIL_ARROWHEADS_ITEM_ID = 267;
+export const BLACK_BRONZE_ARROWHEADS_ITEM_ID = 268;
 export const LOW_QUALITY_SINEW_ITEM_ID = 269;
 export const ARROW_SHAFTS_ITEM_ID = 270;
 export const MAGIC_LOGS_ITEM_ID = 271;
@@ -123,6 +129,9 @@ export const ARROWHEAD_FLETCHING_RECIPES: readonly {
 }[] = [
   { arrowheadItemId: BRONZE_ARROWHEADS_ITEM_ID, arrowItemId: BRONZE_ARROWS_ITEM_ID, arrowLabel: 'bronze', levelRequired: 1, xpReward: 1 },
   { arrowheadItemId: IRON_ARROWHEADS_ITEM_ID, arrowItemId: IRON_ARROWS_ITEM_ID, arrowLabel: 'iron', levelRequired: 15, xpReward: 2 },
+  { arrowheadItemId: STEEL_ARROWHEADS_ITEM_ID, arrowItemId: STEEL_ARROWS_ITEM_ID, arrowLabel: 'steel', levelRequired: 30, xpReward: 4 },
+  { arrowheadItemId: MITHRIL_ARROWHEADS_ITEM_ID, arrowItemId: MITHRIL_ARROWS_ITEM_ID, arrowLabel: 'mithril', levelRequired: 45, xpReward: 8 },
+  { arrowheadItemId: BLACK_BRONZE_ARROWHEADS_ITEM_ID, arrowItemId: BLACK_BRONZE_ARROWS_ITEM_ID, arrowLabel: 'black bronze', levelRequired: 60, xpReward: 16 },
 ];
 
 /** Distance budget for materializing humanoid NPCs as skinned 3D characters. */

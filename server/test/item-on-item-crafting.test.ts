@@ -8,6 +8,12 @@ import {
   LOGS_ITEM_ID,
   IRON_ARROWHEADS_ITEM_ID,
   IRON_ARROWS_ITEM_ID,
+  STEEL_ARROWHEADS_ITEM_ID,
+  STEEL_ARROWS_ITEM_ID,
+  MITHRIL_ARROWHEADS_ITEM_ID,
+  MITHRIL_ARROWS_ITEM_ID,
+  BLACK_BRONZE_ARROWHEADS_ITEM_ID,
+  BLACK_BRONZE_ARROWS_ITEM_ID,
   HEADLESS_ARROWS_ITEM_ID,
   OAK_LOGS_ITEM_ID,
   OAK_SHORTBOW_ITEM_ID,
@@ -61,6 +67,12 @@ function makeHarness(logQuantity: number, logItemId: number = LOGS_ITEM_ID): {
       [BUCKET_ITEM_ID, itemDef(BUCKET_ITEM_ID, 'Bucket')],
       [IRON_ARROWHEADS_ITEM_ID, itemDef(IRON_ARROWHEADS_ITEM_ID, 'Iron Arrowheads')],
       [IRON_ARROWS_ITEM_ID, itemDef(IRON_ARROWS_ITEM_ID, 'Iron Arrows')],
+      [STEEL_ARROWHEADS_ITEM_ID, itemDef(STEEL_ARROWHEADS_ITEM_ID, 'Steel Arrowheads')],
+      [STEEL_ARROWS_ITEM_ID, itemDef(STEEL_ARROWS_ITEM_ID, 'Steel Arrows')],
+      [MITHRIL_ARROWHEADS_ITEM_ID, itemDef(MITHRIL_ARROWHEADS_ITEM_ID, 'Mithril Arrowheads')],
+      [MITHRIL_ARROWS_ITEM_ID, itemDef(MITHRIL_ARROWS_ITEM_ID, 'Mithril Arrows')],
+      [BLACK_BRONZE_ARROWHEADS_ITEM_ID, itemDef(BLACK_BRONZE_ARROWHEADS_ITEM_ID, 'Black Bronze Arrowheads')],
+      [BLACK_BRONZE_ARROWS_ITEM_ID, itemDef(BLACK_BRONZE_ARROWS_ITEM_ID, 'Black Bronze Arrows')],
       [KNIFE_ITEM_ID, itemDef(KNIFE_ITEM_ID, 'Knife')],
       [LOGS_ITEM_ID, itemDef(LOGS_ITEM_ID, 'Log')],
       [OAK_LOGS_ITEM_ID, itemDef(OAK_LOGS_ITEM_ID, 'Oak Log')],
@@ -222,5 +234,56 @@ describe('item-on-item crafting recipes', () => {
       { itemId: IRON_ARROWS_ITEM_ID, quantity: 1 },
     ]);
     expect(messages).toEqual(['You start making iron arrows.']);
+  });
+
+  test('headless arrows plus higher-tier arrowheads creates matching arrows', () => {
+    const cases = [
+      {
+        arrowheadId: STEEL_ARROWHEADS_ITEM_ID,
+        arrowId: STEEL_ARROWS_ITEM_ID,
+        label: 'steel',
+        xp: 4,
+      },
+      {
+        arrowheadId: MITHRIL_ARROWHEADS_ITEM_ID,
+        arrowId: MITHRIL_ARROWS_ITEM_ID,
+        label: 'mithril',
+        xp: 8,
+      },
+      {
+        arrowheadId: BLACK_BRONZE_ARROWHEADS_ITEM_ID,
+        arrowId: BLACK_BRONZE_ARROWS_ITEM_ID,
+        label: 'black bronze',
+        xp: 16,
+      },
+    ];
+
+    for (const { arrowheadId, arrowId, label, xp: expectedXp } of cases) {
+      const { world, player, xp, messages } = makeHarness(0);
+      player.inventory[0] = { itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 };
+      player.inventory[1] = { itemId: arrowheadId, quantity: 1 };
+
+      world.handlePlayerUseItemOnItem(player.id, 0, HEADLESS_ARROWS_ITEM_ID, 1, arrowheadId, 1);
+
+      expect(player.inventory[0]).toEqual({ itemId: arrowId, quantity: 1 });
+      expect(player.inventory[1]).toBeNull();
+      expect(xp).toEqual([{ skill: 'crafting', amount: expectedXp }]);
+      expect(messages).toEqual([`You make a ${label} arrow.`]);
+    }
+  });
+
+  test('higher-tier arrowhead recipes enforce crafting levels', () => {
+    const { world, player, xp, messages } = makeHarness(0);
+    player.skills.crafting.level = 44;
+    player.skills.crafting.currentLevel = 44;
+    player.inventory[0] = { itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 };
+    player.inventory[1] = { itemId: MITHRIL_ARROWHEADS_ITEM_ID, quantity: 1 };
+
+    world.handlePlayerUseItemOnItem(player.id, 0, HEADLESS_ARROWS_ITEM_ID, 1, MITHRIL_ARROWHEADS_ITEM_ID, 1);
+
+    expect(player.inventory[0]).toEqual({ itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 });
+    expect(player.inventory[1]).toEqual({ itemId: MITHRIL_ARROWHEADS_ITEM_ID, quantity: 1 });
+    expect(xp).toEqual([]);
+    expect(messages).toEqual(['You need level 45 Crafting to do that.']);
   });
 });

@@ -4,7 +4,8 @@ import {
   SkillBlock, MeleeStance, CombatBonuses,
   initSkills, combatLevel, zeroBonuses, bowAttackSpeedForStance,
   PlayerAnimationKind, PlayerSkillAnimationVariant,
-  BRONZE_ARROWS_ITEM_ID, IRON_ARROWS_ITEM_ID,
+  BRONZE_ARROWS_ITEM_ID, IRON_ARROWS_ITEM_ID, STEEL_ARROWS_ITEM_ID,
+  MITHRIL_ARROWS_ITEM_ID, BLACK_BRONZE_ARROWS_ITEM_ID,
   SHORTBOW_ITEM_ID, OAK_SHORTBOW_ITEM_ID, WILLOW_SHORTBOW_ITEM_ID,
   MAPLE_SHORTBOW_ITEM_ID, YEW_SHORTBOW_ITEM_ID, MAGIC_SHORTBOW_ITEM_ID,
   type PlayerAppearance, type ItemDef,
@@ -29,6 +30,9 @@ export type PlayerAmmo =
 const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
   [BRONZE_ARROWS_ITEM_ID]: 1,
   [IRON_ARROWS_ITEM_ID]: 2,
+  [STEEL_ARROWS_ITEM_ID]: 3,
+  [MITHRIL_ARROWS_ITEM_ID]: 4,
+  [BLACK_BRONZE_ARROWS_ITEM_ID]: 5,
 };
 
 const MAX_ARROW_TIER_BY_BOW_ITEM_ID: Record<number, number> = {
