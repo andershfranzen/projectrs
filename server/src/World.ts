@@ -3021,11 +3021,8 @@ export class World {
         );
         continue;
       }
-      // Multi-tile NPCs: anchor + (size-1)/2 offset matches the chase blocker math.
-      const ax = Math.floor(npc.position.x);
-      const az = Math.floor(npc.position.y);
-      const minX = ax - Math.floor((size - 1) / 2);
-      const minZ = az - Math.floor((size - 1) / 2);
+      const minX = getObjectFootprintMinTile(npc.position.x, size);
+      const minZ = getObjectFootprintMinTile(npc.position.y, size);
       for (let i = 0; i < size; i++) {
         for (let j = 0; j < size; j++) {
           this.entityTileOccupants.add(
@@ -7165,8 +7162,8 @@ export class World {
         // larger footprints build a set for O(1) membership checks.
         const selfAx = Math.floor(npc.position.x);
         const selfAz = Math.floor(npc.position.y);
-        const selfMinX = selfAx - Math.floor((size - 1) / 2);
-        const selfMinZ = selfAz - Math.floor((size - 1) / 2);
+        const selfMinX = getObjectFootprintMinTile(npc.position.x, size);
+        const selfMinZ = getObjectFootprintMinTile(npc.position.y, size);
         const selfEntityKey = this.entityTileKeyFor(mapId, selfAx, selfAz, npcFloor);
         let selfFootprintKeys: Set<number> | null = null;
         if (size > 1) {
@@ -7201,8 +7198,8 @@ export class World {
             }
           : (x: number, z: number) => {
               const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
-              const minX = Math.floor(x) - Math.floor((size - 1) / 2);
-              const minZ = Math.floor(z) - Math.floor((size - 1) / 2);
+              const minX = getObjectFootprintMinTile(x, size);
+              const minZ = getObjectFootprintMinTile(z, size);
               for (let i = 0; i < size; i++) {
                 for (let j = 0; j < size; j++) {
                   if (map.isTileBlockedOnFloor(minX + i, minZ + j, npcFloor)) return true;
@@ -7223,10 +7220,10 @@ export class World {
         const npcWallBlocked = size <= 1
           ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, npc.currentFloor)
           : (fx: number, fz: number, tx: number, tz: number) => {
-              const minFx = Math.floor(fx) - Math.floor((size - 1) / 2);
-              const minFz = Math.floor(fz) - Math.floor((size - 1) / 2);
-              const minTx = Math.floor(tx) - Math.floor((size - 1) / 2);
-              const minTz = Math.floor(tz) - Math.floor((size - 1) / 2);
+              const minFx = getObjectFootprintMinTile(fx, size);
+              const minFz = getObjectFootprintMinTile(fz, size);
+              const minTx = getObjectFootprintMinTile(tx, size);
+              const minTz = getObjectFootprintMinTile(tz, size);
               for (let i = 0; i < size; i++) {
                 for (let j = 0; j < size; j++) {
                   if (map.isWallBlockedOnFloor(minFx + i, minFz + j, minTx + i, minTz + j, npc.currentFloor)) return true;

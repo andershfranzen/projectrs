@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { effectiveNpcCombatStats, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, normalizeAppearance, npcCombatLevel } from '@projectrs/shared';
+import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, npcCombatLevel } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
 
 function normalizeFacingAngle(value: number | null | undefined): number | null {
@@ -50,6 +50,8 @@ export class Npc extends Entity {
   retreatTarget: Entity | null = null;
   attackCooldown: number = 0;
   returning: boolean = false;
+  private overlapEscapeDelayTargetId: number = -1;
+  private overlapEscapeDelayTicks: number = 0;
 
   // A* path following — used for wander + returning to spawn only. Chase
   // uses naiveChaseStep (2004scape-style direct stepping) so NPCs get
@@ -70,6 +72,7 @@ export class Npc extends Entity {
 
   static readonly NPC_MAX_PATH_LENGTH = 20;
   static readonly MELEE_RANGE = 1.5;
+  private static readonly OVERLAP_ESCAPE_DELAY_TICKS = 2;
   private static readonly WANDER_PATH_MAX = 8;
   private static readonly RETREAT_INTERACTION_EXTRA = 11;
 
@@ -293,6 +296,25 @@ export class Npc extends Entity {
     return isTileAdjacentToObject(tileX, tileZ, this.position.x, this.position.y, { width: this.size });
   }
 
+  isFootprintTile(tileX: number, tileZ: number): boolean {
+    return isTileInsideObjectFootprint(tileX, tileZ, this.position.x, this.position.y, { width: this.size });
+  }
+
+  private resetOverlapEscapeDelay(): void {
+    this.overlapEscapeDelayTargetId = -1;
+    this.overlapEscapeDelayTicks = 0;
+  }
+
+  private shouldDelayOverlapEscape(targetId: number): boolean {
+    if (this.overlapEscapeDelayTargetId !== targetId) {
+      this.overlapEscapeDelayTargetId = targetId;
+      this.overlapEscapeDelayTicks = 0;
+    }
+    if (this.overlapEscapeDelayTicks >= Npc.OVERLAP_ESCAPE_DELAY_TICKS) return false;
+    this.overlapEscapeDelayTicks++;
+    return true;
+  }
+
   /** True if (x, z) is within this NPC's wander box around spawn. The 0.5
    *  fudge covers half-integer tile centers — both spawnX and the queried
    *  point live at `floor(...)+0.5`, so abs differences are integers and the
@@ -411,6 +433,46 @@ export class Npc extends Entity {
     return canStep(axisDx, axisDz, false) ? move(axisDx, axisDz) : 'blocked';
   }
 
+  /** If a player is inside a large NPC's own footprint, ordinary chase can
+   *  stall because the target's tile is not an interaction tile and may share
+   *  the NPC anchor tile. Step the footprint away from the closest edge until
+   *  the player becomes cardinal-adjacent again. */
+  private stepOutFromOverlappingTarget(
+    targetTileX: number,
+    targetTileZ: number,
+    isBlocked: (x: number, z: number) => boolean,
+    isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+  ): boolean {
+    const size = this.size;
+    if (size <= 1) return false;
+    const bounds = getObjectFootprintBounds(this.position.x, this.position.y, size);
+    if (targetTileX < bounds.minX || targetTileX > bounds.maxX || targetTileZ < bounds.minZ || targetTileZ > bounds.maxZ) {
+      return false;
+    }
+
+    const px = Math.floor(this.position.x);
+    const pz = Math.floor(this.position.y);
+    const fromX = px + 0.5;
+    const fromZ = pz + 0.5;
+    const candidates = [
+      { dx: 1, dz: 0, cost: targetTileX - bounds.minX },
+      { dx: -1, dz: 0, cost: bounds.maxX - targetTileX },
+      { dx: 0, dz: 1, cost: targetTileZ - bounds.minZ },
+      { dx: 0, dz: -1, cost: bounds.maxZ - targetTileZ },
+    ].sort((a, b) => a.cost - b.cost);
+
+    for (const c of candidates) {
+      const nx = px + c.dx + 0.5;
+      const nz = pz + c.dz + 0.5;
+      if (isBlocked(nx, nz)) continue;
+      if (isWallBlocked && isWallBlocked(fromX, fromZ, nx, nz)) continue;
+      this.position.x = nx;
+      this.position.y = nz;
+      return true;
+    }
+    return false;
+  }
+
   shouldDisengageFromTarget(targetX: number, targetZ: number): boolean {
     return !this.isTargetWithinCombatMaxRange(targetX, targetZ);
   }
@@ -420,7 +482,10 @@ export class Npc extends Entity {
   }
 
   setCombatTarget(target: Entity | null): void {
-    if ((this.combatTarget?.id ?? 0) !== (target?.id ?? 0)) this.syncDirty = true;
+    if ((this.combatTarget?.id ?? 0) !== (target?.id ?? 0)) {
+      this.syncDirty = true;
+      this.resetOverlapEscapeDelay();
+    }
     this.combatTarget = target;
   }
 
@@ -548,10 +613,17 @@ export class Npc extends Entity {
       // chases under the same spawn-anchored leash above.
       if (this.isInteractionTile(targetTileX, targetTileZ)) {
         this.pathQueue.length = 0;
+        this.resetOverlapEscapeDelay();
         return;
       }
 
       this.pathQueue.length = 0;
+      if (this.isFootprintTile(targetTileX, targetTileZ)) {
+        if (this.shouldDelayOverlapEscape(this.combatTarget.id)) return;
+        if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, isBlocked, isWallBlocked)) return;
+      } else {
+        this.resetOverlapEscapeDelay();
+      }
       this.naiveChaseStep(targetX, targetZ, isBlocked, isWallBlocked);
       return;
     }

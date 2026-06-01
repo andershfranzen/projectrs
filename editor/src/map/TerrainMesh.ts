@@ -101,6 +101,7 @@ function getCornerBlendedColor(map: MapData, cornerX: number, cornerZ: number, s
   for (const [nx, nz] of sharingTiles) {
     if (!map.getTile(nx, nz)) continue
     const type = map.getBaseGroundType(nx, nz) as GroundType
+    if (type === 'void') continue
     if (type === 'road') continue
     const w = 1.0
     const c = groundColor(type, 1.0)
@@ -369,6 +370,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
       if (!map.isTileInActiveChunk(x, z)) continue
       const h = map.getTileCornerHeights(x, z)
       const landType = map.getBaseGroundType(x, z) as GroundType
+      if (landType === 'void') continue
 
       landBase += addTileGeometry(
         landVertices, landColors, landUVs, landIndices,
@@ -398,6 +400,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
     for (let x = 0; x < map.width; x++) {
       if (!map.isTileInActiveChunk(x, z)) continue
       const tile = map.getTile(x, z)
+      if (tile?.ground === 'void') continue
       if (!tile?.waterSurface) continue
 
       const h = map.getTileCornerHeights(x, z)
@@ -501,6 +504,7 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
   for (let z = 0; z < map.height; z++) {
     for (let x = 0; x < map.width; x++) {
       if (!map.isTileInActiveChunk(x, z)) continue
+      if (map.getBaseGroundType(x, z) === 'void') continue
       if (!shouldRenderWater(map, x, z)) continue
       const wY = map.getTileWaterLevel(x, z) + 0.02
       const wc = WATER_SURFACE_VERTEX_COLOR
@@ -799,6 +803,7 @@ export function buildTextureOverlays(
     for (let x = 0; x < map.width; x++) {
       if (!map.isTileInActiveChunk(x, z)) continue
       const tile = map.getTile(x, z)
+      if (tile?.ground === 'void') continue
       if (!tile || (!tile.textureId && !tile.textureIdB)) continue
 
       const h = map.getTileCornerHeights(x, z)

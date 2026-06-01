@@ -1,5 +1,5 @@
-import { DEFAULT_CUT_ANGLE, DEFAULT_WATER_FLOW, legacyCutAngleFromSplit, normalizeCutAngle, normalizeWaterFlow } from '@projectrs/shared'
-import type { WaterFlow } from '@projectrs/shared'
+import { DEFAULT_CUT_ANGLE, DEFAULT_WATER_FLOW, defaultGroundForMap, legacyCutAngleFromSplit, normalizeCutAngle, normalizeWaterFlow } from '@projectrs/shared'
+import type { GroundType, WaterFlow } from '@projectrs/shared'
 
 export interface Tile {
   ground: string
@@ -57,6 +57,7 @@ export interface MapDataJSON {
   width: number
   height: number
   mapType: string
+  defaultGround?: GroundType
   worldOffset: { x: number; z: number }
   waterLevel: number
   chunkWaterLevels: Record<string, number>
@@ -71,9 +72,9 @@ export interface MapDataJSON {
 
 const CHUNK = 64
 
-function createDefaultTile(): Tile {
+function createDefaultTile(defaultGround: GroundType = 'grass'): Tile {
   return {
-    ground: 'grass',
+    ground: defaultGround,
     groundB: null,
     split: 'forward',
     textureId: null,
@@ -96,6 +97,7 @@ export class MapData {
   height: number
   terrainGeneration: number
   mapType: MapType
+  defaultGround: GroundType
   worldOffset: { x: number; z: number }
   waterLevel: number
   chunkWaterLevels: Record<string, number>
@@ -106,12 +108,13 @@ export class MapData {
   tiles: Tile[][]
   heights: number[][]
 
-  constructor(width: number, height: number) {
+  constructor(width: number, height: number, defaultGround: GroundType = 'grass') {
     this.width = width
     this.height = height
 
     this.terrainGeneration = 0   // incremented on terrain/tile/height changes -- used by undo to skip rebuilds
     this.mapType = 'overworld'
+    this.defaultGround = defaultGround
     this.worldOffset = { x: 0, z: 0 }
     this.waterLevel = -2.5
     this.chunkWaterLevels = {}
@@ -130,7 +133,7 @@ export class MapData {
     for (let z = 0; z < height; z++) {
       const row: Tile[] = []
       for (let x = 0; x < width; x++) {
-        row.push(createDefaultTile())
+        row.push(createDefaultTile(this.defaultGround))
       }
       this.tiles.push(row)
     }
@@ -195,8 +198,8 @@ export class MapData {
 
   getBaseGroundType(x: number, z: number): string {
     const tile = this.getTile(x, z)
-    if (!tile) return 'grass'
-    return tile.ground || 'grass'
+    if (!tile) return this.defaultGround
+    return tile.ground || this.defaultGround
   }
 
   getChunkWaterLevel(chunkX: number, chunkZ: number): number {
@@ -490,8 +493,9 @@ export class MapData {
   }
 
   resize(newWidth: number, newHeight: number, offsetX: number = 0, offsetZ: number = 0): MapData {
-    const next = new MapData(newWidth, newHeight)
+    const next = new MapData(newWidth, newHeight, this.defaultGround)
     next.mapType = this.mapType
+    next.defaultGround = this.defaultGround
     next.worldOffset = { ...this.worldOffset }
     next.waterLevel = this.waterLevel
     // Shift chunk water level keys by the offset
@@ -560,6 +564,7 @@ export class MapData {
       width: this.width,
       height: this.height,
       mapType: this.mapType,
+      defaultGround: this.defaultGround,
       worldOffset: { ...this.worldOffset },
       waterLevel: this.waterLevel,
       chunkWaterLevels: { ...this.chunkWaterLevels },
@@ -574,9 +579,10 @@ export class MapData {
   }
 
   static fromJSON(data: Partial<MapDataJSON> & { width: number; height: number }): MapData {
-    const map = new MapData(data.width, data.height)
+    const map = new MapData(data.width, data.height, defaultGroundForMap(data))
 
     map.mapType = data.mapType === 'dungeon' ? 'dungeon' : 'overworld'
+    map.defaultGround = defaultGroundForMap(map)
     map.worldOffset = {
       x: typeof data.worldOffset?.x === 'number' ? data.worldOffset.x : 0,
       z: typeof data.worldOffset?.z === 'number' ? data.worldOffset.z : 0
@@ -611,7 +617,7 @@ export class MapData {
             : legacyCutAngleFromSplit(src.split)
 
           map.tiles[z][x] = {
-            ground: src.ground || 'grass',
+            ground: src.ground || map.defaultGround,
             groundB: src.groundB || null,
             split: src.split || 'forward',
             textureId: src.textureId || null,

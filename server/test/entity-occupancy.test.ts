@@ -53,6 +53,20 @@ describe('entity occupancy', () => {
     expect(world.entityTileOccupants.size).toBe(0);
   });
 
+  test('even-sized NPCs reserve the same shared footprint tiles as combat', () => {
+    const world = makeWorldHarness();
+    const npc = new Npc({ ...npcDef, size: 2 }, 10.5, 10.5);
+    world.npcs.set(npc.id, npc);
+
+    world.rebuildEntityTileOccupants();
+
+    expect(world.entityTileOccupants.has(world.entityTileKeyFor(npc.currentMapLevel, 9, 9, npc.currentFloor))).toBe(true);
+    expect(world.entityTileOccupants.has(world.entityTileKeyFor(npc.currentMapLevel, 9, 10, npc.currentFloor))).toBe(true);
+    expect(world.entityTileOccupants.has(world.entityTileKeyFor(npc.currentMapLevel, 10, 9, npc.currentFloor))).toBe(true);
+    expect(world.entityTileOccupants.has(world.entityTileKeyFor(npc.currentMapLevel, 10, 10, npc.currentFloor))).toBe(true);
+    expect(world.entityTileOccupants.has(world.entityTileKeyFor(npc.currentMapLevel, 11, 11, npc.currentFloor))).toBe(false);
+  });
+
   test('players do not block other players movement tiles', () => {
     const world = makeWorldHarness();
     const alice = new Player('alice', 1.5, 1.5, fakeWs, 1);

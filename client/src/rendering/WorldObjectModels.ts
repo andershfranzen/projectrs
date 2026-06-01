@@ -8,7 +8,7 @@ interface ModelTemplate { template: TransformNode; scale: number; }
 
 const TREE_MODEL_CONFIG: { defId: number; files: string[]; targetHeight: number; stumpFile: string }[] = [
   { defId: 1, files: ['sTree_1.glb', 'sTree_2.glb', 'stree_3.glb', 'sTree4.glb', 'stree_autumn.glb'], targetHeight: 3.45, stumpFile: 'stump1.glb' },
-  { defId: 2, files: ['oaktree2.glb'], targetHeight: 4.3, stumpFile: 'oakstump.glb' },
+  { defId: 2, files: ['/assets/models/oaktree.glb', 'oaktree2.glb'], targetHeight: 4.3, stumpFile: 'oakstump.glb' },
   { defId: 9, files: ['willow_tree.glb'], targetHeight: 4.6, stumpFile: 'willowstump.glb' },
   { defId: 10, files: ['DeadTreeLam.glb'], targetHeight: 2.875, stumpFile: 'stump2.glb' },
   { defId: 14, files: ['/assets/models/maple tree.glb'], targetHeight: 4.6, stumpFile: 'maplestump.glb' },

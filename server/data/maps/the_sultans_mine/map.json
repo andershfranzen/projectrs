@@ -2,9 +2,10 @@
   "map": {
     "width": 256,
     "height": 192,
-    "mapType": "overworld",
+    "mapType": "dungeon",
+    "defaultGround": "void",
     "worldOffset": {
-      "x": 0,
+      "x": 2000,
       "z": 0
     },
     "waterLevel": -2.5,

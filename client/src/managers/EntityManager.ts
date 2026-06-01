@@ -218,6 +218,7 @@ export class EntityManager {
       name: `npc_${entityId}`,
       modelPath: getCharacterModelPath(this.npcAppearances.get(entityId) ?? null),
       targetHeight: CHARACTER_TARGET_HEIGHT,
+      tileSize,
       // No floating label — NPCs introduce themselves via chat on interaction
       // instead. Identity is still surfaced through the hover tooltip + the
       // right-click menu label.

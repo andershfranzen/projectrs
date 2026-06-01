@@ -14,6 +14,7 @@ import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '../../../shared/appearance';
+import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectFootprint';
 import type { CustomColors, HeadRenderMode } from '../../../shared/types';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
@@ -225,6 +226,8 @@ export interface CharacterEntityOptions {
   /** Label shown above head */
   label?: string;
   labelColor?: string;
+  /** Gameplay footprint width for NPCs rendered through the character rig. */
+  tileSize?: number;
   /**
    * Additional animations to load from separate GLB files.
    * Use this when you can't (or don't want to) merge animations in Blender.
@@ -262,6 +265,9 @@ export class CharacterEntity {
   private childYOffset: number = 0; // -minY applied to root children so feet are at y=0
   private layerMask: number | undefined = undefined;
   private renderEnabled: boolean = true;
+  /** Gameplay position is the authoritative footprint anchor. Render and aim
+   *  from the footprint center so even-width NPCs visually match melee tiles. */
+  private footprintWidth: number = 1;
 
   // Animations — keyed by name as exported from Blender NLA strips
   private animGroups: Map<string, AnimationGroup> = new Map();
@@ -424,6 +430,7 @@ export class CharacterEntity {
     this.scene = scene;
     this.modelPath = options.modelPath;
     this.layerMask = options.layerMask;
+    this.footprintWidth = Math.max(1, Math.round(options.tileSize ?? 1));
     this._readyPromise = new Promise((resolve) => {
       this._resolveReady = resolve;
     });
@@ -436,6 +443,19 @@ export class CharacterEntity {
 
   getModelPath(): string {
     return this.modelPath;
+  }
+
+  private visualX(x: number = this._position.x): number {
+    return getObjectFootprintContinuousCenterCoord(x, this.footprintWidth);
+  }
+
+  private visualZ(z: number = this._position.z): number {
+    return getObjectFootprintContinuousCenterCoord(z, this.footprintWidth);
+  }
+
+  private setRootPositionFromLogical(): void {
+    if (!this.root) return;
+    this.root.position.set(this.visualX(), this._position.y + this.feetOffsetY, this.visualZ());
   }
 
   // ---------------------------------------------------------------------------
@@ -686,7 +706,7 @@ export class CharacterEntity {
       this.playAnimByState(this.queuedState === AnimState.Walk ? AnimState.Walk : AnimState.Idle);
 
       // Apply initial position (with feet offset)
-      this.root.position.set(this._position.x, this._position.y + this.feetOffsetY, this._position.z);
+      this.setRootPositionFromLogical();
 
       // Picking proxy — the ONLY pickable mesh on the character. All
       // skinned meshes (body, hair, gear) are forced non-pickable in
@@ -1403,8 +1423,8 @@ export class CharacterEntity {
   /** No-allocation variant of faceToward — accepts raw x/z so the per-frame
    *  combat-follow loop doesn't need to construct a Vector3. */
   faceTowardXZ(x: number, z: number): void {
-    const dx = x - this._position.x;
-    const dz = z - this._position.z;
+    const dx = x - this.visualX();
+    const dz = z - this.visualZ();
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     this.attackFaceLockUntilMs = 0;
     this.targetRotationY = Math.atan2(dx, dz);
@@ -1420,8 +1440,8 @@ export class CharacterEntity {
 
   /** No-allocation overload for the per-frame combat hot path. */
   lockFaceTowardXZ(x: number, z: number): void {
-    const dx = x - this._position.x;
-    const dz = z - this._position.z;
+    const dx = x - this.visualX();
+    const dz = z - this.visualZ();
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     this.targetRotationY = Math.atan2(dx, dz);
     this.faceLocked = true;
@@ -1431,8 +1451,8 @@ export class CharacterEntity {
    *  continues. This prevents local walk prediction from immediately pulling
    *  bow shots back toward travel direction. */
   lockAttackFaceTowardXZ(x: number, z: number, durationMs: number): void {
-    const dx = x - this._position.x;
-    const dz = z - this._position.z;
+    const dx = x - this.visualX();
+    const dz = z - this.visualZ();
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     this.targetRotationY = Math.atan2(dx, dz);
     this.faceLocked = true;
@@ -1528,16 +1548,12 @@ export class CharacterEntity {
 
   set position(pos: Vector3) {
     this._position = pos;
-    if (this.root) {
-      this.root.position.set(pos.x, pos.y + this.feetOffsetY, pos.z);
-    }
+    this.setRootPositionFromLogical();
   }
 
   setPositionXYZ(x: number, y: number, z: number): void {
     this._position.set(x, y, z);
-    if (this.root) {
-      this.root.position.set(x, y + this.feetOffsetY, z);
-    }
+    this.setRootPositionFromLogical();
   }
 
   // ---------------------------------------------------------------------------
@@ -2279,7 +2295,7 @@ export class CharacterEntity {
   getHealthBarWorldPos(out?: Vector3): Vector3 | null {
     if (!this.healthBarVisible || !this.healthBarEl) return null;
     const v = out ?? new Vector3();
-    v.set(this._position.x, this._position.y + this.yOffset * 2 + 0.3, this._position.z);
+    v.set(this.visualX(), this._position.y + this.yOffset * 2 + 0.3, this.visualZ());
     return v;
   }
 
@@ -2320,7 +2336,7 @@ export class CharacterEntity {
   getChatBubbleWorldPos(out?: Vector3): Vector3 | null {
     if (!this.chatBubbleEl) return null;
     const v = out ?? new Vector3();
-    v.set(this._position.x, this._position.y + this.yOffset * 2 + 0.6, this._position.z);
+    v.set(this.visualX(), this._position.y + this.yOffset * 2 + 0.6, this.visualZ());
     return v;
   }
 
@@ -2370,7 +2386,7 @@ export class CharacterEntity {
   getLabelWorldPos(out?: Vector3): Vector3 | null {
     if (!this.labelEl) return null;
     const v = out ?? new Vector3();
-    v.set(this._position.x, this._position.y + this.yOffset * 2 + 0.95, this._position.z);
+    v.set(this.visualX(), this._position.y + this.yOffset * 2 + 0.95, this.visualZ());
     return v;
   }
 
@@ -2450,7 +2466,7 @@ export class CharacterEntity {
   getTargetAnchor(): Vector3 {
     const p = this.getBoneWorldPosition('mixamorig:Spine2');
     if (p) return p;
-    return new Vector3(this._position.x, this._position.y + this.yOffset, this._position.z);
+    return new Vector3(this.visualX(), this._position.y + this.yOffset, this.visualZ());
   }
 
   // ---------------------------------------------------------------------------

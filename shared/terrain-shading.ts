@@ -48,6 +48,7 @@ export function groundColor(type: GroundType, shade: number): RGB {
     case 'drysand':       r = 0.62; g = 0.42; b = 0.22; break;
     case 'dungeon-floor': r = 0.22; g = 0.17; b = 0.11; break;
     case 'dungeon-rock':  r = 0.28; g = 0.20; b = 0.12; break;
+    case 'void':          r = 0.00; g = 0.00; b = 0.00; break;
     default:              r = 0.13; g = 0.43; b = 0.07; break; // grass
   }
 

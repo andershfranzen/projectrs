@@ -7,6 +7,7 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import '@babylonjs/loaders/glTF';
+import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectFootprint';
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
@@ -94,6 +95,15 @@ function resolveAnimationGroup(
   return groups.find((group) => animationNameMatchesRole(group.name, role));
 }
 
+interface AnimationFade {
+  group: AnimationGroup;
+  from: number;
+  to: number;
+  startMs: number;
+  durationMs: number;
+  stopOnDone: boolean;
+}
+
 /**
  * 3D NPC entity — loads a GLB with embedded animations.
  * Exposes the same public interface as SpriteEntity so it can be used interchangeably.
@@ -111,9 +121,9 @@ export class Npc3DEntity {
   private groundOffset: number = 0;
   private facingOffsetY: number = 0;
   private renderEnabled: boolean = true;
-  /** Server positions are already centered on the NPC footprint. Kept as a
-   *  field so existing position/facing code can share one render anchor. */
-  private renderOffset: number = 0;
+  /** Gameplay position is the authoritative footprint anchor. Render and aim
+   *  from the footprint center so even-width mobs visually match melee tiles. */
+  private footprintWidth: number = 1;
 
   // Animations keyed by role (idle, walk, attack, death)
   private animGroups: Map<string, AnimationGroup> = new Map();
@@ -124,6 +134,8 @@ export class Npc3DEntity {
   private animationEnabled: boolean = true;
   private missingAnimationWarnings = new Set<string>();
   private _walking: boolean = false;
+  private animationFades: AnimationFade[] = [];
+  private static readonly ANIMATION_BLEND_MS = 160;
 
   // Health bar (HTML overlay — same as SpriteEntity)
   private healthBarEl: HTMLDivElement | null = null;
@@ -159,12 +171,25 @@ export class Npc3DEntity {
     this.facingOffsetY = options.facingOffsetY ?? 0;
     this.animSpeedRatio = options.animSpeedRatio ?? {};
     this.preserveAnimationRoles = new Set(options.preserveAnimationRoles ?? []);
-    this.renderOffset = 0;
+    this.footprintWidth = Math.max(1, Math.round(options.tileSize ?? 1));
     this.load(file, animMap, options.label, options.materialColors);
   }
 
   private visualY(y: number): number {
     return y + this.groundOffset;
+  }
+
+  private visualX(x: number = this._position.x): number {
+    return getObjectFootprintContinuousCenterCoord(x, this.footprintWidth);
+  }
+
+  private visualZ(z: number = this._position.z): number {
+    return getObjectFootprintContinuousCenterCoord(z, this.footprintWidth);
+  }
+
+  private setRootPositionFromLogical(): void {
+    if (!this.root) return;
+    this.root.position.set(this.visualX(), this.visualY(this._position.y), this.visualZ());
   }
 
   private applyRootRotation(): void {
@@ -283,7 +308,7 @@ export class Npc3DEntity {
 
       if (this._walking && this.animGroups.has('walk')) this.playAnim('walk', true);
       else this.playAnim('idle', true);
-      this.root.position.set(this._position.x + this.renderOffset, this.visualY(this._position.y), this._position.z + this.renderOffset);
+      this.setRootPositionFromLogical();
       if (!this.renderEnabled) this.root.setEnabled(false);
       this._ready = true;
       // Force enable all meshes
@@ -298,14 +323,93 @@ export class Npc3DEntity {
     }
   }
 
+  private animationBlendDurationMs(from: string, to: string): number {
+    if (!from || from === to) return 0;
+    if (from === 'death' || to === 'death') return 0;
+    return Npc3DEntity.ANIMATION_BLEND_MS;
+  }
+
+  private currentAnimationWeight(group: AnimationGroup): number {
+    const weight = group.weight;
+    if (!Number.isFinite(weight) || weight < 0) return 1;
+    return Math.max(0, Math.min(1, weight));
+  }
+
+  private setAnimationWeight(group: AnimationGroup, weight: number): void {
+    const clamped = Math.max(0, Math.min(1, weight));
+    group.weight = clamped;
+    group.setWeightForAllAnimatables(clamped);
+  }
+
+  private removeAnimationFade(group: AnimationGroup): void {
+    for (let i = this.animationFades.length - 1; i >= 0; i--) {
+      if (this.animationFades[i].group === group) this.animationFades.splice(i, 1);
+    }
+  }
+
+  private queueAnimationFade(
+    group: AnimationGroup,
+    from: number,
+    to: number,
+    durationMs: number,
+    stopOnDone: boolean,
+  ): void {
+    this.removeAnimationFade(group);
+    if (durationMs <= 0) {
+      this.setAnimationWeight(group, to);
+      if (stopOnDone) {
+        group.stop(true);
+        this.setAnimationWeight(group, 1);
+      }
+      return;
+    }
+    this.animationFades.push({
+      group,
+      from,
+      to,
+      startMs: performance.now(),
+      durationMs,
+      stopOnDone,
+    });
+  }
+
+  private updateAnimationFades(now: number = performance.now()): void {
+    for (let i = this.animationFades.length - 1; i >= 0; i--) {
+      const fade = this.animationFades[i];
+      const t = Math.min(1, Math.max(0, (now - fade.startMs) / fade.durationMs));
+      this.setAnimationWeight(fade.group, fade.from + (fade.to - fade.from) * t);
+      if (t < 1) continue;
+      this.animationFades.splice(i, 1);
+      if (fade.stopOnDone) {
+        fade.group.stop(true);
+        this.setAnimationWeight(fade.group, 1);
+      } else {
+        this.setAnimationWeight(fade.group, fade.to);
+      }
+    }
+  }
+
+  private stopAnimationFades(): void {
+    if (this.animationFades.length === 0) return;
+    for (const fade of this.animationFades) {
+      if (fade.stopOnDone) fade.group.stop(true);
+      this.setAnimationWeight(fade.group, 1);
+    }
+    this.animationFades = [];
+  }
+
+  private stopAllAnimationGroups(): void {
+    this.stopAnimationFades();
+    for (const [, anim] of this.animGroups) {
+      anim.stop(true);
+      this.setAnimationWeight(anim, 1);
+    }
+  }
+
   private playAnim(name: string, loop: boolean): void {
     if (name === this.currentAnim && loop) {
       const currentGroup = this.animGroups.get(name);
       if (!this.renderEnabled || currentGroup?.isPlaying) return;
-    }
-    if (this.currentAnim) {
-      const cur = this.animGroups.get(this.currentAnim);
-      cur?.stop();
     }
     const group = this.animGroups.get(name);
     if (!group) {
@@ -315,10 +419,39 @@ export class Npc3DEntity {
       }
       return;
     }
+
+    const oldName = this.currentAnim;
+    const oldGroup = oldName ? this.animGroups.get(oldName) : null;
+    const shouldAnimate = this.animationEnabled && this.renderEnabled;
+    const shouldBlend = Boolean(
+      shouldAnimate
+      && oldGroup
+      && oldGroup !== group
+      && oldGroup.isPlaying,
+    );
+    const blendMs = shouldBlend ? this.animationBlendDurationMs(oldName, name) : 0;
+
+    if (oldGroup && oldGroup !== group) {
+      if (shouldBlend && blendMs > 0) {
+        this.queueAnimationFade(oldGroup, this.currentAnimationWeight(oldGroup), 0, blendMs, true);
+      } else {
+        this.removeAnimationFade(oldGroup);
+        oldGroup.stop(true);
+        this.setAnimationWeight(oldGroup, 1);
+      }
+    }
+
     this.currentAnim = name;
     this.currentAnimLoop = loop;
-    if (this.animationEnabled && this.renderEnabled) {
+    this.removeAnimationFade(group);
+    if (shouldAnimate) {
       group.start(loop, this.getAnimSpeedRatio(name), group.from, group.to, false);
+      if (shouldBlend && blendMs > 0) {
+        this.setAnimationWeight(group, 0);
+        this.queueAnimationFade(group, 0, 1, blendMs, false);
+      } else {
+        this.setAnimationWeight(group, 1);
+      }
     }
   }
 
@@ -353,9 +486,11 @@ export class Npc3DEntity {
     const group = this.currentAnim ? this.animGroups.get(this.currentAnim) : null;
     if (!group) return;
     if (enabled && this.renderEnabled) {
+      this.stopAnimationFades();
       group.start(this.currentAnimLoop, this.getAnimSpeedRatio(this.currentAnim), group.from, group.to, false);
+      this.setAnimationWeight(group, 1);
     } else {
-      group.stop();
+      this.stopAllAnimationGroups();
     }
   }
 
@@ -369,7 +504,7 @@ export class Npc3DEntity {
     if (this.root) this.root.setEnabled(enabled);
     const group = this.currentAnim ? this.animGroups.get(this.currentAnim) : null;
     if (!enabled) {
-      for (const [, anim] of this.animGroups) anim.stop();
+      this.stopAllAnimationGroups();
       if (this.healthBarEl) {
         this.healthBarEl.style.left = '-9999px';
         this.healthBarEl.style.top = '-9999px';
@@ -379,7 +514,9 @@ export class Npc3DEntity {
         this.chatBubbleEl.style.top = '-9999px';
       }
     } else if (group && this.animationEnabled) {
+      this.stopAnimationFades();
       group.start(this.currentAnimLoop, this.getAnimSpeedRatio(this.currentAnim), group.from, group.to, false);
+      this.setAnimationWeight(group, 1);
     }
   }
 
@@ -391,18 +528,18 @@ export class Npc3DEntity {
 
   setPositionXYZ(x: number, y: number, z: number): void {
     this._position.set(x, y, z);
-    if (this.root) this.root.position.set(x + this.renderOffset, this.visualY(y), z + this.renderOffset);
+    this.setRootPositionFromLogical();
   }
 
   get position(): Vector3 { return this._position; }
   set position(pos: Vector3) {
     this._position = pos;
-    if (this.root) this.root.position.set(pos.x + this.renderOffset, this.visualY(pos.y), pos.z + this.renderOffset);
+    this.setRootPositionFromLogical();
   }
 
   /** World-space point projectiles aim at: roughly chest-height above the NPC's base. */
   getTargetAnchor(): Vector3 {
-    return new Vector3(this._position.x + this.renderOffset, this._position.y + 0.7, this._position.z + this.renderOffset);
+    return new Vector3(this.visualX(), this._position.y + 0.7, this.visualZ());
   }
 
   startWalking(): void {
@@ -428,6 +565,7 @@ export class Npc3DEntity {
     const group = this.animGroups.get('attack');
     if (group) {
       group.onAnimationGroupEndObservable.addOnce(() => {
+        if (this.currentAnim !== 'attack') return;
         if (this._walking) this.playAnim('walk', true);
         else this.playAnim('idle', true);
       });
@@ -444,6 +582,7 @@ export class Npc3DEntity {
 
   updateAnimation(dt: number): void {
     if (!this.root) return;
+    this.updateAnimationFades();
     const newYaw = rs2Rotation(this._rotationY, this.targetRotationY, dt);
     if (newYaw !== this._rotationY) {
       this._rotationY = newYaw;
@@ -470,8 +609,8 @@ export class Npc3DEntity {
   }
 
   faceToward(target: Vector3, _cameraPos?: Vector3): void {
-    const dx = target.x - (this._position.x + this.renderOffset);
-    const dz = target.z - (this._position.z + this.renderOffset);
+    const dx = target.x - this.visualX();
+    const dz = target.z - this.visualZ();
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
     this.targetRotationY = Math.atan2(dx, dz);
   }
@@ -507,7 +646,7 @@ export class Npc3DEntity {
   getHealthBarWorldPos(out?: Vector3): Vector3 | null {
     if (!this.healthBarVisible) return null;
     const v = out ?? new Vector3();
-    v.set(this._position.x + this.renderOffset, this._position.y + this.yOffset * 2 + 0.3, this._position.z + this.renderOffset);
+    v.set(this.visualX(), this._position.y + this.yOffset * 2 + 0.3, this.visualZ());
     return v;
   }
 
@@ -539,7 +678,7 @@ export class Npc3DEntity {
   getChatBubbleWorldPos(out?: Vector3): Vector3 | null {
     if (!this.chatBubbleEl) return null;
     const v = out ?? new Vector3();
-    v.set(this._position.x + this.renderOffset, this._position.y + this.yOffset * 2 + 0.6, this._position.z + this.renderOffset);
+    v.set(this.visualX(), this._position.y + this.yOffset * 2 + 0.6, this.visualZ());
     return v;
   }
 
@@ -591,7 +730,8 @@ export class Npc3DEntity {
     this.disposed = true;
     this.hideChatBubble();
     this.hideHealthBar();
-    for (const [, group] of this.animGroups) { group.stop(); group.dispose(); }
+    this.stopAnimationFades();
+    for (const [, group] of this.animGroups) { group.stop(true); group.dispose(); }
     this.animGroups.clear();
     for (const mesh of this.meshes) mesh.dispose();
     if (this.root) this.root.dispose();

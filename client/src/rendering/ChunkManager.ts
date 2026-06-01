@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -157,6 +157,7 @@ export class ChunkManager {
   private mapWidth: number = 0;
   private mapHeight: number = 0;
   private activeChunks: Set<string> | null = null; // editor 64x64 chunks
+  private defaultGround: GroundType = 'grass';
   private chunkCols: number = 0;
   private chunkRows: number = 0;
   private defaultWaterLevel: number = -0.3;
@@ -568,6 +569,7 @@ export class ChunkManager {
     const mapFile: KCMapFile = await mapRes.json();
     if (isStale()) return;
     this.mapData = mapFile.map;
+    this.defaultGround = defaultGroundForMap(this.mapData);
     this.activeChunks = Array.isArray(this.mapData.activeChunks)
       ? new Set(this.mapData.activeChunks)
       : null;
@@ -596,7 +598,7 @@ export class ChunkManager {
             continue;
           }
           const tile = this.getTileRaw(x, z);
-          if (!tile) { this.tileTypes[z * this.mapWidth + x] = TileType.GRASS; continue; }
+          if (!tile) { this.tileTypes[z * this.mapWidth + x] = this.defaultGround === 'void' ? TileType.WALL : TileType.GRASS; continue; }
           const corners = this.getTileCornerHeights(x, z);
           const wl = this.getChunkWaterLevel(x, z);
           this.tileTypes[z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
@@ -824,7 +826,7 @@ export class ChunkManager {
 
   private getBaseGroundType(x: number, z: number): GroundType {
     const tile = this.getTileRaw(x, z);
-    return tile?.ground ?? 'grass';
+    return tile?.ground ?? this.defaultGround;
   }
 
   private getChunkWaterLevel(tileX: number, tileZ: number): number {
@@ -886,7 +888,6 @@ export class ChunkManager {
   private shouldRenderWater(x: number, z: number): boolean {
     const tile = this.getTileRaw(x, z);
     if (!tile) return false;
-    if (tile.waterPainted) return true;
     const corners = this.getTileCornerHeights(x, z);
     return shouldTileRenderWater(tile, corners, this.getChunkWaterLevel(x, z));
   }
@@ -927,13 +928,14 @@ export class ChunkManager {
     for (const [nx, nz] of sharingTiles) {
       if (!this.getTileRaw(nx, nz)) continue;
       const type = this.getBaseGroundType(nx, nz);
+      if (type === 'void') continue;
       if (type === 'road') continue;
       const c = groundColor(type, 1.0);
       r += c.r; g += c.g; b += c.b;
       noise += getNoiseExtra(type, cornerX, cornerZ);
       totalWeight += 1;
     }
-    if (totalWeight === 0) return groundColor('grass', shade);
+    if (totalWeight === 0) return groundColor(this.defaultGround, shade);
     const s = shade + noise / totalWeight;
     return { r: (r / totalWeight) * s, g: (g / totalWeight) * s, b: (b / totalWeight) * s };
   }
@@ -1429,7 +1431,7 @@ export class ChunkManager {
               continue;
             }
             const tile = this.getTileRaw(x, z);
-            if (!tile) { this.tileTypes[z * this.mapWidth + x] = TileType.GRASS; continue; }
+            if (!tile) { this.tileTypes[z * this.mapWidth + x] = this.defaultGround === 'void' ? TileType.WALL : TileType.GRASS; continue; }
             const corners = this.getTileCornerHeights(x, z);
             const wl = this.getChunkWaterLevel(x, z);
             this.tileTypes[z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
@@ -1457,7 +1459,7 @@ export class ChunkManager {
   /** Expand a sparse/partial tile object into a full KCTile */
   private expandTile(partial: Partial<KCTile>): KCTile {
     return {
-      ground: partial.ground ?? 'grass',
+      ground: partial.ground ?? this.defaultGround,
       groundB: partial.groundB ?? null,
       split: partial.split ?? 'forward',
       textureId: partial.textureId ?? null,
@@ -1530,7 +1532,8 @@ export class ChunkManager {
         if (this.activeChunks && !this.activeChunks.has(`${Math.floor(x / EDITOR_CHUNK_SIZE)},${Math.floor(z / EDITOR_CHUNK_SIZE)}`)) continue;
         if (this.holeTiles.has(z * this.mapWidth + x)) continue; // skip ground for terrain holes
         const tile = this.getTileRaw(x, z);
-        const tileType = tile?.ground ?? 'grass';
+        const tileType = tile?.ground ?? this.defaultGround;
+        if (tileType === 'void') continue;
         const h = this.getTileCornerHeights(x, z);
         const splitDir = tile?.split ?? 'forward';
         const groundBType = tile?.groundB ?? null;
@@ -1692,6 +1695,7 @@ export class ChunkManager {
 
     for (let x = startX; x < endX; x++) {
       for (let z = startZ; z < endZ; z++) {
+        if (this.getBaseGroundType(x, z) === 'void') continue;
         if (!this.shouldRenderWater(x, z)) continue;
         if (this.holeTiles.has(z * this.mapWidth + x)) continue; // no water in holes
         hasWater = true;
@@ -1736,6 +1740,7 @@ export class ChunkManager {
     for (let x = startX; x < endX; x++) {
       for (let z = startZ; z < endZ; z++) {
         const tile = this.getTileRaw(x, z);
+        if (tile?.ground === 'void') continue;
         if (!tile?.waterSurface) continue;
         hasWater = true;
 
@@ -1938,6 +1943,7 @@ export class ChunkManager {
       for (let z = startZ; z < endZ; z++) {
         if (this.holeTiles.has(z * this.mapWidth + x)) continue;
         const tile = this.getTileRaw(x, z);
+        if (tile?.ground === 'void') continue;
         if (!tile || (!tile.textureId && !tile.textureIdB)) continue;
 
         const h = this.getTileCornerHeights(x, z);
@@ -2881,9 +2887,17 @@ export class ChunkManager {
         if (tx < 0 || tz < 0 || tx >= this.mapWidth || tz >= this.mapHeight) continue;
 
         const flatIdx = tz * this.mapWidth + tx;
+        const kcTile = this.getTileRaw(tx, tz);
+        const hasSurfaceOverride = this.floorHeights.has(flatIdx)
+          || this.texturePlaneFloorTiles.has(flatIdx)
+          || this.stairData.has(flatIdx)
+          || this.roofData.has(flatIdx);
+        if ((kcTile?.ground ?? this.defaultGround) === 'void' && !hasSurfaceOverride) {
+          voidTiles[idx] = 1;
+          continue;
+        }
         if (this.roofData.has(flatIdx)) roofs[idx] = 1;
 
-        const kcTile = this.getTileRaw(tx, tz);
         if (kcTile) {
           const id = GROUND_TYPE_ID[kcTile.ground];
           if (id !== undefined) grounds[idx] = id;
@@ -4860,6 +4874,7 @@ export class ChunkManager {
     this.tileTypes = null;
     this.mapData = null;
     this.activeChunks = null;
+    this.defaultGround = 'grass';
     this.chunkCols = 0;
     this.chunkRows = 0;
     this.defaultWaterLevel = -0.3;

@@ -1,6 +1,8 @@
 {
   "id": "the_sultans_mine",
   "name": "The_sultans_mine",
+  "mapType": "dungeon",
+  "dungeon": true,
   "width": 256,
   "height": 192,
   "waterLevel": -2.5,
@@ -9,11 +11,11 @@
     "z": 32.5
   },
   "fogColor": [
-    0.4,
-    0.6,
-    0.9
+    0.05,
+    0.02,
+    0.08
   ],
-  "fogStart": 30,
-  "fogEnd": 50,
+  "fogStart": 8,
+  "fogEnd": 25,
   "transitions": []
 }

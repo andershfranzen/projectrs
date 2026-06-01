@@ -2727,8 +2727,8 @@ export class SidePanel {
 
     this.requestQuantity({
       inputType: 'choice',
-      title: 'Carve Logs',
-      prompt: 'Choose what to carve from your logs.',
+      title: 'Carve Log',
+      prompt: 'Choose what to carve from this log.',
       details: [
         `You have ${this.formatLogs(logsHeld, logItemId)}.`,
       ],
@@ -2922,11 +2922,7 @@ export class SidePanel {
   }
 
   private formatLogs(quantity: number, itemId: number = LOGS_ITEM_ID): string {
-    const itemName = this.itemDefs.get(itemId)?.name ?? 'Logs';
-    if (quantity === 1) {
-      if (itemName === 'Logs') return '1 log';
-      if (itemName.endsWith(' Logs')) return `1 ${itemName.slice(0, -1).toLowerCase()}`;
-    }
+    const itemName = this.itemDefs.get(itemId)?.name ?? 'Log';
     return `${quantity} ${this.pluralizeItemName(itemName, quantity).toLowerCase()}`;
   }
 

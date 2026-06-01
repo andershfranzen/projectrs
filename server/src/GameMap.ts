@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, type StairAssetConfig } from '@projectrs/shared';
+import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, defaultGroundForMap, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, type StairAssetConfig } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, KCMapFile, KCMapData, KCTile, PlacedObject } from '@projectrs/shared';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
@@ -119,7 +119,8 @@ export class GameMap {
     this.mapData = mapFile.map;
 
     // Try loading tiles/heights from per-chunk files (falls back to map.json inline data)
-    const chunkedTiles = GameMap.loadChunkedTiles(dir, this.width, this.height);
+    const defaultGround = defaultGroundForMap(this.mapData);
+    const chunkedTiles = GameMap.loadChunkedTiles(dir, this.width, this.height, defaultGround);
     if (chunkedTiles) this.mapData.tiles = chunkedTiles;
     const chunkedHeights = GameMap.loadChunkedHeights(dir, this.width, this.height);
     if (chunkedHeights) this.mapData.heights = chunkedHeights;
@@ -186,7 +187,7 @@ export class GameMap {
         }
         const tile = this.mapData.tiles[z]?.[x];
         if (!tile) {
-          this.tileTypes[z * this.width + x] = TileType.GRASS;
+          this.tileTypes[z * this.width + x] = defaultGround === 'void' ? TileType.WALL : TileType.GRASS;
           continue;
         }
         // Check if this tile is effectively water (painted or below water level)
@@ -1229,7 +1230,7 @@ export class GameMap {
   private static readonly EDITOR_CHUNK_SIZE = 64;
 
   /** Load tiles from per-chunk files under tiles/. Returns null if directory doesn't exist. */
-  private static loadChunkedTiles(mapDir: string, width: number, height: number): KCTile[][] | null {
+  private static loadChunkedTiles(mapDir: string, width: number, height: number, defaultGround: KCTile['ground'] = 'grass'): KCTile[][] | null {
     const tilesDir = resolve(mapDir, 'tiles');
     if (!existsSync(tilesDir)) return null;
 
@@ -1237,7 +1238,7 @@ export class GameMap {
     for (let z = 0; z < height; z++) {
       const row: KCTile[] = [];
       for (let x = 0; x < width; x++) {
-        row.push(defaultKCTile());
+        row.push(defaultKCTile(defaultGround));
       }
       tiles.push(row);
     }
@@ -1261,7 +1262,7 @@ export class GameMap {
           const z = startZ + parseInt(localZStr);
           const x = startX + parseInt(localXStr);
           if (z >= 0 && z < height && x >= 0 && x < width) {
-            tiles[z][x] = { ...defaultKCTile(), ...partial };
+            tiles[z][x] = { ...defaultKCTile(defaultGround), ...partial };
           }
         }
       }

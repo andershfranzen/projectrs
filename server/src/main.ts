@@ -1,9 +1,9 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, DEFAULT_CUT_ANGLE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
-import type { CustomColors, FloorLayerData, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, TileType } from '@projectrs/shared';
+import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, TileType } from '@projectrs/shared';
 import { World } from './World';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
@@ -448,31 +448,17 @@ function queueMapBackup(mapDir: string, maxKeep: number = 20): Promise<void> {
 
 const EDITOR_CHUNK_SIZE = 64;
 
-/** Default tile values for stripping unchanged fields */
-const TILE_DEFAULTS: Record<string, any> = {
-  ground: 'grass',
-  groundB: null,
-  split: 'forward',
-  textureId: null,
-  textureRotation: 0,
-  textureScale: 1,
-  textureWorldUV: false,
-  textureHalfMode: false,
-  textureIdB: null,
-  textureRotationB: 0,
-  textureScaleB: 1,
-  textureCutAngle: DEFAULT_CUT_ANGLE,
-  textureCutOffset: 0,
-  waterPainted: false,
-  waterSurface: false,
-};
+function tileDefaults(defaultGround: GroundType): KCTile {
+  return defaultKCTile(defaultGround);
+}
 
 /** Strip default fields from a tile, returning only non-default values */
-function stripTileDefaults(tile: KCTile): Partial<KCTile> | null {
+function stripTileDefaults(tile: KCTile, defaultGround: GroundType = 'grass'): Partial<KCTile> | null {
+  const defaults = tileDefaults(defaultGround);
   const stripped: Partial<KCTile> = {};
   let hasNonDefault = false;
-  for (const key of Object.keys(TILE_DEFAULTS) as (keyof KCTile)[]) {
-    if (tile[key] !== TILE_DEFAULTS[key]) {
+  for (const key of Object.keys(defaults) as (keyof KCTile)[]) {
+    if (tile[key] !== defaults[key]) {
       (stripped as Record<string, unknown>)[key] = tile[key];
       hasNonDefault = true;
     }
@@ -481,12 +467,12 @@ function stripTileDefaults(tile: KCTile): Partial<KCTile> | null {
 }
 
 /** Expand a partial tile back to a full KCTile */
-function expandTile(partial: Partial<KCTile>): KCTile {
-  return { ...defaultKCTile(), ...partial };
+function expandTile(partial: Partial<KCTile>, defaultGround: GroundType = 'grass'): KCTile {
+  return { ...defaultKCTile(defaultGround), ...partial };
 }
 
 /** Save tiles as per-chunk JSON files */
-async function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number, height: number): Promise<void> {
+async function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number, height: number, defaultGround: GroundType = 'grass'): Promise<void> {
   const tilesDir = resolve(mapDir, 'tiles');
   await fsp.mkdir(tilesDir, { recursive: true });
 
@@ -507,7 +493,7 @@ async function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number
         for (let x = startX; x < endX; x++) {
           const tile = tiles[z]?.[x];
           if (!tile) continue;
-          const stripped = stripTileDefaults(tile);
+          const stripped = stripTileDefaults(tile, defaultGround);
           if (stripped) {
             const localZ = z - startZ;
             const localX = x - startX;
@@ -528,7 +514,7 @@ async function saveChunkedTiles(mapDir: string, tiles: KCTile[][], width: number
   // Partial-payload guard: if the editor sent a tiles array with zero
   // non-default tiles across the entire map, treat it as an empty payload
   // and preserve existing chunk files instead of deleting them.
-  if (written.size === 0) return;
+  if (written.size === 0 && defaultGround === 'grass') return;
 
   try {
     const files = await fsp.readdir(tilesDir);
@@ -594,7 +580,7 @@ async function saveChunkedHeights(mapDir: string, heights: number[][], width: nu
 }
 
 /** Load tiles from per-chunk files. Returns null if tiles/ dir doesn't exist (fall back to map.json). */
-function loadChunkedTiles(mapDir: string, width: number, height: number): KCTile[][] | null {
+function loadChunkedTiles(mapDir: string, width: number, height: number, defaultGround: GroundType = 'grass'): KCTile[][] | null {
   const tilesDir = resolve(mapDir, 'tiles');
   if (!existsSync(tilesDir)) return null;
 
@@ -603,7 +589,7 @@ function loadChunkedTiles(mapDir: string, width: number, height: number): KCTile
   for (let z = 0; z < height; z++) {
     const row: KCTile[] = [];
     for (let x = 0; x < width; x++) {
-      row.push(defaultKCTile());
+      row.push(defaultKCTile(defaultGround));
     }
     tiles.push(row);
   }
@@ -628,7 +614,7 @@ function loadChunkedTiles(mapDir: string, width: number, height: number): KCTile
         const z = startZ + parseInt(localZStr);
         const x = startX + parseInt(localXStr);
         if (z >= 0 && z < height && x >= 0 && x < width) {
-          tiles[z][x] = expandTile(partial);
+          tiles[z][x] = expandTile(partial, defaultGround);
         }
       }
     }
@@ -681,7 +667,8 @@ function loadChunkedHeights(mapDir: string, width: number, height: number): numb
 function reassembleChunkedMapData(mapDir: string, mapFile: KCMapFile): void {
   const w = mapFile.map.width;
   const h = mapFile.map.height;
-  const chunkedTiles = loadChunkedTiles(mapDir, w, h);
+  const defaultGround = defaultGroundForMap(mapFile.map);
+  const chunkedTiles = loadChunkedTiles(mapDir, w, h, defaultGround);
   if (chunkedTiles) mapFile.map.tiles = chunkedTiles;
   const chunkedHeights = loadChunkedHeights(mapDir, w, h);
   if (chunkedHeights) mapFile.map.heights = chunkedHeights;
@@ -807,7 +794,8 @@ function makeTileRows(mapFile: KCMapFile, mapDir: string, width: number, height:
   rows: string[];
   counts: Record<WorldMapTileCode, number>;
 } {
-  const tiles = loadChunkedTiles(mapDir, width, height) ?? mapFile.map.tiles ?? [];
+  const defaultGround = defaultGroundForMap(mapFile.map);
+  const tiles = loadChunkedTiles(mapDir, width, height, defaultGround) ?? mapFile.map.tiles ?? [];
   const heights = loadChunkedHeights(mapDir, width, height) ?? mapFile.map.heights ?? null;
   const counts: Record<WorldMapTileCode, number> = { g: 0, d: 0, p: 0, s: 0, r: 0, w: 0, m: 0, u: 0 };
   const rows: string[] = [];
@@ -815,7 +803,7 @@ function makeTileRows(mapFile: KCMapFile, mapDir: string, width: number, height:
   for (let z = 0; z < height; z++) {
     let row = '';
     for (let x = 0; x < width; x++) {
-      const code = visualTileCode(tiles[z]?.[x] ?? defaultKCTile(), heights, x, z, waterLevel);
+      const code = visualTileCode(tiles[z]?.[x] ?? defaultKCTile(defaultGround), heights, x, z, waterLevel);
       counts[code]++;
       row += code;
     }
@@ -2847,6 +2835,7 @@ const server = Bun.serve<SocketData>({
             chunkWaterFlows: preservedChunkWaterFlows,
           },
         };
+        const mapDefaultGround = defaultGroundForMap(mapFileToSave.map);
 
         // Walls + biomes: preserve existing if editor omitted the field
         // (partial-payload protection).
@@ -2873,7 +2862,7 @@ const server = Bun.serve<SocketData>({
           fsp.writeFile(biomesPath, JSON.stringify(biomesToSave, null, 2)),
           saveChunkedObjects(mapDir, objectsToSave),
           mapData.map?.tiles?.length > 0
-            ? saveChunkedTiles(mapDir, mapData.map.tiles, mapWidth, mapHeight)
+            ? saveChunkedTiles(mapDir, mapData.map.tiles, mapWidth, mapHeight, mapDefaultGround)
             : Promise.resolve(),
           mapData.map?.heights?.length > 0
             ? saveChunkedHeights(mapDir, mapData.map.heights, mapWidth, mapHeight)
@@ -3131,7 +3120,9 @@ const server = Bun.serve<SocketData>({
           map: {
             width,
             height,
-            waterLevel: -0.3,
+            mapType: isDungeon ? 'dungeon' : 'overworld',
+            defaultGround: isDungeon ? 'void' : 'grass',
+            waterLevel: meta.waterLevel,
             chunkWaterLevels: {},
             chunkWaterFlows: {},
             texturePlanes: [],
@@ -3256,6 +3247,7 @@ const server = Bun.serve<SocketData>({
           placedObjects: [],
           map: { ...importedMap.map, tiles: [], heights: [] },
         };
+        const importedDefaultGround = defaultGroundForMap(importedMap.map);
 
         await queueMapBackup(mapDir);
         await Promise.all([
@@ -3272,7 +3264,7 @@ const server = Bun.serve<SocketData>({
             ? saveChunkedObjects(mapDir, importedObjects)
             : Promise.resolve(),
           importedMap.map?.tiles?.length > 0 && iw > 0 && ih > 0
-            ? saveChunkedTiles(mapDir, importedMap.map.tiles, iw, ih)
+            ? saveChunkedTiles(mapDir, importedMap.map.tiles, iw, ih, importedDefaultGround)
             : Promise.resolve(),
           importedMap.map?.heights?.length > 0 && iw > 0 && ih > 0
             ? saveChunkedHeights(mapDir, importedMap.map.heights, iw, ih)

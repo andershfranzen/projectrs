@@ -1,4 +1,12 @@
-import type { ItemDef } from '@projectrs/shared';
+import {
+  LOGS_ITEM_ID,
+  MAGIC_LOGS_ITEM_ID,
+  MAPLE_LOGS_ITEM_ID,
+  OAK_LOGS_ITEM_ID,
+  WILLOW_LOGS_ITEM_ID,
+  YEW_LOGS_ITEM_ID,
+  type ItemDef,
+} from '@projectrs/shared';
 import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
@@ -30,7 +38,17 @@ interface GroundItemTemplate {
 
 const MAX_MODELS_PER_TILE = 3;
 const DEFAULT_TARGET_MODEL_SIZE = 0.34;
+const LOG_GROUND_ITEM_VISUAL_SCALE = 1.6;
 const TEMPLATE_CACHE_BY_SCENE = new WeakMap<Scene, Map<string, Promise<GroundItemTemplate | null>>>();
+
+const LOG_GROUND_ITEM_IDS = new Set<number>([
+  LOGS_ITEM_ID,
+  OAK_LOGS_ITEM_ID,
+  WILLOW_LOGS_ITEM_ID,
+  MAPLE_LOGS_ITEM_ID,
+  YEW_LOGS_ITEM_ID,
+  MAGIC_LOGS_ITEM_ID,
+]);
 
 const SLOT_TARGET_MODEL_SIZE: Partial<Record<NonNullable<ItemDef['equipSlot']>, number>> = {
   weapon: 0.46,
@@ -133,9 +151,13 @@ export function groundItemVisualScaleFromOptions(options: Pick<ThumbnailOptions,
   return clampGroundItemVisualScale(options.iconScale);
 }
 
+function groundItemTypeScaleForItem(def: ItemDef): number {
+  return LOG_GROUND_ITEM_IDS.has(def.id) ? LOG_GROUND_ITEM_VISUAL_SCALE : 1;
+}
+
 export function groundItemTargetModelSizeForItem(def: ItemDef, quantity: number = 1, visualScale: number = 1): number {
   const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
-  return baseSize * stackModelScaleForItem(def, quantity) * clampGroundItemVisualScale(visualScale);
+  return baseSize * stackModelScaleForItem(def, quantity) * clampGroundItemVisualScale(visualScale) * groundItemTypeScaleForItem(def);
 }
 
 function normalizeTemplate(root: TransformNode, targetSize: number): number {

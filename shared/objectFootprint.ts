@@ -67,6 +67,20 @@ function footprintMinTile(coord: number, normalizedWidth: number): number {
   return W % 2 === 0 ? Math.floor(coord - W / 2) : Math.floor(coord) - Math.floor((W - 1) / 2);
 }
 
+export function getObjectFootprintCenterCoord(coord: number, width?: number): number {
+  const W = normalizeWidth(width);
+  return footprintMinTile(coord, W) + W / 2;
+}
+
+/** Continuous render/aim center for an entity whose logical anchor can move
+ *  between tile centers. The discrete footprint-center helper floors to tile
+ *  bounds and is correct for tile logic, but render interpolation must keep
+ *  sub-tile movement smooth. */
+export function getObjectFootprintContinuousCenterCoord(coord: number, width?: number): number {
+  const W = normalizeWidth(width);
+  return coord + (W % 2 === 0 ? -0.5 : 0);
+}
+
 export function getObjectFootprintBounds(x: number, z: number, width?: number): ObjectFootprintBounds {
   const W = normalizeWidth(width);
   const minX = footprintMinTile(x, W);
@@ -77,6 +91,14 @@ export function getObjectFootprintBounds(x: number, z: number, width?: number): 
     minZ,
     maxZ: minZ + W - 1,
     width: W,
+  };
+}
+
+export function getObjectFootprintCenter(x: number, z: number, def: ObjectFootprintDef): TileCoord {
+  const { minX, minZ, width: W } = getObjectFootprintBounds(x, z, def.width);
+  return {
+    x: minX + W / 2,
+    z: minZ + W / 2,
   };
 }
 
@@ -125,6 +147,17 @@ export function getObjectFootprintTiles(x: number, z: number, def: ObjectFootpri
   }
 
   return tiles;
+}
+
+export function isTileInsideObjectFootprint(
+  tileX: number,
+  tileZ: number,
+  objX: number,
+  objZ: number,
+  def: ObjectFootprintDef,
+): boolean {
+  const { minX, maxX, minZ, maxZ } = getObjectFootprintBounds(objX, objZ, def.width);
+  return tileX >= minX && tileX <= maxX && tileZ >= minZ && tileZ <= maxZ;
 }
 
 export interface InteractionTileOptions {

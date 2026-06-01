@@ -1,11 +1,15 @@
 import { describe, expect, test } from 'bun:test';
+import { existsSync } from 'node:fs';
 import type { ItemDef } from '@projectrs/shared';
+import itemsJson from '../../../server/data/items.json';
 import {
   findThumbnailOverrideForItem,
+  getItemIconSyncUrl,
   itemThumbnailFamily,
   itemThumbnailFamilyKey,
   parseBakedThumbnailManifest,
   resolveBakedThumbnailUrl,
+  resolveItemModelPath,
   type ThumbnailOverride,
 } from './ItemIcon';
 
@@ -76,5 +80,35 @@ describe('item thumbnail families', () => {
 
     expect(manifest.legacyIds.has(58)).toBe(true);
     expect(resolveBakedThumbnailUrl(manifest, 58, 'thumb:v11|current')).toBeNull();
+  });
+
+  test('arrow items resolve to 3D thumbnails instead of RS Classic PNGs', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    for (const id of [42, 43, 270, 272]) {
+      const def = defs.get(id);
+      expect(def?.icon).toBeUndefined();
+      expect(def?.sprite).toBeUndefined();
+      expect(getItemIconSyncUrl(def!, 1)).toBeNull();
+
+      const modelPath = resolveItemModelPath(def!, 1);
+      expect(modelPath).toBeTruthy();
+      expect(modelPath?.startsWith('/assets/models/')).toBe(true);
+      expect(existsSync(`client/public${modelPath}`)).toBe(true);
+    }
+  });
+
+  test('woodcutting logs resolve to 3D thumbnails instead of RS Classic PNGs', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    for (const id of [23, 24, 235, 39, 40, 271]) {
+      const def = defs.get(id);
+      expect(def?.icon).toBeUndefined();
+      expect(def?.sprite).toBeUndefined();
+      expect(getItemIconSyncUrl(def!, 1)).toBeNull();
+
+      const modelPath = resolveItemModelPath(def!, 1);
+      expect(modelPath).toBeTruthy();
+      expect(modelPath?.startsWith('/assets/models/logs/')).toBe(true);
+      expect(existsSync(`client/public${modelPath}`)).toBe(true);
+    }
   });
 });

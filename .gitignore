@@ -3,7 +3,12 @@ dist/
 **/.next/
 *.lock
 .vite/
+.npmrc
+tmp/
+**/__pycache__/
+*.blend1
 *.db
+*.db.*.bak
 *.db-shm
 *.db-wal
 

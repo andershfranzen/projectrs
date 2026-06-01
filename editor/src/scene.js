@@ -5271,6 +5271,7 @@ let selectedWaterFlowChunk = null
   ]
 
   const GROUND_TYPES_DUNGEON = [
+    { id: 'void',          label: 'Void',        color: '#050505' },
     { id: 'dungeon-floor', label: 'Stone Floor', color: '#3a2e20' },
     { id: 'dungeon-rock',  label: 'Rock',        color: '#4a3828' },
     { id: 'dirt',          label: 'Dirt',         color: '#7a5030' },
@@ -7630,11 +7631,13 @@ function applyToolAtTile(tile, eventLike = null) {
 
     const _pbr = paintBrushRadius - 1
     const cx = tile.x, cz = tile.z
+    let structuralPaint = false
     for (let dz = -_pbr; dz <= _pbr; dz++) {
       for (let dx = -_pbr; dx <= _pbr; dx++) {
         if (dx * dx + dz * dz > _pbr * _pbr + _pbr) continue
         const tx = cx + dx, tz = cz + dz
         if (tx < 0 || tz < 0 || tx >= map.width || tz >= map.height) continue
+        const beforeGround = map.getTile(tx, tz)?.ground
         if (state.paintType === 'water') {
           map.paintWaterTile(tx, tz)
         } else if (state.halfPaint && dx === 0 && dz === 0) {
@@ -7656,10 +7659,18 @@ function applyToolAtTile(tile, eventLike = null) {
         } else if (!state.halfPaint) {
           map.paintTile(tx, tz, state.paintType)
         }
+        const afterGround = map.getTile(tx, tz)?.ground
+        if (beforeGround === 'void' || afterGround === 'void') structuralPaint = true
       }
     }
 
-    markTerrainDirty({ skipTexturePlanes: true, skipShadows: true, skipTextureOverlays: true, heightsOnly: true, region: { x1: cx - _pbr, z1: cz - _pbr, x2: cx + _pbr, z2: cz + _pbr } })
+    markTerrainDirty({
+      skipTexturePlanes: true,
+      skipShadows: true,
+      skipTextureOverlays: true,
+      heightsOnly: !structuralPaint,
+      region: structuralPaint ? null : { x1: cx - _pbr, z1: cz - _pbr, x2: cx + _pbr, z2: cz + _pbr }
+    })
     return
   }
 
@@ -10824,8 +10835,9 @@ function applyToolAtTile(tile, eventLike = null) {
   const DUNGEON_THRESHOLD = 2000
 
   function applyMapType() {
-    const isDungeon = map.worldOffset.x >= DUNGEON_THRESHOLD
+    const isDungeon = map.mapType === 'dungeon' || map.defaultGround === 'void' || map.worldOffset.x >= DUNGEON_THRESHOLD
     map.mapType = isDungeon ? 'dungeon' : 'overworld'
+    map.defaultGround = isDungeon ? 'void' : (map.defaultGround === 'void' ? 'grass' : map.defaultGround)
 
     if (isDungeon) {
       scene.clearColor = new Color4(0, 0, 0, 1)
@@ -10852,6 +10864,9 @@ function applyToolAtTile(tile, eventLike = null) {
     }
 
     GROUND_TYPES = isDungeon ? GROUND_TYPES_DUNGEON : GROUND_TYPES_OVERWORLD
+    if (!GROUND_TYPES.some((gt) => gt.id === state.paintType)) {
+      state.paintType = isDungeon ? 'dungeon-floor' : 'grass'
+    }
     buildGroundSwatches()
   }
 

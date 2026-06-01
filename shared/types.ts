@@ -392,6 +392,8 @@ export interface MapTransition {
 export interface MapMeta {
   id: string;
   name: string;
+  mapType?: 'overworld' | 'dungeon';
+  dungeon?: boolean;
   width: number;
   height: number;
   waterLevel: number;
@@ -537,7 +539,7 @@ export interface BiomesFile {
 
 // --- KC Map Editor format types ---
 
-export type GroundType = 'grass' | 'dirt' | 'sand' | 'path' | 'road' | 'water' | 'desert' | 'sandstone' | 'rock' | 'drysand' | 'dungeon-floor' | 'dungeon-rock';
+export type GroundType = 'grass' | 'dirt' | 'sand' | 'path' | 'road' | 'water' | 'desert' | 'sandstone' | 'rock' | 'drysand' | 'dungeon-floor' | 'dungeon-rock' | 'void';
 export type SplitDirection = 'forward' | 'back';
 
 /** Apparent world-space direction for animated water. X is east/west, Z is
@@ -624,7 +626,7 @@ export function pushWaterFlowQuadUvs(
  *  for the minimap snapshot. Order is stable; insert new types at the end. */
 export const GROUND_TYPES_BY_ID: readonly GroundType[] = [
   'grass', 'dirt', 'sand', 'path', 'road', 'water',
-  'desert', 'sandstone', 'rock', 'drysand', 'dungeon-floor', 'dungeon-rock',
+  'desert', 'sandstone', 'rock', 'drysand', 'dungeon-floor', 'dungeon-rock', 'void',
 ];
 export const GROUND_TYPE_ID: Record<GroundType, number> = Object.freeze(
   Object.fromEntries(GROUND_TYPES_BY_ID.map((g, i) => [g, i])) as Record<GroundType, number>,
@@ -777,6 +779,9 @@ export interface EditorLayer {
 export interface KCMapData {
   width: number;
   height: number;
+  mapType?: 'overworld' | 'dungeon';
+  /** Ground used when sparse chunk tile data omits a tile. Dungeon maps default to void. */
+  defaultGround?: GroundType;
   waterLevel: number;
   chunkWaterLevels: Record<string, number>;
   /** "chunkX,chunkZ" -> normalized water flow direction for 64x64 editor chunks. */
@@ -816,9 +821,15 @@ export function defaultKCTile(ground: GroundType = 'grass'): KCTile {
   };
 }
 
+/** Default sparse-tile ground for a map. Overworld remains grass; dungeon/cave maps are void-first. */
+export function defaultGroundForMap(map?: { mapType?: string | null; defaultGround?: GroundType | null } | null): GroundType {
+  return map?.defaultGround ?? (map?.mapType === 'dungeon' ? 'void' : 'grass');
+}
+
 /** Map KC ground type to game TileType (for collision/pathfinding) */
 export function groundTypeToTileType(ground: GroundType): TileType {
   switch (ground) {
+    case 'void':  return TileType.WALL;
     case 'grass': return TileType.GRASS;
     case 'dirt':  return TileType.DIRT;
     case 'sand':  return TileType.SAND;
@@ -849,6 +860,7 @@ export function classifyTileType(
   cornerHeights: { tl: number; tr: number; bl: number; br: number },
   waterLevel: number,
 ): TileType {
+  if (tile.ground === 'void') return TileType.WALL;
   const minH = Math.min(cornerHeights.tl, cornerHeights.tr, cornerHeights.bl, cornerHeights.br);
   if (minH <= waterLevel) return TileType.WATER;
   if (tile.waterPainted) return TileType.MUD;
@@ -861,6 +873,7 @@ export function shouldTileRenderWater(
   cornerHeights: { tl: number; tr: number; bl: number; br: number },
   waterLevel: number,
 ): boolean {
+  if (tile.ground === 'void') return false;
   if (tile.waterPainted) return true;
   const minH = Math.min(cornerHeights.tl, cornerHeights.tr, cornerHeights.bl, cornerHeights.br);
   return minH <= waterLevel;

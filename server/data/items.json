@@ -171,21 +171,21 @@
   },
   {
     "id": 23,
-    "name": "Logs",
-    "description": "A set of logs.",
+    "name": "Log",
+    "description": "A cut log.",
     "stackable": false,
     "equippable": false,
     "value": 4,
-    "icon": "Logs_14.png"
+    "model": "/assets/models/logs/Log.glb"
   },
   {
     "id": 24,
-    "name": "Oak Logs",
-    "description": "Logs cut from an oak tree.",
+    "name": "Oak Log",
+    "description": "A log cut from an oak tree.",
     "stackable": false,
     "equippable": false,
     "value": 10,
-    "icon": "Oak_Logs_632.png"
+    "model": "/assets/models/logs/OakLog.glb"
   },
   {
     "id": 25,
@@ -373,21 +373,21 @@
   },
   {
     "id": 39,
-    "name": "Maple Logs",
-    "description": "Logs cut from a maple tree.",
+    "name": "Maple Log",
+    "description": "A log cut from a maple tree.",
     "stackable": false,
     "equippable": false,
     "value": 20,
-    "icon": "Maple_Logs_634.png"
+    "model": "/assets/models/logs/MapleLog.glb"
   },
   {
     "id": 40,
-    "name": "Yew Logs",
-    "description": "Logs cut from a yew tree.",
+    "name": "Yew Log",
+    "description": "A log cut from a yew tree.",
     "stackable": false,
     "equippable": false,
     "value": 30,
-    "icon": "Yew_Logs_635.png"
+    "model": "/assets/models/logs/YewLog.glb"
   },
   {
     "id": 42,
@@ -400,7 +400,33 @@
     "ammoType": "arrow",
     "rangedStrength": 7,
     "value": 2,
-    "icon": "Bronze_Arrows_11.png"
+    "model": "/assets/models/arrows/stacks/BronzeArrowStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrows/stacks/BronzeArrowStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrows/stacks/BronzeArrowStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrows/stacks/BronzeArrowStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrows/stacks/BronzeArrowStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrows/stacks/BronzeArrowStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrows/stacks/BronzeArrowStack6Plus.glb"
+      }
+    ]
   },
   {
     "id": 43,
@@ -413,7 +439,33 @@
     "ammoType": "arrow",
     "rangedStrength": 10,
     "value": 5,
-    "icon": "Iron_Arrows_638.png"
+    "model": "/assets/models/arrows/stacks/IronArrowStack1.glb",
+    "stackModels": [
+      {
+        "minQuantity": 1,
+        "model": "/assets/models/arrows/stacks/IronArrowStack1.glb"
+      },
+      {
+        "minQuantity": 2,
+        "model": "/assets/models/arrows/stacks/IronArrowStack2.glb"
+      },
+      {
+        "minQuantity": 3,
+        "model": "/assets/models/arrows/stacks/IronArrowStack3.glb"
+      },
+      {
+        "minQuantity": 4,
+        "model": "/assets/models/arrows/stacks/IronArrowStack4.glb"
+      },
+      {
+        "minQuantity": 5,
+        "model": "/assets/models/arrows/stacks/IronArrowStack5.glb"
+      },
+      {
+        "minQuantity": 6,
+        "model": "/assets/models/arrows/stacks/IronArrowStack6Plus.glb"
+      }
+    ]
   },
   {
     "id": 44,
@@ -2059,12 +2111,12 @@
   },
   {
     "id": 235,
-    "name": "Willow Logs",
-    "description": "Logs cut from a willow tree.",
+    "name": "Willow Log",
+    "description": "A log cut from a willow tree.",
     "stackable": false,
     "equippable": false,
     "value": 15,
-    "icon": "Willow_Logs_633.png"
+    "model": "/assets/models/logs/WillowLog.glb"
   },
   {
     "id": 236,
@@ -2511,7 +2563,6 @@
     "stackable": true,
     "equippable": false,
     "value": 1,
-    "icon": "arrow_shafts_280.png",
     "model": "/assets/models/arrow-shafts/stacks/ArrowShaftStack1.glb",
     "stackModels": [
       {
@@ -2542,12 +2593,12 @@
   },
   {
     "id": 271,
-    "name": "Mystic Logs",
-    "description": "Logs cut from a mystic tree.",
+    "name": "Mystic Log",
+    "description": "A log cut from a mystic tree.",
     "stackable": false,
     "equippable": false,
     "value": 50,
-    "icon": "Magic_Logs_636.png"
+    "model": "/assets/models/logs/MysticLog.glb"
   },
   {
     "id": 272,
@@ -2556,7 +2607,6 @@
     "stackable": true,
     "equippable": false,
     "value": 1,
-    "icon": "Headless_Arrows_637.png",
     "model": "/assets/models/headless-arrows/stacks/HeadlessArrowStack1.glb",
     "stackModels": [
       {

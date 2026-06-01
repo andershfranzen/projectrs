@@ -44,6 +44,24 @@
     "rotationZ": 0,
     "iconScale": 1.05
   },
+  "23": {
+    "alpha": -1.0122909661567112,
+    "beta": 1.2740903539558606,
+    "distanceMult": 0.85,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
+  "24": {
+    "alpha": -1.0122909661567112,
+    "beta": 1.2740903539558606,
+    "distanceMult": 0.85,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
   "29": {
     "alpha": -2.5743606466916362,
     "beta": 1.208304866765305,
@@ -115,6 +133,42 @@
     "rotationY": 0,
     "rotationZ": 0,
     "iconScale": 1
+  },
+  "39": {
+    "alpha": -1.0122909661567112,
+    "beta": 1.2740903539558606,
+    "distanceMult": 0.85,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
+  "40": {
+    "alpha": -1.0122909661567112,
+    "beta": 1.2740903539558606,
+    "distanceMult": 0.85,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
+  "42": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.82
+  },
+  "43": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.82
   },
   "48": {
     "alpha": -2.5743606466916362,
@@ -755,6 +809,15 @@
     "rotationZ": 0,
     "iconScale": 1
   },
+  "235": {
+    "alpha": -1.0122909661567112,
+    "beta": 1.2740903539558606,
+    "distanceMult": 0.85,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
   "237": {
     "alpha": -1.888775653373959,
     "beta": 0.675398163397448,
@@ -880,6 +943,24 @@
     "rotationY": 0,
     "rotationZ": 0,
     "iconScale": 0.75
+  },
+  "271": {
+    "alpha": -1.0122909661567112,
+    "beta": 1.2740903539558606,
+    "distanceMult": 0.85,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.95
+  },
+  "272": {
+    "alpha": -1.1257373675363425,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
   },
   "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_thumbnail_manual_items": [

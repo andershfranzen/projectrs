@@ -3,7 +3,7 @@ import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
-import { ServerOpcode, decodePacket, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
+import { ServerOpcode, decodePacket, getObjectFootprintBounds, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -77,6 +77,8 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   world.chunkManagers = new Map();
   world.blockedObjectTiles = new Set();
   world.entityTileOccupants = new Set();
+  world.playerTileOccupants = new Set();
+  world.entityTileOccupantsDirty = true;
   world.currentTick = 1;
   world.currentTickStartMs = 0;
   world.data = {
@@ -426,6 +428,89 @@ describe('NPC interaction reachability', () => {
     expect(npc.position.x === 9.5 || npc.position.y === 9.5).toBe(true);
   });
 
+  test('large NPC combat chase steps out when the target is inside its footprint', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, size: 2, wanderRange: 5 }, 10.5, 10.5);
+    npc.combatTarget = player;
+
+    npc.processAI(() => false);
+
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+    expect(npc.isFootprintTile(10, 10)).toBe(true);
+
+    npc.processAI(() => false);
+
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+    expect(npc.isFootprintTile(10, 10)).toBe(true);
+
+    npc.processAI(() => false);
+
+    expect(npc.position.x === 9.5 || npc.position.y === 9.5).toBe(true);
+    expect(npc.isInteractionTile(Math.floor(player.position.x), Math.floor(player.position.y))).toBe(true);
+  });
+
+  test('larger NPCs keep stepping out until an overlapped target reaches the melee perimeter', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, size: 5, wanderRange: 8 }, 10.5, 10.5);
+    npc.combatTarget = player;
+
+    for (let i = 0; i < 5 && !npc.isInteractionTile(10, 10); i++) {
+      npc.processAI(() => false);
+    }
+
+    expect(npc.isFootprintTile(10, 10)).toBe(false);
+    expect(npc.isInteractionTile(10, 10)).toBe(true);
+  });
+
+  test('large NPC overlap escape tries another side when the closest exit is blocked', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, size: 2, wanderRange: 5 }, 10.5, 10.5);
+    npc.combatTarget = player;
+
+    npc.processAI((x, z) => x === 9.5 && z === 10.5);
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+
+    npc.processAI((x, z) => x === 9.5 && z === 10.5);
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+
+    npc.processAI((x, z) => x === 9.5 && z === 10.5);
+
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(9.5);
+    expect(npc.isInteractionTile(10, 10)).toBe(true);
+  });
+
+  test('world NPC movement can escape a player standing inside its current footprint', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, size: 2, wanderRange: 5 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.combatTarget = player;
+    const { world } = makeCombatWorld(player, npc);
+
+    world.rebuildEntityTileOccupants();
+    world.tickNpcAI();
+
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+    expect(npc.isFootprintTile(10, 10)).toBe(true);
+
+    world.tickNpcAI();
+
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+    expect(npc.isFootprintTile(10, 10)).toBe(true);
+
+    world.tickNpcAI();
+
+    expect(npc.isInteractionTile(10, 10)).toBe(true);
+    expect(npc.position.x === 9.5 || npc.position.y === 9.5).toBe(true);
+  });
+
   test('melee combat requires a cardinal NPC interaction tile', () => {
     const diagonal = new Player('diagonal', 9.5, 9.5, fakeWs, 1);
     const cardinal = new Player('cardinal', 9.5, 10.5, fakeWs, 2);
@@ -724,13 +809,20 @@ describe('NPC interaction reachability', () => {
     expect(npc.position.y).toBeLessThan(npc.spawnZ);
   });
 
-  test('NPC melee retaliation uses the NPC footprint, not only its anchor tile', () => {
-    const largeNpcDef: NpcDef = { ...npcDef, size: 2 };
-    const cardinal = new Player('cardinal', 8.5, 9.5, fakeWs, 1);
-    const diagonal = new Player('diagonal', 8.5, 8.5, fakeWs, 2);
+  test('NPC melee retaliation uses the full NPC footprint for larger mobs', () => {
+    for (const size of [2, 3, 4, 5]) {
+      const largeNpcDef: NpcDef = { ...npcDef, size };
+      const interactionTiles = new Npc(largeNpcDef, 10.5, 10.5).interactionTiles();
 
-    expect(processNpcCombat(new Npc(largeNpcDef, 10.5, 10.5), cardinal, new Map())).not.toBeNull();
-    expect(processNpcCombat(new Npc(largeNpcDef, 10.5, 10.5), diagonal, new Map())).toBeNull();
+      for (const tile of interactionTiles) {
+        const player = new Player(`cardinal-${size}-${tile.x}-${tile.z}`, tile.x + 0.5, tile.z + 0.5, fakeWs, 1);
+        expect(processNpcCombat(new Npc(largeNpcDef, 10.5, 10.5), player, new Map())).not.toBeNull();
+      }
+
+      const { minX, minZ } = getObjectFootprintBounds(10.5, 10.5, size);
+      const corner = new Player(`corner-${size}`, minX - 0.5, minZ - 0.5, fakeWs, 2);
+      expect(processNpcCombat(new Npc(largeNpcDef, 10.5, 10.5), corner, new Map())).toBeNull();
+    }
   });
 
   test('NPC first-retaliation cooldown keeps ticking while chasing', () => {

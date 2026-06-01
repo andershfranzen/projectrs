@@ -3,6 +3,7 @@
     "width": 384,
     "height": 256,
     "mapType": "overworld",
+    "defaultGround": "grass",
     "worldOffset": {
       "x": 0,
       "z": 0

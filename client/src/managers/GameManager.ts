@@ -57,7 +57,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -1730,9 +1730,10 @@ export class GameManager {
     if (!attacker || targetId <= 0) return;
     const target = this.resolveTargetableIncludingLocal(targetId);
     if (!target) return;
+    const anchor = target.getTargetAnchor();
     attacker.lockAttackFaceTowardXZ(
-      target.position.x,
-      target.position.z,
+      anchor.x,
+      anchor.z,
       this.getAttackFaceLockDurationMs(attacker, animName),
     );
   }
@@ -4888,7 +4889,30 @@ export class GameManager {
       return;
     }
     const target = this.resolveTargetableIncludingLocal(targetId);
-    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    if (target) {
+      const anchor = target.getTargetAnchor();
+      this.faceLocalPlayerToward(anchor.x, anchor.z);
+    }
+  }
+
+  private getNpcVisualCenter(npcEntityId: number, target?: { x: number; z: number }): { x: number; z: number } | null {
+    const sprite = this.entities.npcSprites.get(npcEntityId);
+    if (sprite) {
+      const anchor = sprite.getTargetAnchor();
+      return { x: anchor.x, z: anchor.z };
+    }
+    const npcTarget = target ?? this.entities.npcTargets.get(npcEntityId);
+    if (!npcTarget) return null;
+    const size = this.getNpcTileSize(npcEntityId);
+    return {
+      x: getObjectFootprintCenterCoord(npcTarget.x, size),
+      z: getObjectFootprintCenterCoord(npcTarget.z, size),
+    };
+  }
+
+  private faceLocalPlayerTowardNpc(npcEntityId: number, target?: { x: number; z: number }): void {
+    const center = this.getNpcVisualCenter(npcEntityId, target);
+    if (center) this.faceLocalPlayerToward(center.x, center.z);
   }
 
   private clearLocalNpcCombatState(): void {
@@ -5130,7 +5154,7 @@ export class GameManager {
         } else {
           this.clearPredictedPath(true);
           if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
-          this.faceLocalPlayerToward(target.x, target.z);
+          this.faceLocalPlayerTowardNpc(npcEntityId, target);
         }
       } else {
         const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode, requireRangedLineOfSight);
@@ -5140,7 +5164,7 @@ export class GameManager {
           if (this.destMarker) this.destMarker.isVisible = false;
           this.minimap?.clearDestination();
         } else {
-          this.faceLocalPlayerToward(target.x, target.z);
+          this.faceLocalPlayerTowardNpc(npcEntityId, target);
         }
       }
     }
@@ -5187,7 +5211,10 @@ export class GameManager {
     const targetState = this.entities.remoteTargets.get(playerEntityId);
     if (targetState && targetState.floor !== this.currentFloor) return;
     const target = this.entities.remotePlayers.get(playerEntityId);
-    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    if (target) {
+      const anchor = target.getTargetAnchor();
+      this.faceLocalPlayerToward(anchor.x, anchor.z);
+    }
     this.combatTargetId = -1;
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
@@ -5221,7 +5248,10 @@ export class GameManager {
     const targetState = this.entities.remoteTargets.get(playerEntityId);
     if (targetState && targetState.floor !== this.currentFloor) return;
     const target = this.entities.remotePlayers.get(playerEntityId);
-    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    if (target) {
+      const anchor = target.getTargetAnchor();
+      this.faceLocalPlayerToward(anchor.x, anchor.z);
+    }
     this.combatTargetId = -1;
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
@@ -5241,7 +5271,10 @@ export class GameManager {
     const targetState = this.entities.remoteTargets.get(playerEntityId);
     if (targetState && targetState.floor !== this.currentFloor) return;
     const target = this.entities.remotePlayers.get(playerEntityId);
-    if (target) this.faceLocalPlayerToward(target.position.x, target.position.z);
+    if (target) {
+      const anchor = target.getTargetAnchor();
+      this.faceLocalPlayerToward(anchor.x, anchor.z);
+    }
     this.combatTargetId = -1;
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
@@ -5272,7 +5305,7 @@ export class GameManager {
     if (bankerBoothPath && bankerBoothPath.path.length === 0) {
       this.clearPredictedPath();
       if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
-      this.faceLocalPlayerToward(target.x, target.z);
+      this.faceLocalPlayerTowardNpc(npcEntityId, target);
       this.pendingFaceTargetEntityId = -1;
     } else if (bankerBoothPath) {
       this.startPredictedPath(bankerBoothPath.path, bankerBoothPath.preserveCurrentStep);
@@ -5291,7 +5324,7 @@ export class GameManager {
       // no path-complete event will fire to do it for us.
       this.clearPredictedPath();
       if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
-      this.faceLocalPlayerToward(target.x, target.z);
+      this.faceLocalPlayerTowardNpc(npcEntityId, target);
       this.pendingFaceTargetEntityId = -1;
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
@@ -7159,7 +7192,7 @@ export class GameManager {
     // server-broadcast position even if the NPC wandered while we walked.
     if (this.pendingFaceTargetEntityId >= 0) {
       const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
-      if (npcTarget) this.faceLocalPlayerToward(npcTarget.x, npcTarget.z);
+      if (npcTarget) this.faceLocalPlayerTowardNpc(this.pendingFaceTargetEntityId, npcTarget);
       this.pendingFaceTargetEntityId = -1;
     }
   }
@@ -7827,7 +7860,8 @@ export class GameManager {
         const npcSprite = this.entities.npcSprites.get(this.combatTargetId);
         if (npcTarget && npcSprite) {
           // Hold body yaw on the target across chase repaths.
-          this.localPlayer.lockFaceTowardXZ(npcSprite.position.x, npcSprite.position.z);
+          const anchor = npcSprite.getTargetAnchor();
+          this.localPlayer.lockFaceTowardXZ(anchor.x, anchor.z);
         }
       }
     }
@@ -7928,7 +7962,8 @@ export class GameManager {
         this.clearPredictedPath(true);
         this.localPlayer.stopWalking();
       }
-      this.localPlayer.lockFaceTowardXZ(target.position.x, target.position.z);
+      const anchor = target.getTargetAnchor();
+      this.localPlayer.lockFaceTowardXZ(anchor.x, anchor.z);
       return;
     }
     const queuedDest = this.pathIndex < this.path.length ? this.path[this.path.length - 1] : null;
