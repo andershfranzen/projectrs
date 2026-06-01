@@ -128,11 +128,34 @@ export function combatLevel(skills: SkillBlock): number {
   return Math.floor(base + Math.max(melee, range, mage));
 }
 
+export type NpcCombatStats = { health: number; attack: number; defence: number; strength: number };
+export type NpcCombatStatOverrides = Partial<NpcCombatStats> | null | undefined;
+
+/** Resolve the combat stats that feed the NPC combat-level formula.
+ *  This mirrors server Npc construction: a positive health override replaces
+ *  maxHealth, while attack/defence/strength use nullish override fallback so
+ *  authored 0 values remain valid. */
+export function effectiveNpcCombatStats(base: NpcCombatStats, overrides?: NpcCombatStatOverrides): NpcCombatStats {
+  const stat = (value: number | undefined): number => (
+    typeof value === 'number' && Number.isFinite(value) ? value : 0
+  );
+  const healthOverride = overrides?.health;
+  const health = typeof healthOverride === 'number' && Number.isFinite(healthOverride) && healthOverride > 0
+    ? Math.floor(healthOverride)
+    : stat(base.health);
+  return {
+    health,
+    attack: stat(overrides?.attack ?? base.attack),
+    defence: stat(overrides?.defence ?? base.defence),
+    strength: stat(overrides?.strength ?? base.strength),
+  };
+}
+
 /** Combat level for an NPC, derived from their flat stat block. NPCs don't have
  *  separate level/xp; their stat values stand in for "level" in the player
  *  formula, and `health` plays the hitpoints-level role. Ranged/magic terms
  *  are dropped — NPCs are melee-only at the moment. */
-export function npcCombatLevel(npc: { health: number; attack: number; defence: number; strength: number }): number {
+export function npcCombatLevel(npc: NpcCombatStats): number {
   const base = 0.25 * (npc.defence + npc.health);
   const melee = 0.325 * (npc.attack + npc.strength);
   return Math.floor(base + melee);

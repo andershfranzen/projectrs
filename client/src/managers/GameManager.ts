@@ -57,7 +57,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -2996,8 +2996,11 @@ export class GameManager {
       const y = v.length >= 8 ? (v[7] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
       const facingQ = v.length >= 10 ? v[9] : NPC_FACING_NONE;
       const faceTargetId = v.length >= 11 ? (v[10] ?? 0) : 0;
+      const combatLevel = v.length >= 12 ? (v[11] ?? 0) : 0;
 
       this.entities.npcDefs.set(entityId, npcDefId);
+      if (combatLevel > 0) this.entities.npcCombatLevels.set(entityId, combatLevel);
+      else this.entities.npcCombatLevels.delete(entityId);
       if (v.length >= 11) {
         if (faceTargetId > 0) this.entities.npcCombatTargets.set(entityId, faceTargetId);
         else this.entities.npcCombatTargets.delete(entityId);
@@ -4645,7 +4648,7 @@ export class GameManager {
       return [{ label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) }];
     }
 
-    const lvl = this.npcLevelFor(npcDefId);
+    const lvl = this.npcLevelFor(entityId, npcDefId);
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
     return [{ label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) }];
   }
@@ -4946,8 +4949,12 @@ export class GameManager {
     return null;
   }
 
-  /** Combat level for an NPC by defId, or 0 if unknown. */
-  private npcLevelFor(npcDefId: number | undefined): number {
+  /** Combat level for an NPC, preferring the server-sent effective spawn stats. */
+  private npcLevelFor(entityId: number | undefined, npcDefId: number | undefined): number {
+    if (entityId != null) {
+      const effective = this.entities.npcCombatLevels.get(entityId);
+      if (effective != null && effective > 0) return effective;
+    }
     if (npcDefId == null) return 0;
     const def = this.npcDefsCache.get(npcDefId);
     if (!def) return 0;
@@ -4997,7 +5004,7 @@ export class GameManager {
         if (flags !== 0 || this.isNonAttackableNpc(npcDefId)) {
           npcLabel = name;
         } else {
-          const lvl = this.npcLevelFor(npcDefId);
+          const lvl = this.npcLevelFor(entityId, npcDefId);
           npcLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
         }
       }
@@ -5788,6 +5795,7 @@ export class GameManager {
    *  if no reachable adjacent tile exists. */
   private walkToAdjacentTileOf(data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] }, def: WorldObjectDef): boolean {
     const hasAuthoredTiles = !!data.interactionTiles?.length;
+    const start = this.getActiveUnitStep()?.from ?? { x: this.playerX, z: this.playerZ };
     const candidates = this.objectInteractionTiles(data, def)
       .filter(tile => !this.isTileBlocked(tile.x, tile.z))
       .filter(tile => this.hasClearObjectInteractionEdge(data, def, tile.x, tile.z, hasAuthoredTiles))
@@ -5796,13 +5804,20 @@ export class GameManager {
         az: tile.z,
         dist: Math.hypot(this.playerX - (tile.x + 0.5), this.playerZ - (tile.z + 0.5)),
       }));
-    candidates.sort((a, b) => a.dist - b.dist);
-    for (const { ax, az } of candidates) {
+
+    let best: { path: { x: number; z: number }[]; preserveCurrentStep: boolean; steps: number; dist: number } | null = null;
+    for (const { ax, az, dist } of candidates) {
       const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(ax + 0.5, az + 0.5, 500);
       if (this.pathReachesGoal(path, ax + 0.5, az + 0.5)) {
-        this.startPredictedPath(path, preserveCurrentStep);
-        return true;
+        const steps = compressedPathTileSteps(start, path);
+        if (!best || steps < best.steps || (steps === best.steps && dist < best.dist)) {
+          best = { path, preserveCurrentStep, steps, dist };
+        }
       }
+    }
+    if (best) {
+      this.startPredictedPath(best.path, best.preserveCurrentStep);
+      return true;
     }
     return false;
   }

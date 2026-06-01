@@ -137,4 +137,64 @@ describe('wall-gated station interaction', () => {
     terrainBlocked = true;
     expect(world.isTileBlockedForPlayer(player, map, 10, 10)).toBe(true);
   });
+
+  test('object interaction pathing chooses the shortest reachable side', () => {
+    const world = Object.create(World.prototype) as any;
+    world.blockedObjectTiles = new Set();
+    const player = new Player('rock_path_test', 10.5, 7.5, fakeWs, 1);
+    player.currentMapLevel = 'kcmap';
+    player.currentFloor = 0;
+    const rockDef: WorldObjectDef = {
+      id: 3,
+      name: 'Copper Rock',
+      category: 'rock',
+      actions: ['Mine', 'Examine'],
+      blocking: true,
+      width: 1,
+      height: 1,
+      color: [140, 90, 50],
+    };
+    const rock = {
+      id: 10003,
+      defId: 3,
+      mapLevel: 'kcmap',
+      floor: 0,
+      x: 10.5,
+      z: 10.5,
+      rotationY: 0,
+      interactionSides: undefined,
+      interactionTiles: undefined,
+      def: rockDef,
+    };
+    const map = {
+      isBlocked: () => false,
+      isTileBlockedOnFloor: () => false,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+      findPathForNpc: (_sx: number, _sz: number, gx: number, gz: number) => {
+        const key = `${Math.floor(gx)},${Math.floor(gz)}`;
+        if (key === '10,9') return [
+          { x: 30.5, z: 7.5 },
+          { x: 30.5, z: 9.5 },
+          { x: 10.5, z: 9.5 },
+        ];
+        if (key === '9,10') return [
+          { x: 9.5, z: 8.5 },
+          { x: 9.5, z: 9.5 },
+          { x: 9.5, z: 10.5 },
+        ];
+        return [
+          { x: 14.5, z: 8.5 },
+          { x: gx, z: gz },
+        ];
+      },
+    };
+    world.getPlayerMap = () => map;
+
+    const path = world.findPathToObjectInteraction(player, rock);
+    const last = path[path.length - 1]!;
+
+    expect(Math.floor(last.x)).toBe(9);
+    expect(Math.floor(last.z)).toBe(10);
+  });
 });

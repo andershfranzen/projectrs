@@ -65,6 +65,7 @@ export class EntityManager {
   readonly npcSprites: Map<number, Npc3DEntity | CharacterEntity> = new Map();
   readonly npcTargets: Map<number, { x: number; z: number; floor: number; y: number; prevX: number; prevZ: number; t: number; continueWalking: boolean }> = new Map();
   readonly npcDefs: Map<number, number> = new Map();
+  readonly npcCombatLevels: Map<number, number> = new Map();
   readonly npcCombatTargets: Map<number, number> = new Map();
   /** Per-spawn appearance for customizable NPCs (e.g. bankers, shopkeepers).
    *  Cached on receipt of NPC_APPEARANCE; applied to the CharacterEntity once
@@ -458,6 +459,7 @@ export class EntityManager {
     this.npcSprites.delete(entityId);
     this.npcTargets.delete(entityId);
     this.npcDefs.delete(entityId);
+    this.npcCombatLevels.delete(entityId);
     this.npcAppearances.delete(entityId);
     this.npcEquipment.delete(entityId);
     this.npcCustomColors.delete(entityId);
@@ -509,6 +511,7 @@ export class EntityManager {
     this.disposeNpcSprite(entityId);
     this.npcTargets.delete(entityId);
     this.npcDefs.delete(entityId);
+    this.npcCombatLevels.delete(entityId);
     this.npcAppearances.delete(entityId);
     this.npcEquipment.delete(entityId);
     this.npcCustomColors.delete(entityId);
@@ -780,6 +783,7 @@ export class EntityManager {
     this.npcSprites.clear();
     this.npcTargets.clear();
     this.npcDefs.clear();
+    this.npcCombatLevels.clear();
     this.npcAppearances.clear();
     this.npcEquipment.clear();
     this.npcCustomColors.clear();
@@ -787,6 +791,7 @@ export class EntityManager {
     this.npcFacingAngles.clear();
     this.npcInteractions.clear();
     this.npcOverrideNames.clear();
+    this.npcCombatTargets.clear();
     this.npc3dCount = 0;
 
     for (const [, sprite] of this.groundItemSprites) sprite.dispose();

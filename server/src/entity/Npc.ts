@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, normalizeAppearance } from '@projectrs/shared';
+import { effectiveNpcCombatStats, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, normalizeAppearance, npcCombatLevel } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
 
 function normalizeFacingAngle(value: number | null | undefined): number | null {
@@ -37,6 +37,8 @@ export class Npc extends Entity {
   /** Per-spawn stat overrides. Any field set wins over def. Read via the
    *  attack/defence/strength/attackSpeed/respawnTime getters below. */
   readonly statsOverride: NpcStatOverrides | null;
+  /** Effective combat level derived from the runtime stat block. */
+  readonly combatLevel: number;
   /** Animation name to play on swing (e.g. `attack_2h_smash`). When null,
    *  the client falls back to the weapon-driven picker in
    *  GameManager.getPlayerAttackAnimName. */
@@ -148,6 +150,7 @@ export class Npc extends Entity {
     this.attackAnimOverride = (attackAnimOverride && attackAnimOverride.length > 0)
       ? attackAnimOverride
       : null;
+    this.combatLevel = npcCombatLevel(effectiveNpcCombatStats(this.def, this.statsOverride));
   }
 
   /** Effective combat stats. Spawn override wins over NpcDef. Combat code

@@ -21,3 +21,4 @@ export * from './opcodeMapping.js';
 export * from './npcSafety.js';
 export * from './png.js';
 export * from './projectile.js';
+export * from './movementPath.js';

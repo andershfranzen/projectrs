@@ -164,7 +164,7 @@ export enum ServerOpcode {
   PLAYER_SYNC = 10,
   /** NPC state. Layout:
    *  [entityId, npcDefId, x10, z10, health, maxHealth, floor, y10,
-   *   continueWalking, facingQ1000, faceTargetEntityId?].
+   *   continueWalking, facingQ1000, faceTargetEntityId, combatLevel].
    *  faceTargetEntityId covers both combat chase and retreat backpedal. */
   NPC_SYNC = 11,
   GROUND_ITEM_SYNC = 12,

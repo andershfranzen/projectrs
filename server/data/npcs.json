@@ -106,6 +106,31 @@
     ]
   },
   {
+    "id": 25,
+    "name": "Bear",
+    "health": 35,
+    "attack": 20,
+    "defence": 12,
+    "strength": 28,
+    "attackSpeed": 4,
+    "respawnTime": 45,
+    "aggressive": true,
+    "wanderRange": 5,
+    "size": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 20,
+        "quantity": 1,
+        "chance": 0.75
+      }
+    ]
+  },
+  {
     "id": 2,
     "name": "Giant Rat",
     "health": 15,
@@ -520,10 +545,10 @@
   {
     "id": 15,
     "name": "Camel",
-    "health": 20,
-    "attack": 3,
-    "defence": 3,
-    "strength": 3,
+    "health": 24,
+    "attack": 10,
+    "defence": 17,
+    "strength": 15,
     "attackSpeed": 5,
     "respawnTime": 25,
     "aggressive": false,

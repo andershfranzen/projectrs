@@ -67,6 +67,8 @@ import {
   validateBankAccessSpawns,
   DEFAULT_WATER_FLOW,
   normalizeWaterFlow,
+  npcCombatLevel,
+  effectiveNpcCombatStats,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -458,6 +460,53 @@ function tuneModelLighting(model) {
   // visually unobstructed — restored when the preview is disposed.
   const npcPreviews = new Map()  // spawn.id → { entity, hiddenNodes: Set<TransformNode> }
 
+  function stampNpcSpawnPickMetadataOnNode(node, spawn) {
+    if (!node || !spawn) return false
+    node.metadata = { ...(node.metadata || {}), npcSpawn: spawn }
+    return true
+  }
+
+  function stampNpcPreviewPickMetadata(spawn, entry) {
+    if (!spawn || !entry?.entity) return false
+    let stamped = false
+    const root = entry.entity.getRoot?.()
+    if (root) {
+      stamped = stampNpcSpawnPickMetadataOnNode(root, spawn) || stamped
+      const meshes = root.getChildMeshes ? root.getChildMeshes() : []
+      for (const mesh of meshes) {
+        stamped = stampNpcSpawnPickMetadataOnNode(mesh, spawn) || stamped
+      }
+    }
+    const meshes = entry.entity.getMeshes?.() || []
+    for (const mesh of meshes) {
+      stamped = stampNpcSpawnPickMetadataOnNode(mesh, spawn) || stamped
+    }
+    const mesh = entry.entity.getMesh?.()
+    if (mesh) stamped = stampNpcSpawnPickMetadataOnNode(mesh, spawn) || stamped
+    return stamped
+  }
+
+  function ensureNpcPreviewPickMetadata(spawn, entry) {
+    if (stampNpcPreviewPickMetadata(spawn, entry)) return
+    if (entry.pickMetadataReadyScheduled) return
+    entry.pickMetadataReadyScheduled = true
+    const afterReady = entry.entity.whenReady?.()
+    if (afterReady?.then) {
+      afterReady.then(() => {
+        entry.pickMetadataReadyScheduled = false
+        if (npcPreviews.get(spawn.id) === entry) stampNpcPreviewPickMetadata(spawn, entry)
+      })
+      return
+    }
+    requestAnimationFrame(() => {
+      entry.pickMetadataReadyScheduled = false
+      if (npcPreviews.get(spawn.id) !== entry) {
+        return
+      }
+      stampNpcPreviewPickMetadata(spawn, entry)
+    })
+  }
+
   /** Tiles within this XZ-distance of the spawn get their placed objects
    *  hidden so the preview character isn't covered by the previously-placed
    *  NPC GLB. 0.7 catches anything centered on the same tile without
@@ -778,9 +827,14 @@ function tuneModelLighting(model) {
         const tmpl = EDITOR_SKINNED_GEAR_SLOTS.has(slot) || slot === 'head'
           ? await loadGearSmartForPreview(spawn, entry, slot, itemId, def)
           : await loadGearTemplate(scene, def)
-        if (!tmpl) continue // skinned armor attaches directly and returns null
+        if (!tmpl) {
+          // Skinned armor attaches directly and returns null.
+          stampNpcPreviewPickMetadata(spawn, entry)
+          continue
+        }
         if (npcPreviews.get(spawn.id) !== entry) return
         entry.entity.attachGear(slot, itemId, tmpl)
+        stampNpcPreviewPickMetadata(spawn, entry)
       } catch (e) {
         console.warn(`[editor-gear] couldn't preview ${slot}/${itemId}: ${e?.message ?? e}`)
       }
@@ -827,9 +881,11 @@ function tuneModelLighting(model) {
       }
       npcPreviews.set(spawn.id, entry)
     }
+    ensureNpcPreviewPickMetadata(spawn, entry)
     const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
     entry.entity.setPositionXYZ(spawn.x, y, spawn.z)
     entry.entity.setFacingAngle(npcFacingAngle(spawn))
+    ensureNpcPreviewPickMetadata(spawn, entry)
     maskPlacedObjectsForPreview(spawn, entry)
     if (entry.kind !== 'character') return
     // applyAppearance idempotently re-derives material colors + hair mesh
@@ -1129,11 +1185,24 @@ function tuneModelLighting(model) {
 
   function pickNpcSpawn(event) {
     updateMouse(event)
+    const spawnFromMesh = (mesh) => {
+      let node = mesh
+      while (node) {
+        if (node.metadata?.npcSpawn) return node.metadata.npcSpawn
+        const entityId = node.metadata?.kind === 'npc' ? node.metadata?.entityId : null
+        if (Number.isFinite(entityId)) {
+          const spawn = npcSpawns.find(s => s.id === entityId)
+          if (spawn) return spawn
+        }
+        node = node.parent
+      }
+      return null
+    }
     const pick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => {
-      return mesh.isDescendantOf(npcSpawnGroup) && mesh.metadata?.npcSpawn
+      return !!spawnFromMesh(mesh)
     })
     if (!pick.hit) return null
-    return pick.pickedMesh.metadata.npcSpawn
+    return spawnFromMesh(pick.pickedMesh)
   }
 
   // --- Item Spawn system ---
@@ -3355,6 +3424,14 @@ let selectedWaterFlowChunk = null
       },
     })
 
+    const combatLevelReadout = document.createElement('div')
+    combatLevelReadout.style.cssText = 'font-size:11px;color:#ffcc66;margin:0 0 8px;padding:5px 6px;background:#241f14;border:1px solid #4a3820;border-radius:3px;'
+    const refreshCombatLevelReadout = () => {
+      combatLevelReadout.textContent = `Combat level: ${npcCombatLevel(effectiveNpcCombatStats(def, spawn?.stats))}`
+    }
+    refreshCombatLevelReadout()
+    root.appendChild(combatLevelReadout)
+
     if (overrideActive) {
       // Per-spawn override editor. Each row: label, the override input (blank
       // = inherit from def), and a small "× clear" button.
@@ -3378,11 +3455,13 @@ let selectedWaterFlowChunk = null
           const v = input.value.trim()
           if (v === '') delete spawn.stats[key]
           else spawn.stats[key] = parseFloat(v) || 0
+          refreshCombatLevelReadout()
           refreshNpcSpawnList()
         })
         row.querySelector('button').addEventListener('click', () => {
           delete spawn.stats[key]
           input.value = ''
+          refreshCombatLevelReadout()
           refreshNpcSpawnList()
         })
         root.appendChild(row)
@@ -3447,6 +3526,7 @@ let selectedWaterFlowChunk = null
         } else {
           def[key] = input.value
         }
+        refreshCombatLevelReadout()
         markDefsDirty()
         // Reflect Name updates in the dropdown live.
         if (key === 'name') {

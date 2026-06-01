@@ -300,65 +300,9 @@
       "name": "Farmer"
     },
     {
-      "id": 38,
-      "npcId": 6,
-      "x": 314.5,
-      "z": 157.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
-      "id": 39,
-      "npcId": 6,
-      "x": 311.5,
-      "z": 157.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
-      "id": 40,
-      "npcId": 6,
-      "x": 312.5,
-      "z": 154.5,
-      "wanderRange": 3,
-      "aggressive": false
-    },
-    {
-      "id": 41,
-      "npcId": 6,
-      "x": 308.5,
-      "z": 154.5,
-      "wanderRange": 3,
-      "aggressive": false
-    },
-    {
-      "id": 42,
-      "npcId": 6,
-      "x": 308.5,
-      "z": 152.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
-      "id": 43,
-      "npcId": 6,
-      "x": 318.5,
-      "z": 160.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
-      "id": 44,
-      "npcId": 6,
-      "x": 313.5,
-      "z": 152.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
       "id": 46,
       "npcId": 15,
-      "x": 279.5,
+      "x": 277.5,
       "z": 199.5,
       "wanderRange": 3,
       "aggressive": false
@@ -366,7 +310,7 @@
     {
       "id": 47,
       "npcId": 15,
-      "x": 283.5,
+      "x": 280.5,
       "z": 200.5,
       "wanderRange": 3,
       "aggressive": false,
@@ -375,8 +319,8 @@
     {
       "id": 48,
       "npcId": 15,
-      "x": 279.5,
-      "z": 199.5,
+      "x": 286.5,
+      "z": 200.5,
       "wanderRange": 3,
       "aggressive": false,
       "name": "Camel"
@@ -1762,22 +1706,6 @@
       }
     },
     {
-      "id": 128,
-      "npcId": 6,
-      "x": 308.5,
-      "z": 154.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
-      "id": 129,
-      "npcId": 6,
-      "x": 312.5,
-      "z": 154.5,
-      "wanderRange": 6,
-      "aggressive": false
-    },
-    {
       "id": 130,
       "npcId": 8,
       "x": 68.5,
@@ -1803,6 +1731,23 @@
       "z": 174.5,
       "wanderRange": 3,
       "aggressive": false
+    },
+    {
+      "id": 133,
+      "npcId": 25,
+      "x": 310.5,
+      "z": 159.5,
+      "wanderRange": 6,
+      "aggressive": true
+    },
+    {
+      "id": 134,
+      "npcId": 15,
+      "x": 277.5,
+      "z": 196.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "name": "Camel"
     }
   ],
   "objects": [],

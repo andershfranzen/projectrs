@@ -1,7 +1,7 @@
 export const NPC_NAMES: Record<number, string> = {
   1: 'Chicken', 2: 'Giant Rat', 3: 'Goblin', 4: 'Wolf',
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
-  9: 'Dark Knight', 10: 'Cow', 15: 'Camel',
+  9: 'Dark Knight', 10: 'Cow', 15: 'Camel', 25: 'Bear',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   16: 'Banker',
   21: 'Bill the Stylist',
@@ -46,6 +46,7 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   // authored full-cycle walk loop. Jump is the closest one-shot combat motion.
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
   24: { file: '/models/npcs/bull.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
+  25: { file: '/models/npcs/bear.glb', scale: 0.9, originMode: 'boundsCenter', anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'BiteAttack4Legs', death: 'Death4Legs' } },
   // Camel.glb is authored in centimeters and exported with the final flat-color
   // mesh plus the four gameplay clips.
   15: { file: '/models/npcs/Camel.glb', scale: 0.01, originMode: 'boundsCenter', facingOffsetY: Math.PI, preserveAnimationRoles: ['idle'], anims: { idle: 'Idle_01', walk: 'Walk', attack: 'Attack', death: 'Die' } },

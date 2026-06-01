@@ -135,6 +135,8 @@ export class Npc3DEntity {
   private chatBubbleTimer: number | null = null;
 
   private _ready = false;
+  private _readyPromise: Promise<void>;
+  private _resolveReady!: () => void;
   /** Entity ID stamped on every loaded mesh's metadata. Set via
    *  setEntityIdMetadata so picking can resolve the clicked instance even
    *  when multiple NPCs share the same source GLB (e.g. multiple cows). */
@@ -148,6 +150,9 @@ export class Npc3DEntity {
     options: Npc3DEntityOptions = {},
   ) {
     this.scene = scene;
+    this._readyPromise = new Promise((resolve) => {
+      this._resolveReady = resolve;
+    });
     this.modelScale = scale;
     this.originMode = options.originMode ?? 'authored';
     this.groundOffset = options.groundOffset ?? 0;
@@ -179,6 +184,7 @@ export class Npc3DEntity {
       const result = await importMeshWithTimeout(this.scene, dir, fname);
       if (this.disposed || this.scene.isDisposed) {
         disposeImportedMeshResult(result);
+        this._resolveReady();
         return;
       }
 
@@ -285,8 +291,10 @@ export class Npc3DEntity {
         mesh.isVisible = true;
         mesh.setEnabled(true);
       }
+      this._resolveReady();
     } catch (e) {
       if (!this.disposed) console.warn(`[Npc3DEntity] Failed to load ${file}:`, e);
+      this._resolveReady();
     }
   }
 
@@ -549,8 +557,13 @@ export class Npc3DEntity {
   setWalkAnimation(_anim: any): void { }
   setDirectionalSprites(_sprites: any): void { }
   addAttackAnimation(_name: string, _anim: any): void { }
+  /** Wait until the GLB has either loaded or failed. Mirrors CharacterEntity. */
+  whenReady(): Promise<void> { return this._readyPromise; }
+  get isReady(): boolean { return this._ready; }
   getRoot(): TransformNode | null { return this.root; }
   getMesh(): any { return this.meshes[0] ?? null; }
+  /** Get all renderable meshes (for editor picking / metadata stamping). */
+  getMeshes(): AbstractMesh[] { return this.meshes; }
 
   /**
    * Stamp the entityId onto every mesh's metadata so picking can identify

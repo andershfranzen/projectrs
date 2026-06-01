@@ -2,7 +2,7 @@ import type { Player } from '../entity/Player';
 import type { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
-  osrsMeleeMaxHit, rollHit, npcCombatLevel, bowAttackRollMultiplierForStance,
+  osrsMeleeMaxHit, rollHit, bowAttackRollMultiplierForStance,
   relicDropPoolForCombatLevel,
   type ItemDef,
 } from '@projectrs/shared';
@@ -341,7 +341,7 @@ export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
   }
 
   if (Math.random() < RELIC_DROP_CHANCE) {
-    const level = npcCombatLevel(npc.def);
+    const level = npc.combatLevel;
     const pool = relicDropPoolForCombatLevel(level);
     if (pool) {
       drops.push({ itemId: pool[Math.floor(Math.random() * pool.length)], quantity: 1 });
