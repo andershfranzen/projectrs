@@ -3,7 +3,7 @@ import {
   KILN_OBJECT_DEF_ID,
   POTTERY_WHEEL_OBJECT_DEF_ID,
   SPINNING_WHEEL_OBJECT_DEF_ID,
-} from './constants.js';
+} from './constants';
 
 export interface ObjectFootprintDef {
   id?: number;
