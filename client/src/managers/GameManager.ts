@@ -4617,6 +4617,15 @@ export class GameManager {
       options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId));
     }
 
+    if (options.length === 0 && pickResult.pickedPoint) {
+      const { x, z } = pickResult.pickedPoint;
+      options.push({
+        label: 'Walk here',
+        primary: false,
+        action: () => this.handleGroundClick(x, z),
+      });
+    }
+
     return options;
   }
 
