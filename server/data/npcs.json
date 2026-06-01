@@ -324,6 +324,11 @@
           "stock": 10
         },
         {
+          "itemId": 52,
+          "price": 5,
+          "stock": 10
+        },
+        {
           "itemId": 19,
           "price": 2,
           "stock": 100
