@@ -723,6 +723,11 @@
         "itemId": 32,
         "quantity": 1,
         "chance": 0.1
+      },
+      {
+        "itemId": 52,
+        "quantity": 1,
+        "chance": 0.4
       }
     ]
   },
