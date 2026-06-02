@@ -10,6 +10,7 @@ import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
 import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike, parseAllowedOrigins, readCookie, wsAcceptHeaders } from './network/WsSecurity';
 import { requestClientIp } from './network/clientIp';
 import { audit } from './Audit';
+import { sanitizeForumUpload } from './forumUploadSecurity';
 
 // Mob-kill leaderboard display tweaks — scoped to the hiscores only; these do
 // NOT rename or remove the NPC in-world. Override placeholder/dev names and
@@ -123,6 +124,17 @@ function getMobKillVisualProfiles(): Map<number, MobKillVisual> {
   }
   mobKillVisualCache = { expiresAt: now + MOB_KILL_VISUAL_CACHE_TTL_MS, profiles };
   return profiles;
+}
+
+function getHiscoreMobs(world: World): { id: number; name: string; visual?: MobKillVisual }[] {
+  const visualProfiles = getMobKillVisualProfiles();
+  return world.data.getAllNpcs()
+    .filter((def) => !def.shop && !def.bankAccess && !def.dialogue && !MOB_KILL_HIDDEN_IDS.has(def.id))
+    .map((def) => ({
+      id: def.id,
+      name: MOB_KILL_NAME_OVERRIDES[def.id] ?? def.name,
+      visual: visualProfiles.get(def.id),
+    }));
 }
 
 // --- Chunked object storage helpers ---
@@ -1003,6 +1015,8 @@ const WEBSITE_DIST = resolve(import.meta.dir, '../../website/dist');
 const WEBSITE_PUBLIC = resolve(import.meta.dir, '../../website/public');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
+const FORUM_MEDIA_DIR = resolve(DATA_DIR, 'forum-media');
+const FORUM_AVATAR_DIR = resolve(DATA_DIR, 'forum-avatars');
 const WEBSITE_DEV_ORIGIN = (() => {
   const raw = (process.env.WEBSITE_DEV_ORIGIN || '').trim();
   if (!raw || isProductionLike()) return null;
@@ -1049,6 +1063,9 @@ const MIME_TYPES: Record<string, string> = {
   '.json': 'application/json',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
   '.wasm': 'application/wasm',
   '.glb': 'model/gltf-binary',
@@ -1166,13 +1183,15 @@ function serveWebsite(req: Request, pathname: string): Response | null {
     && normalized !== '/hiscores'
     && normalized !== '/world-map'
     && normalized !== '/news'
+    && normalized !== '/forums'
     && !normalized.startsWith('/news/')
+    && !normalized.startsWith('/forums/')
     && !normalized.startsWith('/_next/')
   ) {
     return null;
   }
 
-  const routePath = normalized === '/' ? 'index' : normalized.slice(1);
+  const routePath = normalized === '/' ? 'index' : normalized.startsWith('/forums/') ? 'forums' : normalized.slice(1);
   const candidates = normalized.startsWith('/_next/')
     ? [routePath]
     : [`${routePath}.html`, routePath, `${routePath}/index.html`];
@@ -1241,7 +1260,9 @@ function isWebsiteDevProxyRoute(pathname: string): boolean {
     || normalized === '/hiscores'
     || normalized === '/world-map'
     || normalized === '/news'
+    || normalized === '/forums'
     || normalized.startsWith('/news/')
+    || normalized.startsWith('/forums/')
     || normalized.startsWith('/_next/');
 }
 
@@ -1252,6 +1273,7 @@ async function serveWebsiteDev(req: Request, pathname: string): Promise<Response
   const origin = new URL(WEBSITE_DEV_ORIGIN);
   target.protocol = origin.protocol;
   target.host = origin.host;
+  if (pathname.startsWith('/forums/') && !pathname.startsWith('/forums/avatar-bake')) target.pathname = '/forums';
 
   const headers = new Headers(req.headers);
   headers.set('host', origin.host);
@@ -1525,6 +1547,7 @@ setInterval(() => {
   for (const [k, v] of loginAttempts) if (now > v.resetAt) loginAttempts.delete(k);
   for (const [k, v] of signupAttempts) if (now > v.resetAt) signupAttempts.delete(k);
   for (const [k, v] of deviceIdAttempts) if (now > v.resetAt) deviceIdAttempts.delete(k);
+  for (const map of FORUM_RATE_MAPS) for (const [k, v] of map) if (now > v.resetAt) map.delete(k);
   cleanupPreauthBootstraps(now);
 }, 5 * 60_000);
 
@@ -1623,7 +1646,33 @@ const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
 const BODY_LIMIT_EDITOR = 200 * 1024 * 1024; // 200 MB — full map import / save
 const BODY_LIMIT_SPELL_ICON = 512 * 1024;   // 512 KB — one PNG icon
+const BODY_LIMIT_FORUM_JSON = 64 * 1024;
+const BODY_LIMIT_FORUM_UPLOAD = 15 * 1024 * 1024;
 const MAX_SPELL_ICON_DIMENSION = 512;
+const forumThreadAttempts = new Map<string, RateBucket>();
+const forumReplyAttempts = new Map<string, RateBucket>();
+const forumReactionAttempts = new Map<string, RateBucket>();
+const forumReportAttempts = new Map<string, RateBucket>();
+const forumUploadAttempts = new Map<string, RateBucket>();
+const forumEditAttempts = new Map<string, RateBucket>();
+const forumProfileAttempts = new Map<string, RateBucket>();
+const forumGetAttempts = new Map<string, RateBucket>();
+const FORUM_RATE_MAPS = [forumThreadAttempts, forumReplyAttempts, forumReactionAttempts, forumReportAttempts, forumUploadAttempts, forumEditAttempts, forumProfileAttempts, forumGetAttempts];
+
+// Anti-spam policy knobs (env-overridable; set the age vars to 0 to disable the
+// gate, e.g. for a brand-new community where waiting is undesirable).
+const FORUM_MIN_THREAD_AGE_SEC = Number(process.env.FORUM_MIN_THREAD_AGE_SEC ?? 24 * 60 * 60);
+const FORUM_MIN_REPLY_AGE_SEC = Number(process.env.FORUM_MIN_REPLY_AGE_SEC ?? 6 * 60 * 60);
+const FORUM_MEDIA_QUOTA_BYTES = Number(process.env.FORUM_MEDIA_QUOTA_BYTES ?? 500 * 1024 * 1024);
+
+// True when the account is younger than minAgeSec. Fails open on unknown age
+// (auth is already required upstream, so this only blocks fresh signups).
+function forumAccountTooNew(accountId: number, minAgeSec: number): boolean {
+  if (minAgeSec <= 0) return false;
+  const createdAt = db.getAccountCreatedAt(accountId);
+  if (createdAt == null) return false;
+  return Math.floor(Date.now() / 1000) - createdAt < minAgeSec;
+}
 
 // REST/API origin allow-list. Missing Origin stays allowed here because normal
 // same-origin browser GETs often omit it. WebSocket upgrades use stricter
@@ -1684,6 +1733,293 @@ function getBoundBearerSession(req: Request) {
   if (!hasMatchingCookie(req, WS_SESSION_COOKIE, session.wsSecret)) return null;
   if (session.deviceId && !hasMatchingCookie(req, DEVICE_COOKIE, session.deviceId)) return null;
   return session;
+}
+
+function getForumSession(req: Request, srv: { requestIP(req: Request): { address: string } | null }) {
+  const session = getBoundBearerSession(req);
+  if (!session) return null;
+  const ip = requestClientIp(req, srv);
+  if (db.isAccountBanned(session.accountId) || db.isIpBanned(ip)) return null;
+  return session;
+}
+
+function isForumStaff(session: NonNullable<ReturnType<typeof getBoundBearerSession>>): boolean {
+  return db.isForumModerator(session.accountId, session.isAdmin);
+}
+
+function forumAuthError(): Response {
+  return jsonResponse({ ok: false, error: 'Sign in to use the forums.' }, 401, { 'Cache-Control': 'no-store' });
+}
+
+function forumForbidden(): Response {
+  return jsonResponse({ ok: false, error: 'Forum moderator permission required.' }, 403, { 'Cache-Control': 'no-store' });
+}
+
+function forumAdminOnly(): Response {
+  return jsonResponse({ ok: false, error: 'Forums are currently admin-only.' }, 403, { 'Cache-Control': 'no-store' });
+}
+
+async function readForumJson(req: Request): Promise<Record<string, unknown> | null> {
+  if (!bodyWithinLimit(req, BODY_LIMIT_FORUM_JSON)) return null;
+  try {
+    const body = await req.json();
+    return body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function forumRateLimit(map: Map<string, RateBucket>, session: NonNullable<ReturnType<typeof getBoundBearerSession>>, ip: string, limit: number, windowMs: number): boolean {
+  return checkRate(map, `${session.accountId}:${ip}`, limit, windowMs);
+}
+
+function serveForumMedia(pathname: string): Response | null {
+  const rel = pathname.replace(/^\/forum-media\/?/, '');
+  if (!rel || rel.includes('\0')) return null;
+  const filePath = resolveWithinBase(FORUM_MEDIA_DIR, rel);
+  if (!filePath) return null;
+  try {
+    const stat = statSync(filePath);
+    if (!stat.isFile()) return null;
+    return new Response(readCachedStaticFile(filePath), {
+      headers: {
+        'Content-Type': getMimeType(filePath),
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Content-Disposition': `inline; filename="${filePath.split(sep).pop() ?? 'media'}"`,
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+function serveForumAvatar(pathname: string): Response | null {
+  const name = pathname.replace(/^\/forum-avatars\/?/, '');
+  if (!/^[0-9]+-[a-f0-9]{16}\.webp$/.test(name)) return null;
+  const filePath = resolveWithinBase(FORUM_AVATAR_DIR, name);
+  if (!filePath) return null;
+  try {
+    const stat = statSync(filePath);
+    if (!stat.isFile()) return null;
+    return new Response(readCachedStaticFile(filePath), {
+      headers: {
+        'Content-Type': 'image/webp',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Content-Disposition': `inline; filename="${name}"`,
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function handleForumUpload(req: Request, session: NonNullable<ReturnType<typeof getBoundBearerSession>>, ip: string): Promise<Response> {
+  if (!forumRateLimit(forumUploadAttempts, session, ip, 50, 24 * 60 * 60 * 1000)) {
+    return jsonResponse({ ok: false, error: 'Too many uploads today.' }, 429);
+  }
+  if (!bodyWithinLimit(req, BODY_LIMIT_FORUM_UPLOAD)) return tooLarge();
+  if (db.countForumUploadsSince(session.accountId, Math.floor(Date.now() / 1000) - 24 * 3600) >= 50) {
+    return jsonResponse({ ok: false, error: 'Daily upload limit reached.' }, 429);
+  }
+  try {
+    const formData = await req.formData();
+    const file = formData.get('file') as File | null;
+    if (!file) return jsonResponse({ ok: false, error: 'Choose an image or GIF.' }, 400);
+    const upload = await sanitizeForumUpload({ bytes: new Uint8Array(await file.arrayBuffer()), browserMime: file.type });
+    if (db.sumForumMediaBytes(session.accountId) + upload.sizeBytes > FORUM_MEDIA_QUOTA_BYTES) {
+      return jsonResponse({ ok: false, error: 'Storage limit reached. Delete some old images first.' }, 413);
+    }
+    const accountDir = resolve(FORUM_MEDIA_DIR, String(session.accountId));
+    mkdirSync(accountDir, { recursive: true });
+    const filename = `${crypto.randomUUID()}${upload.ext}`;
+    const storagePath = resolve(accountDir, filename);
+    writeFileSync(storagePath, upload.bytes);
+    const url = `/forum-media/${session.accountId}/${filename}`;
+    let record;
+    try {
+      record = db.saveForumMedia(session.accountId, storagePath, url, upload.kind, upload.mimeType, file.name || filename, upload.sizeBytes);
+    } catch (dbError) {
+      rmSync(storagePath, { force: true }); // don't orphan the file if the DB row fails
+      throw dbError;
+    }
+    return jsonResponse({ ok: true, media: { id: record.id, url: record.url } });
+  } catch (error) {
+    console.error('[forums] upload failed:', error);
+    return jsonResponse({ ok: false, error: error instanceof Error ? error.message : 'Upload failed.' }, 400);
+  }
+}
+
+async function handleForumApi(req: Request, srv: { requestIP(req: Request): { address: string } | null }): Promise<Response | null> {
+  const url = new URL(req.url);
+  if (!url.pathname.startsWith('/api/forums')) return null;
+  if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
+
+  const rawParts = url.pathname.split('/').filter(Boolean).slice(2);
+  const [resource, ...parts] = rawParts;
+  const maybeSession = getForumSession(req, srv);
+  if (!maybeSession) return forumAuthError();
+  if (!maybeSession.isAdmin) return forumAdminOnly();
+  const includeHidden = maybeSession ? isForumStaff(maybeSession) : false;
+  const ip = requestClientIp(req, srv);
+
+  if (req.method === 'GET') {
+    if (!checkRate(forumGetAttempts, ip, 60, 10 * 1000)) return jsonResponse({ ok: false, error: 'Too many requests. Slow down.' }, 429, { 'Cache-Control': 'no-store' });
+    if (!resource) {
+      return jsonResponse(db.listForumThreads({
+        query: url.searchParams.get('q') ?? '',
+        sort: url.searchParams.get('sort') ?? 'latest',
+        page: Number(url.searchParams.get('page') ?? 1),
+        limit: Number(url.searchParams.get('limit') ?? 20),
+        includeHidden,
+      }), 200, { 'Cache-Control': 'no-store' });
+    }
+    if (resource === 'categories') return jsonResponse({ categories: db.listForumCategories(includeHidden) }, 200, { 'Cache-Control': 'no-store' });
+    if (resource === 'category' && parts[0]) {
+      return jsonResponse(db.listForumThreads({
+        categorySlug: parts[0],
+        query: url.searchParams.get('q') ?? '',
+        sort: url.searchParams.get('sort') ?? 'latest',
+        page: Number(url.searchParams.get('page') ?? 1),
+        limit: Number(url.searchParams.get('limit') ?? 20),
+        includeHidden,
+      }), 200, { 'Cache-Control': 'no-store' });
+    }
+    if (resource === 'thread' && parts[0] && parts[1]) {
+      const thread = db.getForumThread(
+        parts[0],
+        parts[1],
+        maybeSession?.accountId ?? null,
+        includeHidden,
+        Number(url.searchParams.get('page') ?? 1),
+        Number(url.searchParams.get('limit') ?? 20),
+      );
+      return thread ? jsonResponse(thread, 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false, error: 'Thread not found.' }, 404);
+    }
+    if (resource === 'profile' && parts[0]) {
+      const profile = db.getForumProfile(parts[0]);
+      return profile ? jsonResponse(profile, 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false, error: 'Profile not found.' }, 404);
+    }
+    if (resource === 'me') {
+      return maybeSession ? jsonResponse({ ok: true, accountId: maybeSession.accountId, username: maybeSession.username, isAdmin: maybeSession.isAdmin, isModerator: isForumStaff(maybeSession) }, 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false }, 401);
+    }
+    if (resource === 'notifications') {
+      if (!maybeSession) return forumAuthError();
+      return jsonResponse(db.listForumNotifications(maybeSession.accountId), 200, { 'Cache-Control': 'no-store' });
+    }
+    if (resource === 'online') {
+      return jsonResponse({ users: db.listForumOnlineUsers() }, 200, { 'Cache-Control': 'no-store' });
+    }
+    if (resource === 'moderation') {
+      if (!maybeSession) return forumAuthError();
+      if (!isForumStaff(maybeSession)) return forumForbidden();
+      return jsonResponse({ reports: db.listForumReports(), moderators: db.listForumModerators(), categories: db.listForumCategories(true) }, 200, { 'Cache-Control': 'no-store' });
+    }
+    return jsonResponse({ ok: false, error: 'Forum endpoint not found.' }, 404);
+  }
+
+  if (req.method !== 'POST') return jsonResponse({ ok: false, error: 'Method not allowed.' }, 405);
+  if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
+  const session = maybeSession;
+  if (!session) return forumAuthError();
+
+  if (resource === 'upload') return handleForumUpload(req, session, ip);
+  if (resource === 'presence') return jsonResponse(db.touchForumPresence(session.accountId), 200, { 'Cache-Control': 'no-store' });
+
+  const body = await readForumJson(req);
+  if (!body) return jsonResponse({ ok: false, error: 'Invalid request body.' }, 400);
+
+  if (resource === 'thread') {
+    if (forumAccountTooNew(session.accountId, FORUM_MIN_THREAD_AGE_SEC)) return jsonResponse({ ok: false, error: 'New accounts need to be a little older before starting threads. Play a bit and come back soon.' }, 403);
+    if (!forumRateLimit(forumThreadAttempts, session, ip, 5, 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many new threads. Try later.' }, 429);
+    const result = db.createForumThread(session.accountId, Math.floor(Number(body.categoryId)), String(body.title ?? ''), String(body.body ?? ''));
+    if (!result.ok) return jsonResponse(result, 400);
+    audit({ type: 'forum.thread.create', tick: world.getCurrentTick(), accountId: session.accountId, details: { threadId: result.thread.id } });
+    return jsonResponse(result);
+  }
+  if (resource === 'reply') {
+    if (forumAccountTooNew(session.accountId, FORUM_MIN_REPLY_AGE_SEC)) return jsonResponse({ ok: false, error: 'New accounts need to be a little older before replying. Play a bit and come back soon.' }, 403);
+    if (!forumRateLimit(forumReplyAttempts, session, ip, 30, 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many replies. Try later.' }, 429);
+    const result = db.createForumReply(
+      session.accountId,
+      Math.floor(Number(body.threadId)),
+      String(body.body ?? ''),
+      body.replyToPostId == null ? undefined : Math.floor(Number(body.replyToPostId)),
+    );
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'notifications' && parts[0] === 'read') {
+    return jsonResponse(db.markForumNotificationsRead(session.accountId, body.notificationId == null ? undefined : Math.floor(Number(body.notificationId))));
+  }
+  if (resource === 'post' && parts[0] === 'edit') {
+    if (!forumRateLimit(forumEditAttempts, session, ip, 20, 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many edits. Try later.' }, 429);
+    const result = db.editForumPost(session.accountId, Math.floor(Number(body.postId)), String(body.body ?? ''), isForumStaff(session));
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'post' && parts[0] === 'delete') {
+    const result = db.deleteForumPost(session.accountId, Math.floor(Number(body.postId)), isForumStaff(session));
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'reaction') {
+    if (!forumRateLimit(forumReactionAttempts, session, ip, 120, 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many reactions. Try later.' }, 429);
+    const result = db.reactToForumPost(session.accountId, Math.floor(Number(body.postId)), String(body.reaction ?? ''));
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'report') {
+    if (!forumRateLimit(forumReportAttempts, session, ip, 20, 24 * 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many reports today.' }, 429);
+    const result = db.reportForumPost(session.accountId, Math.floor(Number(body.postId)), String(body.reason ?? ''));
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'profile') {
+    if (!forumRateLimit(forumProfileAttempts, session, ip, 10, 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many profile updates. Try later.' }, 429);
+    const hasAvatarMediaId = Object.prototype.hasOwnProperty.call(body, 'avatarMediaId');
+    const hasBannerMediaId = Object.prototype.hasOwnProperty.call(body, 'bannerMediaId');
+    const result = db.updateForumProfile(session.accountId, {
+      bio: body.bio === undefined ? undefined : String(body.bio),
+      title: body.title === undefined ? undefined : String(body.title),
+      avatarMediaId: hasAvatarMediaId ? (body.avatarMediaId == null ? null : Math.floor(Number(body.avatarMediaId))) : undefined,
+      bannerMediaId: hasBannerMediaId ? (body.bannerMediaId == null ? null : Math.floor(Number(body.bannerMediaId))) : undefined,
+    });
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+
+  if (!isForumStaff(session)) return forumForbidden();
+  if (resource === 'moderate' && parts[0] === 'thread') {
+    const result = db.moderateForumThread(Math.floor(Number(body.threadId)), String(body.action ?? ''), body.categoryId == null ? undefined : Math.floor(Number(body.categoryId)));
+    if (result.ok) audit({ type: 'forum.thread.moderate', tick: world.getCurrentTick(), accountId: session.accountId, details: body });
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'moderate' && parts[0] === 'post') {
+    const result = db.moderateForumPost(Math.floor(Number(body.postId)), String(body.action ?? ''), String(body.reason ?? ''));
+    if (result.ok) audit({ type: 'forum.post.moderate', tick: world.getCurrentTick(), accountId: session.accountId, details: body });
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'moderate' && parts[0] === 'category') {
+    const result = db.upsertForumCategory({
+      id: body.id == null ? undefined : Math.floor(Number(body.id)),
+      name: String(body.name ?? ''),
+      description: String(body.description ?? ''),
+      sortOrder: Math.floor(Number(body.sortOrder ?? 0)),
+      isHidden: body.isHidden === true,
+      isLocked: body.isLocked === true,
+      staffOnlyWrite: body.staffOnlyWrite === true,
+    });
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'moderate' && parts[0] === 'report') {
+    const result = db.resolveForumReport(Math.floor(Number(body.reportId)), session.accountId);
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  if (resource === 'admin' && parts[0] === 'moderator') {
+    if (!session.isAdmin) return adminForbidden();
+    const username = String(body.username ?? '');
+    const result = body.action === 'revoke'
+      ? db.revokeForumModerator(username)
+      : db.grantForumModerator(username, session.accountId);
+    return jsonResponse(result, result.ok ? 200 : 400);
+  }
+  return jsonResponse({ ok: false, error: 'Forum endpoint not found.' }, 404);
 }
 
 function validateDevicePublicKey(raw: unknown): JsonWebKey | null {
@@ -1824,7 +2160,10 @@ function recordGameplayMapDataFetch(
 }
 
 // Clean expired sessions every 10 minutes
-setInterval(() => db.cleanExpiredSessions(), 10 * 60 * 1000);
+setInterval(() => {
+  db.cleanExpiredSessions();
+  db.cleanupOldForumNotifications(Math.floor(Date.now() / 1000) - 90 * 24 * 3600);
+}, 10 * 60 * 1000);
 
 // Save all players on graceful shutdown so a server restart (SIGTERM from
 // `bun --watch`, deploy, or operator Ctrl-C) doesn't lose the last 15 s of
@@ -1871,6 +2210,21 @@ const server = Bun.serve<SocketData>({
       return jsonResponse({ onlinePlayers: world.getOnlinePlayerCount() });
     }
 
+    if (url.pathname.startsWith('/forum-media/')) {
+      const media = serveForumMedia(url.pathname);
+      if (media) return media;
+      return new Response('Not Found', { status: 404 });
+    }
+
+    if (url.pathname.startsWith('/forum-avatars/')) {
+      const avatar = serveForumAvatar(url.pathname);
+      if (avatar) return avatar;
+      return new Response('Not Found', { status: 404 });
+    }
+
+    const forumApiResponse = await handleForumApi(req, server);
+    if (forumApiResponse) return forumApiResponse;
+
     if (url.pathname === '/api/device-id' && req.method === 'GET') {
       if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       const existingDeviceId = parseCookie(req, DEVICE_COOKIE);
@@ -1908,7 +2262,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/hiscores/player' && req.method === 'GET') {
-      const profile = db.getHiscoreProfile(url.searchParams.get('username') ?? '');
+      const profile = db.getHiscoreProfile(url.searchParams.get('username') ?? '', getHiscoreMobs(world));
       if (!profile) return jsonResponse({ ok: false, error: 'Player profile not found.' }, 404);
       return jsonResponse(profile);
     }
@@ -1917,14 +2271,7 @@ const server = Bun.serve<SocketData>({
       // Selectable mobs = attackable NPCs only. Vendors/bankers (shop /
       // bankAccess / dialogue) are not killable, so they never appear in the
       // picker. Derived live from the NPC defs so editor changes flow through.
-      const visualProfiles = getMobKillVisualProfiles();
-      const mobs = world.data.getAllNpcs()
-        .filter((def) => !def.shop && !def.bankAccess && !def.dialogue && !MOB_KILL_HIDDEN_IDS.has(def.id))
-        .map((def) => ({
-          id: def.id,
-          name: MOB_KILL_NAME_OVERRIDES[def.id] ?? def.name,
-          visual: visualProfiles.get(def.id),
-        }));
+      const mobs = getHiscoreMobs(world);
       const npcParam = url.searchParams.get('npc');
       return jsonResponse(db.getMobKillHiscores(
         npcParam ? Number(npcParam) : null,
@@ -2401,6 +2748,45 @@ const server = Bun.serve<SocketData>({
         }
         writeFileSync(outPath, pngBytes);
         return jsonResponse({ ok: true, bytes: pngBytes.length });
+      } catch (e: any) {
+        return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/dev/forum-avatar-targets' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      const targets = db.listForumAvatarBakeTargets().map((target) => {
+        const filePath = resolve(FORUM_AVATAR_DIR, `${target.accountId}-${target.hash}.webp`);
+        return { ...target, baked: existsSync(filePath) };
+      });
+      return jsonResponse({ targets }, 200, { 'Cache-Control': 'no-store' });
+    }
+
+    if (url.pathname === '/api/dev/forum-avatar' && req.method === 'POST') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown; hash?: unknown; dataUrl?: unknown };
+        const accountId = Number(body.accountId);
+        const hash = typeof body.hash === 'string' ? body.hash : '';
+        const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : '';
+        if (!Number.isInteger(accountId) || accountId <= 0 || accountId > 1_000_000) {
+          return jsonResponse({ ok: false, error: 'Invalid account id' }, 400);
+        }
+        if (!/^[a-f0-9]{16}$/.test(hash)) return jsonResponse({ ok: false, error: 'Invalid avatar hash' }, 400);
+        const current = db.listForumAvatarBakeTargets().find((target) => target.accountId === accountId);
+        if (!current || current.hash !== hash) return jsonResponse({ ok: false, error: 'Avatar target is stale.' }, 409);
+        const m = /^data:image\/webp;base64,(.+)$/.exec(dataUrl);
+        if (!m) return jsonResponse({ ok: false, error: 'Expected WebP dataURL' }, 400);
+        const webpBytes = Buffer.from(m[1], 'base64');
+        if (webpBytes.length > 128 * 1024) {
+          return jsonResponse({ ok: false, error: `WebP too large: ${webpBytes.length}` }, 400);
+        }
+        if (!existsSync(FORUM_AVATAR_DIR)) mkdirSync(FORUM_AVATAR_DIR, { recursive: true });
+        const outPath = resolve(FORUM_AVATAR_DIR, `${accountId}-${hash}.webp`);
+        if (!outPath.startsWith(FORUM_AVATAR_DIR + sep)) return jsonResponse({ ok: false, error: 'Path outside output dir' }, 400);
+        writeFileSync(outPath, webpBytes);
+        return jsonResponse({ ok: true, url: `/forum-avatars/${accountId}-${hash}.webp`, bytes: webpBytes.length });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
       }

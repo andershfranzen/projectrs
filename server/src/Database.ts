@@ -1,8 +1,8 @@
 import { Database as SQLiteDB } from 'bun:sqlite';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, combatLevel, initSkills, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, combatLevel, initSkills, isValidAppearance, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -17,6 +17,78 @@ const SUSPECT_SKETCH_ITEM_ID = 236;
 const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
 const RETIRED_RESOURCE_OBJECT_IDS = [17, 18] as const;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
+const FORUM_DEFAULT_CATEGORIES = [
+  { slug: 'announcements', name: 'Announcements', description: 'Official EvilQuest news and notices.', staffOnly: 1 },
+  { slug: 'general', name: 'General', description: 'Talk about EvilQuest and the wider community.', staffOnly: 0 },
+  { slug: 'help', name: 'Help', description: 'Ask questions and help other adventurers.', staffOnly: 0 },
+  { slug: 'suggestions', name: 'Suggestions', description: 'Share ideas for future updates.', staffOnly: 0 },
+  { slug: 'bug-reports', name: 'Bug Reports', description: 'Report issues with the game or website.', staffOnly: 0 },
+  { slug: 'marketplace', name: 'Marketplace', description: 'Buy, sell, and trade with other players.', staffOnly: 0 },
+  { slug: 'off-topic', name: 'Off Topic', description: 'Relaxed discussion that does not fit elsewhere.', staffOnly: 0 },
+] as const;
+
+// A post is auto-hidden (pending staff review) once this many distinct accounts
+// report it. Stops a single spam post from staying live for hours before a
+// moderator sees it; still reversible via moderateForumPost('restore').
+const FORUM_AUTO_HIDE_DISTINCT_REPORTS = 3;
+const FORUM_AVATAR_BAKE_VERSION = 5;
+
+function forumSlug(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+function clampForumPage(value: number, fallback = 1): number {
+  return Math.max(1, Math.floor(Number.isFinite(value) ? value : fallback));
+}
+
+function parseSavedAppearance(raw: string | null | undefined): PlayerAppearance | null {
+  if (!raw) return null;
+  try {
+    const appearance = normalizeAppearance(JSON.parse(raw) as Partial<PlayerAppearance>);
+    return isValidAppearance(appearance) ? appearance : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseSavedHeadItemId(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  try {
+    const equipment = JSON.parse(raw) as Record<string, unknown>;
+    const value = equipment.head;
+    const itemId = typeof value === 'number'
+      ? value
+      : value && typeof value === 'object' && typeof (value as { itemId?: unknown }).itemId === 'number'
+        ? (value as { itemId: number }).itemId
+        : 0;
+    return Number.isInteger(itemId) && itemId > 0 ? itemId : null;
+  } catch {
+    return null;
+  }
+}
+
+function forumAvatarTarget(accountId: number, username: string, rawAppearance: string | null | undefined, rawEquipment: string | null | undefined): ForumAvatarBakeTarget | null {
+  const appearance = parseSavedAppearance(rawAppearance);
+  if (!appearance) return null;
+  const headItemId = parseSavedHeadItemId(rawEquipment);
+  const hash = createHash('sha1')
+    .update(JSON.stringify({ appearance, headItemId, bakeVersion: FORUM_AVATAR_BAKE_VERSION }))
+    .digest('hex')
+    .slice(0, 16);
+  return {
+    accountId,
+    username,
+    appearance,
+    headItemId,
+    hash,
+    url: `/forum-avatars/${accountId}-${hash}.webp`,
+  };
+}
 
 export interface SessionInfo {
   accountId: number;
@@ -178,6 +250,7 @@ export interface HiscoreRow {
   level: number;
   xp: number;
   dailyXp: number;
+  rankChange: number | null;
 }
 
 export interface HiscoreResponse {
@@ -196,11 +269,19 @@ export interface HiscoreProfileRow {
   level: number;
   xp: number;
   dailyXp: number;
+  rankChange: number | null;
 }
 
 export interface HiscoreProfileResponse {
   username: string;
   rows: HiscoreProfileRow[];
+  monsterKills: HiscoreProfileMonsterKillRow[];
+}
+
+export interface HiscoreProfileMonsterKillRow {
+  npcDefId: number;
+  name: string;
+  kills: number;
 }
 
 export type SocialListKind = 'friends' | 'ignore';
@@ -208,6 +289,147 @@ export type SocialListKind = 'friends' | 'ignore';
 export interface SocialEntry {
   accountId: number;
   username: string;
+}
+
+export interface ForumCategory {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  sortOrder: number;
+  isHidden: boolean;
+  isLocked: boolean;
+  staffOnlyWrite: boolean;
+  threadCount: number;
+  postCount: number;
+  latestThread: ForumThreadSummary | null;
+}
+
+export interface ForumThreadSummary {
+  id: number;
+  categoryId: number;
+  categorySlug: string;
+  categoryName: string;
+  slug: string;
+  title: string;
+  author: { accountId: number; username: string };
+  createdAt: number;
+  updatedAt: number;
+  lastPostAt: number;
+  lastPostBy: string;
+  replyCount: number;
+  viewCount: number;
+  isPinned: boolean;
+  isLocked: boolean;
+  isHidden: boolean;
+  isDeleted: boolean;
+}
+
+export interface ForumPost {
+  id: number;
+  threadId: number;
+  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean };
+  replyTo: { id: number; author: { accountId: number; username: string }; body: string; createdAt: number } | null;
+  body: string;
+  createdAt: number;
+  updatedAt: number;
+  editedAt: number | null;
+  isHidden: boolean;
+  isDeleted: boolean;
+  hiddenReason: string;
+  reactions: Record<string, number>;
+  myReaction: string | null;
+}
+
+export interface ForumThreadDetail {
+  thread: ForumThreadSummary;
+  category: ForumCategory;
+  posts: ForumPost[];
+  page: number;
+  pageSize: number;
+  totalPosts: number;
+  totalPages: number;
+}
+
+export interface ForumListResponse {
+  categories: ForumCategory[];
+  threads: ForumThreadSummary[];
+  page: number;
+  pageSize: number;
+  totalThreads: number;
+  totalPages: number;
+}
+
+export interface ForumProfile {
+  accountId: number;
+  username: string;
+  createdAt: number;
+  avatarUrl: string;
+  bannerUrl: string;
+  bio: string;
+  title: string;
+  postCount: number;
+  threadCount: number;
+  isModerator: boolean;
+  isAdmin: boolean;
+  combatLevel: number | null;
+  topSkills: Array<{ id: string; name: string; level: number; xp: number }>;
+  recentThreads: ForumThreadSummary[];
+  recentPosts: Array<{ id: number; threadId: number; threadTitle: string; threadSlug: string; createdAt: number }>;
+}
+
+export interface ForumOnlineUser {
+  accountId: number;
+  username: string;
+  avatarUrl: string;
+  combatLevel: number | null;
+  isAdmin: boolean;
+  lastSeenAt: number;
+}
+
+export interface ForumReport {
+  id: number;
+  postId: number;
+  threadId: number;
+  threadTitle: string;
+  reason: string;
+  status: string;
+  reporter: { accountId: number; username: string };
+  createdAt: number;
+  resolvedAt: number | null;
+  resolvedBy: string | null;
+}
+
+export interface ForumNotification {
+  id: number;
+  type: string;
+  createdAt: number;
+  readAt: number | null;
+  actor: { accountId: number; username: string };
+  thread: { id: number; categorySlug: string; slug: string; title: string };
+  postId: number;
+  postPage: number;
+  sourcePostId: number | null;
+}
+
+export interface ForumMediaRecord {
+  id: number;
+  accountId: number;
+  url: string;
+  kind: string;
+  mimeType: string;
+  originalName: string;
+  sizeBytes: number;
+  createdAt: number;
+}
+
+export interface ForumAvatarBakeTarget {
+  accountId: number;
+  username: string;
+  appearance: PlayerAppearance;
+  headItemId: number | null;
+  hash: string;
+  url: string;
 }
 
 export interface SocialLists {
@@ -930,6 +1152,145 @@ export class GameDatabase {
       CREATE INDEX IF NOT EXISTS idx_mob_kills_npc
         ON mob_kills(npc_def_id, kills DESC);
     `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS forum_categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_hidden INTEGER NOT NULL DEFAULT 0,
+        is_locked INTEGER NOT NULL DEFAULT 0,
+        staff_only_write INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_threads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        category_id INTEGER NOT NULL REFERENCES forum_categories(id),
+        author_account_id INTEGER NOT NULL REFERENCES accounts(id),
+        slug TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_post_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        last_post_account_id INTEGER NOT NULL REFERENCES accounts(id),
+        reply_count INTEGER NOT NULL DEFAULT 0,
+        view_count INTEGER NOT NULL DEFAULT 0,
+        is_pinned INTEGER NOT NULL DEFAULT 0,
+        is_locked INTEGER NOT NULL DEFAULT 0,
+        is_hidden INTEGER NOT NULL DEFAULT 0,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(category_id, slug)
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_id INTEGER NOT NULL REFERENCES forum_threads(id),
+        author_account_id INTEGER NOT NULL REFERENCES accounts(id),
+        reply_to_post_id INTEGER REFERENCES forum_posts(id),
+        body TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        edited_at INTEGER,
+        is_hidden INTEGER NOT NULL DEFAULT 0,
+        is_deleted INTEGER NOT NULL DEFAULT 0,
+        hidden_reason TEXT NOT NULL DEFAULT ''
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_reactions (
+        post_id INTEGER NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+        account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        reaction TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        PRIMARY KEY (post_id, account_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_profiles (
+        account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        avatar_media_id INTEGER REFERENCES forum_media(id),
+        banner_media_id INTEGER REFERENCES forum_media(id),
+        bio TEXT NOT NULL DEFAULT '',
+        title TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_media (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        storage_path TEXT NOT NULL,
+        url TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        original_name TEXT NOT NULL DEFAULT '',
+        size_bytes INTEGER NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        post_id INTEGER NOT NULL REFERENCES forum_posts(id),
+        reporter_account_id INTEGER NOT NULL REFERENCES accounts(id),
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        resolved_at INTEGER,
+        resolved_by_account_id INTEGER REFERENCES accounts(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_moderators (
+        account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        granted_by_account_id INTEGER REFERENCES accounts(id),
+        granted_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_post_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        post_id INTEGER NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+        editor_account_id INTEGER NOT NULL REFERENCES accounts(id),
+        old_body TEXT NOT NULL,
+        new_body TEXT NOT NULL,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        actor_account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        type TEXT NOT NULL,
+        thread_id INTEGER NOT NULL REFERENCES forum_threads(id) ON DELETE CASCADE,
+        post_id INTEGER NOT NULL REFERENCES forum_posts(id) ON DELETE CASCADE,
+        source_post_id INTEGER REFERENCES forum_posts(id) ON DELETE CASCADE,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        read_at INTEGER
+      );
+
+      CREATE TABLE IF NOT EXISTS forum_presence (
+        account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+        last_seen_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_forum_threads_category_last
+        ON forum_threads(category_id, is_deleted, is_hidden, is_pinned DESC, last_post_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_threads_last
+        ON forum_threads(is_deleted, is_hidden, last_post_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_posts_thread
+        ON forum_posts(thread_id, is_deleted, is_hidden, created_at);
+      CREATE INDEX IF NOT EXISTS idx_forum_reports_status
+        ON forum_reports(status, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_media_account_created
+        ON forum_media(account_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_notifications_recipient
+        ON forum_notifications(recipient_account_id, read_at, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_presence_last_seen
+        ON forum_presence(last_seen_at DESC);
+    `);
+    try {
+      this.db.exec(`ALTER TABLE forum_posts ADD COLUMN reply_to_post_id INTEGER REFERENCES forum_posts(id)`);
+    } catch {}
+    this.seedForumCategories();
   }
 
   private runOneTimeDataMigrations(): void {
@@ -1795,8 +2156,36 @@ export class GameDatabase {
     return dailyBaselineXp;
   }
 
+  private loadPreviousHiscoreRanks(categoryId: string, cutoff: number): Map<number, number> {
+    const rows = this.db.query(`
+      SELECT hs.account_id, a.username, hs.level, hs.xp
+      FROM hiscore_snapshots hs
+      JOIN (
+        SELECT account_id, MAX(bucket_start) AS bucket_start
+        FROM hiscore_snapshots
+        WHERE category = ? AND bucket_start <= ?
+        GROUP BY account_id
+      ) latest
+        ON latest.account_id = hs.account_id
+       AND latest.bucket_start = hs.bucket_start
+      JOIN accounts a ON a.id = hs.account_id
+      LEFT JOIN account_bans ab
+        ON ab.account_id = a.id
+       AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      WHERE hs.category = ? AND ab.account_id IS NULL
+    `).all(categoryId, cutoff, categoryId) as Array<{ account_id: number; username: string; level: number; xp: number }>;
+
+    const ranks = new Map<number, number>();
+    rows
+      .filter((row) => !isHiscoreExcludedUsername(row.username))
+      .sort((a, b) => b.level - a.level || b.xp - a.xp || a.username.localeCompare(b.username))
+      .forEach((row, idx) => ranks.set(row.account_id, idx + 1));
+    return ranks;
+  }
+
   private rankedHiscoreRows(category: HiscoreCategory, players: HiscorePlayerRecord[], cutoff: number): RankedHiscoreRow[] {
     const dailyBaselineXp = this.loadDailyHiscoreBaselines(category.id, cutoff);
+    const previousRanks = this.loadPreviousHiscoreRanks(category.id, cutoff);
     return players
       .map((row) => {
         const value = this.hiscoreCategoryValue(category.id, row.skills);
@@ -1807,10 +2196,19 @@ export class GameDatabase {
           level: value.level,
           xp: value.xp,
           dailyXp: baselineXp == null ? 0 : Math.max(0, value.xp - baselineXp),
+          rankChange: null,
         };
       })
       .sort((a, b) => b.level - a.level || b.xp - a.xp || a.username.localeCompare(b.username))
-      .map((row, idx) => ({ rank: idx + 1, ...row }));
+      .map((row, idx) => {
+        const rank = idx + 1;
+        const previousRank = previousRanks.get(row.accountId);
+        return {
+          rank,
+          ...row,
+          rankChange: previousRank == null ? null : previousRank - rank,
+        };
+      });
   }
 
   getHiscores(
@@ -1847,7 +2245,7 @@ export class GameDatabase {
     };
   }
 
-  getHiscoreProfile(username: string): HiscoreProfileResponse | null {
+  getHiscoreProfile(username: string, mobs: MobKillMob[] = []): HiscoreProfileResponse | null {
     const normalizedUsername = username.trim().toLowerCase();
     if (!normalizedUsername) return null;
 
@@ -1866,12 +2264,27 @@ export class GameDatabase {
         level: row?.level ?? 0,
         xp: row?.xp ?? 0,
         dailyXp: row?.dailyXp ?? 0,
+        rankChange: row?.rankChange ?? null,
       };
     });
+    const mobNames = new Map(mobs.map((mob) => [mob.id, mob.name]));
+    const monsterKills = (this.db.query(`
+      SELECT npc_def_id, kills
+      FROM mob_kills
+      WHERE account_id = ? AND kills > 0
+      ORDER BY kills DESC, npc_def_id ASC
+      LIMIT 10
+    `).all(target.accountId) as Array<{ npc_def_id: number; kills: number }>)
+      .map((row) => ({
+        npcDefId: row.npc_def_id,
+        name: mobNames.get(row.npc_def_id) ?? `NPC ${row.npc_def_id}`,
+        kills: row.kills,
+      }));
 
     return {
       username: target.username,
       rows,
+      monsterKills,
     };
   }
 
@@ -2265,6 +2678,693 @@ export class GameDatabase {
     }));
   }
 
+  private seedForumCategories(): void {
+    const stmt = this.db.query(`
+      INSERT INTO forum_categories (slug, name, description, sort_order, staff_only_write)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(slug) DO NOTHING
+    `);
+    FORUM_DEFAULT_CATEGORIES.forEach((category, index) => {
+      stmt.run(category.slug, category.name, category.description, index + 1, category.staffOnly);
+    });
+  }
+
+  private forumCategoryFromRow(row: {
+    id: number; slug: string; name: string; description: string; sort_order: number;
+    is_hidden: number; is_locked: number; staff_only_write: number;
+    thread_count?: number | null; post_count?: number | null;
+  }, latestThread: ForumThreadSummary | null = null): ForumCategory {
+    return {
+      id: row.id,
+      slug: row.slug,
+      name: row.name,
+      description: row.description,
+      sortOrder: row.sort_order,
+      isHidden: row.is_hidden === 1,
+      isLocked: row.is_locked === 1,
+      staffOnlyWrite: row.staff_only_write === 1,
+      threadCount: row.thread_count ?? 0,
+      postCount: row.post_count ?? 0,
+      latestThread,
+    };
+  }
+
+  private forumThreadFromRow(row: {
+    id: number; category_id: number; category_slug: string; category_name: string;
+    author_account_id: number; author_username: string; last_post_username: string;
+    slug: string; title: string; created_at: number; updated_at: number; last_post_at: number;
+    reply_count: number; view_count: number; is_pinned: number; is_locked: number; is_hidden: number; is_deleted: number;
+  }): ForumThreadSummary {
+    return {
+      id: row.id,
+      categoryId: row.category_id,
+      categorySlug: row.category_slug,
+      categoryName: row.category_name,
+      slug: row.slug,
+      title: row.title,
+      author: { accountId: row.author_account_id, username: row.author_username },
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      lastPostAt: row.last_post_at,
+      lastPostBy: row.last_post_username,
+      replyCount: row.reply_count,
+      viewCount: row.view_count,
+      isPinned: row.is_pinned === 1,
+      isLocked: row.is_locked === 1,
+      isHidden: row.is_hidden === 1,
+      isDeleted: row.is_deleted === 1,
+    };
+  }
+
+  private forumThreadSelect(whereSql: string): string {
+    return `
+      SELECT
+        t.id, t.category_id, c.slug AS category_slug, c.name AS category_name,
+        t.author_account_id, a.username AS author_username,
+        COALESCE(lp.username, a.username) AS last_post_username,
+        t.slug, t.title, t.created_at, t.updated_at, t.last_post_at,
+        t.reply_count, t.view_count, t.is_pinned, t.is_locked, t.is_hidden, t.is_deleted
+      FROM forum_threads t
+      JOIN forum_categories c ON c.id = t.category_id
+      JOIN accounts a ON a.id = t.author_account_id
+      LEFT JOIN accounts lp ON lp.id = t.last_post_account_id
+      ${whereSql}
+    `;
+  }
+
+  isForumModerator(accountId: number, isAdmin: boolean = false): boolean {
+    if (isAdmin) return true;
+    return !!this.db.query('SELECT 1 FROM forum_moderators WHERE account_id = ?').get(accountId);
+  }
+
+  listForumCategories(includeHidden: boolean = false): ForumCategory[] {
+    const rows = this.db.query(`
+      SELECT
+        c.*,
+        COUNT(DISTINCT CASE WHEN t.is_deleted = 0 AND t.is_hidden = 0 THEN t.id END) AS thread_count,
+        COUNT(DISTINCT CASE WHEN p.is_deleted = 0 AND p.is_hidden = 0 THEN p.id END) AS post_count
+      FROM forum_categories c
+      LEFT JOIN forum_threads t ON t.category_id = c.id
+      LEFT JOIN forum_posts p ON p.thread_id = t.id
+      WHERE (? = 1 OR c.is_hidden = 0)
+      GROUP BY c.id
+      ORDER BY c.sort_order ASC, c.name ASC
+    `).all(includeHidden ? 1 : 0) as Array<{
+      id: number; slug: string; name: string; description: string; sort_order: number;
+      is_hidden: number; is_locked: number; staff_only_write: number; thread_count: number; post_count: number;
+    }>;
+    return rows.map((row) => this.forumCategoryFromRow(row, this.getLatestThreadForCategory(row.id, includeHidden)));
+  }
+
+  private getLatestThreadForCategory(categoryId: number, includeHidden: boolean): ForumThreadSummary | null {
+    const row = this.db.query(this.forumThreadSelect(`
+      WHERE t.category_id = ? AND t.is_deleted = 0 AND (? = 1 OR t.is_hidden = 0)
+      ORDER BY t.last_post_at DESC LIMIT 1
+    `)).get(categoryId, includeHidden ? 1 : 0) as Parameters<typeof this.forumThreadFromRow>[0] | null;
+    return row ? this.forumThreadFromRow(row) : null;
+  }
+
+  getForumCategory(slug: string, includeHidden: boolean = false): ForumCategory | null {
+    return this.listForumCategories(includeHidden).find((category) => category.slug === slug) ?? null;
+  }
+
+  listForumThreads(opts: { categorySlug?: string; query?: string; sort?: string; page?: number; limit?: number; includeHidden?: boolean } = {}): ForumListResponse {
+    const includeHidden = opts.includeHidden === true;
+    const pageSize = Math.max(5, Math.min(50, Math.floor(opts.limit ?? 20) || 20));
+    const page = clampForumPage(opts.page ?? 1);
+    const query = (opts.query ?? '').trim().toLowerCase();
+    const categorySlug = (opts.categorySlug ?? '').trim().toLowerCase();
+    const sort = opts.sort === 'new' ? 'new' : opts.sort === 'top' ? 'top' : 'latest';
+    const clauses = ['t.is_deleted = 0', '(? = 1 OR t.is_hidden = 0)', '(? = 1 OR c.is_hidden = 0)'];
+    const params: Array<string | number> = [includeHidden ? 1 : 0, includeHidden ? 1 : 0];
+    if (categorySlug) {
+      clauses.push('c.slug = ?');
+      params.push(categorySlug);
+    }
+    if (query) {
+      clauses.push('(lower(t.title) LIKE ? OR EXISTS (SELECT 1 FROM forum_posts p WHERE p.thread_id = t.id AND p.is_deleted = 0 AND (? = 1 OR p.is_hidden = 0) AND lower(p.body) LIKE ?))');
+      params.push(`%${query}%`, includeHidden ? 1 : 0, `%${query}%`);
+    }
+    const where = `WHERE ${clauses.join(' AND ')}`;
+    const total = (this.db.query(`
+      SELECT COUNT(*) AS n
+      FROM forum_threads t JOIN forum_categories c ON c.id = t.category_id
+      ${where}
+    `).get(...params) as { n: number }).n;
+    const orderBy = sort === 'new'
+      ? 't.created_at DESC'
+      : sort === 'top'
+        ? 't.view_count DESC, t.reply_count DESC, t.last_post_at DESC'
+        : 't.is_pinned DESC, t.last_post_at DESC';
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const safePage = Math.min(page, totalPages);
+    const rows = this.db.query(`${this.forumThreadSelect(where)} ORDER BY ${orderBy} LIMIT ? OFFSET ?`)
+      .all(...params, pageSize, (safePage - 1) * pageSize) as Array<Parameters<typeof this.forumThreadFromRow>[0]>;
+    return {
+      categories: this.listForumCategories(includeHidden),
+      threads: rows.map((row) => this.forumThreadFromRow(row)),
+      page: safePage,
+      pageSize,
+      totalThreads: total,
+      totalPages,
+    };
+  }
+
+  getForumThread(categorySlug: string, threadSlug: string, viewerAccountId: number | null = null, includeHidden: boolean = false, page: number = 1, limit: number = 20): ForumThreadDetail | null {
+    const row = this.db.query(this.forumThreadSelect(`
+      WHERE c.slug = ? AND t.slug = ? AND t.is_deleted = 0
+        AND (? = 1 OR (t.is_hidden = 0 AND c.is_hidden = 0))
+      LIMIT 1
+    `)).get(categorySlug, threadSlug, includeHidden ? 1 : 0) as Parameters<typeof this.forumThreadFromRow>[0] | null;
+    if (!row) return null;
+    this.db.query('UPDATE forum_threads SET view_count = view_count + 1 WHERE id = ?').run(row.id);
+    const thread = this.forumThreadFromRow({ ...row, view_count: row.view_count + 1 });
+    const category = this.getForumCategory(categorySlug, includeHidden);
+    if (!category) return null;
+    const pageSize = Math.max(5, Math.min(50, Math.floor(limit) || 20));
+    const totalPosts = (this.db.query('SELECT COUNT(*) AS n FROM forum_posts WHERE thread_id = ? AND is_deleted = 0 AND (? = 1 OR is_hidden = 0)')
+      .get(thread.id, includeHidden ? 1 : 0) as { n: number }).n;
+    const totalPages = Math.max(1, Math.ceil(totalPosts / pageSize));
+    const safePage = Math.min(clampForumPage(page), totalPages);
+    const posts = this.getForumPosts(thread.id, viewerAccountId, includeHidden, safePage, pageSize);
+    return { thread, category, posts, page: safePage, pageSize, totalPosts, totalPages };
+  }
+
+  private getForumPosts(threadId: number, viewerAccountId: number | null, includeHidden: boolean, page: number = 1, limit: number = 20): ForumPost[] {
+    const offset = (clampForumPage(page) - 1) * limit;
+    const rows = this.db.query(`
+      SELECT p.*, a.username, a.is_admin AS author_is_admin,
+        ps.skills AS author_skills, ps.appearance AS author_appearance, ps.equipment AS author_equipment,
+        avatar.url AS author_avatar_url,
+        rp.id AS reply_to_id, rp.author_account_id AS reply_to_author_account_id,
+        ra.username AS reply_to_author_username, rp.body AS reply_to_body, rp.created_at AS reply_to_created_at
+      FROM forum_posts p JOIN accounts a ON a.id = p.author_account_id
+      LEFT JOIN player_state ps ON ps.account_id = p.author_account_id
+      LEFT JOIN forum_profiles fp ON fp.account_id = p.author_account_id
+      LEFT JOIN forum_media avatar ON avatar.id = fp.avatar_media_id
+      LEFT JOIN forum_posts rp ON rp.id = p.reply_to_post_id AND rp.is_deleted = 0
+      LEFT JOIN accounts ra ON ra.id = rp.author_account_id
+      WHERE p.thread_id = ? AND p.is_deleted = 0 AND (? = 1 OR p.is_hidden = 0)
+      ORDER BY p.created_at ASC, p.id ASC
+      LIMIT ? OFFSET ?
+    `).all(threadId, includeHidden ? 1 : 0, limit, offset) as Array<{
+      id: number; thread_id: number; author_account_id: number; username: string; author_is_admin: number;
+      author_skills: string | null; author_appearance: string | null; author_equipment: string | null; author_avatar_url: string | null; body: string;
+      created_at: number; updated_at: number; edited_at: number | null; is_hidden: number; is_deleted: number; hidden_reason: string;
+      reply_to_id: number | null; reply_to_author_account_id: number | null; reply_to_author_username: string | null; reply_to_body: string | null; reply_to_created_at: number | null;
+    }>;
+    const postIds = rows.map((row) => row.id);
+    const reactionCounts = new Map<number, Record<string, number>>();
+    const myReactions = new Map<number, string>();
+    if (postIds.length > 0) {
+      const placeholders = postIds.map(() => '?').join(',');
+      const reactions = this.db.query(`
+        SELECT post_id, reaction, COUNT(*) AS n
+        FROM forum_reactions
+        WHERE post_id IN (${placeholders})
+        GROUP BY post_id, reaction
+      `).all(...postIds) as Array<{ post_id: number; reaction: string; n: number }>;
+      for (const row of reactions) {
+        const counts = reactionCounts.get(row.post_id) ?? {};
+        counts[row.reaction] = row.n;
+        reactionCounts.set(row.post_id, counts);
+      }
+      if (viewerAccountId != null) {
+        const mine = this.db.query(`SELECT post_id, reaction FROM forum_reactions WHERE account_id = ? AND post_id IN (${placeholders})`)
+          .all(viewerAccountId, ...postIds) as Array<{ post_id: number; reaction: string }>;
+        for (const row of mine) myReactions.set(row.post_id, row.reaction);
+      }
+    }
+    return rows.map((row) => {
+      let authorCombatLevel: number | null = null;
+      if (row.author_skills) {
+        try {
+          authorCombatLevel = combatLevel(JSON.parse(row.author_skills));
+        } catch {
+          authorCombatLevel = null;
+        }
+      }
+      const avatarTarget = forumAvatarTarget(row.author_account_id, row.username, row.author_appearance, row.author_equipment);
+      return {
+      id: row.id,
+      threadId: row.thread_id,
+      author: { accountId: row.author_account_id, username: row.username, avatarUrl: avatarTarget?.url ?? row.author_avatar_url ?? '', combatLevel: authorCombatLevel, isAdmin: row.author_is_admin === 1 },
+      replyTo: row.reply_to_id == null ? null : {
+        id: row.reply_to_id,
+        author: { accountId: row.reply_to_author_account_id ?? 0, username: row.reply_to_author_username ?? 'unknown' },
+        body: (row.reply_to_body ?? '').slice(0, 500),
+        createdAt: row.reply_to_created_at ?? 0,
+      },
+      body: row.body,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      editedAt: row.edited_at,
+      isHidden: row.is_hidden === 1,
+      isDeleted: row.is_deleted === 1,
+      hiddenReason: row.hidden_reason,
+      reactions: reactionCounts.get(row.id) ?? {},
+      myReaction: myReactions.get(row.id) ?? null,
+      };
+    });
+  }
+
+  private getForumPostById(postId: number, viewerAccountId: number | null, includeHidden: boolean): ForumPost | null {
+    const row = this.db.query('SELECT thread_id FROM forum_posts WHERE id = ?').get(postId) as { thread_id: number } | null;
+    if (!row) return null;
+    return this.getForumPosts(row.thread_id, viewerAccountId, includeHidden, 1, 1_000_000).find((post) => post.id === postId) ?? null;
+  }
+
+  private createForumNotification(recipientAccountId: number, actorAccountId: number, type: string, threadId: number, postId: number, sourcePostId: number | null): void {
+    if (recipientAccountId === actorAccountId) return;
+    this.db.query(`
+      INSERT INTO forum_notifications (recipient_account_id, actor_account_id, type, thread_id, post_id, source_post_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(recipientAccountId, actorAccountId, type, threadId, postId, sourcePostId);
+  }
+
+  listForumNotifications(accountId: number, limit: number = 20): { notifications: ForumNotification[]; unreadCount: number } {
+    const safeLimit = Math.max(1, Math.min(50, Math.floor(limit) || 20));
+    const rows = this.db.query(`
+      SELECT n.id, n.type, n.created_at, n.read_at, n.post_id, n.source_post_id,
+        actor.id AS actor_account_id, actor.username AS actor_username,
+        t.id AS thread_id, t.slug AS thread_slug, t.title AS thread_title,
+        c.slug AS category_slug,
+        (
+          SELECT COUNT(*) FROM forum_posts previous
+          WHERE previous.thread_id = n.thread_id AND previous.is_deleted = 0
+            AND previous.is_hidden = 0
+            AND (previous.created_at < p.created_at OR (previous.created_at = p.created_at AND previous.id <= p.id))
+        ) AS post_position
+      FROM forum_notifications n
+      JOIN forum_posts p ON p.id = n.post_id
+      JOIN accounts actor ON actor.id = n.actor_account_id
+      JOIN forum_threads t ON t.id = n.thread_id
+      JOIN forum_categories c ON c.id = t.category_id
+      WHERE n.recipient_account_id = ?
+      ORDER BY n.created_at DESC, n.id DESC
+      LIMIT ?
+    `).all(accountId, safeLimit) as Array<{
+      id: number; type: string; created_at: number; read_at: number | null; post_id: number; source_post_id: number | null;
+      actor_account_id: number; actor_username: string; thread_id: number; thread_slug: string; thread_title: string; category_slug: string; post_position: number;
+    }>;
+    const unreadCount = (this.db.query('SELECT COUNT(*) AS n FROM forum_notifications WHERE recipient_account_id = ? AND read_at IS NULL')
+      .get(accountId) as { n: number }).n;
+    return {
+      unreadCount,
+      notifications: rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        createdAt: row.created_at,
+        readAt: row.read_at,
+        actor: { accountId: row.actor_account_id, username: row.actor_username },
+        thread: { id: row.thread_id, categorySlug: row.category_slug, slug: row.thread_slug, title: row.thread_title },
+        postId: row.post_id,
+        postPage: Math.max(1, Math.ceil(row.post_position / 20)),
+        sourcePostId: row.source_post_id,
+      })),
+    };
+  }
+
+  markForumNotificationsRead(accountId: number, notificationId?: number): { ok: true } {
+    if (notificationId) {
+      this.db.query('UPDATE forum_notifications SET read_at = COALESCE(read_at, unixepoch()) WHERE id = ? AND recipient_account_id = ?')
+        .run(notificationId, accountId);
+    } else {
+      this.db.query('UPDATE forum_notifications SET read_at = COALESCE(read_at, unixepoch()) WHERE recipient_account_id = ? AND read_at IS NULL')
+        .run(accountId);
+    }
+    return { ok: true };
+  }
+
+  touchForumPresence(accountId: number, nowUnix: number = Math.floor(Date.now() / 1000)): { ok: true } {
+    const safeNow = Math.max(0, Math.floor(nowUnix));
+    this.db.query(`
+      INSERT INTO forum_presence (account_id, last_seen_at)
+      VALUES (?, ?)
+      ON CONFLICT(account_id) DO UPDATE SET last_seen_at = excluded.last_seen_at
+    `).run(accountId, safeNow);
+    return { ok: true };
+  }
+
+  listForumOnlineUsers(nowUnix: number = Math.floor(Date.now() / 1000), windowSeconds: number = 180): ForumOnlineUser[] {
+    const safeNow = Math.max(0, Math.floor(nowUnix));
+    const safeWindow = Math.max(30, Math.min(15 * 60, Math.floor(windowSeconds) || 180));
+    const rows = this.db.query(`
+      SELECT p.account_id, p.last_seen_at, a.username, a.is_admin, ps.skills, avatar.url AS avatar_url
+      FROM forum_presence p
+      JOIN accounts a ON a.id = p.account_id
+      LEFT JOIN player_state ps ON ps.account_id = p.account_id
+      LEFT JOIN forum_profiles fp ON fp.account_id = p.account_id
+      LEFT JOIN forum_media avatar ON avatar.id = fp.avatar_media_id
+      WHERE p.last_seen_at >= ?
+      ORDER BY p.last_seen_at DESC, lower(a.username) ASC
+      LIMIT 100
+    `).all(safeNow - safeWindow) as Array<{
+      account_id: number; last_seen_at: number; username: string; is_admin: number; skills: string | null; avatar_url: string | null;
+    }>;
+    return rows.map((row) => {
+      let level: number | null = null;
+      if (row.skills) {
+        try {
+          level = combatLevel(JSON.parse(row.skills));
+        } catch {
+          level = null;
+        }
+      }
+      return {
+        accountId: row.account_id,
+        username: row.username,
+        avatarUrl: row.avatar_url ?? '',
+        combatLevel: level,
+        isAdmin: row.is_admin === 1,
+        lastSeenAt: row.last_seen_at,
+      };
+    });
+  }
+
+  createForumThread(accountId: number, categoryId: number, title: string, body: string): { ok: true; thread: ForumThreadSummary } | { ok: false; error: string } {
+    const cleanTitle = title.trim().replace(/\s+/g, ' ').slice(0, 120);
+    const cleanBody = body.trim().slice(0, 20_000);
+    if (cleanTitle.length < 3 || !/[a-z0-9]/i.test(cleanTitle)) return { ok: false, error: 'Thread title must include at least one letter or number.' };
+    if (cleanBody.length < 2) return { ok: false, error: 'Post body is too short.' };
+    const category = this.db.query('SELECT id, slug, is_locked, staff_only_write, is_hidden FROM forum_categories WHERE id = ?')
+      .get(categoryId) as { id: number; slug: string; is_locked: number; staff_only_write: number; is_hidden: number } | null;
+    if (!category || category.is_hidden === 1) return { ok: false, error: 'Category not found.' };
+    const account = this.getAccountModerationInfo(accountId);
+    if (!account) return { ok: false, error: 'Account not found.' };
+    const canModerate = this.isForumModerator(accountId, account.isAdmin);
+    if (category.is_locked === 1 || (category.staff_only_write === 1 && !canModerate)) return { ok: false, error: 'Only staff can post in this category.' };
+    const baseSlug = forumSlug(cleanTitle) || `thread-${Date.now()}`;
+    let slug = baseSlug;
+    for (let i = 2; i < 100; i++) {
+      if (!this.db.query('SELECT 1 FROM forum_threads WHERE category_id = ? AND slug = ?').get(categoryId, slug)) break;
+      slug = `${baseSlug}-${i}`;
+    }
+    let threadId = 0;
+    this.db.transaction(() => {
+      const result = this.db.query('INSERT INTO forum_threads (category_id, author_account_id, slug, title, last_post_account_id) VALUES (?, ?, ?, ?, ?)')
+        .run(categoryId, accountId, slug, cleanTitle, accountId);
+      threadId = Number(result.lastInsertRowid);
+      this.db.query('INSERT INTO forum_posts (thread_id, author_account_id, body) VALUES (?, ?, ?)')
+        .run(threadId, accountId, cleanBody);
+    }).immediate();
+    void threadId;
+    const thread = this.getForumThread(category.slug, slug, accountId, true)?.thread;
+    return thread ? { ok: true, thread } : { ok: false, error: 'Thread creation failed.' };
+  }
+
+  createForumReply(accountId: number, threadId: number, body: string, replyToPostId?: number): { ok: true; post: ForumPost } | { ok: false; error: string } {
+    const cleanBody = body.trim().slice(0, 20_000);
+    if (cleanBody.length < 2) return { ok: false, error: 'Reply is too short.' };
+    const thread = this.db.query('SELECT id, author_account_id, title, is_locked, is_hidden, is_deleted FROM forum_threads WHERE id = ?')
+      .get(threadId) as { id: number; author_account_id: number; title: string; is_locked: number; is_hidden: number; is_deleted: number } | null;
+    if (!thread || thread.is_deleted === 1 || thread.is_hidden === 1) return { ok: false, error: 'Thread not found.' };
+    if (thread.is_locked === 1) return { ok: false, error: 'Thread is locked.' };
+    // Cheap flood guard: reject an exact repeat of this author's most recent
+    // post in the thread (the common copy-paste spam pattern).
+    const lastOwn = this.db.query('SELECT body FROM forum_posts WHERE thread_id = ? AND author_account_id = ? AND is_deleted = 0 ORDER BY id DESC LIMIT 1')
+      .get(threadId, accountId) as { body: string } | null;
+    if (lastOwn && lastOwn.body === cleanBody) return { ok: false, error: 'This looks like a duplicate of your last reply.' };
+    let replyTo: { id: number; author_account_id: number } | null = null;
+    if (replyToPostId && Number.isFinite(replyToPostId)) {
+      replyTo = this.db.query('SELECT id, author_account_id FROM forum_posts WHERE id = ? AND thread_id = ? AND is_deleted = 0 AND is_hidden = 0')
+        .get(replyToPostId, threadId) as { id: number; author_account_id: number } | null;
+      if (!replyTo) return { ok: false, error: 'Quoted post not found.' };
+    }
+    let postId = 0;
+    this.db.transaction(() => {
+      const result = this.db.query('INSERT INTO forum_posts (thread_id, author_account_id, reply_to_post_id, body) VALUES (?, ?, ?, ?)')
+        .run(threadId, accountId, replyTo?.id ?? null, cleanBody);
+      postId = Number(result.lastInsertRowid);
+      this.db.query('UPDATE forum_threads SET reply_count = reply_count + 1, last_post_at = unixepoch(), last_post_account_id = ?, updated_at = unixepoch() WHERE id = ?')
+        .run(accountId, threadId);
+      this.createForumNotification(thread.author_account_id, accountId, 'thread_reply', threadId, postId, null);
+      if (replyTo) this.createForumNotification(replyTo.author_account_id, accountId, 'quote_reply', threadId, postId, replyTo.id);
+    }).immediate();
+    const post = this.getForumPostById(postId, accountId, true);
+    return post ? { ok: true, post } : { ok: false, error: 'Reply creation failed.' };
+  }
+
+  editForumPost(accountId: number, postId: number, body: string, isModerator: boolean): { ok: true; post: ForumPost } | { ok: false; error: string } {
+    const cleanBody = body.trim().slice(0, 20_000);
+    if (cleanBody.length < 2) return { ok: false, error: 'Post body is too short.' };
+    const row = this.db.query('SELECT p.id, p.thread_id, p.author_account_id, p.body, p.is_hidden, p.is_deleted, t.is_locked FROM forum_posts p JOIN forum_threads t ON t.id = p.thread_id WHERE p.id = ?')
+      .get(postId) as { id: number; thread_id: number; author_account_id: number; body: string; is_hidden: number; is_deleted: number; is_locked: number } | null;
+    if (!row || row.is_deleted === 1) return { ok: false, error: 'Post not found.' };
+    if (!isModerator && (row.author_account_id !== accountId || row.is_locked === 1 || row.is_hidden === 1)) return { ok: false, error: 'You cannot edit this post.' };
+    this.db.transaction(() => {
+      this.db.query('INSERT INTO forum_post_revisions (post_id, editor_account_id, old_body, new_body) VALUES (?, ?, ?, ?)')
+        .run(postId, accountId, row.body, cleanBody);
+      this.db.query('UPDATE forum_posts SET body = ?, updated_at = unixepoch(), edited_at = unixepoch() WHERE id = ?').run(cleanBody, postId);
+      this.db.query('UPDATE forum_threads SET updated_at = unixepoch() WHERE id = ?').run(row.thread_id);
+    }).immediate();
+    const post = this.getForumPostById(postId, accountId, true);
+    return post ? { ok: true, post } : { ok: false, error: 'Post edit failed.' };
+  }
+
+  deleteForumPost(accountId: number, postId: number, isModerator: boolean): { ok: true } | { ok: false; error: string } {
+    const row = this.db.query(`
+      SELECT p.id, p.thread_id, p.author_account_id,
+        (SELECT MIN(id) FROM forum_posts WHERE thread_id = p.thread_id AND is_deleted = 0) AS first_post_id
+      FROM forum_posts p WHERE p.id = ?
+    `).get(postId) as { id: number; thread_id: number; author_account_id: number; first_post_id: number } | null;
+    if (!row) return { ok: false, error: 'Post not found.' };
+    if (!isModerator && row.author_account_id !== accountId) return { ok: false, error: 'You cannot delete this post.' };
+    if (!isModerator && row.first_post_id === postId) {
+      const replies = (this.db.query('SELECT COUNT(*) AS n FROM forum_posts WHERE thread_id = ? AND id <> ? AND is_deleted = 0').get(row.thread_id, postId) as { n: number }).n;
+      if (replies > 0) return { ok: false, error: 'Threads with replies can only be removed by staff.' };
+    }
+    this.db.transaction(() => {
+      this.db.query('UPDATE forum_posts SET is_deleted = 1, updated_at = unixepoch() WHERE id = ?').run(postId);
+      if (row.first_post_id === postId) this.db.query('UPDATE forum_threads SET is_deleted = 1, updated_at = unixepoch() WHERE id = ?').run(row.thread_id);
+      else this.db.query('UPDATE forum_threads SET reply_count = max(0, reply_count - 1), updated_at = unixepoch() WHERE id = ?').run(row.thread_id);
+    }).immediate();
+    return { ok: true };
+  }
+
+  reactToForumPost(accountId: number, postId: number, reaction: string): { ok: true; reactions: Record<string, number>; myReaction: string | null } | { ok: false; error: string } {
+    const allowed = new Set(['heart', 'smile', 'fire', 'skull', 'thumbs-up', 'thumbs-down', 'sword']);
+    if (!allowed.has(reaction)) return { ok: false, error: 'Unsupported reaction.' };
+    if (!this.db.query('SELECT id FROM forum_posts WHERE id = ? AND is_deleted = 0 AND is_hidden = 0').get(postId)) return { ok: false, error: 'Post not found.' };
+    const existing = this.db.query('SELECT reaction FROM forum_reactions WHERE post_id = ? AND account_id = ?').get(postId, accountId) as { reaction: string } | null;
+    if (existing?.reaction === reaction) this.db.query('DELETE FROM forum_reactions WHERE post_id = ? AND account_id = ?').run(postId, accountId);
+    else this.db.query('INSERT INTO forum_reactions (post_id, account_id, reaction) VALUES (?, ?, ?) ON CONFLICT(post_id, account_id) DO UPDATE SET reaction = excluded.reaction, created_at = unixepoch()').run(postId, accountId, reaction);
+    const counts: Record<string, number> = {};
+    const rows = this.db.query('SELECT reaction, COUNT(*) AS n FROM forum_reactions WHERE post_id = ? GROUP BY reaction').all(postId) as Array<{ reaction: string; n: number }>;
+    for (const row of rows) counts[row.reaction] = row.n;
+    const mine = this.db.query('SELECT reaction FROM forum_reactions WHERE post_id = ? AND account_id = ?').get(postId, accountId) as { reaction: string } | null;
+    return { ok: true, reactions: counts, myReaction: mine?.reaction ?? null };
+  }
+
+  reportForumPost(accountId: number, postId: number, reason: string): { ok: true } | { ok: false; error: string } {
+    const cleanReason = reason.trim().slice(0, 500);
+    if (cleanReason.length < 3) return { ok: false, error: 'Report reason is too short.' };
+    if (!this.db.query('SELECT id FROM forum_posts WHERE id = ? AND is_deleted = 0').get(postId)) return { ok: false, error: 'Post not found.' };
+    this.db.query('INSERT INTO forum_reports (post_id, reporter_account_id, reason) VALUES (?, ?, ?)').run(postId, accountId, cleanReason);
+    // Auto-hide once enough distinct accounts flag the post, so obvious spam is
+    // pulled before a moderator gets to it. Staff can restore via moderateForumPost.
+    const distinctReporters = (this.db.query("SELECT COUNT(DISTINCT reporter_account_id) AS n FROM forum_reports WHERE post_id = ? AND status = 'open'").get(postId) as { n: number }).n;
+    if (distinctReporters >= FORUM_AUTO_HIDE_DISTINCT_REPORTS) {
+      this.db.query("UPDATE forum_posts SET is_hidden = 1, hidden_reason = ?, updated_at = unixepoch() WHERE id = ? AND is_hidden = 0")
+        .run('Auto-hidden pending review (multiple reports).', postId);
+    }
+    return { ok: true };
+  }
+
+  moderateForumThread(threadId: number, action: string, categoryId?: number): { ok: true } | { ok: false; error: string } {
+    if (!this.db.query('SELECT id FROM forum_threads WHERE id = ?').get(threadId)) return { ok: false, error: 'Thread not found.' };
+    if (action === 'pin' || action === 'unpin') this.db.query('UPDATE forum_threads SET is_pinned = ?, updated_at = unixepoch() WHERE id = ?').run(action === 'pin' ? 1 : 0, threadId);
+    else if (action === 'lock' || action === 'unlock') this.db.query('UPDATE forum_threads SET is_locked = ?, updated_at = unixepoch() WHERE id = ?').run(action === 'lock' ? 1 : 0, threadId);
+    else if (action === 'hide' || action === 'restore') this.db.query('UPDATE forum_threads SET is_hidden = ?, updated_at = unixepoch() WHERE id = ?').run(action === 'hide' ? 1 : 0, threadId);
+    else if (action === 'move') {
+      if (!categoryId || !Number.isFinite(categoryId) || categoryId <= 0) return { ok: false, error: 'A target category is required.' };
+      const target = this.db.query('SELECT id, is_hidden FROM forum_categories WHERE id = ?').get(categoryId) as { id: number; is_hidden: number } | null;
+      if (!target) return { ok: false, error: 'Target category not found.' };
+      if (target.is_hidden === 1) return { ok: false, error: 'Cannot move a thread into a hidden category.' };
+      this.db.query('UPDATE forum_threads SET category_id = ?, updated_at = unixepoch() WHERE id = ?').run(categoryId, threadId);
+    }
+    else return { ok: false, error: 'Unsupported moderation action.' };
+    return { ok: true };
+  }
+
+  moderateForumPost(postId: number, action: string, reason: string = ''): { ok: true } | { ok: false; error: string } {
+    if (!this.db.query('SELECT id FROM forum_posts WHERE id = ?').get(postId)) return { ok: false, error: 'Post not found.' };
+    if (action !== 'hide' && action !== 'restore') return { ok: false, error: 'Unsupported moderation action.' };
+    this.db.query('UPDATE forum_posts SET is_hidden = ?, hidden_reason = ?, updated_at = unixepoch() WHERE id = ?')
+      .run(action === 'hide' ? 1 : 0, action === 'hide' ? reason.trim().slice(0, 200) : '', postId);
+    return { ok: true };
+  }
+
+  upsertForumCategory(input: { id?: number; name: string; description: string; sortOrder: number; isHidden: boolean; isLocked: boolean; staffOnlyWrite: boolean }): { ok: true; category: ForumCategory } | { ok: false; error: string } {
+    const name = input.name.trim().slice(0, 60);
+    if (name.length < 2) return { ok: false, error: 'Category name is too short.' };
+    const description = input.description.trim().slice(0, 240);
+    if (input.id) {
+      this.db.query('UPDATE forum_categories SET name = ?, description = ?, sort_order = ?, is_hidden = ?, is_locked = ?, staff_only_write = ?, updated_at = unixepoch() WHERE id = ?')
+        .run(name, description, Math.floor(input.sortOrder) || 0, input.isHidden ? 1 : 0, input.isLocked ? 1 : 0, input.staffOnlyWrite ? 1 : 0, input.id);
+      const category = this.listForumCategories(true).find((entry) => entry.id === input.id);
+      return category ? { ok: true, category } : { ok: false, error: 'Category not found.' };
+    }
+    const result = this.db.query('INSERT INTO forum_categories (slug, name, description, sort_order, is_hidden, is_locked, staff_only_write) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(forumSlug(name), name, description, Math.floor(input.sortOrder) || 0, input.isHidden ? 1 : 0, input.isLocked ? 1 : 0, input.staffOnlyWrite ? 1 : 0);
+    const category = this.listForumCategories(true).find((entry) => entry.id === Number(result.lastInsertRowid));
+    return category ? { ok: true, category } : { ok: false, error: 'Category creation failed.' };
+  }
+
+  listForumReports(): ForumReport[] {
+    const rows = this.db.query(`
+      SELECT r.id, r.post_id, p.thread_id, t.title AS thread_title, r.reason, r.status,
+        r.reporter_account_id, reporter.username AS reporter_username,
+        r.created_at, r.resolved_at, resolver.username AS resolved_by
+      FROM forum_reports r
+      JOIN forum_posts p ON p.id = r.post_id
+      JOIN forum_threads t ON t.id = p.thread_id
+      JOIN accounts reporter ON reporter.id = r.reporter_account_id
+      LEFT JOIN accounts resolver ON resolver.id = r.resolved_by_account_id
+      ORDER BY CASE r.status WHEN 'open' THEN 0 ELSE 1 END, r.created_at DESC
+      LIMIT 200
+    `).all() as Array<{ id: number; post_id: number; thread_id: number; thread_title: string; reason: string; status: string; reporter_account_id: number; reporter_username: string; created_at: number; resolved_at: number | null; resolved_by: string | null }>;
+    return rows.map((row) => ({
+      id: row.id,
+      postId: row.post_id,
+      threadId: row.thread_id,
+      threadTitle: row.thread_title,
+      reason: row.reason,
+      status: row.status,
+      reporter: { accountId: row.reporter_account_id, username: row.reporter_username },
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+      resolvedBy: row.resolved_by,
+    }));
+  }
+
+  resolveForumReport(reportId: number, resolverAccountId: number): { ok: true } | { ok: false; error: string } {
+    const changed = this.db.query('UPDATE forum_reports SET status = \'resolved\', resolved_at = unixepoch(), resolved_by_account_id = ? WHERE id = ?')
+      .run(resolverAccountId, reportId).changes;
+    return changed > 0 ? { ok: true } : { ok: false, error: 'Report not found.' };
+  }
+
+  saveForumMedia(accountId: number, storagePath: string, url: string, kind: string, mimeType: string, originalName: string, sizeBytes: number): ForumMediaRecord {
+    const result = this.db.query('INSERT INTO forum_media (account_id, storage_path, url, kind, mime_type, original_name, size_bytes) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(accountId, storagePath, url, kind, mimeType, originalName.slice(0, 120), sizeBytes);
+    return { id: Number(result.lastInsertRowid), accountId, url, kind, mimeType, originalName: originalName.slice(0, 120), sizeBytes, createdAt: Math.floor(Date.now() / 1000) };
+  }
+
+  countForumUploadsSince(accountId: number, sinceUnix: number): number {
+    return (this.db.query('SELECT COUNT(*) AS n FROM forum_media WHERE account_id = ? AND created_at >= ?').get(accountId, sinceUnix) as { n: number }).n;
+  }
+
+  sumForumMediaBytes(accountId: number): number {
+    return (this.db.query('SELECT COALESCE(SUM(size_bytes), 0) AS n FROM forum_media WHERE account_id = ?').get(accountId) as { n: number }).n;
+  }
+
+  updateForumProfile(accountId: number, input: { bio?: string; title?: string; avatarMediaId?: number | null; bannerMediaId?: number | null }): { ok: true } | { ok: false; error: string } {
+    // IDOR guard: a profile may only reference media the account itself uploaded.
+    // `!= null` skips both `undefined` (field unchanged) and `null` (clearing).
+    for (const mediaId of [input.avatarMediaId, input.bannerMediaId]) {
+      if (mediaId != null) {
+        const owned = this.db.query('SELECT 1 FROM forum_media WHERE id = ? AND account_id = ?').get(mediaId, accountId);
+        if (!owned) return { ok: false, error: 'That image is not in your uploads.' };
+      }
+    }
+    const existing = this.db.query('SELECT bio, title, avatar_media_id, banner_media_id FROM forum_profiles WHERE account_id = ?')
+      .get(accountId) as { bio: string; title: string; avatar_media_id: number | null; banner_media_id: number | null } | null;
+    const bio = input.bio === undefined ? (existing?.bio ?? '') : input.bio.trim().slice(0, 500);
+    const title = input.title === undefined ? (existing?.title ?? '') : input.title.trim().slice(0, 40);
+    const avatarMediaId = input.avatarMediaId === undefined ? (existing?.avatar_media_id ?? null) : input.avatarMediaId;
+    const bannerMediaId = input.bannerMediaId === undefined ? (existing?.banner_media_id ?? null) : input.bannerMediaId;
+    this.db.query(`
+      INSERT INTO forum_profiles (account_id, bio, title, avatar_media_id, banner_media_id, updated_at)
+      VALUES (?, ?, ?, ?, ?, unixepoch())
+      ON CONFLICT(account_id) DO UPDATE SET
+        bio = excluded.bio, title = excluded.title, avatar_media_id = excluded.avatar_media_id,
+        banner_media_id = excluded.banner_media_id, updated_at = unixepoch()
+    `).run(accountId, bio, title, avatarMediaId, bannerMediaId);
+    return { ok: true };
+  }
+
+  getForumProfile(username: string): ForumProfile | null {
+    const account = this.db.query('SELECT id, username, is_admin, created_at FROM accounts WHERE username = ?').get(username.trim()) as { id: number; username: string; is_admin: number; created_at: number } | null;
+    if (!account) return null;
+    const profile = this.db.query(`
+      SELECT fp.bio, fp.title, avatar.url AS avatar_url, banner.url AS banner_url
+      FROM forum_profiles fp
+      LEFT JOIN forum_media avatar ON avatar.id = fp.avatar_media_id
+      LEFT JOIN forum_media banner ON banner.id = fp.banner_media_id
+      WHERE fp.account_id = ?
+    `).get(account.id) as { bio: string; title: string; avatar_url: string | null; banner_url: string | null } | null;
+    const postCount = (this.db.query('SELECT COUNT(*) AS n FROM forum_posts WHERE author_account_id = ? AND is_deleted = 0').get(account.id) as { n: number }).n;
+    const threadCount = (this.db.query('SELECT COUNT(*) AS n FROM forum_threads WHERE author_account_id = ? AND is_deleted = 0').get(account.id) as { n: number }).n;
+    const state = this.loadPlayerState(account.id);
+    const skills = state?.skills ?? null;
+    const avatarTarget = state?.appearance
+      ? forumAvatarTarget(account.id, account.username, JSON.stringify(state.appearance), JSON.stringify(Object.fromEntries(state.equipment)))
+      : null;
+    const topSkills = skills ? ALL_SKILLS
+      .map((id) => ({ id, name: SKILL_NAMES[id], level: skills[id].level, xp: skills[id].xp }))
+      .sort((a, b) => b.xp - a.xp || b.level - a.level || a.name.localeCompare(b.name))
+      .slice(0, 5) : [];
+    const recentThreads = (this.db.query(this.forumThreadSelect('WHERE t.author_account_id = ? AND t.is_deleted = 0 AND t.is_hidden = 0 ORDER BY t.created_at DESC LIMIT 5'))
+      .all(account.id) as Array<Parameters<typeof this.forumThreadFromRow>[0]>).map((row) => this.forumThreadFromRow(row));
+    const recentPosts = this.db.query(`
+      SELECT p.id, p.thread_id, t.title AS thread_title, t.slug AS thread_slug, p.created_at
+      FROM forum_posts p JOIN forum_threads t ON t.id = p.thread_id
+      WHERE p.author_account_id = ? AND p.is_deleted = 0 AND p.is_hidden = 0
+      ORDER BY p.created_at DESC LIMIT 5
+    `).all(account.id) as Array<{ id: number; thread_id: number; thread_title: string; thread_slug: string; created_at: number }>;
+    return {
+      accountId: account.id,
+      username: account.username,
+      createdAt: account.created_at,
+      avatarUrl: avatarTarget?.url ?? profile?.avatar_url ?? '',
+      bannerUrl: profile?.banner_url ?? '',
+      bio: profile?.bio ?? '',
+      title: profile?.title ?? '',
+      postCount,
+      threadCount,
+      isModerator: this.isForumModerator(account.id, account.is_admin === 1),
+      isAdmin: account.is_admin === 1,
+      combatLevel: skills ? combatLevel(skills) : null,
+      topSkills,
+      recentThreads,
+      recentPosts: recentPosts.map((row) => ({ id: row.id, threadId: row.thread_id, threadTitle: row.thread_title, threadSlug: row.thread_slug, createdAt: row.created_at })),
+    };
+  }
+
+  listForumAvatarBakeTargets(): ForumAvatarBakeTarget[] {
+    const rows = this.db.query(`
+      SELECT a.id AS account_id, a.username, ps.appearance, ps.equipment
+      FROM accounts a
+      JOIN player_state ps ON ps.account_id = a.id
+      WHERE ps.appearance IS NOT NULL AND ps.appearance != ''
+      ORDER BY lower(a.username) ASC
+    `).all() as Array<{ account_id: number; username: string; appearance: string | null; equipment: string | null }>;
+    return rows
+      .map((row) => forumAvatarTarget(row.account_id, row.username, row.appearance, row.equipment))
+      .filter((target): target is ForumAvatarBakeTarget => target !== null);
+  }
+
+  grantForumModerator(targetUsername: string, grantedByAccountId: number): { ok: true } | { ok: false; error: string } {
+    const accountId = this.getAccountIdByUsername(targetUsername);
+    if (accountId == null) return { ok: false, error: 'Account not found.' };
+    this.db.query('INSERT INTO forum_moderators (account_id, granted_by_account_id) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET granted_by_account_id = excluded.granted_by_account_id, granted_at = unixepoch()')
+      .run(accountId, grantedByAccountId);
+    return { ok: true };
+  }
+
+  revokeForumModerator(targetUsername: string): { ok: true } | { ok: false; error: string } {
+    const accountId = this.getAccountIdByUsername(targetUsername);
+    if (accountId == null) return { ok: false, error: 'Account not found.' };
+    this.db.query('DELETE FROM forum_moderators WHERE account_id = ?').run(accountId);
+    return { ok: true };
+  }
+
+  listForumModerators(): Array<{ accountId: number; username: string; grantedAt: number }> {
+    const rows = this.db.query('SELECT fm.account_id, a.username, fm.granted_at FROM forum_moderators fm JOIN accounts a ON a.id = fm.account_id ORDER BY lower(a.username)')
+      .all() as Array<{ account_id: number; username: string; granted_at: number }>;
+    return rows.map((row) => ({ accountId: row.account_id, username: row.username, grantedAt: row.granted_at }));
+  }
+
   cleanExpiredSessions(): void {
     const now = Math.floor(Date.now() / 1000);
     this.db.query('DELETE FROM sessions WHERE expires_at <= ?').run(now);
@@ -2354,6 +3454,17 @@ export class GameDatabase {
     const row = this.db.query('SELECT id, username, is_admin FROM accounts WHERE id = ?')
       .get(accountId) as { id: number; username: string; is_admin: number } | null;
     return row ? { accountId: row.id, username: row.username, isAdmin: row.is_admin === 1 } : null;
+  }
+
+  getAccountCreatedAt(accountId: number): number | null {
+    const row = this.db.query('SELECT created_at FROM accounts WHERE id = ?').get(accountId) as { created_at: number | null } | null;
+    return row && row.created_at != null ? row.created_at : null;
+  }
+
+  // Forum notification rows accumulate forever (only marked read). Prune read
+  // ones past a retention cutoff to keep the table and DB file from bloating.
+  cleanupOldForumNotifications(olderThanUnix: number): number {
+    return this.db.query('DELETE FROM forum_notifications WHERE read_at IS NOT NULL AND created_at < ?').run(olderThanUnix).changes;
   }
 
   private pruneExpiredBans(): void {

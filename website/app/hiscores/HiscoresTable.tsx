@@ -15,6 +15,7 @@ type HiscoreRow = {
   level: number;
   xp: number;
   dailyXp: number;
+  rankChange: number | null;
 };
 
 type HiscoreResponse = {
@@ -33,11 +34,19 @@ type HiscoreProfileRow = {
   level: number;
   xp: number;
   dailyXp: number;
+  rankChange: number | null;
 };
 
 type HiscoreProfileResponse = {
   username: string;
   rows: HiscoreProfileRow[];
+  monsterKills: HiscoreProfileMonsterKillRow[];
+};
+
+type HiscoreProfileMonsterKillRow = {
+  npcDefId: number;
+  name: string;
+  kills: number;
 };
 
 // Mob-kill leaderboard shapes — mirror server/src/Database.ts (MobKillResponse).
@@ -67,9 +76,18 @@ type MobKillResponse = {
   totalPages: number;
 };
 
+type SortDirection = 'asc' | 'desc';
+type SortState<T extends string> = {
+  key: T;
+  direction: SortDirection;
+};
+
+type MainSortKey = 'rank' | 'username' | 'level' | 'xp' | 'dailyXp';
+type KillSortKey = 'rank' | 'username' | 'kills';
+type ProfileSortKey = 'category' | 'rank' | 'level' | 'xp' | 'dailyXp';
+
 const fallbackCategories: HiscoreCategory[] = [
   { id: 'overall', name: 'Overall', hasXp: true },
-  { id: 'combat', name: 'Combat', hasXp: true },
 ];
 
 // Synthetic category for the Monster Kills view. It is NOT a server skill category
@@ -80,6 +98,74 @@ const MOB_KILLS_CATEGORY: HiscoreCategory = { id: 'mobkills', name: 'Monster Kil
 
 const formatNumber = new Intl.NumberFormat('en-US');
 const PAGE_SIZE = 25;
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+}
+
+function applyDirection(value: number, direction: SortDirection): number {
+  return direction === 'asc' ? value : -value;
+}
+
+function sortRows<T>(rows: readonly T[], compare: (a: T, b: T) => number, direction: SortDirection): T[] {
+  return [...rows].sort((a, b) => applyDirection(compare(a, b), direction));
+}
+
+function nextSort<T extends string>(current: SortState<T>, key: T): SortState<T> {
+  if (current.key !== key) return { key, direction: 'asc' };
+  return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+}
+
+function rankedCategories(categories: HiscoreCategory[]): HiscoreCategory[] {
+  return categories.filter((category) => category.id !== 'combat');
+}
+
+function SortHeader<T extends string>({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  className,
+}: {
+  label: string;
+  sortKey: T;
+  sort: SortState<T>;
+  onSort: (key: T) => void;
+  className?: string;
+}) {
+  const active = sort.key === sortKey;
+  const directionLabel = active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'not sorted';
+
+  return (
+    <th className={className} scope="col" aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <button
+        type="button"
+        className="sort-header-button"
+        onClick={() => onSort(sortKey)}
+        aria-label={`Sort by ${label}, ${directionLabel}`}
+      >
+        <span>{label}</span>
+        <span className="sort-indicator" aria-hidden="true">{active ? (sort.direction === 'asc' ? '▲' : '▼') : '↕'}</span>
+      </button>
+    </th>
+  );
+}
+
+function RankCell({ rank, rankChange }: { rank: number; rankChange?: number | null }) {
+  const hasMovement = typeof rankChange === 'number' && rankChange !== 0;
+  const movementClass = rankChange != null && rankChange > 0 ? 'up' : 'down';
+
+  return (
+    <span className="rank-value">
+      {hasMovement ? (
+        <span className={`rank-movement ${movementClass}`}>
+          {rankChange! > 0 ? '▲' : '▼'}{formatNumber.format(Math.abs(rankChange!))}
+        </span>
+      ) : null}
+      <span>{rank > 0 ? formatNumber.format(rank) : '-'}</span>
+    </span>
+  );
+}
 
 export function HiscoresTable() {
   const [selected, setSelected] = useState('overall');
@@ -97,13 +183,17 @@ export function HiscoresTable() {
   const [isLoading, setIsLoading] = useState(true);
   const [isProfileLoading, setIsProfileLoading] = useState(false);
   const [urlReady, setUrlReady] = useState(false);
+  const [mainSort, setMainSort] = useState<SortState<MainSortKey>>({ key: 'rank', direction: 'asc' });
+  const [killSort, setKillSort] = useState<SortState<KillSortKey>>({ key: 'rank', direction: 'asc' });
+  const [profileSort, setProfileSort] = useState<SortState<ProfileSortKey>>({ key: 'category', direction: 'asc' });
 
   const isKillsMode = selected === 'mobkills';
 
   useEffect(() => {
     const readUrlState = () => {
       const params = new URLSearchParams(window.location.search);
-      setSelected(params.get('category') || 'overall');
+      const category = params.get('category') || 'overall';
+      setSelected(category === 'combat' ? 'overall' : category);
       setSelectedMob(params.get('mob') || '');
       setPage(Math.max(1, Math.floor(Number(params.get('page') || 1)) || 1));
       setSearch(params.get('q') || '');
@@ -132,7 +222,7 @@ export function HiscoresTable() {
     if (current !== next) window.history.replaceState(null, '', next);
   }, [selected, selectedMob, page, search, selectedPlayer, isKillsMode, urlReady]);
 
-  // Skill-category rankings (Overall / Combat / individual skills).
+  // Skill-category rankings (Overall / individual skills).
   useEffect(() => {
     if (!urlReady || isKillsMode) return;
     let cancelled = false;
@@ -156,10 +246,10 @@ export function HiscoresTable() {
         if (!cancelled) {
           setData(nextData);
           if (nextData.categories.length) {
-            setSkillCategories(nextData.categories);
+            setSkillCategories(rankedCategories(nextData.categories));
             setSkillCategoriesLoaded(true);
           }
-          if (nextData.category.id !== selected) setSelected(nextData.category.id);
+          if (nextData.category.id !== selected && nextData.category.id !== 'combat') setSelected(nextData.category.id);
           if (nextData.page !== page) setPage(nextData.page);
         }
       })
@@ -226,7 +316,7 @@ export function HiscoresTable() {
       .then((res) => (res.ok ? (res.json() as Promise<HiscoreResponse>) : null))
       .then((d) => {
         if (!cancelled && d?.categories?.length) {
-          setSkillCategories(d.categories);
+          setSkillCategories(rankedCategories(d.categories));
           setSkillCategoriesLoaded(true);
         }
       })
@@ -270,7 +360,7 @@ export function HiscoresTable() {
     };
   }, [selectedPlayer]);
 
-  const categories = useMemo(() => [MOB_KILLS_CATEGORY, ...skillCategories], [skillCategories]);
+  const categories = useMemo(() => [MOB_KILLS_CATEGORY, ...rankedCategories(skillCategories)], [skillCategories]);
   const activeData = isKillsMode ? killData : data;
   const rowCount = activeData?.rows.length ?? 0;
   const totalRows = activeData?.totalRows ?? rowCount;
@@ -281,6 +371,20 @@ export function HiscoresTable() {
   const lastRow = rowCount > 0 ? firstRow + rowCount - 1 : 0;
   const hasSearch = search.trim().length > 0;
   const rankingTitle = isKillsMode ? (killData?.mobName ?? 'Monster Kills') : (data?.category.name ?? 'Overall');
+  const sortedMainRows = useMemo(() => sortRows(data?.rows ?? [], (a, b) => {
+    if (mainSort.key === 'username') return compareText(a.username, b.username);
+    return a[mainSort.key] - b[mainSort.key];
+  }, mainSort.direction), [data?.rows, mainSort]);
+  const sortedKillRows = useMemo(() => sortRows(killData?.rows ?? [], (a, b) => {
+    if (killSort.key === 'username') return compareText(a.username, b.username);
+    return a[killSort.key] - b[killSort.key];
+  }, killSort.direction), [killData?.rows, killSort]);
+  const profileCombatLevel = profile?.rows.find((row) => row.category.id === 'combat')?.level ?? null;
+  const profileSkillRows = useMemo(() => (profile?.rows ?? []).filter((row) => row.category.id !== 'combat'), [profile?.rows]);
+  const sortedProfileRows = useMemo(() => sortRows(profileSkillRows, (a, b) => {
+    if (profileSort.key === 'category') return compareText(a.category.name, b.category.name);
+    return a[profileSort.key] - b[profileSort.key];
+  }, profileSort.direction), [profileSkillRows, profileSort]);
 
   const selectCategory = (categoryId: string) => {
     setSelected(categoryId);
@@ -332,6 +436,7 @@ export function HiscoresTable() {
                 'skill-tab',
                 category.id === selected ? 'active' : '',
                 isInactiveSkill ? 'inactive-skill' : '',
+                category.id === 'overall' ? 'overall-tab' : '',
               ].filter(Boolean).join(' ');
 
               return (
@@ -355,7 +460,12 @@ export function HiscoresTable() {
               <div className="player-profile-heading">
                 <div>
                   <span>Player Profile</span>
-                  <h2>{profile?.username ?? selectedPlayer}</h2>
+                  <h2>
+                    {profile?.username ?? selectedPlayer}
+                    {profileCombatLevel != null ? (
+                      <span className="combat-level-badge">Combat Lv. {formatNumber.format(profileCombatLevel)}</span>
+                    ) : null}
+                  </h2>
                 </div>
                 <button type="button" onClick={closeProfile}>Close</button>
               </div>
@@ -364,30 +474,58 @@ export function HiscoresTable() {
               {profileError ? <p className="table-state compact-state">{profileError}</p> : null}
 
               {!isProfileLoading && !profileError && profile ? (
-                <div className="hiscores-table-wrap">
-                  <table className="hiscores-table profile-table">
-                    <thead>
-                      <tr>
-                        <th scope="col">Skill</th>
-                        <th scope="col">Rank</th>
-                        <th scope="col">Level</th>
-                        <th scope="col">XP</th>
-                        <th scope="col">Daily XP</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {profile.rows.map((row) => (
-                        <tr key={row.category.id}>
-                          <td>{row.category.name}</td>
-                          <td>{row.rank > 0 ? formatNumber.format(row.rank) : '-'}</td>
-                          <td>{formatNumber.format(row.level)}</td>
-                          <td>{formatNumber.format(row.xp)}</td>
-                          <td className="daily-xp">{row.dailyXp > 0 ? `+${formatNumber.format(row.dailyXp)}` : '-'}</td>
+                <>
+                  <div className="hiscores-table-wrap">
+                    <table className="hiscores-table profile-table">
+                      <thead>
+                        <tr>
+                          <SortHeader label="Skill" sortKey="category" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
+                          <SortHeader label="Rank" sortKey="rank" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} className="rank-column" />
+                          <SortHeader label="Level" sortKey="level" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
+                          <SortHeader label="XP" sortKey="xp" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
+                          <SortHeader label="Daily XP" sortKey="dailyXp" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {sortedProfileRows.map((row) => (
+                          <tr key={row.category.id}>
+                            <td>{row.category.name}</td>
+                            <td className="rank-column"><RankCell rank={row.rank} rankChange={row.rankChange} /></td>
+                            <td>{formatNumber.format(row.level)}</td>
+                            <td>{formatNumber.format(row.xp)}</td>
+                            <td className="daily-xp">{row.dailyXp > 0 ? `+${formatNumber.format(row.dailyXp)}` : '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <section className="profile-monster-kills" aria-label={`${profile.username} monster kills`}>
+                    <h3>Monster Kills</h3>
+                    {profile.monsterKills.length > 0 ? (
+                      <div className="hiscores-table-wrap">
+                        <table className="hiscores-table profile-monster-table">
+                          <thead>
+                            <tr>
+                              <th scope="col">Monster</th>
+                              <th scope="col">Kills</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {profile.monsterKills.map((row) => (
+                              <tr key={row.npcDefId}>
+                                <td>{row.name}</td>
+                                <td>{formatNumber.format(row.kills)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="table-state compact-state">No monster kills yet.</p>
+                    )}
+                  </section>
+                </>
               ) : null}
             </section>
           ) : (
@@ -440,15 +578,15 @@ export function HiscoresTable() {
                       <table className="hiscores-table">
                         <thead>
                           <tr>
-                            <th scope="col">Rank</th>
-                            <th scope="col">Name</th>
-                            <th scope="col">Kills</th>
+                            <SortHeader label="Rank" sortKey="rank" sort={killSort} onSort={(key) => setKillSort((current) => nextSort(current, key))} className="rank-column" />
+                            <SortHeader label="Name" sortKey="username" sort={killSort} onSort={(key) => setKillSort((current) => nextSort(current, key))} />
+                            <SortHeader label="Kills" sortKey="kills" sort={killSort} onSort={(key) => setKillSort((current) => nextSort(current, key))} />
                           </tr>
                         </thead>
                         <tbody>
-                          {(killData?.rows ?? []).map((row) => (
+                          {sortedKillRows.map((row) => (
                             <tr key={`${row.rank}-${row.username}`}>
-                              <td>{row.rank}</td>
+                              <td className="rank-column">{row.rank}</td>
                               <td>{row.username}</td>
                               <td>{formatNumber.format(row.kills)}</td>
                             </tr>
@@ -459,17 +597,17 @@ export function HiscoresTable() {
                       <table className="hiscores-table">
                         <thead>
                           <tr>
-                            <th scope="col">Rank</th>
-                            <th scope="col">Name</th>
-                            <th scope="col">Level</th>
-                            <th scope="col">XP</th>
-                            <th scope="col">Daily XP</th>
+                            <SortHeader label="Rank" sortKey="rank" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} className="rank-column" />
+                            <SortHeader label="Name" sortKey="username" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
+                            <SortHeader label="Level" sortKey="level" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
+                            <SortHeader label="XP" sortKey="xp" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
+                            <SortHeader label="Daily XP" sortKey="dailyXp" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
                           </tr>
                         </thead>
                         <tbody>
-                          {(data?.rows ?? []).map((row) => (
+                          {sortedMainRows.map((row) => (
                             <tr key={`${row.rank}-${row.username}`}>
-                              <td>{row.rank}</td>
+                              <td className="rank-column"><RankCell rank={row.rank} rankChange={row.rankChange} /></td>
                               <td>
                                 <button
                                   type="button"

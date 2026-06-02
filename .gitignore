@@ -56,6 +56,8 @@ editor/public/Character models
 # files created by server/src/main.ts on each gear-overrides save).
 server/data/audit.log
 server/data/gear-overrides.*.bak
+server/data/forum-avatars/
+server/data/forum-media/
 # NPC defs backups created by the /api/editor/npcs endpoint.
 server/data/backups/
 references/

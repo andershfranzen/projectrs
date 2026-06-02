@@ -37,7 +37,7 @@ const MONSTER_PREVIEWS: Record<number, MonsterPreviewConfig> = {
   6: { file: '/models/npcs/spider.glb', scale: 0.2 },
   10: { file: '/models/npcs/cow.glb', scale: 0.2 },
   24: { file: '/models/npcs/bull.glb', scale: 0.2 },
-  15: { file: '/models/npcs/Camel.glb', scale: 1.0 },
+  15: { file: '/models/npcs/Camel.glb', scale: 0.0075, modelYaw: -Math.PI * 0.42, radius: 3.2, targetY: 0.22 },
   18: { file: '/models/npcs/rat_small.glb', scale: 0.45 },
   22: { file: '/models/npcs/spider_v2.glb', scale: 0.75 },
   17: {

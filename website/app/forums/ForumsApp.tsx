@@ -1,0 +1,1201 @@
+'use client';
+
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import type { PointerEvent } from 'react';
+import { FaBell, FaBold, FaCog, FaEdit, FaExchangeAlt, FaEye, FaEyeSlash, FaFlag, FaGrin, FaHome, FaImage, FaItalic, FaLink, FaListUl, FaLock, FaPen, FaQuoteRight, FaReply, FaShieldAlt, FaThumbtack, FaTrashAlt, FaUnlock, FaUser, FaUsers } from 'react-icons/fa';
+
+const TOKEN_KEY = 'evilquest_token';
+const EMOJI: Record<string, string> = {
+  smile: '🙂',
+  heart: '❤️',
+  skull: '💀',
+  fire: '🔥',
+  sword: '⚔️',
+  'thumbs-up': '👍',
+  'thumbs-down': '👎',
+};
+
+type ForumUser = { ok?: boolean; accountId?: number; username?: string; isAdmin?: boolean; isModerator?: boolean };
+type ForumOnlineUser = { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; lastSeenAt: number };
+type ForumCategory = {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  sortOrder: number;
+  isHidden: boolean;
+  isLocked: boolean;
+  staffOnlyWrite: boolean;
+  threadCount: number;
+  postCount: number;
+  latestThread: ForumThread | null;
+};
+type ForumThread = {
+  id: number;
+  categoryId: number;
+  categorySlug: string;
+  categoryName: string;
+  slug: string;
+  title: string;
+  author: { accountId: number; username: string };
+  createdAt: number;
+  updatedAt: number;
+  lastPostAt: number;
+  lastPostBy: string;
+  replyCount: number;
+  viewCount: number;
+  isPinned: boolean;
+  isLocked: boolean;
+  isHidden: boolean;
+  isDeleted: boolean;
+};
+type ForumPost = {
+  id: number;
+  threadId: number;
+  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean };
+  replyTo: { id: number; author: { accountId: number; username: string }; body: string; createdAt: number } | null;
+  body: string;
+  createdAt: number;
+  updatedAt: number;
+  editedAt: number | null;
+  isHidden: boolean;
+  isDeleted: boolean;
+  hiddenReason: string;
+  reactions: Record<string, number>;
+  myReaction: string | null;
+};
+type ForumListResponse = {
+  categories: ForumCategory[];
+  threads: ForumThread[];
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  totalThreads: number;
+};
+type ForumThreadDetail = {
+  thread: ForumThread;
+  category: ForumCategory;
+  posts: ForumPost[];
+  page: number;
+  pageSize: number;
+  totalPosts: number;
+  totalPages: number;
+};
+type ForumProfile = {
+  accountId: number;
+  username: string;
+  createdAt: number;
+  avatarUrl: string;
+  bannerUrl: string;
+  bio: string;
+  title: string;
+  postCount: number;
+  threadCount: number;
+  isModerator: boolean;
+  isAdmin: boolean;
+  combatLevel: number | null;
+  topSkills: Array<{ id: string; name: string; level: number; xp: number }>;
+  recentThreads: ForumThread[];
+  recentPosts: Array<{ id: number; threadId: number; threadTitle: string; threadSlug: string; createdAt: number }>;
+};
+type ForumReport = {
+  id: number;
+  postId: number;
+  threadId: number;
+  threadTitle: string;
+  reason: string;
+  status: string;
+  reporter: { accountId: number; username: string };
+  createdAt: number;
+  resolvedAt: number | null;
+  resolvedBy: string | null;
+};
+type ForumMedia = { id: number; url: string };
+type PendingMediaInsert = { start: number; end: number; alt: string };
+type ProfileMediaKind = 'avatar' | 'banner';
+type ProfileCropDraft = {
+  kind: ProfileMediaKind;
+  file: File;
+  url: string;
+  imageWidth: number;
+  imageHeight: number;
+  targetWidth: number;
+  targetHeight: number;
+  scale: number;
+  minScale: number;
+  x: number;
+  y: number;
+};
+type ForumNotification = {
+  id: number;
+  type: string;
+  createdAt: number;
+  readAt: number | null;
+  actor: { accountId: number; username: string };
+  thread: { id: number; categorySlug: string; slug: string; title: string };
+  postId: number;
+  postPage: number;
+  sourcePostId: number | null;
+};
+
+function token(): string {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(TOKEN_KEY) || '';
+}
+
+async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const headers = new Headers(opts.headers);
+  const saved = token();
+  if (saved) headers.set('Authorization', `Bearer ${saved}`);
+  if (opts.body && !(opts.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  const res = await fetch(path, { ...opts, headers, credentials: 'same-origin', cache: 'no-store' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data as T;
+}
+
+async function uploadForumFile(file: File): Promise<ForumMedia> {
+  const form = new FormData();
+  form.set('file', file);
+  const data = await api<{ media: ForumMedia }>('/api/forums/upload', { method: 'POST', body: form });
+  return data.media;
+}
+
+function fmt(ts: number): string {
+  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(ts * 1000));
+}
+
+function escapeHtml(raw: string): string {
+  return raw.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
+}
+
+function renderMarkdown(raw: string): string {
+  let text = escapeHtml(raw).replace(/:([a-z0-9-]+):/g, (_, name) => EMOJI[name] || `:${name}:`);
+  text = text.replace(/!\[([^\]]*)]\((https?:\/\/[^\s)]+\.(?:png|jpe?g|webp|gif)|\/forum-media\/[^\s)]+)\)/gi, '<img src="$2" alt="$1" loading="lazy" />');
+  text = text.replace(/\[([^\]]+)]\((https?:\/\/[^\s)]+|\/forums\/[^\s)]+|\/forum-media\/[^\s)]+)\)/gi, '<a href="$2" rel="noopener noreferrer nofollow ugc">$1</a>');
+  text = text.replace(/(^|[\s>])((https?:\/\/[^\s<"]+\.(?:png|jpe?g|webp|gif))(?:[?#][^\s<"]*)?)/gi, '$1<img src="$2" alt="" loading="lazy" />');
+  text = text.replace(/(^|[\s>])((https?:\/\/[^\s<"]+))/gi, '$1<a href="$2" rel="noopener noreferrer nofollow ugc">$2</a>');
+  text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>').replace(/^## (.+)$/gm, '<h2>$1</h2>').replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\*([^*]+)\*/g, '<em>$1</em>').replace(/`([^`]+)`/g, '<code>$1</code>');
+  text = text.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+  return text.split(/\n{2,}/).map((block) => /<\/?(h1|h2|h3|blockquote|img)/.test(block) ? block : `<p>${block.replace(/\n/g, '<br />')}</p>`).join('');
+}
+
+function currentRoute() {
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  if (parts[1] === 'category') return { view: 'category', category: parts[2] || '' } as const;
+  if (parts[1] === 'thread') return { view: 'thread', category: parts[2] || '', thread: parts[3] || '' } as const;
+  if (parts[1] === 'u') return { view: 'profile', username: parts[2] || '' } as const;
+  if (parts[1] === 'moderation') return { view: 'moderation' } as const;
+  return { view: 'index' } as const;
+}
+
+function currentPageParam(): number {
+  const page = Number(new URLSearchParams(window.location.search).get('page') ?? 1);
+  return Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+}
+
+function previewText(raw: string): string {
+  return raw.replace(/[#>*_`![\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function isImageUrl(url: string): boolean {
+  return /^https:\/\/\S+\.(png|jpe?g|webp|gif)([?#]\S*)?$/i.test(url) || url.startsWith('/forum-media/');
+}
+
+function mediaMarkdown(url: string, alt: string): string {
+  return isImageUrl(url) ? `![${alt || 'image'}](${url})` : `[${alt || url}](${url})`;
+}
+
+function MediaUploadModal({ open, alt, onClose, onInsert }: { open: boolean; alt: string; onClose: () => void; onInsert: (markdown: string) => void }) {
+  const [url, setUrl] = useState('');
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!open) return null;
+
+  async function upload(file: File) {
+    setError('');
+    setUploading(true);
+    try {
+      const media = await uploadForumFile(file);
+      onInsert(mediaMarkdown(media.url, alt || file.name));
+      setUrl('');
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function insertUrl() {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    if (!/^https:\/\//i.test(trimmed)) {
+      setError('Use a direct https:// URL.');
+      return;
+    }
+    onInsert(mediaMarkdown(trimmed, alt));
+    setUrl('');
+    onClose();
+  }
+
+  return (
+    <div className="forum-modal-backdrop" role="presentation" onClick={onClose}>
+      <div className="forum-media-modal" role="dialog" aria-modal="true" aria-label="Add media" onClick={(event) => event.stopPropagation()}>
+        <h3>Add image, GIF, or URL</h3>
+        <div
+          className={`forum-dropzone${dragging ? ' is-dragging' : ''}`}
+          onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragging(false);
+            const file = event.dataTransfer.files[0];
+            if (file) void upload(file);
+          }}
+        >
+          <FaImage aria-hidden />
+          <strong>Drop an image or GIF here</strong>
+          <span>PNG, JPEG, WebP, or GIF</span>
+          <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) void upload(file);
+            event.currentTarget.value = '';
+          }} />
+        </div>
+        <div className="forum-media-url-row">
+          <input value={url} placeholder="https://example.com/image.gif or page URL" onChange={(event) => setUrl(event.target.value)} />
+          <button type="button" onClick={insertUrl}>Insert</button>
+        </div>
+        {error ? <p className="forum-error">{error}</p> : null}
+        <div className="forum-composer-actions">
+          <button type="button" onClick={onClose}>Cancel</button>
+          {uploading ? <span>Uploading...</span> : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MarkdownEditor({ value, onChange, rows, placeholder }: { value: string; onChange: (value: string) => void; rows: number; placeholder: string }) {
+  const [mode, setMode] = useState<'write' | 'preview'>('write');
+  const [mediaInsert, setMediaInsert] = useState<PendingMediaInsert | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  function focusSelection(start: number, end: number) {
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(start, end);
+    });
+  }
+
+  function replaceSelection(before: string, after = '', fallback = 'text') {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const selected = value.slice(start, end) || fallback;
+    const next = `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`;
+    onChange(next);
+    focusSelection(start + before.length, start + before.length + selected.length);
+  }
+
+  function insertLine(prefix: string, fallback: string) {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const selected = value.slice(start, end) || fallback;
+    const lineStart = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
+    const lineEnd = end < value.length && value[end] !== '\n' ? '\n' : '';
+    const next = `${value.slice(0, start)}${lineStart}${selected.split('\n').map((line) => `${prefix}${line}`).join('\n')}${lineEnd}${value.slice(end)}`;
+    onChange(next);
+    focusSelection(start + lineStart.length + prefix.length, start + lineStart.length + prefix.length + selected.length);
+  }
+
+  function insertLink() {
+    const url = window.prompt('Link URL');
+    if (!url) return;
+    replaceSelection('[', `](${url})`, 'link text');
+  }
+
+  function openMediaModal() {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const selected = value.slice(start, end) || 'image';
+    setMediaInsert({ start, end, alt: selected });
+  }
+
+  function insertMedia(markdown: string) {
+    const insert = mediaInsert ?? { start: value.length, end: value.length, alt: 'image' };
+    const next = `${value.slice(0, insert.start)}${markdown}${value.slice(insert.end)}`;
+    onChange(next);
+    setMediaInsert(null);
+    focusSelection(insert.start + markdown.length, insert.start + markdown.length);
+  }
+
+  return (
+    <div className="forum-markdown-editor">
+      <div className="forum-markdown-tabs" role="tablist" aria-label="Markdown editor mode">
+        <button type="button" className={mode === 'write' ? 'active' : ''} onClick={() => setMode('write')}><FaPen aria-hidden />Write</button>
+        <button type="button" className={mode === 'preview' ? 'active' : ''} onClick={() => setMode('preview')}><FaEye aria-hidden />Preview</button>
+      </div>
+      {mode === 'write' ? (
+        <>
+          <div className="forum-markdown-toolbar" aria-label="Formatting options">
+            <button type="button" title="Bold" onClick={() => replaceSelection('**', '**', 'bold text')}><FaBold aria-hidden /></button>
+            <button type="button" title="Italic" onClick={() => replaceSelection('*', '*', 'italic text')}><FaItalic aria-hidden /></button>
+            <button type="button" title="Quote" onClick={() => insertLine('> ', 'quoted text')}><FaQuoteRight aria-hidden /></button>
+            <button type="button" title="List" onClick={() => insertLine('- ', 'list item')}><FaListUl aria-hidden /></button>
+            <button type="button" title="Link" onClick={insertLink}><FaLink aria-hidden /></button>
+            <button type="button" title="Image or upload" onClick={openMediaModal}><FaImage aria-hidden /></button>
+          </div>
+          <textarea ref={textareaRef} value={value} rows={rows} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+        </>
+      ) : (
+        <div className="forum-post-body preview" dangerouslySetInnerHTML={{ __html: value ? renderMarkdown(value) : '<p class="forum-preview-empty">Nothing to preview yet.</p>' }} />
+      )}
+      <MediaUploadModal open={mediaInsert != null} alt={mediaInsert?.alt ?? ''} onClose={() => setMediaInsert(null)} onInsert={insertMedia} />
+    </div>
+  );
+}
+
+function ForumComposer({ categories, defaultCategoryId, showCategorySelect = true, onCreated }: { categories: ForumCategory[]; defaultCategoryId?: number; showCategorySelect?: boolean; onCreated: (thread: ForumThread) => void }) {
+  const [categoryId, setCategoryId] = useState(defaultCategoryId ?? categories[0]?.id ?? 0);
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [error, setError] = useState('');
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    try {
+      const data = await api<{ ok: true; thread: ForumThread }>('/api/forums/thread', { method: 'POST', body: JSON.stringify({ categoryId, title, body }) });
+      setTitle('');
+      setBody('');
+      onCreated(data.thread);
+      window.history.pushState(null, '', `/forums/thread/${data.thread.categorySlug}/${data.thread.slug}`);
+      window.dispatchEvent(new Event('popstate'));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not create thread.');
+    }
+  }
+
+  return (
+    <form className={`forum-composer${showCategorySelect ? '' : ' forum-composer-single-category'}`} onSubmit={submit}>
+      {!showCategorySelect ? <div className="forum-composer-category">Posting in <strong>{categories[0]?.name ?? 'this category'}</strong></div> : null}
+      <div className="forum-composer-grid">
+        {showCategorySelect ? (
+          <select value={categoryId} onChange={(event) => setCategoryId(Number(event.target.value))}>
+            {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+          </select>
+        ) : null}
+        <input value={title} maxLength={120} placeholder="Thread title" onChange={(event) => setTitle(event.target.value)} />
+      </div>
+      <MarkdownEditor value={body} onChange={setBody} rows={7} placeholder="Write in Markdown. Images: ![alt](url), emoji: :fire:" />
+      <div className="forum-composer-actions">
+        <button type="submit" className="button">Post Thread</button>
+      </div>
+      {error ? <p className="forum-error">{error}</p> : null}
+    </form>
+  );
+}
+
+function ThreadList({ threads }: { threads: ForumThread[] }) {
+  if (threads.length === 0) return <p className="forum-empty">No threads yet.</p>;
+  return (
+    <ol className="forum-thread-list">
+      {threads.map((thread) => (
+        <li key={thread.id} className={thread.isHidden ? 'is-hidden' : ''}>
+          <div className="forum-thread-main">
+            <a href={`/forums/thread/${thread.categorySlug}/${thread.slug}`}>
+              {thread.isPinned ? <span className="forum-pill">Pinned</span> : null}
+              {thread.isLocked ? <span className="forum-pill">Locked</span> : null}
+              {thread.isHidden ? <span className="forum-pill">Hidden</span> : null}
+              <strong>{thread.title}</strong>
+            </a>
+            <span>by <a href={`/forums/u/${thread.author.username}`}>{thread.author.username}</a> in <a href={`/forums/category/${thread.categorySlug}`}>{thread.categoryName}</a></span>
+          </div>
+          <div className="forum-thread-side">
+            <strong>{thread.replyCount} replies · {thread.viewCount} views</strong>
+            <span>{fmt(thread.lastPostAt)} by {thread.lastPostBy}</span>
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Pagination({ page, totalPages, onPage }: { page: number; totalPages: number; onPage: (page: number) => void }) {
+  if (totalPages <= 1) return null;
+  const pages = Array.from({ length: totalPages }, (_, index) => index + 1).filter((candidate) => (
+    candidate === 1 || candidate === totalPages || Math.abs(candidate - page) <= 2
+  ));
+  return (
+    <nav className="forum-pagination" aria-label="Forum pages">
+      <button type="button" disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</button>
+      {pages.map((candidate, index) => (
+        <button key={candidate} type="button" className={candidate === page ? 'active' : ''} onClick={() => onPage(candidate)}>
+          {index > 0 && candidate - pages[index - 1] > 1 ? '...' : null}{candidate}
+        </button>
+      ))}
+      <button type="button" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>Next</button>
+    </nav>
+  );
+}
+
+function NotificationsMenu({ notifications, unreadCount, onRefresh }: { notifications: ForumNotification[]; unreadCount: number; onRefresh: () => void }) {
+  const [open, setOpen] = useState(false);
+  async function markRead(notificationId?: number) {
+    await api('/api/forums/notifications/read', { method: 'POST', body: JSON.stringify({ notificationId }) });
+    onRefresh();
+  }
+  return (
+    <div className="forum-notifications">
+      <button type="button" className="auth-topbar-link forum-nav-link" onClick={() => setOpen((value) => !value)}>
+        <FaBell aria-hidden />Notifications{unreadCount > 0 ? <span>{unreadCount}</span> : null}
+      </button>
+      {open ? (
+        <div className="forum-notifications-menu">
+          <div className="forum-notifications-head">
+            <strong>Notifications</strong>
+            {unreadCount > 0 ? <button type="button" onClick={() => void markRead()}>Mark all read</button> : null}
+          </div>
+          {notifications.length === 0 ? <p>No notifications yet.</p> : notifications.map((notification) => (
+            <a
+              key={notification.id}
+              className={notification.readAt == null ? 'unread' : ''}
+              href={`/forums/thread/${notification.thread.categorySlug}/${notification.thread.slug}?page=${notification.postPage}#post-${notification.postId}`}
+              onClick={() => void markRead(notification.id)}
+            >
+              <span>{notification.actor.username} {notification.type === 'quote_reply' ? 'quoted you' : 'replied'} in {notification.thread.title}</span>
+              <small>{fmt(notification.createdAt)}</small>
+            </a>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost; me: ForumUser; onRefresh: () => void; onQuote: (post: ForumPost) => void; canReply: boolean }) {
+  const [editing, setEditing] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [reactionMenuOpen, setReactionMenuOpen] = useState(false);
+  const [reactionBurst, setReactionBurst] = useState<{ id: number; reaction: string; delta: 1 | -1 } | null>(null);
+  const [body, setBody] = useState(post.body);
+  const canEdit = me.accountId === post.author.accountId || me.isModerator || me.isAdmin;
+  const canManage = canEdit || me.isModerator || me.isAdmin || me.ok;
+  const reactions = Object.entries(EMOJI);
+
+  async function react(reaction: string) {
+    const delta = post.myReaction === reaction ? -1 : 1;
+    await api('/api/forums/reaction', { method: 'POST', body: JSON.stringify({ postId: post.id, reaction }) });
+    const id = Date.now();
+    setReactionBurst({ id, reaction, delta });
+    window.setTimeout(() => setReactionBurst((current) => current?.id === id ? null : current), 900);
+    setReactionMenuOpen(false);
+    onRefresh();
+  }
+
+  async function save() {
+    await api('/api/forums/post/edit', { method: 'POST', body: JSON.stringify({ postId: post.id, body }) });
+    setEditing(false);
+    onRefresh();
+  }
+
+  async function hide() {
+    await api('/api/forums/moderate/post', { method: 'POST', body: JSON.stringify({ postId: post.id, action: post.isHidden ? 'restore' : 'hide', reason: 'Moderated' }) });
+    setMenuOpen(false);
+    onRefresh();
+  }
+
+  async function remove() {
+    if (!window.confirm('Delete this post?')) return;
+    await api('/api/forums/post/delete', { method: 'POST', body: JSON.stringify({ postId: post.id }) });
+    setMenuOpen(false);
+    onRefresh();
+  }
+
+  async function report() {
+    await api('/api/forums/report', { method: 'POST', body: JSON.stringify({ postId: post.id, reason: 'Needs review' }) });
+    setMenuOpen(false);
+  }
+
+  return (
+    <article id={`post-${post.id}`} className={`forum-post${post.isHidden ? ' is-hidden' : ''}`}>
+      <aside>
+        <ForumAvatarImage
+          url={post.author.avatarUrl}
+          alt={`${post.author.username} avatar`}
+          imgClassName="forum-post-avatar"
+          fallbackClassName="forum-post-avatar forum-post-avatar-empty"
+          fallback="?"
+        />
+        <a className={post.author.isAdmin ? 'forum-admin-name' : undefined} href={`/forums/u/${post.author.username}`}>{post.author.username}</a>
+        {post.author.combatLevel != null ? <span className="forum-post-combat">Combat Lv. {post.author.combatLevel}</span> : null}
+        <a href={`#post-${post.id}`}>{fmt(post.createdAt)}</a>
+        {post.editedAt ? <span className="forum-post-edited">Edited {fmt(post.editedAt)}</span> : null}
+      </aside>
+      <div>
+        {editing ? (
+          <>
+            <MarkdownEditor value={body} onChange={setBody} rows={8} placeholder="Edit with Markdown..." />
+            <div className="forum-composer-actions">
+              <button className="auth-topbar-button" type="button" onClick={() => void save()}>Save</button>
+              <button className="auth-topbar-button" type="button" onClick={() => setEditing(false)}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            {post.replyTo ? (
+              <div className="forum-quoted-post">
+                <div className="forum-quoted-post-head">
+                  <strong>{post.replyTo.author.username}</strong>
+                  <span>{post.replyTo.createdAt ? fmt(post.replyTo.createdAt) : 'Earlier post'}</span>
+                  <a href={`#post-${post.replyTo.id}`}>View</a>
+                </div>
+                <p>{previewText(post.replyTo.body)}</p>
+              </div>
+            ) : null}
+            <div className="forum-post-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(post.body) }} />
+          </>
+        )}
+        <div className="forum-post-actions-row">
+          <div className="forum-post-actions">
+            {reactions.filter(([key]) => (post.reactions[key] ?? 0) > 0 || reactionBurst?.reaction === key).map(([key, icon]) => (
+              <span key={key} className={post.myReaction === key ? 'forum-reaction-chip active' : 'forum-reaction-chip'}>
+                {icon} {post.reactions[key] ?? 0}
+                {reactionBurst?.reaction === key ? <span key={reactionBurst.id} className={reactionBurst.delta > 0 ? 'forum-reaction-burst positive' : 'forum-reaction-burst negative'}>{reactionBurst.delta > 0 ? '+1' : '-1'}</span> : null}
+              </span>
+            ))}
+          </div>
+          <div className="forum-post-right-actions">
+            {me.ok ? (
+              <div className="forum-post-menu">
+                <button type="button" onClick={() => setReactionMenuOpen((open) => !open)}><FaGrin aria-hidden />Reactions</button>
+                {reactionMenuOpen ? (
+                  <div className="forum-post-menu-list forum-reaction-menu-list">
+                    {reactions.map(([key, icon]) => (
+                      <button key={key} type="button" className={post.myReaction === key ? 'active' : ''} onClick={() => void react(key)}>
+                        <span>{icon}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {canReply ? <button type="button" onClick={() => onQuote(post)}><FaReply aria-hidden />Reply</button> : null}
+            {canManage ? (
+            <div className="forum-post-menu">
+              <button type="button" onClick={() => setMenuOpen((open) => !open)}><FaCog aria-hidden />Options</button>
+              {menuOpen ? (
+                <div className="forum-post-menu-list">
+                  {canEdit ? <button type="button" onClick={() => { setEditing(true); setMenuOpen(false); }}><FaEdit aria-hidden />Edit</button> : null}
+                  {canEdit ? <button type="button" onClick={() => void remove()}><FaTrashAlt aria-hidden />Delete</button> : null}
+                  {me.isModerator || me.isAdmin ? <button type="button" onClick={() => void hide()}>{post.isHidden ? <FaEye aria-hidden /> : <FaEyeSlash aria-hidden />}{post.isHidden ? 'Restore' : 'Hide'}</button> : null}
+                  {me.ok ? <button type="button" onClick={() => void report()}><FaFlag aria-hidden />Report</button> : null}
+                </div>
+              ) : null}
+            </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export function ForumsApp() {
+  const [route, setRoute] = useState(() => (typeof window === 'undefined' ? { view: 'index' as const } : currentRoute()));
+  const [page, setPage] = useState(() => (typeof window === 'undefined' ? 1 : currentPageParam()));
+  const [me, setMe] = useState<ForumUser>({});
+  const [list, setList] = useState<ForumListResponse | null>(null);
+  const [detail, setDetail] = useState<ForumThreadDetail | null>(null);
+  const [profile, setProfile] = useState<ForumProfile | null>(null);
+  const [reports, setReports] = useState<ForumReport[]>([]);
+  const [moderators, setModerators] = useState<Array<{ username: string }>>([]);
+  const [notifications, setNotifications] = useState<ForumNotification[]>([]);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [onlineUsers, setOnlineUsers] = useState<ForumOnlineUser[]>([]);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState('latest');
+  const [reply, setReply] = useState('');
+  const [replyTo, setReplyTo] = useState<ForumPost | null>(null);
+  const [pendingPostId, setPendingPostId] = useState<number | null>(null);
+  const [status, setStatus] = useState('');
+  const [moveCategoryId, setMoveCategoryId] = useState(0);
+
+  const categories = list?.categories ?? [];
+  const canPost = me.ok === true;
+  const writableCategories = useMemo(
+    () => categories.filter((category) => !category.isLocked && (!category.staffOnlyWrite || me.isModerator || me.isAdmin)),
+    [categories, me.isAdmin, me.isModerator],
+  );
+  const currentCategory = route.view === 'category' ? categories.find((category) => category.slug === route.category) : undefined;
+  const currentWritableCategory = currentCategory && writableCategories.some((category) => category.id === currentCategory.id) ? currentCategory : undefined;
+
+  async function loadNotifications() {
+    try {
+      const data = await api<{ notifications: ForumNotification[]; unreadCount: number }>('/api/forums/notifications');
+      setNotifications(data.notifications);
+      setUnreadNotifications(data.unreadCount);
+    } catch {
+      setNotifications([]);
+      setUnreadNotifications(0);
+    }
+  }
+
+  async function loadOnlineUsers() {
+    try {
+      const data = await api<{ users: ForumOnlineUser[] }>('/api/forums/online');
+      setOnlineUsers(data.users);
+    } catch {
+      setOnlineUsers([]);
+    }
+  }
+
+  function goToPage(nextPage: number) {
+    const params = new URLSearchParams(window.location.search);
+    if (nextPage <= 1) params.delete('page');
+    else params.set('page', String(nextPage));
+    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ''}`;
+    window.history.pushState(null, '', nextUrl);
+    setPage(nextPage);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  async function load() {
+    setStatus('');
+    api<ForumUser>('/api/forums/me').then((user) => { setMe(user); void loadNotifications(); }).catch(() => { setMe({ ok: false }); setNotifications([]); setUnreadNotifications(0); });
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (sort) params.set('sort', sort);
+    if (page > 1) params.set('page', String(page));
+    if (route.view === 'thread') {
+      const data = await api<ForumThreadDetail>(`/api/forums/thread/${route.category}/${route.thread}?${params.toString()}`);
+      setDetail(data);
+      window.setTimeout(() => {
+        const target = pendingPostId ? document.getElementById(`post-${pendingPostId}`) : (window.location.hash ? document.querySelector(window.location.hash) : null);
+        target?.scrollIntoView({ block: 'start' });
+        if (pendingPostId) setPendingPostId(null);
+      }, 0);
+      setMoveCategoryId(data.thread.categoryId);
+      setList(await api<ForumListResponse>('/api/forums'));
+      setProfile(null);
+      return;
+    }
+    if (route.view === 'profile') {
+      setProfile(await api<ForumProfile>(`/api/forums/profile/${route.username}`));
+      setList(await api<ForumListResponse>('/api/forums'));
+      setDetail(null);
+      return;
+    }
+    if (route.view === 'moderation') {
+      const data = await api<{ reports: ForumReport[]; moderators: Array<{ username: string }>; categories: ForumCategory[] }>('/api/forums/moderation');
+      setReports(data.reports);
+      setModerators(data.moderators);
+      setList({ categories: data.categories, threads: [], page: 1, pageSize: 20, totalPages: 1, totalThreads: 0 });
+      return;
+    }
+    const path = route.view === 'category' ? `/api/forums/category/${route.category}` : '/api/forums';
+    const data = await api<ForumListResponse>(`${path}?${params.toString()}`);
+    setList(data);
+    setDetail(null);
+    setProfile(null);
+  }
+
+  useEffect(() => {
+    const onPop = () => {
+      setRoute(currentRoute());
+      setPage(currentPageParam());
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+
+  useEffect(() => { void load().catch((err) => setStatus(err.message)); }, [route, query, sort, page]);
+
+  useEffect(() => {
+    void loadOnlineUsers();
+    const interval = window.setInterval(() => void loadOnlineUsers(), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    if (!me.ok || !me.accountId) return;
+    let cancelled = false;
+    async function pulse() {
+      try {
+        await api('/api/forums/presence', { method: 'POST' });
+        if (!cancelled) await loadOnlineUsers();
+      } catch {
+        // Presence should never block forum browsing.
+      }
+    }
+    void pulse();
+    const interval = window.setInterval(() => void pulse(), 25_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [me.ok, me.accountId]);
+
+  async function submitReply(event: FormEvent) {
+    event.preventDefault();
+    if (!detail) return;
+    const result = await api<{ ok: true; post: ForumPost }>('/api/forums/reply', { method: 'POST', body: JSON.stringify({ threadId: detail.thread.id, body: reply, replyToPostId: replyTo?.id }) });
+    setReply('');
+    setReplyTo(null);
+    setPendingPostId(result.post.id);
+    const lastPage = Math.max(1, Math.ceil((detail.totalPosts + 1) / detail.pageSize));
+    if (lastPage !== page) goToPage(lastPage);
+    else await load();
+  }
+
+  async function moderateThread(action: string, categoryId?: number) {
+    if (!detail) return;
+    await api('/api/forums/moderate/thread', { method: 'POST', body: JSON.stringify({ threadId: detail.thread.id, action, categoryId }) });
+    await load();
+  }
+
+  return (
+    <main className="page forums-page">
+      <header className="forums-header">
+        <div className="forums-title-block">
+          <span className="forums-kicker">EvilQuest</span>
+          <h1 className="panel-title">Forums</h1>
+        </div>
+        <nav className="forums-nav">
+          <a className="back-link" href="/">Back to Home</a>
+          <div className="forums-nav-actions">
+            <a className="auth-topbar-link forum-nav-link" href="/forums"><FaHome aria-hidden />Index</a>
+            {me.isModerator || me.isAdmin ? <a className="auth-topbar-link forum-nav-link" href="/forums/moderation"><FaShieldAlt aria-hidden />Moderation</a> : null}
+            {me.username ? <a className="auth-topbar-link forum-nav-link" href={`/forums/u/${me.username}`}><FaUser aria-hidden />Profile</a> : null}
+            {me.ok ? <NotificationsMenu notifications={notifications} unreadCount={unreadNotifications} onRefresh={() => void loadNotifications()} /> : null}
+          </div>
+        </nav>
+      </header>
+      {status ? <p className="forum-error">{status}</p> : null}
+
+      {route.view === 'thread' && detail ? (
+        <section className="panel forum-panel">
+          <div className="forum-thread-subnav">
+            <a href={`/forums/category/${detail.category.slug}`}>{detail.category.name}</a>
+            <a className="auth-topbar-link forum-nav-link" href="/forums"><FaHome aria-hidden />Back to Forums</a>
+          </div>
+          <h2 className="forum-thread-title">{detail.thread.title}</h2>
+          {(me.isModerator || me.isAdmin) ? (
+            <div className="forum-mod-actions">
+              <button onClick={() => void moderateThread(detail.thread.isPinned ? 'unpin' : 'pin')}><FaThumbtack aria-hidden />{detail.thread.isPinned ? 'Unpin' : 'Pin'}</button>
+              <button onClick={() => void moderateThread(detail.thread.isLocked ? 'unlock' : 'lock')}>{detail.thread.isLocked ? <FaUnlock aria-hidden /> : <FaLock aria-hidden />}{detail.thread.isLocked ? 'Unlock' : 'Lock'}</button>
+              <button onClick={() => void moderateThread(detail.thread.isHidden ? 'restore' : 'hide')}>{detail.thread.isHidden ? <FaEye aria-hidden /> : <FaEyeSlash aria-hidden />}{detail.thread.isHidden ? 'Restore' : 'Hide'}</button>
+              <select value={moveCategoryId} onChange={(event) => setMoveCategoryId(Number(event.target.value))}>
+                {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+              </select>
+              <button onClick={() => void moderateThread('move', moveCategoryId)}><FaExchangeAlt aria-hidden />Move</button>
+            </div>
+          ) : null}
+          {detail.posts.map((post) => <PostCard key={post.id} post={post} me={me} canReply={canPost && !detail.thread.isLocked} onQuote={(target) => {
+            setReplyTo(target);
+            setReply((current) => current || '');
+            window.setTimeout(() => document.querySelector<HTMLTextAreaElement>('.forum-reply-composer textarea')?.focus(), 0);
+          }} onRefresh={() => void load()} />)}
+          <Pagination page={detail.page} totalPages={detail.totalPages} onPage={goToPage} />
+          {canPost && !detail.thread.isLocked ? (
+            <form className="forum-composer forum-reply-composer" onSubmit={submitReply}>
+              {replyTo ? (
+                <div className="forum-replying-to">
+                  <span>Replying to <strong>{replyTo.author.username}</strong>: {previewText(replyTo.body)}</span>
+                  <button type="button" onClick={() => setReplyTo(null)}>Cancel</button>
+                </div>
+              ) : null}
+              <MarkdownEditor value={reply} onChange={setReply} rows={6} placeholder="Reply with Markdown..." />
+              <div className="forum-reply-actions">
+                <button type="submit" className="button">Reply</button>
+              </div>
+            </form>
+          ) : <p className="forum-empty">{detail.thread.isLocked ? 'This thread is locked.' : 'Sign in to reply.'}</p>}
+        </section>
+      ) : null}
+
+      {route.view === 'profile' && profile ? (
+        <section className="panel forum-panel forum-profile">
+          <div className="forum-profile-banner" style={profile.bannerUrl ? { backgroundImage: `url(${profile.bannerUrl})` } : undefined} />
+          <div className="forum-profile-head">
+            <ForumAvatarImage
+              url={profile.avatarUrl}
+              alt={`${profile.username} avatar`}
+              fallbackClassName="forum-avatar-fallback"
+              fallback={profile.username.slice(0, 1).toUpperCase()}
+            />
+            <div>
+              <h2><span className={profileNameClass(profile)}>{profile.username}</span> {profile.combatLevel != null ? <span className="forum-profile-combat">Combat Lv. {profile.combatLevel}</span> : null}</h2>
+              <p>{profile.title || (profile.isAdmin ? 'Administrator' : profile.isModerator ? 'Moderator' : 'Adventurer')}</p>
+            </div>
+          </div>
+          {profile.bio ? <p>{profile.bio}</p> : null}
+          <div className="forum-profile-stats">
+            <span>{profile.threadCount} threads</span>
+            <span>{profile.postCount} posts</span>
+          </div>
+          {me.username === profile.username ? <ProfileEditor profile={profile} onSaved={() => void load()} /> : null}
+          <h3>Recent Threads</h3>
+          <ThreadList threads={profile.recentThreads} />
+        </section>
+      ) : null}
+
+      {route.view === 'moderation' && (me.isModerator || me.isAdmin) ? (
+        <section className="panel forum-panel">
+          <h2>Moderation</h2>
+          <div className="forum-admin-grid">
+            <div>
+              <h3>Reports</h3>
+              {reports.map((report) => (
+                <div key={report.id} className="forum-report">
+                  <strong>{report.threadTitle}</strong>
+                  <p>{report.reason}</p>
+                  <span>{report.status} · by {report.reporter.username}</span>
+                  {report.status === 'open' ? <button onClick={() => void api('/api/forums/moderate/report', { method: 'POST', body: JSON.stringify({ reportId: report.id }) }).then(load)}>Resolve</button> : null}
+                </div>
+              ))}
+            </div>
+            <ModeratorManager me={me} moderators={moderators} onSaved={() => void load()} />
+            <CategoryManager categories={categories} onSaved={() => void load()} />
+          </div>
+        </section>
+      ) : null}
+
+      {(route.view === 'index' || route.view === 'category') && list ? (
+        <>
+          <section className="panel forum-panel">
+            <div className="forum-toolbar">
+              <input value={query} placeholder="Search forums" onChange={(event) => setQuery(event.target.value)} />
+              <select value={sort} onChange={(event) => setSort(event.target.value)}>
+                <option value="latest">Latest</option>
+                <option value="new">Newest</option>
+                <option value="top">Top</option>
+              </select>
+            </div>
+            <div className="forum-category-grid">
+              {categories.map((category) => (
+                <a key={category.id} className="forum-category-card" href={`/forums/category/${category.slug}`}>
+                  <strong>{category.name}</strong>
+                  <span>{category.description}</span>
+                  <small>{category.threadCount} threads · {category.postCount} posts</small>
+                </a>
+              ))}
+            </div>
+          </section>
+          <section className="panel forum-panel">
+            <h2>{route.view === 'category' ? categories.find((c) => c.slug === route.category)?.name ?? 'Category' : 'Latest Threads'}</h2>
+            <ThreadList threads={list.threads} />
+            <Pagination page={list.page} totalPages={list.totalPages} onPage={goToPage} />
+          </section>
+          {canPost && (route.view === 'category' ? currentWritableCategory : writableCategories.length > 0) ? (
+            <section className="panel forum-panel">
+              <h2>Start a Thread</h2>
+              <ForumComposer
+                categories={route.view === 'category' && currentWritableCategory ? [currentWritableCategory] : writableCategories}
+                defaultCategoryId={route.view === 'category' ? currentWritableCategory?.id : undefined}
+                showCategorySelect={route.view !== 'category'}
+                onCreated={() => void load()}
+              />
+            </section>
+          ) : null}
+        </>
+      ) : null}
+      <ForumOnlineFooter users={onlineUsers} />
+    </main>
+  );
+}
+
+function ForumOnlineFooter({ users }: { users: ForumOnlineUser[] }) {
+  return (
+    <footer className="forum-online-footer">
+      <div className="forum-online-title"><FaUsers aria-hidden />Online on the Forums</div>
+      {users.length > 0 ? (
+        <div className="forum-online-list">
+          {users.map((user) => (
+            <a key={user.accountId} className="forum-online-user" href={`/forums/u/${user.username}`}>
+              <span className={user.isAdmin ? 'forum-admin-name' : undefined}>{user.username}</span>
+            </a>
+          ))}
+        </div>
+      ) : <p>No signed-in players are browsing the forums right now.</p>}
+    </footer>
+  );
+}
+
+function ForumAvatarImage({ url, alt, imgClassName, fallbackClassName, fallback }: { url: string; alt: string; imgClassName?: string; fallbackClassName: string; fallback: string }) {
+  const [failedUrl, setFailedUrl] = useState('');
+  const canShow = url && failedUrl !== url;
+  if (canShow) return <img className={imgClassName} src={url} alt={alt} onError={() => setFailedUrl(url)} />;
+  return <div className={fallbackClassName}>{fallback}</div>;
+}
+
+function profileNameClass(profile: Pick<ForumProfile, 'isAdmin' | 'isModerator'>): string | undefined {
+  if (profile.isAdmin) return 'forum-admin-name';
+  if (profile.isModerator) return 'forum-moderator-name';
+  return undefined;
+}
+
+function ProfileEditor({ profile, onSaved }: { profile: ForumProfile; onSaved: () => void }) {
+  const [bio, setBio] = useState(profile.bio);
+  const [title, setTitle] = useState(profile.title);
+  const [bannerMediaId, setBannerMediaId] = useState<number | undefined>(undefined);
+  const [cropDraft, setCropDraft] = useState<ProfileCropDraft | null>(null);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const bannerRef = useRef<HTMLInputElement>(null);
+
+  async function openCropper(kind: ProfileMediaKind, file: File | undefined) {
+    if (!file) return;
+    setUploadStatus('');
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      const targetWidth = kind === 'avatar' ? 256 : 1200;
+      const targetHeight = kind === 'avatar' ? 256 : 300;
+      const minScale = Math.max(targetWidth / image.naturalWidth, targetHeight / image.naturalHeight);
+      const scale = minScale;
+      setCropDraft({
+        kind,
+        file,
+        url,
+        imageWidth: image.naturalWidth,
+        imageHeight: image.naturalHeight,
+        targetWidth,
+        targetHeight,
+        scale,
+        minScale,
+        x: (targetWidth - image.naturalWidth * scale) / 2,
+        y: (targetHeight - image.naturalHeight * scale) / 2,
+      });
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      setUploadStatus('That image could not be loaded.');
+    };
+    image.src = url;
+  }
+
+  async function applyCrop() {
+    if (!cropDraft) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = cropDraft.targetWidth;
+    canvas.height = cropDraft.targetHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const image = new Image();
+    image.onload = async () => {
+      ctx.drawImage(image, cropDraft.x, cropDraft.y, cropDraft.imageWidth * cropDraft.scale, cropDraft.imageHeight * cropDraft.scale);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
+      if (!blob) {
+        setUploadStatus('Could not prepare that image.');
+        return;
+      }
+      const file = new File([blob], `${cropDraft.kind}.webp`, { type: 'image/webp' });
+      const media = await uploadForumFile(file);
+      setBannerMediaId(media.id);
+      if (bannerRef.current) bannerRef.current.value = '';
+      setUploadStatus('Banner ready.');
+      URL.revokeObjectURL(cropDraft.url);
+      setCropDraft(null);
+    };
+    image.src = cropDraft.url;
+  }
+
+  function closeCropper() {
+    if (cropDraft) URL.revokeObjectURL(cropDraft.url);
+    setCropDraft(null);
+  }
+
+  async function save() {
+    const payload: { bio: string; title: string; bannerMediaId?: number } = { bio, title };
+    if (bannerMediaId !== undefined) payload.bannerMediaId = bannerMediaId;
+    await api('/api/forums/profile', { method: 'POST', body: JSON.stringify(payload) });
+    onSaved();
+  }
+  return (
+    <div className="forum-profile-editor">
+      <input value={title} maxLength={40} placeholder="Forum title" onChange={(event) => setTitle(event.target.value)} />
+      <textarea value={bio} maxLength={500} rows={4} placeholder="Profile bio" onChange={(event) => setBio(event.target.value)} />
+      <div className="forum-profile-upload-grid">
+        <div>
+          <button className="forum-profile-upload-button" type="button" onClick={() => bannerRef.current?.click()}>{bannerMediaId ? 'Banner Ready' : 'Upload Banner'}</button>
+          <small>Recommended: wide image, 1200 x 300 or larger.</small>
+          <input ref={bannerRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void openCropper('banner', event.target.files?.[0])} hidden />
+        </div>
+        <div className="forum-profile-auto-avatar-note">
+          <strong>Avatar</strong>
+          <small>Your forum avatar is generated from your saved in-game head and helmet.</small>
+        </div>
+      </div>
+      {uploadStatus ? <p className="forum-profile-upload-status">{uploadStatus}</p> : null}
+      <div className="forum-profile-save-row">
+        <button className="button" type="button" onClick={() => void save()}>Save Profile</button>
+      </div>
+      {cropDraft ? <ProfileCropModal draft={cropDraft} onChange={setCropDraft} onCancel={closeCropper} onApply={() => void applyCrop()} /> : null}
+    </div>
+  );
+}
+
+function ProfileCropModal({ draft, onChange, onCancel, onApply }: { draft: ProfileCropDraft; onChange: (draft: ProfileCropDraft) => void; onCancel: () => void; onApply: () => void }) {
+  const dragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
+  const displayScale = Math.min(1, 520 / draft.targetWidth);
+  const scaledWidth = draft.imageWidth * draft.scale;
+  const scaledHeight = draft.imageHeight * draft.scale;
+
+  function clamp(next: ProfileCropDraft): ProfileCropDraft {
+    const width = next.imageWidth * next.scale;
+    const height = next.imageHeight * next.scale;
+    return {
+      ...next,
+      x: Math.min(0, Math.max(next.targetWidth - width, next.x)),
+      y: Math.min(0, Math.max(next.targetHeight - height, next.y)),
+    };
+  }
+
+  function pointerDown(event: PointerEvent<HTMLDivElement>) {
+    dragRef.current = { x: event.clientX, y: event.clientY, startX: draft.x, startY: draft.y };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function pointerMove(event: PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = (event.clientX - drag.x) / displayScale;
+    const dy = (event.clientY - drag.y) / displayScale;
+    onChange(clamp({ ...draft, x: drag.startX + dx, y: drag.startY + dy }));
+  }
+
+  function pointerUp() {
+    dragRef.current = null;
+  }
+
+  function changeScale(value: number) {
+    const nextScale = Math.max(draft.minScale, Number(value));
+    const centerX = draft.targetWidth / 2;
+    const centerY = draft.targetHeight / 2;
+    const ratio = nextScale / draft.scale;
+    onChange(clamp({
+      ...draft,
+      scale: nextScale,
+      x: centerX - (centerX - draft.x) * ratio,
+      y: centerY - (centerY - draft.y) * ratio,
+    }));
+  }
+
+  return (
+    <div className="forum-modal-backdrop">
+      <div className="forum-media-modal forum-profile-crop-modal">
+        <h3>{draft.kind === 'avatar' ? 'Crop Avatar' : 'Crop Banner'}</h3>
+        <p>Drag the image to choose the visible section.</p>
+        <div
+          className={`forum-profile-crop-frame ${draft.kind}`}
+          style={{ width: draft.targetWidth * displayScale, height: draft.targetHeight * displayScale }}
+          onPointerDown={pointerDown}
+          onPointerMove={pointerMove}
+          onPointerUp={pointerUp}
+          onPointerCancel={pointerUp}
+        >
+          <img
+            src={draft.url}
+            alt=""
+            draggable={false}
+            style={{
+              width: scaledWidth * displayScale,
+              height: scaledHeight * displayScale,
+              transform: `translate(${draft.x * displayScale}px, ${draft.y * displayScale}px)`,
+            }}
+          />
+        </div>
+        <label className="forum-profile-zoom">
+          Zoom
+          <input type="range" min={draft.minScale} max={draft.minScale * 3} step={0.01} value={draft.scale} onChange={(event) => changeScale(Number(event.target.value))} />
+        </label>
+        <div className="forum-media-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="button" onClick={onApply}>Use Image</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModeratorManager({ me, moderators, onSaved }: { me: ForumUser; moderators: Array<{ username: string }>; onSaved: () => void }) {
+  const [username, setUsername] = useState('');
+  if (!me.isAdmin) return <div><h3>Moderators</h3>{moderators.map((mod) => <p key={mod.username}>{mod.username}</p>)}</div>;
+  async function setModerator(action: 'grant' | 'revoke') {
+    await api('/api/forums/admin/moderator', { method: 'POST', body: JSON.stringify({ username, action }) });
+    setUsername('');
+    onSaved();
+  }
+  return (
+    <div>
+      <h3>Moderators</h3>
+      {moderators.map((mod) => <p key={mod.username}>{mod.username}</p>)}
+      <input value={username} placeholder="Username" onChange={(event) => setUsername(event.target.value)} />
+      <div className="forum-composer-actions">
+        <button onClick={() => void setModerator('grant')}>Grant</button>
+        <button onClick={() => void setModerator('revoke')}>Revoke</button>
+      </div>
+    </div>
+  );
+}
+
+function CategoryManager({ categories, onSaved }: { categories: ForumCategory[]; onSaved: () => void }) {
+  const [categoryId, setCategoryId] = useState<string>(categories[0]?.id.toString() ?? 'new');
+  const selected = categories.find((category) => category.id.toString() === categoryId);
+  const [name, setName] = useState(selected?.name ?? '');
+  const [description, setDescription] = useState(selected?.description ?? '');
+  const [sortOrder, setSortOrder] = useState(selected?.sortOrder ?? 100);
+  const [isHidden, setIsHidden] = useState(selected?.isHidden ?? false);
+  const [isLocked, setIsLocked] = useState(selected?.isLocked ?? false);
+  const [staffOnlyWrite, setStaffOnlyWrite] = useState(selected?.staffOnlyWrite ?? false);
+
+  useEffect(() => {
+    const category = categories.find((item) => item.id.toString() === categoryId);
+    setName(category?.name ?? '');
+    setDescription(category?.description ?? '');
+    setSortOrder(category?.sortOrder ?? 100);
+    setIsHidden(category?.isHidden ?? false);
+    setIsLocked(category?.isLocked ?? false);
+    setStaffOnlyWrite(category?.staffOnlyWrite ?? false);
+  }, [categories, categoryId]);
+
+  async function save() {
+    await api('/api/forums/moderate/category', {
+      method: 'POST',
+      body: JSON.stringify({
+        categoryId: categoryId === 'new' ? undefined : Number(categoryId),
+        name,
+        description,
+        sortOrder,
+        isHidden,
+        isLocked,
+        staffOnlyWrite,
+      }),
+    });
+    onSaved();
+  }
+
+  return (
+    <div>
+      <h3>Categories</h3>
+      <select value={categoryId} onChange={(event) => setCategoryId(event.target.value)}>
+        {categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}
+        <option value="new">New category</option>
+      </select>
+      <input value={name} maxLength={60} placeholder="Name" onChange={(event) => setName(event.target.value)} />
+      <textarea value={description} rows={3} maxLength={240} placeholder="Description" onChange={(event) => setDescription(event.target.value)} />
+      <input type="number" value={sortOrder} onChange={(event) => setSortOrder(Number(event.target.value))} />
+      <label><input type="checkbox" checked={isHidden} onChange={(event) => setIsHidden(event.target.checked)} /> Hidden</label>
+      <label><input type="checkbox" checked={isLocked} onChange={(event) => setIsLocked(event.target.checked)} /> Locked</label>
+      <label><input type="checkbox" checked={staffOnlyWrite} onChange={(event) => setStaffOnlyWrite(event.target.checked)} /> Staff write only</label>
+      <button type="button" onClick={() => void save()}>Save Category</button>
+    </div>
+  );
+}

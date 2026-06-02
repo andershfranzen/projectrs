@@ -39,7 +39,7 @@ const secureServices = [
     title: 'Forums',
     body: 'Discuss the game with fellow players!',
     cta: 'Visit',
-    href: '#',
+    href: '/forums',
   },
   {
     image: '/items/Unicorn_horn_466.png',
