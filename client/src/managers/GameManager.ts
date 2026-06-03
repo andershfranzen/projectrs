@@ -58,7 +58,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -5084,7 +5084,7 @@ export class GameManager {
   private predictSpellCastMovementToNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
     if (target && !this.isPlayerInNpcInteractionRange(npcEntityId, target, SPELL_CAST_DISTANCE)) {
-      const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE);
+      const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE, 'chebyshev');
       if (pathResult.path.length > 0) {
         this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;
@@ -5570,9 +5570,7 @@ export class GameManager {
       return this.isPointOnNpcInteractionTile(npcEntityId, target, x, z);
     }
     const fp = this.distToNpcFootprint(npcEntityId, target, x, z);
-    const inRange = mode === 'chebyshev'
-      ? Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range
-      : Math.hypot(fp.dx, fp.dz) <= range;
+    const inRange = combatRangeIncludesOffset(fp.dx, fp.dz, range, mode);
     if (!inRange) return false;
     return !requireRangedLineOfSight || this.hasRangedLineOfSightToNpc(npcEntityId, target, x, z);
   }
@@ -7819,9 +7817,9 @@ export class GameManager {
       if (!npcTarget) return;
       if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
       const fp = this.distToNpcFootprint(this.magicTargetId, npcTarget, this.playerX, this.playerZ);
-      if (Math.hypot(fp.dx, fp.dz) <= SPELL_CAST_DISTANCE) return;
+      if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= SPELL_CAST_DISTANCE) return;
       this._combatPathTimer = 0.6;
-      const pathResult = this.findPathToNpcInteraction(this.magicTargetId, npcTarget, SPELL_CAST_DISTANCE);
+      const pathResult = this.findPathToNpcInteraction(this.magicTargetId, npcTarget, SPELL_CAST_DISTANCE, 'chebyshev');
       if (pathResult.path.length > 0) {
         this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
         if (this.destMarker) this.destMarker.isVisible = false;

@@ -1,8 +1,8 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, STANCE_KEYS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
-import { addXp, statRandom, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, MAGIC_STANCE_BONUSES, MAGIC_STANCE_XP, spellSchoolSkill, bowAttackRollMultiplierForStance } from '@projectrs/shared';
+import { addXp, statRandom, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -10,7 +10,9 @@ import { WorldObject } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { ASSET_TO_GROUND_ITEM_SPAWN } from './data/AssetGroundItemSpawns';
 import { GameDatabase } from './Database';
-import { processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, RANGED_ATTACK_DISTANCE } from './combat/Combat';
+import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttackRange, isPointInNpcRangedAttackRange as isNpcInRangedAttackRange, processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, rollPlayerMagicDamageAgainstNpc, rollPlayerMagicDamageAgainstPlayer, rollPlayerMeleeDamageAgainstPlayer, rollPlayerRangedDamageAgainstPlayer, shouldConsumeAmmoOnShot, MAGIC_ATTACK_COOLDOWN_TICKS, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, RANGED_ATTACK_DISTANCE, type PlayerNpcCombatResult } from './combat/Combat';
+import { CombatSystem, type CombatActorRef, type CombatContext, type CombatMode, type ImpactQueueEntry, type RetaliationRequest } from './combat/CombatSystem';
+import { finalizeNpcDeath as finalizeNpcDeathCombat } from './combat/NpcDeath';
 import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } from './network/ChatSocket';
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
@@ -24,7 +26,6 @@ const mapIdRegistry: Map<string, number> = new Map();
 
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
 const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
-const MAGIC_ATTACK_COOLDOWN_TICKS = 5;
 type ItemQuantity = { itemId: number; quantity: number };
 type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
@@ -50,6 +51,21 @@ type ItemProductionAction =
   | { kind: 'itemOnObject'; recipe: ItemOnObjectRecipe; objectEntityId: number; remaining: number | null; nextTick: number }
   | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
   | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number };
+type PendingSpellImpact = {
+  impactTick: number;
+  attackerId: number;
+  targetId: number;
+  damage: number;
+  spellId: string;
+  xpSkill: SkillId;
+  magicStance?: MagicStance;
+  mapLevel: string;
+  floor: number;
+};
+type PendingSpellImpactPayload = Omit<PendingSpellImpact, 'impactTick' | 'attackerId' | 'targetId' | 'mapLevel' | 'floor'> & {
+  kind: 'spell';
+};
+type PendingSpellImpactEntry = ImpactQueueEntry<PendingSpellImpactPayload>;
 const LOG_CRAFT_INTERVAL_TICKS = 3;
 function indefiniteArticle(noun: string): 'a' | 'an' {
   return /^[aeiou]/i.test(noun.trim()) ? 'an' : 'a';
@@ -229,10 +245,6 @@ const RECONNECT_GRACE_TICKS = 38;
 /** OSRS-inspired x-log safety cap: force-close disconnected combat logouts
  *  after 60s even if NPC combat keeps re-arming the 10s combat timer. */
 const DISCONNECTED_COMBAT_LOGOUT_TICKS = Math.ceil(60_000 / TICK_RATE);
-/** Fired arrows are recoverable most of the time; only broken arrows leave the
- *  equipped ammo stack. Bolts/other future ammo keep the old consume-on-shot
- *  behavior until they get their own recovery rule. */
-const ARROW_BREAK_CHANCE = 0.2;
 const IDLE_WARNING_TICKS = Math.ceil(4 * 60_000 / TICK_RATE);
 const IDLE_LOGOUT_TICKS = Math.ceil(5 * 60_000 / TICK_RATE);
 const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
@@ -529,6 +541,7 @@ export class World {
   private playerCombatTargets: Map<number, number> = new Map();
   // Reverse lookup: npcId -> set of playerIds targeting it (kept in sync with playerCombatTargets)
   private npcTargetedBy: Map<number, Set<number>> = new Map();
+  private combatSystem: CombatSystem = new CombatSystem();
 
   /** Ground items with active despawn timers (avoids iterating all permanent items) */
   private despawningItemIds: Set<number> = new Set();
@@ -558,24 +571,20 @@ export class World {
     4: 3, // Black Bronze: 4 ticks; leave 3/2 ticks for future tiers.
   };
 
+  private static readonly PVM_COMBAT_LOCK_TICKS = 8;
+
   /**
-   * Damage queued by a spell cast, fired on the tick the projectile visually
-   * arrives. We roll damage at cast time (so the result is settled even if the
-   * target moves) but defer application so the hit splat matches the visual.
+   * Compatibility view for older tests and admin harnesses. Spell impacts are
+   * owned by CombatSystem's central impact queue; this accessor translates the
+   * legacy shape at the World boundary.
    */
-  private pendingSpellImpacts: {
-    impactTick: number;
-    attackerId: number;
-    targetId: number;
-    damage: number;
-    spellId: string;
-    /** Skill to credit XP to on hit. Captured at cast time so a mid-flight
-     *  spell def reload couldn't reroute XP to a different school. */
-    xpSkill: SkillId;
-    magicStance?: MagicStance;
-    mapLevel: string;
-    floor: number;
-  }[] = [];
+  private get pendingSpellImpacts(): PendingSpellImpact[] {
+    return this.listPendingSpellImpacts();
+  }
+
+  private set pendingSpellImpacts(impacts: PendingSpellImpact[]) {
+    this.replacePendingSpellImpacts(impacts);
+  }
 
   constructor(db: GameDatabase, options: WorldOptions = {}) {
     this.db = db;
@@ -1265,8 +1274,7 @@ export class World {
 
   private isPointInNpcFootprintRange(npc: Npc, x: number, z: number, range: number, mode: 'euclidean' | 'chebyshev'): boolean {
     const fp = npc.distToFootprint(x, z);
-    if (mode === 'chebyshev') return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= range;
-    return Math.hypot(fp.dx, fp.dz) <= range;
+    return combatRangeIncludesOffset(fp.dx, fp.dz, range, mode);
   }
 
   private hasRangedLineOfSightFrom(player: Player, npc: Npc, fromX: number, fromZ: number): boolean {
@@ -1312,7 +1320,7 @@ export class World {
   }
 
   private isPointInNpcRangedAttackRange(player: Player, npc: Npc, x: number, z: number, range: number = RANGED_ATTACK_DISTANCE): boolean {
-    return this.isPointInNpcFootprintRange(npc, x, z, range, 'chebyshev')
+    return isNpcInRangedAttackRange(npc, x, z, range)
       && this.hasRangedLineOfSightFrom(player, npc, x, z);
   }
 
@@ -1390,7 +1398,7 @@ export class World {
   private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic', rangedRange: number = RANGED_ATTACK_DISTANCE): boolean {
     if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
     if (mode === 'ranged') return this.isPointInNpcRangedAttackRange(player, npc, player.position.x, player.position.y, rangedRange);
-    return this.isPointInNpcFootprintRange(npc, player.position.x, player.position.y, SPELL_CAST_DISTANCE, 'euclidean');
+    return isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y);
   }
 
   private setObjectTilesBlocked(
@@ -2347,6 +2355,7 @@ export class World {
     if (persist) this.persistMagicCombatState(player);
     this.sendMagicState(player);
     this.magicDebug(player, 'autocast-cleared', { reason, previousSpellIndex });
+    this.syncPlayerActiveCombatIntent(player);
     return true;
   }
 
@@ -2928,6 +2937,8 @@ export class World {
     if (!set) { set = new Set(); this.npcTargetedBy.set(npcId, set); }
     set.add(playerId);
     const player = this.players.get(playerId);
+    const npc = this.npcs.get(npcId);
+    if (player && npc) this.syncPlayerCombatIntent(player, npc);
     if (player) {
       this.magicDebug(player, 'setCombatTarget', { npcId, autocast: player.autocastSpellIndex, cooldown: player.attackCooldown });
       this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, npcId);
@@ -2949,13 +2960,65 @@ export class World {
         this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
       }
     }
+    const actor = this.playerCombatRef(playerId);
+    const combat = this.getCombatSystem();
+    combat.clearIntent(actor);
+    combat.clearRetaliationForActor(actor);
+    combat.clearLock(actor);
   }
 
   private clearPlayerCombatTargetForNpc(playerId: number, npcId: number): void {
     if (this.playerCombatTargets.get(playerId) === npcId) this.clearCombatTarget(playerId);
   }
 
-  private maybeAutoRetaliateAgainstNpc(player: Player, npc: Npc): void {
+  private playerCombatMode(player: Player): CombatMode {
+    if (player.autocastSpellIndex >= 0) return 'magic';
+    if (player.isRangedWeapon(this.data.itemDefs)) return 'ranged';
+    return 'melee';
+  }
+
+  private syncPlayerCombatIntent(player: Player, npc: Npc): void {
+    const actor = this.playerCombatRef(player.id);
+    const existing = this.getCombatSystem().getIntent(actor);
+    const mode = this.playerCombatMode(player);
+    const ammo = mode === 'ranged' ? player.findAmmo(this.data.itemDefs) : null;
+    this.getCombatSystem().setIntent({
+      actor,
+      target: this.npcCombatRef(npc.id),
+      mode,
+      createdTick: existing?.createdTick ?? this.currentTick,
+      spellIndex: mode === 'magic' ? player.autocastSpellIndex : undefined,
+      ammoItemId: ammo?.itemDef.id,
+    });
+  }
+
+  private syncPlayerActiveCombatIntent(player: Player): void {
+    const npcId = this.playerCombatTargets?.get(player.id);
+    if (npcId === undefined) return;
+    const npc = this.npcs.get(npcId);
+    if (!npc || npc.dead) return;
+    this.syncPlayerCombatIntent(player, npc);
+  }
+
+  private enqueuePlayerAutoRetaliation(player: Player, npc: Npc): void {
+    this.getCombatSystem().enqueueRetaliation({
+      actor: this.playerCombatRef(player.id),
+      target: this.npcCombatRef(npc.id),
+      earliestTick: this.currentTick,
+      reason: 'auto-retaliate',
+    });
+  }
+
+  private enqueueNpcRetaliation(npc: Npc, player: Player, delayTicks: number = 0): void {
+    this.getCombatSystem().enqueueRetaliation({
+      actor: this.npcCombatRef(npc.id),
+      target: this.playerCombatRef(player.id),
+      earliestTick: this.currentTick + delayTicks,
+      reason: 'npc-retaliate',
+    });
+  }
+
+  private startPlayerAutoRetaliation(player: Player, npc: Npc): void {
     if (!player.autoRetaliate || !player.alive || player.disconnected) return;
     if (player.isInterfaceOpen() || this.activeDuels?.has(player.id)) return;
     if (player.hasMoveQueue() || this.playerCombatTargets.has(player.id)) return;
@@ -2967,25 +3030,61 @@ export class World {
     this.setCombatTarget(player.id, npc.id);
   }
 
+  private processCombatRetaliation(request: RetaliationRequest): void {
+    if (request.actor.kind === 'player' && request.target.kind === 'npc') {
+      const player = this.players.get(request.actor.id);
+      const npc = this.npcs.get(request.target.id);
+      if (!player || !npc) return;
+      this.startPlayerAutoRetaliation(player, npc);
+      return;
+    }
+
+    if (request.actor.kind === 'npc' && request.target.kind === 'player') {
+      const npc = this.npcs.get(request.actor.id);
+      const player = this.players.get(request.target.id);
+      if (!npc || !player || npc.dead || !player.alive) return;
+      if (this.activeDuels?.has(player.id) || player.openInterface === 'duel') return;
+      if (!this.canPlayerTargetNpc(player, npc)) return;
+      armNpcRetaliation(npc, player);
+      this.syncNpcAttackCooldownFromSchedule(npc);
+    }
+  }
+
+  private finishCombatTick(): void {
+    for (const request of this.getCombatSystem().takeDueRetaliation(this.currentTick)) {
+      this.processCombatRetaliation(request);
+    }
+  }
+
   private disengageLeashedNpcCombat(player: Player, npc: Npc): void {
     this.clearPlayerCombatTargetForNpc(player.id, npc.id);
     npc.disengageAndReturnHome();
   }
 
-  private handleNpcDeath(npc: Npc): void {
-    const targeters = this.npcTargetedBy.get(npc.id);
-    if (targeters) {
-      for (const playerId of [...targeters]) this.clearCombatTarget(playerId);
-    }
-
-      this.broadcastNearbyOnFloor(npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y, ServerOpcode.ENTITY_DEATH, npc.id, EntityDeathKind.Death);
-
-    const cm = this.chunkManagers.get(npc.currentMapLevel);
-    if (cm) cm.removeEntity(npc.id);
-    this.markEntityTileOccupantsDirty();
-    for (const [, player] of this.players) {
-      player.visibleEntityIds.delete(npc.id);
-    }
+  private finalizeNpcDeath(npc: Npc, killer: Player | null): void {
+    this.getCombatSystem().clearActor(this.npcCombatRef(npc.id));
+    finalizeNpcDeathCombat({
+      getTargeters: (npcId) => this.npcTargetedBy.get(npcId),
+      clearCombatTarget: (playerId) => this.clearCombatTarget(playerId),
+      broadcastDeath: (deadNpc) => {
+        this.broadcastNearbyOnFloor(deadNpc.currentMapLevel, deadNpc.currentFloor, deadNpc.position.x, deadNpc.position.y, ServerOpcode.ENTITY_DEATH, deadNpc.id, EntityDeathKind.Death);
+      },
+      removeChunkEntity: (deadNpc) => {
+        const cm = this.chunkManagers.get(deadNpc.currentMapLevel);
+        if (cm) cm.removeEntity(deadNpc.id);
+      },
+      markOccupantsDirty: () => this.markEntityTileOccupantsDirty(),
+      forgetVisibleNpc: (npcId) => {
+        for (const [, player] of this.players) {
+          player.visibleEntityIds.delete(npcId);
+        }
+      },
+      notifyQuestKill: (questKiller, deadNpc) => {
+        this.quests.notifyQuestEvent(questKiller, { type: 'npcKill', npcDefId: deadNpc.def.id });
+      },
+      creditMobKill: (deadNpc) => this.creditMobKill(deadNpc),
+      spawnLoot: (deadNpc, ownerPlayerId) => this.spawnNpcLoot(deadNpc, ownerPlayerId),
+    }, npc, killer);
   }
 
   private handleNpcRespawn(npc: Npc): void {
@@ -3376,6 +3475,7 @@ export class World {
     // handlePlayerTalkNpc: dialogue > shop > bank.
     if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
+    if (!this.canPlayerEngageNpcCombat(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
     this.interruptPlayerAction(playerId, player);
     player.botStats?.recordActionSignature('attackNpc', npc.npcId, player.position.x, player.position.y);
@@ -3388,7 +3488,7 @@ export class World {
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const isMagicAutocast = player.autocastSpellIndex >= 0;
     const rangedAttackDist = isRanged ? player.getRangedAttackRange(this.data.itemDefs) : RANGED_ATTACK_DISTANCE;
-    const attackDist = isMagicAutocast ? SPELL_CAST_DISTANCE : (isRanged ? rangedAttackDist : 1.5);
+    const attackDist = isMagicAutocast ? MAGIC_ATTACK_DISTANCE : (isRanged ? rangedAttackDist : 1.5);
     const attackMode = isMagicAutocast ? 'magic' : (isRanged ? 'ranged' : 'melee');
     const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, attackMode, rangedAttackDist);
     if (dist > Math.max(attackDist, 24)) return;
@@ -3408,7 +3508,7 @@ export class World {
       // current queue is consumed, keeping client prediction stable mid-walk.
       if (isMagicAutocast && player.hasMoveQueue()) {
         const beforeDest = player.getMoveDestination();
-        if (this.trimPlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE, 'euclidean')) {
+        if (this.trimPlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE)) {
           this.notifyClientIfMoveDestinationChanged(player, beforeDest);
         }
       } else if (isRanged && player.hasMoveQueue()) {
@@ -3418,7 +3518,7 @@ export class World {
         }
       } else if (!player.hasMoveQueue()) {
         if (isMagicAutocast) {
-          this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
+          this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE);
         } else if (!isRanged) {
           const path = this.findPlayerPathToNpc(player, npc);
           player.setMoveQueue(path);
@@ -4777,6 +4877,7 @@ export class World {
         player.setEquipment('ammo', slot.itemId, sourceQuantity);
       }
 
+      this.syncPlayerActiveCombatIntent(player);
       player.setDelay(this.currentTick, 1);
       this.sendInventory(player);
       this.sendEquipment(player);
@@ -4836,8 +4937,12 @@ export class World {
       }
     }
 
-    if (weaponBefore !== player.equipment.get('weapon')) {
+    const weaponChanged = weaponBefore !== player.equipment.get('weapon');
+    if (weaponChanged) {
       this.clearAutocastSelection(player, 'weapon-equipment-changed', false);
+    }
+    if (weaponChanged) {
+      this.syncPlayerActiveCombatIntent(player);
     }
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
@@ -4862,7 +4967,12 @@ export class World {
     if (player.addItem(itemId, quantity, this.data.itemDefs).completed === quantity) {
       this.interruptPlayerAction(playerId, player);
       player.deleteEquipment(slotName);
-      if (slotName === 'weapon') this.clearAutocastSelection(player, 'weapon-unequipped', false);
+      if (slotName === 'weapon') {
+        this.clearAutocastSelection(player, 'weapon-unequipped', false);
+        this.syncPlayerActiveCombatIntent(player);
+      } else if (slotName === 'ammo') {
+        this.syncPlayerActiveCombatIntent(player);
+      }
       player.setDelay(this.currentTick, 1);
       this.sendInventory(player);
       this.sendEquipment(player);
@@ -5290,6 +5400,7 @@ export class World {
     player.autocastSpellIndex = spellIndex;
     this.persistMagicCombatState(player);
     this.sendMagicState(player);
+    this.syncPlayerActiveCombatIntent(player);
     this.magicDebug(player, 'setAutocast-enabled', { spellIndex, spell: this.data.getSpellByIndex(spellIndex)?.name });
   }
 
@@ -5307,7 +5418,7 @@ export class World {
 
   private throttleFailedAutocast(player: Player, spellIndex: number, keepCombatTarget: boolean): void {
     if (!keepCombatTarget || player.autocastSpellIndex !== spellIndex) return;
-    player.attackCooldown = Math.max(player.attackCooldown, 4);
+    this.armPlayerAttackCooldown(player, Math.max(player.attackCooldown, 4));
   }
 
   private clearInvalidAutocast(player: Player, spellIndex: number): void {
@@ -5386,25 +5497,6 @@ export class World {
     };
   }
 
-  private rollMagicDamageAgainstNpc(player: Player, npc: Npc, cast: MagicCastPreparation): number {
-    const stanceBonus = MAGIC_STANCE_BONUSES[player.magicStance];
-    const bonuses = player.computeBonuses(this.data.itemDefs);
-    const attackRoll = (cast.magicLevel + stanceBonus.accuracy + 8) * (bonuses.magicAccuracy + ACC_BASE);
-    const defRoll = (npc.defence + 8) * ACC_BASE;
-    const maxHit = Math.max(1, magicMaxHit(cast.magicLevel, cast.def.tier) + stanceBonus.maxHit);
-    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
-  }
-
-  private rollMagicDamageAgainstPlayer(attacker: Player, defender: Player, cast: MagicCastPreparation): number {
-    const stanceBonus = MAGIC_STANCE_BONUSES[attacker.magicStance];
-    const attackBonuses = attacker.computeBonuses(this.data.itemDefs);
-    const defenceBonuses = defender.computeBonuses(this.data.itemDefs);
-    const attackRoll = (cast.magicLevel + stanceBonus.accuracy + 8) * (attackBonuses.magicAccuracy + ACC_BASE);
-    const defRoll = (defender.skills.defence.currentLevel + 8) * (defenceBonuses.magicDefence + ACC_BASE);
-    const maxHit = Math.max(1, magicMaxHit(cast.magicLevel, cast.def.tier) + stanceBonus.maxHit);
-    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
-  }
-
   /**
    * Cast a spell at an NPC. Damage rolls now, applies on the impact tick
    * (cast duration + projectile travel time) so the hit splat lands when the
@@ -5453,6 +5545,11 @@ export class World {
       });
       return;
     }
+    if (!this.canPlayerEngageNpcCombat(player, npc)) {
+      this.magicDebug(player, 'castSpell-reject-combat-lock', { spellIndex, targetEntityId, keepCombatTarget });
+      if (keepCombatTarget) this.clearCombatTarget(playerId);
+      return;
+    }
     if (!keepCombatTarget && player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(targetEntityId)) {
       this.magicDebug(player, 'castSpell-reject-unseen', { spellIndex, targetEntityId, keepCombatTarget, visibleCount: player.visibleEntityIds.size });
       return;
@@ -5473,9 +5570,10 @@ export class World {
 
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
-    if (dist > SPELL_CAST_DISTANCE) {
-      this.magicDebug(player, 'castSpell-defer-range', { spellIndex, targetEntityId, keepCombatTarget, dist, max: SPELL_CAST_DISTANCE });
-      if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
+    const rangeDist = Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
+    if (!isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y)) {
+      this.magicDebug(player, 'castSpell-defer-range', { spellIndex, targetEntityId, keepCombatTarget, dist: rangeDist, max: MAGIC_ATTACK_DISTANCE });
+      if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE);
       if (player.hasMoveQueue()) {
         player.pendingSpellCast = { spellIndex, targetEntityId, actionRevision: player.actionRevision };
         this.markQueuedAction(player);
@@ -5492,7 +5590,7 @@ export class World {
       this.magicDebug(player, 'castSpell-prepare-failed', { spellIndex, targetEntityId, keepCombatTarget });
       return;
     }
-    const damage = this.rollMagicDamageAgainstNpc(player, npc, cast);
+    const damage = rollPlayerMagicDamageAgainstNpc(player, npc, this.data.itemDefs, cast.magicLevel, cast.def.tier, player.magicStance, () => this.combatRng());
 
     // Total wall time before damage applies — matches client visual length.
     const travelMs = cast.def.trajectory.speed > 0 ? (dist / cast.def.trajectory.speed) * 1000 : 600;
@@ -5505,7 +5603,8 @@ export class World {
     const castTicks = Math.max(1, Math.ceil(cast.def.cast.durationMs / TICK_RATE));
 
     player.setDelay(this.currentTick, castTicks + 1);
-    player.attackCooldown = MAGIC_ATTACK_COOLDOWN_TICKS;
+    this.armPlayerAttackCooldown(player, MAGIC_ATTACK_COOLDOWN_TICKS);
+    this.refreshPlayerNpcCombatLock(player, npc);
     this.magicDebug(player, 'castSpell-fired', {
       spellIndex,
       spell: cast.def.name,
@@ -5535,7 +5634,7 @@ export class World {
       ServerOpcode.SPELL_CAST, player.id, npc.id, spellIndex,
     );
 
-    this.pendingSpellImpacts.push({
+    this.enqueuePendingSpellImpact({
       impactTick: this.currentTick + totalDelayTicks,
       attackerId: player.id,
       targetId: npc.id,
@@ -5632,31 +5731,28 @@ export class World {
     }
   }
 
-  private grantMagicCombatXp(player: Player, xpSkill: SkillId, damage: number, stance: MagicStance): void {
-    if (damage <= 0) return;
-    const xpStyle = MAGIC_STANCE_XP[stance] ?? MAGIC_STANCE_XP.accurate;
-    const drops: Array<{ skill: SkillId; amount: number }> = [];
-    const magicAmount = damage * xpStyle.magic;
-    const defenceAmount = damage * xpStyle.defence;
-    if (magicAmount > 0) drops.push({ skill: xpSkill, amount: magicAmount });
-    if (defenceAmount > 0) drops.push({ skill: 'defence', amount: defenceAmount });
-
-    const oldHpLevel = player.skills.hitpoints.level;
-    for (const drop of drops) {
-      const result = addXp(player.skills, drop.skill, drop.amount);
-      const skillIdx = ALL_SKILLS.indexOf(drop.skill);
-      if (skillIdx < 0) continue;
-      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(drop.amount));
-      if (result.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
-      this.sendSingleSkill(player, skillIdx);
+  private sendCombatXp(player: Player, result: Pick<PlayerNpcCombatResult, 'xpDrops' | 'levelUps'>): void {
+    for (const xp of result.xpDrops) {
+      const skillIdx = ALL_SKILLS.indexOf(xp.skill);
+      if (skillIdx >= 0) {
+        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xp.amount);
+      }
     }
 
-    const hpIdx = ALL_SKILLS.indexOf('hitpoints');
-    if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
-      this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
-      this.sendSingleSkill(player, hpIdx);
+    for (const lu of result.levelUps) {
+      const skillIdx = ALL_SKILLS.indexOf(lu.skill);
+      if (skillIdx >= 0) {
+        this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, lu.level);
+      }
     }
-    player.syncHealthFromSkills();
+
+    const synced = new Set<SkillId>();
+    for (const xp of result.xpDrops) {
+      if (synced.has(xp.skill)) continue;
+      synced.add(xp.skill);
+      const skillIdx = ALL_SKILLS.indexOf(xp.skill);
+      if (skillIdx >= 0) this.sendSingleSkill(player, skillIdx);
+    }
   }
 
   startQuestForAdmin(player: Player, questId: string): boolean {
@@ -6399,12 +6495,19 @@ export class World {
   }
 
   private hasPendingSpellImpact(playerId: number): boolean {
-    return this.pendingSpellImpacts?.some(impact => impact.attackerId === playerId) ?? false;
+    return this.getCombatSystem().listImpacts().some(impact =>
+      this.isPendingSpellImpactEntry(impact)
+      && impact.source.kind === 'player'
+      && impact.source.id === playerId
+    );
   }
 
   private clearPendingSpellImpactsFor(playerId: number): void {
-    if (!this.pendingSpellImpacts || this.pendingSpellImpacts.length === 0) return;
-    this.pendingSpellImpacts = this.pendingSpellImpacts.filter(impact => impact.attackerId !== playerId);
+    this.getCombatSystem().removeImpactsWhere(impact =>
+      this.isPendingSpellImpactEntry(impact)
+      && impact.source.kind === 'player'
+      && impact.source.id === playerId
+    );
   }
 
   private isPlayerInCombatForDuel(player: Player): boolean {
@@ -6728,8 +6831,8 @@ export class World {
     this.clearDuelSetupState(bPlayer);
     aPlayer.openInterface = 'duel';
     bPlayer.openInterface = 'duel';
-    aPlayer.attackCooldown = 0;
-    bPlayer.attackCooldown = 0;
+    this.armPlayerAttackCooldown(aPlayer, 0);
+    this.armPlayerAttackCooldown(bPlayer, 0);
 
     const duel: ActiveDuel = {
       a: { id: session.a.id, stake: session.a.stake, startHealth: aPlayer.health },
@@ -6825,11 +6928,6 @@ export class World {
     return this.tileChebyshev(a, b) <= 1;
   }
 
-  private ammoStrengthForRangedRoll(_ammo: PlayerAmmo): number {
-    // Equipped ammo is already included in computeBonuses().
-    return 0;
-  }
-
   private playerRangedAmmoFailureMessage(player: Player): string {
     const itemDefs = this.data.itemDefs;
     const weaponId = player.equipment.get('weapon');
@@ -6851,7 +6949,7 @@ export class World {
   }
 
   private consumePlayerAmmo(player: Player, ammo: PlayerAmmo): void {
-    if (ammo.itemDef.ammoType === 'arrow' && Math.random() >= ARROW_BREAK_CHANCE) return;
+    if (!shouldConsumeAmmoOnShot(ammo, () => this.combatRng())) return;
     const beforeItemId = player.equipment.get(ammo.equipSlot);
     player.decrementEquipment(ammo.equipSlot, 1);
     this.sendEquipment(player);
@@ -6863,6 +6961,7 @@ export class World {
   }
 
   private processDuelAttack(duel: ActiveDuel, attacker: Player, defender: Player): void {
+    this.syncPlayerAttackCooldownFromSchedule(attacker);
     if (!attacker.alive || !defender.alive || attacker.attackCooldown > 0) return;
     if (attacker.autocastSpellIndex >= 0) {
       const hit = this.processDuelMagicAttack(attacker, defender);
@@ -6872,67 +6971,28 @@ export class World {
     if (attacker.isRangedWeapon(this.data.itemDefs)) {
       const ammo = attacker.findAmmo(this.data.itemDefs);
       if (!ammo) {
-        attacker.attackCooldown = Math.max(1, attacker.getAttackSpeed(this.data.itemDefs));
+        this.armPlayerAttackCooldown(attacker, Math.max(1, attacker.getAttackSpeed(this.data.itemDefs)));
         this.sendChatSystem(attacker, this.playerRangedAmmoFailureMessage(attacker));
         return;
       }
-      const hit = this.rollDuelRangedHit(attacker, defender, this.ammoStrengthForRangedRoll(ammo));
-      attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
+      const hit = rollPlayerRangedDamageAgainstPlayer(attacker, defender, this.data.itemDefs, () => this.combatRng());
+      this.armPlayerAttackCooldown(attacker, attacker.getAttackSpeed(this.data.itemDefs));
       this.consumePlayerAmmo(attacker, ammo);
       this.broadcastProjectile(attacker, defender, this.projectileTypeForAmmo(ammo), attacker.currentMapLevel, duel.floor);
       this.applyDuelHit(duel, attacker, defender, hit, false);
       return;
     }
-    const hit = this.rollDuelMeleeHit(attacker, defender);
-    attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
+    const hit = rollPlayerMeleeDamageAgainstPlayer(attacker, defender, this.data.itemDefs, () => this.combatRng());
+    this.armPlayerAttackCooldown(attacker, attacker.getAttackSpeed(this.data.itemDefs));
     this.applyDuelHit(duel, attacker, defender, hit, false);
-  }
-
-  private rollDuelMeleeHit(attacker: Player, defender: Player): number {
-    const itemDefs = this.data.itemDefs;
-    const attackBonuses = attacker.computeBonuses(itemDefs);
-    const defenceBonuses = defender.computeBonuses(itemDefs);
-    const attackStance = STANCE_BONUSES[attacker.stance];
-    const defenceStance = STANCE_BONUSES[defender.stance];
-    const effAcc = attacker.skills.weaponry.currentLevel + attackStance.accuracy + 8;
-    const effStr = attacker.skills.strength.currentLevel + attackStance.strength + 8;
-    const weaponStyle = attacker.getWeaponStyle(itemDefs);
-    let attackBonus = attackBonuses.crushAttack;
-    let defenceBonus = defenceBonuses.crushDefence;
-    if (weaponStyle === 'stab') {
-      attackBonus = attackBonuses.stabAttack;
-      defenceBonus = defenceBonuses.stabDefence;
-    } else if (weaponStyle === 'slash') {
-      attackBonus = attackBonuses.slashAttack;
-      defenceBonus = defenceBonuses.slashDefence;
-    }
-    const attackRoll = effAcc * (attackBonus + ACC_BASE);
-    const defRoll = (defender.skills.defence.currentLevel + defenceStance.defence + 8) * (defenceBonus + ACC_BASE);
-    const maxHit = osrsMeleeMaxHit(effStr, attackBonuses.meleeStrength);
-    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
-  }
-
-  private rollDuelRangedHit(attacker: Player, defender: Player, arrowStrength: number): number {
-    const itemDefs = this.data.itemDefs;
-    const attackBonuses = attacker.computeBonuses(itemDefs);
-    const defenceBonuses = defender.computeBonuses(itemDefs);
-    const defenceStance = STANCE_BONUSES[defender.stance];
-    const effRanged = attacker.skills.archery.currentLevel + 8;
-    const attackRollMultiplier = attacker.getWeaponStyle(itemDefs) === 'bow'
-      ? bowAttackRollMultiplierForStance(attacker.stance)
-      : 1.0;
-    const attackRoll = Math.floor(effRanged * (attackBonuses.rangedAccuracy + ACC_BASE) * attackRollMultiplier);
-    const defRoll = (defender.skills.defence.currentLevel + defenceStance.defence + 8) * (defenceBonuses.rangedDefence + ACC_BASE);
-    const maxHit = osrsMeleeMaxHit(effRanged, attackBonuses.rangedStrength + arrowStrength);
-    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
   }
 
   private processDuelMagicAttack(attacker: Player, defender: Player): number | null {
     const spellIndex = attacker.autocastSpellIndex;
     const cast = this.prepareMagicCast(attacker, spellIndex, true);
     if (!cast) return null;
-    const hit = this.rollMagicDamageAgainstPlayer(attacker, defender, cast);
-    attacker.attackCooldown = MAGIC_ATTACK_COOLDOWN_TICKS;
+    const hit = rollPlayerMagicDamageAgainstPlayer(attacker, defender, this.data.itemDefs, cast.magicLevel, cast.def.tier, attacker.magicStance, () => this.combatRng());
+    this.armPlayerAttackCooldown(attacker, MAGIC_ATTACK_COOLDOWN_TICKS);
     this.broadcastPlayerAnimationEvent(
       attacker,
       PlayerAnimationKind.Skill,
@@ -7059,7 +7119,7 @@ export class World {
     player.clearDelay();
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
-    player.attackCooldown = 0;
+    this.armPlayerAttackCooldown(player, 0);
     this.closeShopForPlayer(player);
     const restored = Math.max(1, Math.min(player.maxHealth, Math.floor(startHealth)));
     player.health = restored;
@@ -7224,12 +7284,8 @@ export class World {
     this.rebuildEntityTileOccupants();
     this.tickNpcAI();
     this.rebuildEntityTileOccupants();
-    this.tickPlayerCooldowns();
-    this.tickQueuedSpellCasts();
     this.tickActiveDuels();
-    this.tickPlayerCombat();
-    this.tickNpcCombat();
-    this.tickPendingSpells();
+    this.getCombatSystem().tick(this.createCombatContext());
     if (this.currentTick % 40 === 0) this.tickHealthRegen();
     this.tickItemProductionActions();
     this.tickSkillingActions();
@@ -7598,15 +7654,162 @@ export class World {
     }
   }
 
-  /** Decrement attack cooldowns once per tick globally. RS2 semantics: the
-   *  attack timer ticks regardless of whether the player is currently in
-   *  combat or adjacent to a target — so walking to a mob doesn't reset
-   *  your timer. The reset (back to full attack speed) still happens inside
-   *  processPlayerCombat / processPlayerRangedCombat after a successful swing. */
+  /** Advance attack schedules once per tick globally. RS2 semantics: attack
+   *  timers tick regardless of whether the actor is currently adjacent to a
+   *  target — so walking to a mob doesn't reset your timer. Entity cooldown
+   *  fields are compatibility projections of CombatSystem schedules. */
+  private tickCombatSchedules(): void {
+    this.tickPlayerCooldowns();
+    this.tickNpcCooldowns();
+    this.getCombatSystem().clearExpiredLocks(this.currentTick, World.PVM_COMBAT_LOCK_TICKS);
+  }
+
   private tickPlayerCooldowns(): void {
     for (const [, player] of this.players) {
-      if (player.attackCooldown > 0) player.attackCooldown--;
+      this.syncPlayerAttackCooldownFromSchedule(player);
     }
+  }
+
+  private armPlayerAttackCooldown(player: Player, cooldownTicks: number): void {
+    player.attackCooldown = this.getCombatSystem().armSchedule(
+      this.playerCombatRef(player.id),
+      this.currentTick,
+      cooldownTicks,
+    );
+  }
+
+  private syncPlayerAttackCooldownFromSchedule(player: Player): void {
+    const actor = this.playerCombatRef(player.id);
+    const combat = this.getCombatSystem();
+    if (player.attackCooldown > 0 && !combat.getSchedule(actor)) {
+      player.attackCooldown = combat.adoptScheduleFromCooldown(actor, this.currentTick, player.attackCooldown);
+      return;
+    }
+    player.attackCooldown = combat.advanceSchedule(actor, this.currentTick);
+  }
+
+  private tickNpcCooldowns(): void {
+    for (const [, npc] of this.npcs) {
+      this.syncNpcAttackCooldownFromSchedule(npc);
+    }
+  }
+
+  private armNpcAttackCooldown(npc: Npc, cooldownTicks: number): void {
+    npc.attackCooldown = this.getCombatSystem().armSchedule(
+      this.npcCombatRef(npc.id),
+      this.currentTick,
+      cooldownTicks,
+    );
+  }
+
+  private syncNpcAttackCooldownFromSchedule(npc: Npc): void {
+    const actor = this.npcCombatRef(npc.id);
+    const combat = this.getCombatSystem();
+    if (npc.attackCooldown > 0 && !combat.getSchedule(actor)) {
+      npc.attackCooldown = combat.adoptScheduleFromCooldown(actor, this.currentTick, npc.attackCooldown);
+      return;
+    }
+    npc.attackCooldown = combat.advanceSchedule(actor, this.currentTick);
+  }
+
+  private getCombatSystem(): CombatSystem {
+    this.combatSystem ??= new CombatSystem();
+    return this.combatSystem;
+  }
+
+  private combatRng(): number {
+    return Math.random();
+  }
+
+  private playerCombatRef(playerId: number) {
+    return { kind: 'player' as const, id: playerId };
+  }
+
+  private npcCombatRef(npcId: number) {
+    return { kind: 'npc' as const, id: npcId };
+  }
+
+  private canEngagePvmTarget(actor: CombatActorRef, target: CombatActorRef): boolean {
+    return this.getCombatSystem().canAttack(
+      actor,
+      target,
+      this.currentTick,
+      World.PVM_COMBAT_LOCK_TICKS,
+      'pvm',
+    );
+  }
+
+  private canPlayerEngageNpcCombat(player: Player, npc: Npc): boolean {
+    return this.canEngagePvmTarget(this.playerCombatRef(player.id), this.npcCombatRef(npc.id));
+  }
+
+  private refreshPlayerNpcCombatLock(player: Player, npc: Npc): void {
+    this.getCombatSystem().refreshLock(this.playerCombatRef(player.id), this.npcCombatRef(npc.id), this.currentTick, 'pvm');
+    npc.lastCombatTick = this.currentTick;
+    npc.lastAttackerId = player.id;
+  }
+
+  private isPendingSpellImpactEntry(impact: ImpactQueueEntry): impact is PendingSpellImpactEntry {
+    return impact.mode === 'magic'
+      && typeof impact.payload === 'object'
+      && impact.payload !== null
+      && (impact.payload as { kind?: unknown }).kind === 'spell';
+  }
+
+  private listPendingSpellImpacts(): PendingSpellImpact[] {
+    return this.getCombatSystem()
+      .listImpacts()
+      .filter((impact): impact is PendingSpellImpactEntry => this.isPendingSpellImpactEntry(impact))
+      .map(impact => ({
+        impactTick: impact.impactTick,
+        attackerId: impact.source.id,
+        targetId: impact.target.id,
+        damage: impact.payload.damage,
+        spellId: impact.payload.spellId,
+        xpSkill: impact.payload.xpSkill,
+        magicStance: impact.payload.magicStance,
+        mapLevel: impact.mapLevel,
+        floor: impact.floor,
+      }));
+  }
+
+  private enqueuePendingSpellImpact(impact: PendingSpellImpact): void {
+    this.getCombatSystem().enqueueImpact<PendingSpellImpactPayload>({
+      source: this.playerCombatRef(impact.attackerId),
+      target: this.npcCombatRef(impact.targetId),
+      mode: 'magic',
+      launchTick: this.currentTick,
+      impactTick: impact.impactTick,
+      mapLevel: impact.mapLevel,
+      floor: impact.floor ?? 0,
+      payload: {
+        kind: 'spell',
+        damage: impact.damage,
+        spellId: impact.spellId,
+        xpSkill: impact.xpSkill,
+        magicStance: impact.magicStance,
+      },
+      invalidationPolicy: 'target-only',
+    });
+  }
+
+  private replacePendingSpellImpacts(impacts: PendingSpellImpact[]): void {
+    const combat = this.getCombatSystem();
+    combat.removeImpactsWhere(impact => this.isPendingSpellImpactEntry(impact));
+    for (const impact of impacts) this.enqueuePendingSpellImpact({ ...impact, floor: impact.floor ?? 0 });
+  }
+
+  private createCombatContext(): CombatContext {
+    return {
+      currentTick: this.currentTick,
+      rng: () => this.combatRng(),
+      advanceSchedules: () => this.tickCombatSchedules(),
+      resumeQueuedCasts: () => this.tickQueuedSpellCasts(),
+      startPlayerIntents: () => this.tickPlayerCombat(),
+      startNpcIntents: () => this.tickNpcCombat(),
+      resolveImpacts: () => this.tickPendingSpells(),
+      finishTick: () => this.finishCombatTick(),
+    };
   }
 
   private tickQueuedSpellCasts(): void {
@@ -7645,6 +7848,12 @@ export class World {
         this.clearCombatTarget(playerId);
         continue;
       }
+      if (!this.canPlayerEngageNpcCombat(player, npc)) {
+        this.magicDebug(player, 'tickCombat-clear-combat-lock', { npcId });
+        this.clearCombatTarget(playerId);
+        continue;
+      }
+      this.syncPlayerCombatIntent(player, npc);
 
       if (player.autocastSpellIndex >= 0) {
         const def = this.data.getSpellByIndex(player.autocastSpellIndex);
@@ -7654,16 +7863,16 @@ export class World {
           continue;
         }
         const fp = npc.distToFootprint(player.position.x, player.position.y);
-        const dist = Math.hypot(fp.dx, fp.dz);
-        if (dist > SPELL_CAST_DISTANCE) {
+        const dist = Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
+        if (!isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y)) {
           this.magicDebug(player, 'tickCombat-autocast-out-of-range', {
             npcId,
             autocast: player.autocastSpellIndex,
             dist,
-            max: SPELL_CAST_DISTANCE,
+            max: MAGIC_ATTACK_DISTANCE,
             hasMoveQueue: player.hasMoveQueue(),
           });
-          if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
+          if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE);
           continue;
         }
         if (player.attackCooldown <= 0) {
@@ -7717,8 +7926,7 @@ export class World {
       if (isRanged) {
         const ammo = player.findAmmo(itemDefs);
         if (ammo) {
-          const arrowStr = this.ammoStrengthForRangedRoll(ammo);
-          result = processPlayerRangedCombat(player, npc, itemDefs, arrowStr);
+          result = processPlayerRangedCombat(player, npc, itemDefs, { rng: () => this.combatRng(), queueNpcRetaliation: true });
           if (result) {
             this.consumePlayerAmmo(player, ammo);
             this.broadcastProjectile(player, npc, this.projectileTypeForAmmo(ammo), player.currentMapLevel, player.currentFloor);
@@ -7729,65 +7937,29 @@ export class World {
           continue;
         }
       } else {
-        result = processPlayerCombat(player, npc, itemDefs);
+        result = processPlayerCombat(player, npc, itemDefs, { rng: () => this.combatRng(), queueNpcRetaliation: true });
       }
       if (result) {
-        const shouldNpcFlee = npc.alive && npc.shouldFleeFromCombat();
-        const canNpcRetaliate = !npc.shouldDisengageFromTarget(player.position.x, player.position.y);
+        this.armPlayerAttackCooldown(player, player.attackCooldown);
+        this.refreshPlayerNpcCombatLock(player, npc);
         this.setPlayerAnimation(player, PlayerAnimationKind.Attack, PlayerSkillAnimationVariant.None, npc.id, true);
-        if (shouldNpcFlee) {
-          npc.startRetreatFromTarget(player);
-        } else if (npc.alive && canNpcRetaliate) {
-          npc.clearRetreat();
+        if (result.npcReaction === 'retaliate') {
           this.broadcastNpcFacingPlayer(npc, player);
-        } else if (npc.alive) {
-          npc.startRetreatFromTarget(player);
+          this.enqueueNpcRetaliation(npc, player);
         }
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
         player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
         this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, player.currentMapLevel, player.currentFloor, npc.position.x, npc.position.y);
 
-        for (const xp of result.xpDrops) {
-          const skillIdx = ALL_SKILLS.indexOf(xp.skill as SkillId);
-          if (skillIdx >= 0) {
-            this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xp.amount);
-          }
-        }
-
-        for (const lu of result.levelUps) {
-          const skillIdx = ALL_SKILLS.indexOf(lu.skill as SkillId);
-          if (skillIdx >= 0) {
-            this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, lu.level);
-          }
-        }
-
-        for (const xp of result.xpDrops) {
-          const skillIdx = ALL_SKILLS.indexOf(xp.skill as SkillId);
-          if (skillIdx >= 0) this.sendSingleSkill(player, skillIdx);
-        }
+        this.sendCombatXp(player, result);
 
         if (!npc.alive) {
-          npc.die();
-          this.clearCombatTarget(playerId);
           // Bot-detection: mark the kill timestamp so the next attack swing
           // gets a reaction-time delta. Bots re-engage within 50ms; humans
           // 300-800ms.
           player.botStats?.recordNpcDeath(performance.now());
-
-          // Quest hook — may start a quest (probability-gated, e.g. the
-          // "1/20 on cow kill" starter trigger) AND/OR advance the current
-          // stage of any active quest whose trigger matches this npc def.
-          this.quests.notifyQuestEvent(player, { type: 'npcKill', npcDefId: npc.def.id });
-
-          this.handleNpcDeath(npc);
-
-          // Tally the kill for the per-mob hiscores (credits the top damager).
-          this.creditMobKill(npc);
-
-          // Drop where the NPC actually died, not at its spawn tile. Loot is
-          // private to the highest damager first, then becomes public.
-          this.spawnNpcLoot(npc, npc.getTopDamager());
+          this.finalizeNpcDeath(npc, player);
         }
       }
     }
@@ -7795,8 +7967,7 @@ export class World {
 
   /** Credit one kill of this mob to the player who dealt the most cumulative
    *  damage — matching loot ownership (spawnNpcLoot also uses getTopDamager).
-   *  Called from BOTH NPC-death paths (melee/ranged and queued-spell impact) so
-   *  magic kills count too. Persists immediately via an atomic UPSERT
+   *  Called by the centralized NPC death finalizer. Persists immediately via an atomic UPSERT
    *  (GameDatabase.recordMobKill); banned/excluded accounts are filtered out at
    *  read time, so no gating is needed here. getTopDamager() returns an entity
    *  id (players + NPCs share the id space), so resolve it to a Player first. */
@@ -7823,65 +7994,46 @@ export class World {
    * have died, moved maps, or the caster may have disconnected — all skipped.
    */
   private tickPendingSpells(): void {
-    if (this.pendingSpellImpacts.length === 0) return;
+    const due = this.getCombatSystem().takeDueImpactsWhere(
+      this.currentTick,
+      impact => this.isPendingSpellImpactEntry(impact),
+    ) as PendingSpellImpactEntry[];
+    if (due.length === 0) return;
 
-    const remaining: typeof this.pendingSpellImpacts = [];
-    for (const imp of this.pendingSpellImpacts) {
-      if (imp.impactTick > this.currentTick) { remaining.push(imp); continue; }
-
-      const player = this.players.get(imp.attackerId);
-      const npc = this.npcs.get(imp.targetId);
+    for (const imp of due) {
+      const player = this.players.get(imp.source.id);
+      const npc = this.npcs.get(imp.target.id);
       if (!player || !npc || npc.dead) continue;
       if (player.openInterface === 'duel' || this.activeDuels?.has(player.id)) continue;
       if (npc.currentMapLevel !== imp.mapLevel || npc.currentFloor !== imp.floor) continue;
       if (player.currentMapLevel !== imp.mapLevel || player.currentFloor !== imp.floor) continue;
 
-      const actual = npc.takeDamage(imp.damage);
-      const shouldNpcFlee = npc.alive && npc.shouldFleeFromCombat();
-      const canNpcRetaliate = !npc.shouldDisengageFromTarget(player.position.x, player.position.y);
-
-      if (shouldNpcFlee) {
-        npc.startRetreatFromTarget(player);
-      } else if (npc.alive && canNpcRetaliate) {
-        npc.clearRetreat();
-        const wasInCombat = npc.combatTarget != null;
-        npc.setCombatTarget(player);
-        if (!wasInCombat) {
-          npc.attackCooldown = Math.floor(npc.attackSpeed / 2);
-        }
-      } else if (npc.alive) {
-        if (!npc.combatTarget || npc.combatTarget.id === player.id) npc.startRetreatFromTarget(player);
+      const result = applyPlayerMagicImpactToNpc(
+        player,
+        npc,
+        imp.payload.damage,
+        imp.payload.xpSkill,
+        imp.payload.magicStance ?? 'accurate',
+        { queueNpcRetaliation: true },
+      );
+      if (result.npcReaction === 'retaliate') {
+        this.broadcastNpcFacingPlayer(npc, player);
+        this.enqueueNpcRetaliation(npc, player, 1);
       }
-
-      // XP: 4 per damage to the spell's school (locked in at cast time).
-      // Same rate as melee/ranged so a magic-only player isn't penalised.
-      if (actual > 0) {
-        this.grantMagicCombatXp(player, imp.xpSkill, actual, imp.magicStance ?? 'accurate');
-        npc.addHeroPoints(player.id, actual);
-      }
-
-      if (canNpcRetaliate && !shouldNpcFlee) this.broadcastNpcFacingPlayer(npc, player);
-      this.broadcastCombatHit(player.id, npc.id, actual, npc.health, npc.maxHealth, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y);
+      this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y);
+      this.sendCombatXp(player, result);
 
       if (!npc.alive) {
-        npc.die();
-        this.clearCombatTarget(imp.attackerId);
-        this.handleNpcDeath(npc);
-
-        // Tally magic kills too — the melee/ranged path's quest hook is absent
-        // here, but kill counting must stay consistent across both paths.
-        this.creditMobKill(npc);
-
-        this.spawnNpcLoot(npc, npc.getTopDamager());
+        this.finalizeNpcDeath(npc, player);
       }
     }
-    this.pendingSpellImpacts = remaining;
   }
 
   private tickNpcCombat(): void {
     const itemDefs = this.data.itemDefs;
 
     for (const [, npc] of this.npcs) {
+      this.syncNpcAttackCooldownFromSchedule(npc);
       if (npc.dead || !npc.combatTarget) continue;
       const target = npc.combatTarget as Player;
       if (!target.alive || !this.players.has(target.id) || target.currentMapLevel !== npc.currentMapLevel || target.currentFloor !== npc.currentFloor) {
@@ -7894,14 +8046,12 @@ export class World {
         continue;
       }
       if (!this.isNpcMeleeReachableToPlayer(npc, target)) {
-        // Keep the NPC swing timer moving while chasing or blocked by a wall,
-        // matching processNpcCombat's cooldown behavior before adjacency.
-        if (npc.attackCooldown > 0) npc.attackCooldown--;
         continue;
       }
 
-      const hit = processNpcCombat(npc, target, itemDefs);
+      const hit = processNpcCombat(npc, target, itemDefs, { tickCooldown: false, rng: () => this.combatRng() });
       if (hit) {
+        this.armNpcAttackCooldown(npc, npc.attackCooldown);
         // Player took (or dodged) a hit — arm post-combat logout block.
         target.markInCombat(this.currentTick);
         this.broadcastNpcFacingPlayer(npc, target);
@@ -7913,7 +8063,7 @@ export class World {
         this.sendSingleSkill(target, HITPOINTS_SKILL_INDEX);
 
         if (target.alive) {
-          this.maybeAutoRetaliateAgainstNpc(target, npc);
+          this.enqueuePlayerAutoRetaliation(target, npc);
         }
 
         if (!target.alive) {
@@ -8480,12 +8630,13 @@ export class World {
 
     // Drop all transient combat / action state.
     this.clearCombatTarget(player.id);
+    this.getCombatSystem().clearActor(this.playerCombatRef(player.id));
     this.cancelSkilling(player.id);
     this.cancelItemProduction(player.id);
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearQueuedPlayerActions(player);
-    player.attackCooldown = 0;
+    this.armPlayerAttackCooldown(player, 0);
     player.clearDelay();
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;

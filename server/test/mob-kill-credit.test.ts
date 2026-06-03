@@ -2,7 +2,7 @@ import { describe, expect, test, afterEach } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
-import type { NpcDef } from '@projectrs/shared';
+import { ALL_SKILLS, ServerOpcode, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = { sendBinary() {}, send() {} } as any;
 
@@ -31,6 +31,7 @@ function makeMeleeWorld(player: Player, npc: Npc): { world: any; killCalls: Arra
   world.playerCombatTargets = new Map([[player.id, npc.id]]);
   world.npcTargetedBy = new Map();
   world.pendingSpellImpacts = [];
+  world.chunkManagers = new Map();
   world.currentTick = 0;
   world.currentTickStartMs = 0;
   world.data = { itemDefs: new Map() };
@@ -41,10 +42,10 @@ function makeMeleeWorld(player: Player, npc: Npc): { world: any; killCalls: Arra
   world.isPlayerInNpcAttackRange = () => true;
   world.setPlayerAnimation = () => {};
   world.broadcastCombatHit = () => {};
+  world.broadcastNearbyOnFloor = () => {};
   world.broadcastNpcFacingPlayer = () => {};
   world.sendToPlayer = () => {};
   world.sendSingleSkill = () => {};
-  world.handleNpcDeath = () => {};
   world.spawnNpcLoot = () => {};
   world.clearCombatTarget = (playerId: number) => { world.playerCombatTargets.delete(playerId); };
   world.quests = { notifyQuestEvent: () => {} };
@@ -103,22 +104,41 @@ describe('mob kill credit (real combat tick)', () => {
 // Magic kills run through a SEPARATE death block in tickPendingSpells. Drive it
 // directly by pushing impacts (bypasses rune costs) so we can verify the
 // credit count, including two impacts landing the same tick.
-function makeMagicWorld(player: Player, npc: Npc): { world: any; killCalls: Array<[number, number]> } {
+function makeMagicWorld(player: Player, npc: Npc): {
+  world: any;
+  killCalls: Array<[number, number]>;
+  questCalls: Array<{ playerId: number; npcDefId: number }>;
+  sent: Array<{ opcode: ServerOpcode; values: number[] }>;
+} {
   const killCalls: Array<[number, number]> = [];
+  const questCalls: Array<{ playerId: number; npcDefId: number }> = [];
+  const sent: Array<{ opcode: ServerOpcode; values: number[] }> = [];
   const world = Object.create(World.prototype) as any;
   world.players = new Map([[player.id, player]]);
   world.npcs = new Map([[npc.id, npc]]);
+  world.playerCombatTargets = new Map();
+  world.npcTargetedBy = new Map();
+  world.chunkManagers = new Map();
   world.pendingSpellImpacts = [];
   world.currentTick = 0;
   world.db = { recordMobKill: (a: number, n: number) => { killCalls.push([a, n]); } };
   world.broadcastNpcFacingPlayer = () => {};
   world.broadcastCombatHit = () => {};
-  world.sendToPlayer = () => {};
+  world.broadcastNearbyOnFloor = () => {};
+  world.sendToPlayer = (_player: Player, opcode: ServerOpcode, ...values: number[]) => {
+    sent.push({ opcode, values });
+  };
   world.sendSingleSkill = () => {};
-  world.handleNpcDeath = () => {};
   world.spawnNpcLoot = () => {};
   world.clearCombatTarget = () => {};
-  return { world, killCalls };
+  world.quests = {
+    notifyQuestEvent: (questPlayer: Player, event: { type: string; npcDefId?: number }) => {
+      if (event.type === 'npcKill' && event.npcDefId !== undefined) {
+        questCalls.push({ playerId: questPlayer.id, npcDefId: event.npcDefId });
+      }
+    },
+  };
+  return { world, killCalls, questCalls, sent };
 }
 
 function impact(player: Player, npc: Npc, damage: number) {
@@ -139,13 +159,14 @@ describe('mob kill credit — magic (tickPendingSpells)', () => {
     const player = new Player('mage', 9.5, 10.5, fakeWs, 2);
     const npc = new Npc(cowDef, 10.5, 10.5);
     player.currentMapLevel = npc.currentMapLevel = 'kcmap';
-    const { world, killCalls } = makeMagicWorld(player, npc);
+    const { world, killCalls, questCalls } = makeMagicWorld(player, npc);
     world.pendingSpellImpacts = [impact(player, npc, 5)];
 
     world.tickPendingSpells();
 
     expect(npc.dead).toBe(true);
     expect(killCalls).toEqual([[2, 10]]);
+    expect(questCalls).toEqual([{ playerId: player.id, npcDefId: 10 }]);
   });
 
   test('two impacts landing the same tick credit only once (dead-guard)', () => {
@@ -160,5 +181,18 @@ describe('mob kill credit — magic (tickPendingSpells)', () => {
 
     expect(npc.dead).toBe(true);
     expect(killCalls.length).toBe(1);
+  });
+
+  test('magic impact emits hitpoints XP gain just like melee and ranged', () => {
+    const player = new Player('mage', 9.5, 10.5, fakeWs, 2);
+    const npc = new Npc({ ...cowDef, health: 10 }, 10.5, 10.5);
+    player.currentMapLevel = npc.currentMapLevel = 'kcmap';
+    const { world, sent } = makeMagicWorld(player, npc);
+    world.pendingSpellImpacts = [impact(player, npc, 3)];
+
+    world.tickPendingSpells();
+
+    const hpIdx = ALL_SKILLS.indexOf('hitpoints');
+    expect(sent).toContainEqual({ opcode: ServerOpcode.XP_GAIN, values: [hpIdx, 4] });
   });
 });

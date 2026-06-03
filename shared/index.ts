@@ -3,6 +3,7 @@ export * from './constants.js';
 export * from './types.js';
 export * from './protocol.js';
 export * from './skills.js';
+export * from './combat/formulas.js';
 export * from './assetObjectMap.js';
 export * from './appearance.js';
 export * from './terrain-shading.js';

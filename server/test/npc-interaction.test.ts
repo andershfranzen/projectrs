@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
-import { processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
+import { isPointInNpcMagicAttackRange, processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
 import { ServerOpcode, decodePacket, getObjectFootprintBounds, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
@@ -94,18 +94,25 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   world.currentTickStartMs = 0;
   world.data = {
     itemDefs: new Map(),
+    getItem: (itemId: number) => world.data.itemDefs.get(itemId),
     getSpellByIndex: () => null,
   };
   world.cancelSkilling = () => {};
   world.cancelItemProduction = () => {};
   world.clearPendingObjectIntents = () => {};
   world.closeNpcUiContext = () => {};
+  world.quests = { notifyQuestEvent() {} };
+  world.creditMobKill = () => {};
+  world.spawnNpcLoot = () => {};
+  world.markEntityTileOccupantsDirty = () => {};
   world.sendChatSystem = () => {};
   world.sendInventory = () => {};
+  world.sendEquipment = () => {};
   world.sendToPlayer = () => {};
   world.sendSingleSkill = () => {};
   world.setPlayerAnimation = () => {};
   world.broadcastPlayerAnimationEvent = () => {};
+  world.broadcastRemoteEquipment = () => {};
   world.broadcastCombatHit = () => {};
   world.broadcastProjectile = (attackerId: number, targetId: number, projectileType: number) => {
     broadcasts.push({ opcode: ServerOpcode.COMBAT_PROJECTILE, values: [attackerId, targetId, projectileType] });
@@ -122,6 +129,7 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
     findPathForNpc: (_sx: number, _sz: number, gx: number, gz: number) => [{ x: gx, z: gz }],
   });
   world.blockedKeyFor = (_mapId: string, x: number, z: number, floor: number) => `${_mapId}:${Math.floor(x)}:${Math.floor(z)}:${floor}`;
+  world.savePlayerState = () => {};
   return { world, broadcasts };
 }
 
@@ -219,6 +227,129 @@ describe('NPC interaction reachability', () => {
     expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
   });
 
+  test('mirrored combat intent tracks public weapon and autocast changes', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    const spell = { id: 'test', name: 'Test', tier: 1, autocastable: true };
+    world.data.getSpellByIndex = (spellIndex: number) => spellIndex === 3 ? spell : null;
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+    const actor = { kind: 'player', id: player.id };
+    expect(world.combatSystem.getIntent(actor)?.mode).toBe('melee');
+
+    player.inventory[0] = { itemId: bowItemDef.id, quantity: 1 };
+    world.handlePlayerEquip(player.id, 0, bowItemDef.id);
+    expect(world.combatSystem.getIntent(actor)?.mode).toBe('ranged');
+    expect(world.combatSystem.getIntent(actor)?.ammoItemId).toBeUndefined();
+
+    player.clearDelay();
+    player.inventory[0] = { itemId: arrowItemDef.id, quantity: 10 };
+    world.handlePlayerEquip(player.id, 0, arrowItemDef.id);
+    expect(world.combatSystem.getIntent(actor)?.ammoItemId).toBe(arrowItemDef.id);
+
+    player.clearDelay();
+    world.handlePlayerSetAutocast(player.id, 3);
+    expect(world.combatSystem.getIntent(actor)?.mode).toBe('magic');
+    expect(world.combatSystem.getIntent(actor)?.spellIndex).toBe(3);
+  });
+
+  test('player attack cooldown projects from the combat schedule', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    const actor = { kind: 'player', id: player.id };
+
+    world.currentTick = 10;
+    player.attackCooldown = 4;
+    world.tickPlayerCooldowns();
+    expect(player.attackCooldown).toBe(3);
+    expect(world.combatSystem.getSchedule(actor)).toEqual({ actor, nextAttackTick: 13 });
+
+    player.attackCooldown = 0;
+    world.currentTick = 11;
+    world.tickPlayerCooldowns();
+    expect(player.attackCooldown).toBe(2);
+    expect(world.combatSystem.getSchedule(actor)).toEqual({ actor, nextAttackTick: 13 });
+  });
+
+  test('NPC attack cooldown projects from the combat schedule', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    const actor = { kind: 'npc', id: npc.id };
+
+    world.currentTick = 10;
+    npc.attackCooldown = 4;
+    world.tickNpcCooldowns();
+    expect(npc.attackCooldown).toBe(3);
+    expect(world.combatSystem.getSchedule(actor)).toEqual({ actor, nextAttackTick: 13 });
+
+    npc.attackCooldown = 0;
+    world.currentTick = 11;
+    world.tickNpcCooldowns();
+    expect(npc.attackCooldown).toBe(2);
+    expect(world.combatSystem.getSchedule(actor)).toEqual({ actor, nextAttackTick: 13 });
+  });
+
+  test('NPC death clears target-owned queued spell impacts immediately', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+
+    world.pendingSpellImpacts = [{
+      impactTick: world.currentTick + 5,
+      attackerId: player.id,
+      targetId: npc.id,
+      damage: 1,
+      spellId: 'test',
+      xpSkill: 'evilmagic',
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+    }];
+
+    expect(world.pendingSpellImpacts).toHaveLength(1);
+
+    world.finalizeNpcDeath(npc, player);
+
+    expect(npc.dead).toBe(true);
+    expect(world.pendingSpellImpacts).toHaveLength(0);
+    expect(world.combatSystem.listImpacts()).toHaveLength(0);
+  });
+
+  test('PVM combat lock blocks third-party NPC attacks until expiry', () => {
+    const first = new Player('first', 9.5, 10.5, fakeWs, 1);
+    const second = new Player('second', 9.5, 11.5, fakeWs, 2);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    first.currentMapLevel = second.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(first, npc);
+    world.players.set(second.id, second);
+
+    world.handlePlayerAttackNpc(first.id, npc.id);
+    withMockedRandom(0, () => world.tickPlayerCombat());
+
+    world.handlePlayerAttackNpc(second.id, npc.id);
+    expect(world.playerCombatTargets.get(first.id)).toBe(npc.id);
+    expect(world.playerCombatTargets.has(second.id)).toBe(false);
+
+    world.currentTick += 8;
+    world.tickCombatSchedules();
+    world.handlePlayerAttackNpc(second.id, npc.id);
+
+    expect(world.playerCombatTargets.get(second.id)).toBe(npc.id);
+  });
+
   test('NPC melee does not arm player combat when auto retaliate is off', () => {
     const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);
@@ -243,8 +374,12 @@ describe('NPC interaction reachability', () => {
 
     withMockedRandom(0, () => world.tickNpcCombat());
 
+    expect(world.combatSystem.listRetaliationRequests()).toHaveLength(1);
+    world.finishCombatTick();
+
     expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
     expect(player.attackTarget).toBe(npc);
+    expect(world.combatSystem.listRetaliationRequests()).toHaveLength(0);
   });
 
   test('ranged attack trims an existing client path to the first in-range tile', () => {
@@ -592,7 +727,42 @@ describe('NPC interaction reachability', () => {
     const world = makeWorld();
 
     expect(world.isPlayerInNpcAttackRange(player, npc, 'ranged')).toBe(true);
-    expect(processPlayerRangedCombat(player, npc, new Map(), 0)).not.toBeNull();
+    expect(processPlayerRangedCombat(player, npc, new Map())).not.toBeNull();
+  });
+
+  test('ranged and magic combat cannot attack from inside an NPC footprint', () => {
+    const player = new Player('archer', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    const world = makeWorld();
+    player.setEquipment('weapon', bowItemDef.id);
+    const itemDefs = new Map<number, ItemDef>([[bowItemDef.id, bowItemDef]]);
+
+    expect(npc.isFootprintTile(Math.floor(player.position.x), Math.floor(player.position.y))).toBe(true);
+    expect(world.isPlayerInNpcAttackRange(player, npc, 'ranged')).toBe(false);
+    expect(isPointInNpcMagicAttackRange(npc, player.position.x, player.position.y)).toBe(false);
+    expect(processPlayerRangedCombat(player, npc, itemDefs)).toBeNull();
+    expect(player.attackCooldown).toBe(0);
+  });
+
+  test('server ranged combat does not fire while the player overlaps the NPC', () => {
+    const player = new Player('archer', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setEquipment('weapon', bowItemDef.id);
+    player.setEquipment('ammo', arrowItemDef.id, 5);
+    const { world, broadcasts } = makeCombatWorld(player, npc);
+    world.data.itemDefs.set(bowItemDef.id, bowItemDef);
+    world.data.itemDefs.set(arrowItemDef.id, arrowItemDef);
+    world.playerCombatTargets.set(player.id, npc.id);
+    world.npcTargetedBy.set(npc.id, new Set([player.id]));
+
+    world.tickPlayerCombat();
+
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_PROJECTILE)).toBe(false);
+    expect(player.attackCooldown).toBe(0);
+    expect(player.getEquipmentQuantity('ammo')).toBe(5);
+    expect(npc.health).toBe(npc.maxHealth);
   });
 
   test('ranged combat respects weapon attackRange metadata', () => {
@@ -601,14 +771,14 @@ describe('NPC interaction reachability', () => {
     defaultRangePlayer.setEquipment('weapon', bowItemDef.id);
     const defaultRangeDefs = new Map<number, ItemDef>([[bowItemDef.id, bowItemDef]]);
 
-    expect(processPlayerRangedCombat(defaultRangePlayer, defaultRangeNpc, defaultRangeDefs, 0)).toBeNull();
+    expect(processPlayerRangedCombat(defaultRangePlayer, defaultRangeNpc, defaultRangeDefs)).toBeNull();
 
     const longRangePlayer = new Player('archer', 20.5, 10.5, fakeWs, 1);
     const longRangeNpc = new Npc(npcDef, 10.5, 10.5);
     longRangePlayer.setEquipment('weapon', bowItemDef.id);
     const longRangeDefs = new Map<number, ItemDef>([[bowItemDef.id, { ...bowItemDef, attackRange: 10 }]]);
 
-    expect(processPlayerRangedCombat(longRangePlayer, longRangeNpc, longRangeDefs, 0)).not.toBeNull();
+    expect(processPlayerRangedCombat(longRangePlayer, longRangeNpc, longRangeDefs)).not.toBeNull();
   });
 
   test('ranged projectile broadcasts include source target and timing metadata', () => {
@@ -692,6 +862,7 @@ describe('NPC interaction reachability', () => {
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
     withMockedRandom([0.99, 0, 0, 0.199], () => world.tickPlayerCombat());
+    world.finishCombatTick();
 
     expect(player.attackCooldown).toBe(4);
     expect(player.getEquipmentQuantity('ammo')).toBe(4);
@@ -716,6 +887,7 @@ describe('NPC interaction reachability', () => {
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
     world.tickPlayerCombat();
+    world.finishCombatTick();
     for (let i = 0; i < 5; i++) world.tickNpcAI();
 
     expect(Math.abs(npc.position.x - npc.spawnX)).toBeGreaterThan(npc.wanderRange);
@@ -855,10 +1027,12 @@ describe('NPC interaction reachability', () => {
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
     withMockedRandom([0.99, 0, 0, 0.199], () => world.tickPlayerCombat());
+    world.finishCombatTick();
     player.attackCooldown = 0;
     player.position.x = 14.5;
 
     world.tickPlayerCombat();
+    world.finishCombatTick();
 
     expect(npc.retreatTarget).toBeNull();
     expect(npc.combatTarget).toBe(player);

@@ -188,7 +188,7 @@ describe('player duel staking and combat validation', () => {
     const a = makePlayer('alice', 1);
     const b = makePlayer('bob', 2, 2.5, 1.5);
     const { world, chats } = makeHarness(a, b);
-    world.pendingSpellImpacts.push({
+    world.pendingSpellImpacts = [{
       impactTick: world.currentTick + 1,
       attackerId: a.id,
       targetId: 999,
@@ -196,7 +196,8 @@ describe('player duel staking and combat validation', () => {
       spellId: 'test',
       xpSkill: 'goodmagic',
       mapLevel: a.currentMapLevel,
-    });
+      floor: a.currentFloor,
+    }];
 
     world.handleDuelRequest(a.id, b.id);
 

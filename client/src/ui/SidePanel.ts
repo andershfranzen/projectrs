@@ -7,7 +7,7 @@ import {
   ARROWHEAD_FLETCHING_RECIPES, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
-  zeroBonuses, STANCE_KEYS,
+  zeroBonuses, STANCE_KEYS, combatLevelFromLevels,
   type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef,
   type CombatBonuses,
   type SpellEffectDef, type SpellSchool,
@@ -3296,20 +3296,15 @@ export class SidePanel {
   }
 
   private updateCombatLevel(): void {
-    const hp = this.skills.get('hitpoints')?.level || 10;
-    const def = this.skills.get('defence')?.level || 1;
-    const weaponry = this.skills.get('weaponry')?.level || 1;
-    const str = this.skills.get('strength')?.level || 1;
-    const arch = this.skills.get('archery')?.level || 1;
-    const goodMag = this.skills.get('goodmagic')?.level || 1;
-    const evilMag = this.skills.get('evilmagic')?.level || 1;
-
-    const base = 0.25 * (def + hp);
-    const melee = 0.325 * (weaponry + str);
-    const range = 0.325 * (Math.floor(arch / 2) + arch);
-    const magicLevel = Math.max(goodMag, evilMag);
-    const mage = 0.325 * (Math.floor(magicLevel / 2) + magicLevel);
-    const cl = Math.floor(base + Math.max(melee, range, mage));
+    const cl = combatLevelFromLevels({
+      hitpoints: this.skills.get('hitpoints')?.level || 10,
+      defence: this.skills.get('defence')?.level || 1,
+      weaponry: this.skills.get('weaponry')?.level || 1,
+      strength: this.skills.get('strength')?.level || 1,
+      archery: this.skills.get('archery')?.level || 1,
+      goodmagic: this.skills.get('goodmagic')?.level || 1,
+      evilmagic: this.skills.get('evilmagic')?.level || 1,
+    });
 
     const rowEl = document.getElementById('combat-level-row');
     if (rowEl) rowEl.textContent = `Combat Lv: ${cl}`;
