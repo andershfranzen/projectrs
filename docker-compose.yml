@@ -26,7 +26,7 @@ services:
       # Forum Discord emote sync. Reuse the Left Hand bot credentials by
       # default so production only needs one Discord bot token in .env.
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-${LEFT_HAND_DISCORD_GUILD_ID:-1504534632799010816}}
-      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-${LEFT_HAND_DISCORD_TOKEN:-}}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-${DISCORD_TOKEN:-${LEFT_HAND_DISCORD_TOKEN:-}}}
       DISCORD_EMOJI_SYNC_INTERVAL_MS: ${DISCORD_EMOJI_SYNC_INTERVAL_MS:-900000}
 
   left-hand:
@@ -41,8 +41,8 @@ services:
     volumes:
       - ./server/data/items.json:/app/game-data/items.json:ro
     environment:
-      DISCORD_TOKEN: ${LEFT_HAND_DISCORD_TOKEN:-}
-      DISCORD_GUILD_ID: ${LEFT_HAND_DISCORD_GUILD_ID:-}
+      DISCORD_TOKEN: ${DISCORD_TOKEN:-${LEFT_HAND_DISCORD_TOKEN:-}}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-${LEFT_HAND_DISCORD_GUILD_ID:-}}
       EVILQUEST_API_BASE_URL: ${LEFT_HAND_EVILQUEST_API_BASE_URL:-https://evilquest.net}
       LEFT_HAND_ITEMS_PATH: ${LEFT_HAND_ITEMS_PATH:-/app/game-data/items.json}
       LEFT_HAND_TRADING_POST_CHANNEL_ID: ${LEFT_HAND_TRADING_POST_CHANNEL_ID:-1504543318401482854}

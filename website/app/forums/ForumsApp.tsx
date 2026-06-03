@@ -894,25 +894,31 @@ export function ForumsApp() {
   }, [me.ok, me.accountId]);
 
   useEffect(() => {
-    if (!me.ok) {
-      cacheDiscordEmojis([]);
-      setEmojiVersion((version) => version + 1);
-      return;
-    }
     let cancelled = false;
+    let retryTimer: number | undefined;
+    let didScheduleRetry = false;
     async function loadEmojis() {
       try {
         const data = await api<{ emojis: ForumDiscordEmoji[] }>('/api/forums/emojis');
         if (cancelled) return;
         cacheDiscordEmojis(data.emojis);
         setEmojiVersion((version) => version + 1);
+        if (data.emojis.length === 0 && !didScheduleRetry) {
+          didScheduleRetry = true;
+          retryTimer = window.setTimeout(() => void loadEmojis(), 3_000);
+        }
       } catch {
         // Forum text should still render if Discord emoji sync is unavailable.
       }
     }
     void loadEmojis();
-    return () => { cancelled = true; };
-  }, [me.ok]);
+    const interval = window.setInterval(() => void loadEmojis(), 5 * 60_000);
+    return () => {
+      cancelled = true;
+      if (retryTimer) window.clearTimeout(retryTimer);
+      window.clearInterval(interval);
+    };
+  }, []);
 
   async function submitReply(event: FormEvent) {
     event.preventDefault();

@@ -1225,14 +1225,14 @@ const FORUM_AVATAR_DIR = resolve(DATA_DIR, 'forum-avatars');
 const FORUM_AVATAR_BAKE_SECRET = process.env.FORUM_AVATAR_BAKE_SECRET || randomUUID();
 const DEFAULT_DISCORD_GUILD_ID = '1504534632799010816';
 const DISCORD_GUILD_ID = (process.env.DISCORD_GUILD_ID || process.env.LEFT_HAND_DISCORD_GUILD_ID || DEFAULT_DISCORD_GUILD_ID).trim();
-const DISCORD_BOT_TOKEN = (process.env.DISCORD_BOT_TOKEN || process.env.LEFT_HAND_DISCORD_TOKEN || '').trim();
+const DISCORD_BOT_TOKEN = (process.env.DISCORD_BOT_TOKEN || process.env.DISCORD_TOKEN || process.env.LEFT_HAND_DISCORD_TOKEN || '').trim();
 const DISCORD_EMOJI_SYNC_INTERVAL_MS = (() => {
   const raw = Number(process.env.DISCORD_EMOJI_SYNC_INTERVAL_MS ?? 15 * 60_000);
   return Number.isFinite(raw) && raw >= 60_000 ? raw : 15 * 60_000;
 })();
 const DISCORD_EMOJI_SYNC_ENABLED = DISCORD_GUILD_ID.length > 0 && DISCORD_BOT_TOKEN.length > 0;
 if ((DISCORD_GUILD_ID || DISCORD_BOT_TOKEN) && !DISCORD_EMOJI_SYNC_ENABLED) {
-  console.warn('[forums] Discord emoji sync disabled; set both DISCORD_GUILD_ID and DISCORD_BOT_TOKEN');
+  console.warn('[forums] Discord emoji sync disabled; set DISCORD_GUILD_ID plus DISCORD_BOT_TOKEN, DISCORD_TOKEN, or LEFT_HAND_DISCORD_TOKEN');
 }
 const WEBSITE_DEV_ORIGIN = (() => {
   const raw = (process.env.WEBSITE_DEV_ORIGIN || '').trim();
