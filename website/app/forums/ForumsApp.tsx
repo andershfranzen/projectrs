@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { FaBell, FaBold, FaCog, FaEdit, FaExchangeAlt, FaEye, FaEyeSlash, FaFlag, FaGrin, FaHome, FaImage, FaItalic, FaLink, FaListUl, FaLock, FaPen, FaQuoteRight, FaReply, FaShieldAlt, FaThumbtack, FaTrashAlt, FaTrophy, FaUnlock, FaUser, FaUsers } from 'react-icons/fa';
 
 const TOKEN_KEY = 'evilquest_token';
+const AUTH_CHANGED_EVENT = 'evilquest-auth-changed';
 const PROFILE_BIO_LIMIT = 500;
 const PROFILE_SIGNATURE_LIMIT = 240;
 const EMOJI: Record<string, string> = {
@@ -714,6 +715,15 @@ export function ForumsApp() {
   }, []);
 
   useEffect(() => { void load().catch((err) => setStatus(err.message)); }, [route, query, sort, page]);
+
+  useEffect(() => {
+    const onAuthChanged = () => {
+      void load().catch((err) => setStatus(err.message));
+      void loadOnlineUsers();
+    };
+    window.addEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+    return () => window.removeEventListener(AUTH_CHANGED_EVENT, onAuthChanged);
+  });
 
   useEffect(() => {
     void loadOnlineUsers();

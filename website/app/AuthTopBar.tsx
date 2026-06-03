@@ -8,6 +8,7 @@ const USERNAME_KEY = 'evilquest_username';
 const LEGACY_TOKEN_KEY = 'projectrs_token';
 const LEGACY_USERNAME_KEY = 'projectrs_username';
 const DEVICE_KEY = 'evilmud_device_id';
+const AUTH_CHANGED_EVENT = 'evilquest-auth-changed';
 const RECAPTCHA_SITE_KEY = process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || process.env.NEXT_PUBLIC_VITE_RECAPTCHA_SITE_KEY || '';
 const RECAPTCHA_SCRIPT_ID = 'eq-recaptcha-v3';
 
@@ -231,6 +232,7 @@ export function AuthTopBar() {
       window.localStorage.removeItem(LEGACY_TOKEN_KEY);
       window.localStorage.removeItem(LEGACY_USERNAME_KEY);
       setAuth({ status: 'signed-in', username: data.username, isAdmin: false });
+      window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
       setPassword('');
       setIsLoginOpen(false);
     } catch {
@@ -244,6 +246,7 @@ export function AuthTopBar() {
     const token = getSavedToken();
     clearSavedAuth();
     setAuth({ status: 'signed-out' });
+    window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
     if (!token) return;
 
     try {
@@ -257,6 +260,7 @@ export function AuthTopBar() {
         const savedUsername = window.localStorage.getItem(USERNAME_KEY) || 'your account';
         window.localStorage.setItem(TOKEN_KEY, token);
         setAuth({ status: 'signed-in', username: savedUsername, isAdmin: false });
+        window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
         setError('You cannot log out while your character is in combat.');
         setIsLoginOpen(true);
       }

@@ -16,6 +16,7 @@ COPY shared/ ./shared/
 COPY server/ ./server/
 COPY client/ ./client/
 COPY website/ ./website/
+COPY scripts/ ./scripts/
 
 # Vite bakes VITE_* env vars into the client bundle at build time. Surface
 # them as build-args so docker-compose can pipe them through from the host
@@ -29,12 +30,14 @@ RUN cd website && bunx next build
 
 FROM oven/bun:1-alpine
 WORKDIR /app
+RUN apk add --no-cache chromium
 RUN mkdir -p /app/data
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/shared ./shared
 COPY --from=builder /app/server ./server
+COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/client/dist ./client/dist
 COPY --from=builder /app/website/dist ./website/dist
 

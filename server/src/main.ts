@@ -1388,7 +1388,13 @@ function serveWebsite(req: Request, pathname: string): Response | null {
     return null;
   }
 
-  const routePath = normalized === '/' ? 'index' : normalized.startsWith('/forums/') ? 'forums' : normalized.slice(1);
+  const routePath = normalized === '/'
+    ? 'index'
+    : normalized === '/forums/avatar-bake'
+      ? 'forums/avatar-bake'
+      : normalized.startsWith('/forums/')
+        ? 'forums'
+        : normalized.slice(1);
   const candidates = normalized.startsWith('/_next/')
     ? [routePath]
     : [`${routePath}.html`, routePath, `${routePath}/index.html`];
@@ -2678,7 +2684,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/session' && req.method === 'GET') {
-      if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!isAllowedOrigin(req)) return new Response('Forbidden', { status: 403 });
       const session = getBoundBearerSession(req);
       if (!session) return jsonResponse({ ok: false }, 401, { 'Cache-Control': 'no-store' });
       const ip = requestClientIp(req, server);

@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, combatLevel, initSkills, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, DEFAULT_APPEARANCE, combatLevel, initSkills, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -76,8 +76,7 @@ function parseSavedHeadItemId(raw: string | null | undefined): number | null {
 }
 
 function forumAvatarTarget(accountId: number, username: string, rawAppearance: string | null | undefined, rawEquipment: string | null | undefined): ForumAvatarBakeTarget | null {
-  const appearance = parseSavedAppearance(rawAppearance);
-  if (!appearance) return null;
+  const appearance = parseSavedAppearance(rawAppearance) ?? DEFAULT_APPEARANCE;
   const headItemId = parseSavedHeadItemId(rawEquipment);
   const hash = createHash('sha1')
     .update(JSON.stringify({ appearance, headItemId, bakeVersion: FORUM_AVATAR_BAKE_VERSION }))
@@ -3476,7 +3475,6 @@ export class GameDatabase {
       SELECT a.id AS account_id, a.username, ps.appearance, ps.equipment
       FROM accounts a
       JOIN player_state ps ON ps.account_id = a.id
-      WHERE ps.appearance IS NOT NULL AND ps.appearance != ''
       ORDER BY lower(a.username) ASC
     `).all() as Array<{ account_id: number; username: string; appearance: string | null; equipment: string | null }>;
     return rows

@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { existsSync } from 'fs';
 
 type BakeResult = { ok: boolean; baked: number; total: number; errors: string[] };
 
@@ -22,6 +23,8 @@ const onlyMissing = !Bun.argv.includes('--all');
 const timeoutMs = Math.max(10_000, Number(argValue('--timeout-ms') || Bun.env.FORUM_AVATAR_BAKE_TIMEOUT_MS || 120_000));
 const failOnError = Bun.argv.includes('--fail-on-error');
 const url = `${origin}/forums/avatar-bake?autorun=${onlyMissing ? 'missing' : 'all'}`;
+const chromiumExecutablePath = Bun.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+  || ['/usr/bin/chromium-browser', '/usr/bin/chromium'].find((path) => existsSync(path));
 
 console.log(`[forum-avatar-bake] opening ${url}`);
 
@@ -29,7 +32,8 @@ let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
 try {
   browser = await chromium.launch({
     headless: true,
-    args: ['--disable-dev-shm-usage', '--use-gl=swiftshader'],
+    executablePath: chromiumExecutablePath,
+    args: ['--disable-dev-shm-usage', '--no-sandbox', '--use-gl=swiftshader'],
   });
   const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
   page.on('console', (message) => {

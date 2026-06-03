@@ -42,6 +42,17 @@ describe('forums persistence', () => {
     db.close();
   });
 
+  test('avatar bake targets include players without saved appearance', async () => {
+    const db = new GameDatabase(':memory:');
+    const created = db.loginFallbackAccount('defaultavatar', 'device-default-avatar');
+
+    const targets = db.listForumAvatarBakeTargets();
+    const target = targets.find((entry) => entry.accountId === created.accountId);
+    expect(target?.username).toBe('defaultavatar');
+    expect(target?.url).toContain(`/forum-avatars/${created.accountId}-`);
+    db.close();
+  });
+
   test('forum presence lists only recently active users', async () => {
     const db = new GameDatabase(':memory:');
     const recent = db.loginFallbackAccount('recentforumuser', 'device-recent-presence');
