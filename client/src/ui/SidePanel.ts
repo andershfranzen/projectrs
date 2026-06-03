@@ -2302,6 +2302,9 @@ export class SidePanel {
 
     const autoRetaliateRow = document.createElement('label');
     autoRetaliateRow.className = 'auto-retaliate-row';
+    autoRetaliateRow.addEventListener('pointerdown', (event) => {
+      event.preventDefault();
+    });
     const autoRetaliateCheckbox = document.createElement('input');
     autoRetaliateCheckbox.type = 'checkbox';
     autoRetaliateCheckbox.addEventListener('change', () => {

@@ -36,12 +36,20 @@ try {
     args: ['--disable-dev-shm-usage', '--no-sandbox', '--use-gl=swiftshader'],
   });
   const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
+  const pageErrors: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error') console.warn(`[forum-avatar-bake] browser: ${message.text()}`);
+  });
+  page.on('pageerror', (error) => {
+    const message = error instanceof Error ? error.stack || error.message : String(error);
+    pageErrors.push(message);
+    console.warn(`[forum-avatar-bake] pageerror: ${message}`);
   });
   await page.goto(url, { waitUntil: 'networkidle', timeout: timeoutMs });
   await page.waitForFunction(() => window.__forumAvatarBakeDone === true, undefined, { timeout: timeoutMs });
   const result = await page.evaluate(() => window.__forumAvatarBakeResult ?? { ok: false, baked: 0, total: 0, errors: ['Bake page did not report a result.'] }) as BakeResult;
+  result.errors.push(...pageErrors);
+  result.ok = result.ok && pageErrors.length === 0;
   console.log(`[forum-avatar-bake] baked ${result.baked}/${result.total}`);
   for (const error of result.errors) console.warn(`[forum-avatar-bake] ${error}`);
   if (failOnError && !result.ok) process.exitCode = 1;

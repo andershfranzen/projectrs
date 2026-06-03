@@ -1523,6 +1523,42 @@ function jsonResponse(data: any, status: number = 200, headers: Record<string, s
   });
 }
 
+function forumAvatarFilePath(urlOrPath: string): string | null {
+  let pathname = urlOrPath;
+  if (/^https?:\/\//.test(pathname)) {
+    try {
+      pathname = new URL(pathname).pathname;
+    } catch {
+      return null;
+    }
+  }
+  const name = pathname.replace(/^\/forum-avatars\/?/, '');
+  if (!/^[0-9]+-[a-f0-9]{16}\.webp$/.test(name)) return null;
+  return resolveWithinBase(FORUM_AVATAR_DIR, name);
+}
+
+function bakedForumAvatarUrl(url: string, reason: string): string {
+  if (!url.startsWith('/forum-avatars/') && !/^https?:\/\/[^/]+\/forum-avatars\//.test(url)) return url;
+  const filePath = forumAvatarFilePath(url);
+  if (filePath && existsSync(filePath)) return url;
+  scheduleForumAvatarBake(`missing:${reason}`, 100);
+  return '';
+}
+
+function stripMissingForumAvatarUrls<T>(value: T, reason: string): T {
+  if (typeof value === 'string') return bakedForumAvatarUrl(value, reason) as T;
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map((entry) => stripMissingForumAvatarUrls(entry, reason)) as T;
+  const source = value as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(source)) {
+    next[key] = key === 'avatarUrl' && typeof entry === 'string'
+      ? bakedForumAvatarUrl(entry, reason)
+      : stripMissingForumAvatarUrls(entry, reason);
+  }
+  return next as T;
+}
+
 // --- Auth rate limiting ---
 // Bun.serve runs in one process, so an in-memory map is sufficient. If we ever
 // shard, this needs to move behind a shared store (Redis). Mirrors 2004scape
@@ -2047,8 +2083,7 @@ function serveForumMedia(pathname: string): Response | null {
 
 function serveForumAvatar(pathname: string): Response | null {
   const name = pathname.replace(/^\/forum-avatars\/?/, '');
-  if (!/^[0-9]+-[a-f0-9]{16}\.webp$/.test(name)) return null;
-  const filePath = resolveWithinBase(FORUM_AVATAR_DIR, name);
+  const filePath = forumAvatarFilePath(pathname);
   if (!filePath) return null;
   try {
     const stat = statSync(filePath);
@@ -2062,6 +2097,7 @@ function serveForumAvatar(pathname: string): Response | null {
       },
     });
   } catch {
+    scheduleForumAvatarBake(`request:${name}`, 100);
     return null;
   }
 }
@@ -2145,11 +2181,11 @@ async function handleForumApi(req: Request, srv: { requestIP(req: Request): { ad
         Number(url.searchParams.get('page') ?? 1),
         Number(url.searchParams.get('limit') ?? 20),
       );
-      return thread ? jsonResponse(thread, 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false, error: 'Thread not found.' }, 404);
+      return thread ? jsonResponse(stripMissingForumAvatarUrls(thread, `thread:${parts[0]}/${parts[1]}`), 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false, error: 'Thread not found.' }, 404);
     }
     if (resource === 'profile' && parts[0]) {
       const profile = db.getForumProfile(parts[0]);
-      return profile ? jsonResponse(profile, 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false, error: 'Profile not found.' }, 404);
+      return profile ? jsonResponse(stripMissingForumAvatarUrls(profile, `profile:${parts[0]}`), 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false, error: 'Profile not found.' }, 404);
     }
     if (resource === 'me') {
       return maybeSession ? jsonResponse({ ok: true, accountId: maybeSession.accountId, username: maybeSession.username, isAdmin: maybeSession.isAdmin, isModerator: isForumStaff(maybeSession) }, 200, { 'Cache-Control': 'no-store' }) : jsonResponse({ ok: false }, 401);
@@ -2159,7 +2195,7 @@ async function handleForumApi(req: Request, srv: { requestIP(req: Request): { ad
       return jsonResponse(db.listForumNotifications(maybeSession.accountId), 200, { 'Cache-Control': 'no-store' });
     }
     if (resource === 'online') {
-      return jsonResponse({ users: db.listForumOnlineUsers() }, 200, { 'Cache-Control': 'no-store' });
+      return jsonResponse(stripMissingForumAvatarUrls({ users: db.listForumOnlineUsers() }, 'online'), 200, { 'Cache-Control': 'no-store' });
     }
     if (resource === 'moderation') {
       if (!maybeSession) return forumAuthError();
@@ -2513,7 +2549,7 @@ const server = Bun.serve<SocketData>({
     if (url.pathname === '/api/hiscores/player' && req.method === 'GET') {
       const profile = db.getHiscoreProfile(url.searchParams.get('username') ?? '', getHiscoreMobs(world));
       if (!profile) return jsonResponse({ ok: false, error: 'Player profile not found.' }, 404);
-      return jsonResponse(profile);
+      return jsonResponse(stripMissingForumAvatarUrls(profile, `hiscores:${profile.username}`));
     }
 
     if (url.pathname === '/api/hiscores/kills' && req.method === 'GET') {
