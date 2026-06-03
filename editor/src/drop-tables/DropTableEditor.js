@@ -1,11 +1,37 @@
+import { effectiveNpcCombatStats, npcCombatLevel } from '@projectrs/shared'
+
 function clone(value) {
+  if (value === undefined) return undefined
   return JSON.parse(JSON.stringify(value))
 }
 
-function snapshotLootTables(npcs) {
+const CORE_STAT_FIELDS = [
+  { key: 'health', label: 'Health', min: 1 },
+  { key: 'attack', label: 'Attack', min: 0 },
+  { key: 'strength', label: 'Strength', min: 0 },
+  { key: 'defence', label: 'Defence', min: 0 },
+]
+
+const BEHAVIOR_STAT_FIELDS = [
+  { key: 'attackSpeed', label: 'Atk speed', min: 1 },
+  { key: 'respawnTime', label: 'Respawn', min: 1 },
+  { key: 'wanderRange', label: 'Wander', min: 0 },
+  { key: 'maxRange', label: 'Leash', min: 0, optional: true },
+  { key: 'huntRange', label: 'Aggro', min: 0, optional: true },
+  { key: 'attackRange', label: 'Attack range', min: 0, optional: true },
+  { key: 'retreatHealth', label: 'Flee HP', min: 0, optional: true },
+]
+
+function snapshotNpcEditorState(npcs) {
   const snapshot = new Map()
   for (const npc of Array.isArray(npcs) ? npcs : []) {
-    snapshot.set(npc.id, clone(Array.isArray(npc.lootTable) ? npc.lootTable : []))
+    snapshot.set(npc.id, {
+      lootTable: clone(Array.isArray(npc.lootTable) ? npc.lootTable : []),
+      stats: Object.fromEntries(
+        [...CORE_STAT_FIELDS, ...BEHAVIOR_STAT_FIELDS, { key: 'aggressive' }]
+          .map(field => [field.key, clone(npc[field.key])])
+      ),
+    })
   }
   return snapshot
 }
@@ -107,6 +133,17 @@ function normalizeDrop(drop) {
   }
 }
 
+function normalizeInteger(value, min, fallback) {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, n)
+}
+
+function combatLevelForNpc(npc) {
+  if (!npc) return 0
+  return npcCombatLevel(effectiveNpcCombatStats(npc))
+}
+
 function tableStats(npc, itemIndex) {
   const drops = Array.isArray(npc?.lootTable) ? npc.lootTable.map(normalizeDrop) : []
   let guaranteed = 0
@@ -141,7 +178,7 @@ export async function openDropTableEditor(options = {}) {
   let npcs = options.npcDefs || []
   let items = Array.isArray(options.items) ? options.items : []
   let itemIndex = buildItemIndex(items)
-  let originalLootTables = snapshotLootTables(npcs)
+  let originalNpcState = snapshotNpcEditorState(npcs)
   let selectedId = options.selectedNpcId || npcs[0]?.id || 0
   let selectedDropIndex = 0
   let search = ''
@@ -258,9 +295,10 @@ export async function openDropTableEditor(options = {}) {
     listEl.innerHTML = rows.map(npc => {
       const stats = tableStats(npc, itemIndex)
       const active = npc.id === selectedId
+      const level = combatLevelForNpc(npc)
       return `<button class="drop-table-npc-row${active ? ' active' : ''}" data-npc-id="${npc.id}">
         <span>${esc(npc.name || 'Unnamed NPC')}</span>
-        <small>#${npc.id} - ${stats.drops.length} drop${stats.drops.length === 1 ? '' : 's'} - ${formatNumber(stats.valueEv, 1)} value</small>
+        <small>lvl ${level} - #${npc.id} - ${stats.drops.length} drop${stats.drops.length === 1 ? '' : 's'} - ${formatNumber(stats.valueEv, 1)} value</small>
       </button>`
     }).join('') || '<div class="drop-table-empty">No matching NPCs.</div>'
 
@@ -338,6 +376,62 @@ export async function openDropTableEditor(options = {}) {
     render()
   }
 
+  function setNpcStatField(key, value, field) {
+    const npc = selectedNpc()
+    if (!npc) return
+    const text = String(value ?? '').trim()
+    if (field.optional && text === '') {
+      delete npc[key]
+    } else {
+      npc[key] = normalizeInteger(text, field.min, normalizeInteger(npc[key], field.min, field.min))
+    }
+    markDirty()
+    render()
+  }
+
+  function setNpcBooleanField(key, value) {
+    const npc = selectedNpc()
+    if (!npc) return
+    npc[key] = value === true || value === 'true'
+    markDirty()
+    render()
+  }
+
+  function renderStatField(field, npc) {
+    const hasValue = npc[field.key] !== undefined && npc[field.key] !== null
+    const value = hasValue ? normalizeInteger(npc[field.key], field.min, field.min) : ''
+    const placeholder = field.optional ? 'auto' : String(field.min)
+    return `
+      <label class="drop-table-stat-field">
+        <span>${esc(field.label)}</span>
+        <input data-npc-stat="${esc(field.key)}" type="number" min="${field.min}" step="1" value="${value}" placeholder="${placeholder}" />
+      </label>
+    `
+  }
+
+  function renderNpcStatsEditor(npc) {
+    const level = combatLevelForNpc(npc)
+    return `
+      <section class="drop-table-combat-card">
+        <div class="drop-table-combat-level">
+          <span>Combat level</span>
+          <b>${level}</b>
+        </div>
+        <div class="drop-table-combat-fields">
+          ${CORE_STAT_FIELDS.map(field => renderStatField(field, npc)).join('')}
+          <label class="drop-table-stat-field">
+            <span>Aggressive</span>
+            <select data-npc-bool="aggressive">
+              <option value="true"${npc.aggressive === true ? ' selected' : ''}>Yes</option>
+              <option value="false"${npc.aggressive !== true ? ' selected' : ''}>No</option>
+            </select>
+          </label>
+          ${BEHAVIOR_STAT_FIELDS.map(field => renderStatField(field, npc)).join('')}
+        </div>
+      </section>
+    `
+  }
+
   function renderCopyTools(npc) {
     const choices = npcs
       .filter(n => n.id !== npc.id && Array.isArray(n.lootTable) && n.lootTable.length > 0)
@@ -412,6 +506,7 @@ export async function openDropTableEditor(options = {}) {
         <div><b>${stats.random}</b><span>random</span></div>
         <div><b>${formatNumber(stats.valueEv, 1)}</b><span>value/kill</span></div>
       </div>
+      ${renderNpcStatsEditor(npc)}
       <div class="drop-table-presets">
         <button data-set-selected-chance="1">100%</button>
         <button data-set-selected-chance="0.5">50%</button>
@@ -430,6 +525,14 @@ export async function openDropTableEditor(options = {}) {
     const copySelect = editorEl.querySelector('#dropTableCopySource')
     copySelect?.addEventListener('change', () => { copySourceId = Number(copySelect.value) })
     editorEl.querySelector('#dropTableCopyBtn')?.addEventListener('click', () => copyFromNpc(copySelect?.value))
+
+    for (const input of editorEl.querySelectorAll('[data-npc-stat]')) {
+      const field = [...CORE_STAT_FIELDS, ...BEHAVIOR_STAT_FIELDS].find(row => row.key === input.dataset.npcStat)
+      if (field) input.addEventListener('change', event => setNpcStatField(field.key, event.target.value, field))
+    }
+    for (const select of editorEl.querySelectorAll('[data-npc-bool]')) {
+      select.addEventListener('change', event => setNpcBooleanField(event.target.dataset.npcBool, event.target.value))
+    }
 
     for (const btn of editorEl.querySelectorAll('[data-set-selected-chance]')) {
       btn.addEventListener('click', () => {
@@ -529,7 +632,7 @@ export async function openDropTableEditor(options = {}) {
     options = { ...options, ...nextOptions }
     if (Array.isArray(options.npcDefs)) npcs = options.npcDefs
     setItems(options.items)
-    if (!dirty) originalLootTables = snapshotLootTables(npcs)
+    if (!dirty) originalNpcState = snapshotNpcEditorState(npcs)
     if (options.selectedNpcId && npcs.some(n => n.id === options.selectedNpcId)) selectedId = options.selectedNpcId
     if (!items.length && typeof options.loadItems === 'function') {
       options.loadItems().then(loaded => {
@@ -552,9 +655,15 @@ export async function openDropTableEditor(options = {}) {
     overlay.style.display = 'none'
   })
   overlay.querySelector('#dropTablesRevert')?.addEventListener('click', () => {
-    if (dirty && !confirm('Revert drop table edits made since opening this window?')) return
+    if (dirty && !confirm('Revert NPC stat and drop table edits made since opening this window?')) return
     for (const npc of npcs) {
-      npc.lootTable = clone(originalLootTables.get(npc.id) || [])
+      const original = originalNpcState.get(npc.id)
+      if (!original) continue
+      npc.lootTable = clone(original.lootTable || [])
+      for (const field of [...CORE_STAT_FIELDS, ...BEHAVIOR_STAT_FIELDS, { key: 'aggressive' }]) {
+        if (original.stats[field.key] === undefined) delete npc[field.key]
+        else npc[field.key] = clone(original.stats[field.key])
+      }
     }
     dirty = false
     setStatus('reverted', '#aaa')
@@ -565,7 +674,7 @@ export async function openDropTableEditor(options = {}) {
     try {
       setStatus('saving...', '#fc6')
       await options.onSave(npcs)
-      originalLootTables = snapshotLootTables(npcs)
+      originalNpcState = snapshotNpcEditorState(npcs)
       dirty = false
       setStatus('saved', '#6e6')
     } catch (err) {

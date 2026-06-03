@@ -625,7 +625,9 @@ canvas {
 .drop-table-list-pane input,
 .drop-table-list-pane select,
 .drop-table-copy select,
-.drop-table-entry input {
+.drop-table-entry input,
+.drop-table-stat-field input,
+.drop-table-stat-field select {
   width: 100%;
   box-sizing: border-box;
   background: #222;
@@ -733,6 +735,54 @@ canvas {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 5px;
   margin-bottom: 10px;
+}
+
+.drop-table-combat-card {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  background: #1b1b1b;
+  border: 1px solid #333;
+  border-radius: 5px;
+  padding: 8px;
+  margin-bottom: 10px;
+}
+
+.drop-table-combat-level {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: #241f14;
+  border: 1px solid #4a3820;
+  border-radius: 4px;
+  min-height: 76px;
+}
+
+.drop-table-combat-level span {
+  color: #c9a85c;
+  font-size: 11px;
+}
+
+.drop-table-combat-level b {
+  color: #ffcc66;
+  font-size: 34px;
+  line-height: 1.05;
+}
+
+.drop-table-combat-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(72px, 1fr));
+  gap: 7px;
+}
+
+.drop-table-stat-field {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #aaa;
+  font-size: 11px;
 }
 
 .drop-table-copy {
@@ -949,6 +999,14 @@ canvas {
 
   .drop-table-presets {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .drop-table-combat-card {
+    grid-template-columns: 1fr;
+  }
+
+  .drop-table-combat-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 

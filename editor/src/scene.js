@@ -326,7 +326,7 @@ function tuneModelLighting(model) {
   let texturePlaneBridge = false
 
   // --- NPC Spawn system ---
-  let npcDefs = []           // loaded from /data/npcs.json
+  let npcDefs = []           // loaded from /api/editor/npcs
   let npcSpawns = []         // { id, npcId, x, z, wanderRange, maxRange?, huntRange?, facing? }
   let _npcSpawnNextId = 1
   let selectedNpcSpawn = null
@@ -3080,8 +3080,24 @@ let selectedWaterFlowChunk = null
     updateToolUI()
   }
 
-  fetch('/data/npcs.json')
-    .then(r => r.json())
+  async function loadNpcDefsForEditor() {
+    const urls = ['/api/editor/npcs', '/data/npcs.json']
+    let lastError = null
+    for (const url of urls) {
+      try {
+        const r = await fetch(url, { cache: 'no-store' })
+        if (!r.ok) throw new Error(`${url} returned ${r.status}`)
+        const defs = await r.json()
+        if (!Array.isArray(defs)) throw new Error(`${url} did not return an NPC array`)
+        return defs
+      } catch (err) {
+        lastError = err
+      }
+    }
+    throw lastError || new Error('Failed to load NPC defs')
+  }
+
+  loadNpcDefsForEditor()
     .then(defs => {
       npcDefs = defs
       populateNpcTypeControls(defs)

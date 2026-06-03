@@ -579,6 +579,15 @@ export class EntityManager {
     }
   }
 
+  private applyCombatFaceLockToTarget(
+    sprite: CharacterEntity | Npc3DEntity | SpriteEntity,
+    target: CharacterEntity | Npc3DEntity | SpriteEntity,
+    camPos: Vector3 | null,
+  ): void {
+    const anchor = target.getTargetAnchor();
+    this.applyCombatFaceLock(sprite, anchor.x, anchor.z, anchor.y, camPos);
+  }
+
   interpolateRemotePlayers(dt: number, camPos: Vector3 | null, isRemoteSkilling: (entityId: number) => boolean = () => false): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
@@ -608,8 +617,7 @@ export class EntityManager {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
         if (combatTargetSprite) {
-          const tp = combatTargetSprite.position;
-          this.applyCombatFaceLock(sprite, tp.x, tp.z, tp.y, camPos);
+          this.applyCombatFaceLockToTarget(sprite, combatTargetSprite, camPos);
         }
         // Chebyshev-paced interpolation matches the server's 1 tile/tick
         // regardless of direction.
@@ -623,8 +631,7 @@ export class EntityManager {
       } else {
         if (sprite.isWalking()) sprite.stopWalking();
         if (combatTargetSprite) {
-          const tp = combatTargetSprite.position;
-          this.applyCombatFaceLock(sprite, tp.x, tp.z, tp.y, camPos);
+          this.applyCombatFaceLockToTarget(sprite, combatTargetSprite, camPos);
         } else if (sprite instanceof CharacterEntity) {
           sprite.clearFaceLock();
         }

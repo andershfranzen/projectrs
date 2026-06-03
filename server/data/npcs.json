@@ -161,7 +161,7 @@
       {
         "itemId": 227,
         "quantity": 1,
-        "chance": 0.017
+        "chance": 0.0176
       }
     ]
   },
@@ -191,7 +191,7 @@
       {
         "itemId": 228,
         "quantity": 1,
-        "chance": 0.08199999999999999
+        "chance": 0.04
       }
     ]
   },
@@ -434,7 +434,7 @@
       {
         "itemId": 288,
         "quantity": 1,
-        "chance": 0.015
+        "chance": 0.0064
       },
       {
         "itemId": 301,
@@ -1032,7 +1032,7 @@
       {
         "itemId": 288,
         "quantity": 1,
-        "chance": 0.015
+        "chance": 0.0112
       }
     ]
   },
@@ -1052,6 +1052,11 @@
         "itemId": 301,
         "quantity": 1,
         "chance": 0.25
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.006667
       }
     ]
   }

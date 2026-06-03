@@ -1787,7 +1787,7 @@ export class GameManager {
           remote.faceTowardXZ(objectData.x, objectData.z);
         } else {
           const target = this.entities.resolveTargetable(targetId);
-          if (target) remote.faceToward(target.position);
+          if (target) remote.faceToward(target.getTargetAnchor());
           this.entities.remoteCombatTargets.set(entityId, targetId);
         }
       } else {
@@ -1803,7 +1803,7 @@ export class GameManager {
         remote.faceToward(new Vector3(objectData.x, 0, objectData.z));
       } else if (targetId > 0) {
         const target = this.resolveTargetableIncludingLocal(targetId);
-        if (target) remote.faceToward(target.position);
+        if (target) remote.faceToward(target.getTargetAnchor());
       }
       // Magic is a one-shot cast (single-tick obelisk offering); other skill
       // variants loop until the server sends Idle.
@@ -4764,8 +4764,8 @@ export class GameManager {
     if (npcTarget && npcTarget.floor !== this.currentFloor) return;
     const sprite = this.entities.npcSprites.get(npcEntityId);
     if (sprite) {
-      const pos = sprite.position;
-      lp.lockFaceTowardXZ(pos.x, pos.z);
+      const anchor = sprite.getTargetAnchor();
+      lp.lockFaceTowardXZ(anchor.x, anchor.z);
       return;
     }
     if (!npcTarget) return;
@@ -6575,7 +6575,7 @@ export class GameManager {
     onImpact?: () => void,
   ): void {
     if (!this.spellEffectPlayer) this.spellEffectPlayer = new SpellEffectPlayer(this.scene);
-    caster.faceToward(target.position);
+    caster.faceToward(target.getTargetAnchor());
     caster.playNamedOneShot('spell_cast_2h', { layerWhenWalking: true });
     if (caster === this.localPlayer) {
       const now = performance.now();
@@ -7779,6 +7779,10 @@ export class GameManager {
       this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill);
     this.maintainNpcMaterialization();
     this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
+    // Remote actors get per-frame combat face locks in EntityManager. The
+    // local player owns its own movement prediction, so keep its NPC combat
+    // facing alive here without enabling strafe-lock while pathing.
+    this.refreshLocalCombatFacing();
 
     this.updateIndoorDetection();
     this.updateDoorAnimations(dt);

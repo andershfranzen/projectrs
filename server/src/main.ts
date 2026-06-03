@@ -1,4 +1,4 @@
-import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance } from '@projectrs/shared';
+import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES, validateDeviceId, gearFitTierForName, resolveEquipmentModelPath, validateBankAccessSpawns, readPngDimensions, CUSTOM_COLOR_SLOTS, isValidAppearance, normalizeAppearance, RELIC_ITEM_IDS } from '@projectrs/shared';
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
@@ -489,6 +489,68 @@ async function loadJsonOrNull<T = unknown>(path: string): Promise<T | null> {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isRelicLootDrop(value: unknown): value is Record<string, unknown> {
+  return isPlainRecord(value)
+    && Number.isInteger(value.itemId)
+    && RELIC_ITEM_IDS.has(value.itemId as number);
+}
+
+function npcId(value: unknown): number | null {
+  return isPlainRecord(value) && Number.isInteger(value.id) ? value.id as number : null;
+}
+
+function protectNpcLootTablesOnSave(incomingNpcs: any[], existingNpcs: any[] | null): { npcs: any[]; preservedRelicDrops: number; preservedMissingLootTables: number } {
+  if (!Array.isArray(existingNpcs) || existingNpcs.length === 0) {
+    return { npcs: incomingNpcs, preservedRelicDrops: 0, preservedMissingLootTables: 0 };
+  }
+
+  const existingById = new Map<number, any>();
+  for (const npc of existingNpcs) {
+    const id = npcId(npc);
+    if (id !== null) existingById.set(id, npc);
+  }
+
+  let incomingRelicDropCount = 0;
+  let existingRelicDropCount = 0;
+  for (const npc of incomingNpcs) {
+    const lootTable = isPlainRecord(npc) && Array.isArray(npc.lootTable) ? npc.lootTable : [];
+    incomingRelicDropCount += lootTable.filter(isRelicLootDrop).length;
+  }
+  for (const npc of existingNpcs) {
+    const lootTable = isPlainRecord(npc) && Array.isArray(npc.lootTable) ? npc.lootTable : [];
+    existingRelicDropCount += lootTable.filter(isRelicLootDrop).length;
+  }
+
+  const preserveRelics = existingRelicDropCount > 0 && incomingRelicDropCount === 0;
+  let preservedRelicDrops = 0;
+  let preservedMissingLootTables = 0;
+
+  const npcs = incomingNpcs.map((npc) => {
+    if (!isPlainRecord(npc)) return npc;
+    const id = npcId(npc);
+    const existing = id !== null ? existingById.get(id) : null;
+    const existingLootTable = isPlainRecord(existing) && Array.isArray(existing.lootTable) ? existing.lootTable : null;
+
+    if (!Array.isArray(npc.lootTable)) {
+      if (existingLootTable) {
+        preservedMissingLootTables++;
+        return { ...npc, lootTable: existingLootTable };
+      }
+      return npc;
+    }
+
+    if (!preserveRelics || !existingLootTable) return npc;
+    const existingRelicDrops = existingLootTable.filter(isRelicLootDrop);
+    if (existingRelicDrops.length === 0) return npc;
+
+    preservedRelicDrops += existingRelicDrops.length;
+    const nonRelicDrops = npc.lootTable.filter((drop: unknown) => !isRelicLootDrop(drop));
+    return { ...npc, lootTable: [...nonRelicDrops, ...existingRelicDrops] };
+  });
+
+  return { npcs, preservedRelicDrops, preservedMissingLootTables };
 }
 
 /**
@@ -3772,6 +3834,21 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    if (url.pathname === '/api/editor/npcs' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      const npcsPath = resolve(import.meta.dir, '../data/npcs.json');
+      try {
+        return new Response(readFileSync(npcsPath, 'utf-8'), {
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          },
+        });
+      } catch {
+        return new Response('Not Found', { status: 404 });
+      }
+    }
+
     // Save the full server/data/npcs.json from the editor's NPC inspector.
     // Body shape: { npcs: NpcDef[] }. Atomic via tmp + rename. Snapshots the
     // pre-save file into server/data/backups/npcs/<ISO>.json and keeps the
@@ -3798,9 +3875,10 @@ const server = Bun.serve<SocketData>({
             error: `Refusing save: would shrink ${existingNpcs.length} → ${body.npcs.length} NPCs (>50% drop)`,
           }, 400);
         }
+        const protectedPayload = protectNpcLootTablesOnSave(body.npcs, existingNpcs);
         await saveJsonWithBackup({
           path: npcsPath,
-          data: body.npcs,
+          data: protectedPayload.npcs,
           backupDir: resolve(dataDir, 'backups', 'npcs'),
           backupPrefix: 'npcs',
           backupExt: 'json',
@@ -3812,7 +3890,11 @@ const server = Bun.serve<SocketData>({
         // the new defs. Editor users can /reloadmap to force-respawn if they
         // want their changes applied to in-world NPCs right now.
         world.data.reloadNpcs();
-        return jsonResponse({ ok: true });
+        return jsonResponse({
+          ok: true,
+          preservedRelicDrops: protectedPayload.preservedRelicDrops,
+          preservedMissingLootTables: protectedPayload.preservedMissingLootTables,
+        });
       } catch (e: any) {
         return jsonResponse({ ok: false, error: e.message || 'Save failed' }, 500);
       }

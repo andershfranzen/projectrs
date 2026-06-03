@@ -37,6 +37,8 @@ export interface Npc3DModelEntry {
   facingOffsetY?: number;
 }
 
+const BEAR_FACING_OFFSET_Y = -Math.PI / 18;
+
 export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   1:  { file: '/models/npcs/chicken_v2.glb', scale: 1.2, originMode: 'boundsCenter', animSpeedRatio: { walk: 1.85 }, preserveAnimationRoles: ['idle', 'walk', 'attack'], anims: { idle: 'Idle_Game', walk: 'Walk_Game', attack: 'Peck_Game' } },
   23: { file: '/models/npcs/rooster_v1.glb', scale: 1.35, originMode: 'boundsCenter', animSpeedRatio: { walk: 1.85 }, preserveAnimationRoles: ['idle', 'walk', 'attack'], anims: { idle: 'Idle_Game', walk: 'Walk_Game', attack: 'Peck_Game' } },
@@ -47,17 +49,19 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   // authored full-cycle walk loop. Jump is the closest one-shot combat motion.
   10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
   24: { file: '/models/npcs/bull.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
-  25: { file: '/models/npcs/bear.glb', scale: 0.9, originMode: 'boundsCenter', anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'BiteAttack4Legs', death: 'Death4Legs' } },
+  25: { file: '/models/npcs/bear.glb', scale: 0.9, originMode: 'boundsCenter', facingOffsetY: BEAR_FACING_OFFSET_Y, anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'BiteAttack4Legs', death: 'Death4Legs' } },
   26: {
     file: '/models/npcs/bear_black.glb',
     scale: 0.9,
     originMode: 'boundsCenter',
+    facingOffsetY: BEAR_FACING_OFFSET_Y,
     anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'BiteAttack4Legs', death: 'Death4Legs' },
   },
   27: {
     file: '/models/npcs/bear_cub.glb',
     scale: 0.9,
     originMode: 'boundsCenter',
+    facingOffsetY: BEAR_FACING_OFFSET_Y,
     anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'LClawsAttack4Legs', death: 'Death4Legs' },
   },
   // Camel.glb is authored in centimeters and exported with the final flat-color
