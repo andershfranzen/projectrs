@@ -2058,7 +2058,7 @@ export class World {
     this.finalizePlayerLogoutSession(player);
 
     this.savePlayerState(player);
-    this.options.onPlayerAvatarDirty?.(player.accountId, player.name);
+    this.options?.onPlayerAvatarDirty?.(player.accountId, player.name);
     try {
       player.ws.close(1000, closeReason);
     } catch { /* ignore */ }

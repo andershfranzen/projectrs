@@ -413,6 +413,76 @@
   place-items: center;
 }
 
+.forum-emoji-picker {
+  position: relative;
+}
+
+.forum-emoji-menu {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  z-index: 8;
+  width: min(330px, calc(100vw - 42px));
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  background: #030303;
+  border: 1px solid rgba(255,255,255,0.16);
+  outline: 1px solid #000;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.5);
+}
+
+.forum-emoji-menu input {
+  width: 100%;
+  min-height: 32px;
+  padding: 7px 9px;
+  color: #f5ead7;
+  background: #050505;
+  border: 1px solid rgba(255,255,255,0.14);
+}
+
+.forum-emoji-grid {
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
+  gap: 6px;
+}
+
+.forum-emoji-grid button {
+  width: auto;
+  min-height: 58px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 5px;
+}
+
+.forum-emoji-grid img,
+.forum-emoji-grid span {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.forum-emoji-grid small {
+  max-width: 100%;
+  overflow: hidden;
+  color: #cfc1aa;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.forum-emoji-grid p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #8f8677;
+  font-size: 12px;
+}
+
 .forum-markdown-toolbar + textarea {
   border-top-color: rgba(255,255,255,0.08);
 }
@@ -748,6 +818,21 @@
   object-fit: contain;
   border: 1px solid rgba(255,255,255,0.18);
   background: #000;
+}
+
+.forum-post-body img.forum-inline-emoji,
+.forum-profile-bio img.forum-inline-emoji,
+.forum-post-signature img.forum-inline-emoji {
+  display: inline-block;
+  width: 1.45em;
+  height: 1.45em;
+  max-width: 1.45em;
+  max-height: 1.45em;
+  margin: 0 0.08em;
+  vertical-align: -0.32em;
+  object-fit: contain;
+  border: 0;
+  background: transparent;
 }
 
 .forum-post-body blockquote,

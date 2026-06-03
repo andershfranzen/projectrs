@@ -23,6 +23,11 @@ services:
       # When unset the production server fails startup.
       RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
       RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-}
+      # Forum Discord emote sync. Reuse the Left Hand bot credentials by
+      # default so production only needs one Discord bot token in .env.
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-${LEFT_HAND_DISCORD_GUILD_ID:-1504534632799010816}}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-${LEFT_HAND_DISCORD_TOKEN:-}}
+      DISCORD_EMOJI_SYNC_INTERVAL_MS: ${DISCORD_EMOJI_SYNC_INTERVAL_MS:-900000}
 
   left-hand:
     build:

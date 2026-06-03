@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { FaBell, FaBold, FaCog, FaEdit, FaExchangeAlt, FaEye, FaEyeSlash, FaFlag, FaGrin, FaHome, FaImage, FaItalic, FaLink, FaListUl, FaLock, FaPen, FaQuoteRight, FaReply, FaShieldAlt, FaThumbtack, FaTrashAlt, FaTrophy, FaUnlock, FaUser, FaUsers } from 'react-icons/fa';
+import { useAutoCloseMenu } from '../useAutoCloseMenu';
 
 const TOKEN_KEY = 'evilquest_token';
 const AUTH_CHANGED_EVENT = 'evilquest-auth-changed';
@@ -9,6 +10,7 @@ const PROFILE_BIO_LIMIT = 500;
 const PROFILE_SIGNATURE_LIMIT = 240;
 const EMOJI: Record<string, string> = {
   smile: '🙂',
+  laughing: '😂',
   heart: '❤️',
   skull: '💀',
   fire: '🔥',
@@ -17,6 +19,7 @@ const EMOJI: Record<string, string> = {
   'thumbs-down': '👎',
 };
 
+type ForumDiscordEmoji = { id: string; guildId: string; name: string; animated: boolean; available: boolean; url: string; updatedAt: number };
 type ForumUser = { ok?: boolean; accountId?: number; username?: string; isAdmin?: boolean; isModerator?: boolean };
 type ForumOnlineUser = { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; lastSeenAt: number };
 type ForumCategory = {
@@ -117,6 +120,7 @@ type ForumReport = {
 };
 type ForumMedia = { id: number; url: string };
 type PendingMediaInsert = { start: number; end: number; alt: string };
+type EmojiChoice = { name: string; label: string; icon: string; url?: string; source: 'local' | 'discord' };
 type ForumNotification = {
   id: number;
   type: string;
@@ -128,6 +132,9 @@ type ForumNotification = {
   postPage: number;
   sourcePostId: number | null;
 };
+
+let discordEmojiByName: Record<string, ForumDiscordEmoji> = {};
+let discordEmojiList: ForumDiscordEmoji[] = [];
 
 function token(): string {
   if (typeof window === 'undefined') return '';
@@ -152,6 +159,11 @@ async function uploadForumFile(file: File): Promise<ForumMedia> {
   return data.media;
 }
 
+function cacheDiscordEmojis(emojis: ForumDiscordEmoji[]): void {
+  discordEmojiList = emojis;
+  discordEmojiByName = Object.fromEntries(emojis.map((emoji) => [emoji.name.toLowerCase(), emoji]));
+}
+
 function fmt(ts: number): string {
   // `undefined` locale + no timeZone => the viewer's own locale and timezone
   // (e.g. a Danish browser renders 24h time in Europe/Copenhagen).
@@ -162,8 +174,17 @@ function escapeHtml(raw: string): string {
   return raw.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char));
 }
 
+function renderEmojiShortcode(name: string): string {
+  const local = EMOJI[name.toLowerCase()];
+  if (local) return local;
+  const emoji = discordEmojiByName[name.toLowerCase()];
+  if (!emoji) return `:${name}:`;
+  const label = escapeHtml(`:${emoji.name}:`);
+  return `<img class="forum-inline-emoji" src="${escapeHtml(emoji.url)}" alt="${label}" title="${label}" loading="lazy" />`;
+}
+
 function renderMarkdown(raw: string): string {
-  let text = escapeHtml(raw).replace(/:([a-z0-9-]+):/g, (_, name) => EMOJI[name] || `:${name}:`);
+  let text = escapeHtml(raw).replace(/:([a-z0-9_-]+):/gi, (_, name) => renderEmojiShortcode(String(name)));
   text = text.replace(/!\[([^\]]*)]\((https?:\/\/[^\s)]+\.(?:png|jpe?g|webp|gif)|\/forum-media\/[^\s)]+)\)/gi, '<img src="$2" alt="$1" loading="lazy" />');
   text = text.replace(/\[([^\]]+)]\((https?:\/\/[^\s)]+|\/forums\/[^\s)]+|\/forum-media\/[^\s)]+)\)/gi, '<a href="$2" rel="noopener noreferrer nofollow ugc">$1</a>');
   text = text.replace(/(^|[\s>])((https?:\/\/[^\s<"]+\.(?:png|jpe?g|webp|gif))(?:[?#][^\s<"]*)?)/gi, '$1<img src="$2" alt="" loading="lazy" />');
@@ -280,10 +301,30 @@ function MediaUploadModal({ open, alt, onClose, onInsert }: { open: boolean; alt
   );
 }
 
+function forumEmojiChoices(query: string): EmojiChoice[] {
+  const search = query.trim().toLowerCase();
+  const seen = new Set<string>();
+  const choices: EmojiChoice[] = [];
+  for (const [name, icon] of Object.entries(EMOJI)) {
+    seen.add(name.toLowerCase());
+    choices.push({ name, label: `:${name}:`, icon, source: 'local' });
+  }
+  for (const emoji of discordEmojiList) {
+    const key = emoji.name.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    choices.push({ name: emoji.name, label: `:${emoji.name}:`, icon: '', url: emoji.url, source: 'discord' });
+  }
+  return search ? choices.filter((choice) => choice.name.toLowerCase().includes(search)) : choices;
+}
+
 function MarkdownEditor({ value, onChange, rows, placeholder, maxLength }: { value: string; onChange: (value: string) => void; rows: number; placeholder: string; maxLength?: number }) {
   const [mode, setMode] = useState<'write' | 'preview'>('write');
   const [mediaInsert, setMediaInsert] = useState<PendingMediaInsert | null>(null);
+  const [emojiMenuOpen, setEmojiMenuOpen] = useState(false);
+  const [emojiSearch, setEmojiSearch] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const emojiMenuRef = useAutoCloseMenu<HTMLDivElement>(emojiMenuOpen, () => setEmojiMenuOpen(false));
 
   function emit(next: string) {
     onChange(maxLength === undefined ? next : next.slice(0, maxLength));
@@ -318,10 +359,25 @@ function MarkdownEditor({ value, onChange, rows, placeholder, maxLength }: { val
     focusSelection(start + lineStart.length + prefix.length, start + lineStart.length + prefix.length + selected.length);
   }
 
+  function insertAtCursor(markdown: string) {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? value.length;
+    const end = textarea?.selectionEnd ?? value.length;
+    const next = `${value.slice(0, start)}${markdown}${value.slice(end)}`;
+    emit(next);
+    focusSelection(start + markdown.length, start + markdown.length);
+  }
+
   function insertLink() {
     const url = window.prompt('Link URL');
     if (!url) return;
     replaceSelection('[', `](${url})`, 'link text');
+  }
+
+  function insertEmoji(name: string) {
+    insertAtCursor(`:${name}:`);
+    setEmojiMenuOpen(false);
+    setEmojiSearch('');
   }
 
   function openMediaModal() {
@@ -340,6 +396,8 @@ function MarkdownEditor({ value, onChange, rows, placeholder, maxLength }: { val
     focusSelection(insert.start + markdown.length, insert.start + markdown.length);
   }
 
+  const emojiChoices = forumEmojiChoices(emojiSearch);
+
   return (
     <div className="forum-markdown-editor">
       <div className="forum-markdown-tabs" role="tablist" aria-label="Markdown editor mode">
@@ -355,6 +413,23 @@ function MarkdownEditor({ value, onChange, rows, placeholder, maxLength }: { val
             <button type="button" title="List" onClick={() => insertLine('- ', 'list item')}><FaListUl aria-hidden /></button>
             <button type="button" title="Link" onClick={insertLink}><FaLink aria-hidden /></button>
             <button type="button" title="Image or upload" onClick={openMediaModal}><FaImage aria-hidden /></button>
+            <div className="forum-emoji-picker" ref={emojiMenuRef}>
+              <button type="button" title="Emoji" aria-haspopup="menu" aria-expanded={emojiMenuOpen} onClick={() => setEmojiMenuOpen((open) => !open)}><FaGrin aria-hidden /></button>
+              {emojiMenuOpen ? (
+                <div className="forum-emoji-menu" role="menu" aria-label="Forum emoji">
+                  <input value={emojiSearch} placeholder="Search emotes" onChange={(event) => setEmojiSearch(event.target.value)} />
+                  <div className="forum-emoji-grid">
+                    {emojiChoices.map((choice) => (
+                      <button key={`${choice.source}-${choice.name}`} type="button" role="menuitem" title={choice.label} onClick={() => insertEmoji(choice.name)}>
+                        {choice.url ? <img src={choice.url} alt="" loading="lazy" /> : <span>{choice.icon}</span>}
+                        <small>{choice.name}</small>
+                      </button>
+                    ))}
+                    {emojiChoices.length === 0 ? <p>No emotes found.</p> : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
           <textarea ref={textareaRef} value={value} rows={rows} maxLength={maxLength} placeholder={placeholder} onChange={(event) => emit(event.target.value)} />
         </>
@@ -453,17 +528,18 @@ function Pagination({ page, totalPages, onPage }: { page: number; totalPages: nu
 
 function NotificationsMenu({ notifications, unreadCount, onRefresh }: { notifications: ForumNotification[]; unreadCount: number; onRefresh: () => void }) {
   const [open, setOpen] = useState(false);
+  const menuRef = useAutoCloseMenu<HTMLDivElement>(open, () => setOpen(false));
   async function markRead(notificationId?: number) {
     await api('/api/forums/notifications/read', { method: 'POST', body: JSON.stringify({ notificationId }) });
     onRefresh();
   }
   return (
-    <div className="forum-notifications">
-      <button type="button" className="auth-topbar-link forum-nav-link" onClick={() => setOpen((value) => !value)}>
+    <div className="forum-notifications" ref={menuRef}>
+      <button type="button" className="auth-topbar-link forum-nav-link" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
         <FaBell aria-hidden />Notifications{unreadCount > 0 ? <span>{unreadCount}</span> : null}
       </button>
       {open ? (
-        <div className="forum-notifications-menu">
+        <div className="forum-notifications-menu" role="dialog" aria-label="Notifications">
           <div className="forum-notifications-head">
             <strong>Notifications</strong>
             {unreadCount > 0 ? <button type="button" onClick={() => void markRead()}>Mark all read</button> : null}
@@ -524,9 +600,27 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
   const [reactionMenuOpen, setReactionMenuOpen] = useState(false);
   const [reactionBurst, setReactionBurst] = useState<ReactionBurst | null>(null);
   const [body, setBody] = useState(post.body);
+  const reactionsMenuRef = useAutoCloseMenu<HTMLDivElement>(reactionMenuOpen, () => setReactionMenuOpen(false));
+  const optionsMenuRef = useAutoCloseMenu<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
   const canEdit = me.accountId === post.author.accountId || me.isModerator || me.isAdmin;
   const canManage = canEdit || me.isModerator || me.isAdmin || me.ok;
   const reactions = Object.entries(EMOJI);
+
+  function toggleReactionMenu() {
+    setReactionMenuOpen((open) => {
+      const next = !open;
+      if (next) setMenuOpen(false);
+      return next;
+    });
+  }
+
+  function toggleOptionsMenu() {
+    setMenuOpen((open) => {
+      const next = !open;
+      if (next) setReactionMenuOpen(false);
+      return next;
+    });
+  }
 
   async function react(reaction: string) {
     const delta = post.myReaction === reaction ? -1 : 1;
@@ -620,12 +714,12 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
           </div>
           <div className="forum-post-right-actions">
             {me.ok ? (
-              <div className="forum-post-menu">
-                <button type="button" onClick={() => setReactionMenuOpen((open) => !open)}><FaGrin aria-hidden />Reactions</button>
+              <div className="forum-post-menu" ref={reactionsMenuRef}>
+                <button type="button" aria-haspopup="menu" aria-expanded={reactionMenuOpen} onClick={toggleReactionMenu}><FaGrin aria-hidden />Reactions</button>
                 {reactionMenuOpen ? (
-                  <div className="forum-post-menu-list forum-reaction-menu-list">
+                  <div className="forum-post-menu-list forum-reaction-menu-list" role="menu">
                     {reactions.map(([key, icon]) => (
-                      <button key={key} type="button" className={post.myReaction === key ? 'active' : ''} onClick={() => void react(key)}>
+                      <button key={key} type="button" role="menuitem" className={post.myReaction === key ? 'active' : ''} onClick={() => void react(key)}>
                         <span>{icon}</span>
                       </button>
                     ))}
@@ -635,17 +729,17 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
             ) : null}
             {canReply ? <button type="button" onClick={() => onQuote(post)}><FaReply aria-hidden />Reply</button> : null}
             {canManage ? (
-            <div className="forum-post-menu">
-              <button type="button" onClick={() => setMenuOpen((open) => !open)}><FaCog aria-hidden />Options</button>
-              {menuOpen ? (
-                <div className="forum-post-menu-list">
-                  {canEdit ? <button type="button" onClick={() => { setEditing(true); setMenuOpen(false); }}><FaEdit aria-hidden />Edit</button> : null}
-                  {canEdit ? <button type="button" onClick={() => void remove()}><FaTrashAlt aria-hidden />Delete</button> : null}
-                  {me.isModerator || me.isAdmin ? <button type="button" onClick={() => void hide()}>{post.isHidden ? <FaEye aria-hidden /> : <FaEyeSlash aria-hidden />}{post.isHidden ? 'Restore' : 'Hide'}</button> : null}
-                  {me.ok ? <button type="button" onClick={() => void report()}><FaFlag aria-hidden />Report</button> : null}
-                </div>
-              ) : null}
-            </div>
+              <div className="forum-post-menu" ref={optionsMenuRef}>
+                <button type="button" aria-haspopup="menu" aria-expanded={menuOpen} onClick={toggleOptionsMenu}><FaCog aria-hidden />Options</button>
+                {menuOpen ? (
+                  <div className="forum-post-menu-list" role="menu">
+                    {canEdit ? <button type="button" role="menuitem" onClick={() => { setEditing(true); setMenuOpen(false); }}><FaEdit aria-hidden />Edit</button> : null}
+                    {canEdit ? <button type="button" role="menuitem" onClick={() => void remove()}><FaTrashAlt aria-hidden />Delete</button> : null}
+                    {me.isModerator || me.isAdmin ? <button type="button" role="menuitem" onClick={() => void hide()}>{post.isHidden ? <FaEye aria-hidden /> : <FaEyeSlash aria-hidden />}{post.isHidden ? 'Restore' : 'Hide'}</button> : null}
+                    {me.ok ? <button type="button" role="menuitem" onClick={() => void report()}><FaFlag aria-hidden />Report</button> : null}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </div>
@@ -673,6 +767,7 @@ export function ForumsApp() {
   const [pendingPostId, setPendingPostId] = useState<number | null>(null);
   const [status, setStatus] = useState('');
   const [moveCategoryId, setMoveCategoryId] = useState(0);
+  const [, setEmojiVersion] = useState(0);
 
   const categories = list?.categories ?? [];
   const canPost = me.ok === true;
@@ -797,6 +892,27 @@ export function ForumsApp() {
       window.clearInterval(interval);
     };
   }, [me.ok, me.accountId]);
+
+  useEffect(() => {
+    if (!me.ok) {
+      cacheDiscordEmojis([]);
+      setEmojiVersion((version) => version + 1);
+      return;
+    }
+    let cancelled = false;
+    async function loadEmojis() {
+      try {
+        const data = await api<{ emojis: ForumDiscordEmoji[] }>('/api/forums/emojis');
+        if (cancelled) return;
+        cacheDiscordEmojis(data.emojis);
+        setEmojiVersion((version) => version + 1);
+      } catch {
+        // Forum text should still render if Discord emoji sync is unavailable.
+      }
+    }
+    void loadEmojis();
+    return () => { cancelled = true; };
+  }, [me.ok]);
 
   async function submitReply(event: FormEvent) {
     event.preventDefault();

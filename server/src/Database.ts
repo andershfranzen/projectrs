@@ -443,6 +443,16 @@ export interface ForumNotification {
   sourcePostId: number | null;
 }
 
+export interface ForumDiscordEmoji {
+  id: string;
+  guildId: string;
+  name: string;
+  animated: boolean;
+  available: boolean;
+  url: string;
+  updatedAt: number;
+}
+
 export interface ForumMediaRecord {
   id: number;
   accountId: number;
@@ -1380,6 +1390,16 @@ export class GameDatabase {
         last_seen_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
+      CREATE TABLE IF NOT EXISTS forum_discord_emojis (
+        id TEXT PRIMARY KEY,
+        guild_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        animated INTEGER NOT NULL DEFAULT 0,
+        available INTEGER NOT NULL DEFAULT 1,
+        url TEXT NOT NULL,
+        updated_at INTEGER NOT NULL DEFAULT (unixepoch())
+      );
+
       CREATE INDEX IF NOT EXISTS idx_forum_threads_category_last
         ON forum_threads(category_id, is_deleted, is_hidden, is_pinned DESC, last_post_at DESC);
       CREATE INDEX IF NOT EXISTS idx_forum_threads_last
@@ -1394,6 +1414,8 @@ export class GameDatabase {
         ON forum_notifications(recipient_account_id, read_at, created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_forum_presence_last_seen
         ON forum_presence(last_seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_forum_discord_emojis_guild_name
+        ON forum_discord_emojis(guild_id, name);
     `);
     try {
       this.db.exec(`ALTER TABLE forum_profiles ADD COLUMN signature TEXT NOT NULL DEFAULT ''`);
@@ -2971,6 +2993,40 @@ export class GameDatabase {
     return !!this.db.query('SELECT 1 FROM forum_moderators WHERE account_id = ?').get(accountId);
   }
 
+  listForumDiscordEmojis(): ForumDiscordEmoji[] {
+    const rows = this.db.query(`
+      SELECT id, guild_id, name, animated, available, url, updated_at
+      FROM forum_discord_emojis
+      WHERE available = 1
+      ORDER BY lower(name) ASC
+    `).all() as Array<{
+      id: string; guild_id: string; name: string; animated: number; available: number; url: string; updated_at: number;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      guildId: row.guild_id,
+      name: row.name,
+      animated: row.animated === 1,
+      available: row.available === 1,
+      url: row.url,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  replaceForumDiscordEmojis(guildId: string, emojis: Array<{ id: string; name: string; animated: boolean; available: boolean; url: string }>): number {
+    const insert = this.db.query(`
+      INSERT INTO forum_discord_emojis (id, guild_id, name, animated, available, url, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, unixepoch())
+    `);
+    this.db.transaction(() => {
+      this.db.query('DELETE FROM forum_discord_emojis WHERE guild_id = ?').run(guildId);
+      for (const emoji of emojis) {
+        insert.run(emoji.id, guildId, emoji.name, emoji.animated ? 1 : 0, emoji.available ? 1 : 0, emoji.url);
+      }
+    }).immediate();
+    return emojis.length;
+  }
+
   listForumCategories(includeHidden: boolean = false): ForumCategory[] {
     const rows = this.db.query(`
       SELECT
@@ -3384,7 +3440,7 @@ export class GameDatabase {
   }
 
   reactToForumPost(accountId: number, postId: number, reaction: string): { ok: true; reactions: Record<string, number>; myReaction: string | null } | { ok: false; error: string } {
-    const allowed = new Set(['heart', 'smile', 'fire', 'skull', 'thumbs-up', 'thumbs-down', 'sword']);
+    const allowed = new Set(['heart', 'smile', 'laughing', 'fire', 'skull', 'thumbs-up', 'thumbs-down', 'sword']);
     if (!allowed.has(reaction)) return { ok: false, error: 'Unsupported reaction.' };
     if (!this.db.query('SELECT id FROM forum_posts WHERE id = ? AND is_deleted = 0 AND is_hidden = 0').get(postId)) return { ok: false, error: 'Post not found.' };
     const existing = this.db.query('SELECT reaction FROM forum_reactions WHERE post_id = ? AND account_id = ?').get(postId, accountId) as { reaction: string } | null;

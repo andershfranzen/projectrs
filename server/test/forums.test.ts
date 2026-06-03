@@ -81,6 +81,26 @@ describe('forums persistence', () => {
     db.close();
   });
 
+  test('Discord emoji cache replaces stale guild emoji rows', () => {
+    const db = new GameDatabase(':memory:');
+    const guildId = '1504534632799010816';
+
+    expect(db.replaceForumDiscordEmojis(guildId, [
+      { id: '1508123662153289948', name: 'evilquest', animated: false, available: true, url: 'https://cdn.discordapp.com/emojis/1508123662153289948.webp' },
+      { id: '1508123662153289949', name: 'hidden', animated: false, available: false, url: 'https://cdn.discordapp.com/emojis/1508123662153289949.webp' },
+    ])).toBe(2);
+    expect(db.listForumDiscordEmojis().map((emoji) => emoji.name)).toEqual(['evilquest']);
+
+    expect(db.replaceForumDiscordEmojis(guildId, [
+      { id: '1508123662153289950', name: 'camel_cape', animated: true, available: true, url: 'https://cdn.discordapp.com/emojis/1508123662153289950.webp?animated=true' },
+    ])).toBe(1);
+
+    const emojis = db.listForumDiscordEmojis();
+    expect(emojis).toHaveLength(1);
+    expect(emojis[0]).toMatchObject({ name: 'camel_cape', animated: true, available: true });
+    db.close();
+  });
+
   test('threads paginate posts and create quote notifications', async () => {
     const db = new GameDatabase(':memory:');
     const alice = db.loginFallbackAccount('aliceforum', 'device-alice-forum');
@@ -144,6 +164,30 @@ describe('forums persistence', () => {
     expect(post?.reactions.heart).toBe(7);
     expect(post?.reactionUsers.heart.names).toEqual(['reactor6', 'reactor5', 'reactor4', 'reactor3', 'reactor2']);
     expect(post?.reactionUsers.heart.others).toBe(2);
+    db.close();
+  });
+
+  test('post reactions support laughing emoji', async () => {
+    const db = new GameDatabase(':memory:');
+    const author = db.loginFallbackAccount('laughauthor', 'device-laugh-author');
+    const reactor = db.loginFallbackAccount('laughreactor', 'device-laugh-reactor');
+    const general = db.listForumCategories().find((category) => category.slug === 'general');
+    expect(general).toBeTruthy();
+    if (!general) return;
+
+    const thread = db.createForumThread(author.accountId, general.id, 'Laugh reaction', 'This deserves a laugh.');
+    expect(thread.ok).toBe(true);
+    if (!thread.ok) return;
+    const firstPost = db.getForumThread('general', thread.thread.slug, reactor.accountId, false)?.posts[0];
+    expect(firstPost).toBeTruthy();
+    if (!firstPost) return;
+
+    const result = db.reactToForumPost(reactor.accountId, firstPost.id, 'laughing');
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.reactions.laughing).toBe(1);
+      expect(result.myReaction).toBe('laughing');
+    }
     db.close();
   });
 });

@@ -25,6 +25,13 @@ type MobKillVisual = {
   customColors?: CustomColors;
 };
 
+type DiscordGuildEmojiPayload = {
+  id?: string | null;
+  name?: string | null;
+  animated?: boolean;
+  available?: boolean;
+};
+
 const MOB_KILL_VISUAL_CACHE_TTL_MS = 30_000;
 const MOB_KILL_EQUIPMENT_SLOT_COUNT = 11;
 let mobKillVisualCache: { expiresAt: number; profiles: Map<number, MobKillVisual> } | null = null;
@@ -1216,6 +1223,17 @@ const DATA_DIR = resolve(import.meta.dir, '../data');
 const FORUM_MEDIA_DIR = resolve(DATA_DIR, 'forum-media');
 const FORUM_AVATAR_DIR = resolve(DATA_DIR, 'forum-avatars');
 const FORUM_AVATAR_BAKE_SECRET = process.env.FORUM_AVATAR_BAKE_SECRET || randomUUID();
+const DEFAULT_DISCORD_GUILD_ID = '1504534632799010816';
+const DISCORD_GUILD_ID = (process.env.DISCORD_GUILD_ID || process.env.LEFT_HAND_DISCORD_GUILD_ID || DEFAULT_DISCORD_GUILD_ID).trim();
+const DISCORD_BOT_TOKEN = (process.env.DISCORD_BOT_TOKEN || process.env.LEFT_HAND_DISCORD_TOKEN || '').trim();
+const DISCORD_EMOJI_SYNC_INTERVAL_MS = (() => {
+  const raw = Number(process.env.DISCORD_EMOJI_SYNC_INTERVAL_MS ?? 15 * 60_000);
+  return Number.isFinite(raw) && raw >= 60_000 ? raw : 15 * 60_000;
+})();
+const DISCORD_EMOJI_SYNC_ENABLED = DISCORD_GUILD_ID.length > 0 && DISCORD_BOT_TOKEN.length > 0;
+if ((DISCORD_GUILD_ID || DISCORD_BOT_TOKEN) && !DISCORD_EMOJI_SYNC_ENABLED) {
+  console.warn('[forums] Discord emoji sync disabled; set both DISCORD_GUILD_ID and DISCORD_BOT_TOKEN');
+}
 const WEBSITE_DEV_ORIGIN = (() => {
   const raw = (process.env.WEBSITE_DEV_ORIGIN || '').trim();
   if (!raw || isProductionLike()) return null;
@@ -1816,6 +1834,58 @@ try {
   console.warn('[world-map] initial snapshot build failed:', e instanceof Error ? e.message : e);
 }
 
+function discordEmojiCdnUrl(id: string, animated: boolean): string {
+  return `https://cdn.discordapp.com/emojis/${id}.webp${animated ? '?animated=true' : ''}`;
+}
+
+async function syncForumDiscordEmojis(reason: string = 'startup'): Promise<void> {
+  if (!DISCORD_EMOJI_SYNC_ENABLED) return;
+  try {
+    const res = await fetch(`https://discord.com/api/v10/guilds/${DISCORD_GUILD_ID}/emojis`, {
+      headers: {
+        Authorization: `Bot ${DISCORD_BOT_TOKEN}`,
+        Accept: 'application/json',
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[forums] Discord emoji sync failed (${reason}): HTTP ${res.status}`);
+      return;
+    }
+
+    const payload = await res.json() as unknown;
+    if (!Array.isArray(payload)) {
+      console.warn(`[forums] Discord emoji sync failed (${reason}): unexpected response`);
+      return;
+    }
+
+    const emojis = payload.flatMap((item: DiscordGuildEmojiPayload) => {
+      const id = typeof item.id === 'string' ? item.id : '';
+      const name = typeof item.name === 'string' ? item.name : '';
+      if (!/^\d{8,32}$/.test(id) || !/^[A-Za-z0-9_]{2,64}$/.test(name)) return [];
+      const animated = item.animated === true;
+      return [{
+        id,
+        name,
+        animated,
+        available: item.available !== false,
+        url: discordEmojiCdnUrl(id, animated),
+      }];
+    });
+    const count = db.replaceForumDiscordEmojis(DISCORD_GUILD_ID, emojis);
+    console.log(`[forums] synced ${count} Discord emoji (${reason})`);
+  } catch (error) {
+    console.warn('[forums] Discord emoji sync failed:', error instanceof Error ? error.message : error);
+  }
+}
+
+function startForumDiscordEmojiSync(): void {
+  if (!DISCORD_EMOJI_SYNC_ENABLED) return;
+  void syncForumDiscordEmojis('startup');
+  setInterval(() => void syncForumDiscordEmojis('interval'), DISCORD_EMOJI_SYNC_INTERVAL_MS);
+}
+
+startForumDiscordEmojiSync();
+
 // --- Admin authorization for editor / dev APIs ---
 // A request is admin-authorized if:
 //   1. It originates from loopback (local dev / SSH-tunneled use), OR
@@ -2189,6 +2259,7 @@ async function handleForumApi(req: Request, srv: { requestIP(req: Request): { ad
       }), 200, { 'Cache-Control': 'no-store' });
     }
     if (resource === 'categories') return jsonResponse({ categories: db.listForumCategories(includeHidden) }, 200, { 'Cache-Control': 'no-store' });
+    if (resource === 'emojis') return jsonResponse({ emojis: db.listForumDiscordEmojis() }, 200, { 'Cache-Control': 'no-store' });
     if (resource === 'category' && parts[0]) {
       return jsonResponse(db.listForumThreads({
         categorySlug: parts[0],

@@ -55,6 +55,10 @@ COPY --from=builder /app/website/dist ./website/dist
 
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+# Non-secret defaults for forum Discord emote sync. The bot token must be
+# provided at runtime via docker-compose/.env, not baked into the image.
+ENV DISCORD_GUILD_ID=1504534632799010816
+ENV DISCORD_EMOJI_SYNC_INTERVAL_MS=900000
 EXPOSE 4000
 WORKDIR /app/data
 CMD ["bun", "/app/server/src/main.ts"]
