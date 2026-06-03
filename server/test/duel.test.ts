@@ -317,8 +317,8 @@ describe('player duel staking and combat validation', () => {
     b.inventory[0] = { itemId: SWORD, quantity: 1 };
     a.health = 7; a.skills.hitpoints.currentLevel = 7;
     b.health = 5; b.skills.hitpoints.currentLevel = 5;
-    const aXpBefore = a.skills.accuracy.xp + a.skills.strength.xp + a.skills.defence.xp + a.skills.hitpoints.xp;
-    const bXpBefore = b.skills.accuracy.xp + b.skills.strength.xp + b.skills.defence.xp + b.skills.hitpoints.xp;
+    const aXpBefore = a.skills.weaponry.xp + a.skills.strength.xp + a.skills.defence.xp + a.skills.hitpoints.xp;
+    const bXpBefore = b.skills.weaponry.xp + b.skills.strength.xp + b.skills.defence.xp + b.skills.hitpoints.xp;
     const { world, saves } = makeHarness(a, b);
     openDuel(world, a, b);
 
@@ -334,8 +334,8 @@ describe('player duel staking and combat validation', () => {
     expect(countItem(b, SWORD)).toBe(0);
     expect(a.health).toBe(7);
     expect(b.health).toBe(5);
-    expect(a.skills.accuracy.xp + a.skills.strength.xp + a.skills.defence.xp + a.skills.hitpoints.xp).toBe(aXpBefore);
-    expect(b.skills.accuracy.xp + b.skills.strength.xp + b.skills.defence.xp + b.skills.hitpoints.xp).toBe(bXpBefore);
+    expect(a.skills.weaponry.xp + a.skills.strength.xp + a.skills.defence.xp + a.skills.hitpoints.xp).toBe(aXpBefore);
+    expect(b.skills.weaponry.xp + b.skills.strength.xp + b.skills.defence.xp + b.skills.hitpoints.xp).toBe(bXpBefore);
     expect(a.openInterface).toBeNull();
     expect(b.openInterface).toBeNull();
     expect(saves).toContain(a.accountId);

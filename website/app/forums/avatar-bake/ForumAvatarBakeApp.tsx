@@ -46,6 +46,13 @@ type AvatarRenderSettings = {
   crop: number;
 };
 
+declare global {
+  interface Window {
+    __forumAvatarBakeDone?: boolean;
+    __forumAvatarBakeResult?: { ok: boolean; baked: number; total: number; errors: string[] };
+  }
+}
+
 const DEFAULT_RENDER_SETTINGS: AvatarRenderSettings = {
   yaw: -0.31,
   elevation: 1.04,
@@ -320,11 +327,13 @@ export function ForumAvatarBakeApp() {
     setRunning(true);
     setLog([]);
     setProgress('Loading targets...');
+    window.__forumAvatarBakeDone = false;
     try {
       const { allTargets, allItems } = await ensureBakeData();
       const targets = onlyMissing ? allTargets.filter((target) => !target.baked) : allTargets;
       append(`Found ${allTargets.length} avatar target(s), baking ${targets.length}.`);
       let done = 0;
+      const errors: string[] = [];
       for (const target of targets) {
         setProgress(`${done + 1} / ${targets.length}: ${target.username}`);
         try {
@@ -332,15 +341,21 @@ export function ForumAvatarBakeApp() {
           await postAvatar(target, dataUrl);
           append(`${target.username}: OK`);
         } catch (error) {
-          append(`${target.username}: ${error instanceof Error ? error.message : String(error)}`);
+          const message = `${target.username}: ${error instanceof Error ? error.message : String(error)}`;
+          errors.push(message);
+          append(message);
         }
         done++;
       }
       setProgress('Done.');
+      window.__forumAvatarBakeResult = { ok: errors.length === 0, baked: targets.length - errors.length, total: targets.length, errors };
     } catch (error) {
       setProgress('Failed.');
-      append(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      append(message);
+      window.__forumAvatarBakeResult = { ok: false, baked: 0, total: 0, errors: [message] };
     } finally {
+      window.__forumAvatarBakeDone = true;
       setRunning(false);
     }
   }

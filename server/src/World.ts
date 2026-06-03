@@ -443,11 +443,16 @@ const GROUND_ITEM_ENTITY_ID_MAX = 32760;
 const DEFAULT_SHOP_RESTOCK_TICKS = 100;
 let nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
 
+export type WorldOptions = {
+  onPlayerAvatarDirty?: (accountId: number, username: string) => void;
+};
+
 export class World {
   readonly maps: Map<string, GameMap> = new Map();
   readonly chunkManagers: Map<string, ServerChunkManager> = new Map();
   readonly data: DataLoader;
   readonly db: GameDatabase;
+  private readonly options: WorldOptions;
   private readonly quests: QuestService;
   readonly players: Map<number, Player> = new Map();
 
@@ -572,8 +577,9 @@ export class World {
     floor: number;
   }[] = [];
 
-  constructor(db: GameDatabase) {
+  constructor(db: GameDatabase, options: WorldOptions = {}) {
     this.db = db;
+    this.options = options;
     this.data = new DataLoader();
     this.quests = new QuestService(this.data, {
       sendToPlayer: (player, opcode, ...values) => this.sendToPlayer(player, opcode, ...values),
@@ -2052,6 +2058,7 @@ export class World {
     this.finalizePlayerLogoutSession(player);
 
     this.savePlayerState(player);
+    this.options.onPlayerAvatarDirty?.(player.accountId, player.name);
     try {
       player.ws.close(1000, closeReason);
     } catch { /* ignore */ }
@@ -4733,7 +4740,7 @@ export class World {
 
     const equipSlot = itemDef.equipSlot as EquipSlot;
     const requiredLevel = itemDef.levelRequired ?? 1;
-    const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'accuracy' : equipSlot === 'ammo' ? undefined : 'defence');
+    const requiredSkill = itemDef.equipSkill ?? (equipSlot === 'weapon' ? 'weaponry' : equipSlot === 'ammo' ? undefined : 'defence');
     if (requiredSkill && requiredLevel > 1 && (player.skills[requiredSkill]?.level ?? 1) < requiredLevel) {
       this.sendChatSystem(player, `You need level ${requiredLevel} ${SKILL_NAMES[requiredSkill] ?? 'skill'} to equip ${itemDef.name}.`);
       return;
@@ -6887,7 +6894,7 @@ export class World {
     const defenceBonuses = defender.computeBonuses(itemDefs);
     const attackStance = STANCE_BONUSES[attacker.stance];
     const defenceStance = STANCE_BONUSES[defender.stance];
-    const effAcc = attacker.skills.accuracy.currentLevel + attackStance.accuracy + 8;
+    const effAcc = attacker.skills.weaponry.currentLevel + attackStance.accuracy + 8;
     const effStr = attacker.skills.strength.currentLevel + attackStance.strength + 8;
     const weaponStyle = attacker.getWeaponStyle(itemDefs);
     let attackBonus = attackBonuses.crushAttack;

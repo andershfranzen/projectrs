@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getAllNewsPosts } from '../../lib/news';
+import { LocalDate } from '../components/LocalDate';
 
 export const metadata: Metadata = {
   title: 'News - EvilQuest',
@@ -29,7 +30,7 @@ export default function NewsPage() {
             {posts.map((post) => (
               <li key={post.slug}>
                 <a href={`/news/${post.slug}`}>{post.title}</a>
-                <time dateTime={post.date}>{post.formattedDate}</time>
+                <LocalDate iso={post.date} fallback={post.formattedDate} />
                 {post.summary ? <p>{post.summary}</p> : null}
               </li>
             ))}

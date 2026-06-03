@@ -2,7 +2,7 @@ import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
 import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, combatLevel, initSkills, isValidAppearance, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, combatLevel, initSkills, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -33,6 +33,8 @@ const FORUM_DEFAULT_CATEGORIES = [
 // moderator sees it; still reversible via moderateForumPost('restore').
 const FORUM_AUTO_HIDE_DISTINCT_REPORTS = 3;
 const FORUM_AVATAR_BAKE_VERSION = 5;
+const FORUM_PROFILE_BIO_LIMIT = 500;
+const FORUM_PROFILE_SIGNATURE_LIMIT = 240;
 
 function forumSlug(raw: string): string {
   return raw
@@ -278,6 +280,7 @@ export interface HiscoreProfileRow {
 
 export interface HiscoreProfileResponse {
   username: string;
+  avatarUrl: string;
   rows: HiscoreProfileRow[];
   monsterKills: HiscoreProfileMonsterKillRow[];
 }
@@ -285,7 +288,9 @@ export interface HiscoreProfileResponse {
 export interface HiscoreProfileMonsterKillRow {
   npcDefId: number;
   name: string;
+  rank: number;
   kills: number;
+  dailyKills: number;
 }
 
 export type SocialListKind = 'friends' | 'ignore';
@@ -332,7 +337,7 @@ export interface ForumThreadSummary {
 export interface ForumPost {
   id: number;
   threadId: number;
-  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean };
+  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; signature: string };
   replyTo: { id: number; author: { accountId: number; username: string }; body: string; createdAt: number } | null;
   body: string;
   createdAt: number;
@@ -369,9 +374,9 @@ export interface ForumProfile {
   username: string;
   createdAt: number;
   avatarUrl: string;
-  bannerUrl: string;
   bio: string;
   title: string;
+  signature: string;
   postCount: number;
   threadCount: number;
   isModerator: boolean;
@@ -1171,6 +1176,17 @@ export class GameDatabase {
       CREATE INDEX IF NOT EXISTS idx_mob_kills_npc
         ON mob_kills(npc_def_id, kills DESC);
     `);
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS mob_kill_snapshots (
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        npc_def_id INTEGER NOT NULL,
+        bucket_start INTEGER NOT NULL,
+        kills INTEGER NOT NULL,
+        PRIMARY KEY (account_id, npc_def_id, bucket_start)
+      );
+      CREATE INDEX IF NOT EXISTS idx_mob_kill_snapshots_npc_bucket
+        ON mob_kill_snapshots(npc_def_id, bucket_start);
+    `);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS forum_categories (
@@ -1233,6 +1249,7 @@ export class GameDatabase {
         banner_media_id INTEGER REFERENCES forum_media(id),
         bio TEXT NOT NULL DEFAULT '',
         title TEXT NOT NULL DEFAULT '',
+        signature TEXT NOT NULL DEFAULT '',
         updated_at INTEGER NOT NULL DEFAULT (unixepoch())
       );
 
@@ -1306,6 +1323,9 @@ export class GameDatabase {
       CREATE INDEX IF NOT EXISTS idx_forum_presence_last_seen
         ON forum_presence(last_seen_at DESC);
     `);
+    try {
+      this.db.exec(`ALTER TABLE forum_profiles ADD COLUMN signature TEXT NOT NULL DEFAULT ''`);
+    } catch { /* column already exists */ }
     try {
       this.db.exec(`ALTER TABLE forum_posts ADD COLUMN reply_to_post_id INTEGER REFERENCES forum_posts(id)`);
     } catch {}
@@ -1894,12 +1914,12 @@ export class GameDatabase {
     try {
       const saved = JSON.parse(row.skills) as Record<string, { xp: number; level: number; currentLevel: number }>;
       skills = initSkills(); // Start with defaults
-      for (const id of ALL_SKILLS) {
-        if (saved[id]) {
-          skills[id].xp = saved[id].xp;
-          skills[id].level = saved[id].level;
-          skills[id].currentLevel = saved[id].currentLevel;
-        }
+      for (const [rawId, skill] of Object.entries(saved)) {
+        const id = normalizeSkillId(rawId);
+        if (!id || !skill) continue;
+        skills[id].xp = skill.xp;
+        skills[id].level = skill.level;
+        skills[id].currentLevel = skill.currentLevel;
       }
     } catch {
       skills = initSkills();
@@ -2138,10 +2158,10 @@ export class GameDatabase {
   private parseHiscoreSkills(rawSkills: string): SkillBlock {
     const skills = initSkills();
     try {
-      const saved = JSON.parse(rawSkills) as Partial<Record<SkillId, Partial<SkillBlock[SkillId]>>>;
-      for (const id of ALL_SKILLS) {
-        const skill = saved[id];
-        if (!skill) continue;
+      const saved = JSON.parse(rawSkills) as Record<string, Partial<SkillBlock[SkillId]>>;
+      for (const [rawId, skill] of Object.entries(saved)) {
+        const id = normalizeSkillId(rawId);
+        if (!id || !skill) continue;
         const xp = typeof skill.xp === 'number' && Number.isFinite(skill.xp) ? Math.max(0, Math.floor(skill.xp)) : skills[id].xp;
         const level = typeof skill.level === 'number' && Number.isFinite(skill.level) ? Math.max(1, Math.floor(skill.level)) : skills[id].level;
         const currentLevel = typeof skill.currentLevel === 'number' && Number.isFinite(skill.currentLevel)
@@ -2153,6 +2173,11 @@ export class GameDatabase {
       // Keep default level-1/10hp skills for corrupted or legacy rows.
     }
     return skills;
+  }
+
+  private normalizeHiscoreCategoryId(categoryId: string): string {
+    if (categoryId === 'overall' || categoryId === 'combat') return categoryId;
+    return normalizeSkillId(categoryId) ?? categoryId;
   }
 
   private loadHiscorePlayers(): HiscorePlayerRecord[] {
@@ -2222,6 +2247,57 @@ export class GameDatabase {
     return ranks;
   }
 
+  private loadDailyMobKillBaselines(accountId: number, cutoff: number): Map<number, number> {
+    const rows = this.db.query(`
+      SELECT mks.npc_def_id, mks.kills
+      FROM mob_kill_snapshots mks
+      JOIN (
+        SELECT npc_def_id, MAX(bucket_start) AS bucket_start
+        FROM mob_kill_snapshots
+        WHERE account_id = ? AND bucket_start <= ?
+        GROUP BY npc_def_id
+      ) latest
+        ON latest.npc_def_id = mks.npc_def_id
+       AND latest.bucket_start = mks.bucket_start
+      WHERE mks.account_id = ?
+    `).all(accountId, cutoff, accountId) as Array<{ npc_def_id: number; kills: number }>;
+    return new Map(rows.map((row) => [row.npc_def_id, row.kills]));
+  }
+
+  private mobKillRank(npcDefId: number, accountId: number): number {
+    const rows = this.db.query(`
+      SELECT mk.account_id, a.username, mk.kills
+      FROM mob_kills mk
+      JOIN accounts a ON a.id = mk.account_id
+      LEFT JOIN account_bans ab
+        ON ab.account_id = a.id
+       AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
+      WHERE mk.npc_def_id = ? AND mk.kills > 0 AND ab.account_id IS NULL
+    `).all(npcDefId) as Array<{ account_id: number; username: string; kills: number }>;
+
+    const rank = rows
+      .filter((row) => !isHiscoreExcludedUsername(row.username))
+      .sort((a, b) => b.kills - a.kills || a.username.localeCompare(b.username))
+      .findIndex((row) => row.account_id === accountId);
+    return rank >= 0 ? rank + 1 : 0;
+  }
+
+  private saveMobKillSnapshot(accountId: number, npcDefId: number, kills: number): void {
+    const now = Math.floor(Date.now() / 1000);
+    const bucketStart = Math.floor(now / 3600) * 3600;
+    this.db.query(`
+      INSERT INTO mob_kill_snapshots (account_id, npc_def_id, bucket_start, kills)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(account_id, npc_def_id, bucket_start) DO UPDATE SET
+        kills = excluded.kills
+    `).run(accountId, npcDefId, bucketStart, kills);
+
+    if (now - this.lastHiscoreSnapshotPruneAt > 6 * 3600) {
+      this.lastHiscoreSnapshotPruneAt = now;
+      this.db.query('DELETE FROM mob_kill_snapshots WHERE bucket_start < ?').run(now - 8 * 24 * 3600);
+    }
+  }
+
   private rankedHiscoreRows(category: HiscoreCategory, players: HiscorePlayerRecord[], cutoff: number): RankedHiscoreRow[] {
     const dailyBaselineXp = this.loadDailyHiscoreBaselines(category.id, cutoff);
     const previousRanks = this.loadPreviousHiscoreRanks(category.id, cutoff);
@@ -2258,7 +2334,8 @@ export class GameDatabase {
   ): HiscoreResponse {
     const players = this.loadHiscorePlayers();
     const categories = this.hiscoreCategories(players);
-    const category = categories.find((c) => c.id === categoryId) ?? categories[0];
+    const requestedCategoryId = this.normalizeHiscoreCategoryId(categoryId);
+    const category = categories.find((c) => c.id === requestedCategoryId) ?? categories[0];
     const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
     const currentPage = Math.max(1, Math.floor(page) || 1);
     const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
@@ -2292,6 +2369,17 @@ export class GameDatabase {
     const categories = this.hiscoreCategories(players);
     const target = players.find((player) => player.username.toLowerCase() === normalizedUsername);
     if (!target) return null;
+    const avatarState = this.db.query(`
+      SELECT ps.appearance, ps.equipment
+      FROM player_state ps
+      WHERE ps.account_id = ?
+    `).get(target.accountId) as { appearance: string | null; equipment: string | null } | null;
+    const avatarUrl = forumAvatarTarget(
+      target.accountId,
+      target.username,
+      avatarState?.appearance ?? null,
+      avatarState?.equipment ?? null,
+    )?.url ?? '';
 
     const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
     const rows = categories.map((category) => {
@@ -2307,6 +2395,7 @@ export class GameDatabase {
       };
     });
     const mobNames = new Map(mobs.map((mob) => [mob.id, mob.name]));
+    const dailyMobBaselines = this.loadDailyMobKillBaselines(target.accountId, cutoff);
     const monsterKills = (this.db.query(`
       SELECT npc_def_id, kills
       FROM mob_kills
@@ -2317,11 +2406,16 @@ export class GameDatabase {
       .map((row) => ({
         npcDefId: row.npc_def_id,
         name: mobNames.get(row.npc_def_id) ?? `NPC ${row.npc_def_id}`,
+        rank: this.mobKillRank(row.npc_def_id, target.accountId),
         kills: row.kills,
+        dailyKills: dailyMobBaselines.has(row.npc_def_id)
+          ? Math.max(0, row.kills - (dailyMobBaselines.get(row.npc_def_id) ?? row.kills))
+          : 0,
       }));
 
     return {
       username: target.username,
+      avatarUrl,
       rows,
       monsterKills,
     };
@@ -2340,6 +2434,9 @@ export class GameDatabase {
         kills = kills + excluded.kills,
         updated_at = unixepoch()
     `).run(accountId, npcDefId, delta);
+    const row = this.db.query('SELECT kills FROM mob_kills WHERE account_id = ? AND npc_def_id = ?')
+      .get(accountId, npcDefId) as { kills: number } | null;
+    if (row) this.saveMobKillSnapshot(accountId, npcDefId, row.kills);
   }
 
   /** Per-mob kill leaderboard. `mobs` is the selectable mob list (id+name)
@@ -2894,7 +2991,7 @@ export class GameDatabase {
     const rows = this.db.query(`
       SELECT p.*, a.username, a.is_admin AS author_is_admin,
         ps.skills AS author_skills, ps.appearance AS author_appearance, ps.equipment AS author_equipment,
-        avatar.url AS author_avatar_url,
+        avatar.url AS author_avatar_url, fp.signature AS author_signature,
         rp.id AS reply_to_id, rp.author_account_id AS reply_to_author_account_id,
         ra.username AS reply_to_author_username, rp.body AS reply_to_body, rp.created_at AS reply_to_created_at
       FROM forum_posts p JOIN accounts a ON a.id = p.author_account_id
@@ -2908,7 +3005,7 @@ export class GameDatabase {
       LIMIT ? OFFSET ?
     `).all(threadId, includeHidden ? 1 : 0, limit, offset) as Array<{
       id: number; thread_id: number; author_account_id: number; username: string; author_is_admin: number;
-      author_skills: string | null; author_appearance: string | null; author_equipment: string | null; author_avatar_url: string | null; body: string;
+      author_skills: string | null; author_appearance: string | null; author_equipment: string | null; author_avatar_url: string | null; author_signature: string | null; body: string;
       created_at: number; updated_at: number; edited_at: number | null; is_hidden: number; is_deleted: number; hidden_reason: string;
       reply_to_id: number | null; reply_to_author_account_id: number | null; reply_to_author_username: string | null; reply_to_body: string | null; reply_to_created_at: number | null;
     }>;
@@ -2947,7 +3044,7 @@ export class GameDatabase {
       return {
       id: row.id,
       threadId: row.thread_id,
-      author: { accountId: row.author_account_id, username: row.username, avatarUrl: avatarTarget?.url ?? row.author_avatar_url ?? '', combatLevel: authorCombatLevel, isAdmin: row.author_is_admin === 1 },
+      author: { accountId: row.author_account_id, username: row.username, avatarUrl: avatarTarget?.url ?? row.author_avatar_url ?? '', combatLevel: authorCombatLevel, isAdmin: row.author_is_admin === 1, signature: row.author_signature ?? '' },
       replyTo: row.reply_to_id == null ? null : {
         id: row.reply_to_id,
         author: { accountId: row.reply_to_author_account_id ?? 0, username: row.reply_to_author_username ?? 'unknown' },
@@ -3297,28 +3394,33 @@ export class GameDatabase {
     return (this.db.query('SELECT COALESCE(SUM(size_bytes), 0) AS n FROM forum_media WHERE account_id = ?').get(accountId) as { n: number }).n;
   }
 
-  updateForumProfile(accountId: number, input: { bio?: string; title?: string; avatarMediaId?: number | null; bannerMediaId?: number | null }): { ok: true } | { ok: false; error: string } {
+  updateForumProfile(accountId: number, input: { bio?: string; title?: string; signature?: string; avatarMediaId?: number | null }): { ok: true } | { ok: false; error: string } {
     // IDOR guard: a profile may only reference media the account itself uploaded.
     // `!= null` skips both `undefined` (field unchanged) and `null` (clearing).
-    for (const mediaId of [input.avatarMediaId, input.bannerMediaId]) {
+    for (const mediaId of [input.avatarMediaId]) {
       if (mediaId != null) {
         const owned = this.db.query('SELECT 1 FROM forum_media WHERE id = ? AND account_id = ?').get(mediaId, accountId);
         if (!owned) return { ok: false, error: 'That image is not in your uploads.' };
       }
     }
-    const existing = this.db.query('SELECT bio, title, avatar_media_id, banner_media_id FROM forum_profiles WHERE account_id = ?')
-      .get(accountId) as { bio: string; title: string; avatar_media_id: number | null; banner_media_id: number | null } | null;
-    const bio = input.bio === undefined ? (existing?.bio ?? '') : input.bio.trim().slice(0, 500);
+    const existing = this.db.query('SELECT bio, title, signature, avatar_media_id, banner_media_id FROM forum_profiles WHERE account_id = ?')
+      .get(accountId) as { bio: string; title: string; signature: string; avatar_media_id: number | null; banner_media_id: number | null } | null;
+    const requestedBio = input.bio === undefined ? undefined : input.bio.trim();
+    const requestedSignature = input.signature === undefined ? undefined : input.signature.trim();
+    if (requestedBio !== undefined && requestedBio.length > FORUM_PROFILE_BIO_LIMIT) return { ok: false, error: `Profile bio must be ${FORUM_PROFILE_BIO_LIMIT} characters or less.` };
+    if (requestedSignature !== undefined && requestedSignature.length > FORUM_PROFILE_SIGNATURE_LIMIT) return { ok: false, error: `Signature must be ${FORUM_PROFILE_SIGNATURE_LIMIT} characters or less.` };
+    const bio = requestedBio === undefined ? (existing?.bio ?? '') : requestedBio;
     const title = input.title === undefined ? (existing?.title ?? '') : input.title.trim().slice(0, 40);
+    const signature = requestedSignature === undefined ? (existing?.signature ?? '') : requestedSignature;
     const avatarMediaId = input.avatarMediaId === undefined ? (existing?.avatar_media_id ?? null) : input.avatarMediaId;
-    const bannerMediaId = input.bannerMediaId === undefined ? (existing?.banner_media_id ?? null) : input.bannerMediaId;
+    const bannerMediaId = existing?.banner_media_id ?? null;
     this.db.query(`
-      INSERT INTO forum_profiles (account_id, bio, title, avatar_media_id, banner_media_id, updated_at)
-      VALUES (?, ?, ?, ?, ?, unixepoch())
+      INSERT INTO forum_profiles (account_id, bio, title, signature, avatar_media_id, banner_media_id, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, unixepoch())
       ON CONFLICT(account_id) DO UPDATE SET
-        bio = excluded.bio, title = excluded.title, avatar_media_id = excluded.avatar_media_id,
+        bio = excluded.bio, title = excluded.title, signature = excluded.signature, avatar_media_id = excluded.avatar_media_id,
         banner_media_id = excluded.banner_media_id, updated_at = unixepoch()
-    `).run(accountId, bio, title, avatarMediaId, bannerMediaId);
+    `).run(accountId, bio, title, signature, avatarMediaId, bannerMediaId);
     return { ok: true };
   }
 
@@ -3326,12 +3428,11 @@ export class GameDatabase {
     const account = this.db.query('SELECT id, username, is_admin, created_at FROM accounts WHERE username = ?').get(username.trim()) as { id: number; username: string; is_admin: number; created_at: number } | null;
     if (!account) return null;
     const profile = this.db.query(`
-      SELECT fp.bio, fp.title, avatar.url AS avatar_url, banner.url AS banner_url
+      SELECT fp.bio, fp.title, fp.signature, avatar.url AS avatar_url
       FROM forum_profiles fp
       LEFT JOIN forum_media avatar ON avatar.id = fp.avatar_media_id
-      LEFT JOIN forum_media banner ON banner.id = fp.banner_media_id
       WHERE fp.account_id = ?
-    `).get(account.id) as { bio: string; title: string; avatar_url: string | null; banner_url: string | null } | null;
+    `).get(account.id) as { bio: string; title: string; signature: string; avatar_url: string | null } | null;
     const postCount = (this.db.query('SELECT COUNT(*) AS n FROM forum_posts WHERE author_account_id = ? AND is_deleted = 0').get(account.id) as { n: number }).n;
     const threadCount = (this.db.query('SELECT COUNT(*) AS n FROM forum_threads WHERE author_account_id = ? AND is_deleted = 0').get(account.id) as { n: number }).n;
     const state = this.loadPlayerState(account.id);
@@ -3356,9 +3457,9 @@ export class GameDatabase {
       username: account.username,
       createdAt: account.created_at,
       avatarUrl: avatarTarget?.url ?? profile?.avatar_url ?? '',
-      bannerUrl: profile?.banner_url ?? '',
       bio: profile?.bio ?? '',
       title: profile?.title ?? '',
+      signature: profile?.signature ?? '',
       postCount,
       threadCount,
       isModerator: this.isForumModerator(account.id, account.is_admin === 1),

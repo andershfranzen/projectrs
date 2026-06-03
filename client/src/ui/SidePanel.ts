@@ -3279,14 +3279,14 @@ export class SidePanel {
   private updateCombatLevel(): void {
     const hp = this.skills.get('hitpoints')?.level || 10;
     const def = this.skills.get('defence')?.level || 1;
-    const acc = this.skills.get('accuracy')?.level || 1;
+    const weaponry = this.skills.get('weaponry')?.level || 1;
     const str = this.skills.get('strength')?.level || 1;
     const arch = this.skills.get('archery')?.level || 1;
     const goodMag = this.skills.get('goodmagic')?.level || 1;
     const evilMag = this.skills.get('evilmagic')?.level || 1;
 
     const base = 0.25 * (def + hp);
-    const melee = 0.325 * (acc + str);
+    const melee = 0.325 * (weaponry + str);
     const range = 0.325 * (Math.floor(arch / 2) + arch);
     const magicLevel = Math.max(goodMag, evilMag);
     const mage = 0.325 * (Math.floor(magicLevel / 2) + magicLevel);

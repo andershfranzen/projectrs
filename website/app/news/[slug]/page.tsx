@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { getAllNewsPosts, getNewsPost } from '../../../lib/news';
+import { LocalDate } from '../../components/LocalDate';
 
 type NewsPostPageProps = {
   params: Promise<{ slug: string }>;
@@ -75,7 +76,7 @@ export default async function NewsPostPage({ params }: NewsPostPageProps) {
 
       <article className="panel news-post">
         <header className="news-post-header">
-          <time dateTime={post.date}>{post.formattedDate}</time>
+          <LocalDate iso={post.date} fallback={post.formattedDate} />
           <h1>{post.title}</h1>
           {post.summary ? <p>{post.summary}</p> : null}
         </header>

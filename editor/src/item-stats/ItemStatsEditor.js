@@ -9,7 +9,7 @@ import {
 } from '@projectrs/shared'
 
 const EQUIP_SLOTS = ['', 'weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape']
-const EQUIP_SKILLS = ['', 'accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']
+const EQUIP_SKILLS = ['', 'weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']
 const WEAPON_STYLES = ['', 'stab', 'slash', 'crush', 'bow', 'crossbow']
 const TOOL_TYPES = ['', 'axe', 'pickaxe']
 const STANCES = ['accurate', 'aggressive', 'defensive', 'controlled']
@@ -73,7 +73,7 @@ function attackBonusFor(item) {
 function weaponDps(item, settings) {
   if (!item?.equippable || item.equipSlot !== 'weapon') return null
   const stance = STANCE_BONUSES[settings.stance] || STANCE_BONUSES.aggressive
-  const effAcc = settings.accuracy + stance.accuracy + 8
+  const effAcc = settings.weaponry + stance.accuracy + 8
   const effStr = settings.strength + stance.strength + 8
   const attackRoll = effAcc * (attackBonusFor(item) + ACC_BASE)
   const defenceRoll = (settings.targetDefence + 8) * ACC_BASE
@@ -121,7 +121,7 @@ export async function openItemStatsEditor(options = {}) {
   let gearOverrides = {}
   let dirty = false
   let dpsSettings = {
-    accuracy: 35,
+    weaponry: 35,
     strength: 35,
     targetDefence: 35,
     targetHp: 40,
@@ -481,7 +481,7 @@ export async function openItemStatsEditor(options = {}) {
     dpsEl.innerHTML = `
       <div class="item-stats-section-title">DPS Calculator</div>
       <div class="item-stats-grid one-col">
-        ${numberSetting('accuracy', 'Accuracy level')}
+        ${numberSetting('weaponry', 'Weaponry level')}
         ${numberSetting('strength', 'Strength level')}
         ${numberSetting('targetDefence', 'Target defence')}
         ${numberSetting('targetHp', 'Target HP')}
@@ -511,7 +511,7 @@ export async function openItemStatsEditor(options = {}) {
         const current = selectedItem()
         if (btn.dataset.preset === 'requirement' && current) {
           const req = current.levelRequired || 1
-          dpsSettings.accuracy = req
+          dpsSettings.weaponry = req
           dpsSettings.strength = req
         }
         if (btn.dataset.preset === 'tierTarget' && current) {
@@ -568,7 +568,7 @@ export async function openItemStatsEditor(options = {}) {
   function dpsAtRequirement(item) {
     const req = item?.levelRequired || 1
     return weaponDps(item, {
-      accuracy: req,
+      weaponry: req,
       strength: req,
       targetDefence: req,
       targetHp: Math.max(10, req + 5),
@@ -716,7 +716,7 @@ export async function openItemStatsEditor(options = {}) {
     selectedId = items.find(i => i.equippable && i.equipSlot === 'weapon')?.id ?? items[0]?.id ?? null
     const selected = selectedItem()
     if (selected?.levelRequired) {
-      dpsSettings.accuracy = selected.levelRequired
+      dpsSettings.weaponry = selected.levelRequired
       dpsSettings.strength = selected.levelRequired
       dpsSettings.targetDefence = selected.levelRequired
     }

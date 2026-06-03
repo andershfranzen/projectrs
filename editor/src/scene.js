@@ -9847,7 +9847,7 @@ function applyToolAtTile(tile, eventLike = null) {
     if (existing) { existing.style.display = 'flex'; return }
 
     const ALL_QUEST_SKILLS = [
-      'accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints',
+      'weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints',
       'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery',
     ]
 

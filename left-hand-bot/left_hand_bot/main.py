@@ -23,7 +23,7 @@ LOGGER = logging.getLogger("left_hand")
 HISCORE_CATEGORY_CHOICES = [
     app_commands.Choice(name="Overall", value="overall"),
     app_commands.Choice(name="Combat", value="combat"),
-    app_commands.Choice(name="Accuracy", value="accuracy"),
+    app_commands.Choice(name="Weaponry", value="weaponry"),
     app_commands.Choice(name="Strength", value="strength"),
     app_commands.Choice(name="Defence", value="defence"),
     app_commands.Choice(name="Hitpoints", value="hitpoints"),

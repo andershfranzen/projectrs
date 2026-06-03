@@ -727,7 +727,7 @@
     "stabAttack": 5,
     "slashAttack": 2,
     "meleeStrength": 3,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 1
   },
   {
@@ -745,7 +745,7 @@
     "stabAttack": 2,
     "slashAttack": 7,
     "meleeStrength": 5,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 1
   },
   {
@@ -762,7 +762,7 @@
     "attackSpeed": 4,
     "crushAttack": 6,
     "meleeStrength": 5,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 1
   },
   {
@@ -779,7 +779,7 @@
     "attackSpeed": 4,
     "slashAttack": 9,
     "meleeStrength": 7,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 1
   },
   {
@@ -797,7 +797,7 @@
     "slashAttack": 6,
     "crushAttack": 12,
     "meleeStrength": 14,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 1
   },
   {
@@ -815,7 +815,7 @@
     "slashAttack": 14,
     "meleeStrength": 24,
     "model": "bronze_2h.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 1
   },
   {
@@ -960,7 +960,7 @@
     "stabAttack": 8,
     "slashAttack": 3,
     "meleeStrength": 5,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 6
   },
   {
@@ -978,7 +978,7 @@
     "stabAttack": 3,
     "slashAttack": 11,
     "meleeStrength": 8,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 6
   },
   {
@@ -995,7 +995,7 @@
     "attackSpeed": 4,
     "crushAttack": 9,
     "meleeStrength": 8,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 6
   },
   {
@@ -1012,7 +1012,7 @@
     "attackSpeed": 4,
     "slashAttack": 14,
     "meleeStrength": 11,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 6
   },
   {
@@ -1030,7 +1030,7 @@
     "slashAttack": 9,
     "crushAttack": 18,
     "meleeStrength": 21,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 6
   },
   {
@@ -1048,7 +1048,7 @@
     "slashAttack": 21,
     "meleeStrength": 36,
     "model": "/assets/equipment/weapon/Iron2hSword.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 6
   },
   {
@@ -1193,7 +1193,7 @@
     "stabAttack": 10,
     "slashAttack": 4,
     "meleeStrength": 6,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 15
   },
   {
@@ -1211,7 +1211,7 @@
     "slashAttack": 14,
     "meleeStrength": 10,
     "model": "/assets/equipment/weapon/SteelSword.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 15
   },
   {
@@ -1228,7 +1228,7 @@
     "crushAttack": 12,
     "meleeStrength": 10,
     "model": "/assets/equipment/weapon/SteelMace.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 15
   },
   {
@@ -1245,7 +1245,7 @@
     "attackSpeed": 4,
     "slashAttack": 18,
     "meleeStrength": 14,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 15
   },
   {
@@ -1263,7 +1263,7 @@
     "slashAttack": 12,
     "crushAttack": 24,
     "meleeStrength": 28,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 15
   },
   {
@@ -1281,7 +1281,7 @@
     "slashAttack": 28,
     "meleeStrength": 48,
     "model": "/assets/equipment/weapon/Steel2hsword.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 15
   },
   {
@@ -1426,7 +1426,7 @@
     "stabAttack": 15,
     "slashAttack": 6,
     "meleeStrength": 9,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 25
   },
   {
@@ -1444,7 +1444,7 @@
     "slashAttack": 21,
     "meleeStrength": 15,
     "model": "/assets/equipment/weapon/MithrilSword.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 25
   },
   {
@@ -1461,7 +1461,7 @@
     "crushAttack": 18,
     "meleeStrength": 15,
     "model": "/assets/equipment/weapon/MithrilMace.glb",
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 25
   },
   {
@@ -1478,7 +1478,7 @@
     "attackSpeed": 4,
     "slashAttack": 27,
     "meleeStrength": 21,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 25
   },
   {
@@ -1549,7 +1549,7 @@
     "stabAttack": 20,
     "slashAttack": 8,
     "meleeStrength": 12,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 35
   },
   {
@@ -1566,7 +1566,7 @@
     "stabAttack": 8,
     "slashAttack": 28,
     "meleeStrength": 20,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 35
   },
   {
@@ -1582,7 +1582,7 @@
     "attackSpeed": 4,
     "crushAttack": 24,
     "meleeStrength": 20,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 35
   },
   {
@@ -1598,7 +1598,7 @@
     "attackSpeed": 4,
     "slashAttack": 36,
     "meleeStrength": 28,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 35
   },
   {
@@ -1615,7 +1615,7 @@
     "slashAttack": 24,
     "crushAttack": 48,
     "meleeStrength": 56,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 35
   },
   {
@@ -1632,7 +1632,7 @@
     "twoHanded": true,
     "slashAttack": 56,
     "meleeStrength": 96,
-    "equipSkill": "accuracy",
+    "equipSkill": "weaponry",
     "levelRequired": 35
   },
   {

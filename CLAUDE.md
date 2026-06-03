@@ -149,7 +149,7 @@ Opcodes in `shared/opcodes.ts`. XP values exceed int16, so skills are sent as `[
 ### Skills
 
 12 skills total. `shared/skills.ts` is canonical:
-- Combat: `accuracy`, `strength`, `defence`, `goodmagic`, `evilmagic`, `archery`, `hitpoints`
+- Combat: `weaponry`, `strength`, `defence`, `goodmagic`, `evilmagic`, `archery`, `hitpoints`
 - Gathering/crafting: `forestry`, `fishing`, `cooking`, `mining`, `smithing`, `crafting`
 
 EvilQuest splits magic into `goodmagic` and `evilmagic`. Use **canonical keys** (`goodmagic`, not `good_magic`) — the latter silently lookup-fails and returns level 1.

@@ -1,10 +1,11 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { PointerEvent } from 'react';
-import { FaBell, FaBold, FaCog, FaEdit, FaExchangeAlt, FaEye, FaEyeSlash, FaFlag, FaGrin, FaHome, FaImage, FaItalic, FaLink, FaListUl, FaLock, FaPen, FaQuoteRight, FaReply, FaShieldAlt, FaThumbtack, FaTrashAlt, FaUnlock, FaUser, FaUsers } from 'react-icons/fa';
+import { FaBell, FaBold, FaCog, FaEdit, FaExchangeAlt, FaEye, FaEyeSlash, FaFlag, FaGrin, FaHome, FaImage, FaItalic, FaLink, FaListUl, FaLock, FaPen, FaQuoteRight, FaReply, FaShieldAlt, FaThumbtack, FaTrashAlt, FaTrophy, FaUnlock, FaUser, FaUsers } from 'react-icons/fa';
 
 const TOKEN_KEY = 'evilquest_token';
+const PROFILE_BIO_LIMIT = 500;
+const PROFILE_SIGNATURE_LIMIT = 240;
 const EMOJI: Record<string, string> = {
   smile: '🙂',
   heart: '❤️',
@@ -52,7 +53,7 @@ type ForumThread = {
 type ForumPost = {
   id: number;
   threadId: number;
-  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean };
+  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; signature: string };
   replyTo: { id: number; author: { accountId: number; username: string }; body: string; createdAt: number } | null;
   body: string;
   createdAt: number;
@@ -86,9 +87,9 @@ type ForumProfile = {
   username: string;
   createdAt: number;
   avatarUrl: string;
-  bannerUrl: string;
   bio: string;
   title: string;
+  signature: string;
   postCount: number;
   threadCount: number;
   isModerator: boolean;
@@ -112,20 +113,6 @@ type ForumReport = {
 };
 type ForumMedia = { id: number; url: string };
 type PendingMediaInsert = { start: number; end: number; alt: string };
-type ProfileMediaKind = 'avatar' | 'banner';
-type ProfileCropDraft = {
-  kind: ProfileMediaKind;
-  file: File;
-  url: string;
-  imageWidth: number;
-  imageHeight: number;
-  targetWidth: number;
-  targetHeight: number;
-  scale: number;
-  minScale: number;
-  x: number;
-  y: number;
-};
 type ForumNotification = {
   id: number;
   type: string;
@@ -162,7 +149,9 @@ async function uploadForumFile(file: File): Promise<ForumMedia> {
 }
 
 function fmt(ts: number): string {
-  return new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(ts * 1000));
+  // `undefined` locale + no timeZone => the viewer's own locale and timezone
+  // (e.g. a Danish browser renders 24h time in Europe/Copenhagen).
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(ts * 1000));
 }
 
 function escapeHtml(raw: string): string {
@@ -280,10 +269,14 @@ function MediaUploadModal({ open, alt, onClose, onInsert }: { open: boolean; alt
   );
 }
 
-function MarkdownEditor({ value, onChange, rows, placeholder }: { value: string; onChange: (value: string) => void; rows: number; placeholder: string }) {
+function MarkdownEditor({ value, onChange, rows, placeholder, maxLength }: { value: string; onChange: (value: string) => void; rows: number; placeholder: string; maxLength?: number }) {
   const [mode, setMode] = useState<'write' | 'preview'>('write');
   const [mediaInsert, setMediaInsert] = useState<PendingMediaInsert | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  function emit(next: string) {
+    onChange(maxLength === undefined ? next : next.slice(0, maxLength));
+  }
 
   function focusSelection(start: number, end: number) {
     requestAnimationFrame(() => {
@@ -298,7 +291,7 @@ function MarkdownEditor({ value, onChange, rows, placeholder }: { value: string;
     const end = textarea?.selectionEnd ?? value.length;
     const selected = value.slice(start, end) || fallback;
     const next = `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`;
-    onChange(next);
+    emit(next);
     focusSelection(start + before.length, start + before.length + selected.length);
   }
 
@@ -310,7 +303,7 @@ function MarkdownEditor({ value, onChange, rows, placeholder }: { value: string;
     const lineStart = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
     const lineEnd = end < value.length && value[end] !== '\n' ? '\n' : '';
     const next = `${value.slice(0, start)}${lineStart}${selected.split('\n').map((line) => `${prefix}${line}`).join('\n')}${lineEnd}${value.slice(end)}`;
-    onChange(next);
+    emit(next);
     focusSelection(start + lineStart.length + prefix.length, start + lineStart.length + prefix.length + selected.length);
   }
 
@@ -331,7 +324,7 @@ function MarkdownEditor({ value, onChange, rows, placeholder }: { value: string;
   function insertMedia(markdown: string) {
     const insert = mediaInsert ?? { start: value.length, end: value.length, alt: 'image' };
     const next = `${value.slice(0, insert.start)}${markdown}${value.slice(insert.end)}`;
-    onChange(next);
+    emit(next);
     setMediaInsert(null);
     focusSelection(insert.start + markdown.length, insert.start + markdown.length);
   }
@@ -352,11 +345,12 @@ function MarkdownEditor({ value, onChange, rows, placeholder }: { value: string;
             <button type="button" title="Link" onClick={insertLink}><FaLink aria-hidden /></button>
             <button type="button" title="Image or upload" onClick={openMediaModal}><FaImage aria-hidden /></button>
           </div>
-          <textarea ref={textareaRef} value={value} rows={rows} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+          <textarea ref={textareaRef} value={value} rows={rows} maxLength={maxLength} placeholder={placeholder} onChange={(event) => emit(event.target.value)} />
         </>
       ) : (
         <div className="forum-post-body preview" dangerouslySetInnerHTML={{ __html: value ? renderMarkdown(value) : '<p class="forum-preview-empty">Nothing to preview yet.</p>' }} />
       )}
+      {maxLength !== undefined ? <div className="forum-markdown-count">{value.length}/{maxLength}</div> : null}
       <MediaUploadModal open={mediaInsert != null} alt={mediaInsert?.alt ?? ''} onClose={() => setMediaInsert(null)} onInsert={insertMedia} />
     </div>
   );
@@ -561,6 +555,9 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
               </div>
             ) : null}
             <div className="forum-post-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(post.body) }} />
+            {post.author.signature ? (
+              <CollapsibleSignature signature={post.author.signature} />
+            ) : null}
           </>
         )}
         <div className="forum-post-actions-row">
@@ -823,7 +820,6 @@ export function ForumsApp() {
 
       {route.view === 'profile' && profile ? (
         <section className="panel forum-panel forum-profile">
-          <div className="forum-profile-banner" style={profile.bannerUrl ? { backgroundImage: `url(${profile.bannerUrl})` } : undefined} />
           <div className="forum-profile-head">
             <ForumAvatarImage
               url={profile.avatarUrl}
@@ -834,9 +830,10 @@ export function ForumsApp() {
             <div>
               <h2><span className={profileNameClass(profile)}>{profile.username}</span> {profile.combatLevel != null ? <span className="forum-profile-combat">Combat Lv. {profile.combatLevel}</span> : null}</h2>
               <p>{profile.title || (profile.isAdmin ? 'Administrator' : profile.isModerator ? 'Moderator' : 'Adventurer')}</p>
+              <a className="forum-profile-hiscores-link" href={`/hiscores?player=${encodeURIComponent(profile.username)}`}><FaTrophy aria-hidden />Hiscores Profile</a>
             </div>
           </div>
-          {profile.bio ? <p>{profile.bio}</p> : null}
+          {profile.bio ? <div className="forum-profile-bio" dangerouslySetInnerHTML={{ __html: renderMarkdown(profile.bio) }} /> : null}
           <div className="forum-profile-stats">
             <span>{profile.threadCount} threads</span>
             <span>{profile.postCount} posts</span>
@@ -942,185 +939,70 @@ function profileNameClass(profile: Pick<ForumProfile, 'isAdmin' | 'isModerator'>
   return undefined;
 }
 
-function ProfileEditor({ profile, onSaved }: { profile: ForumProfile; onSaved: () => void }) {
-  const [bio, setBio] = useState(profile.bio);
-  const [title, setTitle] = useState(profile.title);
-  const [bannerMediaId, setBannerMediaId] = useState<number | undefined>(undefined);
-  const [cropDraft, setCropDraft] = useState<ProfileCropDraft | null>(null);
-  const [uploadStatus, setUploadStatus] = useState('');
-  const bannerRef = useRef<HTMLInputElement>(null);
+function CollapsibleSignature({ signature }: { signature: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const [canCollapse, setCanCollapse] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
 
-  async function openCropper(kind: ProfileMediaKind, file: File | undefined) {
-    if (!file) return;
-    setUploadStatus('');
-    const url = URL.createObjectURL(file);
-    const image = new Image();
-    image.onload = () => {
-      const targetWidth = kind === 'avatar' ? 256 : 1200;
-      const targetHeight = kind === 'avatar' ? 256 : 300;
-      const minScale = Math.max(targetWidth / image.naturalWidth, targetHeight / image.naturalHeight);
-      const scale = minScale;
-      setCropDraft({
-        kind,
-        file,
-        url,
-        imageWidth: image.naturalWidth,
-        imageHeight: image.naturalHeight,
-        targetWidth,
-        targetHeight,
-        scale,
-        minScale,
-        x: (targetWidth - image.naturalWidth * scale) / 2,
-        y: (targetHeight - image.naturalHeight * scale) / 2,
-      });
-    };
-    image.onerror = () => {
-      URL.revokeObjectURL(url);
-      setUploadStatus('That image could not be loaded.');
-    };
-    image.src = url;
-  }
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    setCanCollapse(content.scrollHeight > 86);
+  }, [signature, expanded]);
 
-  async function applyCrop() {
-    if (!cropDraft) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = cropDraft.targetWidth;
-    canvas.height = cropDraft.targetHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const image = new Image();
-    image.onload = async () => {
-      ctx.drawImage(image, cropDraft.x, cropDraft.y, cropDraft.imageWidth * cropDraft.scale, cropDraft.imageHeight * cropDraft.scale);
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/webp', 0.9));
-      if (!blob) {
-        setUploadStatus('Could not prepare that image.');
-        return;
-      }
-      const file = new File([blob], `${cropDraft.kind}.webp`, { type: 'image/webp' });
-      const media = await uploadForumFile(file);
-      setBannerMediaId(media.id);
-      if (bannerRef.current) bannerRef.current.value = '';
-      setUploadStatus('Banner ready.');
-      URL.revokeObjectURL(cropDraft.url);
-      setCropDraft(null);
-    };
-    image.src = cropDraft.url;
-  }
-
-  function closeCropper() {
-    if (cropDraft) URL.revokeObjectURL(cropDraft.url);
-    setCropDraft(null);
-  }
-
-  async function save() {
-    const payload: { bio: string; title: string; bannerMediaId?: number } = { bio, title };
-    if (bannerMediaId !== undefined) payload.bannerMediaId = bannerMediaId;
-    await api('/api/forums/profile', { method: 'POST', body: JSON.stringify(payload) });
-    onSaved();
-  }
   return (
-    <div className="forum-profile-editor">
-      <input value={title} maxLength={40} placeholder="Forum title" onChange={(event) => setTitle(event.target.value)} />
-      <textarea value={bio} maxLength={500} rows={4} placeholder="Profile bio" onChange={(event) => setBio(event.target.value)} />
-      <div className="forum-profile-upload-grid">
-        <div>
-          <button className="forum-profile-upload-button" type="button" onClick={() => bannerRef.current?.click()}>{bannerMediaId ? 'Banner Ready' : 'Upload Banner'}</button>
-          <small>Recommended: wide image, 1200 x 300 or larger.</small>
-          <input ref={bannerRef} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => void openCropper('banner', event.target.files?.[0])} hidden />
-        </div>
-        <div className="forum-profile-auto-avatar-note">
-          <strong>Avatar</strong>
-          <small>Your forum avatar is generated from your saved in-game head and helmet.</small>
-        </div>
-      </div>
-      {uploadStatus ? <p className="forum-profile-upload-status">{uploadStatus}</p> : null}
-      <div className="forum-profile-save-row">
-        <button className="button" type="button" onClick={() => void save()}>Save Profile</button>
-      </div>
-      {cropDraft ? <ProfileCropModal draft={cropDraft} onChange={setCropDraft} onCancel={closeCropper} onApply={() => void applyCrop()} /> : null}
+    <div className={`forum-post-signature${canCollapse ? ' can-collapse' : ''}${expanded ? ' is-expanded' : ''}`}>
+      <div ref={contentRef} className="forum-post-signature-content" dangerouslySetInnerHTML={{ __html: renderMarkdown(signature) }} />
+      {canCollapse ? (
+        <button type="button" className="forum-signature-toggle" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>
+          {expanded ? 'Hide signature' : 'Show signature'}
+        </button>
+      ) : null}
     </div>
   );
 }
 
-function ProfileCropModal({ draft, onChange, onCancel, onApply }: { draft: ProfileCropDraft; onChange: (draft: ProfileCropDraft) => void; onCancel: () => void; onApply: () => void }) {
-  const dragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
-  const displayScale = Math.min(1, 520 / draft.targetWidth);
-  const scaledWidth = draft.imageWidth * draft.scale;
-  const scaledHeight = draft.imageHeight * draft.scale;
+function ProfileEditor({ profile, onSaved }: { profile: ForumProfile; onSaved: () => void }) {
+  const [bio, setBio] = useState(profile.bio);
+  const [title, setTitle] = useState(profile.title);
+  const [signature, setSignature] = useState(profile.signature);
+  const [saveStatus, setSaveStatus] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  function clamp(next: ProfileCropDraft): ProfileCropDraft {
-    const width = next.imageWidth * next.scale;
-    const height = next.imageHeight * next.scale;
-    return {
-      ...next,
-      x: Math.min(0, Math.max(next.targetWidth - width, next.x)),
-      y: Math.min(0, Math.max(next.targetHeight - height, next.y)),
-    };
+  async function save() {
+    if (saving) return;
+    setSaving(true);
+    setSaveStatus('Saving...');
+    setSaveError('');
+    const payload: { bio: string; title: string; signature: string } = { bio, title, signature };
+    try {
+      await api('/api/forums/profile', { method: 'POST', body: JSON.stringify(payload) });
+      setSaveStatus('Profile saved.');
+      onSaved();
+    } catch (error) {
+      setSaveStatus('');
+      setSaveError(error instanceof Error ? error.message : 'Profile could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   }
-
-  function pointerDown(event: PointerEvent<HTMLDivElement>) {
-    dragRef.current = { x: event.clientX, y: event.clientY, startX: draft.x, startY: draft.y };
-    event.currentTarget.setPointerCapture(event.pointerId);
-  }
-
-  function pointerMove(event: PointerEvent<HTMLDivElement>) {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const dx = (event.clientX - drag.x) / displayScale;
-    const dy = (event.clientY - drag.y) / displayScale;
-    onChange(clamp({ ...draft, x: drag.startX + dx, y: drag.startY + dy }));
-  }
-
-  function pointerUp() {
-    dragRef.current = null;
-  }
-
-  function changeScale(value: number) {
-    const nextScale = Math.max(draft.minScale, Number(value));
-    const centerX = draft.targetWidth / 2;
-    const centerY = draft.targetHeight / 2;
-    const ratio = nextScale / draft.scale;
-    onChange(clamp({
-      ...draft,
-      scale: nextScale,
-      x: centerX - (centerX - draft.x) * ratio,
-      y: centerY - (centerY - draft.y) * ratio,
-    }));
-  }
-
   return (
-    <div className="forum-modal-backdrop">
-      <div className="forum-media-modal forum-profile-crop-modal">
-        <h3>{draft.kind === 'avatar' ? 'Crop Avatar' : 'Crop Banner'}</h3>
-        <p>Drag the image to choose the visible section.</p>
-        <div
-          className={`forum-profile-crop-frame ${draft.kind}`}
-          style={{ width: draft.targetWidth * displayScale, height: draft.targetHeight * displayScale }}
-          onPointerDown={pointerDown}
-          onPointerMove={pointerMove}
-          onPointerUp={pointerUp}
-          onPointerCancel={pointerUp}
-        >
-          <img
-            src={draft.url}
-            alt=""
-            draggable={false}
-            style={{
-              width: scaledWidth * displayScale,
-              height: scaledHeight * displayScale,
-              transform: `translate(${draft.x * displayScale}px, ${draft.y * displayScale}px)`,
-            }}
-          />
-        </div>
-        <label className="forum-profile-zoom">
-          Zoom
-          <input type="range" min={draft.minScale} max={draft.minScale * 3} step={0.01} value={draft.scale} onChange={(event) => changeScale(Number(event.target.value))} />
-        </label>
-        <div className="forum-media-actions">
-          <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="button" onClick={onApply}>Use Image</button>
-        </div>
+    <div className="forum-profile-editor">
+      <input value={title} maxLength={40} placeholder="Forum title" onChange={(event) => setTitle(event.target.value)} />
+      <div className="forum-profile-markdown-field">
+        <span>Profile Bio</span>
+        <MarkdownEditor value={bio} onChange={setBio} rows={4} maxLength={PROFILE_BIO_LIMIT} placeholder="Profile bio with Markdown..." />
       </div>
+      <div className="forum-profile-markdown-field">
+        <span>Signature</span>
+        <MarkdownEditor value={signature} onChange={setSignature} rows={4} maxLength={PROFILE_SIGNATURE_LIMIT} placeholder="Forum signature with Markdown..." />
+      </div>
+      <div className="forum-profile-save-row">
+        <button className="button" type="button" disabled={saving} onClick={() => void save()}>{saving ? 'Saving...' : 'Save Profile'}</button>
+      </div>
+      {saveStatus ? <p className="forum-profile-save-status" role="status">{saveStatus}</p> : null}
+      {saveError ? <p className="forum-profile-save-error" role="alert">{saveError}</p> : null}
     </div>
   );
 }

@@ -529,7 +529,7 @@ async function saveJsonWithBackup(opts: {
 }
 
 const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
-const EQUIP_SKILLS = new Set(['accuracy', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
+const EQUIP_SKILLS = new Set(['weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
 const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
 const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);
@@ -1206,9 +1206,10 @@ import {
   type ChatSocketData,
 } from './network/ChatSocket';
 
-const CLIENT_DIST = resolve(import.meta.dir, '../../client/dist');
-const WEBSITE_DIST = resolve(import.meta.dir, '../../website/dist');
-const WEBSITE_PUBLIC = resolve(import.meta.dir, '../../website/public');
+const ROOT_DIR = resolve(import.meta.dir, '../..');
+const CLIENT_DIST = resolve(ROOT_DIR, 'client/dist');
+const WEBSITE_DIST = resolve(ROOT_DIR, 'website/dist');
+const WEBSITE_PUBLIC = resolve(ROOT_DIR, 'website/public');
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
 const FORUM_MEDIA_DIR = resolve(DATA_DIR, 'forum-media');
@@ -1761,7 +1762,9 @@ if (!ALLOW_EMPTY_DEV_DB && !db.isAdminUsername(REQUIRED_ADMIN_USERNAME)) {
     `Set PROJECTRS_DB_PATH to the populated database, restore the DB backup, or set ALLOW_EMPTY_DEV_DB=1 for intentional fresh-db work.`
   );
 }
-const world = new World(db);
+const world = new World(db, {
+  onPlayerAvatarDirty: (_accountId, username) => scheduleForumAvatarBake(`logout:${username}`),
+});
 world.start();
 try {
   getWorldMapSnapshot(world);
@@ -1943,16 +1946,62 @@ function isForumStaff(session: NonNullable<ReturnType<typeof getBoundBearerSessi
   return db.isForumModerator(session.accountId, session.isAdmin);
 }
 
+let forumAvatarBakeTimer: ReturnType<typeof setTimeout> | null = null;
+let forumAvatarBakeRunning = false;
+let forumAvatarBakeQueuedReason = '';
+
+function scheduleForumAvatarBake(reason: string, delayMs = 2_000): void {
+  if (process.env.FORUM_AVATAR_AUTO_BAKE === '0') return;
+  forumAvatarBakeQueuedReason = forumAvatarBakeQueuedReason ? `${forumAvatarBakeQueuedReason},${reason}` : reason;
+  if (forumAvatarBakeTimer) clearTimeout(forumAvatarBakeTimer);
+  forumAvatarBakeTimer = setTimeout(() => {
+    forumAvatarBakeTimer = null;
+    void runForumAvatarBake(forumAvatarBakeQueuedReason || reason);
+    forumAvatarBakeQueuedReason = '';
+  }, delayMs);
+}
+
+async function logForumAvatarBakeStream(stream: ReadableStream<Uint8Array> | null, label: string): Promise<void> {
+  if (!stream) return;
+  const decoder = new TextDecoder();
+  for await (const chunk of stream) {
+    const text = decoder.decode(chunk).trimEnd();
+    if (text) console.log(`[forum-avatar-bake:${label}] ${text}`);
+  }
+}
+
+async function runForumAvatarBake(reason: string): Promise<void> {
+  if (forumAvatarBakeRunning) {
+    forumAvatarBakeQueuedReason = forumAvatarBakeQueuedReason ? `${forumAvatarBakeQueuedReason},${reason}` : reason;
+    return;
+  }
+  forumAvatarBakeRunning = true;
+  try {
+    console.log(`[forum-avatar-bake] scheduling missing avatar bake (${reason})`);
+    const proc = Bun.spawn(['bun', 'scripts/bake-forum-avatars.ts', '--origin', `http://localhost:${SERVER_PORT}`], {
+      cwd: ROOT_DIR,
+      stdout: 'pipe',
+      stderr: 'pipe',
+      env: process.env,
+    });
+    void logForumAvatarBakeStream(proc.stdout, 'out');
+    void logForumAvatarBakeStream(proc.stderr, 'err');
+    const code = await proc.exited;
+    if (code !== 0) console.warn(`[forum-avatar-bake] exited with code ${code}`);
+  } catch (error) {
+    console.warn(`[forum-avatar-bake] could not start: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    forumAvatarBakeRunning = false;
+    if (forumAvatarBakeQueuedReason) scheduleForumAvatarBake(forumAvatarBakeQueuedReason, 1_000);
+  }
+}
+
 function forumAuthError(): Response {
   return jsonResponse({ ok: false, error: 'Sign in to use the forums.' }, 401, { 'Cache-Control': 'no-store' });
 }
 
 function forumForbidden(): Response {
   return jsonResponse({ ok: false, error: 'Forum moderator permission required.' }, 403, { 'Cache-Control': 'no-store' });
-}
-
-function forumAdminOnly(): Response {
-  return jsonResponse({ ok: false, error: 'Forums are currently admin-only.' }, 403, { 'Cache-Control': 'no-store' });
 }
 
 async function readForumJson(req: Request): Promise<Record<string, unknown> | null> {
@@ -2056,7 +2105,6 @@ async function handleForumApi(req: Request, srv: { requestIP(req: Request): { ad
   const [resource, ...parts] = rawParts;
   const maybeSession = getForumSession(req, srv);
   if (!maybeSession) return forumAuthError();
-  if (!maybeSession.isAdmin) return forumAdminOnly();
   const includeHidden = maybeSession ? isForumStaff(maybeSession) : false;
   const ip = requestClientIp(req, srv);
 
@@ -2170,12 +2218,11 @@ async function handleForumApi(req: Request, srv: { requestIP(req: Request): { ad
   if (resource === 'profile') {
     if (!forumRateLimit(forumProfileAttempts, session, ip, 10, 60 * 60 * 1000)) return jsonResponse({ ok: false, error: 'Too many profile updates. Try later.' }, 429);
     const hasAvatarMediaId = Object.prototype.hasOwnProperty.call(body, 'avatarMediaId');
-    const hasBannerMediaId = Object.prototype.hasOwnProperty.call(body, 'bannerMediaId');
     const result = db.updateForumProfile(session.accountId, {
       bio: body.bio === undefined ? undefined : String(body.bio),
       title: body.title === undefined ? undefined : String(body.title),
+      signature: body.signature === undefined ? undefined : String(body.signature),
       avatarMediaId: hasAvatarMediaId ? (body.avatarMediaId == null ? null : Math.floor(Number(body.avatarMediaId))) : undefined,
-      bannerMediaId: hasBannerMediaId ? (body.bannerMediaId == null ? null : Math.floor(Number(body.bannerMediaId))) : undefined,
     });
     return jsonResponse(result, result.ok ? 200 : 400);
   }
@@ -4140,3 +4187,4 @@ if (WEBSITE_DEV_ORIGIN) {
   console.log(`Website dev proxy: http://localhost:${server.port} -> ${WEBSITE_DEV_ORIGIN}`);
 }
 console.log(`World tick rate: ${600}ms — ${world.players.size} players online`);
+scheduleForumAvatarBake('startup', 3_000);

@@ -249,7 +249,7 @@ for (const tier of TIERS) {
       description: `${tier.name} ${st.type.toLowerCase()}.`,
       stackable: false, equippable: true,
       equipSlot: st.equipSlot,
-      equipSkill: st.equipSlot === "weapon" ? "accuracy" : "defence",
+      equipSkill: st.equipSlot === "weapon" ? "weaponry" : "defence",
       levelRequired: tier.equipLevel,
       value: Math.round(tier.barValue * st.bars * 1.5),
       icon: ICON_MAP[tier.name]?.[st.type],

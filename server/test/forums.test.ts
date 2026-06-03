@@ -110,7 +110,7 @@ describe('forum spam and security hardening', () => {
     const attacker = db.loginFallbackAccount('mediaattacker', 'device-media-attacker');
     const media = db.saveForumMedia(owner.accountId, '/tmp/x.png', '/forum-media/1/x.png', 'image', 'image/png', 'x.png', 100);
 
-    const result = db.updateForumProfile(attacker.accountId, { bannerMediaId: media.id });
+    const result = db.updateForumProfile(attacker.accountId, { avatarMediaId: media.id });
     expect(result.ok).toBe(false);
     db.close();
   });
@@ -120,7 +120,7 @@ describe('forum spam and security hardening', () => {
     const owner = db.loginFallbackAccount('mediaowner2', 'device-media-owner2');
     const media = db.saveForumMedia(owner.accountId, '/tmp/y.png', '/forum-media/1/y.png', 'image', 'image/png', 'y.png', 100);
 
-    const result = db.updateForumProfile(owner.accountId, { bannerMediaId: media.id });
+    const result = db.updateForumProfile(owner.accountId, { avatarMediaId: media.id });
     expect(result.ok).toBe(true);
     db.close();
   });

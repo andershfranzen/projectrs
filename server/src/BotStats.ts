@@ -76,7 +76,7 @@ interface SuspiciousPacketClassCounts {
  *  ceilings (faster than a human could plausibly grind), not "expected"
  *  rates. */
 const XP_PER_HOUR_CEILING: Record<SkillId, number> = {
-  accuracy: 120000,
+  weaponry: 120000,
   strength: 120000,
   defence: 120000,
   hitpoints: 40000,

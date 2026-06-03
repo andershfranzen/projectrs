@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ALL_SKILLS, SKILL_NAMES, type QuestDef, type SkillId } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, normalizeSkillId, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 import type { SocialEntry, SocialListKind, SocialLists } from '../Database';
 import type { Player } from '../entity/Player';
@@ -28,6 +28,8 @@ const ignoredAccountIdsByAccountId: Map<number, Set<number>> = new Map();
 function parseSkillId(raw: string): SkillId | null {
   const normalized = raw.toLowerCase().replace(/[\s_-]+/g, '');
   if (normalized === 'ranging') return 'archery';
+  const legacy = normalizeSkillId(normalized);
+  if (legacy) return legacy;
   for (const skill of ALL_SKILLS) {
     if (skill.toLowerCase() === raw.toLowerCase() || SKILL_NAMES[skill].toLowerCase().replace(/[\s_-]+/g, '') === normalized) {
       return skill;

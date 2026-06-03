@@ -30,6 +30,30 @@ function miningSkills(level: number): SkillBlock {
 }
 
 describe('hiscores exclusions', () => {
+  test('maps legacy accuracy saves and hiscore categories to weaponry', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const account = db.loginFallbackAccount('LegacyFighter');
+      const legacyXp = xpForLevel(20);
+      (db as any).db.query('UPDATE player_state SET skills = ? WHERE account_id = ?')
+        .run(JSON.stringify({
+          accuracy: { level: 20, currentLevel: 19, xp: legacyXp },
+        }), account.accountId);
+
+      const state = db.loadPlayerState(account.accountId);
+      expect(state?.skills.weaponry.level).toBe(20);
+      expect(state?.skills.weaponry.currentLevel).toBe(19);
+      expect(state?.skills.weaponry.xp).toBe(legacyXp);
+
+      const hiscores = db.getHiscores('accuracy');
+      expect(hiscores.category.id).toBe('weaponry');
+      expect(hiscores.category.name).toBe('Weaponry');
+      expect(hiscores.rows[0]?.username).toBe('legacyfighter');
+    } finally {
+      db.close();
+    }
+  });
+
   test('omits the anti-bot testing account from public rankings and profiles', () => {
     const db = new GameDatabase(':memory:');
     try {

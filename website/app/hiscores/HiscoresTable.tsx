@@ -39,6 +39,7 @@ type HiscoreProfileRow = {
 
 type HiscoreProfileResponse = {
   username: string;
+  avatarUrl: string;
   rows: HiscoreProfileRow[];
   monsterKills: HiscoreProfileMonsterKillRow[];
 };
@@ -46,7 +47,9 @@ type HiscoreProfileResponse = {
 type HiscoreProfileMonsterKillRow = {
   npcDefId: number;
   name: string;
+  rank: number;
   kills: number;
+  dailyKills: number;
 };
 
 // Mob-kill leaderboard shapes — mirror server/src/Database.ts (MobKillResponse).
@@ -85,6 +88,7 @@ type SortState<T extends string> = {
 type MainSortKey = 'rank' | 'username' | 'level' | 'xp' | 'dailyXp';
 type KillSortKey = 'rank' | 'username' | 'kills';
 type ProfileSortKey = 'category' | 'rank' | 'level' | 'xp' | 'dailyXp';
+type ProfileMonsterSortKey = 'rank' | 'name' | 'kills' | 'dailyKills';
 
 const fallbackCategories: HiscoreCategory[] = [
   { id: 'overall', name: 'Overall', hasXp: true },
@@ -186,6 +190,7 @@ export function HiscoresTable() {
   const [mainSort, setMainSort] = useState<SortState<MainSortKey>>({ key: 'rank', direction: 'asc' });
   const [killSort, setKillSort] = useState<SortState<KillSortKey>>({ key: 'rank', direction: 'asc' });
   const [profileSort, setProfileSort] = useState<SortState<ProfileSortKey>>({ key: 'category', direction: 'asc' });
+  const [profileMonsterSort, setProfileMonsterSort] = useState<SortState<ProfileMonsterSortKey>>({ key: 'kills', direction: 'desc' });
 
   const isKillsMode = selected === 'mobkills';
 
@@ -385,9 +390,26 @@ export function HiscoresTable() {
     if (profileSort.key === 'category') return compareText(a.category.name, b.category.name);
     return a[profileSort.key] - b[profileSort.key];
   }, profileSort.direction), [profileSkillRows, profileSort]);
+  const sortedProfileMonsterRows = useMemo(() => sortRows(profile?.monsterKills ?? [], (a, b) => {
+    if (profileMonsterSort.key === 'name') return compareText(a.name, b.name);
+    return a[profileMonsterSort.key] - b[profileMonsterSort.key];
+  }, profileMonsterSort.direction), [profile?.monsterKills, profileMonsterSort]);
 
   const selectCategory = (categoryId: string) => {
     setSelected(categoryId);
+    setPage(1);
+    setSelectedPlayer('');
+    setProfile(null);
+    setProfileError('');
+  };
+
+  const selectProfileCategory = (categoryId: string) => {
+    selectCategory(categoryId);
+  };
+
+  const selectProfileMonster = (npcDefId: number) => {
+    setSelected('mobkills');
+    setSelectedMob(String(npcDefId));
     setPage(1);
     setSelectedPlayer('');
     setProfile(null);
@@ -458,14 +480,21 @@ export function HiscoresTable() {
           {selectedPlayer ? (
             <section className="player-profile" aria-label={`${selectedPlayer} hiscore profile`}>
               <div className="player-profile-heading">
-                <div>
-                  <span>Player Profile</span>
-                  <h2>
-                    {profile?.username ?? selectedPlayer}
-                    {profileCombatLevel != null ? (
-                      <span className="combat-level-badge">Combat Lv. {formatNumber.format(profileCombatLevel)}</span>
-                    ) : null}
-                  </h2>
+                <div className="player-profile-title-row">
+                  {profile?.avatarUrl ? (
+                    <img className="hiscores-profile-avatar" src={profile.avatarUrl} alt={`${profile.username} avatar`} />
+                  ) : (
+                    <div className="hiscores-profile-avatar empty" aria-hidden="true">?</div>
+                  )}
+                  <div>
+                    <span>Player Profile</span>
+                    <h2>
+                      {profile?.username ?? selectedPlayer}
+                      {profileCombatLevel != null ? (
+                        <span className="combat-level-badge">Combat Lv. {formatNumber.format(profileCombatLevel)}</span>
+                      ) : null}
+                    </h2>
+                  </div>
                 </div>
                 <button type="button" onClick={closeProfile}>Close</button>
               </div>
@@ -479,8 +508,8 @@ export function HiscoresTable() {
                     <table className="hiscores-table profile-table">
                       <thead>
                         <tr>
-                          <SortHeader label="Skill" sortKey="category" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
                           <SortHeader label="Rank" sortKey="rank" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} className="rank-column" />
+                          <SortHeader label="Skill" sortKey="category" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
                           <SortHeader label="Level" sortKey="level" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
                           <SortHeader label="XP" sortKey="xp" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
                           <SortHeader label="Daily XP" sortKey="dailyXp" sort={profileSort} onSort={(key) => setProfileSort((current) => nextSort(current, key))} />
@@ -489,8 +518,16 @@ export function HiscoresTable() {
                       <tbody>
                         {sortedProfileRows.map((row) => (
                           <tr key={row.category.id}>
-                            <td>{row.category.name}</td>
                             <td className="rank-column"><RankCell rank={row.rank} rankChange={row.rankChange} /></td>
+                            <td>
+                              <button
+                                type="button"
+                                className="player-link"
+                                onClick={() => selectProfileCategory(row.category.id)}
+                              >
+                                {row.category.name}
+                              </button>
+                            </td>
                             <td>{formatNumber.format(row.level)}</td>
                             <td>{formatNumber.format(row.xp)}</td>
                             <td className="daily-xp">{row.dailyXp > 0 ? `+${formatNumber.format(row.dailyXp)}` : '-'}</td>
@@ -507,15 +544,27 @@ export function HiscoresTable() {
                         <table className="hiscores-table profile-monster-table">
                           <thead>
                             <tr>
-                              <th scope="col">Monster</th>
-                              <th scope="col">Kills</th>
+                              <SortHeader label="Rank" sortKey="rank" sort={profileMonsterSort} onSort={(key) => setProfileMonsterSort((current) => nextSort(current, key))} className="rank-column" />
+                              <SortHeader label="Monster" sortKey="name" sort={profileMonsterSort} onSort={(key) => setProfileMonsterSort((current) => nextSort(current, key))} />
+                              <SortHeader label="Kills" sortKey="kills" sort={profileMonsterSort} onSort={(key) => setProfileMonsterSort((current) => nextSort(current, key))} />
+                              <SortHeader label="Daily Change" sortKey="dailyKills" sort={profileMonsterSort} onSort={(key) => setProfileMonsterSort((current) => nextSort(current, key))} />
                             </tr>
                           </thead>
                           <tbody>
-                            {profile.monsterKills.map((row) => (
+                            {sortedProfileMonsterRows.map((row) => (
                               <tr key={row.npcDefId}>
-                                <td>{row.name}</td>
+                                <td className="rank-column">{row.rank > 0 ? formatNumber.format(row.rank) : '-'}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="player-link"
+                                    onClick={() => selectProfileMonster(row.npcDefId)}
+                                  >
+                                    {row.name}
+                                  </button>
+                                </td>
                                 <td>{formatNumber.format(row.kills)}</td>
+                                <td className="daily-xp">{row.dailyKills > 0 ? `+${formatNumber.format(row.dailyKills)}` : '-'}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -587,7 +636,15 @@ export function HiscoresTable() {
                           {sortedKillRows.map((row) => (
                             <tr key={`${row.rank}-${row.username}`}>
                               <td className="rank-column">{row.rank}</td>
-                              <td>{row.username}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="player-link"
+                                  onClick={() => setSelectedPlayer(row.username)}
+                                >
+                                  {row.username}
+                                </button>
+                              </td>
                               <td>{formatNumber.format(row.kills)}</td>
                             </tr>
                           ))}
