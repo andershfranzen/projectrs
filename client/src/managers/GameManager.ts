@@ -25,6 +25,7 @@ import '@babylonjs/loaders/glTF';
 import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
+import { PER_TARGET_GEAR_SLOTS, buildCharacterGearDef, disposeImportedGearResult, loadCharacterGearSmart, resolveCharacterGearModelFile } from '../rendering/CharacterGearLoader';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { ArrowProjectileManager, arrowProjectileTravelMs } from '../rendering/ArrowProjectile';
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
@@ -55,7 +56,7 @@ import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
-import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
+import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
 import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
@@ -66,6 +67,7 @@ const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_LOCKED_CLIENT: readonly string[] = ['Unlock', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
+const GEAR_DEBUG_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
 const ENTITY_RENDER_PADDING_TILES = 8;
@@ -78,8 +80,6 @@ const TERMINAL_CLOSE_REASONS = new Set([
   'Logged in from another session',
   'Account is still in combat',
 ]);
-const GEAR_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
-const PER_TARGET_GEAR_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet']);
 const RECIPE_INPUT_NOUN_BY_CATEGORY: Readonly<Record<string, string>> = {
   furnace: 'ore',
   cookingrange: 'food',
@@ -87,7 +87,7 @@ const RECIPE_INPUT_NOUN_BY_CATEGORY: Readonly<Record<string, string>> = {
 const NO_INTERACTION_ACTIONS: readonly string[] = [];
 
 function devCacheBustGearFile(file: string): string {
-  return GEAR_CACHE_BUST_TOKEN ? `${file}${GEAR_CACHE_BUST_TOKEN}` : file;
+  return GEAR_DEBUG_CACHE_BUST_TOKEN ? `${file}${GEAR_DEBUG_CACHE_BUST_TOKEN}` : file;
 }
 
 function recipePanelSkillFor(def: WorldObjectDef): SkillId {
@@ -2212,17 +2212,7 @@ export class GameManager {
     const itemDef = this.itemDefsCache.get(itemId);
     const rawOverride = this.gearOverrides.get(itemId);
     const bodyType = this.getCharacterBodyType(character);
-    const bodyOverrideFile = bodyType > 0
-      ? rawOverride?.bodyTypeOverrides?.[String(bodyType)]?.file
-      : undefined;
-    if (bodyOverrideFile) return bodyOverrideFile;
-
-    if (bodyType > 0 && itemDef?.bodyTypeModels?.[String(bodyType)]) {
-      return resolveEquipmentModelPath(itemDef, bodyType, slotName);
-    }
-
-    if (rawOverride?.file) return rawOverride.file;
-    return resolveEquipmentModelPath(itemDef, bodyType, slotName);
+    return resolveCharacterGearModelFile(itemDef, rawOverride, bodyType, slotName);
   }
 
   private async saveGearOverridesToServer(): Promise<void> {
@@ -2352,20 +2342,13 @@ export class GameManager {
       // gearOverrides is a shared rigging file; body type 0 uses the root fit,
       // while other body types can override only the fields they need.
       const itemDef = this.itemDefsCache.get(itemId);
-      const override = this.getGearOverrideForCharacter(itemId, target);
-      const gearFile = this.getGearModelFileForCharacter(itemId, slotName, target);
-      if (!gearFile) return null;
-      return {
+      return buildCharacterGearDef(
         itemId,
-        file: gearFile,
-        boneName: override?.boneName ?? boneConfig.boneName,
-        localPosition: override?.localPosition ?? boneConfig.localPosition,
-        localRotation: override?.localRotation ?? boneConfig.localRotation,
-        scale: override?.scale ?? boneConfig.scale,
-        centerOrigin: override?.centerOrigin ?? false,
-        metalColor: TOOL_TIER_METAL_COLOR[itemId],
-        headRenderMode: itemDef?.headRenderMode,
-      };
+        slotName,
+        itemDef,
+        this.gearOverrides.get(itemId),
+        this.getCharacterBodyType(target),
+      )?.def ?? null;
     };
 
     // Slot names whose loaded GLB binds to a specific skeleton — these CAN'T
@@ -2445,9 +2428,7 @@ export class GameManager {
     skeletons?: { dispose: () => void }[];
     animationGroups?: { dispose: () => void }[];
   }): void {
-    for (const group of result.animationGroups ?? []) group.dispose();
-    for (const skeleton of result.skeletons ?? []) skeleton.dispose();
-    for (const mesh of result.meshes ?? []) mesh.dispose();
+    disposeImportedGearResult(result);
   }
 
   private async loadGearSmart(
@@ -2458,224 +2439,16 @@ export class GameManager {
     isCurrentApply?: GearApplyGuard,
   ): Promise<GearTemplate | null> {
     const character = target ?? this.localPlayer;
-    try {
-      const lastSlash = def.file.lastIndexOf('/');
-      const dir = def.file.substring(0, lastSlash + 1);
-      const file = devCacheBustGearFile(def.file.substring(lastSlash + 1));
-      const result = await SceneLoader.ImportMeshAsync('', dir, file, this.scene);
-      if (isCurrentApply && !isCurrentApply()) {
-        this.disposeImportedGearResult(result);
-        return null;
-      }
-
-      // Fallback: if Babylon's glTF loader didn't attach a skeleton (rare —
-      // some Blender-exported GLBs trip the skin auto-detection), re-parse the
-      // GLB ourselves and graft the JOINTS_0/WEIGHTS_0 attributes onto the
-      // imported meshes for slots that need skinning. attachSkinnedArmor's
-      // name-based bone remap then handles the bind to our character skeleton.
-      const SKINNED_SLOTS: ReadonlySet<string> = new Set(['body', 'legs', 'hands', 'feet']);
-      const bodyHideStyle: 'plate' | 'chain' =
-        this.itemDefsCache.get(itemId)?.bodyHideStyle === 'chain' ? 'chain' : 'plate';
-      if (
-        result.skeletons.length === 0 &&
-        SKINNED_SLOTS.has(slotName) &&
-        character
-      ) {
-        const ok = await character.attachManualSkinnedArmor(slotName, def.file, result.meshes, itemId, bodyHideStyle, isCurrentApply);
-        if (isCurrentApply && !isCurrentApply()) {
-          this.disposeImportedGearResult(result);
-          return null;
-        }
-        if (ok) {
-          const loaderRoot = result.meshes.find(m => m.name === '__root__');
-          if (loaderRoot) loaderRoot.dispose();
-          const override = this.getGearOverrideForCharacter(itemId, character);
-          if (override) {
-            character.applySkinnedArmorTransform(slotName, override);
-          }
-          return null;
-        }
-      }
-
-      if (result.skeletons.length > 0 && character) {
-        if (isCurrentApply && !isCurrentApply()) {
-          this.disposeImportedGearResult(result);
-          return null;
-        }
-        // Convert PBR → flat for all skinned armor meshes
-        for (const mesh of result.meshes) {
-          const pbrMat = mesh.material as any;
-          if (!pbrMat || !pbrMat.getClassName || pbrMat.getClassName() !== 'PBRMaterial') continue;
-          const flat = new StandardMaterial(`${pbrMat.name}_flat`, this.scene);
-          if (pbrMat.albedoTexture) flat.diffuseTexture = pbrMat.albedoTexture;
-          if (pbrMat.albedoColor) {
-            const b = 1.3;
-            flat.diffuseColor = new Color3(
-              Math.min(1, pbrMat.albedoColor.r * b),
-              Math.min(1, pbrMat.albedoColor.g * b),
-              Math.min(1, pbrMat.albedoColor.b * b),
-            );
-          }
-          flat.specularColor = Color3.Black();
-          const dc = flat.diffuseColor;
-          flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55);
-          flat.backFaceCulling = pbrMat.backFaceCulling ?? true;
-          mesh.material = flat;
-        }
-
-        // Head slot: bone-parent to Head bone instead of skinned attachment.
-        // Helmets are rigid — skinned rendering causes drift vs the head mesh.
-        if (slotName === 'head') {
-          // Get the Head bone's bind-pose position from the armor skeleton's IBM
-          // so we can offset the mesh vertices to bone-local space.
-          const armorSkel = result.skeletons[0];
-          const headBone = armorSkel.bones.find(b => b.name === 'mixamorig:Head');
-          let headBindY = 0;
-          if (headBone) {
-            const tn = headBone.getTransformNode();
-            if (tn) {
-              tn.computeWorldMatrix(true);
-              headBindY = tn.absolutePosition.y;
-            }
-          }
-          for (const sk of result.skeletons) sk.dispose();
-          for (const mesh of result.meshes) mesh.skeleton = null;
-          def.boneName = 'mixamorig:Head';
-          def.centerOrigin = true;
-          // Shift mesh children so the head-height vertices sit at bone origin
-          const tmpl = this.buildGearTemplateFromResult(result, def);
-          if (isCurrentApply && !isCurrentApply()) {
-            tmpl.template.dispose();
-            return null;
-          }
-          for (const child of tmpl.template.getChildren()) {
-            (child as TransformNode).position.y -= headBindY;
-          }
-          return tmpl;
-        }
-
-        character.detachGear(slotName);
-
-        if (isCurrentApply && !isCurrentApply()) {
-          this.disposeImportedGearResult(result);
-          return null;
-        }
-        character.attachSkinnedArmor(slotName, result.meshes, result.skeletons[0], itemId, bodyHideStyle);
-        const loaderRoot = result.meshes.find(m => m.name === '__root__');
-        if (loaderRoot) loaderRoot.dispose();
-
-        // Apply saved override transforms for fine-tuning fit.
-        const override = this.getGearOverrideForCharacter(itemId, character);
-        if (override) {
-          character.applySkinnedArmorTransform(slotName, override);
-        }
-        return null;
-      }
-
-      // Non-skinned — build GearTemplate from the loaded result
-      const tmpl = this.buildGearTemplateFromResult(result, def);
-      if (isCurrentApply && !isCurrentApply()) {
-        tmpl.template.dispose();
-        return null;
-      }
-      return tmpl;
-    } catch (e) {
-      console.warn(`[Gear] Failed to load '${def.file}':`, e);
-      return null;
-    }
-  }
-
-  private buildGearTemplateFromResult(
-    result: { meshes: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh[] },
-    def: GearDef,
-  ): GearTemplate {
-    const root = new TransformNode(`gearTemplate_${def.itemId}`, this.scene);
-    for (const mesh of result.meshes) {
-      if (!mesh.parent || mesh.parent.name === '__root__') mesh.parent = root;
-    }
-
-    // PBR → flat conversion (matches main character + skinned-armor paths).
-    for (const mesh of result.meshes) {
-      const pbr = mesh.material as any;
-      if (!pbr || !pbr.getClassName || pbr.getClassName() !== 'PBRMaterial') continue;
-      const flat = new StandardMaterial(`${pbr.name}_flat`, this.scene);
-      const hasTexture = !!pbr.albedoTexture;
-      const isPolysplitGear = pbr.name && pbr.name.startsWith('genericRGBMat_Objects');
-      if (hasTexture) {
-        flat.diffuseTexture = pbr.albedoTexture;
-        pbr.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
-      }
-      if (pbr.albedoColor && !hasTexture) {
-        const b = 1.3;
-        flat.diffuseColor = new Color3(
-          Math.min(1, pbr.albedoColor.r * b),
-          Math.min(1, pbr.albedoColor.g * b),
-          Math.min(1, pbr.albedoColor.b * b),
-        );
-      } else if (isPolysplitGear) {
-        // Polysplit palette textures sample much brighter than RS-style gear;
-        // scale down so they sit at the same value range as the rest of the world.
-        flat.diffuseColor = new Color3(0.55, 0.55, 0.55);
-      }
-      flat.specularColor = Color3.Black();
-      if (!hasTexture) {
-        const dc = flat.diffuseColor;
-        flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55);
-      }
-      flat.backFaceCulling = pbr.backFaceCulling ?? true;
-      mesh.material = flat;
-    }
-
-    if (def.metalColor) {
-      const [r, g, b] = def.metalColor;
-      const tint = new Color3(r, g, b);
-      const recolored = new Set<string>();
-      for (const mesh of result.meshes) {
-        const mat = mesh.material as any;
-        if (!mat || !mat.name) continue;
-        if (!mat.name.includes('Material.002')) continue;
-        const clonedName = `${mat.name}_tint_${def.itemId}`;
-        let cloned: any;
-        if (recolored.has(clonedName)) {
-          cloned = this.scene.getMaterialByName(clonedName);
-        } else {
-          cloned = mat.clone(clonedName);
-          if (cloned) {
-            if ('albedoColor' in cloned) cloned.albedoColor = tint;
-            if ('diffuseColor' in cloned) cloned.diffuseColor = tint;
-            recolored.add(clonedName);
-          }
-        }
-        if (cloned) mesh.material = cloned;
-      }
-    }
-
-    if (!def.centerOrigin) {
-      let minY = Infinity;
-      for (const mesh of result.meshes) {
-        if (mesh.getTotalVertices() === 0) continue;
-        mesh.computeWorldMatrix(true);
-        const bb = mesh.getBoundingInfo().boundingBox;
-        if (bb.minimumWorld.y < minY) minY = bb.minimumWorld.y;
-      }
-      for (const child of root.getChildren()) {
-        (child as TransformNode).position.y -= minY;
-      }
-    }
-
-    root.setEnabled(false);
-    return {
-      template: root,
-      boneName: def.boneName,
-      localPosition: def.localPosition
-        ? new Vector3(def.localPosition.x, def.localPosition.y, def.localPosition.z)
-        : Vector3.Zero(),
-      localRotation: def.localRotation
-        ? new Vector3(def.localRotation.x, def.localRotation.y, def.localRotation.z)
-        : Vector3.Zero(),
-      scale: def.scale ?? 1,
-      headRenderMode: def.headRenderMode,
-    };
+    return loadCharacterGearSmart(
+      this.scene,
+      character,
+      slotName,
+      itemId,
+      def,
+      this.itemDefsCache.get(itemId),
+      this.getGearOverrideForCharacter(itemId, character),
+      isCurrentApply,
+    );
   }
 
   private createLocalCharacterEntity(): CharacterEntity {

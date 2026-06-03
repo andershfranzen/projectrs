@@ -11,24 +11,27 @@ import {
   Engine,
   HemisphericLight,
   Scene,
-  SceneLoader,
-  StandardMaterial,
-  Texture,
-  TransformNode,
   Vector3,
   type AbstractMesh,
 } from '@babylonjs/core';
 import type { ItemDef } from '../../../../shared/types';
 import type { PlayerAppearance } from '../../../../shared/appearance';
 import { CHARACTER_TARGET_HEIGHT, getCharacterModelPath } from '../../../../shared/character';
-import { resolveEquipmentModelPath } from '../../../../shared/gear';
+import type { GearOverride } from '../../../../client/src/data/EquipmentConfig';
 import { CharacterEntity } from '../../../../client/src/rendering/CharacterEntity';
+import { buildCharacterGearDef, loadCharacterGearSmart } from '../../../../client/src/rendering/CharacterGearLoader';
+
+const AVATAR_GEAR_SLOTS = ['head', 'body', 'cape'] as const;
+type AvatarGearSlot = (typeof AVATAR_GEAR_SLOTS)[number];
 
 type AvatarTarget = {
   accountId: number;
   username: string;
   appearance: PlayerAppearance;
   headItemId: number | null;
+  bodyItemId?: number | null;
+  capeItemId?: number | null;
+  equipment?: Record<AvatarGearSlot, number | null>;
   hash: string;
   url: string;
   baked: boolean;
@@ -95,6 +98,12 @@ async function loadItems(): Promise<ItemDef[]> {
   return await res.json();
 }
 
+async function loadGearOverrides(): Promise<Record<string, GearOverride>> {
+  const res = await fetch('/data/gear-overrides.json', { headers: authHeaders(), credentials: 'same-origin', cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to load gear-overrides.json (${res.status})`);
+  return await res.json();
+}
+
 async function postAvatar(target: AvatarTarget, dataUrl: string): Promise<void> {
   const headers = authHeaders();
   headers.set('Content-Type', 'application/json');
@@ -118,73 +127,53 @@ async function postAvatar(target: AvatarTarget, dataUrl: string): Promise<void> 
   throw new Error(lastError || 'Upload failed');
 }
 
-function flatGearMaterials(meshes: AbstractMesh[], scene: Scene): void {
-  for (const mesh of meshes) {
-    const pbr = mesh.material as any;
-    if (!pbr || !pbr.getClassName || pbr.getClassName() !== 'PBRMaterial') continue;
-    const flat = new StandardMaterial(`${pbr.name}_flat`, scene);
-    const hasTexture = !!pbr.albedoTexture;
-    if (hasTexture) {
-      flat.diffuseTexture = pbr.albedoTexture;
-      pbr.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
-    }
-    if (pbr.albedoColor && !hasTexture) {
-      const b = 1.3;
-      flat.diffuseColor = new Color3(
-        Math.min(1, pbr.albedoColor.r * b),
-        Math.min(1, pbr.albedoColor.g * b),
-        Math.min(1, pbr.albedoColor.b * b),
-      );
-      const dc = flat.diffuseColor;
-      flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55);
-    }
-    flat.specularColor = Color3.Black();
-    flat.backFaceCulling = pbr.backFaceCulling ?? true;
-    mesh.material = flat;
+function targetGearItemId(target: AvatarTarget, slot: AvatarGearSlot): number | null {
+  if (target.equipment?.[slot]) return target.equipment[slot];
+  if (slot === 'head') return target.headItemId ?? null;
+  if (slot === 'body') return target.bodyItemId ?? null;
+  return target.capeItemId ?? null;
+}
+
+async function attachAvatarGearSlot(
+  scene: Scene,
+  character: CharacterEntity,
+  target: AvatarTarget,
+  itemDefs: ItemDef[],
+  gearOverrides: Record<string, GearOverride>,
+  slotName: AvatarGearSlot,
+): Promise<void> {
+  const itemId = targetGearItemId(target, slotName);
+  if (!itemId) return;
+  const itemDef = itemDefs.find((item) => item.id === itemId && item.equipSlot === slotName);
+  if (!itemDef) return;
+  const bodyType = target.appearance.bodyType ?? 0;
+  const built = buildCharacterGearDef(itemId, slotName, itemDef, gearOverrides[String(itemId)], bodyType);
+  if (!built) return;
+  const template = await loadCharacterGearSmart(
+    scene,
+    character,
+    slotName,
+    itemId,
+    built.def,
+    itemDef,
+    built.override,
+  );
+  if (template) {
+    character.attachGear(slotName, itemId, template);
+    return;
   }
 }
 
-async function attachHeadGear(scene: Scene, character: CharacterEntity, target: AvatarTarget, itemDefs: ItemDef[]): Promise<void> {
-  if (!target.headItemId) return;
-  const def = itemDefs.find((item) => item.id === target.headItemId && item.equipSlot === 'head');
-  const modelPath = resolveEquipmentModelPath(def, target.appearance.bodyType);
-  if (!def || !modelPath) return;
-
-  const lastSlash = modelPath.lastIndexOf('/');
-  const result = await SceneLoader.ImportMeshAsync('', modelPath.substring(0, lastSlash + 1), modelPath.substring(lastSlash + 1), scene);
-  flatGearMaterials(result.meshes, scene);
-
-  let headBindY = 0;
-  const armorSkel = result.skeletons[0];
-  if (armorSkel) {
-    const headBone = armorSkel.bones.find((bone) => bone.name === 'mixamorig:Head');
-    const node = headBone?.getTransformNode();
-    if (node) {
-      node.computeWorldMatrix(true);
-      headBindY = node.absolutePosition.y;
-    }
-    for (const skeleton of result.skeletons) skeleton.dispose();
-    for (const mesh of result.meshes) mesh.skeleton = null;
+async function attachAvatarGear(
+  scene: Scene,
+  character: CharacterEntity,
+  target: AvatarTarget,
+  itemDefs: ItemDef[],
+  gearOverrides: Record<string, GearOverride>,
+): Promise<void> {
+  for (const slotName of AVATAR_GEAR_SLOTS) {
+    await attachAvatarGearSlot(scene, character, target, itemDefs, gearOverrides, slotName);
   }
-
-  const template = new TransformNode(`forum_avatar_head_${target.accountId}`, scene);
-  for (const mesh of result.meshes) {
-    if (!mesh.parent || mesh.parent.name === '__root__') mesh.parent = template;
-  }
-  for (const child of template.getChildren()) {
-    (child as TransformNode).position.y -= headBindY;
-  }
-  template.setEnabled(false);
-
-  character.attachGear('head', target.headItemId, {
-    template,
-    boneName: 'mixamorig:Head',
-    localPosition: new Vector3(0, 0.08, 0),
-    localRotation: Vector3.Zero(),
-    scale: 1,
-    headRenderMode: def.headRenderMode ?? 'helmet',
-  });
-  template.dispose();
 }
 
 function nextFrame(): Promise<void> {
@@ -241,7 +230,12 @@ function frameAvatarCamera(scene: Scene, camera: ArcRotateCamera, settings: Avat
   camera.orthoBottom = -halfSize;
 }
 
-async function renderAvatar(target: AvatarTarget, itemDefs: ItemDef[], settings: AvatarRenderSettings): Promise<string> {
+async function renderAvatar(
+  target: AvatarTarget,
+  itemDefs: ItemDef[],
+  gearOverrides: Record<string, GearOverride>,
+  settings: AvatarRenderSettings,
+): Promise<string> {
   const canvas = document.createElement('canvas');
   canvas.width = 128;
   canvas.height = 128;
@@ -272,7 +266,7 @@ async function renderAvatar(target: AvatarTarget, itemDefs: ItemDef[], settings:
   const root = character.getRoot();
   if (root) root.rotation.x = settings.rootPitch;
   character.applyAppearance(target.appearance);
-  await attachHeadGear(scene, character, target, itemDefs);
+  await attachAvatarGear(scene, character, target, itemDefs, gearOverrides);
   await settleAvatarScene(scene);
   frameAvatarCamera(scene, camera, settings);
 
@@ -290,6 +284,7 @@ export function ForumAvatarBakeApp() {
   const [progress, setProgress] = useState('');
   const [targets, setTargets] = useState<AvatarTarget[]>([]);
   const [itemDefs, setItemDefs] = useState<ItemDef[]>([]);
+  const [gearOverrides, setGearOverrides] = useState<Record<string, GearOverride>>({});
   const [settings, setSettings] = useState<AvatarRenderSettings>(() => loadSavedRenderSettings());
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewTargetId, setPreviewTargetId] = useState(0);
@@ -301,23 +296,26 @@ export function ForumAvatarBakeApp() {
     setLog((current) => [...current, line]);
   }
 
-  async function ensureBakeData(): Promise<{ allTargets: AvatarTarget[]; allItems: ItemDef[] }> {
-    if (targets.length > 0 && itemDefs.length > 0) return { allTargets: targets, allItems: itemDefs };
-    const [allTargets, allItems] = await Promise.all([loadTargets(), loadItems()]);
+  async function ensureBakeData(): Promise<{ allTargets: AvatarTarget[]; allItems: ItemDef[]; allGearOverrides: Record<string, GearOverride> }> {
+    if (targets.length > 0 && itemDefs.length > 0 && Object.keys(gearOverrides).length > 0) {
+      return { allTargets: targets, allItems: itemDefs, allGearOverrides: gearOverrides };
+    }
+    const [allTargets, allItems, allGearOverrides] = await Promise.all([loadTargets(), loadItems(), loadGearOverrides()]);
     setTargets(allTargets);
     setItemDefs(allItems);
+    setGearOverrides(allGearOverrides);
     if (!previewTargetId && allTargets[0]) setPreviewTargetId(allTargets[0].accountId);
-    return { allTargets, allItems };
+    return { allTargets, allItems, allGearOverrides };
   }
 
   async function renderPreview(nextSettings: AvatarRenderSettings = settings) {
     setProgress('Rendering preview...');
     try {
-      const { allTargets, allItems } = await ensureBakeData();
+      const { allTargets, allItems, allGearOverrides } = await ensureBakeData();
       const target = allTargets.find((entry) => entry.accountId === previewTargetId) ?? allTargets[0];
       if (!target) throw new Error('No avatar targets found.');
       setPreviewTargetId(target.accountId);
-      setPreviewUrl(await renderAvatar(target, allItems, nextSettings));
+      setPreviewUrl(await renderAvatar(target, allItems, allGearOverrides, nextSettings));
       setProgress('Preview ready.');
     } catch (error) {
       setProgress('Preview failed.');
@@ -331,7 +329,7 @@ export function ForumAvatarBakeApp() {
     setProgress('Loading targets...');
     window.__forumAvatarBakeDone = false;
     try {
-      const { allTargets, allItems } = await ensureBakeData();
+      const { allTargets, allItems, allGearOverrides } = await ensureBakeData();
       const targets = onlyMissing ? allTargets.filter((target) => !target.baked) : allTargets;
       append(`Found ${allTargets.length} avatar target(s), baking ${targets.length}.`);
       let done = 0;
@@ -339,7 +337,7 @@ export function ForumAvatarBakeApp() {
       for (const target of targets) {
         setProgress(`${done + 1} / ${targets.length}: ${target.username}`);
         try {
-          const dataUrl = await renderAvatar(target, allItems, settings);
+          const dataUrl = await renderAvatar(target, allItems, allGearOverrides, settings);
           await postAvatar(target, dataUrl);
           append(`${target.username}: OK`);
         } catch (error) {
@@ -418,7 +416,7 @@ export function ForumAvatarBakeApp() {
     <main className="page forums-page">
       <section className="panel forum-panel">
         <h1 className="panel-title">Forum Avatar Baker</h1>
-        <p className="forum-empty">Generates static WebP head avatars from saved character appearance and last saved helmet.</p>
+        <p className="forum-empty">Generates static WebP head avatars from saved character appearance and visible saved gear.</p>
         <div className="forum-bake-tuner">
           <div
             className="forum-bake-preview"

@@ -869,6 +869,35 @@
   border-color: #a85d36;
 }
 
+.forum-reaction-tooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 8;
+  max-width: min(260px, 72vw);
+  width: max-content;
+  padding: 7px 9px;
+  color: #f5ead7;
+  background: #050505;
+  border: 1px solid rgba(255,255,255,0.16);
+  outline: 1px solid #000;
+  box-shadow: 0 10px 22px rgba(0,0,0,0.5);
+  font: 800 12px/1.25 Arial, Helvetica, sans-serif;
+  text-align: center;
+  white-space: normal;
+  text-shadow: 1px 1px 0 #000;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.forum-reaction-chip:hover .forum-reaction-tooltip,
+.forum-reaction-chip:focus-visible .forum-reaction-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .forum-reaction-burst {
   position: absolute;
   left: 50%;

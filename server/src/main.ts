@@ -2570,6 +2570,8 @@ const server = Bun.serve<SocketData>({
         Number(url.searchParams.get('limit') ?? 25),
         Number(url.searchParams.get('page') ?? 1),
         url.searchParams.get('q') ?? '',
+        url.searchParams.get('sort') ?? 'rank',
+        url.searchParams.get('dir') ?? 'asc',
       ));
     }
 
@@ -2607,6 +2609,8 @@ const server = Bun.serve<SocketData>({
         Number(url.searchParams.get('page') ?? 1),
         url.searchParams.get('q') ?? '',
         mobs,
+        url.searchParams.get('sort') ?? 'rank',
+        url.searchParams.get('dir') ?? 'asc',
       ));
     }
 

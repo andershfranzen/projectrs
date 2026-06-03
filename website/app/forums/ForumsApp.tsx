@@ -64,8 +64,11 @@ type ForumPost = {
   isDeleted: boolean;
   hiddenReason: string;
   reactions: Record<string, number>;
+  reactionUsers?: Record<string, ForumReactionUsers>;
   myReaction: string | null;
 };
+type ForumReactionUsers = { names: string[]; others: number };
+type ReactionBurst = { id: number; reaction: string; delta: 1 | -1 };
 type ForumListResponse = {
   categories: ForumCategory[];
   threads: ForumThread[];
@@ -187,6 +190,13 @@ function currentPageParam(): number {
 
 function previewText(raw: string): string {
   return raw.replace(/[#>*_`![\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+function reactionUsersText(summary: ForumReactionUsers | undefined): string {
+  if (!summary || summary.names.length === 0) return '';
+  const parts = [...summary.names];
+  if (summary.others > 0) parts.push(`+ ${summary.others} ${summary.others === 1 ? 'other' : 'others'}`);
+  return parts.join(', ');
 }
 
 function isImageUrl(url: string): boolean {
@@ -475,11 +485,44 @@ function NotificationsMenu({ notifications, unreadCount, onRefresh }: { notifica
   );
 }
 
+function ReactionChip({
+  reactionKey,
+  icon,
+  count,
+  active,
+  users,
+  burst,
+}: {
+  reactionKey: string;
+  icon: string;
+  count: number;
+  active: boolean;
+  users?: ForumReactionUsers;
+  burst: ReactionBurst | null;
+}) {
+  const usersText = reactionUsersText(users);
+  return (
+    <span
+      className={active ? 'forum-reaction-chip active' : 'forum-reaction-chip'}
+      tabIndex={usersText ? 0 : undefined}
+      aria-label={usersText ? `${icon} ${count}: ${usersText}` : undefined}
+    >
+      {icon} {count}
+      {usersText ? <span className="forum-reaction-tooltip" role="tooltip">{usersText}</span> : null}
+      {burst?.reaction === reactionKey ? (
+        <span key={burst.id} className={burst.delta > 0 ? 'forum-reaction-burst positive' : 'forum-reaction-burst negative'}>
+          {burst.delta > 0 ? '+1' : '-1'}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost; me: ForumUser; onRefresh: () => void; onQuote: (post: ForumPost) => void; canReply: boolean }) {
   const [editing, setEditing] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactionMenuOpen, setReactionMenuOpen] = useState(false);
-  const [reactionBurst, setReactionBurst] = useState<{ id: number; reaction: string; delta: 1 | -1 } | null>(null);
+  const [reactionBurst, setReactionBurst] = useState<ReactionBurst | null>(null);
   const [body, setBody] = useState(post.body);
   const canEdit = me.accountId === post.author.accountId || me.isModerator || me.isAdmin;
   const canManage = canEdit || me.isModerator || me.isAdmin || me.ok;
@@ -564,10 +607,15 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
         <div className="forum-post-actions-row">
           <div className="forum-post-actions">
             {reactions.filter(([key]) => (post.reactions[key] ?? 0) > 0 || reactionBurst?.reaction === key).map(([key, icon]) => (
-              <span key={key} className={post.myReaction === key ? 'forum-reaction-chip active' : 'forum-reaction-chip'}>
-                {icon} {post.reactions[key] ?? 0}
-                {reactionBurst?.reaction === key ? <span key={reactionBurst.id} className={reactionBurst.delta > 0 ? 'forum-reaction-burst positive' : 'forum-reaction-burst negative'}>{reactionBurst.delta > 0 ? '+1' : '-1'}</span> : null}
-              </span>
+              <ReactionChip
+                key={key}
+                reactionKey={key}
+                icon={icon}
+                count={post.reactions[key] ?? 0}
+                active={post.myReaction === key}
+                users={post.reactionUsers?.[key]}
+                burst={reactionBurst}
+              />
             ))}
           </div>
           <div className="forum-post-right-actions">

@@ -114,6 +114,46 @@ describe('hiscores exclusions', () => {
   });
 });
 
+describe('hiscores sorting', () => {
+  test('sorts skill rankings before slicing paginated results', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const names = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Zulu'];
+      names.forEach((name, index) => {
+        const account = db.loginFallbackAccount(name);
+        db.savePlayerState(account.accountId, playerWithSkills(miningSkills(10 + index)), 0);
+      });
+
+      const pageOne = db.getHiscores('mining', 5, 1, '', 'username', 'desc');
+      const pageTwo = db.getHiscores('mining', 5, 2, '', 'username', 'desc');
+
+      expect(pageOne.rows.map((row) => row.username)).toEqual(['zulu', 'foxtrot', 'echo', 'delta', 'charlie']);
+      expect(pageTwo.rows.map((row) => row.username)).toEqual(['bravo', 'alpha']);
+    } finally {
+      db.close();
+    }
+  });
+
+  test('sorts monster kill rankings before slicing paginated results', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const names = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Zulu'];
+      names.forEach((name, index) => {
+        const account = db.loginFallbackAccount(name);
+        for (let i = 0; i <= index; i++) db.recordMobKill(account.accountId, 100);
+      });
+
+      const pageOne = db.getMobKillHiscores(100, 5, 1, '', [{ id: 100, name: 'Vampire' }], 'username', 'desc');
+      const pageTwo = db.getMobKillHiscores(100, 5, 2, '', [{ id: 100, name: 'Vampire' }], 'username', 'desc');
+
+      expect(pageOne.rows.map((row) => row.username)).toEqual(['zulu', 'foxtrot', 'echo', 'delta', 'charlie']);
+      expect(pageTwo.rows.map((row) => row.username)).toEqual(['bravo', 'alpha']);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe('mob kill hiscores', () => {
   const MOBS = [
     { id: 1, name: 'Chicken' },

@@ -90,6 +90,9 @@ type KillSortKey = 'rank' | 'username' | 'kills';
 type ProfileSortKey = 'category' | 'rank' | 'level' | 'xp' | 'dailyXp';
 type ProfileMonsterSortKey = 'rank' | 'name' | 'kills' | 'dailyKills';
 
+const MAIN_SORT_KEYS: readonly MainSortKey[] = ['rank', 'username', 'level', 'xp', 'dailyXp'];
+const KILL_SORT_KEYS: readonly KillSortKey[] = ['rank', 'username', 'kills'];
+
 const fallbackCategories: HiscoreCategory[] = [
   { id: 'overall', name: 'Overall', hasXp: true },
 ];
@@ -118,6 +121,18 @@ function sortRows<T>(rows: readonly T[], compare: (a: T, b: T) => number, direct
 function nextSort<T extends string>(current: SortState<T>, key: T): SortState<T> {
   if (current.key !== key) return { key, direction: 'asc' };
   return { key, direction: current.direction === 'asc' ? 'desc' : 'asc' };
+}
+
+function parseSortDirection(value: string | null): SortDirection {
+  return value === 'desc' ? 'desc' : 'asc';
+}
+
+function isMainSortKey(value: string | null): value is MainSortKey {
+  return MAIN_SORT_KEYS.includes(value as MainSortKey);
+}
+
+function isKillSortKey(value: string | null): value is KillSortKey {
+  return KILL_SORT_KEYS.includes(value as KillSortKey);
 }
 
 function rankedCategories(categories: HiscoreCategory[]): HiscoreCategory[] {
@@ -197,12 +212,20 @@ export function HiscoresTable() {
   useEffect(() => {
     const readUrlState = () => {
       const params = new URLSearchParams(window.location.search);
-      const category = params.get('category') || 'overall';
-      setSelected(category === 'combat' ? 'overall' : category);
+      const categoryParam = params.get('category') || 'overall';
+      const category = categoryParam === 'combat' ? 'overall' : categoryParam;
+      const sortKey = params.get('sort');
+      const sortDirection = parseSortDirection(params.get('dir'));
+      setSelected(category);
       setSelectedMob(params.get('mob') || '');
       setPage(Math.max(1, Math.floor(Number(params.get('page') || 1)) || 1));
       setSearch(params.get('q') || '');
       setSelectedPlayer(params.get('player') || '');
+      if (category === 'mobkills') {
+        setKillSort(isKillSortKey(sortKey) ? { key: sortKey, direction: sortDirection } : { key: 'rank', direction: 'asc' });
+      } else {
+        setMainSort(isMainSortKey(sortKey) ? { key: sortKey, direction: sortDirection } : { key: 'rank', direction: 'asc' });
+      }
     };
 
     readUrlState();
@@ -221,11 +244,16 @@ export function HiscoresTable() {
     if (trimmedSearch) params.set('q', trimmedSearch);
     const trimmedPlayer = selectedPlayer.trim();
     if (trimmedPlayer) params.set('player', trimmedPlayer);
+    const activeSort = isKillsMode ? killSort : mainSort;
+    if (activeSort.key !== 'rank' || activeSort.direction !== 'asc') {
+      params.set('sort', activeSort.key);
+      params.set('dir', activeSort.direction);
+    }
 
     const next = params.toString() ? `/hiscores?${params.toString()}` : '/hiscores';
     const current = `${window.location.pathname}${window.location.search}`;
     if (current !== next) window.history.replaceState(null, '', next);
-  }, [selected, selectedMob, page, search, selectedPlayer, isKillsMode, urlReady]);
+  }, [selected, selectedMob, page, search, selectedPlayer, mainSort, killSort, isKillsMode, urlReady]);
 
   // Skill-category rankings (Overall / individual skills).
   useEffect(() => {
@@ -238,6 +266,8 @@ export function HiscoresTable() {
       category: selected,
       limit: String(PAGE_SIZE),
       page: String(page),
+      sort: mainSort.key,
+      dir: mainSort.direction,
     });
     const trimmedSearch = search.trim();
     if (trimmedSearch) params.set('q', trimmedSearch);
@@ -268,7 +298,7 @@ export function HiscoresTable() {
     return () => {
       cancelled = true;
     };
-  }, [selected, page, search, isKillsMode, urlReady]);
+  }, [selected, page, search, mainSort, isKillsMode, urlReady]);
 
   // Per-mob kill leaderboard. Separate endpoint + state so switching modes
   // never clobbers the skill rankings or the category nav.
@@ -281,6 +311,8 @@ export function HiscoresTable() {
     const params = new URLSearchParams({
       limit: String(PAGE_SIZE),
       page: String(page),
+      sort: killSort.key,
+      dir: killSort.direction,
     });
     if (selectedMob) params.set('npc', selectedMob);
     const trimmedSearch = search.trim();
@@ -310,7 +342,7 @@ export function HiscoresTable() {
     return () => {
       cancelled = true;
     };
-  }, [selectedMob, page, search, isKillsMode, urlReady]);
+  }, [selectedMob, page, search, killSort, isKillsMode, urlReady]);
 
   // When the page is opened directly in Monster Kills mode, the skill data fetch is
   // skipped — so pull the category list once to keep the full nav populated.
@@ -376,14 +408,8 @@ export function HiscoresTable() {
   const lastRow = rowCount > 0 ? firstRow + rowCount - 1 : 0;
   const hasSearch = search.trim().length > 0;
   const rankingTitle = isKillsMode ? (killData?.mobName ?? 'Monster Kills') : (data?.category.name ?? 'Overall');
-  const sortedMainRows = useMemo(() => sortRows(data?.rows ?? [], (a, b) => {
-    if (mainSort.key === 'username') return compareText(a.username, b.username);
-    return a[mainSort.key] - b[mainSort.key];
-  }, mainSort.direction), [data?.rows, mainSort]);
-  const sortedKillRows = useMemo(() => sortRows(killData?.rows ?? [], (a, b) => {
-    if (killSort.key === 'username') return compareText(a.username, b.username);
-    return a[killSort.key] - b[killSort.key];
-  }, killSort.direction), [killData?.rows, killSort]);
+  const mainRows = data?.rows ?? [];
+  const killRows = killData?.rows ?? [];
   const profileCombatLevel = profile?.rows.find((row) => row.category.id === 'combat')?.level ?? null;
   const profileSkillRows = useMemo(() => (profile?.rows ?? []).filter((row) => row.category.id !== 'combat'), [profile?.rows]);
   const sortedProfileRows = useMemo(() => sortRows(profileSkillRows, (a, b) => {
@@ -420,6 +446,16 @@ export function HiscoresTable() {
     setSelectedPlayer('');
     setProfile(null);
     setProfileError('');
+  };
+
+  const updateMainSort = (key: MainSortKey) => {
+    setMainSort((current) => nextSort(current, key));
+    setPage(1);
+  };
+
+  const updateKillSort = (key: KillSortKey) => {
+    setKillSort((current) => nextSort(current, key));
+    setPage(1);
   };
 
   return (
@@ -627,13 +663,13 @@ export function HiscoresTable() {
                       <table className="hiscores-table">
                         <thead>
                           <tr>
-                            <SortHeader label="Rank" sortKey="rank" sort={killSort} onSort={(key) => setKillSort((current) => nextSort(current, key))} className="rank-column" />
-                            <SortHeader label="Name" sortKey="username" sort={killSort} onSort={(key) => setKillSort((current) => nextSort(current, key))} />
-                            <SortHeader label="Kills" sortKey="kills" sort={killSort} onSort={(key) => setKillSort((current) => nextSort(current, key))} />
+                            <SortHeader label="Rank" sortKey="rank" sort={killSort} onSort={updateKillSort} className="rank-column" />
+                            <SortHeader label="Name" sortKey="username" sort={killSort} onSort={updateKillSort} />
+                            <SortHeader label="Kills" sortKey="kills" sort={killSort} onSort={updateKillSort} />
                           </tr>
                         </thead>
                         <tbody>
-                          {sortedKillRows.map((row) => (
+                          {killRows.map((row) => (
                             <tr key={`${row.rank}-${row.username}`}>
                               <td className="rank-column">{row.rank}</td>
                               <td>
@@ -654,15 +690,15 @@ export function HiscoresTable() {
                       <table className="hiscores-table">
                         <thead>
                           <tr>
-                            <SortHeader label="Rank" sortKey="rank" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} className="rank-column" />
-                            <SortHeader label="Name" sortKey="username" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
-                            <SortHeader label="Level" sortKey="level" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
-                            <SortHeader label="XP" sortKey="xp" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
-                            <SortHeader label="Daily XP" sortKey="dailyXp" sort={mainSort} onSort={(key) => setMainSort((current) => nextSort(current, key))} />
+                            <SortHeader label="Rank" sortKey="rank" sort={mainSort} onSort={updateMainSort} className="rank-column" />
+                            <SortHeader label="Name" sortKey="username" sort={mainSort} onSort={updateMainSort} />
+                            <SortHeader label="Level" sortKey="level" sort={mainSort} onSort={updateMainSort} />
+                            <SortHeader label="XP" sortKey="xp" sort={mainSort} onSort={updateMainSort} />
+                            <SortHeader label="Daily XP" sortKey="dailyXp" sort={mainSort} onSort={updateMainSort} />
                           </tr>
                         </thead>
                         <tbody>
-                          {sortedMainRows.map((row) => (
+                          {mainRows.map((row) => (
                             <tr key={`${row.rank}-${row.username}`}>
                               <td className="rank-column"><RankCell rank={row.rank} rankChange={row.rankChange} /></td>
                               <td>

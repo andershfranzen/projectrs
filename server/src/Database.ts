@@ -32,9 +32,14 @@ const FORUM_DEFAULT_CATEGORIES = [
 // report it. Stops a single spam post from staying live for hours before a
 // moderator sees it; still reversible via moderateForumPost('restore').
 const FORUM_AUTO_HIDE_DISTINCT_REPORTS = 3;
-const FORUM_AVATAR_BAKE_VERSION = 5;
+const FORUM_AVATAR_BAKE_VERSION = 12;
 const FORUM_PROFILE_BIO_LIMIT = 500;
 const FORUM_PROFILE_SIGNATURE_LIMIT = 240;
+const FORUM_AVATAR_VISIBLE_EQUIPMENT_SLOTS = {
+  head: 2,
+  body: 3,
+  cape: 9,
+} as const;
 
 function forumSlug(raw: string): string {
   return raw
@@ -59,11 +64,12 @@ function parseSavedAppearance(raw: string | null | undefined): PlayerAppearance 
   }
 }
 
-function parseSavedHeadItemId(raw: string | null | undefined): number | null {
+function parseSavedEquipmentItemId(raw: string | null | undefined, slot: keyof typeof FORUM_AVATAR_VISIBLE_EQUIPMENT_SLOTS): number | null {
   if (!raw) return null;
   try {
-    const equipment = JSON.parse(raw) as Record<string, unknown>;
-    const value = equipment.head;
+    const equipment = JSON.parse(raw) as Record<string, unknown> | unknown[];
+    const legacyIndex = FORUM_AVATAR_VISIBLE_EQUIPMENT_SLOTS[slot];
+    const value = Array.isArray(equipment) ? equipment[legacyIndex] : (equipment[slot] ?? equipment[String(legacyIndex)]);
     const itemId = typeof value === 'number'
       ? value
       : value && typeof value === 'object' && typeof (value as { itemId?: unknown }).itemId === 'number'
@@ -77,16 +83,23 @@ function parseSavedHeadItemId(raw: string | null | undefined): number | null {
 
 function forumAvatarTarget(accountId: number, username: string, rawAppearance: string | null | undefined, rawEquipment: string | null | undefined): ForumAvatarBakeTarget | null {
   const appearance = parseSavedAppearance(rawAppearance) ?? DEFAULT_APPEARANCE;
-  const headItemId = parseSavedHeadItemId(rawEquipment);
+  const equipment = {
+    head: parseSavedEquipmentItemId(rawEquipment, 'head'),
+    body: parseSavedEquipmentItemId(rawEquipment, 'body'),
+    cape: parseSavedEquipmentItemId(rawEquipment, 'cape'),
+  };
   const hash = createHash('sha1')
-    .update(JSON.stringify({ appearance, headItemId, bakeVersion: FORUM_AVATAR_BAKE_VERSION }))
+    .update(JSON.stringify({ appearance, equipment, bakeVersion: FORUM_AVATAR_BAKE_VERSION }))
     .digest('hex')
     .slice(0, 16);
   return {
     accountId,
     username,
     appearance,
-    headItemId,
+    headItemId: equipment.head,
+    bodyItemId: equipment.body,
+    capeItemId: equipment.cape,
+    equipment,
     hash,
     url: `/forum-avatars/${accountId}-${hash}.webp`,
   };
@@ -258,6 +271,10 @@ export interface HiscoreRow {
   rankChange: number | null;
 }
 
+export type HiscoreSortKey = 'rank' | 'username' | 'level' | 'xp' | 'dailyXp';
+export type MobKillSortKey = 'rank' | 'username' | 'kills';
+export type HiscoreSortDirection = 'asc' | 'desc';
+
 export interface HiscoreResponse {
   category: HiscoreCategory;
   categories: HiscoreCategory[];
@@ -346,7 +363,13 @@ export interface ForumPost {
   isDeleted: boolean;
   hiddenReason: string;
   reactions: Record<string, number>;
+  reactionUsers: Record<string, ForumReactionUsers>;
   myReaction: string | null;
+}
+
+export interface ForumReactionUsers {
+  names: string[];
+  others: number;
 }
 
 export interface ForumThreadDetail {
@@ -436,6 +459,13 @@ export interface ForumAvatarBakeTarget {
   username: string;
   appearance: PlayerAppearance;
   headItemId: number | null;
+  bodyItemId: number | null;
+  capeItemId: number | null;
+  equipment: {
+    head: number | null;
+    body: number | null;
+    cape: number | null;
+  };
   hash: string;
   url: string;
 }
@@ -490,6 +520,49 @@ interface HiscorePlayerRecord {
 
 function isHiscoreExcludedUsername(username: string): boolean {
   return HISCORE_EXCLUDED_USERNAMES.has(username.trim().toLowerCase());
+}
+
+const HISCORE_SORT_KEYS = new Set<HiscoreSortKey>(['rank', 'username', 'level', 'xp', 'dailyXp']);
+const MOB_KILL_SORT_KEYS = new Set<MobKillSortKey>(['rank', 'username', 'kills']);
+
+function normalizeHiscoreSortDirection(direction: string): HiscoreSortDirection {
+  return direction === 'desc' ? 'desc' : 'asc';
+}
+
+function compareHiscoreUsername(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+}
+
+function sortHiscoreRows(
+  rows: RankedHiscoreRow[],
+  sortKey: string,
+  sortDirection: string,
+): RankedHiscoreRow[] {
+  const key = HISCORE_SORT_KEYS.has(sortKey as HiscoreSortKey) ? sortKey as HiscoreSortKey : 'rank';
+  const direction = normalizeHiscoreSortDirection(sortDirection);
+  return [...rows].sort((a, b) => {
+    const primary = key === 'username'
+      ? compareHiscoreUsername(a.username, b.username)
+      : a[key] - b[key];
+    const directed = direction === 'asc' ? primary : -primary;
+    return directed || a.rank - b.rank || compareHiscoreUsername(a.username, b.username);
+  });
+}
+
+function sortMobKillRows(
+  rows: MobKillRow[],
+  sortKey: string,
+  sortDirection: string,
+): MobKillRow[] {
+  const key = MOB_KILL_SORT_KEYS.has(sortKey as MobKillSortKey) ? sortKey as MobKillSortKey : 'rank';
+  const direction = normalizeHiscoreSortDirection(sortDirection);
+  return [...rows].sort((a, b) => {
+    const primary = key === 'username'
+      ? compareHiscoreUsername(a.username, b.username)
+      : a[key] - b[key];
+    const directed = direction === 'asc' ? primary : -primary;
+    return directed || a.rank - b.rank || compareHiscoreUsername(a.username, b.username);
+  });
 }
 
 export interface BanInfo {
@@ -2330,6 +2403,8 @@ export class GameDatabase {
     limit: number = 25,
     page: number = 1,
     query: string = '',
+    sortKey: string = 'rank',
+    sortDirection: string = 'asc',
   ): HiscoreResponse {
     const players = this.loadHiscorePlayers();
     const categories = this.hiscoreCategories(players);
@@ -2343,6 +2418,7 @@ export class GameDatabase {
     const filtered = normalizedQuery
       ? ranked.filter((row) => row.username.toLowerCase().includes(normalizedQuery))
       : ranked;
+    const sorted = sortHiscoreRows(filtered, sortKey, sortDirection);
 
     const totalRows = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalRows / cappedLimit));
@@ -2352,7 +2428,7 @@ export class GameDatabase {
     return {
       category,
       categories,
-      rows: filtered.slice(start, start + cappedLimit).map(({ accountId: _accountId, ...row }) => row),
+      rows: sorted.slice(start, start + cappedLimit).map(({ accountId: _accountId, ...row }) => row),
       page: safePage,
       pageSize: cappedLimit,
       totalRows,
@@ -2450,6 +2526,8 @@ export class GameDatabase {
     page: number = 1,
     query: string = '',
     mobs: MobKillMob[] = [],
+    sortKey: string = 'rank',
+    sortDirection: string = 'asc',
   ): MobKillResponse {
     const cappedLimit = Math.max(5, Math.min(100, Math.floor(limit) || 25));
     const currentPage = Math.max(1, Math.floor(page) || 1);
@@ -2481,6 +2559,7 @@ export class GameDatabase {
     const filtered = normalizedQuery
       ? ranked.filter((row) => row.username.toLowerCase().includes(normalizedQuery))
       : ranked;
+    const sorted = sortMobKillRows(filtered, sortKey, sortDirection);
 
     const totalRows = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalRows / cappedLimit));
@@ -2492,7 +2571,7 @@ export class GameDatabase {
       mobName,
       visual: selectedMob?.visual,
       mobs: sortedMobs,
-      rows: filtered.slice(start, start + cappedLimit),
+      rows: sorted.slice(start, start + cappedLimit),
       page: safePage,
       pageSize: cappedLimit,
       totalRows,
@@ -3010,6 +3089,7 @@ export class GameDatabase {
     }>;
     const postIds = rows.map((row) => row.id);
     const reactionCounts = new Map<number, Record<string, number>>();
+    const reactionUsers = new Map<number, Record<string, ForumReactionUsers>>();
     const myReactions = new Map<number, string>();
     if (postIds.length > 0) {
       const placeholders = postIds.map(() => '?').join(',');
@@ -3023,6 +3103,31 @@ export class GameDatabase {
         const counts = reactionCounts.get(row.post_id) ?? {};
         counts[row.reaction] = row.n;
         reactionCounts.set(row.post_id, counts);
+      }
+      const reactionPreviewRows = this.db.query(`
+        WITH ranked_reactions AS (
+          SELECT fr.post_id, fr.reaction, a.username, fr.created_at, fr.account_id,
+            COUNT(*) OVER (PARTITION BY fr.post_id, fr.reaction) AS total,
+            ROW_NUMBER() OVER (
+              PARTITION BY fr.post_id, fr.reaction
+              ORDER BY fr.created_at DESC, fr.account_id DESC
+            ) AS position
+          FROM forum_reactions fr
+          JOIN accounts a ON a.id = fr.account_id
+          WHERE fr.post_id IN (${placeholders})
+        )
+        SELECT post_id, reaction, username, total
+        FROM ranked_reactions
+        WHERE position <= 5
+        ORDER BY post_id ASC, reaction ASC, position ASC
+      `).all(...postIds) as Array<{ post_id: number; reaction: string; username: string; total: number }>;
+      for (const row of reactionPreviewRows) {
+        const byPost = reactionUsers.get(row.post_id) ?? {};
+        const summary = byPost[row.reaction] ?? { names: [], others: 0 };
+        if (summary.names.length < 5) summary.names.push(row.username);
+        summary.others = Math.max(0, row.total - summary.names.length);
+        byPost[row.reaction] = summary;
+        reactionUsers.set(row.post_id, byPost);
       }
       if (viewerAccountId != null) {
         const mine = this.db.query(`SELECT post_id, reaction FROM forum_reactions WHERE account_id = ? AND post_id IN (${placeholders})`)
@@ -3058,6 +3163,7 @@ export class GameDatabase {
       isDeleted: row.is_deleted === 1,
       hiddenReason: row.hidden_reason,
       reactions: reactionCounts.get(row.id) ?? {},
+      reactionUsers: reactionUsers.get(row.id) ?? {},
       myReaction: myReactions.get(row.id) ?? null,
       };
     });

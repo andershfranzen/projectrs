@@ -53,6 +53,20 @@ describe('forums persistence', () => {
     db.close();
   });
 
+  test('avatar bake targets read visible gear from saved equipment slots', async () => {
+    const db = new GameDatabase(':memory:');
+    const created = db.loginFallbackAccount('numericgearavatar', 'device-numeric-gear-avatar');
+    (db as any).db.query('UPDATE player_state SET equipment = ? WHERE account_id = ?')
+      .run(JSON.stringify({ '2': 65, body: 71, '9': 237 }), created.accountId);
+
+    const target = db.listForumAvatarBakeTargets().find((entry) => entry.accountId === created.accountId);
+    expect(target?.headItemId).toBe(65);
+    expect(target?.bodyItemId).toBe(71);
+    expect(target?.capeItemId).toBe(237);
+    expect(target?.equipment).toEqual({ head: 65, body: 71, cape: 237 });
+    db.close();
+  });
+
   test('forum presence lists only recently active users', async () => {
     const db = new GameDatabase(':memory:');
     const recent = db.loginFallbackAccount('recentforumuser', 'device-recent-presence');
@@ -102,6 +116,34 @@ describe('forums persistence', () => {
 
     expect(db.markForumNotificationsRead(bob.accountId).ok).toBe(true);
     expect(db.listForumNotifications(bob.accountId).unreadCount).toBe(0);
+    db.close();
+  });
+
+  test('post reactions include latest five reactor names and an others count', async () => {
+    const db = new GameDatabase(':memory:');
+    const author = db.loginFallbackAccount('reactionauthor', 'device-reaction-author');
+    const general = db.listForumCategories().find((category) => category.slug === 'general');
+    expect(general).toBeTruthy();
+    if (!general) return;
+
+    const thread = db.createForumThread(author.accountId, general.id, 'Reaction hover', 'React to this.');
+    expect(thread.ok).toBe(true);
+    if (!thread.ok) return;
+    const firstPost = db.getForumThread('general', thread.thread.slug, author.accountId, false)?.posts[0];
+    expect(firstPost).toBeTruthy();
+    if (!firstPost) return;
+
+    for (let i = 0; i < 7; i++) {
+      const reactor = db.loginFallbackAccount(`reactor${i}`, `device-reactor-${i}`);
+      expect(db.reactToForumPost(reactor.accountId, firstPost.id, 'heart').ok).toBe(true);
+      (db as any).db.query('UPDATE forum_reactions SET created_at = ? WHERE post_id = ? AND account_id = ?')
+        .run(100 + i, firstPost.id, reactor.accountId);
+    }
+
+    const post = db.getForumThread('general', thread.thread.slug, author.accountId, false)?.posts[0];
+    expect(post?.reactions.heart).toBe(7);
+    expect(post?.reactionUsers.heart.names).toEqual(['reactor6', 'reactor5', 'reactor4', 'reactor3', 'reactor2']);
+    expect(post?.reactionUsers.heart.others).toBe(2);
     db.close();
   });
 });
