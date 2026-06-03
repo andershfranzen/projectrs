@@ -27,7 +27,7 @@ const headless = Bun.env.FORUM_AVATAR_BAKE_HEADLESS !== '0';
 const url = `${origin}/forums/avatar-bake?autorun=${onlyMissing ? 'missing' : 'all'}`;
 const bakeSecret = Bun.env.FORUM_AVATAR_BAKE_SECRET || '';
 const chromiumExecutablePath = Bun.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
-  || ['/usr/bin/chromium-browser', '/usr/bin/chromium'].find((path) => existsSync(path));
+  || ['/usr/bin/chromium', '/usr/bin/chromium-browser'].find((path) => existsSync(path));
 
 console.log(`[forum-avatar-bake] opening ${url}`);
 

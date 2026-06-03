@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-FROM oven/bun:1-alpine AS builder
+FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Cache deps layer — copy manifests first
@@ -28,8 +28,21 @@ ENV VITE_RECAPTCHA_SITE_KEY=$VITE_RECAPTCHA_SITE_KEY
 RUN cd client && bunx vite build
 RUN cd website && bunx next build
 
-FROM oven/bun:1-alpine
+FROM oven/bun:1
 WORKDIR /app
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    chromium \
+    xvfb \
+    libegl1 \
+    libgl1 \
+    libgbm1 \
+    libgtk-3-0 \
+    libnss3 \
+    libxss1 \
+    libasound2 \
+    fonts-liberation \
+  && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /app/data
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json
@@ -41,6 +54,7 @@ COPY --from=builder /app/client/dist ./client/dist
 COPY --from=builder /app/website/dist ./website/dist
 
 ENV NODE_ENV=production
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 EXPOSE 4000
 WORKDIR /app/data
 CMD ["bun", "/app/server/src/main.ts"]
