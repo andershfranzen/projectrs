@@ -2039,14 +2039,19 @@ async function runForumAvatarBake(reason: string): Promise<void> {
     rememberForumAvatarBakeLog(startLine);
     console.log(startLine);
     const proc = Bun.spawn([
-      'sh',
-      '-lc',
-      `Xvfb :99 -screen 0 1280x1024x24 >/tmp/forum-avatar-xvfb.log 2>&1 & xvfb_pid=$!; trap "kill $xvfb_pid 2>/dev/null || true" EXIT; sleep 0.2; DISPLAY=:99 bun scripts/bake-forum-avatars.ts --origin http://localhost:${SERVER_PORT}`,
+      'bun',
+      'scripts/render-forum-avatars-server.ts',
+      '--db',
+      DB_PATH,
+      '--out-dir',
+      FORUM_AVATAR_DIR,
+      '--items',
+      resolve(DATA_DIR, 'items.json'),
     ], {
       cwd: ROOT_DIR,
       stdout: 'pipe',
       stderr: 'pipe',
-      env: { ...process.env, FORUM_AVATAR_BAKE_SECRET, FORUM_AVATAR_BAKE_HEADLESS: '0' },
+      env: { ...process.env, FORUM_AVATAR_BAKE_SECRET, PROJECTRS_DB_PATH: DB_PATH, FORUM_AVATAR_DIR },
     });
     void logForumAvatarBakeStream(proc.stdout, 'out');
     void logForumAvatarBakeStream(proc.stderr, 'err');
