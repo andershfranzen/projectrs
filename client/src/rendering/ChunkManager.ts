@@ -121,6 +121,7 @@ interface PlacedObjectNodeMetadata {
   placedY?: number;
   placedZ?: number;
   interactionActions?: string[];
+  isNoRoof?: boolean;
   roofGridKeys?: string[];
 }
 
@@ -3349,7 +3350,7 @@ export class ChunkManager {
   }
 
   private getThinVisibilityClass(obj: PlacedObject): 'ground' | 'elevated' | 'roof' {
-    if (this.isRoofLikeAsset(obj.assetId)) return 'roof';
+    if (this.isRoofLikeAsset(obj.assetId)) return obj.noRoof ? 'ground' : 'roof';
     const terrainY = this.getInterpolatedHeight(obj.position.x, obj.position.z);
     return obj.position.y > terrainY + 1.5 ? 'elevated' : 'ground';
   }
@@ -3685,7 +3686,7 @@ export class ChunkManager {
     }
 
     for (const obj of renderableObjects) {
-      if (!this.isRoofLikeAsset(obj.assetId)) continue;
+      if (obj.noRoof || !this.isRoofLikeAsset(obj.assetId)) continue;
       const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
       if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max);
       await this.yieldIfFrameBudgetSpent(workSlice);
@@ -3901,6 +3902,7 @@ export class ChunkManager {
         placedY: obj.position.y,
         placedZ: obj.position.z,
         interactionActions: this.placedObjectInteractionActions(obj),
+        isNoRoof: obj.noRoof === true,
       } satisfies PlacedObjectNodeMetadata;
 
       const hasAnims = !!templateAnims && templateAnims.length > 0;
@@ -4232,6 +4234,7 @@ export class ChunkManager {
             // their interaction options are floor-gated by GameManager.
             const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
             if (assetId.includes('door')) continue;
+            if ((node.metadata as PlacedObjectNodeMetadata | null)?.isNoRoof) continue;
 
             // Door/non-door placed objects can be reparented under pivots, so use
             // absolute position rather than local transform when deciding height.

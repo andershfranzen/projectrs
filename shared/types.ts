@@ -702,6 +702,8 @@ export interface PlacedObject {
   consumeKey?: boolean;
   /** Optional private message shown when a player tries to open the door without the key. */
   lockedMessage?: string;
+  /** If true, this roof-like placed object never triggers indoor / roof-culling behavior. */
+  noRoof?: boolean;
   /** Good-magic altar tier. Determines which relic tier can be sacrificed here. */
   altarTier?: number;
   position: { x: number; y: number; z: number };

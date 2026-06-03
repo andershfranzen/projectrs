@@ -4734,6 +4734,20 @@ let selectedWaterFlowChunk = null
     const def = placedObjectDef(obj)
     return Boolean(obj && (def?.transition || obj.userData?.trigger?.type === 'teleport'))
   }
+  function isRoofLikeAssetId(assetId) {
+    const lower = String(assetId || '').toLowerCase()
+    return lower.includes('roof') || lower.includes('slab')
+  }
+  function isRoofLikePlacedObject(obj) {
+    return Boolean(obj && isRoofLikeAssetId(obj.userData?.assetId))
+  }
+  function selectedRoofLikePlacedObjects() {
+    return selectedPlacedObjects.filter(isRoofLikePlacedObject)
+  }
+  function copyNoRoofFlag(src, dest) {
+    if (src?.userData?.noRoof) dest.userData.noRoof = true
+    else delete dest.userData.noRoof
+  }
   function mapInfoById(mapId) {
     return editorServerMaps.find(m => m?.id === mapId) || null
   }
@@ -6148,9 +6162,22 @@ let selectedWaterFlowChunk = null
       if (showPlaneRot) syncPlaneRotationUI()
     }
     if (texNoRoofRow) {
-      const showNoRoof = (state.tool === ToolMode.SELECT || state.tool === ToolMode.TEXTURE_PLANE) && selectedTexturePlane
+      const roofObjects = selectedTexturePlane ? [] : selectedRoofLikePlacedObjects()
+      const showNoRoof = ((state.tool === ToolMode.SELECT || state.tool === ToolMode.TEXTURE_PLANE) && selectedTexturePlane)
+        || (state.tool === ToolMode.SELECT && roofObjects.length > 0)
       texNoRoofRow.style.display = showNoRoof ? 'block' : 'none'
-      if (showNoRoof) texNoRoofCheckbox.checked = !!selectedTexturePlane.noRoof
+      if (showNoRoof) {
+        if (selectedTexturePlane) {
+          texNoRoofCheckbox.indeterminate = false
+          texNoRoofCheckbox.checked = !!selectedTexturePlane.noRoof
+        } else {
+          const checkedCount = roofObjects.filter((obj) => obj.userData.noRoof === true).length
+          texNoRoofCheckbox.checked = checkedCount === roofObjects.length
+          texNoRoofCheckbox.indeterminate = checkedCount > 0 && checkedCount < roofObjects.length
+        }
+      } else {
+        texNoRoofCheckbox.indeterminate = false
+      }
     }
     if (texBridgeRow) {
       const showBridge = (state.tool === ToolMode.SELECT || state.tool === ToolMode.TEXTURE_PLANE) && selectedTexturePlane
@@ -6563,6 +6590,7 @@ let selectedWaterFlowChunk = null
       if (Number.isInteger(obj.userData.keyItemId) && obj.userData.keyItemId > 0) out.keyItemId = obj.userData.keyItemId
       if (obj.userData.consumeKey) out.consumeKey = true
       if (obj.userData.lockedMessage) out.lockedMessage = obj.userData.lockedMessage
+      if (obj.userData.noRoof) out.noRoof = true
       if (Number.isInteger(obj.userData.altarTier) && obj.userData.altarTier > 1) out.altarTier = obj.userData.altarTier
       if (obj.userData.trigger) out.trigger = { ...obj.userData.trigger }
       if (obj.userData.verticalLinks?.length) out.verticalLinks = JSON.parse(JSON.stringify(obj.userData.verticalLinks))
@@ -6617,6 +6645,7 @@ let selectedWaterFlowChunk = null
       if (Number.isInteger(placed.keyItemId) && placed.keyItemId > 0) model.userData.keyItemId = placed.keyItemId
       if (placed.consumeKey) model.userData.consumeKey = true
       if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
+      if (placed.noRoof) model.userData.noRoof = true
       if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
@@ -7002,6 +7031,7 @@ let selectedWaterFlowChunk = null
       if (placed.name) model.userData.name = placed.name
       if (placed.examineText) model.userData.examineText = placed.examineText
       if (placed.interactions?.length) model.userData.interactions = JSON.parse(JSON.stringify(placed.interactions))
+      if (placed.noRoof) model.userData.noRoof = true
       if (placed.trigger) model.userData.trigger = { ...placed.trigger }
       if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
       if (placed.interactionTiles?.length) model.userData.interactionTiles = JSON.parse(JSON.stringify(placed.interactionTiles))
@@ -7784,6 +7814,7 @@ let selectedWaterFlowChunk = null
     if (Number.isInteger(placed.keyItemId) && placed.keyItemId > 0) model.userData.keyItemId = placed.keyItemId
     if (placed.consumeKey) model.userData.consumeKey = true
     if (placed.lockedMessage) model.userData.lockedMessage = placed.lockedMessage
+    if (placed.noRoof) model.userData.noRoof = true
     if (Number.isInteger(placed.altarTier) && placed.altarTier > 0) model.userData.altarTier = placed.altarTier
     if (placed.trigger) model.userData.trigger = { ...placed.trigger }
     if (placed.verticalLinks?.length) model.userData.verticalLinks = JSON.parse(JSON.stringify(placed.verticalLinks))
@@ -8658,6 +8689,7 @@ function applyToolAtTile(tile, eventLike = null) {
       model.userData.assetId = newAsset.id
       model.userData.type = 'asset'
       model.userData.layerId = obj.userData.layerId || activeLayerId
+      if (obj.userData.noRoof && isRoofLikeAssetId(newAsset.id)) model.userData.noRoof = true
       const _rLayer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(_rLayer ? _rLayer.visible : true)
       removePlacedModel(obj)
@@ -8722,6 +8754,7 @@ function applyToolAtTile(tile, eventLike = null) {
         model.userData.assetId = asset.id
         model.userData.type = 'asset'
         model.userData.layerId = src.userData.layerId || activeLayerId
+        copyNoRoofFlag(src, model)
         addPlacedModel(model)
         model.computeWorldMatrix(true)
         model.position.copyFrom(src.position.add(offsetVec))
@@ -8833,6 +8866,7 @@ function applyToolAtTile(tile, eventLike = null) {
         model.userData.assetId = asset.id
         model.userData.type = 'asset'
         model.userData.layerId = src.userData.layerId || activeLayerId
+        copyNoRoofFlag(src, model)
         addPlacedModel(model)
         model.computeWorldMatrix(true)
 
@@ -8882,6 +8916,7 @@ function applyToolAtTile(tile, eventLike = null) {
       model.userData.assetId = asset.id
       model.userData.type = 'asset'
       model.userData.layerId = selectedPlacedObject.userData.layerId || activeLayerId
+      copyNoRoofFlag(selectedPlacedObject, model)
 
       addPlacedModel(model)
       model.computeWorldMatrix(true)
@@ -12140,16 +12175,30 @@ function applyToolAtTile(tile, eventLike = null) {
   const texNoRoofCheckbox = sidebar.querySelector('#texNoRoof')
   const texNoRoofRow = sidebar.querySelector('#texNoRoofRow')
   texNoRoofCheckbox.addEventListener('change', () => {
-    if (!selectedTexturePlane) return
-    for (const plane of selectedTexturePlanes) {
+    if (selectedTexturePlane) {
+      for (const plane of selectedTexturePlanes) {
+        if (texNoRoofCheckbox.checked) {
+          plane.noRoof = true
+        } else {
+          delete plane.noRoof
+          delete plane.bridge
+        }
+      }
+      texBridgeCheckbox.checked = !!selectedTexturePlane.bridge
+      return
+    }
+
+    const roofObjects = selectedRoofLikePlacedObjects()
+    if (!roofObjects.length) return
+    for (const obj of roofObjects) {
       if (texNoRoofCheckbox.checked) {
-        plane.noRoof = true
+        obj.userData.noRoof = true
       } else {
-        delete plane.noRoof
-        delete plane.bridge
+        delete obj.userData.noRoof
       }
     }
-    texBridgeCheckbox.checked = !!selectedTexturePlane.bridge
+    texNoRoofCheckbox.indeterminate = false
+    updateToolUI()
   })
 
   const texBridgeCheckbox = sidebar.querySelector('#texBridge')
