@@ -30,7 +30,7 @@ RUN cd website && bunx next build
 
 FROM oven/bun:1-alpine
 WORKDIR /app
-RUN apk add --no-cache chromium
+RUN apk add --no-cache chromium mesa-dri-gallium mesa-egl mesa-gl
 RUN mkdir -p /app/data
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/tsconfig.json ./tsconfig.json

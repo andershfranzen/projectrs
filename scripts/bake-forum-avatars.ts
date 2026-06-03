@@ -35,7 +35,14 @@ try {
   browser = await chromium.launch({
     headless: true,
     executablePath: chromiumExecutablePath,
-    args: ['--disable-dev-shm-usage', '--no-sandbox', '--use-gl=swiftshader'],
+    args: [
+      '--disable-dev-shm-usage',
+      '--no-sandbox',
+      '--enable-webgl',
+      '--ignore-gpu-blocklist',
+      '--enable-unsafe-swiftshader',
+      '--use-gl=swiftshader',
+    ],
   });
   const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
   if (bakeSecret) {
