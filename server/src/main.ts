@@ -2025,7 +2025,11 @@ async function runForumAvatarBake(reason: string): Promise<void> {
   forumAvatarBakeRunning = true;
   try {
     console.log(`[forum-avatar-bake] scheduling missing avatar bake (${reason})`);
-    const proc = Bun.spawn(['xvfb-run', '-a', 'bun', 'scripts/bake-forum-avatars.ts', '--origin', `http://localhost:${SERVER_PORT}`], {
+    const proc = Bun.spawn([
+      'sh',
+      '-lc',
+      `Xvfb :99 -screen 0 1280x1024x24 >/tmp/forum-avatar-xvfb.log 2>&1 & xvfb_pid=$!; trap "kill $xvfb_pid 2>/dev/null || true" EXIT; sleep 0.2; DISPLAY=:99 bun scripts/bake-forum-avatars.ts --origin http://localhost:${SERVER_PORT}`,
+    ], {
       cwd: ROOT_DIR,
       stdout: 'pipe',
       stderr: 'pipe',
