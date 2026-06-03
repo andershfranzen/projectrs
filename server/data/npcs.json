@@ -87,7 +87,12 @@
       {
         "itemId": 263,
         "quantity": 1,
-        "chance": 0.6
+        "chance": 1
+      },
+      {
+        "itemId": 296,
+        "quantity": 1,
+        "chance": 1
       },
       {
         "itemId": 226,
@@ -119,6 +124,11 @@
         "chance": 0.8
       },
       {
+        "itemId": 296,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
         "itemId": 224,
         "quantity": 1,
         "chance": 0.02
@@ -128,10 +138,10 @@
   {
     "id": 25,
     "name": "Bear",
-    "health": 35,
-    "attack": 20,
-    "defence": 12,
-    "strength": 28,
+    "health": 45,
+    "attack": 21,
+    "defence": 22,
+    "strength": 36,
     "attackSpeed": 4,
     "respawnTime": 45,
     "aggressive": true,
@@ -139,29 +149,29 @@
     "size": 2,
     "lootTable": [
       {
-        "itemId": 1,
+        "itemId": 20,
         "quantity": 1,
         "chance": 1
       },
       {
-        "itemId": 20,
+        "itemId": 297,
         "quantity": 1,
-        "chance": 0.75
+        "chance": 1
       },
       {
         "itemId": 227,
         "quantity": 1,
-        "chance": 0.0048
+        "chance": 0.017
       }
     ]
   },
   {
     "id": 26,
     "name": "Black Bear",
-    "health": 46,
+    "health": 56,
     "attack": 35,
     "defence": 27,
-    "strength": 34,
+    "strength": 53,
     "attackSpeed": 4,
     "respawnTime": 45,
     "aggressive": true,
@@ -169,19 +179,19 @@
     "size": 2,
     "lootTable": [
       {
-        "itemId": 1,
+        "itemId": 20,
         "quantity": 1,
         "chance": 1
       },
       {
-        "itemId": 20,
+        "itemId": 297,
         "quantity": 1,
-        "chance": 0.75
+        "chance": 1
       },
       {
         "itemId": 228,
         "quantity": 1,
-        "chance": 0.0256
+        "chance": 0.08199999999999999
       }
     ]
   },
@@ -306,6 +316,11 @@
         "chance": 0.5
       },
       {
+        "itemId": 298,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
         "itemId": 225,
         "quantity": 1,
         "chance": 0.018333
@@ -398,8 +413,8 @@
     "id": 7,
     "name": "Guard",
     "health": 40,
-    "attack": 12,
-    "defence": 10,
+    "attack": 21,
+    "defence": 32,
     "strength": 10,
     "attackSpeed": 4,
     "respawnTime": 50,
@@ -417,9 +432,14 @@
         "chance": 1
       },
       {
-        "itemId": 226,
+        "itemId": 288,
         "quantity": 1,
-        "chance": 0.031667
+        "chance": 0.015
+      },
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
       }
     ]
   },
@@ -696,6 +716,11 @@
         "chance": 0.001
       },
       {
+        "itemId": 300,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
         "itemId": 224,
         "quantity": 1,
         "chance": 0.03
@@ -805,6 +830,11 @@
         "chance": 0.6
       },
       {
+        "itemId": 298,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
         "itemId": 225,
         "quantity": 1,
         "chance": 0.028333
@@ -868,6 +898,11 @@
         "itemId": 226,
         "quantity": 1,
         "chance": 0.011667
+      },
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
       }
     ]
   },
@@ -970,8 +1005,8 @@
   {
     "id": 101,
     "name": "Elder Vampire",
-    "health": 35,
-    "attack": 27,
+    "health": 41,
+    "attack": 31,
     "defence": 20,
     "strength": 19,
     "attackSpeed": 5,
@@ -979,36 +1014,6 @@
     "aggressive": false,
     "wanderRange": 3,
     "lootTable": [
-      {
-        "itemId": 72,
-        "quantity": 1,
-        "chance": 0.25
-      },
-      {
-        "itemId": 74,
-        "quantity": 1,
-        "chance": 0.18
-      },
-      {
-        "itemId": 75,
-        "quantity": 1,
-        "chance": 0.14
-      },
-      {
-        "itemId": 80,
-        "quantity": 1,
-        "chance": 0.1
-      },
-      {
-        "itemId": 83,
-        "quantity": 1,
-        "chance": 0.06
-      },
-      {
-        "itemId": 82,
-        "quantity": 1,
-        "chance": 0.05
-      },
       {
         "itemId": 84,
         "quantity": 1,
@@ -1027,7 +1032,7 @@
       {
         "itemId": 288,
         "quantity": 1,
-        "chance": 0.0064
+        "chance": 0.015
       }
     ]
   },
@@ -1042,6 +1047,12 @@
     "respawnTime": 30,
     "aggressive": false,
     "wanderRange": 3,
-    "lootTable": []
+    "lootTable": [
+      {
+        "itemId": 301,
+        "quantity": 1,
+        "chance": 0.25
+      }
+    ]
   }
 ]

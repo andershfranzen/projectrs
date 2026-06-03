@@ -11,6 +11,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
@@ -89,6 +90,10 @@ function templateCacheKey(path: string, options: ThumbnailOptions, targetSize: n
 function convertPbrToFlat(mesh: AbstractMesh, scene: Scene): void {
   const pbr = mesh.material as any;
   if (!pbr || !pbr.getClassName || pbr.getClassName() !== 'PBRMaterial') return;
+
+  if (mesh.isVerticesDataPresent(VertexBuffer.ColorKind)) {
+    mesh.useVertexColors = true;
+  }
 
   const flat = new StandardMaterial(`${pbr.name}_groundFlat`, scene);
   const hasTexture = !!pbr.albedoTexture;

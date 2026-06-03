@@ -2841,6 +2841,114 @@
     "model": "/assets/models/Bowstring.glb"
   },
   {
+    "id": 296,
+    "name": "Cowhide",
+    "description": "A rough hide from cattle.",
+    "stackable": false,
+    "equippable": false,
+    "value": 6,
+    "model": "/assets/models/hides/CowHide.glb"
+  },
+  {
+    "id": 297,
+    "name": "Bear Hide",
+    "description": "A heavy hide from a bear.",
+    "stackable": false,
+    "equippable": false,
+    "value": 18,
+    "model": "/assets/models/hides/BearHide.glb"
+  },
+  {
+    "id": 298,
+    "name": "Wolf Hide",
+    "description": "A coarse hide from a wolf.",
+    "stackable": false,
+    "equippable": false,
+    "value": 12,
+    "model": "/assets/models/hides/WolfHide.glb"
+  },
+  {
+    "id": 299,
+    "name": "Deer Hide",
+    "description": "A supple hide from a deer.",
+    "stackable": false,
+    "equippable": false,
+    "value": 10,
+    "model": "/assets/models/hides/DeerHide.glb"
+  },
+  {
+    "id": 300,
+    "name": "Camel Hide",
+    "description": "A dry, tough hide from a camel.",
+    "stackable": false,
+    "equippable": false,
+    "value": 14,
+    "model": "/assets/models/hides/CamelHide.glb"
+  },
+  {
+    "id": 301,
+    "name": "Human Skin",
+    "description": "An unsettling skin from a humanoid creature.",
+    "stackable": false,
+    "equippable": false,
+    "value": 16,
+    "model": "/assets/models/hides/HumanHide.glb"
+  },
+  {
+    "id": 302,
+    "name": "Tanned Cowhide",
+    "description": "Cowhide darkened and cured into leather.",
+    "stackable": false,
+    "equippable": false,
+    "value": 12,
+    "model": "/assets/models/hides/TannedCowHide.glb"
+  },
+  {
+    "id": 303,
+    "name": "Tanned Bear Hide",
+    "description": "Bear hide darkened and cured into heavy leather.",
+    "stackable": false,
+    "equippable": false,
+    "value": 36,
+    "model": "/assets/models/hides/TannedBearHide.glb"
+  },
+  {
+    "id": 304,
+    "name": "Tanned Wolf Hide",
+    "description": "Wolf hide smoked and cured into leather.",
+    "stackable": false,
+    "equippable": false,
+    "value": 24,
+    "model": "/assets/models/hides/TannedWolfHide.glb"
+  },
+  {
+    "id": 305,
+    "name": "Tanned Deer Hide",
+    "description": "Deer hide cured into soft leather.",
+    "stackable": false,
+    "equippable": false,
+    "value": 20,
+    "model": "/assets/models/hides/TannedDeerHide.glb"
+  },
+  {
+    "id": 306,
+    "name": "Tanned Camel Hide",
+    "description": "Camel hide cured into tough desert leather.",
+    "stackable": false,
+    "equippable": false,
+    "value": 28,
+    "model": "/assets/models/hides/TannedCamelHide.glb"
+  },
+  {
+    "id": 307,
+    "name": "Tanned Human Skin",
+    "description": "Humanoid skin darkened and cured into strange leather.",
+    "stackable": false,
+    "equippable": false,
+    "value": 32,
+    "model": "/assets/models/hides/TannedHumanHide.glb"
+  },
+  {
     "id": 274,
     "name": "Shortbow",
     "description": "A strung shortbow ready to fire arrows.",
