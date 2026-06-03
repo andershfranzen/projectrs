@@ -50,6 +50,7 @@ declare global {
   interface Window {
     __forumAvatarBakeDone?: boolean;
     __forumAvatarBakeResult?: { ok: boolean; baked: number; total: number; errors: string[] };
+    __forumAvatarBakeSecret?: string;
   }
 }
 
@@ -77,6 +78,7 @@ function authHeaders(): Headers {
   const headers = new Headers();
   const token = window.localStorage.getItem(TOKEN_KEY) || '';
   if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (window.__forumAvatarBakeSecret) headers.set('X-Forum-Avatar-Bake-Secret', window.__forumAvatarBakeSecret);
   return headers;
 }
 

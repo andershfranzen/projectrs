@@ -2,6 +2,7 @@ import { SERVER_PORT, GAME_WS_PATH, CHAT_WS_PATH, CHUNK_SIZE, HEAD_RENDER_MODES,
 import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
+import { randomUUID } from 'crypto';
 import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
 import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, getObjectInteractionTiles, localSidesToWorldSides, TileType } from '@projectrs/shared';
 import { World } from './World';
@@ -1214,6 +1215,7 @@ const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
 const DATA_DIR = resolve(import.meta.dir, '../data');
 const FORUM_MEDIA_DIR = resolve(DATA_DIR, 'forum-media');
 const FORUM_AVATAR_DIR = resolve(DATA_DIR, 'forum-avatars');
+const FORUM_AVATAR_BAKE_SECRET = process.env.FORUM_AVATAR_BAKE_SECRET || randomUUID();
 const WEBSITE_DEV_ORIGIN = (() => {
   const raw = (process.env.WEBSITE_DEV_ORIGIN || '').trim();
   if (!raw || isProductionLike()) return null;
@@ -1825,6 +1827,9 @@ try {
 const LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 function isAdminRequest(req: Request, srv: { requestIP: (r: Request) => { address: string } | null }): boolean {
+  const bakeSecret = req.headers.get('x-forum-avatar-bake-secret') || '';
+  if (bakeSecret && bakeSecret === FORUM_AVATAR_BAKE_SECRET) return true;
+
   const ip = srv.requestIP(req)?.address ?? '';
   if (LOOPBACK_IPS.has(ip)) {
     const host = (req.headers.get('host') || '').toLowerCase().split(':')[0];
@@ -2024,7 +2029,7 @@ async function runForumAvatarBake(reason: string): Promise<void> {
       cwd: ROOT_DIR,
       stdout: 'pipe',
       stderr: 'pipe',
-      env: process.env,
+      env: { ...process.env, FORUM_AVATAR_BAKE_SECRET },
     });
     void logForumAvatarBakeStream(proc.stdout, 'out');
     void logForumAvatarBakeStream(proc.stderr, 'err');

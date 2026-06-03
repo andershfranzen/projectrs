@@ -7,6 +7,7 @@ declare global {
   interface Window {
     __forumAvatarBakeDone?: boolean;
     __forumAvatarBakeResult?: BakeResult;
+    __forumAvatarBakeSecret?: string;
   }
 }
 
@@ -23,6 +24,7 @@ const onlyMissing = !Bun.argv.includes('--all');
 const timeoutMs = Math.max(10_000, Number(argValue('--timeout-ms') || Bun.env.FORUM_AVATAR_BAKE_TIMEOUT_MS || 120_000));
 const failOnError = Bun.argv.includes('--fail-on-error');
 const url = `${origin}/forums/avatar-bake?autorun=${onlyMissing ? 'missing' : 'all'}`;
+const bakeSecret = Bun.env.FORUM_AVATAR_BAKE_SECRET || '';
 const chromiumExecutablePath = Bun.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
   || ['/usr/bin/chromium-browser', '/usr/bin/chromium'].find((path) => existsSync(path));
 
@@ -36,6 +38,11 @@ try {
     args: ['--disable-dev-shm-usage', '--no-sandbox', '--use-gl=swiftshader'],
   });
   const page = await browser.newPage({ viewport: { width: 900, height: 760 } });
+  if (bakeSecret) {
+    await page.addInitScript((secret) => {
+      window.__forumAvatarBakeSecret = secret;
+    }, bakeSecret);
+  }
   const pageErrors: string[] = [];
   page.on('console', (message) => {
     if (message.type() === 'error') console.warn(`[forum-avatar-bake] browser: ${message.text()}`);
