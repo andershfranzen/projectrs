@@ -25,9 +25,9 @@ function makeSpellModePanel(): any {
 
 function makeAutoRetaliatePanel(initial: boolean): any {
   const activeClasses = new Set<string>();
+  const attributes = new Map<string, string>();
   const panel = Object.create(SidePanel.prototype) as any;
   panel.autoRetaliate = initial;
-  panel.autoRetaliateCheckbox = { checked: !initial };
   panel.autoRetaliateRow = {
     classList: {
       toggle(name: string, enabled?: boolean) {
@@ -38,6 +38,12 @@ function makeAutoRetaliatePanel(initial: boolean): any {
       contains(name: string) {
         return activeClasses.has(name);
       },
+    },
+    setAttribute(name: string, value: string) {
+      attributes.set(name, value);
+    },
+    getAttribute(name: string) {
+      return attributes.get(name) ?? null;
     },
   };
   return panel;
@@ -90,8 +96,8 @@ describe('SidePanel auto retaliate', () => {
     panel.applyAutoRetaliateFromServer(false);
 
     expect(panel.autoRetaliate).toBe(false);
-    expect(panel.autoRetaliateCheckbox.checked).toBe(false);
     expect(panel.autoRetaliateRow.classList.contains('is-active')).toBe(false);
+    expect(panel.autoRetaliateRow.getAttribute('aria-pressed')).toBe('false');
   });
 
   test('server sync marks the row active when enabled', () => {
@@ -100,7 +106,7 @@ describe('SidePanel auto retaliate', () => {
     panel.applyAutoRetaliateFromServer(true);
 
     expect(panel.autoRetaliate).toBe(true);
-    expect(panel.autoRetaliateCheckbox.checked).toBe(true);
     expect(panel.autoRetaliateRow.classList.contains('is-active')).toBe(true);
+    expect(panel.autoRetaliateRow.getAttribute('aria-pressed')).toBe('true');
   });
 });

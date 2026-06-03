@@ -142,8 +142,7 @@ export class SidePanel {
   private stanceButtonLabels: HTMLDivElement[] = [];
   private stanceButtonDescs: HTMLDivElement[] = [];
   private autoRetaliate: boolean = false;
-  private autoRetaliateRow: HTMLLabelElement | null = null;
-  private autoRetaliateCheckbox: HTMLInputElement | null = null;
+  private autoRetaliateRow: HTMLButtonElement | null = null;
   private equipmentBonusValues: Partial<Record<keyof CombatBonuses, HTMLSpanElement>> = {};
 
   // Item definitions
@@ -250,8 +249,12 @@ export class SidePanel {
           display: flex;
           align-items: center;
           gap: 8px;
+          width: 100%;
           margin-top: 8px;
           padding: 8px;
+          appearance: none;
+          font: inherit;
+          text-align: left;
           color: #9c9486;
           background: rgba(0,0,0,0.22);
           border: 1px solid #3a3025;
@@ -267,11 +270,18 @@ export class SidePanel {
           background: rgba(122,90,37,0.32);
           box-shadow: inset 0 0 4px rgba(216,55,43,0.25);
         }
-        .auto-retaliate-row input {
+        .auto-retaliate-indicator {
           width: 16px;
           height: 16px;
-          margin: 0;
-          accent-color: #d8372b;
+          flex: 0 0 auto;
+          border: 1px solid #5b4a35;
+          background: rgba(0,0,0,0.35);
+          box-shadow: inset 0 0 2px rgba(0,0,0,0.8);
+        }
+        .auto-retaliate-row.is-active .auto-retaliate-indicator {
+          border-color: #d8372b;
+          background: #7a5a25;
+          box-shadow: inset 0 0 0 3px rgba(0,0,0,0.45), 0 0 4px rgba(216,55,43,0.45);
         }
         .auto-retaliate-text {
           display: flex;
@@ -2300,19 +2310,26 @@ export class SidePanel {
       this.stanceButtonDescs.push(descEl);
     }
 
-    const autoRetaliateRow = document.createElement('label');
+    const autoRetaliateRow = document.createElement('button');
+    autoRetaliateRow.type = 'button';
     autoRetaliateRow.className = 'auto-retaliate-row';
+    autoRetaliateRow.tabIndex = -1;
     autoRetaliateRow.addEventListener('pointerdown', (event) => {
       event.preventDefault();
     });
-    const autoRetaliateCheckbox = document.createElement('input');
-    autoRetaliateCheckbox.type = 'checkbox';
-    autoRetaliateCheckbox.addEventListener('change', () => {
-      this.autoRetaliate = autoRetaliateCheckbox.checked;
+    autoRetaliateRow.addEventListener('focus', () => {
+      autoRetaliateRow.blur();
+    });
+    autoRetaliateRow.addEventListener('click', () => {
+      autoRetaliateRow.blur();
+      this.autoRetaliate = !this.autoRetaliate;
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_AUTO_RETALIATE, this.autoRetaliate ? 1 : 0));
       this.updateAutoRetaliateUI();
     });
-    autoRetaliateRow.appendChild(autoRetaliateCheckbox);
+    const autoRetaliateIndicator = document.createElement('span');
+    autoRetaliateIndicator.className = 'auto-retaliate-indicator';
+    autoRetaliateIndicator.setAttribute('aria-hidden', 'true');
+    autoRetaliateRow.appendChild(autoRetaliateIndicator);
 
     const autoRetaliateText = document.createElement('span');
     autoRetaliateText.className = 'auto-retaliate-text';
@@ -2327,7 +2344,6 @@ export class SidePanel {
     autoRetaliateRow.appendChild(autoRetaliateText);
     wrap.appendChild(autoRetaliateRow);
     this.autoRetaliateRow = autoRetaliateRow;
-    this.autoRetaliateCheckbox = autoRetaliateCheckbox;
 
     this.updateStanceUI();
     this.updateAutoRetaliateUI();
@@ -3327,8 +3343,8 @@ export class SidePanel {
   }
 
   private updateAutoRetaliateUI(): void {
-    if (this.autoRetaliateCheckbox) this.autoRetaliateCheckbox.checked = this.autoRetaliate;
     this.autoRetaliateRow?.classList.toggle('is-active', this.autoRetaliate);
+    this.autoRetaliateRow?.setAttribute('aria-pressed', this.autoRetaliate ? 'true' : 'false');
   }
 
   private isBowEquipped(): boolean {
