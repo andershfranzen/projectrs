@@ -171,30 +171,13 @@ describe('wall-gated station interaction', () => {
       isTileBlockedOnFloor: () => false,
       isWallBlocked: () => false,
       isWallBlockedOnFloor: () => false,
-      findPathForNpc: (_sx: number, _sz: number, gx: number, gz: number) => {
-        const key = `${Math.floor(gx)},${Math.floor(gz)}`;
-        if (key === '10,9') return [
-          { x: 30.5, z: 7.5 },
-          { x: 30.5, z: 9.5 },
-          { x: 10.5, z: 9.5 },
-        ];
-        if (key === '9,10') return [
-          { x: 9.5, z: 8.5 },
-          { x: 9.5, z: 9.5 },
-          { x: 9.5, z: 10.5 },
-        ];
-        return [
-          { x: 14.5, z: 8.5 },
-          { x: gx, z: gz },
-        ];
-      },
     };
     world.getPlayerMap = () => map;
 
     const path = world.findPathToObjectInteraction(player, rock);
     const last = path[path.length - 1]!;
 
-    expect(Math.floor(last.x)).toBe(9);
-    expect(Math.floor(last.z)).toBe(10);
+    expect(Math.floor(last.x)).toBe(10);
+    expect(Math.floor(last.z)).toBe(9);
   });
 });

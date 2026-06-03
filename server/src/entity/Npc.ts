@@ -1,6 +1,19 @@
 import { Entity } from './Entity';
 import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, npcCombatLevel } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
+import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
+
+function callbackPathingCollision(
+  isBlocked: (x: number, z: number) => boolean,
+  isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+): PathingCollision {
+  return {
+    isTileBlocked: (tileX, tileZ) => isBlocked(tileX + 0.5, tileZ + 0.5),
+    isWallBlocked: isWallBlocked
+      ? (fx, fz, tx, tz) => isWallBlocked(fx + 0.5, fz + 0.5, tx + 0.5, tz + 0.5)
+      : undefined,
+  };
+}
 
 function normalizeFacingAngle(value: number | null | undefined): number | null {
   if (value == null || !Number.isFinite(value)) return null;
@@ -53,8 +66,8 @@ export class Npc extends Entity {
   private overlapEscapeDelayTargetId: number = -1;
   private overlapEscapeDelayTicks: number = 0;
 
-  // A* path following — used for wander + returning to spawn only. Chase
-  // uses naiveChaseStep (2004scape-style direct stepping) so NPCs get
+  // Server path following — used for wander + returning to spawn only. Chase
+  // uses LostCity-style naive interaction stepping so NPCs get
   // visibly stuck on walls / closed doors / placed objects instead of
   // routing around them.
   pathQueue: { x: number; z: number }[] = [];
@@ -325,72 +338,63 @@ export class Npc extends Entity {
            Math.abs(z - this.spawnZ) <= wr + 0.5;
   }
 
-  private followPath(
-    isBlocked: (x: number, z: number) => boolean,
-    isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
-  ): boolean {
+  private followPath(collision: PathingCollision): boolean {
     if (this.pathQueue.length === 0) return false;
     const next = this.pathQueue[0];
-    const px = this.position.x;
-    const pz = this.position.y;
-    if (isBlocked(next.x, next.z)) { this.pathQueue.length = 0; return false; }
-    if (isWallBlocked && isWallBlocked(px, pz, next.x, next.z)) { this.pathQueue.length = 0; return false; }
-    this.position.x = next.x;
-    this.position.y = next.z;
+    const px = Math.floor(this.position.x);
+    const pz = Math.floor(this.position.y);
+    const nx = Math.floor(next.x);
+    const nz = Math.floor(next.z);
+    const dx = nx - px;
+    const dz = nz - pz;
+    if (Math.abs(dx) > 1 || Math.abs(dz) > 1 || !canTravel(collision, px, pz, dx, dz, this.size)) {
+      this.pathQueue.length = 0;
+      return false;
+    }
+    this.moveTo(next.x, next.z);
     this.pathQueue.shift();
     return true;
   }
 
-  /** One-tile direct step toward (targetX, targetZ). Tries diagonal first,
-   *  then the cardinal that closes the larger axis. Returns false (no step)
-   *  if every option is blocked — that's how NPCs end up stuck behind
-   *  walls / closed doors / placed objects. Mirrors 2004scape's NAIVE
-   *  move strategy (Engine-TS PathingEntity.naivePathToTarget). */
+  /** One-tile LostCity-style naive step toward the target's interaction
+   *  surface. This deliberately does not run full BFS during combat chase, so
+   *  NPCs slide along simple obstructions and get stuck at real dead-ends. */
   private naiveChaseStep(
-    targetX: number, targetZ: number,
-    isBlocked: (x: number, z: number) => boolean,
-    isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+    targetX: number,
+    targetZ: number,
+    targetSize: number,
+    collision: PathingCollision,
   ): boolean {
-    const px = Math.floor(this.position.x);
-    const pz = Math.floor(this.position.y);
-    const fromX = px + 0.5;
-    const fromZ = pz + 0.5;
-    const sx = Math.sign(Math.floor(targetX) - px);
-    const sz = Math.sign(Math.floor(targetZ) - pz);
-    if (sx === 0 && sz === 0) return false;
+    const step = stepTowardNaiveInteraction(collision, this.position.x, this.position.y, this.size, targetX, targetZ, targetSize);
+    if (!step) return false;
+    this.moveTo(step.x, step.z);
+    return true;
+  }
 
-    const tryStep = (dx: number, dz: number): boolean => {
-      if (dx === 0 && dz === 0) return false;
-      const nx = px + dx + 0.5;
-      const nz = pz + dz + 0.5;
-      if (isBlocked(nx, nz)) return false;
-      if (isWallBlocked && isWallBlocked(fromX, fromZ, nx, nz)) return false;
-      this.position.x = nx;
-      this.position.y = nz;
-      return true;
-    };
+  private canStep(collision: PathingCollision, fromTileX: number, fromTileZ: number, dx: number, dz: number, allowLargeDiagonal = true): boolean {
+    return canTravel(collision, fromTileX, fromTileZ, dx, dz, this.size, allowLargeDiagonal);
+  }
 
-    // Prefer diagonal when both axes need to close; otherwise fall back to
-    // the cardinal that still has distance to cover. If the diagonal is
-    // blocked but a cardinal isn't, take the cardinal — that's what makes
-    // NPCs slide along walls until they hit a real dead-end.
-    if (sx !== 0 && sz !== 0 && tryStep(sx, sz)) return true;
-    const adx = Math.abs(targetX - this.position.x);
-    const adz = Math.abs(targetZ - this.position.y);
-    if (adx >= adz) {
-      if (sx !== 0 && tryStep(sx, 0)) return true;
-      if (sz !== 0 && tryStep(0, sz)) return true;
-    } else {
-      if (sz !== 0 && tryStep(0, sz)) return true;
-      if (sx !== 0 && tryStep(sx, 0)) return true;
-    }
-    return false;
+  private moveByTileOffset(fromTileX: number, fromTileZ: number, dx: number, dz: number): void {
+    this.moveTo(fromTileX + dx + 0.5, fromTileZ + dz + 0.5);
+  }
+
+  private tryMoveByTileOffset(
+    collision: PathingCollision,
+    fromTileX: number,
+    fromTileZ: number,
+    dx: number,
+    dz: number,
+    allowLargeDiagonal = true,
+  ): boolean {
+    if (!this.canStep(collision, fromTileX, fromTileZ, dx, dz, allowLargeDiagonal)) return false;
+    this.moveByTileOffset(fromTileX, fromTileZ, dx, dz);
+    return true;
   }
 
   private retreatStepAwayFrom(
     targetX: number, targetZ: number,
-    isBlocked: (x: number, z: number) => boolean,
-    isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+    collision: PathingCollision,
   ): 'moved' | 'stalled' | 'blocked' {
     const px = Math.floor(this.position.x);
     const pz = Math.floor(this.position.y);
@@ -399,38 +403,27 @@ export class Npc extends Entity {
     const awayX = targetX >= fromX ? -1 : 1;
     const awayZ = targetZ >= fromZ ? -1 : 1;
 
-    const stepBlocked = (dx: number, dz: number): boolean => {
-      const nx = px + dx + 0.5;
-      const nz = pz + dz + 0.5;
-      return isBlocked(nx, nz) || !!(isWallBlocked && isWallBlocked(fromX, fromZ, nx, nz));
-    };
-
     const canStep = (dx: number, dz: number, strictMaxRange: boolean): boolean => {
       const nx = px + dx + 0.5;
       const nz = pz + dz + 0.5;
-      return this.isPositionWithinMaxRange(nx, nz, strictMaxRange) && !stepBlocked(dx, dz);
-    };
-
-    const move = (dx: number, dz: number): 'moved' => {
-      const nx = px + dx + 0.5;
-      const nz = pz + dz + 0.5;
-      this.position.x = nx;
-      this.position.y = nz;
-      return 'moved';
+      return this.isPositionWithinMaxRange(nx, nz, strictMaxRange) && this.canStep(collision, px, pz, dx, dz);
     };
 
     // 2004Scape's PLAYERESCAPE first tries a diagonal step directly away
     // from the player. A blocked diagonal ends the mode; the axis fallback
     // only applies when the diagonal would leave the NPC's maxrange box.
-    if (stepBlocked(awayX, awayZ)) return 'blocked';
+    if (!this.canStep(collision, px, pz, awayX, awayZ)) return 'blocked';
     if (this.isPositionWithinMaxRange(px + awayX + 0.5, pz + awayZ + 0.5, true)) {
-      return move(awayX, awayZ);
+      this.moveByTileOffset(px, pz, awayX, awayZ);
+      return 'moved';
     }
 
     const axisDx = targetZ < fromZ ? 0 : awayX;
     const axisDz = targetZ < fromZ ? awayZ : 0;
     if (!this.isPositionWithinMaxRange(px + axisDx + 0.5, pz + axisDz + 0.5, false)) return 'stalled';
-    return canStep(axisDx, axisDz, false) ? move(axisDx, axisDz) : 'blocked';
+    if (!canStep(axisDx, axisDz, false)) return 'blocked';
+    this.moveByTileOffset(px, pz, axisDx, axisDz);
+    return 'moved';
   }
 
   /** If a player is inside an NPC's own footprint, ordinary chase can stall
@@ -440,8 +433,7 @@ export class Npc extends Entity {
   private stepOutFromOverlappingTarget(
     targetTileX: number,
     targetTileZ: number,
-    isBlocked: (x: number, z: number) => boolean,
-    isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
+    collision: PathingCollision,
   ): boolean {
     const size = this.size;
     const bounds = getObjectFootprintBounds(this.position.x, this.position.y, size);
@@ -451,8 +443,6 @@ export class Npc extends Entity {
 
     const px = Math.floor(this.position.x);
     const pz = Math.floor(this.position.y);
-    const fromX = px + 0.5;
-    const fromZ = pz + 0.5;
     const candidates = [
       { dx: 1, dz: 0, cost: targetTileX - bounds.minX },
       { dx: -1, dz: 0, cost: bounds.maxX - targetTileX },
@@ -461,13 +451,7 @@ export class Npc extends Entity {
     ].sort((a, b) => a.cost - b.cost);
 
     for (const c of candidates) {
-      const nx = px + c.dx + 0.5;
-      const nz = pz + c.dz + 0.5;
-      if (isBlocked(nx, nz)) continue;
-      if (isWallBlocked && isWallBlocked(fromX, fromZ, nx, nz)) continue;
-      this.position.x = nx;
-      this.position.y = nz;
-      return true;
+      if (this.tryMoveByTileOffset(collision, px, pz, c.dx, c.dz, false)) return true;
     }
     return false;
   }
@@ -522,6 +506,7 @@ export class Npc extends Entity {
     findPath?: (sx: number, sz: number, gx: number, gz: number) => { x: number; z: number }[],
   ): void {
     if (this.dead) return;
+    const collision = callbackPathingCollision(isBlocked, isWallBlocked);
 
     // --- PLAYERESCAPE-style low-HP retreat ---
     if (this.retreatTarget) {
@@ -542,7 +527,7 @@ export class Npc extends Entity {
         return;
       }
 
-      const retreatResult = this.retreatStepAwayFrom(targetX, targetZ, isBlocked, isWallBlocked);
+      const retreatResult = this.retreatStepAwayFrom(targetX, targetZ, collision);
       if (retreatResult === 'blocked') {
         this.clearRetreatTarget(target.id);
       }
@@ -584,7 +569,7 @@ export class Npc extends Entity {
           return;
         }
       }
-      this.followPath(isBlocked, isWallBlocked);
+      this.followPath(collision);
       return;
     }
 
@@ -619,18 +604,19 @@ export class Npc extends Entity {
       this.pathQueue.length = 0;
       if (this.isFootprintTile(targetTileX, targetTileZ)) {
         if (this.size > 1 && this.shouldDelayOverlapEscape(this.combatTarget.id)) return;
-        if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, isBlocked, isWallBlocked)) return;
+        if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, collision)) return;
       } else {
         this.resetOverlapEscapeDelay();
       }
-      this.naiveChaseStep(targetX, targetZ, isBlocked, isWallBlocked);
+      const targetSize = this.combatTarget instanceof Npc ? this.combatTarget.size : 1;
+      this.naiveChaseStep(targetX, targetZ, targetSize, collision);
       return;
     }
 
     // --- Wander ---
     if (this.wanderRange > 0) {
       if (this.pathQueue.length > 0) {
-        this.followPath(isBlocked, isWallBlocked);
+        this.followPath(collision);
         if (this.pathQueue.length === 0) {
           this.wanderCooldown = 5 + Math.floor(Math.random() * 15);
         }
@@ -681,8 +667,7 @@ export class Npc extends Entity {
   respawn(): void {
     this.dead = false;
     this.health = this.maxHealth;
-    this.position.x = this.spawnX;
-    this.position.y = this.spawnZ;
+    this.teleportTo(this.spawnX, this.spawnZ);
     this.setCombatTarget(null);
     this.retreatTarget = null;
     this.attackCooldown = 0;

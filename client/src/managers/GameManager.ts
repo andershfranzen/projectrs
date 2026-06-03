@@ -67,6 +67,7 @@ const DOOR_ACTIONS_CLOSED_CLIENT: readonly string[] = ['Open', 'Examine'];
 const DOOR_ACTIONS_LOCKED_CLIENT: readonly string[] = ['Unlock', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
+const ADMIN_NAME_COLOR = '#b96cff';
 const GEAR_DEBUG_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
@@ -116,6 +117,8 @@ function isHarvestObjectDef(def: WorldObjectDef): boolean {
 
 type InteractionOption = {
   label: string;
+  labelParts?: { text: string; color?: string }[];
+  labelColor?: string;
   action: () => void;
   /** False means right-click/touch-menu only, not primary left-click. */
   primary?: boolean;
@@ -217,6 +220,14 @@ function asAttackAnimationHost(entity: Targetable | null | undefined): AttackAni
   const candidate = entity as AttackAnimationHost;
   return typeof candidate.playAttackAnimation === 'function' || typeof candidate.getAnimationDurationMs === 'function'
     ? candidate
+    : null;
+}
+
+function asHealthBarHost(entity: Targetable | null | undefined): HealthBarHost | null {
+  if (!entity) return null;
+  const candidate = entity as Targetable & Partial<HealthBarHost>;
+  return typeof candidate.showHealthBar === 'function' && typeof candidate.hideHealthBar === 'function'
+    ? candidate as HealthBarHost
     : null;
 }
 
@@ -784,6 +795,9 @@ export class GameManager {
           if (typeof entityId !== 'number' || typeof name !== 'string' || name.length === 0) break;
           this.entities.playerNames.set(entityId, name);
           this.entities.nameToEntityId.set(name.toLowerCase(), entityId);
+          if (typeof data.isAdmin === 'boolean') {
+            this.setRemotePlayerAdmin(entityId, data.isAdmin);
+          }
           // If the remote 3D character was created with a fallback name
           // (chat 'player_info' arrived after PLAYER_SYNC), update its
           // label in place — re-creating the CharacterEntity to swap the
@@ -797,7 +811,8 @@ export class GameManager {
           const message = typeof data.message === 'string' ? data.message : '';
           if (message.length === 0) break;
           if (this.chatPanel) {
-            this.chatPanel.addMessage(from || '???', message, '#fff');
+            const fromIsAdmin = data.isAdmin === true || this.isAdminName(from);
+            this.chatPanel.addMessage(from || '???', message, fromIsAdmin ? ADMIN_NAME_COLOR : '#fff');
           }
           this.showPlayerChatBubble(from, message);
           break;
@@ -2578,6 +2593,8 @@ export class GameManager {
       const syncCombatLevel = hasBodyType ? Math.max(0, v[13] ?? 0) : v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
       const floor = hasBodyType ? Math.floor(v[14] ?? 0) : v.length >= 14 ? Math.floor(v[13] ?? 0) : 0;
       const y = hasBodyType ? (v[15] ?? 0) / 10 : v.length >= 15 ? (v[14] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
+      const hasAdminFlag = v.length >= 17;
+      const syncIsAdmin = hasAdminFlag && (v[16] ?? 0) === 1;
       const syncAppearance: PlayerAppearance | null = hasAppearance
         ? hasBodyType
           ? appearanceFromWireValues(v, 5)
@@ -2619,6 +2636,8 @@ export class GameManager {
       if (isNew) {
         const playerName = this.entities.playerNames.get(entityId) || 'Player';
         const remote = this.entities.createRemotePlayer(entityId, x, z, playerName, floor, y, syncAppearance);
+        const cachedIsAdmin = hasAdminFlag ? syncIsAdmin : this.entities.remoteAdminFlags.get(entityId) === true;
+        remote.setLabelColor(cachedIsAdmin ? ADMIN_NAME_COLOR : '#ffffff');
         // Apply cached appearance + equipment once the GLB + animations finish
         // loading. Both arrive over the network independently of the entity's
         // local-load timing, so we cache them in the EntityManager and flush
@@ -2634,6 +2653,7 @@ export class GameManager {
           if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId, anim.toolItemId);
         });
       }
+      if (hasAdminFlag) this.setRemotePlayerAdmin(entityId, syncIsAdmin);
       if (syncCombatLevel > 0) this.entities.remoteCombatLevels.set(entityId, syncCombatLevel);
       if (syncAppearance) {
         const prev = this.entities.remoteAppearances.get(entityId);
@@ -2658,13 +2678,21 @@ export class GameManager {
       // momentarily satisfies dist≤0.05, and the renderer flips to idle for
       // a frame before the next PLAYER_SYNC bumps the target again.
       const prev = this.entities.remoteTargets.get(entityId);
-      if (!prev || Math.abs(prev.x - x) > 0.001 || Math.abs(prev.z - z) > 0.001) {
+      const moved = !prev || Math.abs(prev.x - x) > 0.001 || Math.abs(prev.z - z) > 0.001;
+      if (moved) {
         // Grace = 1.5 server ticks. Long enough to bridge a normal 600 ms
         // tick gap plus jitter, short enough to drop to idle quickly when
         // the player actually stops walking.
         this.entities.remoteWalkUntil.set(entityId, performance.now() + 900);
       }
-      this.entities.remoteTargets.set(entityId, { x, z, floor, y });
+      this.entities.remoteTargets.set(entityId, {
+        x,
+        z,
+        floor,
+        y,
+        prevX: prev ? (moved ? prev.x : prev.prevX) : x - 1,
+        prevZ: prev ? (moved ? prev.z : prev.prevZ) : z,
+      });
       const character = this.entities.remotePlayers.get(entityId)!;
       // Skip bar update if a COMBAT_HIT splat is pending — splat closure
       // applies the bar at impact time so they stay in sync.
@@ -2936,14 +2964,14 @@ export class GameManager {
       this.entities.cleanupCombatTargetsFor(entityId);
       this.remoteAnimationStates.delete(entityId);
       this.toolSwappedEntities.delete(entityId);
-      if (isTrueDeath && entityId === this.localPlayerId) {
-        this.hideAllTransientHealthBars();
-      } else {
-        this.hideTransientHealthBar(entityId);
-      }
       const deathEffectStarted = isTrueDeath && entityId !== this.localPlayerId
         ? this.entities.startEntityDeathEffect(entityId)
         : false;
+      if (isTrueDeath && entityId === this.localPlayerId) {
+        this.hideAllTransientHealthBars();
+      } else if (!isTrueDeath || !deathEffectStarted) {
+        this.hideTransientHealthBar(entityId);
+      }
       if (isTrueDeath && entityId === this.localPlayerId && this.localPlayer) {
         this.playLocalPlayerDeathEffect();
       }
@@ -2981,13 +3009,15 @@ export class GameManager {
       if (targetId === -1) {
         this.entities.npcCombatTargets.delete(attackerId);
         const sprite = this.entities.npcSprites.get(attackerId);
-        this.hideTransientHealthBar(attackerId, sprite ?? null);
+        if (targetHp > 0 && !this.entities.isDeathEffectActive(attackerId)) {
+          this.hideTransientHealthBar(attackerId, sprite ?? null);
+        }
         if (sprite instanceof CharacterEntity) sprite.clearFaceLock();
         return;
       }
 
       const targetEntity = this.resolveTargetableIncludingLocal(targetId);
-      const targetSprite = this.entities.npcSprites.get(targetId) || this.entities.remotePlayers.get(targetId);
+      const targetHealthBarHost = asHealthBarHost(targetEntity);
 
       if (this.entities.npcSprites.has(attackerId)) {
         this.entities.npcCombatTargets.set(attackerId, targetId);
@@ -3035,9 +3065,9 @@ export class GameManager {
           this.pendingHealthApply.delete(targetId);
           return;
         }
-        if (targetSprite) {
-          this.showHitSplat(targetSprite.position, damage);
-          this.showTransientHealthBar(targetId, targetSprite, targetHp, targetMaxHp);
+        if (targetId !== this.localPlayerId && targetEntity) {
+          this.showHitSplat(targetEntity.position, damage);
+          if (targetHealthBarHost) this.showTransientHealthBar(targetId, targetHealthBarHost, targetHp, targetMaxHp);
         }
         if (targetId === this.localPlayerId && this.localPlayer) {
           this.showHitSplat(this.localPlayer.position, damage);
@@ -4456,11 +4486,31 @@ export class GameManager {
     const name = this.entities.playerNames.get(entityId) ?? 'Player';
     const lvl = this.entities.remoteCombatLevels.get(entityId) ?? 0;
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
+    const nameColor = this.entities.remoteAdminFlags.get(entityId) ? ADMIN_NAME_COLOR : undefined;
+    const playerOption = (prefix: string, suffix: string, action: () => void): InteractionOption => ({
+      label: `${prefix}${name}${suffix}`,
+      labelParts: [{ text: prefix }, { text: name, color: nameColor }, { text: suffix }],
+      action,
+    });
     return [
-      { label: `Follow ${name}${labelLevel}`, action: () => this.followPlayer(entityId) },
-      { label: `Trade with ${name}`, action: () => this.requestTrade(entityId) },
-      { label: `Duel with ${name}`, action: () => this.requestDuel(entityId) },
+      playerOption('Follow ', labelLevel, () => this.followPlayer(entityId)),
+      playerOption('Trade with ', '', () => this.requestTrade(entityId)),
+      playerOption('Duel with ', '', () => this.requestDuel(entityId)),
     ];
+  }
+
+  private setRemotePlayerAdmin(entityId: number, isAdmin: boolean): void {
+    this.entities.remoteAdminFlags.set(entityId, isAdmin);
+    const remote = this.entities.remotePlayers.get(entityId);
+    if (remote) remote.setLabelColor(isAdmin ? ADMIN_NAME_COLOR : '#ffffff');
+  }
+
+  private isAdminName(name: string): boolean {
+    if (!name) return false;
+    const normalized = name.toLowerCase();
+    if (this.username && normalized === this.username.toLowerCase()) return this.isAdmin;
+    const entityId = this.entities.nameToEntityId.get(normalized);
+    return entityId !== undefined && this.entities.remoteAdminFlags.get(entityId) === true;
   }
 
   private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } | null {
@@ -4655,6 +4705,8 @@ export class GameManager {
     let menu: HTMLDivElement;
     menu = createContextMenu(options.map((opt) => ({
       label: opt.label,
+      labelParts: opt.labelParts,
+      labelColor: opt.labelColor,
       action: (ev) => {
         this.runInteractionOption(opt, ev.clientX, ev.clientY);
       },
@@ -4905,9 +4957,11 @@ export class GameManager {
       const playerEntityId = this.pickPlayerAtPoint(this.scene.pointerX, this.scene.pointerY);
       const { entityId, groundItemId } = this.pickAtCursor();
       let playerLabel: string | null = null;
+      let playerIsAdmin = false;
       if (playerEntityId != null) {
         const name = this.entities.playerNames.get(playerEntityId) ?? 'Player';
         const lvl = this.entities.remoteCombatLevels.get(playerEntityId) ?? 0;
+        playerIsAdmin = this.entities.remoteAdminFlags.get(playerEntityId) === true;
         playerLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
       }
       let npcLabel: string | null = null;
@@ -4933,7 +4987,7 @@ export class GameManager {
         });
       }
       if (playerLabel != null) {
-        el.style.color = '#ffffff';
+        el.style.color = playerIsAdmin ? ADMIN_NAME_COLOR : '#ffffff';
         el.textContent = playerLabel;
       } else if (npcLabel != null) {
         el.style.color = '#d8372b';
@@ -6735,7 +6789,7 @@ export class GameManager {
     if (this.localPlayer) {
       this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
-    this.chatPanel?.addMessage(this.username || 'You', message, '#f4ded5');
+    this.chatPanel?.addMessage(this.username || 'You', message, this.isAdmin ? ADMIN_NAME_COLOR : '#f4ded5');
   }
 
   private showHitSplat(pos: Vector3, damage: number): void {
@@ -7564,6 +7618,15 @@ export class GameManager {
         }
       }
     }
+
+    for (const [, sprite] of this.entities.deathEffectEntities) {
+      if (!sprite.hasHealthBar()) continue;
+      const got = sprite.getHealthBarWorldPos(wp);
+      if (!got) continue;
+      Vector3.ProjectToRef(got, identity, transform, vp, screenPos);
+      if (screenPos.z > 0 && screenPos.z < 1) sprite.updateHealthBarScreenPos(screenPos.x, screenPos.y);
+      else sprite.updateHealthBarScreenPos(offscreenX, offscreenY);
+    }
   }
 
   private updateHUD(): void {
@@ -7595,7 +7658,7 @@ export class GameManager {
 
   private getHealthBarHost(entityId: number): HealthBarHost | null {
     if (entityId === this.localPlayerId) return this.localPlayer;
-    return this.entities.remotePlayers.get(entityId) ?? this.entities.npcSprites.get(entityId) ?? null;
+    return this.entities.remotePlayers.get(entityId) ?? this.entities.npcSprites.get(entityId) ?? this.entities.deathEffectEntities.get(entityId) ?? null;
   }
 
   private showTransientHealthBar(entityId: number, host: HealthBarHost, health: number, maxHealth: number): void {
@@ -7604,7 +7667,10 @@ export class GameManager {
       return;
     }
     host.showHealthBar(health, maxHealth);
-    this.transientHealthBars.set(entityId, performance.now() + GameManager.HEALTH_BAR_VISIBLE_MS);
+    const expiresAt = this.entities.isDeathEffectActive(entityId)
+      ? Number.POSITIVE_INFINITY
+      : performance.now() + GameManager.HEALTH_BAR_VISIBLE_MS;
+    this.transientHealthBars.set(entityId, expiresAt);
   }
 
   private updateTransientHealthBar(entityId: number, host: HealthBarHost, health: number, maxHealth: number): void {
@@ -7637,6 +7703,11 @@ export class GameManager {
     if (this.transientHealthBars.size === 0) return;
     const now = performance.now();
     for (const [entityId, expiresAt] of this.transientHealthBars) {
+      if (this.entities.isDeathEffectActive(entityId)) continue;
+      if (!Number.isFinite(expiresAt)) {
+        this.hideTransientHealthBar(entityId);
+        continue;
+      }
       if (now < expiresAt) continue;
       this.hideTransientHealthBar(entityId);
     }
@@ -7867,10 +7938,24 @@ export class GameManager {
     }
 
     this.followPathTimer = Math.max(0, this.followPathTimer - dt);
-    const dx = targetState.x - this.playerX;
-    const dz = targetState.z - this.playerZ;
-    const dist = Math.max(Math.abs(dx), Math.abs(dz));
-    if (dist <= 0.2) {
+    const targetTileX = Math.floor(targetState.x);
+    const targetTileZ = Math.floor(targetState.z);
+    const followCandidates = [
+      { x: targetState.prevX, z: targetState.prevZ },
+      { x: targetTileX - 1 + 0.5, z: targetTileZ + 0.5 },
+      { x: targetTileX + 1 + 0.5, z: targetTileZ + 0.5 },
+      { x: targetTileX + 0.5, z: targetTileZ - 1 + 0.5 },
+      { x: targetTileX + 0.5, z: targetTileZ + 1 + 0.5 },
+    ].filter((candidate, index, all) => {
+      const tileX = Math.floor(candidate.x);
+      const tileZ = Math.floor(candidate.z);
+      return (tileX !== targetTileX || tileZ !== targetTileZ)
+        && all.findIndex(other => Math.floor(other.x) === tileX && Math.floor(other.z) === tileZ) === index;
+    });
+    const currentTileX = Math.floor(this.playerX);
+    const currentTileZ = Math.floor(this.playerZ);
+    const currentGoal = followCandidates.find(candidate => currentTileX === Math.floor(candidate.x) && currentTileZ === Math.floor(candidate.z));
+    if (currentGoal) {
       if (this.pathIndex < this.path.length) {
         this.clearPredictedPath(true);
         this.localPlayer.stopWalking();
@@ -7879,23 +7964,22 @@ export class GameManager {
       this.localPlayer.lockFaceTowardXZ(anchor.x, anchor.z);
       return;
     }
-    const queuedDest = this.pathIndex < this.path.length ? this.path[this.path.length - 1] : null;
-    const queuedDestStillUseful = queuedDest
-      && Math.max(Math.abs(queuedDest.x - targetState.x), Math.abs(queuedDest.z - targetState.z)) <= 0.2;
-    if (queuedDestStillUseful) return;
+    if (this.pathIndex < this.path.length) return;
     if (this.followPathTimer > 0) return;
     this.followPathTimer = 0.6;
 
-    const targetTileX = Math.floor(targetState.x);
-    const targetTileZ = Math.floor(targetState.z);
-    if (!this.isTileBlocked(targetTileX, targetTileZ)) {
-      const pathResult = this.findPathFromMovementAnchor(targetTileX + 0.5, targetTileZ + 0.5);
+    for (const candidate of followCandidates) {
+      const goalTileX = Math.floor(candidate.x);
+      const goalTileZ = Math.floor(candidate.z);
+      if (this.isTileBlocked(goalTileX, goalTileZ)) continue;
+      const pathResult = this.findPathFromMovementAnchor(goalTileX + 0.5, goalTileZ + 0.5);
       if (pathResult.path.length > 0) {
         this.startLocalPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+        break;
       }
-      if (this.destMarker) this.destMarker.isVisible = false;
-      this.minimap?.clearDestination();
     }
+    if (this.destMarker) this.destMarker.isVisible = false;
+    this.minimap?.clearDestination();
   }
 
   /** Current slide-offset effect on the rendered local-player position.

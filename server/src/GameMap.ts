@@ -1,10 +1,10 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, defaultGroundForMap, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, getObjectFootprintMinTile, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, type StairAssetConfig } from '@projectrs/shared';
+import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, defaultGroundForMap, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, type StairAssetConfig } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, KCMapFile, KCMapData, KCTile, PlacedObject } from '@projectrs/shared';
+import { DEFAULT_MAX_SEARCH_TILES, findPathToTile, isFootprintBlocked, isFootprintWallBlocked, type PathingCollision } from './pathing/Pathing';
 
 const MAPS_DIR = resolve(import.meta.dir, '../data/maps');
-const CARDINAL_PATH_DIRS: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, -1], [0, 1]];
 
 /**
  * Server-side map — loads terrain from KC editor JSON format (map.json).
@@ -1023,7 +1023,7 @@ export class GameMap {
   findPathForNpc(
     startX: number, startZ: number, goalX: number, goalZ: number,
     tileBlocked: (x: number, z: number) => boolean,
-    maxSearchSteps: number = 100,
+    maxSearchSteps: number = DEFAULT_MAX_SEARCH_TILES,
     wallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
   ): { x: number; z: number }[] {
     return this.findPathGeneric(startX, startZ, goalX, goalZ, tileBlocked, wallBlocked ?? this.isWallBlockedCb, maxSearchSteps);
@@ -1033,15 +1033,16 @@ export class GameMap {
    *  Anchor convention matches getObjectFootprintTiles. Hot path — enumerates inline (no array alloc) since
    *  NPC AI calls this many times per A* expansion. */
   isNpcBlocked(x: number, z: number, size: number): boolean {
-    if (size <= 1) return this.isBlocked(x, z);
-    const minX = getObjectFootprintMinTile(x, size);
-    const minZ = getObjectFootprintMinTile(z, size);
-    for (let i = 0; i < size; i++) {
-      for (let j = 0; j < size; j++) {
-        if (this.isBlocked(minX + i + 0.5, minZ + j + 0.5)) return true;
-      }
-    }
-    return false;
+    return isFootprintBlocked(
+      {
+        width: this.width,
+        height: this.height,
+        isTileBlocked: (tileX, tileZ) => this.isBlocked(tileX, tileZ),
+      },
+      Math.floor(x),
+      Math.floor(z),
+      size,
+    );
   }
 
   /** Wall-edge check for a size-N NPC moving its anchor from (fromX,fromZ)
@@ -1051,46 +1052,22 @@ export class GameMap {
    *  Allocation-free for cardinals; diagonals recurse exactly two levels
    *  (each into a cardinal), so the diagonal cost is 2 * cardinal cost. */
   isNpcWallBlocked(fromX: number, fromZ: number, toX: number, toZ: number, size: number): boolean {
-    if (size <= 1) return this.isWallBlocked(fromX, fromZ, toX, toZ);
-    const dx = Math.round(toX - fromX);
-    const dz = Math.round(toZ - fromZ);
-    if (dx === 0 && dz === 0) return false;
-
-    if (dx !== 0 && dz !== 0) {
-      const tryPath = (midX: number, midZ: number): boolean =>
-        !this.isNpcBlocked(midX, midZ, size) &&
-        !this.isNpcWallBlocked(fromX, fromZ, midX, midZ, size) &&
-        !this.isNpcWallBlocked(midX, midZ, toX, toZ, size);
-      if (tryPath(fromX + dx, fromZ)) return false;
-      if (tryPath(fromX, fromZ + dz)) return false;
-      return true;
-    }
-
-    // Cardinal: walk the N tiles along the leading edge, checking the wall
-    // between each source-side tile and its dest-side neighbour.
-    const minX = getObjectFootprintMinTile(fromX, size);
-    const maxX = minX + size - 1;
-    const minZ = getObjectFootprintMinTile(fromZ, size);
-    const maxZ = minZ + size - 1;
-    if (dx !== 0) {
-      const srcEdgeX = dx > 0 ? maxX : minX;
-      const destEdgeX = srcEdgeX + dx;
-      for (let j = 0; j < size; j++) {
-        const z = minZ + j + 0.5;
-        if (this.isWallBlocked(srcEdgeX + 0.5, z, destEdgeX + 0.5, z)) return true;
-      }
-    } else {
-      const srcEdgeZ = dz > 0 ? maxZ : minZ;
-      const destEdgeZ = srcEdgeZ + dz;
-      for (let i = 0; i < size; i++) {
-        const x = minX + i + 0.5;
-        if (this.isWallBlocked(x, srcEdgeZ + 0.5, x, destEdgeZ + 0.5)) return true;
-      }
-    }
-    return false;
+    return isFootprintWallBlocked(
+      {
+        width: this.width,
+        height: this.height,
+        isTileBlocked: (tileX, tileZ) => this.isBlocked(tileX, tileZ),
+        isWallBlocked: (fx, fz, tx, tz) => this.isWallBlocked(fx, fz, tx, tz),
+      },
+      Math.floor(fromX),
+      Math.floor(fromZ),
+      Math.floor(toX),
+      Math.floor(toZ),
+      size,
+    );
   }
 
-  /** A* path for a size-N NPC. Each node represents an anchor position whose
+  /** Path for a size-N NPC. Each node represents an anchor position whose
    *  full footprint fits + can be reached from the previous step's anchor
    *  without crossing any wall edges. */
   findPathForSizedNpc(startX: number, startZ: number, goalX: number, goalZ: number, size: number): { x: number; z: number }[] {
@@ -1106,130 +1083,15 @@ export class GameMap {
     startX: number, startZ: number, goalX: number, goalZ: number,
     tileBlocked: (x: number, z: number) => boolean,
     wallBlocked: (fx: number, fz: number, tx: number, tz: number) => boolean,
-    maxSteps: number = 800,
+    maxSteps: number = DEFAULT_MAX_SEARCH_TILES,
   ): { x: number; z: number }[] {
-    const sx = Math.floor(startX);
-    const sz = Math.floor(startZ);
-    const gx = Math.floor(goalX);
-    const gz = Math.floor(goalZ);
-
-    if (sx === gx && sz === gz) return [];
-    if (tileBlocked(gx, gz)) return [];
-
-    const w = this.width;
-    const h = this.height;
-
-    interface PNode { x: number; z: number; g: number; hv: number; f: number; parent: PNode | null; heapIdx: number }
-    const heap: PNode[] = [];
-    const openMap = new Map<number, PNode>();
-    const closed = new Set<number>();
-    const key = (x: number, z: number) => z * w + x;
-
-    const heuristic = (x: number, z: number) => {
-      const dx = Math.abs(x - gx);
-      const dz = Math.abs(z - gz);
-      return Math.max(dx, dz) + (Math.SQRT2 - 1) * Math.min(dx, dz);
+    const collision: PathingCollision = {
+      width: this.width,
+      height: this.height,
+      isTileBlocked: (tileX, tileZ) => tileBlocked(tileX, tileZ),
+      isWallBlocked: (fx, fz, tx, tz) => wallBlocked(fx, fz, tx, tz),
     };
-
-    const bubbleUp = (i: number) => {
-      const node = heap[i];
-      while (i > 0) {
-        const pi = (i - 1) >> 1;
-        const parent = heap[pi];
-        if (node.f >= parent.f) break;
-        heap[i] = parent; parent.heapIdx = i;
-        i = pi;
-      }
-      heap[i] = node; node.heapIdx = i;
-    };
-
-    const sinkDown = (i: number) => {
-      const len = heap.length;
-      const node = heap[i];
-      while (true) {
-        let sm = i;
-        const l = 2 * i + 1, r = 2 * i + 2;
-        if (l < len && heap[l].f < heap[sm].f) sm = l;
-        if (r < len && heap[r].f < heap[sm].f) sm = r;
-        if (sm === i) break;
-        heap[i] = heap[sm]; heap[i].heapIdx = i;
-        i = sm;
-      }
-      heap[i] = node; node.heapIdx = i;
-    };
-
-    const pushNode = (n: PNode) => { n.heapIdx = heap.length; heap.push(n); bubbleUp(heap.length - 1); };
-    const popNode = (): PNode => {
-      const top = heap[0];
-      const last = heap.pop()!;
-      if (heap.length > 0) { heap[0] = last; last.heapIdx = 0; sinkDown(0); }
-      return top;
-    };
-    const considerNeighbor = (current: PNode, dx: number, dz: number) => {
-      const nx = current.x + dx;
-      const nz = current.z + dz;
-      const nk = key(nx, nz);
-      if (closed.has(nk)) return;
-      if (nx < 0 || nx >= w || nz < 0 || nz >= h) return;
-      if (tileBlocked(nx, nz)) return;
-      if (wallBlocked(current.x, current.z, nx, nz)) return;
-
-      const isDiag = dx !== 0 && dz !== 0;
-      const g = current.g + (isDiag ? 1.414 : 1);
-
-      const existing = openMap.get(nk);
-      if (existing) {
-        if (g < existing.g) {
-          existing.g = g;
-          existing.f = g + existing.hv;
-          existing.parent = current;
-          bubbleUp(existing.heapIdx);
-        }
-        return;
-      }
-
-      const nhv = heuristic(nx, nz);
-      const node: PNode = { x: nx, z: nz, g, hv: nhv, f: g + nhv, parent: current, heapIdx: 0 };
-      pushNode(node);
-      openMap.set(nk, node);
-    };
-
-    const sh = heuristic(sx, sz);
-    const startNode: PNode = { x: sx, z: sz, g: 0, hv: sh, f: sh, parent: null, heapIdx: 0 };
-    pushNode(startNode);
-    openMap.set(key(sx, sz), startNode);
-
-    let steps = 0;
-    while (heap.length > 0 && steps < maxSteps) {
-      steps++;
-      const current = popNode();
-      const ck = key(current.x, current.z);
-      openMap.delete(ck);
-
-      if (current.x === gx && current.z === gz) {
-        const path: { x: number; z: number }[] = [];
-        let node: PNode | null = current;
-        while (node && !(node.x === sx && node.z === sz)) {
-          path.push({ x: node.x + 0.5, z: node.z + 0.5 });
-          node = node.parent;
-        }
-        path.reverse();
-        return path;
-      }
-
-      closed.add(ck);
-
-      const canW = !tileBlocked(current.x - 1, current.z) && !wallBlocked(current.x, current.z, current.x - 1, current.z);
-      const canE = !tileBlocked(current.x + 1, current.z) && !wallBlocked(current.x, current.z, current.x + 1, current.z);
-      const canN = !tileBlocked(current.x, current.z - 1) && !wallBlocked(current.x, current.z, current.x, current.z - 1);
-      const canS = !tileBlocked(current.x, current.z + 1) && !wallBlocked(current.x, current.z, current.x, current.z + 1);
-      for (const [dx, dz] of CARDINAL_PATH_DIRS) considerNeighbor(current, dx, dz);
-      if (canW && canN) considerNeighbor(current, -1, -1);
-      if (canE && canN) considerNeighbor(current, 1, -1);
-      if (canW && canS) considerNeighbor(current, -1, 1);
-      if (canE && canS) considerNeighbor(current, 1, 1);
-    }
-    return [];
+    return findPathToTile({ startX, startZ, goalX, goalZ, collision, maxSearchTiles: maxSteps });
   }
 
   // --- Chunked tile/height loading helpers ---

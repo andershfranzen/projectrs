@@ -24,8 +24,15 @@ function makeHarness(map: GameMap, player: Player): { world: any; floorChanges: 
   world.clearCombatReferencesTo = () => {};
   world.cancelSkilling = () => {};
   world.closeOpenInterface = () => {};
+  world.closeNpcUiContext = () => {};
   world.sendDialogueClose = () => {};
   world.sendNearbyDoorUpdates = () => {};
+  world.sendNearbyVerticalObjectUpdates = () => {};
+  world.updateEntityChunk = () => {};
+  world.markEntityTileOccupantsDirty = () => {};
+  world.checkpointPlayerPosition = () => {};
+  world.clearQueuedPlayerActions = () => {};
+  world.isQueuedActionCurrent = () => true;
   world.refreshPlayerEffectiveY = (p: Player) => {
     p.effectiveY = map.getEffectiveHeightOnFloor(p.position.x, p.position.y, p.currentFloor, p.effectiveY);
   };
@@ -104,5 +111,41 @@ describe('placed stair descent', () => {
     expect(player.currentFloor).toBe(1);
     expect(floorChanges).toEqual([]);
     expect(player.hasMoveQueue()).toBe(true);
+  });
+
+  test('move validation updates floor while expanding a compressed stair path', () => {
+    const map = {
+      width: 8,
+      height: 8,
+      isTileBlockedOnFloor: (x: number, z: number, floor: number) => floor === 0 && x === 2 && z === 0,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+      getStairOnFloor: () => null,
+      getWalkableFloorTargetsAt: (x: number) => Math.floor(x) >= 1
+        ? [{ floor: 0, y: 0 }, { floor: 1, y: 2.7 }]
+        : [{ floor: 0, y: 0 }],
+      getEffectiveHeightOnFloor: (x: number, _z: number, floor: number) =>
+        floor === 1 || Math.floor(x) >= 1 ? 2.7 : 0,
+    } as unknown as GameMap;
+    const player = makePlayer(0.5, 0.5, 0, 0);
+    const { world } = makeHarness(map, player);
+
+    world.handlePlayerMove(player.id, [{ x: 2.5, z: 0.5 }]);
+
+    expect(player.getMoveDestination()).toEqual({ x: 2.5, z: 0.5 });
+  });
+
+  test('movement ticks reconcile floor before consuming later queued stair steps', () => {
+    const map = new GameMap('kcmap');
+    const player = makePlayer(219.5, 156.5, 0, map.getEffectiveHeightOnFloor(219.5, 156.5, 0, 0));
+    const { world, floorChanges } = makeHarness(map, player);
+
+    world.handlePlayerMove(player.id, [{ x: 222.5, z: 156.5 }]);
+    player.movementCredit = 2;
+    world.tickPlayerMovement();
+
+    expect(player.position.x).toBe(222.5);
+    expect(player.currentFloor).toBe(1);
+    expect(floorChanges.at(-1)).toEqual({ floor: 1, y: 27 });
   });
 });

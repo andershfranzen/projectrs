@@ -200,10 +200,10 @@ function sendPrivateMessage(
   } catch { /* sender socket is closing */ }
 }
 
-export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number): void {
+export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false): void {
   const msg = message.substring(0, 1000);
   if (!from || msg.length === 0) return;
-  const payload = JSON.stringify({ type: 'local', from, fromAccountId, message: msg });
+  const payload = JSON.stringify({ type: 'local', from, fromAccountId, isAdmin: fromIsAdmin, message: msg });
   for (const sock of chatSockets) {
     if (fromAccountId != null && ignoredAccountIdsByAccountId.get(sock.data.accountId)?.has(fromAccountId)) {
       continue;
@@ -227,7 +227,7 @@ export function handleChatSocketOpen(
   // forever (player_info never re-sends for already-online players).
   for (const [, p] of world.players) {
     try {
-      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name }));
+      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name, isAdmin: p.isAdmin }));
     } catch { /* ignore */ }
   }
   sendSocialList(ws, world);
@@ -284,7 +284,7 @@ export function handleChatSocketMessage(
       const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
       speaker?.botStats?.recordChat();
 
-      broadcastLocalMessage(from, msg, ws.data.accountId);
+      broadcastLocalMessage(from, msg, ws.data.accountId, ws.data.isAdmin);
       break;
     }
 
@@ -884,8 +884,8 @@ export function handleChatSocketClose(
 }
 
 /** Broadcast player info to all chat sockets so clients can map entityId → name */
-export function broadcastPlayerInfo(entityId: number, name: string): void {
-  const payload = JSON.stringify({ type: 'player_info', entityId, name });
+export function broadcastPlayerInfo(entityId: number, name: string, isAdmin: boolean = false): void {
+  const payload = JSON.stringify({ type: 'player_info', entityId, name, isAdmin });
   for (const sock of chatSockets) {
     try {
       sock.send(payload);

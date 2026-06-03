@@ -985,10 +985,7 @@ function completeGameSocketLogin(
       }
       if (!recovered) {
         console.log(`[GameSocket] Recovering "${username}": saved tile (${tx},${tz}) blocked on all floors, respawning at default`);
-        player.position.x = defaultSpawn.x;
-        player.position.y = defaultSpawn.z;
-        player.followAnchorX = defaultSpawn.x;
-        player.followAnchorZ = defaultSpawn.z;
+        player.teleportTo(defaultSpawn.x, defaultSpawn.z);
         player.currentFloor = 0;
       }
     } else if (

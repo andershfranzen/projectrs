@@ -47,8 +47,8 @@ export type ChatMessage =
   | { type: 'system'; message: string }
   | { type: 'social_list'; friends: SocialClientEntry[]; ignore: SocialClientEntry[] }
   | { type: 'social_presence'; accountId: number; username: string; online: boolean }
-  | { type: 'player_info'; entityId: number; name: string; message: string }
-  | { type: string; from?: string; to?: string; message: string; entityId?: number; name?: string; username?: string; accountId?: number; fromAccountId?: number; toAccountId?: number; friends?: SocialClientEntry[]; ignore?: SocialClientEntry[]; online?: boolean };
+  | { type: 'player_info'; entityId: number; name: string; isAdmin?: boolean; message: string }
+  | { type: string; from?: string; to?: string; message: string; entityId?: number; name?: string; username?: string; accountId?: number; fromAccountId?: number; toAccountId?: number; isAdmin?: boolean; friends?: SocialClientEntry[]; ignore?: SocialClientEntry[]; online?: boolean };
 export interface SocialClientEntry {
   accountId: number;
   username: string;

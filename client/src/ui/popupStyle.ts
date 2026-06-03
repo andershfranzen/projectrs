@@ -119,6 +119,8 @@ export const panelCloseButtonCss = `
 
 export interface ContextMenuItem {
   label: string;
+  labelParts?: { text: string; color?: string }[];
+  labelColor?: string;
   action: (event: MouseEvent) => void;
 }
 
@@ -369,9 +371,18 @@ export function createContextMenu(items: ContextMenuItem[], opts: ContextMenuOpt
 
   for (const opt of items) {
     const item = document.createElement('div');
-    item.textContent = opt.label;
     item.setAttribute('role', 'menuitem');
-    item.style.cssText = `padding: ${opts.itemPadding ?? '4px 12px'}; color: #d8372b; cursor: pointer;`;
+    item.style.cssText = `padding: ${opts.itemPadding ?? '4px 12px'}; color: ${opt.labelColor ?? '#d8372b'}; cursor: pointer;`;
+    if (opt.labelParts?.length) {
+      for (const part of opt.labelParts) {
+        const span = document.createElement('span');
+        span.textContent = part.text;
+        if (part.color) span.style.color = part.color;
+        item.appendChild(span);
+      }
+    } else {
+      item.textContent = opt.label;
+    }
     item.addEventListener('mouseenter', () => item.style.background = '#5a4a35');
     item.addEventListener('mouseleave', () => item.style.background = 'transparent');
     item.addEventListener('click', (event) => {

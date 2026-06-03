@@ -84,9 +84,9 @@ describe('entity occupancy', () => {
     expect(world.isPlayerMovementTileBlocked(alice, map, 2, 1, 0)).toBe(false);
   });
 
-  test('player follow trails the target player tile instead of orbiting adjacent tiles', () => {
+  test('player follow trails the target previous tile instead of the live occupied tile', () => {
     const world = makeWorldHarness();
-    const alice = new Player('alice', 1.5, 1.5, fakeWs, 1);
+    const alice = new Player('alice', 0.5, 1.5, fakeWs, 1);
     const bob = new Player('bob', 2.5, 1.5, fakeWs, 2);
     const map = {
       isBlocked: () => false,
@@ -102,36 +102,31 @@ describe('entity occupancy', () => {
     world.rebuildEntityTileOccupants();
     world.updatePlayerFollow(alice, bob);
 
-    expect(alice.getMoveDestination()).toEqual({ x: 2.5, z: 1.5 });
+    expect(alice.getMoveDestination()).toEqual({ x: 1.5, z: 1.5 });
   });
 
-  test('player follow uses the target tick-start tile, not the queued final destination', () => {
+  test('player follow uses the target previous tile, not the queued final destination', () => {
     const world = makeWorldHarness();
-    const alice = new Player('alice', 1.5, 1.5, fakeWs, 1);
+    const alice = new Player('alice', 0.5, 1.5, fakeWs, 1);
     const bob = new Player('bob', 2.5, 1.5, fakeWs, 2);
-    const pathGoals: { x: number; z: number }[] = [];
     const map = {
       isBlocked: () => false,
       isTileBlockedOnFloor: () => false,
       isWallBlocked: () => false,
       isWallBlockedOnFloor: () => false,
-      findPathForNpc: (_sx: number, _sz: number, gx: number, gz: number) => {
-        pathGoals.push({ x: gx, z: gz });
-        return [{ x: gx, z: gz }];
-      },
     };
     world.players.set(alice.id, alice);
     world.players.set(bob.id, bob);
     world.getPlayerMap = () => map;
-    bob.setMoveQueue([{ x: 3.5, z: 1.5 }, { x: 9.5, z: 1.5 }]);
+    bob.moveTo(3.5, 1.5);
+    bob.setMoveQueue([{ x: 9.5, z: 1.5 }]);
 
     world.updatePlayerFollow(alice, bob);
 
-    expect(pathGoals[0]).toEqual({ x: 2.5, z: 1.5 });
     expect(alice.getMoveDestination()).toEqual({ x: 2.5, z: 1.5 });
   });
 
-  test('player follow snapshot is stable when the target moves first in the tick', () => {
+  test('player follow anchor is stable when the target moves first in the tick', () => {
     const world = makeWorldHarness();
     const alice = new Player('alice', 1.5, 1.5, fakeWs, 1);
     const bob = new Player('bob', 2.5, 1.5, fakeWs, 2);
@@ -148,7 +143,6 @@ describe('entity occupancy', () => {
     bob.setMoveQueue([{ x: 3.5, z: 1.5 }]);
     bob.movementCredit = 1;
 
-    world.snapshotPlayerFollowAnchors();
     bob.processMovement(1);
     world.updatePlayerFollow(alice, bob);
 
@@ -184,27 +178,23 @@ describe('entity occupancy', () => {
     expect(calls.slice(-3)).toEqual(['deferred', 'rebuild', 'broadcast']);
   });
 
-  test('player-to-NPC interaction paths keep the full player path search budget', () => {
+  test('player-to-NPC interaction paths use shared BFS reach semantics', () => {
     const world = makeWorldHarness();
     const player = new Player('alice', 1.5, 1.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);
-    let seenBudget = 0;
     const map = {
       isBlocked: () => false,
       isTileBlockedOnFloor: () => false,
       isWallBlocked: () => false,
       isWallBlockedOnFloor: () => false,
-      findPathForNpc: (_sx: number, _sz: number, gx: number, gz: number, _blocked: unknown, maxSteps: number) => {
-        seenBudget = maxSteps;
-        return [{ x: gx, z: gz }];
-      },
-      findPathOnFloor: () => [],
     };
     world.getPlayerMap = () => map;
 
     const path = world.findPlayerPathToNpc(player, npc);
+    const last = path.at(-1)!;
 
-    expect(path.length).toBe(1);
-    expect(seenBudget).toBe(800);
+    expect(path.length).toBeGreaterThan(1);
+    expect(npc.isInteractionTile(Math.floor(last.x), Math.floor(last.z))).toBe(true);
+    expect(npc.isFootprintTile(Math.floor(last.x), Math.floor(last.z))).toBe(false);
   });
 });

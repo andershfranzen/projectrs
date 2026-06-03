@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -17,6 +17,7 @@ import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } f
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
+import { DEFAULT_MAX_SEARCH_TILES, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import type { ServerWebSocket } from 'bun';
@@ -27,6 +28,7 @@ const mapIdRegistry: Map<string, number> = new Map();
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
 const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
 type ItemQuantity = { itemId: number; quantity: number };
+type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
   consume: readonly ItemQuantity[];
@@ -250,8 +252,8 @@ const IDLE_LOGOUT_TICKS = Math.ceil(5 * 60_000 / TICK_RATE);
 const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
 const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
-const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = 800;
-const PLAYER_FOLLOW_PATH_SEARCH_STEPS = 800;
+const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
+const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -364,18 +366,6 @@ interface DirectedVerticalLink {
   to: ResolvedVerticalEndpoint;
 }
 
-type NpcPathCapableMap = GameMap & {
-  findPathForNpc?: (
-    startX: number,
-    startZ: number,
-    goalX: number,
-    goalZ: number,
-    tileBlocked: (x: number, z: number) => boolean,
-    maxSearchSteps?: number,
-    wallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
-  ) => { x: number; z: number }[];
-};
-
 type MutableNpcSpawn = SpawnEntry & { id?: number };
 
 export interface NpcGearPersistResult {
@@ -403,6 +393,7 @@ interface ObjectSayScheduledLine {
   runAtTick: number;
   playerId: number;
   accountId: number;
+  isAdmin: boolean;
   playerName: string;
   message: string;
 }
@@ -938,6 +929,19 @@ export class World {
       && this.isGroundItemVisibleTo(player, item);
   }
 
+  private canPlayerReachGroundItemFromCurrentTile(player: Player, item: GroundItem, map: GameMap = this.getPlayerMap(player)): boolean {
+    if (!this.canPlayerTargetGroundItem(player, item)) return false;
+    const fromTileX = Math.floor(player.position.x);
+    const fromTileZ = Math.floor(player.position.y);
+    const itemTileX = Math.floor(item.x);
+    const itemTileZ = Math.floor(item.z);
+    const dx = itemTileX - fromTileX;
+    const dz = itemTileZ - fromTileZ;
+    if (dx === 0 && dz === 0) return true;
+    if (Math.abs(dx) > 1 || Math.abs(dz) > 1) return false;
+    return canTravel(this.playerPathCollision(player, map), fromTileX, fromTileZ, dx, dz);
+  }
+
   private canPlayerUseLadderOnCurrentFloor(player: Player, obj: WorldObject): boolean {
     return this.ladderActionMaskForPlayer(player, obj) !== 0;
   }
@@ -1050,65 +1054,54 @@ export class World {
     return null;
   }
 
+  private playerPathCollision(player: Player, map: GameMap = this.getPlayerMap(player), floor: number = player.currentFloor): PathingCollision {
+    const maybeMap = map as Partial<GameMap>;
+    const wallBlocked = floor === 0
+      ? (typeof maybeMap.isWallBlocked === 'function'
+          ? (fx: number, fz: number, tx: number, tz: number) => maybeMap.isWallBlocked!(fx, fz, tx, tz, player.effectiveY)
+          : undefined)
+      : (typeof maybeMap.isWallBlockedOnFloor === 'function'
+          ? (fx: number, fz: number, tx: number, tz: number) => maybeMap.isWallBlockedOnFloor!(fx, fz, tx, tz, floor)
+          : undefined);
+    return {
+      width: map.width,
+      height: map.height,
+      isTileBlocked: (tileX, tileZ) => this.isPlayerMovementTileBlocked(player, map, tileX, tileZ, floor),
+      isWallBlocked: wallBlocked,
+    };
+  }
+
+  private findPlayerPathToTile(
+    player: Player,
+    tileX: number,
+    tileZ: number,
+    maxSearchTiles: number = DEFAULT_MAX_SEARCH_TILES,
+  ): { x: number; z: number }[] {
+    const map = this.getPlayerMap(player);
+    return findPathToTile({
+      startX: player.position.x,
+      startZ: player.position.y,
+      goalX: tileX + 0.5,
+      goalZ: tileZ + 0.5,
+      collision: this.playerPathCollision(player, map),
+      maxSearchTiles,
+    });
+  }
+
   /** Path from the player to the NPC's interaction surface. Targets the
    *  closest reachable cardinal-adjacent interaction tile directly, avoiding
    *  post-path trimming that breaks compressed corner paths. */
   private findPlayerPathToNpc(player: Player, npc: Npc): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
-    const ps = player.position;
-    const footprint = getObjectFootprintTiles(npc.position.x, npc.position.y, { width: npc.size });
-    const candidates = npc.interactionTiles()
-      .filter(tile => this.npcInteractionTileHasLineOfWalk(player, map, footprint, tile.x, tile.z));
-    // Sort in place by Chebyshev to the player so the closest candidate is
-    // tried first — for the common case (player already standing next to the
-    // mob) this returns after a single findPathOnFloor call.
-    candidates.sort((a, b) => {
-      const da = Math.max(Math.abs((a.x + 0.5) - ps.x), Math.abs((a.z + 0.5) - ps.y));
-      const db = Math.max(Math.abs((b.x + 0.5) - ps.x), Math.abs((b.z + 0.5) - ps.y));
-      return da - db;
+    return findPathToRectInteraction({
+      startX: player.position.x,
+      startZ: player.position.y,
+      targetX: npc.position.x,
+      targetZ: npc.position.y,
+      targetSize: npc.size,
+      collision: this.playerPathCollision(player, map),
+      maxSearchTiles: PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
     });
-    const floor = player.currentFloor;
-    const playerTileBlocker = (x: number, z: number): boolean => {
-      return this.isPlayerMovementTileBlocked(player, map, x, z, floor);
-    };
-    const playerWallBlocker = floor === 0
-      ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
-      : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
-    const pathMap = map as NpcPathCapableMap;
-    const findPathForPlayer = typeof pathMap.findPathForNpc === 'function'
-      ? (sx: number, sz: number, gx: number, gz: number) => pathMap.findPathForNpc!(
-          sx,
-          sz,
-          gx,
-          gz,
-          playerTileBlocker,
-          PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
-          playerWallBlocker,
-        )
-      : (sx: number, sz: number, gx: number, gz: number) => map.findPathOnFloor(sx, sz, gx, gz, floor);
-    for (const t of candidates) {
-      if (Math.floor(ps.x) === t.x && Math.floor(ps.y) === t.z) return [];
-      const path = findPathForPlayer(ps.x, ps.y, t.x + 0.5, t.z + 0.5);
-      if (path.length > 0) return path;
-    }
-    return [];
-  }
-
-  private npcInteractionTileHasLineOfWalk(
-    player: Player,
-    map: GameMap,
-    footprint: { x: number; z: number }[],
-    tileX: number,
-    tileZ: number,
-  ): boolean {
-    for (const foot of footprint) {
-      if (Math.abs(foot.x - tileX) + Math.abs(foot.z - tileZ) !== 1) continue;
-      const blocked = player.currentFloor === 0
-        ? map.isWallBlocked(tileX, tileZ, foot.x, foot.z, player.effectiveY)
-        : map.isWallBlockedOnFloor(tileX, tileZ, foot.x, foot.z, player.currentFloor);
-      if (!blocked) return true;
-    }
-    return false;
   }
 
   private isPlayerNpcInteractionReachable(player: Player, npc: Npc): boolean {
@@ -1117,55 +1110,15 @@ export class World {
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
     if (this.isBankerReachableAcrossBooth(player, npc, ptx, ptz)) return true;
-    if (!npc.isInteractionTile(ptx, ptz)) return false;
-    const footprint = getObjectFootprintTiles(npc.position.x, npc.position.y, { width: npc.size });
-    for (const tile of npc.interactionTiles()) {
-      if (tile.x !== ptx || tile.z !== ptz) continue;
-      if (!this.npcInteractionTileHasLineOfWalk(player, map, footprint, tile.x, tile.z)) continue;
-      return true;
-    }
-    return false;
+    return isRectInteractionTileReachable(this.playerPathCollision(player, map), ptx, ptz, npc.position.x, npc.position.y, npc.size);
   }
 
   private isNpcMeleeReachableToPlayer(npc: Npc, player: Player): boolean {
     if (!this.canPlayerTargetNpc(player, npc)) return false;
     const ptx = Math.floor(player.position.x);
     const ptz = Math.floor(player.position.y);
-    if (!npc.isInteractionTile(ptx, ptz)) return false;
-
     const map = this.getPlayerMap(player);
-    const floor = player.currentFloor;
-    const size = Math.max(1, Math.round(npc.size));
-    if (size <= 1) {
-      const ntx = Math.floor(npc.position.x);
-      const ntz = Math.floor(npc.position.y);
-      return floor === 0
-        ? !map.isWallBlocked(ptx, ptz, ntx, ntz, player.effectiveY)
-        : !map.isWallBlockedOnFloor(ptx, ptz, ntx, ntz, floor);
-    }
-
-    const minX = getObjectFootprintMinTile(npc.position.x, size);
-    const minZ = getObjectFootprintMinTile(npc.position.y, size);
-    if (floor === 0) {
-      for (let dz = 0; dz < size; dz++) {
-        const footZ = minZ + dz;
-        for (let dx = 0; dx < size; dx++) {
-          const footX = minX + dx;
-          if (Math.abs(footX - ptx) + Math.abs(footZ - ptz) !== 1) continue;
-          if (!map.isWallBlocked(ptx, ptz, footX, footZ, player.effectiveY)) return true;
-        }
-      }
-    } else {
-      for (let dz = 0; dz < size; dz++) {
-        const footZ = minZ + dz;
-        for (let dx = 0; dx < size; dx++) {
-          const footX = minX + dx;
-          if (Math.abs(footX - ptx) + Math.abs(footZ - ptz) !== 1) continue;
-          if (!map.isWallBlockedOnFloor(ptx, ptz, footX, footZ, floor)) return true;
-        }
-      }
-    }
-    return false;
+    return isRectInteractionTileReachable(this.playerPathCollision(player, map), ptx, ptz, npc.position.x, npc.position.y, npc.size);
   }
 
   private findBankBoothAt(player: Player, tileX: number, tileZ: number): WorldObject | null {
@@ -1228,27 +1181,17 @@ export class World {
     candidates.sort((a, b) =>
       (Math.abs(player.position.x - (a.useTile.x + 0.5)) + Math.abs(player.position.y - (a.useTile.z + 0.5)))
       - (Math.abs(player.position.x - (b.useTile.x + 0.5)) + Math.abs(player.position.y - (b.useTile.z + 0.5))));
+    const collision = this.playerPathCollision(player, map);
     for (const candidate of candidates) {
       if (Math.floor(player.position.x) === candidate.useTile.x && Math.floor(player.position.y) === candidate.useTile.z) return [];
-      const path = player.currentFloor === 0
-        ? map.findPathForNpc(
-            player.position.x,
-            player.position.y,
-            candidate.useTile.x + 0.5,
-            candidate.useTile.z + 0.5,
-            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
-            PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
-            (fx, fz, tx, tz) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY),
-          )
-        : map.findPathForNpc(
-            player.position.x,
-            player.position.y,
-            candidate.useTile.x + 0.5,
-            candidate.useTile.z + 0.5,
-            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
-            PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
-            (fx, fz, tx, tz) => map.isWallBlockedOnFloor(fx, fz, tx, tz, player.currentFloor),
-          );
+      const path = findPathToTile({
+        startX: player.position.x,
+        startZ: player.position.y,
+        goalX: candidate.useTile.x + 0.5,
+        goalZ: candidate.useTile.z + 0.5,
+        collision,
+        maxSearchTiles: PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
+      });
       if (path.length > 0) return path;
     }
     return null;
@@ -1427,12 +1370,17 @@ export class World {
     }
   }
 
+  private mapTileBlockedOnFloor(map: GameMap, tileX: number, tileZ: number, floor: number): boolean {
+    const maybeMap = map as Partial<GameMap>;
+    if (floor === 0 && typeof maybeMap.isBlocked === 'function') return maybeMap.isBlocked(tileX, tileZ);
+    if (typeof maybeMap.isTileBlockedOnFloor === 'function') return maybeMap.isTileBlockedOnFloor(tileX, tileZ, floor);
+    if (typeof maybeMap.isBlocked === 'function') return maybeMap.isBlocked(tileX, tileZ);
+    return false;
+  }
+
   private isTileBlockedForPlayer(player: Player, map: GameMap, tileX: number, tileZ: number): boolean {
-    if (player.currentFloor !== 0) {
-      return map.isTileBlockedOnFloor(tileX, tileZ, player.currentFloor)
-        || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor));
-    }
-    return map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor));
+    return this.mapTileBlockedOnFloor(map, tileX, tileZ, player.currentFloor)
+      || (this.blockedObjectTiles?.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor)) ?? false);
   }
 
   private isPlayerMovementTileBlocked(
@@ -1443,9 +1391,7 @@ export class World {
     floor: number = player.currentFloor,
   ): boolean {
     const tileKey = this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, floor);
-    const staticBlocked = floor === 0
-      ? map.isBlocked(tileX, tileZ) || this.blockedObjectTiles.has(tileKey)
-      : map.isTileBlockedOnFloor(tileX, tileZ, floor) || this.blockedObjectTiles.has(tileKey);
+    const staticBlocked = this.mapTileBlockedOnFloor(map, tileX, tileZ, floor) || (this.blockedObjectTiles?.has(tileKey) ?? false);
     return staticBlocked;
   }
 
@@ -1563,43 +1509,13 @@ export class World {
     const candidates = interactionTiles
       .filter(tile => !this.isTileBlockedForPlayer(player, map, tile.x, tile.z))
       .filter(tile => this.canUseObjectFromTile(player, obj, tile.x, tile.z, map));
-
-    let bestPath: { x: number; z: number }[] = [];
-    let bestSteps = Infinity;
-    let bestDistance = Infinity;
-    for (const tile of candidates) {
-      const goalX = tile.x + 0.5;
-      const goalZ = tile.z + 0.5;
-      const path = player.currentFloor === 0
-        ? map.findPathForNpc(
-            player.position.x,
-            player.position.y,
-            goalX,
-            goalZ,
-            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
-            800,
-            (fx, fz, tx, tz) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY),
-          )
-        : map.findPathForNpc(
-            player.position.x,
-            player.position.y,
-            goalX,
-            goalZ,
-            (x, z) => this.isPlayerMovementTileBlocked(player, map, x, z, player.currentFloor),
-            800,
-            (fx, fz, tx, tz) => map.isWallBlockedOnFloor(fx, fz, tx, tz, player.currentFloor),
-          );
-      if (path.length === 0) continue;
-      const steps = compressedPathTileSteps({ x: player.position.x, z: player.position.y }, path);
-      const distance = Math.abs(player.position.x - goalX) + Math.abs(player.position.y - goalZ);
-      if (steps < bestSteps || (steps === bestSteps && distance < bestDistance)) {
-        bestPath = path;
-        bestSteps = steps;
-        bestDistance = distance;
-      }
-    }
-
-    return bestPath;
+    return findPathToAnyTile({
+      startX: player.position.x,
+      startZ: player.position.y,
+      goals: candidates,
+      collision: this.playerPathCollision(player, map),
+      maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+    });
   }
 
   private spawnNpcs(): void {
@@ -1963,6 +1879,67 @@ export class World {
     return bestDist <= 0.75 ? best.floor : currentFloor;
   }
 
+  private resolvePlayerMovementLayerAt(
+    map: GameMap,
+    x: number,
+    z: number,
+    state: PlayerMovementLayerState,
+    refreshY: boolean = true,
+  ): PlayerMovementLayerState {
+    let floor = state.floor;
+    let y = refreshY ? map.getEffectiveHeightOnFloor(x, z, floor, state.y) : state.y;
+    let lastFloorChangeTile = state.lastFloorChangeTile;
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    const tileIdx = tz * map.width + tx;
+
+    if (lastFloorChangeTile !== -1 && lastFloorChangeTile !== tileIdx) {
+      lastFloorChangeTile = -1;
+    }
+
+    const oldFloor = floor;
+    const onPlacedGroundStair = !!map.getStairOnFloor(tx, tz, 0);
+    const stairCurrent = map.getStairOnFloor(tx, tz, floor);
+    if (stairCurrent && lastFloorChangeTile !== tileIdx) {
+      const stairAbove = map.getStairOnFloor(tx, tz, floor + 1);
+      const stairBelow = map.getStairOnFloor(tx, tz, floor - 1);
+      if (stairAbove) {
+        floor += 1;
+        lastFloorChangeTile = tileIdx;
+      } else if (stairBelow) {
+        floor -= 1;
+        lastFloorChangeTile = tileIdx;
+      }
+    }
+
+    if (floor === oldFloor && !onPlacedGroundStair) {
+      floor = this.inferFloorFromEffectiveY(map, x, z, y, floor);
+    }
+
+    if (floor !== oldFloor) {
+      y = map.getEffectiveHeightOnFloor(x, z, floor, y);
+    }
+
+    return { floor, y, lastFloorChangeTile };
+  }
+
+  private applyPlayerMovementLayer(player: Player, state: PlayerMovementLayerState): boolean {
+    const oldFloor = player.currentFloor;
+    player.currentFloor = state.floor;
+    player.effectiveY = state.y;
+    player.lastFloorChangeTile = state.lastFloorChangeTile;
+    if (player.currentFloor === oldFloor) return false;
+
+    this.clearCombatReferencesTo(player.id);
+    this.clearQueuedPlayerActions(player);
+    this.closeNpcUiContext(player);
+    player.syncDirty = true;
+    this.markEntityTileOccupantsDirty();
+    this.sendFloorChange(player);
+    this.sendNearbyVerticalObjectUpdates(player);
+    return true;
+  }
+
   private sendFloorChange(player: Player): void {
     this.sendToPlayer(player, ServerOpcode.FLOOR_CHANGE, player.currentFloor, qPos(player.effectiveY));
   }
@@ -2156,9 +2133,9 @@ export class World {
       });
 
       this.sendLoginBootstrap(player);
-      broadcastPlayerInfo(player.id, player.name);
+      broadcastPlayerInfo(player.id, player.name, player.isAdmin);
       for (const [, other] of this.players) {
-        if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name);
+        if (other.id !== player.id) broadcastPlayerInfo(other.id, other.name, other.isAdmin);
       }
       this.broadcastRemoteEquipment(player);
       this.sendRemoteStance(player, player);
@@ -2214,10 +2191,10 @@ export class World {
     this.sendLoginBootstrap(player);
 
     // Broadcast player name to all chat sockets
-    broadcastPlayerInfo(player.id, player.name);
+    broadcastPlayerInfo(player.id, player.name, player.isAdmin);
     for (const [, other] of this.players) {
       if (other.id !== player.id) {
-        broadcastPlayerInfo(other.id, other.name);
+        broadcastPlayerInfo(other.id, other.name, other.isAdmin);
       }
     }
 
@@ -3302,15 +3279,6 @@ export class World {
     // (isWallBlocked only handles dx,dz ∈ {-1,0,1}). The unit-tile expansion
     // also becomes the moveQueue so processMovement consumes one tile/tick,
     // which matches the client's 1.67 t/s visual interpolation exactly.
-    const validPath: { x: number; z: number }[] = [];
-    let prevX = player.position.x;
-    let prevZ = player.position.y;
-    const pFloor = player.currentFloor;
-    // Total unit-tile count the client requested (sum of per-segment max
-    // axial distances). Used after the validation loop to detect whether
-    // we dropped any tiles relative to what was asked for.
-    let requestedTileCount = 0;
-    let truncated = false;
     // Per-segment cap: legitimate compressed corners can be far apart on a
     // long straight, but never longer than the map's diagonal. 256 covers
     // any practical map while bounding worst-case work per packet.
@@ -3324,57 +3292,38 @@ export class World {
     // the two views half a tile apart, and on the next walk the server's
     // delta calc (floor(step.x) - floor(prevX)) starts from the wrong tile,
     // which can compound into multi-tile drift.
-    outer: for (const step of path) {
-      const targetTileX = Math.floor(step.x);
-      const targetTileZ = Math.floor(step.z);
-      const startTileX = Math.floor(prevX);
-      const startTileZ = Math.floor(prevZ);
-      const dxTotal = targetTileX - startTileX;
-      const dzTotal = targetTileZ - startTileZ;
-      const stepDX = Math.sign(dxTotal);
-      const stepDZ = Math.sign(dzTotal);
-      const distance = Math.max(Math.abs(dxTotal), Math.abs(dzTotal));
-      if (distance === 0) continue;
-      if (distance > MAX_SEGMENT_TILES) { truncated = true; break; }
-      // Diagonal compressed steps must move equally on both axes — reject
-      // anything that isn't pure cardinal or pure 45° diagonal.
-      const isDiagonal = stepDX !== 0 && stepDZ !== 0;
-      if (isDiagonal && Math.abs(dxTotal) !== Math.abs(dzTotal)) { truncated = true; break; }
-      requestedTileCount += distance;
-      if (requestedTileCount > MAX_REQUESTED_TILES) { truncated = true; break; }
-      let curTileX = startTileX;
-      let curTileZ = startTileZ;
-      for (let i = 0; i < distance; i++) {
-        const nextTileX = curTileX + stepDX;
-        const nextTileZ = curTileZ + stepDZ;
-        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, nextTileX, nextTileZ, pFloor);
-        // The player's authoritative walking elevation gates wall-edge
-        // collision: a wall authored at an upper-floor Y must not block a
-        // player standing at that elevation, and an open upper-floor door
-        // must let them through. Held fixed for the whole validated path —
-        // matches the client, which validates its predicted path against a
-        // single localPlayer.position.y (GameManager.isWallBlockedForPath).
-        const wallBlocked = pFloor === 0
-          ? map.isWallBlocked(curTileX, curTileZ, nextTileX, nextTileZ, player.effectiveY)
-          : map.isWallBlockedOnFloor(curTileX, curTileZ, nextTileX, nextTileZ, pFloor);
-        if (tileBlocked || wallBlocked) { truncated = true; break outer; }
-        // Push tile-CENTER coords to match client convention.
-        validPath.push({ x: nextTileX + 0.5, z: nextTileZ + 0.5 });
-        curTileX = nextTileX;
-        curTileZ = nextTileZ;
-      }
-      // Advance prevX/Z to the *position* (tile center) we ended at, so the
-      // next compressed segment's delta is computed from a consistent base.
-      prevX = curTileX + 0.5;
-      prevZ = curTileZ + 0.5;
-    }
-    player.setMoveQueue(validPath);
+    const validated = expandAndValidateWaypointPath({
+      startX: player.position.x,
+      startZ: player.position.y,
+      waypoints: path,
+      initialState: {
+        floor: player.currentFloor,
+        y: player.effectiveY,
+        lastFloorChangeTile: player.lastFloorChangeTile,
+      },
+      maxSegmentTiles: MAX_SEGMENT_TILES,
+      maxRequestedTiles: MAX_REQUESTED_TILES,
+      canStep: ({ state, fromTileX, fromTileZ, toTileX, toTileZ }) => {
+        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, toTileX, toTileZ, state.floor);
+        const wallBlocked = state.floor === 0
+          ? map.isWallBlocked(fromTileX, fromTileZ, toTileX, toTileZ, state.y)
+          : map.isWallBlockedOnFloor(fromTileX, fromTileZ, toTileX, toTileZ, state.floor);
+        return !tileBlocked && !wallBlocked;
+      },
+      afterStep: ({ state, toTileX, toTileZ }) => this.resolvePlayerMovementLayerAt(
+        map,
+        toTileX + 0.5,
+        toTileZ + 0.5,
+        state,
+      ),
+    });
+    player.setMoveQueue(validated.path);
     // If we actually dropped tiles vs. what the client asked for, notify it
     // so it can trim its local walk to match. Skip when nothing was
     // requested (zero-distance / empty input) or when the validation
     // produced exactly what was asked. Fire-and-forget — no server state.
-    if (truncated && validPath.length < requestedTileCount && requestedTileCount > 0) {
-      const last = validPath.length > 0 ? validPath[validPath.length - 1] : { x: player.position.x, z: player.position.y };
+    if (validated.truncated && validated.path.length < validated.requestedTileCount && validated.requestedTileCount > 0) {
+      const last = validated.path.length > 0 ? validated.path[validated.path.length - 1] : { x: player.position.x, z: player.position.y };
       player.botStats?.recordPathTruncation();
       this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(last.x), qPos(last.z));
       this.sendNearbyDoorUpdates(player);
@@ -3403,9 +3352,56 @@ export class World {
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
     this.closeShopForPlayer(player);
     if (player.openDialogueState) this.sendDialogueClose(player);
-    target.followAnchorX = target.position.x;
-    target.followAnchorZ = target.position.y;
     this.updatePlayerFollow(player, target);
+  }
+
+  private buildPlayerFollowCandidates(target: Player): { x: number; z: number }[] {
+    const candidates: { x: number; z: number }[] = [];
+    const targetTileX = Math.floor(target.position.x);
+    const targetTileZ = Math.floor(target.position.y);
+    const push = (x: number, z: number): void => {
+      const tileX = Math.floor(x);
+      const tileZ = Math.floor(z);
+      if (tileX === targetTileX && tileZ === targetTileZ) return;
+      if (candidates.some(c => Math.floor(c.x) === tileX && Math.floor(c.z) === tileZ)) return;
+      candidates.push({ x: tileX + 0.5, z: tileZ + 0.5 });
+    };
+
+    if (Number.isFinite(target.followAnchorX) && Number.isFinite(target.followAnchorZ)) {
+      push(target.followAnchorX, target.followAnchorZ);
+    }
+
+    push(targetTileX - 1 + 0.5, targetTileZ + 0.5);
+    push(targetTileX + 1 + 0.5, targetTileZ + 0.5);
+    push(targetTileX + 0.5, targetTileZ - 1 + 0.5);
+    push(targetTileX + 0.5, targetTileZ + 1 + 0.5);
+    return candidates;
+  }
+
+  private findPlayerFollowPath(player: Player, target: Player): { x: number; z: number }[] | null {
+    const map = this.getPlayerMap(player);
+    const floor = player.currentFloor;
+    const collision = this.playerPathCollision(player, map, floor);
+
+    for (const goal of this.buildPlayerFollowCandidates(target)) {
+      const goalTileX = Math.floor(goal.x);
+      const goalTileZ = Math.floor(goal.z);
+      if (collision.isTileBlocked(goalTileX, goalTileZ)) continue;
+      if (Math.floor(player.position.x) === goalTileX && Math.floor(player.position.y) === goalTileZ) {
+        return [];
+      }
+      const path = findPathToTile({
+        startX: player.position.x,
+        startZ: player.position.y,
+        goalX: goal.x,
+        goalZ: goal.z,
+        collision,
+        maxSearchTiles: PLAYER_FOLLOW_PATH_SEARCH_STEPS,
+      });
+      if (path.length > 0) return path;
+    }
+
+    return null;
   }
 
   private updatePlayerFollow(player: Player, target: Player): void {
@@ -3415,54 +3411,20 @@ export class World {
       return;
     }
 
-    const targetGoalX = Number.isFinite(target.followAnchorX) ? target.followAnchorX : target.position.x;
-    const targetGoalZ = Number.isFinite(target.followAnchorZ) ? target.followAnchorZ : target.position.y;
-    const dx = targetGoalX - player.position.x;
-    const dz = targetGoalZ - player.position.y;
-    if (Math.max(Math.abs(dx), Math.abs(dz)) <= 0.2) {
-      player.clearMoveQueue();
-      return;
-    }
-
-    if (player.hasMoveQueue()) {
-      const queuedDest = player.getMoveDestination();
-      const queuedDestStillUseful = queuedDest
-        && Math.max(Math.abs(queuedDest.x - targetGoalX), Math.abs(queuedDest.z - targetGoalZ)) <= 0.2;
-      if (queuedDestStillUseful) return;
-      player.clearMoveQueue();
-    }
-
+    if (player.hasMoveQueue()) return;
     if (this.currentTick < player.nextFollowRepathTick) return;
 
-    const map = this.getPlayerMap(player);
-    const targetTileX = Math.floor(targetGoalX);
-    const targetTileZ = Math.floor(targetGoalZ);
-    const floor = player.currentFloor;
-    if (this.isPlayerMovementTileBlocked(player, map, targetTileX, targetTileZ, floor)) {
+    const path = this.findPlayerFollowPath(player, target);
+    if (path === null) {
       player.nextFollowRepathTick = this.currentTick + 2;
       return;
     }
-    const tileBlocked = (x: number, z: number): boolean => {
-      return this.isPlayerMovementTileBlocked(player, map, x, z, floor);
-    };
-    const wallBlocked = floor === 0
-      ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlocked(fx, fz, tx, tz, player.effectiveY)
-      : (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, floor);
-    const path = map.findPathForNpc(
-      player.position.x,
-      player.position.y,
-      targetTileX + 0.5,
-      targetTileZ + 0.5,
-      tileBlocked,
-      PLAYER_FOLLOW_PATH_SEARCH_STEPS,
-      wallBlocked,
-    );
-    if (path.length > 0) {
-      player.setMoveQueue(path);
-      player.nextFollowRepathTick = this.currentTick + 1;
+    if (path.length === 0) {
+      player.clearMoveQueue();
       return;
     }
-    player.nextFollowRepathTick = this.currentTick + 2;
+    player.setMoveQueue(path);
+    player.nextFollowRepathTick = this.currentTick + 1;
   }
 
   handlePlayerAttackNpc(playerId: number, npcId: number): void {
@@ -4068,17 +4030,16 @@ export class World {
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
     this.interruptPlayerAction(playerId, player);
 
-    // Walk to item if not in range
+    // Walk to item if not in range or if an adjacent wall/fence blocks direct pickup.
     const dx = Math.abs(player.position.x - item.x);
     const dz = Math.abs(player.position.y - item.z);
-    if (dx > 1.5 || dz > 1.5) {
+    if (dx > 1.5 || dz > 1.5 || !this.canPlayerReachGroundItemFromCurrentTile(player, item)) {
       // The client normally sends PLAYER_MOVE immediately before PICKUP.
       // Preserve that queue instead of replacing it with a separately
       // pathfound server route from an earlier authoritative tile; otherwise
       // running redirects can rubber-band when the two routes differ.
       if (!player.hasMoveQueue()) {
-        const map = this.getPlayerMap(player);
-        const path = map.findPathOnFloor(player.position.x, player.position.y, item.x, item.z, player.currentFloor);
+        const path = this.findPlayerPathToTile(player, Math.floor(item.x), Math.floor(item.z));
         if (path.length > 0) player.setMoveQueue(path);
       }
       if (player.hasMoveQueue()) {
@@ -4263,7 +4224,14 @@ export class World {
             (Math.abs(a[0] - px) + Math.abs(a[1] - pz)) - (Math.abs(b[0] - px) + Math.abs(b[1] - pz)));
           path = [];
           for (const [cx, cz] of candidates) {
-            path = map.findPathOnFloor(px, pz, cx, cz, player.currentFloor);
+            path = findPathToTile({
+              startX: px,
+              startZ: pz,
+              goalX: cx,
+              goalZ: cz,
+              collision: this.playerPathCollision(player, map),
+              maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+            });
             if (path.length > 0) break;
           }
         } else {
@@ -4275,7 +4243,14 @@ export class World {
           else if (edge === WallEdge.S && pz > dtz + 0.5 && nb) { tx = dtx + nb.dx; tz = dtz + nb.dz; }
           else if (edge === WallEdge.E && px > dtx + 0.5 && nb) { tx = dtx + nb.dx; tz = dtz + nb.dz; }
           else if (edge === WallEdge.W && px < dtx + 0.5 && nb) { tx = dtx + nb.dx; tz = dtz + nb.dz; }
-          path = map.findPathOnFloor(px, pz, tx + 0.5, tz + 0.5, player.currentFloor);
+          path = findPathToTile({
+            startX: px,
+            startZ: pz,
+            goalX: tx + 0.5,
+            goalZ: tz + 0.5,
+            collision: this.playerPathCollision(player, map),
+            maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+          });
         }
 
         if (!player.hasMoveQueue() && path.length > 0) {
@@ -4437,7 +4412,7 @@ export class World {
       this.queueObjectSaySequence(player, effect.saySequence);
     } else if (typeof effect.say === 'string') {
       const say = effect.say.trim();
-      if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId);
+      if (say) broadcastLocalMessage(player.name, say.slice(0, 1000), player.accountId, player.isAdmin);
     }
     const message = typeof effect.message === 'string' ? effect.message.trim() : '';
     if (message) this.sendChatSystem(player, message.slice(0, 300));
@@ -4488,13 +4463,14 @@ export class World {
         : 0;
       const delayTicks = Math.round((delaySeconds * 1000) / TICK_RATE);
       if (delayTicks <= 0) {
-        broadcastLocalMessage(player.name, message, player.accountId);
+        broadcastLocalMessage(player.name, message, player.accountId, player.isAdmin);
         continue;
       }
       this.objectSayScheduledLines.push({
         runAtTick: this.currentTick + delayTicks,
         playerId: player.id,
         accountId: player.accountId,
+        isAdmin: player.isAdmin,
         playerName: player.name,
         message,
       });
@@ -7340,7 +7316,6 @@ export class World {
   }
 
   private tickPlayerMovement(): void {
-    this.snapshotPlayerFollowAnchors();
     for (const [playerId, player] of this.players) {
       if (this.activeDuels?.has(playerId)) {
         player.clearMoveQueue();
@@ -7383,10 +7358,19 @@ export class World {
           break;
         }
         if (!player.processMovement(this.currentTick)) break;
-        // Tile changed — re-derive the authoritative walking elevation so the
-        // next step's wall check (and the next CLIENT_MOVE validation) gate
-        // on the right Y.
-        this.refreshPlayerEffectiveY(player);
+        // Tile changed — re-derive the authoritative walking elevation and
+        // floor immediately so the next queued step gates walls/tiles against
+        // the layer the player actually reached.
+        this.applyPlayerMovementLayer(player, this.resolvePlayerMovementLayerAt(
+          map,
+          player.position.x,
+          player.position.y,
+          {
+            floor: player.currentFloor,
+            y: player.effectiveY,
+            lastFloorChangeTile: player.lastFloorChangeTile,
+          },
+        ));
       }
       this.updateEntityChunk(player);
 
@@ -7499,13 +7483,6 @@ export class World {
     }
   }
 
-  private snapshotPlayerFollowAnchors(): void {
-    for (const [, player] of this.players) {
-      player.followAnchorX = player.position.x;
-      player.followAnchorZ = player.position.y;
-    }
-  }
-
   private tickNpcAI(): void {
     for (const [, npc] of this.npcs) {
       if (npc.dead) {
@@ -7572,66 +7549,41 @@ export class World {
             }
           }
         }
-        // For size-1 NPCs the callbacks reduce to the original single-tile
-        // checks. For larger NPCs the wrappers test every footprint tile
-        // against terrain (map.isNpcBlocked) AND world-object blockers, and
-        // require the move's leading wall edges to be open. Both wrappers
-        // are allocation-free in the hot path (no footprint array per call).
-        const npcBlocked = size <= 1
-          ? (x: number, z: number) => {
-              const objectKey = this.blockedKeyFor(mapId, x, z, npcFloor);
-              const entityKey = this.entityTileKeyFor(mapId, x, z, npcFloor);
-              if (map.isTileBlockedOnFloor(x, z, npcFloor)) return true;
-              if (this.blockedObjectTiles.has(objectKey)) return true;
-              const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
-              // Refuse to step onto another entity. Self-occupancy is
-              // filtered so the NPC never blocks its own current tile. During
-              // combat movement, ignore other NPCs so a cluster of attackers
-              // does not pin the front NPC at its wander edge; player tiles
-              // still block so NPCs do not walk onto players.
-              if ((this.entityTileOccupants?.has(entityKey) ?? false) && entityKey !== selfEntityKey) {
-                if (!combatMotion || this.playerTileOccupants.has(entityKey)) return true;
-              }
-              return false;
-            }
-          : (x: number, z: number) => {
-              const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
-              const minX = getObjectFootprintMinTile(x, size);
-              const minZ = getObjectFootprintMinTile(z, size);
-              for (let i = 0; i < size; i++) {
-                for (let j = 0; j < size; j++) {
-                  if (map.isTileBlockedOnFloor(minX + i, minZ + j, npcFloor)) return true;
-                }
-              }
-              for (let i = 0; i < size; i++) {
-                for (let j = 0; j < size; j++) {
-                  const objectKey = this.blockedKeyFor(mapId, minX + i, minZ + j, npcFloor);
-                  if (this.blockedObjectTiles.has(objectKey)) return true;
-                  const entityKey = this.entityTileKeyFor(mapId, minX + i, minZ + j, npcFloor);
-                  if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfFootprintKeys?.has(entityKey)) {
-                    if (!combatMotion || this.playerTileOccupants.has(entityKey)) return true;
-                  }
-                }
-              }
-              return false;
-            };
-        const npcWallBlocked = size <= 1
-          ? (fx: number, fz: number, tx: number, tz: number) => map.isWallBlockedOnFloor(fx, fz, tx, tz, npc.currentFloor)
-          : (fx: number, fz: number, tx: number, tz: number) => {
-              const minFx = getObjectFootprintMinTile(fx, size);
-              const minFz = getObjectFootprintMinTile(fz, size);
-              const minTx = getObjectFootprintMinTile(tx, size);
-              const minTz = getObjectFootprintMinTile(tz, size);
-              for (let i = 0; i < size; i++) {
-                for (let j = 0; j < size; j++) {
-                  if (map.isWallBlockedOnFloor(minFx + i, minFz + j, minTx + i, minTz + j, npc.currentFloor)) return true;
-                }
-              }
-              return false;
-            };
+        // Raw per-tile collision. The shared pathing validator expands these
+        // facts over the moving NPC's footprint and leading wall edges.
+        const rawNpcTileBlocked = (x: number, z: number): boolean => {
+          const tileX = Math.floor(x);
+          const tileZ = Math.floor(z);
+          const objectKey = this.blockedKeyFor(mapId, tileX, tileZ, npcFloor);
+          const entityKey = this.entityTileKeyFor(mapId, tileX, tileZ, npcFloor);
+          if (map.isTileBlockedOnFloor(tileX, tileZ, npcFloor)) return true;
+          if (this.blockedObjectTiles.has(objectKey)) return true;
+          const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
+          const selfOccupied = size <= 1 ? entityKey === selfEntityKey : (selfFootprintKeys?.has(entityKey) ?? false);
+          if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfOccupied) {
+            if (!combatMotion || this.playerTileOccupants.has(entityKey)) return true;
+          }
+          return false;
+        };
+        const rawNpcWallBlocked = (fx: number, fz: number, tx: number, tz: number): boolean =>
+          map.isWallBlockedOnFloor(fx, fz, tx, tz, npc.currentFloor);
+        const npcCollision: PathingCollision = {
+          width: map.width,
+          height: map.height,
+          isTileBlocked: rawNpcTileBlocked,
+          isWallBlocked: rawNpcWallBlocked,
+        };
         const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
-          map.findPathForNpc(sx, sz, gx, gz, npcBlocked, 100, npcWallBlocked);
-        npc.processAI(npcBlocked, npcWallBlocked, npcFindPath);
+          findPathToTile({
+            startX: sx,
+            startZ: sz,
+            goalX: gx,
+            goalZ: gz,
+            collision: npcCollision,
+            actorSize: size,
+            maxSearchTiles: 512,
+          });
+        npc.processAI(rawNpcTileBlocked, rawNpcWallBlocked, npcFindPath);
       }
       if (hadCombatTarget && npc.combatTarget == null) {
         if (previousCombatTargetId !== undefined) {
@@ -7903,7 +7855,7 @@ export class World {
         // NPC has since moved). Re-pathing every tick used to trample the
         // active moveQueue: the client visual was walking the path it
         // computed locally, but the server kept overwriting moveQueue with
-        // its own findPathOnFloor result. The two paths diverged from tick
+        // its own server path result. The two paths diverged from tick
         // one onward, and the >1.5-tile snap guard (GameManager.ts:1229)
         // teleported the local visual onto the server position. Leaving the
         // queue alone while it's being walked keeps client + server in sync;
@@ -8527,7 +8479,7 @@ export class World {
       }
       const player = this.players.get(line.playerId);
       if (!player || player.disconnected || player.requestIdleLogout) continue;
-      broadcastLocalMessage(line.playerName, line.message, line.accountId);
+      broadcastLocalMessage(line.playerName, line.message, line.accountId, line.isAdmin);
     }
     this.objectSayScheduledLines = remaining;
   }
@@ -8541,59 +8493,17 @@ export class World {
         continue;
       }
 
-      const tx = Math.floor(player.position.x);
-      const tz = Math.floor(player.position.y);
-      const oldFloor = player.currentFloor;
-      const tileIdx = tz * map.width + tx;
-
-      // Clear the per-tile lock once the player moves off the tile where they
-      // last transitioned. Re-entering the same tile later (e.g. wandering
-      // back to the top of a stair) is allowed.
-      if (player.lastFloorChangeTile !== -1 && player.lastFloorChangeTile !== tileIdx) {
-        player.lastFloorChangeTile = -1;
-      }
-
-      // Floor change fires on the tile where stair entries exist on BOTH the
-      // current floor AND an adjacent floor (the top tile of a stair, after
-      // GameMap's mirror). Bottom/middle tiles only have a stair on floor 0
-      // so they're a no-op. The per-tile lock prevents oscillation: once we
-      // transition AT a tile, we won't re-transition there until the player
-      // walks elsewhere.
-      const onPlacedGroundStair = !!map.getStairOnFloor(tx, tz, 0);
-      const stairCurrent = map.getStairOnFloor(tx, tz, player.currentFloor);
-      if (stairCurrent && player.lastFloorChangeTile !== tileIdx) {
-        const stairAbove = map.getStairOnFloor(tx, tz, player.currentFloor + 1);
-        const stairBelow = map.getStairOnFloor(tx, tz, player.currentFloor - 1);
-        if (stairAbove) {
-          player.currentFloor += 1;
-          player.lastFloorChangeTile = tileIdx;
-        } else if (stairBelow) {
-          player.currentFloor -= 1;
-          player.lastFloorChangeTile = tileIdx;
-        }
-      }
-      if (player.currentFloor === oldFloor && !onPlacedGroundStair) {
-        player.currentFloor = this.inferFloorFromEffectiveY(
-          map,
-          player.position.x,
-          player.position.y,
-          player.effectiveY,
-          player.currentFloor,
-        );
-      }
-
-      if (player.currentFloor !== oldFloor) {
-        // The floor index just changed — re-resolve the walking elevation
-        // against the new floor's layer before the next move validates.
-        this.clearCombatReferencesTo(player.id);
-        this.clearQueuedPlayerActions(player);
-        this.closeNpcUiContext(player);
-        this.refreshPlayerEffectiveY(player);
-        player.syncDirty = true;
-        this.markEntityTileOccupantsDirty();
-        this.sendFloorChange(player);
-        this.sendNearbyVerticalObjectUpdates(player);
-      }
+      this.applyPlayerMovementLayer(player, this.resolvePlayerMovementLayerAt(
+        map,
+        player.position.x,
+        player.position.y,
+        {
+          floor: player.currentFloor,
+          y: player.effectiveY,
+          lastFloorChangeTile: player.lastFloorChangeTile,
+        },
+        false,
+      ));
     }
   }
 
@@ -8782,10 +8692,7 @@ export class World {
       player.currentFloor = targetFloor;
       player.lastFloorChangeTile = -1;
     }
-    player.position.x = targetX;
-    player.position.y = targetZ;
-    player.followAnchorX = targetX;
-    player.followAnchorZ = targetZ;
+    player.teleportTo(targetX, targetZ);
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearQueuedPlayerActions(player);
@@ -8922,10 +8829,7 @@ export class World {
     // Update player state
     player.visibleEntityIds.clear();
     player.currentMapLevel = newMap;
-    player.position.x = transition.targetX;
-    player.position.y = transition.targetZ;
-    player.followAnchorX = transition.targetX;
-    player.followAnchorZ = transition.targetZ;
+    player.teleportTo(transition.targetX, transition.targetZ);
     player.currentFloor = targetFloor;
     player.lastFloorChangeTile = -1;
     // Re-derive the authoritative collision elevation for the new map — the
@@ -9034,6 +8938,7 @@ export class World {
           player.combatLevel,
           player.currentFloor,
           qPos(player.effectiveY),
+          player.isAdmin ? 1 : 0,
         ));
       }
     }
@@ -9262,6 +9167,7 @@ export class World {
       subject.combatLevel,
       subject.currentFloor,
       qPos(subject.effectiveY),
+      subject.isAdmin ? 1 : 0,
     );
   }
 

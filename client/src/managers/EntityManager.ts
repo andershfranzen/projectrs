@@ -32,6 +32,15 @@ interface NpcCreateOptions {
   stationary?: boolean;
 }
 
+export interface RemotePlayerTarget {
+  x: number;
+  z: number;
+  floor: number;
+  y: number;
+  prevX: number;
+  prevZ: number;
+}
+
 export class EntityManager {
   private scene: Scene;
   private getHeight: (x: number, z: number, floor?: number, currentY?: number) => number;
@@ -43,7 +52,7 @@ export class EntityManager {
   // ready). Appearance is similarly cached in remoteAppearances and applied
   // via whenReady().
   readonly remotePlayers: Map<number, CharacterEntity> = new Map();
-  readonly remoteTargets: Map<number, { x: number; z: number; floor: number; y: number }> = new Map();
+  readonly remoteTargets: Map<number, RemotePlayerTarget> = new Map();
   /** Wall-clock timestamp until which the entity is treated as still
    *  walking, even if its current visual position has caught up to the
    *  latest server target. Bridges the ~600 ms gap between server ticks
@@ -51,6 +60,7 @@ export class EntityManager {
   readonly remoteWalkUntil: Map<number, number> = new Map();
   readonly playerNames: Map<number, string> = new Map();
   readonly nameToEntityId: Map<string, number> = new Map();
+  readonly remoteAdminFlags: Map<number, boolean> = new Map();
   readonly remoteAppearances: Map<number, PlayerAppearance> = new Map();
   readonly remoteCombatLevels: Map<number, number> = new Map();
   /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]. */
@@ -96,6 +106,7 @@ export class EntityManager {
    *  and possible future adaptive quality, but not used to hide humanoid NPCs:
    *  they have no fallback sprite, so budget-culling makes them invisible. */
   npc3dCount: number = 0;
+  readonly deathEffectEntities: Map<number, Npc3DEntity | CharacterEntity> = new Map();
   private readonly activeDeathEffectEntityIds: Set<number> = new Set();
 
   // Ground items
@@ -427,7 +438,7 @@ export class EntityManager {
    * Returns null if the id doesn't match any tracked entity.
    */
   resolveTargetable(entityId: number): Targetable | null {
-    return this.npcSprites.get(entityId) ?? this.remotePlayers.get(entityId) ?? null;
+    return this.npcSprites.get(entityId) ?? this.remotePlayers.get(entityId) ?? this.deathEffectEntities.get(entityId) ?? null;
   }
 
   /**
@@ -456,6 +467,7 @@ export class EntityManager {
     DeathPortalEffect.play(this.scene, entity, {
       onDone: () => {
         this.activeDeathEffectEntityIds.delete(entityId);
+        this.deathEffectEntities.delete(entityId);
         entity.dispose();
       },
     });
@@ -468,9 +480,9 @@ export class EntityManager {
   }
 
   private startNpcDeathSequence(entityId: number, npc: Npc3DEntity | CharacterEntity): void {
-    npc.hideHealthBar();
     npc.hideChatBubble();
     this.activeDeathEffectEntityIds.add(entityId);
+    this.deathEffectEntities.set(entityId, npc);
 
     let finished = false;
     let timeout: number | null = null;
@@ -495,11 +507,13 @@ export class EntityManager {
   startEntityDeathEffect(entityId: number): boolean {
     const character = this.remotePlayers.get(entityId);
     if (character) {
+      this.activeDeathEffectEntityIds.add(entityId);
+      this.deathEffectEntities.set(entityId, character);
       this.remotePlayers.delete(entityId);
       this.remoteTargets.delete(entityId);
       this.remoteWalkUntil.delete(entityId);
       this.remoteCombatTargets.delete(entityId);
-      DeathPortalEffect.play(this.scene, character, { onDone: () => character.dispose() });
+      this.playDeathPortalAndDispose(entityId, character);
       return true;
     }
 
@@ -538,6 +552,7 @@ export class EntityManager {
       const name = this.playerNames.get(entityId);
       if (name) this.nameToEntityId.delete(name.toLowerCase());
       this.playerNames.delete(entityId);
+      this.remoteAdminFlags.delete(entityId);
     }
   }
 
@@ -717,8 +732,10 @@ export class EntityManager {
       const dz = target.z - c.z;
       const dist = Math.hypot(dx, dz);
 
-      // NPC is considered walking if server sent velocity recently
-      const serverMoving = moving && target.continueWalking && elapsed < EntityManager.SERVER_TICK_MS * 2;
+      const freshServerStep = moving && elapsed < EntityManager.SERVER_TICK_MS * 2;
+      // NPC stays in walk animation between adjacent server steps only when
+      // the server says another step is expected.
+      const serverMoving = freshServerStep && target.continueWalking;
 
       // Resolve combat target world position (local player or remote player).
       const combatTarget = this.npcCombatTargets.get(entityId);
@@ -738,9 +755,10 @@ export class EntityManager {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);
         if (hasLockTarget) this.applyCombatFaceLock(sprite, lockX, lockZ, lockY, camPos);
-        // Chebyshev pacing matches the server's 1 tile/tick. Catch-up after
-        // a stall caps at 2.0 t/s — higher values caused visible skating.
-        const speed = serverMoving ? EntityManager.NPC_TILES_PER_SEC : 2.0;
+        // Chebyshev pacing matches the server's 1 tile/tick for fresh
+        // authoritative movement, including the final step of a chase/escape.
+        // Catch-up after a stale visual stall remains capped separately.
+        const speed = freshServerStep ? EntityManager.NPC_TILES_PER_SEC : 2.0;
         const tileSteps = Math.max(Math.abs(dx), Math.abs(dz));
         const stepRatio = Math.min(speed * dt / Math.max(tileSteps, 0.001), 1);
         const nx = c.x + dx * stepRatio;
@@ -820,12 +838,16 @@ export class EntityManager {
   disposeAllEntities(): void {
     for (const [, character] of this.remotePlayers) character.dispose();
     this.remotePlayers.clear();
+    for (const [, entity] of this.deathEffectEntities) entity.dispose();
+    this.deathEffectEntities.clear();
+    this.activeDeathEffectEntityIds.clear();
     this.remoteTargets.clear();
     this.remoteWalkUntil.clear();
     this.remoteAppearances.clear();
     this.remoteEquipment.clear();
     this.remoteStances.clear();
     this.remoteCombatLevels.clear();
+    this.remoteAdminFlags.clear();
     this.playerNames.clear();
     this.nameToEntityId.clear();
 

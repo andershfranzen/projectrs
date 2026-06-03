@@ -81,6 +81,19 @@ function makePlayer(name: string, accountId: number, floor = 0): Player {
   return player;
 }
 
+function makeGroundItem(id: number, x: number, z: number, floor = 0): any {
+  return {
+    id,
+    itemId: itemDef.id,
+    quantity: 7,
+    x,
+    z,
+    floor,
+    mapLevel: 'kcmap',
+    despawnTimer: -1,
+  };
+}
+
 function makeWorld(): any {
   const packets = new Map<number, Array<{ opcode: ServerOpcode; values: number[] }>>();
   const world = Object.create(World.prototype) as any;
@@ -88,6 +101,7 @@ function makeWorld(): any {
   world.players = new Map();
   world.npcs = new Map();
   world.groundItems = new Map();
+  world.despawningItemIds = new Set();
   world.worldObjects = new Map();
   world.chunkManagers = new Map();
   world.playerCombatTargets = new Map();
@@ -271,17 +285,64 @@ describe('floor isolation', () => {
   test('cross-floor pickup is ignored without moving inventory or despawning the item', () => {
     const { world } = makeWorld();
     const player = makePlayer('player', 1, 1);
-    const groundItem = {
-      id: 9001,
-      itemId: itemDef.id,
-      quantity: 7,
-      x: player.position.x,
-      z: player.position.y,
-      floor: 0,
-      mapLevel: 'kcmap',
-      despawnTimer: -1,
-    };
+    const groundItem = makeGroundItem(9001, player.position.x, player.position.y, 0);
     player.visibleEntityIds.add(groundItem.id);
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(true);
+    expect(player.inventory.every((slot: unknown) => slot === null)).toBe(true);
+  });
+
+  test('adjacent pickup succeeds when the item tile is directly reachable', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9002, 6.5, 5.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(false);
+    expect(player.inventory.some(slot => slot?.itemId === itemDef.id && slot.quantity === groundItem.quantity)).toBe(true);
+  });
+
+  test('adjacent pickup cannot cross a wall edge', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9003, 6.5, 5.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      isWallBlocked: (fx: number, fz: number, tx: number, tz: number) => fx === 5 && fz === 5 && tx === 6 && tz === 5,
+      isWallBlockedOnFloor: (fx: number, fz: number, tx: number, tz: number) => fx === 5 && fz === 5 && tx === 6 && tz === 5,
+    });
+    world.players.set(player.id, player);
+    world.groundItems.set(groundItem.id, groundItem);
+
+    world.handlePlayerPickup(player.id, groundItem.id);
+
+    expect(world.groundItems.has(groundItem.id)).toBe(true);
+    expect(player.inventory.every((slot: unknown) => slot === null)).toBe(true);
+  });
+
+  test('diagonal pickup cannot squeeze through blocked corner walls', () => {
+    const { world } = makeWorld();
+    const player = makePlayer('player', 1);
+    const groundItem = makeGroundItem(9004, 6.5, 6.5);
+    player.visibleEntityIds.add(groundItem.id);
+    world.maps.set('kcmap', {
+      ...world.maps.get('kcmap'),
+      isWallBlocked: (fx: number, fz: number, tx: number, tz: number) =>
+        (fx === 5 && fz === 5 && tx === 6 && tz === 5)
+        || (fx === 5 && fz === 5 && tx === 5 && tz === 6),
+      isWallBlockedOnFloor: (fx: number, fz: number, tx: number, tz: number) =>
+        (fx === 5 && fz === 5 && tx === 6 && tz === 5)
+        || (fx === 5 && fz === 5 && tx === 5 && tz === 6),
+    });
     world.players.set(player.id, player);
     world.groundItems.set(groundItem.id, groundItem);
 

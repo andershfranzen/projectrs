@@ -89,7 +89,6 @@ export class DeathPortalEffect {
     const foot = target.position.clone();
     const node = getTargetNode(target);
     target.stopWalking?.();
-    target.hideHealthBar?.();
     target.hideChatBubble?.();
     target.setLabel?.('');
     new ActiveDeathPortal(scene, foot, node, opts);

@@ -166,11 +166,6 @@ export class Player extends Entity {
   followTargetPlayerId: number = -1;
   /** Earliest world tick where follow may run another path search. */
   nextFollowRepathTick: number = 0;
-  /** Position occupied at the start of the movement tick. Followers path to
-   *  this tile so player follow trails the target instead of chasing the
-   *  target's queued final destination. */
-  followAnchorX: number = 0;
-  followAnchorZ: number = 0;
   /** Per-quest state. Key = quest id from quests.json. Value tracks the
    *  current stage and progress toward that stage's trigger threshold
    *  (kill count, item count, etc). `stage: -1` = completed. Persisted in
@@ -399,8 +394,6 @@ export class Player extends Entity {
     this.skills = initSkills();
     this.health = this.skills.hitpoints.currentLevel;
     this.maxHealth = this.skills.hitpoints.level;
-    this.followAnchorX = x;
-    this.followAnchorZ = z;
   }
 
   get combatLevel(): number {
@@ -738,8 +731,7 @@ export class Player extends Entity {
     // validation), so each cursor advance here is a 1-tile step.
     if (this.hasMoveQueue() && this.movementCredit >= 1) {
       const target = this.moveQueue[this.moveQueueIndex++]!;
-      this.position.x = target.x;
-      this.position.y = target.z;
+      this.moveTo(target.x, target.z);
       this.lastMovedTick = currentTick;
       this.movementCredit -= 1;
       if (!this.hasMoveQueue()) this.clearMoveQueue();

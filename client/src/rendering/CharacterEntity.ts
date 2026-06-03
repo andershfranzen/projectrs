@@ -2415,6 +2415,11 @@ export class CharacterEntity {
     this.labelEl.textContent = text;
   }
 
+  setLabelColor(color: string): void {
+    this.labelColor = color;
+    if (this.labelEl) this.labelEl.style.color = color;
+  }
+
   /** World-space anchor for the name label — sits above the chat bubble's slot
    *  so they don't overlap when both are visible. */
   getLabelWorldPos(out?: Vector3): Vector3 | null {

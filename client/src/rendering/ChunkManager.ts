@@ -37,6 +37,16 @@ const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 
+export function isRoofLikePlacedAsset(assetId: string): boolean {
+  const lower = assetId.toLowerCase().trim();
+  return lower.includes('roof') || lower.includes('spire');
+}
+
+export function placedObjectThinGroupKey(assetId: string, visibility: 'ground' | 'elevated' | 'roof', originY: number): string {
+  const yBucket = visibility === 'elevated' ? Math.floor(originY * 2) / 2 : 0;
+  return `${assetId}\u0000${visibility}\u0000${yBucket}`;
+}
+
 function authFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const token = localStorage.getItem('evilquest_token') || '';
   if (!token) return fetch(input, init);
@@ -3700,7 +3710,7 @@ export class ChunkManager {
       if (!this.loadedModelCache.get(obj.assetId)) continue;
       if (this.canThinInstance(obj)) {
         const visibility = this.getThinVisibilityClass(obj);
-        const groupKey = `${obj.assetId}\u0000${visibility}`;
+        const groupKey = placedObjectThinGroupKey(obj.assetId, visibility, obj.position.y);
         let group = thinGroups.get(groupKey);
         if (!group) {
           group = { assetId: obj.assetId, visibility, placements: [] };
@@ -4126,8 +4136,7 @@ export class ChunkManager {
   }
 
   private isRoofLikeAsset(assetId: string): boolean {
-    const lower = assetId.toLowerCase();
-    return lower.includes('roof') || lower.includes('slab');
+    return isRoofLikePlacedAsset(assetId);
   }
 
   isUnderRoof(x: number, z: number, playerY: number, _floor: number): boolean {
