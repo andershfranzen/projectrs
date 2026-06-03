@@ -96,6 +96,7 @@ export class EntityManager {
    *  and possible future adaptive quality, but not used to hide humanoid NPCs:
    *  they have no fallback sprite, so budget-culling makes them invisible. */
   npc3dCount: number = 0;
+  private readonly activeDeathEffectEntityIds: Set<number> = new Set();
 
   // Ground items
   readonly groundItems: Map<number, GroundItemData> = new Map();
@@ -149,6 +150,8 @@ export class EntityManager {
   }
 
   createNpc(entityId: number, defId: number, x: number, z: number, options: NpcCreateOptions = {}): Npc3DEntity | CharacterEntity | null {
+    if (this.activeDeathEffectEntityIds.has(entityId)) return null;
+
     const {
       render3D = false,
       tileSize = 1,
@@ -445,6 +448,50 @@ export class EntityManager {
 
   // --- Entity removal ---
 
+  isDeathEffectActive(entityId: number): boolean {
+    return this.activeDeathEffectEntityIds.has(entityId);
+  }
+
+  private playDeathPortalAndDispose(entityId: number, entity: Npc3DEntity | CharacterEntity): void {
+    DeathPortalEffect.play(this.scene, entity, {
+      onDone: () => {
+        this.activeDeathEffectEntityIds.delete(entityId);
+        entity.dispose();
+      },
+    });
+  }
+
+  private getDeathAnimationTimeoutMs(entity: Npc3DEntity | CharacterEntity): number {
+    const duration = Math.max(entity.getAnimationDurationMs('death'), entity.getAnimationDurationMs('die'));
+    if (!Number.isFinite(duration) || duration <= 0) return 750;
+    return Math.max(750, Math.min(6000, duration + 250));
+  }
+
+  private startNpcDeathSequence(entityId: number, npc: Npc3DEntity | CharacterEntity): void {
+    npc.hideHealthBar();
+    npc.hideChatBubble();
+    this.activeDeathEffectEntityIds.add(entityId);
+
+    let finished = false;
+    let timeout: number | null = null;
+    const finishDeathAnimation = () => {
+      if (finished) return;
+      finished = true;
+      if (timeout !== null) {
+        window.clearTimeout(timeout);
+        timeout = null;
+      }
+      this.playDeathPortalAndDispose(entityId, npc);
+    };
+
+    if (npc.playDeathAnimation(finishDeathAnimation)) {
+      timeout = window.setTimeout(finishDeathAnimation, this.getDeathAnimationTimeoutMs(npc));
+      return;
+    }
+
+    finishDeathAnimation();
+  }
+
   startEntityDeathEffect(entityId: number): boolean {
     const character = this.remotePlayers.get(entityId);
     if (character) {
@@ -471,14 +518,7 @@ export class EntityManager {
     this.npcInteractions.delete(entityId);
     this.npcOverrideNames.delete(entityId);
     this.npcCombatTargets.delete(entityId);
-    if (npc instanceof Npc3DEntity) {
-      npc.hideHealthBar();
-      npc.hideChatBubble();
-      if (npc.playDeathAnimation(() => DeathPortalEffect.play(this.scene, npc, { onDone: () => npc.dispose() }))) {
-        return true;
-      }
-    }
-    DeathPortalEffect.play(this.scene, npc, { onDone: () => npc.dispose() });
+    this.startNpcDeathSequence(entityId, npc);
     return true;
   }
 

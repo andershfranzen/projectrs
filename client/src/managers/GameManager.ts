@@ -2791,6 +2791,8 @@ export class GameManager {
 
     this.network.on(ServerOpcode.NPC_SYNC, (_op, v) => {
       const [entityId, npcDefId, x10, z10, health, maxHealth] = v;
+      if (this.entities.isDeathEffectActive(entityId)) return;
+
       const x = x10 / 10;
       const z = z10 / 10;
       const floor = v.length >= 7 ? Math.floor(v[6] ?? 0) : 0;

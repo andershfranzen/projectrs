@@ -1248,6 +1248,24 @@ export class CharacterEntity {
     this.playAnimByState(AnimState.Attack, variant, false);
   }
 
+  playDeathAnimation(onDone?: () => void): boolean {
+    if (!this._ready || !this.renderEnabled) return false;
+    const deathAnim = this.getAnimNamesForState(AnimState.Death).find((name) => this.animGroups.has(name));
+    if (!deathAnim) return false;
+
+    this.clearLayeredOneShot();
+    this.queuedState = AnimState.Death;
+    this.queuedAnimName = '';
+    this.activeOneShotCanLayerOnWalk = false;
+    this.activeOneShotStartMs = performance.now();
+    this.currentState = AnimState.Death;
+    this.playAnim(deathAnim, false, () => {
+      if (this.currentState !== AnimState.Death) return;
+      onDone?.();
+    });
+    return true;
+  }
+
   /** Resolve the active walk variant from currentAnimName. The strafe
    *  picker may have swapped to walk_l/r/b during a face-locked combat
    *  approach, so we can't assume 'walk'. Falls back to walkanim. */

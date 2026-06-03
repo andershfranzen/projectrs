@@ -658,6 +658,31 @@ describe('NPC interaction reachability', () => {
     expect(npc.isInteractionTile(10, 10)).toBe(true);
   });
 
+  test('size-one NPC combat chase steps off an overlapped player when an adjacent tile is available', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 5 }, 10.5, 10.5);
+    npc.combatTarget = player;
+
+    npc.processAI(() => false);
+
+    expect(npc.position.x).toBe(11.5);
+    expect(npc.position.y).toBe(10.5);
+    expect(npc.isInteractionTile(10, 10)).toBe(true);
+  });
+
+  test('size-one NPC overlap escape only stalls when every adjacent tile is blocked', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 5 }, 10.5, 10.5);
+    npc.combatTarget = player;
+
+    npc.processAI((x, z) => Math.max(Math.abs(x - 10.5), Math.abs(z - 10.5)) === 1);
+
+    expect(npc.position.x).toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
+    expect(npc.isFootprintTile(10, 10)).toBe(true);
+    expect(npc.isInteractionTile(10, 10)).toBe(false);
+  });
+
   test('world NPC movement can escape a player standing inside its current footprint', () => {
     const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
     const npc = new Npc({ ...npcDef, size: 2, wanderRange: 5 }, 10.5, 10.5);
@@ -683,6 +708,22 @@ describe('NPC interaction reachability', () => {
 
     expect(npc.isInteractionTile(10, 10)).toBe(true);
     expect(npc.position.x === 9.5 || npc.position.y === 9.5).toBe(true);
+  });
+
+  test('world NPC movement can escape a same-tile player for ordinary mobs', () => {
+    const player = new Player('tester', 10.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, wanderRange: 5 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.combatTarget = player;
+    const { world } = makeCombatWorld(player, npc);
+
+    world.rebuildEntityTileOccupants();
+    world.tickNpcAI();
+
+    expect(npc.isInteractionTile(10, 10)).toBe(true);
+    expect(npc.position.x).not.toBe(10.5);
+    expect(npc.position.y).toBe(10.5);
   });
 
   test('melee combat requires a cardinal NPC interaction tile', () => {

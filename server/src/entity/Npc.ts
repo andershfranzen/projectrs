@@ -433,10 +433,10 @@ export class Npc extends Entity {
     return canStep(axisDx, axisDz, false) ? move(axisDx, axisDz) : 'blocked';
   }
 
-  /** If a player is inside a large NPC's own footprint, ordinary chase can
-   *  stall because the target's tile is not an interaction tile and may share
-   *  the NPC anchor tile. Step the footprint away from the closest edge until
-   *  the player becomes cardinal-adjacent again. */
+  /** If a player is inside an NPC's own footprint, ordinary chase can stall
+   *  because the target's tile is not an interaction tile and may share the
+   *  NPC anchor tile. Step the footprint away from the closest edge until the
+   *  player becomes cardinal-adjacent again. */
   private stepOutFromOverlappingTarget(
     targetTileX: number,
     targetTileZ: number,
@@ -444,7 +444,6 @@ export class Npc extends Entity {
     isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
   ): boolean {
     const size = this.size;
-    if (size <= 1) return false;
     const bounds = getObjectFootprintBounds(this.position.x, this.position.y, size);
     if (targetTileX < bounds.minX || targetTileX > bounds.maxX || targetTileZ < bounds.minZ || targetTileZ > bounds.maxZ) {
       return false;
@@ -619,7 +618,7 @@ export class Npc extends Entity {
 
       this.pathQueue.length = 0;
       if (this.isFootprintTile(targetTileX, targetTileZ)) {
-        if (this.shouldDelayOverlapEscape(this.combatTarget.id)) return;
+        if (this.size > 1 && this.shouldDelayOverlapEscape(this.combatTarget.id)) return;
         if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, isBlocked, isWallBlocked)) return;
       } else {
         this.resetOverlapEscapeDelay();

@@ -799,8 +799,12 @@ export class Npc3DEntity {
   playDeathAnimation(onDone?: () => void): boolean {
     const group = this.animGroups.get('death');
     if (!group || !this.animationEnabled || !this.renderEnabled) return false;
-    if (this.currentAnim !== 'death') this.playAnim('death', false);
-    group.onAnimationGroupEndObservable.addOnce(() => onDone?.());
+    this._walking = false;
+    group.onAnimationGroupEndObservable.addOnce(() => {
+      if (this.currentAnim !== 'death') return;
+      onDone?.();
+    });
+    this.playAnim('death', false);
     return true;
   }
 
