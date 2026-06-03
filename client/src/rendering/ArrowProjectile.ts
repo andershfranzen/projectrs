@@ -5,20 +5,12 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { Observer } from '@babylonjs/core/Misc/observable';
 import type { Scene } from '@babylonjs/core/scene';
+import { rangedProjectileArcHeightForDistance, rangedProjectileTravelMsForDistance } from '@projectrs/shared';
 import type { Targetable } from './Targetable';
 
 type ProjectileSource = Targetable & {
   getCastOrigin?: () => Vector3;
 };
-
-const MIN_TRAVEL_MS = 280;
-const MAX_TRAVEL_MS = 620;
-const MS_PER_TILE = 48;
-const BASE_TRAVEL_MS = 250;
-const TRAVEL_TIME_SCALE = 0.9 / 1.1;
-const MIN_ARC_HEIGHT = 0.14;
-const MAX_ARC_HEIGHT = 0.62;
-const ARC_HEIGHT_PER_TILE = 0.075;
 
 function clamp(v: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, v));
@@ -26,12 +18,20 @@ function clamp(v: number, min: number, max: number): number {
 
 export function arrowProjectileTravelMs(from: Vector3, to: Vector3): number {
   const horizontalDistance = Math.hypot(to.x - from.x, to.z - from.z);
-  return clamp(BASE_TRAVEL_MS + horizontalDistance * MS_PER_TILE, MIN_TRAVEL_MS, MAX_TRAVEL_MS) * TRAVEL_TIME_SCALE;
+  return rangedProjectileTravelMsForDistance(horizontalDistance);
 }
 
 function arrowArcHeight(from: Vector3, to: Vector3): number {
   const horizontalDistance = Math.hypot(to.x - from.x, to.z - from.z);
-  return clamp(MIN_ARC_HEIGHT + horizontalDistance * ARC_HEIGHT_PER_TILE, MIN_ARC_HEIGHT, MAX_ARC_HEIGHT);
+  return rangedProjectileArcHeightForDistance(horizontalDistance);
+}
+
+export interface ArrowProjectileOptions {
+  from?: Vector3;
+  to?: Vector3;
+  travelMs?: number;
+  arcHeight?: number;
+  projectileType?: number;
 }
 
 function resolveLaunchPoint(source: ProjectileSource): Vector3 {
@@ -64,16 +64,16 @@ export class ArrowProjectileManager {
 
   constructor(private readonly scene: Scene) {}
 
-  spawn(attacker: ProjectileSource, target: Targetable, releaseDelayMs: number): void {
+  spawn(attacker: ProjectileSource, target: Targetable, releaseDelayMs: number, options: ArrowProjectileOptions = {}): void {
     const delay = Math.max(0, releaseDelayMs);
     if (delay <= 0) {
-      this.launch(attacker, target);
+      this.launch(attacker, target, options);
       return;
     }
 
     const timer = setTimeout(() => {
       this.launchTimers.delete(timer);
-      this.launch(attacker, target);
+      this.launch(attacker, target, options);
     }, delay);
     this.launchTimers.add(timer);
   }
@@ -95,12 +95,16 @@ export class ArrowProjectileManager {
     this.featherMat = null;
   }
 
-  private launch(attacker: ProjectileSource, target: Targetable): void {
+  private launch(attacker: ProjectileSource, target: Targetable, options: ArrowProjectileOptions): void {
     if (this.disposed) return;
-    const from = resolveLaunchPoint(attacker);
-    const to = target.getTargetAnchor();
-    const travelMs = arrowProjectileTravelMs(from, to);
-    const arcHeight = arrowArcHeight(from, to);
+    const from = options.from?.clone() ?? resolveLaunchPoint(attacker);
+    const to = options.to?.clone() ?? target.getTargetAnchor();
+    const travelMs = typeof options.travelMs === 'number' && Number.isFinite(options.travelMs) && options.travelMs > 0
+      ? options.travelMs
+      : arrowProjectileTravelMs(from, to);
+    const arcHeight = typeof options.arcHeight === 'number' && Number.isFinite(options.arcHeight) && options.arcHeight >= 0
+      ? options.arcHeight
+      : arrowArcHeight(from, to);
     const root = this.createArrowRoot();
     const pos = new Vector3();
     const tangent = new Vector3();

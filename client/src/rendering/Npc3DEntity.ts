@@ -3,6 +3,8 @@ import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
+import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
+import type { AssetContainer, InstantiatedEntries } from '@babylonjs/core/assetContainer';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
@@ -25,16 +27,40 @@ export interface Npc3DEntityOptions {
   preserveAnimationRoles?: Array<'idle' | 'walk' | 'attack' | 'death'>;
 }
 
-async function importMeshWithTimeout(
+type NpcAnimationRole = 'idle' | 'walk' | 'attack' | 'death';
+type NpcAnimMap = { idle: string; walk?: string; attack?: string; death?: string };
+
+interface NpcModelTemplate {
+  container: AssetContainer;
+}
+
+interface NpcModelInstance {
+  entries: InstantiatedEntries;
+  rootNodes: TransformNode[];
+  meshes: AbstractMesh[];
+  skeletons: Skeleton[];
+  animationGroups: AnimationGroup[];
+}
+
+const CACHE_BUST_TOKEN: string = (import.meta as any).env?.DEV ? `?v=${Date.now()}` : '';
+const sceneNpcModelTemplates = new WeakMap<Scene, Map<string, Promise<NpcModelTemplate>>>();
+const scenesWithNpcModelCacheCleanup = new WeakSet<Scene>();
+let npcModelInstanceId = 0;
+
+function devCacheBust(file: string): string {
+  return CACHE_BUST_TOKEN ? `${file}${CACHE_BUST_TOKEN}` : file;
+}
+
+async function loadAssetContainerWithTimeout(
   scene: Scene,
   dir: string,
   file: string,
   timeoutMs: number = 20_000,
-): Promise<Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>> {
+): Promise<AssetContainer> {
   let timer: number | null = null;
   try {
     return await Promise.race([
-      SceneLoader.ImportMeshAsync('', dir, file, scene),
+      SceneLoader.LoadAssetContainerAsync(dir, file, scene),
       new Promise<never>((_, reject) => {
         timer = window.setTimeout(
           () => reject(new Error(`GLB import timed out after ${timeoutMs}ms: ${dir}${file}`)),
@@ -47,15 +73,197 @@ async function importMeshWithTimeout(
   }
 }
 
-type ImportedMeshResult = Awaited<ReturnType<typeof SceneLoader.ImportMeshAsync>>;
-
-function disposeImportedMeshResult(result: ImportedMeshResult): void {
-  for (const group of result.animationGroups) group.dispose();
-  for (const mesh of result.meshes) mesh.dispose();
-  for (const node of result.transformNodes) {
-    if (!node.isDisposed()) node.dispose();
+function npcModelTemplateCache(scene: Scene): Map<string, Promise<NpcModelTemplate>> {
+  let cache = sceneNpcModelTemplates.get(scene);
+  if (!cache) {
+    cache = new Map();
+    sceneNpcModelTemplates.set(scene, cache);
   }
-  for (const skeleton of result.skeletons) skeleton.dispose();
+  if (!scenesWithNpcModelCacheCleanup.has(scene)) {
+    scenesWithNpcModelCacheCleanup.add(scene);
+    scene.onDisposeObservable.addOnce(() => clearNpcModelTemplateCache(scene));
+  }
+  return cache;
+}
+
+function buildAnimationProfileKey(
+  animMap: NpcAnimMap,
+  preserveAnimationRoles: ReadonlySet<NpcAnimationRole>,
+): string {
+  const preserved = Array.from(preserveAnimationRoles).sort().join(',');
+  return [
+    animMap.idle,
+    animMap.walk ?? '',
+    animMap.attack ?? '',
+    animMap.death ?? '',
+    preserved,
+  ].map((part) => part.trim()).join('|');
+}
+
+function prepareTemplateAnimationGroups(
+  groups: AnimationGroup[],
+  animMap: NpcAnimMap,
+  preserveAnimationRoles: ReadonlySet<NpcAnimationRole>,
+): void {
+  for (const group of groups) group.stop();
+
+  const roleGroups = new Map<NpcAnimationRole, AnimationGroup>();
+  const idleGroup = resolveAnimationGroup(groups, animMap.idle, 'idle');
+  const walkGroup = resolveAnimationGroup(groups, animMap.walk, 'walk');
+  const attackGroup = resolveAnimationGroup(groups, animMap.attack, 'attack');
+  const deathGroup = resolveAnimationGroup(groups, animMap.death, 'death');
+
+  if (idleGroup) roleGroups.set('idle', idleGroup);
+  if (walkGroup) roleGroups.set('walk', walkGroup);
+  if (attackGroup) roleGroups.set('attack', attackGroup);
+  if (deathGroup) roleGroups.set('death', deathGroup);
+  if (!idleGroup) {
+    const fallback = walkGroup ?? groups[0];
+    if (fallback) roleGroups.set('idle', fallback);
+  }
+
+  const retainedGroups = new Set(roleGroups.values());
+  for (const group of groups) {
+    if (!retainedGroups.has(group)) {
+      group.stop();
+      group.dispose();
+    }
+  }
+  groups.splice(0, groups.length, ...retainedGroups);
+
+  const rolesByGroup = new Map<AnimationGroup, Set<NpcAnimationRole>>();
+  for (const [role, group] of roleGroups) {
+    let roles = rolesByGroup.get(group);
+    if (!roles) {
+      roles = new Set();
+      rolesByGroup.set(group, roles);
+    }
+    roles.add(role);
+  }
+
+  const preferredRoles: NpcAnimationRole[] = ['walk', 'attack', 'death', 'idle'];
+  for (const [group, roles] of rolesByGroup) {
+    const shouldPreserve = Array.from(roles).some((role) => preserveAnimationRoles.has(role));
+    if (shouldPreserve) continue;
+    const quantizeRole = preferredRoles.find((role) => roles.has(role)) ?? 'idle';
+    quantizeAnimationGroup(group, `npc_${quantizeRole}`);
+  }
+}
+
+function applyNpcMaterialRuntimeDefaults(mat: any): void {
+  if (mat.diffuseTexture) mat.diffuseTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+  if (mat.albedoTexture) mat.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+  if (mat.getClassName?.() === 'PBRMaterial') {
+    mat.roughness = 1.0;
+    mat.metallic = 0.0;
+    mat.environmentIntensity = 0;
+    mat.specularIntensity = 0;
+  }
+}
+
+function prepareTemplateMaterials(container: AssetContainer): void {
+  const materials = new Set<any>();
+  for (const mesh of container.meshes) {
+    const mat = mesh.material as any;
+    if (mat) materials.add(mat);
+  }
+  for (const mat of materials) applyNpcMaterialRuntimeDefaults(mat);
+}
+
+function disposeNpcModelTemplate(template: NpcModelTemplate): void {
+  for (const group of uniqueAnimationGroups(template.container.animationGroups)) {
+    group.stop();
+    group.dispose();
+  }
+  template.container.dispose();
+}
+
+export function clearNpcModelTemplateCache(scene: Scene, file?: string): void {
+  const cache = sceneNpcModelTemplates.get(scene);
+  if (!cache) return;
+
+  let fileKey: string | null = null;
+  if (file) {
+    const lastSlash = file.lastIndexOf('/');
+    const dir = file.substring(0, lastSlash + 1);
+    const fname = devCacheBust(file.substring(lastSlash + 1));
+    fileKey = `${dir}${fname}`;
+  }
+
+  for (const [key, promise] of Array.from(cache.entries())) {
+    if (fileKey && !key.startsWith(`${fileKey}|`)) continue;
+    cache.delete(key);
+    promise.then(disposeNpcModelTemplate).catch(() => {});
+  }
+  if (!fileKey) sceneNpcModelTemplates.delete(scene);
+}
+
+function getNpcModelTemplate(
+  scene: Scene,
+  dir: string,
+  file: string,
+  animMap: NpcAnimMap,
+  preserveAnimationRoles: ReadonlySet<NpcAnimationRole>,
+): Promise<NpcModelTemplate> {
+  const cache = npcModelTemplateCache(scene);
+  const fileKey = `${dir}${file}`;
+  const key = `${fileKey}|${buildAnimationProfileKey(animMap, preserveAnimationRoles)}`;
+  let promise = cache.get(key);
+  if (!promise) {
+    promise = loadAssetContainerWithTimeout(scene, dir, file)
+      .then((container) => {
+        prepareTemplateMaterials(container);
+        prepareTemplateAnimationGroups(container.animationGroups, animMap, preserveAnimationRoles);
+        return { container };
+      }, (err) => {
+        if (cache.get(key) === promise) cache.delete(key);
+        throw err;
+      });
+    cache.set(key, promise);
+  }
+  return promise;
+}
+
+function collectNpcModelInstance(entries: InstantiatedEntries): NpcModelInstance {
+  const allNodes = new Set<any>();
+  for (const root of entries.rootNodes) {
+    allNodes.add(root);
+    for (const child of (root as any).getDescendants?.(false) ?? []) {
+      allNodes.add(child);
+    }
+  }
+  const meshes = Array.from(allNodes).filter((node): node is AbstractMesh => node instanceof AbstractMesh);
+  return {
+    entries,
+    rootNodes: entries.rootNodes.filter((node): node is TransformNode => node instanceof TransformNode),
+    meshes,
+    skeletons: entries.skeletons,
+    animationGroups: entries.animationGroups,
+  };
+}
+
+async function instantiateNpcModel(
+  scene: Scene,
+  dir: string,
+  file: string,
+  animMap: NpcAnimMap,
+  preserveAnimationRoles: ReadonlySet<NpcAnimationRole>,
+  label?: string,
+): Promise<NpcModelInstance> {
+  const template = await getNpcModelTemplate(scene, dir, file, animMap, preserveAnimationRoles);
+  const instanceId = ++npcModelInstanceId;
+  const prefix = `npc3dsrc_${label ?? 'npc'}_${instanceId}`;
+  const entries = template.container.instantiateModelsToScene(
+    (sourceName) => `${prefix}_${sourceName}`,
+    false,
+    { doNotInstantiate: true },
+  );
+  for (const group of entries.animationGroups) group.stop();
+  return collectNpcModelInstance(entries);
+}
+
+function disposeNpcModelInstance(result: NpcModelInstance): void {
+  result.entries.dispose();
 }
 
 function normalizeAnimationName(name: string): string {
@@ -95,6 +303,25 @@ function resolveAnimationGroup(
   return groups.find((group) => animationNameMatchesRole(group.name, role));
 }
 
+function uniqueAnimationGroups(groups: Iterable<AnimationGroup>): AnimationGroup[] {
+  return Array.from(new Set(groups));
+}
+
+function normalizeMaterialName(name: string): string {
+  return name.trim().toLowerCase().replace(/\.\d+$/, '');
+}
+
+function materialColorLookup(
+  materialColors?: Record<string, [number, number, number]>,
+): Map<string, [number, number, number]> | null {
+  if (!materialColors || Object.keys(materialColors).length === 0) return null;
+  const lookup = new Map<string, [number, number, number]>();
+  for (const [name, color] of Object.entries(materialColors)) {
+    lookup.set(normalizeMaterialName(name), color);
+  }
+  return lookup;
+}
+
 interface AnimationFade {
   group: AnimationGroup;
   from: number;
@@ -109,9 +336,14 @@ interface AnimationFade {
  * Exposes the same public interface as SpriteEntity so it can be used interchangeably.
  */
 export class Npc3DEntity {
+  static clearModelCache(scene: Scene, file?: string): void {
+    clearNpcModelTemplateCache(scene, file);
+  }
+
   private scene: Scene;
   private root: TransformNode | null = null;
   private meshes: AbstractMesh[] = [];
+  private skeletons: Skeleton[] = [];
   private disposed: boolean = false;
   private _position: Vector3 = Vector3.Zero();
   private _rotationY: number = 0;
@@ -205,37 +437,33 @@ export class Npc3DEntity {
     try {
       const lastSlash = file.lastIndexOf('/');
       const dir = file.substring(0, lastSlash + 1);
-      const fname = file.substring(lastSlash + 1);
-      const result = await importMeshWithTimeout(this.scene, dir, fname);
+      const fname = devCacheBust(file.substring(lastSlash + 1));
+      const result = await instantiateNpcModel(this.scene, dir, fname, animMap, this.preserveAnimationRoles, label);
       if (this.disposed || this.scene.isDisposed) {
-        disposeImportedMeshResult(result);
+        disposeNpcModelInstance(result);
         this._resolveReady();
         return;
       }
 
-      // Clone every material before touching it — Babylon's glTF loader
-      // shares material instances across multiple ImportMeshAsync() of the
-      // same file, so unguarded mutation cross-contaminates every NPC sharing
-      // the GLB (Snow Wolf would whiten regular wolves too).
+      // Only clone materials when a variant needs color overrides. Plain mobs
+      // can share cached template materials across instances.
+      const materialLookup = materialColorLookup(materialColors);
+      const shouldCloneMaterials = materialLookup !== null;
       const cloned = new Map<any, any>();
       for (const mesh of result.meshes) {
         const original = mesh.material as any;
         if (!original) continue;
-        let mat = cloned.get(original);
-        if (!mat) {
-          mat = original.clone(`${original.name}_${label ?? 'npc'}`);
-          cloned.set(original, mat);
+        let mat = original;
+        if (shouldCloneMaterials) {
+          mat = cloned.get(original);
+          if (!mat) {
+            mat = original.clone(`${original.name}_${label ?? 'npc'}`);
+            cloned.set(original, mat);
+          }
+          mesh.material = mat;
+          applyNpcMaterialRuntimeDefaults(mat);
         }
-        mesh.material = mat;
-        if (mat.diffuseTexture) mat.diffuseTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
-        if (mat.albedoTexture) mat.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
-        if (mat.getClassName?.() === 'PBRMaterial') {
-          mat.roughness = 1.0;
-          mat.metallic = 0.0;
-          mat.environmentIntensity = 0;
-          mat.specularIntensity = 0;
-        }
-        const override = materialColors?.[original.name];
+        const override = materialLookup?.get(normalizeMaterialName(original.name));
         if (override) {
           const [r, g, b] = override;
           if ('albedoColor' in mat) mat.albedoColor = new Color3(r, g, b);
@@ -244,12 +472,12 @@ export class Npc3DEntity {
       }
 
       // Same pattern as ChunkManager.loadGLBModel — proven to work
-      const glbRoot = result.meshes[0]; // __root__ node with coordinate transforms
       this.root = new TransformNode(`npc3d_${label ?? ''}`, this.scene);
-      glbRoot.parent = this.root;
+      for (const node of result.rootNodes) node.parent = this.root;
       this.applyRootRotation();
 
       this.meshes = result.meshes.filter(m => m.getTotalVertices() > 0);
+      this.skeletons = result.skeletons;
 
       // Compute bounds and offset so feet are at Y=0. Some authored GLBs
       // also need X/Z recentering so their visual center lands on the NPC
@@ -267,10 +495,12 @@ export class Npc3DEntity {
         if (bb.maximumWorld.z > maxZ) maxZ = bb.maximumWorld.z;
       }
       if (this.originMode === 'boundsCenter') {
-        glbRoot.position.x -= (minX + maxX) / 2;
-        glbRoot.position.z -= (minZ + maxZ) / 2;
+        for (const node of result.rootNodes) {
+          node.position.x -= (minX + maxX) / 2;
+          node.position.z -= (minZ + maxZ) / 2;
+        }
       }
-      glbRoot.position.y -= minY;
+      for (const node of result.rootNodes) node.position.y -= minY;
 
       this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
 
@@ -298,12 +528,6 @@ export class Npc3DEntity {
       if (!idleGroup) {
         const fallback = walkGroup ?? result.animationGroups[0];
         if (fallback) this.animGroups.set('idle', fallback);
-      }
-
-      for (const [role, group] of this.animGroups) {
-        if (!this.preserveAnimationRoles.has(role as 'idle' | 'walk' | 'attack' | 'death')) {
-          quantizeAnimationGroup(group, `npc_${role}`);
-        }
       }
 
       if (this._walking && this.animGroups.has('walk')) this.playAnim('walk', true);
@@ -400,7 +624,7 @@ export class Npc3DEntity {
 
   private stopAllAnimationGroups(): void {
     this.stopAnimationFades();
-    for (const [, anim] of this.animGroups) {
+    for (const anim of uniqueAnimationGroups(this.animGroups.values())) {
       anim.stop(true);
       this.setAnimationWeight(anim, 1);
     }
@@ -731,8 +955,10 @@ export class Npc3DEntity {
     this.hideChatBubble();
     this.hideHealthBar();
     this.stopAnimationFades();
-    for (const [, group] of this.animGroups) { group.stop(true); group.dispose(); }
+    for (const group of uniqueAnimationGroups(this.animGroups.values())) { group.stop(true); group.dispose(); }
     this.animGroups.clear();
+    for (const skeleton of this.skeletons) skeleton.dispose();
+    this.skeletons = [];
     for (const mesh of this.meshes) mesh.dispose();
     if (this.root) this.root.dispose();
     this.root = null;

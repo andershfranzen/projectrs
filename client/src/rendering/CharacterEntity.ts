@@ -311,21 +311,22 @@ export class CharacterEntity {
   private static readonly STRAFE_FORWARD_THRESHOLD = Math.PI / 4;   // 45°
   private static readonly STRAFE_BACK_THRESHOLD = Math.PI * 3 / 4;  // 135°
 
-  // Layered attack: when a swing fires while walking, attack_<v>_upper plays
-  // on top of <walk variant>_lower so the legs keep cycling. If walk stops
-  // mid-swing we swap to attack_<v>_lower at the attack's current frame.
+  // Layered one-shots: when an allowed one-shot fires while walking,
+  // <anim>_upper plays on top of <walk variant>_lower so legs keep cycling.
+  // If walk stops mid-shot we swap to <anim>_lower at the shot's current frame.
   // activeWalkBase records the variant driving the legs. Stored (not derived
   // from currentAnimName) because currentAnimName gets clobbered to
-  // `${attack}_upper` during the layered window.
-  private attackIsLayered: boolean = false;
-  private activeAttackBase: string = '';
+  // `${anim}_upper` during the layered window.
+  private oneShotIsLayered: boolean = false;
+  private activeOneShotBase: string = '';
+  private activeOneShotCanLayerOnWalk: boolean = false;
   private activeWalkBase: WalkVariantName = 'walk';
   // Cached `${activeWalkBase}_lower` name + group reference — avoid
   // re-allocating the template string and re-querying the Map on every
   // frame of startWalking's layered hot path.
   private activeWalkLowerName: string = 'walk_lower';
   private activeWalkLowerGroup: AnimationGroup | null = null;
-  private attackStartMs: number = 0;
+  private activeOneShotStartMs: number = 0;
   private missingAnimationWarnings = new Set<string>();
 
   // One-shot animations (attack/death) call back when done
@@ -986,6 +987,7 @@ export class CharacterEntity {
       const group = this.animGroups.get(name);
       if (group) {
         this.playAnim(name, loop ?? (state <= AnimState.Skill), () => {
+          if (state === AnimState.Attack) this.activeOneShotCanLayerOnWalk = false;
           // One-shot finished — return to idle or walk
           if (this.currentState === state) {
             this.currentState = this.queuedState;
@@ -1043,16 +1045,18 @@ export class CharacterEntity {
     return true;
   }
 
-  /** Stop any layered-attack groups and clear flags. Used both when the swing
-   *  ends naturally and when we tear down to start a fresh full-body anim. */
-  private clearLayeredAttack(): void {
-    if (this.activeAttackBase) {
-      this.animGroups.get(`${this.activeAttackBase}_upper`)?.stop();
-      this.animGroups.get(`${this.activeAttackBase}_lower`)?.stop();
+  /** Stop any layered one-shot groups and clear flags. Used both when the
+   *  one-shot ends naturally and when we tear down to start a fresh full-body
+   *  animation. */
+  private clearLayeredOneShot(): void {
+    if (this.activeOneShotBase) {
+      this.animGroups.get(`${this.activeOneShotBase}_upper`)?.stop();
+      this.animGroups.get(`${this.activeOneShotBase}_lower`)?.stop();
     }
     this.activeWalkLowerGroup?.stop();
-    this.attackIsLayered = false;
-    this.activeAttackBase = '';
+    this.oneShotIsLayered = false;
+    this.activeOneShotBase = '';
+    this.activeOneShotCanLayerOnWalk = false;
     this.activeWalkBase = isWalkVariant(this.walkanim) ? this.walkanim : 'walk';
     this.activeWalkLowerName = `${this.activeWalkBase}_lower`;
     this.activeWalkLowerGroup = null;
@@ -1112,19 +1116,19 @@ export class CharacterEntity {
     }
     this.queuedState = AnimState.Walk;
     this.queuedAnimName = '';
-    if (this.currentState === AnimState.Walk && !this.attackIsLayered) {
+    if (this.currentState === AnimState.Walk && !this.oneShotIsLayered) {
       const activeGroup = this.currentAnimName ? this.animGroups.get(this.currentAnimName) : null;
       if (!this.renderEnabled || activeGroup?.isPlaying) return;
       if (this.startWalkCyclePreservingPhase(this.currentAnimName)) return;
     }
-    // Layered-attack in progress: re-attach the active walk variant's
-    // _lower behind the still-running attack_upper. Called every frame
+    // Layered one-shot in progress: re-attach the active walk variant's
+    // _lower behind the still-running one-shot upper. Called every frame
     // while a path is active, so the steady-state path (lower already
     // playing) early-returns after the cached group's isPlaying check.
-    if (this.attackIsLayered) {
+    if (this.oneShotIsLayered) {
       const walkLower = this.activeWalkLowerGroup;
       if (walkLower?.isPlaying) return;
-      this.animGroups.get(`${this.activeAttackBase}_lower`)?.stop();
+      this.animGroups.get(`${this.activeOneShotBase}_lower`)?.stop();
       if (walkLower) {
         walkLower.start(true, this.getAnimationSpeed(this.activeWalkLowerName),
           walkLower.from, walkLower.to, false);
@@ -1132,7 +1136,7 @@ export class CharacterEntity {
       return;
     }
     if (this.currentState >= AnimState.Attack) {
-      this.convertActiveAttackToWalkLayer();
+      this.convertActiveOneShotToWalkLayer();
       return;
     }
     // Walk preempts Skill (matches RS2 seq `postanim_move=abortanim`) so
@@ -1142,16 +1146,16 @@ export class CharacterEntity {
 
   /** Stop walking, return to idle. */
   stopWalking(): void {
-    if (this.attackIsLayered) {
-      const base = this.activeAttackBase;
+    if (this.oneShotIsLayered) {
+      const base = this.activeOneShotBase;
       this.activeWalkLowerGroup?.stop();
       const lower = this.animGroups.get(`${base}_lower`);
       if (lower && lower.targetedAnimations.length > 0) {
-        // Sync attack_lower's start frame to where the upper anim is so the
+        // Sync one-shot lower's start frame to where the upper anim is so the
         // silhouette stays consistent — no rewind / jump-ahead on the legs.
-        const speed = ANIM_SPEED_RATIO[base] ?? 1.0;
+        const speed = this.getAnimationSpeed(base);
         const fps = lower.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
-        const elapsedMs = performance.now() - this.attackStartMs;
+        const elapsedMs = performance.now() - this.activeOneShotStartMs;
         const frame = Math.min(lower.from + (elapsedMs / 1000) * fps * speed, lower.to);
         lower.start(false, speed, frame, lower.to, false);
       }
@@ -1168,7 +1172,7 @@ export class CharacterEntity {
 
   isWalking(): boolean {
     return this.currentState === AnimState.Walk
-      || (this.attackIsLayered && (this.activeWalkLowerGroup?.isPlaying ?? false));
+      || (this.oneShotIsLayered && (this.activeWalkLowerGroup?.isPlaying ?? false));
   }
 
   /**
@@ -1176,12 +1180,24 @@ export class CharacterEntity {
    * Returns false (and does nothing) if the name isn't loaded — no fallback,
    * unlike playAttackAnimation. Used by debug commands like /spell and /anim.
    */
-  playNamedOneShot(name: string): boolean {
+  playNamedOneShot(name: string, options: { layerWhenWalking?: boolean } = {}): boolean {
     if (this.currentState === AnimState.Attack) return false;
     if (!this.animGroups.has(name)) return false;
     this.queuedState = this.currentState >= AnimState.Walk ? AnimState.Walk : AnimState.Idle;
     this.queuedAnimName = '';
+    this.activeOneShotCanLayerOnWalk = options.layerWhenWalking === true;
+    if (
+      this.activeOneShotCanLayerOnWalk
+      && this.isWalking()
+      && this.ensureBoneSplitVariants(name)
+      && this.ensureBoneSplitVariants(this.activeWalkVariant())
+    ) {
+      this.playLayeredOneShot(name);
+      return true;
+    }
+    this.activeOneShotStartMs = performance.now();
     this.playAnim(name, false, () => {
+      this.activeOneShotCanLayerOnWalk = false;
       if (this.currentState === AnimState.Attack) {
         this.currentState = this.queuedState;
         this.playAnimByState(this.queuedState, this.queuedAnimName, undefined);
@@ -1193,15 +1209,16 @@ export class CharacterEntity {
 
   /** Play a one-shot attack animation. Optional variant name (e.g. 'attack_slash').
    *  When the player is currently walking, plays an upper-body-only variant
-   *  layered over walk's lower-body so the legs keep cycling — the silhouette
-   *  walks AND swings. stopWalking swaps walk_lower for attack_lower mid-swing
-   *  so the legs finish the attack pose. */
+   *  layered over walk's lower-body so the legs keep cycling. stopWalking swaps
+   *  from walk_lower to the one-shot lower body mid-animation so the legs finish
+   *  the same pose as the torso. */
   playAttackAnimation(variant?: string, _restart: boolean = false): void {
     if (this.currentState === AnimState.Attack) {
       return;
     }
     this.queuedState = this.currentState >= AnimState.Walk ? AnimState.Walk : AnimState.Idle;
     this.queuedAnimName = '';
+    this.activeOneShotCanLayerOnWalk = true;
 
     // Resolve the attack anim name the same way playAnimByState would, so
     // the layered path picks the same group (e.g. attack_2h_smash, falling
@@ -1215,7 +1232,7 @@ export class CharacterEntity {
     const wasWalking = this.isWalking();
     // ensureBoneSplitVariants for the ACTIVE walk variant (strafe picker
     // may have swapped currentAnimName to walk_l/r/b during a face-locked
-    // approach). Without this, playLayeredAttack would try to start a
+    // approach). Without this, playLayeredOneShot would try to start a
     // walk_l_lower group that doesn't exist yet.
     if (
       wasWalking
@@ -1223,11 +1240,11 @@ export class CharacterEntity {
       && this.ensureBoneSplitVariants(attackName)
       && this.ensureBoneSplitVariants(this.activeWalkVariant())
     ) {
-      this.playLayeredAttack(attackName);
+      this.playLayeredOneShot(attackName);
       return;
     }
     // Non-walking, or split-variants unavailable: existing full-body path.
-    this.attackStartMs = performance.now();
+    this.activeOneShotStartMs = performance.now();
     this.playAnimByState(AnimState.Attack, variant, false);
   }
 
@@ -1240,15 +1257,14 @@ export class CharacterEntity {
       : (isWalkVariant(this.walkanim) ? this.walkanim : 'walk');
   }
 
-  /** Start a layered attack — `<variant>_lower` runs for the legs,
-   *  attack_X_upper for the upper body. Detects which walk variant was
-   *  playing (forward / strafe / back) so a player attacking mid-strafe
-   *  keeps strafing on the legs instead of snapping to forward. */
-  private playLayeredAttack(baseName: string): void {
+  /** Start a layered one-shot — `<walk variant>_lower` runs for the legs,
+   *  `<baseName>_upper` for the upper body. Detects which walk variant was
+   *  playing (forward / strafe / back) so the legs do not snap to forward. */
+  private playLayeredOneShot(baseName: string): void {
     const walkVariant = this.activeWalkVariant();
     const walkPhase = this.walkCyclePhase(walkVariant);
-    // Stop whichever walk variant is currently driving the body so it
-    // doesn't fight attack_upper for upper-body bones.
+    // Stop whichever walk variant is currently driving the body so it does
+    // not fight the upper-body one-shot.
     const currentWalk = this.animGroups.get(walkVariant);
     if (currentWalk?.isPlaying) currentWalk.stop();
     this.ensureBoneSplitVariants(walkVariant);
@@ -1267,39 +1283,39 @@ export class CharacterEntity {
     }
     upper.start(false, this.getAnimationSpeed(baseName), upper.from, upper.to, false);
 
-    this.attackIsLayered = true;
-    this.activeAttackBase = baseName;
+    this.oneShotIsLayered = true;
+    this.activeOneShotBase = baseName;
+    this.activeOneShotCanLayerOnWalk = true;
     this.activeWalkBase = walkVariant;
     this.activeWalkLowerName = lowerName;
     this.activeWalkLowerGroup = walkLower;
-    this.attackStartMs = performance.now();
+    this.activeOneShotStartMs = performance.now();
     this.currentState = AnimState.Attack;
     this.currentAnimName = `${baseName}_upper`;
 
     upper.onAnimationGroupEndObservable.addOnce(() => {
-      this.finishLayeredAttack(baseName);
+      this.finishLayeredOneShot(baseName);
     });
   }
 
-  private finishLayeredAttack(baseName: string): void {
-    // Could already have been torn down by clearLayeredAttack() if the
+  private finishLayeredOneShot(baseName: string): void {
+    // Could already have been torn down by clearLayeredOneShot() if the
     // caller stacked another action; guard against double-cleanup.
-    if (!this.attackIsLayered || this.activeAttackBase !== baseName) return;
+    if (!this.oneShotIsLayered || this.activeOneShotBase !== baseName) return;
     const queuedState = this.queuedState;
     const queuedAnimName = this.queuedAnimName;
     const walkVariant = this.activeWalkBase;
-    this.clearLayeredAttack();
+    this.clearLayeredOneShot();
     this.currentState = AnimState.Idle;
     if (queuedState === AnimState.Walk && this.startWalkCyclePreservingPhase(walkVariant)) return;
     this.playAnimByState(queuedState, queuedAnimName, undefined);
   }
 
-  /** If movement starts during a full-body attack, keep the attack's upper
-   *  body running from its current frame and hand the legs over to the walk
-   *  cycle. This prevents combat movement from skating while still letting
-   *  the swing finish naturally. */
-  private convertActiveAttackToWalkLayer(): void {
-    if (this.attackIsLayered || this.currentState !== AnimState.Attack) return;
+  /** If movement starts during a full-body one-shot that opted into layering,
+   *  keep the upper body running from its current frame and hand the legs over
+   *  to the walk cycle. */
+  private convertActiveOneShotToWalkLayer(): void {
+    if (this.oneShotIsLayered || this.currentState !== AnimState.Attack || !this.activeOneShotCanLayerOnWalk) return;
     const baseName = this.currentAnimName;
     if (!baseName || !this.animGroups.has(baseName)) return;
     const walkVariant = isWalkVariant(this.walkanim) ? this.walkanim : 'walk';
@@ -1312,12 +1328,12 @@ export class CharacterEntity {
 
     const speed = this.getAnimationSpeed(baseName);
     const fps = upper.targetedAnimations[0]?.animation?.framePerSecond ?? 60;
-    const elapsedMs = Math.max(0, performance.now() - this.attackStartMs);
+    const elapsedMs = Math.max(0, performance.now() - this.activeOneShotStartMs);
     const frame = Math.min(upper.from + (elapsedMs / 1000) * fps * speed, upper.to);
     this.walkCycleStartMs = performance.now();
 
     // Stopping the old full-body group can fire its previous one-shot end
-    // callback. Clear it first so movement cannot cancel the attack handoff.
+    // callback. Clear it first so movement cannot cancel the handoff.
     this.oneShotCallback = null;
     fullBody?.stop();
     if (walkLower) {
@@ -1326,15 +1342,15 @@ export class CharacterEntity {
     }
     upper.start(false, speed, frame, upper.to, false);
 
-    this.attackIsLayered = true;
-    this.activeAttackBase = baseName;
+    this.oneShotIsLayered = true;
+    this.activeOneShotBase = baseName;
     this.activeWalkBase = walkVariant;
     this.activeWalkLowerName = `${walkVariant}_lower`;
     this.activeWalkLowerGroup = walkLower;
     this.currentAnimName = `${baseName}_upper`;
 
     upper.onAnimationGroupEndObservable.addOnce(() => {
-      this.finishLayeredAttack(baseName);
+      this.finishLayeredOneShot(baseName);
     });
   }
 
@@ -1362,7 +1378,7 @@ export class CharacterEntity {
 
   /** Cancel transient local-only animation state after authoritative snaps. */
   resetTransientAnimation(): void {
-    this.clearLayeredAttack();
+    this.clearLayeredOneShot();
     this.oneShotCallback = null;
     this.queuedState = AnimState.Idle;
     this.queuedAnimName = '';
@@ -1473,7 +1489,7 @@ export class CharacterEntity {
     }
     if (
       this.currentState === AnimState.Walk
-      && !this.attackIsLayered
+      && !this.oneShotIsLayered
       && isWalkVariant(this.currentAnimName)
       && this.currentAnimName !== this.walkanim
     ) {
@@ -1572,13 +1588,13 @@ export class CharacterEntity {
     }
 
     // Strafe picker — only meaningful when face-locked AND we have a
-    // travel direction. Layered attacks drive walk_lower directly and
+    // travel direction. Layered one-shots drive walk_lower directly and
     // would fight a swap, so skip them too.
     if (
       this.currentState === AnimState.Walk
       && this.faceLocked
       && this.hasTravelDir
-      && !this.attackIsLayered
+      && !this.oneShotIsLayered
     ) {
       const seq = this.pickWalkSeq();
       if (seq !== this.currentAnimName) this.swapWalkSeqPreservingPhase(seq);
@@ -1606,13 +1622,13 @@ export class CharacterEntity {
 
     const walking =
       this.currentState === AnimState.Walk
-      || (this.attackIsLayered && (this.activeWalkLowerGroup?.isPlaying ?? false));
+      || (this.oneShotIsLayered && (this.activeWalkLowerGroup?.isPlaying ?? false));
 
     let back = 0;
     let left = 0;
     let right = 0;
     if (walking) {
-      const walkName = this.attackIsLayered
+      const walkName = this.oneShotIsLayered
         ? this.activeWalkBase
         : (isWalkVariant(this.currentAnimName) ? this.currentAnimName : this.walkanim);
       const phase = this.walkCyclePhase(walkName);

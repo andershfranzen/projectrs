@@ -1,8 +1,8 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, STANCE_KEYS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
-import { addXp, statRandom, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, spellSchoolSkill, bowAttackRollMultiplierForStance } from '@projectrs/shared';
+import { addXp, statRandom, magicMaxHit, osrsMeleeMaxHit, rollHit, ACC_BASE, STANCE_BONUSES, MAGIC_STANCE_BONUSES, MAGIC_STANCE_XP, spellSchoolSkill, bowAttackRollMultiplierForStance } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -23,6 +23,8 @@ import type { ServerWebSocket } from 'bun';
 const mapIdRegistry: Map<string, number> = new Map();
 
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
+const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
+const MAGIC_ATTACK_COOLDOWN_TICKS = 5;
 type ItemQuantity = { itemId: number; quantity: number };
 type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
@@ -227,6 +229,10 @@ const RECONNECT_GRACE_TICKS = 38;
 /** OSRS-inspired x-log safety cap: force-close disconnected combat logouts
  *  after 60s even if NPC combat keeps re-arming the 10s combat timer. */
 const DISCONNECTED_COMBAT_LOGOUT_TICKS = Math.ceil(60_000 / TICK_RATE);
+/** Fired arrows are recoverable most of the time; only broken arrows leave the
+ *  equipped ammo stack. Bolts/other future ammo keep the old consume-on-shot
+ *  behavior until they get their own recovery rule. */
+const ARROW_BREAK_CHANCE = 0.2;
 const IDLE_WARNING_TICKS = Math.ceil(4 * 60_000 / TICK_RATE);
 const IDLE_LOGOUT_TICKS = Math.ceil(5 * 60_000 / TICK_RATE);
 const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
@@ -424,6 +430,13 @@ interface ActiveDuel {
   startedTick: number;
 }
 
+type MagicCastPreparation = {
+  def: SpellEffectDef;
+  xpSkill: SkillId;
+  magicLevel: number;
+  spellIndex: number;
+};
+
 const GROUND_ITEM_ENTITY_ID_MIN = 20000;
 const GROUND_ITEM_ENTITY_ID_MAX = 32760;
 const DEFAULT_SHOP_RESTOCK_TICKS = 100;
@@ -553,6 +566,7 @@ export class World {
     /** Skill to credit XP to on hit. Captured at cast time so a mid-flight
      *  spell def reload couldn't reroute XP to a different school. */
     xpSkill: SkillId;
+    magicStance?: MagicStance;
     mapLevel: string;
     floor: number;
   }[] = [];
@@ -1366,9 +1380,9 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(after.x), qPos(after.z));
   }
 
-  private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic'): boolean {
+  private isPlayerInNpcAttackRange(player: Player, npc: Npc, mode: 'melee' | 'ranged' | 'magic', rangedRange: number = RANGED_ATTACK_DISTANCE): boolean {
     if (mode === 'melee') return this.isPlayerNpcInteractionReachable(player, npc);
-    if (mode === 'ranged') return this.isPointInNpcRangedAttackRange(player, npc, player.position.x, player.position.y);
+    if (mode === 'ranged') return this.isPointInNpcRangedAttackRange(player, npc, player.position.x, player.position.y, rangedRange);
     return this.isPointInNpcFootprintRange(npc, player.position.x, player.position.y, SPELL_CAST_DISTANCE, 'euclidean');
   }
 
@@ -2273,6 +2287,7 @@ export class World {
     if (player.currentFloor !== 0) {
       this.sendFloorChange(player);
     }
+    this.sendMagicState(player);
 
     if (!player.appearance) {
       this.openCharacterCreatorFor(player);
@@ -2283,6 +2298,45 @@ export class World {
     // QUEST_STAGE_ADVANCED deltas.
     this.quests.sendQuestStateSync(player);
     this.sendToPlayer(player, ServerOpcode.RENOWN_SYNC, player.renown);
+  }
+
+  private stanceIndex(stance: MagicStance): number {
+    const idx = STANCE_KEYS.indexOf(stance);
+    return idx >= 0 ? idx : 0;
+  }
+
+  private stanceFromIndex(index: number): MagicStance | null {
+    return STANCE_KEYS[index] ?? null;
+  }
+
+  private sendMagicState(player: Player): void {
+    this.sendToPlayer(player, ServerOpcode.PLAYER_MAGIC_STATE, player.autocastSpellIndex, this.stanceIndex(player.magicStance));
+  }
+
+  private magicDebug(player: Player | undefined, event: string, details: Record<string, unknown> = {}): void {
+    if (!MAGIC_DEBUG_ENABLED) return;
+    const actor = player ? `${player.name}#${player.id}` : 'unknown';
+    console.log(`[magic-debug] tick=${this.currentTick} ${event} player=${actor} ${JSON.stringify(details)}`);
+  }
+
+  private persistMagicCombatState(player: Player): void {
+    const db = (this as { db?: GameDatabase }).db;
+    db?.saveMagicCombatState?.(player.accountId, player.autocastSpellIndex, player.magicStance);
+  }
+
+  private clearAutocastSelection(player: Player, reason: string, persist: boolean = true): boolean {
+    if (player.autocastSpellIndex < 0) return false;
+    const previousSpellIndex = player.autocastSpellIndex;
+    player.autocastSpellIndex = -1;
+    if (persist) this.persistMagicCombatState(player);
+    this.sendMagicState(player);
+    this.magicDebug(player, 'autocast-cleared', { reason, previousSpellIndex });
+    return true;
+  }
+
+  isAutocastableSpellIndex(spellIndex: number): boolean {
+    const def = this.data.getSpellByIndex(spellIndex);
+    return !!def && isAutocastableSpell(def);
   }
 
   private cancelSkilling(playerId: number): void {
@@ -2300,13 +2354,35 @@ export class World {
     this.itemProductionActions?.delete(playerId);
   }
 
+  private bumpActionRevision(player: Player): void {
+    player.actionRevision = (player.actionRevision + 1) & 0x7fffffff;
+    player.pendingActionRevision = -1;
+  }
+
+  private markQueuedAction(player: Player): void {
+    player.pendingActionRevision = player.actionRevision;
+  }
+
+  private isQueuedActionCurrent(player: Player, actionRevision: number = player.pendingActionRevision): boolean {
+    return actionRevision === player.actionRevision;
+  }
+
+  private clearQueuedPlayerActions(player: Player): void {
+    this.clearPendingObjectIntents(player);
+    player.pendingPickup = -1;
+    player.pendingSpellCast = null;
+    player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
+    player.pendingActionRevision = -1;
+  }
+
   /** Interrupt the player's active or queued world action before another
    *  deliberate action mutates state. Movement has its own path because it is
    *  itself the cancel signal; this covers inventory/equipment/item actions
    *  that can happen while standing still or while walking toward an object. */
   private interruptPlayerAction(playerId: number, player: Player, keepNpcUiContext: boolean = false): void {
-    this.clearPendingObjectIntents(player);
-    player.pendingPickup = -1;
+    this.bumpActionRevision(player);
+    this.clearQueuedPlayerActions(player);
     player.followTargetPlayerId = -1;
     player.actionDelay = 0;
     if (!keepNpcUiContext) {
@@ -2396,8 +2472,7 @@ export class World {
     this.closeShopForPlayer(player);
     this.closeDialogueForPlayer(player, false);
     player.clearMoveQueue();
-    player.pendingPickup = -1;
-    this.clearPendingObjectIntents(player);
+    this.clearQueuedPlayerActions(player);
     player.clearDelay();
     this.cancelSkilling(playerId);
     this.cancelItemProduction(playerId);
@@ -2500,8 +2575,7 @@ export class World {
 
     player.markInCombat(this.currentTick);
     player.clearMoveQueue();
-    player.pendingPickup = -1;
-    this.clearPendingObjectIntents(player);
+    this.clearQueuedPlayerActions(player);
     player.clearDelay();
     this.cancelSkilling(player.id);
     this.cancelItemProduction(player.id);
@@ -2839,6 +2913,7 @@ export class World {
     set.add(playerId);
     const player = this.players.get(playerId);
     if (player) {
+      this.magicDebug(player, 'setCombatTarget', { npcId, autocast: player.autocastSpellIndex, cooldown: player.attackCooldown });
       this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, npcId);
     }
   }
@@ -2854,6 +2929,7 @@ export class World {
       this.playerCombatTargets.delete(playerId);
       const player = this.players.get(playerId);
       if (player) {
+        this.magicDebug(player, 'clearCombatTarget', { npcId: oldNpc, autocast: player.autocastSpellIndex, cooldown: player.attackCooldown });
         this.setPlayerAnimation(player, PlayerAnimationKind.Idle, PlayerSkillAnimationVariant.None, 0);
       }
     }
@@ -2905,9 +2981,7 @@ export class World {
     this.clearCombatTarget(playerId);
     if (player) {
       player.attackTarget = null;
-      this.clearPendingObjectIntents(player);
-      player.pendingTalkNpcId = -1;
-      player.pendingTalkRepathTicks = 0;
+      this.clearQueuedPlayerActions(player);
       player.followTargetPlayerId = -1;
     }
     for (const [, npc] of this.npcs) {
@@ -3050,22 +3124,20 @@ export class World {
       return;
     }
     if (path.length === 0) {
+      this.bumpActionRevision(player);
       this.clearCombatTarget(playerId);
       player.attackTarget = null;
       player.clearMoveQueue();
       player.followTargetPlayerId = -1;
-      this.clearPendingObjectIntents(player);
-      player.pendingSpellCast = null;
+      this.clearQueuedPlayerActions(player);
       this.cancelItemProduction(playerId);
       return;
     }
 
+    this.bumpActionRevision(player);
     this.clearCombatTarget(playerId);
     player.attackTarget = null;
-    this.clearPendingObjectIntents(player);
-    player.pendingSpellCast = null;
-    player.pendingTalkNpcId = -1;
-    player.pendingTalkRepathTicks = 0;
+    this.clearQueuedPlayerActions(player);
     player.followTargetPlayerId = -1;
     this.cancelSkilling(playerId);
     this.cancelItemProduction(playerId);
@@ -3199,10 +3271,6 @@ export class World {
     this.clearCombatTarget(playerId);
     player.clearMoveQueue();
     player.attackTarget = null;
-    this.clearPendingObjectIntents(player);
-    player.pendingSpellCast = null;
-    player.pendingTalkNpcId = -1;
-    player.pendingTalkRepathTicks = 0;
     player.followTargetPlayerId = target.id;
     player.nextFollowRepathTick = 0;
     if (player.isInterfaceOpen()) this.closeOpenInterface(player, /*declineTrade*/ true);
@@ -3279,11 +3347,9 @@ export class World {
     // with a non-combat interaction surface. Mirrors the priority used by
     // handlePlayerTalkNpc: dialogue > shop > bank.
     if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
-    this.cancelSkilling(playerId);
-    this.cancelItemProduction(playerId);
     if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
-    this.closeNpcUiContext(player);
+    this.interruptPlayerAction(playerId, player);
     player.botStats?.recordActionSignature('attackNpc', npc.npcId, player.position.x, player.position.y);
 
     // Distance to the NPC's nearest footprint tile (size-1 falls through to
@@ -3293,9 +3359,10 @@ export class World {
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     const isRanged = player.isRangedWeapon(this.data.itemDefs);
     const isMagicAutocast = player.autocastSpellIndex >= 0;
-    const attackDist = isMagicAutocast ? SPELL_CAST_DISTANCE : (isRanged ? RANGED_ATTACK_DISTANCE : 1.5);
+    const rangedAttackDist = isRanged ? player.getRangedAttackRange(this.data.itemDefs) : RANGED_ATTACK_DISTANCE;
+    const attackDist = isMagicAutocast ? SPELL_CAST_DISTANCE : (isRanged ? rangedAttackDist : 1.5);
     const attackMode = isMagicAutocast ? 'magic' : (isRanged ? 'ranged' : 'melee');
-    const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, attackMode);
+    const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, attackMode, rangedAttackDist);
     if (dist > Math.max(attackDist, 24)) return;
 
     player.attackTarget = npc;
@@ -3343,6 +3410,7 @@ export class World {
     if (player.isInterfaceOpen()) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
+    this.interruptPlayerAction(playerId, player);
 
     // Chebyshev (max-of-axes) matches the rest of the interaction surface —
     // pickup, combat, harvest are all Chebyshev. Euclidean here would let a
@@ -3358,10 +3426,12 @@ export class World {
     if (!this.isPlayerNpcInteractionReachable(player, npc)) {
       player.pendingTalkNpcId = npcEntityId;
       player.pendingTalkRepathTicks = 8;
+      this.markQueuedAction(player);
       if (!player.hasMoveQueue() && !this.queuePlayerPathToNpcInteraction(player, npc)) {
         this.sendChatSystem(player, "I can't reach that.");
         player.pendingTalkNpcId = -1;
         player.pendingTalkRepathTicks = 0;
+        player.pendingActionRevision = -1;
       }
       return;
     }
@@ -3868,7 +3938,7 @@ export class World {
     if (player.isInterfaceOpen()) return;
     if (!this.canPlayerTargetGroundItem(player, item)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(groundItemId)) return;
-    this.closeNpcUiContext(player);
+    this.interruptPlayerAction(playerId, player);
 
     // Walk to item if not in range
     const dx = Math.abs(player.position.x - item.x);
@@ -3883,14 +3953,16 @@ export class World {
         const path = map.findPathOnFloor(player.position.x, player.position.y, item.x, item.z, player.currentFloor);
         if (path.length > 0) player.setMoveQueue(path);
       }
-      if (player.hasMoveQueue()) player.pendingPickup = groundItemId;
+      if (player.hasMoveQueue()) {
+        player.pendingPickup = groundItemId;
+        this.markQueuedAction(player);
+      }
       return;
     }
     player.botStats?.recordActionSignature('pickup', item.itemId, player.position.x, player.position.y);
 
     const added = player.addItem(item.itemId, item.quantity, this.data.itemDefs);
     if (added.completed > 0) {
-      this.interruptPlayerAction(playerId, player);
       const respawnSource = item.spawnKey ? this.groundItemRespawnSources.get(item.spawnKey) : undefined;
       if (respawnSource && item.spawnKey) {
         respawnSource.respawnTimer = respawnSource.respawnTime;
@@ -4014,13 +4086,15 @@ export class World {
       }
       return;
     }
-    this.clearPendingObjectIntents(player);
+    this.bumpActionRevision(player);
+    this.clearQueuedPlayerActions(player);
     this.cancelItemProduction(playerId);
 
     if (player.isBusy(this.currentTick)) {
       const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
       if (isQueuedObjectAction) {
         player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen, recipeQuantity };
+        this.markQueuedAction(player);
       }
       return;
     }
@@ -4081,6 +4155,7 @@ export class World {
         }
         if (player.hasMoveQueue()) {
           player.pendingInteraction = { objectEntityId, actionIndex, swingSign, expectedDoorOpen, recipeQuantity };
+          this.markQueuedAction(player);
         }
         // Empty path = unreachable (closed door is the only gap in the wall
         // and player is on the wrong side, OR maxSteps exhausted). Drop the
@@ -4100,6 +4175,7 @@ export class World {
       }
       if (player.hasMoveQueue()) {
         player.pendingInteraction = { objectEntityId, actionIndex, recipeIndex, recipeQuantity };
+        this.markQueuedAction(player);
       } else {
         this.sendChatSystem(player, "I can't reach that.");
       }
@@ -4659,6 +4735,7 @@ export class World {
       }
     }
 
+    const weaponBefore = player.equipment.get('weapon');
     this.interruptPlayerAction(playerId, player);
 
     // Source slot: receives displaced equipment if any, else cleared.
@@ -4679,6 +4756,9 @@ export class World {
       }
     }
 
+    if (weaponBefore !== player.equipment.get('weapon')) {
+      this.clearAutocastSelection(player, 'weapon-equipment-changed', false);
+    }
     player.setDelay(this.currentTick, 1);
     this.sendInventory(player);
     this.sendEquipment(player);
@@ -4702,6 +4782,7 @@ export class World {
     if (player.addItem(itemId, quantity, this.data.itemDefs).completed === quantity) {
       this.interruptPlayerAction(playerId, player);
       player.deleteEquipment(slotName);
+      if (slotName === 'weapon') this.clearAutocastSelection(player, 'weapon-unequipped', false);
       player.setDelay(this.currentTick, 1);
       this.sendInventory(player);
       this.sendEquipment(player);
@@ -4985,7 +5066,7 @@ export class World {
     if (!player) return;
     if (!this.canPlayerTargetObject(player, obj)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
-    this.clearPendingObjectIntents(player);
+    this.interruptPlayerAction(playerId, player);
     if (!this.isAdjacentToObject(player, obj)) {
       const path = this.findPathToObjectInteraction(player, obj);
       if (!player.hasMoveQueue() && path.length > 0) {
@@ -4993,13 +5074,13 @@ export class World {
       }
       if (player.hasMoveQueue()) {
         player.pendingUseItemOnObject = { invSlot, itemId, objectEntityId };
+        this.markQueuedAction(player);
       } else {
         this.sendChatSystem(player, "I can't reach that.");
       }
       return;
     }
     player.botStats?.recordActionSignature('useItemObject', obj.defId, player.position.x, player.position.y, itemId);
-    this.interruptPlayerAction(playerId, player);
     if (obj.def.category === 'door' && obj.doorLocked && !obj.doorOpen && itemId === obj.doorKeyItemId) {
       if (!this.canOpenLockedDoor(player, obj)) return;
       this.toggleDoor(obj, this.computeSwingSign(player, obj));
@@ -5058,23 +5139,22 @@ export class World {
     if (!player) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
-    this.clearPendingObjectIntents(player);
+    this.interruptPlayerAction(playerId, player);
     if (!this.isPlayerNpcInteractionReachable(player, npc)) {
       if (!player.hasMoveQueue() && !this.queuePlayerPathToNpcInteraction(player, npc)) return;
       if (player.hasMoveQueue()) {
         player.pendingUseItemOnNpc = { invSlot, itemId, npcEntityId };
+        this.markQueuedAction(player);
       }
       return;
     }
     player.botStats?.recordActionSignature('useItemNpc', npc.npcId, player.position.x, player.position.y, itemId);
-    this.interruptPlayerAction(playerId, player);
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
   handlePlayerSetStance(playerId: number, stanceIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
-    const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
     // Modal interfaces lock stance — keep the gate but echo the current
     // server stance back so the client doesn't desync visually.
     // The previous `isBusy` gate also dropped packets while any unrelated
@@ -5082,11 +5162,11 @@ export class World {
     // would then show the new stance while combat kept reading the old
     // one — surfacing as XP going to the wrong skill. The post-flip
     // setDelay below still prevents rapid stance flip-flopping.
-    if (player.isInterfaceOpen() || stanceIndex < 0 || stanceIndex >= stances.length) {
+    if (player.isInterfaceOpen() || stanceIndex < 0 || stanceIndex >= STANCE_KEYS.length) {
       this.sendRemoteStance(player, player);
       return;
     }
-    player.stance = stances[stanceIndex];
+    player.stance = STANCE_KEYS[stanceIndex];
     this.db.saveStance(player.accountId, player.stance);
     player.setDelay(this.currentTick, 1);
     // Self-echo lets the client correct its optimistic UI if anything ever
@@ -5095,16 +5175,142 @@ export class World {
     this.broadcastRemoteStance(player);
   }
 
+  handlePlayerSetMagicStance(playerId: number, stanceIndex: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const stance = this.stanceFromIndex(stanceIndex);
+    if (player.isInterfaceOpen() || !stance) {
+      this.sendMagicState(player);
+      return;
+    }
+    player.magicStance = stance;
+    this.persistMagicCombatState(player);
+    player.setDelay(this.currentTick, 1);
+    this.sendMagicState(player);
+  }
+
   handlePlayerSetAutocast(playerId: number, spellIndex: number): void {
     const player = this.players.get(playerId);
     if (!player) return;
-    if (player.isInterfaceOpen()) return;
-    if (spellIndex < 0) {
-      player.autocastSpellIndex = -1;
+    if (player.isInterfaceOpen()) {
+      this.magicDebug(player, 'setAutocast-reject-interface', { spellIndex, openInterface: player.openInterface });
+      this.sendMagicState(player);
       return;
     }
-    if (!this.data.getSpellByIndex(spellIndex)) return;
+    if (spellIndex < 0) {
+      this.clearAutocastSelection(player, 'manual-disable');
+      this.magicDebug(player, 'setAutocast-disabled', { spellIndex });
+      return;
+    }
+    if (!this.isAutocastableSpellIndex(spellIndex)) {
+      this.magicDebug(player, 'setAutocast-reject-invalid', { spellIndex });
+      this.sendMagicState(player);
+      return;
+    }
     player.autocastSpellIndex = spellIndex;
+    this.persistMagicCombatState(player);
+    this.sendMagicState(player);
+    this.magicDebug(player, 'setAutocast-enabled', { spellIndex, spell: this.data.getSpellByIndex(spellIndex)?.name });
+  }
+
+  private throttleFailedAutocast(player: Player, spellIndex: number, keepCombatTarget: boolean): void {
+    if (!keepCombatTarget || player.autocastSpellIndex !== spellIndex) return;
+    player.attackCooldown = Math.max(player.attackCooldown, 4);
+  }
+
+  private clearInvalidAutocast(player: Player, spellIndex: number): void {
+    if (player.autocastSpellIndex !== spellIndex) return;
+    this.clearAutocastSelection(player, 'invalid-selected-spell');
+  }
+
+  private continueAutocastCombat(player: Player, npc: Npc, castDef: SpellEffectDef): void {
+    if (castDef.continueByAutocast === false || player.autocastSpellIndex < 0) {
+      this.magicDebug(player, 'continueAutocast-skip', {
+        npcId: npc.id,
+        autocast: player.autocastSpellIndex,
+        continueByAutocast: castDef.continueByAutocast,
+      });
+      return;
+    }
+    const autocastDef = this.data.getSpellByIndex(player.autocastSpellIndex);
+    if (!autocastDef || !isAutocastableSpell(autocastDef)) {
+      this.magicDebug(player, 'continueAutocast-invalid-selected-spell', { npcId: npc.id, autocast: player.autocastSpellIndex });
+      this.clearInvalidAutocast(player, player.autocastSpellIndex);
+      return;
+    }
+    player.attackTarget = npc;
+    if (this.playerCombatTargets.get(player.id) !== npc.id) this.setCombatTarget(player.id, npc.id);
+    this.magicDebug(player, 'continueAutocast-armed', { npcId: npc.id, autocast: player.autocastSpellIndex });
+  }
+
+  private prepareMagicCast(player: Player, spellIndex: number, keepCombatTarget: boolean): MagicCastPreparation | null {
+    const def = this.data.getSpellByIndex(spellIndex);
+    if (!def) {
+      this.clearInvalidAutocast(player, spellIndex);
+      return null;
+    }
+    if (keepCombatTarget && !isAutocastableSpell(def)) {
+      this.clearInvalidAutocast(player, spellIndex);
+      return null;
+    }
+
+    const xpSkill: SkillId = spellSchoolSkill(def);
+    const requiredLevel = def.levelRequired ?? 1;
+    if (player.skills[xpSkill].level < requiredLevel) {
+      this.magicDebug(player, 'prepareMagic-level-failed', {
+        spellIndex,
+        spell: def.name,
+        skill: xpSkill,
+        level: player.skills[xpSkill].level,
+        currentLevel: player.skills[xpSkill].currentLevel,
+        xp: player.skills[xpSkill].xp,
+        requiredLevel,
+        keepCombatTarget,
+      });
+      this.sendChatSystem(player, `You need level ${requiredLevel} ${SKILL_NAMES[xpSkill] ?? 'magic'} to cast ${def.name}.`);
+      this.throttleFailedAutocast(player, spellIndex, keepCombatTarget);
+      return null;
+    }
+
+    const costResult = consumeSpellCosts(player, def, this.data.itemDefs);
+    if (!costResult.ok) {
+      this.magicDebug(player, 'prepareMagic-cost-failed', {
+        spellIndex,
+        spell: def.name,
+        message: costResult.message,
+        keepCombatTarget,
+      });
+      if (costResult.message) this.sendChatSystem(player, costResult.message);
+      this.throttleFailedAutocast(player, spellIndex, keepCombatTarget);
+      return null;
+    }
+    if (costResult.inventoryChanged) this.sendInventory(player);
+
+    return {
+      def,
+      xpSkill,
+      magicLevel: player.skills[xpSkill].currentLevel,
+      spellIndex,
+    };
+  }
+
+  private rollMagicDamageAgainstNpc(player: Player, npc: Npc, cast: MagicCastPreparation): number {
+    const stanceBonus = MAGIC_STANCE_BONUSES[player.magicStance];
+    const bonuses = player.computeBonuses(this.data.itemDefs);
+    const attackRoll = (cast.magicLevel + stanceBonus.accuracy + 8) * (bonuses.magicAccuracy + ACC_BASE);
+    const defRoll = (npc.defence + 8) * ACC_BASE;
+    const maxHit = Math.max(1, magicMaxHit(cast.magicLevel, cast.def.tier) + stanceBonus.maxHit);
+    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
+  }
+
+  private rollMagicDamageAgainstPlayer(attacker: Player, defender: Player, cast: MagicCastPreparation): number {
+    const stanceBonus = MAGIC_STANCE_BONUSES[attacker.magicStance];
+    const attackBonuses = attacker.computeBonuses(this.data.itemDefs);
+    const defenceBonuses = defender.computeBonuses(this.data.itemDefs);
+    const attackRoll = (cast.magicLevel + stanceBonus.accuracy + 8) * (attackBonuses.magicAccuracy + ACC_BASE);
+    const defRoll = (defender.skills.defence.currentLevel + 8) * (defenceBonuses.magicDefence + ACC_BASE);
+    const maxHit = Math.max(1, magicMaxHit(cast.magicLevel, cast.def.tier) + stanceBonus.maxHit);
+    return rollHit(attackRoll, defRoll) ? Math.floor(Math.random() * (maxHit + 1)) : 0;
   }
 
   /**
@@ -5119,23 +5325,55 @@ export class World {
   handlePlayerCastSpell(playerId: number, spellIndex: number, targetEntityId: number, keepCombatTarget: boolean = false): void {
     const player = this.players.get(playerId);
     if (!player || !player.alive) return;
-    if (player.isInterfaceOpen()) return;
-    if (player.isBusy(this.currentTick)) return;
+    if (player.isInterfaceOpen()) {
+      this.magicDebug(player, 'castSpell-reject-interface', { spellIndex, targetEntityId, keepCombatTarget, openInterface: player.openInterface });
+      return;
+    }
+    if (!keepCombatTarget && player.isBusy(this.currentTick)) {
+      this.magicDebug(player, 'castSpell-reject-busy', { spellIndex, targetEntityId, keepCombatTarget });
+      return;
+    }
 
     const def = this.data.getSpellByIndex(spellIndex);
-    if (!def) return;
+    if (!def) {
+      this.magicDebug(player, 'castSpell-reject-missing-def', { spellIndex, targetEntityId, keepCombatTarget });
+      return;
+    }
 
     const npc = this.npcs.get(targetEntityId);
-    if (!npc || npc.dead) return;
-    if (this.data.getShop(npc.npcId)) return;                 // shopkeepers immune
-    if (!this.canPlayerTargetNpc(player, npc)) return;
-    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(targetEntityId)) return;
+    if (!npc || npc.dead) {
+      this.magicDebug(player, 'castSpell-reject-missing-npc', { spellIndex, targetEntityId, keepCombatTarget, dead: npc?.dead });
+      return;
+    }
+    if (this.data.getShop(npc.npcId)) {
+      this.magicDebug(player, 'castSpell-reject-shop', { spellIndex, targetEntityId, keepCombatTarget, npcDefId: npc.npcId });
+      return;
+    }
+    if (!this.canPlayerTargetNpc(player, npc)) {
+      this.magicDebug(player, 'castSpell-reject-target-gate', {
+        spellIndex,
+        targetEntityId,
+        keepCombatTarget,
+        playerMap: player.currentMapLevel,
+        npcMap: npc.currentMapLevel,
+        playerFloor: player.currentFloor,
+        npcFloor: npc.currentFloor,
+      });
+      return;
+    }
+    if (!keepCombatTarget && player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(targetEntityId)) {
+      this.magicDebug(player, 'castSpell-reject-unseen', { spellIndex, targetEntityId, keepCombatTarget, visibleCount: player.visibleEntityIds.size });
+      return;
+    }
 
+    if (!keepCombatTarget) this.interruptPlayerAction(playerId, player);
     player.clearMoveQueue();
     player.followTargetPlayerId = -1;
     if (player.attackCooldown > 0) {
+      this.magicDebug(player, 'castSpell-defer-cooldown', { spellIndex, targetEntityId, keepCombatTarget, cooldown: player.attackCooldown });
       if (!keepCombatTarget && this.playerCombatTargets.has(playerId)) {
-        player.pendingSpellCast = { spellIndex, targetEntityId };
+        player.pendingSpellCast = { spellIndex, targetEntityId, actionRevision: player.actionRevision };
+        this.markQueuedAction(player);
         this.clearCombatTarget(playerId);
       }
       return;
@@ -5144,8 +5382,12 @@ export class World {
     const fp = npc.distToFootprint(player.position.x, player.position.y);
     const dist = Math.sqrt(fp.dx * fp.dx + fp.dz * fp.dz);
     if (dist > SPELL_CAST_DISTANCE) {
+      this.magicDebug(player, 'castSpell-defer-range', { spellIndex, targetEntityId, keepCombatTarget, dist, max: SPELL_CAST_DISTANCE });
       if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
-      if (player.hasMoveQueue()) player.pendingSpellCast = { spellIndex, targetEntityId };
+      if (player.hasMoveQueue()) {
+        player.pendingSpellCast = { spellIndex, targetEntityId, actionRevision: player.actionRevision };
+        this.markQueuedAction(player);
+      }
       return;
     }
 
@@ -5153,46 +5395,37 @@ export class World {
     this.cancelItemProduction(playerId);
     if (!keepCombatTarget) this.clearCombatTarget(playerId);   // single-cast cancels auto-attack
 
-    // Magic combat roll. Mirrors the OSRS pattern in processPlayerCombat /
-    // processPlayerRangedCombat: dual roll (attacker vs defender), miss → 0
-    // damage, hit → uniform [0..maxHit]. Equipment's magicAccuracy bonus feeds
-    // the attack roll. NPC magic defence falls back to base defence — NpcDef
-    // doesn't carry a magicDefence stat (yet).
-    const xpSkill: SkillId = spellSchoolSkill(def);
-
-    // Level gate. Server-authoritative — the UI hides locked spells but a
-    // crafted packet could still try to cast them, so we re-check here.
-    // `.level` (not `.currentLevel`) so temporary stat drains don't lock you out.
-    const requiredLevel = def.levelRequired ?? 1;
-    if (player.skills[xpSkill].level < requiredLevel) return;
-
-    const magicLevel = player.skills[xpSkill].currentLevel;
-    const effMagic = magicLevel + 8;
-    const bonuses = player.computeBonuses(this.data.itemDefs);
-    const attackRoll = effMagic * (bonuses.magicAccuracy + ACC_BASE);
-    const defRoll = (npc.defence + 8) * ACC_BASE;
-    const damage = rollHit(attackRoll, defRoll)
-      ? Math.floor(Math.random() * (magicMaxHit(magicLevel, def.tier) + 1))
-      : 0;
+    const cast = this.prepareMagicCast(player, spellIndex, keepCombatTarget);
+    if (!cast) {
+      this.magicDebug(player, 'castSpell-prepare-failed', { spellIndex, targetEntityId, keepCombatTarget });
+      return;
+    }
+    const damage = this.rollMagicDamageAgainstNpc(player, npc, cast);
 
     // Total wall time before damage applies — matches client visual length.
-    const travelMs = def.trajectory.speed > 0 ? (dist / def.trajectory.speed) * 1000 : 600;
-    const totalDelayMs = def.cast.durationMs + travelMs;
+    const travelMs = cast.def.trajectory.speed > 0 ? (dist / cast.def.trajectory.speed) * 1000 : 600;
+    const totalDelayMs = cast.def.cast.durationMs + travelMs;
     const totalDelayTicks = Math.max(1, Math.round(totalDelayMs / TICK_RATE));
 
     // Lock other actions for the cast window; block recasts until impact.
     // Recast cooldown is fixed (not distance-scaled) so pacing stays
     // consistent regardless of how far the target is.
-    const castTicks = Math.max(1, Math.ceil(def.cast.durationMs / TICK_RATE));
-    const costResult = consumeSpellCosts(player, def, this.data.itemDefs);
-    if (!costResult.ok) {
-      if (costResult.message) this.sendChatSystem(player, costResult.message);
-      return;
-    }
-    if (costResult.inventoryChanged) this.sendInventory(player);
+    const castTicks = Math.max(1, Math.ceil(cast.def.cast.durationMs / TICK_RATE));
 
     player.setDelay(this.currentTick, castTicks + 1);
-    player.attackCooldown = 7;
+    player.attackCooldown = MAGIC_ATTACK_COOLDOWN_TICKS;
+    this.magicDebug(player, 'castSpell-fired', {
+      spellIndex,
+      spell: cast.def.name,
+      targetEntityId,
+      keepCombatTarget,
+      damage,
+      dist,
+      cooldown: player.attackCooldown,
+      level: player.skills[cast.xpSkill].level,
+      currentLevel: player.skills[cast.xpSkill].currentLevel,
+      xp: player.skills[cast.xpSkill].xp,
+    });
 
     // SPELL_CAST carries the projectile/effect definition. Also send the
     // generic animation event so character cast animation survives cases where
@@ -5215,11 +5448,14 @@ export class World {
       attackerId: player.id,
       targetId: npc.id,
       damage,
-      spellId: def.id,
-      xpSkill,
+      spellId: cast.def.id,
+      xpSkill: cast.xpSkill,
+      magicStance: player.magicStance,
       mapLevel: player.currentMapLevel,
       floor: player.currentFloor,
     });
+
+    this.continueAutocastCombat(player, npc, cast.def);
   }
 
   handleSetAppearance(playerId: number, appearance: PlayerAppearance): void {
@@ -5302,6 +5538,33 @@ export class World {
       this.sendSingleSkill(player, hpIdx);
       player.syncHealthFromSkills();
     }
+  }
+
+  private grantMagicCombatXp(player: Player, xpSkill: SkillId, damage: number, stance: MagicStance): void {
+    if (damage <= 0) return;
+    const xpStyle = MAGIC_STANCE_XP[stance] ?? MAGIC_STANCE_XP.accurate;
+    const drops: Array<{ skill: SkillId; amount: number }> = [];
+    const magicAmount = damage * xpStyle.magic;
+    const defenceAmount = damage * xpStyle.defence;
+    if (magicAmount > 0) drops.push({ skill: xpSkill, amount: magicAmount });
+    if (defenceAmount > 0) drops.push({ skill: 'defence', amount: defenceAmount });
+
+    const oldHpLevel = player.skills.hitpoints.level;
+    for (const drop of drops) {
+      const result = addXp(player.skills, drop.skill, drop.amount);
+      const skillIdx = ALL_SKILLS.indexOf(drop.skill);
+      if (skillIdx < 0) continue;
+      this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(drop.amount));
+      if (result.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+      this.sendSingleSkill(player, skillIdx);
+    }
+
+    const hpIdx = ALL_SKILLS.indexOf('hitpoints');
+    if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
+      this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
+      this.sendSingleSkill(player, hpIdx);
+    }
+    player.syncHealthFromSkills();
   }
 
   startQuestForAdmin(player: Player, questId: string): boolean {
@@ -6420,11 +6683,7 @@ export class World {
     player.attackTarget = null;
     player.clearMoveQueue();
     player.followTargetPlayerId = -1;
-    player.pendingPickup = -1;
-    player.pendingSpellCast = null;
-    player.pendingTalkNpcId = -1;
-    player.pendingTalkRepathTicks = 0;
-    this.clearPendingObjectIntents(player);
+    this.clearQueuedPlayerActions(player);
     this.cancelSkilling(player.id);
     this.cancelItemProduction(player.id);
     this.closeShopForPlayer(player);
@@ -6500,10 +6759,15 @@ export class World {
   }
 
   private consumePlayerAmmo(player: Player, ammo: PlayerAmmo): void {
+    if (ammo.itemDef.ammoType === 'arrow' && Math.random() >= ARROW_BREAK_CHANCE) return;
     const beforeItemId = player.equipment.get(ammo.equipSlot);
     player.decrementEquipment(ammo.equipSlot, 1);
     this.sendEquipment(player);
     if (beforeItemId !== player.equipment.get(ammo.equipSlot)) this.broadcastRemoteEquipment(player);
+  }
+
+  private projectileTypeForAmmo(ammo: PlayerAmmo): number {
+    return ammo.itemDef.ammoType === 'bolt' ? 2 : 1;
   }
 
   private processDuelAttack(duel: ActiveDuel, attacker: Player, defender: Player): void {
@@ -6523,7 +6787,7 @@ export class World {
       const hit = this.rollDuelRangedHit(attacker, defender, this.ammoStrengthForRangedRoll(ammo));
       attacker.attackCooldown = attacker.getAttackSpeed(this.data.itemDefs);
       this.consumePlayerAmmo(attacker, ammo);
-      this.broadcastProjectile(attacker.id, defender.id, 1, attacker.currentMapLevel, duel.floor, attacker.position.x, attacker.position.y);
+      this.broadcastProjectile(attacker, defender, this.projectileTypeForAmmo(ammo), attacker.currentMapLevel, duel.floor);
       this.applyDuelHit(duel, attacker, defender, hit, false);
       return;
     }
@@ -6573,32 +6837,10 @@ export class World {
 
   private processDuelMagicAttack(attacker: Player, defender: Player): number | null {
     const spellIndex = attacker.autocastSpellIndex;
-    const def = this.data.getSpellByIndex(spellIndex);
-    if (!def) {
-      attacker.autocastSpellIndex = -1;
-      return null;
-    }
-    const xpSkill: SkillId = spellSchoolSkill(def);
-    if (attacker.skills[xpSkill].level < (def.levelRequired ?? 1)) {
-      attacker.autocastSpellIndex = -1;
-      return null;
-    }
-    const costResult = consumeSpellCosts(attacker, def, this.data.itemDefs);
-    if (!costResult.ok) {
-      attacker.attackCooldown = 4;
-      if (costResult.message) this.sendChatSystem(attacker, costResult.message);
-      return null;
-    }
-    if (costResult.inventoryChanged) this.sendInventory(attacker);
-    const magicLevel = attacker.skills[xpSkill].currentLevel;
-    const attackBonuses = attacker.computeBonuses(this.data.itemDefs);
-    const defenceBonuses = defender.computeBonuses(this.data.itemDefs);
-    const attackRoll = (magicLevel + 8) * (attackBonuses.magicAccuracy + ACC_BASE);
-    const defRoll = (defender.skills.defence.currentLevel + 8) * (defenceBonuses.magicDefence + ACC_BASE);
-    const hit = rollHit(attackRoll, defRoll)
-      ? Math.floor(Math.random() * (magicMaxHit(magicLevel, def.tier) + 1))
-      : 0;
-    attacker.attackCooldown = 7;
+    const cast = this.prepareMagicCast(attacker, spellIndex, true);
+    if (!cast) return null;
+    const hit = this.rollMagicDamageAgainstPlayer(attacker, defender, cast);
+    attacker.attackCooldown = MAGIC_ATTACK_COOLDOWN_TICKS;
     this.broadcastPlayerAnimationEvent(
       attacker,
       PlayerAnimationKind.Skill,
@@ -6721,9 +6963,7 @@ export class World {
     player.followTargetPlayerId = -1;
     player.attackTarget = null;
     this.clearCombatTarget(player.id);
-    player.pendingSpellCast = null;
-    player.pendingPickup = -1;
-    this.clearPendingObjectIntents(player);
+    this.clearQueuedPlayerActions(player);
     player.clearDelay();
     player.logoutBlockedUntilTick = 0;
     player.actionDelay = 0;
@@ -6990,7 +7230,7 @@ export class World {
           this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
           this.sendNearbyDoorUpdates(player);
           player.clearMoveQueue();
-          this.clearPendingObjectIntents(player);
+          this.clearQueuedPlayerActions(player);
           player.movementCredit = 0;
           break;
         }
@@ -7025,9 +7265,15 @@ export class World {
         this.checkpointPlayerPosition(player);
       }
 
+      if (!player.hasMoveQueue() && player.pendingActionRevision >= 0 && !this.isQueuedActionCurrent(player)) {
+        this.clearQueuedPlayerActions(player);
+        continue;
+      }
+
       if (player.pendingPickup >= 0 && !player.hasMoveQueue() && !justArrived) {
         const pickupId = player.pendingPickup;
         player.pendingPickup = -1;
+        player.pendingActionRevision = -1;
         this.handlePlayerPickup(playerId, pickupId);
       }
       if (player.pendingInteraction && !player.hasMoveQueue()) {
@@ -7040,7 +7286,7 @@ export class World {
         // animations don't register while the character is mid-step.
         const isDoorInteraction = obj?.def.category === 'door';
         if (!isDoorInteraction && justArrived) continue;
-        this.clearPendingObjectIntents(player);
+        this.clearQueuedPlayerActions(player);
         if (obj && this.canPlayerTargetObject(player, obj)) {
           if (this.isAdjacentToObject(player, obj)) {
             player.clearMoveQueue();
@@ -7063,12 +7309,14 @@ export class World {
         if (justArrived) continue;
         const { invSlot, itemId, objectEntityId } = player.pendingUseItemOnObject;
         player.pendingUseItemOnObject = null;
+        player.pendingActionRevision = -1;
         this.handlePlayerUseItemOnObject(playerId, invSlot, itemId, objectEntityId);
       }
       if (player.pendingUseItemOnNpc && !player.hasMoveQueue()) {
         if (justArrived) continue;
         const { invSlot, itemId, npcEntityId } = player.pendingUseItemOnNpc;
         player.pendingUseItemOnNpc = null;
+        player.pendingActionRevision = -1;
         this.handlePlayerUseItemOnNpc(playerId, invSlot, itemId, npcEntityId);
       }
       // Deferred Talk-to fires once the walk has drained. Mid-walk firing
@@ -7084,6 +7332,7 @@ export class World {
         if (inRange) {
           player.pendingTalkNpcId = -1;
           player.pendingTalkRepathTicks = 0;
+          player.pendingActionRevision = -1;
           this.handlePlayerTalkNpc(playerId, id);
         } else if (
           targetNpc
@@ -7096,6 +7345,7 @@ export class World {
         } else {
           player.pendingTalkNpcId = -1;
           player.pendingTalkRepathTicks = 0;
+          player.pendingActionRevision = -1;
         }
       }
     }
@@ -7271,8 +7521,9 @@ export class World {
     for (const [playerId, player] of this.players) {
       if (!player.pendingSpellCast || player.attackCooldown > 0) continue;
       if (player.hasMoveQueue()) continue;
-      const { spellIndex, targetEntityId } = player.pendingSpellCast;
+      const { spellIndex, targetEntityId, actionRevision } = player.pendingSpellCast;
       player.pendingSpellCast = null;
+      if (!this.isQueuedActionCurrent(player, actionRevision)) continue;
       this.handlePlayerCastSpell(playerId, spellIndex, targetEntityId);
     }
   }
@@ -7284,34 +7535,67 @@ export class World {
       const player = this.players.get(playerId);
       const npc = this.npcs.get(npcId);
       if (this.activeDuels?.has(playerId) || player?.openInterface === 'duel') {
+        this.magicDebug(player, 'tickCombat-clear-duel', { npcId });
         this.clearCombatTarget(playerId);
         continue;
       }
       if (!player || !npc || npc.dead || !this.canPlayerTargetNpc(player, npc)) {
+        this.magicDebug(player, 'tickCombat-clear-invalid', {
+          npcId,
+          hasPlayer: !!player,
+          hasNpc: !!npc,
+          npcDead: npc?.dead,
+          playerMap: player?.currentMapLevel,
+          npcMap: npc?.currentMapLevel,
+          playerFloor: player?.currentFloor,
+          npcFloor: npc?.currentFloor,
+        });
         this.clearCombatTarget(playerId);
         continue;
       }
 
       if (player.autocastSpellIndex >= 0) {
         const def = this.data.getSpellByIndex(player.autocastSpellIndex);
-        if (!def) {
-          player.autocastSpellIndex = -1;
+        if (!def || !isAutocastableSpell(def)) {
+          this.magicDebug(player, 'tickCombat-autocast-invalid-spell', { npcId, autocast: player.autocastSpellIndex });
+          this.clearInvalidAutocast(player, player.autocastSpellIndex);
           continue;
         }
         const fp = npc.distToFootprint(player.position.x, player.position.y);
         const dist = Math.hypot(fp.dx, fp.dz);
         if (dist > SPELL_CAST_DISTANCE) {
+          this.magicDebug(player, 'tickCombat-autocast-out-of-range', {
+            npcId,
+            autocast: player.autocastSpellIndex,
+            dist,
+            max: SPELL_CAST_DISTANCE,
+            hasMoveQueue: player.hasMoveQueue(),
+          });
           if (!player.hasMoveQueue()) this.queuePlayerPathToNpcRange(player, npc, SPELL_CAST_DISTANCE);
           continue;
         }
         if (player.attackCooldown <= 0) {
+          this.magicDebug(player, 'tickCombat-autocast-ready', {
+            npcId,
+            autocast: player.autocastSpellIndex,
+            dist,
+            cooldown: player.attackCooldown,
+          });
           this.handlePlayerCastSpell(playerId, player.autocastSpellIndex, npcId, true);
+        } else {
+          this.magicDebug(player, 'tickCombat-autocast-cooldown', {
+            npcId,
+            autocast: player.autocastSpellIndex,
+            dist,
+            cooldown: player.attackCooldown,
+          });
         }
         continue;
       }
 
       const isRanged = player.isRangedWeapon(itemDefs);
-      const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, isRanged ? 'ranged' : 'melee');
+      const rangedAttackDist = isRanged ? player.getRangedAttackRange(itemDefs) : RANGED_ATTACK_DISTANCE;
+      const inAttackRange = this.isPlayerInNpcAttackRange(player, npc, isRanged ? 'ranged' : 'melee', rangedAttackDist);
       if (!inAttackRange) {
         // Out of range — only re-pathfind when the existing queue has been
         // fully consumed (player arrived at the previous target tile but the
@@ -7330,7 +7614,7 @@ export class World {
               player.setMoveQueue(path);
             }
           } else {
-            this.queuePlayerPathToNpcRange(player, npc, RANGED_ATTACK_DISTANCE, 'chebyshev', true);
+            this.queuePlayerPathToNpcRange(player, npc, rangedAttackDist, 'chebyshev', true);
           }
         }
         // Out of range this tick — defer the swing. Cooldown still ticks
@@ -7345,7 +7629,7 @@ export class World {
           result = processPlayerRangedCombat(player, npc, itemDefs, arrowStr);
           if (result) {
             this.consumePlayerAmmo(player, ammo);
-            this.broadcastProjectile(player.id, npc.id, 1, player.currentMapLevel, player.currentFloor, player.position.x, player.position.y);
+            this.broadcastProjectile(player, npc, this.projectileTypeForAmmo(ammo), player.currentMapLevel, player.currentFloor);
           }
         } else {
           this.clearCombatTarget(playerId);
@@ -7480,21 +7764,8 @@ export class World {
       // XP: 4 per damage to the spell's school (locked in at cast time).
       // Same rate as melee/ranged so a magic-only player isn't penalised.
       if (actual > 0) {
-        const oldHpLevel = player.skills.hitpoints.level;
-        const amt = actual * 4;
-        const r = addXp(player.skills, imp.xpSkill, amt);
-        const skillIdx = ALL_SKILLS.indexOf(imp.xpSkill);
-        if (skillIdx >= 0) {
-          this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amt));
-          if (r.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, r.newLevel);
-          this.sendSingleSkill(player, skillIdx);
-        }
-        const hpIdx = ALL_SKILLS.indexOf('hitpoints');
-        if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
-          this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
-        }
+        this.grantMagicCombatXp(player, imp.xpSkill, actual, imp.magicStance ?? 'accurate');
         npc.addHeroPoints(player.id, actual);
-        player.syncHealthFromSkills();
       }
 
       if (canNpcRetaliate && !shouldNpcFlee) this.broadcastNpcFacingPlayer(npc, player);
@@ -8069,8 +8340,7 @@ export class World {
         // The floor index just changed — re-resolve the walking elevation
         // against the new floor's layer before the next move validates.
         this.clearCombatReferencesTo(player.id);
-        player.pendingPickup = -1;
-        player.pendingSpellCast = null;
+        this.clearQueuedPlayerActions(player);
         this.closeNpcUiContext(player);
         this.refreshPlayerEffectiveY(player);
         player.syncDirty = true;
@@ -8118,11 +8388,7 @@ export class World {
     this.cancelItemProduction(player.id);
     player.clearMoveQueue();
     player.attackTarget = null;
-    this.clearPendingObjectIntents(player);
-    player.pendingSpellCast = null;
-    player.pendingTalkNpcId = -1;
-    player.pendingTalkRepathTicks = 0;
-    player.pendingPickup = -1;
+    this.clearQueuedPlayerActions(player);
     player.attackCooldown = 0;
     player.clearDelay();
     player.logoutBlockedUntilTick = 0;
@@ -8275,11 +8541,7 @@ export class World {
     player.followAnchorZ = targetZ;
     player.clearMoveQueue();
     player.attackTarget = null;
-    this.clearPendingObjectIntents(player);
-    player.pendingPickup = -1;
-    player.pendingSpellCast = null;
-    player.pendingTalkNpcId = -1;
-    player.pendingTalkRepathTicks = 0;
+    this.clearQueuedPlayerActions(player);
     player.followTargetPlayerId = -1;
     player.actionDelay = 0;
     this.cancelSkilling(player.id);
@@ -8680,8 +8942,36 @@ export class World {
     this.broadcastNearbyOnFloor(mapLevel, floor, worldX, worldZ, ServerOpcode.COMBAT_HIT, attackerId, targetId, damage, targetHp, targetMaxHp);
   }
 
-  private broadcastProjectile(attackerId: number, targetId: number, projectileType: number, mapLevel: string, floor: number, worldX: number, worldZ: number): void {
-    this.broadcastNearbyOnFloor(mapLevel, floor, worldX, worldZ, ServerOpcode.COMBAT_PROJECTILE, attackerId, targetId, projectileType);
+  private broadcastProjectile(attacker: Player, target: Player | Npc, projectileType: number, mapLevel: string, floor: number): void {
+    const sourceX = attacker.position.x;
+    const sourceZ = attacker.position.y;
+    const targetX = target.position.x;
+    const targetZ = target.position.y;
+    const sourceY = attacker.effectiveY + RANGED_PROJECTILE_SOURCE_HEIGHT;
+    const targetY = target instanceof Npc
+      ? this.npcWorldY(target) + RANGED_PROJECTILE_TARGET_HEIGHT
+      : target.effectiveY + RANGED_PROJECTILE_TARGET_HEIGHT;
+    const horizontalDistance = Math.hypot(targetX - sourceX, targetZ - sourceZ);
+    const travelMs = Math.round(rangedProjectileTravelMsForDistance(horizontalDistance));
+    const arcHeight = rangedProjectileArcHeightForDistance(horizontalDistance);
+    this.broadcastNearbyOnFloor(
+      mapLevel,
+      floor,
+      sourceX,
+      sourceZ,
+      ServerOpcode.COMBAT_PROJECTILE,
+      attacker.id,
+      target.id,
+      projectileType,
+      qPos(sourceX),
+      qPos(sourceZ),
+      qPos(targetX),
+      qPos(targetZ),
+      qPos(sourceY),
+      qPos(targetY),
+      travelMs,
+      qPos(arcHeight),
+    );
   }
 
   private broadcastWorldObjectAnimation(obj: WorldObject): void {
@@ -9063,8 +9353,7 @@ export class World {
 
   /** Build PLAYER_REMOTE_STANCE packet. Layout: [entityId, stanceIdx]. */
   private encodeRemoteStance(subject: Player): Uint8Array {
-    const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
-    const idx = Math.max(0, stances.indexOf(subject.stance));
+    const idx = Math.max(0, STANCE_KEYS.indexOf(subject.stance));
     return encodePacket(ServerOpcode.PLAYER_REMOTE_STANCE, subject.id, idx);
   }
 

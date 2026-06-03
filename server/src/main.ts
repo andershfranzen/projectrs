@@ -345,7 +345,7 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
   if (!Array.isArray(items)) return { ok: false, error: 'Body must be { items: ItemDef[] }' };
   const seen = new Set<number>();
   const finiteNumberFields = [
-    'value', 'attackSpeed', 'stabAttack', 'slashAttack', 'crushAttack',
+    'value', 'attackSpeed', 'attackRange', 'stabAttack', 'slashAttack', 'crushAttack',
     'stabDefence', 'slashDefence', 'crushDefence', 'rangedDefence',
     'magicDefence', 'magicAccuracy', 'meleeStrength', 'rangedAccuracy',
     'rangedStrength', 'healAmount', 'toolLevel', 'toolBonus', 'levelRequired',
@@ -396,6 +396,9 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
       if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
         return { ok: false, error: `Item ${item.id} has invalid ${field}` };
       }
+    }
+    if (item.attackRange !== undefined && (item.attackRange as number) <= 0) {
+      return { ok: false, error: `Item ${item.id} has invalid attackRange` };
     }
   }
   return { ok: true, items: items as ItemDef[] };

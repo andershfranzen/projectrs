@@ -25,7 +25,7 @@ export const MAX_STACK = 0x7FFFFFFF;
  *  disconnects on mismatch with a "please refresh" prompt. Without this
  *  guard, a tab from yesterday's build silently misinterprets new opcodes
  *  and corrupts state — exactly what dupe surfaces are made of. */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 export const SERVER_PORT = 4000;
 export const GAME_WS_PATH = '/ws/game';
 export const CHAT_WS_PATH = '/ws/chat';
@@ -147,6 +147,15 @@ export const NPC_INTERACTION_RANGE = 2;
 /** Max distance in tiles a player can cast a targeted spell from. Shared so
  *  client prediction and server validation use the same range. */
 export const SPELL_CAST_DISTANCE = 10;
+/** Default Chebyshev range for player ranged attacks. Shortbows use this;
+ *  longer weapon families can override it with ItemDef.attackRange. */
+export const DEFAULT_RANGED_ATTACK_DISTANCE = 7;
+export const MIN_RANGED_ATTACK_DISTANCE = 1;
+export const MAX_RANGED_ATTACK_DISTANCE = 10;
+export function normalizeRangedAttackDistance(range: number | null | undefined): number {
+  if (typeof range !== 'number' || !Number.isFinite(range) || range <= 0) return DEFAULT_RANGED_ATTACK_DISTANCE;
+  return Math.max(MIN_RANGED_ATTACK_DISTANCE, Math.min(MAX_RANGED_ATTACK_DISTANCE, range));
+}
 /** Projectile eye/target offsets used by ranged attacks. Shared so client
  *  path prediction and server combat validation test the same line segment. */
 export const RANGED_PROJECTILE_SOURCE_HEIGHT = 1.35;

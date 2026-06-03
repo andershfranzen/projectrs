@@ -3,7 +3,7 @@ import type { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
   osrsMeleeMaxHit, rollHit, bowAttackRollMultiplierForStance,
-  relicDropPoolForCombatLevel,
+  relicDropPoolForCombatLevel, DEFAULT_RANGED_ATTACK_DISTANCE,
   type ItemDef,
 } from '@projectrs/shared';
 
@@ -169,7 +169,7 @@ export function processPlayerCombat(
 }
 
 /** Maximum range for ranged attacks in tiles */
-export const RANGED_ATTACK_DISTANCE = 7;
+export const RANGED_ATTACK_DISTANCE = DEFAULT_RANGED_ATTACK_DISTANCE;
 
 /**
  * Ranged combat: player attacks NPC with a bow + arrows.
@@ -187,7 +187,7 @@ export function processPlayerRangedCombat(
   // Check distance against the nearest footprint tile so large NPCs can be
   // ranged from their body edge, not only from their anchor coordinate.
   const fp = npc.distToFootprint(player.position.x, player.position.y);
-  if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > RANGED_ATTACK_DISTANCE) return null;
+  if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) > player.getRangedAttackRange(itemDefs)) return null;
 
   // Cooldown gate. Decrement is global; see processPlayerCombat for rationale.
   if (player.attackCooldown > 0) return null;

@@ -11,6 +11,8 @@ import {
   YEW_SHORTBOW_ITEM_ID,
   MAGIC_SHORTBOW_ITEM_ID,
   SHORTBOW_ITEM_ID,
+  DEFAULT_RANGED_ATTACK_DISTANCE,
+  ServerOpcode,
   bowAttackRollMultiplierForStance,
   type ItemDef,
 } from '@projectrs/shared';
@@ -52,9 +54,20 @@ function makeEquipWorld(player: Player, defs: Map<number, ItemDef>): World {
   world.sendChatSystem = () => {};
   world.sendInventory = () => {};
   world.sendEquipment = () => {};
+  world.sendToPlayer = () => {};
   world.broadcastRemoteEquipment = () => {};
   world.savePlayerState = () => {};
   return world as World;
+}
+
+function withMockedRandom<T>(value: number, fn: () => T): T {
+  const originalRandom = Math.random;
+  Math.random = () => value;
+  try {
+    return fn();
+  } finally {
+    Math.random = originalRandom;
+  }
 }
 
 describe('player ammo selection', () => {
@@ -120,6 +133,42 @@ describe('player ammo selection', () => {
     player.setEquipment('weapon', CROSSBOW_ITEM_ID);
     player.stance = 'aggressive';
     expect(player.getAttackSpeed(defs)).toBe(7);
+  });
+
+  test('ranged attack range is data-driven and clamps invalid weapon data', () => {
+    const player = makePlayer();
+    const LONG_BOW_ITEM_ID = 9001;
+    const EXTREME_BOW_ITEM_ID = 9002;
+    const defs = new Map<number, ItemDef>([
+      [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [LONG_BOW_ITEM_ID, baseItem(LONG_BOW_ITEM_ID, 'Longbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+        attackRange: 10,
+      })],
+      [EXTREME_BOW_ITEM_ID, baseItem(EXTREME_BOW_ITEM_ID, 'Debug bow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+        attackRange: 999,
+      })],
+    ]);
+
+    expect(player.getRangedAttackRange(defs)).toBe(DEFAULT_RANGED_ATTACK_DISTANCE);
+
+    player.setEquipment('weapon', LONG_BOW_ITEM_ID);
+    expect(player.getRangedAttackRange(defs)).toBe(10);
+
+    player.setEquipment('weapon', EXTREME_BOW_ITEM_ID);
+    expect(player.getRangedAttackRange(defs)).toBe(10);
   });
 
   test('prefers equipped ammo and tracks ammo stack quantity', () => {
@@ -190,6 +239,63 @@ describe('player ammo selection', () => {
     world.handlePlayerUnequip(player.id, 10);
     expect(player.equipment.has('ammo')).toBe(false);
     expect(player.inventory[0]).toEqual({ itemId: BRONZE_ARROWS_ITEM_ID, quantity: 15 });
+  });
+
+  test('equipping a different weapon clears active autocast', () => {
+    const player = makePlayer();
+    player.autocastSpellIndex = 4;
+    player.magicStance = 'controlled';
+    player.inventory[0] = { itemId: OAK_SHORTBOW_ITEM_ID, quantity: 1 };
+    const defs = new Map<number, ItemDef>([
+      [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [OAK_SHORTBOW_ITEM_ID, baseItem(OAK_SHORTBOW_ITEM_ID, 'Oak Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+    ]);
+    const world = makeEquipWorld(player, defs) as any;
+    const magicStates: number[][] = [];
+    world.sendToPlayer = (_player: Player, opcode: ServerOpcode, ...values: number[]) => {
+      if (opcode === ServerOpcode.PLAYER_MAGIC_STATE) magicStates.push(values);
+    };
+
+    world.handlePlayerEquip(player.id, 0, OAK_SHORTBOW_ITEM_ID);
+
+    expect(player.equipment.get('weapon')).toBe(OAK_SHORTBOW_ITEM_ID);
+    expect(player.autocastSpellIndex).toBe(-1);
+    expect(magicStates).toEqual([[-1, 3]]);
+  });
+
+  test('unequipping a weapon clears active autocast', () => {
+    const player = makePlayer();
+    player.autocastSpellIndex = 2;
+    player.magicStance = 'defensive';
+    const defs = new Map<number, ItemDef>([
+      [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+    ]);
+    const world = makeEquipWorld(player, defs) as any;
+    const magicStates: number[][] = [];
+    world.sendToPlayer = (_player: Player, opcode: ServerOpcode, ...values: number[]) => {
+      if (opcode === ServerOpcode.PLAYER_MAGIC_STATE) magicStates.push(values);
+    };
+
+    world.handlePlayerUnequip(player.id, 0);
+
+    expect(player.equipment.has('weapon')).toBe(false);
+    expect(player.autocastSpellIndex).toBe(-1);
+    expect(magicStates).toEqual([[-1, 2]]);
   });
 
   test('ignores ammo that does not match the equipped weapon ammo type', () => {
@@ -317,5 +423,39 @@ describe('player ammo selection', () => {
     expect(world.playerRangedAmmoFailureMessage(player)).toBe("You don't have any arrows equipped.");
     player.setEquipment('ammo', STEEL_ARROWS_ITEM_ID, 5);
     expect(world.playerRangedAmmoFailureMessage(player)).toBe("Your bow can't fire those arrows.");
+  });
+
+  test('fired arrows are kept unless the 20% break roll hits', () => {
+    const player = makePlayer();
+    player.setEquipment('ammo', BRONZE_ARROWS_ITEM_ID, 5);
+    const bronzeArrowDef = baseItem(BRONZE_ARROWS_ITEM_ID, 'Bronze Arrows', {
+      stackable: true,
+      equippable: true,
+      equipSlot: 'ammo',
+      isAmmo: true,
+      ammoType: 'arrow',
+      rangedStrength: 7,
+    });
+    const defs = new Map<number, ItemDef>([
+      [SHORTBOW_ITEM_ID, baseItem(SHORTBOW_ITEM_ID, 'Shortbow', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [BRONZE_ARROWS_ITEM_ID, bronzeArrowDef],
+    ]);
+    const equipmentUpdates: number[] = [];
+    const world = makeEquipWorld(player, defs) as any;
+    world.sendEquipment = () => equipmentUpdates.push(player.getEquipmentQuantity('ammo'));
+    const ammo = player.findAmmo(defs)!;
+
+    withMockedRandom(0.2, () => world.consumePlayerAmmo(player, ammo));
+    expect(player.getEquipmentQuantity('ammo')).toBe(5);
+    expect(equipmentUpdates).toEqual([]);
+
+    withMockedRandom(0.199, () => world.consumePlayerAmmo(player, ammo));
+    expect(player.getEquipmentQuantity('ammo')).toBe(4);
+    expect(equipmentUpdates).toEqual([4]);
   });
 });

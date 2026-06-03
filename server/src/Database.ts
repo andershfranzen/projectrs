@@ -1,8 +1,8 @@
 import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
-import type { SkillBlock, SkillId, MeleeStance, PlayerAppearance } from '@projectrs/shared';
-import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, combatLevel, initSkills, isValidAppearance, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
+import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance } from '@projectrs/shared';
+import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, combatLevel, initSkills, isValidAppearance, normalizeAppearance, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -17,6 +17,7 @@ const SUSPECT_SKETCH_ITEM_ID = 236;
 const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
 const RETIRED_RESOURCE_OBJECT_IDS = [17, 18] as const;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
+const VALID_STANCES = new Set<string>(STANCE_KEYS);
 const FORUM_DEFAULT_CATEGORIES = [
   { slug: 'announcements', name: 'Announcements', description: 'Official EvilQuest news and notices.', staffOnly: 1 },
   { slug: 'general', name: 'General', description: 'Talk about EvilQuest and the wider community.', staffOnly: 0 },
@@ -231,6 +232,8 @@ export interface SavedPlayerState {
   equipment: Map<EquipSlot, number>;
   equipmentQuantities: Map<EquipSlot, number>;
   stance: MeleeStance;
+  magicStance: MagicStance;
+  autocastSpellIndex: number;
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
@@ -863,6 +866,15 @@ export class GameDatabase {
     // Migration: player renown earned from quest completions.
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN renown INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    // Migration: persistent magic combat selection. Autocast is validated again
+    // at login against the currently loaded spell catalogue, so stale indices
+    // from deleted spells safely fall back to disabled.
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN autocast_spell_index INTEGER NOT NULL DEFAULT -1`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN magic_stance TEXT NOT NULL DEFAULT 'accurate'`);
     } catch { /* column already exists */ }
     this.runOneTimeDataMigrations();
 
@@ -1756,7 +1768,8 @@ export class GameDatabase {
         x = ?, z = ?, y = ?, floor = ?,
         map_level = ?,
         skills = ?, inventory = ?, equipment = ?,
-        stance = ?, appearance = COALESCE(?, appearance), bank = ?, quests = ?, renown = ?, updated_at = unixepoch()
+        stance = ?, magic_stance = ?, autocast_spell_index = ?,
+        appearance = COALESCE(?, appearance), bank = ?, quests = ?, renown = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
       player.position.x, player.position.y, effectiveY, player.currentFloor,
@@ -1765,6 +1778,8 @@ export class GameDatabase {
       JSON.stringify(player.inventory),
       JSON.stringify(equipment),
       player.stance,
+      player.magicStance ?? 'accurate',
+      Number.isInteger(player.autocastSpellIndex) ? Math.max(-1, player.autocastSpellIndex) : -1,
       player.appearance ? JSON.stringify(player.appearance) : null,
       JSON.stringify(player.bank),
       JSON.stringify(player.quests),
@@ -1861,8 +1876,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, magic_stance, autocast_spell_index, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; magic_stance: string | null; autocast_spell_index: number | null; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
 
     if (!row) return null;
 
@@ -1934,8 +1949,11 @@ export class GameDatabase {
     }
 
     // Parse stance
-    const validStances = ['accurate', 'aggressive', 'defensive', 'controlled'];
-    const stance = validStances.includes(row.stance) ? row.stance as MeleeStance : 'accurate';
+    const stance = VALID_STANCES.has(row.stance) ? row.stance as MeleeStance : 'accurate';
+    const magicStance = VALID_STANCES.has(row.magic_stance ?? '') ? row.magic_stance as MagicStance : 'accurate';
+    const autocastSpellIndex = typeof row.autocast_spell_index === 'number' && Number.isInteger(row.autocast_spell_index)
+      ? Math.max(-1, row.autocast_spell_index)
+      : -1;
 
     // Parse appearance (normalizeAppearance fills in missing fields from older saves)
     let appearance: PlayerAppearance | null = null;
@@ -1988,6 +2006,8 @@ export class GameDatabase {
       equipment,
       equipmentQuantities,
       stance,
+      magicStance,
+      autocastSpellIndex,
       appearance,
       bank,
       respawnVersion: row.respawn_version ?? 0,
@@ -2024,6 +2044,11 @@ export class GameDatabase {
   saveStance(accountId: number, stance: MeleeStance): void {
     this.db.query('UPDATE player_state SET stance = ?, updated_at = unixepoch() WHERE account_id = ?')
       .run(stance, accountId);
+  }
+
+  saveMagicCombatState(accountId: number, autocastSpellIndex: number, magicStance: MagicStance): void {
+    this.db.query('UPDATE player_state SET autocast_spell_index = ?, magic_stance = ?, updated_at = unixepoch() WHERE account_id = ?')
+      .run(autocastSpellIndex, magicStance, accountId);
   }
 
   private hiscoreCategoryValue(categoryId: string, skills: SkillBlock): { level: number; xp: number } {

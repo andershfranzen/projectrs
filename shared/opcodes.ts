@@ -58,6 +58,10 @@ export enum ClientOpcode {
    *  Server owns repeated autocast execution while an NPC combat target is
    *  active; client keeps local state only for UI/prediction. */
   PLAYER_SET_AUTOCAST = 45,
+  /** Set active magic attack style. Values: [styleIdx], using the same
+   *  accurate/aggressive/defensive/controlled index order as PLAYER_SET_STANCE,
+   *  but persisted separately from melee/ranged stance. */
+  PLAYER_SET_MAGIC_STANCE = 46,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Close the appearance editor without saving changes.
@@ -372,6 +376,10 @@ export enum ServerOpcode {
   /** Outer packet used to amortize encrypted websocket sends. Payload is a
    *  custom length-prefixed list of ordinary logical server packets. */
   PACKET_BATCH = 123,
+  /** Authoritative local-player magic combat selection. Values:
+   *  [autocastSpellIndex, magicStanceIdx]. Sent on login/reconnect and after
+   *  server-side validation applies or rejects a magic combat setting. */
+  PLAYER_MAGIC_STATE = 124,
 }
 
 export enum EntityDeathKind {

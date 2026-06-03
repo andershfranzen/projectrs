@@ -44,6 +44,8 @@ import { audit } from '../Audit';
 import { randomBytes } from 'crypto';
 import type { ServerWebSocket } from 'bun';
 
+const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
+
 interface GameSocketCryptoState {
   version: 2;
   token: string;
@@ -262,6 +264,18 @@ function opcodeCountsAsActivity(opcode: number): boolean {
     && opcode !== ClientOpcode.MAP_READY;
 }
 
+function magicOpcodeDebug(player: Player, opcode: ClientOpcode, values: number[], phase: string, details: Record<string, unknown> = {}): void {
+  if (!MAGIC_DEBUG_ENABLED) return;
+  let name: string | null = null;
+  if (opcode === ClientOpcode.PLAYER_ATTACK_NPC) name = 'PLAYER_ATTACK_NPC';
+  else if (opcode === ClientOpcode.PLAYER_CAST_SPELL) name = 'PLAYER_CAST_SPELL';
+  else if (opcode === ClientOpcode.PLAYER_SET_AUTOCAST) name = 'PLAYER_SET_AUTOCAST';
+  else if (opcode === ClientOpcode.PLAYER_SET_MAGIC_STANCE) name = 'PLAYER_SET_MAGIC_STANCE';
+  else if (opcode === ClientOpcode.PLAYER_MOVE) name = 'PLAYER_MOVE';
+  if (!name) return;
+  console.log(`[magic-debug] packet ${phase} player=${player.name}#${player.id} opcode=${name} values=${JSON.stringify(values)} ${JSON.stringify(details)}`);
+}
+
 export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: number[] = [], player?: Player): boolean {
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE:
@@ -276,6 +290,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.PLAYER_UNEQUIP_ITEM:
     case ClientOpcode.PLAYER_EAT_ITEM:
     case ClientOpcode.PLAYER_SET_STANCE:
+    case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
     case ClientOpcode.PLAYER_BUY_ITEM:
     case ClientOpcode.PLAYER_SELL_ITEM:
     case ClientOpcode.PLAYER_MOVE_INV_ITEM:
@@ -316,6 +331,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.PLAYER_ATTACK_NPC:
     case ClientOpcode.PLAYER_CAST_SPELL:
     case ClientOpcode.PLAYER_SET_AUTOCAST:
+    case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
       return { bucket: 'combat', maxMessages: 8, windowMs: 1000 };
     case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
@@ -468,6 +484,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       return OK_PACKET;
     }
 
+    case ClientOpcode.PLAYER_SET_MAGIC_STANCE: {
+      if (!hasValues(values, 1)) return invalid('missing-magic-stance');
+      if (!isSlot(values[0], 4)) return invalid('bad-magic-stance');
+      return OK_PACKET;
+    }
+
     case ClientOpcode.PLAYER_CAST_SPELL: {
       if (!hasValues(values, 2)) return invalid('missing-spell-target');
       if (!Number.isInteger(values[0]) || values[0] < 0 || !world.data.getSpellByIndex(values[0])) return invalid('bad-spell-index');
@@ -479,7 +501,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
 
     case ClientOpcode.PLAYER_SET_AUTOCAST: {
       if (!hasValues(values, 1)) return invalid('missing-autocast-spell');
-      if (!Number.isInteger(values[0]) || values[0] < -1 || (values[0] >= 0 && !world.data.getSpellByIndex(values[0]))) return invalid('bad-autocast-spell');
+      if (!Number.isInteger(values[0]) || values[0] < -1 || (values[0] >= 0 && !world.isAutocastableSpellIndex(values[0]))) return invalid('bad-autocast-spell');
       return OK_PACKET;
     }
 
@@ -900,6 +922,10 @@ function completeGameSocketLogin(
     player.equipment = saved.equipment;
     player.equipmentQuantities = saved.equipmentQuantities;
     player.stance = saved.stance;
+    player.magicStance = saved.magicStance;
+    player.autocastSpellIndex = world.isAutocastableSpellIndex(saved.autocastSpellIndex)
+      ? saved.autocastSpellIndex
+      : -1;
     player.appearance = saved.appearance;
     // Pad bank to BANK_SIZE — older saves may have a shorter or empty array
     const bank = saved.bank;
@@ -1060,8 +1086,10 @@ function handleDecryptedGameSocketMessage(
   }
 
   if (!checkOpcodeRateLimit(player, opcode, ws, world)) return;
+  magicOpcodeDebug(player, opcode, values, 'received');
   const validation = validateClientPacket(player, opcode, values, world);
   if (!validation.ok) {
+    magicOpcodeDebug(player, opcode, values, 'validation-failed', { reason: validation.reason });
     reportSuspiciousPacket(player, opcode, validation.reason ?? 'invalid-packet', values, ws, world);
     return;
   }
@@ -1071,6 +1099,7 @@ function handleDecryptedGameSocketMessage(
     const hasRecentActivity = player.botStats.hasRecentClientActivity(now, BROWSER_INPUT_MAX_AGE_MS);
     player.botStats.recordGameplayCommandInputCheck(hasRecentInput, hasRecentActivity);
     if (!hasRecentInput && BLOCK_INPUTLESS_GAMEPLAY) {
+      magicOpcodeDebug(player, opcode, values, 'input-telemetry-failed');
       reportSuspiciousPacket(player, opcode, 'missing-input-telemetry', values, ws, world);
       return;
     }
@@ -1149,6 +1178,12 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 1)) return;
       const stanceIdx = values[0];
       world.handlePlayerSetStance(playerId, stanceIdx);
+      break;
+    }
+
+    case ClientOpcode.PLAYER_SET_MAGIC_STANCE: {
+      if (!hasValues(values, 1)) return;
+      world.handlePlayerSetMagicStance(playerId, values[0]);
       break;
     }
 

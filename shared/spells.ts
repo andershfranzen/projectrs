@@ -126,6 +126,12 @@ export interface SpellEffectDef {
    *  model: validate before casting, consume before projectile/impact, and
    *  spend the reagent even if the spell splashes. */
   reagents?: SpellReagentDef[];
+  /** Omitted -> true for combat-targeted spells. Set false for utility spells
+   *  that may still target entities but should never be selected as autocast. */
+  autocastable?: boolean;
+  /** Omitted -> true. Some future spells may be combat-targeted but should not
+   *  keep the combat loop alive, mirroring 2004scape's continue_by_autocast. */
+  continueByAutocast?: boolean;
   /** Animation key to play on the caster. Omitted → 'spell_cast_2h'. */
   castAnimation?: string;
   projectile: ProjectileDef;
@@ -142,6 +148,11 @@ export interface SpellEffectDef {
  *  directly into the player's skill block. */
 export function spellSchoolSkill(def: SpellEffectDef): 'goodmagic' | 'evilmagic' {
   return (def.school ?? 'evil') === 'good' ? 'goodmagic' : 'evilmagic';
+}
+
+export function isAutocastableSpell(def: SpellEffectDef): boolean {
+  if (def.autocastable === false) return false;
+  return (def.spellType ?? 'projectile') !== 'self';
 }
 
 export function spellReagentSummary(def: SpellEffectDef): string {

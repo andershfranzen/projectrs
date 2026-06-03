@@ -1,8 +1,9 @@
 import { Entity } from './Entity';
 import {
   InventorySlot, INVENTORY_SIZE, BANK_SIZE, MAX_STACK,
-  SkillBlock, MeleeStance, CombatBonuses,
+  SkillBlock, MeleeStance, type MagicStance, CombatBonuses,
   initSkills, combatLevel, zeroBonuses, bowAttackSpeedForStance,
+  normalizeRangedAttackDistance,
   PlayerAnimationKind, PlayerSkillAnimationVariant,
   BRONZE_ARROWS_ITEM_ID, IRON_ARROWS_ITEM_ID, STEEL_ARROWS_ITEM_ID,
   MITHRIL_ARROWS_ITEM_ID, BLACK_BRONZE_ARROWS_ITEM_ID,
@@ -223,7 +224,10 @@ export class Player extends Entity {
   attackTarget: Entity | null = null;
   attackCooldown: number = 0;
   autocastSpellIndex: number = -1;
-  pendingSpellCast: { spellIndex: number; targetEntityId: number } | null = null;
+  magicStance: MagicStance = 'accurate';
+  actionRevision: number = 0;
+  pendingActionRevision: number = -1;
+  pendingSpellCast: { spellIndex: number; targetEntityId: number; actionRevision: number } | null = null;
 
   /** Tick on which the player is no longer busy. 0 = not busy.
    *  While busy, most state-mutating packet handlers reject the packet.
@@ -486,6 +490,12 @@ export class Player extends Entity {
   isRangedWeapon(itemDefs: Map<number, ItemDef>): boolean {
     const style = this.getWeaponStyle(itemDefs);
     return style === 'bow' || style === 'crossbow';
+  }
+
+  getRangedAttackRange(itemDefs: Map<number, ItemDef>): number {
+    const weaponId = this.equipment.get('weapon');
+    const weaponDef = weaponId ? itemDefs.get(weaponId) : undefined;
+    return normalizeRangedAttackDistance(weaponDef?.attackRange);
   }
 
   canFireAmmo(itemDefs: Map<number, ItemDef>, ammoDef: ItemDef): boolean {

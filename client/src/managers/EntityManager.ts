@@ -243,17 +243,19 @@ export class EntityManager {
     return weaponDef?.weaponStyle === 'bow' || weaponDef?.weaponStyle === 'crossbow';
   }
 
-  applyCachedNpcFacing(entityId: number, sprite: Npc3DEntity | CharacterEntity): void {
+  applyCachedNpcFacing(entityId: number, sprite: Npc3DEntity | CharacterEntity, snap: boolean = true): void {
     const angle = this.npcFacingAngles.get(entityId);
     if (angle == null) return;
+    const applyFacing = () => {
+      if (this.npcSprites.get(entityId) !== sprite) return;
+      if (snap) sprite.setFacingAngle(angle);
+      else sprite.setTargetFacing(angle);
+    };
     if (sprite instanceof CharacterEntity) {
-      const apply = () => {
-        if (this.npcSprites.get(entityId) === sprite) sprite.setFacingAngle(angle);
-      };
-      if (sprite.isReady) apply();
-      else void sprite.whenReady().then(apply);
+      if (sprite.isReady) applyFacing();
+      else void sprite.whenReady().then(applyFacing);
     } else {
-      sprite.setFacingAngle(angle);
+      applyFacing();
     }
   }
 

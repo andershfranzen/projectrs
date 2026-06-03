@@ -11,8 +11,39 @@ export type ProjectileWallBlocker<TContext> = (
 
 const SHOOT_OVER_FENCE_ASSET_RE = /fence/i;
 
+export const RANGED_PROJECTILE_MIN_TRAVEL_MS = 280;
+export const RANGED_PROJECTILE_MAX_TRAVEL_MS = 620;
+export const RANGED_PROJECTILE_MS_PER_TILE = 48;
+export const RANGED_PROJECTILE_BASE_TRAVEL_MS = 250;
+export const RANGED_PROJECTILE_TRAVEL_TIME_SCALE = 0.9 / 1.1;
+export const RANGED_PROJECTILE_MIN_ARC_HEIGHT = 0.14;
+export const RANGED_PROJECTILE_MAX_ARC_HEIGHT = 0.62;
+export const RANGED_PROJECTILE_ARC_HEIGHT_PER_TILE = 0.075;
+
 export function isShootOverProjectileFenceAssetId(assetId: string): boolean {
   return SHOOT_OVER_FENCE_ASSET_RE.test(assetId);
+}
+
+function clampNumber(v: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, v));
+}
+
+export function rangedProjectileTravelMsForDistance(horizontalDistance: number): number {
+  const distance = Number.isFinite(horizontalDistance) && horizontalDistance > 0 ? horizontalDistance : 0;
+  return clampNumber(
+    RANGED_PROJECTILE_BASE_TRAVEL_MS + distance * RANGED_PROJECTILE_MS_PER_TILE,
+    RANGED_PROJECTILE_MIN_TRAVEL_MS,
+    RANGED_PROJECTILE_MAX_TRAVEL_MS,
+  ) * RANGED_PROJECTILE_TRAVEL_TIME_SCALE;
+}
+
+export function rangedProjectileArcHeightForDistance(horizontalDistance: number): number {
+  const distance = Number.isFinite(horizontalDistance) && horizontalDistance > 0 ? horizontalDistance : 0;
+  return clampNumber(
+    RANGED_PROJECTILE_MIN_ARC_HEIGHT + distance * RANGED_PROJECTILE_ARC_HEIGHT_PER_TILE,
+    RANGED_PROJECTILE_MIN_ARC_HEIGHT,
+    RANGED_PROJECTILE_MAX_ARC_HEIGHT,
+  );
 }
 
 function isProjectileWallBlockedBetweenTiles<TContext>(

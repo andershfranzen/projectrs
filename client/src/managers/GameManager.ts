@@ -57,7 +57,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, TOOL_TIER_METAL_COLOR, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -258,7 +258,7 @@ export class GameManager {
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
   private static readonly LOGIN_READY_TIMEOUT_MS = 10_000;
   private static readonly AUTHORITY_LOGIN_GRACE_MS = 5_000;
-  private static readonly RANGED_ATTACK_DISTANCE = 7;
+  private static readonly RANGED_ATTACK_DISTANCE = DEFAULT_RANGED_ATTACK_DISTANCE;
   private static readonly MOBILE_LANDSCAPE_CAMERA_QUERY =
     '(max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
   private static readonly DESKTOP_CAMERA_ASPECT_CAP = 980 / 500;
@@ -533,6 +533,8 @@ export class GameManager {
   private spellsByIndex: SpellEffectDef[] = [];
   private spellbookPanel: SpellbookPanel | null = null;
   private castingUntil = 0;
+  private spellMovementLockedUntil = 0;
+  private spellMovementUnlockOnSelfSync = false;
 
   // Combat hit splats (HTML overlay)
   private hitSplats: HitSplatOverlay[] = [];
@@ -1806,7 +1808,7 @@ export class GameManager {
       // Magic is a one-shot cast (single-tick obelisk offering); other skill
       // variants loop until the server sends Idle.
       if (variant === PlayerSkillAnimationVariant.Magic) {
-        remote.playNamedOneShot('spell_cast_2h');
+        remote.playNamedOneShot('spell_cast_2h', { layerWhenWalking: true });
         return;
       }
       const anim =
@@ -2918,6 +2920,7 @@ export class GameManager {
       this.lastSelfAuthorityWarnAt = 0;
       this.selfAuthorityGraceUntil = 0;
       this.latestSelfSync = { x: serverX, z: serverZ, moving: serverMoving };
+      this.clearSpellMovementLockOnSelfSync();
       this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth && health > this.playerHealth });
       if (syncAppearance && !appearanceEquals(this.localAppearance, syncAppearance)) {
         this.applyLocalAppearance(syncAppearance);
@@ -2961,12 +2964,19 @@ export class GameManager {
       // Layout: [entityId, stanceIdx]. Index matches the server's stance order.
       const entityId = v[0];
       const idx = v[1] ?? 0;
-      const stances = ['accurate', 'aggressive', 'defensive', 'controlled'] as const;
-      const stance = stances[idx] ?? 'accurate';
+      const stance = STANCE_KEYS[idx] ?? 'accurate';
       this.entities.remoteStances.set(entityId, stance);
       // Self-echo from the server — reconcile the sidePanel's optimistic
       // UI if the request was rejected or applied differently than expected.
       if (entityId === this.localPlayerId) this.sidePanel?.applyStanceFromServer(stance);
+    });
+
+    this.network.on(ServerOpcode.PLAYER_MAGIC_STATE, (_op, v) => {
+      const spellIndex = Number.isInteger(v[0]) ? v[0] : -1;
+      const idx = v[1] ?? 0;
+      const magicStance = STANCE_KEYS[idx] ?? 'accurate';
+      this.autoCastSpellIndex = spellIndex;
+      this.sidePanel?.applyMagicStateFromServer(spellIndex, magicStance);
     });
 
     this.network.on(ServerOpcode.PLAYER_ANIMATION, (_op, v) => {
@@ -2983,7 +2993,7 @@ export class GameManager {
           this.localPlayer.playAttackAnimation(animName, true);
         } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
           if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
-          this.localPlayer.playNamedOneShot('spell_cast_2h');
+          this.localPlayer.playNamedOneShot('spell_cast_2h', { layerWhenWalking: true });
         } else if (kind === PlayerAnimationKind.Idle && this.localPlayer) {
           if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
           if (!this.localPlayer.isAttackAnimationPlaying()) this.localPlayer.resetTransientAnimation();
@@ -3018,7 +3028,8 @@ export class GameManager {
         this.entities.npcFacingAngles.set(entityId, facingQ / 1000);
       }
 
-      if (!this.entities.npcSprites.has(entityId)) {
+      const newlyMaterialized = !this.entities.npcSprites.has(entityId);
+      if (newlyMaterialized) {
         this.tryMaterializeNpc(entityId, npcDefId, x, z, floor, y);
       }
 
@@ -3033,7 +3044,7 @@ export class GameManager {
 
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite && Number.isFinite(facingQ) && facingQ !== NPC_FACING_NONE && !sprite.isWalking()) {
-        this.entities.applyCachedNpcFacing(entityId, sprite);
+        this.entities.applyCachedNpcFacing(entityId, sprite, newlyMaterialized);
       }
       if (sprite && !this.pendingHealthApply.has(entityId)) {
         this.updateTransientHealthBar(entityId, sprite, health, maxHealth);
@@ -3263,11 +3274,20 @@ export class GameManager {
 
     // Ranged projectile visual
     this.network.on(ServerOpcode.COMBAT_PROJECTILE, (_op, v) => {
-      const [attackerId, targetId, _projectileType] = v;
+      const [attackerId, targetId, projectileType] = v;
       const attacker = this.resolveTargetableIncludingLocal(attackerId);
       const target = this.resolveTargetableIncludingLocal(targetId);
       if (!attacker || !target) return;
-      this.arrowProjectiles.spawn(attacker, target, this.getRangedProjectileReleaseMs(attacker));
+      const projectileOptions = v.length >= 11 && v.slice(3, 11).every(Number.isFinite)
+        ? {
+            from: new Vector3(v[3] / 10, v[7] / 10, v[4] / 10),
+            to: new Vector3(v[5] / 10, v[8] / 10, v[6] / 10),
+            travelMs: Math.max(1, v[9]),
+            arcHeight: Math.max(0, v[10] / 10),
+            projectileType,
+          }
+        : undefined;
+      this.arrowProjectiles.spawn(attacker, target, this.getRangedProjectileReleaseMs(attacker), projectileOptions);
     });
 
     // Spell cast — server broadcasts [casterId, targetId, spellIndex] when any
@@ -3286,17 +3306,30 @@ export class GameManager {
       console.warn(`[spell-cast] unknown spell index ${spellIndex}`);
       return;
     }
-    const caster = casterId === this.localPlayerId
+    const isLocalCaster = casterId === this.localPlayerId;
+    const caster = isLocalCaster
       ? this.localPlayer
       : (this.entities.remotePlayers.get(casterId) ?? null);
     const target = this.entities.resolveTargetable(targetId);
-    if (!caster || !target) return;  // caster/target out of our chunk window
+    if (!caster || !target) {
+      if (isLocalCaster) this.finishPendingSingleSpellCast(targetId);
+      return;  // caster/target out of our chunk window
+    }
     this.playSpellEffect(caster, target, def);
 
-    if (casterId === this.localPlayerId && this.pendingSingleCastSpell >= 0) {
-      this.pendingSingleCastSpell = -1;
-      if (this.autoCastSpellIndex < 0) this.magicTargetId = -1;
+    if (isLocalCaster) this.finishPendingSingleSpellCast(targetId);
+  }
+
+  private finishPendingSingleSpellCast(targetId: number): void {
+    if (this.pendingSingleCastSpell < 0) return;
+    this.pendingSingleCastSpell = -1;
+    if (this.autoCastSpellIndex >= 0) {
+      this.combatTargetId = -1;
+      this.magicTargetId = targetId;
+      this._combatPathTimer = 0;
+      return;
     }
+    this.magicTargetId = -1;
   }
 
   private setupWorldObjectHandlers(): void {
@@ -4939,7 +4972,6 @@ export class GameManager {
   private clearLocalNpcCombatState(): void {
     this.combatTargetId = -1;
     this.magicTargetId = -1;
-    this.autoCastSpellIndex = -1;
     this.pendingSingleCastSpell = -1;
   }
 
@@ -5430,7 +5462,7 @@ export class GameManager {
     this.faceLocalPlayerToward(data.x, data.z);
   }
 
-  private rootLocalPlayerForSpellCast(): void {
+  private rootLocalPlayerForSpellCast(notifyServer: boolean = true): void {
     this.clearPredictedPath(true);
     this.slideOffsetX = 0;
     this.slideOffsetZ = 0;
@@ -5439,7 +5471,26 @@ export class GameManager {
     if (this.localPlayer) {
       this.localPlayer.setPositionXYZ(this.playerX, this.getHeight(this.playerX, this.playerZ), this.playerZ);
     }
-    this.network.sendMove([]);
+    if (notifyServer) this.network.sendMove([]);
+  }
+
+  private armSpellMovementLock(now: number): void {
+    this.spellMovementUnlockOnSelfSync = true;
+    this.spellMovementLockedUntil = now + TICK_RATE;
+  }
+
+  private clearSpellMovementLockOnSelfSync(): void {
+    if (!this.spellMovementUnlockOnSelfSync) return;
+    this.spellMovementUnlockOnSelfSync = false;
+    this.spellMovementLockedUntil = 0;
+  }
+
+  private isSpellMovementLocked(now: number = performance.now()): boolean {
+    if (this.spellMovementLockedUntil <= 0) return false;
+    if (now < this.spellMovementLockedUntil) return true;
+    this.spellMovementUnlockOnSelfSync = false;
+    this.spellMovementLockedUntil = 0;
+    return false;
   }
 
   private getActiveUnitStep(): { from: { x: number; z: number }; target: { x: number; z: number }; progress: number } | null {
@@ -5740,15 +5791,24 @@ export class GameManager {
     return { path: [], preserveCurrentStep: false };
   }
 
-  private isLocalRangedWeapon(): boolean {
+  private getLocalWeaponDef(): ItemDef | undefined {
     const weaponId = this.sidePanel?.getEquipItem(0) ?? 0;
-    const weaponDef = this.itemDefsCache.get(weaponId);
+    return this.itemDefsCache.get(weaponId);
+  }
+
+  private isLocalRangedWeapon(): boolean {
+    const weaponDef = this.getLocalWeaponDef();
     const style = weaponDef?.weaponStyle;
     return style === 'bow' || style === 'crossbow';
   }
 
+  private getLocalRangedAttackRange(): number {
+    const attackRange = this.getLocalWeaponDef()?.attackRange;
+    return attackRange === undefined ? GameManager.RANGED_ATTACK_DISTANCE : normalizeRangedAttackDistance(attackRange);
+  }
+
   private getLocalNpcAttackRange(): number {
-    return this.isLocalRangedWeapon() ? GameManager.RANGED_ATTACK_DISTANCE : 1.5;
+    return this.isLocalRangedWeapon() ? this.getLocalRangedAttackRange() : 1.5;
   }
 
   private getLocalNpcAttackRangeMode(): 'euclidean' | 'chebyshev' | 'cardinal' {
@@ -6065,7 +6125,9 @@ export class GameManager {
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
-    this.combatTargetId = -1; this.magicTargetId = -1; this.autoCastSpellIndex = -1;
+    this.combatTargetId = -1;
+    this.magicTargetId = -1;
+    this.pendingSingleCastSpell = -1;
     const data = this.worldObjectDefs.get(objectEntityId);
     if (!data) return;
     const def = this.objectDefsCache.get(data.defId);
@@ -6679,10 +6741,12 @@ export class GameManager {
   ): void {
     if (!this.spellEffectPlayer) this.spellEffectPlayer = new SpellEffectPlayer(this.scene);
     caster.faceToward(target.position);
-    caster.playNamedOneShot('spell_cast_2h');
+    caster.playNamedOneShot('spell_cast_2h', { layerWhenWalking: true });
     if (caster === this.localPlayer) {
-      this.castingUntil = performance.now() + def.cast.durationMs;
-      this.rootLocalPlayerForSpellCast();
+      const now = performance.now();
+      this.castingUntil = now + def.cast.durationMs;
+      this.armSpellMovementLock(now);
+      this.rootLocalPlayerForSpellCast(false);
     }
     const from = caster.getCastOrigin();
     const to = target.getTargetAnchor();
@@ -7224,7 +7288,7 @@ export class GameManager {
     markerTarget: { worldX: number; worldZ: number } | null = null,
   ): void {
     if (this.duelActive) return;
-    if (performance.now() < this.castingUntil) return;
+    if (this.isSpellMovementLocked()) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
     const tx = Math.floor(worldX), tz = Math.floor(worldZ);
     const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);

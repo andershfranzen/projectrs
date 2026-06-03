@@ -6,9 +6,9 @@ import {
   LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES,
   ARROWHEAD_FLETCHING_RECIPES, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID,
   QUEST_STAGE_COMPLETED,
-  spellReagentSummary, spellSchoolSkill,
-  zeroBonuses,
-  type SkillId, type MeleeStance, type ItemDef, type QuestDef,
+  isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
+  zeroBonuses, STANCE_KEYS,
+  type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef,
   type CombatBonuses,
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
@@ -57,7 +57,6 @@ const ARROW_SHAFT_RECIPE_BY_LOG_ITEM_ID: ReadonlyMap<number, typeof LOG_CRAFT_AR
 const ARROWHEAD_RECIPE_BY_ITEM_ID: ReadonlyMap<number, typeof ARROWHEAD_FLETCHING_RECIPES[number]> = new Map(
   ARROWHEAD_FLETCHING_RECIPES.map(recipe => [recipe.arrowheadItemId, recipe]),
 );
-const STANCE_KEYS: readonly MeleeStance[] = ['accurate', 'aggressive', 'defensive', 'controlled'];
 const MELEE_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
   accurate: { label: 'Accurate', desc: 'Measured attacks' },
   aggressive: { label: 'Aggressive', desc: 'Heavy attacks' },
@@ -69,6 +68,12 @@ const BOW_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: str
   aggressive: { label: 'Rapid', desc: 'Quick shots' },
   defensive: { label: 'Unavailable', desc: 'Use Accurate or Rapid' },
   controlled: { label: 'Unavailable', desc: 'Use Accurate or Rapid' },
+};
+const MAGIC_STANCE_LABELS: Readonly<Record<MagicStance, { label: string; desc: string }>> = {
+  accurate: { label: 'Accurate', desc: 'Precise casts' },
+  aggressive: { label: 'Power', desc: 'Harder casts' },
+  defensive: { label: 'Defensive', desc: 'Magic and defence' },
+  controlled: { label: 'Balanced', desc: 'Split training' },
 };
 function shortbowRecipeIndexForLog(logItemId: number): number {
   return logItemId === LOGS_ITEM_ID ? LOG_CRAFT_SHORTBOW_RECIPE_INDEX : 0;
@@ -132,6 +137,7 @@ export class SidePanel {
 
   // Stance
   private currentStance: MeleeStance = 'accurate';
+  private currentMagicStance: MagicStance = 'accurate';
   private stanceButtons: HTMLButtonElement[] = [];
   private stanceButtonLabels: HTMLDivElement[] = [];
   private stanceButtonDescs: HTMLDivElement[] = [];
@@ -1095,8 +1101,13 @@ export class SidePanel {
    *  re-renders both spellbook tabs so unlocked icons appear immediately. */
   setSpellCatalogue(spells: SpellEffectDef[]): void {
     this.spellCatalogue = spells;
+    const selected = this.spellCatalogue[this.autocastSpellIndex];
+    if (this.autocastSpellIndex >= 0 && selected && !isAutocastableSpell(selected)) {
+      this.autocastSpellIndex = -1;
+    }
     this.renderSpellbook('good');
     this.renderSpellbook('evil');
+    this.updateStanceUI();
   }
 
   /** Wired to PLAYER_CAST_SPELL; click on an unlocked spell fires this with
@@ -1110,9 +1121,14 @@ export class SidePanel {
   }
 
   setAutocastSpell(spellIndex: number): void {
-    this.autocastSpellIndex = this.autocastSpellIndex === spellIndex ? -1 : spellIndex;
+    const def = this.spellCatalogue[spellIndex];
+    if (!def || !isAutocastableSpell(def)) return;
+    const nextSpellIndex = this.autocastSpellIndex === spellIndex ? -1 : spellIndex;
+    this.autocastSpellIndex = nextSpellIndex;
+    if (nextSpellIndex >= 0) this.clearTargetingSpell();
     this.renderSpellbook('good');
     this.renderSpellbook('evil');
+    this.updateStanceUI();
     this.autocastChangeCallback?.(this.autocastSpellIndex);
   }
 
@@ -1122,6 +1138,7 @@ export class SidePanel {
     this.autocastSpellIndex = -1;
     this.renderSpellbook('good');
     this.renderSpellbook('evil');
+    this.updateStanceUI();
     this.autocastChangeCallback?.(-1);
   }
 
@@ -1217,7 +1234,8 @@ export class SidePanel {
   ): HTMLDivElement {
     const required = def.levelRequired ?? 1;
     const unlocked = playerLevel >= required;
-    const isAutocast = this.autocastSpellIndex === spellIndex;
+    const autocastable = isAutocastableSpell(def);
+    const isAutocast = autocastable && this.autocastSpellIndex === spellIndex;
     const defaultBorder = isAutocast ? '#f4d97a' : '#3a2a18';
     const borderWidth = isAutocast ? '2px' : '1px';
 
@@ -1247,11 +1265,13 @@ export class SidePanel {
       cell.addEventListener('mouseenter', () => { cell.style.borderColor = '#c44'; });
       cell.addEventListener('mouseleave', () => { cell.style.borderColor = defaultBorder; });
       cell.addEventListener('click', () => this.spellCastCallback?.(spellIndex));
-      cell.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        this.setAutocastSpell(spellIndex);
-      });
-      installLongPressContextMenu(cell, () => this.setAutocastSpell(spellIndex));
+      if (autocastable) {
+        cell.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          this.setAutocastSpell(spellIndex);
+        });
+        installLongPressContextMenu(cell, () => this.setAutocastSpell(spellIndex));
+      }
       cell.appendChild(img);
     } else {
       const q = document.createElement('div');
@@ -1279,7 +1299,7 @@ export class SidePanel {
       ? [
           spellReagentSummary(def) ? `Requires: ${spellReagentSummary(def)}` : '',
           'Left-click: cast on target',
-          'Right-click: toggle auto-cast',
+          isAutocastableSpell(def) ? 'Right-click: toggle auto-cast' : '',
         ].filter(Boolean)
       : [`Requires level ${required} ${SKILL_NAMES[(spellSchoolSkill(def)) as SkillId]}`];
 
@@ -2202,8 +2222,13 @@ export class SidePanel {
     const setStance = (i: number) => {
       const stance = STANCE_KEYS[i];
       if (!stance) return;
-      this.currentStance = stance;
-      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_STANCE, i));
+      if (this.autocastSpellIndex >= 0) {
+        this.currentMagicStance = stance;
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_MAGIC_STANCE, i));
+      } else {
+        this.currentStance = stance;
+        this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_STANCE, i));
+      }
       this.updateStanceUI();
     };
 
@@ -3209,12 +3234,14 @@ export class SidePanel {
   }
 
   private updateStanceUI(): void {
+    const magicStyleActive = this.autocastSpellIndex >= 0;
     const bowEquipped = this.isBowEquipped();
-    const labels = bowEquipped ? BOW_STANCE_LABELS : MELEE_STANCE_LABELS;
+    const labels = magicStyleActive ? MAGIC_STANCE_LABELS : bowEquipped ? BOW_STANCE_LABELS : MELEE_STANCE_LABELS;
+    const selectedStance = magicStyleActive ? this.currentMagicStance : this.currentStance;
     for (let i = 0; i < this.stanceButtons.length; i++) {
       const stance = STANCE_KEYS[i];
-      const unavailableBowStyle = bowEquipped && (stance === 'defensive' || stance === 'controlled');
-      this.stanceButtons[i].classList.toggle('selected', stance === this.currentStance);
+      const unavailableBowStyle = !magicStyleActive && bowEquipped && (stance === 'defensive' || stance === 'controlled');
+      this.stanceButtons[i].classList.toggle('selected', stance === selectedStance);
       this.stanceButtons[i].disabled = unavailableBowStyle;
       this.stanceButtons[i].style.opacity = unavailableBowStyle ? '0.45' : '';
       this.stanceButtons[i].title = unavailableBowStyle ? 'Bows currently use Accurate or Rapid.' : '';
@@ -3240,6 +3267,21 @@ export class SidePanel {
   applyStanceFromServer(stance: MeleeStance): void {
     if (this.currentStance === stance) return;
     this.currentStance = stance;
+    this.updateStanceUI();
+  }
+
+  applyMagicStateFromServer(autocastSpellIndex: number, magicStance: MagicStance): void {
+    const def = this.spellCatalogue[autocastSpellIndex];
+    const safeAutocast = autocastSpellIndex >= 0 && (!def || isAutocastableSpell(def))
+      ? autocastSpellIndex
+      : -1;
+    const changed = this.autocastSpellIndex !== safeAutocast || this.currentMagicStance !== magicStance;
+    this.autocastSpellIndex = safeAutocast;
+    this.currentMagicStance = magicStance;
+    if (!changed) return;
+    if (safeAutocast >= 0) this.clearTargetingSpell();
+    this.renderSpellbook('good');
+    this.renderSpellbook('evil');
     this.updateStanceUI();
   }
 

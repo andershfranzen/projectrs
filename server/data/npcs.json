@@ -131,6 +131,31 @@
     ]
   },
   {
+    "id": 26,
+    "name": "Black Bear",
+    "health": 46,
+    "attack": 35,
+    "defence": 27,
+    "strength": 34,
+    "attackSpeed": 4,
+    "respawnTime": 45,
+    "aggressive": true,
+    "wanderRange": 5,
+    "size": 2,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 20,
+        "quantity": 1,
+        "chance": 0.75
+      }
+    ]
+  },
+  {
     "id": 2,
     "name": "Giant Rat",
     "health": 15,

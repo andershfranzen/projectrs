@@ -100,11 +100,17 @@ export function initSkills(): SkillBlock {
 export function addXp(skills: SkillBlock, id: SkillId, amount: number): { leveled: boolean; newLevel: number } {
   const cur = skills[id];
   const oldLevel = cur.level;
+  const xpGain = Math.floor(amount);
   // Clamp to int31 — wire encoding for XP is (xpHigh << 16) | (xpLow & 0xFFFF),
   // so values past 2^31 truncate on broadcast. Caps any single skill at 2.1B
   // which is well past the OSRS-style 200M target most players aim for.
-  cur.xp = Math.max(0, Math.min(0x7FFFFFFF, cur.xp + Math.floor(amount)));
-  const newLevel = levelFromXp(cur.xp);
+  cur.xp = Math.max(0, Math.min(0x7FFFFFFF, cur.xp + xpGain));
+  let newLevel = levelFromXp(cur.xp);
+  const preservedLevel = Math.max(1, Math.min(99, oldLevel));
+  if (newLevel < preservedLevel) {
+    cur.xp = Math.max(cur.xp, Math.min(0x7FFFFFFF, xpForLevel(preservedLevel) + Math.max(0, xpGain)));
+    newLevel = preservedLevel;
+  }
   const leveled = newLevel > oldLevel;
   cur.level = newLevel;
   if (leveled) cur.currentLevel = newLevel;
@@ -163,6 +169,8 @@ export function npcCombatLevel(npc: NpcCombatStats): number {
 
 // Melee stance types
 export type MeleeStance = 'accurate' | 'aggressive' | 'defensive' | 'controlled';
+export type MagicStance = MeleeStance;
+export const STANCE_KEYS: readonly MeleeStance[] = ['accurate', 'aggressive', 'defensive', 'controlled'];
 
 export const STANCE_BONUSES: Record<MeleeStance, { accuracy: number; strength: number; defence: number }> = {
   accurate:   { accuracy: 3, strength: 0, defence: 0 },
@@ -177,6 +185,20 @@ export const STANCE_XP: Record<MeleeStance, { accuracy: number; strength: number
   aggressive: { accuracy: 0, strength: 4, defence: 0 },
   defensive:  { accuracy: 0, strength: 0, defence: 4 },
   controlled: { accuracy: 1.33, strength: 1.33, defence: 1.33 },
+};
+
+export const MAGIC_STANCE_BONUSES: Record<MagicStance, { accuracy: number; maxHit: number }> = {
+  accurate:   { accuracy: 3, maxHit: 0 },
+  aggressive: { accuracy: 0, maxHit: 1 },
+  defensive:  { accuracy: 0, maxHit: 0 },
+  controlled: { accuracy: 1, maxHit: 0 },
+};
+
+export const MAGIC_STANCE_XP: Record<MagicStance, { magic: number; defence: number }> = {
+  accurate:   { magic: 4, defence: 0 },
+  aggressive: { magic: 4, defence: 0 },
+  defensive:  { magic: 3, defence: 1 },
+  controlled: { magic: 2, defence: 2 },
 };
 
 export const BOW_ACCURATE_ATTACK_SPEED = 4;

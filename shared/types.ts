@@ -55,6 +55,7 @@ export interface ItemDef {
    */
   headRenderMode?: HeadRenderMode;
   attackSpeed?: number;
+  attackRange?: number;
   weaponStyle?: 'stab' | 'slash' | 'crush' | 'bow' | 'crossbow';
   twoHanded?: boolean;
   ammoType?: 'arrow' | 'bolt';

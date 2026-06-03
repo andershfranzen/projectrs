@@ -10,6 +10,17 @@ const fakeWs = {
   send() {},
 } as any;
 
+function withMockedRandom<T>(value: number | number[], fn: () => T): T {
+  const originalRandom = Math.random;
+  const values = Array.isArray(value) ? [...value] : [value];
+  Math.random = () => values.shift() ?? values[values.length - 1] ?? (Array.isArray(value) ? 0 : value);
+  try {
+    return fn();
+  } finally {
+    Math.random = originalRandom;
+  }
+}
+
 const npcDef: NpcDef = {
   id: 1,
   name: 'Guide',
@@ -556,6 +567,48 @@ describe('NPC interaction reachability', () => {
     expect(processPlayerRangedCombat(player, npc, new Map(), 0)).not.toBeNull();
   });
 
+  test('ranged combat respects weapon attackRange metadata', () => {
+    const defaultRangePlayer = new Player('archer', 20.5, 10.5, fakeWs, 1);
+    const defaultRangeNpc = new Npc(npcDef, 10.5, 10.5);
+    defaultRangePlayer.setEquipment('weapon', bowItemDef.id);
+    const defaultRangeDefs = new Map<number, ItemDef>([[bowItemDef.id, bowItemDef]]);
+
+    expect(processPlayerRangedCombat(defaultRangePlayer, defaultRangeNpc, defaultRangeDefs, 0)).toBeNull();
+
+    const longRangePlayer = new Player('archer', 20.5, 10.5, fakeWs, 1);
+    const longRangeNpc = new Npc(npcDef, 10.5, 10.5);
+    longRangePlayer.setEquipment('weapon', bowItemDef.id);
+    const longRangeDefs = new Map<number, ItemDef>([[bowItemDef.id, { ...bowItemDef, attackRange: 10 }]]);
+
+    expect(processPlayerRangedCombat(longRangePlayer, longRangeNpc, longRangeDefs, 0)).not.toBeNull();
+  });
+
+  test('ranged projectile broadcasts include source target and timing metadata', () => {
+    const player = new Player('archer', 12.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.effectiveY = 0;
+    const world = makeWorld();
+    const packet: { current: { opcode: ServerOpcode; values: number[] } | null } = { current: null };
+    world.broadcastNearbyOnFloor = (_map: string, _floor: number, _x: number, _z: number, opcode: ServerOpcode, ...values: number[]) => {
+      packet.current = { opcode, values };
+    };
+
+    world.broadcastProjectile(player, npc, 1, 'kcmap', 0);
+
+    const sent = packet.current;
+    expect(sent).not.toBeNull();
+    if (!sent) throw new Error('expected projectile packet');
+    expect(sent.opcode).toBe(ServerOpcode.COMBAT_PROJECTILE);
+    expect(sent.values.length).toBe(11);
+    expect(sent.values.slice(0, 7)).toEqual([player.id, npc.id, 1, 125, 105, 105, 105]);
+    expect(sent.values[7]).toBe(14);
+    expect(sent.values[8]).toBe(10);
+    expect(sent.values[9]).toBeGreaterThan(0);
+    expect(sent.values[10]).toBeGreaterThan(0);
+  });
+
   test('NPC leash disengage also clears the player combat target', () => {
     const player = new Player('tester', 25.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);
@@ -610,7 +663,7 @@ describe('NPC interaction reachability', () => {
     world.playerCombatTargets.set(player.id, npc.id);
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
-    world.tickPlayerCombat();
+    withMockedRandom([0.99, 0, 0, 0.199], () => world.tickPlayerCombat());
 
     expect(player.attackCooldown).toBe(4);
     expect(player.getEquipmentQuantity('ammo')).toBe(4);
@@ -678,7 +731,7 @@ describe('NPC interaction reachability', () => {
     world.playerCombatTargets.set(player.id, npc.id);
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
-    world.tickPlayerCombat();
+    withMockedRandom(0.199, () => world.tickPlayerCombat());
 
     expect(player.attackCooldown).toBe(4);
     expect(player.getEquipmentQuantity('ammo')).toBe(4);
@@ -773,7 +826,7 @@ describe('NPC interaction reachability', () => {
     world.playerCombatTargets.set(player.id, npc.id);
     world.npcTargetedBy.set(npc.id, new Set([player.id]));
 
-    world.tickPlayerCombat();
+    withMockedRandom([0.99, 0, 0, 0.199], () => world.tickPlayerCombat());
     player.attackCooldown = 0;
     player.position.x = 14.5;
 
