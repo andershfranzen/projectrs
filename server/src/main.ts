@@ -1996,6 +1996,13 @@ function isForumStaff(session: NonNullable<ReturnType<typeof getBoundBearerSessi
 let forumAvatarBakeTimer: ReturnType<typeof setTimeout> | null = null;
 let forumAvatarBakeRunning = false;
 let forumAvatarBakeQueuedReason = '';
+const forumAvatarBakeLog: string[] = [];
+
+function rememberForumAvatarBakeLog(line: string): void {
+  const timestamp = new Date().toISOString();
+  forumAvatarBakeLog.push(`${timestamp} ${line}`);
+  if (forumAvatarBakeLog.length > 80) forumAvatarBakeLog.splice(0, forumAvatarBakeLog.length - 80);
+}
 
 function scheduleForumAvatarBake(reason: string, delayMs = 2_000): void {
   if (process.env.FORUM_AVATAR_AUTO_BAKE === '0') return;
@@ -2013,7 +2020,11 @@ async function logForumAvatarBakeStream(stream: ReadableStream<Uint8Array> | nul
   const decoder = new TextDecoder();
   for await (const chunk of stream) {
     const text = decoder.decode(chunk).trimEnd();
-    if (text) console.log(`[forum-avatar-bake:${label}] ${text}`);
+    if (text) {
+      const line = `[forum-avatar-bake:${label}] ${text}`;
+      rememberForumAvatarBakeLog(line);
+      console.log(line);
+    }
   }
 }
 
@@ -2024,7 +2035,9 @@ async function runForumAvatarBake(reason: string): Promise<void> {
   }
   forumAvatarBakeRunning = true;
   try {
-    console.log(`[forum-avatar-bake] scheduling missing avatar bake (${reason})`);
+    const startLine = `[forum-avatar-bake] scheduling missing avatar bake (${reason})`;
+    rememberForumAvatarBakeLog(startLine);
+    console.log(startLine);
     const proc = Bun.spawn([
       'sh',
       '-lc',
@@ -2038,9 +2051,14 @@ async function runForumAvatarBake(reason: string): Promise<void> {
     void logForumAvatarBakeStream(proc.stdout, 'out');
     void logForumAvatarBakeStream(proc.stderr, 'err');
     const code = await proc.exited;
-    if (code !== 0) console.warn(`[forum-avatar-bake] exited with code ${code}`);
+    const exitLine = `[forum-avatar-bake] exited with code ${code}`;
+    rememberForumAvatarBakeLog(exitLine);
+    if (code !== 0) console.warn(exitLine);
+    else console.log(exitLine);
   } catch (error) {
-    console.warn(`[forum-avatar-bake] could not start: ${error instanceof Error ? error.message : String(error)}`);
+    const line = `[forum-avatar-bake] could not start: ${error instanceof Error ? error.message : String(error)}`;
+    rememberForumAvatarBakeLog(line);
+    console.warn(line);
   } finally {
     forumAvatarBakeRunning = false;
     if (forumAvatarBakeQueuedReason) scheduleForumAvatarBake(forumAvatarBakeQueuedReason, 1_000);
@@ -2559,6 +2577,22 @@ const server = Bun.serve<SocketData>({
       const profile = db.getHiscoreProfile(url.searchParams.get('username') ?? '', getHiscoreMobs(world));
       if (!profile) return jsonResponse({ ok: false, error: 'Player profile not found.' }, 404);
       return jsonResponse(stripMissingForumAvatarUrls(profile, `hiscores:${profile.username}`));
+    }
+
+    if (url.pathname === '/api/forum-avatar-bake-status' && req.method === 'GET') {
+      const targets = db.listForumAvatarBakeTargets();
+      let baked = 0;
+      for (const target of targets) {
+        if (existsSync(resolve(FORUM_AVATAR_DIR, `${target.accountId}-${target.hash}.webp`))) baked++;
+      }
+      return jsonResponse({
+        running: forumAvatarBakeRunning,
+        queuedReason: forumAvatarBakeQueuedReason,
+        targetCount: targets.length,
+        baked,
+        missing: Math.max(0, targets.length - baked),
+        log: forumAvatarBakeLog.slice(-30),
+      }, 200, { 'Cache-Control': 'no-store' });
     }
 
     if (url.pathname === '/api/hiscores/kills' && req.method === 'GET') {
