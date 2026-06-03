@@ -525,6 +525,7 @@ interface RankedHiscoreRow extends HiscoreRow {
 interface HiscorePlayerRecord {
   accountId: number;
   username: string;
+  isAdmin: boolean;
   skills: SkillBlock;
 }
 
@@ -2274,16 +2275,18 @@ export class GameDatabase {
     return normalizeSkillId(categoryId) ?? categoryId;
   }
 
-  private loadHiscorePlayers(): HiscorePlayerRecord[] {
+  private loadHiscorePlayers(options: { includeAdmins?: boolean } = {}): HiscorePlayerRecord[] {
+    const adminFilter = options.includeAdmins ? '' : 'AND a.is_admin = 0';
     const rows = this.db.query(`
-      SELECT ps.account_id, a.username, ps.skills
+      SELECT ps.account_id, a.username, a.is_admin, ps.skills
       FROM player_state ps
       JOIN accounts a ON a.id = ps.account_id
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
       WHERE ab.account_id IS NULL
-    `).all() as Array<{ account_id: number; username: string; skills: string }>;
+        ${adminFilter}
+    `).all() as Array<{ account_id: number; username: string; is_admin: number; skills: string }>;
 
     return rows
       // Anti-bot test accounts can produce artificial XP; keep them out of public rankings.
@@ -2291,6 +2294,7 @@ export class GameDatabase {
       .map((row) => ({
         accountId: row.account_id,
         username: row.username,
+        isAdmin: row.is_admin === 1,
         skills: this.parseHiscoreSkills(row.skills),
       }));
   }
@@ -2330,7 +2334,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE hs.category = ? AND ab.account_id IS NULL
+      WHERE hs.category = ? AND ab.account_id IS NULL AND a.is_admin = 0
     `).all(categoryId, cutoff, categoryId) as Array<{ account_id: number; username: string; level: number; xp: number }>;
 
     const ranks = new Map<number, number>();
@@ -2366,7 +2370,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE mk.npc_def_id = ? AND mk.kills > 0 AND ab.account_id IS NULL
+      WHERE mk.npc_def_id = ? AND mk.kills > 0 AND ab.account_id IS NULL AND a.is_admin = 0
     `).all(npcDefId) as Array<{ account_id: number; username: string; kills: number }>;
 
     const rank = rows
@@ -2464,7 +2468,7 @@ export class GameDatabase {
 
     const players = this.loadHiscorePlayers();
     const categories = this.hiscoreCategories(players);
-    const target = players.find((player) => player.username.toLowerCase() === normalizedUsername);
+    const target = this.loadHiscorePlayers({ includeAdmins: true }).find((player) => player.username.toLowerCase() === normalizedUsername);
     if (!target) return null;
     const avatarState = this.db.query(`
       SELECT ps.appearance, ps.equipment
@@ -2480,6 +2484,18 @@ export class GameDatabase {
 
     const cutoff = Math.floor(Date.now() / 1000) - 24 * 3600;
     const rows = categories.map((category) => {
+      if (target.isAdmin) {
+        const value = this.hiscoreCategoryValue(category.id, target.skills);
+        const dailyBaselineXp = this.loadDailyHiscoreBaselines(category.id, cutoff).get(target.accountId);
+        return {
+          category,
+          rank: 0,
+          level: value.level,
+          xp: value.xp,
+          dailyXp: dailyBaselineXp == null ? 0 : Math.max(0, value.xp - dailyBaselineXp),
+          rankChange: null,
+        };
+      }
       const ranked = this.rankedHiscoreRows(category, players, cutoff);
       const row = ranked.find((entry) => entry.accountId === target.accountId);
       return {
@@ -2568,7 +2584,7 @@ export class GameDatabase {
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
-      WHERE mk.npc_def_id = ? AND ab.account_id IS NULL AND mk.kills > 0
+      WHERE mk.npc_def_id = ? AND ab.account_id IS NULL AND a.is_admin = 0 AND mk.kills > 0
     `).all(effectiveId) as Array<{ username: string; kills: number }>;
 
     const ranked = rows

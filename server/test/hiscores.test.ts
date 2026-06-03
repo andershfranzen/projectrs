@@ -98,6 +98,39 @@ describe('hiscores exclusions', () => {
     }
   });
 
+  test('omits admins from public rankings but keeps direct profiles visible', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const admin = db.loginFallbackAccount('AdminMiner');
+      const visible = db.loginFallbackAccount('VisibleMiner');
+      (db as any).db.query('UPDATE accounts SET is_admin = 1 WHERE id = ?').run(admin.accountId);
+      db.savePlayerState(admin.accountId, playerWithSkills(miningSkills(90)), 0);
+      db.savePlayerState(visible.accountId, playerWithSkills(miningSkills(30)), 0);
+      for (let i = 0; i < 9; i++) db.recordMobKill(admin.accountId, 100);
+      for (let i = 0; i < 2; i++) db.recordMobKill(visible.accountId, 100);
+
+      const mining = db.getHiscores('mining');
+      expect(mining.rows.map((row) => row.username.toLowerCase())).not.toContain('adminminer');
+      expect(mining.rows[0]?.username).toBe('visibleminer');
+
+      const search = db.getHiscores('overall', 25, 1, 'AdminMiner');
+      expect(search.rows).toHaveLength(0);
+
+      const kills = db.getMobKillHiscores(100, 25, 1, '', [{ id: 100, name: 'Vampire' }]);
+      expect(kills.rows.map((row) => row.username.toLowerCase())).not.toContain('adminminer');
+      expect(kills.rows.map((row) => [row.rank, row.username, row.kills])).toEqual([[1, 'visibleminer', 2]]);
+
+      const profile = db.getHiscoreProfile('AdminMiner', [{ id: 100, name: 'Vampire' }]);
+      expect(profile?.username).toBe('adminminer');
+      const miningProfile = profile?.rows.find((row) => row.category.id === 'mining');
+      expect(miningProfile?.rank).toBe(0);
+      expect(miningProfile?.level).toBe(90);
+      expect(profile?.monsterKills.find((row) => row.npcDefId === 100)).toMatchObject({ rank: 0, kills: 9 });
+    } finally {
+      db.close();
+    }
+  });
+
   test('expired account bans do not hide hiscores', () => {
     const db = new GameDatabase(':memory:');
     try {
