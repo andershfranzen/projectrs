@@ -121,6 +121,10 @@ type ForumReport = {
 type ForumMedia = { id: number; url: string };
 type PendingMediaInsert = { start: number; end: number; alt: string };
 type EmojiChoice = { name: string; label: string; icon: string; url?: string; source: 'local' | 'discord' };
+type ForumEmojiResponse = {
+  emojis: ForumDiscordEmoji[];
+  discord?: { enabled: boolean; guildId: string; lastSyncAt: number | null; lastError: string | null };
+};
 type ForumNotification = {
   id: number;
   type: string;
@@ -135,6 +139,7 @@ type ForumNotification = {
 
 let discordEmojiByName: Record<string, ForumDiscordEmoji> = {};
 let discordEmojiList: ForumDiscordEmoji[] = [];
+let discordEmojiNotice = '';
 
 function token(): string {
   if (typeof window === 'undefined') return '';
@@ -159,9 +164,14 @@ async function uploadForumFile(file: File): Promise<ForumMedia> {
   return data.media;
 }
 
-function cacheDiscordEmojis(emojis: ForumDiscordEmoji[]): void {
+function cacheDiscordEmojis(emojis: ForumDiscordEmoji[], discord?: ForumEmojiResponse['discord']): void {
   discordEmojiList = emojis;
   discordEmojiByName = Object.fromEntries(emojis.map((emoji) => [emoji.name.toLowerCase(), emoji]));
+  if (emojis.length > 0) discordEmojiNotice = '';
+  else if (discord?.enabled === false) discordEmojiNotice = 'Discord emotes are not configured on this server.';
+  else if (discord?.lastError) discordEmojiNotice = `Discord emote sync failed: ${discord.lastError}.`;
+  else if (discord?.enabled) discordEmojiNotice = 'Discord emotes are syncing. Try again in a moment.';
+  else discordEmojiNotice = '';
 }
 
 function fmt(ts: number): string {
@@ -418,6 +428,7 @@ function MarkdownEditor({ value, onChange, rows, placeholder, maxLength }: { val
               {emojiMenuOpen ? (
                 <div className="forum-emoji-menu" role="menu" aria-label="Forum emoji">
                   <input value={emojiSearch} placeholder="Search emotes" onChange={(event) => setEmojiSearch(event.target.value)} />
+                  {discordEmojiNotice ? <p className="forum-emoji-notice">{discordEmojiNotice}</p> : null}
                   <div className="forum-emoji-grid">
                     {emojiChoices.map((choice) => (
                       <button key={`${choice.source}-${choice.name}`} type="button" role="menuitem" title={choice.label} onClick={() => insertEmoji(choice.name)}>
@@ -568,6 +579,8 @@ function ReactionChip({
   active,
   users,
   burst,
+  onReact,
+  disabled,
 }: {
   reactionKey: string;
   icon: string;
@@ -575,14 +588,13 @@ function ReactionChip({
   active: boolean;
   users?: ForumReactionUsers;
   burst: ReactionBurst | null;
+  onReact?: (reaction: string) => void;
+  disabled?: boolean;
 }) {
   const usersText = reactionUsersText(users);
-  return (
-    <span
-      className={active ? 'forum-reaction-chip active' : 'forum-reaction-chip'}
-      tabIndex={usersText ? 0 : undefined}
-      aria-label={usersText ? `${icon} ${count}: ${usersText}` : undefined}
-    >
+  const label = usersText ? `${icon} ${count}: ${usersText}` : `React ${icon} ${count}`;
+  const content = (
+    <>
       {icon} {count}
       {usersText ? <span className="forum-reaction-tooltip" role="tooltip">{usersText}</span> : null}
       {burst?.reaction === reactionKey ? (
@@ -590,6 +602,30 @@ function ReactionChip({
           {burst.delta > 0 ? '+1' : '-1'}
         </span>
       ) : null}
+    </>
+  );
+
+  if (onReact) {
+    return (
+      <button
+        type="button"
+        className={active ? 'forum-reaction-chip active' : 'forum-reaction-chip'}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => onReact(reactionKey)}
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <span
+      className={active ? 'forum-reaction-chip active' : 'forum-reaction-chip'}
+      tabIndex={usersText ? 0 : undefined}
+      aria-label={usersText ? label : undefined}
+    >
+      {content}
     </span>
   );
 }
@@ -599,6 +635,7 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactionMenuOpen, setReactionMenuOpen] = useState(false);
   const [reactionBurst, setReactionBurst] = useState<ReactionBurst | null>(null);
+  const [pendingReaction, setPendingReaction] = useState<string | null>(null);
   const [body, setBody] = useState(post.body);
   const reactionsMenuRef = useAutoCloseMenu<HTMLDivElement>(reactionMenuOpen, () => setReactionMenuOpen(false));
   const optionsMenuRef = useAutoCloseMenu<HTMLDivElement>(menuOpen, () => setMenuOpen(false));
@@ -623,13 +660,19 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
   }
 
   async function react(reaction: string) {
+    if (pendingReaction) return;
     const delta = post.myReaction === reaction ? -1 : 1;
-    await api('/api/forums/reaction', { method: 'POST', body: JSON.stringify({ postId: post.id, reaction }) });
-    const id = Date.now();
-    setReactionBurst({ id, reaction, delta });
-    window.setTimeout(() => setReactionBurst((current) => current?.id === id ? null : current), 900);
-    setReactionMenuOpen(false);
-    onRefresh();
+    setPendingReaction(reaction);
+    try {
+      await api('/api/forums/reaction', { method: 'POST', body: JSON.stringify({ postId: post.id, reaction }) });
+      const id = Date.now();
+      setReactionBurst({ id, reaction, delta });
+      window.setTimeout(() => setReactionBurst((current) => current?.id === id ? null : current), 900);
+      setReactionMenuOpen(false);
+      onRefresh();
+    } finally {
+      setPendingReaction(null);
+    }
   }
 
   async function save() {
@@ -709,6 +752,8 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
                 active={post.myReaction === key}
                 users={post.reactionUsers?.[key]}
                 burst={reactionBurst}
+                onReact={me.ok ? (reaction) => void react(reaction) : undefined}
+                disabled={pendingReaction != null}
               />
             ))}
           </div>
@@ -899,9 +944,9 @@ export function ForumsApp() {
     let didScheduleRetry = false;
     async function loadEmojis() {
       try {
-        const data = await api<{ emojis: ForumDiscordEmoji[] }>('/api/forums/emojis');
+        const data = await api<ForumEmojiResponse>('/api/forums/emojis');
         if (cancelled) return;
-        cacheDiscordEmojis(data.emojis);
+        cacheDiscordEmojis(data.emojis, data.discord);
         setEmojiVersion((version) => version + 1);
         if (data.emojis.length === 0 && !didScheduleRetry) {
           didScheduleRetry = true;

@@ -102,7 +102,8 @@ function renderAvatarSvg(target: ForumAvatarBakeTarget, item: ItemDef | undefine
 
 const rootDir = resolve(import.meta.dir, '..');
 const dbPath = argValue('--db') || Bun.env.PROJECTRS_DB_PATH || resolve('projectrs.db');
-const outDir = argValue('--out-dir') || Bun.env.FORUM_AVATAR_DIR || resolve(rootDir, 'server/data/forum-avatars');
+const runtimeDataDir = Bun.env.PROJECTRS_RUNTIME_DATA_DIR ? resolve(Bun.env.PROJECTRS_RUNTIME_DATA_DIR) : resolve(rootDir, 'server/data');
+const outDir = argValue('--out-dir') || Bun.env.FORUM_AVATAR_DIR || resolve(runtimeDataDir, 'forum-avatars');
 const itemsPath = argValue('--items') || resolve(rootDir, 'server/data/items.json');
 const onlyMissing = !Bun.argv.includes('--all');
 

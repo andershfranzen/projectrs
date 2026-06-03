@@ -55,6 +55,7 @@ COPY --from=builder /app/website/dist ./website/dist
 
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
+ENV PROJECTRS_RUNTIME_DATA_DIR=/app/data
 # Non-secret defaults for forum Discord emote sync. The bot token must be
 # provided at runtime via docker-compose/.env, not baked into the image.
 ENV DISCORD_GUILD_ID=1504534632799010816

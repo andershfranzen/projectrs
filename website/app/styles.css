@@ -441,6 +441,13 @@
   border: 1px solid rgba(255,255,255,0.14);
 }
 
+.forum-emoji-notice {
+  margin: 0;
+  color: #cfc1aa;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .forum-emoji-grid {
   max-height: 220px;
   overflow: auto;
@@ -952,6 +959,11 @@
 .forum-reaction-chip.active {
   color: #ffe2ad;
   border-color: #a85d36;
+}
+
+.forum-reaction-chip:disabled {
+  cursor: wait;
+  opacity: 0.75;
 }
 
 .forum-reaction-tooltip {
