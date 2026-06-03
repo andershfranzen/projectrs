@@ -2941,7 +2941,8 @@ const server = Bun.serve<SocketData>({
       if (filename.includes('/') || filename.includes('..')) {
         return new Response('Forbidden', { status: 403 });
       }
-      if (isProductionLike() && !getBoundBearerSession(req)) {
+      const hasBakeSecret = (req.headers.get('x-forum-avatar-bake-secret') || '') === FORUM_AVATAR_BAKE_SECRET;
+      if (isProductionLike() && !hasBakeSecret && !getBoundBearerSession(req)) {
         return new Response('Unauthorized', { status: 401 });
       }
       if (isProductionLike() && !isPublicDataFile(filename)) {
