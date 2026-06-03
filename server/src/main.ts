@@ -3,7 +3,7 @@ import { resolve, dirname, sep, relative } from 'path';
 import { statSync, readFileSync, readdirSync, writeFileSync, mkdirSync, existsSync, rmSync, realpathSync } from 'fs';
 import { promises as fsp } from 'fs';
 import type { CustomColors, FloorLayerData, GroundType, KCMapFile, KCTile, MapMeta, PlayerAppearance, WallsFile, SpawnsFile, PlacedObject, BiomesFile, ItemDef } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, TileType } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, classifyTileType, defaultKCTile, defaultGroundForMap, getObjectInteractionTiles, localSidesToWorldSides, TileType } from '@projectrs/shared';
 import { World } from './World';
 import { invalidatePublicDataCache, isPublicDataFile, readPublicDataContent } from './data/PublicData';
 import { preserveExistingFloorLayerTiles } from './data/WallsMerge';
@@ -194,6 +194,199 @@ function loadChunkedObjects(mapDir: string): PlacedObject[] | null {
     }
   } catch { return null; }
   return objects.length > 0 ? objects : null;
+}
+
+function loadEditorMapPlacedObjects(mapDir: string): PlacedObject[] {
+  const chunked = loadChunkedObjects(mapDir);
+  if (chunked) return chunked;
+  try {
+    const mapFile = JSON.parse(readFileSync(resolve(mapDir, 'map.json'), 'utf-8')) as Partial<KCMapFile>;
+    return Array.isArray(mapFile.placedObjects) ? mapFile.placedObjects : [];
+  } catch {
+    return [];
+  }
+}
+
+function editorFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+const DUNGEON_EXIT_ASSET_IDS = new Set(['CavernExit1']);
+
+type EditorTeleportEntry = {
+  targetMap: string;
+  targetX: number;
+  targetY?: number;
+  targetZ: number;
+  sourceMap: string;
+  sourceX: number;
+  sourceY?: number;
+  sourceZ: number;
+  assetId: string;
+  objectName?: string;
+  custom: boolean;
+};
+
+type EditorDungeonExit = {
+  mapId: string;
+  x: number;
+  y?: number;
+  z: number;
+  landingX?: number;
+  landingY?: number;
+  landingZ?: number;
+  assetId: string;
+  objectName?: string;
+};
+
+function editorPlacedObjectName(obj: PlacedObject): string | undefined {
+  return typeof obj.name === 'string' && obj.name.trim() ? obj.name.trim() : undefined;
+}
+
+function rotateEditorLocalTile(tile: { x: number; z: number }, rotY: number): { x: number; z: number } {
+  const q = (((Math.round(rotY / (Math.PI / 2)) % 4) + 4) % 4);
+  if (q === 1) return { x: tile.z, z: -tile.x };
+  if (q === 2) return { x: -tile.x, z: -tile.z };
+  if (q === 3) return { x: -tile.z, z: tile.x };
+  return { x: tile.x, z: tile.z };
+}
+
+function editorExplicitInteractionTiles(obj: PlacedObject): { x: number; z: number }[] {
+  if (!Array.isArray(obj.interactionTiles) || obj.interactionTiles.length === 0) return [];
+  const baseX = Math.floor(editorFiniteNumber(obj.position?.x, 0));
+  const baseZ = Math.floor(editorFiniteNumber(obj.position?.z, 0));
+  const rotY = editorFiniteNumber(obj.rotation?.y, 0);
+  const seen = new Set<string>();
+  const out: { x: number; z: number }[] = [];
+  for (const local of obj.interactionTiles) {
+    if (!Number.isFinite(local?.x) || !Number.isFinite(local?.z)) continue;
+    const rotated = rotateEditorLocalTile({ x: Math.round(local.x), z: Math.round(local.z) }, rotY);
+    const tile = { x: baseX + rotated.x, z: baseZ + rotated.z };
+    const key = `${tile.x},${tile.z}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tile);
+  }
+  return out;
+}
+
+function editorTileIsWalkable(tiles: KCTile[][], width: number, height: number, x: number, z: number): boolean {
+  if (!Number.isInteger(x) || !Number.isInteger(z)) return false;
+  if (x < 0 || z < 0 || x >= width || z >= height) return false;
+  const tile = tiles[z]?.[x];
+  return !!tile && tile.ground !== 'void';
+}
+
+function editorExitLandingPoint(mapDir: string, obj: PlacedObject): { x: number; y?: number; z: number } {
+  const defId = ASSET_TO_OBJECT_DEF[obj.assetId];
+  const def = defId ? world.data.getObject(defId) : undefined;
+  const center = {
+    x: editorFiniteNumber(obj.position?.x, 0),
+    y: typeof obj.position?.y === 'number' && Number.isFinite(obj.position.y) ? obj.position.y : undefined,
+    z: editorFiniteNumber(obj.position?.z, 0),
+  };
+  if (!def) return center;
+
+  try {
+    const mapFile = JSON.parse(readFileSync(resolve(mapDir, 'map.json'), 'utf-8')) as KCMapFile;
+    const width = mapFile.map.width;
+    const height = mapFile.map.height;
+    const defaultGround = defaultGroundForMap(mapFile.map);
+    const tiles = loadChunkedTiles(mapDir, width, height, defaultGround) ?? mapFile.map.tiles ?? [];
+    const rotY = editorFiniteNumber(obj.rotation?.y, 0);
+    const candidates = editorExplicitInteractionTiles(obj);
+    if (candidates.length === 0) {
+      candidates.push(...getObjectInteractionTiles(center.x, center.z, def, {
+        allowedWorldSides: obj.interactionSides
+          ? localSidesToWorldSides(obj.interactionSides, rotY, def.width)
+          : undefined,
+      }));
+    }
+
+    candidates.sort((a, b) => {
+      const da = teleportDistance2dForServer(a.x + 0.5, a.z + 0.5, center.x, center.z);
+      const db = teleportDistance2dForServer(b.x + 0.5, b.z + 0.5, center.x, center.z);
+      return da - db;
+    });
+    const best = candidates.find(tile => editorTileIsWalkable(tiles, width, height, tile.x, tile.z));
+    if (best) return { x: best.x + 0.5, y: center.y, z: best.z + 0.5 };
+  } catch {
+    // Fall back to the placed object's center if the map cannot be inspected.
+  }
+
+  return center;
+}
+
+function teleportDistance2dForServer(ax: number, az: number, bx: number, bz: number): number {
+  const dx = ax - bx;
+  const dz = az - bz;
+  return Math.sqrt(dx * dx + dz * dz);
+}
+
+function buildEditorTeleportData(): { teleports: EditorTeleportEntry[]; exits: EditorDungeonExit[] } {
+  const teleports: EditorTeleportEntry[] = [];
+  const exits: EditorDungeonExit[] = [];
+
+  for (const dirEntry of readdirSync(MAPS_DIR, { withFileTypes: true })) {
+    if (!dirEntry.isDirectory()) continue;
+    const sourceMap = dirEntry.name;
+    const mapDir = resolve(MAPS_DIR, sourceMap);
+    for (const obj of loadEditorMapPlacedObjects(mapDir)) {
+      if (!obj || typeof obj.assetId !== 'string') continue;
+      if (DUNGEON_EXIT_ASSET_IDS.has(obj.assetId) && Number.isFinite(obj.position?.x) && Number.isFinite(obj.position?.z)) {
+        const landing = editorExitLandingPoint(mapDir, obj);
+        exits.push({
+          mapId: sourceMap,
+          x: editorFiniteNumber(obj.position.x, 0),
+          y: typeof obj.position?.y === 'number' && Number.isFinite(obj.position.y) ? obj.position.y : undefined,
+          z: editorFiniteNumber(obj.position.z, 0),
+          landingX: landing.x,
+          landingY: landing.y,
+          landingZ: landing.z,
+          assetId: obj.assetId,
+          objectName: editorPlacedObjectName(obj),
+        });
+      }
+
+      let targetMap = '';
+      let targetX = 32.5;
+      let targetY: number | undefined;
+      let targetZ = 32.5;
+      let custom = false;
+
+      if (obj.trigger?.type === 'teleport' && typeof obj.trigger.destChunk === 'string' && obj.trigger.destChunk.trim()) {
+        targetMap = obj.trigger.destChunk.trim();
+        targetX = editorFiniteNumber(obj.trigger.entryX, targetX);
+        targetY = typeof obj.trigger.entryY === 'number' && Number.isFinite(obj.trigger.entryY) ? obj.trigger.entryY : undefined;
+        targetZ = editorFiniteNumber(obj.trigger.entryZ, targetZ);
+        custom = true;
+      } else {
+        const defId = ASSET_TO_OBJECT_DEF[obj.assetId];
+        const transition = defId ? world.data.getObject(defId)?.transition : undefined;
+        if (!transition) continue;
+        targetMap = transition.targetMap;
+        targetX = transition.targetX;
+        targetZ = transition.targetZ;
+      }
+
+      if (!targetMap || !Number.isFinite(targetX) || !Number.isFinite(targetZ)) continue;
+      teleports.push({
+        targetMap,
+        targetX,
+        targetY,
+        targetZ,
+        sourceMap,
+        sourceX: editorFiniteNumber(obj.position?.x, 0),
+        sourceY: typeof obj.position?.y === 'number' && Number.isFinite(obj.position.y) ? obj.position.y : undefined,
+        sourceZ: editorFiniteNumber(obj.position?.z, 0),
+        assetId: obj.assetId,
+        objectName: editorPlacedObjectName(obj),
+        custom,
+      });
+    }
+  }
+
+  return { teleports, exits };
 }
 
 function buildObjectChunkManifest(mapDir: string): { chunks: Record<string, string[]> } {
@@ -3119,7 +3312,12 @@ const server = Bun.serve<SocketData>({
           .map(e => {
             try {
               const meta = JSON.parse(readFileSync(resolve(MAPS_DIR, e.name, 'meta.json'), 'utf-8'));
-              return { id: meta.id, name: meta.name, width: meta.width, height: meta.height };
+              let mapType: string | undefined;
+              try {
+                const mapFile = JSON.parse(readFileSync(resolve(MAPS_DIR, e.name, 'map.json'), 'utf-8'));
+                if (typeof mapFile?.map?.mapType === 'string') mapType = mapFile.map.mapType;
+              } catch { /* map type is optional for legacy maps */ }
+              return { id: meta.id, name: meta.name, width: meta.width, height: meta.height, mapType };
             } catch {
               return { id: e.name, name: e.name, width: 0, height: 0 };
             }
@@ -3127,6 +3325,15 @@ const server = Bun.serve<SocketData>({
         return jsonResponse({ ok: true, maps });
       } catch {
         return jsonResponse({ ok: false, error: 'Failed to list maps' }, 500);
+      }
+    }
+
+    if (url.pathname === '/api/editor/teleport-entries' && req.method === 'GET') {
+      if (!isAdminRequest(req, server)) return adminForbidden();
+      try {
+        return jsonResponse({ ok: true, ...buildEditorTeleportData() });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Failed to scan teleport entries' }, 500);
       }
     }
 

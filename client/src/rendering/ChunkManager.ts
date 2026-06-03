@@ -508,15 +508,13 @@ export class ChunkManager {
     this.disposeChunkPlacedObjects(key);
   }
 
-  /** Resolves once map.json is parsed AND the spawn chunk's terrain data +
-   *  placed objects have finished loading. Used by the login flow's loading
-   *  screen so input doesn't unlock against a half-streamed world (where you
-   *  could click-walk through unloaded trees or fall through holes). Polls
-   *  every 50 ms; resolves after `timeoutMs` even if some assets still
-   *  haven't returned (better to unblock the player than to hang on a slow
-   *  asset fetch). */
+  /** Resolves once map.json is parsed and the spawn chunk's terrain is built.
+   *  Placed objects get a short grace period, but they must not be able to
+   *  pin the login overlay forever if a model import stalls. */
   async whenSpawnChunksReady(playerX: number, playerZ: number, timeoutMs: number = 15000): Promise<void> {
     const start = performance.now();
+    const objectGraceMs = Math.min(2500, timeoutMs);
+    let terrainReadyAt = 0;
     // Wait for map.json + walls + asset registry — the synchronous data the
     // streamed-chunk loaders depend on.
     while (!this.loaded) {
@@ -531,9 +529,22 @@ export class ChunkManager {
     while (true) {
       if (performance.now() - start > timeoutMs) return;
       this.updatePlayerPosition(playerX, playerZ);
-      const terrainReady = this.isGameChunkReady(cx, cz) && this.chunks.has(spawnKey);
+      const terrainDataReady = this.isGameChunkReady(cx, cz);
+      if (terrainDataReady && !this.chunks.has(spawnKey)) {
+        this.pendingGameChunks.delete(spawnKey);
+        this.queuedGameChunks.add(spawnKey);
+        this.residentGameChunks.add(spawnKey);
+        this.desiredGameChunks.add(spawnKey);
+        this.touchTerrainChunk(spawnKey);
+        this.buildQueuedGameChunks(cx, cz);
+      }
+      const terrainReady = terrainDataReady && this.chunks.has(spawnKey);
       const objectsReady = this.chunkPlacedNodes.has(spawnKey) && !this.loadingObjectChunks.has(spawnKey);
       if (terrainReady && objectsReady) return;
+      if (terrainReady) {
+        if (terrainReadyAt === 0) terrainReadyAt = performance.now();
+        if (performance.now() - terrainReadyAt > objectGraceMs) return;
+      }
       await new Promise(r => setTimeout(r, 50));
     }
   }
@@ -1666,6 +1677,12 @@ export class ChunkManager {
     }
 
     const mesh = new Mesh(`chunk_${chunkX}_${chunkZ}`, this.scene);
+    if (positions.length === 0 || indices.length === 0) {
+      mesh.material = this.groundMat;
+      mesh.hasVertexAlpha = false;
+      mesh.isPickable = false;
+      return mesh;
+    }
     const vertexData = new VertexData();
     vertexData.positions = positions;
     vertexData.indices = indices;

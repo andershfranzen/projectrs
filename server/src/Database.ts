@@ -234,6 +234,7 @@ export interface SavedPlayerState {
   stance: MeleeStance;
   magicStance: MagicStance;
   autocastSpellIndex: number;
+  autoRetaliate: boolean;
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
@@ -814,6 +815,7 @@ export class GameDatabase {
         inventory TEXT DEFAULT '[]',
         equipment TEXT DEFAULT '{}',
         stance TEXT DEFAULT 'accurate',
+        auto_retaliate INTEGER NOT NULL DEFAULT 0,
         appearance TEXT DEFAULT NULL,
         renown INTEGER NOT NULL DEFAULT 0,
         updated_at INTEGER DEFAULT (unixepoch())
@@ -875,6 +877,11 @@ export class GameDatabase {
     } catch { /* column already exists */ }
     try {
       this.db.exec(`ALTER TABLE player_state ADD COLUMN magic_stance TEXT NOT NULL DEFAULT 'accurate'`);
+    } catch { /* column already exists */ }
+    // Migration: persistent auto-retaliation toggle. Default off preserves
+    // pre-feature behavior for existing accounts.
+    try {
+      this.db.exec(`ALTER TABLE player_state ADD COLUMN auto_retaliate INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
     this.runOneTimeDataMigrations();
 
@@ -1768,7 +1775,7 @@ export class GameDatabase {
         x = ?, z = ?, y = ?, floor = ?,
         map_level = ?,
         skills = ?, inventory = ?, equipment = ?,
-        stance = ?, magic_stance = ?, autocast_spell_index = ?,
+        stance = ?, magic_stance = ?, autocast_spell_index = ?, auto_retaliate = ?,
         appearance = COALESCE(?, appearance), bank = ?, quests = ?, renown = ?, updated_at = unixepoch()
       WHERE account_id = ?
     `).run(
@@ -1780,6 +1787,7 @@ export class GameDatabase {
       player.stance,
       player.magicStance ?? 'accurate',
       Number.isInteger(player.autocastSpellIndex) ? Math.max(-1, player.autocastSpellIndex) : -1,
+      player.autoRetaliate ? 1 : 0,
       player.appearance ? JSON.stringify(player.appearance) : null,
       JSON.stringify(player.bank),
       JSON.stringify(player.quests),
@@ -1876,8 +1884,8 @@ export class GameDatabase {
   }
 
   loadPlayerState(accountId: number): SavedPlayerState | null {
-    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, magic_stance, autocast_spell_index, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
-      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; magic_stance: string | null; autocast_spell_index: number | null; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
+    const row = this.db.query('SELECT x, z, y, floor, map_level, skills, inventory, equipment, stance, magic_stance, autocast_spell_index, auto_retaliate, appearance, bank, respawn_version, quests, renown FROM player_state WHERE account_id = ?')
+      .get(accountId) as { x: number; z: number; y: number | null; floor: number | null; map_level: string; skills: string; inventory: string; equipment: string; stance: string; magic_stance: string | null; autocast_spell_index: number | null; auto_retaliate: number | null; appearance: string | null; bank: string | null; respawn_version: number | null; quests: string | null; renown: number | null } | null;
 
     if (!row) return null;
 
@@ -2008,6 +2016,7 @@ export class GameDatabase {
       stance,
       magicStance,
       autocastSpellIndex,
+      autoRetaliate: row.auto_retaliate === 1,
       appearance,
       bank,
       respawnVersion: row.respawn_version ?? 0,
@@ -2049,6 +2058,11 @@ export class GameDatabase {
   saveMagicCombatState(accountId: number, autocastSpellIndex: number, magicStance: MagicStance): void {
     this.db.query('UPDATE player_state SET autocast_spell_index = ?, magic_stance = ?, updated_at = unixepoch() WHERE account_id = ?')
       .run(autocastSpellIndex, magicStance, accountId);
+  }
+
+  saveAutoRetaliate(accountId: number, enabled: boolean): void {
+    this.db.query('UPDATE player_state SET auto_retaliate = ?, updated_at = unixepoch() WHERE account_id = ?')
+      .run(enabled ? 1 : 0, accountId);
   }
 
   private hiscoreCategoryValue(categoryId: string, skills: SkillBlock): { level: number; xp: number } {

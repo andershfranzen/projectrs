@@ -101,21 +101,21 @@ const OPCODE_MAPPING_ROTATE_MS = 60_000;
 // telemetry was delayed, throttled, or unavailable.
 const BLOCK_INPUTLESS_GAMEPLAY = process.env.BLOCK_INPUTLESS_GAMEPLAY === '1';
 
-function savedFloorMatchesReportedY(
+function savedFloorMatchesHeightSeed(
   map: { getWalkableFloorTargetsAt?: (x: number, z: number) => Array<{ floor: number; y: number }> },
   x: number,
   z: number,
   floor: number,
-  reportedY: number,
+  heightSeedY: number,
 ): boolean {
-  if (!Number.isFinite(reportedY) || !map.getWalkableFloorTargetsAt) return false;
+  if (!Number.isFinite(heightSeedY) || !map.getWalkableFloorTargetsAt) return false;
   const targets = map.getWalkableFloorTargetsAt(x, z);
   if (targets.length === 0) return false;
   const current = targets.filter(target => target.floor === floor)
-    .sort((a, b) => Math.abs(a.y - reportedY) - Math.abs(b.y - reportedY))[0];
+    .sort((a, b) => Math.abs(a.y - heightSeedY) - Math.abs(b.y - heightSeedY))[0];
   if (!current) return false;
-  const currentDist = Math.abs(current.y - reportedY);
-  const bestDist = Math.min(...targets.map(target => Math.abs(target.y - reportedY)));
+  const currentDist = Math.abs(current.y - heightSeedY);
+  const bestDist = Math.min(...targets.map(target => Math.abs(target.y - heightSeedY)));
   return currentDist <= 0.75 && currentDist <= bestDist + 0.05;
 }
 
@@ -271,6 +271,7 @@ function magicOpcodeDebug(player: Player, opcode: ClientOpcode, values: number[]
   else if (opcode === ClientOpcode.PLAYER_CAST_SPELL) name = 'PLAYER_CAST_SPELL';
   else if (opcode === ClientOpcode.PLAYER_SET_AUTOCAST) name = 'PLAYER_SET_AUTOCAST';
   else if (opcode === ClientOpcode.PLAYER_SET_MAGIC_STANCE) name = 'PLAYER_SET_MAGIC_STANCE';
+  else if (opcode === ClientOpcode.PLAYER_SET_AUTO_RETALIATE) name = 'PLAYER_SET_AUTO_RETALIATE';
   else if (opcode === ClientOpcode.PLAYER_MOVE) name = 'PLAYER_MOVE';
   if (!name) return;
   console.log(`[magic-debug] packet ${phase} player=${player.name}#${player.id} opcode=${name} values=${JSON.stringify(values)} ${JSON.stringify(details)}`);
@@ -291,6 +292,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.PLAYER_EAT_ITEM:
     case ClientOpcode.PLAYER_SET_STANCE:
     case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
+    case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
     case ClientOpcode.PLAYER_BUY_ITEM:
     case ClientOpcode.PLAYER_SELL_ITEM:
     case ClientOpcode.PLAYER_MOVE_INV_ITEM:
@@ -332,6 +334,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.PLAYER_CAST_SPELL:
     case ClientOpcode.PLAYER_SET_AUTOCAST:
     case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
+    case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
       return { bucket: 'combat', maxMessages: 8, windowMs: 1000 };
     case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
@@ -490,6 +493,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       return OK_PACKET;
     }
 
+    case ClientOpcode.PLAYER_SET_AUTO_RETALIATE: {
+      if (!hasValues(values, 1)) return invalid('missing-auto-retaliate');
+      if (values[0] !== 0 && values[0] !== 1) return invalid('bad-auto-retaliate');
+      return OK_PACKET;
+    }
+
     case ClientOpcode.PLAYER_CAST_SPELL: {
       if (!hasValues(values, 2)) return invalid('missing-spell-target');
       if (!Number.isInteger(values[0]) || values[0] < 0 || !world.data.getSpellByIndex(values[0])) return invalid('bad-spell-index');
@@ -619,7 +628,6 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     }
 
     case ClientOpcode.CLIENT_POSITION_Y:
-      if (!hasValues(values, 1)) return invalid('missing-position-y');
       return OK_PACKET;
 
     case ClientOpcode.CURSOR_POSITION:
@@ -926,6 +934,7 @@ function completeGameSocketLogin(
     player.autocastSpellIndex = world.isAutocastableSpellIndex(saved.autocastSpellIndex)
       ? saved.autocastSpellIndex
       : -1;
+    player.autoRetaliate = saved.autoRetaliate;
     player.appearance = saved.appearance;
     // Pad bank to BANK_SIZE — older saves may have a shorter or empty array
     const bank = saved.bank;
@@ -940,16 +949,16 @@ function completeGameSocketLogin(
     player.currentFloor = (typeof savedFloor === 'number' && isFinite(savedFloor))
       ? Math.max(-10, Math.min(10, Math.floor(savedFloor)))
       : 0;
-    player.reportedY = saved.y; // restore visual height for spawn
+    player.effectiveY = saved.y; // persisted server-resolved height seed for spawn
     player.syncHealthFromSkills();
-    // Forced-respawn migration: drop floor + reportedY so the player lands
+    // Forced-respawn migration: drop floor + effectiveY so the player lands
     // cleanly on ground at the new spawn. Without this, a player saved on
     // an upper floor of a building gets relocated to the new spawn tile
     // but stays on the old floor index / Y, which the recovery loop below
     // only patches up if the old floor happens to be blocked there.
     if (needsForcedRespawn) {
       player.currentFloor = 0;
-      player.reportedY = 0;
+      player.effectiveY = 0;
     }
 
     // Unstick recovery. If the saved floor is blocked at the saved tile, try
@@ -985,7 +994,7 @@ function completeGameSocketLogin(
     } else if (
       player.currentFloor !== 0
       && !map.isTileBlockedOnFloor(tx, tz, 0)
-      && !savedFloorMatchesReportedY(map, player.position.x, player.position.y, player.currentFloor, player.reportedY)
+      && !savedFloorMatchesHeightSeed(map, player.position.x, player.position.y, player.currentFloor, player.effectiveY)
     ) {
       console.log(`[GameSocket] Downgrading "${username}" from floor ${player.currentFloor} → 0 (saved Y does not match upper floor at saved tile)`);
       player.currentFloor = 0;
@@ -996,7 +1005,7 @@ function completeGameSocketLogin(
         player.position.x,
         player.position.y,
         player.currentFloor,
-        player.reportedY,
+        player.effectiveY,
       );
       world.db.saveRespawnMigration(accountId, player, effectiveY, WORLD_RESPAWN_VERSION);
     }
@@ -1201,6 +1210,12 @@ function handleDecryptedGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_SET_AUTO_RETALIATE: {
+      if (!hasValues(values, 1)) return;
+      world.handlePlayerSetAutoRetaliate(playerId, values[0] === 1);
+      break;
+    }
+
     case ClientOpcode.PLAYER_INTERACT_OBJECT: {
       if (!hasValues(values, 1)) return;
       const objectEntityId = values[0];
@@ -1292,17 +1307,8 @@ function handleDecryptedGameSocketMessage(
     // (GameMap.ts) mirrors the top tile across both connecting floors.
 
     case ClientOpcode.CLIENT_POSITION_Y: {
-      if (!hasValues(values, 1)) return;
-      // Pure metadata. Stored for persistence so an elevated-tile spawn
-      // restores at the right height. Y has no game-logic effect, but clamp
-      // to a plausible range so a malicious client can't stash absurd values
-      // that propagate to logs/saves and bite some future feature that
-      // assumes a sane Y range.
-      const player = world.getPlayer(playerId);
-      if (player) {
-        const raw = (values[0] ?? 0) / 10;
-        player.reportedY = Math.max(-2, Math.min(20, raw));
-      }
+      // Deprecated compatibility no-op. Older clients reported visual Y here;
+      // persistence now uses server-derived player.effectiveY only.
       break;
     }
 

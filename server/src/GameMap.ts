@@ -987,6 +987,13 @@ export class GameMap {
         }
       }
     }
+    for (let z = 0; z < this.height; z++) {
+      for (let x = 0; x < this.width; x++) {
+        if (!this.isBlocked(x, z)) {
+          return { x: x + 0.5, z: z + 0.5 };
+        }
+      }
+    }
     return { x: sp.x, z: sp.z };
   }
 

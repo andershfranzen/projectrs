@@ -652,8 +652,7 @@ describe('floor isolation', () => {
     const player = makePlayer('upper_save', 1, 0);
     player.position.x = 158.5;
     player.position.y = 156.5;
-    player.reportedY = 2.73;
-    player.effectiveY = 0.52;
+    player.effectiveY = 2.73;
     player.appearance = {} as any;
     world.players.set(player.id, player);
     world.maps.set('kcmap', {
@@ -672,16 +671,14 @@ describe('floor isolation', () => {
 
     expect(player.currentFloor).toBe(1);
     expect(player.effectiveY).toBe(2.73);
-    expect(player.reportedY).toBe(2.73);
     expect(packets.get(player.id)?.some((p: { opcode: ServerOpcode; values: number[] }) => p.opcode === ServerOpcode.FLOOR_CHANGE && p.values[0] === 1)).toBe(true);
   });
 
-  test('position persistence uses server effective height rather than a client-reported upper Y', () => {
+  test('position persistence uses server effective height as the elevated-floor gate', () => {
     const { world } = makeWorld();
     const player = makePlayer('spoof_y', 1, 0);
     player.position.x = 158.5;
     player.position.y = 156.5;
-    player.reportedY = 2.73;
     player.effectiveY = 0.52;
     world.maps.set('kcmap', {
       width: 64,

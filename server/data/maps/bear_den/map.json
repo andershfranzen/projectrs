@@ -1,0 +1,32 @@
+{
+  "map": {
+    "width": 64,
+    "height": 64,
+    "mapType": "dungeon",
+    "defaultGround": "void",
+    "worldOffset": {
+      "x": 0,
+      "z": 0
+    },
+    "waterLevel": -10,
+    "chunkWaterLevels": {},
+    "chunkWaterFlows": {},
+    "selectedTexturePlaneId": null,
+    "texturePlanes": [],
+    "tiles": [],
+    "heights": [],
+    "terrainGeneration": 29575,
+    "activeChunks": [
+      "0,0"
+    ]
+  },
+  "layers": [
+    {
+      "id": "default",
+      "name": "Default",
+      "visible": true
+    }
+  ],
+  "activeLayerId": "default",
+  "placedObjects": []
+}

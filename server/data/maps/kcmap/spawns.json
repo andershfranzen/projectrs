@@ -1735,8 +1735,8 @@
     {
       "id": 133,
       "npcId": 25,
-      "x": 310.5,
-      "z": 159.5,
+      "x": 312.5,
+      "z": 162.5,
       "wanderRange": 6,
       "aggressive": true
     },

@@ -2979,6 +2979,10 @@ export class GameManager {
       this.sidePanel?.applyMagicStateFromServer(spellIndex, magicStance);
     });
 
+    this.network.on(ServerOpcode.PLAYER_AUTO_RETALIATE, (_op, v) => {
+      this.sidePanel?.applyAutoRetaliateFromServer((v[0] ?? 0) === 1);
+    });
+
     this.network.on(ServerOpcode.PLAYER_ANIMATION, (_op, v) => {
       const entityId = v[0];
       const kind = (v[1] ?? PlayerAnimationKind.Idle) as PlayerAnimationKind;
@@ -2989,12 +2993,17 @@ export class GameManager {
       if (entityId === this.localPlayerId) {
         if (kind === PlayerAnimationKind.Attack && this.localPlayer) {
           const animName = this.getPlayerAttackAnimName(entityId);
+          this.adoptLocalNpcCombatTargetFromServer(targetId);
           this.lockCharacterAttackFacing(this.localPlayer, targetId, animName);
           this.localPlayer.playAttackAnimation(animName, true);
         } else if (kind === PlayerAnimationKind.Skill && variant === PlayerSkillAnimationVariant.Magic && this.localPlayer) {
+          if (this.pendingSingleCastSpell < 0 || this.autoCastSpellIndex >= 0) {
+            this.adoptLocalNpcCombatTargetFromServer(targetId);
+          }
           if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
           this.localPlayer.playNamedOneShot('spell_cast_2h', { layerWhenWalking: true });
         } else if (kind === PlayerAnimationKind.Idle && this.localPlayer) {
+          this.adoptLocalNpcCombatTargetFromServer(targetId);
           if (targetId > 0) this.faceLocalPlayerTowardTarget(targetId);
           if (!this.localPlayer.isAttackAnimationPlaying()) this.localPlayer.resetTransientAnimation();
         } else if (targetId > 0) {
@@ -3034,18 +3043,20 @@ export class GameManager {
       }
 
       const prev = this.entities.npcTargets.get(entityId);
-      this.entities.npcTargets.set(entityId, {
+      const npcTargetState = {
         x, z, floor, y,
         prevX: prev ? prev.x : x,
         prevZ: prev ? prev.z : z,
         t: performance.now(),
         continueWalking: (v[8] ?? 0) === 1,
-      });
+      };
+      this.entities.npcTargets.set(entityId, npcTargetState);
 
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite && Number.isFinite(facingQ) && facingQ !== NPC_FACING_NONE && !sprite.isWalking()) {
         this.entities.applyCachedNpcFacing(entityId, sprite, newlyMaterialized);
       }
+      this.refreshLocalCombatFacing(entityId, npcTargetState);
       if (sprite && !this.pendingHealthApply.has(entityId)) {
         this.updateTransientHealthBar(entityId, sprite, health, maxHealth);
       }
@@ -3952,11 +3963,15 @@ export class GameManager {
         const mapReady = this.handleMapChange(mapId, newX, newZ);
         if (!this._loginSettled) {
           this._loginMapReady = mapReady;
-          void mapReady.then(() => {
-            this._resolveLoginMapReady?.();
-            this._resolveLoginMapReady = null;
-            void this.tryResolveLoginReady(this._loginReadySeq);
-          });
+          void mapReady
+            .catch((err) => {
+              console.warn('[map] initial map change failed during login', err);
+            })
+            .then(() => {
+              this._resolveLoginMapReady?.();
+              this._resolveLoginMapReady = null;
+              void this.tryResolveLoginReady(this._loginReadySeq);
+            });
         }
       } else if (opcode === ServerOpcode.DIALOGUE_OPEN) {
         const { str, values } = decodeStringPacket(data);
@@ -4928,12 +4943,12 @@ export class GameManager {
   /** Rotate the local player's facing toward a world (x, z). 2004scape
    *  Player.faceEntity primitive — used by talkToNpc / attackNpc so the
    *  player isn't standing sideways during the interaction. Uses the
-   *  CharacterEntity's smooth-yaw state machine (faceToward) so it lerps
+   *  CharacterEntity's smooth-yaw state machine (faceTowardXZ) so it lerps
    *  rather than snapping. */
   private faceLocalPlayerToward(x: number, z: number): void {
     const lp = this.localPlayer;
     if (!lp) return;
-    lp.faceToward(new Vector3(x, lp.position.y, z));
+    lp.faceTowardXZ(x, z);
   }
 
   private faceLocalPlayerTowardTarget(targetId: number): void {
@@ -4947,6 +4962,53 @@ export class GameManager {
       const anchor = target.getTargetAnchor();
       this.faceLocalPlayerToward(anchor.x, anchor.z);
     }
+  }
+
+  private adoptLocalNpcCombatTargetFromServer(targetId: number): void {
+    if (targetId <= 0) return;
+    if (!this.entities.npcTargets.has(targetId) && !this.entities.npcSprites.has(targetId)) return;
+    this.followTargetPlayerId = -1;
+    this.followPathTimer = 0;
+    if (this.autoCastSpellIndex >= 0) {
+      this.combatTargetId = -1;
+      this.magicTargetId = targetId;
+      this.refreshLocalCombatFacing(targetId);
+      return;
+    }
+    this.magicTargetId = -1;
+    this.combatTargetId = targetId;
+    this.refreshLocalCombatFacing(targetId);
+  }
+
+  private getLocalCombatFaceTargetId(): number {
+    return this.magicTargetId >= 0 ? this.magicTargetId : this.combatTargetId;
+  }
+
+  private lockLocalPlayerFaceTowardNpc(npcEntityId: number, target?: { x: number; z: number; floor?: number }): void {
+    const lp = this.localPlayer;
+    if (!lp) return;
+    const npcTarget = target ?? this.entities.npcTargets.get(npcEntityId);
+    if (npcTarget && npcTarget.floor !== this.currentFloor) return;
+    const sprite = this.entities.npcSprites.get(npcEntityId);
+    if (sprite) {
+      const pos = sprite.position;
+      lp.lockFaceTowardXZ(pos.x, pos.z);
+      return;
+    }
+    if (!npcTarget) return;
+    const size = this.getNpcTileSize(npcEntityId);
+    lp.lockFaceTowardXZ(
+      getObjectFootprintCenterCoord(npcTarget.x, size),
+      getObjectFootprintCenterCoord(npcTarget.z, size),
+    );
+  }
+
+  private refreshLocalCombatFacing(npcEntityId?: number, target?: { x: number; z: number; floor?: number }): void {
+    if (!this.localPlayer || this.pathIndex < this.path.length) return;
+    const targetId = this.getLocalCombatFaceTargetId();
+    if (targetId < 0) return;
+    if (npcEntityId !== undefined && npcEntityId !== targetId) return;
+    this.lockLocalPlayerFaceTowardNpc(targetId, target);
   }
 
   private getNpcVisualCenter(npcEntityId: number, target?: { x: number; z: number }): { x: number; z: number } | null {
@@ -7280,6 +7342,7 @@ export class GameManager {
       if (npcTarget) this.faceLocalPlayerTowardNpc(this.pendingFaceTargetEntityId, npcTarget);
       this.pendingFaceTargetEntityId = -1;
     }
+    this.refreshLocalCombatFacing();
   }
 
   private handleGroundClick(
@@ -7939,18 +8002,6 @@ export class GameManager {
       this.renderLocalPlayerWithSlide();
     }
 
-    if (this.localPlayer && this.pathIndex >= this.path.length && this.combatTargetId >= 0) {
-      if (camPos) {
-        const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
-        const npcSprite = this.entities.npcSprites.get(this.combatTargetId);
-        if (npcTarget && npcSprite) {
-          // Hold body yaw on the target across chase repaths.
-          const anchor = npcSprite.getTargetAnchor();
-          this.localPlayer.lockFaceTowardXZ(anchor.x, anchor.z);
-        }
-      }
-    }
-
     this.entities.interpolateRemotePlayers(dt, camPos, (entityId) =>
       this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill);
     this.maintainNpcMaterialization();
@@ -8427,22 +8478,7 @@ export class GameManager {
     this.xpDrops.length = writeIdx;
   }
 
-  private _lastSentY: number = -9999;
-  private _ySendCooldown: number = 0;
-  private reportYToServer(): void {
-    if (!this.localPlayer) return;
-    if (!this._loginSettled || !this.network.isConnected()) return;
-    this._ySendCooldown -= 1;
-    if (this._ySendCooldown > 0) return;
-    const y = this.localPlayer.position.y;
-    if (Math.abs(y - this._lastSentY) < 0.05) return;
-    this._lastSentY = y;
-    this._ySendCooldown = 30; // ~30 frames between reports — coarse, server uses for save only
-    this.network.sendRaw(encodePacket(ClientOpcode.CLIENT_POSITION_Y, Math.round(y * 10)));
-  }
-
   private updateIndoorDetection(): void {
-    this.reportYToServer();
     const playerY = this.localPlayer?.position.y ?? this.getHeight(this.playerX, this.playerZ);
     const floor = this.currentFloor;
 

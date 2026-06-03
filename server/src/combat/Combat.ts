@@ -328,7 +328,9 @@ export function processNpcCombat(
  * Adds a combat-level-gated relic drop on top of the def's loot table:
  *   lvl  < 30 → 1/30 chance of a random tier-1 relic
  *   lvl 30–60 → 1/30 chance of a random tier-2 relic
- *   lvl >  60 → no bonus relic (reserved for future higher tiers)
+ *   lvl 61–100 → 1/30 chance of a random tier-3 relic
+ *   lvl 101–150 → 1/30 chance of a random tier-4 relic
+ *   lvl > 150 → 1/30 chance of a random tier-5 relic
  */
 export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
   if (NO_LOOT_NPC_IDS.has(npc.def.id)) return [];

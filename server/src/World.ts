@@ -273,6 +273,7 @@ interface GroundItemRespawnSource {
 
 interface RuntimeObjectSpawn {
   objectId: number;
+  assetId?: string;
   x: number;
   z: number;
   y?: number;
@@ -1786,6 +1787,7 @@ export class World {
       if (defId != null) {
         objectSpawns.push({
           objectId: defId,
+          assetId: placed.assetId,
           x: placed.position.x,
           z: placed.position.z,
           y: placed.position.y,
@@ -1825,6 +1827,7 @@ export class World {
       ? this.resolveAuthoredFloor(map, spawn.x, spawn.z, spawn.y, spawn.floor)
       : { floor: Math.floor(spawn.floor ?? 0), y: spawn.y ?? 0 };
     const obj = new WorldObject(objDef, spawn.x, spawn.z, mapId, resolved.floor, resolved.y);
+    if (spawn.assetId) obj.assetId = spawn.assetId;
     if (spawn.rotY != null) obj.rotationY = spawn.rotY;
     if (spawn.name) obj.name = spawn.name;
     if (spawn.examineText) obj.examineText = spawn.examineText;
@@ -1899,9 +1902,7 @@ export class World {
 
   /** Effective walking Y at the player's current (x, z, floor). Server is
    *  authoritative for gameplay saves: use the server's own last resolved
-   *  elevation as the roof/elevated-floor gate. The client's reported Y is
-   *  only a login recovery hint for older rows that predate reliable floor
-   *  persistence. */
+   *  elevation as the roof/elevated-floor gate. */
   private computeEffectiveY(player: Player): number {
     const map = this.getPlayerMap(player);
     return map.getEffectiveHeightOnFloor(
@@ -2230,15 +2231,14 @@ export class World {
     // The 4th value is the effective walking Y so the client can spawn at
     // the right elevation (e.g. on top of a texture-plane bridge interior).
     const playerMap = this.getPlayerMap(player);
-    // Login is the one place where the persisted visual Y is useful: it lets
-    // us recover old/bad rows where the player was saved on an upper walking
-    // plane with floor=0. After this bootstrap, gameplay and persistence use
-    // player.effectiveY so CLIENT_POSITION_Y cannot spoof floor changes.
+    // Login seeds from persisted player_state.y so old/bad rows saved on an
+    // upper walking plane can recover correctly. After this bootstrap,
+    // gameplay and persistence keep using server-derived player.effectiveY.
     let spawnY = playerMap.getEffectiveHeightOnFloor(
       player.position.x,
       player.position.y,
       player.currentFloor,
-      player.reportedY,
+      player.effectiveY,
     );
     const spawnFloor = this.inferFloorFromEffectiveY(
       playerMap,
@@ -2258,16 +2258,15 @@ export class World {
     }
     // Do not auto-snap low saved Y up to an elevated texture plane. Multi-story
     // buildings can have a valid floor-0 walkable tile directly under an upper
-    // floor, so the persisted Y is the only reliable signal for which plane
+    // floor, so the persisted Y seed is the only reliable signal for which plane
     // the player logged out on. If the player actually logged out upstairs,
-    // saved/reportedY is already high enough for getEffectiveHeightOnFloor's
+    // the saved Y seed is already high enough for getEffectiveHeightOnFloor's
     // gate to return the elevated surface.
     // Seed the server-authoritative collision elevation from the resolved
     // spawn height so the first move after (re)login gates wall edges on the
     // correct Y. Covers both fresh login and grace-period reconnect — both
     // routes call sendLoginBootstrap.
     player.effectiveY = spawnY;
-    player.reportedY = spawnY;
     // LOGIN_OK layout: [playerId, x*10, z*10, spawnY*10, protocolVersion].
     // Version added at the end so older client builds (which read only the
     // first 4 values) still parse without error — they just don't see the
@@ -2288,6 +2287,7 @@ export class World {
       this.sendFloorChange(player);
     }
     this.sendMagicState(player);
+    this.sendAutoRetaliateState(player);
 
     if (!player.appearance) {
       this.openCharacterCreatorFor(player);
@@ -2313,6 +2313,10 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.PLAYER_MAGIC_STATE, player.autocastSpellIndex, this.stanceIndex(player.magicStance));
   }
 
+  private sendAutoRetaliateState(player: Player): void {
+    this.sendToPlayer(player, ServerOpcode.PLAYER_AUTO_RETALIATE, player.autoRetaliate ? 1 : 0);
+  }
+
   private magicDebug(player: Player | undefined, event: string, details: Record<string, unknown> = {}): void {
     if (!MAGIC_DEBUG_ENABLED) return;
     const actor = player ? `${player.name}#${player.id}` : 'unknown';
@@ -2322,6 +2326,11 @@ export class World {
   private persistMagicCombatState(player: Player): void {
     const db = (this as { db?: GameDatabase }).db;
     db?.saveMagicCombatState?.(player.accountId, player.autocastSpellIndex, player.magicStance);
+  }
+
+  private persistAutoRetaliate(player: Player): void {
+    const db = (this as { db?: GameDatabase }).db;
+    db?.saveAutoRetaliate?.(player.accountId, player.autoRetaliate);
   }
 
   private clearAutocastSelection(player: Player, reason: string, persist: boolean = true): boolean {
@@ -2937,6 +2946,18 @@ export class World {
 
   private clearPlayerCombatTargetForNpc(playerId: number, npcId: number): void {
     if (this.playerCombatTargets.get(playerId) === npcId) this.clearCombatTarget(playerId);
+  }
+
+  private maybeAutoRetaliateAgainstNpc(player: Player, npc: Npc): void {
+    if (!player.autoRetaliate || !player.alive || player.disconnected) return;
+    if (player.isInterfaceOpen() || this.activeDuels?.has(player.id)) return;
+    if (player.hasMoveQueue() || this.playerCombatTargets.has(player.id)) return;
+    if (npc.dead || npc.hasDialogue || npc.hasShop || npc.hasBank) return;
+    if (!this.canPlayerTargetNpc(player, npc)) return;
+
+    this.interruptPlayerAction(player.id, player);
+    player.attackTarget = npc;
+    this.setCombatTarget(player.id, npc.id);
   }
 
   private disengageLeashedNpcCombat(player: Player, npc: Npc): void {
@@ -4375,11 +4396,24 @@ export class World {
 
   private handleTeleportInteraction(player: Player, obj: WorldObject): void {
     this.interruptPlayerAction(player.id, player);
+    if (this.isDungeonExitObject(obj)) {
+      const returnTransition = this.consumeDungeonReturnTarget(player);
+      if (returnTransition) {
+        this.handleMapTransition(player, returnTransition);
+        return;
+      }
+    }
     if (obj.trigger?.type === 'teleport' && obj.trigger.destChunk) {
+      const targetX = Number.isFinite(obj.trigger.entryX) ? obj.trigger.entryX : 32.5;
+      const targetZ = Number.isFinite(obj.trigger.entryZ) ? obj.trigger.entryZ : 32.5;
+      if (this.shouldRememberDungeonReturnTarget(player, obj, obj.trigger.destChunk)) {
+        this.rememberDungeonReturnTarget(player, obj.trigger.destChunk);
+      }
       this.handleMapTransition(player, {
         targetMap: obj.trigger.destChunk,
-        targetX: obj.trigger.entryX || 32.5,
-        targetZ: obj.trigger.entryZ || 32.5,
+        targetX,
+        targetZ,
+        targetY: Number.isFinite(obj.trigger.entryY) ? obj.trigger.entryY : undefined,
       });
       return;
     }
@@ -4390,6 +4424,45 @@ export class World {
         targetZ: obj.def.transition.targetZ,
       });
     }
+  }
+
+  private isDungeonExitObject(obj: WorldObject): boolean {
+    const assetId = obj.assetId?.toLowerCase();
+    return assetId === 'cavernexit1' || (assetId === 'cavedoor' && this.isDungeonMap(obj.mapLevel));
+  }
+
+  private shouldRememberDungeonReturnTarget(player: Player, obj: WorldObject, targetMapId: string): boolean {
+    if (targetMapId === player.currentMapLevel) return false;
+    if (this.isDungeonExitObject(obj)) return false;
+    return this.isDungeonMap(targetMapId);
+  }
+
+  private isDungeonMap(mapId: string): boolean {
+    const map = this.maps.get(mapId);
+    return map?.meta.mapType === 'dungeon' || map?.meta.dungeon === true;
+  }
+
+  private rememberDungeonReturnTarget(player: Player, dungeonMap: string): void {
+    player.dungeonReturnTargets.set(dungeonMap, {
+      mapId: player.currentMapLevel,
+      x: player.position.x,
+      z: player.position.y,
+      y: player.effectiveY,
+      floor: player.currentFloor,
+    });
+  }
+
+  private consumeDungeonReturnTarget(player: Player): { targetMap: string; targetX: number; targetZ: number; targetFloor?: number; targetY?: number } | null {
+    const target = player.dungeonReturnTargets.get(player.currentMapLevel);
+    if (!target) return null;
+    player.dungeonReturnTargets.delete(player.currentMapLevel);
+    return {
+      targetMap: target.mapId,
+      targetX: target.x,
+      targetZ: target.z,
+      targetFloor: target.floor,
+      targetY: target.y,
+    };
   }
 
   private handleLadderInteraction(player: Player, obj: WorldObject, action: 'Climb-up' | 'Climb-down'): void {
@@ -5211,6 +5284,18 @@ export class World {
     this.persistMagicCombatState(player);
     this.sendMagicState(player);
     this.magicDebug(player, 'setAutocast-enabled', { spellIndex, spell: this.data.getSpellByIndex(spellIndex)?.name });
+  }
+
+  handlePlayerSetAutoRetaliate(playerId: number, enabled: boolean): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.isInterfaceOpen()) {
+      this.sendAutoRetaliateState(player);
+      return;
+    }
+    player.autoRetaliate = enabled;
+    this.persistAutoRetaliate(player);
+    this.sendAutoRetaliateState(player);
   }
 
   private throttleFailedAutocast(player: Player, spellIndex: number, keepCombatTarget: boolean): void {
@@ -7820,6 +7905,10 @@ export class World {
         );
         this.sendSingleSkill(target, HITPOINTS_SKILL_INDEX);
 
+        if (target.alive) {
+          this.maybeAutoRetaliateAgainstNpc(target, npc);
+        }
+
         if (!target.alive) {
           npc.setCombatTarget(null);
           this.handlePlayerDeath(target);
@@ -8556,14 +8645,13 @@ export class World {
     // /spawn can put a player back on the ground under a two-story building.
     let teleportY = forcedY;
     if (teleportY == null) {
-      const heightGateY = forceFloorChange && player.currentFloor === 0 ? undefined : player.reportedY;
+      const heightGateY = forceFloorChange && player.currentFloor === 0 ? undefined : player.effectiveY;
       teleportY = map.getEffectiveHeightOnFloor(targetX, targetZ, player.currentFloor, heightGateY);
       const elevAtTile = !forceFloorChange ? map.getElevatedFloorHeight(targetX, targetZ) : undefined;
       if (typeof elevAtTile === 'number' && elevAtTile > 1.0 && teleportY < elevAtTile - 1.0) {
         teleportY = elevAtTile;
       }
     }
-    player.reportedY = teleportY;
     player.effectiveY = teleportY;
     const packet = encodePacket(
       ServerOpcode.PLAYER_TELEPORT,
@@ -8690,7 +8778,6 @@ export class World {
       : targetMapObj.getEffectiveHeightOnFloor(
         player.position.x, player.position.y, player.currentFloor,
         player.currentFloor > 0 ? Number.POSITIVE_INFINITY : undefined);
-    player.reportedY = player.effectiveY;
     player.clearMoveQueue();
     player.attackTarget = null;
     this.clearCombatTarget(player.id);

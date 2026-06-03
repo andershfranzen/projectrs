@@ -2,6 +2,7 @@ export const NPC_NAMES: Record<number, string> = {
   1: 'Chicken', 2: 'Giant Rat', 3: 'Goblin', 4: 'Wolf',
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
   9: 'Dark Knight', 10: 'Cow', 15: 'Camel', 25: 'Bear', 26: 'Black Bear',
+  27: 'Bear Cub',
   11: 'Weapon Smith', 12: 'Armorer', 13: 'Leg Armorer', 14: 'Shield Smith',
   16: 'Banker',
   21: 'Bill the Stylist',
@@ -52,6 +53,12 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
     scale: 0.9,
     originMode: 'boundsCenter',
     anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'BiteAttack4Legs', death: 'Death4Legs' },
+  },
+  27: {
+    file: '/models/npcs/bear_cub.glb',
+    scale: 0.9,
+    originMode: 'boundsCenter',
+    anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'LClawsAttack4Legs', death: 'Death4Legs' },
   },
   // Camel.glb is authored in centimeters and exported with the final flat-color
   // mesh plus the four gameplay clips.

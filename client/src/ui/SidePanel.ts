@@ -141,6 +141,9 @@ export class SidePanel {
   private stanceButtons: HTMLButtonElement[] = [];
   private stanceButtonLabels: HTMLDivElement[] = [];
   private stanceButtonDescs: HTMLDivElement[] = [];
+  private autoRetaliate: boolean = false;
+  private autoRetaliateRow: HTMLLabelElement | null = null;
+  private autoRetaliateCheckbox: HTMLInputElement | null = null;
   private equipmentBonusValues: Partial<Record<keyof CombatBonuses, HTMLSpanElement>> = {};
 
   // Item definitions
@@ -242,6 +245,48 @@ export class SidePanel {
           border-color: #d8372b;
           font-weight: bold;
           box-shadow: inset 0 0 4px rgba(216,55,43,0.5);
+        }
+        .auto-retaliate-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-top: 8px;
+          padding: 8px;
+          color: #9c9486;
+          background: rgba(0,0,0,0.22);
+          border: 1px solid #3a3025;
+          box-sizing: border-box;
+          cursor: pointer;
+          user-select: none;
+          -webkit-user-select: none;
+          touch-action: manipulation;
+        }
+        .auto-retaliate-row.is-active {
+          color: #d8372b;
+          border-color: #d8372b;
+          background: rgba(122,90,37,0.32);
+          box-shadow: inset 0 0 4px rgba(216,55,43,0.25);
+        }
+        .auto-retaliate-row input {
+          width: 16px;
+          height: 16px;
+          margin: 0;
+          accent-color: #d8372b;
+        }
+        .auto-retaliate-text {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+          min-width: 0;
+          line-height: 1.1;
+        }
+        .auto-retaliate-label {
+          font-size: 12px;
+          font-weight: bold;
+        }
+        .auto-retaliate-desc {
+          font-size: 10px;
+          opacity: 0.72;
         }
 
         .inv-slot {
@@ -2255,7 +2300,34 @@ export class SidePanel {
       this.stanceButtonDescs.push(descEl);
     }
 
+    const autoRetaliateRow = document.createElement('label');
+    autoRetaliateRow.className = 'auto-retaliate-row';
+    const autoRetaliateCheckbox = document.createElement('input');
+    autoRetaliateCheckbox.type = 'checkbox';
+    autoRetaliateCheckbox.addEventListener('change', () => {
+      this.autoRetaliate = autoRetaliateCheckbox.checked;
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_AUTO_RETALIATE, this.autoRetaliate ? 1 : 0));
+      this.updateAutoRetaliateUI();
+    });
+    autoRetaliateRow.appendChild(autoRetaliateCheckbox);
+
+    const autoRetaliateText = document.createElement('span');
+    autoRetaliateText.className = 'auto-retaliate-text';
+    const autoRetaliateLabel = document.createElement('span');
+    autoRetaliateLabel.className = 'auto-retaliate-label';
+    autoRetaliateLabel.textContent = 'Auto Retaliate';
+    autoRetaliateText.appendChild(autoRetaliateLabel);
+    const autoRetaliateDesc = document.createElement('span');
+    autoRetaliateDesc.className = 'auto-retaliate-desc';
+    autoRetaliateDesc.textContent = 'Counterattack when standing idle';
+    autoRetaliateText.appendChild(autoRetaliateDesc);
+    autoRetaliateRow.appendChild(autoRetaliateText);
+    wrap.appendChild(autoRetaliateRow);
+    this.autoRetaliateRow = autoRetaliateRow;
+    this.autoRetaliateCheckbox = autoRetaliateCheckbox;
+
     this.updateStanceUI();
+    this.updateAutoRetaliateUI();
 	    return this.buildPanelFrame('Combat Style', '#d8372b', wrap);
 	  }
 
@@ -3251,6 +3323,11 @@ export class SidePanel {
     }
   }
 
+  private updateAutoRetaliateUI(): void {
+    if (this.autoRetaliateCheckbox) this.autoRetaliateCheckbox.checked = this.autoRetaliate;
+    this.autoRetaliateRow?.classList.toggle('is-active', this.autoRetaliate);
+  }
+
   private isBowEquipped(): boolean {
     const weaponId = this.equipment.get(0);
     return weaponId !== undefined && this.itemDefs.get(weaponId)?.weaponStyle === 'bow';
@@ -3283,6 +3360,11 @@ export class SidePanel {
     this.renderSpellbook('good');
     this.renderSpellbook('evil');
     this.updateStanceUI();
+  }
+
+  applyAutoRetaliateFromServer(enabled: boolean): void {
+    this.autoRetaliate = enabled;
+    this.updateAutoRetaliateUI();
   }
 
   /** Set a sell callback (when shop is open) or null to clear */

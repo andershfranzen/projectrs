@@ -65,6 +65,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'basicTruedoor': 13,
   // Cave entrances
   'cavedoor': 15,  // Cave Entrance -> map transition
+  'CavernEntrance1': 15,
+  'CavernExit1': 15,
   // Floor transitions
   'Ladder': 23,
   // Chests (roguery / lockpicking). Closed asset is interactable; the open

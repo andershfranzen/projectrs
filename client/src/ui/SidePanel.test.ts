@@ -23,6 +23,26 @@ function makeSpellModePanel(): any {
   return panel;
 }
 
+function makeAutoRetaliatePanel(initial: boolean): any {
+  const activeClasses = new Set<string>();
+  const panel = Object.create(SidePanel.prototype) as any;
+  panel.autoRetaliate = initial;
+  panel.autoRetaliateCheckbox = { checked: !initial };
+  panel.autoRetaliateRow = {
+    classList: {
+      toggle(name: string, enabled?: boolean) {
+        if (enabled) activeClasses.add(name);
+        else activeClasses.delete(name);
+        return activeClasses.has(name);
+      },
+      contains(name: string) {
+        return activeClasses.has(name);
+      },
+    },
+  };
+  return panel;
+}
+
 describe('SidePanel spell modes', () => {
   test('selecting autocast clears a stale one-off target spell', () => {
     const panel = makeSpellModePanel();
@@ -60,5 +80,27 @@ describe('SidePanel spell modes', () => {
 
     expect(panel.getAutocastSpell()).toBe(-1);
     expect(autocastChanges).toEqual([]);
+  });
+});
+
+describe('SidePanel auto retaliate', () => {
+  test('server sync refreshes controls even when the value is unchanged', () => {
+    const panel = makeAutoRetaliatePanel(false);
+
+    panel.applyAutoRetaliateFromServer(false);
+
+    expect(panel.autoRetaliate).toBe(false);
+    expect(panel.autoRetaliateCheckbox.checked).toBe(false);
+    expect(panel.autoRetaliateRow.classList.contains('is-active')).toBe(false);
+  });
+
+  test('server sync marks the row active when enabled', () => {
+    const panel = makeAutoRetaliatePanel(false);
+
+    panel.applyAutoRetaliateFromServer(true);
+
+    expect(panel.autoRetaliate).toBe(true);
+    expect(panel.autoRetaliateCheckbox.checked).toBe(true);
+    expect(panel.autoRetaliateRow.classList.contains('is-active')).toBe(true);
   });
 });

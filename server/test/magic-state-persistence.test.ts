@@ -31,4 +31,25 @@ describe('magic combat state persistence', () => {
       db.close();
     }
   });
+
+  test('saves and loads auto retaliate', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const session = db.loginFallbackAccount('Cub');
+      const player = new Player('Cub', 1.5, 1.5, fakeWs, session.accountId);
+      player.autoRetaliate = true;
+
+      db.savePlayerState(session.accountId, player, 0);
+      let saved = db.loadPlayerState(session.accountId);
+
+      expect(saved?.autoRetaliate).toBe(true);
+
+      db.saveAutoRetaliate(session.accountId, false);
+      saved = db.loadPlayerState(session.accountId);
+
+      expect(saved?.autoRetaliate).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
 });

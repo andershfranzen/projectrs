@@ -26,3 +26,28 @@ test('addXp still levels normally from coherent XP state', () => {
   expect(skills.mining.currentLevel).toBe(2);
   expect(skills.mining.xp).toBe(xpForLevel(2));
 });
+
+test('hitpoints level-up adds gained max hp without full healing', () => {
+  const skills = initSkills();
+  skills.hitpoints.currentLevel = 4;
+  skills.hitpoints.xp = xpForLevel(11) - 1;
+
+  const result = addXp(skills, 'hitpoints', 1);
+
+  expect(result).toEqual({ leveled: true, newLevel: 11 });
+  expect(skills.hitpoints.level).toBe(11);
+  expect(skills.hitpoints.currentLevel).toBe(5);
+  expect(skills.hitpoints.xp).toBe(xpForLevel(11));
+});
+
+test('combat auto hitpoints level-up does not full heal', () => {
+  const skills = initSkills();
+  skills.hitpoints.currentLevel = 4;
+  skills.hitpoints.xp = xpForLevel(11) - 1;
+
+  addXp(skills, 'strength', 3);
+
+  expect(skills.hitpoints.level).toBe(11);
+  expect(skills.hitpoints.currentLevel).toBe(5);
+  expect(skills.hitpoints.xp).toBe(xpForLevel(11));
+});

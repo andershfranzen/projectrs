@@ -2114,57 +2114,135 @@
   },
   {
     "id": 224,
-    "name": "Strange Totem",
-    "description": "A tier-1 relic. Worn smooth by countless hands.",
+    "name": "Boat (tier 1)",
+    "description": "A tier-1 relic. A tiny vessel made for a forgotten rite.",
     "stackable": false,
     "equippable": false,
     "value": 50,
-    "icon": "Strange_Totem_224.png"
+    "icon": "Strange_Totem_224.png",
+    "model": "/assets/models/relics/Boat.glb"
   },
   {
     "id": 225,
-    "name": "Old Coin",
-    "description": "A tier-1 relic. The face is unfamiliar.",
+    "name": "Old Game (tier 1)",
+    "description": "A tier-1 relic. The rules were lost before the pieces were.",
     "stackable": false,
     "equippable": false,
     "value": 50,
-    "icon": "Old_Coin_225.png"
+    "icon": "Old_Coin_225.png",
+    "model": "/assets/models/relics/OldGame.glb"
   },
   {
     "id": 226,
-    "name": "Old Symbol",
-    "description": "A tier-1 relic. The meaning is lost to time.",
+    "name": "Bird Statue (tier 1)",
+    "description": "A tier-1 relic. Its watcher was carved with patient hands.",
     "stackable": false,
     "equippable": false,
     "value": 50,
-    "icon": "Old_Symbol_226.png"
+    "icon": "Old_Symbol_226.png",
+    "model": "/assets/models/relics/BirdStatue.glb"
   },
   {
     "id": 227,
-    "name": "Old Jewelry",
-    "description": "A tier-2 relic. Tarnished but unmistakably valuable.",
+    "name": "Skyglass Shard (tier 2)",
+    "description": "A tier-2 relic. Blue glass catches light along its broken notch.",
     "stackable": false,
     "equippable": false,
     "value": 200,
-    "icon": "Old_Jewelry_227.png"
+    "icon": "Old_Jewelry_227.png",
+    "model": "/assets/models/relics/SkyglassShard.glb"
   },
   {
     "id": 228,
-    "name": "Old Bone",
-    "description": "A tier-2 relic. Too smooth to be natural.",
+    "name": "Moontear Ring (tier 2)",
+    "description": "A tier-2 relic. A crescent frame holds a cold tear of glass.",
     "stackable": false,
     "equippable": false,
     "value": 200,
-    "icon": "Old_Bone_228.png"
+    "icon": "Old_Bone_228.png",
+    "model": "/assets/models/relics/MoontearRing.glb"
   },
   {
     "id": 229,
-    "name": "Manuscript",
-    "description": "A tier-2 relic. The script bends in patterns that shouldn't make sense.",
+    "name": "Broken Drop (tier 2)",
+    "description": "A tier-2 relic. The charm is cracked, but the core still answers.",
     "stackable": false,
     "equippable": false,
     "value": 200,
-    "icon": "Manuscript_229.png"
+    "icon": "Manuscript_229.png",
+    "model": "/assets/models/relics/BrokenDrop.glb"
+  },
+  {
+    "id": 288,
+    "name": "Omen Kite (tier 2)",
+    "description": "A tier-2 relic. Its cloth spines were made to read unlucky winds.",
+    "stackable": false,
+    "equippable": false,
+    "value": 200,
+    "model": "/assets/models/relics/OmenKite.glb"
+  },
+  {
+    "id": 289,
+    "name": "Crescent Reliquary (tier 3)",
+    "description": "A tier-3 relic. The silver crescent holds a moon-cold core.",
+    "stackable": false,
+    "equippable": false,
+    "value": 800,
+    "model": "/assets/models/relics/CrescentReliquary.glb"
+  },
+  {
+    "id": 290,
+    "name": "Broken Halo Idol (tier 3)",
+    "description": "A tier-3 relic. Its halo is broken, but the idol still burns with old faith.",
+    "stackable": false,
+    "equippable": false,
+    "value": 800,
+    "model": "/assets/models/relics/BrokenHaloIdol.glb"
+  },
+  {
+    "id": 291,
+    "name": "Tri-Spire Reliquary (tier 3)",
+    "description": "A tier-3 relic. Three spires guard a sealed ritual ember.",
+    "stackable": false,
+    "equippable": false,
+    "value": 800,
+    "model": "/assets/models/relics/TriSpireReliquary.glb"
+  },
+  {
+    "id": 292,
+    "name": "Bell Tower Casket (tier 3)",
+    "description": "A tier-3 relic. A tiny tower built over a silent shrine bell.",
+    "stackable": false,
+    "equippable": false,
+    "value": 800,
+    "model": "/assets/models/relics/BellTowerCasket.glb"
+  },
+  {
+    "id": 293,
+    "name": "Twin-Spire Sigil (tier 4)",
+    "description": "A tier-4 relic. Two spires press an old seal around a dark altar mark.",
+    "stackable": false,
+    "equippable": false,
+    "value": 2500,
+    "model": "/assets/models/relics/TwinSpireSigil.glb"
+  },
+  {
+    "id": 294,
+    "name": "Celestial Astrolabe (tier 4)",
+    "description": "A tier-4 relic. Its rings chart skies that no living sailor has seen.",
+    "stackable": false,
+    "equippable": false,
+    "value": 2500,
+    "model": "/assets/models/relics/CelestialAstrolabe.glb"
+  },
+  {
+    "id": 295,
+    "name": "Black Sun Reliquary (tier 5)",
+    "description": "A tier-5 relic. The black sun burns behind a ring of sacred gold.",
+    "stackable": false,
+    "equippable": false,
+    "value": 7500,
+    "model": "/assets/models/relics/BlackSunReliquary.glb"
   },
   {
     "id": 230,

@@ -30,6 +30,8 @@ export class WorldObject {
   closedEdge: number = 0;
   /** Optional per-instance name from an editor placed object. */
   name?: string;
+  /** Source editor asset id, when this object came from a placed GLB. */
+  assetId?: string;
   /** Optional per-instance examine text from an editor placed object. */
   examineText?: string;
   /** Optional per-action effects from an editor placed object. */

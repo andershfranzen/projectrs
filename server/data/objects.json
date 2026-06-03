@@ -1517,6 +1517,11 @@
         "itemId": 229,
         "quantity": 1,
         "chance": 0.05
+      },
+      {
+        "itemId": 288,
+        "quantity": 1,
+        "chance": 0.05
       }
     ]
   },
@@ -1547,17 +1552,22 @@
     "depletedAssetId": "open tier 3 chest",
     "extraLoot": [
       {
-        "itemId": 227,
+        "itemId": 289,
         "quantity": 1,
         "chance": 0.05
       },
       {
-        "itemId": 228,
+        "itemId": 290,
         "quantity": 1,
         "chance": 0.05
       },
       {
-        "itemId": 229,
+        "itemId": 291,
+        "quantity": 1,
+        "chance": 0.05
+      },
+      {
+        "itemId": 292,
         "quantity": 1,
         "chance": 0.05
       }
@@ -1590,17 +1600,12 @@
     "depletedAssetId": "open tier 4 chest",
     "extraLoot": [
       {
-        "itemId": 227,
+        "itemId": 293,
         "quantity": 1,
         "chance": 0.05
       },
       {
-        "itemId": 228,
-        "quantity": 1,
-        "chance": 0.05
-      },
-      {
-        "itemId": 229,
+        "itemId": 294,
         "quantity": 1,
         "chance": 0.05
       }
@@ -1633,17 +1638,7 @@
     "depletedAssetId": "open tier 5 chest",
     "extraLoot": [
       {
-        "itemId": 227,
-        "quantity": 1,
-        "chance": 0.05
-      },
-      {
-        "itemId": 228,
-        "quantity": 1,
-        "chance": 0.05
-      },
-      {
-        "itemId": 229,
+        "itemId": 295,
         "quantity": 1,
         "chance": 0.05
       }
@@ -1676,17 +1671,7 @@
     "depletedAssetId": "open tier 6 chest",
     "extraLoot": [
       {
-        "itemId": 227,
-        "quantity": 1,
-        "chance": 0.05
-      },
-      {
-        "itemId": 228,
-        "quantity": 1,
-        "chance": 0.05
-      },
-      {
-        "itemId": 229,
+        "itemId": 295,
         "quantity": 1,
         "chance": 0.05
       }

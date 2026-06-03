@@ -447,11 +447,26 @@ function handleCommand(
       if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);
       if (player) {
-        const map = world.getMap(player.currentMapLevel);
+        const rawTarget = (parts[1] ?? '').trim();
+        const targetMapId = rawTarget === 'here' || rawTarget === 'current'
+          ? player.currentMapLevel
+          : rawTarget || 'kcmap';
+        const map = world.getMap(targetMapId);
         if (map) {
           preparePlayerForAdminTeleport(player, world);
-          world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z, undefined, 0);
-          sendSystem(ws, 'Teleported to spawn');
+          if (targetMapId === player.currentMapLevel) {
+            world.teleportPlayer(player, map.meta.spawnPoint.x, map.meta.spawnPoint.z, undefined, 0);
+          } else {
+            world.handleMapTransition(player, {
+              targetMap: targetMapId,
+              targetX: map.meta.spawnPoint.x,
+              targetZ: map.meta.spawnPoint.z,
+              targetFloor: 0,
+            });
+          }
+          sendSystem(ws, `Teleported to ${targetMapId} spawn`);
+        } else {
+          sendSystem(ws, `Map "${targetMapId}" not found`);
         }
       }
       break;

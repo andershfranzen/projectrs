@@ -1,0 +1,42 @@
+{
+  "npcs": [
+    {
+      "id": 1,
+      "npcId": 27,
+      "x": 11.5,
+      "z": 20.5,
+      "wanderRange": 4,
+      "aggressive": true
+    },
+    {
+      "id": 2,
+      "npcId": 27,
+      "x": 13.5,
+      "z": 17.5,
+      "wanderRange": 4
+    },
+    {
+      "id": 3,
+      "npcId": 27,
+      "x": 15.5,
+      "z": 20.5,
+      "wanderRange": 4
+    },
+    {
+      "id": 4,
+      "npcId": 27,
+      "x": 13.5,
+      "z": 14.5,
+      "wanderRange": 4
+    },
+    {
+      "id": 5,
+      "npcId": 27,
+      "x": 8.5,
+      "z": 18.5,
+      "wanderRange": 4
+    }
+  ],
+  "objects": [],
+  "items": []
+}

@@ -85,6 +85,7 @@ import { getThumbnail } from './assets-system/ThumbnailRenderer'
 import { openThumbnailRotationEditor } from './assets-system/ThumbnailRotationEditor'
 import { openItemThumbnailBrowser } from './assets-system/ItemThumbnailBrowser'
 import { openItemStatsEditor } from './item-stats/ItemStatsEditor'
+import { openDropTableEditor } from './drop-tables/DropTableEditor'
 import { loadTextureRegistry } from './assets-system/TextureRegistry'
 import {
   buildTerrainMeshes,
@@ -263,6 +264,10 @@ function tuneModelLighting(model) {
 
   let assetRegistry = []
   let assetById = new Map()
+  let editorServerMaps = []
+  let editorTeleportEntries = []
+  let editorDungeonExits = []
+  let currentServerMapId = 'kcmap'
   let filteredAssets = []
   let selectedAssetId = ''
   let previewObject = null
@@ -1242,6 +1247,8 @@ function tuneModelLighting(model) {
       console.warn('Failed to load object definitions:', e)
       editorObjectDefs = []
       editorObjectDefById = new Map()
+    } finally {
+      try { updateToolUI() } catch {}
     }
   }
   loadEditorObjectDefs()
@@ -2069,6 +2076,7 @@ let selectedWaterFlowChunk = null
     <button id="newDungeonBtn" title="Create a new dungeon map">+ Dungeon</button>
     <button id="questsBtn" title="Edit quests.json (storyline definitions)">Quests</button>
     <button id="itemsBtn" title="Edit item stats and compare weapon DPS">Items</button>
+    <button id="dropsBtn" title="Edit NPC loot tables">Drops</button>
     <button id="itemThumbsTopBtn" title="Choose render side for inventory and ground 3D item thumbnails">Item Thumbs</button>
     <span class="top-sep"></span>
     <span class="top-label" id="mapSizeLabel">192 x 64</span>
@@ -2315,6 +2323,9 @@ let selectedWaterFlowChunk = null
           <select id="altarTierSelect" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:11px;">
             <option value="1">Tier 1 relics</option>
             <option value="2">Tier 2 relics</option>
+            <option value="3">Tier 3 relics</option>
+            <option value="4">Tier 4 relics</option>
+            <option value="5">Tier 5 relics</option>
           </select>
         </label>
         <div id="ladderWiringRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
@@ -2346,21 +2357,35 @@ let selectedWaterFlowChunk = null
         <textarea id="objectEffectMessage" placeholder="Private chat-panel message (optional)" style="width:100%;height:44px;box-sizing:border-box;font-size:11px;resize:vertical;"></textarea>
       </div>
       <div id="triggerRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
-        <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Trigger</div>
+        <div style="font-size:11px;color:#aaa;margin-bottom:6px;">Dungeon teleport</div>
         <div style="display:flex;gap:5px;align-items:center;margin-bottom:5px;">
           <select id="triggerType" style="flex:1;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:4px 6px;font-size:12px;">
-            <option value="">— none —</option>
-            <option value="teleport">Teleport</option>
+            <option value="">Default destination</option>
+            <option value="teleport">Custom dungeon map</option>
           </select>
         </div>
         <div id="triggerTeleportFields" style="display:none;">
-          <div style="font-size:10px;color:#888;margin-bottom:3px;">Destination chunk file</div>
-          <input id="triggerDestChunk" type="text" placeholder="e.g. dungeon_1" style="width:100%;box-sizing:border-box;margin-bottom:5px;font-size:11px;" />
+          <div style="font-size:10px;color:#888;margin-bottom:3px;">Destination map</div>
+          <input id="triggerDestChunk" type="text" list="triggerDestMapList" placeholder="e.g. underground" style="width:100%;box-sizing:border-box;margin-bottom:5px;font-size:11px;" />
+          <datalist id="triggerDestMapList"></datalist>
           <div style="font-size:10px;color:#888;margin-bottom:3px;">Entry point (X / Y / Z)</div>
           <div style="display:flex;gap:3px;">
             <input id="triggerEntryX" type="number" step="0.5" placeholder="X" style="flex:1;min-width:0;" />
             <input id="triggerEntryY" type="number" step="0.5" placeholder="Y" style="flex:1;min-width:0;" />
             <input id="triggerEntryZ" type="number" step="0.5" placeholder="Z" style="flex:1;min-width:0;" />
+          </div>
+          <button id="triggerUseDungeonExitBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-top:5px;">Use placed dungeon exit</button>
+          <button id="triggerUseMapCenterBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-top:5px;">Use map center</button>
+          <div id="triggerDungeonExitStatus" style="font-size:10px;color:#888;line-height:1.35;margin-top:4px;"></div>
+          <div id="teleportOccupancyPanel" style="margin-top:7px;border:1px solid #333;border-radius:4px;background:#171717;padding:6px;">
+            <div style="font-size:10px;color:#aaa;margin-bottom:4px;">Source map placement</div>
+            <canvas id="teleportSourceMapCanvas" width="220" height="132" style="display:block;width:100%;height:132px;background:#0d0d0d;border:1px solid #2d2d2d;border-radius:3px;box-sizing:border-box;"></canvas>
+            <div id="teleportSourceMapSummary" style="font-size:10px;color:#aaa;line-height:1.35;margin-top:5px;margin-bottom:7px;"></div>
+            <div style="font-size:10px;color:#aaa;margin-bottom:4px;border-top:1px solid #2d2d2d;padding-top:7px;">Destination landing points</div>
+            <canvas id="teleportOccupancyCanvas" width="220" height="132" style="display:block;width:100%;height:132px;background:#0d0d0d;border:1px solid #2d2d2d;border-radius:3px;box-sizing:border-box;"></canvas>
+            <div id="teleportOccupancySummary" style="font-size:10px;color:#aaa;line-height:1.35;margin-top:5px;"></div>
+            <div id="teleportSourceProximity" style="font-size:10px;color:#888;line-height:1.35;margin-top:3px;"></div>
+            <div id="teleportOccupancyList" style="font-size:10px;color:#888;line-height:1.35;margin-top:5px;max-height:54px;overflow-y:auto;"></div>
           </div>
         </div>
       </div>
@@ -2477,6 +2502,7 @@ let selectedWaterFlowChunk = null
         <button class="npc-tab" data-tab="stats" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Stats</button>
         <button class="npc-tab" data-tab="appearance" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Look</button>
         <button class="npc-tab" data-tab="equipment" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Gear</button>
+        <button class="npc-tab" data-tab="drops" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Drops</button>
         <button class="npc-tab" data-tab="shop" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Shop</button>
         <button class="npc-tab" data-tab="dialogue" style="flex:1;font-size:10px;padding:5px 2px;background:#1a1a1a;border:1px solid #444;border-bottom:none;border-radius:3px 3px 0 0;color:#aaa;cursor:pointer;">Talk</button>
       </div>
@@ -2769,6 +2795,10 @@ let selectedWaterFlowChunk = null
   function formatItemDisplay(id) {
     const def = itemDefs.find(d => d.id === id)
     return def ? `${def.name} (${def.id})` : (id > 0 ? String(id) : '')
+  }
+
+  function escapeEditorHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
   }
 
   function formatNpcTypeDisplay(def) {
@@ -3187,6 +3217,8 @@ let selectedWaterFlowChunk = null
       renderAppearanceTab(content)
     } else if (activeNpcTab === 'equipment') {
       renderEquipmentTab(content)
+    } else if (activeNpcTab === 'drops') {
+      renderDropsTab(content, def)
     } else if (activeNpcTab === 'shop') {
       renderShopTab(content, def)
     } else if (activeNpcTab === 'dialogue') {
@@ -3886,6 +3918,117 @@ let selectedWaterFlowChunk = null
     root.appendChild(hint)
   }
 
+  function openDropsEditor(selectedNpcId = selectedNpcSpawn?.npcId) {
+    return openDropTableEditor({
+      npcDefs,
+      items: itemDefs,
+      loadItems: fetchItemDefsOnce,
+      selectedNpcId,
+      onDirty: markDefsDirty,
+      onSave: saveNpcDefsToServer,
+    })
+  }
+
+  function lootChanceLabel(chance) {
+    const pct = Math.max(0, Math.min(1, Number(chance) || 0)) * 100
+    if (pct >= 100) return 'Always'
+    if (pct <= 0) return 'Never'
+    if (pct < 1) return `${pct.toFixed(2)}%`
+    if (pct < 10) return `${pct.toFixed(1)}%`
+    return `${Math.round(pct)}%`
+  }
+
+  function renderDropsTab(root, def) {
+    root.innerHTML = ''
+    if (!def) {
+      root.innerHTML = `<div class="hint">Select an NPC spawn (or pick a type) to edit drops.</div>`
+      return
+    }
+
+    if (itemDefs.length === 0) {
+      root.innerHTML = `<div class="hint">Loading item names...</div>`
+      fetchItemDefsOnce().then(() => {
+        if (activeNpcTab === 'drops') renderDropsTab(root, def)
+      })
+      return
+    }
+
+    if (!Array.isArray(def.lootTable)) def.lootTable = []
+    const rows = def.lootTable.map(drop => {
+      const item = itemDefs.find(d => d.id === drop.itemId)
+      const chance = Math.max(0, Math.min(1, Number(drop.chance) || 0))
+      const expectedQty = (Number(drop.quantity) || 0) * chance
+      const expectedValue = expectedQty * (Number(item?.value) || 0)
+      return { drop, item, chance, expectedQty, expectedValue }
+    })
+    const guaranteed = rows.filter(row => row.chance >= 1).length
+    const random = rows.filter(row => row.chance > 0 && row.chance < 1).length
+    const expectedValue = rows.reduce((sum, row) => sum + row.expectedValue, 0)
+
+    root.innerHTML = `
+      <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${escapeEditorHtml(def.name)}".</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;margin-bottom:8px;">
+        <div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:6px;text-align:center;">
+          <div style="font-size:15px;color:#fff;font-weight:bold;">${rows.length}</div>
+          <div style="font-size:10px;color:#888;">entries</div>
+        </div>
+        <div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:6px;text-align:center;">
+          <div style="font-size:15px;color:#fff;font-weight:bold;">${guaranteed}</div>
+          <div style="font-size:10px;color:#888;">always</div>
+        </div>
+        <div style="background:#1a1a1a;border:1px solid #333;border-radius:4px;padding:6px;text-align:center;">
+          <div style="font-size:15px;color:#fff;font-weight:bold;">${expectedValue.toFixed(expectedValue >= 10 ? 0 : 1)}</div>
+          <div style="font-size:10px;color:#888;">value/kill</div>
+        </div>
+      </div>
+      <button id="openDropTablesBtn" style="width:100%;font-size:11px;padding:6px;background:#2a4a6c;color:#fff;cursor:pointer;border:1px solid #5d7897;border-radius:3px;">Open drop table editor</button>
+      <div style="display:flex;gap:5px;margin-top:6px;">
+        <button id="quickAlwaysDropBtn" style="flex:1;font-size:11px;padding:5px;background:#315c31;color:#fff;cursor:pointer;border:1px solid #4d7d4d;border-radius:3px;">+ Always</button>
+        <button id="quickRandomDropBtn" style="flex:1;font-size:11px;padding:5px;background:#5f5130;color:#fff;cursor:pointer;border:1px solid #826f45;border-radius:3px;">+ Random</button>
+      </div>
+      <div style="font-size:10px;color:#888;margin:8px 0 4px;">${guaranteed} guaranteed · ${random} random</div>
+      <div id="dropTabRows" style="display:flex;flex-direction:column;gap:5px;"></div>
+    `
+
+    const list = root.querySelector('#dropTabRows')
+    if (rows.length === 0) {
+      list.innerHTML = `<div class="hint" style="font-size:10px;color:rgba(255,255,255,0.35);">No drops on this NPC type.</div>`
+    } else {
+      for (const row of rows.slice(0, 8)) {
+        const div = document.createElement('div')
+        div.style.cssText = 'background:#171717;border:1px solid #333;border-radius:4px;padding:5px 6px;'
+        div.innerHTML = `
+          <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:#ddd;">
+            <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeEditorHtml(row.item?.name || `Item ${row.drop.itemId}`)} x${Math.max(1, row.drop.quantity || 1)}</span>
+            <b style="flex:0 0 auto;color:#ffcc66;">${lootChanceLabel(row.chance)}</b>
+          </div>
+          <div style="height:5px;background:#0c0c0c;border-radius:999px;overflow:hidden;margin-top:4px;">
+            <i style="display:block;height:100%;width:${Math.max(2, Math.min(100, row.chance * 100))}%;background:${row.chance >= 1 ? '#5a8f5a' : row.chance >= 0.25 ? '#4d789e' : row.chance >= 0.05 ? '#8a7940' : '#9a5d4c'};"></i>
+          </div>
+        `
+        list.appendChild(div)
+      }
+      if (rows.length > 8) {
+        const more = document.createElement('div')
+        more.style.cssText = 'font-size:10px;color:#888;text-align:center;padding:3px;'
+        more.textContent = `+ ${rows.length - 8} more`
+        list.appendChild(more)
+      }
+    }
+
+    root.querySelector('#openDropTablesBtn')?.addEventListener('click', () => openDropsEditor(def.id))
+    root.querySelector('#quickAlwaysDropBtn')?.addEventListener('click', () => {
+      def.lootTable.push({ itemId: 0, quantity: 1, chance: 1 })
+      markDefsDirty()
+      openDropsEditor(def.id)
+    })
+    root.querySelector('#quickRandomDropBtn')?.addEventListener('click', () => {
+      def.lootTable.push({ itemId: 0, quantity: 1, chance: 0.25 })
+      markDefsDirty()
+      openDropsEditor(def.id)
+    })
+  }
+
   /** Append a "Shared (def) | Override (this spawn)" mode toggle. Used by
    *  the Shop and Dialogue tabs — both edit either a shared NpcDef field or
    *  a per-spawn override of it. The disabled state for "Override" handles
@@ -4554,20 +4697,439 @@ let selectedWaterFlowChunk = null
     else delete selectedPlacedObject.userData.name
     ensureShopItemDatalist()
   })
-  function isDoorPlacedObject(obj) {
+  function placedObjectDef(obj) {
     const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
-    if (defId == null) return false
-    return editorObjectDefById.get(defId)?.category === 'door'
+    if (defId == null) return null
+    return editorObjectDefById.get(defId) || null
+  }
+  function isDoorPlacedObject(obj) {
+    const def = placedObjectDef(obj)
+    return def?.category === 'door'
   }
   function isAltarPlacedObject(obj) {
-    const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
-    if (defId == null) return false
-    return editorObjectDefById.get(defId)?.category === 'altar'
+    const def = placedObjectDef(obj)
+    return def?.category === 'altar'
   }
   function isLadderPlacedObject(obj) {
-    const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
-    if (defId == null) return false
-    return editorObjectDefById.get(defId)?.category === 'ladder'
+    const def = placedObjectDef(obj)
+    return def?.category === 'ladder'
+  }
+  function isTeleportPlacedObject(obj) {
+    const def = placedObjectDef(obj)
+    return Boolean(obj && (def?.transition || obj.userData?.trigger?.type === 'teleport'))
+  }
+  function mapInfoById(mapId) {
+    return editorServerMaps.find(m => m?.id === mapId) || null
+  }
+  function defaultTeleportMapId(obj) {
+    const existing = obj?.userData?.trigger?.destChunk
+    if (existing) return existing
+    const defTarget = placedObjectDef(obj)?.transition?.targetMap
+    if (defTarget) return defTarget
+    const dungeon = editorServerMaps.find(m => m?.id !== currentServerMapId && (m.mapType === 'dungeon' || m.id === 'underground'))
+    if (dungeon?.id) return dungeon.id
+    const other = editorServerMaps.find(m => m?.id && m.id !== currentServerMapId)
+    return other?.id || 'underground'
+  }
+  function defaultTeleportEntry(mapId) {
+    const info = mapInfoById(mapId)
+    const width = Number.isFinite(info?.width) && info.width > 0 ? info.width : 64
+    const height = Number.isFinite(info?.height) && info.height > 0 ? info.height : 64
+    return {
+      x: Math.floor(width / 2) + 0.5,
+      y: 0,
+      z: Math.floor(height / 2) + 0.5,
+    }
+  }
+  function syncTeleportMapDatalist() {
+    const list = sidebar.querySelector('#triggerDestMapList')
+    if (!list) return
+    const attr = (value) => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+    list.innerHTML = editorServerMaps
+      .filter(m => m?.id)
+      .map(m => {
+        const type = m.mapType ? `, ${m.mapType}` : ''
+        const size = m.width && m.height ? ` (${m.width}x${m.height}${type})` : type ? ` (${m.mapType})` : ''
+        return `<option value="${attr(m.id)}" label="${attr(`${m.name || m.id}${size}`)}"></option>`
+      })
+      .join('')
+  }
+  function ensureTeleportDefaultsInUI() {
+    const destInput = sidebar.querySelector('#triggerDestChunk')
+    const entryX = sidebar.querySelector('#triggerEntryX')
+    const entryY = sidebar.querySelector('#triggerEntryY')
+    const entryZ = sidebar.querySelector('#triggerEntryZ')
+    if (!destInput || !entryX || !entryY || !entryZ) return
+    if (!destInput.value.trim()) destInput.value = defaultTeleportMapId(selectedPlacedObject)
+    const entry = defaultTeleportEntry(destInput.value.trim())
+    if (!entryX.value) entryX.value = entry.x
+    if (!entryY.value) entryY.value = entry.y
+    if (!entryZ.value) entryZ.value = entry.z
+  }
+  function fillTeleportEntryFromMapCenter() {
+    const destInput = sidebar.querySelector('#triggerDestChunk')
+    const entryX = sidebar.querySelector('#triggerEntryX')
+    const entryY = sidebar.querySelector('#triggerEntryY')
+    const entryZ = sidebar.querySelector('#triggerEntryZ')
+    if (!destInput || !entryX || !entryY || !entryZ) return
+    if (!destInput.value.trim()) destInput.value = defaultTeleportMapId(selectedPlacedObject)
+    const entry = defaultTeleportEntry(destInput.value.trim())
+    entryX.value = entry.x
+    entryY.value = entry.y
+    entryZ.value = entry.z
+    saveTriggerFromUI()
+  }
+  function dungeonExitsForMap(mapId) {
+    return editorDungeonExits.filter(exit => (
+      exit?.mapId === mapId &&
+      Number.isFinite(exit.x) &&
+      Number.isFinite(exit.z)
+    ))
+  }
+  function teleportExitLanding(exit) {
+    return {
+      x: Number.isFinite(exit?.landingX) ? exit.landingX : exit?.x,
+      y: Number.isFinite(exit?.landingY) ? exit.landingY : (exit?.y ?? 0),
+      z: Number.isFinite(exit?.landingZ) ? exit.landingZ : exit?.z,
+    }
+  }
+  function nearestDungeonExitForMap(mapId, anchor) {
+    const exits = dungeonExitsForMap(mapId)
+    if (!exits.length) return null
+    const reference = anchor || defaultTeleportEntry(mapId)
+    return exits
+      .map(exit => {
+        const landing = teleportExitLanding(exit)
+        return { exit, landing, distance: teleportDistance2d(reference.x, reference.z, landing.x, landing.z) }
+      })
+      .sort((a, b) => a.distance - b.distance)[0]
+  }
+  function setDungeonExitStatus(message, color = '#888') {
+    const status = sidebar.querySelector('#triggerDungeonExitStatus')
+    if (!status) return
+    status.style.color = color
+    status.textContent = message
+  }
+  function fillTeleportEntryFromDungeonExit() {
+    const typeInput = sidebar.querySelector('#triggerType')
+    const fields = sidebar.querySelector('#triggerTeleportFields')
+    const destInput = sidebar.querySelector('#triggerDestChunk')
+    const entryX = sidebar.querySelector('#triggerEntryX')
+    const entryY = sidebar.querySelector('#triggerEntryY')
+    const entryZ = sidebar.querySelector('#triggerEntryZ')
+    if (!typeInput || !fields || !destInput || !entryX || !entryY || !entryZ) return
+
+    typeInput.value = 'teleport'
+    fields.style.display = 'block'
+    if (!destInput.value.trim()) destInput.value = defaultTeleportMapId(selectedPlacedObject)
+    const targetMap = destInput.value.trim()
+    const fallback = defaultTeleportEntry(targetMap)
+    const rawX = parseFloat(entryX.value)
+    const rawY = parseFloat(entryY.value)
+    const rawZ = parseFloat(entryZ.value)
+    const anchor = {
+      x: Number.isFinite(rawX) ? rawX : fallback.x,
+      y: Number.isFinite(rawY) ? rawY : fallback.y,
+      z: Number.isFinite(rawZ) ? rawZ : fallback.z,
+    }
+    const match = nearestDungeonExitForMap(targetMap, anchor)
+    if (!match) {
+      setDungeonExitStatus(`No saved CavernExit1 on ${targetMap}. Place one in that dungeon, save the map, then try again.`, '#ffb45f')
+      renderTeleportOccupancyPreview()
+      return
+    }
+
+    const landing = match.landing || teleportExitLanding(match.exit)
+    entryX.value = formatTeleportNumber(landing.x)
+    entryY.value = formatTeleportNumber(landing.y)
+    entryZ.value = formatTeleportNumber(landing.z)
+    saveTriggerFromUI()
+    const coord = `${formatTeleportNumber(landing.x)}, ${formatTeleportNumber(landing.y)}, ${formatTeleportNumber(landing.z)}`
+    setDungeonExitStatus(`Linked to ${match.exit.objectName || match.exit.assetId || 'CavernExit1'} on ${targetMap} at ${coord}.`, '#7bdca8')
+    updateToolUI()
+  }
+  function formatTeleportNumber(value) {
+    if (!Number.isFinite(value)) return '?'
+    const rounded = Math.round(value * 10) / 10
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+  }
+  function teleportDistance2d(ax, az, bx, bz) {
+    const dx = ax - bx
+    const dz = az - bz
+    return Math.sqrt(dx * dx + dz * dz)
+  }
+  function currentTeleportDraft() {
+    if (!selectedPlacedObject || !isTeleportPlacedObject(selectedPlacedObject)) return null
+    const type = sidebar.querySelector('#triggerType')?.value || selectedPlacedObject.userData?.trigger?.type || ''
+    if (type !== 'teleport') return null
+    const dest = sidebar.querySelector('#triggerDestChunk')?.value.trim() || defaultTeleportMapId(selectedPlacedObject)
+    if (!dest) return null
+    const fallback = defaultTeleportEntry(dest)
+    const rawX = parseFloat(sidebar.querySelector('#triggerEntryX')?.value)
+    const rawY = parseFloat(sidebar.querySelector('#triggerEntryY')?.value)
+    const rawZ = parseFloat(sidebar.querySelector('#triggerEntryZ')?.value)
+    return {
+      targetMap: dest,
+      x: Number.isFinite(rawX) ? rawX : fallback.x,
+      y: Number.isFinite(rawY) ? rawY : fallback.y,
+      z: Number.isFinite(rawZ) ? rawZ : fallback.z,
+    }
+  }
+  function teleportEntryLabel(entry) {
+    const name = entry.objectName ? `${entry.objectName} · ` : ''
+    const kind = entry.custom ? 'custom' : 'default'
+    return `${name}${entry.sourceMap} (${formatTeleportNumber(entry.sourceX)}, ${formatTeleportNumber(entry.sourceZ)}) · ${kind}`
+  }
+  function teleportExitLabel(exit) {
+    const name = exit.objectName ? `${exit.objectName} · ` : ''
+    const landing = teleportExitLanding(exit)
+    return `${name}${exit.mapId} exit (${formatTeleportNumber(exit.x)}, ${formatTeleportNumber(exit.z)}) landing (${formatTeleportNumber(landing.x)}, ${formatTeleportNumber(landing.z)})`
+  }
+  function teleportHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  }
+  function renderTeleportSourceMapPreview(canvas, summary, sourceEntries, nearestSource) {
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const sourceX = selectedPlacedObject?.position?.x
+    const sourceZ = selectedPlacedObject?.position?.z
+    const hasSource = Number.isFinite(sourceX) && Number.isFinite(sourceZ)
+    const w = canvas.width
+    const h = canvas.height
+    const pad = 12
+    const plotW = w - pad * 2
+    const plotH = h - pad * 2
+    const width = Math.max(1, map.width || 64)
+    const height = Math.max(1, map.height || 64)
+    const project = (x, z) => ({
+      x: pad + Math.max(0, Math.min(1, x / width)) * plotW,
+      y: pad + Math.max(0, Math.min(1, z / height)) * plotH,
+    })
+
+    ctx.clearRect(0, 0, w, h)
+    ctx.fillStyle = '#0d0d0d'
+    ctx.fillRect(0, 0, w, h)
+
+    if (map.activeChunks?.size) {
+      ctx.fillStyle = '#142233'
+      for (const key of map.activeChunks) {
+        const [cx, cz] = key.split(',').map(Number)
+        if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue
+        const a = project(cx * WALL_CHUNK_SIZE, cz * WALL_CHUNK_SIZE)
+        const b = project(Math.min((cx + 1) * WALL_CHUNK_SIZE, width), Math.min((cz + 1) * WALL_CHUNK_SIZE, height))
+        ctx.fillRect(a.x, a.y, Math.max(1, b.x - a.x), Math.max(1, b.y - a.y))
+      }
+    }
+
+    ctx.strokeStyle = '#2c3b4a'
+    ctx.lineWidth = 1
+    for (let x = 0; x <= width; x += WALL_CHUNK_SIZE) {
+      const p = project(x, 0)
+      ctx.beginPath(); ctx.moveTo(p.x, pad); ctx.lineTo(p.x, h - pad); ctx.stroke()
+    }
+    for (let z = 0; z <= height; z += WALL_CHUNK_SIZE) {
+      const p = project(0, z)
+      ctx.beginPath(); ctx.moveTo(pad, p.y); ctx.lineTo(w - pad, p.y); ctx.stroke()
+    }
+    ctx.strokeStyle = '#626262'
+    ctx.strokeRect(pad, pad, plotW, plotH)
+
+    for (const entry of sourceEntries) {
+      const p = project(entry.sourceX, entry.sourceZ)
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, entry.custom ? 4 : 3, 0, Math.PI * 2)
+      ctx.fillStyle = entry.custom ? '#ff6868' : '#c98542'
+      ctx.fill()
+    }
+
+    if (hasSource) {
+      const current = project(sourceX, sourceZ)
+      if (nearestSource) {
+        const near = project(nearestSource.entry.sourceX, nearestSource.entry.sourceZ)
+        ctx.beginPath()
+        ctx.moveTo(current.x, current.y)
+        ctx.lineTo(near.x, near.y)
+        ctx.strokeStyle = nearestSource.distance < 8 ? '#ff6868' : '#ffd166'
+        ctx.lineWidth = 2
+        ctx.stroke()
+      }
+      ctx.beginPath()
+      ctx.arc(current.x, current.y, 6, 0, Math.PI * 2)
+      ctx.strokeStyle = '#55f0a3'
+      ctx.lineWidth = 2
+      ctx.stroke()
+      ctx.fillStyle = '#55f0a3'
+      ctx.fillRect(current.x - 1, current.y - 1, 2, 2)
+    }
+
+    const sourceCoord = hasSource
+      ? `${formatTeleportNumber(sourceX)}, ${formatTeleportNumber(selectedPlacedObject?.position?.y ?? 0)}, ${formatTeleportNumber(sourceZ)}`
+      : 'unknown'
+    if (!nearestSource) {
+      summary.style.color = '#a8d8ff'
+      summary.textContent = `${currentServerMapId}: current entrance at ${sourceCoord}. No nearby saved entrances on this map.`
+    } else {
+      summary.style.color = nearestSource.distance < 8 ? '#ff9e9e' : nearestSource.distance < 24 ? '#ffd27a' : '#a8d8ff'
+      summary.textContent = `${currentServerMapId}: current entrance at ${sourceCoord}. Nearest saved entrance is ${formatTeleportNumber(nearestSource.distance)} tiles away and points to ${nearestSource.entry.targetMap}.`
+    }
+  }
+  function renderTeleportOccupancyPreview() {
+    const panel = sidebar.querySelector('#teleportOccupancyPanel')
+    const sourceCanvas = sidebar.querySelector('#teleportSourceMapCanvas')
+    const sourceMapSummary = sidebar.querySelector('#teleportSourceMapSummary')
+    const canvas = sidebar.querySelector('#teleportOccupancyCanvas')
+    const summary = sidebar.querySelector('#teleportOccupancySummary')
+    const sourceSummary = sidebar.querySelector('#teleportSourceProximity')
+    const list = sidebar.querySelector('#teleportOccupancyList')
+    if (!panel || !sourceCanvas || !sourceMapSummary || !canvas || !summary || !sourceSummary || !list) return
+    const draft = currentTeleportDraft()
+    panel.style.display = draft ? 'block' : 'none'
+    if (!draft) return
+
+    const mapInfo = mapInfoById(draft.targetMap)
+    const width = Number.isFinite(mapInfo?.width) && mapInfo.width > 0 ? mapInfo.width : 64
+    const height = Number.isFinite(mapInfo?.height) && mapInfo.height > 0 ? mapInfo.height : 64
+    const entries = editorTeleportEntries.filter(entry => entry.targetMap === draft.targetMap)
+    const exits = dungeonExitsForMap(draft.targetMap)
+    const withLandingDistance = entries
+      .map(entry => ({ entry, distance: teleportDistance2d(draft.x, draft.z, entry.targetX, entry.targetZ) }))
+      .sort((a, b) => a.distance - b.distance)
+    const withExitDistance = exits
+      .map(exit => {
+        const landing = teleportExitLanding(exit)
+        return { exit, landing, distance: teleportDistance2d(draft.x, draft.z, landing.x, landing.z) }
+      })
+      .sort((a, b) => a.distance - b.distance)
+    const nearestLanding = withLandingDistance[0] || null
+    const nearestExit = withExitDistance[0] || null
+    const sourceX = selectedPlacedObject?.position?.x
+    const sourceZ = selectedPlacedObject?.position?.z
+    const nearbySources = Number.isFinite(sourceX) && Number.isFinite(sourceZ)
+      ? editorTeleportEntries
+        .filter(entry => entry.sourceMap === currentServerMapId)
+        .map(entry => ({ entry, distance: teleportDistance2d(sourceX, sourceZ, entry.sourceX, entry.sourceZ) }))
+        .filter(item => item.distance > 0.5)
+        .sort((a, b) => a.distance - b.distance)
+      : []
+    const nearestSource = nearbySources[0] || null
+    const sourceEntries = editorTeleportEntries.filter(entry => entry.sourceMap === currentServerMapId)
+    renderTeleportSourceMapPreview(sourceCanvas, sourceMapSummary, sourceEntries, nearestSource)
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    const w = canvas.width
+    const h = canvas.height
+    ctx.clearRect(0, 0, w, h)
+    ctx.fillStyle = '#0d0d0d'
+    ctx.fillRect(0, 0, w, h)
+    const pad = 12
+    const plotW = w - pad * 2
+    const plotH = h - pad * 2
+    const project = (x, z) => ({
+      x: pad + Math.max(0, Math.min(1, x / width)) * plotW,
+      y: pad + Math.max(0, Math.min(1, z / height)) * plotH,
+    })
+    ctx.strokeStyle = '#242424'
+    ctx.lineWidth = 1
+    for (let i = 0; i <= 4; i++) {
+      const gx = pad + (plotW * i / 4)
+      const gy = pad + (plotH * i / 4)
+      ctx.beginPath(); ctx.moveTo(gx, pad); ctx.lineTo(gx, h - pad); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(pad, gy); ctx.lineTo(w - pad, gy); ctx.stroke()
+    }
+    ctx.strokeStyle = '#555'
+    ctx.strokeRect(pad, pad, plotW, plotH)
+    for (const exit of exits) {
+      const p = project(exit.x, exit.z)
+      ctx.fillStyle = '#62c8ff'
+      ctx.fillRect(p.x - 4, p.y - 4, 8, 8)
+      ctx.strokeStyle = '#d8f4ff'
+      ctx.lineWidth = 1
+      ctx.strokeRect(p.x - 4.5, p.y - 4.5, 9, 9)
+      const landing = teleportExitLanding(exit)
+      if (Number.isFinite(landing.x) && Number.isFinite(landing.z) && teleportDistance2d(exit.x, exit.z, landing.x, landing.z) > 0.05) {
+        const lp = project(landing.x, landing.z)
+        ctx.beginPath()
+        ctx.arc(lp.x, lp.y, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#7ce8ff'
+        ctx.fill()
+        ctx.strokeStyle = '#ffffff'
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(p.x, p.y)
+        ctx.lineTo(lp.x, lp.y)
+        ctx.strokeStyle = '#4aaed6'
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+    }
+    for (const entry of entries) {
+      const p = project(entry.targetX, entry.targetZ)
+      ctx.beginPath()
+      ctx.arc(p.x, p.y, entry.custom ? 4 : 3, 0, Math.PI * 2)
+      ctx.fillStyle = entry.custom ? '#ff6868' : '#c98542'
+      ctx.fill()
+    }
+    const current = project(draft.x, draft.z)
+    if (nearestLanding) {
+      const near = project(nearestLanding.entry.targetX, nearestLanding.entry.targetZ)
+      ctx.beginPath()
+      ctx.moveTo(current.x, current.y)
+      ctx.lineTo(near.x, near.y)
+      ctx.strokeStyle = nearestLanding.distance < 1.5 ? '#ff6868' : '#ffd166'
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
+    if (nearestExit) {
+      const nearExit = project(nearestExit.landing.x, nearestExit.landing.z)
+      ctx.beginPath()
+      ctx.moveTo(current.x, current.y)
+      ctx.lineTo(nearExit.x, nearExit.y)
+      ctx.strokeStyle = nearestExit.distance < 1.5 ? '#62c8ff' : '#73d7ff'
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+    ctx.beginPath()
+    ctx.arc(current.x, current.y, 6, 0, Math.PI * 2)
+    ctx.strokeStyle = '#55f0a3'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.fillStyle = '#55f0a3'
+    ctx.fillRect(current.x - 1, current.y - 1, 2, 2)
+
+    const mapLabel = mapInfo?.name || draft.targetMap
+    const coordLabel = `${formatTeleportNumber(draft.x)}, ${formatTeleportNumber(draft.y)}, ${formatTeleportNumber(draft.z)}`
+    const entryOutOfBounds = draft.x < 0 || draft.x >= width || draft.z < 0 || draft.z >= height
+    const exitPhrase = exits.length
+      ? `${exits.length} placed exit${exits.length === 1 ? '' : 's'}`
+      : 'no placed exits'
+    if (entryOutOfBounds) {
+      summary.style.color = '#ff9e9e'
+      summary.textContent = `${mapLabel}: current entry ${coordLabel} is outside this ${width}x${height} map. Use a placed exit or choose an in-bounds tile.`
+    } else if (!nearestLanding) {
+      summary.style.color = '#a8d8ff'
+      summary.textContent = `${mapLabel}: ${exitPhrase}. No saved landing points yet. Current entry ${coordLabel}.`
+    } else {
+      const distance = formatTeleportNumber(nearestLanding.distance)
+      const nearestCoord = `${formatTeleportNumber(nearestLanding.entry.targetX)}, ${formatTeleportNumber(nearestLanding.entry.targetY ?? 0)}, ${formatTeleportNumber(nearestLanding.entry.targetZ)}`
+      summary.style.color = nearestLanding.distance < 1.5 ? '#ff9e9e' : nearestLanding.distance < 8 ? '#ffd27a' : '#a8d8ff'
+      summary.textContent = `${mapLabel}: ${entries.length} saved landing point${entries.length === 1 ? '' : 's'}, ${exitPhrase}. Nearest saved landing is ${distance} tiles away at ${nearestCoord}.`
+    }
+
+    sourceSummary.textContent = 'Green = current, square = exit object, blue dot = exit landing, red = custom saved, amber = default saved. Source grid uses 64-tile chunks.'
+
+    const exitRows = withExitDistance.slice(0, 5).map(({ exit, landing, distance }) => {
+      const target = `${formatTeleportNumber(landing.x)}, ${formatTeleportNumber(landing.y)}, ${formatTeleportNumber(landing.z)}`
+      return `<div>${teleportHtml(formatTeleportNumber(distance))} tiles · ${teleportHtml(target)} · exit · ${teleportHtml(teleportExitLabel(exit))}</div>`
+    })
+    const landingRows = withLandingDistance.slice(0, 5).map(({ entry, distance }) => {
+      const target = `${formatTeleportNumber(entry.targetX)}, ${formatTeleportNumber(entry.targetY ?? 0)}, ${formatTeleportNumber(entry.targetZ)}`
+      return `<div>${teleportHtml(formatTeleportNumber(distance))} tiles · ${teleportHtml(target)} · ${teleportHtml(teleportEntryLabel(entry))}</div>`
+    })
+    list.innerHTML = [
+      exitRows.length ? `<div style="color:#84d4ff;">Placed exits</div>${exitRows.join('')}` : '',
+      landingRows.length ? `<div style="color:#d7b273;margin-top:4px;">Saved landing points</div>${landingRows.join('')}` : '',
+    ].filter(Boolean).join('') || '<div>No saved exits or entries for this destination map.</div>'
   }
   function getAllPlacedLadders() {
     return placedGroup.getChildren().filter(isLadderPlacedObject)
@@ -4994,26 +5556,43 @@ let selectedWaterFlowChunk = null
     const type = sidebar.querySelector('#triggerType').value
     if (!type) {
       delete selectedPlacedObject.userData.trigger
+      renderTeleportOccupancyPreview()
       return
     }
+    const destChunk = sidebar.querySelector('#triggerDestChunk').value.trim()
+    if (!destChunk) {
+      delete selectedPlacedObject.userData.trigger
+      renderTeleportOccupancyPreview()
+      return
+    }
+    const entryX = parseFloat(sidebar.querySelector('#triggerEntryX').value)
+    const entryY = parseFloat(sidebar.querySelector('#triggerEntryY').value)
+    const entryZ = parseFloat(sidebar.querySelector('#triggerEntryZ').value)
+    const fallback = defaultTeleportEntry(destChunk)
     selectedPlacedObject.userData.trigger = {
       type,
-      destChunk: sidebar.querySelector('#triggerDestChunk').value.trim(),
-      entryX: parseFloat(sidebar.querySelector('#triggerEntryX').value) || 0,
-      entryY: parseFloat(sidebar.querySelector('#triggerEntryY').value) || 0,
-      entryZ: parseFloat(sidebar.querySelector('#triggerEntryZ').value) || 0
+      destChunk,
+      entryX: Number.isFinite(entryX) ? entryX : fallback.x,
+      entryY: Number.isFinite(entryY) ? entryY : fallback.y,
+      entryZ: Number.isFinite(entryZ) ? entryZ : fallback.z
     }
+    renderTeleportOccupancyPreview()
   }
 
   sidebar.querySelector('#triggerType').addEventListener('change', () => {
     const isTP = sidebar.querySelector('#triggerType').value === 'teleport'
     sidebar.querySelector('#triggerTeleportFields').style.display = isTP ? 'block' : 'none'
+    if (isTP) ensureTeleportDefaultsInUI()
     saveTriggerFromUI()
+    updateToolUI()
   })
 
   for (const id of ['#triggerDestChunk', '#triggerEntryX', '#triggerEntryY', '#triggerEntryZ']) {
+    sidebar.querySelector(id).addEventListener('input', saveTriggerFromUI)
     sidebar.querySelector(id).addEventListener('change', saveTriggerFromUI)
   }
+  sidebar.querySelector('#triggerUseMapCenterBtn')?.addEventListener('click', fillTeleportEntryFromMapCenter)
+  sidebar.querySelector('#triggerUseDungeonExitBtn')?.addEventListener('click', fillTeleportEntryFromDungeonExit)
 
   function placedObjectWidth(obj) {
     const defId = obj ? ASSET_TO_OBJECT_DEF[obj.userData?.assetId] : null
@@ -5518,19 +6097,25 @@ let selectedWaterFlowChunk = null
     }
     const triggerRow = sidebar.querySelector('#triggerRow')
     if (triggerRow) {
-      const showTrigger = state.tool === ToolMode.SELECT && selectedPlacedObject
+      const showTrigger = state.tool === ToolMode.SELECT && selectedPlacedObject && isTeleportPlacedObject(selectedPlacedObject)
       triggerRow.style.display = showTrigger ? 'block' : 'none'
       if (showTrigger) {
         const t = selectedPlacedObject.userData.trigger
-        sidebar.querySelector('#triggerType').value = t?.type || ''
+        const typeInput = sidebar.querySelector('#triggerType')
+        if (typeInput && document.activeElement !== typeInput) typeInput.value = t?.type || ''
         const isTP = t?.type === 'teleport'
         sidebar.querySelector('#triggerTeleportFields').style.display = isTP ? 'block' : 'none'
         if (isTP) {
-          sidebar.querySelector('#triggerDestChunk').value = t.destChunk || ''
-          sidebar.querySelector('#triggerEntryX').value = t.entryX ?? ''
-          sidebar.querySelector('#triggerEntryY').value = t.entryY ?? ''
-          sidebar.querySelector('#triggerEntryZ').value = t.entryZ ?? ''
+          const dest = sidebar.querySelector('#triggerDestChunk')
+          const entryX = sidebar.querySelector('#triggerEntryX')
+          const entryY = sidebar.querySelector('#triggerEntryY')
+          const entryZ = sidebar.querySelector('#triggerEntryZ')
+          if (dest && document.activeElement !== dest) dest.value = t.destChunk || ''
+          if (entryX && document.activeElement !== entryX) entryX.value = t.entryX ?? ''
+          if (entryY && document.activeElement !== entryY) entryY.value = t.entryY ?? ''
+          if (entryZ && document.activeElement !== entryZ) entryZ.value = t.entryZ ?? ''
         }
+        renderTeleportOccupancyPreview()
       }
     }
     const interactionSidesRow = sidebar.querySelector('#interactionSidesRow')
@@ -6042,19 +6627,85 @@ let selectedWaterFlowChunk = null
       activeLayerId,
       npcSpawns: serializeNpcSpawns(),
       itemSpawns: serializeItemSpawns(),
-      collisionData: serializeCollisionData()
+      collisionData: serializeCollisionData(),
+      biomesData: serializeBiomesData()
     }
   }
 
-  function autosaveWeight(data) {
+  function countObjectEntries(value) {
+    if (!value || typeof value !== 'object') return 0
+    return Object.keys(value).length
+  }
+
+  function countCollisionEdits(data) {
     if (!data || typeof data !== 'object') return 0
+    let count = 0
+    count += countObjectEntries(data.walls)
+    count += countObjectEntries(data.wallHeights)
+    count += countObjectEntries(data.floors)
+    count += countObjectEntries(data.stairs)
+    count += countObjectEntries(data.tiles)
+    count += countObjectEntries(data.holes)
+    for (const layer of Object.values(data.floorLayers || {})) {
+      count += countCollisionEdits(layer)
+    }
+    return count
+  }
+
+  function countTileEdits(mapData) {
+    if (!mapData || typeof mapData !== 'object') return 0
+    const defaultGround = mapData.defaultGround || 'grass'
+    const tiles = Array.isArray(mapData.tiles) ? mapData.tiles : []
+    let count = 0
+    for (const row of tiles) {
+      if (!Array.isArray(row)) continue
+      for (const tile of row) {
+        if (!tile) continue
+        if (typeof tile === 'string') {
+          if (tile !== defaultGround) count++
+          continue
+        }
+        if (tile.ground && tile.ground !== defaultGround) count++
+        if (tile.groundB && tile.groundB !== defaultGround) count++
+        if (tile.split && tile.split !== 'forward') count++
+        if (tile.textureId || tile.textureIdB) count++
+        if (tile.waterPainted || tile.waterSurface) count++
+      }
+    }
+    const heights = Array.isArray(mapData.heights) ? mapData.heights : []
+    for (const row of heights) {
+      if (!Array.isArray(row)) continue
+      for (const height of row) {
+        if (Number.isFinite(height) && Math.abs(height) > 0.001) count++
+      }
+    }
+    return count
+  }
+
+  function autosaveStats(data) {
+    if (!data || typeof data !== 'object') {
+      return { weight: 0, tileEdits: 0, collisionEdits: 0, biomeEdits: 0 }
+    }
     const objectCount = Array.isArray(data.placedObjects) ? data.placedObjects.length : 0
     const npcCount = Array.isArray(data.npcSpawns) ? data.npcSpawns.length : 0
     const itemCount = Array.isArray(data.itemSpawns) ? data.itemSpawns.length : 0
     const planeCount = Array.isArray(data.map?.texturePlanes) ? data.map.texturePlanes.length : 0
     const chunkCount = Array.isArray(data.map?.activeChunks) ? data.map.activeChunks.length : 0
+    const tileEditCount = countTileEdits(data.map)
+    const collisionCount = countCollisionEdits(data.collisionData)
+    const biomeCount = countObjectEntries(data.biomesData?.cells) + (Array.isArray(data.biomesData?.defs) ? data.biomesData.defs.length : 0)
     const area = (data.map?.width || 0) * (data.map?.height || 0)
-    return objectCount * 10 + npcCount * 3 + itemCount + planeCount * 2 + chunkCount + Math.floor(area / 4096)
+    const weight = objectCount * 10 + npcCount * 3 + itemCount + planeCount * 2 + chunkCount + tileEditCount + collisionCount + biomeCount + Math.floor(area / 4096)
+    return {
+      weight,
+      tileEdits: tileEditCount,
+      collisionEdits: collisionCount,
+      biomeEdits: biomeCount
+    }
+  }
+
+  function autosaveWeight(data) {
+    return autosaveStats(data).weight
   }
 
   function parseAutosave(raw) {
@@ -6062,18 +6713,35 @@ let selectedWaterFlowChunk = null
     try { return JSON.parse(raw) } catch { return null }
   }
 
-  function autoSave() {
+  function previousAutosaveWeight(prevText) {
+    const meta = parseAutosave(localStorage.getItem('projectrs-autosave-meta'))
+    if (Number.isFinite(meta?.weight)) return meta.weight
+    return autosaveWeight(parseAutosave(prevText))
+  }
+
+  let autosaveDirty = false
+  let autosaveTimer = null
+  let autosaveStatusTimer = null
+  let suppressAutosaveDirty = false
+
+  function autoSave({ force = false, silent = false } = {}) {
+    if (!force && !autosaveDirty) return
+    if (autosaveTimer) {
+      clearTimeout(autosaveTimer)
+      autosaveTimer = null
+    }
     try {
       const nextData = buildSaveData()
+      const nextStats = autosaveStats(nextData)
       const nextText = JSON.stringify(nextData)
       const prevText = localStorage.getItem('projectrs-autosave')
-      const prevData = parseAutosave(prevText)
-      const nextWeight = autosaveWeight(nextData)
-      const prevWeight = autosaveWeight(prevData)
+      const nextWeight = nextStats.weight
+      const prevWeight = previousAutosaveWeight(prevText)
 
       // Do not let an empty/default editor boot clobber the last useful work.
       if (prevText && prevWeight > 20 && nextWeight <= 2) {
         console.warn('Auto-save skipped: refusing to overwrite non-empty autosave with empty map')
+        autosaveDirty = false
         return
       }
 
@@ -6089,16 +6757,114 @@ let selectedWaterFlowChunk = null
         objects: nextData.placedObjects?.length || 0,
         npcs: nextData.npcSpawns?.length || 0,
         items: nextData.itemSpawns?.length || 0,
+        tileEdits: nextStats.tileEdits,
+        collisionEdits: nextStats.collisionEdits,
+        biomeEdits: nextStats.biomeEdits,
       }))
-      const prev = statusText.textContent
-      statusText.textContent = 'Auto-saved'
-      setTimeout(() => { statusText.textContent = prev }, 2000)
+      autosaveDirty = false
+      if (!silent) {
+        const prev = statusText.textContent
+        statusText.textContent = 'Auto-saved'
+        if (autosaveStatusTimer) clearTimeout(autosaveStatusTimer)
+        autosaveStatusTimer = setTimeout(() => { statusText.textContent = prev }, 2000)
+      }
     } catch (e) {
       console.warn('Auto-save failed:', e)
     }
   }
 
-  setInterval(autoSave, 15 * 60 * 1000)
+  function scheduleAutoSave() {
+    if (suppressAutosaveDirty) return
+    autosaveDirty = true
+    if (autosaveTimer) return
+    autosaveTimer = setTimeout(() => autoSave(), 2000)
+  }
+
+  function pushUndoStateWithoutAutosave(scope) {
+    const previous = suppressAutosaveDirty
+    suppressAutosaveDirty = true
+    try {
+      pushUndoState(scope)
+    } finally {
+      suppressAutosaveDirty = previous
+    }
+  }
+
+  setInterval(() => autoSave({ silent: true }), 60 * 1000)
+  window.addEventListener('beforeunload', () => autoSave({ force: true, silent: true }))
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') autoSave({ force: true, silent: true })
+  })
+
+  function includeMapFocusPoint(bounds, x, z) {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return
+    bounds.minX = Math.min(bounds.minX, x)
+    bounds.minZ = Math.min(bounds.minZ, z)
+    bounds.maxX = Math.max(bounds.maxX, x)
+    bounds.maxZ = Math.max(bounds.maxZ, z)
+    bounds.count++
+  }
+
+  function includeMapFocusTile(bounds, x, z) {
+    includeMapFocusPoint(bounds, x, z)
+    includeMapFocusPoint(bounds, x + 1, z + 1)
+  }
+
+  function loadedMapFocusBounds() {
+    const bounds = { minX: Infinity, minZ: Infinity, maxX: -Infinity, maxZ: -Infinity, count: 0 }
+
+    // Sparse dungeon maps render void as no mesh, so active chunk bounds alone
+    // can point the camera at empty space. Prefer actual visible terrain.
+    for (let z = 0; z < map.height; z++) {
+      for (let x = 0; x < map.width; x++) {
+        if (!map.isTileInActiveChunk(x, z)) continue
+        const tile = map.getTile(x, z)
+        if (!tile) continue
+        const hasVisibleGround = tile.ground && tile.ground !== 'void'
+        const hasSecondGround = tile.groundB && tile.groundB !== 'void'
+        if (hasVisibleGround || hasSecondGround || tile.waterPainted || tile.waterSurface) {
+          includeMapFocusTile(bounds, x, z)
+        }
+      }
+    }
+
+    // If a map currently has only placed objects/spawns, still frame those.
+    for (const obj of placedGroup.getChildren()) includeMapFocusPoint(bounds, obj.position.x, obj.position.z)
+    for (const spawn of npcSpawns) includeMapFocusPoint(bounds, spawn.x, spawn.z)
+    for (const spawn of itemSpawns) includeMapFocusPoint(bounds, spawn.x, spawn.z)
+
+    if (bounds.count > 0) return bounds
+
+    if (map.activeChunks?.size) {
+      for (const ck of map.activeChunks) {
+        const [cx, cz] = ck.split(',').map(Number)
+        if (!Number.isFinite(cx) || !Number.isFinite(cz)) continue
+        includeMapFocusPoint(bounds, cx * 64, cz * 64)
+        includeMapFocusPoint(bounds, Math.min(map.width, (cx + 1) * 64), Math.min(map.height, (cz + 1) * 64))
+      }
+    }
+
+    if (bounds.count > 0) return bounds
+
+    includeMapFocusPoint(bounds, 0, 0)
+    includeMapFocusPoint(bounds, map.width, map.height)
+    return bounds
+  }
+
+  function focusCameraOnLoadedMap() {
+    const bounds = loadedMapFocusBounds()
+    const centerX = (bounds.minX + bounds.maxX) / 2
+    const centerZ = (bounds.minZ + bounds.maxZ) / 2
+    const tileX = Math.max(0, Math.min(map.width - 1, Math.floor(centerX)))
+    const tileZ = Math.max(0, Math.min(map.height - 1, Math.floor(centerZ)))
+    const h = map.getAverageTileHeight(tileX, tileZ)
+    const extent = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ)
+    target.x = centerX
+    target.y = h
+    target.z = centerZ
+    distance = Math.max(14, Math.min(90, extent * 1.4 + 14))
+    updateCamera()
+  }
 
   function downloadJSON(filename, data) {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -6112,7 +6878,7 @@ let selectedWaterFlowChunk = null
 
   async function loadSaveData(data) {
     if (!data?.map) return
-    pushUndoState()
+    pushUndoStateWithoutAutosave()
 
     saveFileHandle = null
 
@@ -6121,7 +6887,7 @@ let selectedWaterFlowChunk = null
     selectedPlacedObject = null
     selectedPlacedObjects = []
     selectedTexturePlane = null
-      selectedTexturePlanes = []
+    selectedTexturePlanes = []
     transformMode = null
     transformStart = null
     transformLift = 0
@@ -6153,25 +6919,7 @@ let selectedWaterFlowChunk = null
     updateSelectionHelper()
     updateToolUI()
 
-    // Center camera on the active area of the map
-    const activeChunks = map.activeChunks
-    if (activeChunks && activeChunks.size > 0) {
-      let sumX = 0, sumZ = 0, count = 0
-      for (const ck of activeChunks) {
-        const [cx, cz] = ck.split(',').map(Number)
-        sumX += (cx + 0.5) * 64
-        sumZ += (cz + 0.5) * 64
-        count++
-      }
-      const centerX = sumX / count, centerZ = sumZ / count
-      const h = map.getAverageTileHeight(Math.floor(centerX), Math.floor(centerZ))
-      camera.target = new Vector3(centerX, h, centerZ)
-    } else {
-      // No active chunks — center on map middle
-      const cx = map.width / 2, cz = map.height / 2
-      const h = map.getAverageTileHeight(Math.floor(cx), Math.floor(cz))
-      camera.target = new Vector3(cx, h, cz)
-    }
+    focusCameraOnLoadedMap()
     buildWallChunkDropdown()
     if (typeof syncChunkWaterFlowControls === 'function') syncChunkWaterFlowControls()
   }
@@ -6363,6 +7111,7 @@ let selectedWaterFlowChunk = null
     undoStack.push(captureSnapshot(scope))
     if (undoStack.length > MAX_HISTORY) undoStack.shift()
     redoStack.length = 0
+    scheduleAutoSave()
   }
 
   async function undo() {
@@ -6859,6 +7608,20 @@ let selectedWaterFlowChunk = null
     return pickTerrainPointFromRay(ray)
   }
 
+  function pickActiveChunkPlanePoint(event) {
+    updateMouse(event)
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+    const p = pickHorizontalPlaneFromRay(ray, _pickTileFallbackY)
+    if (!p) return null
+    const x = Math.floor(p.x)
+    const z = Math.floor(p.z)
+    if (x < 0 || z < 0 || x >= map.width || z >= map.height) return null
+    if (!map.isTileInActiveChunk(x, z)) return null
+    const y = getTerrainDisplayHeightAt(p.x, p.z)
+    p.y = y ?? _pickTileFallbackY
+    return p
+  }
+
   function pickHorizontalPlaneFromRay(ray, y = 0) {
     if (Math.abs(ray.direction.y) < 0.0001) return null
     const t = -(ray.origin.y - y) / ray.direction.y
@@ -6898,7 +7661,7 @@ let selectedWaterFlowChunk = null
     // Fallback: project ray onto horizontal plane at Y=0 (or last known height)
     // This ensures clicks always resolve to a tile, even over bridges/elevated surfaces
     if (!p) {
-      p = pickHorizontalPlane(event, _pickTileFallbackY)
+      p = pickActiveChunkPlanePoint(event) ?? pickHorizontalPlane(event, _pickTileFallbackY)
     }
 
     if (!p) return null
@@ -7527,6 +8290,17 @@ function captureStrokeHistoryOnce(scope) {
   }
 }
 
+function baseGroundForTexturePaint() {
+  return (map.mapType === 'dungeon' || map.defaultGround === 'void') ? 'dungeon-floor' : 'grass'
+}
+
+function ensurePaintableGroundForTexture(tx, tz) {
+  const tile = map.getTile(tx, tz)
+  if (!tile || tile.ground !== 'void') return false
+  map.paintTile(tx, tz, baseGroundForTexturePaint())
+  return true
+}
+
 
 function applyToolAtTile(tile, eventLike = null) {
   if (!tile) return
@@ -7591,6 +8365,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
     if (eventLike?.shiftKey || paintTabTextureId) {
       const isErase = eventLike?.shiftKey || paintTabTextureId === '__erase__'
+      const createdBaseGround = !isErase && ensurePaintableGroundForTexture(tile.x, tile.z)
       if (state.halfPaint) {
         const u = tile.u ?? 0.5
         const v = tile.v ?? 0.5
@@ -7625,7 +8400,11 @@ function applyToolAtTile(tile, eventLike = null) {
         if (isErase) map.clearTextureTile(tile.x, tile.z)
         else map.paintTextureTile(tile.x, tile.z, paintTabTextureId, textureRotation, textureScale, textureWorldUV)
       }
-      updateTileTextureOverlay(tile.x, tile.z)
+      if (createdBaseGround) {
+        markTerrainDirty({ skipTexturePlanes: true, skipShadows: true, rebuildTextureOverlays: true })
+      } else {
+        updateTileTextureOverlay(tile.x, tile.z)
+      }
       return
     }
 
@@ -8869,10 +9648,15 @@ function applyToolAtTile(tile, eventLike = null) {
   const serverReloadBtn = topBar.querySelector('#serverReloadBtn')
   const questsBtn = topBar.querySelector('#questsBtn')
   const itemsBtn = topBar.querySelector('#itemsBtn')
+  const dropsBtn = topBar.querySelector('#dropsBtn')
   let serverHealthOk = null
   let serverHealthTimer = null
   let serverHealthInFlight = false
   let serverSaveInProgress = false
+
+  serverMapSelect?.addEventListener('change', () => {
+    currentServerMapId = serverMapSelect.value || currentServerMapId
+  })
 
   function setServerHealth(ok, detail = '') {
     const previous = serverHealthOk
@@ -8924,6 +9708,19 @@ function applyToolAtTile(tile, eventLike = null) {
 
   checkServerHealth()
   serverHealthTimer = setInterval(checkServerHealth, 5000)
+
+  async function refreshTeleportEntries() {
+    try {
+      const res = await fetch(`${SERVER_API}/teleport-entries`, { cache: 'no-store' })
+      const data = await res.json()
+      editorTeleportEntries = data.ok && Array.isArray(data.teleports) ? data.teleports : []
+      editorDungeonExits = data.ok && Array.isArray(data.exits) ? data.exits : []
+    } catch {
+      editorTeleportEntries = []
+      editorDungeonExits = []
+    }
+    renderTeleportOccupancyPreview()
+  }
 
   async function saveNpcDefsToServer() {
     const r = await fetch('/api/editor/npcs', {
@@ -9029,6 +9826,7 @@ function applyToolAtTile(tile, eventLike = null) {
   // Reuses the existing item-picker datalist and npcDefs cache so authors
   // pick by name rather than typing IDs.
   questsBtn?.addEventListener('click', () => openQuestsEditor())
+  dropsBtn?.addEventListener('click', () => openDropsEditor(selectedNpcSpawn?.npcId))
   itemsBtn?.addEventListener('click', () => openItemStatsEditor({
     onSaved(savedItems) {
       itemDefs = savedItems
@@ -10567,10 +11365,12 @@ function applyToolAtTile(tile, eventLike = null) {
       const res = await fetch(`${SERVER_API}/maps`)
       const data = await res.json()
       if (data.ok && data.maps) {
-        // Sort: kcmap first, then other surface maps, then underground/dungeons last
+        editorServerMaps = data.maps
+        syncTeleportMapDatalist()
+        // Sort: kcmap first, then other surface maps, then dungeons/legacy maps last
         const primary = data.maps.filter(m => m.id === 'kcmap')
-        const surface = data.maps.filter(m => m.id !== 'kcmap' && m.id !== 'underground')
-        const legacy = data.maps.filter(m => m.id === 'underground')
+        const dungeon = data.maps.filter(m => m.id !== 'kcmap' && (m.id === 'underground' || m.mapType === 'dungeon'))
+        const surface = data.maps.filter(m => m.id !== 'kcmap' && m.id !== 'underground' && m.mapType !== 'dungeon')
         let html = ''
         if (primary.length) {
           html += primary.map(m => `<option value="${m.id}">${m.name || m.id} (${m.width}x${m.height})</option>`).join('')
@@ -10580,9 +11380,9 @@ function applyToolAtTile(tile, eventLike = null) {
           html += surface.map(m => `<option value="${m.id}">${m.name || m.id} (${m.width}x${m.height})</option>`).join('')
           html += `</optgroup>`
         }
-        if (legacy.length) {
-          html += `<optgroup label="── Legacy Maps ──">`
-          html += legacy.map(m => `<option value="${m.id}">${m.name || m.id} (${m.width}x${m.height})</option>`).join('')
+        if (dungeon.length) {
+          html += `<optgroup label="── Dungeons ──">`
+          html += dungeon.map(m => `<option value="${m.id}">${m.name || m.id} (${m.width}x${m.height})</option>`).join('')
           html += `</optgroup>`
         }
         serverMapSelect.innerHTML = html
@@ -10592,9 +11392,16 @@ function applyToolAtTile(tile, eventLike = null) {
         } else {
           serverMapSelect.value = 'kcmap'
         }
+        currentServerMapId = serverMapSelect.value || currentServerMapId
+        await refreshTeleportEntries()
       }
     } catch {
+      editorServerMaps = []
+      syncTeleportMapDatalist()
       serverMapSelect.innerHTML = '<option>Server offline</option>'
+      editorTeleportEntries = []
+      editorDungeonExits = []
+      renderTeleportOccupancyPreview()
     }
   }
   refreshServerMapList()
@@ -10616,6 +11423,7 @@ function applyToolAtTile(tile, eventLike = null) {
       if (!data.ok) { alert(`Failed: ${data.error}`); return }
       await refreshServerMapList(true)
       serverMapSelect.value = mapId
+      currentServerMapId = mapId
       statusText.textContent = `Created dungeon "${name}" (${size}x${size})`
     } catch (e) {
       alert('Server error: ' + e.message)
@@ -10625,6 +11433,7 @@ function applyToolAtTile(tile, eventLike = null) {
   serverLoadBtn.addEventListener('click', async () => {
     const mapId = serverMapSelect.value
     if (!mapId) return
+    currentServerMapId = mapId
     try {
       const res = await fetch(`${SERVER_API}/export-map?mapId=${encodeURIComponent(mapId)}`)
       const data = await res.json()
@@ -12920,7 +13729,7 @@ if (key === 'e') {
         if (res.ok) {
           const data = await res.json()
           await loadSaveData(data)
-          pushUndoState()
+          pushUndoStateWithoutAutosave()
           return
         }
       } catch (e) {
@@ -12929,7 +13738,7 @@ if (key === 'e') {
     }
     // No map loaded — build the default empty terrain
     markTerrainDirty({ rebuildTexturePlanes: true, rebuildTextureOverlays: true })
-    pushUndoState()
+    pushUndoStateWithoutAutosave()
   }
 
   Promise.all([initAssets(), initTextures()]).then(() => initDefaultSave())

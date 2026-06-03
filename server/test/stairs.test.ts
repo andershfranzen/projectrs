@@ -40,7 +40,6 @@ function makePlayer(x: number, z: number, floor: number, y: number): Player {
   player.currentMapLevel = 'kcmap';
   player.currentFloor = floor;
   player.effectiveY = y;
-  player.reportedY = y;
   return player;
 }
 

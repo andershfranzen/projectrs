@@ -113,7 +113,13 @@ export function addXp(skills: SkillBlock, id: SkillId, amount: number): { levele
   }
   const leveled = newLevel > oldLevel;
   cur.level = newLevel;
-  if (leveled) cur.currentLevel = newLevel;
+  if (leveled) {
+    if (id === 'hitpoints') {
+      cur.currentLevel = Math.min(newLevel, cur.currentLevel + (newLevel - oldLevel));
+    } else {
+      cur.currentLevel = newLevel;
+    }
+  }
 
   // Combat skills auto-award 1/3 XP to hitpoints
   if (COMBAT_SKILLS.includes(id) && amount > 0) {

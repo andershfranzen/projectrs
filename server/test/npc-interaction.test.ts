@@ -219,6 +219,34 @@ describe('NPC interaction reachability', () => {
     expect(broadcasts.some(b => b.opcode === ServerOpcode.NPC_FACING)).toBe(false);
   });
 
+  test('NPC melee does not arm player combat when auto retaliate is off', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    npc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, npc);
+
+    withMockedRandom(0, () => world.tickNpcCombat());
+
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+  });
+
+  test('NPC melee arms player combat when auto retaliate is on', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.autoRetaliate = true;
+    npc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, npc);
+
+    withMockedRandom(0, () => world.tickNpcCombat());
+
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(player.attackTarget).toBe(npc);
+  });
+
   test('ranged attack trims an existing client path to the first in-range tile', () => {
     const player = new Player('archer', 1.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);

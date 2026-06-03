@@ -95,10 +95,10 @@
     },
     "trigger": {
       "type": "teleport",
-      "destChunk": "The Sultans Mine",
-      "entryX": 0,
-      "entryY": 0,
-      "entryZ": 0
+      "destChunk": "kcmap",
+      "entryX": 267.5,
+      "entryY": 0.6224362850189209,
+      "entryZ": 210.5
     }
   },
   {

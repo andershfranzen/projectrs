@@ -28,6 +28,14 @@ export interface EquippedItem {
 export type PlayerAmmo =
   | { source: 'equipment'; equipSlot: 'ammo'; itemDef: ItemDef };
 
+export interface DungeonReturnTarget {
+  mapId: string;
+  x: number;
+  z: number;
+  y?: number;
+  floor?: number;
+}
+
 const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
   [BRONZE_ARROWS_ITEM_ID]: 1,
   [IRON_ARROWS_ITEM_ID]: 2,
@@ -187,21 +195,18 @@ export class Player extends Entity {
   currentChunkX: number = -1;
   currentChunkZ: number = -1;
 
-  /** Latest visual Y reported by the client (CLIENT_POSITION_Y). Pure
-   *  metadata — never used for collision, pathfinding, or any other logic.
-   *  Persisted at logout so the client can spawn at the correct visual
-   *  height on next login (e.g. on top of a texture-plane bridge that
-   *  the server's floorHeights doesn't capture). */
-  reportedY: number = 0;
+  /** Per-player dungeon exits. Keyed by destination map id so two entrance
+   *  objects can share one dungeon without sharing the same return tile. */
+  dungeonReturnTargets: Map<string, DungeonReturnTarget> = new Map();
 
-  /** Server-authoritative walking elevation, in world Y units. Unlike
-   *  reportedY (client-reported, never trusted for logic), this is derived
+  /** Server-authoritative walking elevation, in world Y units. Derived
    *  entirely server-side: re-resolved every time the player's tile changes,
    *  one gated getEffectiveHeightOnFloor step per tile, which mirrors the
    *  client's per-frame getEffectiveHeight(currentY) feedback. It is the Y
    *  fed into wall-edge collision (wallBlocksAtHeight) during move validation
    *  so walls/doors authored at an upper-floor elevation resolve correctly
-   *  while the player is up there. Seeded at spawn / teleport / transition. */
+   *  while the player is up there. Seeded from persisted player_state.y at
+   *  login, then refreshed by spawn / movement / teleport / transition. */
   effectiveY: number = 0;
 
   /** Tile (z*width+x) where the player most recently transitioned floors.
@@ -225,6 +230,7 @@ export class Player extends Entity {
   attackCooldown: number = 0;
   autocastSpellIndex: number = -1;
   magicStance: MagicStance = 'accurate';
+  autoRetaliate: boolean = false;
   actionRevision: number = 0;
   pendingActionRevision: number = -1;
   pendingSpellCast: { spellIndex: number; targetEntityId: number; actionRevision: number } | null = null;

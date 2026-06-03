@@ -156,6 +156,31 @@
     ]
   },
   {
+    "id": 27,
+    "name": "Bear Cub",
+    "health": 20,
+    "attack": 6,
+    "defence": 4,
+    "strength": 12,
+    "attackSpeed": 4,
+    "respawnTime": 35,
+    "aggressive": true,
+    "wanderRange": 4,
+    "size": 1,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 20,
+        "quantity": 1,
+        "chance": 0.5
+      }
+    ]
+  },
+  {
     "id": 2,
     "name": "Giant Rat",
     "health": 15,

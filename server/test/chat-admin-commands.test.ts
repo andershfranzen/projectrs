@@ -90,4 +90,61 @@ describe('admin chat teleport commands', () => {
     expect(teleports).toEqual([[target, 5.5, 6.5, 2.75, 1]]);
     expect(messages).toContain('Summoned Target.');
   });
+
+  test('/spawn defaults to the kcmap spawn even when admin is inside a dungeon', () => {
+    const admin = makePlayer(1, 'Admin', 'the_sultans_mine', 32.5, 32.5);
+    const transitions: any[] = [];
+    const teleports: any[] = [];
+    const world: any = {
+      players: new Map([[admin.id, admin]]),
+      getMap(mapId: string) {
+        if (mapId === 'kcmap') return { meta: { spawnPoint: { x: 192.5, z: 128.5 } } };
+        if (mapId === 'the_sultans_mine') return { meta: { spawnPoint: { x: 32.5, z: 32.5 } } };
+        return null;
+      },
+      abortTrade() {},
+      closeDialogueForPlayer() {},
+      teleportPlayer(...args: any[]) { teleports.push(args); },
+      handleMapTransition(player: any, transition: any) { transitions.push({ player, transition }); },
+    };
+    const { ws, messages } = makeAdminSocket('Admin');
+
+    handleChatSocketMessage(ws, JSON.stringify({ type: 'local', message: '/spawn' }), world);
+
+    expect(teleports).toHaveLength(0);
+    expect(transitions).toEqual([{
+      player: admin,
+      transition: {
+        targetMap: 'kcmap',
+        targetX: 192.5,
+        targetZ: 128.5,
+        targetFloor: 0,
+      },
+    }]);
+    expect(messages).toContain('Teleported to kcmap spawn');
+  });
+
+  test('/spawn here keeps the old current-map spawn behavior', () => {
+    const admin = makePlayer(1, 'Admin', 'the_sultans_mine', 44.5, 44.5);
+    const transitions: any[] = [];
+    const teleports: any[] = [];
+    const world: any = {
+      players: new Map([[admin.id, admin]]),
+      getMap(mapId: string) {
+        if (mapId === 'the_sultans_mine') return { meta: { spawnPoint: { x: 32.5, z: 32.5 } } };
+        return null;
+      },
+      abortTrade() {},
+      closeDialogueForPlayer() {},
+      teleportPlayer(...args: any[]) { teleports.push(args); },
+      handleMapTransition(player: any, transition: any) { transitions.push({ player, transition }); },
+    };
+    const { ws, messages } = makeAdminSocket('Admin');
+
+    handleChatSocketMessage(ws, JSON.stringify({ type: 'local', message: '/spawn here' }), world);
+
+    expect(transitions).toHaveLength(0);
+    expect(teleports).toEqual([[admin, 32.5, 32.5, undefined, 0]]);
+    expect(messages).toContain('Teleported to the_sultans_mine spawn');
+  });
 });

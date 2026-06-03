@@ -62,23 +62,20 @@ export enum ClientOpcode {
    *  accurate/aggressive/defensive/controlled index order as PLAYER_SET_STANCE,
    *  but persisted separately from melee/ranged stance. */
   PLAYER_SET_MAGIC_STANCE = 46,
+  /** Toggle player auto-retaliation against NPCs. Values: [enabled] where
+   *  enabled is 0 or 1. Server owns the actual counterattack decision. */
+  PLAYER_SET_AUTO_RETALIATE = 47,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Close the appearance editor without saving changes.
    *  Only accepted for players who already have an appearance. */
   APPEARANCE_CLOSE = 61,
-  /** Client tells server which floor the player is visually on. Sent when
-   *  the player's visual Y crosses a floor boundary — covers cases where
-   *  there's no real stair object (e.g. the player walks up auto-derived
-   *  texture-plane steps) so the server's stair-mechanic FLOOR_CHANGE
-   *  isn't fired. Without this, server.currentFloor stays 0 and saves
-   *  spawn the player on floor 0 next session. */
+  /** Deprecated and rejected by the server. Reserved wire value for the old
+   *  client floor hint path; floor changes are now server-authoritative via
+   *  FLOOR_CHANGE and map transition/object logic. */
   CLIENT_FLOOR_HINT = 70,
-  /** Client tells the server its current visual Y (×10). Pure metadata —
-   *  the server uses x/z + currentFloor for all collision/movement logic.
-   *  Persisted on disconnect so an elevated-tile spawn (texture-plane
-   *  bridges under buildings, where the server's floorHeights doesn't
-   *  capture the elevation) restores at the right height on next login. */
+  /** Deprecated compatibility no-op. Older clients reported visual Y here;
+   *  the server now derives and persists walking Y from server-owned state. */
   CLIENT_POSITION_Y = 71,
 
   // --- Bank ---
@@ -380,6 +377,8 @@ export enum ServerOpcode {
    *  [autocastSpellIndex, magicStanceIdx]. Sent on login/reconnect and after
    *  server-side validation applies or rejects a magic combat setting. */
   PLAYER_MAGIC_STATE = 124,
+  /** Authoritative local-player auto-retaliation toggle. Values: [enabled]. */
+  PLAYER_AUTO_RETALIATE = 125,
 }
 
 export enum EntityDeathKind {
