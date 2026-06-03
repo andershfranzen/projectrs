@@ -23,6 +23,7 @@ const origin = (argValue('--origin') || Bun.env.FORUM_AVATAR_BAKE_ORIGIN || 'htt
 const onlyMissing = !Bun.argv.includes('--all');
 const timeoutMs = Math.max(10_000, Number(argValue('--timeout-ms') || Bun.env.FORUM_AVATAR_BAKE_TIMEOUT_MS || 120_000));
 const failOnError = Bun.argv.includes('--fail-on-error');
+const headless = Bun.env.FORUM_AVATAR_BAKE_HEADLESS !== '0';
 const url = `${origin}/forums/avatar-bake?autorun=${onlyMissing ? 'missing' : 'all'}`;
 const bakeSecret = Bun.env.FORUM_AVATAR_BAKE_SECRET || '';
 const chromiumExecutablePath = Bun.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
@@ -33,7 +34,7 @@ console.log(`[forum-avatar-bake] opening ${url}`);
 let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
 try {
   browser = await chromium.launch({
-    headless: true,
+    headless,
     executablePath: chromiumExecutablePath,
     args: [
       '--disable-dev-shm-usage',
