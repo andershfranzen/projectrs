@@ -280,6 +280,12 @@ function ensureContextMenuGlobalListeners(): void {
   // empty UI, this still clears the old menu instead of leaving it stranded.
   document.addEventListener('contextmenu', (event) => {
     if (consumeSuppressedContextMenuFollowup(event)) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('.eq-context-menu')) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     closeActiveContextMenu();
     closeActiveHoverTooltips();
   }, true);
