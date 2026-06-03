@@ -3,14 +3,10 @@ import type { Npc } from '../entity/Npc';
 import {
   addXp, STANCE_BONUSES, STANCE_XP, ACC_BASE,
   osrsMeleeMaxHit, rollHit, bowAttackRollMultiplierForStance,
-  relicDropPoolForCombatLevel, DEFAULT_RANGED_ATTACK_DISTANCE,
+  DEFAULT_RANGED_ATTACK_DISTANCE,
   type ItemDef,
 } from '@projectrs/shared';
 
-/** Item-id pools for the combat-level-gated bonus relic drop. Tier 1 covers
- *  sub-30 mobs, tier 2 covers 30–60. RELIC_DROP_CHANCE applies once per kill;
- *  on a hit, one variant is picked uniformly from the tier pool. */
-const RELIC_DROP_CHANCE = 1 / 30;
 const NO_LOOT_NPC_IDS = new Set<number>([18]);
 
 export interface CombatHit {
@@ -325,12 +321,8 @@ export function processNpcCombat(
 
 /**
  * Roll loot — drops go to the player with the most hero points (kill credit).
- * Adds a combat-level-gated relic drop on top of the def's loot table:
- *   lvl  < 30 → 1/30 chance of a random tier-1 relic
- *   lvl 30–60 → 1/30 chance of a random tier-2 relic
- *   lvl 61–100 → 1/30 chance of a random tier-3 relic
- *   lvl 101–150 → 1/30 chance of a random tier-4 relic
- *   lvl > 150 → 1/30 chance of a random tier-5 relic
+ * Relic drops are authored directly in npc loot tables so designers can see
+ * and tune the exact per-mob chance in the editor.
  */
 export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
   if (NO_LOOT_NPC_IDS.has(npc.def.id)) return [];
@@ -339,14 +331,6 @@ export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
   for (const drop of npc.def.lootTable) {
     if (Math.random() <= drop.chance) {
       drops.push({ itemId: drop.itemId, quantity: drop.quantity });
-    }
-  }
-
-  if (Math.random() < RELIC_DROP_CHANCE) {
-    const level = npc.combatLevel;
-    const pool = relicDropPoolForCombatLevel(level);
-    if (pool) {
-      drops.push({ itemId: pool[Math.floor(Math.random() * pool.length)], quantity: 1 });
     }
   }
 

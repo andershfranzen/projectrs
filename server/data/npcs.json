@@ -25,6 +25,11 @@
         "itemId": 19,
         "quantity": 3,
         "chance": 1
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.003333
       }
     ]
   },
@@ -54,6 +59,11 @@
         "itemId": 19,
         "quantity": 3,
         "chance": 1
+      },
+      {
+        "itemId": 225,
+        "quantity": 1,
+        "chance": 0.005
       }
     ]
   },
@@ -78,6 +88,11 @@
         "itemId": 263,
         "quantity": 1,
         "chance": 0.6
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.006667
       }
     ]
   },
@@ -102,6 +117,11 @@
         "itemId": 263,
         "quantity": 1,
         "chance": 0.8
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.02
       }
     ]
   },
@@ -127,6 +147,11 @@
         "itemId": 20,
         "quantity": 1,
         "chance": 0.75
+      },
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.0048
       }
     ]
   },
@@ -152,6 +177,11 @@
         "itemId": 20,
         "quantity": 1,
         "chance": 0.75
+      },
+      {
+        "itemId": 228,
+        "quantity": 1,
+        "chance": 0.0256
       }
     ]
   },
@@ -177,6 +207,11 @@
         "itemId": 20,
         "quantity": 1,
         "chance": 0.5
+      },
+      {
+        "itemId": 225,
+        "quantity": 1,
+        "chance": 0.018333
       }
     ]
   },
@@ -206,6 +241,11 @@
         "itemId": 10,
         "quantity": 3,
         "chance": 0.4
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.01
       }
     ]
   },
@@ -235,6 +275,11 @@
         "itemId": 13,
         "quantity": 1,
         "chance": 0.3
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.011667
       }
     ]
   },
@@ -259,6 +304,11 @@
         "itemId": 20,
         "quantity": 1,
         "chance": 0.5
+      },
+      {
+        "itemId": 225,
+        "quantity": 1,
+        "chance": 0.018333
       }
     ]
   },
@@ -288,6 +338,11 @@
         "itemId": 73,
         "quantity": 1,
         "chance": 0.08
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.025
       }
     ]
   },
@@ -307,6 +362,11 @@
         "itemId": 10,
         "quantity": 4,
         "chance": 0.3
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.01
       }
     ]
   },
@@ -326,6 +386,11 @@
         "itemId": 10,
         "quantity": 4,
         "chance": 0.3
+      },
+      {
+        "itemId": 225,
+        "quantity": 1,
+        "chance": 0.031667
       }
     ]
   },
@@ -350,6 +415,11 @@
         "itemId": 10,
         "quantity": 20,
         "chance": 1
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.031667
       }
     ]
   },
@@ -499,6 +569,11 @@
         "itemId": 22,
         "quantity": 1,
         "chance": 0.03
+      },
+      {
+        "itemId": 229,
+        "quantity": 1,
+        "chance": 0.008
       }
     ]
   },
@@ -619,6 +694,11 @@
         "itemId": 237,
         "quantity": 1,
         "chance": 0.001
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.03
       }
     ]
   },
@@ -723,6 +803,11 @@
         "itemId": 20,
         "quantity": 1,
         "chance": 0.6
+      },
+      {
+        "itemId": 225,
+        "quantity": 1,
+        "chance": 0.028333
       }
     ]
   },
@@ -778,6 +863,11 @@
         "itemId": 52,
         "quantity": 1,
         "chance": 0.4
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.011667
       }
     ]
   },
@@ -869,6 +959,11 @@
         "itemId": 54,
         "quantity": 1,
         "chance": 0.0005
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.038333
       }
     ]
   },
@@ -928,6 +1023,11 @@
         "itemId": 36,
         "quantity": 1,
         "chance": 0.02
+      },
+      {
+        "itemId": 288,
+        "quantity": 1,
+        "chance": 0.0064
       }
     ]
   },

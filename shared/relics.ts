@@ -14,14 +14,42 @@ export const RELIC_TIERS: readonly RelicTierDef[] = [
 
 export const RELIC_ITEM_IDS: ReadonlySet<number> = new Set(RELIC_TIERS.flatMap(tier => tier.itemIds));
 
+export interface RelicCombatDropBand {
+  tier: number;
+  minLevel: number;
+  maxLevel: number;
+}
+
+export const RELIC_COMBAT_DROP_MAX_CHANCE = 1 / 25;
+export const RELIC_COMBAT_DROP_BANDS: readonly RelicCombatDropBand[] = [
+  { tier: 1, minLevel: 1, maxLevel: 24 },
+  { tier: 2, minLevel: 25, maxLevel: 49 },
+  { tier: 3, minLevel: 50, maxLevel: 74 },
+  { tier: 4, minLevel: 75, maxLevel: 99 },
+  { tier: 5, minLevel: 100, maxLevel: 149 },
+];
+
 export function relicTierDef(tier: number): RelicTierDef | undefined {
   return RELIC_TIERS.find(def => def.tier === tier);
 }
 
+export function relicCombatDropBandForLevel(level: number): RelicCombatDropBand | null {
+  if (!Number.isFinite(level)) return null;
+  const combatLevel = Math.floor(level);
+  return RELIC_COMBAT_DROP_BANDS.find(band => combatLevel >= band.minLevel && combatLevel <= band.maxLevel) ?? null;
+}
+
+export function relicDropChanceForCombatLevel(level: number): number {
+  const band = relicCombatDropBandForLevel(level);
+  if (!band) return 0;
+
+  const combatLevel = Math.floor(level);
+  const bandSize = band.maxLevel - band.minLevel + 1;
+  const bandProgress = combatLevel - band.minLevel + 1;
+  return (bandProgress / bandSize) * RELIC_COMBAT_DROP_MAX_CHANCE;
+}
+
 export function relicDropPoolForCombatLevel(level: number): readonly number[] | null {
-  if (level < 30) return RELIC_TIERS[0].itemIds;
-  if (level <= 60) return RELIC_TIERS[1].itemIds;
-  if (level <= 100) return relicTierDef(3)?.itemIds ?? null;
-  if (level <= 150) return relicTierDef(4)?.itemIds ?? null;
-  return relicTierDef(5)?.itemIds ?? null;
+  const band = relicCombatDropBandForLevel(level);
+  return band ? relicTierDef(band.tier)?.itemIds ?? null : null;
 }
