@@ -791,6 +791,51 @@
     "rotationZ": 0,
     "iconScale": 1
   },
+  "224": {
+    "alpha": 1.6493361431346414,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.75
+  },
+  "226": {
+    "alpha": 1.631882850614698,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "227": {
+    "alpha": 1.7802358370342162,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
+  },
+  "228": {
+    "alpha": 1.5446163880149817,
+    "beta": 0.8290313946973066,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "229": {
+    "alpha": 1.1082840750163994,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
   "232": {
     "alpha": -0.7853981633974483,
     "beta": 1.3089969389957472,
@@ -917,6 +962,78 @@
     "rotationZ": 2.4870941840919194,
     "iconScale": 1
   },
+  "254": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "255": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "256": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "257": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "258": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "259": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "260": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "261": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
   "262": {
     "alpha": -0.7853981633974483,
     "beta": 2.5569073541716927,
@@ -933,7 +1050,7 @@
     "rotationX": 0,
     "rotationY": 0,
     "rotationZ": 0,
-    "iconScale": 0.7
+    "iconScale": 0.5
   },
   "265": {
     "alpha": -0.7853981633974483,
@@ -942,7 +1059,7 @@
     "rotationX": 0,
     "rotationY": 0,
     "rotationZ": 0,
-    "iconScale": 0.7
+    "iconScale": 0.5
   },
   "266": {
     "alpha": -0.7853981633974483,
@@ -951,7 +1068,7 @@
     "rotationX": 0,
     "rotationY": 0,
     "rotationZ": 0,
-    "iconScale": 0.7
+    "iconScale": 0.5
   },
   "267": {
     "alpha": -0.7853981633974483,
@@ -960,7 +1077,7 @@
     "rotationX": 0,
     "rotationY": 0,
     "rotationZ": 0,
-    "iconScale": 0.7
+    "iconScale": 0.5
   },
   "268": {
     "alpha": -0.7853981633974483,
@@ -969,7 +1086,7 @@
     "rotationX": 0,
     "rotationY": 0,
     "rotationZ": 0,
-    "iconScale": 0.7
+    "iconScale": 0.5
   },
   "269": {
     "alpha": -1.1257373675363425,
@@ -1007,6 +1124,114 @@
     "rotationZ": 0,
     "iconScale": 0.8
   },
+  "273": {
+    "alpha": -0.7853981633974483,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0.017453292519943295,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "274": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "275": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "276": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "277": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "278": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "279": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "280": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "281": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "282": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "283": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
+  "284": {
+    "alpha": -0.7853981633974483,
+    "beta": 2.5569073541716927,
+    "distanceMult": 0.75,
+    "rotationX": 0.23561944901923448,
+    "rotationY": 0,
+    "rotationZ": 2.722713633111154,
+    "iconScale": 1
+  },
   "285": {
     "alpha": -1.1257373675363425,
     "beta": 1.208304866765305,
@@ -1033,6 +1258,186 @@
     "rotationY": 0,
     "rotationZ": 0,
     "iconScale": 0.82
+  },
+  "288": {
+    "alpha": 1.631882850614698,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
+  },
+  "289": {
+    "alpha": 1.5446163880149817,
+    "beta": 0.8290313946973066,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "290": {
+    "alpha": 1.8151424220741028,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "291": {
+    "alpha": 1.8325957145940461,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
+  },
+  "292": {
+    "alpha": 1.7802358370342162,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.8
+  },
+  "293": {
+    "alpha": 1.9634954084936207,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "294": {
+    "alpha": 1.8500490071139892,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 1
+  },
+  "295": {
+    "alpha": 1.8325957145940461,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
+  },
+  "296": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "297": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "298": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "299": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "300": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "301": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "302": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "303": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "304": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "305": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "306": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
+  },
+  "307": {
+    "alpha": -0.9773843811168246,
+    "beta": 0.8988445647770797,
+    "distanceMult": 0.75,
+    "rotationX": -0.2530727415391778,
+    "rotationY": 0.10471975511965978,
+    "rotationZ": -0.03490658503988659,
+    "iconScale": 1
   },
   "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_thumbnail_manual_items": [

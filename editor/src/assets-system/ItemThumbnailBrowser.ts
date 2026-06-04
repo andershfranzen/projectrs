@@ -1,5 +1,6 @@
 import type { ItemDef } from '@projectrs/shared'
 import {
+  getThumbnail as getRuntimeThumbnail,
   getThumbnailPoseKey as getRuntimeThumbnailPoseKey,
   renderThumbnailPreview as renderRuntimeThumbnailPreview,
 } from '@client/rendering/ThumbnailRenderer'
@@ -9,6 +10,9 @@ import {
   itemThumbnailFamilyKey,
   itemThumbnailTier,
   itemThumbnailTierIndex,
+  parseBakedThumbnailManifest,
+  resolveBakedThumbnailUrl,
+  type ParsedBakedThumbnailManifest,
 } from '@client/rendering/ItemIcon'
 import { getItemOverride, invalidateOverridesCache, type AssetThumbnailOverride } from './ThumbnailRenderer'
 import { openThumbnailPoseEditor } from './ThumbnailRotationEditor'
@@ -18,7 +22,7 @@ export interface ItemThumbnailBrowserOptions {
   resolveModelPath: (def: ItemDef) => string | null
 }
 
-let itemThumbManifestPromise: Promise<Set<number>> | null = null
+let itemThumbManifestPromise: Promise<ParsedBakedThumbnailManifest> | null = null
 
 interface ItemThumbnailOverrideStore {
   items: Record<string, AssetThumbnailOverride>
@@ -90,40 +94,47 @@ function posesMatch(a: AssetThumbnailOverride | null | undefined, b: AssetThumbn
   return true
 }
 
-function loadItemThumbManifest(): Promise<Set<number>> {
+function loadItemThumbManifest(): Promise<ParsedBakedThumbnailManifest> {
   if (itemThumbManifestPromise) return itemThumbManifestPromise
   itemThumbManifestPromise = (async () => {
     try {
       const res = await fetch('/items/3d/manifest.json', { cache: 'no-store' })
-      if (!res.ok) return new Set<number>()
+      if (!res.ok) return parseBakedThumbnailManifest(null)
       const data = await res.json()
-      const ids = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.ids)
-          ? data.ids
-          : data?.entries && typeof data.entries === 'object'
-            ? Object.keys(data.entries).map((id) => Number(id))
-            : []
-      return new Set(ids.filter((id: unknown) => typeof id === 'number'))
+      return parseBakedThumbnailManifest(data)
     } catch {
-      return new Set<number>()
+      return parseBakedThumbnailManifest(null)
     }
   })()
   return itemThumbManifestPromise
 }
 
-async function renderRuntimeItemThumb(def: ItemDef, modelPath: string, override: AssetThumbnailOverride): Promise<string | null> {
+function manifestHasItem(manifest: ParsedBakedThumbnailManifest, itemId: number): boolean {
+  return manifest.entries.has(itemId) || manifest.legacyIds.has(itemId)
+}
+
+function getBakedRuntimeThumb(
+  manifest: ParsedBakedThumbnailManifest,
+  def: ItemDef,
+  modelPath: string,
+  override: AssetThumbnailOverride,
+): string | null {
   const opts = buildThumbnailOptionsFromOverride(def, override)
-  const first = await renderRuntimeThumbnailPreview(modelPath, opts)
-  return await renderRuntimeThumbnailPreview(modelPath, opts) ?? first
+  return resolveBakedThumbnailUrl(manifest, def.id, getRuntimeThumbnailPoseKey(modelPath, opts))
+}
+
+async function renderRuntimeItemThumb(
+  manifest: ParsedBakedThumbnailManifest,
+  def: ItemDef,
+  modelPath: string,
+  override: AssetThumbnailOverride,
+): Promise<string | null> {
+  const opts = buildThumbnailOptionsFromOverride(def, override)
+  return getBakedRuntimeThumb(manifest, def, modelPath, override) ?? await getRuntimeThumbnail(modelPath, opts)
 }
 
 function runtimePoseKey(def: ItemDef, modelPath: string, override: AssetThumbnailOverride): string {
   return getRuntimeThumbnailPoseKey(modelPath, buildThumbnailOptionsFromOverride(def, override))
-}
-
-async function refreshRuntimeItemThumb(def: ItemDef, modelPath: string, override: AssetThumbnailOverride): Promise<string | null> {
-  return renderRuntimeItemThumb(def, modelPath, override)
 }
 
 export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOptions): Promise<void> {
@@ -134,6 +145,21 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
     .map((def) => ({ def, modelPath: options.resolveModelPath(def) }))
     .filter((entry): entry is { def: ItemDef; modelPath: string } => !!entry.modelPath)
   const itemById = new Map(items.map((entry) => [entry.def.id, entry]))
+  const itemsBySlot = new Map<string, typeof items>()
+  const itemsByFamilyKey = new Map<string, typeof items>()
+  for (const entry of items) {
+    if (entry.def.equipSlot) {
+      const bySlot = itemsBySlot.get(entry.def.equipSlot)
+      if (bySlot) bySlot.push(entry)
+      else itemsBySlot.set(entry.def.equipSlot, [entry])
+    }
+    const familyKey = itemThumbnailFamilyKey(entry.def)
+    if (familyKey && itemThumbnailTier(entry.def)) {
+      const byFamily = itemsByFamilyKey.get(familyKey)
+      if (byFamily) byFamily.push(entry)
+      else itemsByFamilyKey.set(familyKey, [entry])
+    }
+  }
   const itemDefsForInheritance = items.map((entry) => entry.def)
   let numericOverrides = buildOverrideMap(thumbnailOverrides.items)
   let indexedPoseLookup = buildPoseLookup()
@@ -220,10 +246,12 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   let observer: IntersectionObserver | null = null
   let closed = false
   let sourceItemId: number | null = null
+  let renderListTimer: number | null = null
   const renderedImages = new Map<number, HTMLImageElement>()
   const close = (): void => {
     if (closed) return
     closed = true
+    if (renderListTimer !== null) window.clearTimeout(renderListTimer)
     if (observer) observer.disconnect()
     document.removeEventListener('keydown', onKeyDown)
     try { document.body.removeChild(backdrop) } catch { /* ignore */ }
@@ -272,20 +300,11 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   const sameTierFamilyTargets = (source: ItemDef): typeof items => {
     const familyKey = itemThumbnailFamilyKey(source)
     if (!itemThumbnailTier(source)) return []
-    return items.filter((entry) =>
-      entry.def.id !== source.id &&
-      !!familyKey &&
-      !!itemThumbnailTier(entry.def) &&
-      itemThumbnailFamilyKey(entry.def) === familyKey
-    )
+    return familyKey ? (itemsByFamilyKey.get(familyKey) ?? []).filter((entry) => entry.def.id !== source.id) : []
   }
 
   const sameSlotTargets = (source: ItemDef): typeof items => {
-    return items.filter((entry) =>
-      entry.def.id !== source.id &&
-      !!source.equipSlot &&
-      entry.def.equipSlot === source.equipSlot
-    )
+    return source.equipSlot ? (itemsBySlot.get(source.equipSlot) ?? []).filter((entry) => entry.def.id !== source.id) : []
   }
 
   const buildPoseEntryForTarget = (
@@ -359,17 +378,6 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
     return missing
   }
 
-  const refreshVisibleThumb = async (def: ItemDef): Promise<void> => {
-    const entry = itemById.get(def.id)
-    const img = renderedImages.get(def.id)
-    if (!entry || !img || img.dataset.itemId !== String(def.id)) return
-    const pose = getEffectivePose(def)
-    const poseKey = runtimePoseKey(def, entry.modelPath, pose)
-    img.dataset.poseKey = poseKey
-    const url = await refreshRuntimeItemThumb(def, entry.modelPath, pose)
-    if (url && !closed && img.isConnected && img.dataset.itemId === String(def.id) && img.dataset.poseKey === poseKey) img.src = url
-  }
-
   const copyPoseTo = async (
     source: ItemDef,
     targets: typeof items,
@@ -400,7 +408,7 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       }
       invalidateOverridesCache()
       invalidateThumbnailOverrides()
-      await Promise.all(targets.map((target) => refreshVisibleThumb(target.def)))
+      if (closed) return
       renderList()
       setCopyStatus(`Copied and verified thumbnail pose on ${saved} item(s).`)
       setTimeout(() => setCopyStatus(), 2500)
@@ -410,6 +418,7 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
   }
 
   const renderList = (): void => {
+    if (closed) return
     const q = search.value.trim().toLowerCase()
     const filtered = items.filter(({ def, modelPath }) => {
       if (!q) return true
@@ -431,24 +440,26 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
         obs.unobserve(entry.target)
         const img = entry.target as HTMLImageElement
         const id = Number(img.dataset.itemId)
-        const match = items.find((item) => item.def.id === id)
+        const match = itemById.get(id)
         if (!match) continue
         const pose = getEffectivePose(match.def)
         const poseKey = runtimePoseKey(match.def, match.modelPath, pose)
         img.dataset.poseKey = poseKey
-        renderRuntimeItemThumb(match.def, match.modelPath, pose)
+        renderRuntimeItemThumb(manifest, match.def, match.modelPath, pose)
           .then((url) => {
             if (url && !closed && img.isConnected && img.dataset.itemId === String(id) && img.dataset.poseKey === poseKey) img.src = url
           })
           .catch(() => {})
       }
-    }, { root: grid, rootMargin: '180px', threshold: 0.01 })
+    }, { root: grid, rootMargin: '100px', threshold: 0.01 })
 
     if (!filtered.length) {
       grid.innerHTML = '<div class="asset-grid-empty">No 3D item thumbnails found</div>'
       return
     }
 
+    const fragment = document.createDocumentFragment()
+    const imagesToObserve: HTMLImageElement[] = []
     for (const { def, modelPath } of filtered) {
       const card = document.createElement('div')
       card.className = 'item-thumb-card'
@@ -457,7 +468,10 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       img.className = 'item-thumb-img'
       img.alt = def.name
       img.dataset.itemId = String(def.id)
-      img.dataset.poseKey = runtimePoseKey(def, modelPath, getEffectivePose(def))
+      const effectivePose = getEffectivePose(def)
+      img.dataset.poseKey = runtimePoseKey(def, modelPath, effectivePose)
+      const bakedUrl = getBakedRuntimeThumb(manifest, def, modelPath, effectivePose)
+      if (bakedUrl) img.src = bakedUrl
 
       const meta = document.createElement('div')
       meta.className = 'item-thumb-meta'
@@ -469,7 +483,7 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       const familyKey = itemThumbnailFamilyKey(def)
       const familySaved = familyKey ? !!thumbnailOverrides.families[familyKey] : false
       const itemSaved = !!thumbnailOverrides.items[String(def.id)]
-      detail.textContent = `#${def.id}${def.equipSlot ? ` · ${def.equipSlot}` : ''}${itemSaved ? ' · item pose' : familySaved ? ' · family pose' : ''}${manifest.has(def.id) ? ' · baked' : ''}`
+      detail.textContent = `#${def.id}${def.equipSlot ? ` · ${def.equipSlot}` : ''}${itemSaved ? ' · item pose' : familySaved ? ' · family pose' : ''}${manifestHasItem(manifest, def.id) ? ' · baked' : ''}`
       meta.appendChild(name)
       meta.appendChild(detail)
 
@@ -483,7 +497,7 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
           modelPath,
           title: `${def.name || 'Item'} (#${def.id})`,
           subtitle: modelPath,
-          bakedWarning: manifest.has(def.id)
+          bakedWarning: manifestHasItem(manifest, def.id)
             ? 'This item has a baked PNG. If its manifest pose is stale, players see the runtime thumbnail until you rebake.'
             : undefined,
           initialOverride: getEffectivePose(def),
@@ -501,14 +515,12 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
             }
             invalidateThumbnailOverrides()
             rebuildOverrideIndexes()
-            await refreshVisibleThumb(def)
             sourceItemId = def.id
             renderList()
           },
         })
       })
 
-      const pose = getSavedPose(def)
       const directPose = getDirectItemPose(def)
       const sourceBtn = document.createElement('button')
       sourceBtn.className = 'asset-rotate-modal-btn secondary'
@@ -520,6 +532,8 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
         renderList()
       })
 
+      const familyTargets = sameTierFamilyTargets(def)
+      const slotTargets = sameSlotTargets(def)
       const applyBtn = document.createElement('button')
       applyBtn.className = 'asset-rotate-modal-btn secondary'
       applyBtn.textContent = 'Apply'
@@ -533,16 +547,16 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       const familyBtn = document.createElement('button')
       familyBtn.className = 'asset-rotate-modal-btn secondary'
       familyBtn.textContent = 'Tiers'
-      familyBtn.disabled = !directPose || !def.equipSlot || sameTierFamilyTargets(def).length === 0
+      familyBtn.disabled = !directPose || !def.equipSlot || familyTargets.length === 0
       familyBtn.title = 'Copy this direct item pose to every other item tier in the same family and slot'
-      familyBtn.addEventListener('click', () => copyPoseTo(def, sameTierFamilyTargets(def), 'same-family tier', 'item', 'direct-item'))
+      familyBtn.addEventListener('click', () => copyPoseTo(def, familyTargets, 'same-family tier', 'item', 'direct-item'))
 
       const slotBtn = document.createElement('button')
       slotBtn.className = 'asset-rotate-modal-btn secondary'
       slotBtn.textContent = 'Slot'
-      slotBtn.disabled = !directPose || !def.equipSlot || sameSlotTargets(def).length === 0
+      slotBtn.disabled = !directPose || !def.equipSlot || slotTargets.length === 0
       slotBtn.title = 'Copy this direct item pose to every modeled item in this equipment slot'
-      slotBtn.addEventListener('click', () => copyPoseTo(def, sameSlotTargets(def), 'same-slot', 'item', 'direct-item'))
+      slotBtn.addEventListener('click', () => copyPoseTo(def, slotTargets, 'same-slot', 'item', 'direct-item'))
 
       const actions = document.createElement('div')
       actions.className = 'item-thumb-actions'
@@ -555,13 +569,23 @@ export async function openItemThumbnailBrowser(options: ItemThumbnailBrowserOpti
       card.appendChild(img)
       card.appendChild(meta)
       card.appendChild(actions)
-      grid.appendChild(card)
+      fragment.appendChild(card)
       renderedImages.set(def.id, img)
-      observer.observe(img)
+      if (!bakedUrl) imagesToObserve.push(img)
     }
+    grid.appendChild(fragment)
+    for (const img of imagesToObserve) observer.observe(img)
   }
 
-  search.addEventListener('input', renderList)
+  const scheduleRenderList = (): void => {
+    if (renderListTimer !== null) window.clearTimeout(renderListTimer)
+    renderListTimer = window.setTimeout(() => {
+      renderListTimer = null
+      renderList()
+    }, 100)
+  }
+
+  search.addEventListener('input', scheduleRenderList)
   renderList()
   search.focus()
 }
