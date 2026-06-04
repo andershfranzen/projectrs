@@ -1465,11 +1465,13 @@ function tuneModelLighting(model) {
     rebuildCollisionMeshes()
   }
 
-  // --- Biome painting (8x8 tile cells with fog overrides) ---
+  // --- Biome painting (8x8 tile cells with fog/sky overrides) ---
 
   const BIOME_CELL_SIZE = 1
+  const DEFAULT_SKYBOX_COLOR = [0.4, 0.62, 0.92]
+  const DEFAULT_DUNGEON_SKYBOX_COLOR = [0, 0, 0]
   const biomeData = {
-    defs: [],         // { id, name, fogColor:[r,g,b] 0-1, fogStart, fogEnd }
+    defs: [],         // { id, name, fogColor:[r,g,b] 0-1, fogStart, fogEnd, skybox:{color:[r,g,b]} }
     cells: {}         // "cellX,cellZ" -> biome id
   }
   let nextBiomeId = 1
@@ -1489,8 +1491,25 @@ function tuneModelLighting(model) {
     return { defs: JSON.parse(JSON.stringify(biomeData.defs)), cells: { ...biomeData.cells } }
   }
 
+  function rgb01Array(value, fallback) {
+    const source = Array.isArray(value) && value.length >= 3 ? value : fallback
+    return [
+      Math.max(0, Math.min(1, Number(source[0]) || 0)),
+      Math.max(0, Math.min(1, Number(source[1]) || 0)),
+      Math.max(0, Math.min(1, Number(source[2]) || 0))
+    ]
+  }
+
+  function normalizeSkyboxConfig(value, fallbackColor = DEFAULT_SKYBOX_COLOR) {
+    return { color: rgb01Array(value?.color, fallbackColor), showSun: value?.showSun !== false }
+  }
+
   function loadBiomesData(data) {
-    biomeData.defs = (data?.defs || []).map(d => ({ ...d, fogColor: [...d.fogColor] }))
+    biomeData.defs = (data?.defs || []).map(d => ({
+      ...d,
+      fogColor: rgb01Array(d.fogColor, [0.4, 0.6, 0.9]),
+      skybox: normalizeSkyboxConfig(d.skybox, DEFAULT_SKYBOX_COLOR)
+    }))
     biomeData.cells = { ...(data?.cells || {}) }
     nextBiomeId = biomeData.defs.reduce((m, d) => Math.max(m, d.id), 0) + 1
     selectedBiomeId = biomeData.defs[0]?.id ?? null
@@ -2535,6 +2554,12 @@ let selectedWaterFlowChunk = null
         <input id="biomeEditName" type="text" style="width:100%;margin-top:3px;margin-bottom:6px;" />
         <label style="font-size:11px;color:rgba(255,255,255,0.45);">Fog Color</label>
         <input id="biomeEditColor" type="color" style="width:100%;height:32px;margin-top:3px;margin-bottom:6px;" />
+        <label style="font-size:11px;color:rgba(255,255,255,0.45);">Sky Color</label>
+        <input id="biomeEditSkyColor" type="color" style="width:100%;height:32px;margin-top:3px;margin-bottom:6px;" />
+        <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:rgba(255,255,255,0.65);margin-bottom:8px;">
+          <input id="biomeEditShowSun" type="checkbox" checked />
+          Show east sun
+        </label>
         <div style="display:flex;gap:5px;">
           <div style="flex:1;">
             <label style="font-size:11px;color:rgba(255,255,255,0.45);">Clear up to <span id="biomeEditStartVal">10</span> tiles</label>
@@ -9796,6 +9821,10 @@ function applyToolAtTile(tile, eventLike = null) {
       fogColor: map.mapType === 'dungeon' ? [0.05, 0.02, 0.1] : [0.4, 0.6, 0.9],
       fogStart: map.mapType === 'dungeon' ? 5 : 30,
       fogEnd: map.mapType === 'dungeon' ? 25 : 50,
+      skybox: {
+        color: map.mapType === 'dungeon' ? [...DEFAULT_DUNGEON_SKYBOX_COLOR] : [...DEFAULT_SKYBOX_COLOR],
+        showSun: map.mapType !== 'dungeon'
+      },
       transitions: []
     }
     return {
@@ -11563,6 +11592,8 @@ function applyToolAtTile(tile, eventLike = null) {
   const biomeEditorEl = sidebar.querySelector('#biomeEditor')
   const biomeEditName = sidebar.querySelector('#biomeEditName')
   const biomeEditColor = sidebar.querySelector('#biomeEditColor')
+  const biomeEditSkyColor = sidebar.querySelector('#biomeEditSkyColor')
+  const biomeEditShowSun = sidebar.querySelector('#biomeEditShowSun')
   const biomeEditStart = sidebar.querySelector('#biomeEditStart')
   const biomeEditStartVal = sidebar.querySelector('#biomeEditStartVal')
   const biomeEditEnd = sidebar.querySelector('#biomeEditEnd')
@@ -11587,6 +11618,10 @@ function applyToolAtTile(tile, eventLike = null) {
       row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:5px;margin-bottom:3px;border-radius:3px;cursor:pointer;background:' + (def.id === selectedBiomeId ? 'rgba(45,108,223,0.3)' : 'rgba(255,255,255,0.04)')
       const sw = document.createElement('div')
       sw.style.cssText = `width:16px;height:16px;border-radius:2px;flex-shrink:0;background:${rgb01ToHex(def.fogColor)};border:1px solid #222;`
+      sw.title = 'Fog color'
+      const skySw = document.createElement('div')
+      skySw.style.cssText = `width:16px;height:16px;border-radius:2px;flex-shrink:0;background:${rgb01ToHex(def.skybox?.color ?? DEFAULT_SKYBOX_COLOR)};border:1px solid #222;`
+      skySw.title = 'Sky color'
       const name = document.createElement('div')
       name.textContent = def.name
       name.style.cssText = 'flex:1;font-size:12px;'
@@ -11597,6 +11632,7 @@ function applyToolAtTile(tile, eventLike = null) {
       edit.addEventListener('click', (ev) => { ev.stopPropagation(); openBiomeEditor(def.id) })
       row.addEventListener('click', () => { selectedBiomeId = def.id; refreshBiomePalette() })
       row.appendChild(sw)
+      row.appendChild(skySw)
       row.appendChild(name)
       row.appendChild(edit)
       biomeDefListEl.appendChild(row)
@@ -11609,6 +11645,8 @@ function applyToolAtTile(tile, eventLike = null) {
     editingBiomeId = id
     biomeEditName.value = def.name
     biomeEditColor.value = rgb01ToHex(def.fogColor)
+    biomeEditSkyColor.value = rgb01ToHex(def.skybox?.color ?? DEFAULT_SKYBOX_COLOR)
+    biomeEditShowSun.checked = def.skybox?.showSun !== false
     biomeEditStart.value = String(def.fogStart)
     biomeEditStartVal.textContent = String(def.fogStart)
     biomeEditEnd.value = String(def.fogEnd)
@@ -11617,7 +11655,7 @@ function applyToolAtTile(tile, eventLike = null) {
   }
 
   biomeAddBtn?.addEventListener('click', () => {
-    const def = { id: nextBiomeId++, name: `Biome ${biomeData.defs.length + 1}`, fogColor: [0.1, 0.05, 0.15], fogStart: 8, fogEnd: 25 }
+    const def = { id: nextBiomeId++, name: `Biome ${biomeData.defs.length + 1}`, fogColor: [0.1, 0.05, 0.15], fogStart: 8, fogEnd: 25, skybox: { color: [...DEFAULT_SKYBOX_COLOR], showSun: true } }
     biomeData.defs.push(def)
     selectedBiomeId = def.id
     openBiomeEditor(def.id)
@@ -11630,6 +11668,7 @@ function applyToolAtTile(tile, eventLike = null) {
     if (!def) return
     def.name = biomeEditName.value.trim() || def.name
     def.fogColor = hexToRgb01(biomeEditColor.value)
+    def.skybox = normalizeSkyboxConfig({ color: hexToRgb01(biomeEditSkyColor.value), showSun: biomeEditShowSun.checked }, DEFAULT_SKYBOX_COLOR)
     def.fogStart = parseFloat(biomeEditStart.value) || 0
     def.fogEnd = parseFloat(biomeEditEnd.value) || 100
     biomeOverlayDirty = true

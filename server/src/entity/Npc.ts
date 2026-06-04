@@ -1,6 +1,6 @@
 import { Entity } from './Entity';
 import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, npcCombatLevel } from '@projectrs/shared';
-import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors } from '@projectrs/shared';
+import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition } from '@projectrs/shared';
 import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
 function callbackPathingCollision(
@@ -108,6 +108,8 @@ export class Npc extends Entity {
   readonly shopNextRestockTick: Map<number, number> = new Map();
   /** Resolved at spawn time as `spawn.dialogue ?? def.dialogue`. */
   readonly effectiveDialogue: DialogueTree | null;
+  /** Per-player visibility gate for quest-only NPCs. */
+  readonly visibilityCondition: QuestCondition | null;
   /** Per-spawn name override (`spawn.name`). When null the runtime falls
    *  back to def.name (already set on Entity by the super constructor). */
   readonly nameOverride: string | null;
@@ -131,6 +133,7 @@ export class Npc extends Entity {
     huntRange?: number | null,
     attackRange?: number | null,
     retreatHealth?: number | null,
+    visibilityCondition?: QuestCondition | null,
   ) {
     // Health override applies at construction so the Entity's maxHealth picks
     // it up. Stats override is positive integers; ignore non-finite or ≤0.
@@ -162,6 +165,7 @@ export class Npc extends Entity {
       }
     }
     this.effectiveDialogue = effectiveDialogue ?? null;
+    this.visibilityCondition = visibilityCondition ?? null;
     this.statsOverride = statsOverride ?? null;
     this.attackAnimOverride = (attackAnimOverride && attackAnimOverride.length > 0)
       ? attackAnimOverride

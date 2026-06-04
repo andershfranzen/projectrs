@@ -1,4 +1,4 @@
-import { QUEST_STAGE_COMPLETED, type QuestDef } from '@projectrs/shared';
+import { QUEST_STAGE_COMPLETED, type QuestDef, type QuestState as SharedQuestState } from '@projectrs/shared';
 import {
   DIALOGUE_ACCENT,
   DIALOGUE_PARCHMENT_BG,
@@ -6,7 +6,7 @@ import {
   mountModalInGameFrame,
 } from './ModalPanel';
 
-export type QuestState = Record<string, { stage: number; triggerProgress: number }>;
+export type QuestJournalState = Record<string, SharedQuestState>;
 
 /** Quest journal detail panel: a dialogue-chrome game-frame modal with a
  *  parchment-like text area, status-colored quest title, and
@@ -23,12 +23,12 @@ export class QuestJournalPopup {
   private bodyEl: HTMLDivElement;
   private currentQuestId: string | null = null;
   private getDef: (id: string) => QuestDef | undefined;
-  private getState: () => QuestState;
+  private getState: () => QuestJournalState;
   private onClose: () => void;
 
   constructor(
     getDef: (id: string) => QuestDef | undefined,
-    getState: () => QuestState,
+    getState: () => QuestJournalState,
     onClose: () => void = () => {},
   ) {
     this.getDef = getDef;
@@ -134,7 +134,7 @@ export class QuestJournalPopup {
       const stage = def.stages[i];
       const para = document.createElement('div');
       para.style.marginBottom = '12px';
-      para.textContent = stage.description ?? `(stage ${i})`;
+      para.textContent = this.stageDescription(stage, state) ?? `(stage ${i})`;
       this.bodyEl.appendChild(para);
     }
 
@@ -159,5 +159,18 @@ export class QuestJournalPopup {
         this.bodyEl.appendChild(prog);
       }
     }
+  }
+
+  private stageDescription(
+    stage: QuestDef['stages'][number],
+    state: SharedQuestState,
+  ): string | undefined {
+    const branch = stage.descriptionByVar;
+    if (branch) {
+      const value = state.vars?.[branch.key];
+      const override = value !== undefined ? branch.values[String(value)] : undefined;
+      if (override) return override;
+    }
+    return stage.description;
   }
 }

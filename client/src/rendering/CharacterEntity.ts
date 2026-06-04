@@ -22,6 +22,7 @@ import { bindHumanoidAnimationTemplate, buildHumanoidRigContext, getHumanoidAnim
 import { remapSkinningToSkeleton } from './skinnedArmor';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
+import { createMobGroundShadow } from './MobGroundShadow';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
@@ -228,6 +229,8 @@ export interface CharacterEntityOptions {
   labelColor?: string;
   /** Gameplay footprint width for NPCs rendered through the character rig. */
   tileSize?: number;
+  /** Draw a soft ground shadow under NPC/mob instances. Players leave this off. */
+  groundShadow?: boolean;
   /**
    * Additional animations to load from separate GLB files.
    * Use this when you can't (or don't want to) merge animations in Blender.
@@ -356,6 +359,7 @@ export class CharacterEntity {
    *  isVisible=false), visibility=0 (transparent), layerMask=0 (no camera
    *  renders it — picker doesn't honour layerMask, so it still hits). */
   private pickProxy: Mesh | null = null;
+  private groundShadow: Mesh | null = null;
 
   private bodyMeshes: AbstractMesh[] = [];
   /** Per body-mesh: original index buffer + a filtered version with chest /
@@ -708,6 +712,19 @@ export class CharacterEntity {
 
       // Apply initial position (with feet offset)
       this.setRootPositionFromLogical();
+      if (options.groundShadow) {
+        const shadowWidth = Math.max(0.78, this.footprintWidth * 0.82, targetH * 0.46);
+        const shadowDepth = Math.max(0.56, this.footprintWidth * 0.64, targetH * 0.34);
+        this.groundShadow = createMobGroundShadow(
+          this.scene,
+          `${options.name}_groundShadow`,
+          this.root,
+          shadowWidth,
+          shadowDepth,
+          this.modelScale,
+          -this.feetOffsetY,
+        );
+      }
 
       // Picking proxy — the ONLY pickable mesh on the character. All
       // skinned meshes (body, hair, gear) are forced non-pickable in
@@ -2632,6 +2649,10 @@ export class CharacterEntity {
     if (this.pickProxy) {
       this.pickProxy.dispose();
       this.pickProxy = null;
+    }
+    if (this.groundShadow) {
+      this.groundShadow.dispose();
+      this.groundShadow = null;
     }
 
     if (this.root) {

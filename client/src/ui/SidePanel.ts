@@ -8,7 +8,7 @@ import {
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
   zeroBonuses, STANCE_KEYS, combatLevelFromLevels,
-  type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef,
+  type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef, type QuestState,
   type CombatBonuses,
   type SpellEffectDef, type SpellSchool,
 } from '@projectrs/shared';
@@ -57,6 +57,7 @@ const ARROW_SHAFT_RECIPE_BY_LOG_ITEM_ID: ReadonlyMap<number, typeof LOG_CRAFT_AR
 const ARROWHEAD_RECIPE_BY_ITEM_ID: ReadonlyMap<number, typeof ARROWHEAD_FLETCHING_RECIPES[number]> = new Map(
   ARROWHEAD_FLETCHING_RECIPES.map(recipe => [recipe.arrowheadItemId, recipe]),
 );
+type SocialListTab = 'friends' | 'ignore';
 const MELEE_STANCE_LABELS: Readonly<Record<MeleeStance, { label: string; desc: string }>> = {
   accurate: { label: 'Accurate', desc: 'Measured attacks' },
   aggressive: { label: 'Aggressive', desc: 'Heavy attacks' },
@@ -150,7 +151,7 @@ export class SidePanel {
 
   // Quest journal state — driven by GameManager's quest cache + state record.
   private questDefs: Map<string, QuestDef> = new Map();
-  private questState: Record<string, { stage: number; triggerProgress: number }> = {};
+  private questState: Record<string, QuestState> = {};
   private renown: number = 0;
   private questsContent: HTMLDivElement | null = null;
   private renownHeaderEl: HTMLSpanElement | null = null;
@@ -170,6 +171,7 @@ export class SidePanel {
   private friends: SocialClientEntry[] = [];
   private ignore: SocialClientEntry[] = [];
   private socialContent: HTMLDivElement | null = null;
+  private activeSocialListTab: SocialListTab = 'friends';
 
   // Tab content areas
   private tabContents: Map<string, HTMLDivElement> = new Map();
@@ -357,6 +359,45 @@ export class SidePanel {
           background: rgba(120,80,40,0.14);
           outline: 1px solid rgba(255,204,68,0.45);
           outline-offset: -1px;
+        }
+
+        .social-list-tabs {
+          display: flex;
+          align-items: flex-end;
+          gap: 4px;
+          flex: 0 0 auto;
+          padding: 0 2px;
+          border-bottom: 1px solid #4b3f31;
+        }
+        .social-list-tab {
+          appearance: none;
+          -webkit-appearance: none;
+          flex: 1 1 0;
+          height: 30px;
+          margin: 0 0 -1px;
+          border: 1px solid #3a3025;
+          border-bottom-color: #4b3f31;
+          border-radius: 4px 4px 0 0;
+          background: linear-gradient(180deg, #302820 0%, #211a15 100%);
+          color: #9b9487;
+          cursor: pointer;
+          font: 700 12px Arial, Helvetica, sans-serif;
+          text-shadow: 1px 1px 0 #000;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), inset 0 -2px 4px rgba(0,0,0,0.35);
+          user-select: none;
+          -webkit-user-select: none;
+          touch-action: manipulation;
+        }
+        .social-list-tab.is-active {
+          color: #f2dfc7;
+          border-color: #5e4e3d;
+          border-bottom-color: #1d1712;
+          background: linear-gradient(180deg, #463827 0%, #1d1712 100%);
+          box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 -1px 4px rgba(0,0,0,0.25);
+        }
+        .social-list-tab:focus-visible {
+          outline: 1px solid #d8372b;
+          outline-offset: -3px;
         }
 
         #game-frame .side-account-actions {
@@ -943,7 +984,7 @@ export class SidePanel {
     this.tabContents.set('quests', questsWrap);
     this.renderQuestJournal();
 
-    // Social tab (friends + ignore combined)
+    // Social tab
     const socialWrap = document.createElement('div');
     socialWrap.style.display = 'none';
     this.socialContent = this.buildSocialContent();
@@ -1042,7 +1083,7 @@ export class SidePanel {
 
   /** Replace the full quest-state snapshot. Fired by GameManager on
    *  QUEST_STATE_SYNC (login). */
-  setQuestState(state: Record<string, { stage: number; triggerProgress: number }>): void {
+  setQuestState(state: Record<string, QuestState>): void {
     this.questState = state;
     this.renderQuestJournal();
   }
@@ -1051,7 +1092,7 @@ export class SidePanel {
    *  rebuilding the state record; also nudges the journal popup if the
    *  player has it open on this quest. */
   updateQuestState(questId: string, stage: number, triggerProgress: number): void {
-    this.questState[questId] = { stage, triggerProgress };
+    this.questState[questId] = { ...(this.questState[questId] ?? {}), stage, triggerProgress };
     this.renderQuestJournal();
     this.questJournalPopup?.refresh();
   }
@@ -1559,12 +1600,47 @@ export class SidePanel {
   private renderSocialPanel(root: HTMLDivElement | null = this.socialContent): void {
     if (!root) return;
     root.innerHTML = '';
-    root.appendChild(this.buildSocialSection('friends', 'Friends List', '#56c96b', this.friends));
-    root.appendChild(this.buildSocialSection('ignore', 'Ignore List', '#c44', this.ignore));
+
+    const tabBar = document.createElement('div');
+    tabBar.className = 'social-list-tabs';
+
+    const tabs: { key: SocialListTab; label: string }[] = [
+      { key: 'friends', label: 'Friends' },
+      { key: 'ignore', label: 'Ignore' },
+    ];
+    for (const tab of tabs) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'social-list-tab';
+      btn.textContent = tab.label;
+      btn.dataset.tab = tab.key;
+      btn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.switchSocialListTab(tab.key);
+      });
+      setToggleButtonActive(btn, tab.key === this.activeSocialListTab);
+      tabBar.appendChild(btn);
+    }
+    root.appendChild(tabBar);
+
+    const isFriends = this.activeSocialListTab === 'friends';
+    root.appendChild(this.buildSocialSection(
+      this.activeSocialListTab,
+      isFriends ? 'Friends List' : 'Ignore List',
+      isFriends ? '#56c96b' : '#c44',
+      isFriends ? this.friends : this.ignore,
+    ));
+  }
+
+  private switchSocialListTab(tab: SocialListTab): void {
+    if (this.activeSocialListTab === tab) return;
+    this.activeSocialListTab = tab;
+    this.renderSocialPanel();
   }
 
   private buildSocialSection(
-    list: 'friends' | 'ignore',
+    list: SocialListTab,
     title: string,
     color: string,
     entries: SocialClientEntry[],
@@ -1629,7 +1705,7 @@ export class SidePanel {
     return section;
   }
 
-  private buildSocialRow(list: 'friends' | 'ignore', entry: SocialClientEntry, color: string): HTMLDivElement {
+  private buildSocialRow(list: SocialListTab, entry: SocialClientEntry, color: string): HTMLDivElement {
     const row = document.createElement('div');
     row.style.cssText = `
       display:grid;
@@ -1698,7 +1774,7 @@ export class SidePanel {
     return row;
   }
 
-  private promptAddSocial(list: 'friends' | 'ignore'): void {
+  private promptAddSocial(list: SocialListTab): void {
     if (!this.requestQuantity) return;
     const label = list === 'friends' ? 'friend' : 'ignore';
     this.requestQuantity({
@@ -2082,10 +2158,11 @@ export class SidePanel {
     if (!data) return;
     const nextLevelXp = xpForLevel(data.level + 1);
     const xpLeft = Math.max(0, nextLevelXp - data.xp);
+    const progress = this.skillLevelProgressPercent(data);
 
     this.skillXpTooltip = new HoverTooltip({
       title: SKILL_NAMES[skillId],
-      body: data.level >= 99 ? 'Max level' : `${xpLeft} XP left`,
+      body: data.level >= 99 ? 'Max level' : [`${this.formatPercent(progress)} of level`, `${xpLeft} XP left`],
       x,
       y,
       minWidthPx: 136,
@@ -3313,14 +3390,39 @@ export class SidePanel {
     if (levelEl) levelEl.textContent = data.level.toString();
 
     // XP progress to next level
+    const progress = this.skillLevelProgressPercent(data);
+    if (barEl) barEl.style.width = `${progress}%`;
+
+    const nextLevelXp = xpForLevel(data.level + 1);
+    if (xpEl) {
+      const currentXpText = this.formatSkillBarXp(data.xp);
+      const nextXpText = this.formatSkillBarXp(data.level >= 99 ? data.xp : nextLevelXp);
+      xpEl.textContent = `${currentXpText} / ${nextXpText}`;
+    }
+  }
+
+  private skillLevelProgressPercent(data: SkillData): number {
+    if (data.level >= 99) return 100;
     const currentLevelXp = xpForLevel(data.level);
     const nextLevelXp = xpForLevel(data.level + 1);
-    const xpInLevel = data.xp - currentLevelXp;
+    const xpInLevel = Math.max(0, data.xp - currentLevelXp);
     const xpNeeded = nextLevelXp - currentLevelXp;
-    const progress = xpNeeded > 0 ? Math.min(100, (xpInLevel / xpNeeded) * 100) : 100;
+    return xpNeeded > 0 ? Math.max(0, Math.min(100, (xpInLevel / xpNeeded) * 100)) : 100;
+  }
 
-    if (barEl) barEl.style.width = `${progress}%`;
-    if (xpEl) xpEl.textContent = data.level >= 99 ? `${data.xp}/${data.xp}` : `${data.xp}/${nextLevelXp}`;
+  private formatPercent(value: number): string {
+    return `${value >= 99.95 ? '100' : value.toFixed(1)}%`;
+  }
+
+  private formatSkillBarXp(value: number): string {
+    const xp = Math.max(0, Math.floor(value));
+    if (xp >= 1_000_000) return `${this.truncateToTwoDecimals(xp / 1_000_000).toFixed(2)}M`;
+    if (xp >= 10_000) return `${this.truncateToTwoDecimals(xp / 1_000).toFixed(2)}K`;
+    return xp.toString();
+  }
+
+  private truncateToTwoDecimals(value: number): number {
+    return Math.floor(value * 100) / 100;
   }
 
   private updateCombatLevel(): void {

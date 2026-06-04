@@ -45,5 +45,57 @@
       ],
       "renown": 1
     }
+  },
+  {
+    "id": "Bad Blood",
+    "name": "Bad Blood",
+    "blurb": "Farmer Borin's cattle are being killed and drained of blood.",
+    "stages": [
+      {
+        "id": 0,
+        "description": "I should investigate the dead cattle by the old barn."
+      },
+      {
+        "id": 1,
+        "description": "I found Sela, a young vampire, in the barn. She was turned and abandoned by Lord Mortrek. I need to decide how to handle this."
+      },
+      {
+        "id": 2,
+        "description": "I need to confront Lord Mortrek in his castle.",
+        "descriptionByVar": {
+          "key": "BLOOD_PATH",
+          "values": {
+            "1": "I'm going to break Sela's curse. I must confront Lord Mortrek in his castle.",
+            "2": "Sela and I are going to the castle to get Lord Mortrek's power."
+          }
+        }
+      },
+      {
+        "id": 3,
+        "description": "I'm facing Lord Mortrek in his castle.",
+        "descriptionByVar": {
+          "key": "BLOOD_PATH",
+          "values": {
+            "1": "I'm facing Lord Mortrek in his castle. I need to defeat him to break Sela's curse.",
+            "2": "Lord Mortrek wants the prisoner's heart from the cells below before he gives me the dark blood."
+          }
+        },
+        "trigger": {
+          "type": "npcKill",
+          "npcDefId": 101
+        }
+      },
+      {
+        "id": 4,
+        "description": "I should return to Farmer Borin.",
+        "descriptionByVar": {
+          "key": "BLOOD_PATH",
+          "values": {
+            "1": "Mortrek is defeated and Sela is free. I should tell Farmer Borin.",
+            "2": "Mortrek gave me the dark blood. Nothing left for me at Borin's farm."
+          }
+        }
+      }
+    ]
   }
 ]

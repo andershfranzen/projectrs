@@ -9,7 +9,15 @@
         0.10196078431372549
       ],
       "fogStart": 18,
-      "fogEnd": 28
+      "fogEnd": 28,
+      "skybox": {
+        "color": [
+          0.12,
+          0.12,
+          0.13
+        ],
+        "showSun": false
+      }
     }
   ],
   "cells": {

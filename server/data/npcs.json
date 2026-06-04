@@ -1059,5 +1059,29 @@
         "chance": 0.006666666666666666
       }
     ]
+  },
+  {
+    "id": 103,
+    "name": "Castle Prisoner",
+    "health": 12,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 5,
+    "respawnTime": 90,
+    "aggressive": false,
+    "wanderRange": 1,
+    "lootTable": [
+      {
+        "itemId": 309,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 224,
+        "quantity": 1,
+        "chance": 0.005
+      }
+    ]
   }
 ]

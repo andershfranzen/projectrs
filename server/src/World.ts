@@ -765,7 +765,8 @@ export class World {
         spawn.attackAnim ?? null,
         spawn.facing ?? null,
         spawn.maxRange ?? null, spawn.huntRange ?? null,
-        spawn.attackRange ?? null, spawn.retreatHealth ?? null);
+        spawn.attackRange ?? null, spawn.retreatHealth ?? null,
+        spawn.visibilityCondition ?? null);
       npc.currentMapLevel = mapId;
       npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
@@ -907,12 +908,18 @@ export class World {
   canPlayerTargetNpc(player: Player, npc: Npc): boolean {
     return !npc.dead
       && npc.currentMapLevel === player.currentMapLevel
-      && (npc.currentFloor ?? 0) === player.currentFloor;
+      && (npc.currentFloor ?? 0) === player.currentFloor
+      && this.canPlayerSeeNpc(player, npc);
   }
 
   private canPlayerSyncNpc(player: Player, npc: Npc): boolean {
     return !npc.dead
-      && npc.currentMapLevel === player.currentMapLevel;
+      && npc.currentMapLevel === player.currentMapLevel
+      && this.canPlayerSeeNpc(player, npc);
+  }
+
+  private canPlayerSeeNpc(player: Player, npc: Npc): boolean {
+    return !npc.visibilityCondition || this.quests.questConditionMet(player, npc.visibilityCondition);
   }
 
   canPlayerTargetObject(player: Player, obj: WorldObject): boolean {
@@ -1556,6 +1563,7 @@ export class World {
           spawn.huntRange ?? null,
           spawn.attackRange ?? null,
           spawn.retreatHealth ?? null,
+          spawn.visibilityCondition ?? null,
         );
         npc.currentMapLevel = mapId;
         npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
@@ -3547,7 +3555,7 @@ export class World {
     // shop or bank via DialogueAction, so authoring a dialogue-wrapped
     // shopkeeper is the supported way to combine the two.
     if (npc.hasDialogue) {
-      this.openDialogueAt(player, npc, npc.effectiveDialogue!.root, true);
+      this.openDialogueAt(player, npc, this.dialogueRootFor(player, npc.effectiveDialogue!), true);
       return;
     }
 
@@ -3694,6 +3702,13 @@ export class World {
   /** Push the current dialogue node to the client and update server-side
    *  state. Sends DIALOGUE_OPEN with a JSON-encoded node payload (lines,
    *  speaker, options) so the client doesn't need to know the whole tree. */
+  private dialogueRootFor(player: Player, tree: import('@projectrs/shared').DialogueTree): string {
+    for (const route of tree.rootConditions ?? []) {
+      if (this.quests.questConditionMet(player, route.condition) && tree.nodes[route.node]) return route.node;
+    }
+    return tree.root;
+  }
+
   private openDialogueAt(player: Player, npc: Npc, nodeId: string, newSession: boolean = false): void {
     const tree = npc.effectiveDialogue;
     if (!tree) return;
@@ -3772,7 +3787,7 @@ export class World {
       ...(option.actions ?? []),
     ];
     if (actions.length > 0) {
-      this.runDialogueActions(player, npc, actions);
+      if (!this.runDialogueActions(player, npc, actions)) return;
       const afterActionState = player.openDialogueState;
       if (
         !afterActionState ||
@@ -3797,10 +3812,22 @@ export class World {
     player: Player,
     npc: Npc,
     actions: import('@projectrs/shared').DialogueAction[],
-  ): void {
+  ): boolean {
     const initialState = player.openDialogueState;
-    for (const action of actions) {
-      this.runDialogueAction(player, npc, action);
+    for (let i = 0; i < actions.length; i++) {
+      const action = actions[i];
+      if (this.isQuestDialogueAction(action)) {
+        const batch = [action];
+        while (true) {
+          const next = actions[i + 1];
+          if (!next || !this.isQuestDialogueAction(next)) break;
+          batch.push(next);
+          i++;
+        }
+        if (!this.quests.runQuestActions(player, batch, 'dialogue')) return false;
+      } else {
+        this.runDialogueAction(player, npc, action);
+      }
       const state = player.openDialogueState;
       if (
         !initialState ||
@@ -3809,9 +3836,19 @@ export class World {
         state.npcEntityId !== initialState.npcEntityId ||
         state.nodeId !== initialState.nodeId
       ) {
-        return;
+        return true;
       }
     }
+    return true;
+  }
+
+  private isQuestDialogueAction(action: import('@projectrs/shared').DialogueAction): boolean {
+    return action.type === 'giveItem'
+      || action.type === 'takeItem'
+      || action.type === 'grantXp'
+      || action.type === 'setQuestStage'
+      || action.type === 'setQuestVar'
+      || action.type === 'completeQuest';
   }
 
   private runDialogueAction(
@@ -3835,11 +3872,16 @@ export class World {
         this.sendDialogueClose(player);
         this.openCharacterCreatorFor(player);
         return;
-      case 'giveItem':
-      case 'takeItem':
-      case 'setQuestStage':
-      case 'completeQuest':
-        this.quests.runQuestAction(player, action, 'dialogue');
+      case 'startNpcCombat':
+        this.sendDialogueClose(player);
+        if (npc.dead || !this.canPlayerTargetNpc(player, npc)) return;
+        if (!this.canPlayerEngageNpcCombat(player, npc)) {
+          this.sendChatSystem(player, "You can't attack that right now.");
+          return;
+        }
+        player.attackTarget = npc;
+        this.setCombatTarget(player.id, npc.id);
+        this.broadcastNpcFacingPlayer(npc, player);
         return;
     }
   }

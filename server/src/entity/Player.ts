@@ -9,7 +9,7 @@ import {
   MITHRIL_ARROWS_ITEM_ID, BLACK_BRONZE_ARROWS_ITEM_ID,
   SHORTBOW_ITEM_ID, OAK_SHORTBOW_ITEM_ID, WILLOW_SHORTBOW_ITEM_ID,
   MAPLE_SHORTBOW_ITEM_ID, YEW_SHORTBOW_ITEM_ID, MAGIC_SHORTBOW_ITEM_ID,
-  type PlayerAppearance, type ItemDef,
+  type PlayerAppearance, type ItemDef, type QuestState,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 
@@ -170,7 +170,7 @@ export class Player extends Entity {
    *  current stage and progress toward that stage's trigger threshold
    *  (kill count, item count, etc). `stage: -1` = completed. Persisted in
    *  player_state.quests. */
-  quests: Record<string, { stage: number; triggerProgress: number }> = {};
+  quests: Record<string, QuestState> = {};
   /** Account-wide reputation earned from quest completions. Persisted in
    *  player_state.renown and synced to the quest journal. */
   renown: number = 0;

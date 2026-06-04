@@ -140,6 +140,7 @@ export class EntityManager {
       targetHeight: CHARACTER_TARGET_HEIGHT,
       label: name,
       labelColor: '#ffffff',
+      groundShadow: true,
       additionalAnimations: [...PLAYER_ANIMATIONS],
     });
     character.setEntityIdMetadata(entityId, 'player');
@@ -233,6 +234,7 @@ export class EntityManager {
       modelPath: getCharacterModelPath(this.npcAppearances.get(entityId) ?? null),
       targetHeight: CHARACTER_TARGET_HEIGHT,
       tileSize,
+      groundShadow: true,
       // No floating label — NPCs introduce themselves via chat on interaction
       // instead. Identity is still surfaced through the hover tooltip + the
       // right-click menu label.

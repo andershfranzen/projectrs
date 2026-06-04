@@ -69,6 +69,7 @@ function sanitizeQuestStage(stage: unknown): unknown {
     id: stage.id,
     description: stage.description,
   };
+  if (isRecord(stage.descriptionByVar)) out.descriptionByVar = stage.descriptionByVar;
   if (isRecord(stage.trigger)) {
     const { type, count, quantity } = stage.trigger;
     out.trigger = {

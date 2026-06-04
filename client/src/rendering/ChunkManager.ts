@@ -591,6 +591,9 @@ export class ChunkManager {
     const mapFile: KCMapFile = await mapRes.json();
     if (isStale()) return;
     this.mapData = mapFile.map;
+    if (this.mapData.mapType && !this.meta.mapType) {
+      this.meta.mapType = this.mapData.mapType;
+    }
     this.defaultGround = defaultGroundForMap(this.mapData);
     this.activeChunks = Array.isArray(this.mapData.activeChunks)
       ? new Set(this.mapData.activeChunks)

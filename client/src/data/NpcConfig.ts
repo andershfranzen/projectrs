@@ -67,7 +67,7 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   // Camel.glb is authored in centimeters and exported with the final flat-color
   // mesh plus the four gameplay clips.
   15: { file: '/models/npcs/Camel.glb', scale: 0.01, originMode: 'boundsCenter', facingOffsetY: Math.PI, preserveAnimationRoles: ['idle'], anims: { idle: 'Idle_01', walk: 'Walk', attack: 'Attack', death: 'Die' } },
-  18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', groundOffset: 0.2, anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
+  18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   22: { file: '/models/npcs/spider_v2.glb', scale: 0.75, originMode: 'boundsCenter', preserveAnimationRoles: ['walk'], anims: { idle: 'Idle', walk: 'WalkCycle', attack: 'Attack', death: 'Dead(just-pose)' } },
   17: {
     file: '/models/npcs/wolf.glb',

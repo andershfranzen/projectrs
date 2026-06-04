@@ -1,7 +1,7 @@
 import { Database as SQLiteDB } from 'bun:sqlite';
 import { createHash, randomBytes } from 'crypto';
 import type { Player } from './entity/Player';
-import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance } from '@projectrs/shared';
+import type { SkillBlock, SkillId, MeleeStance, MagicStance, PlayerAppearance, QuestState } from '@projectrs/shared';
 import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STANCE_KEYS, DEFAULT_APPEARANCE, combatLevel, initSkills, isValidAppearance, normalizeAppearance, normalizeSkillId, validateDeviceId, validatePassword, validateUsername } from '@projectrs/shared';
 import type { EquipSlot } from './entity/Player';
 
@@ -252,7 +252,7 @@ export interface SavedPlayerState {
   appearance: PlayerAppearance | null;
   bank: ({ itemId: number; quantity: number } | null)[];
   respawnVersion: number;
-  quests: Record<string, { stage: number; triggerProgress: number }>;
+  quests: Record<string, QuestState>;
   renown: number;
 }
 
@@ -2103,16 +2103,26 @@ export class GameDatabase {
     // Parse quests. Sanitize: only accept entries with numeric stage +
     // triggerProgress. A corrupted row falls back to an empty record so
     // quests can re-acquire normally.
-    let quests: Record<string, { stage: number; triggerProgress: number }> = {};
+    let quests: Record<string, QuestState> = {};
     try {
       const raw = row.quests ? JSON.parse(row.quests) as Record<string, unknown> : {};
       for (const [k, v] of Object.entries(raw)) {
         if (!v || typeof v !== 'object') continue;
-        const o = v as { stage?: unknown; triggerProgress?: unknown };
+        const o = v as { stage?: unknown; triggerProgress?: unknown; vars?: unknown };
         if (typeof o.stage !== 'number' || !Number.isInteger(o.stage)) continue;
         const prog = typeof o.triggerProgress === 'number' && Number.isInteger(o.triggerProgress) && o.triggerProgress >= 0
           ? o.triggerProgress : 0;
-        quests[k] = { stage: o.stage, triggerProgress: prog };
+        const vars: Record<string, number> = {};
+        if (o.vars && typeof o.vars === 'object') {
+          for (const [varKey, varValue] of Object.entries(o.vars as Record<string, unknown>)) {
+            if (typeof varValue === 'number' && Number.isInteger(varValue)) vars[varKey] = varValue;
+          }
+        }
+        quests[k] = {
+          stage: o.stage,
+          triggerProgress: prog,
+          ...(Object.keys(vars).length > 0 ? { vars } : {}),
+        };
       }
     } catch {
       quests = {};

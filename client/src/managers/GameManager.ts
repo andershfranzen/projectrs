@@ -31,6 +31,7 @@ import { ArrowProjectileManager, arrowProjectileTravelMs } from '../rendering/Ar
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { LevelUpFireworkEffect } from '../rendering/LevelUpFireworkEffect';
+import { DEFAULT_DUNGEON_SKYBOX_CONFIG, DEFAULT_SKYBOX_CONFIG, GameSkybox } from '../rendering/GameSkybox';
 import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
 import { mountWorldOverlayElement } from '../rendering/worldOverlay';
@@ -59,7 +60,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -245,6 +246,7 @@ export class GameManager {
   private scene: Scene;
   private camera: GameCamera;
   private chunkManager: ChunkManager;
+  private skybox: GameSkybox;
   private arrowProjectiles: ArrowProjectileManager;
   private inputManager: InputManager;
   private network: NetworkManager;
@@ -458,7 +460,7 @@ export class GameManager {
   /** Per-player quest state, populated on QUEST_STATE_SYNC at login and
    *  patched per QUEST_STAGE_ADVANCED delta. Mirrored into SidePanel's
    *  Quest Journal tab for rendering, and drives per-stage chat notifications. */
-  private questState: Record<string, { stage: number; triggerProgress: number }> = {};
+  private questState: Record<string, QuestState> = {};
   // Biome fog overrides — loaded per map. Fog lerps toward the biome under the player.
   private biomesFile: BiomesFile | null = null;
   private biomeById: Map<number, BiomeDef> = new Map();
@@ -612,6 +614,8 @@ export class GameManager {
     this.scene.postProcessesEnabled = false;
     this.scene.probesEnabled = false;
     this.scene.audioEnabled = false;
+
+    this.skybox = new GameSkybox(this.scene);
 
     // Lighting — matched to KC editor's Three.js scene for correct terrain colors
     const ambient = new HemisphericLight('ambient', new Vector3(0, 1, 0), this.scene);
@@ -1458,6 +1462,7 @@ export class GameManager {
     this.scene.fogStart = meta.fogStart;
     this.scene.fogEnd = meta.fogEnd;
     this.scene.clearColor = new Color4(c.r * voidDarken, c.g * voidDarken, c.b * voidDarken, 1.0);
+    this.skybox.setConfig(this.skyboxConfigFor(meta));
     // Seed fog state so updateFog has a starting point that matches the map default.
     this.fogTargetColor = c.clone();
     this.fogCurrentColor = c.clone();
@@ -1538,6 +1543,13 @@ export class GameManager {
     const b = this.fogCurrentColor.b * voidDarken;
     this.scene.fogColor.set(r, g, b);
     this.scene.clearColor.set(r, g, b, 1.0);
+    this.skybox.setConfig(this.skyboxConfigFor(meta, this._lastBiomeDef));
+  }
+
+  private skyboxConfigFor(meta: { skybox?: SkyboxConfig; mapType?: string; dungeon?: boolean }, biome?: BiomeDef): SkyboxConfig {
+    if (biome?.skybox) return biome.skybox;
+    if (meta.skybox) return meta.skybox;
+    return meta.mapType === 'dungeon' || meta.dungeon ? DEFAULT_DUNGEON_SKYBOX_CONFIG : DEFAULT_SKYBOX_CONFIG;
   }
 
   private async loadObjectDefs(): Promise<void> {
@@ -2472,6 +2484,7 @@ export class GameManager {
       name: 'localPlayer',
       modelPath: getCharacterModelPath(this.localAppearance),
       targetHeight: CHARACTER_TARGET_HEIGHT,
+      groundShadow: true,
       // No label on the local player — matches pre-3D-remote-players behavior.
       // Other players see the local player's name through PLAYER_SYNC + the
       // chat 'player_info' broadcast.
@@ -3826,7 +3839,7 @@ export class GameManager {
         // Full snapshot on login. JSON record {questId: {stage, triggerProgress}}.
         const { str } = decodeStringPacket(data);
         try {
-          this.questState = JSON.parse(str) as Record<string, { stage: number; triggerProgress: number }>;
+          this.questState = JSON.parse(str) as Record<string, QuestState>;
           this.sidePanel?.setQuestState(this.questState);
         } catch (e) { console.warn('[quest] sync parse failed', e); }
       } else if (opcode === ServerOpcode.QUEST_STAGE_ADVANCED) {
@@ -3835,7 +3848,7 @@ export class GameManager {
         const stage = values[0];
         const triggerProgress = values[1] ?? 0;
         const prev = this.questState[questId];
-        this.questState[questId] = { stage, triggerProgress };
+        this.questState[questId] = { ...(this.questState[questId] ?? {}), stage, triggerProgress };
         this.sidePanel?.updateQuestState(questId, stage, triggerProgress);
         // Chat notification on stage change (not on triggerProgress ticks
         // — those are just intermediate kill/item counters).
@@ -7334,6 +7347,7 @@ export class GameManager {
       this._npcTooltipHandler = null;
     }
     this.arrowProjectiles.dispose();
+    this.skybox.dispose();
     this.engine.stopRenderLoop();
     this.engine.dispose();
     this.chunkManager.disposeAll();

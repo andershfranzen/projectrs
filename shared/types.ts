@@ -182,9 +182,12 @@ export type DialogueAction =
   | { type: 'openAppearance' }
   | { type: 'giveItem'; itemId: number; qty: number }
   | { type: 'takeItem'; itemId: number; qty: number }
+  | { type: 'grantXp'; skill: SkillId; amount: number }
   | { type: 'closeDialogue' }
   | { type: 'setQuestStage'; questId: string; stage: number }
-  | { type: 'completeQuest'; questId: string };
+  | { type: 'setQuestVar'; questId: string; key: string; value: number }
+  | { type: 'completeQuest'; questId: string }
+  | { type: 'startNpcCombat' };
 
 export type QuestCondition =
   | { type: 'all'; conditions: QuestCondition[] }
@@ -194,6 +197,7 @@ export type QuestCondition =
   | { type: 'questStarted'; questId: string }
   | { type: 'questNotStarted'; questId: string }
   | { type: 'questCompleted'; questId: string }
+  | { type: 'questVar'; questId: string; key: string; value?: number; min?: number; max?: number }
   | { type: 'hasItem'; itemId: number; quantity?: number }
   | { type: 'hasEquippedItem'; itemId: number }
   | { type: 'skillLevel'; skill: SkillId; level: number }
@@ -242,6 +246,8 @@ export interface DialogueNode {
 export interface DialogueTree {
   /** ID of the starting node. */
   root: string;
+  /** Optional first-match routing for stage-specific greetings. */
+  rootConditions?: Array<{ condition: QuestCondition; node: string }>;
   nodes: Record<string, DialogueNode>;
 }
 
@@ -402,6 +408,7 @@ export interface MapMeta {
   fogColor: [number, number, number];
   fogStart: number;
   fogEnd: number;
+  skybox?: SkyboxConfig;
   transitions: MapTransition[];
 }
 
@@ -447,6 +454,8 @@ export interface SpawnEntry {
   shop?: ShopDef;
   /** Per-spawn dialogue override. When set, fully replaces NpcDef.dialogue. */
   dialogue?: DialogueTree;
+  /** Optional per-player visibility gate for quest-only NPCs. */
+  visibilityCondition?: QuestCondition;
   /** Per-spawn combat stat overrides. Any field set here wins over the
    *  NpcDef's value (HP, attack, defence, strength, attackSpeed, respawnTime).
    *  Missing fields fall through to the def. Lets a single "Guard" def spawn
@@ -523,12 +532,20 @@ export interface SpawnsFile {
 /** Biome cells are painted in 8x8 tile blocks. */
 export const BIOME_CELL_SIZE = 1;
 
+export interface SkyboxConfig {
+  /** Solid sky dome color, RGB 0-1. Sun position is fixed at world east. */
+  color: [number, number, number];
+  /** Whether to render the fixed east sun. Defaults to true for legacy data. */
+  showSun?: boolean;
+}
+
 export interface BiomeDef {
   id: number;
   name: string;
   fogColor: [number, number, number]; // RGB 0-1
   fogStart: number;
   fogEnd: number;
+  skybox?: SkyboxConfig;
 }
 
 /** On-disk format for biomes.json — per-map biome defs + sparse cell grid. */
@@ -917,6 +934,8 @@ export interface QuestStageDef {
   id: number;
   /** Shown in the player's quest log. Plain text; supports newlines. */
   description: string;
+  /** Optional path-specific journal copy keyed by a numeric quest var. */
+  descriptionByVar?: { key: string; values: Record<string, string> };
   /** What advances *from* this stage. Omit for terminal stages (use
    *  completeQuest dialogue action to finish). */
   trigger?: QuestTrigger;
@@ -963,4 +982,5 @@ export const QUEST_STAGE_COMPLETED = -1;
 export interface QuestState {
   stage: number;
   triggerProgress: number;
+  vars?: Record<string, number>;
 }

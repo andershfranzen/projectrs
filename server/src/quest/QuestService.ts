@@ -74,6 +74,14 @@ export class QuestService {
       }
       case 'questCompleted':
         return player.quests[condition.questId]?.stage === QUEST_STAGE_COMPLETED;
+      case 'questVar': {
+        const value = player.quests[condition.questId]?.vars?.[condition.key];
+        if (typeof value !== 'number') return false;
+        if (condition.value !== undefined && value !== condition.value) return false;
+        if (condition.min !== undefined && value < condition.min) return false;
+        if (condition.max !== undefined && value > condition.max) return false;
+        return true;
+      }
       case 'hasItem':
         return this.playerHasItem(player, condition.itemId, condition.quantity ?? 1);
       case 'hasEquippedItem':
@@ -101,8 +109,20 @@ export class QuestService {
     }
     const current = player.quests[questId];
     if (current && current.stage === stage) return true;
-    player.quests[questId] = { stage, triggerProgress: 0 };
+    player.quests[questId] = { stage, triggerProgress: 0, ...(current?.vars ? { vars: { ...current.vars } } : {}) };
     this.sendQuestDelta(player, questId);
+    return true;
+  }
+
+  setPlayerQuestVar(player: Player, questId: string, key: string, value: number): boolean {
+    const def = this.data.getQuest(questId);
+    if (!def) return false;
+    const current = player.quests[questId];
+    if (!current || current.stage === QUEST_STAGE_COMPLETED) return false;
+    if (!key || !Number.isInteger(value)) return false;
+    const vars = { ...(current.vars ?? {}), [key]: value };
+    player.quests[questId] = { ...current, vars };
+    this.sendQuestStateSync(player);
     return true;
   }
 
@@ -136,12 +156,7 @@ export class QuestService {
           if (typeof amount !== 'number' || amount <= 0) continue;
           const skillIdx = ALL_SKILLS.indexOf(skillKey as SkillId);
           if (skillIdx < 0) continue;
-          const result = addXp(player.skills, skillKey as SkillId, amount);
-          this.senders.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, amount);
-          if (result.leveled) {
-            this.senders.sendLevelUp(player, skillIdx, result.newLevel);
-          }
-          this.senders.sendSingleSkill(player, skillIdx);
+          this.grantSkillXp(player, skillKey as SkillId, amount);
         }
       }
       if (itemRewards.length > 0) {
@@ -164,7 +179,11 @@ export class QuestService {
       }
     }
 
-    player.quests[questId] = { stage: QUEST_STAGE_COMPLETED, triggerProgress: 0 };
+    player.quests[questId] = {
+      stage: QUEST_STAGE_COMPLETED,
+      triggerProgress: 0,
+      ...(current.vars ? { vars: { ...current.vars } } : {}),
+    };
     this.sendQuestDelta(player, questId);
     const rewardSummary = this.questRewardSummary(def.rewards);
     this.senders.sendChatSystem(player, rewardSummary
@@ -216,8 +235,17 @@ export class QuestService {
           inventoryTouched = true;
           break;
         }
+        case 'grantXp':
+          if (action.amount > 0) this.grantSkillXp(player, action.skill, action.amount);
+          break;
         case 'setQuestStage':
           if (!this.setPlayerQuestStage(player, action.questId, action.stage)) {
+            rollbackInventory();
+            return false;
+          }
+          break;
+        case 'setQuestVar':
+          if (!this.setPlayerQuestVar(player, action.questId, action.key, action.value)) {
             rollbackInventory();
             return false;
           }
@@ -293,7 +321,11 @@ export class QuestService {
           this.setPlayerQuestStage(player, questId, nextStage);
         }
       } else {
-        player.quests[questId] = { stage: state.stage, triggerProgress: count };
+        player.quests[questId] = {
+          stage: state.stage,
+          triggerProgress: count,
+          ...(state.vars ? { vars: { ...state.vars } } : {}),
+        };
         this.sendQuestDelta(player, questId);
       }
     }
@@ -351,6 +383,18 @@ export class QuestService {
       parts.push(`${drop.quantity}x ${itemName}`);
     }
     return parts.join(', ');
+  }
+
+  private grantSkillXp(player: Player, skillKey: SkillId, amount: number): void {
+    if (typeof amount !== 'number' || amount <= 0) return;
+    const skillIdx = ALL_SKILLS.indexOf(skillKey);
+    if (skillIdx < 0) return;
+    const result = addXp(player.skills, skillKey, amount);
+    this.senders.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amount));
+    if (result.leveled) {
+      this.senders.sendLevelUp(player, skillIdx, result.newLevel);
+    }
+    this.senders.sendSingleSkill(player, skillIdx);
   }
 
   private legacyDialogueRequiresVisible(player: Player, req: NonNullable<DialogueOption['requires']>): boolean {

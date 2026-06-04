@@ -3106,5 +3106,23 @@
     "levelRequired": 60,
     "value": 220,
     "model": "/assets/models/MysticShortbow.glb"
+  },
+  {
+    "id": 308,
+    "name": "Warding Charm",
+    "description": "A plain old charm with a little protective magic left in it.",
+    "stackable": false,
+    "equippable": false,
+    "value": 60,
+    "icon": "Emerald_Amulet_of_protection_315.png"
+  },
+  {
+    "id": 309,
+    "name": "Prisoner's Heart",
+    "description": "Still warm. Lord Mortrek asked for this.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "icon": "Blood-Rune_619.png"
   }
 ]

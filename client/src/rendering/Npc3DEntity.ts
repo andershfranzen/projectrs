@@ -2,6 +2,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+import type { Mesh } from '@babylonjs/core/Meshes/mesh';
 import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import type { AssetContainer, InstantiatedEntries } from '@babylonjs/core/assetContainer';
@@ -13,6 +14,7 @@ import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectF
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
+import { createMobGroundShadow } from './MobGroundShadow';
 
 export interface Npc3DEntityOptions {
   label?: string;
@@ -353,6 +355,7 @@ export class Npc3DEntity {
   private groundOffset: number = 0;
   private facingOffsetY: number = 0;
   private renderEnabled: boolean = true;
+  private groundShadow: Mesh | null = null;
   /** Gameplay position is the authoritative footprint anchor. Render and aim
    *  from the footprint center so even-width mobs visually match melee tiles. */
   private footprintWidth: number = 1;
@@ -503,6 +506,18 @@ export class Npc3DEntity {
       for (const node of result.rootNodes) node.position.y -= minY;
 
       this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
+      const boundsWidth = Number.isFinite(maxX - minX) ? (maxX - minX) * this.modelScale : 0;
+      const boundsDepth = Number.isFinite(maxZ - minZ) ? (maxZ - minZ) * this.modelScale : 0;
+      const footprintSize = this.footprintWidth * 0.72;
+      this.groundShadow = createMobGroundShadow(
+        this.scene,
+        `npc3d_${label ?? 'npc'}_groundShadow`,
+        this.root,
+        Math.max(0.45, footprintSize * 1.08, boundsWidth * 1.12),
+        Math.max(0.36, footprintSize * 0.90, boundsDepth * 1.04),
+        this.modelScale,
+        -this.groundOffset,
+      );
 
       // If setEntityIdMetadata was called before the GLB finished loading,
       // apply the queued id now that meshes exist.
@@ -964,6 +979,10 @@ export class Npc3DEntity {
     for (const skeleton of this.skeletons) skeleton.dispose();
     this.skeletons = [];
     for (const mesh of this.meshes) mesh.dispose();
+    if (this.groundShadow) {
+      this.groundShadow.dispose();
+      this.groundShadow = null;
+    }
     if (this.root) this.root.dispose();
     this.root = null;
     this.meshes = [];

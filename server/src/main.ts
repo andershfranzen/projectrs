@@ -4041,6 +4041,10 @@ const server = Bun.serve<SocketData>({
           fogColor: isDungeon ? [0.05, 0.02, 0.08] as [number, number, number] : [0.4, 0.6, 0.9] as [number, number, number],
           fogStart: isDungeon ? 8 : 30,
           fogEnd: isDungeon ? 25 : 50,
+          skybox: {
+            color: isDungeon ? [0, 0, 0] as [number, number, number] : [0.4, 0.62, 0.92] as [number, number, number],
+            showSun: !isDungeon,
+          },
           transitions: [],
         };
 
