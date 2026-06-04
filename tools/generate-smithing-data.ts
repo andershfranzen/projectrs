@@ -19,6 +19,7 @@ interface Tier {
   miningXp: number;       // XP per ore mined
   smeltLevel: number;     // Level to smelt into bar
   smeltXp: number;        // XP per bar smelted
+  smithXpPerBar: number;  // XP per bar forged at an anvil
   smithBaseLevel: number; // Base smithing level for this tier's items
   equipLevel: number;     // Level to equip gear in this tier
   statMultiplier: number; // Multiplied against base weapon/armor stats
@@ -32,11 +33,11 @@ interface Tier {
 }
 
 const TIERS: Tier[] = [
-  { name: "Bronze",     miningLevel: 1,  miningXp: 18,  smeltLevel: 1,  smeltXp: 6,  smithBaseLevel: 1,  equipLevel: 1,  statMultiplier: 1.0, barValue: 15,  respawnTime: 10,  depletionChance: 0.40, rockColor: [140, 90,  50]  },
-  { name: "Iron",       miningLevel: 15, miningXp: 35,  smeltLevel: 15, smeltXp: 13, smithBaseLevel: 15, equipLevel: 6,  statMultiplier: 1.5, barValue: 30,  respawnTime: 18,  depletionChance: 0.35, rockColor: [100, 70,  60]  },
-  { name: "Steel",      miningLevel: 30, miningXp: 50,  smeltLevel: 30, smeltXp: 18, smithBaseLevel: 30, equipLevel: 15, statMultiplier: 2.0, barValue: 60,  respawnTime: 20,  depletionChance: 0.30, rockColor: [ 40, 40,  40]  },
-  { name: "Mithril",    miningLevel: 55, miningXp: 80,  smeltLevel: 50, smeltXp: 30, smithBaseLevel: 50, equipLevel: 25, statMultiplier: 3.0, barValue: 120, respawnTime: 120, depletionChance: 0.25, rockColor: [ 70, 70, 120]  },
-  { name: "Black Bronze", miningLevel: 70, miningXp: 95,  smeltLevel: 70, smeltXp: 38, smithBaseLevel: 70, equipLevel: 35, statMultiplier: 4.0, barValue: 240, respawnTime: 240, depletionChance: 0.20, rockColor: [ 50, 100, 60]  },
+  { name: "Bronze",     miningLevel: 1,  miningXp: 18,  smeltLevel: 1,  smeltXp: 6,  smithXpPerBar: 13, smithBaseLevel: 1,  equipLevel: 1,  statMultiplier: 1.0, barValue: 15,  respawnTime: 10,  depletionChance: 0.40, rockColor: [140, 90,  50]  },
+  { name: "Iron",       miningLevel: 15, miningXp: 35,  smeltLevel: 15, smeltXp: 13, smithXpPerBar: 25, smithBaseLevel: 15, equipLevel: 6,  statMultiplier: 1.5, barValue: 30,  respawnTime: 18,  depletionChance: 0.35, rockColor: [100, 70,  60]  },
+  { name: "Steel",      miningLevel: 30, miningXp: 50,  smeltLevel: 30, smeltXp: 18, smithXpPerBar: 38, smithBaseLevel: 30, equipLevel: 15, statMultiplier: 2.0, barValue: 60,  respawnTime: 20,  depletionChance: 0.30, rockColor: [ 40, 40,  40]  },
+  { name: "Mithril",    miningLevel: 55, miningXp: 80,  smeltLevel: 50, smeltXp: 30, smithXpPerBar: 50, smithBaseLevel: 50, equipLevel: 25, statMultiplier: 3.0, barValue: 120, respawnTime: 120, depletionChance: 0.25, rockColor: [ 70, 70, 120]  },
+  { name: "Black Bronze", miningLevel: 70, miningXp: 95,  smeltLevel: 70, smeltXp: 38, smithXpPerBar: 63, smithBaseLevel: 70, equipLevel: 35, statMultiplier: 4.0, barValue: 240, respawnTime: 240, depletionChance: 0.20, rockColor: [ 50, 100, 60]  },
 ];
 
 // Fix Bronze — it needs copper ore + tin ore
@@ -305,7 +306,7 @@ for (const tier of TIERS) {
       outputQuantity: 1,
       skill: "smithing",
       levelRequired: tier.smithBaseLevel + st.levelOffset,
-      xpReward: Math.round(tier.smeltXp * st.bars * 0.8),
+      xpReward: Math.round(tier.smithXpPerBar * st.bars),
       requiresTool: "hammer",
     });
   }
