@@ -308,6 +308,10 @@ export class EntityManager {
     return this.collectGroundItemTileStack(this.groundItemTileKey(item.x, item.z, item.floor)).map(({ def: _def, ...data }) => data);
   }
 
+  getGroundItemStackAtTile(x: number, z: number, floor: number): GroundItemData[] {
+    return this.collectGroundItemTileStack(this.groundItemTileKey(x, z, floor)).map(({ def: _def, ...data }) => data);
+  }
+
   private addGroundItemToTileIndex(groundItemId: number, tileKey: string): void {
     let ids = this.groundItemIdsByTile.get(tileKey);
     if (!ids) {

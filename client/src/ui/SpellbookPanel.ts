@@ -37,6 +37,12 @@ export class SpellbookPanel {
     this.container.appendChild(this.listEl);
 
     document.body.appendChild(this.container);
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !this.visible) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.hide();
+    });
   }
 
   setCastCallback(cb: CastCallback): void {

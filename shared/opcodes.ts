@@ -10,6 +10,9 @@ export enum ClientOpcode {
   PLAYER_TALK_NPC = 21,
   /** Follow another player. Payload: [targetPlayerEntityId]. */
   PLAYER_FOLLOW = 23,
+  /** Close the currently open dialogue.
+   *  Values: [npcEntityId, sessionId]. Stale/no-open closes are ignored server-side. */
+  DIALOGUE_CLOSE = 24,
   PLAYER_PICKUP_ITEM = 30,
   PLAYER_DROP_ITEM = 31,
   PLAYER_EQUIP_ITEM = 32,

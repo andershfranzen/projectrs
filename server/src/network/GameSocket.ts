@@ -297,6 +297,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.PLAYER_SELL_ITEM:
     case ClientOpcode.PLAYER_MOVE_INV_ITEM:
     case ClientOpcode.DIALOGUE_CHOOSE:
+    case ClientOpcode.DIALOGUE_CLOSE:
     case ClientOpcode.PLAYER_INTERACT_OBJECT:
     case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM:
     case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
@@ -593,6 +594,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const npc = world.npcs.get(npcEntityId);
       if (!npc || !world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-dialogue-npc');
       if (!isSlot(optionIndex, state.visibleOptionIndices.length)) return invalid('bad-dialogue-option');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.DIALOGUE_CLOSE: {
+      if (!hasValues(values, 2)) return invalid('missing-dialogue-close');
+      if (!Number.isInteger(values[0]) || !Number.isInteger(values[1])) return invalid('bad-dialogue-close-values');
       return OK_PACKET;
     }
 
@@ -1267,6 +1274,14 @@ function handleDecryptedGameSocketMessage(
       const sessionId = values.length >= 3 ? values[1] : -1;
       const optionIndex = values.length >= 3 ? values[2] : values[1];
       world.handleDialogueChoose(playerId, npcEntityId, sessionId, optionIndex);
+      break;
+    }
+
+    case ClientOpcode.DIALOGUE_CLOSE: {
+      if (!hasValues(values, 2)) return;
+      const npcEntityId = values[0];
+      const sessionId = values[1];
+      world.handleDialogueClose(playerId, npcEntityId, sessionId);
       break;
     }
 

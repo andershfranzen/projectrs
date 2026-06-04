@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { ClientOpcode, decodePacket, type ItemDef } from '@projectrs/shared';
 import { SidePanel } from './SidePanel';
 
 function makeSpellModePanel(): any {
@@ -49,6 +50,23 @@ function makeAutoRetaliatePanel(initial: boolean): any {
   return panel;
 }
 
+function makeInventoryPanel(): any {
+  const sent: Uint8Array[] = [];
+  const panel = Object.create(SidePanel.prototype) as any;
+  panel.invSlots = new Array(28).fill(null);
+  panel.invSlots[3] = { itemId: 101, quantity: 1 };
+  panel.itemDefs = new Map<number, ItemDef>([[
+    101,
+    { id: 101, name: 'Test Item', description: 'A test item.', stackable: false, equippable: false, value: 1 },
+  ]]);
+  panel.network = { sendRaw: (packet: Uint8Array) => sent.push(packet) };
+  panel.tradeOfferCallback = null;
+  panel.sellCallback = null;
+  panel.using = null;
+  panel.sent = sent;
+  return panel;
+}
+
 describe('SidePanel spell modes', () => {
   test('selecting autocast clears a stale one-off target spell', () => {
     const panel = makeSpellModePanel();
@@ -86,6 +104,32 @@ describe('SidePanel spell modes', () => {
 
     expect(panel.getAutocastSpell()).toBe(-1);
     expect(autocastChanges).toEqual([]);
+  });
+});
+
+describe('SidePanel inventory shortcuts', () => {
+  test('shift-click drops the clicked inventory item', () => {
+    const panel = makeInventoryPanel();
+    let prevented = false;
+    let stopped = false;
+    const event = {
+      shiftKey: true,
+      preventDefault: () => { prevented = true; },
+      stopPropagation: () => { stopped = true; },
+    } as MouseEvent;
+
+    panel.onInvSlotClick(3, event);
+
+    expect(prevented).toBe(true);
+    expect(stopped).toBe(true);
+    expect(panel.sent).toHaveLength(1);
+    expect(decodePacket(panel.sent[0].buffer.slice(
+      panel.sent[0].byteOffset,
+      panel.sent[0].byteOffset + panel.sent[0].byteLength,
+    ))).toEqual({
+      opcode: ClientOpcode.PLAYER_DROP_ITEM,
+      values: [3, 101],
+    });
   });
 });
 

@@ -3844,6 +3844,14 @@ export class World {
     }
   }
 
+  handleDialogueClose(playerId: number, npcEntityId: number, sessionId: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    const state = player.openDialogueState;
+    if (!state || state.npcEntityId !== npcEntityId || state.sessionId !== sessionId) return;
+    this.closeDialogueForPlayer(player);
+  }
+
   private runDialogueActions(
     player: Player,
     npc: Npc,

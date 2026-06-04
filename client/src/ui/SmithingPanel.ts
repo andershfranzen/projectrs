@@ -63,6 +63,12 @@ export class SmithingPanel {
     this.container.appendChild(this.gridEl);
 
     document.body.appendChild(this.container);
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !this.visible) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.hide();
+    });
   }
 
   show(
@@ -171,6 +177,21 @@ export class SmithingPanel {
     return Math.min(primary, secondary);
   }
 
+  private itemRequirementLabel(itemId: number, quantity: number): string {
+    const itemName = this.cachedItemDefs.get(itemId)?.name ?? `Item ${itemId}`;
+    return quantity > 1 ? `${itemName} x${quantity}` : itemName;
+  }
+
+  private recipeRequirementLabel(recipe: ObjectRecipe): string {
+    const parts = [
+      this.itemRequirementLabel(recipe.inputItemId, Math.max(1, recipe.inputQuantity)),
+    ];
+    if (recipe.secondInputItemId !== undefined) {
+      parts.push(this.itemRequirementLabel(recipe.secondInputItemId, Math.max(1, recipe.secondInputQuantity ?? 1)));
+    }
+    return parts.join(' + ');
+  }
+
   private renderFlatRecipeList(): void {
     this.titleEl.textContent = this.stationLabel;
     this.gridEl.innerHTML = '';
@@ -203,6 +224,7 @@ export class SmithingPanel {
       const inputName = inputDef?.name ?? `Item ${recipe.inputItemId}`;
       const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
       const outputLabel = recipe.outputQuantity > 1 ? `${outputName} x${recipe.outputQuantity}` : outputName;
+      const requirementLabel = this.recipeRequirementLabel(recipe);
       const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
       const hasSecondInput = recipe.secondInputItemId === undefined
         || (itemCounts.get(recipe.secondInputItemId) ?? 0) >= (recipe.secondInputQuantity ?? 1);
@@ -225,6 +247,7 @@ export class SmithingPanel {
         box-shadow: inset 0 1px 0 rgba(235, 205, 160, 0.08), 0 1px 0 rgba(0,0,0,0.55);
         opacity: ${canMake ? '1' : '0.62'};
       `;
+      card.title = `${outputLabel} — ${requirementLabel}, Lv ${recipe.levelRequired}`;
 
       const media = document.createElement('div');
       media.style.cssText = 'display: grid; grid-template-columns: 42px 1fr 42px; align-items: center; gap: 7px; min-height: 44px;';
@@ -413,6 +436,7 @@ export class SmithingPanel {
       const outputDef = this.cachedItemDefs.get(recipe.outputItemId);
       const outputName = outputDef?.name ?? `Item ${recipe.outputItemId}`;
       const outputLabel = recipe.outputQuantity > 1 ? `${recipe.outputQuantity} ${outputName}` : outputName;
+      const requirementLabel = this.recipeRequirementLabel(recipe);
       const hasLevel = this.cachedSmithingLevel >= recipe.levelRequired;
       const hasBars = barCount >= recipe.inputQuantity;
       // Furnace recipes also have a secondInputItemId (coal, etc.). Without
@@ -435,7 +459,7 @@ export class SmithingPanel {
         cursor: ${canSmith ? 'pointer' : 'default'};
         transition: background 0.1s, border-color 0.1s;
       `;
-      tile.title = `${outputLabel} — ${recipe.inputQuantity} ${barName}${recipe.inputQuantity > 1 ? 's' : ''}, Lv ${recipe.levelRequired}`;
+      tile.title = `${outputLabel} — ${requirementLabel}, Lv ${recipe.levelRequired}`;
 
       // Icon — 48px, readable at normal zoom
       if (outputDef) {

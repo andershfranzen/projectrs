@@ -1,0 +1,33 @@
+import { describe, expect, test } from 'bun:test';
+import { ClientOpcode, decodePacket } from '@projectrs/shared';
+import { DialoguePanel } from './DialoguePanel';
+
+function decodeClientPacket(packet: Uint8Array) {
+  return decodePacket(packet.buffer.slice(
+    packet.byteOffset,
+    packet.byteOffset + packet.byteLength,
+  ) as ArrayBuffer);
+}
+
+describe('DialoguePanel', () => {
+  test('cancelDialogue sends a session-scoped close packet and hides locally', () => {
+    const sent: Uint8Array[] = [];
+    const panel = Object.create(DialoguePanel.prototype) as any;
+    let hidden = false;
+    panel.visible = true;
+    panel.currentNode = { sessionId: 77, speaker: 'Guide', lines: ['Hello'], options: [] };
+    panel.npcEntityId = 123;
+    panel.sessionId = 77;
+    panel.network = { sendRaw: (packet: Uint8Array) => sent.push(packet) };
+    panel.hide = () => { hidden = true; };
+
+    panel.cancelDialogue();
+
+    expect(hidden).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(decodeClientPacket(sent[0])).toEqual({
+      opcode: ClientOpcode.DIALOGUE_CLOSE,
+      values: [123, 77],
+    });
+  });
+});

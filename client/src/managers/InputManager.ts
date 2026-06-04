@@ -125,7 +125,7 @@ export class InputManager {
    * surface would resolve to the floor 0 X/Z behind/below it (RS2's "your
    * click only counts on your own plane" rule). Snapped to tile centre.
    */
-  private pickGround(pointerX: number = this.scene.pointerX, pointerY: number = this.scene.pointerY): { x: number; z: number } | null {
+  pickGround(pointerX: number = this.scene.pointerX, pointerY: number = this.scene.pointerY): { x: number; z: number } | null {
     if (!this.scene.activeCamera) return null;
 
     // Accept any pickable visible mesh — the Y-match check below handles

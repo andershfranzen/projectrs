@@ -4459,10 +4459,12 @@ export class GameManager {
     const point = this.canvasPointFromClient(clientX, clientY);
     if (!point) return [];
     const pickResult = this.scene.pick(point.x, point.y);
-    if (!pickResult?.hit || !pickResult.pickedMesh) return [];
+    const groundPoint = this.inputManager.pickGround(point.x, point.y);
+    if ((!pickResult?.hit || !pickResult.pickedMesh) && !groundPoint) return [];
 
-    const meshName = pickResult.pickedMesh.name;
+    const meshName = pickResult?.pickedMesh?.name ?? '';
     const options: InteractionOption[] = [];
+    const addedGroundItemIds = new Set<number>();
 
     const pickedPlayerEntityId = this.pickPlayerAtPoint(point.x, point.y);
     if (pickedPlayerEntityId != null) {
@@ -4483,26 +4485,77 @@ export class GameManager {
       options.push(...this.getNpcInteractionOptions(pickedNpcEntityId));
     }
 
-    const pickedGroundItemId = this.findGroundItemIdFromPick(pickResult.pickedMesh as unknown as TransformNode, meshName);
-    if (pickedGroundItemId != null) {
-      options.push(...this.getGroundItemInteractionOptions(pickedGroundItemId));
+    if (pickResult?.pickedMesh) {
+      const pickedGroundItemId = this.findGroundItemIdFromPick(pickResult.pickedMesh as unknown as TransformNode, meshName);
+      if (pickedGroundItemId != null) {
+        options.push(...this.getGroundItemInteractionOptions(pickedGroundItemId, addedGroundItemIds));
+      }
     }
 
-    const pickedObjectEntityId = this.findWorldObjectIdFromPick(pickResult.pickedMesh as unknown as TransformNode);
-    if (pickedObjectEntityId != null) {
-      options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId));
+    if (pickResult?.pickedMesh) {
+      const pickedObjectEntityId = this.findWorldObjectIdFromPick(pickResult.pickedMesh as unknown as TransformNode);
+      if (pickedObjectEntityId != null) {
+        options.push(...this.getWorldObjectInteractionOptions(pickedObjectEntityId));
+      }
     }
 
-    if (options.length === 0 && pickResult.pickedPoint) {
-      const { x, z } = pickResult.pickedPoint;
-      options.push({
-        label: 'Walk here',
-        primary: false,
-        action: () => this.handleGroundClick(x, z),
-      });
+    const entityTilePoints = this.getPickedEntityGroundTilePoints(pickedPlayerEntityId, pickedNpcEntityId, groundPoint);
+    if (entityTilePoints.length > 0) {
+      for (const tilePoint of entityTilePoints) {
+        options.push(...this.getGroundItemInteractionOptionsAtTile(tilePoint.x, tilePoint.z, addedGroundItemIds));
+      }
+      options.push(this.getWalkHereInteractionOption(entityTilePoints[0].x, entityTilePoints[0].z));
+    }
+
+    if (options.length === 0 && groundPoint) {
+      options.push(this.getWalkHereInteractionOption(groundPoint.x, groundPoint.z));
     }
 
     return options;
+  }
+
+  private getWalkHereInteractionOption(x: number, z: number): InteractionOption {
+    return {
+      label: 'Walk here',
+      primary: false,
+      action: () => this.handleGroundClick(x, z),
+    };
+  }
+
+  private getPickedEntityGroundTilePoints(
+    playerEntityId: number | null,
+    npcEntityId: number | null,
+    fallbackGroundPoint: { x: number; z: number } | null,
+  ): { x: number; z: number }[] {
+    if (playerEntityId == null && npcEntityId == null) return [];
+    const points: { x: number; z: number }[] = [];
+    const seen = new Set<string>();
+    const addTile = (x: number, z: number): void => {
+      const tx = Math.floor(x);
+      const tz = Math.floor(z);
+      const key = `${tx},${tz}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      points.push({ x: tx + 0.5, z: tz + 0.5 });
+    };
+
+    if (playerEntityId != null) {
+      const target = this.entities.remoteTargets.get(playerEntityId);
+      if (target && target.floor === this.currentFloor) addTile(target.x, target.z);
+    }
+
+    if (npcEntityId != null) {
+      const target = this.entities.npcTargets.get(npcEntityId);
+      if (target && target.floor === this.currentFloor) {
+        const size = this.getNpcTileSize(npcEntityId);
+        for (const tile of getObjectFootprintTiles(target.x, target.z, { width: size })) {
+          addTile(tile.x, tile.z);
+        }
+      }
+    }
+
+    if (fallbackGroundPoint) addTile(fallbackGroundPoint.x, fallbackGroundPoint.z);
+    return points;
   }
 
   private getPlayerInteractionOptions(entityId: number): InteractionOption[] {
@@ -4595,9 +4648,32 @@ export class GameManager {
     return this.entities.getGroundItemStackForItem(groundItemId);
   }
 
-  private getGroundItemInteractionOptions(groundItemId: number): InteractionOption[] {
-    return this.groundItemStackForTile(groundItemId).map((gi) => {
+  private getGroundItemInteractionOptions(
+    groundItemId: number,
+    addedGroundItemIds: Set<number> = new Set<number>(),
+  ): InteractionOption[] {
+    return this.getGroundItemInteractionOptionsForStack(this.groundItemStackForTile(groundItemId), addedGroundItemIds);
+  }
+
+  private getGroundItemInteractionOptionsAtTile(
+    x: number,
+    z: number,
+    addedGroundItemIds: Set<number> = new Set<number>(),
+  ): InteractionOption[] {
+    return this.getGroundItemInteractionOptionsForStack(
+      this.entities.getGroundItemStackAtTile(x, z, this.currentFloor),
+      addedGroundItemIds,
+    );
+  }
+
+  private getGroundItemInteractionOptionsForStack(
+    stack: GroundItemData[],
+    addedGroundItemIds: Set<number>,
+  ): InteractionOption[] {
+    return stack.map((gi) => {
       if (gi.floor !== this.currentFloor) return null;
+      if (addedGroundItemIds.has(gi.id)) return null;
+      addedGroundItemIds.add(gi.id);
       const iDef = this.itemDefsCache.get(gi.itemId);
       const iName = iDef?.name ?? 'item';
       const qtyLabel = gi.quantity > 1 ? ` (${gi.quantity})` : '';

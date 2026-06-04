@@ -130,6 +130,16 @@ export class DialoguePanel {
     return this.visible;
   }
 
+  cancelDialogue(): void {
+    if (!this.visible || !this.currentNode) return;
+    this.network.sendRaw(encodePacket(
+      ClientOpcode.DIALOGUE_CLOSE,
+      this.npcEntityId,
+      this.sessionId,
+    ));
+    this.hide();
+  }
+
   private advance(): void {
     if (!this.currentNode) return;
     if (this.lineIndex < this.currentNode.lines.length - 1) {
@@ -149,6 +159,13 @@ export class DialoguePanel {
     }
 
     const onLastLine = this.lineIndex >= this.currentNode.lines.length - 1;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.cancelDialogue();
+      return;
+    }
+
     if (!onLastLine) {
       if (event.key === ' ' || event.key === 'Enter') {
         event.preventDefault();

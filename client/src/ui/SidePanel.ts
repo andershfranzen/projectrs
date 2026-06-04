@@ -1881,7 +1881,7 @@ export class SidePanel {
           e.stopPropagation();
           return;
         }
-        this.onInvSlotClick(i);
+        this.onInvSlotClick(i, e);
       });
 
       slot.addEventListener('pointerdown', (e) => this.beginTouchInvDrag(e, i));
@@ -2825,8 +2825,15 @@ export class SidePanel {
     }
   }
 
-  private onInvSlotClick(index: number): void {
+  private onInvSlotClick(index: number, event?: MouseEvent): void {
     const tradeSlot = this.invSlots[index];
+    if (event?.shiftKey && tradeSlot && !this.tradeOfferCallback && !this.sellCallback && !this.using) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, tradeSlot.itemId));
+      return;
+    }
+
     if (this.tradeOfferCallback && tradeSlot) {
       if (this.using) this.clearUsingInvItem();
       this.tradeOfferCallback(index, tradeSlot.itemId, 1);

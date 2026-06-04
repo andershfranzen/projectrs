@@ -55,11 +55,14 @@ export class QuantityInputPanel {
   private cancelBtn!: HTMLButtonElement;
   private hiddenChatPanel: HTMLElement | null = null;
   private request: QuantityInputRequest | null = null;
+  private keyHandler: (event: KeyboardEvent) => void;
 
   constructor() {
+    this.keyHandler = (event) => this.handleDocumentKeyDown(event);
     this.container = this.buildUI();
     const mount = document.getElementById('ui-chat-inner');
     (mount ?? document.body).appendChild(this.container);
+    document.addEventListener('keydown', this.keyHandler, true);
   }
 
   show(request: QuantityInputRequest): void {
@@ -113,6 +116,10 @@ export class QuantityInputPanel {
   hide(): void {
     this.request = null;
     this.setVisible(false);
+  }
+
+  isVisible(): boolean {
+    return this.request !== null;
   }
 
   private buildUI(): HTMLDivElement {
@@ -386,6 +393,13 @@ export class QuantityInputPanel {
       event.stopPropagation();
       this.hide();
     }
+  }
+
+  private handleDocumentKeyDown(event: KeyboardEvent): void {
+    if (event.key !== 'Escape' || !this.request) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.hide();
   }
 
   private submit(): void {
