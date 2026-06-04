@@ -1235,9 +1235,7 @@ export class World {
     return null;
   }
 
-  private findBankerAcrossBooth(player: Player, booth: WorldObject): Npc | null {
-    const ptx = Math.floor(player.position.x);
-    const ptz = Math.floor(player.position.y);
+  private findBankerAcrossBoothFromTile(player: Player, booth: WorldObject, ptx: number, ptz: number): Npc | null {
     const bx = Math.floor(booth.x);
     const bz = Math.floor(booth.z);
     const dx = bx - ptx;
@@ -1251,6 +1249,15 @@ export class World {
       if (Math.floor(npc.position.x) === bankerX && Math.floor(npc.position.y) === bankerZ) return npc;
     }
     return null;
+  }
+
+  private findBankerAcrossBooth(player: Player, booth: WorldObject): Npc | null {
+    return this.findBankerAcrossBoothFromTile(
+      player,
+      booth,
+      Math.floor(player.position.x),
+      Math.floor(player.position.y),
+    );
   }
 
   private isPointInNpcFootprintRange(npc: Npc, x: number, z: number, range: number, mode: 'euclidean' | 'chebyshev'): boolean {
@@ -1496,6 +1503,7 @@ export class World {
     map?: GameMap,
     allowAuthoredNonAdjacentTile: boolean = false,
   ): boolean {
+    if (obj.def.category === 'bank' && this.findBankerAcrossBoothFromTile(player, obj, tileX, tileZ)) return true;
     if (!this.requiresClearObjectInteractionEdge(obj)) return true;
     const gameMap = map ?? this.getPlayerMap(player);
     let hasAdjacentFootprintTile = false;

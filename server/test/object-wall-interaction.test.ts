@@ -66,10 +66,85 @@ function canUseWithWallBlocked(defId: number, name: string, wallBlocked: boolean
   return world.canUseObjectFromTile(player, obj, 10, 9, map);
 }
 
+function makeBankerBehindBooth(): any {
+  return {
+    id: 777,
+    hasBank: true,
+    dead: false,
+    currentMapLevel: 'kcmap',
+    currentFloor: 0,
+    position: { x: 10.5, y: 11.5 },
+  };
+}
+
+function canUseBankWithWallBlocked(wallBlocked: boolean, hasBanker: boolean): boolean {
+  const world = Object.create(World.prototype) as any;
+  const player = makePlayer();
+  const obj = makeObject(31, 'Bank booth', 'bank');
+  const map = {
+    isWallBlocked: () => wallBlocked,
+    isWallBlockedOnFloor: () => wallBlocked,
+  };
+  world.npcs = hasBanker ? new Map([[777, makeBankerBehindBooth()]]) : new Map();
+  return world.canUseObjectFromTile(player, obj, 10, 9, map);
+}
+
+function makeBankBoothHarness(): { world: any; player: Player; obj: any; opened: () => number; talked: () => number } {
+  const world = Object.create(World.prototype) as any;
+  const player = makePlayer();
+  const obj = makeObject(31, 'Bank booth', 'bank');
+  obj.depleted = false;
+  obj.doorOpen = false;
+  obj.displayName = 'Bank booth';
+  obj.examineText = 'A bank booth.';
+  obj.currentActions = ['Talk-to', 'Use-quickly', 'Examine'];
+  obj.interactions = [];
+
+  let opened = 0;
+  let talked = 0;
+  const map = {
+    isBlocked: () => false,
+    isTileBlockedOnFloor: () => false,
+    isWallBlocked: () => true,
+    isWallBlockedOnFloor: () => true,
+  };
+  world.players = new Map([[player.id, player]]);
+  world.worldObjects = new Map([[obj.id, obj]]);
+  world.blockedObjectTiles = new Set();
+  world.maps = new Map([['kcmap', map]]);
+  world.getPlayerMap = (p: Player) => world.maps.get(p.currentMapLevel);
+  world.clearCombatTarget = () => {};
+  world.closeNpcUiContext = () => {};
+  world.runObjectInteractionEffects = () => {};
+  world.quests = { notifyQuestEvent() {} };
+  world.npcs = new Map([[777, makeBankerBehindBooth()]]);
+  world.handlePlayerTalkNpc = () => { talked += 1; };
+  world.openBankFor = () => { opened += 1; };
+  return { world, player, obj, opened: () => opened, talked: () => talked };
+}
+
 describe('wall-gated station interaction', () => {
   test('ordinary resource objects cannot be used through a wall edge', () => {
     expect(canUseWithWallBlocked(3, 'Copper Rock', true, 'rock')).toBe(false);
     expect(canUseWithWallBlocked(3, 'Copper Rock', false, 'rock')).toBe(true);
+  });
+
+  test('bank booths can be used across a counter edge but not an arbitrary blocked edge', () => {
+    expect(canUseBankWithWallBlocked(true, true)).toBe(true);
+    expect(canUseBankWithWallBlocked(true, false)).toBe(false);
+    expect(canUseBankWithWallBlocked(false, false)).toBe(true);
+  });
+
+  test('bank booth actions dispatch across their counter edge', () => {
+    const talkHarness = makeBankBoothHarness();
+    talkHarness.world.handlePlayerInteractObject(talkHarness.player.id, talkHarness.obj.id, 0);
+    expect(talkHarness.talked()).toBe(1);
+    expect(talkHarness.opened()).toBe(0);
+
+    const bankHarness = makeBankBoothHarness();
+    bankHarness.world.handlePlayerInteractObject(bankHarness.player.id, bankHarness.obj.id, 1);
+    expect(bankHarness.talked()).toBe(0);
+    expect(bankHarness.opened()).toBe(1);
   });
 
   test('pottery wheels cannot be used through a wall edge', () => {
