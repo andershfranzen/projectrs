@@ -3,10 +3,12 @@ import { existsSync } from 'node:fs';
 import type { ItemDef } from '@projectrs/shared';
 import itemsJson from '../../../server/data/items.json';
 import {
+  buildThumbnailOptionsFromOverride,
   findThumbnailOverrideForItem,
   getItemIconSyncUrl,
   itemThumbnailFamily,
   itemThumbnailFamilyKey,
+  itemThumbnailVisualSource,
   parseBakedThumbnailManifest,
   resolveBakedThumbnailUrl,
   resolveItemModelPath,
@@ -29,6 +31,8 @@ describe('item thumbnail families', () => {
     expect(itemThumbnailFamilyKey(item(904, 'Royal Great Helm', 'head'))).toBe('head:greathelm');
     expect(itemThumbnailFamilyKey(item(905, 'Royal Face Mask (F)', 'head'))).toBe('head:facemaskf');
     expect(itemThumbnailFamilyKey(item(33, 'Bronze Pickaxe'))).toBe('weapon:pickaxe');
+    expect(itemThumbnailFamily(item(382, 'Mithril Sword (HQ)'))).toBe('Sword');
+    expect(itemThumbnailFamilyKey(item(382, 'Mithril Sword (HQ)'))).toBe('weapon:sword');
   });
 
   test('direct item override wins, family override seeds items without direct poses', () => {
@@ -58,6 +62,24 @@ describe('item thumbnail families', () => {
       { 63: bronzePose },
       [bronzeBattleaxe, futureBattleaxe],
     )).toBe(bronzePose);
+  });
+
+  test('HQ items reuse their normal item visual source for thumbnail poses', () => {
+    const mithrilSword = item(144, 'Mithril Sword');
+    const mithrilSwordHq = item(382, 'Mithril Sword (HQ)');
+    const swordPose: ThumbnailOverride = { alpha: -0.9, beta: 1.1, distanceMult: 0.7, rotationY: 0.25 };
+
+    expect(itemThumbnailVisualSource(mithrilSwordHq, [mithrilSword, mithrilSwordHq])).toBe(mithrilSword);
+    expect(findThumbnailOverrideForItem(
+      mithrilSwordHq,
+      { 144: swordPose },
+      [mithrilSword, mithrilSwordHq],
+    )).toBe(swordPose);
+
+    const opts = buildThumbnailOptionsFromOverride(mithrilSwordHq, swordPose, mithrilSword);
+    expect(opts.cacheIdentity).toBe('item:144');
+    expect(opts.camera?.alpha).toBe(swordPose.alpha);
+    expect(opts.rotationY).toBe(swordPose.rotationY);
   });
 
   test('baked thumbnail manifest only resolves pose-matched entries', () => {

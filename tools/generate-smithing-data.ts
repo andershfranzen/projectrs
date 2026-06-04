@@ -9,6 +9,8 @@
  * ═══════════════════════════════════════════════════════════════════
  */
 
+import { highQualityItemDescription } from '../shared/gear';
+
 // ─── TIER CONFIGURATION ───────────────────────────────────────────
 // Change names, levels, or stat multipliers here.
 // The rest of the script generates everything from these tables.
@@ -411,6 +413,10 @@ for (const item of existingItems) {
 const newItemIds = new Set(newItems.map((i: any) => i.id));
 const dedupedExistingItems = existingItems.filter((i: any) => !newItemIds.has(i.id));
 const allItems = [...dedupedExistingItems, ...newItems];
+for (const item of allItems) {
+  const hqDescription = highQualityItemDescription(item.name);
+  if (hqDescription && item.equippable && !item.stackable) item.description = hqDescription;
+}
 writeFileSync(resolve(dataDir, 'items.json'), JSON.stringify(allItems, null, 2) + '\n');
 console.log(`\n✅ Wrote ${allItems.length} items to items.json`);
 

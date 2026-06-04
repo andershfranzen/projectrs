@@ -528,6 +528,18 @@ function handleCommand(
       break;
     }
 
+    case '/max': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      world.maxPlayerStats(player);
+      sendSystem(ws, 'All stats maxed to 99.');
+      break;
+    }
+
     case '/simulatebigdrop': {
       if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);

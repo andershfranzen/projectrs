@@ -23,6 +23,7 @@ import { remapSkinningToSkeleton } from './skinnedArmor';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
 import { createMobGroundShadow } from './MobGroundShadow';
+import { HighQualityGearEffect } from './HighQualityGearEffect';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
@@ -342,6 +343,7 @@ export class CharacterEntity {
   private skinnedArmorMeshes: Map<string, AbstractMesh[]> = new Map();
   private skinnedArmorRoots: Map<string, TransformNode> = new Map();
   private skinnedArmorItemIds: Map<string, number> = new Map();
+  private highQualityGearEffects: Map<string, HighQualityGearEffect> = new Map();
 
   // Head meshes — collected during load for hide/show under full helmets
   private headMeshes: AbstractMesh[] = [];
@@ -1762,6 +1764,7 @@ export class CharacterEntity {
 
   /** Remove gear from a slot. */
   detachGear(slot: string): void {
+    this.clearHighQualityGearEffect(slot);
     const existing = this.gearAttachments.get(slot);
     if (existing) {
       existing.node.dispose();
@@ -1809,6 +1812,7 @@ export class CharacterEntity {
   }
 
   detachSkinnedArmor(slot: string): void {
+    this.clearHighQualityGearEffect(slot);
     const meshes = this.skinnedArmorMeshes.get(slot);
     if (meshes) {
       for (const mesh of meshes) mesh.dispose();
@@ -1823,6 +1827,43 @@ export class CharacterEntity {
     if (slot === 'head' && this.getGearItemId('head') === -1) this.setHeadVisible(true);
     if (slot === 'body') this.setBodyVisible(true);
     if (slot === 'legs') this.setLegsVisible(true);
+  }
+
+  setHighQualityGearEffect(slot: string, active: boolean): void {
+    this.clearHighQualityGearEffect(slot);
+    if (!active) return;
+
+    const root = this.gearAttachments.get(slot)?.node ?? this.skinnedArmorRoots.get(slot);
+    if (!root || root.isDisposed()) return;
+    const meshes = this.gearAttachments.get(slot)?.node.getChildMeshes(false) ?? this.skinnedArmorMeshes.get(slot) ?? [];
+    const visibleMeshes = meshes.filter(mesh => !mesh.isDisposed() && mesh.getTotalVertices() > 0);
+    if (visibleMeshes.length === 0) return;
+    const itemId = this.getGearItemId(slot);
+    this.highQualityGearEffects.set(
+      slot,
+      new HighQualityGearEffect(this.scene, root, visibleMeshes, slot, itemId, () => this.highQualityGearEffectAnchor(slot, root)),
+    );
+  }
+
+  private highQualityGearEffectAnchor(slot: string, root: TransformNode | AbstractMesh): Vector3 | null {
+    if (slot === 'body') {
+      return new Vector3(this.visualX(), this._position.y + this.yOffset * 1.05, this.visualZ());
+    }
+    if (slot === 'legs') {
+      return new Vector3(this.visualX(), this._position.y + this.yOffset * 0.45, this.visualZ());
+    }
+    if (slot === 'shield') {
+      return new Vector3(this.visualX(), this._position.y + this.yOffset * 0.85, this.visualZ());
+    }
+    if (root.isDisposed()) return null;
+    return root.getAbsolutePosition().clone();
+  }
+
+  private clearHighQualityGearEffect(slot: string): void {
+    const effect = this.highQualityGearEffects.get(slot);
+    if (!effect) return;
+    effect.dispose(this.scene);
+    this.highQualityGearEffects.delete(slot);
   }
 
   /**

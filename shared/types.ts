@@ -116,6 +116,10 @@ export interface ItemDef {
   value: number;
 }
 
+export function isHighQualityItem(def: Pick<ItemDef, 'name'> | null | undefined): boolean {
+  return typeof def?.name === 'string' && def.name.endsWith(' (HQ)');
+}
+
 export interface NpcDef {
   id: number;
   name: string;

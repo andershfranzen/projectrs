@@ -3763,7 +3763,7 @@
   {
     "id": 342,
     "name": "Bronze Dagger (HQ)",
-    "description": "Bronze dagger.",
+    "description": "A high quality Bronze Dagger.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -3781,7 +3781,7 @@
   {
     "id": 343,
     "name": "Bronze Sword (HQ)",
-    "description": "Bronze sword.",
+    "description": "A high quality Bronze Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -3799,7 +3799,7 @@
   {
     "id": 344,
     "name": "Bronze Mace (HQ)",
-    "description": "Bronze mace.",
+    "description": "A high quality Bronze Mace.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -3816,7 +3816,7 @@
   {
     "id": 345,
     "name": "Bronze Scimitar (HQ)",
-    "description": "Bronze scimitar.",
+    "description": "A high quality Bronze Scimitar.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -3833,7 +3833,7 @@
   {
     "id": 346,
     "name": "Bronze Battle Axe (HQ)",
-    "description": "Bronze battle axe.",
+    "description": "A high quality Bronze Battle Axe.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -3851,7 +3851,7 @@
   {
     "id": 347,
     "name": "Bronze 2-handed Sword (HQ)",
-    "description": "Bronze 2-handed sword.",
+    "description": "A high quality Bronze 2-handed Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -3869,7 +3869,7 @@
   {
     "id": 348,
     "name": "Bronze Medium Helmet (HQ)",
-    "description": "Bronze medium helmet.",
+    "description": "A high quality Bronze Medium Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -3885,7 +3885,7 @@
   {
     "id": 349,
     "name": "Bronze Full Helmet (HQ)",
-    "description": "Bronze full helmet.",
+    "description": "A high quality Bronze Full Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -3901,7 +3901,7 @@
   {
     "id": 350,
     "name": "Bronze Square Shield (HQ)",
-    "description": "Bronze square shield.",
+    "description": "A high quality Bronze Square Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -3918,7 +3918,7 @@
   {
     "id": 351,
     "name": "Bronze Cuirass (HQ)",
-    "description": "Bronze cuirass.",
+    "description": "A high quality Bronze Cuirass.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -3939,7 +3939,7 @@
   {
     "id": 352,
     "name": "Bronze Kite Shield (HQ)",
-    "description": "Bronze kite shield.",
+    "description": "A high quality Bronze Kite Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -3956,7 +3956,7 @@
   {
     "id": 353,
     "name": "Bronze Plate Mail Legs (HQ)",
-    "description": "Bronze plate mail legs.",
+    "description": "A high quality Bronze Plate Mail Legs.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
@@ -3976,7 +3976,7 @@
   {
     "id": 354,
     "name": "Bronze Plate Mail Body (HQ)",
-    "description": "Bronze plate mail body.",
+    "description": "A high quality Bronze Plate Mail Body.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -3996,7 +3996,7 @@
   {
     "id": 355,
     "name": "Iron Dagger (HQ)",
-    "description": "Iron dagger.",
+    "description": "A high quality Iron Dagger.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4014,7 +4014,7 @@
   {
     "id": 356,
     "name": "Iron Sword (HQ)",
-    "description": "Iron sword.",
+    "description": "A high quality Iron Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4032,7 +4032,7 @@
   {
     "id": 357,
     "name": "Iron Mace (HQ)",
-    "description": "Iron mace.",
+    "description": "A high quality Iron Mace.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4049,7 +4049,7 @@
   {
     "id": 358,
     "name": "Iron Scimitar (HQ)",
-    "description": "Iron scimitar.",
+    "description": "A high quality Iron Scimitar.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4066,7 +4066,7 @@
   {
     "id": 359,
     "name": "Iron Battle Axe (HQ)",
-    "description": "Iron battle axe.",
+    "description": "A high quality Iron Battle Axe.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4084,7 +4084,7 @@
   {
     "id": 360,
     "name": "Iron 2-handed Sword (HQ)",
-    "description": "Iron 2-handed sword.",
+    "description": "A high quality Iron 2-handed Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4102,7 +4102,7 @@
   {
     "id": 361,
     "name": "Iron Medium Helmet (HQ)",
-    "description": "Iron medium helmet.",
+    "description": "A high quality Iron Medium Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4118,7 +4118,7 @@
   {
     "id": 362,
     "name": "Iron Full Helmet (HQ)",
-    "description": "Iron full helmet.",
+    "description": "A high quality Iron Full Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4134,7 +4134,7 @@
   {
     "id": 363,
     "name": "Iron Square Shield (HQ)",
-    "description": "Iron square shield.",
+    "description": "A high quality Iron Square Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4151,7 +4151,7 @@
   {
     "id": 364,
     "name": "Iron Cuirass (HQ)",
-    "description": "Iron cuirass.",
+    "description": "A high quality Iron Cuirass.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4172,7 +4172,7 @@
   {
     "id": 365,
     "name": "Iron Kite Shield (HQ)",
-    "description": "Iron kite shield.",
+    "description": "A high quality Iron Kite Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4189,7 +4189,7 @@
   {
     "id": 366,
     "name": "Iron Plate Mail Legs (HQ)",
-    "description": "Iron plate mail legs.",
+    "description": "A high quality Iron Plate Mail Legs.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
@@ -4209,7 +4209,7 @@
   {
     "id": 367,
     "name": "Iron Plate Mail Body (HQ)",
-    "description": "Iron plate mail body.",
+    "description": "A high quality Iron Plate Mail Body.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4229,7 +4229,7 @@
   {
     "id": 368,
     "name": "Steel Dagger (HQ)",
-    "description": "Steel dagger.",
+    "description": "A high quality Steel Dagger.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4247,7 +4247,7 @@
   {
     "id": 369,
     "name": "Steel Sword (HQ)",
-    "description": "Steel sword.",
+    "description": "A high quality Steel Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4265,7 +4265,7 @@
   {
     "id": 370,
     "name": "Steel Mace (HQ)",
-    "description": "Steel mace.",
+    "description": "A high quality Steel Mace.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4282,7 +4282,7 @@
   {
     "id": 371,
     "name": "Steel Scimitar (HQ)",
-    "description": "Steel scimitar.",
+    "description": "A high quality Steel Scimitar.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4299,7 +4299,7 @@
   {
     "id": 372,
     "name": "Steel Battle Axe (HQ)",
-    "description": "Steel battle axe.",
+    "description": "A high quality Steel Battle Axe.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4317,7 +4317,7 @@
   {
     "id": 373,
     "name": "Steel 2-handed Sword (HQ)",
-    "description": "Steel 2-handed sword.",
+    "description": "A high quality Steel 2-handed Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4335,7 +4335,7 @@
   {
     "id": 374,
     "name": "Steel Medium Helmet (HQ)",
-    "description": "Steel medium helmet.",
+    "description": "A high quality Steel Medium Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4351,7 +4351,7 @@
   {
     "id": 375,
     "name": "Steel Full Helmet (HQ)",
-    "description": "Steel full helmet.",
+    "description": "A high quality Steel Full Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4367,7 +4367,7 @@
   {
     "id": 376,
     "name": "Steel Square Shield (HQ)",
-    "description": "Steel square shield.",
+    "description": "A high quality Steel Square Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4384,7 +4384,7 @@
   {
     "id": 377,
     "name": "Steel Cuirass (HQ)",
-    "description": "Steel cuirass.",
+    "description": "A high quality Steel Cuirass.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4405,7 +4405,7 @@
   {
     "id": 378,
     "name": "Steel Kite Shield (HQ)",
-    "description": "Steel kite shield.",
+    "description": "A high quality Steel Kite Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4422,7 +4422,7 @@
   {
     "id": 379,
     "name": "Steel Plate Mail Legs (HQ)",
-    "description": "Steel plate mail legs.",
+    "description": "A high quality Steel Plate Mail Legs.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
@@ -4442,7 +4442,7 @@
   {
     "id": 380,
     "name": "Steel Plate Mail Body (HQ)",
-    "description": "Steel plate mail body.",
+    "description": "A high quality Steel Plate Mail Body.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4462,7 +4462,7 @@
   {
     "id": 381,
     "name": "Mithril Dagger (HQ)",
-    "description": "Mithril dagger.",
+    "description": "A high quality Mithril Dagger.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4480,7 +4480,7 @@
   {
     "id": 382,
     "name": "Mithril Sword (HQ)",
-    "description": "Mithril sword.",
+    "description": "A high quality Mithril Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4498,7 +4498,7 @@
   {
     "id": 383,
     "name": "Mithril Mace (HQ)",
-    "description": "Mithril mace.",
+    "description": "A high quality Mithril Mace.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4515,7 +4515,7 @@
   {
     "id": 384,
     "name": "Mithril Scimitar (HQ)",
-    "description": "Mithril scimitar.",
+    "description": "A high quality Mithril Scimitar.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4532,7 +4532,7 @@
   {
     "id": 385,
     "name": "Mithril Battle Axe (HQ)",
-    "description": "Mithril battle axe.",
+    "description": "A high quality Mithril Battle Axe.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4550,7 +4550,7 @@
   {
     "id": 386,
     "name": "Mithril 2-handed Sword (HQ)",
-    "description": "Mithril 2-handed sword.",
+    "description": "A high quality Mithril 2-handed Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4568,7 +4568,7 @@
   {
     "id": 387,
     "name": "Mithril Medium Helmet (HQ)",
-    "description": "Mithril medium helmet.",
+    "description": "A high quality Mithril Medium Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4584,7 +4584,7 @@
   {
     "id": 388,
     "name": "Mithril Full Helmet (HQ)",
-    "description": "Mithril full helmet.",
+    "description": "A high quality Mithril Full Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4600,7 +4600,7 @@
   {
     "id": 389,
     "name": "Mithril Square Shield (HQ)",
-    "description": "Mithril square shield.",
+    "description": "A high quality Mithril Square Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4617,7 +4617,7 @@
   {
     "id": 390,
     "name": "Mithril Cuirass (HQ)",
-    "description": "Mithril cuirass.",
+    "description": "A high quality Mithril Cuirass.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4638,7 +4638,7 @@
   {
     "id": 391,
     "name": "Mithril Kite Shield (HQ)",
-    "description": "Mithril kite shield.",
+    "description": "A high quality Mithril Kite Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4655,7 +4655,7 @@
   {
     "id": 392,
     "name": "Mithril Plate Mail Legs (HQ)",
-    "description": "Mithril plate mail legs.",
+    "description": "A high quality Mithril Plate Mail Legs.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
@@ -4675,7 +4675,7 @@
   {
     "id": 393,
     "name": "Mithril Plate Mail Body (HQ)",
-    "description": "Mithril plate mail body.",
+    "description": "A high quality Mithril Plate Mail Body.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4695,7 +4695,7 @@
   {
     "id": 394,
     "name": "Black Bronze Dagger (HQ)",
-    "description": "Black Bronze dagger.",
+    "description": "A high quality Black Bronze Dagger.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4712,7 +4712,7 @@
   {
     "id": 395,
     "name": "Black Bronze Sword (HQ)",
-    "description": "Black Bronze sword.",
+    "description": "A high quality Black Bronze Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4729,7 +4729,7 @@
   {
     "id": 396,
     "name": "Black Bronze Mace (HQ)",
-    "description": "Black Bronze mace.",
+    "description": "A high quality Black Bronze Mace.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4745,7 +4745,7 @@
   {
     "id": 397,
     "name": "Black Bronze Scimitar (HQ)",
-    "description": "Black Bronze scimitar.",
+    "description": "A high quality Black Bronze Scimitar.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4761,7 +4761,7 @@
   {
     "id": 398,
     "name": "Black Bronze Battle Axe (HQ)",
-    "description": "Black Bronze battle axe.",
+    "description": "A high quality Black Bronze Battle Axe.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4778,7 +4778,7 @@
   {
     "id": 399,
     "name": "Black Bronze 2-handed Sword (HQ)",
-    "description": "Black Bronze 2-handed sword.",
+    "description": "A high quality Black Bronze 2-handed Sword.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
@@ -4795,7 +4795,7 @@
   {
     "id": 400,
     "name": "Black Bronze Medium Helmet (HQ)",
-    "description": "Black Bronze medium helmet.",
+    "description": "A high quality Black Bronze Medium Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4810,7 +4810,7 @@
   {
     "id": 401,
     "name": "Black Bronze Full Helmet (HQ)",
-    "description": "Black Bronze full helmet.",
+    "description": "A high quality Black Bronze Full Helmet.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
@@ -4825,7 +4825,7 @@
   {
     "id": 402,
     "name": "Black Bronze Square Shield (HQ)",
-    "description": "Black Bronze square shield.",
+    "description": "A high quality Black Bronze Square Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4841,7 +4841,7 @@
   {
     "id": 403,
     "name": "Black Bronze Cuirass (HQ)",
-    "description": "Black Bronze cuirass.",
+    "description": "A high quality Black Bronze Cuirass.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
@@ -4861,7 +4861,7 @@
   {
     "id": 404,
     "name": "Black Bronze Kite Shield (HQ)",
-    "description": "Black Bronze kite shield.",
+    "description": "A high quality Black Bronze Kite Shield.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
@@ -4877,7 +4877,7 @@
   {
     "id": 405,
     "name": "Black Bronze Plate Mail Legs (HQ)",
-    "description": "Black Bronze plate mail legs.",
+    "description": "A high quality Black Bronze Plate Mail Legs.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
@@ -4896,7 +4896,7 @@
   {
     "id": 406,
     "name": "Black Bronze Plate Mail Body (HQ)",
-    "description": "Black Bronze plate mail body.",
+    "description": "A high quality Black Bronze Plate Mail Body.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",

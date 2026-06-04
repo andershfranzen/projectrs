@@ -60,7 +60,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, mergeObjectActionLabels, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -2231,16 +2231,20 @@ export class GameManager {
 
   private getGearOverrideForCharacter(itemId: number, character?: CharacterEntity | null): GearOverride | null {
     return resolveGearOverrideForBodyType(
-      this.gearOverrides.get(itemId),
+      this.gearOverrides.get(this.getGearFitSourceItemId(itemId)),
       this.getCharacterBodyType(character),
     );
   }
 
   private getGearModelFileForCharacter(itemId: number, slotName: string, character?: CharacterEntity | null): string | null {
     const itemDef = this.itemDefsCache.get(itemId);
-    const rawOverride = this.gearOverrides.get(itemId);
+    const rawOverride = this.gearOverrides.get(this.getGearFitSourceItemId(itemId));
     const bodyType = this.getCharacterBodyType(character);
     return resolveCharacterGearModelFile(itemDef, rawOverride, bodyType, slotName);
+  }
+
+  private getGearFitSourceItemId(itemId: number): number {
+    return resolveGearFitSourceItemId(itemId, this.itemDefsCache.values());
   }
 
   private async saveGearOverridesToServer(): Promise<void> {
@@ -2286,15 +2290,21 @@ export class GameManager {
     const slotName = itemDef?.equipSlot;
     if (!slotName) return;
 
+    const refresh = (character: CharacterEntity): void => {
+      const equippedItemId = character.getGearItemId(slotName);
+      if (equippedItemId !== itemId && this.getGearFitSourceItemId(equippedItemId) !== itemId) return;
+      this.applyGearOverrideTransform(character, slotName, equippedItemId);
+    };
+
     if (this.localPlayer) {
-      this.applyGearOverrideTransform(this.localPlayer, slotName, itemId);
+      refresh(this.localPlayer);
     }
     for (const character of this.entities.remotePlayers.values()) {
-      this.applyGearOverrideTransform(character, slotName, itemId);
+      refresh(character);
     }
     for (const npc of this.entities.npcSprites.values()) {
       if (npc instanceof CharacterEntity) {
-        this.applyGearOverrideTransform(npc, slotName, itemId);
+        refresh(npc);
       }
     }
   }
@@ -2355,7 +2365,10 @@ export class GameManager {
     }
 
     // Already wearing this item?
-    if (target.getGearItemId(slotName) === itemId) return;
+    if (target.getGearItemId(slotName) === itemId) {
+      target.setHighQualityGearEffect(slotName, isHighQualityItem(this.itemDefsCache.get(itemId)));
+      return;
+    }
 
     const boneConfig = EQUIP_SLOT_BONES[slotName];
     if (!boneConfig) return;
@@ -2374,7 +2387,7 @@ export class GameManager {
         itemId,
         slotName,
         itemDef,
-        this.gearOverrides.get(itemId),
+        this.gearOverrides.get(this.getGearFitSourceItemId(itemId)),
         this.getCharacterBodyType(target),
       )?.def ?? null;
     };
@@ -2387,7 +2400,12 @@ export class GameManager {
     // through the cache below like any other bone-attached slot.
     if (PER_TARGET_GEAR_SLOTS.has(slotName)) {
       const def = buildDef();
-      if (def) await this.loadGearSmart(slotName, itemId, def, target, isCurrentApply);
+      if (def) {
+        await this.loadGearSmart(slotName, itemId, def, target, isCurrentApply);
+        if (isCurrentApply() && target.getGearItemId(slotName) === itemId) {
+          target.setHighQualityGearEffect(slotName, isHighQualityItem(this.itemDefsCache.get(itemId)));
+        }
+      }
       return;
     }
 
@@ -2416,6 +2434,7 @@ export class GameManager {
     }
     if (template && isCurrentApply()) {
       target.attachGear(slotName, itemId, template);
+      target.setHighQualityGearEffect(slotName, isHighQualityItem(this.itemDefsCache.get(itemId)));
     }
   }
 

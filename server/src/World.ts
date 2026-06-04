@@ -2,7 +2,7 @@ import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_P
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
-import { addXp, statRandom, spellSchoolSkill } from '@projectrs/shared';
+import { addXp, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc } from './entity/Npc';
@@ -5825,6 +5825,20 @@ export class World {
       this.sendSingleSkill(player, hpIdx);
       player.syncHealthFromSkills();
     }
+  }
+
+  maxPlayerStats(player: Player): void {
+    const maxXp = xpForLevel(99);
+    for (const skillId of ALL_SKILLS) {
+      const skill = player.skills[skillId];
+      skill.xp = maxXp;
+      skill.level = 99;
+      skill.currentLevel = 99;
+    }
+    player.syncHealthFromSkills();
+    player.syncDirty = true;
+    this.sendSkills(player);
+    this.savePlayerState(player);
   }
 
   private sendLevelUp(player: Player, skillIndex: number, newLevel: number): void {

@@ -1,4 +1,4 @@
-import { resolveEquipmentModelPath, type ItemDef } from '@projectrs/shared';
+import { highQualityBaseItemName, resolveEquipmentModelPath, resolveGearFitSourceItemId, type ItemDef } from '@projectrs/shared';
 import { METAL_TIER_THUMBNAIL_COLOR, TOOL_TIER_METAL_COLOR } from '../data/EquipmentConfig';
 import { getThumbnail, getThumbnailPoseKey, type ThumbnailCamera, type ThumbnailOptions } from './ThumbnailRenderer';
 
@@ -108,7 +108,7 @@ export function itemThumbnailTier(item: ItemDef): string {
 
 export function itemThumbnailFamily(item: ItemDef): string {
   const tier = itemThumbnailTier(item);
-  const name = item.name || '';
+  const name = highQualityBaseItemName(item.name) ?? item.name ?? '';
   if (tier) return name.slice(tier.length).trim();
   const normalizedName = normalizeFamilyText(name);
   const suffix = FAMILY_SUFFIX_ALIASES.find((entry) => normalizedName.endsWith(entry.normalized));
@@ -128,6 +128,12 @@ export function itemThumbnailTierIndex(item: ItemDef): number {
 
 function findBronzeFamilyItem(candidates: readonly ItemDef[]): ItemDef | undefined {
   return candidates.find((item) => itemThumbnailTier(item) === 'Bronze');
+}
+
+export function itemThumbnailVisualSource(def: ItemDef, itemDefs: readonly ItemDef[] = _itemCatalog): ItemDef {
+  if (itemDefs.length === 0) return def;
+  const sourceId = resolveGearFitSourceItemId(def.id, itemDefs);
+  return itemDefs.find(item => item.id === sourceId) ?? def;
 }
 
 export function setThumbnailItemCatalog(defs: Iterable<ItemDef>): void {
@@ -339,11 +345,12 @@ export function findThumbnailOverrideForItem(
   overrides: ThumbnailOverrideInput,
   itemDefs: readonly ItemDef[] = _itemCatalog,
 ): ThumbnailOverride | undefined {
+  const sourceDef = itemThumbnailVisualSource(def, itemDefs);
   const store = asOverrideStore(overrides);
-  const direct = store.items[def.id];
-  if (!def.equipSlot) return direct;
+  const direct = store.items[sourceDef.id];
+  if (!sourceDef.equipSlot) return direct;
 
-  const familyKey = itemThumbnailFamilyKey(def);
+  const familyKey = itemThumbnailFamilyKey(sourceDef);
   if (!familyKey) return direct;
 
   if (direct) return direct;
@@ -351,19 +358,19 @@ export function findThumbnailOverrideForItem(
   if (familyOverride) return familyOverride;
   if (itemDefs.length === 0) return direct;
 
-  const targetTierIndex = itemThumbnailTierIndex(def);
+  const targetTierIndex = itemThumbnailTierIndex(sourceDef);
   const indexed = itemDefs === _itemCatalog ? _itemFamilyIndex.get(familyKey) : undefined;
   const candidates = indexed ?? itemDefs.filter((item) =>
     itemThumbnailFamilyKey(item) === familyKey
   );
 
   const bronze = findBronzeFamilyItem(candidates);
-  if (bronze && bronze.id !== def.id && store.items[bronze.id]) return store.items[bronze.id];
+  if (bronze && bronze.id !== sourceDef.id && store.items[bronze.id]) return store.items[bronze.id];
 
   let best: ItemDef | undefined;
   let bestDelta = Number.POSITIVE_INFINITY;
   for (const item of candidates) {
-    if (item.id === def.id || !store.items[item.id]) continue;
+    if (item.id === sourceDef.id || !store.items[item.id]) continue;
     const delta = Math.abs(itemThumbnailTierIndex(item) - targetTierIndex);
     if (!best || delta < bestDelta || (delta === bestDelta && item.id < best.id)) {
       best = item;
@@ -376,20 +383,20 @@ export function findThumbnailOverrideForItem(
 
 /** Build thumbnail options for a specific item and override. Used by both the
  *  game client and editor previews so saved editor poses match runtime icons. */
-export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride): ThumbnailOptions {
-  const modelPath = def.model ?? '';
+export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride, visualDef: ItemDef = def): ThumbnailOptions {
+  const modelPath = visualDef.model ?? def.model ?? '';
   const bowColorRevision = /(?:^|\/)(?:Shortbow|OakShortbow|WillowShortbow|MapleShortbow|YewShortbow|MysticShortbow|MagicShortbow)\.glb$/i.test(modelPath)
     ? ':bow-colors-v5'
     : '';
-  const opts: ThumbnailOptions = { cacheIdentity: `item:${def.id}${bowColorRevision}` };
-  const tint = TOOL_TIER_METAL_COLOR[def.id];
+  const opts: ThumbnailOptions = { cacheIdentity: `item:${visualDef.id}${bowColorRevision}` };
+  const tint = TOOL_TIER_METAL_COLOR[visualDef.id];
   if (tint) opts.tint = tint;
-  const shieldTint = SHIELD_THUMBNAIL_TINT[def.id];
+  const shieldTint = SHIELD_THUMBNAIL_TINT[visualDef.id];
   if (shieldTint) {
     opts.tint = shieldTint;
     opts.tintBaseColorMatch = SHIELD_DOMINANT_BROWN;
   }
-  const slotCam = def.equipSlot ? SLOT_THUMBNAIL_CAMERAS[def.equipSlot] : undefined;
+  const slotCam = visualDef.equipSlot ? SLOT_THUMBNAIL_CAMERAS[visualDef.equipSlot] : undefined;
   if (slotCam || itemOverride) {
     const { rotationX, rotationY, rotationZ, iconScale, ...itemCam } = itemOverride ?? {};
     opts.camera = { ...slotCam, ...itemCam };
@@ -406,7 +413,8 @@ export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: T
  *  per-item override. Exposed so the bake script can use the same settings. */
 export async function buildThumbnailOptionsForItem(def: ItemDef): Promise<ThumbnailOptions> {
   const overrides = await loadOverrides();
-  return buildThumbnailOptionsFromOverride(def, findThumbnailOverrideForItem(def, overrides));
+  const visualDef = itemThumbnailVisualSource(def);
+  return buildThumbnailOptionsFromOverride(def, findThumbnailOverrideForItem(def, overrides), visualDef);
 }
 
 function normalizeStackQuantity(quantity: number | undefined): number {
@@ -449,15 +457,16 @@ function uses3DIcon(def: ItemDef, quantity: number = 1): boolean {
 
 /** Best-effort async lookup. Returns the highest-quality icon URL available. */
 export async function getItemIconUrl(def: ItemDef, quantity: number = 1): Promise<string | null> {
-  const modelPath = resolveItemModelPath(def, quantity);
+  const visualDef = itemThumbnailVisualSource(def);
+  const modelPath = resolveItemModelPath(visualDef, quantity);
   if (modelPath) {
     const [manifest, opts] = await Promise.all([
       loadManifest(),
       buildThumbnailOptionsForItem(def),
     ]);
-    const stackScale = stackModelScaleForItem(def, quantity);
+    const stackScale = stackModelScaleForItem(visualDef, quantity);
     if (stackScale !== 1) opts.iconScale = (opts.iconScale ?? 1) * stackScale;
-    const bakedUrl = resolveBakedThumbnailUrl(manifest, def.id, getThumbnailPoseKey(modelPath, opts));
+    const bakedUrl = resolveBakedThumbnailUrl(manifest, visualDef.id, getThumbnailPoseKey(modelPath, opts));
     if (bakedUrl) return bakedUrl;
     const dataUrl = await getThumbnail(modelPath, opts);
     if (dataUrl) return dataUrl;
