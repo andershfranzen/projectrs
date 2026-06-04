@@ -166,6 +166,34 @@ export function ensurePreAuthTheme(): void {
       box-shadow: inset 0 0 0 1px #151515;
     }
 
+    .eq-login-home-link {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 10px;
+      min-height: 18px;
+      color: #a79f90;
+      font-size: 12px;
+      line-height: 18px;
+      font-weight: bold;
+      text-align: center;
+      text-decoration: none;
+      text-shadow: 1px 1px 0 #000;
+    }
+
+    .eq-login-home-icon {
+      width: 12px;
+      height: 12px;
+      flex: 0 0 12px;
+      fill: currentColor;
+    }
+
+    .eq-login-home-link:hover {
+      color: #e6d6bd;
+      text-decoration: underline;
+    }
+
     .eq-login-vignette {
       position: absolute;
       left: calc(50% + 160px);

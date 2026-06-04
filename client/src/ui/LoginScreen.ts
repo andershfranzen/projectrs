@@ -90,6 +90,7 @@ export class LoginScreen {
 
     card.appendChild(form);
     overlay.appendChild(card);
+    overlay.appendChild(this.createHomepageLink());
 
     // Enter key submits
     overlay.addEventListener('keydown', (e) => {
@@ -213,6 +214,26 @@ export class LoginScreen {
     label.appendChild(box);
     label.appendChild(text);
     return label;
+  }
+
+  private createHomepageLink(): HTMLAnchorElement {
+    const link = document.createElement('a');
+    link.href = '/';
+    link.className = 'eq-login-home-link';
+
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    icon.setAttribute('class', 'eq-login-home-icon');
+    icon.setAttribute('viewBox', '0 0 448 512');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.setAttribute('focusable', 'false');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', 'M257.5 445.1l-22.2 22.2c-9.4 9.4-24.6 9.4-33.9 0L7 273c-9.4-9.4-9.4-24.6 0-33.9L201.4 44.7c9.4-9.4 24.6-9.4 33.9 0l22.2 22.2c9.5 9.5 9.3 25-.4 34.3L136.6 216H424c13.3 0 24 10.7 24 24v32c0 13.3-10.7 24-24 24H136.6l120.5 114.8c9.8 9.3 10 24.8.4 34.3z');
+    icon.appendChild(path);
+
+    const label = document.createElement('span');
+    label.textContent = 'Back to homepage';
+    link.append(icon, label);
+    return link;
   }
 
   // Google permits hiding the v3 badge as long as the branding notice
