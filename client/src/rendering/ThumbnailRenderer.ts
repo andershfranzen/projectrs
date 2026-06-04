@@ -10,6 +10,7 @@ import type { Skeleton } from '@babylonjs/core/Bones/skeleton';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import { CHARACTER_IDLE_ANIM, CHARACTER_MODEL_PATH } from '@projectrs/shared';
 import '@babylonjs/loaders/glTF';
+import { isAuthoredGearMetalMaterial, materialHasTexture, tuneGearDiffuseColor } from './GearMaterialTuning';
 import { clearCachedThumb, getCachedThumb, putCachedThumb } from './ThumbnailCache';
 import { remapSkinningToSkeleton } from './skinnedArmor';
 
@@ -24,9 +25,9 @@ const THUMB_INTERNAL_SIZE = 256;
 const THUMB_PADDING = 0.02;
 /** Alpha threshold below which a pixel is considered transparent. Trims AA halos. */
 const TRIM_ALPHA_MIN = 12;
-// Bump to invalidate every cached thumbnail across clients. v14 caches only
-// the stabilized second item render, matching the editor preview behavior.
-const THUMB_VERSION = 14;
+// Bump to invalidate every cached thumbnail across clients. v19 promotes the
+// oxblood palette to the official Crimson tier.
+const THUMB_VERSION = 19;
 const RENDER_TIMEOUT_MS = 8000;
 export const THUMBNAIL_RENDERER_VERSION = THUMB_VERSION;
 
@@ -340,6 +341,27 @@ function applyThumbnailModelRotation(options: ThumbnailOptions, result: { meshes
   return wrapper;
 }
 
+function getMaterialBaseColor(mat: any): Color3 | null {
+  return mat.albedoColor ?? mat.diffuseColor ?? null;
+}
+
+function setMaterialBaseColor(mat: any, color: Color3): void {
+  if ('albedoColor' in mat) mat.albedoColor = color;
+  if ('diffuseColor' in mat) mat.diffuseColor = color;
+}
+
+function tuneThumbnailGearMetalMaterials(meshes: any[]): void {
+  for (const mesh of meshes) {
+    const mat = mesh.material as any;
+    if (!mat) continue;
+    const hasTexture = materialHasTexture(mat);
+    if (!isAuthoredGearMetalMaterial(mat, hasTexture)) continue;
+    const base = getMaterialBaseColor(mat);
+    if (!base) continue;
+    setMaterialBaseColor(mat, tuneGearDiffuseColor(base, true));
+  }
+}
+
 function enqueue(path: string, options: ThumbnailOptions, cacheKey?: string, priority = false): Promise<string | null> {
   return new Promise((resolve) => {
     const entry = { path, options, cacheKey, priority, resolve };
@@ -514,10 +536,12 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
     // cannot change which transform wins.
     poseRoot = applyThumbnailModelRotation(options, result);
 
+    tuneThumbnailGearMetalMaterials(result.meshes);
+
     if (options.tint) {
       const match = options.tintMaterialMatch ?? 'Material.002';
       const [r, g, b] = options.tint;
-      const tintColor = new Color3(r, g, b);
+      const tintColor = tuneGearDiffuseColor(new Color3(r, g, b), true);
       const baseMatch = options.tintBaseColorMatch;
       const baseTolerance = options.tintBaseColorTolerance ?? 0.015;
       for (const mesh of result.meshes) {
@@ -533,10 +557,9 @@ async function renderOne(path: string, options: ThumbnailOptions): Promise<strin
         }
         if (!shouldTint && mat.name && mat.name.includes(match)) shouldTint = true;
         if (!shouldTint) continue;
-        const hasTexture = (mat.albedoTexture && mat.albedoTexture !== null) || (mat.diffuseTexture && mat.diffuseTexture !== null);
+        const hasTexture = materialHasTexture(mat);
         if (hasTexture) continue;
-        if ('albedoColor' in mat) mat.albedoColor = tintColor;
-        if ('diffuseColor' in mat) mat.diffuseColor = tintColor;
+        setMaterialBaseColor(mat, tintColor);
       }
     }
 

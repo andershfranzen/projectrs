@@ -119,9 +119,11 @@ export const EQUIP_SLOT_NAMES = ['weapon', 'shield', 'head', 'body', 'legs', 'ne
 export const METAL_TIER_THUMBNAIL_COLOR = {
   bronze: [0.497, 0.309, 0.132],
   iron: [0.48, 0.48, 0.50],
-  steel: [0.75, 0.78, 0.82],
+  steel: [0.34, 0.39, 0.46],
   mithril: [0.035, 0.075, 0.205],
   blackBronze: [0.045, 0.014, 0.005],
+  crimson: [0.175, 0.006, 0.012],
+  malachor: [0.027, 0.112, 0.056],
 } satisfies Record<string, [number, number, number]>;
 
 export const TOOL_TIER_METAL_COLOR: Record<number, [number, number, number]> = {
@@ -131,10 +133,14 @@ export const TOOL_TIER_METAL_COLOR: Record<number, [number, number, number]> = {
   36: METAL_TIER_THUMBNAIL_COLOR.steel, // Steel Axe
   37: METAL_TIER_THUMBNAIL_COLOR.mithril, // Mithril Axe
   38: METAL_TIER_THUMBNAIL_COLOR.blackBronze, // Black Bronze Axe
+  312: METAL_TIER_THUMBNAIL_COLOR.crimson, // Crimson Axe
+  327: METAL_TIER_THUMBNAIL_COLOR.malachor, // Malachor Axe
   // Pickaxes
   33: METAL_TIER_THUMBNAIL_COLOR.bronze, // Bronze Pickaxe
   53: METAL_TIER_THUMBNAIL_COLOR.iron, // Iron Pickaxe
   54: METAL_TIER_THUMBNAIL_COLOR.steel, // Steel Pickaxe
   55: METAL_TIER_THUMBNAIL_COLOR.mithril, // Mithril Pickaxe
   56: METAL_TIER_THUMBNAIL_COLOR.blackBronze, // Black Bronze Pickaxe
+  313: METAL_TIER_THUMBNAIL_COLOR.crimson, // Crimson Pickaxe
+  328: METAL_TIER_THUMBNAIL_COLOR.malachor, // Malachor Pickaxe
 };

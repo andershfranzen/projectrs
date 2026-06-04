@@ -28,7 +28,7 @@ let _manifestPromise: Promise<ParsedBakedThumbnailManifest> | null = null;
 let _itemCatalog: ItemDef[] = [];
 let _itemFamilyIndex = new Map<string, ItemDef[]>();
 
-export const ITEM_THUMBNAIL_TIERS = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze'];
+export const ITEM_THUMBNAIL_TIERS = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze', 'Crimson', 'Malachor'];
 
 const ITEM_THUMBNAIL_FAMILY_SUFFIXES: Array<{ label: string; aliases: string[] }> = [
   { label: '2-handed Sword', aliases: ['2-handed sword', '2 handed sword', '2h sword'] },

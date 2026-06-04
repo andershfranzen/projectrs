@@ -471,7 +471,7 @@ export class SmithingPanel {
 
       // Short name — strip the bar-type prefix (e.g. "Bronze Dagger" → "Dagger")
       const shortName = outputName.replace(
-        /^(Bronze|Iron|Steel|Mithril|Black Bronze|Silver)\s+/i,
+        /^(Bronze|Iron|Steel|Mithril|Black Bronze|Crimson|Malachor|Silver)\s+/i,
         '',
       );
       const nameEl = document.createElement('div');

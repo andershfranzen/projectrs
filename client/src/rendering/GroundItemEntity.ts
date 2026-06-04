@@ -100,6 +100,7 @@ function convertPbrToFlat(mesh: AbstractMesh, scene: Scene): void {
   if (hasTexture) {
     flat.diffuseTexture = pbr.albedoTexture;
     pbr.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+    if (pbr.albedoColor) flat.diffuseColor = pbr.albedoColor;
   }
   if (pbr.albedoColor && !hasTexture) {
     const boost = 1.2;

@@ -10,6 +10,7 @@ import type { ItemDef } from '../../../shared/types';
 import { resolveEquipmentModelPath } from '../../../shared/gear';
 import { EQUIP_SLOT_BONES, TOOL_TIER_METAL_COLOR, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { CharacterEntity, type GearDef, type GearTemplate } from './CharacterEntity';
+import { applyFlatGearLighting, isAuthoredGearMetalMaterial, tuneGearDiffuseColor } from './GearMaterialTuning';
 import '@babylonjs/loaders/glTF';
 
 const GEAR_CACHE_BUST_TOKEN: string = (import.meta as any).env?.DEV ? `?v=${Date.now()}` : '';
@@ -83,26 +84,19 @@ function flattenGearMaterials(scene: Scene, meshes: AbstractMesh[], metalColor?:
     if (!pbr || !pbr.getClassName || pbr.getClassName() !== 'PBRMaterial') continue;
     const flat = new StandardMaterial(`${pbr.name}_flat`, scene);
     const hasTexture = !!pbr.albedoTexture;
+    const isMetal = isAuthoredGearMetalMaterial(pbr, hasTexture);
     const isPolysplitGear = pbr.name && pbr.name.startsWith('genericRGBMat_Objects');
     if (hasTexture) {
       flat.diffuseTexture = pbr.albedoTexture;
       pbr.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+      if (pbr.albedoColor) flat.diffuseColor = pbr.albedoColor;
     }
     if (pbr.albedoColor && !hasTexture) {
-      const b = 1.3;
-      flat.diffuseColor = new Color3(
-        Math.min(1, pbr.albedoColor.r * b),
-        Math.min(1, pbr.albedoColor.g * b),
-        Math.min(1, pbr.albedoColor.b * b),
-      );
+      flat.diffuseColor = tuneGearDiffuseColor(pbr.albedoColor, isMetal);
     } else if (isPolysplitGear) {
       flat.diffuseColor = new Color3(0.55, 0.55, 0.55);
     }
-    flat.specularColor = Color3.Black();
-    if (!hasTexture) {
-      const dc = flat.diffuseColor;
-      flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55);
-    }
+    applyFlatGearLighting(flat, hasTexture, isMetal);
     flat.backFaceCulling = pbr.backFaceCulling ?? true;
     mesh.material = flat;
   }
@@ -120,8 +114,10 @@ function flattenGearMaterials(scene: Scene, meshes: AbstractMesh[], metalColor?:
     } else {
       cloned = mat.clone(clonedName);
       if (cloned) {
-        if ('albedoColor' in cloned) cloned.albedoColor = tint;
-        if ('diffuseColor' in cloned) cloned.diffuseColor = tint;
+        const diffuse = tuneGearDiffuseColor(tint, true);
+        if ('albedoColor' in cloned) cloned.albedoColor = diffuse;
+        if ('diffuseColor' in cloned) cloned.diffuseColor = diffuse;
+        if (cloned instanceof StandardMaterial) applyFlatGearLighting(cloned, false, true);
         recolored.add(clonedName);
       }
     }

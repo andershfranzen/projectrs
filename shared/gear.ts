@@ -1,6 +1,6 @@
 import type { ItemDef } from './types.js';
 
-const GEAR_FIT_TIERS: readonly string[] = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze'];
+const GEAR_FIT_TIERS: readonly string[] = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze', 'Crimson', 'Malachor'];
 
 export function gearFitTierForName(name?: string | null): string {
   if (!name) return '';
