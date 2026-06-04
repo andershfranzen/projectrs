@@ -254,6 +254,9 @@ const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
 const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
+const MITHRIL_ROCK_OBJECT_DEF_ID = 16;
+const MITHRIL_PICKAXE_ITEM_ID = 55;
+const MITHRIL_PICKAXE_FIND_CHANCE = 1 / 2048;
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -8281,6 +8284,23 @@ export class World {
           this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primary.added, source: isChest ? 'chest' : 'harvest' });
         }
         if (primary.dropped > 0) this.sendChatSystem(player, "Your inventory is full, so the harvest falls to the ground.");
+
+        if (obj.defId === MITHRIL_ROCK_OBJECT_DEF_ID && Math.random() < MITHRIL_PICKAXE_FIND_CHANCE) {
+          const rare = this.awardHarvestItem(player, MITHRIL_PICKAXE_ITEM_ID, 1);
+          this.sendChatSystem(player, 'You find a beautiful blue pickaxe left among the rocks...');
+          if (rare.added > 0) {
+            inventoryChanged = true;
+            this.quests.notifyQuestEvent(player, {
+              type: 'itemPickup',
+              itemId: MITHRIL_PICKAXE_ITEM_ID,
+              quantity: rare.added,
+              source: 'harvest',
+            });
+          }
+          if (rare.dropped > 0) {
+            this.sendChatSystem(player, 'You do not have space for it in your inventory, so you throw it to the ground.');
+          }
+        }
 
         // Bonus loot — chests use this for relic rolls on top of the
         // primary coin payout. Each entry is independent; misses drop
