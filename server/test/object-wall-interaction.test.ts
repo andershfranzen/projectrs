@@ -176,6 +176,20 @@ describe('wall-gated station interaction', () => {
     expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(false);
   });
 
+  test('authored crafting station tiles can use their station across a blocked footprint edge', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeObject(6, 'Furnace', 'furnace');
+    obj.def.width = 2;
+    obj.interactionTiles = [{ x: 1, z: 0 }];
+    const map = {
+      isWallBlocked: () => true,
+      isWallBlockedOnFloor: () => true,
+    };
+
+    expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(true);
+  });
+
   test('authored interaction tiles can be stood on when terrain is not blocked', () => {
     const world = Object.create(World.prototype) as any;
     world.blockedObjectTiles = new Set();
