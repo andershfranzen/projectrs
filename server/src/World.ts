@@ -953,6 +953,33 @@ export class World {
     return canTravel(this.playerPathCollision(player, map), fromTileX, fromTileZ, dx, dz);
   }
 
+  private canPlayerReachPlayer(player: Player, target: Player, maxRange: number): boolean {
+    if (player.id === target.id) return false;
+    if (player.currentMapLevel !== target.currentMapLevel || player.currentFloor !== target.currentFloor) return false;
+    if (this.tileChebyshev(player, target) > maxRange) return false;
+    const fromTileX = Math.floor(player.position.x);
+    const fromTileZ = Math.floor(player.position.y);
+    const targetTileX = Math.floor(target.position.x);
+    const targetTileZ = Math.floor(target.position.y);
+    const dx = targetTileX - fromTileX;
+    const dz = targetTileZ - fromTileZ;
+    if (dx === 0 && dz === 0) return true;
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map);
+    if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) {
+      return canTravel(collision, fromTileX, fromTileZ, dx, dz);
+    }
+    const path = findPathToTile({
+      startX: player.position.x,
+      startZ: player.position.y,
+      goalX: targetTileX + 0.5,
+      goalZ: targetTileZ + 0.5,
+      collision,
+      maxSearchTiles: Math.max(1, (maxRange * 2 + 1) * (maxRange * 2 + 1)),
+    });
+    return path.length > 0 && path.length <= maxRange;
+  }
+
   private canPlayerUseLadderOnCurrentFloor(player: Player, obj: WorldObject): boolean {
     return this.ladderActionMaskForPlayer(player, obj) !== 0;
   }
@@ -1458,10 +1485,7 @@ export class World {
   }
 
   private requiresClearObjectInteractionEdge(obj: WorldObject): boolean {
-    return obj.def.category === 'chest'
-      || obj.def.category === 'cookingrange'
-      || obj.defId === POTTERY_WHEEL_OBJECT_DEF_ID
-      || obj.defId === KILN_OBJECT_DEF_ID;
+    return obj.def.category !== 'door' && obj.def.category !== 'ladder';
   }
 
   private hasClearObjectInteractionEdge(
@@ -6068,6 +6092,10 @@ export class World {
       if (reporter === a) this.sendChatSystem(a, 'That player is too far away to trade.');
       return false;
     }
+    if (!this.canPlayerReachPlayer(a, b, TRADE_REQUEST_RANGE)) {
+      if (reporter === a) this.sendChatSystem(a, 'That player is too far away to trade.');
+      return false;
+    }
     return true;
   }
 
@@ -6585,6 +6613,10 @@ export class World {
       if (reporter === a) this.sendChatSystem(a, 'You need to stand next to them to duel.');
       return false;
     }
+    if (!this.canPlayerReachPlayer(a, b, 1)) {
+      if (reporter === a) this.sendChatSystem(a, 'You need to stand next to them to duel.');
+      return false;
+    }
     if (this.isPlayerInCombatForDuel(a)) {
       if (reporter === a) this.sendChatSystem(a, 'You are already in combat.');
       return false;
@@ -6603,6 +6635,7 @@ export class World {
     if (this.activeDuels?.has(a.id) || this.activeDuels?.has(b.id)) return false;
     if (a.currentMapLevel !== b.currentMapLevel || a.currentFloor !== b.currentFloor) return false;
     if (this.tileChebyshev(a, b) > 1) return false;
+    if (!this.canPlayerReachPlayer(a, b, 1)) return false;
     if (this.playerCombatTargets.has(a.id) || this.playerCombatTargets.has(b.id)) return false;
     if (this.isPlayerUnderNpcAttack(a.id) || this.isPlayerUnderNpcAttack(b.id)) return false;
     if (a.isLogoutBlocked(this.currentTick) || b.isLogoutBlocked(this.currentTick)) return false;
@@ -6974,7 +7007,7 @@ export class World {
   private isActiveDuelPositionValid(duel: ActiveDuel, a: Player, b: Player): boolean {
     if (a.currentMapLevel !== duel.mapLevel || b.currentMapLevel !== duel.mapLevel) return false;
     if (a.currentFloor !== duel.floor || b.currentFloor !== duel.floor) return false;
-    return this.tileChebyshev(a, b) <= 1;
+    return this.canPlayerReachPlayer(a, b, 1);
   }
 
   private playerRangedAmmoFailureMessage(player: Player): string {

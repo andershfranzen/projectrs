@@ -44,6 +44,17 @@ function makePlayer(name: string, accountId: number, x = 1.5, z = 1.5): Player {
   return player;
 }
 
+function makeOpenMap(): any {
+  return {
+    width: 64,
+    height: 64,
+    isBlocked: () => false,
+    isTileBlockedOnFloor: () => false,
+    isWallBlocked: () => false,
+    isWallBlockedOnFloor: () => false,
+  };
+}
+
 function makeHarness(a: Player, b: Player): TradeHarness {
   const packets = new Map<number, Array<{ opcode: ServerOpcode; values: number[] }>>([
     [a.id, []],
@@ -61,6 +72,9 @@ function makeHarness(a: Player, b: Player): TradeHarness {
   world.npcTargetedBy = new Map();
   world.tradeSessions = new Map();
   world.pendingTradeRequests = new Map();
+  world.blockedObjectTiles = new Set();
+  world.maps = new Map([['kcmap', makeOpenMap()]]);
+  world.getPlayerMap = (player: Player) => world.maps.get(player.currentMapLevel);
   world.currentTick = 42;
   world.db = {
     savePlayerState() {},
@@ -116,6 +130,22 @@ function acceptBothTwice(world: any, a: Player, b: Player): void {
 }
 
 describe('player trading anti-dupe validation', () => {
+  test('trade requests cannot cross wall or fence edges', () => {
+    const a = makePlayer('alice', 1);
+    const b = makePlayer('bob', 2, 2.5, 1.5);
+    const { world, chats } = makeHarness(a, b);
+    const map = world.maps.get('kcmap');
+    map.isWallBlocked = (fx: number, fz: number, tx: number, tz: number) =>
+      fx === 1 && fz === 1 && tx === 2 && tz === 1;
+    map.isWallBlockedOnFloor = map.isWallBlocked;
+
+    world.handleTradeRequest(a.id, b.id);
+
+    expect(world.pendingTradeRequests.size).toBe(0);
+    expect(world.tradeSessions.has(a.id)).toBe(false);
+    expect(chats.get(a.id)).toContain('That player is too far away to trade.');
+  });
+
   test('accepting a pending request opens trade only while nearby on the same floor', () => {
     const a = makePlayer('alice', 1);
     const b = makePlayer('bob', 2, 20.5, 1.5);

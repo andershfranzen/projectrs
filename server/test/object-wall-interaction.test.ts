@@ -67,6 +67,11 @@ function canUseWithWallBlocked(defId: number, name: string, wallBlocked: boolean
 }
 
 describe('wall-gated station interaction', () => {
+  test('ordinary resource objects cannot be used through a wall edge', () => {
+    expect(canUseWithWallBlocked(3, 'Copper Rock', true, 'rock')).toBe(false);
+    expect(canUseWithWallBlocked(3, 'Copper Rock', false, 'rock')).toBe(true);
+  });
+
   test('pottery wheels cannot be used through a wall edge', () => {
     expect(canUseWithWallBlocked(POTTERY_WHEEL_OBJECT_DEF_ID, 'Pottery Wheel', true)).toBe(false);
     expect(canUseWithWallBlocked(POTTERY_WHEEL_OBJECT_DEF_ID, 'Pottery Wheel', false)).toBe(true);

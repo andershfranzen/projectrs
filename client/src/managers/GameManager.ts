@@ -3080,11 +3080,11 @@ export class GameManager {
           return;
         }
         if (targetId !== this.localPlayerId && targetEntity) {
-          this.showHitSplat(targetEntity.position, damage);
+          this.showHitSplat(this.hitSplatBasePositionFor(targetEntity), damage);
           if (targetHealthBarHost) this.showTransientHealthBar(targetId, targetHealthBarHost, targetHp, targetMaxHp);
         }
         if (targetId === this.localPlayerId && this.localPlayer) {
-          this.showHitSplat(this.localPlayer.position, damage);
+          this.showHitSplat(this.hitSplatBasePositionFor(this.localPlayer), damage);
           this.playerHealth = targetHp;
           this.playerMaxHealth = targetMaxHp;
           this.updateHUD();
@@ -6815,6 +6815,11 @@ export class GameManager {
       this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
     this.chatPanel?.addMessage(this.username || 'You', message, this.isAdmin ? ADMIN_NAME_COLOR : '#f4ded5');
+  }
+
+  private hitSplatBasePositionFor(target: Targetable): Vector3 {
+    const anchor = target.getTargetAnchor();
+    return new Vector3(anchor.x, target.position.y, anchor.z);
   }
 
   private showHitSplat(pos: Vector3, damage: number): void {

@@ -46,6 +46,17 @@ function makePlayer(name: string, accountId: number, x = 1.5, z = 1.5): Player {
   return player;
 }
 
+function makeOpenMap(): any {
+  return {
+    width: 64,
+    height: 64,
+    isBlocked: () => false,
+    isTileBlockedOnFloor: () => false,
+    isWallBlocked: () => false,
+    isWallBlockedOnFloor: () => false,
+  };
+}
+
 function makeHarness(a: Player, b: Player): DuelHarness {
   const packets = new Map<number, Array<{ opcode: ServerOpcode; values: number[] }>>([
     [a.id, []],
@@ -69,6 +80,9 @@ function makeHarness(a: Player, b: Player): DuelHarness {
   world.pendingDuelRequests = new Map();
   world.activeDuels = new Map();
   world.pendingSpellImpacts = [];
+  world.blockedObjectTiles = new Set();
+  world.maps = new Map([['kcmap', makeOpenMap()]]);
+  world.getPlayerMap = (player: Player) => world.maps.get(player.currentMapLevel);
   world.currentTick = 42;
   world.currentTickStartMs = 0;
   world.data = {
@@ -142,6 +156,22 @@ function acceptBothTwice(world: any, a: Player, b: Player): void {
 }
 
 describe('player duel staking and combat validation', () => {
+  test('duel requests cannot cross wall or fence edges', () => {
+    const a = makePlayer('alice', 1);
+    const b = makePlayer('bob', 2, 2.5, 1.5);
+    const { world, chats } = makeHarness(a, b);
+    const map = world.maps.get('kcmap');
+    map.isWallBlocked = (fx: number, fz: number, tx: number, tz: number) =>
+      fx === 1 && fz === 1 && tx === 2 && tz === 1;
+    map.isWallBlockedOnFloor = map.isWallBlocked;
+
+    world.handleDuelRequest(a.id, b.id);
+
+    expect(world.pendingDuelRequests.size).toBe(0);
+    expect(world.duelStakeSessions.has(a.id)).toBe(false);
+    expect(chats.get(a.id)).toContain('You need to stand next to them to duel.');
+  });
+
   test('request rejects target already in combat with exact message', () => {
     const a = makePlayer('alice', 1);
     const b = makePlayer('bob', 2, 2.5, 1.5);
@@ -289,6 +319,24 @@ describe('player duel staking and combat validation', () => {
       targetId: a.id,
       includeSelf: true,
     });
+  });
+
+  test('duel final accept aborts if a wall edge now separates the players', () => {
+    const a = makePlayer('alice', 1);
+    const b = makePlayer('bob', 2, 2.5, 1.5);
+    const { world } = makeHarness(a, b);
+    openDuel(world, a, b);
+    const map = world.maps.get('kcmap');
+    map.isWallBlocked = (fx: number, fz: number, tx: number, tz: number) =>
+      fx === 1 && fz === 1 && tx === 2 && tz === 1;
+    map.isWallBlockedOnFloor = map.isWallBlocked;
+
+    acceptBothTwice(world, a, b);
+
+    expect(world.duelStakeSessions.has(a.id)).toBe(false);
+    expect(world.activeDuels.has(a.id)).toBe(false);
+    expect(a.openInterface).toBeNull();
+    expect(b.openInterface).toBeNull();
   });
 
   test('full potential winner inventory aborts start and refunds stakes', () => {

@@ -8,6 +8,17 @@ const fakeWs = {
   send() {},
 } as any;
 
+function makeOpenMap(): any {
+  return {
+    width: 64,
+    height: 64,
+    isBlocked: () => false,
+    isTileBlockedOnFloor: () => false,
+    isWallBlocked: () => false,
+    isWallBlockedOnFloor: () => false,
+  };
+}
+
 function makeHarness(recipeIndex: number = -1): { opened: number[]; crafted: number[] } {
   const player = new Player('smith_test', 9.5, 10.5, fakeWs, 1);
   const obj = {
@@ -36,6 +47,9 @@ function makeHarness(recipeIndex: number = -1): { opened: number[]; crafted: num
   const world = Object.create(World.prototype) as any;
   world.players = new Map([[player.id, player]]);
   world.worldObjects = new Map([[obj.id, obj]]);
+  world.blockedObjectTiles = new Set();
+  world.maps = new Map([['kcmap', makeOpenMap()]]);
+  world.getPlayerMap = (p: Player) => world.maps.get(p.currentMapLevel);
   world.clearCombatTarget = () => {};
   world.closeNpcUiContext = () => {};
   world.runObjectInteractionEffects = () => {};
@@ -91,6 +105,9 @@ describe('server-authoritative smithing picker', () => {
     const world = Object.create(World.prototype) as any;
     world.players = new Map([[player.id, player]]);
     world.worldObjects = new Map([[obj.id, obj]]);
+    world.blockedObjectTiles = new Set();
+    world.maps = new Map([['kcmap', makeOpenMap()]]);
+    world.getPlayerMap = (p: Player) => world.maps.get(p.currentMapLevel);
     world.clearCombatTarget = () => {};
     world.closeNpcUiContext = () => {};
     world.runObjectInteractionEffects = () => {};
