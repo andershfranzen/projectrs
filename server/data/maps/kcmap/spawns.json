@@ -659,7 +659,338 @@
         0,
         0
       ],
-  "name": "Lord Mortrek",
+      "dialogue": {
+        "root": "mortrek_default",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questCompleted",
+                  "questId": "Bad Blood"
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "mortrek_complete_evil"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 2,
+                  "maxStage": 2
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 1
+                }
+              ]
+            },
+            "node": "mortrek_good_intro"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 2,
+                  "maxStage": 2
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "mortrek_evil_intro"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 3,
+                  "maxStage": 3
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 1
+                }
+              ]
+            },
+            "node": "mortrek_good_mid"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 3,
+                  "maxStage": 3
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "mortrek_evil_mid"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 4,
+                  "maxStage": 4
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 1
+                }
+              ]
+            },
+            "node": "mortrek_good_after"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 4,
+                  "maxStage": 4
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "mortrek_evil_done"
+          }
+        ],
+        "nodes": {
+          "mortrek_default": {
+            "id": "mortrek_default",
+            "lines": [
+              "A cold-eyed vampire watches you from the throne."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "mortrek_good_intro": {
+            "id": "mortrek_good_intro",
+            "lines": [
+              "A visitor. They don't usually walk in on their own."
+            ],
+            "options": [
+              {
+                "label": "Release your hold on Sela.",
+                "next": "mortrek_good_refuse"
+              }
+            ]
+          },
+          "mortrek_good_refuse": {
+            "id": "mortrek_good_refuse",
+            "lines": [
+              "She's mine. I made her. You don't get to take that back."
+            ],
+            "options": [
+              {
+                "label": "I'll take it by force, then.",
+                "actions": [
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 3
+                  },
+                  {
+                    "type": "startNpcCombat"
+                  }
+                ]
+              }
+            ]
+          },
+          "mortrek_good_mid": {
+            "id": "mortrek_good_mid",
+            "lines": [
+              "We're not done."
+            ],
+            "options": [
+              {
+                "label": "Fight.",
+                "actions": [
+                  {
+                    "type": "startNpcCombat"
+                  }
+                ]
+              }
+            ]
+          },
+          "mortrek_good_after": {
+            "id": "mortrek_good_after",
+            "lines": [
+              "The girl's free of me. Enjoy it while it lasts."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "mortrek_evil_intro": {
+            "id": "mortrek_evil_intro",
+            "lines": [
+              "My fledgling's back, and she's brought help. What do you want?"
+            ],
+            "options": [
+              {
+                "label": "The power you gave her. Give it to me too.",
+                "next": "mortrek_evil_cost"
+              }
+            ]
+          },
+          "mortrek_evil_cost": {
+            "id": "mortrek_evil_cost",
+            "lines": [
+              "That isn't handed out for free."
+            ],
+            "options": [
+              {
+                "label": "Name your price.",
+                "actions": [
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 3
+                  }
+                ],
+                "next": "mortrek_evil_task"
+              },
+              {
+                "label": "Forget it. I've changed my mind.",
+                "actions": [
+                  {
+                    "type": "setQuestVar",
+                    "questId": "Bad Blood",
+                    "key": "BLOOD_PATH",
+                    "value": 1
+                  }
+                ],
+                "next": "mortrek_good_refuse"
+              }
+            ]
+          },
+          "mortrek_evil_task": {
+            "id": "mortrek_evil_task",
+            "lines": [
+              "There's a prisoner in the cells below. Bring me his heart and the dark blood is yours."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "mortrek_evil_mid": {
+            "id": "mortrek_evil_mid",
+            "lines": [
+              "We're not done."
+            ],
+            "options": [
+              {
+                "label": "I have the prisoner's heart.",
+                "conditions": [
+                  {
+                    "type": "hasItem",
+                    "itemId": 309,
+                    "quantity": 1
+                  }
+                ],
+                "actions": [
+                  {
+                    "type": "takeItem",
+                    "itemId": 309,
+                    "qty": 1
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 4
+                  },
+                  {
+                    "type": "grantXp",
+                    "skill": "evilmagic",
+                    "amount": 850
+                  }
+                ],
+                "next": "mortrek_evil_done"
+              },
+              {
+                "label": "Not yet."
+              }
+            ]
+          },
+          "mortrek_evil_done": {
+            "id": "mortrek_evil_done",
+            "lines": [
+              "It's done. You've got the dark blood now."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "mortrek_complete_evil": {
+            "id": "mortrek_complete_evil",
+            "lines": [
+              "Use it well."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          }
+        }
+      },
+      "name": "Lord Mortrek",
       "customColors": {
         "skinColor": [
           0.5333333333333333,
@@ -677,937 +1008,557 @@
           0.5333333333333333
         ]
       },
-  "attackAnim": "attack_1h_slash",
-  "visibilityCondition": {
-    "type": "any",
-    "conditions": [
-      {
-        "type": "questStage",
-        "questId": "Bad Blood",
-        "minStage": 2,
-        "maxStage": 4
-      },
-      {
-        "type": "all",
-        "conditions": [
-          {
-            "type": "questCompleted",
-            "questId": "Bad Blood"
-          },
-          {
-            "type": "questVar",
-            "questId": "Bad Blood",
-            "key": "BLOOD_PATH",
-            "value": 2
-          }
-        ]
-      }
-    ]
-  },
-  "dialogue": {
-    "root": "mortrek_default",
-    "rootConditions": [
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questCompleted",
-              "questId": "Bad Blood"
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 2
-            }
-          ]
-        },
-        "node": "mortrek_complete_evil"
-      },
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 2,
-              "maxStage": 2
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 1
-            }
-          ]
-        },
-        "node": "mortrek_good_intro"
-      },
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 2,
-              "maxStage": 2
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 2
-            }
-          ]
-        },
-        "node": "mortrek_evil_intro"
-      },
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 3,
-              "maxStage": 3
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 1
-            }
-          ]
-        },
-        "node": "mortrek_good_mid"
-      },
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 3,
-              "maxStage": 3
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 2
-            }
-          ]
-        },
-        "node": "mortrek_evil_mid"
-      },
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 4,
-              "maxStage": 4
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 1
-            }
-          ]
-        },
-        "node": "mortrek_good_after"
-      },
-      {
-        "condition": {
-          "type": "all",
-          "conditions": [
-            {
-              "type": "questStage",
-              "questId": "Bad Blood",
-              "minStage": 4,
-              "maxStage": 4
-            },
-            {
-              "type": "questVar",
-              "questId": "Bad Blood",
-              "key": "BLOOD_PATH",
-              "value": 2
-            }
-          ]
-        },
-        "node": "mortrek_evil_done"
-      }
-    ],
-    "nodes": {
-      "mortrek_default": {
-        "id": "mortrek_default",
-        "lines": [
-          "A cold-eyed vampire watches you from the throne."
-        ],
-        "options": [
-          {
-            "label": "Continue."
-          }
-        ]
-      },
-      "mortrek_good_intro": {
-        "id": "mortrek_good_intro",
-        "lines": [
-          "A visitor. They don't usually walk in on their own."
-        ],
-        "options": [
-          {
-            "label": "Release your hold on Sela.",
-            "next": "mortrek_good_refuse"
-          }
-        ]
-      },
-      "mortrek_good_refuse": {
-        "id": "mortrek_good_refuse",
-        "lines": [
-          "She's mine. I made her. You don't get to take that back."
-        ],
-        "options": [
-          {
-            "label": "I'll take it by force, then.",
-            "actions": [
-              {
-                "type": "setQuestStage",
-                "questId": "Bad Blood",
-                "stage": 3
-              },
-              {
-                "type": "startNpcCombat"
-              }
-            ]
-          }
-        ]
-      },
-      "mortrek_good_mid": {
-        "id": "mortrek_good_mid",
-        "lines": [
-          "We're not done."
-        ],
-        "options": [
-          {
-            "label": "Fight.",
-            "actions": [
-              {
-                "type": "startNpcCombat"
-              }
-            ]
-          }
-        ]
-      },
-      "mortrek_good_after": {
-        "id": "mortrek_good_after",
-        "lines": [
-          "The girl's free of me. Enjoy it while it lasts."
-        ],
-        "options": [
-          {
-            "label": "Continue."
-          }
-        ]
-      },
-      "mortrek_evil_intro": {
-        "id": "mortrek_evil_intro",
-        "lines": [
-          "My fledgling's back, and she's brought help. What do you want?"
-        ],
-        "options": [
-          {
-            "label": "The power you gave her. Give it to me too.",
-            "next": "mortrek_evil_cost"
-          }
-        ]
-      },
-      "mortrek_evil_cost": {
-        "id": "mortrek_evil_cost",
-        "lines": [
-          "That isn't handed out for free."
-        ],
-        "options": [
-          {
-            "label": "Name your price.",
-            "actions": [
-              {
-                "type": "setQuestStage",
-                "questId": "Bad Blood",
-                "stage": 3
-              }
-            ],
-            "next": "mortrek_evil_task"
-          },
-          {
-            "label": "Forget it. I've changed my mind.",
-            "actions": [
-              {
-                "type": "setQuestVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 1
-              }
-            ],
-            "next": "mortrek_good_refuse"
-          }
-        ]
-      },
-      "mortrek_evil_task": {
-        "id": "mortrek_evil_task",
-        "lines": [
-          "There's a prisoner in the cells below. Bring me his heart and the dark blood is yours."
-        ],
-        "options": [
-          {
-            "label": "Continue."
-          }
-        ]
-      },
-      "mortrek_evil_mid": {
-        "id": "mortrek_evil_mid",
-        "lines": [
-          "We're not done."
-        ],
-        "options": [
-          {
-            "label": "I have the prisoner's heart.",
-            "conditions": [
-              {
-                "type": "hasItem",
-                "itemId": 309,
-                "quantity": 1
-              }
-            ],
-            "actions": [
-              {
-                "type": "takeItem",
-                "itemId": 309,
-                "qty": 1
-              },
-              {
-                "type": "setQuestStage",
-                "questId": "Bad Blood",
-                "stage": 4
-              },
-              {
-                "type": "grantXp",
-                "skill": "evilmagic",
-                "amount": 850
-              }
-            ],
-            "next": "mortrek_evil_done"
-          },
-          {
-            "label": "Not yet."
-          }
-        ]
-      },
-      "mortrek_evil_done": {
-        "id": "mortrek_evil_done",
-        "lines": [
-          "It's done. You've got the dark blood now."
-        ],
-        "options": [
-          {
-            "label": "Continue."
-          }
-        ]
-      },
-      "mortrek_complete_evil": {
-        "id": "mortrek_complete_evil",
-        "lines": [
-          "Use it well."
-        ],
-        "options": [
-          {
-            "label": "Continue."
-          }
-        ]
-      }
-    }
-  }
-},
-{
-  "id": 138,
-  "npcId": 103,
-  "x": 316.5,
-  "z": 145.5,
-  "wanderRange": 1,
-  "aggressive": false,
-  "appearance": {
-    "shirtColor": 11,
-    "pantsColor": 3,
-    "shoesColor": 0,
-    "hairColor": 2,
-    "beltColor": 0,
-    "skinColor": 2,
-    "hairStyle": 4
-  },
-  "name": "Prisoner",
-  "visibilityCondition": {
-    "type": "all",
-    "conditions": [
-      {
-        "type": "questStage",
-        "questId": "Bad Blood",
-        "minStage": 3,
-        "maxStage": 3
-      },
-      {
-        "type": "questVar",
-        "questId": "Bad Blood",
-        "key": "BLOOD_PATH",
-        "value": 2
-      }
-    ]
-  }
-},
-  {
-    "id": 63,
-    "npcId": 20,
-    "x": 170.5,
-    "z": 160.5,
-    "wanderRange": 2,
-    "aggressive": false,
-    "appearance": {
-      "shirtColor": 4,
-      "pantsColor": 3,
+      "attackAnim": "attack_1h_slash"
+    },
+    {
+      "id": 138,
+      "npcId": 103,
+      "x": 316.5,
+      "z": 145.5,
+      "wanderRange": 1,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 11,
+        "pantsColor": 3,
         "shoesColor": 0,
         "hairColor": 2,
         "beltColor": 0,
-      "skinColor": 3,
-      "hairStyle": 14
+        "skinColor": 2,
+        "hairStyle": 4
+      },
+      "name": "Prisoner"
     },
-    "name": "Farmer Borin",
-    "dialogue": {
-      "root": "borin_start",
-      "rootConditions": [
-        {
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questCompleted",
-                "questId": "Bad Blood"
-              },
-              {
-                "type": "questVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 1
-              }
-            ]
-          },
-          "node": "borin_complete_good"
-        },
-        {
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questCompleted",
-                "questId": "Bad Blood"
-              },
-              {
-                "type": "questVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 2
-              }
-            ]
-          },
-          "node": "borin_complete_evil"
-        },
-        {
-          "condition": {
-            "type": "questNotStarted",
-            "questId": "Bad Blood"
-          },
-          "node": "borin_start"
-        },
-        {
-          "condition": {
-            "type": "questStage",
-            "questId": "Bad Blood",
-            "minStage": 0,
-            "maxStage": 0
-          },
-          "node": "borin_investigate"
-        },
-        {
-          "condition": {
-            "type": "questStage",
-            "questId": "Bad Blood",
-            "minStage": 1,
-            "maxStage": 3
-          },
-          "node": "borin_progress"
-        },
-        {
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questStage",
-                "questId": "Bad Blood",
-                "minStage": 4,
-                "maxStage": 4
-              },
-              {
-                "type": "questVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 1
-              }
-            ]
-          },
-          "node": "borin_return_good"
-        },
-        {
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questStage",
-                "questId": "Bad Blood",
-                "minStage": 4,
-                "maxStage": 4
-              },
-              {
-                "type": "questVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 2
-              }
-            ]
-          },
-          "node": "borin_return_evil"
-        }
-      ],
-      "nodes": {
-        "borin_start": {
-          "id": "borin_start",
-          "lines": [
-            "My cows are dying. Something's draining the blood right out of them, two holes in the neck and nothing left inside."
-          ],
-          "options": [
-            {
-              "label": "I'll find out what's doing it.",
-              "actions": [
+    {
+      "id": 63,
+      "npcId": 20,
+      "x": 170.5,
+      "z": 160.5,
+      "wanderRange": 2,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 4,
+        "pantsColor": 3,
+        "shoesColor": 0,
+        "hairColor": 2,
+        "beltColor": 0,
+        "skinColor": 3,
+        "hairStyle": 14
+      },
+      "dialogue": {
+        "root": "borin_start",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
                 {
-                  "type": "setQuestStage",
-                  "questId": "Bad Blood",
-                  "stage": 0
-                }
-              ],
-              "next": "borin_accept"
-            },
-            {
-              "label": "Not now."
-            }
-          ]
-        },
-        "borin_accept": {
-          "id": "borin_accept",
-          "lines": [
-            "Start at the old barn by the back field. Be careful."
-          ],
-          "options": [
-            {
-              "label": "I'll be careful."
-            }
-          ]
-        },
-        "borin_investigate": {
-          "id": "borin_investigate",
-          "lines": [
-            "The dead ones are out by the barn. Go and look."
-          ],
-          "options": [
-            {
-              "label": "I'm going."
-            }
-          ]
-        },
-        "borin_progress": {
-          "id": "borin_progress",
-          "lines": [
-            "Found what's killing my cattle yet?"
-          ],
-          "options": [
-            {
-              "label": "Still working on it.",
-              "next": "borin_hurry"
-            }
-          ]
-        },
-        "borin_hurry": {
-          "id": "borin_hurry",
-          "lines": [
-            "Hurry up. I'm losing animals."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "borin_return_good": {
-          "id": "borin_return_good",
-          "lines": [
-            "No dead cows this morning. First time in a week. That you?"
-          ],
-          "options": [
-            {
-              "label": "It's handled. Nothing else will touch your livestock.",
-              "actions": [
-                {
-                  "type": "giveItem",
-                  "itemId": 308,
-                  "qty": 1
+                  "type": "questCompleted",
+                  "questId": "Bad Blood"
                 },
                 {
-                  "type": "grantXp",
-                  "skill": "goodmagic",
-                  "amount": 850
-                },
-                {
-                  "type": "completeQuest",
-                  "questId": "Bad Blood"
-                }
-              ],
-              "next": "borin_good_reward"
-            }
-          ]
-        },
-        "borin_good_reward": {
-          "id": "borin_good_reward",
-          "lines": [
-            "Good work. Here, take this charm. It's no use to me."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "borin_return_evil": {
-          "id": "borin_return_evil",
-          "lines": [
-            "Cows are still dying, and now there's two of those things out there. You were no help at all."
-          ],
-          "options": [
-            {
-              "label": "Your problem now, not mine.",
-              "actions": [
-                {
-                  "type": "completeQuest",
-                  "questId": "Bad Blood"
-                }
-              ],
-              "next": "borin_evil_done"
-            }
-          ]
-        },
-        "borin_evil_done": {
-          "id": "borin_evil_done",
-          "lines": [
-            "Then clear off my land."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "borin_complete_good": {
-          "id": "borin_complete_good",
-          "lines": [
-            "Quiet nights again. Thanks."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "borin_complete_evil": {
-          "id": "borin_complete_evil",
-          "lines": [
-            "Borin turns away and refuses to speak to you."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        }
-      }
-    }
-  },
-  {
-    "id": 137,
-    "npcId": 100,
-    "x": 186.5,
-    "z": 168.5,
-    "wanderRange": 1,
-    "aggressive": false,
-    "appearance": {
-      "shirtColor": 15,
-      "pantsColor": 4,
-      "shoesColor": 6,
-      "hairColor": 0,
-      "beltColor": 1,
-      "skinColor": 0,
-      "hairStyle": 6
-    },
-    "customColors": {
-      "skinColor": [
-        0.66,
-        0.62,
-        0.62
-      ],
-      "shirtColor": [
-        0.36,
-        0.06,
-        0.08
-      ]
-    },
-    "name": "Sela",
-    "visibilityCondition": {
-      "type": "questStage",
-      "questId": "Bad Blood",
-      "minStage": 0,
-      "maxStage": 4
-    },
-    "dialogue": {
-      "root": "sela_wait",
-      "rootConditions": [
-        {
-          "condition": {
-            "type": "questStage",
-            "questId": "Bad Blood",
-            "minStage": 0,
-            "maxStage": 0
-          },
-          "node": "sela_first"
-        },
-        {
-          "condition": {
-            "type": "questStage",
-            "questId": "Bad Blood",
-            "minStage": 1,
-            "maxStage": 1
-          },
-          "node": "sela_wait"
-        },
-        {
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questStage",
-                "questId": "Bad Blood",
-                "minStage": 2,
-                "maxStage": 4
-              },
-              {
-                "type": "questVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 1
-              }
-            ]
-          },
-          "node": "sela_good_hurry"
-        },
-        {
-          "condition": {
-            "type": "all",
-            "conditions": [
-              {
-                "type": "questStage",
-                "questId": "Bad Blood",
-                "minStage": 2,
-                "maxStage": 4
-              },
-              {
-                "type": "questVar",
-                "questId": "Bad Blood",
-                "key": "BLOOD_PATH",
-                "value": 2
-              }
-            ]
-          },
-          "node": "sela_evil_hurry"
-        }
-      ],
-      "nodes": {
-        "sela_first": {
-          "id": "sela_first",
-          "lines": [
-            "Stay back. I don't want to hurt you."
-          ],
-          "options": [
-            {
-              "label": "You killed those cows.",
-              "actions": [
-                {
-                  "type": "setQuestStage",
-                  "questId": "Bad Blood",
-                  "stage": 1
-                }
-              ],
-              "next": "sela_explain"
-            }
-          ]
-        },
-        "sela_explain": {
-          "id": "sela_explain",
-          "lines": [
-            "I didn't mean to. I woke up like this. The elder vampire, Lord Mortrek, bit me and left me out here."
-          ],
-          "options": [
-            {
-              "label": "I can break the curse. Hold still.",
-              "actions": [
-                {
-                  "type": "setQuestVar",
+                  "type": "questVar",
                   "questId": "Bad Blood",
                   "key": "BLOOD_PATH",
                   "value": 1
+                }
+              ]
+            },
+            "node": "borin_complete_good"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questCompleted",
+                  "questId": "Bad Blood"
                 },
                 {
-                  "type": "setQuestStage",
-                  "questId": "Bad Blood",
-                  "stage": 2
-                }
-              ],
-              "next": "sela_good_choice"
-            },
-            {
-              "label": "Don't fight it. Come with me. We'll go to him together.",
-              "actions": [
-                {
-                  "type": "setQuestVar",
+                  "type": "questVar",
                   "questId": "Bad Blood",
                   "key": "BLOOD_PATH",
                   "value": 2
+                }
+              ]
+            },
+            "node": "borin_complete_evil"
+          },
+          {
+            "condition": {
+              "type": "questNotStarted",
+              "questId": "Bad Blood"
+            },
+            "node": "borin_start"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "Bad Blood",
+              "minStage": 0,
+              "maxStage": 0
+            },
+            "node": "borin_investigate"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "Bad Blood",
+              "minStage": 1,
+              "maxStage": 3
+            },
+            "node": "borin_progress"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 4,
+                  "maxStage": 4
                 },
                 {
-                  "type": "setQuestStage",
-                  "questId": "Bad Blood",
-                  "stage": 2
-                }
-              ],
-              "next": "sela_evil_choice"
-            },
-            {
-              "label": "Give me a moment."
-            }
-          ]
-        },
-        "sela_wait": {
-          "id": "sela_wait",
-          "lines": [
-            "Have you decided? I can't stay out here much longer."
-          ],
-          "options": [
-            {
-              "label": "I can break the curse. Hold still.",
-              "actions": [
-                {
-                  "type": "setQuestVar",
+                  "type": "questVar",
                   "questId": "Bad Blood",
                   "key": "BLOOD_PATH",
                   "value": 1
+                }
+              ]
+            },
+            "node": "borin_return_good"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 4,
+                  "maxStage": 4
                 },
                 {
-                  "type": "setQuestStage",
-                  "questId": "Bad Blood",
-                  "stage": 2
-                }
-              ],
-              "next": "sela_good_choice"
-            },
-            {
-              "label": "Don't fight it. Come with me. We'll go to him together.",
-              "actions": [
-                {
-                  "type": "setQuestVar",
+                  "type": "questVar",
                   "questId": "Bad Blood",
                   "key": "BLOOD_PATH",
                   "value": 2
+                }
+              ]
+            },
+            "node": "borin_return_evil"
+          }
+        ],
+        "nodes": {
+          "borin_start": {
+            "id": "borin_start",
+            "lines": [
+              "My cows are dying. Something's draining the blood right out of them, two holes in the neck and nothing left inside."
+            ],
+            "options": [
+              {
+                "label": "I'll find out what's doing it.",
+                "actions": [
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 0
+                  }
+                ],
+                "next": "borin_accept"
+              },
+              {
+                "label": "Not now."
+              }
+            ]
+          },
+          "borin_accept": {
+            "id": "borin_accept",
+            "lines": [
+              "Start at the old barn by the back field. Be careful."
+            ],
+            "options": [
+              {
+                "label": "I'll be careful."
+              }
+            ]
+          },
+          "borin_investigate": {
+            "id": "borin_investigate",
+            "lines": [
+              "The dead ones are out by the barn. Go and look."
+            ],
+            "options": [
+              {
+                "label": "I'm going."
+              }
+            ]
+          },
+          "borin_progress": {
+            "id": "borin_progress",
+            "lines": [
+              "Found what's killing my cattle yet?"
+            ],
+            "options": [
+              {
+                "label": "Still working on it.",
+                "next": "borin_hurry"
+              }
+            ]
+          },
+          "borin_hurry": {
+            "id": "borin_hurry",
+            "lines": [
+              "Hurry up. I'm losing animals."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_return_good": {
+            "id": "borin_return_good",
+            "lines": [
+              "No dead cows this morning. First time in a week. That you?"
+            ],
+            "options": [
+              {
+                "label": "It's handled. Nothing else will touch your livestock.",
+                "actions": [
+                  {
+                    "type": "giveItem",
+                    "itemId": 308,
+                    "qty": 1
+                  },
+                  {
+                    "type": "grantXp",
+                    "skill": "goodmagic",
+                    "amount": 850
+                  },
+                  {
+                    "type": "completeQuest",
+                    "questId": "Bad Blood"
+                  }
+                ],
+                "next": "borin_good_reward"
+              }
+            ]
+          },
+          "borin_good_reward": {
+            "id": "borin_good_reward",
+            "lines": [
+              "Good work. Here, take this charm. It's no use to me."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_return_evil": {
+            "id": "borin_return_evil",
+            "lines": [
+              "Cows are still dying, and now there's two of those things out there. You were no help at all."
+            ],
+            "options": [
+              {
+                "label": "Your problem now, not mine.",
+                "actions": [
+                  {
+                    "type": "completeQuest",
+                    "questId": "Bad Blood"
+                  }
+                ],
+                "next": "borin_evil_done"
+              }
+            ]
+          },
+          "borin_evil_done": {
+            "id": "borin_evil_done",
+            "lines": [
+              "Then clear off my land."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_complete_good": {
+            "id": "borin_complete_good",
+            "lines": [
+              "Quiet nights again. Thanks."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "borin_complete_evil": {
+            "id": "borin_complete_evil",
+            "lines": [
+              "Borin turns away and refuses to speak to you."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          }
+        }
+      },
+      "name": "Farmer Borin"
+    },
+    {
+      "id": 137,
+      "npcId": 100,
+      "x": 186.5,
+      "z": 168.5,
+      "wanderRange": 1,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 15,
+        "pantsColor": 4,
+        "shoesColor": 6,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 0,
+        "hairStyle": 6
+      },
+      "dialogue": {
+        "root": "sela_wait",
+        "rootConditions": [
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "Bad Blood",
+              "minStage": 0,
+              "maxStage": 0
+            },
+            "node": "sela_first"
+          },
+          {
+            "condition": {
+              "type": "questStage",
+              "questId": "Bad Blood",
+              "minStage": 1,
+              "maxStage": 1
+            },
+            "node": "sela_wait"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 2,
+                  "maxStage": 4
                 },
                 {
-                  "type": "setQuestStage",
+                  "type": "questVar",
                   "questId": "Bad Blood",
-                  "stage": 2
+                  "key": "BLOOD_PATH",
+                  "value": 1
                 }
-              ],
-              "next": "sela_evil_choice"
+              ]
             },
-            {
-              "label": "Give me a moment."
-            }
-          ]
-        },
-        "sela_good_choice": {
-          "id": "sela_good_choice",
-          "lines": [
-            "You'd try? Then go to the castle. His hold still ties me to him. Break it and the curse breaks too."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "sela_evil_choice": {
-          "id": "sela_evil_choice",
-          "lines": [
-            "...Alright. Take me to the castle."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "sela_good_hurry": {
-          "id": "sela_good_hurry",
-          "lines": [
-            "Please hurry. I can feel him in my head."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
-        },
-        "sela_evil_hurry": {
-          "id": "sela_evil_hurry",
-          "lines": [
-            "The castle's this way. Come on."
-          ],
-          "options": [
-            {
-              "label": "Continue."
-            }
-          ]
+            "node": "sela_good_hurry"
+          },
+          {
+            "condition": {
+              "type": "all",
+              "conditions": [
+                {
+                  "type": "questStage",
+                  "questId": "Bad Blood",
+                  "minStage": 2,
+                  "maxStage": 4
+                },
+                {
+                  "type": "questVar",
+                  "questId": "Bad Blood",
+                  "key": "BLOOD_PATH",
+                  "value": 2
+                }
+              ]
+            },
+            "node": "sela_evil_hurry"
+          }
+        ],
+        "nodes": {
+          "sela_first": {
+            "id": "sela_first",
+            "lines": [
+              "Stay back. I don't want to hurt you."
+            ],
+            "options": [
+              {
+                "label": "You killed those cows.",
+                "actions": [
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 1
+                  }
+                ],
+                "next": "sela_explain"
+              }
+            ]
+          },
+          "sela_explain": {
+            "id": "sela_explain",
+            "lines": [
+              "I didn't mean to. I woke up like this. The elder vampire, Lord Mortrek, bit me and left me out here."
+            ],
+            "options": [
+              {
+                "label": "I can break the curse. Hold still.",
+                "actions": [
+                  {
+                    "type": "setQuestVar",
+                    "questId": "Bad Blood",
+                    "key": "BLOOD_PATH",
+                    "value": 1
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 2
+                  }
+                ],
+                "next": "sela_good_choice"
+              },
+              {
+                "label": "Don't fight it. Come with me. We'll go to him together.",
+                "actions": [
+                  {
+                    "type": "setQuestVar",
+                    "questId": "Bad Blood",
+                    "key": "BLOOD_PATH",
+                    "value": 2
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 2
+                  }
+                ],
+                "next": "sela_evil_choice"
+              },
+              {
+                "label": "Give me a moment."
+              }
+            ]
+          },
+          "sela_wait": {
+            "id": "sela_wait",
+            "lines": [
+              "Have you decided? I can't stay out here much longer."
+            ],
+            "options": [
+              {
+                "label": "I can break the curse. Hold still.",
+                "actions": [
+                  {
+                    "type": "setQuestVar",
+                    "questId": "Bad Blood",
+                    "key": "BLOOD_PATH",
+                    "value": 1
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 2
+                  }
+                ],
+                "next": "sela_good_choice"
+              },
+              {
+                "label": "Don't fight it. Come with me. We'll go to him together.",
+                "actions": [
+                  {
+                    "type": "setQuestVar",
+                    "questId": "Bad Blood",
+                    "key": "BLOOD_PATH",
+                    "value": 2
+                  },
+                  {
+                    "type": "setQuestStage",
+                    "questId": "Bad Blood",
+                    "stage": 2
+                  }
+                ],
+                "next": "sela_evil_choice"
+              },
+              {
+                "label": "Give me a moment."
+              }
+            ]
+          },
+          "sela_good_choice": {
+            "id": "sela_good_choice",
+            "lines": [
+              "You'd try? Then go to the castle. His hold still ties me to him. Break it and the curse breaks too."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "sela_evil_choice": {
+            "id": "sela_evil_choice",
+            "lines": [
+              "...Alright. Take me to the castle."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "sela_good_hurry": {
+            "id": "sela_good_hurry",
+            "lines": [
+              "Please hurry. I can feel him in my head."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          },
+          "sela_evil_hurry": {
+            "id": "sela_evil_hurry",
+            "lines": [
+              "The castle's this way. Come on."
+            ],
+            "options": [
+              {
+                "label": "Continue."
+              }
+            ]
+          }
         }
+      },
+      "name": "Sela",
+      "customColors": {
+        "skinColor": [
+          0.66,
+          0.62,
+          0.62
+        ],
+        "shirtColor": [
+          0.36,
+          0.06,
+          0.08
+        ]
       }
-    }
-  },
+    },
     {
       "id": 67,
       "npcId": 16,

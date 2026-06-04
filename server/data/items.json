@@ -351,7 +351,7 @@
     "toolLevel": 25,
     "toolBonus": 3,
     "sprite": "axe base.png",
-    "model": "/assets/equipment/Tools/Bronze axe.glb"
+    "model": "/assets/equipment/Tools/Mithril axe.glb"
   },
   {
     "id": 38,
@@ -1482,6 +1482,74 @@
     "levelRequired": 25
   },
   {
+    "id": 105,
+    "name": "Mithril Battle Axe",
+    "description": "Mithril battle axe.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "weapon",
+    "value": 540,
+    "icon": "Mithril_battle_Axe_91.png",
+    "model": "/assets/equipment/weapon/MithrilBattleaxe.glb",
+    "weaponStyle": "crush",
+    "attackSpeed": 6,
+    "slashAttack": 18,
+    "crushAttack": 36,
+    "meleeStrength": 42,
+    "equipSkill": "weaponry",
+    "levelRequired": 25
+  },
+  {
+    "id": 106,
+    "name": "Mithril 2-handed Sword",
+    "description": "Mithril 2-handed sword.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "weapon",
+    "value": 540,
+    "icon": "Mithril_2-handed_Sword_79.png",
+    "model": "/assets/equipment/weapon/Mithril2hsword.glb",
+    "weaponStyle": "slash",
+    "attackSpeed": 7,
+    "twoHanded": true,
+    "slashAttack": 42,
+    "meleeStrength": 72,
+    "equipSkill": "weaponry",
+    "levelRequired": 25
+  },
+  {
+    "id": 107,
+    "name": "Mithril Medium Helmet",
+    "description": "Mithril medium helmet.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "value": 180,
+    "icon": "Medium_Mithril_Helmet_106.png",
+    "model": "/assets/equipment/head/MithrilMedHelm.glb",
+    "stabDefence": 9,
+    "slashDefence": 12,
+    "crushDefence": 6,
+    "equipSkill": "defence",
+    "levelRequired": 25
+  },
+  {
+    "id": 108,
+    "name": "Mithril Full Helmet",
+    "description": "Mithril full helmet.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "value": 360,
+    "icon": "Large_Mithril_Helmet_110.png",
+    "model": "/assets/equipment/head/MithrilFullHelm.glb",
+    "stabDefence": 15,
+    "slashDefence": 18,
+    "crushDefence": 12,
+    "equipSkill": "defence",
+    "levelRequired": 25
+  },
+  {
     "id": 109,
     "name": "Mithril Square Shield",
     "description": "Mithril square shield.",
@@ -1499,6 +1567,27 @@
     "levelRequired": 25
   },
   {
+    "id": 110,
+    "name": "Mithril Cuirass",
+    "description": "Mithril cuirass.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "body",
+    "value": 540,
+    "icon": "Mithril_Chain_Mail_Body_115.png",
+    "model": "/assets/equipment/body/MithrilCuirass.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/body/female/MithrilCuirassWoman.glb"
+    },
+    "stabDefence": 24,
+    "slashDefence": 30,
+    "crushDefence": 18,
+    "rangedDefence": 24,
+    "bodyHideStyle": "chain",
+    "equipSkill": "defence",
+    "levelRequired": 25
+  },
+  {
     "id": 111,
     "name": "Mithril Kite Shield",
     "description": "Mithril kite shield.",
@@ -1512,6 +1601,26 @@
     "crushDefence": 21,
     "rangedDefence": 15,
     "model": "/assets/equipment/shield/MithrilKiteshield.glb",
+    "equipSkill": "defence",
+    "levelRequired": 25
+  },
+  {
+    "id": 112,
+    "name": "Mithril Plate Mail Legs",
+    "description": "Mithril plate mail legs.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "legs",
+    "value": 540,
+    "icon": "Mithril_Plate_Mail_Legs_122.png",
+    "model": "/assets/equipment/legs/MithrilPlatelegs.glb",
+    "bodyTypeModels": {
+      "1": "/assets/equipment/legs/female/MithrilPlatelegsWoman.glb"
+    },
+    "stabDefence": 18,
+    "slashDefence": 21,
+    "crushDefence": 15,
+    "rangedDefence": 15,
     "equipSkill": "defence",
     "levelRequired": 25
   },

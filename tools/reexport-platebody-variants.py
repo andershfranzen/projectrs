@@ -69,10 +69,10 @@ def main():
     args = parser.parse_args(argv)
 
     variants = {
-        "BronzePlatebody.glb": ("#160400", "#050100"),
+        "BronzePlatebody.glb": ("#1F0600", "#070100"),
         "IronPlatebody.glb": ("#0D0C0C", "#040404"),
         "SteelPlatebody.glb": ("#8592A3", "#232932"),
-        "BlackBronzePlatebody.glb": ("#020202", "#000000"),
+        "BlackBronzePlatebody.glb": ("#0C0301", "#0F0501"),
     }
 
     for filename, (main_hex, dark_hex) in variants.items():

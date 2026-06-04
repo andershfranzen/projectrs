@@ -15,5 +15,13 @@
   ],
   "fogStart": 30,
   "fogEnd": 50,
+  "skybox": {
+    "color": [
+      0.4,
+      0.62,
+      0.92
+    ],
+    "showSun": true
+  },
   "transitions": []
 }

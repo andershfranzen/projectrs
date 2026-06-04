@@ -25,8 +25,8 @@ function escapeXml(value: string): string {
 
 function helmetColor(item: ItemDef | undefined): string {
   const name = item?.name.toLowerCase() ?? '';
+  if (name.includes('black bronze')) return '#0c0301';
   if (name.includes('bronze')) return '#8d5f30';
-  if (name.includes('black bronze')) return '#2c2a2b';
   if (name.includes('iron')) return '#9ca2a6';
   if (name.includes('steel')) return '#bfc7cc';
   if (name.includes('mithril')) return '#5fa8a9';

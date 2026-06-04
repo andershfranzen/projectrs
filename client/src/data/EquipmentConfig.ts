@@ -117,11 +117,11 @@ export const EQUIP_SLOT_BONES: Record<string, { boneName: string; localPosition:
 export const EQUIP_SLOT_NAMES = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo'];
 
 export const METAL_TIER_THUMBNAIL_COLOR = {
-  bronze: [0.45, 0.28, 0.12],
+  bronze: [0.497, 0.309, 0.132],
   iron: [0.48, 0.48, 0.50],
   steel: [0.75, 0.78, 0.82],
-  mithril: [0.12, 0.22, 0.40],
-  blackBronze: [0.05, 0.05, 0.07],
+  mithril: [0.035, 0.075, 0.205],
+  blackBronze: [0.045, 0.014, 0.005],
 } satisfies Record<string, [number, number, number]>;
 
 export const TOOL_TIER_METAL_COLOR: Record<number, [number, number, number]> = {

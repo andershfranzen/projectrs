@@ -4674,7 +4674,17 @@
       "y": 1,
       "z": 1
     },
-    "altarTier": 2
+    "altarTier": 2,
+    "interactionTiles": [
+      {
+        "x": 0,
+        "z": -1
+      },
+      {
+        "x": -1,
+        "z": -1
+      }
+    ]
   },
   {
     "assetId": "Ladder",
