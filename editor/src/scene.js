@@ -7708,21 +7708,37 @@ let selectedWaterFlowChunk = null
     return pickHorizontalPlaneFromRay(ray, y)
   }
 
-  function pickSurfacePoint(event, excludeObjects = []) {
-    updateMouse(event)
-    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
-
-    const terrainPoint = pickTerrainPointFromRay(ray)
-    if (!terrainPoint) return null
-
-    const point = terrainPoint.clone()
-    const planeTop = findTexturePlaneTopAtWorld(point.x, point.z)
-    if (planeTop != null && planeTop > point.y) point.y = planeTop
+  function pickSurfacePointFromRay(ray, excludeObjects = []) {
+    const texturePlanePoint = pickTexturePlaneSurfacePointFromRay(ray)
+    let point
+    if (texturePlanePoint) {
+      point = texturePlanePoint.clone()
+    } else {
+      const terrainPoint = pickTerrainPointFromRay(ray)
+      if (!terrainPoint) return null
+      point = terrainPoint.clone()
+      const planeTop = findTexturePlaneTopAtWorld(point.x, point.z)
+      if (planeTop != null && planeTop > point.y) point.y = planeTop
+    }
 
     const objectTop = findObjectTopAt(point.x, point.z, excludeObjects)
     if (objectTop != null && objectTop > point.y) point.y = objectTop
 
     return point
+  }
+
+  function pickSurfacePoint(event, excludeObjects = []) {
+    updateMouse(event)
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+    return pickSurfacePointFromRay(ray, excludeObjects)
+  }
+
+  function tileFromWorldPoint(point) {
+    if (!point) return null
+    const x = Math.floor(point.x)
+    const z = Math.floor(point.z)
+    if (x < 0 || z < 0 || x >= map.width || z >= map.height) return null
+    return { x, z, u: point.x - x, v: point.z - z }
   }
 
   function pickTile(event) {
@@ -8084,32 +8100,42 @@ let selectedWaterFlowChunk = null
   }
 
 
-  function findTexturePlaneTopAt(event) {
+  function isHorizontalTexturePlane(plane) {
+    const rx = plane?.rotation?.x ?? 0
+    return Math.abs(Math.abs(rx) - Math.PI / 2) < 0.12
+  }
+
+  function isTexturePlanePickableSurface(plane) {
+    if (!isHorizontalTexturePlane(plane)) return false
+    const layer = layers.find((l) => l.id === (plane.layerId || 'layer_0'))
+    if (layer && !layer.visible) return false
+    const py = plane.position?.y ?? 0
+    if (heightCullEnabled && py > heightCullThreshold) return false
+    return true
+  }
+
+  function pickTexturePlaneSurfacePointFromRay(ray) {
     if (!texturePlaneGroup) return null
-    updateMouse(event)
-    const pick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => {
-      return mesh.isDescendantOf(texturePlaneGroup) && mesh.isVisible
+    const pick = scene.pickWithRay(ray, (mesh) => {
+      if (!mesh.isDescendantOf(texturePlaneGroup) || !mesh.isVisible || !mesh.isEnabled()) return false
+      const plane = mesh.metadata?.texturePlane
+      return isTexturePlanePickableSurface(plane)
     })
-    if (pick.hit) {
-      const n = pick.getNormal(true)
-      if (n && n.y > 0.5) return pick.pickedPoint.y
-    }
-    return null
+    if (!pick?.hit || !pick.pickedPoint) return null
+    const point = pick.pickedPoint.clone()
+    const plane = pick.pickedMesh?.metadata?.texturePlane
+    if (Number.isFinite(plane?.position?.y)) point.y = plane.position.y
+    return point
   }
 
   function findTexturePlaneTopAtWorld(worldX, worldZ) {
     let best = null
     for (const plane of map.texturePlanes || []) {
-      const layer = layers.find((l) => l.id === (plane.layerId || 'layer_0'))
-      if (layer && !layer.visible) continue
-      const py = plane.position?.y ?? 0
-      if (heightCullEnabled && py > heightCullThreshold) continue
-
-      const rx = plane.rotation?.x ?? 0
-      if (Math.abs(Math.abs(rx) - Math.PI / 2) >= 0.12) continue
+      if (!isTexturePlanePickableSurface(plane)) continue
 
       const px = plane.position?.x ?? 0
       const pz = plane.position?.z ?? 0
+      const py = plane.position?.y ?? 0
       const sx = plane.scale?.x ?? 1
       const sy = plane.scale?.y ?? 1
       const ry = plane.rotation?.y ?? 0
@@ -8652,26 +8678,19 @@ function applyToolAtTile(tile, eventLike = null) {
 
     pushUndoState('objects')
 
-    const pos = tileWorldPosition(tile.x, tile.z)
+    const surfacePoint = event ? pickSurfacePoint(event) : null
+    const placementTile = tileFromWorldPoint(surfacePoint) || tile
+    const pos = tileWorldPosition(placementTile.x, placementTile.z)
+    if (surfacePoint) pos.y = surfacePoint.y
     if (asset.name?.toLowerCase().includes('wall')) {
-      const snap = getWallEdgeSnap(tile)
+      const snap = getWallEdgeSnap(placementTile)
       if (snap) {
         pos.x = snap.x; pos.z = snap.z
       }
     }
-    if (event) {
-      const sp = pickSurfacePoint(event)
-      if (sp) {
-        pos.y = sp.y
-        if (asset.path?.toLowerCase().includes('tree')) {
-          pos.x = Math.round(sp.x)
-          pos.z = Math.round(sp.z)
-        }
-      }
-    }
     if (asset.path?.toLowerCase().includes('tree')) {
-      pos.x = Math.round(pos.x)
-      pos.z = Math.round(pos.z)
+      pos.x = surfacePoint ? Math.round(surfacePoint.x) : Math.round(pos.x)
+      pos.z = surfacePoint ? Math.round(surfacePoint.z) : Math.round(pos.z)
     }
     model.position.copyFrom(pos)
     model.rotationQuaternion = null // use euler rotation
@@ -12441,9 +12460,10 @@ function applyToolAtTile(tile, eventLike = null) {
             : transformStart.position.z + dz
         }
       } else {
-        // Unconstrained: object follows cursor on a horizontal plane. Terrain height
-        // is sampled once, avoiding the multi-pick surface snap that made live drag slow.
-        const movePoint = pickHorizontalPlane(event, selectedPlacedObject.position.y)
+        updateMouse(event)
+        const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+        const surfacePoint = pickSurfacePointFromRay(ray, selectedPlacedObjects)
+        const movePoint = surfacePoint ?? pickHorizontalPlaneFromRay(ray, selectedPlacedObject.position.y)
         if (!movePoint) return true
 
         const _movingAsset = assetRegistry.find((a) => a.id === selectedPlacedObject.userData.assetId)
@@ -12465,8 +12485,7 @@ function applyToolAtTile(tile, eventLike = null) {
         if (transformLift !== 0) {
           targetY = selectedPlacedObject.position.y
         } else {
-          const terrainPoint = pickTerrainPoint(event)
-          targetY = terrainPoint?.y ?? selectedPlacedObject.position.y
+          targetY = surfacePoint?.y ?? selectedPlacedObject.position.y
         }
         selectedPlacedObject.position.set(newX, targetY, newZ)
       }
@@ -12512,11 +12531,17 @@ function applyToolAtTile(tile, eventLike = null) {
 
     if (previewObject) {
       const sp = pickSurfacePoint(event)
-      const pos = tileWorldPosition(tile.x, tile.z)
+      const placementTile = tileFromWorldPoint(sp) || tile
+      if (sp && state.tool === ToolMode.PLACE) {
+        state.hovered = placementTile
+        highlight.position.set(placementTile.x + 0.5, sp.y + 0.04, placementTile.z + 0.5)
+        hoverText.textContent = `tile (${placementTile.x}, ${placementTile.z})  elev ${sp.y.toFixed(2)}`
+      }
+      const pos = tileWorldPosition(placementTile.x, placementTile.z)
       if (sp) pos.y = sp.y
       const _prevAsset = assetRegistry.find((a) => a.id === previewObject.userData.assetId)
       if (_prevAsset?.name?.toLowerCase().includes('wall')) {
-        const snap = getWallEdgeSnap(tile)
+        const snap = getWallEdgeSnap(placementTile)
         if (snap) { pos.x = snap.x; pos.z = snap.z }
       }
       if (_prevAsset?.path?.toLowerCase().includes('tree')) {

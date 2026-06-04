@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -40,6 +40,11 @@ const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
   return lower.includes('roof') || lower.includes('spire');
+}
+
+export function isInteractiveDoorPlacedAsset(assetId: string): boolean {
+  const lower = assetId.toLowerCase().trim();
+  return lower === 'castletruedoor' || lower === 'basictruedoor';
 }
 
 export function placedObjectThinGroupKey(assetId: string, visibility: 'ground' | 'elevated' | 'roof', originY: number): string {
@@ -3919,8 +3924,7 @@ export class ChunkManager {
       } satisfies PlacedObjectNodeMetadata;
 
       const hasAnims = !!templateAnims && templateAnims.length > 0;
-      const isDoorAsset = obj.assetId === 'castleTruedoor' || obj.assetId === 'basicTruedoor';
-      if (!hasAnims && !isDoorAsset) {
+      if (!hasAnims && !isInteractiveDoorPlacedAsset(obj.assetId)) {
         root.freezeWorldMatrix();
         for (const child of root.getChildMeshes()) {
           child.freezeWorldMatrix();
@@ -4242,10 +4246,10 @@ export class ChunkManager {
         if (nodes) {
           for (const node of nodes) {
             if (seen.has(node)) continue;
-            // Door panels remain visible while roofs/floor slabs are culled; only
-            // their interaction options are floor-gated by GameManager.
+            // True door panels remain visible while roofs/floor slabs are culled;
+            // decorative modular door frames should hide with their storey.
             const assetId = typeof node.metadata?.assetId === 'string' ? node.metadata.assetId.toLowerCase() : '';
-            if (assetId.includes('door')) continue;
+            if (isInteractiveDoorPlacedAsset(assetId)) continue;
             if ((node.metadata as PlacedObjectNodeMetadata | null)?.isNoRoof) continue;
 
             // Door/non-door placed objects can be reparented under pivots, so use
@@ -4717,7 +4721,7 @@ export class ChunkManager {
       let isRoof = false;
       let roofFloor = 0;
       const isNoRoof = !!plane.noRoof;
-      if (isFlat) {
+      if (isRoofCoverPlane(plane)) {
         const terrainH = this.getEffectiveHeight(plane.position.x, plane.position.z);
         if (plane.position.y > terrainH + 1.0 && !plane.noRoof) {
           isRoof = true;

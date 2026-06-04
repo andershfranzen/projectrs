@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { deriveElevatedFloorTiles, deriveUpperFloorTilesFromPlanes } from './floorDerivation';
+import { deriveElevatedFloorTiles, deriveUpperFloorTilesFromPlanes, isFlatPlane, isRoofCoverPlane } from './floorDerivation';
 
 const flatPlane = (x: number, z: number, y: number) => ({
   position: { x, y, z },
@@ -7,6 +7,22 @@ const flatPlane = (x: number, z: number, y: number) => ({
   scale: { x: 1, y: 1, z: 1 },
   width: 1,
   height: 1,
+});
+
+describe('texture plane angle classification', () => {
+  test('treats -75 degree planes as roof cover but not flat walkable floors', () => {
+    const pitched = {
+      position: { x: 0.5, y: 2.5, z: 0.5 },
+      rotation: { x: -75 * Math.PI / 180, y: 0, z: 0 },
+      scale: { x: 1, y: 1, z: 1 },
+      width: 1,
+      height: 1,
+    };
+
+    expect(isFlatPlane(pitched)).toBe(false);
+    expect(isRoofCoverPlane(pitched)).toBe(true);
+    expect(deriveUpperFloorTilesFromPlanes([pitched], 1, 1).size).toBe(0);
+  });
 });
 
 describe('deriveElevatedFloorTiles bridge flag', () => {

@@ -33,6 +33,14 @@ export function isFlatPlane(plane: DerivedFloorTilesPlane): boolean {
   return Math.abs(Math.abs(rx) - Math.PI / 2) < 0.1;
 }
 
+/** True when a texture plane is horizontal enough to act as roof cover.
+ *  This is deliberately looser than `isFlatPlane`: pitched roof planes should
+ *  hide when the player is below them, but they must not become walkable floors. */
+export function isRoofCoverPlane(plane: DerivedFloorTilesPlane): boolean {
+  const rx = plane.rotation?.x ?? 0;
+  return Math.abs(Math.abs(rx) - Math.PI / 2) < 0.4;
+}
+
 /** Iterate every tile whose center lies inside the plane's rotated footprint,
  *  bounded by the map dimensions. The callback receives the flat tile index
  *  (z*width + x) plus the plane's Y elevation so callers can compare against

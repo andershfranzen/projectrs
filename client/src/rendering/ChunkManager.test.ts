@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
+import { isInteractiveDoorPlacedAsset, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
 
 describe('placed object roof classification', () => {
   test('does not treat structural slabs as removable roofs', () => {
@@ -15,6 +15,17 @@ describe('placed object roof classification', () => {
     expect(isRoofLikePlacedAsset('tile roofing')).toBe(true);
     expect(isRoofLikePlacedAsset('wood roofing')).toBe(true);
     expect(isRoofLikePlacedAsset('spire')).toBe(true);
+  });
+});
+
+describe('placed object door classification', () => {
+  test('only Truedoor assets are treated as interactive door panels', () => {
+    expect(isInteractiveDoorPlacedAsset('castleTruedoor')).toBe(true);
+    expect(isInteractiveDoorPlacedAsset('basicTruedoor')).toBe(true);
+    expect(isInteractiveDoorPlacedAsset('stone door1')).toBe(false);
+    expect(isInteractiveDoorPlacedAsset('dark stone door2')).toBe(false);
+    expect(isInteractiveDoorPlacedAsset('wood door3')).toBe(false);
+    expect(isInteractiveDoorPlacedAsset('white doorway')).toBe(false);
   });
 });
 
