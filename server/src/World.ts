@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -27,6 +27,7 @@ const mapIdRegistry: Map<string, number> = new Map();
 
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
 const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
+const DEFAULT_HQ_XP_MULTIPLIER = 3.25;
 type ItemQuantity = { itemId: number; quantity: number };
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type ItemOnItemRecipe = {
@@ -4800,7 +4801,8 @@ export class World {
         return false;
       }
 
-      const addResult = player.addItem(recipe.outputItemId, recipe.outputQuantity, this.data.itemDefs);
+      const craftingOutput = this.resolveCraftingOutput(recipe);
+      const addResult = player.addItem(craftingOutput.itemId, craftingOutput.quantity, this.data.itemDefs);
       if (addResult.completed === 0) {
         if (secondRemoval) player.revertRemove(secondRemoval);
         player.revertRemove(inputRemoval);
@@ -4808,13 +4810,17 @@ export class World {
         return false;
       }
 
-      const result = addXp(player.skills, skillId, recipe.xpReward);
+      const result = addXp(player.skills, skillId, craftingOutput.xpReward);
       const skillIdx = ALL_SKILLS.indexOf(skillId);
       if (skillIdx >= 0) {
-        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, recipe.xpReward);
+        this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, craftingOutput.xpReward);
         if (result.leveled) {
           this.sendLevelUp(player, skillIdx, result.newLevel);
         }
+      }
+      if (craftingOutput.highQuality) {
+        const itemName = this.data.getItem(craftingOutput.itemId)?.name ?? 'High Quality item';
+        this.sendChatSystem(player, `High quality result: ${itemName}.`);
       }
 
       if (
@@ -4830,6 +4836,33 @@ export class World {
       return true;
     }
     return false;
+  }
+
+  private resolveCraftingOutput(recipe: ObjectRecipe): {
+    itemId: number;
+    quantity: number;
+    xpReward: number;
+    highQuality: boolean;
+  } {
+    const hqChance = recipe.hqChance ?? 0;
+    if (
+      recipe.hqOutputItemId !== undefined
+      && hqChance > 0
+      && Math.random() < hqChance
+    ) {
+      return {
+        itemId: recipe.hqOutputItemId,
+        quantity: recipe.outputQuantity,
+        xpReward: Math.floor(recipe.xpReward * (recipe.hqXpMultiplier ?? DEFAULT_HQ_XP_MULTIPLIER)),
+        highQuality: true,
+      };
+    }
+    return {
+      itemId: recipe.outputItemId,
+      quantity: recipe.outputQuantity,
+      xpReward: recipe.xpReward,
+      highQuality: false,
+    };
   }
 
   private itemRequirementLabel(itemId: number, quantity: number): string {

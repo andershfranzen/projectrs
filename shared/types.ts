@@ -384,6 +384,12 @@ export interface ObjectRecipe {
   requiresTool?: string; // e.g. "hammer" — must be in inventory but not consumed
   /** 0..1 chance the recipe yields output. Inputs are consumed regardless. Default 1. */
   successChance?: number;
+  /** Optional rare high-quality output. When rolled, replaces outputItemId and multiplies XP. */
+  hqOutputItemId?: number;
+  /** 0..1 chance to yield hqOutputItemId instead of outputItemId. */
+  hqChance?: number;
+  /** XP multiplier applied only when hqOutputItemId rolls. */
+  hqXpMultiplier?: number;
 }
 
 // --- Map metadata types ---
