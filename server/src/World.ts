@@ -583,6 +583,7 @@ export class World {
     this.data = new DataLoader();
     this.quests = new QuestService(this.data, {
       sendToPlayer: (player, opcode, ...values) => this.sendToPlayer(player, opcode, ...values),
+      sendLevelUp: (player, skillIndex, newLevel) => this.sendLevelUp(player, skillIndex, newLevel),
       sendChatSystem: (player, message) => this.sendChatSystem(player, message),
       sendInventory: (player) => this.sendInventory(player),
       sendSingleSkill: (player, skillIndex) => this.sendSingleSkill(player, skillIndex),
@@ -4726,7 +4727,7 @@ export class World {
       if (skillIdx >= 0) {
         this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, recipe.xpReward);
         if (result.leveled) {
-          this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+          this.sendLevelUp(player, skillIdx, result.newLevel);
         }
       }
 
@@ -4792,7 +4793,7 @@ export class World {
     const skillIdx = ALL_SKILLS.indexOf('goodmagic');
     if (skillIdx >= 0) {
       this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xp);
-      if (result.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+      if (result.leveled) this.sendLevelUp(player, skillIdx, result.newLevel);
       this.sendSingleSkill(player, skillIdx);
     }
     this.sendInventory(player);
@@ -5696,15 +5697,42 @@ export class World {
     const skillIdx = ALL_SKILLS.indexOf(skillId);
     if (skillIdx >= 0) {
       this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, Math.floor(amount));
-      if (r.leveled) this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, r.newLevel);
+      if (r.leveled) this.sendLevelUp(player, skillIdx, r.newLevel);
       this.sendSingleSkill(player, skillIdx);
     }
     const hpIdx = ALL_SKILLS.indexOf('hitpoints');
     if (hpIdx >= 0 && player.skills.hitpoints.level > oldHpLevel) {
-      this.sendToPlayer(player, ServerOpcode.LEVEL_UP, hpIdx, player.skills.hitpoints.level);
+      this.sendLevelUp(player, hpIdx, player.skills.hitpoints.level);
       this.sendSingleSkill(player, hpIdx);
       player.syncHealthFromSkills();
     }
+  }
+
+  private sendLevelUp(player: Player, skillIndex: number, newLevel: number): void {
+    if (skillIndex < 0 || skillIndex >= ALL_SKILLS.length) return;
+    this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIndex, newLevel);
+    this.broadcastLevelUpEffect(player, skillIndex, newLevel);
+  }
+
+  triggerLevelUpEffect(player: Player): void {
+    const skillIndex = Math.max(0, ALL_SKILLS.indexOf('hitpoints'));
+    const skillId = ALL_SKILLS[skillIndex];
+    const newLevel = skillId ? player.skills[skillId].level : 1;
+    this.broadcastLevelUpEffect(player, skillIndex, newLevel);
+  }
+
+  private broadcastLevelUpEffect(player: Player, skillIndex: number, newLevel: number): void {
+    if (skillIndex < 0 || skillIndex >= ALL_SKILLS.length) return;
+    this.broadcastNearbyOnFloor(
+      player.currentMapLevel,
+      player.currentFloor,
+      player.position.x,
+      player.position.y,
+      ServerOpcode.LEVEL_UP_EFFECT,
+      player.id,
+      skillIndex,
+      newLevel,
+    );
   }
 
   private sendCombatXp(player: Player, result: Pick<PlayerNpcCombatResult, 'xpDrops' | 'levelUps'>): void {
@@ -5718,7 +5746,7 @@ export class World {
     for (const lu of result.levelUps) {
       const skillIdx = ALL_SKILLS.indexOf(lu.skill);
       if (skillIdx >= 0) {
-        this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, lu.level);
+        this.sendLevelUp(player, skillIdx, lu.level);
       }
     }
 
@@ -8247,7 +8275,7 @@ export class World {
           if (skillIdx >= 0) {
             this.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, xpReward);
             if (result.leveled) {
-              this.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+              this.sendLevelUp(player, skillIdx, result.newLevel);
             }
           }
         }

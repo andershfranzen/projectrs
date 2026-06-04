@@ -1,6 +1,6 @@
-# Restore EvilQuest SQLite from a backup
+# Restore EvilQuest SQLite and forum media from a backup
 
-Backups live at `/opt/evilquest-backups/{daily,weekly}/projectrs-YYYYMMDD-HHMMSS.db` on the LCL host. Each is a self-contained SQLite file produced by the Online Backup API (atomic, includes WAL state at snapshot time).
+Backups live at `/opt/evilquest-backups/{daily,weekly}/` on the LCL host. Each run writes a self-contained SQLite file (`projectrs-YYYYMMDD-HHMMSS.db`) plus a matching forum media/avatar archive (`projectrs-media-YYYYMMDD-HHMMSS.tar.gz`).
 
 ## Restore procedure
 
@@ -10,9 +10,10 @@ ssh lcl
 # 1. Pick a snapshot
 ls -lh /opt/evilquest-backups/daily/ /opt/evilquest-backups/weekly/
 
-# 2. Sanity check it
+# 2. Sanity check it and confirm the matching media archive exists
 sqlite3 /opt/evilquest-backups/daily/projectrs-<ts>.db 'PRAGMA integrity_check;'
 # → ok
+test -f /opt/evilquest-backups/daily/projectrs-media-<ts>.tar.gz
 
 # 3. Stop the server (so it releases the live DB)
 cd /opt/evilquest && docker compose stop
@@ -25,6 +26,14 @@ cp /opt/evilquest-backups/daily/projectrs-<ts>.db $VOL/projectrs.db
 chown root:root $VOL/projectrs.db
 chmod 644 $VOL/projectrs.db
 
+# 4b. Restore the media files that match the DB rows
+MEDIA_PRESWAP=$VOL/forum-media.preswap-$(date +%s)
+AVATAR_PRESWAP=$VOL/forum-avatars.preswap-$(date +%s)
+mkdir -p "$MEDIA_PRESWAP" "$AVATAR_PRESWAP" "$VOL/forum-media" "$VOL/forum-avatars"
+mv "$VOL/forum-media"/* "$MEDIA_PRESWAP"/ 2>/dev/null || true
+mv "$VOL/forum-avatars"/* "$AVATAR_PRESWAP"/ 2>/dev/null || true
+tar -C "$VOL" -xzf /opt/evilquest-backups/daily/projectrs-media-<ts>.tar.gz
+
 # 5. Restart
 docker compose up -d
 docker logs -f evilquest    # watch for clean boot
@@ -32,8 +41,9 @@ docker logs -f evilquest    # watch for clean boot
 
 ## Notes
 
-- `docker compose stop` is enough — `down` would also work but removes the container. `down -v` would normally drop the volume too, but the volume is declared `external` so it's protected.
+- `docker compose stop` is enough. Avoid `docker compose down -v`; it removes the named volume that stores the DB and forum media.
 - The `-wal` / `-shm` files are checkpoint state for the *live* DB; replacing the main file invalidates them. Remove before restart.
+- Restore the matching `projectrs-media-<ts>.tar.gz` with the DB, otherwise forum posts and profiles can point at missing image files.
 - If the swapped DB is also bad, restore the `.preswap-*` file the same way to revert.
 
 ## Verify backup cron is running

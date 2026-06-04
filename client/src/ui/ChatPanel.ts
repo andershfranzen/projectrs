@@ -287,7 +287,7 @@ export class ChatPanel {
 
   addMessage(from: string, message: string, color: string = '#fff'): void {
     const el = document.createElement('div');
-    el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${this.escapeHtml(from)}:</span> ${this.escapeHtml(message)}`;
+    el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${this.escapeHtml(from)}:</span> <span style="color: #fff;">${this.escapeHtml(message)}</span>`;
     this.appendMessage(el, 'public');
   }
 

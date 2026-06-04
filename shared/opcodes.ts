@@ -189,6 +189,9 @@ export enum ServerOpcode {
    * arrives separately via a deferred COMBAT_HIT scheduled for the impact tick.
    */
   SPELL_CAST = 35,
+  /** Visible level-up celebration. Payload: [playerEntityId, skillIndex, newLevel].
+   *  Broadcast near the player so nearby clients can render the one-shot effect. */
+  LEVEL_UP_EFFECT = 36,
   CHAT_SYSTEM = 42,
   SHOP_OPEN = 50,
   WORLD_OBJECT_SYNC = 55,

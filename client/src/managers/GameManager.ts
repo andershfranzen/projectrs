@@ -30,6 +30,7 @@ import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { ArrowProjectileManager, arrowProjectileTravelMs } from '../rendering/ArrowProjectile';
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
+import { LevelUpFireworkEffect } from '../rendering/LevelUpFireworkEffect';
 import type { Targetable } from '../rendering/Targetable';
 import { WorldObjectModels } from '../rendering/WorldObjectModels';
 import { mountWorldOverlayElement } from '../rendering/worldOverlay';
@@ -3136,6 +3137,13 @@ export class GameManager {
     if (isLocalCaster) this.finishPendingSingleSpellCast(targetId);
   }
 
+  private playLevelUpFirework(entityId: number | undefined): void {
+    if (typeof entityId !== 'number' || !Number.isFinite(entityId)) return;
+    const target = this.resolveTargetableIncludingLocal(entityId);
+    if (!target) return;
+    LevelUpFireworkEffect.play(this.scene, target.getTargetAnchor().add(new Vector3(0, 1.15, 0)));
+  }
+
   private finishPendingSingleSpellCast(targetId: number): void {
     if (this.pendingSingleCastSpell < 0) return;
     this.pendingSingleCastSpell = -1;
@@ -3658,6 +3666,10 @@ export class GameManager {
         this.chatPanel.addSystemMessage(`Congratulations! You just advanced a ${skillName} level.`, '#ff0');
         this.chatPanel.addSystemMessage(`Your ${skillName} level is now ${newLevel}.`, '#ff0');
       }
+    });
+
+    this.network.on(ServerOpcode.LEVEL_UP_EFFECT, (_op, v) => {
+      this.playLevelUpFirework(v[0]);
     });
   }
 

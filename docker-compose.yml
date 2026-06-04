@@ -18,7 +18,7 @@ services:
     environment:
       CLIENT_ORIGINS: "https://evilquest.net,https://www.evilquest.net"
       NODE_ENV: production
-      PROJECTRS_RUNTIME_DATA_DIR: ${PROJECTRS_RUNTIME_DATA_DIR:-/app/data}
+      PROJECTRS_RUNTIME_DATA_DIR: /app/data
       FALLBACK_LOGIN_ENABLED: "0"
       # Server-side reCAPTCHA secret. Sourced from host .env by compose.
       # When unset the production server fails startup.
@@ -58,3 +58,4 @@ services:
 
 volumes:
   evilquest_data:
+    name: evilquest_evilquest_data

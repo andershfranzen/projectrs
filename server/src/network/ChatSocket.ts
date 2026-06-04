@@ -540,6 +540,18 @@ function handleCommand(
       break;
     }
 
+    case '/testlvlgfx': {
+      if (denyIfNotAdmin(ws, from)) return;
+      const player = findPlayerByUsername(from, world);
+      if (!player) {
+        sendSystem(ws, 'You are not online.');
+        return;
+      }
+      world.triggerLevelUpEffect(player);
+      sendSystem(ws, 'Triggered level-up gfx.');
+      break;
+    }
+
     case '/appearance': {
       if (denyIfNotAdmin(ws, from)) return;
       const player = findPlayerByUsername(from, world);

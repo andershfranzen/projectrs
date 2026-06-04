@@ -24,7 +24,7 @@ import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
 import { Vector3, Color3, Color4 } from '@babylonjs/core/Maths/math';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
 import { CharacterEntity } from '../rendering/CharacterEntity';
-import { createModalPanel } from './ModalPanel';
+import { createModalPanel, mountModalInGameFrame } from './ModalPanel';
 import { closeActiveContextMenu } from './popupStyle';
 
 export type CharacterCreatorCallback = (appearance: PlayerAppearance) => void;
@@ -259,7 +259,7 @@ export class CharacterCreator {
     this.localPlayer = opts?.localPlayer ?? null;
     this.rowSpecs = this.buildRowSpecs();
     this.container = this.buildUI();
-    document.body.appendChild(this.container);
+    mountModalInGameFrame(this.container);
     if (this.onCancel) document.addEventListener('keydown', this.handleKeyDown, true);
 
     // Hide the local player while the creator is open so the preview char
@@ -331,9 +331,9 @@ export class CharacterCreator {
       title: 'Create Your Character',
       subtitle: 'Choose your appearance',
       geometry: {
-        kind: 'center',
-        width: 'min(640px, calc(var(--eq-viewport-width, 100vw) - 24px))',
-        maxHeight: 'calc(var(--eq-viewport-height, 100vh) - 24px)',
+        kind: 'game-canvas',
+        width: 'min(640px, calc(100% - var(--right-rail-width, 300px) - 24px))',
+        maxHeight: 'calc(100% - var(--chat-height, 220px) - 24px)',
         zIndex: 10000,
       },
       chrome: 'stone',

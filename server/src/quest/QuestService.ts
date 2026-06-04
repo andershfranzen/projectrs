@@ -25,6 +25,7 @@ export type QuestEventDescriptor =
 
 interface QuestServiceSenders {
   sendToPlayer(player: Player, opcode: ServerOpcode, ...values: number[]): void;
+  sendLevelUp(player: Player, skillIndex: number, newLevel: number): void;
   sendChatSystem(player: Player, message: string): void;
   sendInventory(player: Player): void;
   sendSingleSkill(player: Player, skillIndex: number): void;
@@ -138,7 +139,7 @@ export class QuestService {
           const result = addXp(player.skills, skillKey as SkillId, amount);
           this.senders.sendToPlayer(player, ServerOpcode.XP_GAIN, skillIdx, amount);
           if (result.leveled) {
-            this.senders.sendToPlayer(player, ServerOpcode.LEVEL_UP, skillIdx, result.newLevel);
+            this.senders.sendLevelUp(player, skillIdx, result.newLevel);
           }
           this.senders.sendSingleSkill(player, skillIdx);
         }

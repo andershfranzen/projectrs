@@ -330,6 +330,35 @@ export class SidePanel {
           background: rgba(154,51,43,0.18);
         }
 
+        .quest-row {
+          appearance: none;
+          -webkit-appearance: none;
+          width: 100%;
+          text-align: left;
+          border: 0;
+          background: transparent;
+          padding: 4px 8px;
+          font: 700 12px Arial, Helvetica, sans-serif;
+          cursor: pointer;
+          user-select: none;
+          -webkit-user-select: none;
+          text-shadow: 1px 1px 0 #000;
+        }
+        .quest-row:hover {
+          background: rgba(120,80,40,0.18);
+        }
+        .quest-row:active {
+          background: rgba(120,80,40,0.26);
+        }
+        .quest-row:focus {
+          outline: none;
+        }
+        .quest-row:focus-visible {
+          background: rgba(120,80,40,0.14);
+          outline: 1px solid rgba(255,204,68,0.45);
+          outline-offset: -1px;
+        }
+
         #game-frame .side-account-actions {
           position: absolute;
           top: 3px;
@@ -1132,10 +1161,9 @@ export class SidePanel {
 
     const row = document.createElement('button');
     row.type = 'button';
+    row.className = 'quest-row';
     row.textContent = def.name;
-    row.style.cssText = `appearance:none;-webkit-appearance:none;text-align:left;border:0;background:transparent;padding:4px 8px;font:700 12px Arial,Helvetica,sans-serif;color:${color};cursor:pointer;user-select:none;text-shadow:1px 1px 0 #000;`;
-    row.addEventListener('mouseenter', () => { row.style.background = 'rgba(120,80,40,0.18)'; });
-    row.addEventListener('mouseleave', () => { row.style.background = ''; });
+    row.style.color = color;
     row.addEventListener('click', () => this.openQuestPopup(def.id));
     return row;
   }

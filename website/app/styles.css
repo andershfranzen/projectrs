@@ -232,6 +232,11 @@
 .forum-post textarea {
   flex: 1 1 280px;
   width: 100%;
+}
+
+.forum-composer textarea,
+.forum-profile-editor textarea,
+.forum-post textarea {
   resize: vertical;
 }
 
