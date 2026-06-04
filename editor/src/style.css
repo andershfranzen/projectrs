@@ -338,15 +338,16 @@ canvas {
 }
 
 .asset-tabs {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 4px;
   margin-bottom: 6px;
 }
 
 .asset-tab {
-  flex: 1;
   padding: 4px 0;
   font-size: 12px;
+  min-width: 0;
   background: rgba(255,255,255,0.06);
   border: 1px solid rgba(255,255,255,0.12);
   color: rgba(255,255,255,0.5);

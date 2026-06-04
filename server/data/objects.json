@@ -137,6 +137,14 @@
       "56": [
         128,
         400
+      ],
+      "313": [
+        128,
+        400
+      ],
+      "328": [
+        128,
+        400
       ]
     }
   },
@@ -182,6 +190,14 @@
         350
       ],
       "56": [
+        96,
+        350
+      ],
+      "313": [
+        96,
+        350
+      ],
+      "328": [
         96,
         350
       ]
@@ -544,6 +560,14 @@
       "56": [
         128,
         400
+      ],
+      "313": [
+        128,
+        400
+      ],
+      "328": [
+        128,
+        400
       ]
     }
   },
@@ -570,7 +594,7 @@
     "harvestQuantity": 1,
     "harvestTime": 7,
     "depletionChance": 1,
-    "respawnTime": 167,
+    "respawnTime": 50,
     "successChances": {
       "33": [
         16,
@@ -589,6 +613,14 @@
         100
       ],
       "56": [
+        16,
+        100
+      ],
+      "313": [
+        16,
+        100
+      ],
+      "328": [
         16,
         100
       ]
@@ -751,7 +783,7 @@
     "harvestQuantity": 1,
     "harvestTime": 7,
     "depletionChance": 1,
-    "respawnTime": 667,
+    "respawnTime": 67,
     "successChances": {
       "33": [
         5,
@@ -770,6 +802,14 @@
         50
       ],
       "56": [
+        5,
+        50
+      ],
+      "313": [
+        5,
+        50
+      ],
+      "328": [
         5,
         50
       ]
@@ -2023,7 +2063,7 @@
     "harvestQuantity": 1,
     "harvestTime": 7,
     "depletionChance": 1,
-    "respawnTime": 333,
+    "respawnTime": 167,
     "successChances": {
       "33": [
         12,
@@ -2042,6 +2082,14 @@
         100
       ],
       "56": [
+        12,
+        100
+      ],
+      "313": [
+        12,
+        100
+      ],
+      "328": [
         12,
         100
       ]
@@ -2256,6 +2304,14 @@
       "56": [
         128,
         400
+      ],
+      "313": [
+        128,
+        400
+      ],
+      "328": [
+        128,
+        400
       ]
     }
   },
@@ -2332,5 +2388,115 @@
         "xpReward": 5
       }
     ]
+  },
+  {
+    "id": 41,
+    "name": "Crimsonite Rock",
+    "category": "rock",
+    "actions": [
+      "Mine",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 0.9,
+    "height": 0.8,
+    "color": [
+      95,
+      15,
+      24
+    ],
+    "skill": "mining",
+    "levelRequired": 50,
+    "xpReward": 75,
+    "harvestItemId": 407,
+    "harvestQuantity": 1,
+    "harvestTime": 7,
+    "depletionChance": 1,
+    "respawnTime": 300,
+    "successChances": {
+      "33": [
+        5,
+        50
+      ],
+      "53": [
+        5,
+        50
+      ],
+      "54": [
+        5,
+        50
+      ],
+      "55": [
+        5,
+        50
+      ],
+      "56": [
+        5,
+        50
+      ],
+      "313": [
+        5,
+        50
+      ],
+      "328": [
+        5,
+        50
+      ]
+    }
+  },
+  {
+    "id": 42,
+    "name": "Malachite Rock",
+    "category": "rock",
+    "actions": [
+      "Mine",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 0.9,
+    "height": 0.8,
+    "color": [
+      20,
+      115,
+      70
+    ],
+    "skill": "mining",
+    "levelRequired": 50,
+    "xpReward": 75,
+    "harvestItemId": 408,
+    "harvestQuantity": 1,
+    "harvestTime": 7,
+    "depletionChance": 1,
+    "respawnTime": 200,
+    "successChances": {
+      "33": [
+        5,
+        50
+      ],
+      "53": [
+        5,
+        50
+      ],
+      "54": [
+        5,
+        50
+      ],
+      "55": [
+        5,
+        50
+      ],
+      "56": [
+        5,
+        50
+      ],
+      "313": [
+        5,
+        50
+      ],
+      "328": [
+        5,
+        50
+      ]
+    }
   }
 ]

@@ -4911,5 +4911,21 @@
     "rangedDefence": 59,
     "equipSkill": "defence",
     "levelRequired": 35
+  },
+  {
+    "id": 407,
+    "name": "Crimsonite Ore",
+    "description": "A lump of crimsonite ore.",
+    "stackable": false,
+    "equippable": false,
+    "value": 112
+  },
+  {
+    "id": 408,
+    "name": "Malachite Ore",
+    "description": "A lump of malachite ore.",
+    "stackable": false,
+    "equippable": false,
+    "value": 112
   }
 ]

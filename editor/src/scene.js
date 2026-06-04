@@ -2244,6 +2244,7 @@ let selectedWaterFlowChunk = null
     <div class="ctx-panel" id="ctx-place" style="display:none">
       <div class="asset-tabs">
         <button class="asset-tab active" id="tabProps">Props</button>
+        <button class="asset-tab" id="tabResources">Resources</button>
         <button class="asset-tab" id="tabModular">Modular</button>
         <button class="asset-tab" id="tabWalls">Walls</button>
         <button class="asset-tab" id="tabRoofs">Roofs</button>
@@ -4689,6 +4690,7 @@ let selectedWaterFlowChunk = null
   }
 
   const tabProps = sidebar.querySelector('#tabProps')
+  const tabResources = sidebar.querySelector('#tabResources')
   const tabModular = sidebar.querySelector('#tabModular')
   const tabWalls = sidebar.querySelector('#tabWalls')
   const tabRoofs = sidebar.querySelector('#tabRoofs')
@@ -9155,11 +9157,39 @@ function applyToolAtTile(tile, eventLike = null) {
     updateToolUI()
   }
 
+  function resourceAssetGroup(asset) {
+    const defId = ASSET_TO_OBJECT_DEF[asset.id]
+    const def = defId != null ? editorObjectDefById.get(defId) : null
+    if (def?.category === 'rock') return 'Rocks'
+    if (def?.category === 'tree') return 'Trees'
+
+    // Object defs load asynchronously. Keep the tab useful while they are still
+    // loading by falling back to mapped asset names only.
+    if (defId != null) {
+      const haystack = `${asset.id} ${asset.name} ${asset.path}`.toLowerCase()
+      if (haystack.includes('rock')) return 'Rocks'
+      if (haystack.includes('tree')) return 'Trees'
+    }
+    return null
+  }
+
+  function assetMatchesSection(asset, section) {
+    if (section === '__resources__') return resourceAssetGroup(asset) !== null
+    if (section !== 'all' && asset.section !== section) return false
+    return true
+  }
+
+  function assetGroupForSection(asset, section) {
+    if (section === '__resources__') return resourceAssetGroup(asset) || 'General'
+    return asset.group
+  }
+
   function countAssetsByGroup(section) {
     const counts = new Map()
     for (const asset of assetRegistry) {
-      if (section !== 'all' && asset.section !== section) continue
-      counts.set(asset.group, (counts.get(asset.group) || 0) + 1)
+      if (!assetMatchesSection(asset, section)) continue
+      const group = assetGroupForSection(asset, section)
+      counts.set(group, (counts.get(group) || 0) + 1)
     }
     return counts
   }
@@ -9247,16 +9277,21 @@ function applyToolAtTile(tile, eventLike = null) {
         const fileName = asset.path.split('/').pop().toLowerCase()
         return WALL_FILES.includes(fileName)
       }
-      if (assetSectionFilter !== 'all' && asset.section !== assetSectionFilter) return false
-      if (assetGroupFilter !== 'all' && asset.group !== assetGroupFilter) return false
+      if (!assetMatchesSection(asset, assetSectionFilter)) return false
+      const sectionGroup = assetGroupForSection(asset, assetSectionFilter)
+      if (assetGroupFilter !== 'all' && sectionGroup !== assetGroupFilter) return false
 
       if (!q) return true
 
+      const objectDefId = ASSET_TO_OBJECT_DEF[asset.id]
+      const objectDef = objectDefId != null ? editorObjectDefById.get(objectDefId) : null
       const haystack = [
         asset.name,
         asset.section,
-        asset.group,
+        sectionGroup,
         asset.folderPath,
+        objectDef?.name,
+        objectDef?.category,
         ...(asset.tags || [])
       ]
         .join(' ')
@@ -9517,7 +9552,7 @@ function applyToolAtTile(tile, eventLike = null) {
     sidebar.querySelector('#diagFloorWidthSlider').value = diagFloorWidth
   })
 
-  const allTabs = [tabProps, tabModular, tabWalls, tabRoofs, tabBought]
+  const allTabs = [tabProps, tabResources, tabModular, tabWalls, tabRoofs, tabBought]
   const clearTabs = () => allTabs.forEach(t => t.classList.remove('active'))
 
   tabProps.addEventListener('click', async () => {
@@ -9525,6 +9560,16 @@ function applyToolAtTile(tile, eventLike = null) {
     assetGroupFilter = 'all'
     clearTabs(); tabProps.classList.add('active')
     assetGroupSelect.style.display = 'none'
+    refreshAssetList()
+    await updatePreviewObject()
+  })
+
+  tabResources.addEventListener('click', async () => {
+    assetSectionFilter = '__resources__'
+    assetGroupFilter = 'all'
+    clearTabs(); tabResources.classList.add('active')
+    assetGroupSelect.style.display = ''
+    refreshAssetGroupOptions()
     refreshAssetList()
     await updatePreviewObject()
   })
