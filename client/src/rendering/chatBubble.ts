@@ -1,3 +1,5 @@
+import { renderChatText } from './chatEmotes';
+
 export type ChatBubbleVariant = 'chat' | 'dialogue';
 
 export function createChatBubbleElement(
@@ -6,7 +8,7 @@ export function createChatBubbleElement(
 ): HTMLDivElement {
   const el = document.createElement('div');
   el.className = variant === 'dialogue' ? 'chat-bubble-overlay dialogue-bubble-overlay' : 'chat-bubble-overlay';
-  el.textContent = message;
+  el.innerHTML = renderChatText(message);
 
   const palette = variant === 'dialogue'
     ? `

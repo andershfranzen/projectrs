@@ -4,6 +4,14 @@ import {
   setToggleButtonActive,
   UI_RED,
 } from './uiChrome';
+import {
+  ensureChatEmotesLoaded,
+  escapeHtml,
+  getChatEmoteCompletions,
+  onChatEmotesUpdated,
+  renderChatText,
+  type ChatEmoteChoice,
+} from '../rendering/chatEmotes';
 
 export type ChatSendCallback = (message: string) => void;
 export type ChatPrivateSendCallback = (to: string, message: string) => void;
@@ -21,10 +29,16 @@ export class ChatPanel {
   private privatePrefixEl: HTMLButtonElement | null = null;
   private privateClearBtn: HTMLButtonElement | null = null;
   private adminButton: HTMLButtonElement | null = null;
+  private emoteMenu: HTMLDivElement | null = null;
   private onSend: ChatSendCallback | null = null;
   private onPrivateSend: ChatPrivateSendCallback | null = null;
   private mobileHintMedia: MediaQueryList | null = null;
   private privateTarget: string | null = null;
+  private emoteChoices: ChatEmoteChoice[] = [];
+  private emoteChoiceIndex = 0;
+  private emoteToken: { start: number; end: number } | null = null;
+  private emoteQuery = '';
+  private removeEmoteListener: (() => void) | null = null;
 
   // Chat filtering
   private activeTab: ChatTab = 'all';
@@ -34,6 +48,8 @@ export class ChatPanel {
   constructor() {
     installUiChromeStyles();
     this.installChatStyles();
+    ensureChatEmotesLoaded();
+    this.removeEmoteListener = onChatEmotesUpdated(() => this.updateEmoteAutocomplete());
     this.container = this.buildUI();
     this.log = this.container.querySelector('#chat-log') as HTMLDivElement;
     this.input = this.container.querySelector('#chat-input') as HTMLInputElement;
@@ -45,6 +61,10 @@ export class ChatPanel {
     (mount ?? document.body).appendChild(this.container);
 
     this.input.addEventListener('keydown', (e) => {
+      if (this.handleEmoteAutocompleteKey(e)) {
+        e.stopPropagation();
+        return;
+      }
       if (e.key === 'Enter') {
         const msg = this.input.value.trim();
         if (msg) {
@@ -62,6 +82,13 @@ export class ChatPanel {
         this.input.blur();
       }
       e.stopPropagation();
+    });
+    this.input.addEventListener('input', () => this.updateEmoteAutocomplete());
+    this.input.addEventListener('click', () => this.updateEmoteAutocomplete());
+    this.input.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+        this.updateEmoteAutocomplete();
+      }
     });
 
     window.addEventListener('keydown', (e) => {
@@ -87,6 +114,61 @@ export class ChatPanel {
     style.id = CHAT_PLACEHOLDER_STYLE_ID;
     style.textContent = `
       #chat-input::placeholder { color: rgba(216,55,43,0.8); text-shadow: 1px 1px 0 #000; }
+      #chat-log img.chat-inline-emote {
+        width: 20px;
+        height: 20px;
+        object-fit: contain;
+        vertical-align: -5px;
+        margin: 0 1px;
+      }
+      .chat-bubble-overlay img.chat-inline-emote {
+        width: 22px;
+        height: 22px;
+        object-fit: contain;
+        vertical-align: -6px;
+        margin: 0 1px;
+      }
+      #chat-emote-autocomplete {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        bottom: 38px;
+        z-index: 40;
+        display: none;
+        max-height: 162px;
+        overflow-y: auto;
+        padding: 4px;
+        background: rgba(18, 11, 7, 0.96);
+        border: 1px solid rgba(255,200,100,0.28);
+        border-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      }
+      #chat-emote-autocomplete button {
+        display: flex;
+        width: 100%;
+        align-items: center;
+        gap: 6px;
+        border: 0;
+        background: transparent;
+        color: #f4ded5;
+        padding: 4px 6px;
+        border-radius: 2px;
+        font: 700 12px Arial, Helvetica, sans-serif;
+        text-align: left;
+        cursor: pointer;
+        text-shadow: 1px 1px 0 #000;
+      }
+      #chat-emote-autocomplete button[data-active="true"],
+      #chat-emote-autocomplete button:hover {
+        background: rgba(120,80,40,0.34);
+        color: #fff4d8;
+      }
+      #chat-emote-autocomplete img {
+        width: 22px;
+        height: 22px;
+        object-fit: contain;
+        flex: 0 0 22px;
+      }
     `;
     document.head.appendChild(style);
   }
@@ -247,6 +329,12 @@ export class ChatPanel {
     inputBar.appendChild(input);
     panel.appendChild(inputBar);
 
+    this.emoteMenu = document.createElement('div');
+    this.emoteMenu.id = 'chat-emote-autocomplete';
+    this.emoteMenu.setAttribute('role', 'listbox');
+    this.emoteMenu.setAttribute('aria-label', 'Emoji autocomplete');
+    panel.appendChild(this.emoteMenu);
+
     const collapseButton = document.createElement('button');
     collapseButton.id = 'chat-collapse-button';
     collapseButton.type = 'button';
@@ -285,16 +373,136 @@ export class ChatPanel {
     }
   }
 
+  private handleEmoteAutocompleteKey(event: KeyboardEvent): boolean {
+    if (!this.isEmoteMenuOpen()) return false;
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.emoteChoiceIndex = (this.emoteChoiceIndex + 1) % this.emoteChoices.length;
+      this.renderEmoteAutocomplete();
+      return true;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.emoteChoiceIndex = (this.emoteChoiceIndex - 1 + this.emoteChoices.length) % this.emoteChoices.length;
+      this.renderEmoteAutocomplete();
+      return true;
+    }
+    if (event.key === 'Tab' || event.key === 'Enter') {
+      event.preventDefault();
+      this.insertEmoteChoice(this.emoteChoices[this.emoteChoiceIndex]);
+      return true;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      this.hideEmoteAutocomplete();
+      return true;
+    }
+    return false;
+  }
+
+  private updateEmoteAutocomplete(): void {
+    if (!this.input || document.activeElement !== this.input) return;
+    const token = this.currentEmoteToken();
+    if (!token) {
+      this.hideEmoteAutocomplete();
+      return;
+    }
+    const choices = getChatEmoteCompletions(token.query, 8);
+    if (choices.length === 0) {
+      this.hideEmoteAutocomplete();
+      return;
+    }
+    if (!this.emoteToken || this.emoteToken.start !== token.start || this.emoteQuery !== token.query) {
+      this.emoteChoiceIndex = 0;
+    }
+    this.emoteToken = { start: token.start, end: token.end };
+    this.emoteQuery = token.query;
+    this.emoteChoices = choices;
+    this.emoteChoiceIndex = Math.min(this.emoteChoiceIndex, choices.length - 1);
+    this.renderEmoteAutocomplete();
+  }
+
+  private currentEmoteToken(): { start: number; end: number; query: string } | null {
+    const caret = this.input.selectionStart ?? this.input.value.length;
+    if (caret !== (this.input.selectionEnd ?? caret)) return null;
+    const beforeCaret = this.input.value.slice(0, caret);
+    const match = /(^|\s):([a-z0-9_-]{0,32})$/i.exec(beforeCaret);
+    if (!match) return null;
+    const query = match[2] ?? '';
+    const start = caret - query.length - 1;
+    return { start, end: caret, query };
+  }
+
+  private renderEmoteAutocomplete(): void {
+    if (!this.emoteMenu) return;
+    this.emoteMenu.replaceChildren();
+    for (let i = 0; i < this.emoteChoices.length; i++) {
+      const choice = this.emoteChoices[i];
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.setAttribute('role', 'option');
+      button.dataset.active = i === this.emoteChoiceIndex ? 'true' : 'false';
+      button.addEventListener('mousedown', (event) => event.preventDefault());
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.insertEmoteChoice(choice);
+      });
+
+      const img = document.createElement('img');
+      img.src = choice.url;
+      img.alt = `:${choice.name}:`;
+      img.loading = 'lazy';
+      button.appendChild(img);
+
+      const label = document.createElement('span');
+      label.textContent = `:${choice.name}:`;
+      button.appendChild(label);
+
+      this.emoteMenu.appendChild(button);
+    }
+    this.emoteMenu.style.display = 'block';
+  }
+
+  private insertEmoteChoice(choice: ChatEmoteChoice | undefined): void {
+    if (!choice || !this.emoteToken) return;
+    const value = this.input.value;
+    const before = value.slice(0, this.emoteToken.start);
+    const after = value.slice(this.emoteToken.end);
+    const shortcode = `:${choice.name}:`;
+    const suffix = after.length === 0 ? ' ' : (/^\s/.test(after) ? '' : ' ');
+    this.input.value = `${before}${shortcode}${suffix}${after}`;
+    const caret = before.length + shortcode.length + suffix.length;
+    this.input.setSelectionRange(caret, caret);
+    this.hideEmoteAutocomplete();
+    this.input.focus();
+  }
+
+  private hideEmoteAutocomplete(): void {
+    this.emoteChoices = [];
+    this.emoteChoiceIndex = 0;
+    this.emoteToken = null;
+    this.emoteQuery = '';
+    if (this.emoteMenu) {
+      this.emoteMenu.style.display = 'none';
+      this.emoteMenu.replaceChildren();
+    }
+  }
+
+  private isEmoteMenuOpen(): boolean {
+    return !!this.emoteMenu && this.emoteMenu.style.display !== 'none' && this.emoteChoices.length > 0;
+  }
+
   addMessage(from: string, message: string, color: string = '#fff'): void {
     const el = document.createElement('div');
-    el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${this.escapeHtml(from)}:</span> <span style="color: #fff;">${this.escapeHtml(message)}</span>`;
+    el.innerHTML = `<span style="color: ${color}; font-weight: bold;">${escapeHtml(from)}:</span> <span style="color: #fff;">${renderChatText(message)}</span>`;
     this.appendMessage(el, 'public');
   }
 
   addPrivateMessage(label: string, message: string, replyTarget: string | null = null): void {
     const el = document.createElement('div');
     el.style.color = PRIVATE_CHAT_COLOR;
-    el.innerHTML = `<span style="font-weight: bold;">${this.escapeHtml(label)}:</span> ${this.escapeHtml(message)}`;
+    el.innerHTML = `<span style="font-weight: bold;">${escapeHtml(label)}:</span> ${renderChatText(message)}`;
     if (replyTarget) {
       el.title = `Send private message to ${replyTarget}`;
       el.style.cursor = 'pointer';
@@ -309,7 +517,7 @@ export class ChatPanel {
 
   addSystemMessage(message: string, color: string = UI_RED): void {
     const el = document.createElement('div');
-    el.innerHTML = `<span style="color: ${color};">${this.escapeHtml(message)}</span>`;
+    el.innerHTML = `<span style="color: ${color};">${escapeHtml(message)}</span>`;
     this.appendMessage(el, 'game');
   }
 
@@ -421,12 +629,10 @@ export class ChatPanel {
   }
 
   destroy(): void {
+    this.removeEmoteListener?.();
+    this.removeEmoteListener = null;
     this.mobileHintMedia?.removeEventListener('change', this.updateInputPlaceholder);
     window.removeEventListener('resize', this.updateInputPlaceholder);
     this.container.remove();
-  }
-
-  private escapeHtml(str: string): string {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 }
