@@ -1,6 +1,10 @@
 import type { PlayerAppearance } from './appearance.js';
 import type { SkillId } from './skills.js';
-import { DEFAULT_CUT_ANGLE } from './tileCut.js';
+
+// Keep this in sync with tileCut.ts DEFAULT_CUT_ANGLE. Avoid importing it here:
+// the website Turbopack build consumes shared TypeScript directly and does not
+// resolve this package's internal ".js" extension imports to ".ts" sources.
+const DEFAULT_TEXTURE_CUT_ANGLE = (3 * Math.PI) / 4;
 
 export interface Position {
   x: number;
@@ -920,7 +924,7 @@ export function defaultKCTile(ground: GroundType = 'grass'): KCTile {
     textureIdB: null,
     textureRotationB: 0,
     textureScaleB: 1,
-    textureCutAngle: DEFAULT_CUT_ANGLE,
+    textureCutAngle: DEFAULT_TEXTURE_CUT_ANGLE,
     textureCutOffset: 0,
     waterPainted: false,
     waterSurface: false,
