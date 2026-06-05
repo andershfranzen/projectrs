@@ -1222,9 +1222,9 @@
         "chance": 0.08
       },
       {
-        "itemId": 226,
+        "itemId": 227,
         "quantity": 1,
-        "chance": 0.025
+        "chance": 0.0064
       }
     ],
     "rareDropTables": [

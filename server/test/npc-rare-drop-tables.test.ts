@@ -17,6 +17,9 @@ const EXPECTED_ACCESS = new Map<number, number>([
   [27, 1 / 512],
   [100, 3 / 128],
   [101, 4 / 128],
+  [105, 1 / 384],
+  [106, 1 / 384],
+  [107, 1 / 384],
 ]);
 
 const EXPECTED_MEGA_RARE_ITEM_IDS = [10, 311, 329, 330, 386, 393, 412];
