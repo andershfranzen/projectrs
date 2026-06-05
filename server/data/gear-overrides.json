@@ -1,4 +1,30 @@
 {
+  "8": {
+    "localPosition": {
+      "x": -0.295,
+      "y": -0.023,
+      "z": 0.034
+    },
+    "localRotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": 1
+  },
+  "459": {
+    "localPosition": {
+      "x": -0.295,
+      "y": -0.023,
+      "z": 0.034
+    },
+    "localRotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": 1
+  },
   "31": {
     "localPosition": {
       "x": 0.08,

@@ -378,6 +378,7 @@ export class CharacterEntity {
   /** Pants + socks mesh primitives — hidden when plate legs are equipped
    *  so the character's bare legs don't poke through the armor. */
   private legMeshes: AbstractMesh[] = [];
+  private footMeshes: AbstractMesh[] = [];
 
   // The "Skin" primitive — single mesh covering face, arms, hands, legs.
   // We pre-compute two index buffers: the original (full skin) and a
@@ -388,12 +389,17 @@ export class CharacterEntity {
   private skinIndicesFull: Uint32Array | null = null;
   private skinIndicesNoArms: Uint32Array | null = null;
   private skinIndicesNoLegs: Uint32Array | null = null;
+  private skinIndicesNoFeet: Uint32Array | null = null;
   private skinIndicesNoArmsNoLegs: Uint32Array | null = null;
+  private skinIndicesNoArmsNoFeet: Uint32Array | null = null;
+  private skinIndicesNoLegsNoFeet: Uint32Array | null = null;
+  private skinIndicesNoArmsNoLegsNoFeet: Uint32Array | null = null;
   /** When true (plate body), arm triangles are also hidden on the skin mesh.
    *  When false (chain body), arms/shoulders/lower-neck stay visible even
    *  though the bare-chest mesh primitives are off. */
   private bodyHidesArms: boolean = false;
   private legsHidden: boolean = false;
+  private feetHidden: boolean = false;
 
 
   // Modular mesh parts — keyed by mesh name for show/hide
@@ -664,6 +670,7 @@ export class CharacterEntity {
       // Only `pants` is the leg cover — `socks` are the feet/ankle visual
       // and stay visible. Plate legs cover thighs + shins, not feet.
       const LEG_MATERIAL_NAMES = new Set(['pants']);
+      const FOOT_MATERIAL_NAMES = new Set(['socks']);
       for (const mesh of this.meshes) {
         const n = mesh.name;
         if (n.startsWith('M_hair_')) {
@@ -677,6 +684,10 @@ export class CharacterEntity {
         }
         if (LEG_MATERIAL_NAMES.has(matBase)) {
           this.legMeshes.push(mesh);
+          continue;
+        }
+        if (FOOT_MATERIAL_NAMES.has(matBase)) {
+          this.footMeshes.push(mesh);
           continue;
         }
         if (matBase === 'skin') {
@@ -1836,6 +1847,7 @@ export class CharacterEntity {
     if (slot === 'head') this.setHeadVisible(false);
     if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
     if (slot === 'legs') this.setLegsVisible(false);
+    if (slot === 'feet') this.setFeetVisible(false);
     this.applyPickability();
   }
 
@@ -1855,6 +1867,7 @@ export class CharacterEntity {
     if (slot === 'head' && this.getGearItemId('head') === -1) this.setHeadVisible(true);
     if (slot === 'body') this.setBodyVisible(true);
     if (slot === 'legs') this.setLegsVisible(true);
+    if (slot === 'feet') this.setFeetVisible(true);
   }
 
   setHighQualityGearEffect(slot: string, active: boolean): void {
@@ -2025,6 +2038,7 @@ export class CharacterEntity {
       if (slot === 'head') this.setHeadVisible(false);
       if (slot === 'body') this.setBodyVisible(false, bodyHideStyle);
       if (slot === 'legs') this.setLegsVisible(false);
+      if (slot === 'feet') this.setFeetVisible(false);
       this.applyPickability();
       return true;
     } catch (e) {
@@ -2095,12 +2109,22 @@ export class CharacterEntity {
     this.applySkinIndexMask();
   }
 
+  setFeetVisible(visible: boolean): void {
+    for (const m of this.footMeshes) m.setEnabled(visible);
+    this.feetHidden = !visible;
+    this.applySkinIndexMask();
+  }
+
   private applySkinIndexMask(): void {
     if (!this.skinMesh || !this.skinIndicesFull) return;
     let target: Uint32Array | null = this.skinIndicesFull;
-    if (this.bodyHidesArms && this.legsHidden && this.skinIndicesNoArmsNoLegs) target = this.skinIndicesNoArmsNoLegs;
+    if (this.bodyHidesArms && this.legsHidden && this.feetHidden && this.skinIndicesNoArmsNoLegsNoFeet) target = this.skinIndicesNoArmsNoLegsNoFeet;
+    else if (this.bodyHidesArms && this.legsHidden && this.skinIndicesNoArmsNoLegs) target = this.skinIndicesNoArmsNoLegs;
+    else if (this.bodyHidesArms && this.feetHidden && this.skinIndicesNoArmsNoFeet) target = this.skinIndicesNoArmsNoFeet;
+    else if (this.legsHidden && this.feetHidden && this.skinIndicesNoLegsNoFeet) target = this.skinIndicesNoLegsNoFeet;
     else if (this.bodyHidesArms && this.skinIndicesNoArms) target = this.skinIndicesNoArms;
     else if (this.legsHidden && this.skinIndicesNoLegs) target = this.skinIndicesNoLegs;
+    else if (this.feetHidden && this.skinIndicesNoFeet) target = this.skinIndicesNoFeet;
     if (target) this.skinMesh.setIndices(target, null);
   }
 
@@ -2129,12 +2153,18 @@ export class CharacterEntity {
       'mixamorig:LeftUpLeg', 'mixamorig:LeftLeg',
       'mixamorig:RightUpLeg', 'mixamorig:RightLeg',
     ]);
+    const FOOT_BONE_NAMES = new Set([
+      'mixamorig:LeftFoot', 'mixamorig:LeftToeBase',
+      'mixamorig:RightFoot', 'mixamorig:RightToeBase',
+    ]);
     const armIdx = new Set<number>();
     const legIdx = new Set<number>();
+    const footIdx = new Set<number>();
     for (let i = 0; i < this.skeleton.bones.length; i++) {
       const name = this.skeleton.bones[i].name;
       if (ARM_BONE_NAMES.has(name)) armIdx.add(i);
       if (LEG_BONE_NAMES.has(name)) legIdx.add(i);
+      if (FOOT_BONE_NAMES.has(name)) footIdx.add(i);
     }
 
     // Per-vertex region classification using each vert's DOMINANT bone.
@@ -2143,6 +2173,7 @@ export class CharacterEntity {
     const numVerts = positions.length / 3;
     const isArmVert = new Uint8Array(numVerts);
     const isLegVert = new Uint8Array(numVerts);
+    const isFootVert = new Uint8Array(numVerts);
     for (let v = 0; v < numVerts; v++) {
       let bestW = -1, bestJ = -1;
       for (let k = 0; k < 4; k++) {
@@ -2152,26 +2183,40 @@ export class CharacterEntity {
       if (bestJ >= 0) {
         if (armIdx.has(bestJ)) isArmVert[v] = 1;
         else if (legIdx.has(bestJ)) isLegVert[v] = 1;
+        else if (footIdx.has(bestJ)) isFootVert[v] = 1;
       }
     }
 
     const numTris = indices.length / 3;
     const noArm: number[] = [];
     const noLeg: number[] = [];
+    const noFoot: number[] = [];
     const noArmNoLeg: number[] = [];
+    const noArmNoFoot: number[] = [];
+    const noLegNoFoot: number[] = [];
+    const noArmNoLegNoFoot: number[] = [];
     for (let t = 0; t < numTris; t++) {
       const a = indices[t * 3], b = indices[t * 3 + 1], c = indices[t * 3 + 2];
       const allArm = isArmVert[a] && isArmVert[b] && isArmVert[c];
       const allLeg = isLegVert[a] && isLegVert[b] && isLegVert[c];
+      const allFoot = isFootVert[a] && isFootVert[b] && isFootVert[c];
       if (!allArm) noArm.push(a, b, c);
       if (!allLeg) noLeg.push(a, b, c);
+      if (!allFoot) noFoot.push(a, b, c);
       if (!allArm && !allLeg) noArmNoLeg.push(a, b, c);
+      if (!allArm && !allFoot) noArmNoFoot.push(a, b, c);
+      if (!allLeg && !allFoot) noLegNoFoot.push(a, b, c);
+      if (!allArm && !allLeg && !allFoot) noArmNoLegNoFoot.push(a, b, c);
     }
 
     this.skinIndicesFull = new Uint32Array(indices as ArrayLike<number>);
     this.skinIndicesNoArms = armIdx.size > 0 ? new Uint32Array(noArm) : null;
     this.skinIndicesNoLegs = legIdx.size > 0 ? new Uint32Array(noLeg) : null;
+    this.skinIndicesNoFeet = footIdx.size > 0 ? new Uint32Array(noFoot) : null;
     this.skinIndicesNoArmsNoLegs = (armIdx.size > 0 && legIdx.size > 0) ? new Uint32Array(noArmNoLeg) : null;
+    this.skinIndicesNoArmsNoFeet = (armIdx.size > 0 && footIdx.size > 0) ? new Uint32Array(noArmNoFoot) : null;
+    this.skinIndicesNoLegsNoFeet = (legIdx.size > 0 && footIdx.size > 0) ? new Uint32Array(noLegNoFoot) : null;
+    this.skinIndicesNoArmsNoLegsNoFeet = (armIdx.size > 0 && legIdx.size > 0 && footIdx.size > 0) ? new Uint32Array(noArmNoLegNoFoot) : null;
   }
 
   /** Pre-compute a filtered index buffer for every body-slot mesh (shirt,
@@ -2711,9 +2756,19 @@ export class CharacterEntity {
     this.bodyMeshes = [];
     this.bodyMeshIndices.clear();
     this.legMeshes = [];
+    this.footMeshes = [];
     this.skinMesh = null;
     this.skinIndicesFull = null;
     this.skinIndicesNoArms = null;
+    this.skinIndicesNoLegs = null;
+    this.skinIndicesNoFeet = null;
+    this.skinIndicesNoArmsNoLegs = null;
+    this.skinIndicesNoArmsNoFeet = null;
+    this.skinIndicesNoLegsNoFeet = null;
+    this.skinIndicesNoArmsNoLegsNoFeet = null;
+    this.bodyHidesArms = false;
+    this.legsHidden = false;
+    this.feetHidden = false;
     this.modularMeshes.clear();
     if (this.pickProxy) {
       this.pickProxy.dispose();

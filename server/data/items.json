@@ -23,6 +23,34 @@
     "value": 30
   },
   {
+    "id": 8,
+    "name": "Leather Boots",
+    "description": "Basic leather boots.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "feet",
+    "stabDefence": 1,
+    "slashDefence": 1,
+    "crushDefence": 1,
+    "rangedDefence": 1,
+    "value": 12,
+    "model": "/assets/equipment/feet/LeatherBoots.glb"
+  },
+  {
+    "id": 459,
+    "name": "Colourful Boots",
+    "description": "Brightly coloured leather boots.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "feet",
+    "stabDefence": 1,
+    "slashDefence": 1,
+    "crushDefence": 1,
+    "rangedDefence": 1,
+    "value": 18,
+    "model": "/assets/equipment/feet/ColourfulBoots.glb"
+  },
+  {
     "id": 10,
     "name": "Coins",
     "description": "Lovely money!",
