@@ -17,7 +17,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'stree 3': 1,
   'sTree4': 1,
   'stree autumn': 1,
-  'dying tree': 1,
+  'dying tree': 10,
   // Oak -> objectId 2 (Oak Tree)
   'oaktree': 2,
   'oaktree2': 2,
@@ -160,15 +160,15 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   },
   'bush1': {
     name: 'Bush',
-    examineText: 'A thick bush with tangled branches.',
+    examineText: 'A thick bush with tangled branches and dark leaves. Something could easily hide in it.',
   },
   'bush2': {
     name: 'Bush',
-    examineText: 'A scruffy bush growing stubbornly here.',
+    examineText: 'A scruffy roadside bush, dusty at the roots and stubbornly alive.',
   },
   'bush3': {
     name: 'Bush',
-    examineText: 'A leafy bush that helps fill out the scenery.',
+    examineText: 'A leafy green bush, trimmed by weather more than by any gardener.',
   },
   'Cage_2': {
     name: 'Cage',

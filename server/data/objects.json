@@ -45,7 +45,7 @@
         550
       ]
     },
-    "examineText": "A tree with plenty of branches to chop."
+    "examineText": "A broad village tree, rough-barked and heavy with branches. It should yield plain logs."
   },
   {
     "id": 2,
@@ -93,7 +93,7 @@
         275
       ]
     },
-    "examineText": "A sturdy oak tree with thick, useful timber."
+    "examineText": "A stout oak with a thick trunk and stubborn grain. Good wood for stronger bows and boards."
   },
   {
     "id": 3,
@@ -476,7 +476,7 @@
         137
       ]
     },
-    "examineText": "A willow tree with long, flexible branches."
+    "examineText": "A willow tree trailing soft green branches. Its flexible wood is prized by careful fletchers."
   },
   {
     "id": 10,
@@ -524,7 +524,7 @@
         550
       ]
     },
-    "examineText": "A dead tree. Dry, brittle wood clings to it."
+    "examineText": "A dead tree, grey and splintered. The dry branches look ready to snap under an axe."
   },
   {
     "id": 11,
@@ -684,7 +684,7 @@
         68
       ]
     },
-    "examineText": "A maple tree with firm, clean timber."
+    "examineText": "A maple with a warm-coloured trunk and close, clean grain. The logs should carve neatly."
   },
   {
     "id": 38,
@@ -732,7 +732,7 @@
         34
       ]
     },
-    "examineText": "A yew tree with dense, valuable wood."
+    "examineText": "An old yew with dark needles and dense heartwood. A patient woodcutter could make something fine from it."
   },
   {
     "id": 13,
@@ -2017,7 +2017,7 @@
     "harvestTime": 2,
     "depletionChance": 0.5,
     "respawnTime": 35,
-    "examineText": "A rice plant ready for careful harvesting."
+    "examineText": "Slender rice stalks hang heavy with pale grains. Harvest them gently before the field scatters."
   },
   {
     "id": 23,
@@ -2181,7 +2181,7 @@
     "harvestTime": 2,
     "depletionChance": 0.5,
     "respawnTime": 35,
-    "examineText": "A potato plant with edible roots beneath the soil."
+    "examineText": "A low potato plant with healthy leaves. The useful part is hidden in the soil below."
   },
   {
     "id": 29,
@@ -2204,7 +2204,7 @@
     "harvestTime": 2,
     "depletionChance": 0.5,
     "respawnTime": 35,
-    "examineText": "A cauliflower plant with a pale head tucked in its leaves."
+    "examineText": "Broad leaves cradle a pale cauliflower head. It looks ready to pull before it toughens."
   },
   {
     "id": 30,
@@ -2227,7 +2227,7 @@
     "harvestTime": 2,
     "depletionChance": 1,
     "respawnTime": 0,
-    "examineText": "A patch of wheat, golden and ready to gather."
+    "examineText": "A small stand of ripe wheat, dry and golden at the tips. It should thresh into useful grain."
   },
   {
     "id": 31,
