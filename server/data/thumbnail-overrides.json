@@ -198,12 +198,12 @@
     "iconScale": 1
   },
   "52": {
-    "alpha": -1.5446163880149817,
-    "beta": 1.208304866765305,
+    "alpha": -0.32288591161895097,
+    "beta": 1.3002702927357754,
     "distanceMult": 0.75,
-    "rotationX": 1.6144295580947547,
-    "rotationY": 0,
-    "rotationZ": 0,
+    "rotationX": 0,
+    "rotationY": -0.06981317007977318,
+    "rotationZ": 0.2181661564992912,
     "iconScale": 0.8
   },
   "53": {
@@ -872,51 +872,6 @@
     "rotationZ": -0.12217304763960307,
     "iconScale": 1.1
   },
-  "409": {
-    "alpha": -1.888775653373959,
-    "beta": 0.675398163397448,
-    "distanceMult": 0.75,
-    "rotationX": -0.7330382858376184,
-    "rotationY": -2.260201381332657,
-    "rotationZ": -0.12217304763960307,
-    "iconScale": 1.1
-  },
-  "410": {
-    "alpha": -1.888775653373959,
-    "beta": 0.675398163397448,
-    "distanceMult": 0.75,
-    "rotationX": -0.7330382858376184,
-    "rotationY": -2.260201381332657,
-    "rotationZ": -0.12217304763960307,
-    "iconScale": 1.1
-  },
-  "411": {
-    "alpha": -1.888775653373959,
-    "beta": 0.675398163397448,
-    "distanceMult": 0.75,
-    "rotationX": -0.7330382858376184,
-    "rotationY": -2.260201381332657,
-    "rotationZ": -0.12217304763960307,
-    "iconScale": 1.1
-  },
-  "412": {
-    "alpha": -1.888775653373959,
-    "beta": 0.675398163397448,
-    "distanceMult": 0.75,
-    "rotationX": -0.7330382858376184,
-    "rotationY": -2.260201381332657,
-    "rotationZ": -0.12217304763960307,
-    "iconScale": 1.1
-  },
-  "439": {
-    "alpha": -1.888775653373959,
-    "beta": 0.675398163397448,
-    "distanceMult": 0.75,
-    "rotationX": -0.7330382858376184,
-    "rotationY": -2.260201381332657,
-    "rotationZ": -0.12217304763960307,
-    "iconScale": 1.1
-  },
   "238": {
     "alpha": -0.7853981633974483,
     "beta": 1.208304866765305,
@@ -1483,6 +1438,78 @@
     "rotationY": 0.10471975511965978,
     "rotationZ": -0.03490658503988659,
     "iconScale": 1
+  },
+  "409": {
+    "alpha": -1.888775653373959,
+    "beta": 0.675398163397448,
+    "distanceMult": 0.75,
+    "rotationX": -0.7330382858376184,
+    "rotationY": -2.260201381332657,
+    "rotationZ": -0.12217304763960307,
+    "iconScale": 1.1
+  },
+  "410": {
+    "alpha": -1.888775653373959,
+    "beta": 0.675398163397448,
+    "distanceMult": 0.75,
+    "rotationX": -0.7330382858376184,
+    "rotationY": -2.260201381332657,
+    "rotationZ": -0.12217304763960307,
+    "iconScale": 1.1
+  },
+  "411": {
+    "alpha": -1.888775653373959,
+    "beta": 0.675398163397448,
+    "distanceMult": 0.75,
+    "rotationX": -0.7330382858376184,
+    "rotationY": -2.260201381332657,
+    "rotationZ": -0.12217304763960307,
+    "iconScale": 1.1
+  },
+  "412": {
+    "alpha": -1.888775653373959,
+    "beta": 0.675398163397448,
+    "distanceMult": 0.75,
+    "rotationX": -0.7330382858376184,
+    "rotationY": -2.260201381332657,
+    "rotationZ": -0.12217304763960307,
+    "iconScale": 1.1
+  },
+  "439": {
+    "alpha": -1.888775653373959,
+    "beta": 0.675398163397448,
+    "distanceMult": 0.75,
+    "rotationX": -0.7330382858376184,
+    "rotationY": -2.260201381332657,
+    "rotationZ": -0.12217304763960307,
+    "iconScale": 1.1
+  },
+  "440": {
+    "alpha": 1.8151424220741028,
+    "beta": 1.6057029118347832,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.9
+  },
+  "441": {
+    "alpha": -0.9773843811168246,
+    "beta": 1.208304866765305,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.75
+  },
+  "442": {
+    "alpha": 1.1431906600562858,
+    "beta": 1.3089969389957472,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0,
+    "rotationZ": 0,
+    "iconScale": 0.85
   },
   "_doc": "Thumbnail tuning. Top-level numeric keys are legacy item-specific overrides. _item_families is keyed by normalized equipment family (slot:family, e.g. weapon:battleaxe) and is the preferred item thumbnail source for future items. _thumbnail_assets is keyed by editor asset path. Pose fields are radians/multipliers.",
   "_thumbnail_manual_items": [
