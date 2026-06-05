@@ -3,9 +3,9 @@
     "assetId": "dying tree",
     "layerId": "layer_0",
     "position": {
-      "x": 277,
-      "y": 4.168822796859665,
-      "z": 200.8676849034989
+      "x": 275.5,
+      "y": 6.0832034821403305,
+      "z": 201.5
     },
     "rotation": {
       "x": -0.2617993877991492,
@@ -220,7 +220,7 @@
     "layerId": "layer_0",
     "position": {
       "x": 265.55809248704463,
-      "y": 8.881784197001252e-16,
+      "y": 1.040000000000001,
       "z": 214
     },
     "rotation": {
@@ -230,7 +230,7 @@
     },
     "scale": {
       "x": 1,
-      "y": 1,
+      "y": 0.3999999999999999,
       "z": 1
     }
   },
@@ -512,6 +512,234 @@
       "x": 1.1102230246251548e-16,
       "y": -1.5707963267948972,
       "z": -6.162975822039164e-33
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackTurn",
+    "layerId": "layer_0",
+    "position": {
+      "x": 265,
+      "y": 0,
+      "z": 214.90730051024684
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 265.5971238858076,
+      "y": 0.003776830463718252,
+      "z": 212.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 265.5971238858076,
+      "y": 0.003776830463718252,
+      "z": 213.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 265.5971238858076,
+      "y": 0.12377683046371825,
+      "z": 211.52886994484393
+    },
+    "rotation": {
+      "x": 0.2617993877991494,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 263.5621637337868,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": -2.2204460492503104e-16,
+      "y": 1.5707963267948963,
+      "z": 1.232595164407833e-32
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 262.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 261.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 260.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 259.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 258.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 257.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "layer_0",
+    "position": {
+      "x": 256.5,
+      "y": 0,
+      "z": 215.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
     },
     "scale": {
       "x": 1,
