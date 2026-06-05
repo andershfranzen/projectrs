@@ -6,6 +6,7 @@ import {
   buildThumbnailOptionsFromOverride,
   findThumbnailOverrideForItem,
   getItemIconSyncUrl,
+  itemThumbnailTierIndex,
   itemThumbnailFamily,
   itemThumbnailFamilyKey,
   itemThumbnailVisualSource,
@@ -33,6 +34,12 @@ describe('item thumbnail families', () => {
     expect(itemThumbnailFamilyKey(item(33, 'Bronze Pickaxe'))).toBe('weapon:pickaxe');
     expect(itemThumbnailFamily(item(382, 'Mithril Sword (HQ)'))).toBe('Sword');
     expect(itemThumbnailFamilyKey(item(382, 'Mithril Sword (HQ)'))).toBe('weapon:sword');
+  });
+
+  test('orders Black Bronze before Mithril for tier fallback selection', () => {
+    expect(itemThumbnailTierIndex(item(119, 'Black Bronze Battle Axe'))).toBeLessThan(
+      itemThumbnailTierIndex(item(105, 'Mithril Battle Axe')),
+    );
   });
 
   test('direct item override wins, family override seeds items without direct poses', () => {
@@ -80,6 +87,37 @@ describe('item thumbnail families', () => {
     expect(opts.cacheIdentity).toBe('item:144');
     expect(opts.camera?.alpha).toBe(swordPose.alpha);
     expect(opts.rotationY).toBe(swordPose.rotationY);
+  });
+
+  test('new-tier HQ items reuse base inventory and baked-thumbnail visual sources', () => {
+    const defs = itemsJson as ItemDef[];
+    const families = [
+      'Dagger',
+      'Sword',
+      'Mace',
+      'Scimitar',
+      'Battle Axe',
+      '2-handed Sword',
+      'Medium Helmet',
+      'Full Helmet',
+      'Square Shield',
+      'Cuirass',
+      'Kite Shield',
+      'Plate Mail Legs',
+      'Plate Mail Body',
+    ];
+
+    for (const tier of ['Crimson', 'Malachor']) {
+      for (const family of families) {
+        const base = defs.find((def) => def.name === `${tier} ${family}`);
+        const hq = defs.find((def) => def.name === `${tier} ${family} (HQ)`);
+        if (!base || !hq) throw new Error(`Missing new-tier HQ pair for ${tier} ${family}`);
+
+        expect(itemThumbnailVisualSource(hq, defs)).toBe(base);
+        expect(resolveItemModelPath(hq)).toBe(resolveItemModelPath(base));
+        expect(buildThumbnailOptionsFromOverride(hq, undefined, base).cacheIdentity).toBe(`item:${base.id}`);
+      }
+    }
   });
 
   test('baked thumbnail manifest only resolves pose-matched entries', () => {

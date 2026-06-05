@@ -245,15 +245,15 @@ describe('item-on-item crafting recipes', () => {
         xp: 4,
       },
       {
-        arrowheadId: MITHRIL_ARROWHEADS_ITEM_ID,
-        arrowId: MITHRIL_ARROWS_ITEM_ID,
-        label: 'mithril',
-        xp: 8,
-      },
-      {
         arrowheadId: BLACK_BRONZE_ARROWHEADS_ITEM_ID,
         arrowId: BLACK_BRONZE_ARROWS_ITEM_ID,
         label: 'black bronze',
+        xp: 8,
+      },
+      {
+        arrowheadId: MITHRIL_ARROWHEADS_ITEM_ID,
+        arrowId: MITHRIL_ARROWS_ITEM_ID,
+        label: 'mithril',
         xp: 16,
       },
     ];
@@ -277,12 +277,12 @@ describe('item-on-item crafting recipes', () => {
     player.skills.crafting.level = 44;
     player.skills.crafting.currentLevel = 44;
     player.inventory[0] = { itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 };
-    player.inventory[1] = { itemId: MITHRIL_ARROWHEADS_ITEM_ID, quantity: 1 };
+    player.inventory[1] = { itemId: BLACK_BRONZE_ARROWHEADS_ITEM_ID, quantity: 1 };
 
-    world.handlePlayerUseItemOnItem(player.id, 0, HEADLESS_ARROWS_ITEM_ID, 1, MITHRIL_ARROWHEADS_ITEM_ID, 1);
+    world.handlePlayerUseItemOnItem(player.id, 0, HEADLESS_ARROWS_ITEM_ID, 1, BLACK_BRONZE_ARROWHEADS_ITEM_ID, 1);
 
     expect(player.inventory[0]).toEqual({ itemId: HEADLESS_ARROWS_ITEM_ID, quantity: 1 });
-    expect(player.inventory[1]).toEqual({ itemId: MITHRIL_ARROWHEADS_ITEM_ID, quantity: 1 });
+    expect(player.inventory[1]).toEqual({ itemId: BLACK_BRONZE_ARROWHEADS_ITEM_ID, quantity: 1 });
     expect(xp).toEqual([]);
     expect(messages).toEqual(['You need level 45 Crafting to do that.']);
   });

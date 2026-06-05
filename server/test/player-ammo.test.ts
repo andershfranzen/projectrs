@@ -387,20 +387,20 @@ describe('player ammo selection', () => {
 
     player.setEquipment('weapon', OAK_SHORTBOW_ITEM_ID);
     expect(player.canFireAmmo(defs, defs.get(STEEL_ARROWS_ITEM_ID)!)).toBe(true);
-    expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(false);
-
-    player.setEquipment('weapon', WILLOW_SHORTBOW_ITEM_ID);
-    expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(true);
     expect(player.canFireAmmo(defs, defs.get(BLACK_BRONZE_ARROWS_ITEM_ID)!)).toBe(false);
 
-    player.setEquipment('weapon', MAPLE_SHORTBOW_ITEM_ID);
+    player.setEquipment('weapon', WILLOW_SHORTBOW_ITEM_ID);
     expect(player.canFireAmmo(defs, defs.get(BLACK_BRONZE_ARROWS_ITEM_ID)!)).toBe(true);
+    expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(false);
+
+    player.setEquipment('weapon', MAPLE_SHORTBOW_ITEM_ID);
+    expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(true);
 
     player.setEquipment('weapon', YEW_SHORTBOW_ITEM_ID);
-    expect(player.canFireAmmo(defs, defs.get(BLACK_BRONZE_ARROWS_ITEM_ID)!)).toBe(true);
+    expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(true);
 
     player.setEquipment('weapon', MAGIC_SHORTBOW_ITEM_ID);
-    expect(player.canFireAmmo(defs, defs.get(BLACK_BRONZE_ARROWS_ITEM_ID)!)).toBe(true);
+    expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(true);
   });
 
   test('reports useful ranged ammo failures', () => {

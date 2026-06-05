@@ -1,6 +1,6 @@
 import type { ItemDef } from './types.js';
 
-const GEAR_FIT_TIERS: readonly string[] = ['Bronze', 'Iron', 'Steel', 'Mithril', 'Black Bronze', 'Crimson', 'Malachor'];
+const GEAR_FIT_TIERS: readonly string[] = ['Bronze', 'Iron', 'Steel', 'Black Bronze', 'Mithril', 'Crimson', 'Malachor'];
 const HIGH_QUALITY_SUFFIX = ' (HQ)';
 
 export function gearFitTierForName(name?: string | null): string {

@@ -167,8 +167,8 @@ export const ARROWHEAD_FLETCHING_RECIPES: readonly {
   { arrowheadItemId: BRONZE_ARROWHEADS_ITEM_ID, arrowItemId: BRONZE_ARROWS_ITEM_ID, arrowLabel: 'bronze', levelRequired: 1, xpReward: 1 },
   { arrowheadItemId: IRON_ARROWHEADS_ITEM_ID, arrowItemId: IRON_ARROWS_ITEM_ID, arrowLabel: 'iron', levelRequired: 15, xpReward: 2 },
   { arrowheadItemId: STEEL_ARROWHEADS_ITEM_ID, arrowItemId: STEEL_ARROWS_ITEM_ID, arrowLabel: 'steel', levelRequired: 30, xpReward: 4 },
-  { arrowheadItemId: MITHRIL_ARROWHEADS_ITEM_ID, arrowItemId: MITHRIL_ARROWS_ITEM_ID, arrowLabel: 'mithril', levelRequired: 45, xpReward: 8 },
-  { arrowheadItemId: BLACK_BRONZE_ARROWHEADS_ITEM_ID, arrowItemId: BLACK_BRONZE_ARROWS_ITEM_ID, arrowLabel: 'black bronze', levelRequired: 60, xpReward: 16 },
+  { arrowheadItemId: BLACK_BRONZE_ARROWHEADS_ITEM_ID, arrowItemId: BLACK_BRONZE_ARROWS_ITEM_ID, arrowLabel: 'black bronze', levelRequired: 45, xpReward: 8 },
+  { arrowheadItemId: MITHRIL_ARROWHEADS_ITEM_ID, arrowItemId: MITHRIL_ARROWS_ITEM_ID, arrowLabel: 'mithril', levelRequired: 60, xpReward: 16 },
 ];
 
 /** Distance budget for materializing humanoid NPCs as skinned 3D characters. */

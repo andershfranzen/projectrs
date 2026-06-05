@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { COOKING_RANGE_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, type WorldObjectDef } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, WallEdge, type WorldObjectDef } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 
@@ -7,6 +7,7 @@ const fakeWs = {
   sendBinary() {},
   send() {},
 } as any;
+const FULL_TILE_WALL_MASK = WallEdge.N | WallEdge.E | WallEdge.S | WallEdge.W;
 
 const largeBlockingDef: WorldObjectDef = {
   id: 900,
@@ -49,6 +50,7 @@ function makeObject(defId: number, name: string, category: string = 'scenery'): 
       id: defId,
       name,
       category,
+      blocking: true,
       width: 1,
       height: 1,
     },
@@ -62,6 +64,23 @@ function canUseWithWallBlocked(defId: number, name: string, wallBlocked: boolean
   const map = {
     isWallBlocked: () => wallBlocked,
     isWallBlockedOnFloor: () => wallBlocked,
+  };
+  return world.canUseObjectFromTile(player, obj, 10, 9, map);
+}
+
+function canUseFromNorthWithAuthoredWalls(defId: number, name: string, category: string, sourceMask: number, footprintMask: number): boolean {
+  const world = Object.create(World.prototype) as any;
+  world.npcs = new Map();
+  const player = makePlayer();
+  const obj = makeObject(defId, name, category);
+  const map = {
+    isWallBlocked: () => (sourceMask | footprintMask) !== 0,
+    isWallBlockedOnFloor: () => (sourceMask | footprintMask) !== 0,
+    getWallOnFloor: (x: number, z: number) => {
+      if (x === 10 && z === 9) return sourceMask;
+      if (x === 10 && z === 10) return footprintMask;
+      return 0;
+    },
   };
   return world.canUseObjectFromTile(player, obj, 10, 9, map);
 }
@@ -127,6 +146,20 @@ describe('wall-gated station interaction', () => {
   test('ordinary resource objects cannot be used through a wall edge', () => {
     expect(canUseWithWallBlocked(3, 'Copper Rock', true, 'rock')).toBe(false);
     expect(canUseWithWallBlocked(3, 'Copper Rock', false, 'rock')).toBe(true);
+  });
+
+  test('blocking objects can be used across their own full-tile footprint blocker', () => {
+    expect(canUseFromNorthWithAuthoredWalls(8, 'Altar', 'altar', 0, FULL_TILE_WALL_MASK)).toBe(true);
+    expect(canUseFromNorthWithAuthoredWalls(3, 'Copper Rock', 'rock', 0, FULL_TILE_WALL_MASK)).toBe(true);
+  });
+
+  test('blocking objects cannot be used through a source-side wall edge', () => {
+    expect(canUseFromNorthWithAuthoredWalls(8, 'Altar', 'altar', WallEdge.S, FULL_TILE_WALL_MASK)).toBe(false);
+    expect(canUseFromNorthWithAuthoredWalls(3, 'Copper Rock', 'rock', WallEdge.S, FULL_TILE_WALL_MASK)).toBe(false);
+  });
+
+  test('bank booths still require a banker across the counter edge', () => {
+    expect(canUseFromNorthWithAuthoredWalls(31, 'Bank booth', 'bank', 0, FULL_TILE_WALL_MASK)).toBe(false);
   });
 
   test('bank booths can be used across a counter edge but not an arbitrary blocked edge', () => {

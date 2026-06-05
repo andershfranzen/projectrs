@@ -40,15 +40,15 @@ const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
   [BRONZE_ARROWS_ITEM_ID]: 1,
   [IRON_ARROWS_ITEM_ID]: 2,
   [STEEL_ARROWS_ITEM_ID]: 3,
-  [MITHRIL_ARROWS_ITEM_ID]: 4,
-  [BLACK_BRONZE_ARROWS_ITEM_ID]: 5,
+  [BLACK_BRONZE_ARROWS_ITEM_ID]: 4,
+  [MITHRIL_ARROWS_ITEM_ID]: 5,
 };
 
 const MAX_ARROW_TIER_BY_BOW_ITEM_ID: Record<number, number> = {
   [SHORTBOW_ITEM_ID]: 2,        // bronze, iron
   [OAK_SHORTBOW_ITEM_ID]: 3,    // + steel
-  [WILLOW_SHORTBOW_ITEM_ID]: 4, // + mithril
-  [MAPLE_SHORTBOW_ITEM_ID]: 5,  // + black bronze
+  [WILLOW_SHORTBOW_ITEM_ID]: 4, // + black bronze
+  [MAPLE_SHORTBOW_ITEM_ID]: 5,  // + mithril
   [YEW_SHORTBOW_ITEM_ID]: Infinity,
   [MAGIC_SHORTBOW_ITEM_ID]: Infinity,
 };
@@ -57,8 +57,8 @@ function arrowTier(itemDef: ItemDef): number {
   const explicit = ARROW_TIER_BY_ITEM_ID[itemDef.id];
   if (explicit !== undefined) return explicit;
   const name = itemDef.name.toLowerCase();
-  if (name.includes('black bronze')) return 5;
-  if (name.includes('mithril')) return 4;
+  if (name.includes('mithril')) return 5;
+  if (name.includes('black bronze')) return 4;
   if (name.includes('steel')) return 3;
   if (name.includes('iron')) return 2;
   if (name.includes('bronze')) return 1;

@@ -207,6 +207,7 @@ function getMapIdx(mapId: string): number {
 function blockedKey(mapIdx: number, floor: number, tileX: number, tileZ: number): string {
   return `${mapIdx}|${Math.floor(floor)}|${Math.floor(tileX)}|${Math.floor(tileZ)}`;
 }
+const FULL_TILE_WALL_MASK = WallEdge.N | WallEdge.E | WallEdge.S | WallEdge.W;
 const HITPOINTS_SKILL_INDEX = ALL_SKILLS.indexOf('hitpoints' as SkillId);
 
 // ---------------------------------------------------------------------------
@@ -562,8 +563,8 @@ export class World {
     0: 0, // Bronze: 7 ticks
     1: 1, // Iron: 6 ticks
     2: 2, // Steel: 5 ticks
-    3: 2, // Mithril: 5 ticks
-    4: 3, // Black Bronze: 4 ticks; leave 3/2 ticks for future tiers.
+    3: 2, // Black Bronze: 5 ticks
+    4: 3, // Mithril: 4 ticks; leave 3/2 ticks for future tiers.
   };
 
   private static readonly PVM_COMBAT_LOCK_TICKS = 8;
@@ -1496,6 +1497,33 @@ export class World {
     return obj.def.category !== 'door' && obj.def.category !== 'ladder';
   }
 
+  private sourceEdgeToward(fromTileX: number, fromTileZ: number, toTileX: number, toTileZ: number): number | null {
+    const dx = toTileX - fromTileX;
+    const dz = toTileZ - fromTileZ;
+    if (dx === 0 && dz === -1) return WallEdge.N;
+    if (dx === 1 && dz === 0) return WallEdge.E;
+    if (dx === 0 && dz === 1) return WallEdge.S;
+    if (dx === -1 && dz === 0) return WallEdge.W;
+    return null;
+  }
+
+  private canInteractThroughObjectFootprintWall(
+    player: Player,
+    obj: WorldObject,
+    tileX: number,
+    tileZ: number,
+    footprintTile: { x: number; z: number },
+    map: GameMap,
+  ): boolean {
+    if (!obj.def.blocking || obj.def.category === 'bank') return false;
+    const edge = this.sourceEdgeToward(tileX, tileZ, footprintTile.x, footprintTile.z);
+    if (edge === null) return false;
+    const getWallOnFloor = (map as Partial<GameMap>).getWallOnFloor;
+    if (typeof getWallOnFloor !== 'function') return false;
+    if ((getWallOnFloor.call(map, tileX, tileZ, player.currentFloor) & edge) !== 0) return false;
+    return (getWallOnFloor.call(map, footprintTile.x, footprintTile.z, player.currentFloor) & FULL_TILE_WALL_MASK) === FULL_TILE_WALL_MASK;
+  }
+
   private hasClearObjectInteractionEdge(
     player: Player,
     obj: WorldObject,
@@ -1518,6 +1546,7 @@ export class World {
         ? gameMap.isWallBlocked(tileX, tileZ, footprintTile.x, footprintTile.z, player.effectiveY)
         : gameMap.isWallBlockedOnFloor(tileX, tileZ, footprintTile.x, footprintTile.z, player.currentFloor);
       if (!blocked) return true;
+      if (this.canInteractThroughObjectFootprintWall(player, obj, tileX, tileZ, footprintTile, gameMap)) return true;
     }
     if (!hasAdjacentFootprintTile && allowAuthoredNonAdjacentTile) return true;
     return false;

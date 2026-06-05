@@ -6188,7 +6188,7 @@ export class GameManager {
       const ptz = Math.floor(this.playerZ);
       const alreadyAtUseTile = this.isOnObjectInteractionTile(ptx, ptz, data, def);
       if (!alreadyAtUseTile) this.walkToAdjacentTileOf(data, def);
-      // Multi-recipe furnaces (bronze, iron±coal, steel, mithril, ...) used
+      // Multi-recipe furnaces (bronze, iron±coal, steel, black bronze/mithril, ...) used
       // to auto-pick the first matching recipe — which meant steel was
       // unreachable while carrying iron ore + coal because iron+coal matches
       // first. Now we open the SmithingPanel for any furnace with > 1 recipe

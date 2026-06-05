@@ -441,7 +441,7 @@ export class SmithingPanel {
       const hasBars = barCount >= recipe.inputQuantity;
       // Furnace recipes also have a secondInputItemId (coal, etc.). Without
       // it the auto-pick path would fall to a downstream recipe (e.g. coal-less
-      // iron at 50%) — surface that in the picker by greying steel/mithril
+      // iron at 50%) — surface that in the picker by greying steel/black bronze
       // tiles when coal isn't present, so the player understands why a
       // tile they "could" click might not produce what they expect.
       const hasSecondInput = recipe.secondInputItemId === undefined
@@ -471,7 +471,7 @@ export class SmithingPanel {
 
       // Short name — strip the bar-type prefix (e.g. "Bronze Dagger" → "Dagger")
       const shortName = outputName.replace(
-        /^(Bronze|Iron|Steel|Mithril|Black Bronze|Crimson|Malachor|Silver)\s+/i,
+        /^(Bronze|Iron|Steel|Black Bronze|Mithril|Crimson|Malachor|Silver)\s+/i,
         '',
       );
       const nameEl = document.createElement('div');

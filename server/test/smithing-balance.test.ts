@@ -56,8 +56,8 @@ describe('smithing balance data', () => {
     expect(anvilXpPerBar(29)).toBe(13); // Bronze Bar
     expect(anvilXpPerBar(30)).toBe(25); // Iron Bar
     expect(anvilXpPerBar(48)).toBe(38); // Steel Bar
-    expect(anvilXpPerBar(49)).toBe(50); // Mithril Bar
-    expect(anvilXpPerBar(50)).toBe(63); // Black Bronze Bar
+    expect(anvilXpPerBar(50)).toBe(50); // Black Bronze Bar
+    expect(anvilXpPerBar(49)).toBe(63); // Mithril Bar
   });
 
   test('processing ores mined to level 30 reaches steel smithing entry', () => {
