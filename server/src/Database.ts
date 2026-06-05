@@ -244,6 +244,7 @@ export type GameEventLogType =
   | 'harvest'
   | 'bonus_loot'
   | 'chest_loot'
+  | 'crafting_hq'
   | 'chat'
   | 'private_chat'
   | 'chat_command'

@@ -259,6 +259,13 @@ const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 const MITHRIL_ROCK_OBJECT_DEF_ID = 16;
 const MITHRIL_PICKAXE_ITEM_ID = 55;
 const MITHRIL_PICKAXE_FIND_CHANCE = 1 / 2048;
+const LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS = new Set([
+  1,   // Bones
+  20,  // Big Bones
+  297, // Bear Hide
+  300, // Camel Hide
+  301, // Human Skin
+]);
 
 /** Canonical ordering of equipment slots used for binary opcode encoding.
  *  Must stay in sync with the client-side decoder in GameManager. */
@@ -4860,6 +4867,30 @@ export class World {
       if (craftingOutput.highQuality) {
         const itemName = this.data.getItem(craftingOutput.itemId)?.name ?? 'High Quality item';
         this.sendChatSystem(player, `High quality result: ${itemName}.`);
+        this.recordGameEvent({
+          type: 'crafting_hq',
+          severity: 'rare',
+          message: `${player.name} rolled high quality ${craftingOutput.quantity} x ${itemName} while ${skillId === 'smithing' ? 'smithing' : 'crafting'} at ${obj.def.name}`,
+          actorAccountId: player.accountId,
+          actorName: player.name,
+          itemId: craftingOutput.itemId,
+          itemName,
+          quantity: craftingOutput.quantity,
+          mapLevel: player.currentMapLevel,
+          floor: player.currentFloor,
+          x: player.position.x,
+          z: player.position.y,
+          details: {
+            skill: skillId,
+            stationObjectId: obj.id,
+            stationDefId: obj.defId,
+            stationName: obj.def.name,
+            baseOutputItemId: recipe.outputItemId,
+            hqOutputItemId: recipe.hqOutputItemId,
+            hqChance: recipe.hqChance ?? 0,
+            xpReward: craftingOutput.xpReward,
+          },
+        });
       }
 
       if (
@@ -7524,6 +7555,7 @@ export class World {
           this.sendGroundItemUpdate(p, groundItem));
       }
       const rare = drop.rare === true || drop.source === 'rare_drop_table';
+      if (!rare && LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS.has(drop.itemId)) continue;
       this.recordGameEvent({
         type: rare ? 'rare_drop' : 'npc_drop',
         severity: rare ? 'rare' : 'info',

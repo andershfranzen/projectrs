@@ -115,6 +115,7 @@ const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'npc_kill', label: 'Kills' },
   { type: 'npc_drop', label: 'Drops' },
   { type: 'rare_drop', label: 'Rares' },
+  { type: 'crafting_hq', label: 'HQ craft' },
   { type: 'bonus_loot', label: 'Bonus' },
   { type: 'chest_loot', label: 'Chests' },
   { type: 'trade', label: 'Trades' },
@@ -1010,6 +1011,7 @@ export class AdminPanel {
   private eventTypeColor(type: string): string {
     switch (type) {
       case 'rare_drop': return '#8f6d2d';
+      case 'crafting_hq': return '#78612a';
       case 'trade': return '#2f5f8f';
       case 'duel': return '#5f4a7d';
       case 'player_death': return '#8f2f28';
