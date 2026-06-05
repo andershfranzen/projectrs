@@ -15,6 +15,7 @@ describe('public data hardening', () => {
     const sanitized = sanitizePublicData('npcs.json', [{
       id: 4,
       name: 'Wolf',
+      modelNpcId: 17,
       health: 20,
       attack: 8,
       defence: 6,
@@ -29,6 +30,7 @@ describe('public data hardening', () => {
     }]) as Array<Record<string, unknown>>;
 
     expect(sanitized[0].name).toBe('Wolf');
+    expect(sanitized[0].modelNpcId).toBe(17);
     expect(sanitized[0].health).toBe(20);
     expect(sanitized[0].lootTable).toBeUndefined();
     expect(sanitized[0].rareDropTables).toBeUndefined();

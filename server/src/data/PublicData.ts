@@ -88,6 +88,7 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
       const {
         id,
         name,
+        modelNpcId,
         health,
         attack,
         defence,
@@ -99,6 +100,7 @@ export function sanitizePublicData(filename: string, data: unknown): unknown {
       return {
         id,
         name,
+        ...(modelNpcId !== undefined ? { modelNpcId } : {}),
         health,
         attack,
         defence,
