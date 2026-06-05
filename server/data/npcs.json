@@ -1196,7 +1196,7 @@
   },
   {
     "id": 105,
-    "name": "Skeleton warrior",
+    "name": "Skeleton Warrior",
     "health": 30,
     "attack": 25,
     "defence": 27,
@@ -1280,9 +1280,9 @@
     "id": 107,
     "name": "Skeleton Warrior",
     "health": 30,
-    "attack": 10,
-    "defence": 8,
-    "strength": 9,
+    "attack": 18,
+    "defence": 13,
+    "strength": 17,
     "attackSpeed": 4,
     "respawnTime": 30,
     "aggressive": true,
@@ -1306,7 +1306,7 @@
       {
         "itemId": 226,
         "quantity": 1,
-        "chance": 0.025
+        "chance": 0.03666666666666667
       }
     ],
     "rareDropTables": [

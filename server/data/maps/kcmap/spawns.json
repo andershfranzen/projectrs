@@ -1,58 +1,6 @@
 {
   "npcs": [
     {
-      "id": 9,
-      "npcId": 5,
-      "x": 198.5,
-      "z": 206.5,
-      "wanderRange": 3,
-      "appearance": {
-        "shirtColor": 12,
-        "pantsColor": 0,
-        "shoesColor": 0,
-        "hairColor": 0,
-        "beltColor": 1,
-        "skinColor": 0,
-        "hairStyle": 0
-      },
-      "equipment": [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
-      "name": "Skeleton",
-      "customColors": {
-        "shirtColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "skinColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "hairColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "shoesColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ]
-      },
-      "attackAnim": "attack_1h_slash"
-    },
-    {
       "id": 10,
       "npcId": 8,
       "x": 210.5,
@@ -66,6 +14,67 @@
         "beltColor": 1,
         "skinColor": 3,
         "hairStyle": 1
+      },
+      "shop": {
+        "name": "General Store",
+        "items": [
+          {
+            "itemId": 251,
+            "price": 8,
+            "stock": 10
+          },
+          {
+            "itemId": 52,
+            "price": 5,
+            "stock": 10
+          },
+          {
+            "itemId": 19,
+            "price": 2,
+            "stock": 100
+          },
+          {
+            "itemId": 264,
+            "price": 2,
+            "stock": 200
+          },
+          {
+            "itemId": 265,
+            "price": 4,
+            "stock": 200
+          },
+          {
+            "itemId": 266,
+            "price": 10,
+            "stock": 200
+          },
+          {
+            "itemId": 274,
+            "price": 20,
+            "stock": 5
+          },
+          {
+            "itemId": 280,
+            "price": 90,
+            "stock": 5
+          },
+          {
+            "itemId": 281,
+            "price": 150,
+            "stock": 5
+          },
+          {
+            "itemId": 270,
+            "price": 2,
+            "stock": 300
+          },
+          {
+            "itemId": 410,
+            "price": 50,
+            "stock": 5
+          }
+        ],
+        "restockTicks": 30
       },
       "dialogue": {
         "root": "greet",
@@ -134,67 +143,6 @@
             ]
           }
         }
-      },
-      "shop": {
-        "name": "General Store",
-        "items": [
-          {
-            "itemId": 251,
-            "price": 8,
-            "stock": 10
-          },
-          {
-            "itemId": 52,
-            "price": 5,
-            "stock": 10
-          },
-          {
-            "itemId": 19,
-            "price": 2,
-            "stock": 100
-          },
-          {
-            "itemId": 264,
-            "price": 2,
-            "stock": 200
-          },
-          {
-            "itemId": 265,
-            "price": 4,
-            "stock": 200
-          },
-          {
-            "itemId": 266,
-            "price": 10,
-            "stock": 200
-          },
-          {
-            "itemId": 274,
-            "price": 20,
-            "stock": 5
-          },
-          {
-            "itemId": 280,
-            "price": 90,
-            "stock": 5
-          },
-          {
-            "itemId": 281,
-            "price": 150,
-            "stock": 5
-          },
-          {
-            "itemId": 270,
-            "price": 2,
-            "stock": 300
-          },
-          {
-            "itemId": 410,
-            "price": 50,
-            "stock": 5
-          }
-        ],
-        "restockTicks": 30
       },
       "name": "Robert"
     },
@@ -550,110 +498,6 @@
           0.5333333333333333
         ],
         "shirtColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ]
-      },
-      "attackAnim": "attack_1h_slash"
-    },
-    {
-      "id": 56,
-      "npcId": 5,
-      "x": 201.5,
-      "z": 205.5,
-      "wanderRange": 3,
-      "appearance": {
-        "shirtColor": 12,
-        "pantsColor": 0,
-        "shoesColor": 0,
-        "hairColor": 0,
-        "beltColor": 1,
-        "skinColor": 0,
-        "hairStyle": 0
-      },
-      "equipment": [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
-      "name": "Skeleton",
-      "customColors": {
-        "shirtColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "skinColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "hairColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "shoesColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ]
-      },
-      "attackAnim": "attack_1h_slash"
-    },
-    {
-      "id": 57,
-      "npcId": 5,
-      "x": 200.5,
-      "z": 209.5,
-      "wanderRange": 3,
-      "appearance": {
-        "shirtColor": 12,
-        "pantsColor": 0,
-        "shoesColor": 0,
-        "hairColor": 0,
-        "beltColor": 1,
-        "skinColor": 0,
-        "hairStyle": 0
-      },
-      "equipment": [
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0,
-        0
-      ],
-      "name": "Skeleton",
-      "customColors": {
-        "shirtColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "skinColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "hairColor": [
-          0.5333333333333333,
-          0.5333333333333333,
-          0.5333333333333333
-        ],
-        "shoesColor": [
           0.5333333333333333,
           0.5333333333333333,
           0.5333333333333333
@@ -2742,8 +2586,8 @@
     {
       "id": 143,
       "npcId": 105,
-      "x": 226.5,
-      "z": 116.5,
+      "x": 200.5,
+      "z": 214.5,
       "wanderRange": 3,
       "aggressive": true,
       "appearance": {
@@ -2772,9 +2616,9 @@
     },
     {
       "id": 144,
-      "npcId": 107,
-      "x": 234.5,
-      "z": 111.5,
+      "npcId": 106,
+      "x": 202.5,
+      "z": 208.5,
       "wanderRange": 3,
       "aggressive": true,
       "appearance": {
@@ -2804,8 +2648,8 @@
     {
       "id": 145,
       "npcId": 107,
-      "x": 245.5,
-      "z": 110.5,
+      "x": 196.5,
+      "z": 209.5,
       "wanderRange": 3,
       "aggressive": true,
       "appearance": {
