@@ -3240,7 +3240,7 @@
     "description": "A bar of crimson metal.",
     "stackable": false,
     "equippable": false,
-    "value": 280,
+    "value": 480,
     "model": "/assets/models/bars/CrimsonBar.glb"
   },
   {
@@ -3249,7 +3249,7 @@
     "description": "A bar of malachor metal.",
     "stackable": false,
     "equippable": false,
-    "value": 280,
+    "value": 960,
     "model": "/assets/models/bars/MalachorBar.glb"
   },
   {
@@ -3261,12 +3261,12 @@
     "equipSlot": "weapon",
     "attackSpeed": 5,
     "weaponStyle": "slash",
-    "slashAttack": 20,
-    "meleeStrength": 15,
-    "value": 500,
+    "slashAttack": 24,
+    "meleeStrength": 18,
+    "value": 980,
     "toolType": "axe",
-    "toolLevel": 35,
-    "toolBonus": 4,
+    "toolLevel": 45,
+    "toolBonus": 5,
     "model": "/assets/equipment/Tools/Crimson axe.glb"
   },
   {
@@ -3278,12 +3278,12 @@
     "equipSlot": "weapon",
     "attackSpeed": 5,
     "weaponStyle": "crush",
-    "crushAttack": 16,
-    "meleeStrength": 12,
-    "value": 480,
+    "crushAttack": 20,
+    "meleeStrength": 15,
+    "value": 960,
     "toolType": "pickaxe",
-    "toolLevel": 35,
-    "toolBonus": 4,
+    "toolLevel": 45,
+    "toolBonus": 5,
     "model": "/assets/equipment/Tools/CrimsonPickaxe.glb"
   },
   {
@@ -3293,15 +3293,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/weapon/CrimsonDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
-    "stabAttack": 20,
-    "slashAttack": 8,
-    "meleeStrength": 12,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabAttack": 25,
+    "slashAttack": 10,
+    "meleeStrength": 15
   },
   {
     "id": 315,
@@ -3310,15 +3310,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/weapon/CrimsonSword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "stabAttack": 8,
-    "slashAttack": 28,
-    "meleeStrength": 20,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabAttack": 10,
+    "slashAttack": 35,
+    "meleeStrength": 25
   },
   {
     "id": 316,
@@ -3327,14 +3327,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/weapon/CrimsonMace.glb",
     "weaponStyle": "crush",
     "attackSpeed": 4,
-    "crushAttack": 24,
-    "meleeStrength": 20,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "crushAttack": 30,
+    "meleeStrength": 25
   },
   {
     "id": 317,
@@ -3343,14 +3343,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 720,
+    "value": 1440,
     "model": "/assets/equipment/weapon/CrimsonScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "slashAttack": 36,
-    "meleeStrength": 28,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "slashAttack": 45,
+    "meleeStrength": 35
   },
   {
     "id": 318,
@@ -3359,18 +3359,18 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/body/CrimsonCuirass.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/CrimsonCuirassWoman.glb"
     },
-    "stabDefence": 32,
-    "slashDefence": 40,
-    "crushDefence": 24,
-    "rangedDefence": 32,
     "bodyHideStyle": "chain",
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 40,
+    "slashDefence": 50,
+    "crushDefence": 30,
+    "rangedDefence": 40
   },
   {
     "id": 319,
@@ -3379,15 +3379,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/weapon/CrimsonBattleaxe.glb",
     "weaponStyle": "crush",
     "attackSpeed": 6,
-    "slashAttack": 24,
-    "crushAttack": 48,
-    "meleeStrength": 56,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "slashAttack": 30,
+    "crushAttack": 60,
+    "meleeStrength": 70
   },
   {
     "id": 320,
@@ -3396,15 +3396,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/weapon/Crimson2hsword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 7,
     "twoHanded": true,
-    "slashAttack": 56,
-    "meleeStrength": 96,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "slashAttack": 70,
+    "meleeStrength": 120
   },
   {
     "id": 321,
@@ -3413,13 +3413,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/head/CrimsonMedHelm.glb",
-    "stabDefence": 12,
-    "slashDefence": 16,
-    "crushDefence": 8,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 15,
+    "slashDefence": 20,
+    "crushDefence": 10
   },
   {
     "id": 322,
@@ -3428,13 +3428,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 720,
+    "value": 1440,
     "model": "/assets/equipment/head/CrimsonFullHelm.glb",
-    "stabDefence": 20,
-    "slashDefence": 24,
-    "crushDefence": 16,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 25,
+    "slashDefence": 30,
+    "crushDefence": 20
   },
   {
     "id": 323,
@@ -3443,14 +3443,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 720,
+    "value": 1440,
     "model": "/assets/equipment/shield/CrimsonSquareShield.glb",
-    "stabDefence": 16,
-    "slashDefence": 20,
-    "crushDefence": 16,
-    "rangedDefence": 12,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 20,
+    "slashDefence": 25,
+    "crushDefence": 20,
+    "rangedDefence": 15
   },
   {
     "id": 324,
@@ -3459,14 +3459,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/shield/CrimsonKiteshield.glb",
-    "stabDefence": 28,
-    "slashDefence": 32,
-    "crushDefence": 28,
-    "rangedDefence": 20,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 35,
+    "slashDefence": 40,
+    "crushDefence": 35,
+    "rangedDefence": 25
   },
   {
     "id": 325,
@@ -3475,17 +3475,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/legs/CrimsonPlatelegs.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/legs/female/CrimsonPlatelegsWoman.glb"
     },
-    "stabDefence": 24,
-    "slashDefence": 28,
-    "crushDefence": 20,
-    "rangedDefence": 20,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 30,
+    "slashDefence": 35,
+    "crushDefence": 25,
+    "rangedDefence": 25
   },
   {
     "id": 326,
@@ -3494,17 +3494,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1800,
+    "value": 3600,
     "model": "/assets/equipment/body/CrimsonPlatebody.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/CrimsonPlatebodyWoman.glb"
     },
-    "stabDefence": 56,
-    "slashDefence": 64,
-    "crushDefence": 48,
-    "rangedDefence": 56,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 70,
+    "slashDefence": 80,
+    "crushDefence": 60,
+    "rangedDefence": 70
   },
   {
     "id": 327,
@@ -3515,12 +3515,12 @@
     "equipSlot": "weapon",
     "attackSpeed": 5,
     "weaponStyle": "slash",
-    "slashAttack": 20,
-    "meleeStrength": 15,
-    "value": 500,
+    "slashAttack": 28,
+    "meleeStrength": 21,
+    "value": 1940,
     "toolType": "axe",
-    "toolLevel": 35,
-    "toolBonus": 4,
+    "toolLevel": 55,
+    "toolBonus": 6,
     "model": "/assets/equipment/Tools/Malachor axe.glb"
   },
   {
@@ -3532,12 +3532,12 @@
     "equipSlot": "weapon",
     "attackSpeed": 5,
     "weaponStyle": "crush",
-    "crushAttack": 16,
-    "meleeStrength": 12,
-    "value": 480,
+    "crushAttack": 24,
+    "meleeStrength": 18,
+    "value": 1920,
     "toolType": "pickaxe",
-    "toolLevel": 35,
-    "toolBonus": 4,
+    "toolLevel": 55,
+    "toolBonus": 6,
     "model": "/assets/equipment/Tools/MalachorPickaxe.glb"
   },
   {
@@ -3547,15 +3547,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/weapon/MalachorDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
-    "stabAttack": 20,
-    "slashAttack": 8,
-    "meleeStrength": 12,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabAttack": 30,
+    "slashAttack": 12,
+    "meleeStrength": 18
   },
   {
     "id": 330,
@@ -3564,15 +3564,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/weapon/MalachorSword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "stabAttack": 8,
-    "slashAttack": 28,
-    "meleeStrength": 20,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabAttack": 12,
+    "slashAttack": 42,
+    "meleeStrength": 30
   },
   {
     "id": 331,
@@ -3581,14 +3581,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/weapon/MalachorMace.glb",
     "weaponStyle": "crush",
     "attackSpeed": 4,
-    "crushAttack": 24,
-    "meleeStrength": 20,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "crushAttack": 36,
+    "meleeStrength": 30
   },
   {
     "id": 332,
@@ -3597,14 +3597,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 720,
+    "value": 2880,
     "model": "/assets/equipment/weapon/MalachorScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "slashAttack": 36,
-    "meleeStrength": 28,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "slashAttack": 54,
+    "meleeStrength": 42
   },
   {
     "id": 333,
@@ -3613,18 +3613,18 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/body/MalachorCuirass.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/MalachorCuirassWoman.glb"
     },
-    "stabDefence": 32,
-    "slashDefence": 40,
-    "crushDefence": 24,
-    "rangedDefence": 32,
     "bodyHideStyle": "chain",
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 48,
+    "slashDefence": 60,
+    "crushDefence": 36,
+    "rangedDefence": 48
   },
   {
     "id": 334,
@@ -3633,15 +3633,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/weapon/MalachorBattleaxe.glb",
     "weaponStyle": "crush",
     "attackSpeed": 6,
-    "slashAttack": 24,
-    "crushAttack": 48,
-    "meleeStrength": 56,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "slashAttack": 36,
+    "crushAttack": 72,
+    "meleeStrength": 84
   },
   {
     "id": 335,
@@ -3650,15 +3650,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/weapon/Malachor2hsword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 7,
     "twoHanded": true,
-    "slashAttack": 56,
-    "meleeStrength": 96,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "slashAttack": 84,
+    "meleeStrength": 144
   },
   {
     "id": 336,
@@ -3667,13 +3667,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/head/MalachorMedHelm.glb",
-    "stabDefence": 12,
-    "slashDefence": 16,
-    "crushDefence": 8,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 18,
+    "slashDefence": 24,
+    "crushDefence": 12
   },
   {
     "id": 337,
@@ -3682,13 +3682,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 720,
+    "value": 2880,
     "model": "/assets/equipment/head/MalachorFullHelm.glb",
-    "stabDefence": 20,
-    "slashDefence": 24,
-    "crushDefence": 16,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 30,
+    "slashDefence": 36,
+    "crushDefence": 24
   },
   {
     "id": 338,
@@ -3697,14 +3697,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 720,
+    "value": 2880,
     "model": "/assets/equipment/shield/MalachorSquareShield.glb",
-    "stabDefence": 16,
-    "slashDefence": 20,
-    "crushDefence": 16,
-    "rangedDefence": 12,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 24,
+    "slashDefence": 30,
+    "crushDefence": 24,
+    "rangedDefence": 18
   },
   {
     "id": 339,
@@ -3713,14 +3713,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/shield/MalachorKiteshield.glb",
-    "stabDefence": 28,
-    "slashDefence": 32,
-    "crushDefence": 28,
-    "rangedDefence": 20,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 42,
+    "slashDefence": 48,
+    "crushDefence": 42,
+    "rangedDefence": 30
   },
   {
     "id": 340,
@@ -3729,17 +3729,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/legs/MalachorPlatelegs.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/legs/female/MalachorPlatelegsWoman.glb"
     },
-    "stabDefence": 24,
-    "slashDefence": 28,
-    "crushDefence": 20,
-    "rangedDefence": 20,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 36,
+    "slashDefence": 42,
+    "crushDefence": 30,
+    "rangedDefence": 30
   },
   {
     "id": 341,
@@ -3748,17 +3748,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1800,
+    "value": 7200,
     "model": "/assets/equipment/body/MalachorPlatebody.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/MalachorPlatebodyWoman.glb"
     },
-    "stabDefence": 56,
-    "slashDefence": 64,
-    "crushDefence": 48,
-    "rangedDefence": 56,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 84,
+    "slashDefence": 96,
+    "crushDefence": 72,
+    "rangedDefence": 84
   },
   {
     "id": 342,
@@ -4918,7 +4918,7 @@
     "description": "A lump of crimsonite ore.",
     "stackable": false,
     "equippable": false,
-    "value": 112
+    "value": 192
   },
   {
     "id": 408,
@@ -4926,7 +4926,7 @@
     "description": "A lump of malachite ore.",
     "stackable": false,
     "equippable": false,
-    "value": 112
+    "value": 384
   },
   {
     "id": 409,
@@ -4980,15 +4980,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/weapon/CrimsonDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
-    "stabAttack": 23,
-    "slashAttack": 11,
-    "meleeStrength": 14,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabAttack": 28,
+    "slashAttack": 13,
+    "meleeStrength": 17
   },
   {
     "id": 414,
@@ -4997,15 +4997,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/weapon/CrimsonSword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "stabAttack": 11,
-    "slashAttack": 31,
-    "meleeStrength": 22,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabAttack": 13,
+    "slashAttack": 38,
+    "meleeStrength": 27
   },
   {
     "id": 415,
@@ -5014,14 +5014,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/weapon/CrimsonMace.glb",
     "weaponStyle": "crush",
     "attackSpeed": 4,
-    "crushAttack": 27,
-    "meleeStrength": 22,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "crushAttack": 33,
+    "meleeStrength": 27
   },
   {
     "id": 416,
@@ -5030,14 +5030,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 720,
+    "value": 1440,
     "model": "/assets/equipment/weapon/CrimsonScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "slashAttack": 39,
-    "meleeStrength": 30,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "slashAttack": 48,
+    "meleeStrength": 37
   },
   {
     "id": 417,
@@ -5046,18 +5046,18 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/body/CrimsonCuirass.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/CrimsonCuirassWoman.glb"
     },
-    "stabDefence": 35,
-    "slashDefence": 43,
-    "crushDefence": 27,
-    "rangedDefence": 35,
     "bodyHideStyle": "chain",
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 43,
+    "slashDefence": 53,
+    "crushDefence": 33,
+    "rangedDefence": 43
   },
   {
     "id": 418,
@@ -5066,15 +5066,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/weapon/CrimsonBattleaxe.glb",
     "weaponStyle": "crush",
     "attackSpeed": 6,
-    "slashAttack": 27,
-    "crushAttack": 51,
-    "meleeStrength": 58,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "slashAttack": 33,
+    "crushAttack": 63,
+    "meleeStrength": 72
   },
   {
     "id": 419,
@@ -5083,15 +5083,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/weapon/Crimson2hsword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 7,
     "twoHanded": true,
-    "slashAttack": 59,
-    "meleeStrength": 98,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "slashAttack": 73,
+    "meleeStrength": 122
   },
   {
     "id": 420,
@@ -5100,13 +5100,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 360,
+    "value": 720,
     "model": "/assets/equipment/head/CrimsonMedHelm.glb",
-    "stabDefence": 15,
-    "slashDefence": 19,
-    "crushDefence": 11,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 18,
+    "slashDefence": 23,
+    "crushDefence": 13
   },
   {
     "id": 421,
@@ -5115,13 +5115,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 720,
+    "value": 1440,
     "model": "/assets/equipment/head/CrimsonFullHelm.glb",
-    "stabDefence": 23,
-    "slashDefence": 27,
-    "crushDefence": 19,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 28,
+    "slashDefence": 33,
+    "crushDefence": 23
   },
   {
     "id": 422,
@@ -5130,14 +5130,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 720,
+    "value": 1440,
     "model": "/assets/equipment/shield/CrimsonSquareShield.glb",
-    "stabDefence": 19,
-    "slashDefence": 23,
-    "crushDefence": 19,
-    "rangedDefence": 15,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 23,
+    "slashDefence": 28,
+    "crushDefence": 23,
+    "rangedDefence": 18
   },
   {
     "id": 423,
@@ -5146,14 +5146,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/shield/CrimsonKiteshield.glb",
-    "stabDefence": 31,
-    "slashDefence": 35,
-    "crushDefence": 31,
-    "rangedDefence": 23,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 38,
+    "slashDefence": 43,
+    "crushDefence": 38,
+    "rangedDefence": 28
   },
   {
     "id": 424,
@@ -5162,17 +5162,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
-    "value": 1080,
+    "value": 2160,
     "model": "/assets/equipment/legs/CrimsonPlatelegs.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/legs/female/CrimsonPlatelegsWoman.glb"
     },
-    "stabDefence": 27,
-    "slashDefence": 31,
-    "crushDefence": 23,
-    "rangedDefence": 23,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 33,
+    "slashDefence": 38,
+    "crushDefence": 28,
+    "rangedDefence": 28
   },
   {
     "id": 425,
@@ -5181,17 +5181,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1800,
+    "value": 3600,
     "model": "/assets/equipment/body/CrimsonPlatebody.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/CrimsonPlatebodyWoman.glb"
     },
-    "stabDefence": 59,
-    "slashDefence": 67,
-    "crushDefence": 51,
-    "rangedDefence": 59,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 45,
+    "stabDefence": 73,
+    "slashDefence": 83,
+    "crushDefence": 63,
+    "rangedDefence": 73
   },
   {
     "id": 426,
@@ -5200,15 +5200,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/weapon/MalachorDagger.glb",
     "weaponStyle": "stab",
     "attackSpeed": 3,
-    "stabAttack": 23,
-    "slashAttack": 11,
-    "meleeStrength": 14,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabAttack": 33,
+    "slashAttack": 15,
+    "meleeStrength": 20
   },
   {
     "id": 427,
@@ -5217,15 +5217,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/weapon/MalachorSword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "stabAttack": 11,
-    "slashAttack": 31,
-    "meleeStrength": 22,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabAttack": 15,
+    "slashAttack": 45,
+    "meleeStrength": 32
   },
   {
     "id": 428,
@@ -5234,14 +5234,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/weapon/MalachorMace.glb",
     "weaponStyle": "crush",
     "attackSpeed": 4,
-    "crushAttack": 27,
-    "meleeStrength": 22,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "crushAttack": 39,
+    "meleeStrength": 32
   },
   {
     "id": 429,
@@ -5250,14 +5250,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 720,
+    "value": 2880,
     "model": "/assets/equipment/weapon/MalachorScimitar.glb",
     "weaponStyle": "slash",
     "attackSpeed": 4,
-    "slashAttack": 39,
-    "meleeStrength": 30,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "slashAttack": 57,
+    "meleeStrength": 44
   },
   {
     "id": 430,
@@ -5266,18 +5266,18 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/body/MalachorCuirass.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/MalachorCuirassWoman.glb"
     },
-    "stabDefence": 35,
-    "slashDefence": 43,
-    "crushDefence": 27,
-    "rangedDefence": 35,
     "bodyHideStyle": "chain",
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 51,
+    "slashDefence": 63,
+    "crushDefence": 39,
+    "rangedDefence": 51
   },
   {
     "id": 431,
@@ -5286,15 +5286,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/weapon/MalachorBattleaxe.glb",
     "weaponStyle": "crush",
     "attackSpeed": 6,
-    "slashAttack": 27,
-    "crushAttack": 51,
-    "meleeStrength": 58,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "slashAttack": 39,
+    "crushAttack": 75,
+    "meleeStrength": 86
   },
   {
     "id": 432,
@@ -5303,15 +5303,15 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "weapon",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/weapon/Malachor2hsword.glb",
     "weaponStyle": "slash",
     "attackSpeed": 7,
     "twoHanded": true,
-    "slashAttack": 59,
-    "meleeStrength": 98,
     "equipSkill": "weaponry",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "slashAttack": 87,
+    "meleeStrength": 146
   },
   {
     "id": 433,
@@ -5320,13 +5320,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 360,
+    "value": 1440,
     "model": "/assets/equipment/head/MalachorMedHelm.glb",
-    "stabDefence": 15,
-    "slashDefence": 19,
-    "crushDefence": 11,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 21,
+    "slashDefence": 27,
+    "crushDefence": 15
   },
   {
     "id": 434,
@@ -5335,13 +5335,13 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "value": 720,
+    "value": 2880,
     "model": "/assets/equipment/head/MalachorFullHelm.glb",
-    "stabDefence": 23,
-    "slashDefence": 27,
-    "crushDefence": 19,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 33,
+    "slashDefence": 39,
+    "crushDefence": 27
   },
   {
     "id": 435,
@@ -5350,14 +5350,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 720,
+    "value": 2880,
     "model": "/assets/equipment/shield/MalachorSquareShield.glb",
-    "stabDefence": 19,
-    "slashDefence": 23,
-    "crushDefence": 19,
-    "rangedDefence": 15,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 27,
+    "slashDefence": 33,
+    "crushDefence": 27,
+    "rangedDefence": 21
   },
   {
     "id": 436,
@@ -5366,14 +5366,14 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "shield",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/shield/MalachorKiteshield.glb",
-    "stabDefence": 31,
-    "slashDefence": 35,
-    "crushDefence": 31,
-    "rangedDefence": 23,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 45,
+    "slashDefence": 51,
+    "crushDefence": 45,
+    "rangedDefence": 33
   },
   {
     "id": 437,
@@ -5382,17 +5382,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "legs",
-    "value": 1080,
+    "value": 4320,
     "model": "/assets/equipment/legs/MalachorPlatelegs.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/legs/female/MalachorPlatelegsWoman.glb"
     },
-    "stabDefence": 27,
-    "slashDefence": 31,
-    "crushDefence": 23,
-    "rangedDefence": 23,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 39,
+    "slashDefence": 45,
+    "crushDefence": 33,
+    "rangedDefence": 33
   },
   {
     "id": 438,
@@ -5401,17 +5401,17 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "body",
-    "value": 1800,
+    "value": 7200,
     "model": "/assets/equipment/body/MalachorPlatebody.glb",
     "bodyTypeModels": {
       "1": "/assets/equipment/body/female/MalachorPlatebodyWoman.glb"
     },
-    "stabDefence": 59,
-    "slashDefence": 67,
-    "crushDefence": 51,
-    "rangedDefence": 59,
     "equipSkill": "defence",
-    "levelRequired": 35
+    "levelRequired": 55,
+    "stabDefence": 87,
+    "slashDefence": 99,
+    "crushDefence": 75,
+    "rangedDefence": 87
   },
   {
     "id": 439,
