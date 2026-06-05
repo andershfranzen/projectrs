@@ -152,7 +152,7 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   },
   'bookcase2': {
     name: 'Bookcase',
-    examineText: 'Shelves packed with dusty old books.',
+    examineText: 'Someone alphabetised this by confidence.',
   },
   'Bucket2': {
     name: 'Bucket',
@@ -216,7 +216,7 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   },
   'Fountain_2': {
     name: 'Fountain',
-    examineText: 'A stone fountain. The water looks surprisingly clear.',
+    examineText: 'The water reflects someone who should probably get back to work.',
   },
   'helm shop sign': {
     name: 'Helmet shop sign',
@@ -232,7 +232,7 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   },
   'OnePersonBed1': {
     name: 'Bed',
-    examineText: 'A narrow bed. It looks more useful than comfortable.',
+    examineText: "A bed with the exact shape of a bad night's sleep.",
   },
   'ranged shop sign': {
     name: 'Ranged shop sign',

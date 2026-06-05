@@ -71,6 +71,9 @@ export enum ClientOpcode {
   /** Toggle player auto-retaliation against NPCs. Values: [enabled] where
    *  enabled is 0 or 1. Server owns the actual counterattack decision. */
   PLAYER_SET_AUTO_RETALIATE = 47,
+  /** Examine an NPC/mob. Values: [npcEntityId]. Server validates visibility
+   *  and current adjacency, then replies over system chat with authored text. */
+  PLAYER_EXAMINE_NPC = 48,
   MAP_READY = 50,
   SET_APPEARANCE = 60,
   /** Close the appearance editor without saving changes.

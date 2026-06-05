@@ -9,12 +9,12 @@ test('filler scenery has clean display names and authored examine text', () => {
   expect(objectDefIdForPlacedAsset('bookcase2')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
   expect(sceneryExamineMetaForAsset('bookcase2')).toEqual({
     name: 'Bookcase',
-    examineText: 'Shelves packed with dusty old books.',
+    examineText: 'Someone alphabetised this by confidence.',
   });
 
   expect(objectDefIdForPlacedAsset('OnePersonBed1')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
   expect(sceneryExamineMetaForAsset('OnePersonBed1')?.name).toBe('Bed');
-  expect(sceneryExamineMetaForAsset('OnePersonBed1')?.examineText).toBe('A narrow bed. It looks more useful than comfortable.');
+  expect(sceneryExamineMetaForAsset('OnePersonBed1')?.examineText).toBe("A bed with the exact shape of a bad night's sleep.");
 
   expect(objectDefIdForPlacedAsset('bush1')).toBe(GENERIC_SCENERY_OBJECT_DEF_ID);
   expect(sceneryExamineMetaForAsset('bush1')).toEqual({
@@ -23,6 +23,11 @@ test('filler scenery has clean display names and authored examine text', () => {
   });
   expect(sceneryExamineMetaForAsset('bush2')?.examineText).toBe('A scruffy roadside bush, dusty at the roots and stubbornly alive.');
   expect(sceneryExamineMetaForAsset('bush3')?.examineText).toBe('George W.');
+
+  expect(sceneryExamineMetaForAsset('Fountain_2')).toEqual({
+    name: 'Fountain',
+    examineText: 'The water reflects someone who should probably get back to work.',
+  });
 });
 
 test('tree assets resolve to the right harvestable object definitions', () => {

@@ -4741,12 +4741,18 @@ export class GameManager {
       // Talk-to handles all three (dialogue → priority on server, else
       // falls through to shop, then bank). One label keeps the menu tidy.
       const verb = (flags & 1) !== 0 ? 'Talk-to' : 'Trade';
-      return [{ label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) }];
+      return [
+        { label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) },
+        { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
+      ];
     }
 
     const lvl = this.npcLevelFor(entityId, npcDefId);
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
-    return [{ label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) }];
+    return [
+      { label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) },
+      { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
+    ];
   }
 
   private findGroundItemIdFromPick(pickedMesh: TransformNode, meshName: string): number | null {
@@ -5514,6 +5520,12 @@ export class GameManager {
     if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
     this.resumeTalkToNpc(npcEntityId);
+  }
+
+  private examineNpc(npcEntityId: number): void {
+    const target = this.entities.npcTargets.get(npcEntityId);
+    if (!target || target.floor !== this.currentFloor) return;
+    this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EXAMINE_NPC, npcEntityId));
   }
 
   private resumeTalkToNpc(npcEntityId: number): void {

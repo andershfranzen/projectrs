@@ -152,6 +152,7 @@ export function isHighQualityItem(def: Pick<ItemDef, 'name'> | null | undefined)
 export interface NpcDef {
   id: number;
   name: string;
+  examineText?: string;
   /** Optional render/profile alias. Lets authored variants reuse the 3D model
    *  or humanoid profile registered for another NPC id without adding code. */
   modelNpcId?: number;

@@ -31,13 +31,24 @@ test('harvestable vegetation has intentional examine text', () => {
     'Dead Tree': 'A dead tree, grey and splintered. The dry branches look ready to snap under an axe.',
     'Maple Tree': 'A maple with a warm-coloured trunk and close, clean grain. The logs should carve neatly.',
     'Yew Tree': 'An old yew with dark needles and dense heartwood. A patient woodcutter could make something fine from it.',
-    'Rice Plant': 'Slender rice stalks hang heavy with pale grains. Harvest them gently before the field scatters.',
-    'Potato Plant': 'A low potato plant with healthy leaves. The useful part is hidden in the soil below.',
-    'Cauliflower Plant': 'Broad leaves cradle a pale cauliflower head. It looks ready to pull before it toughens.',
-    'Wheat Plant': 'A small stand of ripe wheat, dry and golden at the tips. It should thresh into useful grain.',
+    'Rice Plant': 'Patiently becoming dinner.',
+    'Potato Plant': 'Patiently becoming dinner.',
+    'Cauliflower Plant': 'Patiently becoming dinner.',
+    'Wheat Plant': 'Patiently becoming dinner.',
   };
 
   for (const [name, examineText] of Object.entries(expectedText)) {
     expect(byName.get(name)?.examineText).toBe(examineText);
   }
+});
+
+test('selected scenery stations keep their easter egg examine text', () => {
+  const objects = JSON.parse(readFileSync('server/data/objects.json', 'utf8')) as Array<{
+    name: string;
+    examineText?: string;
+  }>;
+  const byName = new Map(objects.map(obj => [obj.name, obj]));
+
+  expect(byName.get('Well')?.examineText).toBe('The water reflects someone who should probably get back to work.');
+  expect(byName.get('Pottery Wheel')?.examineText).toBe('The wheel spins clay into pottery and patience into regret.');
 });

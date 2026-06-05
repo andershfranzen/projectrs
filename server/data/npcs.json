@@ -2,6 +2,7 @@
   {
     "id": 1,
     "name": "Chicken",
+    "examineText": "A wary chicken pecking at whatever the ground is willing to give up.",
     "health": 6,
     "attack": 1,
     "defence": 1,
@@ -36,6 +37,7 @@
   {
     "id": 23,
     "name": "Rooster",
+    "examineText": "A proud rooster, strutting like dawn itself reports to him.",
     "health": 7,
     "attack": 2,
     "defence": 1,
@@ -70,6 +72,7 @@
   {
     "id": 10,
     "name": "Cow",
+    "examineText": "A gentle cow with the calm confidence of something that has never paid rent.",
     "health": 10,
     "attack": 2,
     "defence": 2,
@@ -104,6 +107,7 @@
   {
     "id": 24,
     "name": "Bull",
+    "examineText": "A heavy bull with a short temper and no interest in negotiation.",
     "health": 22,
     "attack": 6,
     "defence": 4,
@@ -138,6 +142,7 @@
   {
     "id": 25,
     "name": "Bear",
+    "examineText": "A broad-shouldered bear. The sensible part of you suggests distance.",
     "health": 45,
     "attack": 21,
     "defence": 22,
@@ -179,6 +184,7 @@
   {
     "id": 26,
     "name": "Black Bear",
+    "examineText": "A black bear with watchful eyes and the patience to wait you out.",
     "health": 56,
     "attack": 35,
     "defence": 27,
@@ -215,6 +221,7 @@
   {
     "id": 27,
     "name": "Bear Cub",
+    "examineText": "A young bear cub, curious enough to be worrying.",
     "health": 20,
     "attack": 6,
     "defence": 4,
@@ -251,6 +258,7 @@
   {
     "id": 2,
     "name": "Giant Rat",
+    "examineText": "A rat grown far beyond anyone's comfort.",
     "health": 15,
     "attack": 4,
     "defence": 2,
@@ -285,6 +293,7 @@
   {
     "id": 3,
     "name": "Goblin",
+    "examineText": "A goblin with more nerve than plan.",
     "health": 15,
     "attack": 4,
     "defence": 3,
@@ -319,6 +328,7 @@
   {
     "id": 4,
     "name": "Wolf",
+    "examineText": "A lean wolf watching for the smallest mistake.",
     "health": 25,
     "attack": 7,
     "defence": 5,
@@ -353,6 +363,7 @@
   {
     "id": 5,
     "name": "Skeleton",
+    "examineText": "Still standing, which feels frankly unnecessary.",
     "health": 30,
     "attack": 10,
     "defence": 8,
@@ -393,6 +404,7 @@
   {
     "id": 6,
     "name": "Spider",
+    "examineText": "A spider skittering with too many legs and too much confidence.",
     "health": 15,
     "attack": 3,
     "defence": 2,
@@ -417,6 +429,7 @@
   {
     "id": 104,
     "name": "Black Spider",
+    "examineText": "A black spider with a glossy shell and a very convincing glare.",
     "modelNpcId": 22,
     "health": 28,
     "attack": 22,
@@ -442,6 +455,7 @@
   {
     "id": 22,
     "name": "Mother Spider",
+    "examineText": "The matriarch of the nest. Everything about her says not today.",
     "health": 46,
     "attack": 40,
     "defence": 29,
@@ -472,6 +486,7 @@
   {
     "id": 7,
     "name": "Guard",
+    "examineText": "A town guard trying very hard to look like this is under control.",
     "health": 40,
     "attack": 21,
     "defence": 32,
@@ -512,6 +527,7 @@
   {
     "id": 8,
     "name": "Shopkeeper",
+    "examineText": "Smiling with the exact warmth of a refund policy.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -627,6 +643,7 @@
   {
     "id": 9,
     "name": "Dark Knight",
+    "examineText": "A dark knight wrapped in armour and bad intentions.",
     "health": 60,
     "attack": 18,
     "defence": 15,
@@ -672,6 +689,7 @@
   {
     "id": 11,
     "name": "Weapon Smith",
+    "examineText": "A weapon smith with hands that know every edge in the room.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -705,6 +723,7 @@
   {
     "id": 12,
     "name": "Armorer",
+    "examineText": "An armorer sizing up dents before they happen.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -733,6 +752,7 @@
   {
     "id": 13,
     "name": "Leg Armorer",
+    "examineText": "A specialist in leg armour, which suddenly feels more important.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -750,6 +770,7 @@
   {
     "id": 14,
     "name": "Shield Smith",
+    "examineText": "A shield smith who believes every problem can be blocked eventually.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -767,6 +788,7 @@
   {
     "id": 15,
     "name": "Camel",
+    "examineText": "A camel chewing thoughtfully, as if judging the whole kingdom.",
     "health": 24,
     "attack": 10,
     "defence": 17,
@@ -822,6 +844,7 @@
   {
     "id": 16,
     "name": "Banker",
+    "examineText": "A banker protected by ledgers, locks, and professional patience.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -902,6 +925,7 @@
   {
     "id": 17,
     "name": "Snow Wolf",
+    "examineText": "A snow wolf with pale fur and colder instincts.",
     "health": 40,
     "attack": 10,
     "defence": 7,
@@ -942,6 +966,7 @@
   {
     "id": 18,
     "name": "Rat",
+    "examineText": "A small rat. It still looks too comfortable here.",
     "health": 5,
     "attack": 1,
     "defence": 1,
@@ -955,6 +980,7 @@
   {
     "id": 19,
     "name": "New Friendly NPC",
+    "examineText": "A friendly face still waiting for a better job title.",
     "health": 30,
     "attack": 1,
     "defence": 1,
@@ -968,6 +994,7 @@
   {
     "id": 20,
     "name": "Farmer",
+    "examineText": "A farmer with soil on his boots and weather in his bones.",
     "health": 14,
     "attack": 5,
     "defence": 3,
@@ -1007,6 +1034,7 @@
   {
     "id": 21,
     "name": "Bill the Stylist",
+    "examineText": "A man who can see your split ends from three tiles away.",
     "health": 50,
     "attack": 1,
     "defence": 1,
@@ -1044,6 +1072,7 @@
   {
     "id": 100,
     "name": "Vampire",
+    "examineText": "A vampire wearing charm like a second cloak.",
     "health": 25,
     "attack": 20,
     "defence": 19,
@@ -1109,6 +1138,7 @@
   {
     "id": 101,
     "name": "Elder Vampire",
+    "examineText": "An elder vampire who has outlived both mercy and fashion.",
     "health": 41,
     "attack": 31,
     "defence": 20,
@@ -1149,6 +1179,7 @@
   {
     "id": 102,
     "name": "Custom Humanoid",
+    "examineText": "A custom-built stranger with a look that says someone is still editing.",
     "health": 10,
     "attack": 3,
     "defence": 2,
@@ -1173,6 +1204,7 @@
   {
     "id": 103,
     "name": "Castle Prisoner",
+    "examineText": "A prisoner counting stones, footsteps, and chances.",
     "health": 12,
     "attack": 1,
     "defence": 1,
@@ -1197,6 +1229,7 @@
   {
     "id": 105,
     "name": "Skeleton Warrior",
+    "examineText": "A skeleton warrior gripping old steel with borrowed purpose.",
     "health": 30,
     "attack": 25,
     "defence": 27,
@@ -1238,6 +1271,7 @@
   {
     "id": 106,
     "name": "Skeleton Warrior",
+    "examineText": "A skeleton warrior standing guard long after the orders stopped making sense.",
     "health": 30,
     "attack": 10,
     "defence": 8,
@@ -1279,6 +1313,7 @@
   {
     "id": 107,
     "name": "Skeleton Warrior",
+    "examineText": "A skeleton warrior with a cracked helm and tireless patience.",
     "health": 30,
     "attack": 18,
     "defence": 13,

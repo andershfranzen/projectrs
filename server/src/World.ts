@@ -3583,6 +3583,23 @@ export class World {
     }
   }
 
+  handlePlayerExamineNpc(playerId: number, npcEntityId: number): void {
+    const player = this.players.get(playerId);
+    const npc = this.npcs.get(npcEntityId);
+    if (!player || !npc || npc.dead) return;
+    if (player.isInterfaceOpen()) return;
+    if (!this.canPlayerTargetNpc(player, npc)) return;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
+
+    if (!this.isPlayerNpcInteractionReachable(player, npc)) {
+      this.sendChatSystem(player, "I can't reach that.");
+      return;
+    }
+
+    player.botStats?.recordActionSignature('examineNpc', npc.npcId, player.position.x, player.position.y);
+    this.sendChatSystem(player, this.npcExamineTextFor(npc));
+  }
+
   handlePlayerTalkNpc(playerId: number, npcEntityId: number): void {
     const player = this.players.get(playerId);
     const npc = this.npcs.get(npcEntityId);
@@ -4631,6 +4648,10 @@ export class World {
         : 'i wish i had something worth sacrificing';
     }
     return obj.examineText || obj.def.examineText || `It's ${obj.displayName}.`;
+  }
+
+  private npcExamineTextFor(npc: Npc): string {
+    return npc.def.examineText || `It's ${npc.displayName}.`;
   }
 
   private depleteObjectFromInteractionEffect(obj: WorldObject, respawnTicks?: number): void {

@@ -284,6 +284,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
       return true;
     case ClientOpcode.PLAYER_ATTACK_NPC:
       return !hasValues(values, 1) || player?.attackTarget?.id !== values[0];
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
     case ClientOpcode.PLAYER_TALK_NPC:
     case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
@@ -346,6 +347,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
     case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
     case ClientOpcode.PLAYER_TALK_NPC:
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
       return { bucket: 'world-action', maxMessages: 6, windowMs: 1000 };
     case ClientOpcode.PLAYER_DROP_ITEM:
     case ClientOpcode.PLAYER_DELETE_ITEM:
@@ -448,6 +450,15 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!npc || npc.dead) return invalid('stale-npc-target');
       if (!world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-npc-target');
       if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-npc-target');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_EXAMINE_NPC: {
+      if (!hasValues(values, 1)) return invalid('missing-examine-npc');
+      const npc = world.npcs.get(values[0]);
+      if (!npc || npc.dead) return invalid('stale-examine-npc');
+      if (!world.canPlayerTargetNpc(player, npc)) return invalid('unreachable-examine-npc');
+      if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(values[0])) return invalid('unseen-examine-npc');
       return OK_PACKET;
     }
 
@@ -1166,6 +1177,13 @@ function handleDecryptedGameSocketMessage(
       if (!hasValues(values, 1)) return;
       const npcEntityId = values[0];
       world.handlePlayerAttackNpc(playerId, npcEntityId);
+      break;
+    }
+
+    case ClientOpcode.PLAYER_EXAMINE_NPC: {
+      if (!hasValues(values, 1)) return;
+      const npcEntityId = values[0];
+      world.handlePlayerExamineNpc(playerId, npcEntityId);
       break;
     }
 

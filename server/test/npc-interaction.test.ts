@@ -199,6 +199,29 @@ describe('NPC interaction reachability', () => {
     expect(world.isPlayerNpcInteractionReachable(adjacent, npc)).toBe(true);
   });
 
+  test('NPC examine requires current adjacency without queueing movement', () => {
+    const player = new Player('tester', 8.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, examineText: 'A guide who knows more than he says.' }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    const messages: string[] = [];
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+
+    world.handlePlayerExamineNpc(player.id, npc.id);
+
+    expect(messages).toEqual(["I can't reach that."]);
+    expect(player.hasMoveQueue()).toBe(false);
+
+    player.moveTo(9.5, 10.5);
+    messages.length = 0;
+
+    world.handlePlayerExamineNpc(player.id, npc.id);
+
+    expect(messages).toEqual(['A guide who knows more than he says.']);
+    expect(player.hasMoveQueue()).toBe(false);
+  });
+
   test('pending talk repaths when the NPC walks away just before arrival', () => {
     const world = makeWorld();
     const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
