@@ -5415,11 +5415,12 @@
   },
   {
     "id": 439,
-    "name": "Ripped Black Cape",
-    "description": "A black cape with a worn and ragged hem.",
+    "name": "Ripped Cape",
+    "description": "A worn cape with a ragged hem.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "cape",
+    "stabAttack": 2,
     "value": 100,
     "model": "/assets/equipment/cape/RippedBlackCape.glb"
   },
