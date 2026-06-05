@@ -71,9 +71,11 @@ function readAccessor(gltf: any, bin: Uint8Array, accIdx: number): { values: num
     default: throw new Error(`unknown componentType ${ctype}`);
   }
   const values: number[][] = [];
+  const elementBytes = stride * bytes;
+  const byteStride = bv.byteStride ?? elementBytes;
   for (let v = 0; v < acc.count; v++) {
     const tuple: number[] = [];
-    for (let c = 0; c < stride; c++) tuple.push(read((v * stride + c) * bytes));
+    for (let c = 0; c < stride; c++) tuple.push(read(v * byteStride + c * bytes));
     values.push(tuple);
   }
   return { values, type: acc.type, count: acc.count };

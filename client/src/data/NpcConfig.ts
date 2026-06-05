@@ -1,3 +1,5 @@
+import { getCharacterModelPath, type NpcDef, type PlayerAppearance } from '@projectrs/shared';
+
 export const NPC_NAMES: Record<number, string> = {
   1: 'Chicken', 2: 'Giant Rat', 3: 'Goblin', 4: 'Wolf',
   5: 'Skeleton', 6: 'Spider', 7: 'Guard', 8: 'Shopkeeper',
@@ -7,6 +9,7 @@ export const NPC_NAMES: Record<number, string> = {
   16: 'Banker',
   21: 'Bill the Stylist',
   17: 'Snow Wolf', 18: 'Rat', 22: 'New Spider', 23: 'Rooster', 24: 'Bull',
+  105: 'Skeleton warrior',
   // 100 was the Custom Humanoid template; it is now reused for in-editor
   // mob authoring (the first session edited it into Vampire). 101 is the
   // permanent blank baseline. To avoid the "lost my template" issue going
@@ -85,9 +88,15 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
  *  profile doubles as the registry of "use the player rig for this NPC."
  *  `stationary` is a legacy authoring hint; the client only skips walk anims
  *  when the server NPC def has `stationary: true`. `combat` adds melee anims. */
-export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; combat?: boolean }> = {
+export interface NpcCustomizableProfile {
+  stationary: boolean;
+  combat?: boolean;
+  modelPath?: string;
+}
+
+export const NPC_CUSTOMIZABLE_PROFILE: Record<number, NpcCustomizableProfile> = {
   3:  { stationary: false, combat: true },  // Goblin
-  5:  { stationary: false, combat: true },  // Skeleton
+  5:  { stationary: false, combat: true, modelPath: '/models/npcs/skeleton.glb' },  // Skeleton
   7:  { stationary: false, combat: true },  // Guard
   8:  { stationary: true },                 // Shopkeeper
   9:  { stationary: false, combat: true },  // Dark Knight
@@ -104,3 +113,35 @@ export const NPC_CUSTOMIZABLE_PROFILE: Record<number, { stationary: boolean; com
   101: { stationary: false, combat: true }, // Elder Vampire
   102: { stationary: false, combat: true }, // Custom Humanoid (fresh template)
 };
+
+export interface ResolvedNpcVisualConfig {
+  sourceId: number;
+  modelCfg: Npc3DModelEntry | null;
+  profile: NpcCustomizableProfile | null;
+  characterModelPath: string;
+}
+
+export function resolveNpcModelSourceId(
+  defId: number,
+  def?: Pick<NpcDef, 'id' | 'modelNpcId'> | null,
+): number {
+  const raw = Number(def?.modelNpcId);
+  if (Number.isInteger(raw) && raw > 0) return raw;
+  return def?.id ?? defId;
+}
+
+export function resolveNpcVisualConfig(
+  defId: number,
+  def?: Pick<NpcDef, 'id' | 'modelNpcId'> | null,
+  appearance?: Pick<PlayerAppearance, 'bodyType'> | null,
+): ResolvedNpcVisualConfig {
+  const sourceId = resolveNpcModelSourceId(defId, def);
+  const modelCfg = NPC_3D_MODELS[sourceId] ?? null;
+  const profile = NPC_CUSTOMIZABLE_PROFILE[sourceId] ?? NPC_CUSTOMIZABLE_PROFILE[defId] ?? null;
+  return {
+    sourceId,
+    modelCfg,
+    profile,
+    characterModelPath: profile?.modelPath ?? getCharacterModelPath(appearance ?? null),
+  };
+}

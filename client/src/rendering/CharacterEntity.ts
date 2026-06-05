@@ -29,6 +29,7 @@ const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
   'Eye Pupil', 'Eye White', 'Eyebrow', 'Mouth', 'Lip',
   'Eyewhite2', 'Eye colour',
+  'Skeleton_Socket_face',
 ]);
 const APPEARANCE_MATERIAL_ENTRIES = Object.entries(APPEARANCE_MATERIAL_MAP).map(([slot, matNames]) => ({
   slotKey: slot as AppearanceColorSlot,
@@ -609,7 +610,8 @@ export class CharacterEntity {
       for (const mesh of this.meshes) {
         const pbrMat = mesh.material as any;
         if (!pbrMat) continue;
-        const isFaceDetail = FACE_DETAIL_MATS.has(pbrMat.name);
+        const materialBaseName = String(pbrMat.name ?? '').replace(/\.\d+$/, '');
+        const isFaceDetail = FACE_DETAIL_MATS.has(materialBaseName);
         if (isFaceDetail) keepCloseCameraDetailVisible(mesh);
 
         const flat = new StandardMaterial(`${pbrMat.name}_flat`, this.scene);

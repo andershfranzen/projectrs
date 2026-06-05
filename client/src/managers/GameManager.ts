@@ -57,7 +57,7 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
-import { NPC_NAMES } from '../data/NpcConfig';
+import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
 import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
@@ -2924,8 +2924,13 @@ export class GameManager {
       // Live-apply for an already-rendered customizable NPC (admin /npcedit).
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
-        if (sprite.getModelPath() !== getCharacterModelPath(appearance)) {
-          const npcDefId = this.entities.npcDefs.get(entityId);
+        const npcDefId = this.entities.npcDefs.get(entityId);
+        const expectedModelPath = resolveNpcVisualConfig(
+          npcDefId ?? 0,
+          npcDefId != null ? this.npcDefsCache.get(npcDefId) : null,
+          appearance,
+        ).characterModelPath;
+        if (sprite.getModelPath() !== expectedModelPath) {
           const target = this.entities.npcTargets.get(entityId);
           this.entities.disposeNpcSprite(entityId);
           if (npcDefId != null && target) this.tryMaterializeNpc(entityId, npcDefId, target.x, target.z, target.floor, target.y);

@@ -1193,5 +1193,128 @@
         "chance": 0.005
       }
     ]
+  },
+  {
+    "id": 105,
+    "name": "Skeleton warrior",
+    "health": 30,
+    "attack": 25,
+    "defence": 27,
+    "strength": 19,
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": true,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 15,
+        "chance": 0.7
+      },
+      {
+        "itemId": 73,
+        "quantity": 1,
+        "chance": 0.08
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.025
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.002604166667
+      }
+    ],
+    "modelNpcId": 5
+  },
+  {
+    "id": 106,
+    "name": "Skeleton Warrior",
+    "health": 30,
+    "attack": 10,
+    "defence": 8,
+    "strength": 9,
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": true,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 15,
+        "chance": 0.7
+      },
+      {
+        "itemId": 73,
+        "quantity": 1,
+        "chance": 0.08
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.025
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.002604166667
+      }
+    ],
+    "modelNpcId": 5
+  },
+  {
+    "id": 107,
+    "name": "Skeleton Warrior",
+    "health": 30,
+    "attack": 10,
+    "defence": 8,
+    "strength": 9,
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": true,
+    "wanderRange": 3,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 15,
+        "chance": 0.7
+      },
+      {
+        "itemId": 73,
+        "quantity": 1,
+        "chance": 0.08
+      },
+      {
+        "itemId": 226,
+        "quantity": 1,
+        "chance": 0.025
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.002604166667
+      }
+    ],
+    "modelNpcId": 5
   }
 ]

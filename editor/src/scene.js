@@ -37,7 +37,6 @@ import {
   HAIR_COLORS,
   hairStyleChoicesForBodyType,
   normalizeAppearance,
-  getCharacterModelPath,
   CHARACTER_TARGET_HEIGHT,
   CHARACTER_IDLE_ANIM,
   computeCutPolygons,
@@ -81,7 +80,7 @@ import {
 // served through the editor dev server's client-public proxy.
 import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
 import { Npc3DEntity } from '@client/rendering/Npc3DEntity'
-import { NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '@client/data/NpcConfig'
+import { resolveNpcModelSourceId, resolveNpcVisualConfig } from '@client/data/NpcConfig'
 import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
 import { resolveItemModelPath as resolveRuntimeItemModelPath } from '@client/rendering/ItemIcon'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
@@ -442,44 +441,43 @@ function tuneModelLighting(model) {
     return def?.stationary === true || (spawn.wanderRange ?? def?.wanderRange ?? 0) <= 0
   }
 
-  function npcModelSourceId(def) {
-    const raw = Number(def?.modelNpcId)
-    return Number.isInteger(raw) && raw > 0 ? raw : (def?.id ?? 0)
-  }
-
   function npcModelSourceDef(def) {
-    const sourceId = npcModelSourceId(def)
+    const sourceId = resolveNpcModelSourceId(def?.id ?? 0, def)
     return sourceId ? (npcDefById(sourceId) || null) : null
   }
 
   function npcTypeModelLabel(def) {
     if (!def) return ''
-    const sourceId = npcModelSourceId(def)
+    const visual = resolveNpcVisualConfig(def.id, def)
+    const sourceId = visual.sourceId
     const sourceDef = npcModelSourceDef(def)
     const sourceName = sourceDef?.name || `NPC ${sourceId}`
     const own = sourceId === def.id
-    if (NPC_3D_MODELS[sourceId]) return own ? 'Own 3D model' : `Model: ${sourceName}`
-    if (NPC_CUSTOMIZABLE_PROFILE[sourceId]) return own ? 'Humanoid model' : `Humanoid: ${sourceName}`
+    if (visual.modelCfg) return own ? 'Own 3D model' : `Model: ${sourceName}`
+    if (visual.profile?.modelPath) return own ? 'Skinned model' : `Model: ${sourceName}`
+    if (visual.profile) return own ? 'Humanoid model' : `Humanoid: ${sourceName}`
     return own ? 'Default model' : `Model #${sourceId}`
   }
 
-  function npc3DModelConfig(spawn) {
+  function npcPreviewVisualConfig(spawn) {
     if (!spawn) return null
     const def = npcDefById(spawn.npcId)
-    return NPC_3D_MODELS[npcModelSourceId(def)] || null
+    return resolveNpcVisualConfig(spawn.npcId, def, spawn.appearance ?? null)
   }
 
   function shouldShowNpcPreview(spawn) {
-    return !!(npc3DModelConfig(spawn) || spawn?.appearance)
+    const visual = npcPreviewVisualConfig(spawn)
+    return !!(visual?.modelCfg || visual?.profile?.modelPath || spawn?.appearance)
   }
 
   function npcPreviewKey(spawn) {
-    const modelCfg = npc3DModelConfig(spawn)
+    const visual = npcPreviewVisualConfig(spawn)
+    const modelCfg = visual?.modelCfg
     if (modelCfg) {
-      return `npc3d:${npcModelSourceId(npcDefById(spawn?.npcId))}:${modelCfg.file}:${modelCfg.scale}`
+      return `npc3d:${visual.sourceId}:${modelCfg.file}:${modelCfg.scale}:${modelCfg.facingOffsetY ?? 0}`
     }
-    if (spawn?.appearance) {
-      return `character:${getCharacterModelPath(spawn.appearance)}`
+    if (visual?.profile?.modelPath || spawn?.appearance) {
+      return `character:${visual.characterModelPath}`
     }
     return ''
   }
@@ -911,7 +909,8 @@ function tuneModelLighting(model) {
       entry = null
     }
     if (!entry) {
-      const modelCfg = npc3DModelConfig(spawn)
+      const visual = npcPreviewVisualConfig(spawn)
+      const modelCfg = visual?.modelCfg
       const visualScale = npcVisualScale(spawn)
       if (modelCfg) {
         const def = npcDefById(spawn.npcId)
@@ -922,13 +921,14 @@ function tuneModelLighting(model) {
           visualScale,
           originMode: modelCfg.originMode,
           groundOffset: modelCfg.groundOffset,
+          facingOffsetY: modelCfg.facingOffsetY,
           animSpeedRatio: modelCfg.animSpeedRatio,
           preserveAnimationRoles: modelCfg.preserveAnimationRoles,
         })
         entity.setEntityIdMetadata(spawn.id)
         entry = { entity, hiddenNodes: new Set(), kind: 'npc3d', key: previewKey }
       } else {
-        const modelPath = getCharacterModelPath(spawn.appearance)
+        const modelPath = visual.characterModelPath
         const entity = new CharacterEntity(scene, {
           name: `npcPreview_${spawn.id}`,
           modelPath,
@@ -957,7 +957,7 @@ function tuneModelLighting(model) {
     entry.entity.whenReady().then(() => {
       if (npcPreviews.get(spawn.id) !== entry) return
       entry.entity.setFacingAngle(npcFacingAngle(spawn))
-      entry.entity.applyAppearance(spawn.appearance, spawn.customColors ?? null)
+      if (spawn.appearance) entry.entity.applyAppearance(spawn.appearance, spawn.customColors ?? null)
       // Now load gear. Fire-and-forget — errors handled inside.
       void applyEquipmentToPreview(spawn, entry)
     })
@@ -2880,7 +2880,11 @@ let selectedWaterFlowChunk = null
     const bareId = parseInt(text)
     if (Number.isFinite(bareId) && npcDefs.some(def => def.id === bareId)) return bareId
     const lower = text.toLowerCase()
-    return npcDefs.find(def => `${def.name || ''} ${def.id}`.toLowerCase().includes(lower))?.id ?? 0
+    const exactNameMatches = npcDefs.filter(def => String(def.name || '').toLowerCase() === lower)
+    if (exactNameMatches.length === 1) return exactNameMatches[0].id
+    if (exactNameMatches.length > 1) return 0
+    const matches = npcTypeMatches(text)
+    return matches.length === 1 ? matches[0].id : 0
   }
 
   function npcTypeMatches(query) {
@@ -3538,7 +3542,7 @@ let selectedWaterFlowChunk = null
     clone.name = options.name || `${srcDef.name || 'NPC'} variant`
     const sourceModelId = Number.isInteger(options.modelNpcId) && options.modelNpcId > 0
       ? options.modelNpcId
-      : npcModelSourceId(srcDef)
+      : resolveNpcModelSourceId(srcDef.id, srcDef)
     if (sourceModelId > 0) clone.modelNpcId = sourceModelId
 
     if (options.applySpawnOverrides && selectedNpcSpawn?.npcId === srcDef.id) {
@@ -3585,12 +3589,6 @@ let selectedWaterFlowChunk = null
       window.alert('Enter a name for the new NPC type.')
       return
     }
-    const duplicateName = npcDefs.find(def => def.id !== srcDef.id && String(def.name || '').toLowerCase() === name.toLowerCase())
-    if (duplicateName) {
-      window.alert(`"${name}" already exists as NPC #${duplicateName.id}. Pick a unique type name.`)
-      return
-    }
-
     const newDef = duplicateNpcDef(srcDef, {
       name,
       applySpawnOverrides: true,
@@ -3600,7 +3598,7 @@ let selectedWaterFlowChunk = null
     const saveHint = retargetsSelectedSpawn
       ? 'Use Save NPC defs for the new type, then Save Server for the selected spawn.'
       : 'Use Save NPC defs to persist the new type.'
-    showEditorNotice(`Created NPC type #${newDef.id}: ${newDef.name}\nModel source: ${npcTypeModelLabel(newDef)}\n${saveHint}`, 'success', 7000)
+    showEditorNotice(`Created NPC type #${newDef.id}: ${newDef.name}\nDuplicate display names are allowed; use the ID to pick the right variant.\nModel source: ${npcTypeModelLabel(newDef)}\n${saveHint}`, 'success', 7000)
     renderNpcInspector()
     updateNpcPlacementControls()
   }

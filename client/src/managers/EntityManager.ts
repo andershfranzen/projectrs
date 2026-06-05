@@ -9,7 +9,7 @@ import { CharacterEntity } from '../rendering/CharacterEntity';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
-import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
+import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
@@ -179,9 +179,7 @@ export class EntityManager {
     this.npcVisualScales.set(entityId, visualScale);
 
     const def = this.npcDefsCache.get(defId);
-    const modelNpcId = Number.isInteger(def?.modelNpcId) && (def?.modelNpcId ?? 0) > 0
-      ? def!.modelNpcId!
-      : defId;
+    const visualConfig = resolveNpcVisualConfig(defId, def, this.npcAppearances.get(entityId) ?? null);
 
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
@@ -193,7 +191,7 @@ export class EntityManager {
 
     // Dedicated 3D model path (rat, spider, cow, camel). Always preferred when
     // available — these have purpose-built animations.
-    const modelCfg = NPC_3D_MODELS[modelNpcId];
+    const modelCfg = visualConfig.modelCfg;
     if (modelCfg) {
       const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, {
         label: name,
@@ -223,7 +221,7 @@ export class EntityManager {
     // Humanoid NPCs use the same CharacterEntity rig as players, but they do
     // not need every player-only animation. Keep their animation package small
     // so authoring several guards/shopkeepers does not parse 15 GLBs per NPC.
-    const profile = NPC_CUSTOMIZABLE_PROFILE[modelNpcId] ?? NPC_CUSTOMIZABLE_PROFILE[defId];
+    const profile = visualConfig.profile;
     const combat = profile?.combat ?? false;
     // Only skip walk animation when the authoritative NPC def says the NPC
     // cannot move. Some legacy client profiles mark shop/smith NPCs as
@@ -243,7 +241,7 @@ export class EntityManager {
 
     const character = new CharacterEntity(this.scene, {
       name: `npc_${entityId}`,
-      modelPath: getCharacterModelPath(this.npcAppearances.get(entityId) ?? null),
+      modelPath: visualConfig.characterModelPath,
       targetHeight: CHARACTER_TARGET_HEIGHT,
       visualScale,
       tileSize,
