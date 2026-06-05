@@ -21,6 +21,7 @@ describe('public data hardening', () => {
       strength: 7,
       size: 1,
       lootTable: [{ itemId: 10, quantity: 50, chance: 0.1 }],
+      rareDropTables: [{ tableId: 'universal', chance: 0.01 }],
       shop: { name: 'Hidden', items: [{ itemId: 10, price: 1, stock: 1 }] },
       dialogue: { root: 'greet', nodes: {} },
       respawnTime: 30,
@@ -30,6 +31,7 @@ describe('public data hardening', () => {
     expect(sanitized[0].name).toBe('Wolf');
     expect(sanitized[0].health).toBe(20);
     expect(sanitized[0].lootTable).toBeUndefined();
+    expect(sanitized[0].rareDropTables).toBeUndefined();
     expect(sanitized[0].shop).toBeUndefined();
     expect(sanitized[0].dialogue).toBeUndefined();
     expect(sanitized[0].respawnTime).toBeUndefined();

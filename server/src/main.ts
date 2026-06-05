@@ -1273,6 +1273,7 @@ import {
   handleChatSocketOpen,
   handleChatSocketMessage,
   handleChatSocketClose,
+  setChatAccountModerator,
   type ChatSocketData,
 } from './network/ChatSocket';
 
@@ -2828,7 +2829,7 @@ const server = Bun.serve<SocketData>({
         if (result.ok) {
           signupAttempts.delete(key);
           return jsonResponse(
-            { ok: true, token: result.token, username },
+            { ok: true, token: result.token, username, isAdmin: result.isAdmin, isModerator: result.isModerator },
             200,
             { 'Set-Cookie': wsSessionCookieHeader(result.wsSecret, req) },
           );
@@ -2905,7 +2906,7 @@ const server = Bun.serve<SocketData>({
           // from the same client don't hit the limit.
           loginAttempts.delete(key);
           return jsonResponse(
-            { ok: true, token: result.token, username: result.username },
+            { ok: true, token: result.token, username: result.username, isAdmin: result.isAdmin, isModerator: result.isModerator },
             200,
             { 'Set-Cookie': wsSessionCookieHeader(result.wsSecret, req) },
           );
@@ -2951,7 +2952,7 @@ const server = Bun.serve<SocketData>({
         return jsonResponse({ ok: false }, 403, { 'Cache-Control': 'no-store' });
       }
       return jsonResponse(
-        { ok: true, username: session.username, isAdmin: session.isAdmin },
+        { ok: true, username: session.username, isAdmin: session.isAdmin, isModerator: session.isModerator },
         200,
         { 'Cache-Control': 'no-store' },
       );
@@ -3047,6 +3048,29 @@ const server = Bun.serve<SocketData>({
       }
     }
 
+    if (url.pathname === '/api/admin/set-moderator' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown; enabled?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        if (typeof body.enabled !== 'boolean') return jsonResponse({ ok: false, error: 'Invalid moderator value' }, 400);
+        const target = db.setAccountModeratorRole(accountId, body.enabled);
+        if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
+        world.setActiveAccountModerator(accountId, target.isModerator);
+        setChatAccountModerator(accountId, target.isModerator);
+        return jsonResponse({
+          ok: true,
+          account: target,
+          message: `${target.isModerator ? 'Granted' : 'Removed'} moderator role for ${target.username}`,
+        });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
     if (url.pathname === '/api/admin/ban-ip' && req.method === 'POST') {
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();
@@ -3121,7 +3145,7 @@ const server = Bun.serve<SocketData>({
       const banned = banGateResponse(session.accountId, wsIp);
       if (banned) return banned;
       const upgraded = server.upgrade(req, {
-        data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, ip: wsIp, deviceId: session.deviceId, token } as GameSocketData,
+        data: { type: 'game', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, isModerator: session.isModerator, ip: wsIp, deviceId: session.deviceId, token } as GameSocketData,
         headers: wsAcceptHeaders(req),
       });
       if (upgraded) return undefined as unknown as Response;
@@ -3145,7 +3169,7 @@ const server = Bun.serve<SocketData>({
       const banned = banGateResponse(session.accountId, wsIp);
       if (banned) return banned;
       const upgraded = server.upgrade(req, {
-        data: { type: 'chat', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin } as ChatSocketData,
+        data: { type: 'chat', accountId: session.accountId, username: session.username, isAdmin: session.isAdmin, isModerator: session.isModerator } as ChatSocketData,
         headers: wsAcceptHeaders(req),
       });
       if (upgraded) return undefined as unknown as Response;

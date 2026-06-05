@@ -6,6 +6,7 @@ interface AdminBotAccount {
   accountId: number;
   username: string;
   isAdmin: boolean;
+  isModerator: boolean;
   riskScore: number;
   riskLevel: RiskLevel | string;
   riskReasons: string[];
@@ -294,7 +295,7 @@ export class AdminPanel {
       this.render();
     });
     row.append(
-      this.truncateCell(`${account.username}${account.isAdmin ? ' [admin]' : ''}`),
+      this.truncateCell(`${account.username}${account.isAdmin ? ' [admin]' : account.isModerator ? ' [mod]' : ''}`),
       this.truncateCell(String(account.riskScore)),
       this.riskPill(account.riskLevel),
       this.truncateCell(this.signalSummary(account)),
@@ -323,6 +324,7 @@ export class AdminPanel {
       this.riskPill(account.riskLevel),
     );
     if (account.isAdmin) title.appendChild(this.summaryPill('admin', '#5f4a7d'));
+    if (account.isModerator) title.appendChild(this.summaryPill('moderator', '#2f5f8f'));
     root.appendChild(title);
 
     const chips = document.createElement('div');
@@ -450,7 +452,7 @@ export class AdminPanel {
     const wrap = document.createElement('div');
     wrap.style.cssText = `
       display: grid;
-      grid-template-columns: 120px minmax(120px, 1fr) repeat(4, minmax(74px, auto));
+      grid-template-columns: 120px minmax(120px, 1fr) repeat(5, minmax(74px, auto));
       gap: 6px;
       align-items: stretch;
       padding-top: 2px;
@@ -501,7 +503,15 @@ export class AdminPanel {
       ip: account.lastIp,
     });
 
-    wrap.append(duration, reason, accountBan, accountUnban, ipBan, ipUnban);
+    const moderatorToggle = this.smallButton(account.isModerator ? 'Remove mod' : 'Grant mod', account.isModerator ? '#5d4930' : '#2f5f8f');
+    moderatorToggle.disabled = account.isAdmin && !account.isModerator;
+    moderatorToggle.title = moderatorToggle.disabled ? 'Admin accounts already use the admin role' : `${account.isModerator ? 'Remove' : 'Grant'} moderator role`;
+    moderatorToggle.onclick = () => void this.runModerationAction('/api/admin/set-moderator', {
+      accountId: account.accountId,
+      enabled: !account.isModerator,
+    });
+
+    wrap.append(duration, reason, accountBan, accountUnban, ipBan, ipUnban, moderatorToggle);
     return wrap;
   }
 

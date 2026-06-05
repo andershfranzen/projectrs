@@ -20,8 +20,10 @@ import {
   type CombatRangeMode,
   type ItemDef,
   type MagicStance,
+  type RareDropTableDef,
   type SkillId,
 } from '@projectrs/shared';
+import { rollRareDropTable, type RolledLootDrop } from './RareDropTable';
 
 const NO_LOOT_NPC_IDS = new Set<number>([18]);
 const TOTAL_COMBAT_XP_PER_DAMAGE = 4;
@@ -77,6 +79,10 @@ export interface PlayerNpcCombatOptions extends CombatRollOptions {
 
 export interface NpcCombatOptions extends CombatRollOptions {
   tickCooldown?: boolean;
+}
+
+export interface LootRollOptions extends CombatRollOptions {
+  rareDropTables?: ReadonlyMap<string, RareDropTableDef>;
 }
 
 function hit(attackerId: number, targetId: number, damage: number, targetHealth: number, targetMaxHealth: number): CombatHit {
@@ -471,13 +477,27 @@ export function processNpcCombat(
  * Relic drops are authored directly in npc loot tables so designers can see
  * and tune the exact per-mob chance in the editor.
  */
-export function rollLoot(npc: Npc): { itemId: number; quantity: number }[] {
+export function rollLoot(npc: Npc, options: LootRollOptions = {}): RolledLootDrop[] {
   if (NO_LOOT_NPC_IDS.has(npc.def.id)) return [];
 
-  const drops: { itemId: number; quantity: number }[] = [];
+  const rng = options.rng ?? Math.random;
+  const drops: RolledLootDrop[] = [];
   for (const drop of npc.def.lootTable) {
-    if (Math.random() <= drop.chance) {
+    if (rng() <= drop.chance) {
       drops.push({ itemId: drop.itemId, quantity: drop.quantity });
+    }
+  }
+
+  if (options.rareDropTables) {
+    for (const access of npc.def.rareDropTables ?? []) {
+      if (!Number.isFinite(access.chance) || access.chance <= 0) continue;
+      const authoredRolls = Math.floor(access.rolls ?? 1);
+      const rolls = Number.isFinite(authoredRolls) && authoredRolls > 0 ? authoredRolls : 1;
+      for (let i = 0; i < rolls; i++) {
+        if (rng() > access.chance) continue;
+        const rareDrop = rollRareDropTable(access.tableId, options.rareDropTables, rng);
+        if (rareDrop) drops.push(rareDrop);
+      }
     }
   }
 

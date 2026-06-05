@@ -70,6 +70,7 @@ const DOOR_ACTIONS_LOCKED_CLIENT: readonly string[] = ['Unlock', 'Examine'];
 const DOOR_ACTIONS_OPEN_CLIENT: readonly string[] = ['Close', 'Examine'];
 const MAX_FRAME_DT_SECONDS = 0.1;
 const ADMIN_NAME_COLOR = '#b96cff';
+const MODERATOR_NAME_COLOR = '#62a8ff';
 const GEAR_DEBUG_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
@@ -504,6 +505,7 @@ export class GameManager {
   private activeTouchPointers: Map<number, ActiveTouchPoint> = new Map();
   private pinchZoom: PinchZoomState | null = null;
   private isAdmin: boolean = false;
+  private isModerator: boolean = false;
   private static readonly TOUCH_LONG_PRESS_MS = 450;
   private static readonly TOUCH_MOVE_CANCEL_PX = 12;
   private static readonly TOUCH_CAMERA_YAW_PER_PX = 0.008;
@@ -801,7 +803,9 @@ export class GameManager {
           this.entities.playerNames.set(entityId, name);
           this.entities.nameToEntityId.set(name.toLowerCase(), entityId);
           if (typeof data.isAdmin === 'boolean') {
-            this.setRemotePlayerAdmin(entityId, data.isAdmin);
+            this.setRemotePlayerRole(entityId, data.isAdmin, data.isModerator === true);
+          } else if (typeof data.isModerator === 'boolean') {
+            this.setRemotePlayerRole(entityId, false, data.isModerator);
           }
           // If the remote 3D character was created with a fallback name
           // (chat 'player_info' arrived after PLAYER_SYNC), update its
@@ -816,8 +820,7 @@ export class GameManager {
           const message = typeof data.message === 'string' ? data.message : '';
           if (message.length === 0) break;
           if (this.chatPanel) {
-            const fromIsAdmin = data.isAdmin === true || this.isAdminName(from);
-            this.chatPanel.addMessage(from || '???', message, fromIsAdmin ? ADMIN_NAME_COLOR : '#fff');
+            this.chatPanel.addMessage(from || '???', message, this.nameColorForMessage(from, data.isAdmin === true, data.isModerator === true));
           }
           this.showPlayerChatBubble(from, message);
           break;
@@ -2626,8 +2629,10 @@ export class GameManager {
       const syncCombatLevel = hasBodyType ? Math.max(0, v[13] ?? 0) : v.length >= 13 ? Math.max(0, v[12] ?? 0) : 0;
       const floor = hasBodyType ? Math.floor(v[14] ?? 0) : v.length >= 14 ? Math.floor(v[13] ?? 0) : 0;
       const y = hasBodyType ? (v[15] ?? 0) / 10 : v.length >= 15 ? (v[14] ?? 0) / 10 : this.getHeightAtFloor(x, z, floor, 0);
-      const hasAdminFlag = v.length >= 17;
-      const syncIsAdmin = hasAdminFlag && (v[16] ?? 0) === 1;
+      const hasRoleFlags = v.length >= 17;
+      const syncRoleFlags = hasRoleFlags ? (v[16] ?? 0) : 0;
+      const syncIsAdmin = (syncRoleFlags & 1) === 1;
+      const syncIsModerator = (syncRoleFlags & 2) === 2;
       const syncAppearance: PlayerAppearance | null = hasAppearance
         ? hasBodyType
           ? appearanceFromWireValues(v, 5)
@@ -2635,6 +2640,10 @@ export class GameManager {
         : null;
 
       if (entityId === this.localPlayerId) {
+        if (hasRoleFlags) {
+          this.isAdmin = syncIsAdmin;
+          this.isModerator = syncIsModerator;
+        }
         // While a COMBAT_HIT splat is pending for the local player, defer
         // applying the new HP so the bar/HUD drop in sync with the splat.
         this.applyLocalHealthFromServer(health, maxHealth, { clearPendingImpact: health >= maxHealth && health > this.playerHealth });
@@ -2669,8 +2678,10 @@ export class GameManager {
       if (isNew) {
         const playerName = this.entities.playerNames.get(entityId) || 'Player';
         const remote = this.entities.createRemotePlayer(entityId, x, z, playerName, floor, y, syncAppearance);
-        const cachedIsAdmin = hasAdminFlag ? syncIsAdmin : this.entities.remoteAdminFlags.get(entityId) === true;
-        remote.setLabelColor(cachedIsAdmin ? ADMIN_NAME_COLOR : '#ffffff');
+        const cachedIsAdmin = hasRoleFlags ? syncIsAdmin : this.entities.remoteAdminFlags.get(entityId) === true;
+        const cachedIsModerator = hasRoleFlags ? syncIsModerator : this.entities.remoteModeratorFlags.get(entityId) === true;
+        if (hasRoleFlags) this.cacheRemotePlayerRole(entityId, cachedIsAdmin, cachedIsModerator);
+        remote.setLabelColor(this.playerNameColor(cachedIsAdmin, cachedIsModerator));
         // Apply cached appearance + equipment once the GLB + animations finish
         // loading. Both arrive over the network independently of the entity's
         // local-load timing, so we cache them in the EntityManager and flush
@@ -2686,7 +2697,7 @@ export class GameManager {
           if (anim) this.applyRemotePlayerAnimation(entityId, anim.kind, anim.variant, anim.targetId, anim.toolItemId);
         });
       }
-      if (hasAdminFlag) this.setRemotePlayerAdmin(entityId, syncIsAdmin);
+      if (hasRoleFlags) this.setRemotePlayerRole(entityId, syncIsAdmin, syncIsModerator);
       if (syncCombatLevel > 0) this.entities.remoteCombatLevels.set(entityId, syncCombatLevel);
       if (syncAppearance) {
         const prev = this.entities.remoteAppearances.get(entityId);
@@ -4583,7 +4594,10 @@ export class GameManager {
     const name = this.entities.playerNames.get(entityId) ?? 'Player';
     const lvl = this.entities.remoteCombatLevels.get(entityId) ?? 0;
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
-    const nameColor = this.entities.remoteAdminFlags.get(entityId) ? ADMIN_NAME_COLOR : undefined;
+    const nameColor = this.playerNameColor(
+      this.entities.remoteAdminFlags.get(entityId) === true,
+      this.entities.remoteModeratorFlags.get(entityId) === true,
+    );
     const playerOption = (prefix: string, suffix: string, action: () => void): InteractionOption => ({
       label: `${prefix}${name}${suffix}`,
       labelParts: [{ text: prefix }, { text: name, color: nameColor }, { text: suffix }],
@@ -4596,18 +4610,38 @@ export class GameManager {
     ];
   }
 
-  private setRemotePlayerAdmin(entityId: number, isAdmin: boolean): void {
-    this.entities.remoteAdminFlags.set(entityId, isAdmin);
-    const remote = this.entities.remotePlayers.get(entityId);
-    if (remote) remote.setLabelColor(isAdmin ? ADMIN_NAME_COLOR : '#ffffff');
+  private playerNameColor(isAdmin: boolean, isModerator: boolean, fallback: string = '#ffffff'): string {
+    if (isAdmin) return ADMIN_NAME_COLOR;
+    if (isModerator) return MODERATOR_NAME_COLOR;
+    return fallback;
   }
 
-  private isAdminName(name: string): boolean {
-    if (!name) return false;
+  private cacheRemotePlayerRole(entityId: number, isAdmin: boolean, isModerator: boolean): void {
+    this.entities.remoteAdminFlags.set(entityId, isAdmin);
+    this.entities.remoteModeratorFlags.set(entityId, isModerator);
+  }
+
+  private setRemotePlayerRole(entityId: number, isAdmin: boolean, isModerator: boolean): void {
+    this.cacheRemotePlayerRole(entityId, isAdmin, isModerator);
+    const remote = this.entities.remotePlayers.get(entityId);
+    if (remote) remote.setLabelColor(this.playerNameColor(isAdmin, isModerator));
+  }
+
+  private nameColorForMessage(name: string, isAdmin: boolean, isModerator: boolean, fallback: string = '#fff'): string {
+    if (isAdmin) return ADMIN_NAME_COLOR;
+    if (isModerator) return MODERATOR_NAME_COLOR;
+    if (!name) return fallback;
     const normalized = name.toLowerCase();
-    if (this.username && normalized === this.username.toLowerCase()) return this.isAdmin;
+    if (this.username && normalized === this.username.toLowerCase()) {
+      return this.playerNameColor(this.isAdmin, this.isModerator, fallback);
+    }
     const entityId = this.entities.nameToEntityId.get(normalized);
-    return entityId !== undefined && this.entities.remoteAdminFlags.get(entityId) === true;
+    if (entityId === undefined) return fallback;
+    return this.playerNameColor(
+      this.entities.remoteAdminFlags.get(entityId) === true,
+      this.entities.remoteModeratorFlags.get(entityId) === true,
+      fallback,
+    );
   }
 
   private canvasPointFromClient(clientX: number, clientY: number): { x: number; y: number } | null {
@@ -5078,10 +5112,12 @@ export class GameManager {
       const { entityId, groundItemId } = this.pickAtCursor();
       let playerLabel: string | null = null;
       let playerIsAdmin = false;
+      let playerIsModerator = false;
       if (playerEntityId != null) {
         const name = this.entities.playerNames.get(playerEntityId) ?? 'Player';
         const lvl = this.entities.remoteCombatLevels.get(playerEntityId) ?? 0;
         playerIsAdmin = this.entities.remoteAdminFlags.get(playerEntityId) === true;
+        playerIsModerator = this.entities.remoteModeratorFlags.get(playerEntityId) === true;
         playerLabel = lvl > 0 ? `${name} (level-${lvl})` : name;
       }
       let npcLabel: string | null = null;
@@ -5107,7 +5143,7 @@ export class GameManager {
         });
       }
       if (playerLabel != null) {
-        el.style.color = playerIsAdmin ? ADMIN_NAME_COLOR : '#ffffff';
+        el.style.color = this.playerNameColor(playerIsAdmin, playerIsModerator);
         el.textContent = playerLabel;
       } else if (npcLabel != null) {
         el.style.color = '#d8372b';
@@ -6889,7 +6925,7 @@ export class GameManager {
     if (this.localPlayer) {
       this.localPlayer.showChatBubble(message, 4500, 'dialogue');
     }
-    this.chatPanel?.addMessage(this.username || 'You', message, this.isAdmin ? ADMIN_NAME_COLOR : '#f4ded5');
+    this.chatPanel?.addMessage(this.username || 'You', message, this.playerNameColor(this.isAdmin, this.isModerator, '#f4ded5'));
   }
 
   private hitSplatBasePositionFor(target: Targetable): Vector3 {

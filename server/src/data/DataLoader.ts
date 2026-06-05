@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree, QuestDef, SpellEffectDef } from '@projectrs/shared';
+import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree, QuestDef, SpellEffectDef, RareDropTableDef } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
@@ -14,6 +14,7 @@ export class DataLoader {
   private items: Map<number, ItemDef> = new Map();
   private objects: Map<number, WorldObjectDef> = new Map();
   private shops: Map<number, ShopDef> = new Map();
+  private rareDropTables: Map<string, RareDropTableDef> = new Map();
   private shopItemPrices: Map<number, number> = new Map();
   private quests: Map<string, QuestDef> = new Map();
   /** Reverse index: trigger type → quest defs whose startTrigger matches that
@@ -46,6 +47,7 @@ export class DataLoader {
     this.loadNpcs();
     this.loadItems();
     this.loadObjects();
+    this.loadRareDropTables();
     this.loadShops();
     this.loadQuests();
     this.loadSpells();
@@ -79,6 +81,7 @@ export class DataLoader {
   private loadNpcs(): void { this.loadJsonMap<number, NpcDef>('npcs.json', this.npcs, 'NPC definitions'); }
   private loadItems(): void { this.loadJsonMap<number, ItemDef>('items.json', this.items, 'item definitions'); }
   private loadObjects(): void { this.loadJsonMap<number, WorldObjectDef>('objects.json', this.objects, 'object definitions'); }
+  private loadRareDropTables(): void { this.loadJsonMap<string, RareDropTableDef>('rare-drop-tables.json', this.rareDropTables, 'rare drop tables'); }
 
   private loadShops(): void {
     // Legacy fallback: shops.json keyed by NPC id. New authoring goes inline
@@ -256,6 +259,10 @@ export class DataLoader {
 
   getItem(id: number): ItemDef | undefined {
     return this.items.get(id);
+  }
+
+  get rareDropTableDefs(): Map<string, RareDropTableDef> {
+    return this.rareDropTables;
   }
 
   getAllNpcs(): NpcDef[] {

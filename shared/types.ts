@@ -143,6 +143,10 @@ export interface NpcDef {
    *  retaliation switches to PLAYERESCAPE-style fleeing. */
   retreatHealth?: number;
   lootTable: LootDrop[];
+  /** Optional OSRS-style shared rare-table access rolls. Each entry gates
+   *  access to a server-side weighted table; normal lootTable drops still
+   *  roll independently. */
+  rareDropTables?: NpcRareDropTableRoll[];
   /** This NPC offers banking when talked to (right-click → Bank). */
   bankAccess?: boolean;
   /** NPC never moves. Client opts into a static-idle render (no per-frame
@@ -259,6 +263,46 @@ export interface LootDrop {
   itemId: number;
   quantity: number;
   chance: number; // 0-1
+}
+
+export interface NpcRareDropTableRoll {
+  tableId: string;
+  chance: number; // 0-1 chance to access this table per kill
+  rolls?: number;
+}
+
+export interface RareDropTableDef {
+  id: string;
+  name?: string;
+  entries: RareDropTableEntry[];
+}
+
+export type RareDropTableEntry =
+  | RareDropItemEntry
+  | RareDropNothingEntry
+  | RareDropSubtableEntry;
+
+export interface RareDropWeightedEntry {
+  weight: number;
+}
+
+export interface RareDropItemEntry extends RareDropWeightedEntry {
+  type: 'item';
+  itemId: number;
+  /** Fixed quantity. Defaults to 1 when omitted. */
+  quantity?: number;
+  /** Inclusive range. Used only when quantity is omitted. */
+  minQuantity?: number;
+  maxQuantity?: number;
+}
+
+export interface RareDropNothingEntry extends RareDropWeightedEntry {
+  type: 'nothing';
+}
+
+export interface RareDropSubtableEntry extends RareDropWeightedEntry {
+  type: 'table';
+  tableId: string;
 }
 
 export interface InventorySlot {

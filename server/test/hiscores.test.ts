@@ -131,6 +131,32 @@ describe('hiscores exclusions', () => {
     }
   });
 
+  test('includes moderators in public rankings and marks the display role', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const moderator = db.loginFallbackAccount('ModMiner');
+      const visible = db.loginFallbackAccount('VisibleMiner');
+      expect(db.setAccountModeratorRole(moderator.accountId, true)?.isModerator).toBe(true);
+      db.savePlayerState(moderator.accountId, playerWithSkills(miningSkills(70)), 0);
+      db.savePlayerState(visible.accountId, playerWithSkills(miningSkills(30)), 0);
+      for (let i = 0; i < 4; i++) db.recordMobKill(moderator.accountId, 100);
+      for (let i = 0; i < 2; i++) db.recordMobKill(visible.accountId, 100);
+
+      const mining = db.getHiscores('mining');
+      expect(mining.rows.map((row) => [row.rank, row.username, row.isRoleModerator])).toContainEqual([1, 'modminer', true]);
+
+      const kills = db.getMobKillHiscores(100, 25, 1, '', [{ id: 100, name: 'Vampire' }]);
+      expect(kills.rows.map((row) => [row.rank, row.username, row.isRoleModerator, row.kills])).toContainEqual([1, 'modminer', true, 4]);
+
+      const profile = db.getHiscoreProfile('ModMiner', [{ id: 100, name: 'Vampire' }]);
+      expect(profile?.username).toBe('modminer');
+      expect(profile?.isRoleModerator).toBe(true);
+      expect(db.listAdminBotReviewAccounts().find((account) => account.accountId === moderator.accountId)?.isModerator).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   test('expired account bans do not hide hiscores', () => {
     const db = new GameDatabase(':memory:');
     try {

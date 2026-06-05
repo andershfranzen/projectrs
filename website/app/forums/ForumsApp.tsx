@@ -21,7 +21,7 @@ const EMOJI: Record<string, string> = {
 
 type ForumDiscordEmoji = { id: string; guildId: string; name: string; animated: boolean; available: boolean; url: string; updatedAt: number };
 type ForumUser = { ok?: boolean; accountId?: number; username?: string; isAdmin?: boolean; isModerator?: boolean };
-type ForumOnlineUser = { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; lastSeenAt: number };
+type ForumOnlineUser = { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; isRoleModerator?: boolean; lastSeenAt: number };
 type ForumCategory = {
   id: number;
   slug: string;
@@ -57,7 +57,7 @@ type ForumThread = {
 type ForumPost = {
   id: number;
   threadId: number;
-  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; signature: string };
+  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; isRoleModerator?: boolean; signature: string };
   replyTo: { id: number; author: { accountId: number; username: string }; body: string; createdAt: number } | null;
   body: string;
   createdAt: number;
@@ -100,6 +100,7 @@ type ForumProfile = {
   postCount: number;
   threadCount: number;
   isModerator: boolean;
+  isRoleModerator?: boolean;
   isAdmin: boolean;
   combatLevel: number | null;
   topSkills: Array<{ id: string; name: string; level: number; xp: number }>;
@@ -709,7 +710,7 @@ function PostCard({ post, me, onRefresh, onQuote, canReply }: { post: ForumPost;
           fallbackClassName="forum-post-avatar forum-post-avatar-empty"
           fallback="?"
         />
-        <a className={post.author.isAdmin ? 'forum-admin-name' : undefined} href={`/forums/u/${post.author.username}`}>{post.author.username}</a>
+        <a className={roleNameClass(post.author)} href={`/forums/u/${post.author.username}`}>{post.author.username}</a>
         {post.author.combatLevel != null ? <span className="forum-post-combat">Combat Lv. {post.author.combatLevel}</span> : null}
         <a href={`#post-${post.id}`}>{fmt(post.createdAt)}</a>
         {post.editedAt ? <span className="forum-post-edited">Edited {fmt(post.editedAt)}</span> : null}
@@ -1054,7 +1055,7 @@ export function ForumsApp() {
             />
             <div>
               <h2><span className={profileNameClass(profile)}>{profile.username}</span> {profile.combatLevel != null ? <span className="forum-profile-combat">Combat Lv. {profile.combatLevel}</span> : null}</h2>
-              <p>{profile.title || (profile.isAdmin ? 'Administrator' : profile.isModerator ? 'Moderator' : 'Adventurer')}</p>
+              <p>{profile.title || (profile.isAdmin ? 'Administrator' : (profile.isRoleModerator || profile.isModerator) ? 'Moderator' : 'Adventurer')}</p>
               <a className="forum-profile-hiscores-link" href={`/hiscores?player=${encodeURIComponent(profile.username)}`}><FaTrophy aria-hidden />Hiscores Profile</a>
             </div>
           </div>
@@ -1142,7 +1143,7 @@ function ForumOnlineFooter({ users }: { users: ForumOnlineUser[] }) {
         <div className="forum-online-list">
           {users.map((user) => (
             <a key={user.accountId} className="forum-online-user" href={`/forums/u/${user.username}`}>
-              <span className={user.isAdmin ? 'forum-admin-name' : undefined}>{user.username}</span>
+              <span className={roleNameClass(user)}>{user.username}</span>
             </a>
           ))}
         </div>
@@ -1158,9 +1159,13 @@ function ForumAvatarImage({ url, alt, imgClassName, fallbackClassName, fallback 
   return <div className={fallbackClassName}>{fallback}</div>;
 }
 
-function profileNameClass(profile: Pick<ForumProfile, 'isAdmin' | 'isModerator'>): string | undefined {
+function profileNameClass(profile: Pick<ForumProfile, 'isAdmin' | 'isModerator' | 'isRoleModerator'>): string | undefined {
+  return roleNameClass(profile);
+}
+
+function roleNameClass(profile: { isAdmin?: boolean; isModerator?: boolean; isRoleModerator?: boolean }): string | undefined {
   if (profile.isAdmin) return 'forum-admin-name';
-  if (profile.isModerator) return 'forum-moderator-name';
+  if (profile.isRoleModerator || profile.isModerator) return 'forum-moderator-name';
   return undefined;
 }
 

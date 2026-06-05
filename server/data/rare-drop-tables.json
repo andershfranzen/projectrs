@@ -1,0 +1,156 @@
+[
+  {
+    "id": "universal",
+    "name": "Universal rare drop table",
+    "entries": [
+      {
+        "type": "item",
+        "itemId": 10,
+        "minQuantity": 100,
+        "maxQuantity": 250,
+        "weight": 24
+      },
+      {
+        "type": "item",
+        "itemId": 10,
+        "minQuantity": 500,
+        "maxQuantity": 1000,
+        "weight": 12
+      },
+      {
+        "type": "item",
+        "itemId": 285,
+        "minQuantity": 30,
+        "maxQuantity": 80,
+        "weight": 10
+      },
+      {
+        "type": "item",
+        "itemId": 286,
+        "minQuantity": 15,
+        "maxQuantity": 40,
+        "weight": 6
+      },
+      {
+        "type": "item",
+        "itemId": 142,
+        "quantity": 1,
+        "weight": 8
+      },
+      {
+        "type": "item",
+        "itemId": 48,
+        "quantity": 1,
+        "weight": 8
+      },
+      {
+        "type": "item",
+        "itemId": 45,
+        "quantity": 1,
+        "weight": 6
+      },
+      {
+        "type": "item",
+        "itemId": 49,
+        "quantity": 1,
+        "weight": 5
+      },
+      {
+        "type": "item",
+        "itemId": 50,
+        "quantity": 1,
+        "weight": 5
+      },
+      {
+        "type": "item",
+        "itemId": 91,
+        "quantity": 1,
+        "weight": 5
+      },
+      {
+        "type": "item",
+        "itemId": 97,
+        "quantity": 1,
+        "weight": 5
+      },
+      {
+        "type": "item",
+        "itemId": 92,
+        "quantity": 1,
+        "weight": 4
+      },
+      {
+        "type": "item",
+        "itemId": 105,
+        "quantity": 1,
+        "weight": 3
+      },
+      {
+        "type": "item",
+        "itemId": 106,
+        "quantity": 1,
+        "weight": 3
+      },
+      {
+        "type": "item",
+        "itemId": 111,
+        "quantity": 1,
+        "weight": 3
+      },
+      {
+        "type": "table",
+        "tableId": "mega_rare",
+        "weight": 21
+      }
+    ]
+  },
+  {
+    "id": "mega_rare",
+    "name": "Mega-rare drop table",
+    "entries": [
+      {
+        "type": "item",
+        "itemId": 10,
+        "minQuantity": 1000,
+        "maxQuantity": 2500,
+        "weight": 42
+      },
+      {
+        "type": "item",
+        "itemId": 311,
+        "quantity": 1,
+        "weight": 30
+      },
+      {
+        "type": "item",
+        "itemId": 329,
+        "quantity": 1,
+        "weight": 10
+      },
+      {
+        "type": "item",
+        "itemId": 330,
+        "quantity": 1,
+        "weight": 10
+      },
+      {
+        "type": "item",
+        "itemId": 412,
+        "quantity": 1,
+        "weight": 4
+      },
+      {
+        "type": "item",
+        "itemId": 386,
+        "quantity": 1,
+        "weight": 18
+      },
+      {
+        "type": "item",
+        "itemId": 393,
+        "quantity": 1,
+        "weight": 14
+      }
+    ]
+  }
+]

@@ -691,7 +691,8 @@
   color: #b96cff;
 }
 
-.forum-moderator-name {
+.forum-moderator-name,
+.role-moderator-name {
   color: #62a8ff;
 }
 

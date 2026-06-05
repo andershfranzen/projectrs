@@ -87,6 +87,7 @@ export class Player extends Entity {
   ws: ServerWebSocket<{ type: string; playerId?: number }>;
   accountId: number;
   isAdmin: boolean = false;
+  isModerator: boolean = false;
   inventory: (InventorySlot | null)[];
   equipment: Map<EquipSlot, number> = new Map(); // slot -> itemId
   equipmentQuantities: Map<EquipSlot, number> = new Map(); // stack quantity for ammo and any future stackable equipment

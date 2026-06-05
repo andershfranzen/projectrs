@@ -163,6 +163,12 @@
         "quantity": 1,
         "chance": 0.0176
       }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.03125
+      }
     ]
   },
   {
@@ -193,6 +199,12 @@
         "quantity": 1,
         "chance": 0.04
       }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.0390625
+      }
     ]
   },
   {
@@ -222,6 +234,12 @@
         "itemId": 225,
         "quantity": 1,
         "chance": 0.018333
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.001953125
       }
     ]
   },
@@ -359,6 +377,12 @@
         "quantity": 1,
         "chance": 0.025
       }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.002604166667
+      }
     ]
   },
   {
@@ -407,6 +431,12 @@
         "quantity": 1,
         "chance": 0.031667
       }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.015625
+      }
     ]
   },
   {
@@ -440,6 +470,12 @@
         "itemId": 301,
         "quantity": 1,
         "chance": 0.25
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.0234375
       }
     ]
   },
@@ -594,6 +630,12 @@
         "itemId": 229,
         "quantity": 1,
         "chance": 0.008
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.03125
       }
     ]
   },
@@ -859,6 +901,12 @@
         "quantity": 1,
         "chance": 0.028333
       }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.0078125
+      }
     ]
   },
   {
@@ -1020,6 +1068,12 @@
         "quantity": 1,
         "chance": 0.038333
       }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.0234375
+      }
     ]
   },
   {
@@ -1053,6 +1107,12 @@
         "itemId": 288,
         "quantity": 1,
         "chance": 0.0112
+      }
+    ],
+    "rareDropTables": [
+      {
+        "tableId": "universal",
+        "chance": 0.03125
       }
     ]
   },

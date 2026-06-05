@@ -74,6 +74,7 @@ export type GameSocketData = {
   accountId: number;
   username: string;
   isAdmin: boolean;
+  isModerator: boolean;
   ip: string;
   deviceId: string;
   token: string;
@@ -926,6 +927,7 @@ function completeGameSocketLogin(
 
   const player = new Player(username, spawnX, spawnZ, ws, accountId);
   player.isAdmin = ws.data.isAdmin;
+  player.isModerator = ws.data.isModerator;
 
   // Apply saved state
   if (saved) {

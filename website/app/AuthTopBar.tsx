@@ -15,12 +15,14 @@ const RECAPTCHA_SCRIPT_ID = 'eq-recaptcha-v3';
 type AuthState =
   | { status: 'checking' }
   | { status: 'signed-out' }
-  | { status: 'signed-in'; username: string; isAdmin: boolean };
+  | { status: 'signed-in'; username: string; isAdmin: boolean; isModerator: boolean };
 
 type LoginResponse = {
   ok?: boolean;
   token?: string;
   username?: string;
+  isAdmin?: boolean;
+  isModerator?: boolean;
   error?: string;
 };
 
@@ -28,6 +30,7 @@ type SessionResponse = {
   ok?: boolean;
   username?: string;
   isAdmin?: boolean;
+  isModerator?: boolean;
 };
 
 declare global {
@@ -187,7 +190,7 @@ export function AuthTopBar() {
         const data = await loadSession(token);
         if (data.ok && typeof data.username === 'string') {
           window.localStorage.setItem(USERNAME_KEY, data.username);
-          if (!cancelled) setAuth({ status: 'signed-in', username: data.username, isAdmin: data.isAdmin === true });
+          if (!cancelled) setAuth({ status: 'signed-in', username: data.username, isAdmin: data.isAdmin === true, isModerator: data.isModerator === true });
           return;
         }
       } catch {
@@ -231,7 +234,7 @@ export function AuthTopBar() {
       window.localStorage.setItem(USERNAME_KEY, data.username);
       window.localStorage.removeItem(LEGACY_TOKEN_KEY);
       window.localStorage.removeItem(LEGACY_USERNAME_KEY);
-      setAuth({ status: 'signed-in', username: data.username, isAdmin: false });
+      setAuth({ status: 'signed-in', username: data.username, isAdmin: data.isAdmin === true, isModerator: data.isModerator === true });
       window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
       setPassword('');
       setIsLoginOpen(false);
@@ -259,7 +262,7 @@ export function AuthTopBar() {
       if (res.status === 409) {
         const savedUsername = window.localStorage.getItem(USERNAME_KEY) || 'your account';
         window.localStorage.setItem(TOKEN_KEY, token);
-        setAuth({ status: 'signed-in', username: savedUsername, isAdmin: false });
+        setAuth({ status: 'signed-in', username: savedUsername, isAdmin: false, isModerator: false });
         window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
         setError('You cannot log out while your character is in combat.');
         setIsLoginOpen(true);
@@ -280,7 +283,7 @@ export function AuthTopBar() {
           ) : signedIn ? (
             <>
               <span className="auth-topbar-status">
-                Signed in as <strong>{auth.username}</strong>{auth.isAdmin ? ' (admin)' : ''}
+                Signed in as <strong>{auth.username}</strong>{auth.isAdmin ? ' (admin)' : auth.isModerator ? ' (moderator)' : ''}
               </span>
               <a className="auth-topbar-link" href="/play">Play</a>
               <button type="button" className="auth-topbar-button" onClick={handleLogout}>Sign Out</button>

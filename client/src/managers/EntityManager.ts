@@ -61,6 +61,7 @@ export class EntityManager {
   readonly playerNames: Map<number, string> = new Map();
   readonly nameToEntityId: Map<string, number> = new Map();
   readonly remoteAdminFlags: Map<number, boolean> = new Map();
+  readonly remoteModeratorFlags: Map<number, boolean> = new Map();
   readonly remoteAppearances: Map<number, PlayerAppearance> = new Map();
   readonly remoteCombatLevels: Map<number, number> = new Map();
   /** Pending equipment per entityId. Layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]. */
@@ -559,6 +560,7 @@ export class EntityManager {
       if (name) this.nameToEntityId.delete(name.toLowerCase());
       this.playerNames.delete(entityId);
       this.remoteAdminFlags.delete(entityId);
+      this.remoteModeratorFlags.delete(entityId);
     }
   }
 
@@ -854,6 +856,7 @@ export class EntityManager {
     this.remoteStances.clear();
     this.remoteCombatLevels.clear();
     this.remoteAdminFlags.clear();
+    this.remoteModeratorFlags.clear();
     this.playerNames.clear();
     this.nameToEntityId.clear();
 

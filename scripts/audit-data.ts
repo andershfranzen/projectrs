@@ -23,6 +23,7 @@ interface NpcDefLike {
   dialogue?: unknown;
   shop?: unknown;
   bankAccess?: unknown;
+  rareDropTables?: unknown;
 }
 
 interface NpcSpawnLike {
@@ -30,6 +31,11 @@ interface NpcSpawnLike {
   name?: unknown;
   x?: unknown;
   z?: unknown;
+}
+
+interface RareDropTableLike {
+  id?: unknown;
+  entries?: unknown;
 }
 
 const rootDir = join(import.meta.dir, '..');
@@ -340,18 +346,110 @@ function auditGroundItemSpawnAssetIds(itemIds: Set<number>): void {
   }
 }
 
+function auditPositiveInteger(file: string, context: string, value: unknown): void {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+    addIssue(file, `${context} must be a positive integer`);
+  }
+}
+
+function auditRareDropTables(file: string, tables: unknown[], itemIds: Set<number>): Set<string> {
+  const tableIds = new Set<string>();
+  ensureUniqueId(file, 'rare drop table', tables, tableIds);
+
+  for (const [tableIndex, table] of tables.entries()) {
+    if (!isRecord(table)) continue;
+    const tableId = typeof table.id === 'string' ? table.id : `index ${tableIndex}`;
+    const entries = table.entries;
+    if (!Array.isArray(entries)) {
+      addIssue(file, `rare drop table ${tableId} entries must be an array`);
+      continue;
+    }
+
+    for (const [entryIndex, entry] of entries.entries()) {
+      const context = `rare drop table ${tableId} entry ${entryIndex}`;
+      if (!isRecord(entry)) {
+        addIssue(file, `${context} is not an object`);
+        continue;
+      }
+      if (typeof entry.weight !== 'number' || !Number.isFinite(entry.weight) || entry.weight <= 0) {
+        addIssue(file, `${context}.weight must be a positive number`);
+      }
+
+      switch (entry.type) {
+        case 'item':
+          assertItemRef(file, `${context}.itemId`, itemIds, entry.itemId);
+          if (entry.quantity !== undefined) auditPositiveInteger(file, `${context}.quantity`, entry.quantity);
+          if (entry.minQuantity !== undefined) auditPositiveInteger(file, `${context}.minQuantity`, entry.minQuantity);
+          if (entry.maxQuantity !== undefined) auditPositiveInteger(file, `${context}.maxQuantity`, entry.maxQuantity);
+          if (
+            typeof entry.minQuantity === 'number'
+            && typeof entry.maxQuantity === 'number'
+            && entry.maxQuantity < entry.minQuantity
+          ) {
+            addIssue(file, `${context}.maxQuantity must be >= minQuantity`);
+          }
+          break;
+        case 'nothing':
+          break;
+        case 'table':
+          if (typeof entry.tableId !== 'string' || entry.tableId.length === 0) {
+            addIssue(file, `${context}.tableId must be a non-empty string`);
+          } else if (!tableIds.has(entry.tableId)) {
+            addIssue(file, `${context}.tableId references missing rare drop table "${entry.tableId}"`);
+          }
+          break;
+        default:
+          addIssue(file, `${context}.type must be item, nothing, or table`);
+          break;
+      }
+    }
+  }
+
+  return tableIds;
+}
+
+function auditNpcRareDropTableRefs(npcsPath: string, npcs: NpcDefLike[], rareTableIds: Set<string>): void {
+  for (const npc of npcs) {
+    if (!isRecord(npc) || npc.rareDropTables === undefined) continue;
+    const name = typeof npc.name === 'string' ? npc.name : `NPC ${String(npc.id ?? '?')}`;
+    if (!Array.isArray(npc.rareDropTables)) {
+      addIssue(npcsPath, `${name}.rareDropTables must be an array`);
+      continue;
+    }
+
+    for (const [index, access] of npc.rareDropTables.entries()) {
+      const context = `${name}.rareDropTables[${index}]`;
+      if (!isRecord(access)) {
+        addIssue(npcsPath, `${context} is not an object`);
+        continue;
+      }
+      if (typeof access.tableId !== 'string' || access.tableId.length === 0) {
+        addIssue(npcsPath, `${context}.tableId must be a non-empty string`);
+      } else if (!rareTableIds.has(access.tableId)) {
+        addIssue(npcsPath, `${context}.tableId references missing rare drop table "${access.tableId}"`);
+      }
+      if (typeof access.chance !== 'number' || !Number.isFinite(access.chance) || access.chance <= 0 || access.chance > 1) {
+        addIssue(npcsPath, `${context}.chance must be > 0 and <= 1`);
+      }
+      if (access.rolls !== undefined) auditPositiveInteger(npcsPath, `${context}.rolls`, access.rolls);
+    }
+  }
+}
+
 function auditStaticData(): void {
   const itemsPath = join(dataDir, 'items.json');
   const npcsPath = join(dataDir, 'npcs.json');
   const objectsPath = join(dataDir, 'objects.json');
   const questsPath = join(dataDir, 'quests.json');
   const shopsPath = join(dataDir, 'shops.json');
+  const rareDropTablesPath = join(dataDir, 'rare-drop-tables.json');
   const thumbnailOverridesPath = join(dataDir, 'thumbnail-overrides.json');
 
   const items = readJson<unknown[]>(itemsPath);
   const npcs = readJson<unknown[]>(npcsPath);
   const objects = readJson<unknown[]>(objectsPath);
   const quests = readJson<unknown[]>(questsPath);
+  const rareDropTables = readJson<unknown[]>(rareDropTablesPath);
 
   const itemIds = new Set<number>();
   const npcIds = new Set<number>();
@@ -377,6 +475,8 @@ function auditStaticData(): void {
   auditShopKeys(shopsPath, npcIds);
   auditThumbnailOverrides(thumbnailOverridesPath, itemIds);
   auditGroundItemSpawnAssetIds(itemIds);
+  const rareTableIds = auditRareDropTables(rareDropTablesPath, rareDropTables, itemIds);
+  auditNpcRareDropTableRefs(npcsPath, npcs.filter(isRecord) as NpcDefLike[], rareTableIds);
 
   const refs = { itemIds, npcIds, objectIds, questIds };
   for (const file of [npcsPath, objectsPath, questsPath, shopsPath]) {

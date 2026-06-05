@@ -109,6 +109,7 @@ export interface SessionInfo {
   accountId: number;
   username: string;
   isAdmin: boolean;
+  isModerator: boolean;
   /** Browser device ID captured at login. Plumbed through the WS upgrade to
    *  the Player so login_history can record it for cross-account device
    *  correlation. Empty string when the client didn't supply one. */
@@ -186,6 +187,7 @@ export interface AdminBotReviewAccount {
   accountId: number;
   username: string;
   isAdmin: boolean;
+  isModerator: boolean;
   riskScore: number;
   riskLevel: string;
   riskReasons: string[];
@@ -265,6 +267,7 @@ export interface HiscoreCategory {
 export interface HiscoreRow {
   rank: number;
   username: string;
+  isRoleModerator: boolean;
   level: number;
   xp: number;
   dailyXp: number;
@@ -296,6 +299,7 @@ export interface HiscoreProfileRow {
 
 export interface HiscoreProfileResponse {
   username: string;
+  isRoleModerator: boolean;
   avatarUrl: string;
   rows: HiscoreProfileRow[];
   monsterKills: HiscoreProfileMonsterKillRow[];
@@ -353,7 +357,7 @@ export interface ForumThreadSummary {
 export interface ForumPost {
   id: number;
   threadId: number;
-  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; signature: string };
+  author: { accountId: number; username: string; avatarUrl: string; combatLevel: number | null; isAdmin: boolean; isRoleModerator: boolean; signature: string };
   replyTo: { id: number; author: { accountId: number; username: string }; body: string; createdAt: number } | null;
   body: string;
   createdAt: number;
@@ -402,6 +406,7 @@ export interface ForumProfile {
   postCount: number;
   threadCount: number;
   isModerator: boolean;
+  isRoleModerator: boolean;
   isAdmin: boolean;
   combatLevel: number | null;
   topSkills: Array<{ id: string; name: string; level: number; xp: number }>;
@@ -415,6 +420,7 @@ export interface ForumOnlineUser {
   avatarUrl: string;
   combatLevel: number | null;
   isAdmin: boolean;
+  isRoleModerator: boolean;
   lastSeenAt: number;
 }
 
@@ -503,6 +509,7 @@ export interface MobKillMob {
 export interface MobKillRow {
   rank: number;
   username: string;
+  isRoleModerator: boolean;
   kills: number;
 }
 
@@ -526,6 +533,7 @@ interface HiscorePlayerRecord {
   accountId: number;
   username: string;
   isAdmin: boolean;
+  isRoleModerator: boolean;
   skills: SkillBlock;
 }
 
@@ -884,6 +892,7 @@ export class GameDatabase {
         username TEXT UNIQUE NOT NULL COLLATE NOCASE,
         password_hash TEXT NOT NULL,
         is_admin INTEGER NOT NULL DEFAULT 0,
+        is_moderator INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER DEFAULT (unixepoch())
       );
 
@@ -934,6 +943,9 @@ export class GameDatabase {
     // deployments keep working.
     try {
       this.db.exec(`ALTER TABLE accounts ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE accounts ADD COLUMN is_moderator INTEGER NOT NULL DEFAULT 0`);
     } catch { /* column already exists */ }
     this.db.query(`UPDATE accounts SET is_admin = 1 WHERE username = 'mogn' AND is_admin = 0`).run();
     // Migration: per-account bank container. JSON blob keeps the schema simple
@@ -1691,7 +1703,7 @@ export class GameDatabase {
     }
   }
 
-  async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
+  async createAccount(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; accountId: number; isAdmin: boolean; isModerator: boolean } | { ok: false; error: string }> {
     if (!PUBLIC_SIGNUPS_ENABLED) return { ok: false, error: ACCOUNT_CREATION_CLOSED_MESSAGE };
 
     const usernameError = validateUsername(username);
@@ -1734,11 +1746,11 @@ export class GameDatabase {
 
     // Create session
     const session = this.createSession(accountId, deviceId);
-    return { ok: true, token: session.token, wsSecret: session.wsSecret, accountId, isAdmin: isAdmin === 1 };
+    return { ok: true, token: session.token, wsSecret: session.wsSecret, accountId, isAdmin: isAdmin === 1, isModerator: false };
   }
 
-  async login(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean } | { ok: false; error: string }> {
-    const row = this.db.query('SELECT id, username, password_hash, is_admin FROM accounts WHERE username = ?').get(username) as { id: number; username: string; password_hash: string; is_admin: number } | null;
+  async login(username: string, password: string, deviceId: string = ''): Promise<{ ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean; isModerator: boolean } | { ok: false; error: string }> {
+    const row = this.db.query('SELECT id, username, password_hash, is_admin, is_moderator FROM accounts WHERE username = ?').get(username) as { id: number; username: string; password_hash: string; is_admin: number; is_moderator: number } | null;
     if (!row) {
       return { ok: false, error: 'Invalid username or password' };
     }
@@ -1749,10 +1761,10 @@ export class GameDatabase {
     }
 
     const session = this.createSession(row.id, deviceId);
-    return { ok: true, token: session.token, wsSecret: session.wsSecret, username: row.username, accountId: row.id, isAdmin: row.is_admin === 1 };
+    return { ok: true, token: session.token, wsSecret: session.wsSecret, username: row.username, accountId: row.id, isAdmin: row.is_admin === 1, isModerator: row.is_moderator === 1 };
   }
 
-  loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean } {
+  loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean; isModerator: boolean } {
     const starterInventory = JSON.stringify([
       { itemId: 31, quantity: 1 },
       { itemId: 33, quantity: 1 }
@@ -1760,9 +1772,10 @@ export class GameDatabase {
     let accountId = 0;
     let normalizedUsername = username.toLowerCase();
     let isAdmin = 0;
+    let isModerator = 0;
 
     this.db.transaction(() => {
-      let row = this.db.query('SELECT id, username, is_admin FROM accounts WHERE username = ?').get(normalizedUsername) as { id: number; username: string; is_admin: number } | null;
+      let row = this.db.query('SELECT id, username, is_admin, is_moderator FROM accounts WHERE username = ?').get(normalizedUsername) as { id: number; username: string; is_admin: number; is_moderator: number } | null;
       if (!row) {
         const result = this.db.query('INSERT INTO accounts (username, password_hash, is_admin) VALUES (?, ?, 0)').run(normalizedUsername, 'fallback-login');
         accountId = Number(result.lastInsertRowid);
@@ -1772,11 +1785,12 @@ export class GameDatabase {
       accountId = row.id;
       normalizedUsername = row.username;
       isAdmin = row.is_admin;
+      isModerator = row.is_moderator;
       this.db.query('INSERT OR IGNORE INTO player_state (account_id, inventory) VALUES (?, ?)').run(accountId, starterInventory);
     }).immediate();
 
     const session = this.createSession(accountId, deviceId);
-    return { ok: true, token: session.token, wsSecret: session.wsSecret, username: normalizedUsername, accountId, isAdmin: isAdmin === 1 };
+    return { ok: true, token: session.token, wsSecret: session.wsSecret, username: normalizedUsername, accountId, isAdmin: isAdmin === 1, isModerator: isModerator === 1 };
   }
 
   createSession(accountId: number, deviceId: string = ''): CreatedSession {
@@ -1797,17 +1811,18 @@ export class GameDatabase {
     if (!token) return null;
     const now = Math.floor(Date.now() / 1000);
     const row = this.db.query(`
-      SELECT s.account_id, a.username, a.is_admin, s.device_id, s.ws_secret
+      SELECT s.account_id, a.username, a.is_admin, a.is_moderator, s.device_id, s.ws_secret
       FROM sessions s
       JOIN accounts a ON a.id = s.account_id
       WHERE s.token = ? AND s.expires_at > ?
-    `).get(token, now) as { account_id: number; username: string; is_admin: number; device_id: string | null; ws_secret: string | null } | null;
+    `).get(token, now) as { account_id: number; username: string; is_admin: number; is_moderator: number; device_id: string | null; ws_secret: string | null } | null;
 
     if (!row) return null;
     return {
       accountId: row.account_id,
       username: row.username,
       isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
       deviceId: row.device_id ?? '',
       wsSecret: row.ws_secret ?? '',
     };
@@ -2288,7 +2303,7 @@ export class GameDatabase {
   private loadHiscorePlayers(options: { includeAdmins?: boolean } = {}): HiscorePlayerRecord[] {
     const adminFilter = options.includeAdmins ? '' : 'AND a.is_admin = 0';
     const rows = this.db.query(`
-      SELECT ps.account_id, a.username, a.is_admin, ps.skills
+      SELECT ps.account_id, a.username, a.is_admin, a.is_moderator, ps.skills
       FROM player_state ps
       JOIN accounts a ON a.id = ps.account_id
       LEFT JOIN account_bans ab
@@ -2296,7 +2311,7 @@ export class GameDatabase {
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
       WHERE ab.account_id IS NULL
         ${adminFilter}
-    `).all() as Array<{ account_id: number; username: string; is_admin: number; skills: string }>;
+    `).all() as Array<{ account_id: number; username: string; is_admin: number; is_moderator: number; skills: string }>;
 
     return rows
       // Anti-bot test accounts can produce artificial XP; keep them out of public rankings.
@@ -2305,6 +2320,7 @@ export class GameDatabase {
         accountId: row.account_id,
         username: row.username,
         isAdmin: row.is_admin === 1,
+        isRoleModerator: row.is_moderator === 1,
         skills: this.parseHiscoreSkills(row.skills),
       }));
   }
@@ -2416,6 +2432,7 @@ export class GameDatabase {
         return {
           accountId: row.accountId,
           username: row.username,
+          isRoleModerator: row.isRoleModerator,
           level: value.level,
           xp: value.xp,
           dailyXp: baselineXp == null ? 0 : Math.max(0, value.xp - baselineXp),
@@ -2538,6 +2555,7 @@ export class GameDatabase {
 
     return {
       username: target.username,
+      isRoleModerator: target.isRoleModerator,
       avatarUrl,
       rows,
       monsterKills,
@@ -2588,20 +2606,20 @@ export class GameDatabase {
     const mobName = selectedMob?.name ?? `NPC ${effectiveId}`;
 
     const rows = this.db.query(`
-      SELECT a.username, mk.kills
+      SELECT a.username, a.is_moderator, mk.kills
       FROM mob_kills mk
       JOIN accounts a ON a.id = mk.account_id
       LEFT JOIN account_bans ab
         ON ab.account_id = a.id
        AND (ab.expires_at IS NULL OR ab.expires_at > unixepoch())
       WHERE mk.npc_def_id = ? AND ab.account_id IS NULL AND a.is_admin = 0 AND mk.kills > 0
-    `).all(effectiveId) as Array<{ username: string; kills: number }>;
+    `).all(effectiveId) as Array<{ username: string; is_moderator: number; kills: number }>;
 
     const ranked = rows
       // Same anti-bot/test-account exclusion the skill hiscores apply.
       .filter((row) => !isHiscoreExcludedUsername(row.username))
       .sort((a, b) => b.kills - a.kills || a.username.localeCompare(b.username))
-      .map((row, idx) => ({ rank: idx + 1, username: row.username, kills: row.kills }));
+      .map((row, idx) => ({ rank: idx + 1, username: row.username, isRoleModerator: row.is_moderator === 1, kills: row.kills }));
 
     const normalizedQuery = query.trim().toLowerCase();
     const filtered = normalizedQuery
@@ -2741,6 +2759,7 @@ export class GameDatabase {
         a.id,
         a.username,
         a.is_admin,
+        a.is_moderator,
         b.total_skilling_actions,
         b.total_combat_swings,
         b.total_movements,
@@ -2804,6 +2823,7 @@ export class GameDatabase {
       id: number;
       username: string;
       is_admin: number;
+      is_moderator: number;
       total_skilling_actions: number | null;
       total_combat_swings: number | null;
       total_movements: number | null;
@@ -2860,6 +2880,7 @@ export class GameDatabase {
         accountId: row.id,
         username: row.username,
         isAdmin: row.is_admin === 1,
+        isModerator: row.is_moderator === 1,
         riskScore: calibratedRisk?.score ?? row.risk_score ?? 0,
         riskLevel: calibratedRisk?.level ?? row.risk_level ?? 'low',
         riskReasons: calibratedRisk?.reasons ?? storedRiskReasons,
@@ -3149,7 +3170,7 @@ export class GameDatabase {
   private getForumPosts(threadId: number, viewerAccountId: number | null, includeHidden: boolean, page: number = 1, limit: number = 20): ForumPost[] {
     const offset = (clampForumPage(page) - 1) * limit;
     const rows = this.db.query(`
-      SELECT p.*, a.username, a.is_admin AS author_is_admin,
+      SELECT p.*, a.username, a.is_admin AS author_is_admin, a.is_moderator AS author_is_role_moderator,
         ps.skills AS author_skills, ps.appearance AS author_appearance, ps.equipment AS author_equipment,
         avatar.url AS author_avatar_url, fp.signature AS author_signature,
         rp.id AS reply_to_id, rp.author_account_id AS reply_to_author_account_id,
@@ -3164,7 +3185,7 @@ export class GameDatabase {
       ORDER BY p.created_at ASC, p.id ASC
       LIMIT ? OFFSET ?
     `).all(threadId, includeHidden ? 1 : 0, limit, offset) as Array<{
-      id: number; thread_id: number; author_account_id: number; username: string; author_is_admin: number;
+      id: number; thread_id: number; author_account_id: number; username: string; author_is_admin: number; author_is_role_moderator: number;
       author_skills: string | null; author_appearance: string | null; author_equipment: string | null; author_avatar_url: string | null; author_signature: string | null; body: string;
       created_at: number; updated_at: number; edited_at: number | null; is_hidden: number; is_deleted: number; hidden_reason: string;
       reply_to_id: number | null; reply_to_author_account_id: number | null; reply_to_author_username: string | null; reply_to_body: string | null; reply_to_created_at: number | null;
@@ -3230,7 +3251,7 @@ export class GameDatabase {
       return {
       id: row.id,
       threadId: row.thread_id,
-      author: { accountId: row.author_account_id, username: row.username, avatarUrl: avatarTarget?.url ?? row.author_avatar_url ?? '', combatLevel: authorCombatLevel, isAdmin: row.author_is_admin === 1, signature: row.author_signature ?? '' },
+      author: { accountId: row.author_account_id, username: row.username, avatarUrl: avatarTarget?.url ?? row.author_avatar_url ?? '', combatLevel: authorCombatLevel, isAdmin: row.author_is_admin === 1, isRoleModerator: row.author_is_role_moderator === 1, signature: row.author_signature ?? '' },
       replyTo: row.reply_to_id == null ? null : {
         id: row.reply_to_id,
         author: { accountId: row.reply_to_author_account_id ?? 0, username: row.reply_to_author_username ?? 'unknown' },
@@ -3333,7 +3354,7 @@ export class GameDatabase {
     const safeNow = Math.max(0, Math.floor(nowUnix));
     const safeWindow = Math.max(30, Math.min(15 * 60, Math.floor(windowSeconds) || 180));
     const rows = this.db.query(`
-      SELECT p.account_id, p.last_seen_at, a.username, a.is_admin, ps.skills, avatar.url AS avatar_url
+      SELECT p.account_id, p.last_seen_at, a.username, a.is_admin, a.is_moderator, ps.skills, avatar.url AS avatar_url
       FROM forum_presence p
       JOIN accounts a ON a.id = p.account_id
       LEFT JOIN player_state ps ON ps.account_id = p.account_id
@@ -3343,7 +3364,7 @@ export class GameDatabase {
       ORDER BY p.last_seen_at DESC, lower(a.username) ASC
       LIMIT 100
     `).all(safeNow - safeWindow) as Array<{
-      account_id: number; last_seen_at: number; username: string; is_admin: number; skills: string | null; avatar_url: string | null;
+      account_id: number; last_seen_at: number; username: string; is_admin: number; is_moderator: number; skills: string | null; avatar_url: string | null;
     }>;
     return rows.map((row) => {
       let level: number | null = null;
@@ -3360,6 +3381,7 @@ export class GameDatabase {
         avatarUrl: row.avatar_url ?? '',
         combatLevel: level,
         isAdmin: row.is_admin === 1,
+        isRoleModerator: row.is_moderator === 1,
         lastSeenAt: row.last_seen_at,
       };
     });
@@ -3612,7 +3634,7 @@ export class GameDatabase {
   }
 
   getForumProfile(username: string): ForumProfile | null {
-    const account = this.db.query('SELECT id, username, is_admin, created_at FROM accounts WHERE username = ?').get(username.trim()) as { id: number; username: string; is_admin: number; created_at: number } | null;
+    const account = this.db.query('SELECT id, username, is_admin, is_moderator, created_at FROM accounts WHERE username = ?').get(username.trim()) as { id: number; username: string; is_admin: number; is_moderator: number; created_at: number } | null;
     if (!account) return null;
     const profile = this.db.query(`
       SELECT fp.bio, fp.title, fp.signature, avatar.url AS avatar_url
@@ -3650,6 +3672,7 @@ export class GameDatabase {
       postCount,
       threadCount,
       isModerator: this.isForumModerator(account.id, account.is_admin === 1),
+      isRoleModerator: account.is_moderator === 1,
       isAdmin: account.is_admin === 1,
       combatLevel: skills ? combatLevel(skills) : null,
       topSkills,
@@ -3776,10 +3799,16 @@ export class GameDatabase {
     return !!row;
   }
 
-  getAccountModerationInfo(accountId: number): { accountId: number; username: string; isAdmin: boolean } | null {
-    const row = this.db.query('SELECT id, username, is_admin FROM accounts WHERE id = ?')
-      .get(accountId) as { id: number; username: string; is_admin: number } | null;
-    return row ? { accountId: row.id, username: row.username, isAdmin: row.is_admin === 1 } : null;
+  getAccountModerationInfo(accountId: number): { accountId: number; username: string; isAdmin: boolean; isModerator: boolean } | null {
+    const row = this.db.query('SELECT id, username, is_admin, is_moderator FROM accounts WHERE id = ?')
+      .get(accountId) as { id: number; username: string; is_admin: number; is_moderator: number } | null;
+    return row ? { accountId: row.id, username: row.username, isAdmin: row.is_admin === 1, isModerator: row.is_moderator === 1 } : null;
+  }
+
+  setAccountModeratorRole(accountId: number, enabled: boolean): { accountId: number; username: string; isAdmin: boolean; isModerator: boolean } | null {
+    const value = enabled ? 1 : 0;
+    this.db.query('UPDATE accounts SET is_moderator = ? WHERE id = ?').run(value, accountId);
+    return this.getAccountModerationInfo(accountId);
   }
 
   getAccountCreatedAt(accountId: number): number | null {

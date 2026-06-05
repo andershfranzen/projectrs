@@ -12,6 +12,7 @@ type HiscoreCategory = {
 type HiscoreRow = {
   rank: number;
   username: string;
+  isRoleModerator?: boolean;
   level: number;
   xp: number;
   dailyXp: number;
@@ -39,6 +40,7 @@ type HiscoreProfileRow = {
 
 type HiscoreProfileResponse = {
   username: string;
+  isRoleModerator?: boolean;
   avatarUrl: string;
   rows: HiscoreProfileRow[];
   monsterKills: HiscoreProfileMonsterKillRow[];
@@ -64,6 +66,7 @@ type MobKillMob = {
 type MobKillRow = {
   rank: number;
   username: string;
+  isRoleModerator?: boolean;
   kills: number;
 };
 
@@ -525,7 +528,7 @@ export function HiscoresTable() {
                   <div>
                     <span>Player Profile</span>
                     <h2>
-                      {profile?.username ?? selectedPlayer}
+                      <span className={profile?.isRoleModerator ? 'role-moderator-name' : undefined}>{profile?.username ?? selectedPlayer}</span>
                       {profileCombatLevel != null ? (
                         <span className="combat-level-badge">Combat Lv. {formatNumber.format(profileCombatLevel)}</span>
                       ) : null}
@@ -675,7 +678,7 @@ export function HiscoresTable() {
                               <td>
                                 <button
                                   type="button"
-                                  className="player-link"
+                                  className={`player-link${row.isRoleModerator ? ' role-moderator-name' : ''}`}
                                   onClick={() => setSelectedPlayer(row.username)}
                                 >
                                   {row.username}
@@ -704,7 +707,7 @@ export function HiscoresTable() {
                               <td>
                                 <button
                                   type="button"
-                                  className="player-link"
+                                  className={`player-link${row.isRoleModerator ? ' role-moderator-name' : ''}`}
                                   onClick={() => setSelectedPlayer(row.username)}
                                 >
                                   {row.username}

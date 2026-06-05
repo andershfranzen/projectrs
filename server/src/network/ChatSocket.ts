@@ -4,7 +4,7 @@ import type { ServerWebSocket } from 'bun';
 import type { SocialEntry, SocialListKind, SocialLists } from '../Database';
 import type { Player } from '../entity/Player';
 
-export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean };
+export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean; isModerator: boolean };
 
 function sendSystem(ws: ServerWebSocket<ChatSocketData>, message: string): void {
   ws.send(JSON.stringify({ type: 'system', message }));
@@ -200,10 +200,10 @@ function sendPrivateMessage(
   } catch { /* sender socket is closing */ }
 }
 
-export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false): void {
+export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): void {
   const msg = message.substring(0, 1000);
   if (!from || msg.length === 0) return;
-  const payload = JSON.stringify({ type: 'local', from, fromAccountId, isAdmin: fromIsAdmin, message: msg });
+  const payload = JSON.stringify({ type: 'local', from, fromAccountId, isAdmin: fromIsAdmin, isModerator: fromIsModerator, message: msg });
   for (const sock of chatSockets) {
     if (fromAccountId != null && ignoredAccountIdsByAccountId.get(sock.data.accountId)?.has(fromAccountId)) {
       continue;
@@ -227,7 +227,7 @@ export function handleChatSocketOpen(
   // forever (player_info never re-sends for already-online players).
   for (const [, p] of world.players) {
     try {
-      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name, isAdmin: p.isAdmin }));
+      ws.send(JSON.stringify({ type: 'player_info', entityId: p.id, name: p.name, isAdmin: p.isAdmin, isModerator: p.isModerator }));
     } catch { /* ignore */ }
   }
   sendSocialList(ws, world);
@@ -284,7 +284,7 @@ export function handleChatSocketMessage(
       const speaker = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
       speaker?.botStats?.recordChat();
 
-      broadcastLocalMessage(from, msg, ws.data.accountId, ws.data.isAdmin);
+      broadcastLocalMessage(from, msg, ws.data.accountId, ws.data.isAdmin, ws.data.isModerator);
       break;
     }
 
@@ -908,8 +908,8 @@ export function handleChatSocketClose(
 }
 
 /** Broadcast player info to all chat sockets so clients can map entityId → name */
-export function broadcastPlayerInfo(entityId: number, name: string, isAdmin: boolean = false): void {
-  const payload = JSON.stringify({ type: 'player_info', entityId, name, isAdmin });
+export function broadcastPlayerInfo(entityId: number, name: string, isAdmin: boolean = false, isModerator: boolean = false): void {
+  const payload = JSON.stringify({ type: 'player_info', entityId, name, isAdmin, isModerator });
   for (const sock of chatSockets) {
     try {
       sock.send(payload);
@@ -935,4 +935,9 @@ export function sendSystemMessageToUser(username: string, message: string): void
       return;
     }
   }
+}
+
+export function setChatAccountModerator(accountId: number, isModerator: boolean): void {
+  const sock = chatSocketsByAccountId.get(accountId);
+  if (sock) sock.data.isModerator = isModerator;
 }
