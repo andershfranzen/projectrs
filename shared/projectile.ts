@@ -1,4 +1,4 @@
-import { WallEdge } from './types.js';
+import { WallEdge } from './types';
 
 export type ProjectileWallBlocker<TContext> = (
   context: TContext,

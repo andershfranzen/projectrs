@@ -1,4 +1,4 @@
-import type { SkillBlock } from '../skills.js';
+import type { SkillBlock } from '../skills';
 
 export type CombatLevels = {
   defence: number;

@@ -1,4 +1,4 @@
-import type { PlayerAppearance } from './appearance.js';
+import type { PlayerAppearance } from './appearance';
 
 // Shared paths + dimensions for the humanoid character GLB. Both the in-game
 // client (local player, remote players, customizable NPCs, character creator)

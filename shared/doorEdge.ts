@@ -1,4 +1,4 @@
-import { WallEdge } from './types.js';
+import { WallEdge } from './types';
 
 const DOOR_EDGE_EPS = 0.05;
 

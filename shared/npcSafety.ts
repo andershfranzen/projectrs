@@ -1,4 +1,4 @@
-import type { NpcDef, SpawnEntry } from './types.js';
+import type { NpcDef, SpawnEntry } from './types';
 
 type BankAccessSpawnRef = Pick<SpawnEntry, 'npcId' | 'x' | 'z' | 'name'> & { id?: number };
 type BankAccessNpcDefRef = Pick<NpcDef, 'id' | 'name' | 'bankAccess'>;

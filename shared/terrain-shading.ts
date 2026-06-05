@@ -1,4 +1,4 @@
-import type { GroundType } from './types.js';
+import type { GroundType } from './types';
 
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));

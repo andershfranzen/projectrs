@@ -1,9 +1,8 @@
-import type { PlayerAppearance } from './appearance.js';
-import type { SkillId } from './skills.js';
+import type { PlayerAppearance } from './appearance';
+import type { SkillId } from './skills';
 
-// Keep this in sync with tileCut.ts DEFAULT_CUT_ANGLE. Avoid importing it here:
-// the website Turbopack build consumes shared TypeScript directly and does not
-// resolve this package's internal ".js" extension imports to ".ts" sources.
+// Keep this in sync with tileCut.ts DEFAULT_CUT_ANGLE. Avoid importing it here
+// because this base type module is pulled into broad client and website bundles.
 const DEFAULT_TEXTURE_CUT_ANGLE = (3 * Math.PI) / 4;
 
 export interface Position {

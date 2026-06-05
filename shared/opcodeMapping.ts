@@ -1,4 +1,4 @@
-import { ClientOpcode, ServerOpcode } from './opcodes.js';
+import { ClientOpcode, ServerOpcode } from './opcodes';
 
 export const OPCODE_MAPPING_VERSION = 1;
 

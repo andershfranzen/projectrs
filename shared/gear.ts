@@ -1,4 +1,4 @@
-import type { ItemDef } from './types.js';
+import type { ItemDef } from './types';
 
 const GEAR_FIT_TIERS: readonly string[] = ['Bronze', 'Iron', 'Steel', 'Black Bronze', 'Mithril', 'Crimson', 'Malachor'];
 const HIGH_QUALITY_SUFFIX = ' (HQ)';
