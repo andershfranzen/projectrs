@@ -25,7 +25,7 @@ services:
       RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
       # reCAPTCHA v3's default threshold is 0.5. Keep this configurable so
       # production can tune from observed traffic without rebuilding images.
-      RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-0.5}
+      RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-0.4}
       # Forum Discord emote sync. Reuse the Left Hand bot credentials by
       # default so production only needs one Discord bot token in .env.
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-${LEFT_HAND_DISCORD_GUILD_ID:-1504534632799010816}}
