@@ -23,6 +23,21 @@ function item(id: number, name: string, equipSlot = 'weapon'): ItemDef {
   return { id, name, equipSlot } as ItemDef;
 }
 
+type GearOverrideJson = {
+  localPosition?: { x: number; y: number; z: number };
+  localRotation?: { x: number; y: number; z: number };
+  scale?: number;
+  bodyTypeOverrides?: Record<string, unknown>;
+};
+
+function baseGearOverride(override: GearOverrideJson): Omit<GearOverrideJson, 'bodyTypeOverrides'> {
+  return {
+    localPosition: override.localPosition,
+    localRotation: override.localRotation,
+    scale: override.scale,
+  };
+}
+
 describe('item thumbnail families', () => {
   test('normalizes same equipment family across tiers and naming variants', () => {
     expect(itemThumbnailFamily(item(63, 'Bronze Battle Axe'))).toBe('Battle Axe');
@@ -134,9 +149,20 @@ describe('item thumbnail families', () => {
 
     const gearOverrides = gearOverridesJson as Record<string, unknown>;
     const thumbnailOverrides = thumbnailOverridesJson as Record<string, ThumbnailOverride>;
-    const camelGearOverride = gearOverrides['237'];
+    const camelGearOverride = gearOverrides['237'] as GearOverrideJson;
     const camelThumbnailOverride = thumbnailOverrides['237'];
+    const newCapeFemaleOverride = {
+      localPosition: { x: 0.008, y: -0.006, z: 0.003 },
+      localRotation: { x: 0, y: 0, z: 0 },
+      scale: 1,
+    };
     const manifest = parseBakedThumbnailManifest(JSON.parse(readFileSync('client/public/items/3d/manifest.json', 'utf8')));
+
+    for (const id of [409, 410, 411, 412, 439]) {
+      const gearOverride = gearOverrides[String(id)] as GearOverrideJson;
+      expect(baseGearOverride(gearOverride)).toEqual(baseGearOverride(camelGearOverride));
+      expect(gearOverride.bodyTypeOverrides?.['1']).toEqual(newCapeFemaleOverride);
+    }
 
     for (const id of [409, 410, 411, 412]) {
       const def = byId.get(id);
@@ -150,7 +176,6 @@ describe('item thumbnail families', () => {
       if (!model) throw new Error(`Cape variant ${id} is missing its model`);
       expect(model.startsWith('/assets/equipment/cape/')).toBe(true);
       expect(existsSync(`client/public${model}`)).toBe(true);
-      expect(gearOverrides[String(id)]).toEqual(camelGearOverride);
       expect(thumbnailOverrides[String(id)]).toEqual(camelThumbnailOverride);
 
       const modelPath = resolveItemModelPath(def);
