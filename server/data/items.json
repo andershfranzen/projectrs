@@ -5412,5 +5412,15 @@
     "rangedDefence": 59,
     "equipSkill": "defence",
     "levelRequired": 35
+  },
+  {
+    "id": 439,
+    "name": "Ripped Black Cape",
+    "description": "A black cape with a worn and ragged hem.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "cape",
+    "value": 100,
+    "model": "/assets/equipment/cape/RippedBlackCape.glb"
   }
 ]

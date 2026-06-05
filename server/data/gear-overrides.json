@@ -2575,6 +2575,34 @@
       }
     }
   },
+  "439": {
+    "localPosition": {
+      "x": 0,
+      "y": -0.006,
+      "z": 0.003
+    },
+    "localRotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": 1,
+    "bodyTypeOverrides": {
+      "1": {
+        "localPosition": {
+          "x": 0,
+          "y": -0.006,
+          "z": 0.003
+        },
+        "localRotation": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "scale": 1
+      }
+    }
+  },
   "274": {
     "localPosition": {
       "x": -0.477,
