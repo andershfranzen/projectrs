@@ -196,6 +196,15 @@ The 32 base Mixamo bones drive animations directly. The 25 extra finger bones (I
 
 Don't script-modify Rigify rigs — control bones override deformation bone keyframes.
 
+### NPC GLB export / large mobs
+
+When exporting or debugging 2x2-or-larger NPCs from Blender via MCP, remember the bear issue:
+
+- **Large NPC facing must aim at the visual anchor, not `sprite.position`.** Even-sized mobs use the logical position as a footprint anchor; the visual center is offset by half a tile. Combat facing, projectiles, and one-shot face calls should use `target.getTargetAnchor()` / `sprite.getTargetAnchor()` (or the footprint center fallback), not raw `position.x/z`.
+- **Blender Front view can hide model-forward problems.** The bear looked correct in Front Orthographic because it was facing the camera. Check Top Orthographic and axes, and measure the exported/posed body direction in world space (pelvis/spine to head) before assuming the mesh is wrong.
+- **Do not blindly add a 90-degree `facingOffsetY`.** The bear `.blend` was basically straight in Blender, and a `-Math.PI / 2` runtime offset made it ~80 degrees sideways. The correct fix was a small visual trim in `client/src/data/NpcConfig.ts` (`BEAR_FACING_OFFSET_Y = -Math.PI / 18`) after verifying in-game.
+- If a large mob is consistently off by a small constant angle while tracking targets correctly, prefer a small per-model `facingOffsetY`. If it is off by 90/180 degrees, inspect the exported GLB/root transforms and Babylon runtime orientation before changing config.
+
 ### Character pipeline
 
 End-to-end customization is in `shared/appearance.ts`:

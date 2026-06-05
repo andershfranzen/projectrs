@@ -1342,7 +1342,6 @@ function tuneModelLighting(model) {
   let wallLineStart = null  // {x, z, edge} for Ctrl+click line drawing
   let blockLineStart = null // {x, z} for Ctrl+click block line drawing
   let collisionFloor = 0
-  let stairDirection = 'N'
 
   // Diagonal floor placement
   let diagFloorMode = false
@@ -1433,12 +1432,6 @@ function tuneModelLighting(model) {
     const layer = getCollisionLayer()
     if (height == null) delete layer.floors[`${x},${z}`]
     else layer.floors[`${x},${z}`] = height
-  }
-
-  function setStairAt(x, z, data) {
-    const layer = getCollisionLayer()
-    if (!data) delete layer.stairs[`${x},${z}`]
-    else layer.stairs[`${x},${z}`] = data
   }
 
   function setHoleAt(x, z, isHole) {
@@ -2349,7 +2342,7 @@ let selectedWaterFlowChunk = null
           </select>
         </label>
         <div id="ladderWiringRow" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #333;">
-          <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Ladder wiring</div>
+          <div style="font-size:11px;color:#aaa;margin-bottom:4px;">Vertical link wiring</div>
           <div id="ladderWiringStatus" style="font-size:11px;margin-bottom:6px;color:#ddd;">(status)</div>
           <div style="display:flex;gap:5px;margin-bottom:5px;align-items:center;">
             <span style="font-size:10px;color:#888;">Floor:</span>
@@ -2361,7 +2354,7 @@ let selectedWaterFlowChunk = null
               <option value="0">0</option><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option>
             </select>
           </div>
-          <button id="ladderWireToBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Wire to another ladder…</button>
+          <button id="ladderWireToBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Wire to another link object...</button>
           <button id="ladderSelfBidiBtn" style="width:100%;font-size:11px;padding:4px 6px;margin-bottom:5px;">Make bidirectional (this only)</button>
           <button id="ladderClearLinksBtn" style="width:100%;font-size:11px;padding:4px 6px;color:#ffb0b0;">Clear all links</button>
           <div id="ladderLinksList" style="margin-top:6px;font-size:10px;color:#999;line-height:1.4;"></div>
@@ -2588,7 +2581,6 @@ let selectedWaterFlowChunk = null
         <button id="collWallBtn" class="tool-btn active-tool" style="flex:1;font-size:10px;padding:4px;">Walls</button>
         <button id="collBlockBtn" class="tool-btn" style="flex:1;font-size:10px;padding:4px;">Block Tile</button>
         <button id="collFloorBtn" class="tool-btn" style="flex:1;font-size:10px;padding:4px;">Floor</button>
-        <button id="collStairBtn" class="tool-btn" style="flex:1;font-size:10px;padding:4px;">Stairs</button>
         <button id="collHoleBtn" class="tool-btn" style="flex:1;font-size:10px;padding:4px;">Hole</button>
       </div>
       <div id="collWallPanel">
@@ -2613,25 +2605,6 @@ let selectedWaterFlowChunk = null
         <label style="font-size:11px;color:rgba(255,255,255,0.45);">Floor Height <span id="floorHeightLabel">3.0</span></label>
         <input id="floorHeightInput" type="number" step="0.5" value="3.0" style="width:100%;margin-top:3px;" />
         <div class="hint" style="margin-top:4px;">Click to set floor · Shift+Click to remove</div>
-      </div>
-      <div id="collStairPanel" style="display:none;">
-        <div style="display:flex;gap:3px;margin-bottom:5px;">
-          <button class="stair-dir-btn active-tool" data-dir="N" style="flex:1;font-size:10px;padding:4px;">N</button>
-          <button class="stair-dir-btn" data-dir="E" style="flex:1;font-size:10px;padding:4px;">E</button>
-          <button class="stair-dir-btn" data-dir="S" style="flex:1;font-size:10px;padding:4px;">S</button>
-          <button class="stair-dir-btn" data-dir="W" style="flex:1;font-size:10px;padding:4px;">W</button>
-        </div>
-        <div style="display:flex;gap:5px;margin-bottom:3px;">
-          <div style="flex:1;">
-            <div style="font-size:10px;color:#888;">Base H</div>
-            <input id="stairBaseH" type="number" step="0.5" value="0" style="width:100%;" />
-          </div>
-          <div style="flex:1;">
-            <div style="font-size:10px;color:#888;">Top H</div>
-            <input id="stairTopH" type="number" step="0.5" value="3.5" style="width:100%;" />
-          </div>
-        </div>
-        <div class="hint">Click to place stair · Shift+Click to remove</div>
       </div>
       <div id="collHolePanel" style="display:none;">
         <div class="hint">Click to toggle terrain hole<br>Shift+Click to remove</div>
@@ -4452,8 +4425,8 @@ let selectedWaterFlowChunk = null
   }
 
   // --- Collision tool sub-mode buttons ---
-  const collModes = { wall: 'collWallBtn', block: 'collBlockBtn', floor: 'collFloorBtn', stair: 'collStairBtn', hole: 'collHoleBtn' }
-  const collPanels = { wall: 'collWallPanel', block: 'collBlockPanel', floor: 'collFloorPanel', stair: 'collStairPanel', hole: 'collHolePanel' }
+  const collModes = { wall: 'collWallBtn', block: 'collBlockBtn', floor: 'collFloorBtn', hole: 'collHoleBtn' }
+  const collPanels = { wall: 'collWallPanel', block: 'collBlockPanel', floor: 'collFloorPanel', hole: 'collHolePanel' }
   for (const [mode, btnId] of Object.entries(collModes)) {
     sidebar.querySelector(`#${btnId}`)?.addEventListener('click', () => {
       collisionMode = mode
@@ -4476,14 +4449,6 @@ let selectedWaterFlowChunk = null
     sidebar.querySelector('#collFloorLevel').textContent = collisionFloor
     rebuildCollisionMeshes()
   })
-
-
-  for (const btn of sidebar.querySelectorAll('.stair-dir-btn')) {
-    btn.addEventListener('click', () => {
-      stairDirection = btn.dataset.dir
-      for (const b of sidebar.querySelectorAll('.stair-dir-btn')) b.classList.toggle('active-tool', b === btn)
-    })
-  }
 
   sidebar.querySelector('#wallDrawBtn')?.addEventListener('click', () => {
     wallEraseMode = false
@@ -5325,13 +5290,13 @@ let selectedWaterFlowChunk = null
     const wireBtn = sidebar.querySelector('#ladderWireToBtn')
     const reason = ladderBrokenReason(obj)
     if (pendingLadderWireSource === obj) {
-      statusEl.innerHTML = '<span style="color:#ffd28a;">Click another ladder to pair (Esc to cancel)</span>'
+      statusEl.innerHTML = '<span style="color:#ffd28a;">Click another link object to pair (Esc to cancel)</span>'
     } else if (!reason) {
       statusEl.innerHTML = `<span style="color:#8fdc8f;">✓ Wired (${(obj.userData.verticalLinks||[]).length} link${(obj.userData.verticalLinks||[]).length===1?'':'s'})</span>`
     } else {
       statusEl.innerHTML = `<span style="color:#ff9090;">⚠ ${reason}</span>`
     }
-    if (wireBtn) wireBtn.textContent = pendingLadderWireSource === obj ? 'Cancel wiring' : 'Wire to another ladder…'
+    if (wireBtn) wireBtn.textContent = pendingLadderWireSource === obj ? 'Cancel wiring' : 'Wire to another link object...'
     const links = obj.userData.verticalLinks || []
     listEl.innerHTML = links.length === 0
       ? '<em style="color:#666;">(no links)</em>'
@@ -5407,7 +5372,7 @@ let selectedWaterFlowChunk = null
     })
     clearBtn?.addEventListener('click', () => {
       if (!selectedPlacedObject || !isLadderPlacedObject(selectedPlacedObject)) return
-      if (!window.confirm('Clear all vertical links on this ladder?')) return
+      if (!window.confirm('Clear all vertical links on this object?')) return
       selectedPlacedObject.userData.verticalLinks = []
       refreshBrokenLadderIndicators()
       renderLadderWiringPanel(selectedPlacedObject)
@@ -13051,16 +13016,6 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
         } else {
           const h = parseFloat(sidebar.querySelector('#floorHeightInput')?.value) || 3.0
           setFloorAt(tile.x, tile.z, h)
-        }
-      } else if (collisionMode === 'stair') {
-        if (event.shiftKey) {
-          setStairAt(tile.x, tile.z, null)
-        } else {
-          setStairAt(tile.x, tile.z, {
-            direction: stairDirection,
-            baseHeight: parseFloat(sidebar.querySelector('#stairBaseH')?.value) || 0,
-            topHeight: parseFloat(sidebar.querySelector('#stairTopH')?.value) || 3.5
-          })
         }
       } else if (collisionMode === 'hole') {
         if (event.shiftKey) {

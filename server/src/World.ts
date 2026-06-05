@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, STAIR_DESCENT_SEARCH_RADIUS, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -1889,9 +1889,9 @@ export class World {
 
   /** Re-derive the player's server-authoritative walking elevation after a
    *  tile change. The prior effectiveY feeds getEffectiveHeightOnFloor's
-   *  roof-tile gate, so the player only "sticks" to an elevated surface once
-   *  they have actually climbed onto it via stair ramp tiles (whose height
-   *  is reported ungated). Mirrors the client's per-frame
+   *  roof-tile gate, so the player only "sticks" to an elevated surface after
+   *  an explicit vertical transition has moved them near that height. Mirrors
+   *  the client's per-frame
    *  getEffectiveHeight(currentY) feedback loop — keeping the two in lock-step
    *  is what stops wall-edge checks from disagreeing across the wire. */
   private refreshPlayerEffectiveY(player: Player): void {
@@ -3300,20 +3300,6 @@ export class World {
     if (player.openDialogueState) this.sendDialogueClose(player);
 
     const map = this.getPlayerMap(player);
-    const requestedGoal = path[path.length - 1];
-    const requestedGoalIsOnCurrentFloor = requestedGoal
-      ? !map.isTileBlockedOnFloor(Math.floor(requestedGoal.x), Math.floor(requestedGoal.z), player.currentFloor)
-      : true;
-    if (
-      player.currentFloor > 0
-      && !requestedGoalIsOnCurrentFloor
-      && this.isNearGroundStair(map, Math.floor(player.position.x), Math.floor(player.position.y))
-    ) {
-      player.currentFloor = 0;
-      player.lastFloorChangeTile = -1;
-      this.refreshPlayerEffectiveY(player);
-      this.sendFloorChange(player);
-    }
     // Cap path length. Client's sendMove caps at 50 corner waypoints — anything
     // larger is a malicious client. The previous 200-cap × 256 unit-tiles per
     // segment let a single packet queue ~50K tiles into moveQueue.
@@ -7474,15 +7460,6 @@ export class World {
         this.tickOverrunCount = 0;
       }
     }
-  }
-
-  private isNearGroundStair(map: GameMap, tileX: number, tileZ: number): boolean {
-    for (let dz = -STAIR_DESCENT_SEARCH_RADIUS; dz <= STAIR_DESCENT_SEARCH_RADIUS; dz++) {
-      for (let dx = -STAIR_DESCENT_SEARCH_RADIUS; dx <= STAIR_DESCENT_SEARCH_RADIUS; dx++) {
-        if (map.getStair(tileX + dx, tileZ + dz)) return true;
-      }
-    }
-    return false;
   }
 
   private tickPlayerMovement(): void {

@@ -1,3 +1,5 @@
+import { STAIRS_OBJECT_DEF_ID } from './constants';
+
 /**
  * Maps editor-placed asset IDs (GLB model names) to game object definition IDs (objects.json).
  * This is the single source of truth for which placed objects are interactable game objects.
@@ -75,6 +77,11 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'CavernExit1': 15,
   // Floor transitions
   'Ladder': 23,
+  'stone stairs': STAIRS_OBJECT_DEF_ID,
+  'stone stairs small': STAIRS_OBJECT_DEF_ID,
+  'stone small stairs': STAIRS_OBJECT_DEF_ID,
+  'limestone stairs': STAIRS_OBJECT_DEF_ID,
+  'WIPStair1': STAIRS_OBJECT_DEF_ID,
   // Chests (roguery / lockpicking). Closed asset is interactable; the open
   // variant is the depleted-state visual loaded by WorldObjectModels and
   // never needs its own mapping. Add a new entry per chest tier when a
@@ -141,49 +148,3 @@ export const BLOCKING_DECOR_ASSETS: Set<string> = new Set([
   'bush3',
   'Tanning Rack',
 ]);
-
-/**
- * Stair asset config: defines which placed GLB assets are walkable ramps.
- * - heightGain: height gained per tile at scale 1.0 (Y units)
- * - baseDirection: which way "up the stairs" goes at rotY=0
- *   'N' means at rotY=0, walking north goes up. Y rotation shifts the direction.
- */
-export interface StairAssetConfig {
-  tilesLong: number;
-  heightGain: number;
-  baseDirection: 'N' | 'S' | 'E' | 'W';
-}
-
-export const STAIR_ASSET_CONFIG: Record<string, StairAssetConfig> = {
-  'stone stairs':            { tilesLong: 3, heightGain: 3.0, baseDirection: 'N' },
-  'stone stairs small':      { tilesLong: 2, heightGain: 1.0, baseDirection: 'N' },
-  'stone small stairs':      { tilesLong: 2, heightGain: 1.0, baseDirection: 'N' },
-  'limestone stairs':        { tilesLong: 3, heightGain: 3.0, baseDirection: 'N' },
-};
-
-/** Rotate a direction by a Y rotation angle (radians) */
-export function rotateStairDirection(baseDir: 'N' | 'S' | 'E' | 'W', rotY: number): 'N' | 'S' | 'E' | 'W' {
-  const dirs: ('N' | 'E' | 'S' | 'W')[] = ['N', 'E', 'S', 'W'];
-  const baseIdx = dirs.indexOf(baseDir);
-  // Each 90° clockwise rotates the direction one step
-  const steps = Math.round((rotY * 180 / Math.PI) / 90) % 4;
-  return dirs[(baseIdx + steps + 4) % 4];
-}
-
-export function oppositeStairDirection(dir: 'N' | 'S' | 'E' | 'W'): 'N' | 'S' | 'E' | 'W' {
-  switch (dir) {
-    case 'N': return 'S';
-    case 'S': return 'N';
-    case 'E': return 'W';
-    case 'W': return 'E';
-  }
-}
-
-export function stairDirectionVector(dir: 'N' | 'S' | 'E' | 'W'): { dx: number; dz: number } {
-  switch (dir) {
-    case 'N': return { dx: 0, dz: -1 };
-    case 'S': return { dx: 0, dz: 1 };
-    case 'E': return { dx: 1, dz: 0 };
-    case 'W': return { dx: -1, dz: 0 };
-  }
-}

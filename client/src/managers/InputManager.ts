@@ -173,9 +173,9 @@ export class InputManager {
       const floor = this.chunkManager.getCurrentFloor();
       const expectedY = this.chunkManager.getEffectiveHeight(p.x, p.z, floor, this.playerY);
       // Reject the click if the picked point is not on the player's current
-      // plane. ±0.6 tolerance covers stair ramps + small height variation
-      // within a floor; anything bigger is a different floor (or the click
-      // landed on a roof/wall mistakenly registered as pickable).
+      // plane. ±0.6 tolerance covers small height variation within a floor;
+      // anything bigger is a different floor (or the click landed on a
+      // roof/wall mistakenly registered as pickable).
       if (Math.abs(p.y - expectedY) > 0.6) return null;
       return {
         x: Math.floor(p.x) + 0.5,

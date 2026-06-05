@@ -2498,5 +2498,23 @@
         50
       ]
     }
+  },
+  {
+    "id": 43,
+    "name": "Stairs",
+    "category": "ladder",
+    "actions": [
+      "Climb-up",
+      "Climb-down",
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 1,
+    "height": 1,
+    "color": [
+      150,
+      140,
+      125
+    ]
   }
 ]

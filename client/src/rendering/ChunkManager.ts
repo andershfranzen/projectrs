@@ -12,8 +12,8 @@ import { AnimationGroup } from '@babylonjs/core/Animations/animationGroup';
 import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
-import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_DESCENT_SEARCH_RADIUS, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
+import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
+import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -118,16 +118,6 @@ interface FloorLayerClientData {
    *  Y height (used by walls for base height). Texture planes provide the
    *  visual surface so we don't render brown floor planes for these tiles. */
   tiles: Map<number, number>;
-}
-
-interface PlacedStairRamp {
-  chunkKey: string;
-  cx: number;
-  cz: number;
-  baseY: number;
-  topY: number;
-  direction: 'N' | 'S' | 'E' | 'W';
-  halfLength: number;
 }
 
 interface PlacedObjectNodeMetadata {
@@ -298,8 +288,6 @@ export class ChunkManager {
    *  a roof-like placed object's bbox-stamped roofObjectGrid entry over the
    *  same tile would otherwise misfire indoor mode under a balcony/terrace. */
   private noRoofPlaneTiles: Set<number> = new Set();
-  /** Placed stair ramp zones for proximity-based height interpolation */
-  private placedStairRamps: PlacedStairRamp[] = [];
   /** Spatial index of roof objects: "tileX,tileZ" → roof entries with floor tag + Y height */
   private roofObjectGrid: Map<string, { node?: TransformNode; chunkKey?: string; floor: number; y: number }[]> = new Map();
   /** Roof-grid tile keys stamped by each streamed placed-object chunk. */
@@ -691,7 +679,6 @@ export class ChunkManager {
         }
         loadNumberMap(wallsData.wallHeights, this.wallHeights);
         loadNumberMap(wallsData.floors, this.floorHeights);
-        loadValueMap(wallsData.stairs, this.stairData);
         loadValueMap(wallsData.roofs, this.roofData);
         if (wallsData.holes) for (const key of Object.keys(wallsData.holes)) { const idx = parseKey(key); if (idx !== null) this.holeTiles.add(idx); }
         if (wallsData.floorLayers) {
@@ -703,7 +690,6 @@ export class ChunkManager {
             loadNumberMap(ldd.walls, layer.walls);
             loadNumberMap(ldd.wallHeights, layer.wallHeights);
             loadNumberMap(ldd.floors, layer.floors);
-            loadValueMap(ldd.stairs, layer.stairs);
             loadValueMap(ldd.roofs, layer.roofs);
             this.floorLayerData.set(floorIdx, layer);
           }
@@ -2369,33 +2355,6 @@ export class ChunkManager {
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return 0;
     const tileIdx = tz * this.mapWidth + tx;
     if (activeFloor === 0) {
-      // Check placed stair ramps (proximity-based, works regardless of which tile you're on).
-      // When ramps stack vertically (e.g. a 0→1 ramp directly under a 1→2
-      // ramp at the same XZ footprint), more than one will match the
-      // proximity test. Picking the first hit would snap a descending
-      // player onto the upper ramp and push them up a whole floor instead
-      // of letting them descend. Tie-break by closeness to currentY so the
-      // ramp the player is actually on wins.
-      let rampY: number | undefined = undefined;
-      let rampDist = Infinity;
-      for (const ramp of this.placedStairRamps) {
-        let along: number, across: number;
-        if (ramp.direction === 'N' || ramp.direction === 'S') {
-          across = Math.abs(x - ramp.cx);
-          along = (ramp.direction === 'S') ? (z - ramp.cz) : (ramp.cz - z);
-        } else {
-          across = Math.abs(z - ramp.cz);
-          along = (ramp.direction === 'E') ? (x - ramp.cx) : (ramp.cx - x);
-        }
-        if (across < 1.0 && along >= -ramp.halfLength && along <= ramp.halfLength) {
-          const t = (along + ramp.halfLength) / (ramp.halfLength * 2); // 0 at base, 1 at top
-          const y = ramp.baseY + t * (ramp.topY - ramp.baseY);
-          const dist = currentY !== undefined ? Math.abs(y - currentY) : 0;
-          if (dist < rampDist) { rampDist = dist; rampY = y; }
-        }
-      }
-      if (rampY !== undefined) return rampY;
-
       const stair = this.stairData.get(tileIdx);
       if (stair) {
         const fx = x - tx, fz = z - tz;
@@ -2473,44 +2432,6 @@ export class ChunkManager {
     const tx = Math.floor(x), tz = Math.floor(z);
     if (tx < 0 || tx >= this.mapWidth || tz < 0 || tz >= this.mapHeight) return undefined;
     return this.stairData.get(tz * this.mapWidth + tx);
-  }
-
-  private resolvePlacedStairDirection(
-    tx: number,
-    tz: number,
-    baseY: number,
-    totalGain: number,
-    tilesLong: number,
-    authoredDir: 'N' | 'S' | 'E' | 'W',
-  ): 'N' | 'S' | 'E' | 'W' {
-    const opposite = oppositeStairDirection(authoredDir);
-    const topY = baseY + totalGain;
-    const half = Math.floor(tilesLong / 2);
-    const scoreSide = (dir: 'N' | 'S' | 'E' | 'W'): number => {
-      const { dx, dz } = stairDirectionVector(dir);
-      const x = tx + dx * (half + 1) + 0.5;
-      const z = tz + dz * (half + 1) + 0.5;
-      return this.getWalkableHeightsAt(x, z)
-        .filter(height => height > baseY + 0.75 && Math.abs(height - topY) <= 1.0)
-        .length;
-    };
-
-    return scoreSide(opposite) > scoreSide(authoredDir) ? opposite : authoredDir;
-  }
-
-  hasGroundStairNear(x: number, z: number, radius: number = STAIR_DESCENT_SEARCH_RADIUS): boolean {
-    const tileX = Math.floor(x);
-    const tileZ = Math.floor(z);
-    for (let dz = -radius; dz <= radius; dz++) {
-      for (let dx = -radius; dx <= radius; dx++) {
-        if (this.getStairAt(tileX + dx, tileZ + dz)) return true;
-      }
-    }
-    for (const ramp of this.placedStairRamps) {
-      const reach = radius + ramp.halfLength + 1;
-      if (Math.abs(x - ramp.cx) <= reach && Math.abs(z - ramp.cz) <= reach) return true;
-    }
-    return false;
   }
 
   private getTileTypeRaw(x: number, z: number): TileType {
@@ -3338,7 +3259,6 @@ export class ChunkManager {
 
   private canThinInstance(obj: PlacedObject): boolean {
     if (obj.assetId in ASSET_TO_OBJECT_DEF) return false;
-    if (obj.assetId in STAIR_ASSET_CONFIG) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
     // Doors must be unique pickable nodes — clicking one looks up its
     // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
@@ -3770,7 +3690,6 @@ export class ChunkManager {
         if (!node.isDisposed()) node.dispose();
       }
       nodes.length = 0;
-      this.placedStairRamps = this.placedStairRamps.filter(ramp => ramp.chunkKey !== chunkKey);
       this.chunkThinInstSources.delete(chunkKey);
       this.chunkRoofThinInstSources.delete(chunkKey);
       this.chunkElevatedThinInstSources.delete(chunkKey);
@@ -3948,27 +3867,6 @@ export class ChunkManager {
         nodesAtTile.push(root);
       }
 
-      if (STAIR_ASSET_CONFIG[obj.assetId]) {
-        const stairCfg = STAIR_ASSET_CONFIG[obj.assetId];
-        const rotY = obj.rotation?.y ?? 0;
-        const totalGain = stairCfg.heightGain * Math.abs(obj.scale?.y ?? 1);
-        const dir = this.resolvePlacedStairDirection(
-          Math.floor(obj.position.x),
-          Math.floor(obj.position.z),
-          obj.position.y,
-          totalGain,
-          stairCfg.tilesLong,
-          rotateStairDirection(stairCfg.baseDirection, rotY),
-        );
-        const halfLen = stairCfg.tilesLong / 2;
-        this.placedStairRamps.push({
-          chunkKey,
-          cx: obj.position.x, cz: obj.position.z,
-          baseY: obj.position.y, topY: obj.position.y + totalGain,
-          direction: dir, halfLength: halfLen,
-        });
-      }
-
       idx++;
       await this.yieldIfFrameBudgetSpent(workSlice);
       if (abortPartialLoadIfStopped()) return;
@@ -4033,7 +3931,6 @@ export class ChunkManager {
       }
       this.chunkPlacedNodes.delete(chunkKey);
     }
-    this.placedStairRamps = this.placedStairRamps.filter(ramp => ramp.chunkKey !== chunkKey);
     this.chunkPlacedEnabled.delete(chunkKey);
     this.objectChunkLastUsed.delete(chunkKey);
     const anims = this.chunkAnimGroups.get(chunkKey);
@@ -4866,7 +4763,6 @@ export class ChunkManager {
     this.loadingObjectChunks.clear();
     this.roofObjectGrid.clear();
     this.roofObjectGridKeysByChunk.clear();
-    this.placedStairRamps = [];
     this.elevatedFloorHeights.clear();
     this.bridgeFloorTiles.clear();
     this.nonNoRoofElevatedTiles.clear();

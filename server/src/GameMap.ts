@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, STAIR_ASSET_CONFIG, rotateStairDirection, oppositeStairDirection, stairDirectionVector, defaultKCTile, defaultGroundForMap, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, type StairAssetConfig } from '@projectrs/shared';
+import { TileType, BLOCKING_TILES, classifyTileType, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, defaultKCTile, defaultGroundForMap, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
 import type { MapMeta, MapTransition, WallsFile, StairData, RoofData, KCMapFile, KCMapData, KCTile, PlacedObject } from '@projectrs/shared';
 import { DEFAULT_MAX_SEARCH_TILES, findPathToTile, isFootprintBlocked, isFootprintWallBlocked, type PathingCollision } from './pathing/Pathing';
 
@@ -235,12 +235,6 @@ export class GameMap {
           if (coords) this.floorHeights.set(coords[1] * this.width + coords[0], h);
         }
       }
-      if (wallsData.stairs) {
-        for (const [key, data] of Object.entries(wallsData.stairs)) {
-          const coords = parseKey(key);
-          if (coords) this.stairs.set(coords[1] * this.width + coords[0], data);
-        }
-      }
       if (wallsData.roofs) {
         for (const [key, data] of Object.entries(wallsData.roofs)) {
           const coords = parseKey(key);
@@ -269,7 +263,6 @@ export class GameMap {
           if (ld.walls) for (const [k, v] of Object.entries(ld.walls)) { const c = parseKey(k); if (c) layer.walls.set(c[1] * this.width + c[0], v as number); }
           if (ld.wallHeights) for (const [k, v] of Object.entries(ld.wallHeights)) { const c = parseKey(k); if (c) layer.wallHeights.set(c[1] * this.width + c[0], v as number); }
           if (ld.floors) for (const [k, v] of Object.entries(ld.floors)) { const c = parseKey(k); if (c) layer.floors.set(c[1] * this.width + c[0], v as number); }
-          if (ld.stairs) for (const [k, v] of Object.entries(ld.stairs)) { const c = parseKey(k); if (c) layer.stairs.set(c[1] * this.width + c[0], v as StairData); }
           if (ld.roofs) for (const [k, v] of Object.entries(ld.roofs)) { const c = parseKey(k); if (c) layer.roofs.set(c[1] * this.width + c[0], v as RoofData); }
           this.floorLayers.set(floorIdx, layer);
         }
@@ -280,50 +273,6 @@ export class GameMap {
 
     // Register horizontal texture planes as walkable floors (bridges, platforms)
     this.registerTexturePlaneFloors(mapFile);
-
-    // Register placed stair GLBs as ramp zones for height interpolation +
-    // pathfinding. We DON'T mirror the top tile onto an upper floor here —
-    // kcmap (and similar) authors "upper floors" as elevated floor-0
-    // texture-plane bridges, not real floorLayers[N] data. Mirroring would
-    // make the server fire a spurious floor 0→1 transition the moment the
-    // player steps on the top stair tile, and `isTileBlockedOnFloor(1)`
-    // would then reject every adjacent move because floor 1 has no
-    // walkable tiles around. Stair-based floor changes are only valid when
-    // the map has authored floor-1+ stair data in walls.json (rare).
-    for (const placed of this.placedObjects) {
-      const stairCfg = STAIR_ASSET_CONFIG[placed.assetId];
-      if (!stairCfg) continue;
-      const rotY = placed.rotation?.y ?? 0;
-      const tx = Math.floor(placed.position.x);
-      const tz = Math.floor(placed.position.z);
-      const totalGain = stairCfg.heightGain * Math.abs(placed.scale?.y ?? 1);
-      const dir = this.resolvePlacedStairDirection(
-        tx,
-        tz,
-        placed.position.y,
-        totalGain,
-        stairCfg,
-        rotateStairDirection(stairCfg.baseDirection, rotY),
-      );
-      const baseH = placed.position.y;
-      const half = Math.floor(stairCfg.tilesLong / 2);
-      for (let i = 0; i < stairCfg.tilesLong; i++) {
-        const offset = i - half;
-        let sx = tx, sz = tz;
-        if (dir === 'N') sz -= offset;
-        else if (dir === 'S') sz += offset;
-        else if (dir === 'E') sx += offset;
-        else if (dir === 'W') sx -= offset;
-        if (sx >= 0 && sx < this.width && sz >= 0 && sz < this.height) {
-          const t0 = i / stairCfg.tilesLong;
-          const t1 = (i + 1) / stairCfg.tilesLong;
-          const tileBase = baseH + t0 * totalGain;
-          const tileTop = baseH + t1 * totalGain;
-          const tileIdx = sz * this.width + sx;
-          this.stairs.set(tileIdx, { direction: dir, baseHeight: tileBase, topHeight: tileTop });
-        }
-      }
-    }
 
     // Pre-bind collision callbacks (avoids closure allocation in NPC AI hot loop)
     this.isBlockedCb = (x: number, z: number) => this.isBlocked(x, z);
@@ -351,29 +300,6 @@ export class GameMap {
         }
       }
     }
-  }
-
-  private resolvePlacedStairDirection(
-    tx: number,
-    tz: number,
-    baseY: number,
-    totalGain: number,
-    stairCfg: StairAssetConfig,
-    authoredDir: 'N' | 'S' | 'E' | 'W',
-  ): 'N' | 'S' | 'E' | 'W' {
-    const opposite = oppositeStairDirection(authoredDir);
-    const topY = baseY + totalGain;
-    const half = Math.floor(stairCfg.tilesLong / 2);
-    const scoreSide = (dir: 'N' | 'S' | 'E' | 'W'): number => {
-      const { dx, dz } = stairDirectionVector(dir);
-      const x = tx + dx * (half + 1) + 0.5;
-      const z = tz + dz * (half + 1) + 0.5;
-      return this.getWalkableFloorTargetsAt(x, z)
-        .filter(target => target.floor > 0 && Math.abs(target.y - topY) <= 1.0)
-        .length;
-    };
-
-    return scoreSide(opposite) > scoreSide(authoredDir) ? opposite : authoredDir;
   }
 
   /** Detect horizontal texture planes and register them as walkable bridges

@@ -5535,26 +5535,12 @@ export class GameManager {
   }
 
   private findPathFromMovementAnchor(goalX: number, goalZ: number, maxSteps: number = 200): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
-    const canTryGroundDescent = this.currentFloor > 0 && this.chunkManager.hasGroundStairNear(this.playerX, this.playerZ);
     const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
     if (activeStep) {
       const tail = findPath(activeStep.target.x, activeStep.target.z, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath);
-      if (canTryGroundDescent && !this.pathReachesGoal(tail, goalX, goalZ)) {
-        const groundTail = findPath(activeStep.target.x, activeStep.target.z, goalX, goalZ,
-          this.isGroundTileBlocked,
-          this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
-          this.isGroundWallBlockedForPath);
-        if (this.pathReachesGoal(groundTail, goalX, goalZ)) {
-          const startsAtCurrentTarget = this.sameTile(groundTail[0], activeStep.target);
-          return {
-            path: startsAtCurrentTarget ? groundTail : [activeStep.target, ...groundTail],
-            preserveCurrentStep: true,
-          };
-        }
-      }
       if (tail.length === 0) {
         const currentTileIsGoal = Math.floor(activeStep.target.x) === Math.floor(goalX)
           && Math.floor(activeStep.target.z) === Math.floor(goalZ);
@@ -5566,19 +5552,13 @@ export class GameManager {
         preserveCurrentStep: true,
       };
     }
-    const result = {
+    return {
       path: findPath(this.playerX, this.playerZ, goalX, goalZ,
         this.isTileBlocked,
         this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
         this.isWallBlockedForPath),
       preserveCurrentStep: false,
     };
-    if (!canTryGroundDescent || this.pathReachesGoal(result.path, goalX, goalZ)) return result;
-    const groundPath = findPath(this.playerX, this.playerZ, goalX, goalZ,
-      this.isGroundTileBlocked,
-      this.chunkManager.getMapWidth(), this.chunkManager.getMapHeight(), maxSteps,
-      this.isGroundWallBlockedForPath);
-    return this.pathReachesGoal(groundPath, goalX, goalZ) ? { path: groundPath, preserveCurrentStep: false } : result;
   }
 
   private pathReachesGoal(path: { x: number; z: number }[], goalX: number, goalZ: number): boolean {

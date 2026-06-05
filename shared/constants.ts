@@ -38,6 +38,7 @@ export const POTATO_PLANT_OBJECT_DEF_ID = 28;
 export const POTTERY_WHEEL_OBJECT_DEF_ID = 32;
 export const KILN_OBJECT_DEF_ID = 39;
 export const SPINNING_WHEEL_OBJECT_DEF_ID = 40;
+export const STAIRS_OBJECT_DEF_ID = 43;
 export const BATCH_OBJECT_RECIPE_DEF_IDS: readonly number[] = [
   COOKING_RANGE_OBJECT_DEF_ID,
   POTTERY_WHEEL_OBJECT_DEF_ID,
@@ -199,8 +200,3 @@ export const RANGED_PROJECTILE_TARGET_HEIGHT = 1.0;
 /** Walls below this visual height do not block arrows unless explicitly
  *  authored as full-height projectile blockers. */
 export const PROJECTILE_BLOCKING_WALL_HEIGHT = 1.5;
-
-/** Radius around a ground-floor stair where an upper-floor click may resolve
- *  as a descent onto floor 0. Kept shared so client prediction and server
- *  validation agree on when slope descent is allowed. */
-export const STAIR_DESCENT_SEARCH_RADIUS = 2;

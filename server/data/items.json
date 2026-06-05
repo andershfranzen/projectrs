@@ -4927,5 +4927,45 @@
     "stackable": false,
     "equippable": false,
     "value": 112
+  },
+  {
+    "id": 409,
+    "name": "Purple Cape",
+    "description": "A purple cape with darker cloth accents.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "cape",
+    "value": 100,
+    "model": "/assets/equipment/cape/PurpleCape.glb"
+  },
+  {
+    "id": 410,
+    "name": "Black Cape",
+    "description": "A black cape with muted cloth accents.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "cape",
+    "value": 100,
+    "model": "/assets/equipment/cape/BlackCape.glb"
+  },
+  {
+    "id": 411,
+    "name": "Green Cape",
+    "description": "A green cape with darker cloth accents.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "cape",
+    "value": 100,
+    "model": "/assets/equipment/cape/GreenCape.glb"
+  },
+  {
+    "id": 412,
+    "name": "Blue and White Cape",
+    "description": "A blue cape with a pale cloth trim.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "cape",
+    "value": 100,
+    "model": "/assets/equipment/cape/BlueWhiteCape.glb"
   }
 ]

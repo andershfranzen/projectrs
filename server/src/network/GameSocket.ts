@@ -1313,10 +1313,9 @@ function handleDecryptedGameSocketMessage(
 
     // CLIENT_FLOOR_HINT removed — was a security hole. A malicious client
     // could spoof any floor at any tile that happened to be walkable on
-    // multiple floors, bypassing legitimate stair gating. Floor changes are
-    // now server-authoritative (see World.tickTransitions) — they fire only
-    // when the player walks onto a placed stair GLB whose registration
-    // (GameMap.ts) mirrors the top tile across both connecting floors.
+    // multiple floors, bypassing legitimate vertical-link gating. Floor
+    // changes are now server-authoritative through map transitions and
+    // ladder/stair object verticalLinks.
 
     case ClientOpcode.CLIENT_POSITION_Y: {
       // Deprecated compatibility no-op. Older clients reported visual Y here;

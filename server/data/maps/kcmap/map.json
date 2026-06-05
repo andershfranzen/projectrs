@@ -3904,37 +3904,14 @@
         }
       },
       {
-        "id": "plane_1773906347488_47002",
-        "textureId": "tex-7f0972d5",
-        "width": 0.7,
-        "height": 1,
-        "vertical": true,
-        "doubleSided": true,
-        "position": {
-          "x": 220.64775048534375,
-          "y": 5.528531481229594,
-          "z": 157.42170678784817
-        },
-        "rotation": {
-          "x": -1.5707963267948966,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 1,
-          "y": 1,
-          "z": 1
-        }
-      },
-      {
         "id": "plane_1773906347934_36396",
         "textureId": "tex-7f0972d5",
-        "width": 1,
+        "width": 1.6499999999999997,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
-          "x": 221.5063116862746,
+          "x": 221.1807180072955,
           "y": 5.528531481229594,
           "z": 157.42170678784817
         },
@@ -3996,37 +3973,14 @@
         }
       },
       {
-        "id": "plane_1773906361561_75923",
-        "textureId": "tex-7f0972d5",
-        "width": 0.5499999999999999,
-        "height": 1,
-        "vertical": true,
-        "doubleSided": true,
-        "position": {
-          "x": 220.5621823524341,
-          "y": 5.528531481229594,
-          "z": 158.40213384127287
-        },
-        "rotation": {
-          "x": -1.5707963267948966,
-          "y": 0,
-          "z": 0
-        },
-        "scale": {
-          "x": 1,
-          "y": 1,
-          "z": 1
-        }
-      },
-      {
         "id": "plane_1773906375043_89685",
         "textureId": "tex-7f0972d5",
-        "width": 1,
+        "width": 1.4,
         "height": 1,
         "vertical": true,
         "doubleSided": true,
         "position": {
-          "x": 221.23373618591384,
+          "x": 221.05216556404704,
           "y": 5.528531481229594,
           "z": 158.40213384127287
         },
@@ -22680,7 +22634,7 @@
     ],
     "tiles": [],
     "heights": [],
-    "terrainGeneration": 251004,
+    "terrainGeneration": 251005,
     "activeChunks": [
       "3,2",
       "4,2",
