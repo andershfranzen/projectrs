@@ -168,7 +168,7 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   },
   'bush3': {
     name: 'Bush',
-    examineText: 'A leafy green bush, trimmed by weather more than by any gardener.',
+    examineText: 'George W.',
   },
   'Cage_2': {
     name: 'Cage',

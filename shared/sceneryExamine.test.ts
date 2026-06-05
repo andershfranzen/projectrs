@@ -22,7 +22,7 @@ test('filler scenery has clean display names and authored examine text', () => {
     examineText: 'A thick bush with tangled branches and dark leaves. Something could easily hide in it.',
   });
   expect(sceneryExamineMetaForAsset('bush2')?.examineText).toBe('A scruffy roadside bush, dusty at the roots and stubbornly alive.');
-  expect(sceneryExamineMetaForAsset('bush3')?.examineText).toBe('A leafy green bush, trimmed by weather more than by any gardener.');
+  expect(sceneryExamineMetaForAsset('bush3')?.examineText).toBe('George W.');
 });
 
 test('tree assets resolve to the right harvestable object definitions', () => {
