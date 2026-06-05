@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedAt": "2026-05-25T18:55:18.308Z",
+  "generatedAt": "2026-06-05T15:07:16.301Z",
   "ids": [
     31,
     32,
@@ -79,7 +79,11 @@
     240,
     241,
     247,
-    248
+    248,
+    409,
+    410,
+    411,
+    412
   ],
   "entries": {
     "31": {
@@ -471,6 +475,26 @@
       "file": "/items/3d/248.png?v=bucket-20260527-nohighlight",
       "poseKey": "thumb:v14|/assets/models/BucketWater.glb|id:item:248|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 14
+    },
+    "409": {
+      "file": "/items/3d/409.png",
+      "poseKey": "thumb:v19|/assets/equipment/cape/PurpleCape.glb|id:item:409|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
+    },
+    "410": {
+      "file": "/items/3d/410.png",
+      "poseKey": "thumb:v19|/assets/equipment/cape/BlackCape.glb|id:item:410|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
+    },
+    "411": {
+      "file": "/items/3d/411.png",
+      "poseKey": "thumb:v19|/assets/equipment/cape/GreenCape.glb|id:item:411|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
+    },
+    "412": {
+      "file": "/items/3d/412.png",
+      "poseKey": "thumb:v19|/assets/equipment/cape/BlueWhiteCape.glb|id:item:412|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
     }
   }
 }

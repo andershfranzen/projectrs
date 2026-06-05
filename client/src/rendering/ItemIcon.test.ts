@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { ItemDef } from '@projectrs/shared';
 import itemsJson from '../../../server/data/items.json';
+import gearOverridesJson from '../../../server/data/gear-overrides.json';
+import thumbnailOverridesJson from '../../../server/data/thumbnail-overrides.json';
 import {
   buildThumbnailOptionsFromOverride,
   findThumbnailOverrideForItem,
@@ -15,6 +17,7 @@ import {
   resolveItemModelPath,
   type ThumbnailOverride,
 } from './ItemIcon';
+import { getThumbnailPoseKey } from './ThumbnailRenderer';
 
 function item(id: number, name: string, equipSlot = 'weapon'): ItemDef {
   return { id, name, equipSlot } as ItemDef;
@@ -32,6 +35,9 @@ describe('item thumbnail families', () => {
     expect(itemThumbnailFamilyKey(item(904, 'Royal Great Helm', 'head'))).toBe('head:greathelm');
     expect(itemThumbnailFamilyKey(item(905, 'Royal Face Mask (F)', 'head'))).toBe('head:facemaskf');
     expect(itemThumbnailFamilyKey(item(33, 'Bronze Pickaxe'))).toBe('weapon:pickaxe');
+    expect(itemThumbnailFamilyKey(item(409, 'Purple Cape', 'cape'))).toBe('cape:cape');
+    expect(itemThumbnailFamilyKey(item(412, "Knight's Cape", 'cape'))).toBe('cape:cape');
+    expect(itemThumbnailFamilyKey(item(237, 'Camel Cape', 'cape'))).toBe('cape:camelcape');
     expect(itemThumbnailFamily(item(382, 'Mithril Sword (HQ)'))).toBe('Sword');
     expect(itemThumbnailFamilyKey(item(382, 'Mithril Sword (HQ)'))).toBe('weapon:sword');
   });
@@ -118,6 +124,54 @@ describe('item thumbnail families', () => {
         expect(buildThumbnailOptionsFromOverride(hq, undefined, base).cacheIdentity).toBe(`item:${base.id}`);
       }
     }
+  });
+
+  test('new cape variants mirror Camel Cape wiring and baked icon support', () => {
+    const defs = itemsJson as ItemDef[];
+    const byId = new Map(defs.map((def) => [def.id, def]));
+    const camel = byId.get(237);
+    if (!camel) throw new Error('Missing Camel Cape template item');
+
+    const gearOverrides = gearOverridesJson as Record<string, unknown>;
+    const thumbnailOverrides = thumbnailOverridesJson as Record<string, ThumbnailOverride>;
+    const camelGearOverride = gearOverrides['237'];
+    const camelThumbnailOverride = thumbnailOverrides['237'];
+    const manifest = parseBakedThumbnailManifest(JSON.parse(readFileSync('client/public/items/3d/manifest.json', 'utf8')));
+
+    for (const id of [409, 410, 411, 412]) {
+      const def = byId.get(id);
+      if (!def) throw new Error(`Missing cape variant item ${id}`);
+
+      expect(def.stackable).toBe(camel.stackable);
+      expect(def.equippable).toBe(camel.equippable);
+      expect(def.equipSlot).toBe(camel.equipSlot);
+      expect(def.value).toBe(camel.value);
+      const model = def.model;
+      if (!model) throw new Error(`Cape variant ${id} is missing its model`);
+      expect(model.startsWith('/assets/equipment/cape/')).toBe(true);
+      expect(existsSync(`client/public${model}`)).toBe(true);
+      expect(gearOverrides[String(id)]).toEqual(camelGearOverride);
+      expect(thumbnailOverrides[String(id)]).toEqual(camelThumbnailOverride);
+
+      const modelPath = resolveItemModelPath(def);
+      expect(modelPath).toBe(model);
+      const opts = buildThumbnailOptionsFromOverride(def, thumbnailOverrides[String(id)]);
+      if (!modelPath) throw new Error(`Cape variant ${id} did not resolve a thumbnail model`);
+      const poseKey = getThumbnailPoseKey(modelPath, opts);
+      expect(resolveBakedThumbnailUrl(manifest, id, poseKey)).toBe(`/items/3d/${id}.png`);
+      expect(existsSync(`client/public/items/3d/${id}.png`)).toBe(true);
+    }
+
+    const knightsCape = byId.get(412);
+    if (!knightsCape) throw new Error("Missing Knight's Cape item");
+    expect(knightsCape.name).toBe("Knight's Cape");
+    expect(knightsCape.description).toBe('A light blue cape trimmed for a knight.');
+    expect(knightsCape.stabDefence).toBe(2);
+    expect(knightsCape.slashDefence).toBe(4);
+    expect(knightsCape.crushDefence).toBe(3);
+    expect(knightsCape.rangedDefence).toBe(1);
+    expect(knightsCape.magicDefence ?? 0).toBe(0);
+    expect(knightsCape.meleeStrength).toBe(1);
   });
 
   test('baked thumbnail manifest only resolves pose-matched entries', () => {

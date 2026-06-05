@@ -4960,12 +4960,17 @@
   },
   {
     "id": 412,
-    "name": "Blue and White Cape",
-    "description": "A blue cape with a pale cloth trim.",
+    "name": "Knight's Cape",
+    "description": "A light blue cape trimmed for a knight.",
     "stackable": false,
     "equippable": true,
     "equipSlot": "cape",
     "value": 100,
+    "stabDefence": 2,
+    "slashDefence": 4,
+    "crushDefence": 3,
+    "rangedDefence": 1,
+    "meleeStrength": 1,
     "model": "/assets/equipment/cape/BlueWhiteCape.glb"
   },
   {
