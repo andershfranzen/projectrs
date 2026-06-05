@@ -53,3 +53,28 @@ export function relicDropPoolForCombatLevel(level: number): readonly number[] | 
   const band = relicCombatDropBandForLevel(level);
   return band ? relicTierDef(band.tier)?.itemIds ?? null : null;
 }
+
+export interface RelicCombatDropRecommendation {
+  tier: number;
+  itemId: number;
+  quantity: 1;
+  chance: number;
+  itemIds: readonly number[];
+}
+
+export function relicCombatDropForLevel(level: number, preferredItemId?: number): RelicCombatDropRecommendation | null {
+  const band = relicCombatDropBandForLevel(level);
+  if (!band) return null;
+  const itemIds = relicTierDef(band.tier)?.itemIds;
+  if (!itemIds || itemIds.length === 0) return null;
+  const itemId = preferredItemId != null && itemIds.includes(preferredItemId)
+    ? preferredItemId
+    : itemIds[0];
+  return {
+    tier: band.tier,
+    itemId,
+    quantity: 1,
+    chance: relicDropChanceForCombatLevel(level),
+    itemIds,
+  };
+}

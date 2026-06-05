@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
 import {
   RELIC_COMBAT_DROP_MAX_CHANCE,
+  relicCombatDropForLevel,
   relicCombatDropBandForLevel,
   relicDropChanceForCombatLevel,
   relicDropPoolForCombatLevel,
@@ -39,4 +40,17 @@ test('combat relic drop pools follow the configured tier bands', () => {
   expect(relicDropPoolForCombatLevel(75)).toEqual([293, 294]);
   expect(relicDropPoolForCombatLevel(100)).toEqual([295]);
   expect(relicDropPoolForCombatLevel(150)).toBeNull();
+});
+
+test('combat relic drop recommendation keeps preferred item inside the level tier', () => {
+  const tierTwoPreferred = relicCombatDropForLevel(25, 288);
+  expect(tierTwoPreferred?.tier).toBe(2);
+  expect(tierTwoPreferred?.itemId).toBe(288);
+  expect(roundedChance(tierTwoPreferred?.chance ?? 0)).toBe(roundedChance(RELIC_COMBAT_DROP_MAX_CHANCE / 25));
+
+  const mismatchedPreferred = relicCombatDropForLevel(25, 224);
+  expect(mismatchedPreferred?.tier).toBe(2);
+  expect(mismatchedPreferred?.itemId).toBe(227);
+
+  expect(relicCombatDropForLevel(150, 295)).toBeNull();
 });

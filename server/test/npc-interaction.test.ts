@@ -1012,14 +1012,7 @@ describe('NPC interaction reachability', () => {
       { ...npcDef, wanderRange: 2 },
       10.5,
       10.5,
-      undefined,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      { health: 40, attack: 20, defence: 10, strength: 30 },
+      { statsOverride: { health: 40, attack: 20, defence: 10, strength: 30 } },
     );
     player.currentMapLevel = 'kcmap';
     npc.currentMapLevel = 'kcmap';
@@ -1032,6 +1025,26 @@ describe('NPC interaction reachability', () => {
     expect(decoded.opcode).toBe(ServerOpcode.NPC_SYNC);
     expect(decoded.values[11]).toBe(npc.combatLevel);
     expect(decoded.values[11]).toBe(28);
+  });
+
+  test('NPC sync includes per-spawn visual scale', () => {
+    const player = new Player('scout', 17.5, 10.5, fakeWs, 1);
+    const npc = new Npc(
+      npcDef,
+      10.5,
+      10.5,
+      { visualScale: 2.75 },
+    );
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    world.npcWorldY = () => 0;
+
+    const packet = world.encodeNpcUpdate(npc);
+    const decoded = decodePacket(packet.buffer.slice(packet.byteOffset, packet.byteOffset + packet.byteLength) as ArrayBuffer);
+
+    expect(decoded.opcode).toBe(ServerOpcode.NPC_SYNC);
+    expect(decoded.values[12]).toBe(275);
   });
 
   test('NPC sync keeps walk hint while adjacent combat target is still moving away', () => {

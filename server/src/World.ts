@@ -1,11 +1,11 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, type SkillId, type ItemDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
 import { addXp, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
-import { Npc } from './entity/Npc';
+import { Npc, type NpcOptions } from './entity/Npc';
 import { WorldObject } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { ASSET_TO_GROUND_ITEM_SPAWN } from './data/AssetGroundItemSpawns';
@@ -769,19 +769,7 @@ export class World {
         console.error(`[spawn guard] Skipping ${bankAccessViolation}`);
         continue;
       }
-      // Per-spawn shop/dialogue fully replace the def's (no field-merge).
-      // Falls through: spawn override → def → legacy shops.json (shop only).
-      const effShop = spawn.shop ?? this.data.getShop(spawn.npcId) ?? null;
-      const effDialogue = spawn.dialogue ?? npcDef.dialogue ?? null;
-      const npc = new Npc(npcDef, spawn.x, spawn.z, spawn.wanderRange,
-        spawn.appearance ?? null, spawn.equipment ?? null, spawn.aggressive ?? null,
-        effShop, effDialogue, spawn.name ?? null,
-        spawn.stats ?? null, spawn.customColors ?? null,
-        spawn.attackAnim ?? null,
-        spawn.facing ?? null,
-        spawn.maxRange ?? null, spawn.huntRange ?? null,
-        spawn.attackRange ?? null, spawn.retreatHealth ?? null,
-        spawn.visibilityCondition ?? null);
+      const npc = new Npc(npcDef, spawn.x, spawn.z, this.npcOptionsFromSpawn(spawn, npcDef));
       npc.currentMapLevel = mapId;
       npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
       this.npcs.set(npc.id, npc);
@@ -1602,6 +1590,30 @@ export class World {
     });
   }
 
+  private npcOptionsFromSpawn(spawn: SpawnEntry, npcDef: NpcDef): NpcOptions {
+    return {
+      wanderRange: spawn.wanderRange,
+      appearance: spawn.appearance ?? null,
+      equipment: spawn.equipment ?? null,
+      aggressive: spawn.aggressive ?? null,
+      // Per-spawn shop/dialogue fully replace the def's (no field-merge).
+      // Falls through: spawn override -> def -> legacy shops.json (shop only).
+      effectiveShop: spawn.shop ?? this.data.getShop(spawn.npcId) ?? null,
+      effectiveDialogue: spawn.dialogue ?? npcDef.dialogue ?? null,
+      nameOverride: spawn.name ?? null,
+      statsOverride: spawn.stats ?? null,
+      customColors: spawn.customColors ?? null,
+      attackAnimOverride: spawn.attackAnim ?? null,
+      facing: spawn.facing ?? null,
+      maxRange: spawn.maxRange ?? null,
+      huntRange: spawn.huntRange ?? null,
+      attackRange: spawn.attackRange ?? null,
+      retreatHealth: spawn.retreatHealth ?? null,
+      visibilityCondition: spawn.visibilityCondition ?? null,
+      visualScale: spawn.scale ?? null,
+    };
+  }
+
   private spawnNpcs(): void {
     for (const [mapId, gameMap] of this.maps) {
       const spawns = this.data.loadSpawns(mapId);
@@ -1616,30 +1628,11 @@ export class World {
           console.error(`[spawn guard] Skipping ${bankAccessViolation}`);
           continue;
         }
-        // Resolve effective shop/dialogue once per spawn — Npc caches these
-        // so right-click handlers + interactionFlags() don't re-traverse defs.
-        const effShop = spawn.shop ?? this.data.getShop(spawn.npcId) ?? null;
-        const effDialogue = spawn.dialogue ?? npcDef.dialogue ?? null;
         const npc = new Npc(
           npcDef,
           spawn.x,
           spawn.z,
-          spawn.wanderRange,
-          spawn.appearance ?? null,
-          spawn.equipment ?? null,
-          spawn.aggressive ?? null,
-          effShop,
-          effDialogue,
-          spawn.name ?? null,
-          spawn.stats ?? null,
-          spawn.customColors ?? null,
-          spawn.attackAnim ?? null,
-          spawn.facing ?? null,
-          spawn.maxRange ?? null,
-          spawn.huntRange ?? null,
-          spawn.attackRange ?? null,
-          spawn.retreatHealth ?? null,
-          spawn.visibilityCondition ?? null,
+          this.npcOptionsFromSpawn(spawn, npcDef),
         );
         npc.currentMapLevel = mapId;
         npc.currentFloor = this.resolveAuthoredFloor(gameMap, spawn.x, spawn.z, spawn.y, spawn.floor).floor;
@@ -9163,6 +9156,7 @@ export class World {
           qFacing(npc.facingAngle),
           this.npcFaceTargetId(npc),
           npc.combatLevel,
+          encodeNpcVisualScale(npc.visualScale),
         ));
       }
     }
@@ -9435,6 +9429,7 @@ export class World {
       qFacing(npc.facingAngle),
       this.npcFaceTargetId(npc),
       npc.combatLevel,
+      encodeNpcVisualScale(npc.visualScale),
     );
   }
 

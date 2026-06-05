@@ -1,0 +1,21 @@
+[
+  {
+    "assetId": "tier 2 chest",
+    "layerId": "default",
+    "position": {
+      "x": 84.5,
+      "y": 0.60748,
+      "z": 58.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  }
+]

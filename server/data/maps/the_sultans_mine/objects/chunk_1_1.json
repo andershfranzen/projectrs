@@ -1,0 +1,40 @@
+[
+  {
+    "assetId": "Bones",
+    "layerId": "default",
+    "position": {
+      "x": 82.5,
+      "y": 0.581527,
+      "z": 70.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0.5,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Bones",
+    "layerId": "default",
+    "position": {
+      "x": 88.5,
+      "y": 0.595711,
+      "z": 66.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 2.1,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  }
+]

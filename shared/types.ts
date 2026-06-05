@@ -26,6 +26,32 @@ export interface NpcState extends EntityState {
   npcId: number;
 }
 
+export const NPC_VISUAL_SCALE_DEFAULT = 1;
+export const NPC_VISUAL_SCALE_MIN = 0.1;
+export const NPC_VISUAL_SCALE_MAX = 8;
+export const NPC_VISUAL_SCALE_WIRE_MULTIPLIER = 100;
+
+export function normalizeNpcVisualScale(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return NPC_VISUAL_SCALE_DEFAULT;
+  return Math.max(NPC_VISUAL_SCALE_MIN, Math.min(NPC_VISUAL_SCALE_MAX, value));
+}
+
+export function shouldPersistNpcVisualScale(value: unknown): value is number {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && value > 0
+    && Math.abs(normalizeNpcVisualScale(value) - NPC_VISUAL_SCALE_DEFAULT) > 0.0001;
+}
+
+export function encodeNpcVisualScale(scale: number): number {
+  return Math.round(normalizeNpcVisualScale(scale) * NPC_VISUAL_SCALE_WIRE_MULTIPLIER);
+}
+
+export function decodeNpcVisualScale(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return NPC_VISUAL_SCALE_DEFAULT;
+  return normalizeNpcVisualScale(value / NPC_VISUAL_SCALE_WIRE_MULTIPLIER);
+}
+
 export const HEAD_RENDER_MODES = ['helmet', 'hat', 'hairTuck'] as const;
 export type HeadRenderMode = typeof HEAD_RENDER_MODES[number];
 
@@ -123,6 +149,9 @@ export function isHighQualityItem(def: Pick<ItemDef, 'name'> | null | undefined)
 export interface NpcDef {
   id: number;
   name: string;
+  /** Optional render/profile alias. Lets authored variants reuse the 3D model
+   *  or humanoid profile registered for another NPC id without adding code. */
+  modelNpcId?: number;
   health: number;
   attack: number;
   defence: number;
@@ -527,6 +556,9 @@ export interface SpawnEntry {
    *  Must match a name loaded by EntityManager — the NPC_COMBAT_ANIMATIONS
    *  list in shared/character.ts. CharacterEntity-rendered NPCs only. */
   attackAnim?: string;
+  /** Visual-only scale multiplier for this spawn. Does not change the NPC's
+   *  gameplay footprint; use NpcDef.size for pathing/combat size. */
+  scale?: number;
 }
 
 export interface NpcStatOverrides {
@@ -917,6 +949,8 @@ export function groundTypeToTileType(ground: GroundType): TileType {
     case 'sandstone': return TileType.STONE;
     case 'rock':      return TileType.STONE;
     case 'drysand':   return TileType.SAND;
+    case 'dungeon-floor': return TileType.STONE;
+    case 'dungeon-rock':  return TileType.WALL;
     default:          return TileType.GRASS;
   }
 }

@@ -60,7 +60,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -311,6 +311,9 @@ export class GameManager {
   private _loginSettled: boolean = true;
   private _initialMapReadySent: boolean = false;
   private currentFloor: number = 0;
+  private nextMapChangeSeq: number = 0;
+  private activeMapChangeSeq: number = 0;
+  private floorChangeDuringMapLoad: { seq: number; floor: number; worldY?: number } | null = null;
   private localTeleportHeightOverride: { tileX: number; tileZ: number; floor: number; y: number; expiresAt: number } | null = null;
   private playerX: number = 512;
   private playerZ: number = 512;
@@ -2872,10 +2875,12 @@ export class GameManager {
       const facingQ = v.length >= 10 ? v[9] : NPC_FACING_NONE;
       const faceTargetId = v.length >= 11 ? (v[10] ?? 0) : 0;
       const combatLevel = v.length >= 12 ? (v[11] ?? 0) : 0;
+      const visualScale = v.length >= 13 ? decodeNpcVisualScale(v[12]) : decodeNpcVisualScale(undefined);
 
       this.entities.npcDefs.set(entityId, npcDefId);
       if (combatLevel > 0) this.entities.npcCombatLevels.set(entityId, combatLevel);
       else this.entities.npcCombatLevels.delete(entityId);
+      this.entities.npcVisualScales.set(entityId, visualScale);
       if (v.length >= 11) {
         if (faceTargetId > 0) this.entities.npcCombatTargets.set(entityId, faceTargetId);
         else this.entities.npcCombatTargets.delete(entityId);
@@ -2900,6 +2905,7 @@ export class GameManager {
       this.entities.npcTargets.set(entityId, npcTargetState);
 
       const sprite = this.entities.npcSprites.get(entityId);
+      sprite?.setVisualScale?.(visualScale);
       if (sprite && Number.isFinite(facingQ) && facingQ !== NPC_FACING_NONE && !sprite.isWalking()) {
         this.entities.applyCachedNpcFacing(entityId, sprite, newlyMaterialized);
       }
@@ -3724,17 +3730,6 @@ export class GameManager {
       const newZ = (values[1] ?? 0) / 10;
       const newY = (values[2] ?? 0) / 10;
       const newFloor = values[3];
-      if (newFloor !== undefined && newFloor !== this.currentFloor) {
-        this.currentFloor = newFloor;
-        this.chunkManager.setCurrentFloor(newFloor);
-      }
-      this.localTeleportHeightOverride = {
-        tileX: Math.floor(newX),
-        tileZ: Math.floor(newZ),
-        floor: this.currentFloor,
-        y: newY,
-        expiresAt: performance.now() + 3000,
-      };
       this.playerX = newX;
       this.playerZ = newZ;
       this.clearPredictedPath();
@@ -3745,9 +3740,11 @@ export class GameManager {
       if (this.localPlayer) {
         this.localPlayer.resetTransientAnimation();
         this.localPlayer.stopWalking();
-        this.localPlayer.setPositionXYZ(newX, newY, newZ);
       }
-      this.inputManager.setPlayerY(newY);
+      this.applyAuthoritativeFloor(newFloor ?? this.currentFloor, newY, {
+        heightOverrideMs: 3000,
+        refreshWorld: false,
+      });
       if (this.destMarker) this.destMarker.isVisible = false;
       if (this.interactMarker) this.interactMarker.isVisible = false;
       this.minimap?.clearDestination();
@@ -3794,23 +3791,14 @@ export class GameManager {
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
       const newFloor = values[0];
       const authoritativeY = values[1];
-      this.currentFloor = newFloor;
-      if (this.localTeleportHeightOverride?.floor !== newFloor) this.localTeleportHeightOverride = null;
-      if (import.meta.env.DEV) console.log(`Floor changed to ${newFloor}`);
-      this.chunkManager.setCurrentFloor(newFloor);
-      if (authoritativeY !== undefined) {
-        const newY = authoritativeY / 10;
-        this.localTeleportHeightOverride = {
-          tileX: Math.floor(this.playerX),
-          tileZ: Math.floor(this.playerZ),
-          floor: newFloor,
-          y: newY,
-          expiresAt: performance.now() + 2000,
-        };
-        if (this.localPlayer) this.localPlayer.setPositionXYZ(this.playerX, newY, this.playerZ);
-        this.inputManager.setPlayerY(newY);
+      const worldY = authoritativeY !== undefined && Number.isFinite(authoritativeY)
+        ? authoritativeY / 10
+        : undefined;
+      const mapLoadSeq = this.activeMapChangeSeq;
+      this.applyAuthoritativeFloor(newFloor, worldY, { refreshWorld: mapLoadSeq === 0 });
+      if (mapLoadSeq !== 0) {
+        this.floorChangeDuringMapLoad = { seq: mapLoadSeq, floor: newFloor, worldY };
       }
-      this.refreshWorldAfterSameMapTeleport();
     });
 
     this.network.onRawMessage((data: ArrayBuffer) => {
@@ -3911,83 +3899,135 @@ export class GameManager {
   private async handleMapChange(mapId: string, newX: number, newZ: number): Promise<void> {
     if (import.meta.env.DEV) console.log(`Map change to '${mapId}' at (${newX}, ${newZ})`);
 
-    const isInitialPlacement = !this.hasHandledInitialMapChange;
-    const mapAlreadyLoaded = this.chunkManager.isLoaded() && this.chunkManager.getMapId() === mapId;
-    const previousMapId = this.chunkManager.getMapId();
-    const previousMapMeta = this.chunkManager.getMeta();
-    const wasDungeon = this.isDungeonMap(previousMapId, previousMapMeta);
+    const mapChangeSeq = ++this.nextMapChangeSeq;
+    this.activeMapChangeSeq = mapChangeSeq;
+    this.floorChangeDuringMapLoad = null;
+    try {
+      const isInitialPlacement = !this.hasHandledInitialMapChange;
+      const mapAlreadyLoaded = this.chunkManager.isLoaded() && this.chunkManager.getMapId() === mapId;
+      const previousMapId = this.chunkManager.getMapId();
+      const previousMapMeta = this.chunkManager.getMeta();
+      const wasDungeon = this.isDungeonMap(previousMapId, previousMapMeta);
 
-    this.playerX = newX;
-    this.playerZ = newZ;
-    this.clearPredictedPath();
-    this.currentFloor = 0;
-    this.chunkManager.setCurrentFloor(0);
-    if (this.localPlayer) this.localPlayer.stopWalking();
-    this.clearLocalNpcCombatState();
-    this.isSkilling = false;
-    this.skillingObjectId = -1;
+      this.playerX = newX;
+      this.playerZ = newZ;
+      this.clearPredictedPath();
+      this.currentFloor = 0;
+      this.chunkManager.setCurrentFloor(0);
+      if (this.localPlayer) this.localPlayer.stopWalking();
+      this.clearLocalNpcCombatState();
+      this.isSkilling = false;
+      this.skillingObjectId = -1;
 
-    if (!isInitialPlacement || !mapAlreadyLoaded) {
-      this.entities.disposeAllEntities();
-      this.remoteAnimationStates.clear();
-      // Local player persists across map changes — restore any displaced
-      // tool first, then clear the set so a teleport mid-chop doesn't leave
-      // the next chop unable to re-swap.
-      if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
-        this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
+      if (!isInitialPlacement || !mapAlreadyLoaded) {
+        this.entities.disposeAllEntities();
+        this.remoteAnimationStates.clear();
+        // Local player persists across map changes — restore any displaced
+        // tool first, then clear the set so a teleport mid-chop doesn't leave
+        // the next chop unable to re-swap.
+        if (this.localPlayer && this.toolSwappedEntities.has(this.localPlayerId)) {
+          this.restoreSkillingTool(this.localPlayerId, this.localPlayer);
+        }
+        this.toolSwappedEntities.clear();
+
+        // Only dispose models that GameManager created, not linked placed objects from ChunkManager
+        for (const [, model] of this.worldObjectModels) {
+          if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
+        }
+        this.worldObjectModels.clear();
+        this.worldObjectIdByNode = new WeakMap();
+        this.worldObjectPickState = new WeakMap();
+        this.objectModels.disposeStumps();
+        this.worldObjectDefs.clear();
+        this.blockedObjectTiles.clear();
+        for (const [, proxy] of this.doorPickProxies) proxy.dispose();
+        this.doorPickProxies.clear();
+        for (const [, entry] of this.doorPivots) entry.pivot.dispose();
+        this.doorPivots.clear();
+
+        await this.chunkManager.loadMap(mapId);
+        await this.loadBiomes(mapId);
+        this.applyFog();
+        this.minimap?.invalidateTileCache();
+        this._lastMinimapListRefreshMs = 0;
+      } else {
+        this._loginProgress?.(0.58, 'Using preloaded map');
       }
-      this.toolSwappedEntities.clear();
 
-      // Only dispose models that GameManager created, not linked placed objects from ChunkManager
-      for (const [, model] of this.worldObjectModels) {
-        if (!this.chunkManager.isPlacedObjectNode(model)) model.dispose();
+      // Ensure the actual saved spawn chunk is ready before asking the server
+      // for entities. This keeps WORLD_OBJECT_SYNC linking against live placed
+      // object nodes instead of racing chunk streaming after the overlay hides.
+      await this.chunkManager.whenSpawnChunksReady(newX, newZ);
+      this.repositionWorldObjects();
+
+      await this._defsReady;
+      if (!isInitialPlacement || !this._initialMapReadySent) {
+        this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
+        if (isInitialPlacement) this._initialMapReadySent = true;
       }
-      this.worldObjectModels.clear();
-      this.worldObjectIdByNode = new WeakMap();
-      this.worldObjectPickState = new WeakMap();
-      this.objectModels.disposeStumps();
-      this.worldObjectDefs.clear();
-      this.blockedObjectTiles.clear();
-      for (const [, proxy] of this.doorPickProxies) proxy.dispose();
-      this.doorPickProxies.clear();
-      for (const [, entry] of this.doorPivots) entry.pivot.dispose();
-      this.doorPivots.clear();
 
-      await this.chunkManager.loadMap(mapId);
-      await this.loadBiomes(mapId);
-      this.applyFog();
-      this.minimap?.invalidateTileCache();
-      this._lastMinimapListRefreshMs = 0;
-    } else {
-      this._loginProgress?.(0.58, 'Using preloaded map');
+      // No Y snap here. LOGIN_OK already set Y from the server. Re-snapping
+      // via getHeight() can drop the player below an elevated tile because
+      // getHeight gates roof reveal on currentY, and the gate fails the
+      // moment chunk data is mid-rebuild. For inter-map transitions (portals)
+      // the follow-up FLOOR_CHANGE packet carries the authoritative Y.
+      this.replayFloorChangeDuringMapLoad(mapChangeSeq);
+
+      if (!this.hasHandledInitialMapChange) {
+        this.hasHandledInitialMapChange = true;
+        this.suppressNextMapEntryMessage = false;
+      } else if (this.suppressNextMapEntryMessage) {
+        this.suppressNextMapEntryMessage = false;
+      } else if (wasDungeon && this.isOverworldMap(mapId, this.chunkManager.getMeta())) {
+        this.chatPanel?.addSystemMessage('Entered overworld', '#0f0');
+      }
+    } catch (err) {
+      this.clearMapChangeFloorReplay(mapChangeSeq);
+      throw err;
     }
+  }
 
-    // Ensure the actual saved spawn chunk is ready before asking the server
-    // for entities. This keeps WORLD_OBJECT_SYNC linking against live placed
-    // object nodes instead of racing chunk streaming after the overlay hides.
-    await this.chunkManager.whenSpawnChunksReady(newX, newZ);
-    this.repositionWorldObjects();
-
-    await this._defsReady;
-    if (!isInitialPlacement || !this._initialMapReadySent) {
-      this.network.sendRaw(encodePacket(ClientOpcode.MAP_READY));
-      if (isInitialPlacement) this._initialMapReadySent = true;
+  private replayFloorChangeDuringMapLoad(mapChangeSeq: number): void {
+    const pendingFloor = this.activeMapChangeSeq === mapChangeSeq
+      && this.floorChangeDuringMapLoad?.seq === mapChangeSeq
+      ? this.floorChangeDuringMapLoad
+      : null;
+    this.clearMapChangeFloorReplay(mapChangeSeq);
+    if (pendingFloor) {
+      this.applyAuthoritativeFloor(pendingFloor.floor, pendingFloor.worldY);
     }
+  }
 
-    // No Y snap here. LOGIN_OK already set Y from the server. Re-snapping
-    // via getHeight() can drop the player below an elevated tile because
-    // getHeight gates roof reveal on currentY, and the gate fails the
-    // moment chunk data is mid-rebuild. For inter-map transitions (portals)
-    // the follow-up FLOOR_CHANGE packet carries the authoritative Y.
+  private clearMapChangeFloorReplay(mapChangeSeq: number): void {
+    if (this.activeMapChangeSeq !== mapChangeSeq) return;
+    this.activeMapChangeSeq = 0;
+    this.floorChangeDuringMapLoad = null;
+  }
 
-    if (!this.hasHandledInitialMapChange) {
-      this.hasHandledInitialMapChange = true;
-      this.suppressNextMapEntryMessage = false;
-    } else if (this.suppressNextMapEntryMessage) {
-      this.suppressNextMapEntryMessage = false;
-    } else if (wasDungeon && this.isOverworldMap(mapId, this.chunkManager.getMeta())) {
-      this.chatPanel?.addSystemMessage('Entered overworld', '#0f0');
+  private applyAuthoritativeFloor(
+    newFloor: number,
+    worldY?: number,
+    opts: { heightOverrideMs?: number; refreshWorld?: boolean } = {},
+  ): void {
+    if (!Number.isFinite(newFloor)) return;
+    const floor = Math.trunc(newFloor);
+    const floorChanged = this.currentFloor !== floor;
+    this.currentFloor = floor;
+    if (this.localTeleportHeightOverride?.floor !== floor) this.localTeleportHeightOverride = null;
+    if (floorChanged && import.meta.env.DEV) console.log(`Floor changed to ${floor}`);
+    this.chunkManager.setCurrentFloor(floor);
+    if (worldY !== undefined && Number.isFinite(worldY)) {
+      this.localTeleportHeightOverride = {
+        tileX: Math.floor(this.playerX),
+        tileZ: Math.floor(this.playerZ),
+        floor,
+        y: worldY,
+        expiresAt: performance.now() + (opts.heightOverrideMs ?? 2000),
+      };
+      if (this.localPlayer) this.localPlayer.setPositionXYZ(this.playerX, worldY, this.playerZ);
+      this.inputManager.setPlayerY(worldY);
     }
+    if (opts.refreshWorld !== false) this.refreshWorldAfterSameMapTeleport();
   }
 
   private isDungeonMap(mapId: string, meta: { id?: string; mapType?: string; dungeon?: boolean } | null): boolean {
@@ -7521,6 +7561,7 @@ export class GameManager {
       floor,
       y,
       stationary: npcDef?.stationary === true,
+      visualScale: this.entities.npcVisualScales.get(entityId),
     });
     if ((created instanceof CharacterEntity || created instanceof Npc3DEntity) && floor !== this.currentFloor) {
       created.setRenderEnabled(false);

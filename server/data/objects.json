@@ -2516,5 +2516,60 @@
       140,
       125
     ]
+  },
+  {
+    "id": 44,
+    "name": "Sulphur Rock",
+    "category": "rock",
+    "actions": [
+      "Mine",
+      "Examine"
+    ],
+    "blocking": true,
+    "width": 0.9,
+    "height": 0.8,
+    "color": [
+      210,
+      185,
+      55
+    ],
+    "skill": "mining",
+    "levelRequired": 20,
+    "xpReward": 40,
+    "harvestItemId": 442,
+    "harvestQuantity": 1,
+    "harvestTime": 7,
+    "depletionChance": 1,
+    "respawnTime": 45,
+    "successChances": {
+      "33": [
+        64,
+        250
+      ],
+      "53": [
+        64,
+        250
+      ],
+      "54": [
+        64,
+        250
+      ],
+      "55": [
+        64,
+        250
+      ],
+      "56": [
+        64,
+        250
+      ],
+      "313": [
+        64,
+        250
+      ],
+      "328": [
+        64,
+        250
+      ]
+    }
   }
 ]

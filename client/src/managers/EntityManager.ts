@@ -10,7 +10,7 @@ import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '../data/NpcConfig';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -30,6 +30,7 @@ interface NpcCreateOptions {
   floor?: number;
   y?: number;
   stationary?: boolean;
+  visualScale?: number;
 }
 
 export interface RemotePlayerTarget {
@@ -77,6 +78,7 @@ export class EntityManager {
   readonly npcTargets: Map<number, { x: number; z: number; floor: number; y: number; prevX: number; prevZ: number; t: number; continueWalking: boolean }> = new Map();
   readonly npcDefs: Map<number, number> = new Map();
   readonly npcCombatLevels: Map<number, number> = new Map();
+  readonly npcVisualScales: Map<number, number> = new Map();
   readonly npcCombatTargets: Map<number, number> = new Map();
   /** Per-spawn appearance for customizable NPCs (e.g. bankers, shopkeepers).
    *  Cached on receipt of NPC_APPEARANCE; applied to the CharacterEntity once
@@ -171,24 +173,33 @@ export class EntityManager {
       floor = 0,
       y,
       stationary: stationaryFromDef = false,
+      visualScale: visualScaleFromOptions,
     } = options;
+    const visualScale = normalizeNpcVisualScale(visualScaleFromOptions ?? this.npcVisualScales.get(entityId));
+    this.npcVisualScales.set(entityId, visualScale);
+
+    const def = this.npcDefsCache.get(defId);
+    const modelNpcId = Number.isInteger(def?.modelNpcId) && (def?.modelNpcId ?? 0) > 0
+      ? def!.modelNpcId!
+      : defId;
 
     // If NPC_NAME arrived before this entity was created (chunk-entry order
     // isn't guaranteed), honour the override on first construction so the
     // floating label is correct from frame 1.
     const name = this.npcOverrideNames.get(entityId)
-      || this.npcDefsCache.get(defId)?.name
+      || def?.name
       || NPC_NAMES[defId]
       || `NPC${defId}`;
 
     // Dedicated 3D model path (rat, spider, cow, camel). Always preferred when
     // available — these have purpose-built animations.
-    const modelCfg = NPC_3D_MODELS[defId];
+    const modelCfg = NPC_3D_MODELS[modelNpcId];
     if (modelCfg) {
       const npc3d = new Npc3DEntity(this.scene, modelCfg.file, modelCfg.scale, modelCfg.anims, {
         label: name,
         materialColors: modelCfg.materialColors,
         tileSize,
+        visualScale,
         originMode: modelCfg.originMode,
         groundOffset: modelCfg.groundOffset,
         facingOffsetY: modelCfg.facingOffsetY,
@@ -212,7 +223,7 @@ export class EntityManager {
     // Humanoid NPCs use the same CharacterEntity rig as players, but they do
     // not need every player-only animation. Keep their animation package small
     // so authoring several guards/shopkeepers does not parse 15 GLBs per NPC.
-    const profile = NPC_CUSTOMIZABLE_PROFILE[defId];
+    const profile = NPC_CUSTOMIZABLE_PROFILE[modelNpcId] ?? NPC_CUSTOMIZABLE_PROFILE[defId];
     const combat = profile?.combat ?? false;
     // Only skip walk animation when the authoritative NPC def says the NPC
     // cannot move. Some legacy client profiles mark shop/smith NPCs as
@@ -234,6 +245,7 @@ export class EntityManager {
       name: `npc_${entityId}`,
       modelPath: getCharacterModelPath(this.npcAppearances.get(entityId) ?? null),
       targetHeight: CHARACTER_TARGET_HEIGHT,
+      visualScale,
       tileSize,
       groundShadow: true,
       // No floating label — NPCs introduce themselves via chat on interaction
@@ -531,6 +543,7 @@ export class EntityManager {
     this.npcTargets.delete(entityId);
     this.npcDefs.delete(entityId);
     this.npcCombatLevels.delete(entityId);
+    this.npcVisualScales.delete(entityId);
     this.npcAppearances.delete(entityId);
     this.npcEquipment.delete(entityId);
     this.npcCustomColors.delete(entityId);
@@ -578,6 +591,7 @@ export class EntityManager {
     this.npcTargets.delete(entityId);
     this.npcDefs.delete(entityId);
     this.npcCombatLevels.delete(entityId);
+    this.npcVisualScales.delete(entityId);
     this.npcAppearances.delete(entityId);
     this.npcEquipment.delete(entityId);
     this.npcCustomColors.delete(entityId);

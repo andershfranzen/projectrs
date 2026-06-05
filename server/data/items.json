@@ -5422,5 +5422,142 @@
     "equipSlot": "cape",
     "value": 100,
     "model": "/assets/equipment/cape/RippedBlackCape.glb"
+  },
+  {
+    "id": 440,
+    "name": "Bank Note",
+    "description": "A paper note used by banks.",
+    "stackable": true,
+    "equippable": false,
+    "value": 1,
+    "model": "/assets/models/BankNote.glb"
+  },
+  {
+    "id": 441,
+    "name": "Charcoal",
+    "description": "A dark lump of burnt wood.",
+    "stackable": false,
+    "equippable": false,
+    "value": 4,
+    "model": "/assets/models/Charcoal.glb"
+  },
+  {
+    "id": 442,
+    "name": "Sulphur",
+    "description": "A yellow mineral with a sharp smell.",
+    "stackable": false,
+    "equippable": false,
+    "value": 8,
+    "model": "/assets/models/Sulphur.glb"
+  },
+  {
+    "id": 443,
+    "name": "Black Party Hat",
+    "description": "A black paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatBlack.glb"
+  },
+  {
+    "id": 444,
+    "name": "Blue Party Hat",
+    "description": "A blue paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatBlue.glb"
+  },
+  {
+    "id": 445,
+    "name": "Gold Party Hat",
+    "description": "A gold paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatGold.glb"
+  },
+  {
+    "id": 446,
+    "name": "Green Party Hat",
+    "description": "A green paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatGreen.glb"
+  },
+  {
+    "id": 447,
+    "name": "Orange Party Hat",
+    "description": "An orange paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatOrange.glb"
+  },
+  {
+    "id": 448,
+    "name": "Pink Party Hat",
+    "description": "A pink paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatPink.glb"
+  },
+  {
+    "id": 449,
+    "name": "Red Party Hat",
+    "description": "A red paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatRed.glb"
+  },
+  {
+    "id": 450,
+    "name": "White Party Hat",
+    "description": "A white paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatWhite.glb"
+  },
+  {
+    "id": 451,
+    "name": "Yellow Party Hat",
+    "description": "A yellow paper party hat.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 100,
+    "model": "/assets/equipment/head/PartyHatYellow.glb"
+  },
+  {
+    "id": 452,
+    "name": "Farmer's Hat",
+    "description": "A broad hat for field work.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "head",
+    "headRenderMode": "hat",
+    "value": 25,
+    "model": "/assets/equipment/head/FarmersHat.glb"
   }
 ]

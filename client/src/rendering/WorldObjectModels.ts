@@ -94,6 +94,7 @@ export class WorldObjectModels {
     MithrilRock2: 'DepletedRock2.glb',
     SilverRock2: 'DepletedRock2.glb',
     ClayRock2: 'DepletedRock2.glb',
+    SulphurRock: 'SulphurRockDepleted.glb',
     CopperRock3: 'DepletedRock3.glb',
     IronRock3: 'DepletedRock3.glb',
     TinRock3: 'DepletedRock3.glb',

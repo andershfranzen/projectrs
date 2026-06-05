@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, npcCombatLevel } from '@projectrs/shared';
+import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition } from '@projectrs/shared';
 import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
@@ -26,6 +26,26 @@ function normalizeFacingAngle(value: number | null | undefined): number | null {
 function normalizeOptionalRange(value: number | null | undefined): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.max(0, Math.floor(value));
+}
+
+export interface NpcOptions {
+  wanderRange?: number | null;
+  appearance?: PlayerAppearance | null;
+  equipment?: number[] | null;
+  aggressive?: boolean | null;
+  effectiveShop?: ShopDef | null;
+  effectiveDialogue?: DialogueTree | null;
+  nameOverride?: string | null;
+  statsOverride?: NpcStatOverrides | null;
+  customColors?: CustomColors | null;
+  attackAnimOverride?: string | null;
+  facing?: number | null;
+  maxRange?: number | null;
+  huntRange?: number | null;
+  attackRange?: number | null;
+  retreatHealth?: number | null;
+  visibilityCondition?: QuestCondition | null;
+  visualScale?: number | null;
 }
 
 export class Npc extends Entity {
@@ -113,7 +133,12 @@ export class Npc extends Entity {
   /** Per-spawn name override (`spawn.name`). When null the runtime falls
    *  back to def.name (already set on Entity by the super constructor). */
   readonly nameOverride: string | null;
+  /** Visual-only scale multiplier. Gameplay size/interaction stays on
+   *  NpcDef.size so authoring a big-looking mob does not silently alter
+   *  collision or combat reach. */
+  readonly visualScale: number;
 
+  constructor(def: NpcDef, x: number, z: number, options?: NpcOptions);
   constructor(
     def: NpcDef,
     x: number,
@@ -134,41 +159,86 @@ export class Npc extends Entity {
     attackRange?: number | null,
     retreatHealth?: number | null,
     visibilityCondition?: QuestCondition | null,
+    visualScale?: number | null,
+  );
+  constructor(
+    def: NpcDef,
+    x: number,
+    z: number,
+    wanderRangeOrOptions?: number | null | NpcOptions,
+    appearance?: PlayerAppearance | null,
+    equipment?: number[] | null,
+    aggressive?: boolean | null,
+    effectiveShop?: ShopDef | null,
+    effectiveDialogue?: DialogueTree | null,
+    nameOverride?: string | null,
+    statsOverride?: NpcStatOverrides | null,
+    customColors?: CustomColors | null,
+    attackAnimOverride?: string | null,
+    facing?: number | null,
+    maxRange?: number | null,
+    huntRange?: number | null,
+    attackRange?: number | null,
+    retreatHealth?: number | null,
+    visibilityCondition?: QuestCondition | null,
+    visualScale?: number | null,
   ) {
+    const opts: NpcOptions = typeof wanderRangeOrOptions === 'object' && wanderRangeOrOptions !== null
+      ? wanderRangeOrOptions
+      : {
+          wanderRange: wanderRangeOrOptions,
+          appearance,
+          equipment,
+          aggressive,
+          effectiveShop,
+          effectiveDialogue,
+          nameOverride,
+          statsOverride,
+          customColors,
+          attackAnimOverride,
+          facing,
+          maxRange,
+          huntRange,
+          attackRange,
+          retreatHealth,
+          visibilityCondition,
+          visualScale,
+        };
     // Health override applies at construction so the Entity's maxHealth picks
     // it up. Stats override is positive integers; ignore non-finite or ≤0.
-    const overrideHealth = statsOverride?.health;
+    const overrideHealth = opts.statsOverride?.health;
     const effHealth = (typeof overrideHealth === 'number' && overrideHealth > 0)
       ? Math.floor(overrideHealth)
       : def.health;
-    super(nameOverride || def.name, x, z, effHealth);
+    super(opts.nameOverride || def.name, x, z, effHealth);
     this.npcId = def.id;
-    this.nameOverride = nameOverride && nameOverride.length > 0 ? nameOverride : null;
+    this.nameOverride = opts.nameOverride && opts.nameOverride.length > 0 ? opts.nameOverride : null;
     this.def = def;
     this.spawnX = x;
     this.spawnZ = z;
-    this.spawnFacingAngle = normalizeFacingAngle(facing);
+    this.spawnFacingAngle = normalizeFacingAngle(opts.facing);
     this.facingAngle = this.spawnFacingAngle;
-    this.wanderRangeOverride = normalizeOptionalRange(wanderRange);
-    this.maxRangeOverride = normalizeOptionalRange(maxRange);
-    this.huntRangeOverride = normalizeOptionalRange(huntRange);
-    this.attackRangeOverride = normalizeOptionalRange(attackRange);
-    this.retreatHealthOverride = normalizeOptionalRange(retreatHealth);
-    this.appearance = appearance ? normalizeAppearance(appearance) : null;
-    this.equipment = equipment ?? null;
-    this.customColors = customColors ?? null;
-    this.aggressiveOverride = aggressive ?? null;
-    this.effectiveShop = effectiveShop ?? null;
+    this.wanderRangeOverride = normalizeOptionalRange(opts.wanderRange);
+    this.maxRangeOverride = normalizeOptionalRange(opts.maxRange);
+    this.huntRangeOverride = normalizeOptionalRange(opts.huntRange);
+    this.attackRangeOverride = normalizeOptionalRange(opts.attackRange);
+    this.retreatHealthOverride = normalizeOptionalRange(opts.retreatHealth);
+    this.appearance = opts.appearance ? normalizeAppearance(opts.appearance) : null;
+    this.equipment = opts.equipment ?? null;
+    this.customColors = opts.customColors ?? null;
+    this.aggressiveOverride = opts.aggressive ?? null;
+    this.effectiveShop = opts.effectiveShop ?? null;
     if (this.effectiveShop) {
       for (const item of this.effectiveShop.items) {
         this.shopStock.set(item.itemId, Math.max(0, Math.floor(item.stock)));
       }
     }
-    this.effectiveDialogue = effectiveDialogue ?? null;
-    this.visibilityCondition = visibilityCondition ?? null;
-    this.statsOverride = statsOverride ?? null;
-    this.attackAnimOverride = (attackAnimOverride && attackAnimOverride.length > 0)
-      ? attackAnimOverride
+    this.effectiveDialogue = opts.effectiveDialogue ?? null;
+    this.visibilityCondition = opts.visibilityCondition ?? null;
+    this.visualScale = normalizeNpcVisualScale(opts.visualScale);
+    this.statsOverride = opts.statsOverride ?? null;
+    this.attackAnimOverride = (opts.attackAnimOverride && opts.attackAnimOverride.length > 0)
+      ? opts.attackAnimOverride
       : null;
     this.combatLevel = npcCombatLevel(effectiveNpcCombatStats(this.def, this.statsOverride));
   }

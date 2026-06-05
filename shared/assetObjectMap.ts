@@ -52,6 +52,7 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'MalachiteRock': 42,
   'MalachiteRock2': 42,
   'MalachiteRock3': 42,
+  'SulphurRock': 44,
   'SilverRock2': 25,
   'SilverRock3': 25,
   'ClayRock2': 33,

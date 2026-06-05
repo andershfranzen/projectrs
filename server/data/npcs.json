@@ -410,8 +410,9 @@
     ]
   },
   {
-    "id": 22,
+    "id": 104,
     "name": "Black Spider",
+    "modelNpcId": 22,
     "health": 28,
     "attack": 22,
     "defence": 10,
@@ -431,7 +432,20 @@
         "quantity": 1,
         "chance": 0.031667
       }
-    ],
+    ]
+  },
+  {
+    "id": 22,
+    "name": "Mother Spider",
+    "health": 46,
+    "attack": 40,
+    "defence": 29,
+    "strength": 26,
+    "attackSpeed": 3,
+    "respawnTime": 18,
+    "aggressive": true,
+    "wanderRange": 6,
+    "lootTable": [],
     "rareDropTables": [
       {
         "tableId": "universal",

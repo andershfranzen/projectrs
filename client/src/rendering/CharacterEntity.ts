@@ -15,7 +15,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { type PlayerAppearance, type AppearanceColorSlot, APPEARANCE_MATERIAL_MAP, getPalette, BELT_NO_BELT, SHIRT_COLORS, HAIR_STYLE_COUNT } from '../../../shared/appearance';
 import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectFootprint';
-import type { CustomColors, HeadRenderMode } from '../../../shared/types';
+import { normalizeNpcVisualScale, type CustomColors, type HeadRenderMode } from '../../../shared/types';
 import '@babylonjs/loaders/glTF';
 import { quantizeAnimationGroup, rs2Rotation, RS2_TURN_SNAP, wrapAnglePi, isWalkVariant, type WalkVariantName } from './AnimationQuantizer';
 import { bindHumanoidAnimationTemplate, buildHumanoidRigContext, getHumanoidAnimationTemplate } from './HumanoidAnimationTemplateCache';
@@ -225,6 +225,8 @@ export interface CharacterEntityOptions {
   modelPath: string;
   /** Desired height of the character in world units (auto-scales the model) */
   targetHeight?: number;
+  /** Visual-only scale multiplier layered on top of targetHeight. */
+  visualScale?: number;
   /** Label shown above head */
   label?: string;
   labelColor?: string;
@@ -264,6 +266,9 @@ export class CharacterEntity {
   private _position: Vector3 = Vector3.Zero();
   private _rotationY: number = 0;
   private targetRotationY: number = 0;
+  private baseModelScale: number = 1;
+  private visualScale: number = 1;
+  private baseTargetHeight: number = 1.3;
   private modelScale: number = 1;
   private yOffset: number = 0; // half model height, for health bar positioning
   private childYOffset: number = 0; // -minY applied to root children so feet are at y=0
@@ -422,6 +427,7 @@ export class CharacterEntity {
   // advanced enough at load time, gave 0 instead of the real ~0.8). If a
   // future rig has a different hip-to-foot distance, override this in the
   // entity options.
+  private baseFeetOffsetY: number = 0.85;
   private feetOffsetY: number = 0.85;
 
   // Ready state
@@ -438,6 +444,7 @@ export class CharacterEntity {
     this.modelPath = options.modelPath;
     this.layerMask = options.layerMask;
     this.footprintWidth = Math.max(1, Math.round(options.tileSize ?? 1));
+    this.visualScale = normalizeNpcVisualScale(options.visualScale);
     this._readyPromise = new Promise((resolve) => {
       this._resolveReady = resolve;
     });
@@ -463,6 +470,23 @@ export class CharacterEntity {
   private setRootPositionFromLogical(): void {
     if (!this.root) return;
     this.root.position.set(this.visualX(), this._position.y + this.feetOffsetY, this.visualZ());
+  }
+
+  private applyVisualScale(): void {
+    this.modelScale = this.baseModelScale * this.visualScale;
+    this.yOffset = this.baseTargetHeight * this.visualScale / 2;
+    this.feetOffsetY = this.baseFeetOffsetY * this.visualScale;
+    if (this.root) {
+      this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
+      this.setRootPositionFromLogical();
+    }
+  }
+
+  setVisualScale(scale: number): void {
+    const next = normalizeNpcVisualScale(scale);
+    if (Math.abs(next - this.visualScale) < 0.0001) return;
+    this.visualScale = next;
+    this.applyVisualScale();
   }
 
   // ---------------------------------------------------------------------------
@@ -567,15 +591,15 @@ export class CharacterEntity {
       }
       const modelHeight = maxY - minY;
       const targetH = options.targetHeight ?? 1.3;
-      this.modelScale = modelHeight > 0 ? targetH / modelHeight : 1;
-      this.yOffset = targetH / 2;
+      this.baseTargetHeight = targetH;
+      this.baseModelScale = modelHeight > 0 ? targetH / modelHeight : 1;
 
       // Adjust root so feet are at y=0
       this.childYOffset = -minY;
       for (const child of this.root.getChildren()) {
         (child as TransformNode).position.y -= minY;
       }
-      this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
+      this.applyVisualScale();
 
       // Convert PBR → flat StandardMaterial (matches the low-poly world style).
       // Face-detail primitives (eye/mouth/lip/brow) are tiny (4–48 tris each)
@@ -715,8 +739,9 @@ export class CharacterEntity {
       // Apply initial position (with feet offset)
       this.setRootPositionFromLogical();
       if (options.groundShadow) {
-        const shadowWidth = Math.max(0.78, this.footprintWidth * 0.82, targetH * 0.46);
-        const shadowDepth = Math.max(0.56, this.footprintWidth * 0.64, targetH * 0.34);
+        const visualTargetH = this.baseTargetHeight * this.visualScale;
+        const shadowWidth = Math.max(0.78, this.footprintWidth * 0.82, visualTargetH * 0.46);
+        const shadowDepth = Math.max(0.56, this.footprintWidth * 0.64, visualTargetH * 0.34);
         this.groundShadow = createMobGroundShadow(
           this.scene,
           `${options.name}_groundShadow`,

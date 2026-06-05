@@ -11,6 +11,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import '@babylonjs/loaders/glTF';
 import { getObjectFootprintContinuousCenterCoord } from '../../../shared/objectFootprint';
+import { normalizeNpcVisualScale } from '../../../shared/types';
 import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
@@ -20,6 +21,8 @@ export interface Npc3DEntityOptions {
   label?: string;
   materialColors?: Record<string, [number, number, number]>;
   tileSize?: number;
+  /** Visual-only scale multiplier layered on top of the model config scale. */
+  visualScale?: number;
   originMode?: 'authored' | 'boundsCenter';
   /** World-space visual Y lift without changing gameplay/server position. */
   groundOffset?: number;
@@ -51,6 +54,11 @@ let npcModelInstanceId = 0;
 
 function devCacheBust(file: string): string {
   return CACHE_BUST_TOKEN ? `${file}${CACHE_BUST_TOKEN}` : file;
+}
+
+function normalizePositiveScale(value: number | undefined, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return fallback;
+  return value;
 }
 
 async function loadAssetContainerWithTimeout(
@@ -350,7 +358,10 @@ export class Npc3DEntity {
   private _position: Vector3 = Vector3.Zero();
   private _rotationY: number = 0;
   private targetRotationY: number = 0;
+  private baseModelScale: number = 1;
+  private visualScale: number = 1;
   private modelScale: number = 1;
+  private modelBoundsHeight: number = 1;
   private originMode: Npc3DEntityOptions['originMode'] = 'authored';
   private groundOffset: number = 0;
   private facingOffsetY: number = 0;
@@ -400,7 +411,9 @@ export class Npc3DEntity {
     this._readyPromise = new Promise((resolve) => {
       this._resolveReady = resolve;
     });
-    this.modelScale = scale;
+    this.baseModelScale = normalizePositiveScale(scale, 1);
+    this.visualScale = normalizeNpcVisualScale(options.visualScale);
+    this.updateModelScale();
     this.originMode = options.originMode ?? 'authored';
     this.groundOffset = options.groundOffset ?? 0;
     this.facingOffsetY = options.facingOffsetY ?? 0;
@@ -408,6 +421,23 @@ export class Npc3DEntity {
     this.preserveAnimationRoles = new Set(options.preserveAnimationRoles ?? []);
     this.footprintWidth = Math.max(1, Math.round(options.tileSize ?? 1));
     this.load(file, animMap, options.label, options.materialColors);
+  }
+
+  private updateModelScale(): void {
+    this.modelScale = this.baseModelScale * this.visualScale;
+    if (this.root) {
+      this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
+    }
+    if (Number.isFinite(this.modelBoundsHeight) && this.modelBoundsHeight > 0) {
+      this.yOffset = this.modelBoundsHeight * this.modelScale / 2;
+    }
+  }
+
+  setVisualScale(scale: number): void {
+    const next = normalizeNpcVisualScale(scale);
+    if (Math.abs(next - this.visualScale) < 0.0001) return;
+    this.visualScale = next;
+    this.updateModelScale();
   }
 
   private visualY(y: number): number {
@@ -505,7 +535,8 @@ export class Npc3DEntity {
       }
       for (const node of result.rootNodes) node.position.y -= minY;
 
-      this.root.scaling.set(this.modelScale, this.modelScale, this.modelScale);
+      this.modelBoundsHeight = Number.isFinite(maxY - minY) && maxY > minY ? maxY - minY : 1;
+      this.updateModelScale();
       const boundsWidth = Number.isFinite(maxX - minX) ? (maxX - minX) * this.modelScale : 0;
       const boundsDepth = Number.isFinite(maxZ - minZ) ? (maxZ - minZ) * this.modelScale : 0;
       const footprintSize = this.footprintWidth * 0.72;
@@ -524,7 +555,7 @@ export class Npc3DEntity {
       if (this.pendingEntityId !== null) {
         this.setEntityIdMetadata(this.pendingEntityId);
       }
-      this.yOffset = (maxY - minY) * this.modelScale / 2;
+      this.yOffset = this.modelBoundsHeight * this.modelScale / 2;
 
       // Map animations by role. Babylon may suffix group names when the same
       // GLB is imported multiple times, so match by normalized name first and
@@ -778,7 +809,7 @@ export class Npc3DEntity {
 
   /** World-space point projectiles aim at: roughly chest-height above the NPC's base. */
   getTargetAnchor(): Vector3 {
-    return new Vector3(this.visualX(), this._position.y + 0.7, this.visualZ());
+    return new Vector3(this.visualX(), this._position.y + Math.max(0.35, this.yOffset), this.visualZ());
   }
 
   startWalking(): void {

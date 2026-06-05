@@ -1,0 +1,40 @@
+[
+  {
+    "assetId": "MithrilRock",
+    "layerId": "default",
+    "position": {
+      "x": 164.5,
+      "y": 0.634259,
+      "z": 54.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0.2,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MithrilRock2",
+    "layerId": "default",
+    "position": {
+      "x": 181.5,
+      "y": 0.591689,
+      "z": 51.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 2.1,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  }
+]

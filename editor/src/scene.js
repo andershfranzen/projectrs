@@ -69,6 +69,11 @@ import {
   normalizeWaterFlow,
   npcCombatLevel,
   effectiveNpcCombatStats,
+  normalizeNpcVisualScale,
+  shouldPersistNpcVisualScale,
+  RELIC_ITEM_IDS,
+  relicCombatDropForLevel,
+  relicCombatDropBandForLevel,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -76,7 +81,7 @@ import {
 // served through the editor dev server's client-public proxy.
 import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
 import { Npc3DEntity } from '@client/rendering/Npc3DEntity'
-import { NPC_3D_MODELS } from '@client/data/NpcConfig'
+import { NPC_3D_MODELS, NPC_CUSTOMIZABLE_PROFILE } from '@client/data/NpcConfig'
 import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
 import { resolveItemModelPath as resolveRuntimeItemModelPath } from '@client/rendering/ItemIcon'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
@@ -327,7 +332,7 @@ function tuneModelLighting(model) {
 
   // --- NPC Spawn system ---
   let npcDefs = []           // loaded from /api/editor/npcs
-  let npcSpawns = []         // { id, npcId, x, z, wanderRange, maxRange?, huntRange?, facing? }
+  let npcSpawns = []         // { id, npcId, x, z, wanderRange, scale?, maxRange?, huntRange?, facing? }
   let _npcSpawnNextId = 1
   let selectedNpcSpawn = null
   let npcPlacementMode = 'place' // 'place' | 'select' | 'move'
@@ -346,6 +351,7 @@ function tuneModelLighting(model) {
     huntRange:    v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
     attackRange:  v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
     retreatHealth: v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+    scale:        shouldPersistNpcVisualScale,
     facing:       v => typeof v === 'number' && Number.isFinite(v),
     appearance:   v => !!v,
     equipment:    v => Array.isArray(v) && (v.length === 10 || v.length === 11),
@@ -400,6 +406,28 @@ function tuneModelLighting(model) {
     return normalizeNpcFacing((Number.isFinite(numeric) ? numeric : 0) * Math.PI / 180)
   }
 
+  function normalizeNpcSpawnScale(value) {
+    return normalizeNpcVisualScale(Number(value))
+  }
+
+  function npcVisualScale(spawn) {
+    return normalizeNpcSpawnScale(spawn?.scale ?? 1)
+  }
+
+  function formatNpcScale(scale) {
+    return `${normalizeNpcSpawnScale(scale).toFixed(2)}x`
+  }
+
+  function setNpcSpawnScale(spawn, value) {
+    if (!spawn) return 1
+    const scale = normalizeNpcSpawnScale(value)
+    if (Math.abs(scale - 1) < 0.0001) delete spawn.scale
+    else spawn.scale = scale
+    const entry = npcPreviews.get(spawn.id)
+    entry?.entity?.setVisualScale?.(scale)
+    return scale
+  }
+
   function formatNpcFacing(angle) {
     const deg = Math.round(normalizeNpcFacing(angle) * 180 / Math.PI)
     if (deg === 0) return 'South (+Z)'
@@ -414,8 +442,31 @@ function tuneModelLighting(model) {
     return def?.stationary === true || (spawn.wanderRange ?? def?.wanderRange ?? 0) <= 0
   }
 
+  function npcModelSourceId(def) {
+    const raw = Number(def?.modelNpcId)
+    return Number.isInteger(raw) && raw > 0 ? raw : (def?.id ?? 0)
+  }
+
+  function npcModelSourceDef(def) {
+    const sourceId = npcModelSourceId(def)
+    return sourceId ? (npcDefById(sourceId) || null) : null
+  }
+
+  function npcTypeModelLabel(def) {
+    if (!def) return ''
+    const sourceId = npcModelSourceId(def)
+    const sourceDef = npcModelSourceDef(def)
+    const sourceName = sourceDef?.name || `NPC ${sourceId}`
+    const own = sourceId === def.id
+    if (NPC_3D_MODELS[sourceId]) return own ? 'Own 3D model' : `Model: ${sourceName}`
+    if (NPC_CUSTOMIZABLE_PROFILE[sourceId]) return own ? 'Humanoid model' : `Humanoid: ${sourceName}`
+    return own ? 'Default model' : `Model #${sourceId}`
+  }
+
   function npc3DModelConfig(spawn) {
-    return spawn ? NPC_3D_MODELS[spawn.npcId] : null
+    if (!spawn) return null
+    const def = npcDefById(spawn.npcId)
+    return NPC_3D_MODELS[npcModelSourceId(def)] || null
   }
 
   function shouldShowNpcPreview(spawn) {
@@ -425,7 +476,7 @@ function tuneModelLighting(model) {
   function npcPreviewKey(spawn) {
     const modelCfg = npc3DModelConfig(spawn)
     if (modelCfg) {
-      return `npc3d:${spawn.npcId}:${modelCfg.file}:${modelCfg.scale}`
+      return `npc3d:${npcModelSourceId(npcDefById(spawn?.npcId))}:${modelCfg.file}:${modelCfg.scale}`
     }
     if (spawn?.appearance) {
       return `character:${getCharacterModelPath(spawn.appearance)}`
@@ -442,7 +493,9 @@ function tuneModelLighting(model) {
     // value so a fresh spawn doesn't carry empty values.
     for (const field of Object.keys(NPC_SPAWN_OVERRIDE_FIELDS)) {
       if (field === 'aggressive') continue
-      if (NPC_SPAWN_OVERRIDE_FIELDS[field](input[field])) spawn[field] = input[field]
+      if (NPC_SPAWN_OVERRIDE_FIELDS[field](input[field])) {
+        spawn[field] = field === 'scale' ? normalizeNpcSpawnScale(input[field]) : input[field]
+      }
     }
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
     npcSpawns.push(spawn)
@@ -859,12 +912,14 @@ function tuneModelLighting(model) {
     }
     if (!entry) {
       const modelCfg = npc3DModelConfig(spawn)
+      const visualScale = npcVisualScale(spawn)
       if (modelCfg) {
         const def = npcDefById(spawn.npcId)
         const label = spawn.name || def?.name || `NPC ${spawn.npcId}`
         const entity = new Npc3DEntity(scene, modelCfg.file, modelCfg.scale, modelCfg.anims, {
           label,
           materialColors: modelCfg.materialColors,
+          visualScale,
           originMode: modelCfg.originMode,
           groundOffset: modelCfg.groundOffset,
           animSpeedRatio: modelCfg.animSpeedRatio,
@@ -878,6 +933,7 @@ function tuneModelLighting(model) {
           name: `npcPreview_${spawn.id}`,
           modelPath,
           targetHeight: CHARACTER_TARGET_HEIGHT,
+          visualScale,
           additionalAnimations: [
             { name: 'idle', path: CHARACTER_IDLE_ANIM },
           ],
@@ -886,6 +942,7 @@ function tuneModelLighting(model) {
       }
       npcPreviews.set(spawn.id, entry)
     }
+    entry.entity.setVisualScale?.(npcVisualScale(spawn))
     ensureNpcPreviewPickMetadata(spawn, entry)
     const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
     entry.entity.setPositionXYZ(spawn.x, y, spawn.z)
@@ -1020,11 +1077,13 @@ function tuneModelLighting(model) {
       const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
       const color = isSelected ? new Color3(1, 1, 0.2) : (aggressive ? new Color3(0.9, 0.2, 0.15) : new Color3(0.15, 0.7, 0.9))
       const showFacing = isSelected || npcSpawnIsStationary(spawn, def) || Number.isFinite(spawn.facing)
+      const visualScale = npcVisualScale(spawn)
+      const markerScale = Math.max(1, Math.min(visualScale, 4))
 
       // Spawns with a real 3D preview would be obscured by the full marker.
       // Use a thin ground disc as the selection affordance instead.
       if (shouldShowNpcPreview(spawn)) {
-        const disc = MeshBuilder.CreateDisc(`npcSpawnDisc_${spawn.id}`, { radius: 0.45, tessellation: 24 }, scene)
+        const disc = MeshBuilder.CreateDisc(`npcSpawnDisc_${spawn.id}`, { radius: 0.45 * markerScale, tessellation: 24 }, scene)
         const discMat = new StandardMaterial(`npcSpawnDiscMat_${spawn.id}`, scene)
         discMat.diffuseColor = color
         discMat.emissiveColor = color.scale(0.6)
@@ -1037,23 +1096,23 @@ function tuneModelLighting(model) {
         disc.parent = npcSpawnGroup
       } else {
         // Cylinder + top dot — visible from far away for sprite/non-customizable NPCs.
-        const marker = MeshBuilder.CreateCylinder(`npcSpawn_${spawn.id}`, { height: 1.2, diameterTop: 0.3, diameterBottom: 0.5, tessellation: 8 }, scene)
+        const marker = MeshBuilder.CreateCylinder(`npcSpawn_${spawn.id}`, { height: 1.2 * markerScale, diameterTop: 0.3 * markerScale, diameterBottom: 0.5 * markerScale, tessellation: 8 }, scene)
         const markerMat = new StandardMaterial(`npcSpawnMat_${spawn.id}`, scene)
         markerMat.diffuseColor = color
         markerMat.emissiveColor = color.scale(0.4)
         markerMat.specularColor = new Color3(0, 0, 0)
         marker.material = markerMat
-        marker.position = new Vector3(spawn.x, y + 0.6, spawn.z)
+        marker.position = new Vector3(spawn.x, y + 0.6 * markerScale, spawn.z)
         marker.metadata = { npcSpawn: spawn }
         marker.parent = npcSpawnGroup
 
-        const dot = MeshBuilder.CreateSphere(`npcDot_${spawn.id}`, { diameter: 0.25, segments: 6 }, scene)
+        const dot = MeshBuilder.CreateSphere(`npcDot_${spawn.id}`, { diameter: 0.25 * markerScale, segments: 6 }, scene)
         const dotMat = new StandardMaterial(`npcDotMat_${spawn.id}`, scene)
         dotMat.diffuseColor = new Color3(1, 1, 1)
         dotMat.emissiveColor = isSelected ? new Color3(1, 1, 0.3) : new Color3(0.8, 0.8, 0.8)
         dotMat.specularColor = new Color3(0, 0, 0)
         dot.material = dotMat
-        dot.position = new Vector3(spawn.x, y + 1.35, spawn.z)
+        dot.position = new Vector3(spawn.x, y + 1.35 * markerScale, spawn.z)
         dot.metadata = { npcSpawn: spawn }
         dot.parent = npcSpawnGroup
       }
@@ -1121,7 +1180,9 @@ function tuneModelLighting(model) {
     if (selectedLabel) {
       if (selectedNpcSpawn) {
         const def = npcDefById(selectedNpcSpawn.npcId)
-        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}`
+        const scale = npcVisualScale(selectedNpcSpawn)
+        const scaleText = Math.abs(scale - 1) > 0.0001 ? ` · ${formatNpcScale(scale)}` : ''
+        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
       } else {
         selectedLabel.textContent = 'No spawn selected'
       }
@@ -1132,6 +1193,8 @@ function tuneModelLighting(model) {
     if (dupBtn) dupBtn.disabled = !selectedNpcSpawn
     const delBtn = panel.querySelector('#npcDeleteSelectedBtn')
     if (delBtn) delBtn.disabled = !selectedNpcSpawn
+    const variantBtn = panel.querySelector('#npcCreateVariantBtn')
+    if (variantBtn) variantBtn.disabled = !selectedOrCurrentNpcDef()
   }
 
   function refreshNpcSpawnList() {
@@ -1161,7 +1224,9 @@ function tuneModelLighting(model) {
       const facingText = npcSpawnIsStationary(spawn, def) || Number.isFinite(spawn.facing)
         ? ` f=${formatNpcFacing(npcFacingAngle(spawn))}`
         : ''
-      label.textContent = `${name} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}${facingText}`
+      const scale = npcVisualScale(spawn)
+      const scaleText = Math.abs(scale - 1) > 0.0001 ? ` s=${formatNpcScale(scale)}` : ''
+      label.textContent = `${name} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}${facingText}${scaleText}`
       row.appendChild(label)
       const del = document.createElement('button')
       del.type = 'button'
@@ -2492,6 +2557,7 @@ let selectedWaterFlowChunk = null
       <div id="npcTypeResults" style="display:none;max-height:168px;overflow-y:auto;margin-top:4px;background:#181818;border:1px solid #444;border-radius:4px;"></div>
       <select id="npcTypeSelect" style="display:none;"></select>
       <div id="npcTypeSummary" style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:4px;min-height:13px;"></div>
+      <button id="npcCreateVariantBtn" style="width:100%;margin-top:6px;font-size:11px;padding:6px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Create a new NPC type with its own name/stats/drops while reusing this type's model.">New named variant from this model</button>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
         <div style="font-size:11px;color:rgba(255,255,255,0.55);">NPC Library</div>
         <div id="npcTypeLibraryCount" style="font-size:10px;color:rgba(255,255,255,0.35);"></div>
@@ -2871,7 +2937,7 @@ let selectedWaterFlowChunk = null
       name.textContent = `${def.name} (${def.id})`
       name.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
       const meta = document.createElement('span')
-      meta.textContent = `HP ${def.health}${def.bankAccess ? ' · Bank' : ''}`
+      meta.textContent = `HP ${def.health} · ${npcTypeModelLabel(def)}${def.bankAccess ? ' · Bank' : ''}`
       meta.style.cssText = 'flex:0 0 auto;color:rgba(255,255,255,0.48);'
       row.appendChild(name)
       row.appendChild(meta)
@@ -2929,6 +2995,7 @@ let selectedWaterFlowChunk = null
       const badges = [
         `HP ${def.health ?? 0}`,
         `W ${def.wanderRange ?? 0}`,
+        npcTypeModelLabel(def),
         used > 0 ? `Used ${used}` : 'Unused',
         def.id >= 100 ? 'Custom' : '',
         def.aggressive ? 'Aggro' : '',
@@ -2956,7 +3023,7 @@ let selectedWaterFlowChunk = null
       sel.innerHTML = defs.map(d => {
         const title = d.bankAccess ? ` title="Bank-enabled spawns must be named &quot;${BANK_ACCESS_SPAWN_NAME}&quot;."` : ''
         const suffix = d.bankAccess ? ' — BANK' : ''
-        return `<option value="${d.id}"${title}>${d.name} (ID ${d.id}) — HP ${d.health}${suffix}</option>`
+        return `<option value="${d.id}"${title}>${d.name} (ID ${d.id}) — HP ${d.health} — ${npcTypeModelLabel(d)}${suffix}</option>`
       }).join('')
       if (!sel.value && defs[0]) sel.value = defs[0].id
     }
@@ -2973,7 +3040,7 @@ let selectedWaterFlowChunk = null
     renderNpcTypeResults(input?.value || '')
     if (summary) {
       summary.textContent = def
-        ? `HP ${def.health} · Wander ${def.wanderRange ?? 0}${def.aggressive ? ' · Aggressive' : ''}${def.bankAccess ? ' · Bank' : ''}`
+        ? `HP ${def.health} · Wander ${def.wanderRange ?? 0} · ${npcTypeModelLabel(def)}${def.aggressive ? ' · Aggressive' : ''}${def.bankAccess ? ' · Bank' : ''}`
         : ''
     }
     renderNpcTypeLibrary(document.activeElement === input ? input?.value || '' : '')
@@ -3167,6 +3234,7 @@ let selectedWaterFlowChunk = null
   for (const btn of sidebar.querySelectorAll('[data-npc-mode]')) {
     btn.addEventListener('click', () => setNpcPlacementMode(btn.dataset.npcMode))
   }
+  sidebar.querySelector('#npcCreateVariantBtn')?.addEventListener('click', createNpcVariantFromCurrentType)
   sidebar.querySelector('#npcDuplicateSelectedBtn')?.addEventListener('click', duplicateSelectedNpcSpawn)
   sidebar.querySelector('#npcDeleteSelectedBtn')?.addEventListener('click', deleteSelectedNpcSpawn)
 
@@ -3302,6 +3370,7 @@ let selectedWaterFlowChunk = null
       .join('')
     const posX = spawn?.x ?? 0
     const posZ = spawn?.z ?? 0
+    const visualScale = npcVisualScale(spawn)
     const facingDeg = spawn ? npcFacingDeg(spawn) : 0
     const facingLabel = formatNpcFacing(spawn ? npcFacingAngle(spawn) : 0)
     const stationary = spawn ? npcSpawnIsStationary(spawn, def) : false
@@ -3311,7 +3380,7 @@ let selectedWaterFlowChunk = null
     root.innerHTML = `
       <label style="font-size:11px;color:rgba(255,255,255,0.45);">Name (override)</label>
       <input id="spawnNameInput" type="text" value="${nameValue.replace(/"/g, '&quot;')}" placeholder="${defName.replace(/"/g, '&quot;') || 'defaults to NPC type name'}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'} />
-      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">Per-spawn name. Leave blank to inherit "${defName}".</div>
+      <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">This renames only this placed spawn. Use "New named variant from this model" when the name, stats, drops, shop, or dialogue should become a reusable NPC type.</div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Position</label>
       <div style="display:flex;gap:5px;margin-top:3px;">
         <div style="flex:1;">
@@ -3322,6 +3391,12 @@ let selectedWaterFlowChunk = null
           <div style="font-size:10px;color:rgba(255,255,255,0.45);">Z</div>
           <input id="spawnZInput" type="number" step="0.5" value="${posZ.toFixed(1)}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
         </div>
+      </div>
+      <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Visual Scale <span id="npcScaleLabel">${formatNpcScale(visualScale)}</span></label>
+      <input id="npcScaleSlider" type="range" min="0.25" max="4" step="0.05" value="${visualScale}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
+      <div style="display:flex;gap:5px;margin-top:3px;">
+        <input id="npcScaleInput" type="number" min="0.1" max="8" step="0.05" value="${visualScale.toFixed(2)}" style="flex:1;min-width:0;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
+        <button id="npcScaleResetBtn" type="button" style="flex:0 0 auto;font-size:10px;padding:3px 7px;background:#262626;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;" ${spawn ? '' : 'disabled'}>Reset</button>
       </div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Wander Range <span id="wanderRangeLabel">${wander}</span></label>
       <input id="wanderRangeSlider" type="range" min="0" max="15" step="1" value="${wander}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
@@ -3366,6 +3441,24 @@ let selectedWaterFlowChunk = null
         refreshNpcSpawnList()
       }
     })
+    const writeScale = (raw, { rebuild = true } = {}) => {
+      if (!selectedNpcSpawn) return
+      const scale = setNpcSpawnScale(selectedNpcSpawn, raw)
+      const label = root.querySelector('#npcScaleLabel')
+      if (label) label.textContent = formatNpcScale(scale)
+      const slider = root.querySelector('#npcScaleSlider')
+      if (slider) slider.value = String(Math.max(0.25, Math.min(4, scale)))
+      const input = root.querySelector('#npcScaleInput')
+      if (input) input.value = scale.toFixed(2)
+      if (rebuild) rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+      updateNpcPlacementControls()
+    }
+    const scaleSlider = root.querySelector('#npcScaleSlider')
+    scaleSlider?.addEventListener('input', (e) => writeScale(e.target.value, { rebuild: false }))
+    scaleSlider?.addEventListener('change', (e) => writeScale(e.target.value, { rebuild: true }))
+    root.querySelector('#npcScaleInput')?.addEventListener('change', (e) => writeScale(e.target.value))
+    root.querySelector('#npcScaleResetBtn')?.addEventListener('click', () => writeScale(1))
     const writeFacingDeg = (deg) => {
       if (!selectedNpcSpawn) return
       selectedNpcSpawn.facing = npcFacingFromDeg(deg)
@@ -3416,6 +3509,20 @@ let selectedWaterFlowChunk = null
    *  out — it already has its own per-spawn field on the Spawn tab. */
   const SPAWN_STAT_KEYS = ['health', 'attack', 'strength', 'defence', 'attackSpeed', 'respawnTime']
 
+  function selectedOrCurrentNpcDef() {
+    const selectedDef = findSelectedDef()
+    if (selectedDef) return selectedDef
+    const selectedId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value || '0')
+    return npcDefById(selectedId)
+  }
+
+  function nextNpcDefId() {
+    let nextId = 100
+    const taken = new Set(npcDefs.map(d => d.id))
+    while (taken.has(nextId)) nextId++
+    return nextId
+  }
+
   /** Fork the given NpcDef into a brand-new id and swap the selected spawn
    *  to it. Mutating the original def directly is the easy way to lose a
    *  baseline (e.g. renaming "Custom Humanoid" to "Vampire" wipes the
@@ -3424,26 +3531,78 @@ let selectedWaterFlowChunk = null
    *  Picks the next unused integer id ≥ 100 so user-authored mobs don't
    *  collide with the hand-curated ids in the 1..21 range.
    */
-  function duplicateNpcDef(srcDef) {
+  function duplicateNpcDef(srcDef, options = {}) {
     if (!srcDef) return null
-    let nextId = 100
-    const taken = new Set(npcDefs.map(d => d.id))
-    while (taken.has(nextId)) nextId++
     const clone = structuredClone(srcDef)
-    clone.id = nextId
-    clone.name = `${srcDef.name} copy`
+    clone.id = nextNpcDefId()
+    clone.name = options.name || `${srcDef.name || 'NPC'} variant`
+    const sourceModelId = Number.isInteger(options.modelNpcId) && options.modelNpcId > 0
+      ? options.modelNpcId
+      : npcModelSourceId(srcDef)
+    if (sourceModelId > 0) clone.modelNpcId = sourceModelId
+
+    if (options.applySpawnOverrides && selectedNpcSpawn?.npcId === srcDef.id) {
+      if (selectedNpcSpawn.stats) {
+        for (const key of SPAWN_STAT_KEYS) {
+          const value = selectedNpcSpawn.stats[key]
+          if (Number.isFinite(value)) clone[key] = value
+        }
+      }
+      if (!options.name && selectedNpcSpawn.name) clone.name = selectedNpcSpawn.name
+    }
+
     npcDefs.push(clone)
     populateNpcTypeControls(npcDefs)
+
+    const sel = sidebar.querySelector('#npcTypeSelect')
+    if (sel) sel.value = clone.id
+
     // Switch the selected spawn to the new def so the inspector retargets.
-    if (selectedNpcSpawn) {
+    if (selectedNpcSpawn && options.switchSelectedSpawn !== false) {
+      pushUndoState('spawns')
       selectedNpcSpawn.npcId = clone.id
-      const sel = sidebar.querySelector('#npcTypeSelect')
-      if (sel) sel.value = clone.id
+      if (options.consumeSpawnOverrides) {
+        delete selectedNpcSpawn.name
+        delete selectedNpcSpawn.stats
+      }
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
     }
     markDefsDirty()
+    syncNpcTypeInput()
     return clone
+  }
+
+  function createNpcVariantFromCurrentType() {
+    const srcDef = selectedOrCurrentNpcDef()
+    if (!srcDef) return
+    const retargetsSelectedSpawn = !!selectedNpcSpawn
+    const defaultName = selectedNpcSpawn?.name || `${srcDef.name || 'NPC'} variant`
+    const rawName = window.prompt('New NPC type name', defaultName)
+    if (rawName == null) return
+    const name = rawName.trim()
+    if (!name) {
+      window.alert('Enter a name for the new NPC type.')
+      return
+    }
+    const duplicateName = npcDefs.find(def => def.id !== srcDef.id && String(def.name || '').toLowerCase() === name.toLowerCase())
+    if (duplicateName) {
+      window.alert(`"${name}" already exists as NPC #${duplicateName.id}. Pick a unique type name.`)
+      return
+    }
+
+    const newDef = duplicateNpcDef(srcDef, {
+      name,
+      applySpawnOverrides: true,
+      consumeSpawnOverrides: true,
+    })
+    if (!newDef) return
+    const saveHint = retargetsSelectedSpawn
+      ? 'Use Save NPC defs for the new type, then Save Server for the selected spawn.'
+      : 'Use Save NPC defs to persist the new type.'
+    showEditorNotice(`Created NPC type #${newDef.id}: ${newDef.name}\nModel source: ${npcTypeModelLabel(newDef)}\n${saveHint}`, 'success', 7000)
+    renderNpcInspector()
+    updateNpcPlacementControls()
   }
 
   function renderStatsTab(root, def) {
@@ -3527,7 +3686,7 @@ let selectedWaterFlowChunk = null
     const shared = document.createElement('div')
     shared.innerHTML = `
       <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${def.name}".</div>
-      <button id="duplicateNpcDefBtn" style="width:100%;margin-bottom:8px;font-size:11px;padding:5px;background:#3a3a5a;color:#fff;cursor:pointer;border:1px solid #555;border-radius:3px;" title="Fork this NPC type into a fresh id before customizing — keeps the baseline template intact.">Duplicate NPC type (fork before editing)</button>
+      <button id="duplicateNpcDefBtn" style="width:100%;margin-bottom:8px;font-size:11px;padding:5px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Create a new NPC type with its own name/stats/drops while reusing this type's model.">New named variant from this model</button>
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
         <input data-def-key="name" type="text" value="${def.name ?? ''}" style="width:140px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
@@ -3553,10 +3712,7 @@ let selectedWaterFlowChunk = null
       </label>
     `
     root.appendChild(shared)
-    shared.querySelector('#duplicateNpcDefBtn')?.addEventListener('click', () => {
-      const newDef = duplicateNpcDef(def)
-      if (newDef) renderNpcInspector()
-    })
+    shared.querySelector('#duplicateNpcDefBtn')?.addEventListener('click', createNpcVariantFromCurrentType)
     for (const input of shared.querySelectorAll('[data-def-key]')) {
       // 'input' fires every keystroke; 'change' only fires on blur for
       // number/text. Using 'input' makes the Save NPC defs button light up
@@ -3953,6 +4109,46 @@ let selectedWaterFlowChunk = null
     return `${Math.round(pct)}%`
   }
 
+  function roundDropChanceForSave(chance) {
+    return Number(Math.max(0, Math.min(1, Number(chance) || 0)).toFixed(6))
+  }
+
+  function itemNameForEditor(itemId) {
+    return itemDefs.find(d => d.id === itemId)?.name || `Item ${itemId}`
+  }
+
+  function syncNpcRelicDropToCombatLevel(def) {
+    if (!def) return null
+    if (!Array.isArray(def.lootTable)) def.lootTable = []
+    const combatLevel = npcCombatLevel(effectiveNpcCombatStats(def))
+    const existingRelicDrops = def.lootTable.filter(drop => drop && RELIC_ITEM_IDS.has(drop.itemId))
+    const preferredItemId = existingRelicDrops.find(drop => Number.isInteger(drop?.itemId))?.itemId
+    const recommendation = relicCombatDropForLevel(combatLevel, preferredItemId)
+    const nonRelicDrops = def.lootTable.filter(drop => !(drop && RELIC_ITEM_IDS.has(drop.itemId)))
+
+    if (!recommendation) {
+      if (existingRelicDrops.length > 0) {
+        def.lootTable = nonRelicDrops
+        markDefsDirty()
+      }
+      return { combatLevel, recommendation: null, changed: existingRelicDrops.length > 0 }
+    }
+
+    const nextDrop = {
+      itemId: recommendation.itemId,
+      quantity: recommendation.quantity,
+      chance: roundDropChanceForSave(recommendation.chance),
+    }
+    const unchanged = existingRelicDrops.length === 1
+      && existingRelicDrops[0].itemId === nextDrop.itemId
+      && Math.max(1, Number(existingRelicDrops[0].quantity) || 1) === nextDrop.quantity
+      && roundDropChanceForSave(existingRelicDrops[0].chance) === nextDrop.chance
+
+    def.lootTable = [...nonRelicDrops, nextDrop]
+    if (!unchanged) markDefsDirty()
+    return { combatLevel, recommendation: { ...recommendation, chance: nextDrop.chance }, changed: !unchanged }
+  }
+
   function renderDropsTab(root, def) {
     root.innerHTML = ''
     if (!def) {
@@ -3979,6 +4175,19 @@ let selectedWaterFlowChunk = null
     const guaranteed = rows.filter(row => row.chance >= 1).length
     const random = rows.filter(row => row.chance > 0 && row.chance < 1).length
     const expectedValue = rows.reduce((sum, row) => sum + row.expectedValue, 0)
+    const sharedCombatLevel = npcCombatLevel(effectiveNpcCombatStats(def))
+    const relicRows = rows.filter(row => row.drop && RELIC_ITEM_IDS.has(row.drop.itemId))
+    const currentRelic = relicRows[0] || null
+    const relicRecommendation = relicCombatDropForLevel(sharedCombatLevel, currentRelic?.drop?.itemId)
+    const relicBand = relicCombatDropBandForLevel(sharedCombatLevel)
+    const currentRelicText = currentRelic
+      ? `${itemNameForEditor(currentRelic.drop.itemId)} x${Math.max(1, currentRelic.drop.quantity || 1)} - ${lootChanceLabel(currentRelic.chance)}${relicRows.length > 1 ? ` (+${relicRows.length - 1} duplicate)` : ''}`
+      : 'None'
+    const recommendedItemName = relicRecommendation ? itemNameForEditor(relicRecommendation.itemId) : ''
+    const targetRelicText = relicRecommendation
+      ? `Tier ${relicRecommendation.tier}: ${recommendedItemName} x${relicRecommendation.quantity} - ${lootChanceLabel(relicRecommendation.chance)}`
+      : `No relic tier at combat level ${sharedCombatLevel}`
+    const relicButtonDisabled = !relicRecommendation && relicRows.length === 0
 
     root.innerHTML = `
       <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${escapeEditorHtml(def.name)}".</div>
@@ -4000,6 +4209,17 @@ let selectedWaterFlowChunk = null
       <div style="display:flex;gap:5px;margin-top:6px;">
         <button id="quickAlwaysDropBtn" style="flex:1;font-size:11px;padding:5px;background:#315c31;color:#fff;cursor:pointer;border:1px solid #4d7d4d;border-radius:3px;">+ Always</button>
         <button id="quickRandomDropBtn" style="flex:1;font-size:11px;padding:5px;background:#5f5130;color:#fff;cursor:pointer;border:1px solid #826f45;border-radius:3px;">+ Random</button>
+      </div>
+      <div style="margin-top:6px;background:#181512;border:1px solid #3b2d1b;border-radius:4px;padding:6px;">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:11px;color:#ffcc66;font-weight:bold;">
+          <span>Relic drop</span>
+          <span style="font-size:10px;color:rgba(255,255,255,0.45);font-weight:normal;">Combat ${sharedCombatLevel}${relicBand ? ` - tier ${relicBand.tier}` : ''}</span>
+        </div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.55);margin-top:4px;line-height:1.35;">
+          Current: ${escapeEditorHtml(currentRelicText)}<br>
+          Target: ${escapeEditorHtml(targetRelicText)}
+        </div>
+        <button id="syncRelicDropBtn" style="width:100%;margin-top:6px;font-size:11px;padding:5px;background:${relicButtonDisabled ? '#252525' : '#5b4724'};color:${relicButtonDisabled ? '#777' : '#fff'};cursor:${relicButtonDisabled ? 'default' : 'pointer'};border:1px solid ${relicButtonDisabled ? '#333' : '#806535'};border-radius:3px;" ${relicButtonDisabled ? 'disabled' : ''}>${relicRecommendation ? 'Sync relic to combat level' : 'Remove relic drop'}</button>
       </div>
       <div style="font-size:10px;color:#888;margin:8px 0 4px;">${guaranteed} guaranteed · ${random} random</div>
       <div id="dropTabRows" style="display:flex;flex-direction:column;gap:5px;"></div>
@@ -4032,6 +4252,13 @@ let selectedWaterFlowChunk = null
     }
 
     root.querySelector('#openDropTablesBtn')?.addEventListener('click', () => openDropsEditor(def.id))
+    root.querySelector('#syncRelicDropBtn')?.addEventListener('click', () => {
+      const result = syncNpcRelicDropToCombatLevel(def)
+      if (result?.changed) {
+        showEditorNotice(`Relic drop updated for ${def.name} (combat ${result.combatLevel}).`, 'success', 4000)
+      }
+      renderDropsTab(root, def)
+    })
     root.querySelector('#quickAlwaysDropBtn')?.addEventListener('click', () => {
       def.lootTable.push({ itemId: 0, quantity: 1, chance: 1 })
       markDefsDirty()
