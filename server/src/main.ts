@@ -2652,6 +2652,7 @@ function recordGameplayMapDataFetch(
 setInterval(() => {
   db.cleanExpiredSessions();
   db.cleanupOldForumNotifications(Math.floor(Date.now() / 1000) - 90 * 24 * 3600);
+  db.flushGameEventLog();
 }, 10 * 60 * 1000);
 
 // Save all players on graceful shutdown so a server restart (SIGTERM from
@@ -2664,6 +2665,7 @@ const shutdown = (signal: string) => {
   shuttingDown = true;
   console.log(`[shutdown] received ${signal} — saving state and exiting`);
   try { world.stop(); } catch (e) { console.error('[shutdown] world.stop() failed:', e); }
+  try { db.flushGameEventLog(); } catch (e) { console.error('[shutdown] flushGameEventLog() failed:', e); }
   // Drain any in-memory audit events synchronously so we don't lose the last
   // ~1s of forensic log on restart.
   try { flushAuditSync(); } catch (e) { console.error('[shutdown] flushAuditSync() failed:', e); }
@@ -3004,6 +3006,24 @@ const server = Bun.serve<SocketData>({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),
         accounts: db.listAdminBotReviewAccounts(limit),
+      });
+    }
+
+    if (url.pathname === '/api/admin/game-events' && req.method === 'GET') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      const limit = Number(url.searchParams.get('limit') ?? '200');
+      const afterId = Number(url.searchParams.get('afterId') ?? '0');
+      const excludeTypes = [
+        ...url.searchParams.getAll('excludeType'),
+        ...(url.searchParams.get('excludeTypes') ?? '').split(','),
+      ].map(value => value.trim()).filter(Boolean);
+      const snapshot = db.getGameEventLogSnapshot({ afterId, limit, excludeTypes });
+      return jsonResponse({
+        ok: true,
+        generatedAt: Math.floor(Date.now() / 1000),
+        latestId: snapshot.latestId,
+        events: snapshot.events,
       });
     }
 

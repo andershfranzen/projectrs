@@ -56,7 +56,14 @@ describe('NPC loot', () => {
       }],
     ]);
 
-    expect(rollLoot(npc, { rareDropTables, rng: sequenceRng([1, 0]) })).toEqual([{ itemId: 10, quantity: 25 }]);
+    expect(rollLoot(npc, { rareDropTables, rng: sequenceRng([1, 0]) })).toEqual([{
+      itemId: 10,
+      quantity: 25,
+      rare: true,
+      source: 'rare_drop_table',
+      rareTableId: 'universal',
+      rareAccessTableId: 'universal',
+    }]);
   });
 
   test('rare drop table misses leave normal loot behavior unchanged', () => {

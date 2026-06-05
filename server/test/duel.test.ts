@@ -26,7 +26,7 @@ function itemDef(id: number, name: string, stackable: boolean): ItemDef {
 
 const itemDefs = new Map<number, ItemDef>([
   [COINS, itemDef(COINS, 'Coins', true)],
-  [SWORD, itemDef(SWORD, 'Sword', false)],
+  [SWORD, { ...itemDef(SWORD, 'Sword', false), equippable: true, equipSlot: 'weapon' }],
   [FILLER, itemDef(FILLER, 'Filler', false)],
 ]);
 
@@ -74,6 +74,7 @@ function makeHarness(a: Player, b: Player): DuelHarness {
   world.npcs = new Map();
   world.playerCombatTargets = new Map();
   world.npcTargetedBy = new Map();
+  world.chunkManagers = new Map();
   world.tradeSessions = new Map();
   world.pendingTradeRequests = new Map();
   world.duelStakeSessions = new Map();
@@ -295,8 +296,8 @@ describe('player duel staking and combat validation', () => {
     expect(world.duelStakeSessions.has(a.id)).toBe(false);
     expect(world.activeDuels.has(a.id)).toBe(true);
     expect(world.activeDuels.get(a.id)).toBe(world.activeDuels.get(b.id));
-    expect(a.openInterface).toBe('duel');
-    expect(b.openInterface).toBe('duel');
+    expect(a.openInterface).toBeNull();
+    expect(b.openInterface).toBeNull();
   });
 
   test('duel start faces both fighters toward each other', () => {
@@ -405,7 +406,27 @@ describe('player duel staking and combat validation', () => {
 
     expect(a.hasMoveQueue()).toBe(false);
     expect(world.activeDuels.has(a.id)).toBe(true);
-    expect(a.openInterface).toBe('duel');
+    expect(a.openInterface).toBeNull();
+  });
+
+  test('active duel allows gear changes without saving custodied state', () => {
+    const a = makePlayer('alice', 1);
+    const b = makePlayer('bob', 2, 2.5, 1.5);
+    a.inventory[0] = { itemId: COINS, quantity: 100 };
+    a.inventory[1] = { itemId: SWORD, quantity: 1 };
+    const { world, saves } = makeHarness(a, b);
+    openDuel(world, a, b);
+    world.handleDuelStakeItem(a.id, 0, COINS, 40);
+    acceptBothTwice(world, a, b);
+
+    world.handlePlayerEquip(a.id, 1, SWORD);
+    world.handleDuelStakeItem(a.id, 0, COINS, 10);
+
+    expect(a.equipment.get('weapon')).toBe(SWORD);
+    expect(countItem(a, COINS)).toBe(60);
+    expect(world.activeDuels.has(a.id)).toBe(true);
+    expect(a.openInterface).toBeNull();
+    expect(saves).toEqual([]);
   });
 
   test('autosave skips players while stakes are custodied in active duel', () => {

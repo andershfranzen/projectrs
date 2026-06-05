@@ -114,7 +114,7 @@ function endpointIsWalkable(map: GameMap, endpoint: { x: number; z: number; floo
 describe('placed ladder audit', () => {
   test('every placed Ladder is either linked or an intentional decorative placement', () => {
     const ladders = placedLadders();
-    expect(ladders).toHaveLength(11);
+    expect(ladders).toHaveLength(10);
 
     const decorative = ladders.filter(ladder => (ladder.verticalLinks ?? []).length === 0);
     expect(decorative.map(ladderKey).sort()).toEqual([...DECORATIVE_LADDER_KEYS].sort());

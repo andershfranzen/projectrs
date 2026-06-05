@@ -12,6 +12,11 @@ const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
 const MOVE_STACKED_RELICS_TO_BANK_MIGRATION_ID = 'move_stacked_relics_to_bank_2026_05_24';
 const RESET_BOT_METRICS_MIGRATION_ID = 'reset_bot_metrics_2026_05_24_calibration';
 const REMOVE_RETIRED_RESOURCE_ITEMS_MIGRATION_ID = 'remove_retired_resource_items_2026_05_24';
+const GAME_EVENT_LOG_FLUSH_INTERVAL_MS = envBoundedInteger('GAME_EVENT_LOG_FLUSH_INTERVAL_MS', 1_000, 100, 30_000);
+const GAME_EVENT_LOG_BATCH_SIZE = envBoundedInteger('GAME_EVENT_LOG_BATCH_SIZE', 250, 1, 2_000);
+const GAME_EVENT_LOG_MAX_QUEUE_SIZE = envBoundedInteger('GAME_EVENT_LOG_MAX_QUEUE_SIZE', 5_000, 100, 100_000);
+const GAME_EVENT_LOG_RETENTION_DAYS = envBoundedInteger('GAME_EVENT_LOG_RETENTION_DAYS', 90, 0, 3_650);
+const GAME_EVENT_LOG_PRUNE_INTERVAL_MS = 10 * 60 * 1000;
 const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
 const SUSPECT_SKETCH_ITEM_ID = 236;
 const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
@@ -27,6 +32,13 @@ const FORUM_DEFAULT_CATEGORIES = [
   { slug: 'marketplace', name: 'Marketplace', description: 'Buy, sell, and trade with other players.', staffOnly: 0 },
   { slug: 'off-topic', name: 'Off Topic', description: 'Relaxed discussion that does not fit elsewhere.', staffOnly: 0 },
 ] as const;
+
+function envBoundedInteger(name: string, fallback: number, min: number, max: number): number {
+  const raw = Bun.env[name];
+  const value = raw == null || raw.trim() === '' ? fallback : Number(raw);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(value)));
+}
 
 // A post is auto-hidden (pending staff review) once this many distinct accounts
 // report it. Stops a single spam post from staying live for hours before a
@@ -222,6 +234,76 @@ export interface AdminBotReviewAccount {
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AccountBanRecord | null;
   ipBan: IpBanRecord | null;
+}
+
+export type GameEventLogType =
+  | 'npc_kill'
+  | 'npc_drop'
+  | 'rare_drop'
+  | 'item_pickup'
+  | 'harvest'
+  | 'bonus_loot'
+  | 'chest_loot'
+  | 'chat'
+  | 'private_chat'
+  | 'chat_command'
+  | 'trade'
+  | 'player_death'
+  | 'duel'
+  | 'admin'
+  | 'system';
+
+export type GameEventLogSeverity = 'info' | 'notable' | 'rare' | 'warning';
+
+export interface GameEventLogInput {
+  type: GameEventLogType | string;
+  severity?: GameEventLogSeverity | string;
+  message: string;
+  actorAccountId?: number | null;
+  actorName?: string | null;
+  targetAccountId?: number | null;
+  targetName?: string | null;
+  npcDefId?: number | null;
+  npcName?: string | null;
+  itemId?: number | null;
+  itemName?: string | null;
+  quantity?: number | null;
+  mapLevel?: string | null;
+  floor?: number | null;
+  x?: number | null;
+  z?: number | null;
+  details?: Record<string, unknown> | null;
+}
+
+export interface GameEventLogEntry {
+  id: number;
+  createdAt: number;
+  type: string;
+  severity: string;
+  message: string;
+  actorAccountId: number | null;
+  actorName: string | null;
+  targetAccountId: number | null;
+  targetName: string | null;
+  npcDefId: number | null;
+  npcName: string | null;
+  itemId: number | null;
+  itemName: string | null;
+  quantity: number | null;
+  mapLevel: string | null;
+  floor: number | null;
+  x: number | null;
+  z: number | null;
+  details: Record<string, unknown>;
+}
+
+export interface GameEventLogSnapshot {
+  latestId: number;
+  events: GameEventLogEntry[];
+}
+
+interface PendingGameEventLogEntry extends Omit<GameEventLogEntry, 'id'> {
+  detailsJson: string;
 }
 
 /** Bump this constant to force every existing account to spawn at the map's
@@ -752,6 +834,20 @@ function parseJsonObject(raw: string | null | undefined): Record<string, unknown
   }
 }
 
+function nullableFiniteNumber(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function nullableInteger(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : null;
+}
+
+function trimmedText(value: string | null | undefined, maxLength: number): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+
 function parseJsonObjectArray(raw: string | null | undefined): Array<Record<string, unknown>> {
   try {
     const parsed = JSON.parse(raw ?? '[]') as unknown;
@@ -871,6 +967,10 @@ export class GameDatabase {
   private db: SQLiteDB;
   private lastHiscoreSnapshotPruneAt = 0;
   private readonly lastHiscoreSnapshotKeys = new Map<number, string>();
+  private gameEventFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  private gameEventDroppedSinceFlush = 0;
+  private lastGameEventLogPruneAt = 0;
+  private readonly gameEventQueue: PendingGameEventLogEntry[] = [];
 
   constructor(dbPath: string = 'projectrs.db') {
     this.db = new SQLiteDB(dbPath);
@@ -1281,6 +1381,36 @@ export class GameDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_mob_kill_snapshots_npc_bucket
         ON mob_kill_snapshots(npc_def_id, bucket_start);
+    `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS game_event_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'info',
+        message TEXT NOT NULL,
+        actor_account_id INTEGER,
+        actor_name TEXT,
+        target_account_id INTEGER,
+        target_name TEXT,
+        npc_def_id INTEGER,
+        npc_name TEXT,
+        item_id INTEGER,
+        item_name TEXT,
+        quantity INTEGER,
+        map_level TEXT,
+        floor INTEGER,
+        x REAL,
+        z REAL,
+        details TEXT NOT NULL DEFAULT '{}'
+      );
+      CREATE INDEX IF NOT EXISTS idx_game_event_log_created_id
+        ON game_event_log(created_at DESC, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_game_event_log_type_id
+        ON game_event_log(type, id DESC);
+      CREATE INDEX IF NOT EXISTS idx_game_event_log_actor_id
+        ON game_event_log(actor_account_id, id DESC);
     `);
 
     this.db.exec(`
@@ -2578,6 +2708,270 @@ export class GameDatabase {
     const row = this.db.query('SELECT kills FROM mob_kills WHERE account_id = ? AND npc_def_id = ?')
       .get(accountId, npcDefId) as { kills: number } | null;
     if (row) this.saveMobKillSnapshot(accountId, npcDefId, row.kills);
+  }
+
+  private normalizeGameEventInput(input: GameEventLogInput): PendingGameEventLogEntry | null {
+    const createdAt = Math.floor(Date.now() / 1000);
+    const type = trimmedText(input.type, 40) ?? 'system';
+    const severity = trimmedText(input.severity, 20) ?? 'info';
+    const message = trimmedText(input.message, 500);
+    if (!message) return null;
+
+    const details = input.details && typeof input.details === 'object' && !Array.isArray(input.details)
+      ? input.details
+      : {};
+    let detailsJson = '{}';
+    try {
+      const rawDetailsJson = JSON.stringify(details);
+      detailsJson = rawDetailsJson.length <= 12000
+        ? rawDetailsJson
+        : JSON.stringify({ truncated: true, originalLength: rawDetailsJson.length });
+    } catch {
+      detailsJson = '{}';
+    }
+
+    const entry = {
+      createdAt,
+      type,
+      severity,
+      message,
+      actorAccountId: nullableInteger(input.actorAccountId),
+      actorName: trimmedText(input.actorName, 80),
+      targetAccountId: nullableInteger(input.targetAccountId),
+      targetName: trimmedText(input.targetName, 80),
+      npcDefId: nullableInteger(input.npcDefId),
+      npcName: trimmedText(input.npcName, 80),
+      itemId: nullableInteger(input.itemId),
+      itemName: trimmedText(input.itemName, 120),
+      quantity: nullableInteger(input.quantity),
+      mapLevel: trimmedText(input.mapLevel, 80),
+      floor: nullableInteger(input.floor),
+      x: nullableFiniteNumber(input.x),
+      z: nullableFiniteNumber(input.z),
+      details,
+      detailsJson,
+    };
+    return entry;
+  }
+
+  recordGameEvent(input: GameEventLogInput): GameEventLogEntry | null {
+    const entry = this.normalizeGameEventInput(input);
+    if (!entry) return null;
+
+    if (this.gameEventQueue.length >= GAME_EVENT_LOG_MAX_QUEUE_SIZE) {
+      this.gameEventQueue.shift();
+      this.gameEventDroppedSinceFlush++;
+    }
+    this.gameEventQueue.push(entry);
+    this.scheduleGameEventFlush(this.gameEventQueue.length >= GAME_EVENT_LOG_BATCH_SIZE ? 0 : GAME_EVENT_LOG_FLUSH_INTERVAL_MS);
+
+    const { detailsJson: _detailsJson, ...publicEntry } = entry;
+    return { id: 0, ...publicEntry };
+  }
+
+  private scheduleGameEventFlush(delayMs: number = GAME_EVENT_LOG_FLUSH_INTERVAL_MS): void {
+    if (this.gameEventFlushTimer !== null) {
+      if (delayMs > 0) return;
+      clearTimeout(this.gameEventFlushTimer);
+    }
+    this.gameEventFlushTimer = setTimeout(() => {
+      this.gameEventFlushTimer = null;
+      this.flushGameEventLog();
+    }, delayMs);
+  }
+
+  private insertGameEventBatch(batch: PendingGameEventLogEntry[]): void {
+    if (batch.length === 0) return;
+    const insert = this.db.query(`
+        INSERT INTO game_event_log (
+          created_at, type, severity, message,
+          actor_account_id, actor_name, target_account_id, target_name,
+          npc_def_id, npc_name, item_id, item_name, quantity,
+          map_level, floor, x, z, details
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+    const tx = this.db.transaction((entries: PendingGameEventLogEntry[]) => {
+      for (const entry of entries) {
+        insert.run(
+          entry.createdAt,
+          entry.type,
+          entry.severity,
+          entry.message,
+          entry.actorAccountId,
+          entry.actorName,
+          entry.targetAccountId,
+          entry.targetName,
+          entry.npcDefId,
+          entry.npcName,
+          entry.itemId,
+          entry.itemName,
+          entry.quantity,
+          entry.mapLevel,
+          entry.floor,
+          entry.x,
+          entry.z,
+          entry.detailsJson,
+        );
+      }
+    });
+    tx(batch);
+  }
+
+  private pruneGameEventLog(nowMs: number = Date.now()): void {
+    if (GAME_EVENT_LOG_RETENTION_DAYS <= 0) return;
+    if (nowMs - this.lastGameEventLogPruneAt < GAME_EVENT_LOG_PRUNE_INTERVAL_MS) return;
+    this.lastGameEventLogPruneAt = nowMs;
+    const cutoff = Math.floor(nowMs / 1000) - GAME_EVENT_LOG_RETENTION_DAYS * 24 * 60 * 60;
+    try {
+      this.db.query('DELETE FROM game_event_log WHERE created_at < ?').run(cutoff);
+    } catch (e) {
+      console.warn('[game-event-log] prune failed:', e instanceof Error ? e.message : e);
+    }
+  }
+
+  flushGameEventLog(): number {
+    if (this.gameEventFlushTimer !== null) {
+      clearTimeout(this.gameEventFlushTimer);
+      this.gameEventFlushTimer = null;
+    }
+
+    let flushed = 0;
+    while (this.gameEventQueue.length > 0) {
+      const batch = this.gameEventQueue.splice(0, GAME_EVENT_LOG_BATCH_SIZE);
+      try {
+        this.insertGameEventBatch(batch);
+        flushed += batch.length;
+      } catch (e) {
+        this.gameEventQueue.unshift(...batch);
+        console.warn('[game-event-log] flush failed:', e instanceof Error ? e.message : e);
+        this.scheduleGameEventFlush(GAME_EVENT_LOG_FLUSH_INTERVAL_MS);
+        break;
+      }
+    }
+
+    if (this.gameEventQueue.length === 0 && this.gameEventDroppedSinceFlush > 0) {
+      const dropped = this.gameEventDroppedSinceFlush;
+      this.gameEventDroppedSinceFlush = 0;
+      const overflow = this.normalizeGameEventInput({
+        type: 'system',
+        severity: 'warning',
+        message: `Dropped ${dropped} game event log entr${dropped === 1 ? 'y' : 'ies'} because the write queue was full`,
+        details: {
+          reason: 'game_event_queue_full',
+          dropped,
+          maxQueueSize: GAME_EVENT_LOG_MAX_QUEUE_SIZE,
+        },
+      });
+      if (overflow) {
+        try {
+          this.insertGameEventBatch([overflow]);
+          flushed++;
+        } catch (e) {
+          console.warn('[game-event-log] overflow marker insert failed:', e instanceof Error ? e.message : e);
+        }
+      }
+    }
+
+    this.pruneGameEventLog();
+    return flushed;
+  }
+
+  getLatestGameEventLogId(): number {
+    this.flushGameEventLog();
+    const row = this.db.query('SELECT COALESCE(MAX(id), 0) AS latest_id FROM game_event_log').get() as { latest_id: number } | null;
+    return row?.latest_id ?? 0;
+  }
+
+  getGameEventLogSnapshot(options: { afterId?: number; limit?: number; excludeTypes?: string[] } = {}): GameEventLogSnapshot {
+    this.flushGameEventLog();
+    const row = this.db.query('SELECT COALESCE(MAX(id), 0) AS latest_id FROM game_event_log').get() as { latest_id: number } | null;
+    return {
+      latestId: row?.latest_id ?? 0,
+      events: this.readGameEventLogRows(options),
+    };
+  }
+
+  listGameEventLog(options: { afterId?: number; limit?: number; excludeTypes?: string[] } = {}): GameEventLogEntry[] {
+    this.flushGameEventLog();
+    return this.readGameEventLogRows(options);
+  }
+
+  private readGameEventLogRows(options: { afterId?: number; limit?: number; excludeTypes?: string[] } = {}): GameEventLogEntry[] {
+    const afterId = Math.max(0, Math.floor(Number(options.afterId) || 0));
+    const safeLimit = Math.max(1, Math.min(500, Math.floor(Number(options.limit) || 200)));
+    const excludeTypes = [...new Set((options.excludeTypes ?? [])
+      .map(type => trimmedText(type, 40))
+      .filter((type): type is string => !!type))]
+      .slice(0, 32);
+    const excludeSql = excludeTypes.length > 0
+      ? ` AND type NOT IN (${excludeTypes.map(() => '?').join(', ')})`
+      : '';
+    const sql = afterId > 0
+      ? `
+        SELECT id, created_at, type, severity, message,
+               actor_account_id, actor_name, target_account_id, target_name,
+               npc_def_id, npc_name, item_id, item_name, quantity,
+               map_level, floor, x, z, details
+        FROM game_event_log
+        WHERE id > ?${excludeSql}
+        ORDER BY id ASC
+        LIMIT ?
+      `
+      : `
+        SELECT id, created_at, type, severity, message,
+               actor_account_id, actor_name, target_account_id, target_name,
+               npc_def_id, npc_name, item_id, item_name, quantity,
+               map_level, floor, x, z, details
+        FROM game_event_log
+        WHERE 1 = 1${excludeSql}
+        ORDER BY id DESC
+        LIMIT ?
+      `;
+    const rows = (afterId > 0
+      ? this.db.query(sql).all(afterId, ...excludeTypes, safeLimit)
+      : this.db.query(sql).all(...excludeTypes, safeLimit)) as Array<{
+        id: number;
+        created_at: number;
+        type: string;
+        severity: string;
+        message: string;
+        actor_account_id: number | null;
+        actor_name: string | null;
+        target_account_id: number | null;
+        target_name: string | null;
+        npc_def_id: number | null;
+        npc_name: string | null;
+        item_id: number | null;
+        item_name: string | null;
+        quantity: number | null;
+        map_level: string | null;
+        floor: number | null;
+        x: number | null;
+        z: number | null;
+        details: string | null;
+      }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      type: row.type,
+      severity: row.severity,
+      message: row.message,
+      actorAccountId: row.actor_account_id,
+      actorName: row.actor_name,
+      targetAccountId: row.target_account_id,
+      targetName: row.target_name,
+      npcDefId: row.npc_def_id,
+      npcName: row.npc_name,
+      itemId: row.item_id,
+      itemName: row.item_name,
+      quantity: row.quantity,
+      mapLevel: row.map_level,
+      floor: row.floor,
+      x: row.x,
+      z: row.z,
+      details: parseJsonObject(row.details) ?? {},
+    }));
   }
 
   /** Per-mob kill leaderboard. `mobs` is the selectable mob list (id+name)
@@ -3956,6 +4350,11 @@ export class GameDatabase {
   }
 
   close(): void {
+    this.flushGameEventLog();
+    if (this.gameEventFlushTimer !== null) {
+      clearTimeout(this.gameEventFlushTimer);
+      this.gameEventFlushTimer = null;
+    }
     this.db.close();
   }
 }

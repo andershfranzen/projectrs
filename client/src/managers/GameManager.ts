@@ -540,6 +540,7 @@ export class GameManager {
   private currentTradePartnerName: string = '';
   private duelPanel: DuelPanel | null = null;
   private currentDuelPartnerName: string = '';
+  private currentDuelOpponentEntityId: number = -1;
   private duelActive = false;
   private adminPanel: AdminPanel | null = null;
 
@@ -689,7 +690,7 @@ export class GameManager {
         }
 
         this.cancelPendingTouchInteraction();
-        if (!this.inputManager.isEnabled() || this.duelActive || e.shiftKey) return;
+        if (!this.inputManager.isEnabled() || e.shiftKey) return;
         const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
         this.beginTouchInteraction(canvas, e, options);
         // Touch is resolved on pointerup so a finger drag can rotate the
@@ -701,7 +702,7 @@ export class GameManager {
 
       this.cancelPendingTouchInteraction();
 
-      if (!this.inputManager.isEnabled() || this.duelActive || e.shiftKey) return;
+      if (!this.inputManager.isEnabled() || e.shiftKey) return;
       const options = this.getWorldInteractionOptionsAt(e.clientX, e.clientY);
       const primaryOption = options.find(option => option.primary !== false);
       if (primaryOption) {
@@ -1200,6 +1201,7 @@ export class GameManager {
       this.clearPredictedPath();
       this.clearLocalNpcCombatState();
       this.duelActive = false;
+      this.currentDuelOpponentEntityId = -1;
       this.isSkilling = false;
       this.skillingObjectId = -1;
       this.localPlayer?.stopWalking();
@@ -1820,7 +1822,7 @@ export class GameManager {
           this.entities.remoteCombatTargets.delete(entityId);
           remote.faceTowardXZ(objectData.x, objectData.z);
         } else {
-          const target = this.entities.resolveTargetable(targetId);
+          const target = this.resolveTargetableIncludingLocal(targetId);
           if (target) remote.faceToward(target.getTargetAnchor());
           this.entities.remoteCombatTargets.set(entityId, targetId);
         }
@@ -3587,6 +3589,7 @@ export class GameManager {
       const otherEntityId = v[0];
       const name = this.entities.playerNames.get(otherEntityId) ?? `Player ${otherEntityId}`;
       this.currentDuelPartnerName = name;
+      this.currentDuelOpponentEntityId = otherEntityId;
       this.duelActive = false;
       this.duelPanel?.openSession(otherEntityId, name);
       this.enableDuelInventoryStakes();
@@ -3608,12 +3611,14 @@ export class GameManager {
       if (reason === 1) this.chatPanel?.addSystemMessage(`Duel with ${partnerName} declined.`, '#ff0');
       else this.chatPanel?.addSystemMessage(`Duel with ${partnerName} ended.`, '#ff0');
       this.currentDuelPartnerName = '';
+      this.currentDuelOpponentEntityId = -1;
       this.duelActive = false;
     });
     this.network.on(ServerOpcode.DUEL_START, (_op, v) => {
       const otherEntityId = v[0];
       const name = this.entities.playerNames.get(otherEntityId) ?? (this.currentDuelPartnerName || `Player ${otherEntityId}`);
       this.currentDuelPartnerName = name;
+      this.currentDuelOpponentEntityId = otherEntityId;
       this.duelPanel?.close(0);
       this.sidePanel?.setTradeOfferCallback(null);
       this.duelActive = true;
@@ -3637,6 +3642,7 @@ export class GameManager {
         this.chatPanel?.addSystemMessage(`Duel with ${partnerName} ended.`, '#ff0');
       }
       this.currentDuelPartnerName = '';
+      this.currentDuelOpponentEntityId = -1;
     });
 
     this.network.on(ServerOpcode.PLAYER_SKILLS, (_op, v) => {
@@ -4053,7 +4059,7 @@ export class GameManager {
   private openWorldContextMenuAt(clientX: number, clientY: number): void {
       // Same gate as left-click: don't surface interaction options against a
       // half-streamed world.
-      if (!this.inputManager.isEnabled() || this.duelActive) return;
+      if (!this.inputManager.isEnabled()) return;
 
       const options = this.getWorldInteractionOptionsAt(clientX, clientY);
       if (options.length > 0) {
@@ -4540,6 +4546,7 @@ export class GameManager {
     if (pickedPlayerEntityId != null) {
       options.push(...this.getPlayerInteractionOptions(pickedPlayerEntityId));
     }
+    if (this.duelActive) return options;
 
     // Identify the picked NPC. 3D-modeled NPCs (e.g. cows) all share mesh
     // names from their source GLB, so name matching is ambiguous — every
@@ -4643,6 +4650,12 @@ export class GameManager {
       labelParts: [{ text: prefix }, { text: name, color: nameColor }, { text: suffix }],
       action,
     });
+    if (this.duelActive) {
+      if (entityId !== this.currentDuelOpponentEntityId) return [];
+      return [
+        playerOption('Attack ', labelLevel, () => this.attackDuelPlayer(entityId)),
+      ];
+    }
     return [
       playerOption('Follow ', labelLevel, () => this.followPlayer(entityId)),
       playerOption('Trade with ', '', () => this.requestTrade(entityId)),
@@ -5400,6 +5413,21 @@ export class GameManager {
     this.followPathTimer = 0;
     this.network.sendRaw(encodePacket(ClientOpcode.TRADE_REQUEST, playerEntityId));
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#d8b45a');
+  }
+
+  private attackDuelPlayer(playerEntityId: number): void {
+    if (!this.duelActive || playerEntityId !== this.currentDuelOpponentEntityId) return;
+    const targetState = this.entities.remoteTargets.get(playerEntityId);
+    if (targetState && targetState.floor !== this.currentFloor) return;
+    this.clearLocalNpcCombatState();
+    this._combatPathTimer = 0;
+    this.followTargetPlayerId = -1;
+    this.followPathTimer = 0;
+    this.clearPredictedPath(true);
+    this.localPlayer?.stopWalking();
+    this.faceLocalPlayerTowardTarget(playerEntityId);
+    this.minimap?.clearDestination();
+    this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
   }
 
   private acceptDuelRequest(requesterEntityId: number, name: string): void {

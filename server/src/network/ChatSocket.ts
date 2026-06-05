@@ -1,13 +1,19 @@
 import { World } from '../World';
 import { ALL_SKILLS, SKILL_NAMES, normalizeSkillId, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
-import type { SocialEntry, SocialListKind, SocialLists } from '../Database';
+import type { GameEventLogInput, SocialEntry, SocialListKind, SocialLists } from '../Database';
 import type { Player } from '../entity/Player';
 
 export type ChatSocketData = { type: 'chat'; playerId?: number; accountId: number; username: string; isAdmin: boolean; isModerator: boolean };
 
 function sendSystem(ws: ServerWebSocket<ChatSocketData>, message: string): void {
   ws.send(JSON.stringify({ type: 'system', message }));
+}
+
+function recordGameEvent(world: World, input: GameEventLogInput): void {
+  const db = (world as { db?: { recordGameEvent?: (event: GameEventLogInput) => unknown } }).db;
+  const recorder = db?.recordGameEvent;
+  if (typeof recorder === 'function') recorder.call(db, input);
 }
 
 /** Reject a command from a non-admin and notify them. Returns true if blocked.
@@ -198,6 +204,23 @@ function sendPrivateMessage(
       message: msg,
     }));
   } catch { /* sender socket is closing */ }
+  recordGameEvent(world, {
+    type: 'private_chat',
+    message: `${ws.data.username} privately messaged ${targetUsername}: ${msg}`,
+    actorAccountId: ws.data.accountId,
+    actorName: ws.data.username,
+    targetAccountId,
+    targetName: targetUsername,
+    mapLevel: speaker?.currentMapLevel ?? null,
+    floor: speaker?.currentFloor ?? null,
+    x: speaker?.position.x ?? null,
+    z: speaker?.position.y ?? null,
+    details: {
+      channel: 'private',
+      message: msg,
+      fromPlayerId: speaker?.id ?? null,
+    },
+  });
 }
 
 export function broadcastLocalMessage(from: string, message: string, fromAccountId?: number, fromIsAdmin: boolean = false, fromIsModerator: boolean = false): void {
@@ -274,6 +297,23 @@ export function handleChatSocketMessage(
 
       // Handle commands
       if (msg.startsWith('/')) {
+        const player = ws.data.playerId != null ? world.getPlayer(ws.data.playerId) : null;
+        recordGameEvent(world, {
+          type: 'chat_command',
+          severity: ws.data.isAdmin ? 'notable' : 'info',
+          message: `${from} used command ${msg.split(/\s+/)[0]}`,
+          actorAccountId: ws.data.accountId,
+          actorName: from,
+          mapLevel: player?.currentMapLevel ?? null,
+          floor: player?.currentFloor ?? null,
+          x: player?.position.x ?? null,
+          z: player?.position.y ?? null,
+          details: {
+            command: msg,
+            isAdmin: ws.data.isAdmin,
+            isModerator: ws.data.isModerator,
+          },
+        });
         handleCommand(ws, from, msg, world);
         return;
       }
@@ -285,6 +325,23 @@ export function handleChatSocketMessage(
       speaker?.botStats?.recordChat();
 
       broadcastLocalMessage(from, msg, ws.data.accountId, ws.data.isAdmin, ws.data.isModerator);
+      recordGameEvent(world, {
+        type: 'chat',
+        message: `${from}: ${msg}`,
+        actorAccountId: ws.data.accountId,
+        actorName: from,
+        mapLevel: speaker?.currentMapLevel ?? null,
+        floor: speaker?.currentFloor ?? null,
+        x: speaker?.position.x ?? null,
+        z: speaker?.position.y ?? null,
+        details: {
+          channel: 'local',
+          message: msg,
+          playerId: speaker?.id ?? null,
+          isAdmin: ws.data.isAdmin,
+          isModerator: ws.data.isModerator,
+        },
+      });
       break;
     }
 

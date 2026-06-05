@@ -9,7 +9,7 @@ import { Npc, type NpcOptions } from './entity/Npc';
 import { WorldObject } from './entity/WorldObject';
 import { DataLoader } from './data/DataLoader';
 import { ASSET_TO_GROUND_ITEM_SPAWN } from './data/AssetGroundItemSpawns';
-import { GameDatabase } from './Database';
+import { GameDatabase, type GameEventLogInput } from './Database';
 import { applyPlayerMagicImpactToNpc, armNpcRetaliation, isPointInNpcMagicAttackRange, isPointInNpcRangedAttackRange as isNpcInRangedAttackRange, processPlayerCombat, processPlayerRangedCombat, processNpcCombat, rollLoot, rollPlayerMagicDamageAgainstNpc, rollPlayerMagicDamageAgainstPlayer, rollPlayerMeleeDamageAgainstPlayer, rollPlayerRangedDamageAgainstPlayer, shouldConsumeAmmoOnShot, MAGIC_ATTACK_COOLDOWN_TICKS, MAGIC_ATTACK_DISTANCE, MAGIC_ATTACK_RANGE_MODE, RANGED_ATTACK_DISTANCE, type PlayerNpcCombatResult } from './combat/Combat';
 import { CombatSystem, type CombatActorRef, type CombatContext, type CombatMode, type ImpactQueueEntry, type RetaliationRequest } from './combat/CombatSystem';
 import { finalizeNpcDeath as finalizeNpcDeathCombat } from './combat/NpcDeath';
@@ -2033,6 +2033,7 @@ export class World {
   }
 
   private savePlayerState(player: Player): void {
+    if (this.hasCustodiedItems(player.id)) return;
     this.pendingPositionCheckpoints?.delete(player.accountId);
     this.getDb().savePlayerState(player.accountId, player, this.computeEffectiveY(player));
   }
@@ -4180,6 +4181,25 @@ export class World {
         itemId: item.itemId,
         quantity: added.completed,
         source: 'ground',
+      });
+      const itemName = this.itemEventName(item.itemId);
+      this.recordGameEvent({
+        type: 'item_pickup',
+        message: `${player.name} picked up ${added.completed} x ${itemName}`,
+        actorAccountId: player.accountId,
+        actorName: player.name,
+        itemId: item.itemId,
+        itemName,
+        quantity: added.completed,
+        mapLevel: item.mapLevel,
+        floor: item.floor,
+        x: item.x,
+        z: item.z,
+        details: {
+          groundItemId,
+          requestedQuantity: item.quantity,
+          completedQuantity: added.completed,
+        },
       });
     }
   }
@@ -6567,6 +6587,25 @@ export class World {
     this.sendInventory(bPlayer);
     this.sendToPlayer(aPlayer, ServerOpcode.TRADE_CLOSE, 0);
     this.sendToPlayer(bPlayer, ServerOpcode.TRADE_CLOSE, 0);
+    const aOffered = this.itemEventStacks(session.a.offer);
+    const bOffered = this.itemEventStacks(session.b.offer);
+    this.recordGameEvent({
+      type: 'trade',
+      severity: 'notable',
+      message: `${aPlayer.name} traded with ${bPlayer.name}: ${aPlayer.name} gave ${this.itemEventSummary(aOffered)}; ${bPlayer.name} gave ${this.itemEventSummary(bOffered)}`,
+      actorAccountId: aPlayer.accountId,
+      actorName: aPlayer.name,
+      targetAccountId: bPlayer.accountId,
+      targetName: bPlayer.name,
+      mapLevel: aPlayer.currentMapLevel,
+      floor: aPlayer.currentFloor,
+      x: aPlayer.position.x,
+      z: aPlayer.position.y,
+      details: {
+        a: { accountId: aPlayer.accountId, name: aPlayer.name, offered: aOffered },
+        b: { accountId: bPlayer.accountId, name: bPlayer.name, offered: bOffered },
+      },
+    });
     // Forensic record. If a dupe is ever reported, this is the trail. Include
     // both sides' offers verbatim so the exact transfer can be reconstructed.
     audit({
@@ -6994,8 +7033,8 @@ export class World {
     this.clearDuelRequestsFor(session.b.id);
     this.clearDuelSetupState(aPlayer);
     this.clearDuelSetupState(bPlayer);
-    aPlayer.openInterface = 'duel';
-    bPlayer.openInterface = 'duel';
+    aPlayer.openInterface = null;
+    bPlayer.openInterface = null;
     this.armPlayerAttackCooldown(aPlayer, 0);
     this.armPlayerAttackCooldown(bPlayer, 0);
 
@@ -7014,6 +7053,26 @@ export class World {
     this.sendToPlayer(bPlayer, ServerOpcode.DUEL_START, aPlayer.id);
     this.sendChatSystem(aPlayer, `Duel with ${bPlayer.name} started.`);
     this.sendChatSystem(bPlayer, `Duel with ${aPlayer.name} started.`);
+    const aStake = this.itemEventStacks(session.a.stake);
+    const bStake = this.itemEventStacks(session.b.stake);
+    this.recordGameEvent({
+      type: 'duel',
+      severity: 'notable',
+      message: `${aPlayer.name} started a duel with ${bPlayer.name}`,
+      actorAccountId: aPlayer.accountId,
+      actorName: aPlayer.name,
+      targetAccountId: bPlayer.accountId,
+      targetName: bPlayer.name,
+      mapLevel: aPlayer.currentMapLevel,
+      floor: aPlayer.currentFloor,
+      x: aPlayer.position.x,
+      z: aPlayer.position.y,
+      details: {
+        phase: 'start',
+        a: { accountId: aPlayer.accountId, name: aPlayer.name, stake: aStake },
+        b: { accountId: bPlayer.accountId, name: bPlayer.name, stake: bStake },
+      },
+    });
     audit({
       type: 'duel.start',
       tick: this.currentTick,
@@ -7247,6 +7306,35 @@ export class World {
       accountId: winner?.accountId ?? aPlayer?.accountId ?? bPlayer?.accountId ?? 0,
       details: { winnerId: finalWinnerId, loserId: finalLoserId, reason, awardOk, a: aName, b: bName },
     });
+    const aStake = this.itemEventStacks(duel.a.stake);
+    const bStake = this.itemEventStacks(duel.b.stake);
+    const pot = this.itemEventStacks([...duel.a.stake, ...duel.b.stake]);
+    const loser = finalLoserId != null ? this.players.get(finalLoserId) : null;
+    this.recordGameEvent({
+      type: 'duel',
+      severity: winner && awardOk ? 'notable' : 'warning',
+      message: winner && awardOk
+        ? `${winner.name} won a duel against ${loser?.name ?? 'unknown'} and won ${this.itemEventSummary(pot)}`
+        : `Duel between ${aName} and ${bName} ended with no winner`,
+      actorAccountId: winner?.accountId ?? aPlayer?.accountId ?? null,
+      actorName: winner?.name ?? aName,
+      targetAccountId: loser?.accountId ?? bPlayer?.accountId ?? null,
+      targetName: loser?.name ?? bName,
+      mapLevel: duel.mapLevel,
+      floor: duel.floor,
+      x: winner?.position.x ?? aPlayer?.position.x ?? bPlayer?.position.x ?? null,
+      z: winner?.position.y ?? aPlayer?.position.y ?? bPlayer?.position.y ?? null,
+      details: {
+        phase: 'finish',
+        winnerId: finalWinnerId,
+        loserId: finalLoserId,
+        reason,
+        awardOk,
+        a: { playerId: duel.a.id, name: aName, stake: aStake },
+        b: { playerId: duel.b.id, name: bName, stake: bStake },
+        pot,
+      },
+    });
   }
 
   private awardDuelPot(winner: Player, pot: StakeSlot[], duel: ActiveDuel): boolean {
@@ -7345,6 +7433,32 @@ export class World {
     }
   }
 
+  private itemEventName(itemId: number): string {
+    return this.data.itemDefs.get(itemId)?.name ?? `item ${itemId}`;
+  }
+
+  private itemEventStacks(stacks: readonly ({ itemId: number; quantity: number } | null)[]): Array<{ itemId: number; itemName: string; quantity: number }> {
+    return stacks
+      .filter((stack): stack is { itemId: number; quantity: number } => !!stack && stack.quantity > 0)
+      .map(stack => ({
+        itemId: stack.itemId,
+        itemName: this.itemEventName(stack.itemId),
+        quantity: stack.quantity,
+      }));
+  }
+
+  private itemEventSummary(items: readonly { itemName: string; quantity: number }[]): string {
+    if (items.length === 0) return 'nothing';
+    const parts = items.slice(0, 3).map(item => item.quantity > 1 ? `${item.quantity} x ${item.itemName}` : item.itemName);
+    if (items.length > 3) parts.push(`${items.length - 3} more`);
+    return parts.join(', ');
+  }
+
+  private recordGameEvent(input: GameEventLogInput): void {
+    const recorder = (this.db as { recordGameEvent?: (event: GameEventLogInput) => unknown }).recordGameEvent;
+    if (typeof recorder === 'function') recorder.call(this.db, input);
+  }
+
   /** Spawn a ground item under a player (used when rewards/refunds can't fit). */
   private spawnGroundItem(
     player: Player,
@@ -7385,6 +7499,7 @@ export class World {
     for (const drop of loot) {
       const id = this.allocateGroundItemId();
       if (id === null) continue;
+      const itemName = this.itemEventName(drop.itemId);
       const groundItem: GroundItem = {
         id,
         itemId: drop.itemId,
@@ -7408,6 +7523,31 @@ export class World {
         this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
           this.sendGroundItemUpdate(p, groundItem));
       }
+      const rare = drop.rare === true || drop.source === 'rare_drop_table';
+      this.recordGameEvent({
+        type: rare ? 'rare_drop' : 'npc_drop',
+        severity: rare ? 'rare' : 'info',
+        message: rare
+          ? `${owner?.name ?? 'No owner'} rolled rare drop ${drop.quantity} x ${itemName} from ${npc.def.name}`
+          : `${npc.def.name} dropped ${drop.quantity} x ${itemName}${owner ? ` for ${owner.name}` : ''}`,
+        actorAccountId: owner?.accountId ?? null,
+        actorName: owner?.name ?? null,
+        npcDefId: npc.def.id,
+        npcName: npc.def.name,
+        itemId: drop.itemId,
+        itemName,
+        quantity: drop.quantity,
+        mapLevel: npc.currentMapLevel,
+        floor: npc.currentFloor,
+        x: deathX,
+        z: deathZ,
+        details: {
+          groundItemId: id,
+          ownerPlayerId: effectiveOwnerId,
+          rareTableId: drop.rareTableId,
+          rareAccessTableId: drop.rareAccessTableId,
+        },
+      });
     }
   }
 
@@ -8118,6 +8258,22 @@ export class World {
       // the rest of that tick (incl. broadcastSync) — read as broken combat.
       console.warn(`[mobkill] recordMobKill failed acct=${killer.accountId} npc=${npc.def.id}:`, e instanceof Error ? e.message : e);
     }
+    this.recordGameEvent({
+      type: 'npc_kill',
+      message: `${killer.name} killed ${npc.def.name}`,
+      actorAccountId: killer.accountId,
+      actorName: killer.name,
+      npcDefId: npc.def.id,
+      npcName: npc.def.name,
+      mapLevel: npc.currentMapLevel,
+      floor: npc.currentFloor,
+      x: npc.position.x,
+      z: npc.position.y,
+      details: {
+        npcEntityId: npc.id,
+        killerPlayerId: killer.id,
+      },
+    });
   }
 
   /**
@@ -8391,6 +8547,32 @@ export class World {
           this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId, quantity: primary.added, source: isChest ? 'chest' : 'harvest' });
         }
         if (primary.dropped > 0) this.sendChatSystem(player, "Your inventory is full, so the harvest falls to the ground.");
+        const primaryItemName = this.itemEventName(itemId);
+        this.recordGameEvent({
+          type: isChest ? 'chest_loot' : 'harvest',
+          severity: isChest ? 'notable' : 'info',
+          message: isChest
+            ? `${player.name} looted ${primary.added + primary.dropped} x ${primaryItemName} from ${obj.def.name}`
+            : `${player.name} harvested ${primary.added + primary.dropped} x ${primaryItemName} from ${obj.def.name}`,
+          actorAccountId: player.accountId,
+          actorName: player.name,
+          itemId,
+          itemName: primaryItemName,
+          quantity: primary.added + primary.dropped,
+          mapLevel: obj.mapLevel,
+          floor: obj.floor,
+          x: obj.x,
+          z: obj.z,
+          details: {
+            objectEntityId: obj.id,
+            objectDefId: obj.defId,
+            objectName: obj.def.name,
+            skillId,
+            added: primary.added,
+            dropped: primary.dropped,
+            xpReward,
+          },
+        });
 
         if (obj.defId === MITHRIL_ROCK_OBJECT_DEF_ID && Math.random() < MITHRIL_PICKAXE_FIND_CHANCE) {
           const rare = this.awardHarvestItem(player, MITHRIL_PICKAXE_ITEM_ID, 1);
@@ -8407,6 +8589,33 @@ export class World {
           if (rare.dropped > 0) {
             this.sendChatSystem(player, 'You do not have space for it in your inventory, so you throw it to the ground.');
           }
+          const rareQuantity = rare.added + rare.dropped;
+          if (rareQuantity > 0) {
+            const rareItemName = this.itemEventName(MITHRIL_PICKAXE_ITEM_ID);
+            this.recordGameEvent({
+              type: 'rare_drop',
+              severity: 'rare',
+              message: `${player.name} found ${rareQuantity} x ${rareItemName} while mining ${obj.def.name}`,
+              actorAccountId: player.accountId,
+              actorName: player.name,
+              itemId: MITHRIL_PICKAXE_ITEM_ID,
+              itemName: rareItemName,
+              quantity: rareQuantity,
+              mapLevel: obj.mapLevel,
+              floor: obj.floor,
+              x: obj.x,
+              z: obj.z,
+              details: {
+                source: 'mithril_pickaxe_find',
+                objectEntityId: obj.id,
+                objectDefId: obj.defId,
+                objectName: obj.def.name,
+                chance: MITHRIL_PICKAXE_FIND_CHANCE,
+                added: rare.added,
+                dropped: rare.dropped,
+              },
+            });
+          }
         }
 
         // Bonus loot — chests use this for relic rolls on top of the
@@ -8419,21 +8628,44 @@ export class World {
           for (const drop of obj.def.extraLoot) {
             if (Math.random() >= drop.chance) continue;
             const got = isChest
-              ? { completed: player.addItem(drop.itemId, drop.quantity, this.data.itemDefs).completed, dropped: 0 }
-              : {
-                  completed: this.awardHarvestItem(player, drop.itemId, drop.quantity).added,
-                  dropped: 0,
-                };
-            if (got.completed > 0) {
+              ? { added: player.addItem(drop.itemId, drop.quantity, this.data.itemDefs).completed, dropped: 0 }
+              : this.awardHarvestItem(player, drop.itemId, drop.quantity);
+            const gotQuantity = got.added + got.dropped;
+            if (gotQuantity > 0) {
               inventoryChanged = true;
+              const itemDef = this.data.itemDefs.get(drop.itemId);
+              const name = itemDef?.name ?? `item ${drop.itemId}`;
               if (isChest) {
-                foundForChest.push({ itemId: drop.itemId, quantity: got.completed });
-              } else {
-                const itemDef = this.data.itemDefs.get(drop.itemId);
-                const name = itemDef?.name ?? `item ${drop.itemId}`;
+                if (got.added > 0) foundForChest.push({ itemId: drop.itemId, quantity: got.added });
+              } else if (got.added > 0) {
                 this.sendChatSystem(player, `You find a ${name}!`);
               }
-              this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: got.completed, source: isChest ? 'chest' : 'harvest' });
+              if (got.added > 0) {
+                this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: got.added, source: isChest ? 'chest' : 'harvest' });
+              }
+              this.recordGameEvent({
+                type: isChest ? 'chest_loot' : 'bonus_loot',
+                severity: 'notable',
+                message: `${player.name} found ${gotQuantity} x ${name} from ${obj.def.name}`,
+                actorAccountId: player.accountId,
+                actorName: player.name,
+                itemId: drop.itemId,
+                itemName: name,
+                quantity: gotQuantity,
+                mapLevel: obj.mapLevel,
+                floor: obj.floor,
+                x: obj.x,
+                z: obj.z,
+                details: {
+                  source: isChest ? 'chest_extra_loot' : 'harvest_extra_loot',
+                  objectEntityId: obj.id,
+                  objectDefId: obj.defId,
+                  objectName: obj.def.name,
+                  chance: drop.chance,
+                  added: got.added,
+                  dropped: got.dropped,
+                },
+              });
             }
           }
         }
@@ -8838,6 +9070,23 @@ export class World {
     } else {
       this.sendChatSystem(player, 'Oh dear, you are dead.');
     }
+    this.recordGameEvent({
+      type: 'player_death',
+      severity: droppedCount > 0 ? 'warning' : 'notable',
+      message: droppedCount > 0
+        ? `${player.name} died and dropped ${droppedCount} item${droppedCount === 1 ? '' : 's'}`
+        : `${player.name} died`,
+      actorAccountId: player.accountId,
+      actorName: player.name,
+      mapLevel: oldMapId,
+      floor: oldFloor,
+      x: oldX,
+      z: oldZ,
+      details: {
+        kept: kept.map(k => ({ itemId: k.itemId, itemName: this.itemEventName(k.itemId), quantity: k.quantity })),
+        dropped: dropped.map(d => ({ itemId: d.itemId, itemName: this.itemEventName(d.itemId), quantity: d.quantity })),
+      },
+    });
     audit({
       type: 'player.death',
       tick: this.currentTick,

@@ -3,6 +3,10 @@ import type { RareDropTableDef, RareDropTableEntry, RareDropItemEntry } from '@p
 export interface RolledLootDrop {
   itemId: number;
   quantity: number;
+  rare?: true;
+  source?: 'rare_drop_table';
+  rareTableId?: string;
+  rareAccessTableId?: string;
 }
 
 const MAX_RARE_DROP_TABLE_DEPTH = 8;
@@ -61,7 +65,13 @@ export function rollRareDropTable(
 
   switch (selected.type) {
     case 'item':
-      return { itemId: selected.itemId, quantity: rollQuantity(selected, rng) };
+      return {
+        itemId: selected.itemId,
+        quantity: rollQuantity(selected, rng),
+        rare: true,
+        source: 'rare_drop_table',
+        rareTableId: tableId,
+      };
     case 'table':
       return rollRareDropTable(selected.tableId, tables, rng, depth + 1);
     case 'nothing':

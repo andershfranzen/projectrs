@@ -39,7 +39,13 @@ describe('rare drop tables', () => {
       }],
     ]);
 
-    expect(rollRareDropTable('universal', tables, sequenceRng([0.75, 0]))).toEqual({ itemId: 14, quantity: 1 });
+    expect(rollRareDropTable('universal', tables, sequenceRng([0.75, 0]))).toEqual({
+      itemId: 14,
+      quantity: 1,
+      rare: true,
+      source: 'rare_drop_table',
+      rareTableId: 'gems',
+    });
   });
 
   test('item quantity ranges are inclusive', () => {
@@ -52,6 +58,12 @@ describe('rare drop tables', () => {
       }],
     ]);
 
-    expect(rollRareDropTable('universal', tables, sequenceRng([0, 0.999]))).toEqual({ itemId: 10, quantity: 12 });
+    expect(rollRareDropTable('universal', tables, sequenceRng([0, 0.999]))).toEqual({
+      itemId: 10,
+      quantity: 12,
+      rare: true,
+      source: 'rare_drop_table',
+      rareTableId: 'universal',
+    });
   });
 });

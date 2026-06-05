@@ -496,7 +496,14 @@ export function rollLoot(npc: Npc, options: LootRollOptions = {}): RolledLootDro
       for (let i = 0; i < rolls; i++) {
         if (rng() > access.chance) continue;
         const rareDrop = rollRareDropTable(access.tableId, options.rareDropTables, rng);
-        if (rareDrop) drops.push(rareDrop);
+        if (rareDrop) {
+          drops.push({
+            ...rareDrop,
+            rare: true,
+            source: 'rare_drop_table',
+            rareAccessTableId: access.tableId,
+          });
+        }
       }
     }
   }
