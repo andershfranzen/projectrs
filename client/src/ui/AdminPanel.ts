@@ -137,6 +137,9 @@ export class AdminPanel {
   private detailEl: HTMLDivElement;
   private gridHeaderEl: HTMLDivElement;
   private eventFilterEl: HTMLDivElement;
+  private eventTypeChipsEl: HTMLDivElement;
+  private eventSearchInput: HTMLInputElement;
+  private eventUserInput: HTMLInputElement;
   private refreshButton: HTMLButtonElement;
   private subtitleEl: HTMLSpanElement | null = null;
   private activeTab: AdminTab = 'bots';
@@ -149,6 +152,9 @@ export class AdminPanel {
   private eventPollTimer: number | null = null;
   private eventLoading = false;
   private readonly hiddenEventTypes = new Set<string>();
+  private eventSearchQuery = '';
+  private eventUserFilter = '';
+  private eventFilterDebounceTimer: number | null = null;
   private visible = false;
   private loading = false;
   private readonly keydownHandler = (event: KeyboardEvent) => {
@@ -232,11 +238,74 @@ export class AdminPanel {
     this.eventFilterEl = document.createElement('div');
     this.eventFilterEl.style.cssText = `
       display: none;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+      padding: 6px;
+      border: 1px solid rgba(74, 64, 53, 0.58);
+      background: rgba(12, 8, 6, 0.36);
+    `;
+    const eventSearchRow = document.createElement('div');
+    eventSearchRow.style.cssText = `
+      display: grid;
+      grid-template-columns: minmax(170px, 1.5fr) minmax(120px, 0.8fr) 68px;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    `;
+    this.eventSearchInput = document.createElement('input');
+    this.eventSearchInput.type = 'search';
+    this.eventSearchInput.placeholder = 'Search';
+    this.eventSearchInput.spellcheck = false;
+    this.eventSearchInput.style.cssText = this.eventFilterInputCss();
+    this.eventSearchInput.addEventListener('input', () => {
+      this.eventSearchQuery = this.eventSearchInput.value.trim();
+      this.scheduleEventFilterRefresh();
+    });
+    this.eventSearchInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushEventFilterRefresh();
+      }
+    });
+    this.eventUserInput = document.createElement('input');
+    this.eventUserInput.type = 'search';
+    this.eventUserInput.placeholder = 'User';
+    this.eventUserInput.spellcheck = false;
+    this.eventUserInput.style.cssText = this.eventFilterInputCss();
+    this.eventUserInput.addEventListener('input', () => {
+      this.eventUserFilter = this.eventUserInput.value.trim();
+      this.scheduleEventFilterRefresh();
+    });
+    this.eventUserInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushEventFilterRefresh();
+      }
+    });
+    const clearEventFiltersButton = this.smallButton('Clear', 'rgba(50, 38, 28, 0.9)');
+    clearEventFiltersButton.style.minWidth = '68px';
+    clearEventFiltersButton.addEventListener('click', () => {
+      this.eventSearchInput.value = '';
+      this.eventUserInput.value = '';
+      this.eventSearchQuery = '';
+      this.eventUserFilter = '';
+      this.hiddenEventTypes.clear();
+      this.flushEventFilterRefresh();
+      this.renderEventFilters();
+    });
+    eventSearchRow.append(this.eventSearchInput, this.eventUserInput, clearEventFiltersButton);
+    this.eventFilterEl.appendChild(eventSearchRow);
+    this.eventTypeChipsEl = document.createElement('div');
+    this.eventTypeChipsEl.style.cssText = `
+      display: flex;
       flex-wrap: wrap;
       gap: 5px;
       align-items: center;
       min-height: 24px;
+      min-width: 0;
     `;
+    this.eventFilterEl.appendChild(this.eventTypeChipsEl);
     body.appendChild(this.eventFilterEl);
 
     this.gridHeaderEl = document.createElement('div');
@@ -300,6 +369,7 @@ export class AdminPanel {
 
   destroy(): void {
     this.stopEventPolling();
+    this.clearEventFilterDebounce();
     document.removeEventListener('keydown', this.keydownHandler);
     this.root.remove();
   }
@@ -388,6 +458,8 @@ export class AdminPanel {
       params.set('limit', '200');
       if (!reset && this.eventAfterId > 0) params.set('afterId', String(this.eventAfterId));
       for (const type of this.hiddenEventTypes) params.append('excludeType', type);
+      if (this.eventSearchQuery) params.set('q', this.eventSearchQuery);
+      if (this.eventUserFilter) params.set('user', this.eventUserFilter);
       const res = await fetch(`/api/admin/game-events?${params.toString()}`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${this.token}` },
@@ -463,12 +535,15 @@ export class AdminPanel {
     const rare = this.events.filter(event => event.severity === 'rare' || event.type === 'rare_drop').length;
     const trades = this.events.filter(event => event.type === 'trade').length;
     const chats = this.events.filter(event => event.type === 'chat' || event.type === 'private_chat').length;
+    const activeFilters = this.hiddenEventTypes.size
+      + (this.eventSearchQuery ? 1 : 0)
+      + (this.eventUserFilter ? 1 : 0);
     this.summaryEl.replaceChildren(
       this.summaryPill(`${this.events.length} events`, '#6c5c43'),
       this.summaryPill(`${rare} rares`, '#8f6d2d'),
       this.summaryPill(`${trades} trades`, '#2f5f8f'),
       this.summaryPill(`${chats} chats`, '#5f4a7d'),
-      this.summaryPill(`${this.hiddenEventTypes.size} hidden`, this.hiddenEventTypes.size > 0 ? '#7a5a25' : '#4d5d45'),
+      this.summaryPill(`${activeFilters} filters`, activeFilters > 0 ? '#7a5a25' : '#4d5d45'),
     );
 
     this.rowsEl.replaceChildren();
@@ -488,7 +563,7 @@ export class AdminPanel {
   }
 
   private renderEventFilters(): void {
-    this.eventFilterEl.replaceChildren();
+    this.eventTypeChipsEl.replaceChildren();
     for (const config of GAME_EVENT_TYPES) {
       const hidden = this.hiddenEventTypes.has(config.type);
       const button = document.createElement('button');
@@ -510,13 +585,38 @@ export class AdminPanel {
       button.addEventListener('click', () => {
         if (hidden) this.hiddenEventTypes.delete(config.type);
         else this.hiddenEventTypes.add(config.type);
-        this.events = [];
-        this.selectedEventId = null;
-        this.eventAfterId = 0;
+        this.resetEventStream();
         void this.refreshGameEvents(true);
       });
-      this.eventFilterEl.appendChild(button);
+      this.eventTypeChipsEl.appendChild(button);
     }
+  }
+
+  private resetEventStream(): void {
+    this.events = [];
+    this.selectedEventId = null;
+    this.eventAfterId = 0;
+  }
+
+  private scheduleEventFilterRefresh(): void {
+    this.clearEventFilterDebounce();
+    this.eventFilterDebounceTimer = window.setTimeout(() => {
+      this.eventFilterDebounceTimer = null;
+      this.resetEventStream();
+      if (this.visible && this.activeTab === 'events') void this.refreshGameEvents(true);
+    }, 250);
+  }
+
+  private flushEventFilterRefresh(): void {
+    this.clearEventFilterDebounce();
+    this.resetEventStream();
+    if (this.visible && this.activeTab === 'events') void this.refreshGameEvents(true);
+  }
+
+  private clearEventFilterDebounce(): void {
+    if (this.eventFilterDebounceTimer === null) return;
+    window.clearTimeout(this.eventFilterDebounceTimer);
+    this.eventFilterDebounceTimer = null;
   }
 
   private eventRow(event: GameEventLogEntry): HTMLButtonElement {
@@ -1125,6 +1225,15 @@ export class AdminPanel {
       font: 11px Arial, Helvetica, sans-serif;
       padding: 0 7px;
       text-shadow: ${TEXT_SHADOW};
+    `;
+  }
+
+  private eventFilterInputCss(): string {
+    return `
+      ${this.inputCss()}
+      height: 30px;
+      border-color: rgba(84, 70, 50, 0.82);
+      background: rgba(10, 7, 5, 0.72);
     `;
   }
 

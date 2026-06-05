@@ -27,24 +27,40 @@ describe('game event log', () => {
         z: 18.5,
         details: { table: 'mega_rare' },
       });
-      if (!first || !second) throw new Error('Expected event rows to be recorded');
+      const third = db.recordGameEvent({
+        type: 'private_chat',
+        message: 'bob privately messaged alice: secret',
+        actorAccountId: 2,
+        actorName: 'bob',
+        targetAccountId: 1,
+        targetName: 'alice',
+        details: { channel: 'private', message: 'secret' },
+      });
+      if (!first || !second || !third) throw new Error('Expected event rows to be recorded');
 
       expect(first.id).toBe(0);
       expect(second.id).toBe(0);
-      expect(db.flushGameEventLog()).toBe(2);
+      expect(third.id).toBe(0);
+      expect(db.flushGameEventLog()).toBe(3);
 
       const rows = db.listGameEventLog({ limit: 10 });
       const chatId = rows.find(row => row.type === 'chat')?.id;
       const rareId = rows.find(row => row.type === 'rare_drop')?.id;
-      if (chatId == null || rareId == null) throw new Error('Expected flushed event IDs');
-      expect(db.getLatestGameEventLogId()).toBe(rareId);
+      const privateId = rows.find(row => row.type === 'private_chat')?.id;
+      if (chatId == null || rareId == null || privateId == null) throw new Error('Expected flushed event IDs');
+      expect(db.getLatestGameEventLogId()).toBe(privateId);
       expect(rareId).toBeGreaterThan(chatId);
-      expect(rows.map(row => row.type)).toEqual(['rare_drop', 'chat']);
-      expect(rows[0].itemName).toBe("Knight's Cape");
-      expect(rows[0].details).toEqual({ table: 'mega_rare' });
+      expect(privateId).toBeGreaterThan(rareId);
+      expect(rows.map(row => row.type)).toEqual(['private_chat', 'rare_drop', 'chat']);
+      expect(rows[1].itemName).toBe("Knight's Cape");
+      expect(rows[1].details).toEqual({ table: 'mega_rare' });
 
-      expect(db.listGameEventLog({ afterId: chatId }).map(row => row.id)).toEqual([rareId]);
-      expect(db.listGameEventLog({ excludeTypes: ['chat'] }).map(row => row.type)).toEqual(['rare_drop']);
+      expect(db.listGameEventLog({ afterId: chatId }).map(row => row.id)).toEqual([rareId, privateId]);
+      expect(db.listGameEventLog({ excludeTypes: ['chat'] }).map(row => row.type)).toEqual(['private_chat', 'rare_drop']);
+      expect(db.listGameEventLog({ user: 'alice' }).map(row => row.type)).toEqual(['private_chat', 'rare_drop', 'chat']);
+      expect(db.listGameEventLog({ user: 'bob' }).map(row => row.type)).toEqual(['private_chat']);
+      expect(db.listGameEventLog({ query: 'knight' }).map(row => row.type)).toEqual(['rare_drop']);
+      expect(db.listGameEventLog({ query: 'secret' }).map(row => row.type)).toEqual(['private_chat']);
     } finally {
       db.close();
     }

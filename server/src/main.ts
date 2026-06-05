@@ -3018,7 +3018,13 @@ const server = Bun.serve<SocketData>({
         ...url.searchParams.getAll('excludeType'),
         ...(url.searchParams.get('excludeTypes') ?? '').split(','),
       ].map(value => value.trim()).filter(Boolean);
-      const snapshot = db.getGameEventLogSnapshot({ afterId, limit, excludeTypes });
+      const snapshot = db.getGameEventLogSnapshot({
+        afterId,
+        limit,
+        excludeTypes,
+        user: url.searchParams.get('user'),
+        query: url.searchParams.get('q') ?? url.searchParams.get('query'),
+      });
       return jsonResponse({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),

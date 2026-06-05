@@ -303,6 +303,14 @@ export interface GameEventLogSnapshot {
   events: GameEventLogEntry[];
 }
 
+export interface GameEventLogListOptions {
+  afterId?: number;
+  limit?: number;
+  excludeTypes?: string[];
+  user?: string | null;
+  query?: string | null;
+}
+
 interface PendingGameEventLogEntry extends Omit<GameEventLogEntry, 'id'> {
   detailsJson: string;
 }
@@ -847,6 +855,10 @@ function trimmedText(value: string | null | undefined, maxLength: number): strin
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed ? trimmed.slice(0, maxLength) : null;
+}
+
+function sqlLikePattern(value: string): string {
+  return `%${value.toLowerCase().replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 }
 
 function parseJsonObjectArray(raw: string | null | undefined): Array<Record<string, unknown>> {
@@ -2883,7 +2895,7 @@ export class GameDatabase {
     return row?.latest_id ?? 0;
   }
 
-  getGameEventLogSnapshot(options: { afterId?: number; limit?: number; excludeTypes?: string[] } = {}): GameEventLogSnapshot {
+  getGameEventLogSnapshot(options: GameEventLogListOptions = {}): GameEventLogSnapshot {
     this.flushGameEventLog();
     const row = this.db.query('SELECT COALESCE(MAX(id), 0) AS latest_id FROM game_event_log').get() as { latest_id: number } | null;
     return {
@@ -2892,45 +2904,64 @@ export class GameDatabase {
     };
   }
 
-  listGameEventLog(options: { afterId?: number; limit?: number; excludeTypes?: string[] } = {}): GameEventLogEntry[] {
+  listGameEventLog(options: GameEventLogListOptions = {}): GameEventLogEntry[] {
     this.flushGameEventLog();
     return this.readGameEventLogRows(options);
   }
 
-  private readGameEventLogRows(options: { afterId?: number; limit?: number; excludeTypes?: string[] } = {}): GameEventLogEntry[] {
+  private readGameEventLogRows(options: GameEventLogListOptions = {}): GameEventLogEntry[] {
     const afterId = Math.max(0, Math.floor(Number(options.afterId) || 0));
     const safeLimit = Math.max(1, Math.min(500, Math.floor(Number(options.limit) || 200)));
     const excludeTypes = [...new Set((options.excludeTypes ?? [])
       .map(type => trimmedText(type, 40))
       .filter((type): type is string => !!type))]
       .slice(0, 32);
-    const excludeSql = excludeTypes.length > 0
-      ? ` AND type NOT IN (${excludeTypes.map(() => '?').join(', ')})`
-      : '';
-    const sql = afterId > 0
-      ? `
-        SELECT id, created_at, type, severity, message,
-               actor_account_id, actor_name, target_account_id, target_name,
-               npc_def_id, npc_name, item_id, item_name, quantity,
-               map_level, floor, x, z, details
-        FROM game_event_log
-        WHERE id > ?${excludeSql}
-        ORDER BY id ASC
-        LIMIT ?
-      `
-      : `
-        SELECT id, created_at, type, severity, message,
-               actor_account_id, actor_name, target_account_id, target_name,
-               npc_def_id, npc_name, item_id, item_name, quantity,
-               map_level, floor, x, z, details
-        FROM game_event_log
-        WHERE 1 = 1${excludeSql}
-        ORDER BY id DESC
-        LIMIT ?
-      `;
-    const rows = (afterId > 0
-      ? this.db.query(sql).all(afterId, ...excludeTypes, safeLimit)
-      : this.db.query(sql).all(...excludeTypes, safeLimit)) as Array<{
+    const whereParts = ['1 = 1'];
+    const params: Array<string | number> = [];
+    if (afterId > 0) {
+      whereParts.push('id > ?');
+      params.push(afterId);
+    }
+    if (excludeTypes.length > 0) {
+      whereParts.push(`type NOT IN (${excludeTypes.map(() => '?').join(', ')})`);
+      params.push(...excludeTypes);
+    }
+    const userFilter = trimmedText(options.user, 80);
+    if (userFilter) {
+      const pattern = sqlLikePattern(userFilter);
+      whereParts.push(`(
+        lower(COALESCE(actor_name, '')) LIKE ? ESCAPE '\\'
+        OR lower(COALESCE(target_name, '')) LIKE ? ESCAPE '\\'
+      )`);
+      params.push(pattern, pattern);
+    }
+    const searchQuery = trimmedText(options.query, 160);
+    if (searchQuery) {
+      const pattern = sqlLikePattern(searchQuery);
+      whereParts.push(`(
+        lower(type) LIKE ? ESCAPE '\\'
+        OR lower(severity) LIKE ? ESCAPE '\\'
+        OR lower(message) LIKE ? ESCAPE '\\'
+        OR lower(COALESCE(actor_name, '')) LIKE ? ESCAPE '\\'
+        OR lower(COALESCE(target_name, '')) LIKE ? ESCAPE '\\'
+        OR lower(COALESCE(npc_name, '')) LIKE ? ESCAPE '\\'
+        OR lower(COALESCE(item_name, '')) LIKE ? ESCAPE '\\'
+        OR lower(COALESCE(map_level, '')) LIKE ? ESCAPE '\\'
+        OR lower(details) LIKE ? ESCAPE '\\'
+      )`);
+      params.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
+    }
+    const sql = `
+      SELECT id, created_at, type, severity, message,
+             actor_account_id, actor_name, target_account_id, target_name,
+             npc_def_id, npc_name, item_id, item_name, quantity,
+             map_level, floor, x, z, details
+      FROM game_event_log
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY id ${afterId > 0 ? 'ASC' : 'DESC'}
+      LIMIT ?
+    `;
+    const rows = this.db.query(sql).all(...params, safeLimit) as Array<{
         id: number;
         created_at: number;
         type: string;
