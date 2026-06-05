@@ -6335,6 +6335,27 @@ export class World {
     this.sendBankSlot(player, bankSlot);
   }
 
+  /** Drag-and-drop reorder of two bank slots. Pure swap; stack merging remains
+   *  deposit-only so layout edits cannot accidentally combine bank stacks. */
+  handleBankMoveItem(playerId: number, fromSlot: number, toSlot: number, expectedItemId: number): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.isBusy(this.currentTick)) return;
+    if (player.openInterface !== 'bank') return;
+    if (fromSlot === toSlot) return;
+    if (fromSlot < 0 || fromSlot >= player.bank.length) return;
+    if (toSlot < 0 || toSlot >= player.bank.length) return;
+    if (player.bank[fromSlot]?.itemId !== expectedItemId) return;
+
+    const a = player.bank[fromSlot];
+    const b = player.bank[toSlot];
+    player.bank[fromSlot] = b;
+    player.bank[toSlot] = a;
+
+    this.sendBankSlot(player, fromSlot);
+    this.sendBankSlot(player, toSlot);
+  }
+
   handleAdminDeleteBankItem(playerId: number, bankSlot: number, expectedItemId: number): void {
     const player = this.players.get(playerId);
     if (!player || !player.isAdmin) return;

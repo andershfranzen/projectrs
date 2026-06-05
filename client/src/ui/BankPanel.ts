@@ -20,6 +20,7 @@ interface BankTouchDragState {
   dragging: boolean;
   ghost: HTMLDivElement | null;
   dropTarget: BankDropTarget | null;
+  dropSlot: number | null;
   sourceEl: HTMLDivElement;
   longPressTimer: number;
   contextMenuShown: boolean;
@@ -31,6 +32,7 @@ const BANK_BUTTON_HOVER_BG = 'rgba(78, 18, 14, 0.95)';
 const BANK_BUTTON_BORDER = '#9a332b';
 const TOUCH_DRAG_START_PX = 7;
 const TOUCH_CONTEXT_MENU_LONG_PRESS_MS = 450;
+const BANK_SLOT_DRAG_MIME = 'application/x-evilquest-bank-slot';
 
 /** Bank UI — opens inside the playable game frame with the bank grid on the left and a
  *  mirror of the player's inventory on the right.
@@ -159,7 +161,9 @@ export class BankPanel {
     this.addInventoryStitch(bankGrid);
     for (let i = 0; i < BANK_SIZE; i++) {
       const slot = this.makeSlot();
+      slot.dataset.bankSlot = String(i);
       this.installTouchDrag(slot, 'bank', i);
+      this.installBankSlotDrag(slot, i);
       slot.addEventListener('click', (e) => {
         if (this.shouldSuppressClick()) {
           e.preventDefault();
@@ -294,7 +298,12 @@ export class BankPanel {
     const el = this.bankSlotElements[i];
     if (!el) return;
     const s = this.bankSlots[i];
-    if (!s) { el.innerHTML = ''; return; }
+    if (!s) {
+      el.innerHTML = '';
+      el.draggable = false;
+      return;
+    }
+    el.draggable = true;
     this.setSlotInner(el, s.itemId, s.quantity);
   }
   private renderInvSlot(i: number): void {
@@ -368,6 +377,7 @@ export class BankPanel {
       dragging: false,
       ghost: null,
       dropTarget: null,
+      dropSlot: null,
       sourceEl,
       longPressTimer: 0,
       contextMenuShown: false,
@@ -426,11 +436,21 @@ export class BankPanel {
     if (drag.dragging) {
       event.preventDefault();
       event.stopPropagation();
-      const target = this.dropTargetAt(event.clientX, event.clientY);
+      const targetInfo = this.dropTargetAt(event.clientX, event.clientY);
+      const target = targetInfo?.target ?? null;
+      const targetSlot = targetInfo?.slot ?? null;
       if (drag.source === 'inventory' && target === 'bank' && this.invSlots[drag.slot]?.itemId === drag.itemId) {
         this.sendBankQuantity(ClientOpcode.BANK_DEPOSIT, drag.slot, drag.itemId, 1);
       } else if (drag.source === 'bank' && target === 'inventory' && this.bankSlots[drag.slot]?.itemId === drag.itemId) {
         this.sendBankQuantity(ClientOpcode.BANK_WITHDRAW, drag.slot, drag.itemId, 1);
+      } else if (
+        drag.source === 'bank'
+        && target === 'bank'
+        && targetSlot !== null
+        && targetSlot !== drag.slot
+        && this.bankSlots[drag.slot]?.itemId === drag.itemId
+      ) {
+        this.network.sendRaw(encodePacket(ClientOpcode.BANK_MOVE_ITEM, drag.slot, targetSlot, drag.itemId));
       }
       this.suppressClickUntil = performance.now() + 350;
     }
@@ -483,24 +503,38 @@ export class BankPanel {
     drag.ghost.style.top = `${clientY}px`;
   }
 
-  private dropTargetAt(clientX: number, clientY: number): BankDropTarget | null {
+  private dropTargetAt(clientX: number, clientY: number): { target: BankDropTarget; slot: number | null } | null {
     const el = document.elementFromPoint(clientX, clientY) as HTMLElement | null;
     if (!el) return null;
-    if (this.bankGridEl.contains(el)) return 'bank';
-    if (this.invGridEl.contains(el)) return 'inventory';
+    if (this.bankGridEl.contains(el)) {
+      const slotEl = el.closest('[data-bank-slot]') as HTMLElement | null;
+      const slot = slotEl?.dataset.bankSlot;
+      return { target: 'bank', slot: slot === undefined ? null : Number(slot) };
+    }
+    if (this.invGridEl.contains(el)) return { target: 'inventory', slot: null };
     return null;
   }
 
-  private setDropTarget(target: BankDropTarget | null): void {
+  private setDropTarget(targetInfo: { target: BankDropTarget; slot: number | null } | null): void {
     const drag = this.touchDrag;
-    if (!drag || drag.dropTarget === target) return;
+    const target = targetInfo?.target ?? null;
+    const targetSlot = targetInfo?.slot ?? null;
+    if (!drag || (drag.dropTarget === target && drag.dropSlot === targetSlot)) return;
     this.bankGridEl.style.outline = '';
     this.invGridEl.style.outline = '';
+    if (drag.dropSlot !== null) this.bankSlotElements[drag.dropSlot]?.style.removeProperty('outline');
     drag.dropTarget = target;
+    drag.dropSlot = targetSlot;
     const validTarget =
       (drag.source === 'inventory' && target === 'bank')
-      || (drag.source === 'bank' && target === 'inventory');
+      || (drag.source === 'bank' && target === 'inventory')
+      || (drag.source === 'bank' && target === 'bank' && targetSlot !== null && targetSlot !== drag.slot);
     if (!validTarget) return;
+    if (drag.source === 'bank' && target === 'bank' && targetSlot !== null) {
+      this.bankSlotElements[targetSlot].style.outline = '1px solid rgba(255, 200, 80, 0.9)';
+      this.bankSlotElements[targetSlot].style.outlineOffset = '-2px';
+      return;
+    }
     const grid = target === 'bank' ? this.bankGridEl : this.invGridEl;
     grid.style.outline = '1px solid rgba(255, 200, 80, 0.9)';
     grid.style.outlineOffset = '-2px';
@@ -519,6 +553,52 @@ export class BankPanel {
     } catch {
       // Capture may already have been released by the browser.
     }
+  }
+
+  private installBankSlotDrag(slot: HTMLDivElement, index: number): void {
+    slot.addEventListener('dragstart', (event) => {
+      const data = this.bankSlots[index];
+      if (!data) {
+        event.preventDefault();
+        return;
+      }
+      if (!event.dataTransfer) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.setData(BANK_SLOT_DRAG_MIME, String(index));
+      event.dataTransfer.effectAllowed = 'move';
+      slot.style.opacity = '0.45';
+    });
+    slot.addEventListener('dragend', () => {
+      slot.style.opacity = '';
+      this.clearBankDragOver();
+    });
+    slot.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      slot.style.outline = '1px solid rgba(255, 200, 80, 0.9)';
+      slot.style.outlineOffset = '-2px';
+    });
+    slot.addEventListener('dragleave', () => {
+      slot.style.removeProperty('outline');
+    });
+    slot.addEventListener('drop', (event) => {
+      event.preventDefault();
+      this.clearBankDragOver();
+      const fromStr = event.dataTransfer?.getData(BANK_SLOT_DRAG_MIME);
+      if (!fromStr) return;
+      const from = parseInt(fromStr, 10);
+      if (!Number.isInteger(from) || from === index) return;
+      const src = this.bankSlots[from];
+      if (!src) return;
+      this.network.sendRaw(encodePacket(ClientOpcode.BANK_MOVE_ITEM, from, index, src.itemId));
+      this.suppressClickUntil = performance.now() + 350;
+    });
+  }
+
+  private clearBankDragOver(): void {
+    for (const el of this.bankSlotElements) el.style.removeProperty('outline');
   }
 
   private onBankClick(slot: number): void {

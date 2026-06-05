@@ -129,3 +129,57 @@ describe('admin item deletion', () => {
     expect(events).toEqual([]);
   });
 });
+
+describe('bank item reorder', () => {
+  test('swaps two occupied bank slots without delay', () => {
+    const { world, bankUpdates } = makeWorld();
+    const player = new Player('bank_reorder_swap', 12.5, 18.5, fakeWs, 81);
+    player.openInterface = 'bank';
+    player.bank[2] = { itemId: 10, quantity: 500 };
+    player.bank[9] = { itemId: 411, quantity: 1 };
+    world.players.set(player.id, player);
+
+    world.handleBankMoveItem(player.id, 2, 9, 10);
+
+    expect(player.bank[2]).toEqual({ itemId: 411, quantity: 1 });
+    expect(player.bank[9]).toEqual({ itemId: 10, quantity: 500 });
+    expect(player.getActiveDelayReason(100)).toBeNull();
+    expect(bankUpdates).toEqual([
+      [2, 411, 0, 1],
+      [9, 10, 0, 500],
+    ]);
+  });
+
+  test('moves a bank item into an empty slot', () => {
+    const { world, bankUpdates } = makeWorld();
+    const player = new Player('bank_reorder_empty', 12.5, 18.5, fakeWs, 82);
+    player.openInterface = 'bank';
+    player.bank[4] = { itemId: 411, quantity: 3 };
+    world.players.set(player.id, player);
+
+    world.handleBankMoveItem(player.id, 4, 12, 411);
+
+    expect(player.bank[4]).toBeNull();
+    expect(player.bank[12]).toEqual({ itemId: 411, quantity: 3 });
+    expect(bankUpdates).toEqual([
+      [4, 0, 0, 0],
+      [12, 411, 0, 3],
+    ]);
+  });
+
+  test('requires an open bank interface and a current source item match', () => {
+    const { world, bankUpdates } = makeWorld();
+    const player = new Player('bank_reorder_guarded', 12.5, 18.5, fakeWs, 83);
+    player.bank[2] = { itemId: 10, quantity: 500 };
+    player.bank[9] = { itemId: 411, quantity: 1 };
+    world.players.set(player.id, player);
+
+    world.handleBankMoveItem(player.id, 2, 9, 10);
+    player.openInterface = 'bank';
+    world.handleBankMoveItem(player.id, 2, 9, 411);
+
+    expect(player.bank[2]).toEqual({ itemId: 10, quantity: 500 });
+    expect(player.bank[9]).toEqual({ itemId: 411, quantity: 1 });
+    expect(bankUpdates).toEqual([]);
+  });
+});

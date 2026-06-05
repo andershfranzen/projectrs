@@ -104,6 +104,10 @@ export enum ClientOpcode {
   BANK_CLOSE = 83,
   /** Admin-only hard deletion of a bank stack. Values: [bankSlot, expectedItemId]. */
   BANK_DELETE = 84,
+  /** Drag-and-drop reorder of two bank slots. Values: [fromSlot, toSlot, expectedItemId].
+   *  Server validates the bank is open and source still holds expectedItemId,
+   *  then swaps the slots without merging stacks. */
+  BANK_MOVE_ITEM = 85,
 
   // --- Trade ---
   /** Send a trade request to another player. Values: [targetEntityId]. */

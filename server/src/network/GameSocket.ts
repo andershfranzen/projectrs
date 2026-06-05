@@ -311,6 +311,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.BANK_DEPOSIT:
     case ClientOpcode.BANK_WITHDRAW:
     case ClientOpcode.BANK_DELETE:
+    case ClientOpcode.BANK_MOVE_ITEM:
     case ClientOpcode.BANK_CLOSE:
     case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
@@ -362,6 +363,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.BANK_DEPOSIT:
     case ClientOpcode.BANK_WITHDRAW:
     case ClientOpcode.BANK_DELETE:
+    case ClientOpcode.BANK_MOVE_ITEM:
     case ClientOpcode.BANK_CLOSE:
     case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
@@ -709,6 +711,15 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (player.openInterface !== 'bank') return invalid('bank-not-open');
       if (!isSlot(values[0], BANK_SIZE)) return invalid('bad-bank-delete-slot');
       if (player.bank[values[0]]?.itemId !== values[1]) return invalid('stale-bank-delete-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.BANK_MOVE_ITEM: {
+      if (!hasValues(values, 3)) return invalid('missing-bank-move-values');
+      if (player.openInterface !== 'bank') return invalid('bank-not-open');
+      if (values[0] === values[1]) return invalid('self-bank-move');
+      if (!isSlot(values[0], BANK_SIZE) || !isSlot(values[1], BANK_SIZE)) return invalid('bad-bank-move-slot');
+      if (player.bank[values[0]]?.itemId !== values[2]) return invalid('stale-bank-move-slot');
       return OK_PACKET;
     }
 
@@ -1417,6 +1428,14 @@ function handleDecryptedGameSocketMessage(
       const bankSlot = values[0];
       const expectedItemId = values[1];
       world.handleAdminDeleteBankItem(playerId, bankSlot, expectedItemId);
+      break;
+    }
+    case ClientOpcode.BANK_MOVE_ITEM: {
+      if (!hasValues(values, 3)) return;
+      const fromSlot = values[0];
+      const toSlot = values[1];
+      const expectedItemId = values[2];
+      world.handleBankMoveItem(playerId, fromSlot, toSlot, expectedItemId);
       break;
     }
     case ClientOpcode.BANK_CLOSE: {
