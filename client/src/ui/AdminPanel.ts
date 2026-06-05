@@ -137,6 +137,7 @@ export class AdminPanel {
   private gridHeaderEl: HTMLDivElement;
   private eventFilterEl: HTMLDivElement;
   private refreshButton: HTMLButtonElement;
+  private subtitleEl: HTMLSpanElement | null = null;
   private activeTab: AdminTab = 'bots';
   private readonly tabButtons = new Map<AdminTab, HTMLButtonElement>();
   private accounts: AdminBotAccount[] = [];
@@ -154,7 +155,7 @@ export class AdminPanel {
   };
 
   constructor(private readonly token: string) {
-    const { root } = createModalPanel({
+    const { root, header, subtitle, closeButton } = createModalPanel({
       id: 'admin-panel',
       title: 'Admin',
       subtitle: 'Bot review',
@@ -168,6 +169,7 @@ export class AdminPanel {
       onClose: () => this.hide(),
     });
     this.root = root;
+    this.subtitleEl = subtitle ?? null;
 
     const body = document.createElement('div');
     body.style.cssText = `
@@ -188,6 +190,7 @@ export class AdminPanel {
       gap: 5px;
       align-items: center;
       min-width: 0;
+      margin-left: auto;
     `;
     for (const [tab, label] of [['bots', 'Bot review'], ['events', 'Game log']] as const) {
       const button = document.createElement('button');
@@ -198,7 +201,7 @@ export class AdminPanel {
       this.tabButtons.set(tab, button);
       tabBar.appendChild(button);
     }
-    body.appendChild(tabBar);
+    header.insertBefore(tabBar, closeButton ?? null);
 
     const toolbar = document.createElement('div');
     toolbar.style.cssText = `display: flex; align-items: center; gap: 8px; min-width: 0;`;
@@ -358,6 +361,7 @@ export class AdminPanel {
     for (const [tab, button] of this.tabButtons) {
       button.style.cssText = this.tabButtonCss(tab === this.activeTab);
     }
+    if (this.subtitleEl) this.subtitleEl.textContent = this.activeTab === 'events' ? 'Game log' : 'Bot review';
   }
 
   private startEventPolling(): void {
@@ -1080,14 +1084,14 @@ export class AdminPanel {
 
   private tabButtonCss(active: boolean): string {
     return `
-      min-width: 92px;
-      padding: 5px 9px;
+      min-width: 76px;
+      padding: 3px 7px;
       border: 1px solid ${active ? '#9a332b' : 'rgba(74, 64, 53, 0.72)'};
       border-radius: 3px;
       background: ${active ? 'rgba(78, 18, 14, 0.95)' : 'rgba(18, 13, 10, 0.64)'};
       color: ${active ? '#f4ded5' : '#d9c6a2'};
       cursor: pointer;
-      font: 700 11px Arial, Helvetica, sans-serif;
+      font: 700 10px Arial, Helvetica, sans-serif;
       text-shadow: ${TEXT_SHADOW};
     `;
   }
