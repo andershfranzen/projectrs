@@ -141,6 +141,21 @@ describe('item thumbnail families', () => {
     }
   });
 
+  test('HQ bows reuse base inventory model and thumbnail visual sources', () => {
+    const defs = itemsJson as ItemDef[];
+    for (const baseName of ['Shortbow', 'Oak Shortbow', 'Willow Shortbow', 'Maple Shortbow', 'Yew Shortbow', 'Mystic Shortbow']) {
+      const base = defs.find((def) => def.name === baseName);
+      const hq = defs.find((def) => def.name === `${baseName} (HQ)`);
+      if (!base || !hq) throw new Error(`Missing HQ bow pair for ${baseName}`);
+
+      expect(itemThumbnailVisualSource(hq, defs)).toBe(base);
+      expect(resolveItemModelPath(hq)).toBe(resolveItemModelPath(base));
+      expect(buildThumbnailOptionsFromOverride(hq, undefined, base).cacheIdentity).toBe(
+        buildThumbnailOptionsFromOverride(base, undefined, base).cacheIdentity,
+      );
+    }
+  });
+
   test('new cape variants mirror Camel Cape wiring and baked icon support', () => {
     const defs = itemsJson as ItemDef[];
     const byId = new Map(defs.map((def) => [def.id, def]));

@@ -16,13 +16,16 @@ import {
   BLACK_BRONZE_ARROWS_ITEM_ID,
   HEADLESS_ARROWS_ITEM_ID,
   OAK_LOGS_ITEM_ID,
+  OAK_SHORTBOW_HQ_ITEM_ID,
   OAK_SHORTBOW_ITEM_ID,
   OAK_SHORTBOW_UNSTRUNG_ITEM_ID,
   ARROW_SHAFTS_ITEM_ID,
+  SHORTBOW_HQ_ITEM_ID,
   SHORTBOW_ITEM_ID,
   SHORTBOW_UNSTRUNG_ITEM_ID,
   type ItemDef,
 } from '@projectrs/shared';
+import type { GameEventLogInput } from '../src/Database';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 
@@ -47,6 +50,7 @@ function makeHarness(logQuantity: number, logItemId: number = LOGS_ITEM_ID): {
   player: Player;
   xp: Array<{ skill: string; amount: number }>;
   messages: string[];
+  events: GameEventLogInput[];
 } {
   const player = new Player('item_on_item_test', 10.5, 10.5, fakeWs, 1);
   player.skills.crafting.level = 99;
@@ -56,40 +60,62 @@ function makeHarness(logQuantity: number, logItemId: number = LOGS_ITEM_ID): {
 
   const xp: Array<{ skill: string; amount: number }> = [];
   const messages: string[] = [];
+  const events: GameEventLogInput[] = [];
   const world = Object.create(World.prototype) as any;
   world.currentTick = 0;
   world.players = new Map([[player.id, player]]);
+  const itemDefs = new Map([
+    [BOWSTRING_ITEM_ID, itemDef(BOWSTRING_ITEM_ID, 'Bowstring')],
+    [BRONZE_ARROWHEADS_ITEM_ID, itemDef(BRONZE_ARROWHEADS_ITEM_ID, 'Bronze Arrowheads')],
+    [BRONZE_ARROWS_ITEM_ID, itemDef(BRONZE_ARROWS_ITEM_ID, 'Bronze Arrows')],
+    [BUCKET_ITEM_ID, itemDef(BUCKET_ITEM_ID, 'Bucket')],
+    [IRON_ARROWHEADS_ITEM_ID, itemDef(IRON_ARROWHEADS_ITEM_ID, 'Iron Arrowheads')],
+    [IRON_ARROWS_ITEM_ID, itemDef(IRON_ARROWS_ITEM_ID, 'Iron Arrows')],
+    [STEEL_ARROWHEADS_ITEM_ID, itemDef(STEEL_ARROWHEADS_ITEM_ID, 'Steel Arrowheads')],
+    [STEEL_ARROWS_ITEM_ID, itemDef(STEEL_ARROWS_ITEM_ID, 'Steel Arrows')],
+    [MITHRIL_ARROWHEADS_ITEM_ID, itemDef(MITHRIL_ARROWHEADS_ITEM_ID, 'Mithril Arrowheads')],
+    [MITHRIL_ARROWS_ITEM_ID, itemDef(MITHRIL_ARROWS_ITEM_ID, 'Mithril Arrows')],
+    [BLACK_BRONZE_ARROWHEADS_ITEM_ID, itemDef(BLACK_BRONZE_ARROWHEADS_ITEM_ID, 'Black Bronze Arrowheads')],
+    [BLACK_BRONZE_ARROWS_ITEM_ID, itemDef(BLACK_BRONZE_ARROWS_ITEM_ID, 'Black Bronze Arrows')],
+    [KNIFE_ITEM_ID, itemDef(KNIFE_ITEM_ID, 'Knife')],
+    [LOGS_ITEM_ID, itemDef(LOGS_ITEM_ID, 'Log')],
+    [OAK_LOGS_ITEM_ID, itemDef(OAK_LOGS_ITEM_ID, 'Oak Log')],
+    [HEADLESS_ARROWS_ITEM_ID, itemDef(HEADLESS_ARROWS_ITEM_ID, 'Headless Arrows')],
+    [ARROW_SHAFTS_ITEM_ID, itemDef(ARROW_SHAFTS_ITEM_ID, 'Arrow Shafts')],
+    [OAK_SHORTBOW_HQ_ITEM_ID, itemDef(OAK_SHORTBOW_HQ_ITEM_ID, 'Oak Shortbow (HQ)')],
+    [OAK_SHORTBOW_ITEM_ID, itemDef(OAK_SHORTBOW_ITEM_ID, 'Oak Shortbow')],
+    [OAK_SHORTBOW_UNSTRUNG_ITEM_ID, itemDef(OAK_SHORTBOW_UNSTRUNG_ITEM_ID, 'Unstrung Oak Shortbow')],
+    [SHORTBOW_HQ_ITEM_ID, itemDef(SHORTBOW_HQ_ITEM_ID, 'Shortbow (HQ)')],
+    [SHORTBOW_ITEM_ID, itemDef(SHORTBOW_ITEM_ID, 'Shortbow')],
+    [SHORTBOW_UNSTRUNG_ITEM_ID, itemDef(SHORTBOW_UNSTRUNG_ITEM_ID, 'Unstrung Shortbow')],
+  ]);
   world.data = {
-    itemDefs: new Map([
-      [BOWSTRING_ITEM_ID, itemDef(BOWSTRING_ITEM_ID, 'Bowstring')],
-      [BRONZE_ARROWHEADS_ITEM_ID, itemDef(BRONZE_ARROWHEADS_ITEM_ID, 'Bronze Arrowheads')],
-      [BRONZE_ARROWS_ITEM_ID, itemDef(BRONZE_ARROWS_ITEM_ID, 'Bronze Arrows')],
-      [BUCKET_ITEM_ID, itemDef(BUCKET_ITEM_ID, 'Bucket')],
-      [IRON_ARROWHEADS_ITEM_ID, itemDef(IRON_ARROWHEADS_ITEM_ID, 'Iron Arrowheads')],
-      [IRON_ARROWS_ITEM_ID, itemDef(IRON_ARROWS_ITEM_ID, 'Iron Arrows')],
-      [STEEL_ARROWHEADS_ITEM_ID, itemDef(STEEL_ARROWHEADS_ITEM_ID, 'Steel Arrowheads')],
-      [STEEL_ARROWS_ITEM_ID, itemDef(STEEL_ARROWS_ITEM_ID, 'Steel Arrows')],
-      [MITHRIL_ARROWHEADS_ITEM_ID, itemDef(MITHRIL_ARROWHEADS_ITEM_ID, 'Mithril Arrowheads')],
-      [MITHRIL_ARROWS_ITEM_ID, itemDef(MITHRIL_ARROWS_ITEM_ID, 'Mithril Arrows')],
-      [BLACK_BRONZE_ARROWHEADS_ITEM_ID, itemDef(BLACK_BRONZE_ARROWHEADS_ITEM_ID, 'Black Bronze Arrowheads')],
-      [BLACK_BRONZE_ARROWS_ITEM_ID, itemDef(BLACK_BRONZE_ARROWS_ITEM_ID, 'Black Bronze Arrows')],
-      [KNIFE_ITEM_ID, itemDef(KNIFE_ITEM_ID, 'Knife')],
-      [LOGS_ITEM_ID, itemDef(LOGS_ITEM_ID, 'Log')],
-      [OAK_LOGS_ITEM_ID, itemDef(OAK_LOGS_ITEM_ID, 'Oak Log')],
-      [HEADLESS_ARROWS_ITEM_ID, itemDef(HEADLESS_ARROWS_ITEM_ID, 'Headless Arrows')],
-      [ARROW_SHAFTS_ITEM_ID, itemDef(ARROW_SHAFTS_ITEM_ID, 'Arrow Shafts')],
-      [OAK_SHORTBOW_ITEM_ID, itemDef(OAK_SHORTBOW_ITEM_ID, 'Oak Shortbow')],
-      [OAK_SHORTBOW_UNSTRUNG_ITEM_ID, itemDef(OAK_SHORTBOW_UNSTRUNG_ITEM_ID, 'Unstrung Oak Shortbow')],
-      [SHORTBOW_ITEM_ID, itemDef(SHORTBOW_ITEM_ID, 'Shortbow')],
-      [SHORTBOW_UNSTRUNG_ITEM_ID, itemDef(SHORTBOW_UNSTRUNG_ITEM_ID, 'Unstrung Shortbow')],
-    ]),
+    itemDefs,
+    getItem(itemId: number) {
+      return itemDefs.get(itemId) ?? null;
+    },
+  };
+  world.db = {
+    recordGameEvent(event: GameEventLogInput) {
+      events.push(event);
+    },
   };
   world.itemProductionActions = new Map();
   world.interruptPlayerAction = () => {};
   world.sendInventory = () => {};
   world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
   world.grantXp = (_player: Player, skill: any, amount: number) => xp.push({ skill, amount });
-  return { world, player, xp, messages };
+  return { world, player, xp, messages, events };
+}
+
+function withMockedRandom<T>(value: number, fn: () => T): T {
+  const originalRandom = Math.random;
+  Math.random = () => value;
+  try {
+    return fn();
+  } finally {
+    Math.random = originalRandom;
+  }
 }
 
 describe('item-on-item crafting recipes', () => {
@@ -181,7 +207,9 @@ describe('item-on-item crafting recipes', () => {
     player.inventory[0] = { itemId: BOWSTRING_ITEM_ID, quantity: 1 };
     player.inventory[1] = { itemId: SHORTBOW_UNSTRUNG_ITEM_ID, quantity: 1 };
 
-    world.handlePlayerUseItemOnItem(player.id, 0, BOWSTRING_ITEM_ID, 1, SHORTBOW_UNSTRUNG_ITEM_ID, 1);
+    withMockedRandom(0.5, () => {
+      world.handlePlayerUseItemOnItem(player.id, 0, BOWSTRING_ITEM_ID, 1, SHORTBOW_UNSTRUNG_ITEM_ID, 1);
+    });
 
     expect(player.inventory[0]).toEqual({ itemId: SHORTBOW_ITEM_ID, quantity: 1 });
     expect(player.inventory[1]).toBeNull();
@@ -194,12 +222,50 @@ describe('item-on-item crafting recipes', () => {
     player.inventory[0] = { itemId: BOWSTRING_ITEM_ID, quantity: 1 };
     player.inventory[1] = { itemId: OAK_SHORTBOW_UNSTRUNG_ITEM_ID, quantity: 1 };
 
-    world.handlePlayerUseItemOnItem(player.id, 0, BOWSTRING_ITEM_ID, 1, OAK_SHORTBOW_UNSTRUNG_ITEM_ID, 1);
+    withMockedRandom(0.5, () => {
+      world.handlePlayerUseItemOnItem(player.id, 0, BOWSTRING_ITEM_ID, 1, OAK_SHORTBOW_UNSTRUNG_ITEM_ID, 1);
+    });
 
     expect(player.inventory[0]).toEqual({ itemId: OAK_SHORTBOW_ITEM_ID, quantity: 1 });
     expect(player.inventory[1]).toBeNull();
     expect(xp).toEqual([{ skill: 'crafting', amount: 9 }]);
     expect(messages).toEqual(['You string the oak shortbow.']);
+  });
+
+  test('bowstring plus unstrung shortbow can roll the HQ result only when stringing', () => {
+    const { world, player, xp, messages, events } = makeHarness(0);
+    player.inventory[0] = { itemId: BOWSTRING_ITEM_ID, quantity: 1 };
+    player.inventory[1] = { itemId: SHORTBOW_UNSTRUNG_ITEM_ID, quantity: 1 };
+
+    withMockedRandom(0, () => {
+      world.handlePlayerUseItemOnItem(player.id, 0, BOWSTRING_ITEM_ID, 1, SHORTBOW_UNSTRUNG_ITEM_ID, 1);
+    });
+
+    expect(player.inventory[0]).toEqual({ itemId: SHORTBOW_HQ_ITEM_ID, quantity: 1 });
+    expect(player.inventory[1]).toBeNull();
+    expect(xp).toEqual([{ skill: 'crafting', amount: 22 }]);
+    expect(messages).toEqual([
+      'You string the shortbow.',
+      'High quality result: Shortbow (HQ).',
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'crafting_hq',
+      severity: 'rare',
+      actorAccountId: 1,
+      actorName: 'item_on_item_test',
+      itemId: SHORTBOW_HQ_ITEM_ID,
+      itemName: 'Shortbow (HQ)',
+      quantity: 1,
+      details: {
+        skill: 'crafting',
+        source: 'item_on_item',
+        baseOutputItemId: SHORTBOW_ITEM_ID,
+        hqOutputItemId: SHORTBOW_HQ_ITEM_ID,
+        hqChance: 1 / 256,
+        xpReward: 22,
+      },
+    });
   });
 
   test('headless arrows plus bronze arrowheads creates bronze arrows', () => {

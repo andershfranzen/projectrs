@@ -9,6 +9,8 @@ import {
   MITHRIL_ARROWS_ITEM_ID, BLACK_BRONZE_ARROWS_ITEM_ID,
   SHORTBOW_ITEM_ID, OAK_SHORTBOW_ITEM_ID, WILLOW_SHORTBOW_ITEM_ID,
   MAPLE_SHORTBOW_ITEM_ID, YEW_SHORTBOW_ITEM_ID, MAGIC_SHORTBOW_ITEM_ID,
+  SHORTBOW_HQ_ITEM_ID, OAK_SHORTBOW_HQ_ITEM_ID, WILLOW_SHORTBOW_HQ_ITEM_ID,
+  MAPLE_SHORTBOW_HQ_ITEM_ID, YEW_SHORTBOW_HQ_ITEM_ID, MAGIC_SHORTBOW_HQ_ITEM_ID,
   type PlayerAppearance, type ItemDef, type QuestState,
 } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
@@ -46,11 +48,17 @@ const ARROW_TIER_BY_ITEM_ID: Record<number, number> = {
 
 const MAX_ARROW_TIER_BY_BOW_ITEM_ID: Record<number, number> = {
   [SHORTBOW_ITEM_ID]: 2,        // bronze, iron
+  [SHORTBOW_HQ_ITEM_ID]: 2,
   [OAK_SHORTBOW_ITEM_ID]: 3,    // + steel
+  [OAK_SHORTBOW_HQ_ITEM_ID]: 3,
   [WILLOW_SHORTBOW_ITEM_ID]: 4, // + black bronze
+  [WILLOW_SHORTBOW_HQ_ITEM_ID]: 4,
   [MAPLE_SHORTBOW_ITEM_ID]: 5,  // + mithril
+  [MAPLE_SHORTBOW_HQ_ITEM_ID]: 5,
   [YEW_SHORTBOW_ITEM_ID]: Infinity,
+  [YEW_SHORTBOW_HQ_ITEM_ID]: Infinity,
   [MAGIC_SHORTBOW_ITEM_ID]: Infinity,
+  [MAGIC_SHORTBOW_HQ_ITEM_ID]: Infinity,
 };
 
 function arrowTier(itemDef: ItemDef): number {

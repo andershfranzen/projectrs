@@ -6,11 +6,13 @@ import {
   MITHRIL_ARROWS_ITEM_ID,
   BLACK_BRONZE_ARROWS_ITEM_ID,
   OAK_SHORTBOW_ITEM_ID,
+  OAK_SHORTBOW_HQ_ITEM_ID,
   WILLOW_SHORTBOW_ITEM_ID,
   MAPLE_SHORTBOW_ITEM_ID,
   YEW_SHORTBOW_ITEM_ID,
   MAGIC_SHORTBOW_ITEM_ID,
   SHORTBOW_ITEM_ID,
+  SHORTBOW_HQ_ITEM_ID,
   DEFAULT_RANGED_ATTACK_DISTANCE,
   ServerOpcode,
   bowAttackRollMultiplierForStance,
@@ -401,6 +403,47 @@ describe('player ammo selection', () => {
 
     player.setEquipment('weapon', MAGIC_SHORTBOW_ITEM_ID);
     expect(player.canFireAmmo(defs, defs.get(MITHRIL_ARROWS_ITEM_ID)!)).toBe(true);
+  });
+
+  test('HQ shortbows keep the same arrow tier limits as their base bows', () => {
+    const defs = new Map<number, ItemDef>([
+      [SHORTBOW_HQ_ITEM_ID, baseItem(SHORTBOW_HQ_ITEM_ID, 'Shortbow (HQ)', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [OAK_SHORTBOW_HQ_ITEM_ID, baseItem(OAK_SHORTBOW_HQ_ITEM_ID, 'Oak Shortbow (HQ)', {
+        equippable: true,
+        equipSlot: 'weapon',
+        weaponStyle: 'bow',
+        ammoType: 'arrow',
+      })],
+      [IRON_ARROWS_ITEM_ID, baseItem(IRON_ARROWS_ITEM_ID, 'Iron Arrows', {
+        stackable: true,
+        isAmmo: true,
+        ammoType: 'arrow',
+      })],
+      [STEEL_ARROWS_ITEM_ID, baseItem(STEEL_ARROWS_ITEM_ID, 'Steel Arrows', {
+        stackable: true,
+        isAmmo: true,
+        ammoType: 'arrow',
+      })],
+      [BLACK_BRONZE_ARROWS_ITEM_ID, baseItem(BLACK_BRONZE_ARROWS_ITEM_ID, 'Black Bronze Arrows', {
+        stackable: true,
+        isAmmo: true,
+        ammoType: 'arrow',
+      })],
+    ]);
+    const player = makePlayer();
+
+    player.setEquipment('weapon', SHORTBOW_HQ_ITEM_ID);
+    expect(player.canFireAmmo(defs, defs.get(IRON_ARROWS_ITEM_ID)!)).toBe(true);
+    expect(player.canFireAmmo(defs, defs.get(STEEL_ARROWS_ITEM_ID)!)).toBe(false);
+
+    player.setEquipment('weapon', OAK_SHORTBOW_HQ_ITEM_ID);
+    expect(player.canFireAmmo(defs, defs.get(STEEL_ARROWS_ITEM_ID)!)).toBe(true);
+    expect(player.canFireAmmo(defs, defs.get(BLACK_BRONZE_ARROWS_ITEM_ID)!)).toBe(false);
   });
 
   test('reports useful ranged ammo failures', () => {

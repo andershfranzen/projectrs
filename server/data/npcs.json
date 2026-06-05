@@ -450,7 +450,18 @@
     "respawnTime": 18,
     "aggressive": true,
     "wanderRange": 6,
-    "lootTable": [],
+    "lootTable": [
+      {
+        "itemId": 411,
+        "quantity": 1,
+        "chance": 0.0078125
+      },
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.0256
+      }
+    ],
     "rareDropTables": [
       {
         "tableId": "universal",

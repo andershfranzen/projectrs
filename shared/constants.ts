@@ -85,6 +85,12 @@ export const WILLOW_SHORTBOW_ITEM_ID = 281;
 export const MAPLE_SHORTBOW_ITEM_ID = 282;
 export const YEW_SHORTBOW_ITEM_ID = 283;
 export const MAGIC_SHORTBOW_ITEM_ID = 284;
+export const SHORTBOW_HQ_ITEM_ID = 453;
+export const OAK_SHORTBOW_HQ_ITEM_ID = 454;
+export const WILLOW_SHORTBOW_HQ_ITEM_ID = 455;
+export const MAPLE_SHORTBOW_HQ_ITEM_ID = 456;
+export const YEW_SHORTBOW_HQ_ITEM_ID = 457;
+export const MAGIC_SHORTBOW_HQ_ITEM_ID = 458;
 export const COW_HIDE_ITEM_ID = 296;
 export const BEAR_HIDE_ITEM_ID = 297;
 export const WOLF_HIDE_ITEM_ID = 298;
@@ -143,18 +149,19 @@ export const LOG_CRAFT_SHORTBOW_RECIPES: readonly {
   logItemId: number;
   unstrungItemId: number;
   strungItemId: number;
+  hqStrungItemId: number;
   logLabel: string;
   bowLabel: string;
   levelRequired: number;
   carveXpReward: number;
   stringXpReward: number;
 }[] = [
-  { logItemId: LOGS_ITEM_ID, unstrungItemId: SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: SHORTBOW_ITEM_ID, logLabel: 'log', bowLabel: 'shortbow', levelRequired: 1, carveXpReward: 6, stringXpReward: 7 },
-  { logItemId: OAK_LOGS_ITEM_ID, unstrungItemId: OAK_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: OAK_SHORTBOW_ITEM_ID, logLabel: 'oak log', bowLabel: 'oak shortbow', levelRequired: 5, carveXpReward: 8, stringXpReward: 9 },
-  { logItemId: WILLOW_LOGS_ITEM_ID, unstrungItemId: WILLOW_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: WILLOW_SHORTBOW_ITEM_ID, logLabel: 'willow log', bowLabel: 'willow shortbow', levelRequired: 18, carveXpReward: 16, stringXpReward: 17 },
-  { logItemId: MAPLE_LOGS_ITEM_ID, unstrungItemId: MAPLE_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: MAPLE_SHORTBOW_ITEM_ID, logLabel: 'maple log', bowLabel: 'maple shortbow', levelRequired: 32, carveXpReward: 25, stringXpReward: 25 },
-  { logItemId: YEW_LOGS_ITEM_ID, unstrungItemId: YEW_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: YEW_SHORTBOW_ITEM_ID, logLabel: 'yew log', bowLabel: 'yew shortbow', levelRequired: 46, carveXpReward: 34, stringXpReward: 34 },
-  { logItemId: MAGIC_LOGS_ITEM_ID, unstrungItemId: MAGIC_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: MAGIC_SHORTBOW_ITEM_ID, logLabel: 'mystic log', bowLabel: 'mystic shortbow', levelRequired: 60, carveXpReward: 41, stringXpReward: 42 },
+  { logItemId: LOGS_ITEM_ID, unstrungItemId: SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: SHORTBOW_ITEM_ID, hqStrungItemId: SHORTBOW_HQ_ITEM_ID, logLabel: 'log', bowLabel: 'shortbow', levelRequired: 1, carveXpReward: 6, stringXpReward: 7 },
+  { logItemId: OAK_LOGS_ITEM_ID, unstrungItemId: OAK_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: OAK_SHORTBOW_ITEM_ID, hqStrungItemId: OAK_SHORTBOW_HQ_ITEM_ID, logLabel: 'oak log', bowLabel: 'oak shortbow', levelRequired: 5, carveXpReward: 8, stringXpReward: 9 },
+  { logItemId: WILLOW_LOGS_ITEM_ID, unstrungItemId: WILLOW_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: WILLOW_SHORTBOW_ITEM_ID, hqStrungItemId: WILLOW_SHORTBOW_HQ_ITEM_ID, logLabel: 'willow log', bowLabel: 'willow shortbow', levelRequired: 18, carveXpReward: 16, stringXpReward: 17 },
+  { logItemId: MAPLE_LOGS_ITEM_ID, unstrungItemId: MAPLE_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: MAPLE_SHORTBOW_ITEM_ID, hqStrungItemId: MAPLE_SHORTBOW_HQ_ITEM_ID, logLabel: 'maple log', bowLabel: 'maple shortbow', levelRequired: 32, carveXpReward: 25, stringXpReward: 25 },
+  { logItemId: YEW_LOGS_ITEM_ID, unstrungItemId: YEW_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: YEW_SHORTBOW_ITEM_ID, hqStrungItemId: YEW_SHORTBOW_HQ_ITEM_ID, logLabel: 'yew log', bowLabel: 'yew shortbow', levelRequired: 46, carveXpReward: 34, stringXpReward: 34 },
+  { logItemId: MAGIC_LOGS_ITEM_ID, unstrungItemId: MAGIC_SHORTBOW_UNSTRUNG_ITEM_ID, strungItemId: MAGIC_SHORTBOW_ITEM_ID, hqStrungItemId: MAGIC_SHORTBOW_HQ_ITEM_ID, logLabel: 'mystic log', bowLabel: 'mystic shortbow', levelRequired: 60, carveXpReward: 41, stringXpReward: 42 },
 ];
 
 export const ARROWHEAD_FLETCHING_RECIPES: readonly {

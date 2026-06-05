@@ -78,6 +78,18 @@ describe('NPC rare drop table access', () => {
     }
   });
 
+  test('Mother Spider has Green Cape as a normal one-in-128 drop', () => {
+    const motherSpider = loadNpcDefs().find(npc => npc.id === 22);
+    expect(motherSpider?.name).toBe('Mother Spider');
+
+    const greenCapeDrop = motherSpider?.lootTable.find(drop => drop.itemId === 411);
+    expect(greenCapeDrop).toEqual({
+      itemId: 411,
+      quantity: 1,
+      chance: 1 / 128,
+    });
+  });
+
   test('only selected NPCs access the universal rare drop table', () => {
     const rareTableIds = new Set(loadRareDropTables().map(table => table.id));
     expect(rareTableIds.has('universal')).toBe(true);

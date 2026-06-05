@@ -28,6 +28,7 @@ const mapIdRegistry: Map<string, number> = new Map();
 const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
 const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
 const DEFAULT_HQ_XP_MULTIPLIER = 3.25;
+const BOW_STRINGING_HQ_CHANCE = 1 / 256;
 type ItemQuantity = { itemId: number; quantity: number };
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type ItemOnItemRecipe = {
@@ -42,6 +43,9 @@ type ItemOnItemRecipe = {
   repeatable?: boolean;
   startMessage?: string;
   stopMessage?: string;
+  hqOutputs?: readonly ItemQuantity[];
+  hqChance?: number;
+  hqXpMultiplier?: number;
 };
 type ItemOnObjectRecipe = {
   inputItemId: number;
@@ -112,6 +116,9 @@ function createShortbowStringingRecipe(recipe: typeof LOG_CRAFT_SHORTBOW_RECIPES
     inputItemIds: [BOWSTRING_ITEM_ID, recipe.unstrungItemId],
     consume: [{ itemId: BOWSTRING_ITEM_ID, quantity: 1 }, { itemId: recipe.unstrungItemId, quantity: 1 }],
     outputs: [{ itemId: recipe.strungItemId, quantity: 1 }],
+    hqOutputs: [{ itemId: recipe.hqStrungItemId, quantity: 1 }],
+    hqChance: BOW_STRINGING_HQ_CHANCE,
+    hqXpMultiplier: DEFAULT_HQ_XP_MULTIPLIER,
     skill: 'crafting',
     levelRequired: recipe.levelRequired,
     xpReward: recipe.stringXpReward,
@@ -5261,7 +5268,8 @@ export class World {
       removals.push(removed);
     }
 
-    for (const output of recipe.outputs) {
+    const craftingOutput = this.resolveItemOnItemOutput(recipe);
+    for (const output of craftingOutput.outputs) {
       const added = player.addItem(output.itemId, output.quantity, this.data.itemDefs);
       if (added.completed === 0) {
         for (let i = adds.length - 1; i >= 0; i--) player.revertAdd(adds[i]);
@@ -5273,12 +5281,78 @@ export class World {
       adds.push(added);
     }
 
-    if (skillId && recipe.xpReward && recipe.xpReward > 0) {
-      this.grantXp(player, skillId, recipe.xpReward);
+    if (skillId && craftingOutput.xpReward > 0) {
+      this.grantXp(player, skillId, craftingOutput.xpReward);
     }
     this.sendInventory(player);
     if (sendMessage && recipe.message) this.sendChatSystem(player, recipe.message);
+    if (craftingOutput.highQuality) {
+      this.recordItemOnItemHighQualityResult(player, recipe, craftingOutput.outputs, craftingOutput.xpReward);
+    }
     return true;
+  }
+
+  private resolveItemOnItemOutput(recipe: ItemOnItemRecipe): {
+    outputs: readonly ItemQuantity[];
+    xpReward: number;
+    highQuality: boolean;
+  } {
+    const hqChance = recipe.hqChance ?? 0;
+    if (
+      recipe.hqOutputs?.length
+      && hqChance > 0
+      && Math.random() < hqChance
+    ) {
+      return {
+        outputs: recipe.hqOutputs,
+        xpReward: Math.floor((recipe.xpReward ?? 0) * (recipe.hqXpMultiplier ?? DEFAULT_HQ_XP_MULTIPLIER)),
+        highQuality: true,
+      };
+    }
+    return {
+      outputs: recipe.outputs,
+      xpReward: recipe.xpReward ?? 0,
+      highQuality: false,
+    };
+  }
+
+  private recordItemOnItemHighQualityResult(
+    player: Player,
+    recipe: ItemOnItemRecipe,
+    outputs: readonly ItemQuantity[],
+    xpReward: number,
+  ): void {
+    const primary = outputs[0];
+    if (!primary) return;
+    const itemName = this.data.getItem(primary.itemId)?.name ?? 'High Quality item';
+    const baseOutputItemId = recipe.outputs[0]?.itemId;
+    const baseItemName = baseOutputItemId ? this.data.getItem(baseOutputItemId)?.name : null;
+    const actionLabel = recipe.inputItemIds.includes(BOWSTRING_ITEM_ID)
+      ? `while stringing ${baseItemName ?? 'a bow'}`
+      : 'while crafting';
+    this.sendChatSystem(player, `High quality result: ${itemName}.`);
+    this.recordGameEvent({
+      type: 'crafting_hq',
+      severity: 'rare',
+      message: `${player.name} rolled high quality ${primary.quantity} x ${itemName} ${actionLabel}`,
+      actorAccountId: player.accountId,
+      actorName: player.name,
+      itemId: primary.itemId,
+      itemName,
+      quantity: primary.quantity,
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+      x: player.position.x,
+      z: player.position.y,
+      details: {
+        skill: recipe.skill ?? 'crafting',
+        source: 'item_on_item',
+        baseOutputItemId,
+        hqOutputItemId: primary.itemId,
+        hqChance: recipe.hqChance ?? 0,
+        xpReward,
+      },
+    });
   }
 
   private startItemProduction(
@@ -7486,7 +7560,7 @@ export class World {
   }
 
   private recordGameEvent(input: GameEventLogInput): void {
-    const recorder = (this.db as { recordGameEvent?: (event: GameEventLogInput) => unknown }).recordGameEvent;
+    const recorder = (this.db as { recordGameEvent?: (event: GameEventLogInput) => unknown } | undefined)?.recordGameEvent;
     if (typeof recorder === 'function') recorder.call(this.db, input);
   }
 

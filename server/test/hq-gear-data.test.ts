@@ -60,6 +60,14 @@ const GEAR_FAMILY_CONFIGS = {
 
 const HQ_GEAR_TIERS = GEAR_TIER_CONFIGS.map((tier) => tier.name);
 const HQ_GEAR_FAMILIES = Object.keys(GEAR_FAMILY_CONFIGS) as Array<keyof typeof GEAR_FAMILY_CONFIGS>;
+const HQ_BOW_NAMES = [
+  'Shortbow',
+  'Oak Shortbow',
+  'Willow Shortbow',
+  'Maple Shortbow',
+  'Yew Shortbow',
+  'Mystic Shortbow',
+] as const;
 
 const NEWER_GATHERING_TIER_CONFIGS = [
   {
@@ -220,6 +228,36 @@ describe('HQ gear data', () => {
           );
         }
       }
+    }
+  });
+
+  test('all strung shortbows have HQ variants copied from base visuals with ranged bonuses', () => {
+    const items = loadItems();
+    const hqBowStatFields = new Set<keyof ItemDef>(['rangedAccuracy', 'rangedStrength']);
+
+    for (const baseName of HQ_BOW_NAMES) {
+      const base = itemByName(items, baseName);
+      const hq = itemByName(items, `${baseName} (HQ)`);
+      if (!base || !hq) throw new Error(`Missing HQ bow pair for ${baseName}`);
+      const expectedDescription = highQualityItemDescription(hq.name);
+      if (!expectedDescription) throw new Error(`Expected HQ description for ${hq.name}`);
+
+      expect(hq.description).toBe(expectedDescription);
+      expect(resolveGearFitSourceItemId(hq.id, items)).toBe(base.id);
+      expect(hq.equipSlot).toBe(base.equipSlot);
+
+      const fields = new Set<keyof ItemDef>([
+        ...Object.keys(base) as Array<keyof ItemDef>,
+        ...Object.keys(hq) as Array<keyof ItemDef>,
+      ]);
+
+      for (const field of fields) {
+        if (HQ_IDENTITY_FIELD_SET.has(field) || hqBowStatFields.has(field)) continue;
+        expect(hq[field], `${hq.name} should copy ${String(field)} from ${base.name}`).toEqual(base[field]);
+      }
+
+      expect(hq.rangedAccuracy, `${hq.name} ranged accuracy`).toBe((base.rangedAccuracy ?? 0) + 1);
+      expect(hq.rangedStrength, `${hq.name} ranged strength`).toBe((base.rangedStrength ?? 0) + 2);
     }
   });
 });
