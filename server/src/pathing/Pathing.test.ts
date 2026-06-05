@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildNaiveInteractionPath,
   canTravel,
   findPathToAnyTile,
   findPathToRectInteraction,
   isRectInteractionTileReachable,
   stepTowardNaiveInteraction,
+  stepTowardTile,
   type PathingCollision,
 } from './Pathing';
 
@@ -76,6 +78,30 @@ describe('server pathing', () => {
 
     expect(step).not.toBeNull();
     expect(Math.abs(Math.floor(step!.x) - 10) + Math.abs(Math.floor(step!.z) - 10)).toBe(1);
+  });
+
+  test('naive fallback tries x before z after a blocked diagonal', () => {
+    const step = stepTowardTile(openCollision(new Set(['11,11'])), 10.5, 10.5, 11, 13);
+
+    expect(step).toEqual({ x: 11.5, z: 10.5 });
+  });
+
+  test('overlapping naive interaction steps choose a cardinal escape tile', () => {
+    const step = stepTowardNaiveInteraction(openCollision(), 10.5, 10.5, 1, 10.5, 10.5, 1);
+
+    expect(step).not.toBeNull();
+    expect(Math.abs(Math.floor(step!.x) - 10) + Math.abs(Math.floor(step!.z) - 10)).toBe(1);
+  });
+
+  test('naive interaction paths walk direct and do not route around blockers', () => {
+    const openPath = buildNaiveInteractionPath(openCollision(), 0.5, 1.5, 1, 3.5, 1.5, 1);
+    expect(openPath).toEqual([
+      { x: 1.5, z: 1.5 },
+      { x: 2.5, z: 1.5 },
+    ]);
+
+    const blockedPath = buildNaiveInteractionPath(openCollision(new Set(['1,1'])), 0.5, 1.5, 1, 3.5, 1.5, 1);
+    expect(blockedPath).toEqual([]);
   });
 
   test('sized movement validates the whole destination footprint', () => {

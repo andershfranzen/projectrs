@@ -88,7 +88,6 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   world.chunkManagers = new Map();
   world.blockedObjectTiles = new Set();
   world.entityTileOccupants = new Set();
-  world.playerTileOccupants = new Set();
   world.entityTileOccupantsDirty = true;
   world.currentTick = 1;
   world.currentTickStartMs = 0;
@@ -960,7 +959,7 @@ describe('NPC interaction reachability', () => {
     expect(npc.retreatTarget).toBeNull();
   });
 
-  test('NPC combat chase is not pinned by another NPC on the next step', () => {
+  test('NPC combat chase stalls behind another NPC and continues when it clears', () => {
     const player = new Player('archer', 16.5, 10.5, fakeWs, 1);
     const npc = new Npc({ ...npcDef, wanderRange: 3 }, 10.5, 10.5);
     const blocker = new Npc({ ...npcDef, wanderRange: 0 }, 14.5, 10.5);
@@ -973,13 +972,17 @@ describe('NPC interaction reachability', () => {
     world.entityTileOccupants = new Set([
       world.entityTileKeyFor('kcmap', blocker.position.x, blocker.position.y, blocker.currentFloor),
     ]);
-    world.playerTileOccupants = new Set();
 
     for (let i = 0; i < 4; i++) world.tickNpcAI();
 
-    expect(npc.position.x).toBe(14.5);
-    expect(Math.abs(npc.position.x - npc.spawnX)).toBeGreaterThan(npc.wanderRange);
+    expect(npc.position.x).toBe(13.5);
     expect(npc.combatTarget).toBe(player);
+
+    blocker.moveTo(20.5, 10.5);
+    world.entityTileOccupantsDirty = true;
+    world.tickNpcAI();
+
+    expect(npc.position.x).toBe(14.5);
   });
 
   test('ranged attacks outside maxrange edge can hit and make the NPC retreat for a long time', () => {

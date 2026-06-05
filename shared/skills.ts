@@ -63,30 +63,35 @@ export interface SkillState {
 
 export type SkillBlock = Record<SkillId, SkillState>;
 
+export const MAX_SKILL_XP = 0x7FFFFFFF;
+export const MAX_SKILL_LEVEL = 150;
+
 // OSRS-style XP formula
-export function xpForLevel(L: number): number {
-  if (L <= 1) return 0;
-  if (L > 99) L = 99;
+export function xpForLevel(level: number): number {
+  const targetLevel = Math.max(1, Math.floor(level));
+  if (targetLevel <= 1) return 0;
   let points = 0;
-  for (let lvl = 1; lvl < L; lvl++) {
+  for (let lvl = 1; lvl < targetLevel; lvl++) {
     points += Math.floor(lvl + 300.0 * Math.pow(2.0, lvl / 7.0));
   }
   return Math.floor(points / 4);
 }
 
-export function levelFromXp(xp: number, maxLevel = 99): number {
+export function levelFromXp(xp: number, maxLevel = MAX_SKILL_LEVEL): number {
+  const normalizedXp = Number.isFinite(xp) ? Math.max(0, Math.floor(xp)) : 0;
   let lo = 1, hi = maxLevel + 1;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (xpForLevel(mid) <= xp) lo = mid + 1;
+    if (xpForLevel(mid) <= normalizedXp) lo = mid + 1;
     else hi = mid;
   }
   return Math.min(maxLevel, lo - 1);
 }
 
 /**
- * RS-style stat_random: interpolates between low (at level 1) and high (at level 99),
- * then rolls against 256. Returns true on success.
+ * RS-style stat_random: interpolates between low (at level 1) and high (at
+ * level 99), then extrapolates for higher levels and rolls against 256.
+ * Returns true on success.
  * P(success) = (floor(low*(99-level)/98) + floor(high*(level-1)/98) + 1) / 256
  */
 export function statRandom(level: number, low: number, high: number): boolean {
@@ -110,15 +115,15 @@ export function initSkills(): SkillBlock {
 export function addXp(skills: SkillBlock, id: SkillId, amount: number): { leveled: boolean; newLevel: number } {
   const cur = skills[id];
   const oldLevel = cur.level;
-  const xpGain = Math.floor(amount);
+  const xpGain = Number.isFinite(amount) ? Math.floor(amount) : 0;
   // Clamp to int31 — wire encoding for XP is (xpHigh << 16) | (xpLow & 0xFFFF),
   // so values past 2^31 truncate on broadcast. Caps any single skill at 2.1B
-  // which is well past the OSRS-style 200M target most players aim for.
-  cur.xp = Math.max(0, Math.min(0x7FFFFFFF, cur.xp + xpGain));
+  // which makes level 150 the highest reachable level on the extended curve.
+  cur.xp = Math.max(0, Math.min(MAX_SKILL_XP, cur.xp + xpGain));
   let newLevel = levelFromXp(cur.xp);
-  const preservedLevel = Math.max(1, Math.min(99, oldLevel));
+  const preservedLevel = Math.max(1, Math.min(MAX_SKILL_LEVEL, oldLevel));
   if (newLevel < preservedLevel) {
-    cur.xp = Math.max(cur.xp, Math.min(0x7FFFFFFF, xpForLevel(preservedLevel) + Math.max(0, xpGain)));
+    cur.xp = Math.max(cur.xp, Math.min(MAX_SKILL_XP, xpForLevel(preservedLevel) + Math.max(0, xpGain)));
     newLevel = preservedLevel;
   }
   const leveled = newLevel > oldLevel;

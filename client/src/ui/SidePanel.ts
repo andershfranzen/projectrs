@@ -1,6 +1,6 @@
 import {
   INVENTORY_SIZE, ClientOpcode, encodePacket,
-  ALL_SKILLS, SKILL_NAMES, SKILL_COLORS, xpForLevel,
+  ALL_SKILLS, MAX_SKILL_LEVEL, MAX_SKILL_XP, SKILL_NAMES, SKILL_COLORS, xpForLevel,
   CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, SOFT_CLAY_WATER_CONTAINER_ITEM_IDS,
   BUCKET_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID,
   LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES,
@@ -2161,13 +2161,18 @@ export class SidePanel {
     this.hideSkillXpTooltip();
     const data = this.skills.get(skillId);
     if (!data) return;
-    const nextLevelXp = xpForLevel(data.level + 1);
-    const xpLeft = Math.max(0, nextLevelXp - data.xp);
+    const targetXp = this.skillLevelProgressTargetXp(data);
+    const xpLeft = Math.max(0, targetXp - data.xp);
     const progress = this.skillLevelProgressPercent(data);
+    const body = data.xp >= MAX_SKILL_XP
+      ? 'XP cap'
+      : data.level >= MAX_SKILL_LEVEL
+        ? [`${this.formatPercent(progress)} of XP cap`, `${xpLeft} XP to cap`]
+        : [`${this.formatPercent(progress)} of level`, `${xpLeft} XP left`];
 
     this.skillXpTooltip = new HoverTooltip({
       title: SKILL_NAMES[skillId],
-      body: data.level >= 99 ? 'Max level' : [`${this.formatPercent(progress)} of level`, `${xpLeft} XP left`],
+      body,
       x,
       y,
       minWidthPx: 136,
@@ -3407,25 +3412,28 @@ export class SidePanel {
 
     if (levelEl) levelEl.textContent = data.level.toString();
 
-    // XP progress to next level
+    // XP progress to next level, or to the XP cap once the level cap is reached.
     const progress = this.skillLevelProgressPercent(data);
     if (barEl) barEl.style.width = `${progress}%`;
 
-    const nextLevelXp = xpForLevel(data.level + 1);
     if (xpEl) {
       const currentXpText = this.formatSkillBarXp(data.xp);
-      const nextXpText = this.formatSkillBarXp(data.level >= 99 ? data.xp : nextLevelXp);
+      const nextXpText = this.formatSkillBarXp(this.skillLevelProgressTargetXp(data));
       xpEl.textContent = `${currentXpText} / ${nextXpText}`;
     }
   }
 
   private skillLevelProgressPercent(data: SkillData): number {
-    if (data.level >= 99) return 100;
     const currentLevelXp = xpForLevel(data.level);
-    const nextLevelXp = xpForLevel(data.level + 1);
+    const nextLevelXp = this.skillLevelProgressTargetXp(data);
     const xpInLevel = Math.max(0, data.xp - currentLevelXp);
     const xpNeeded = nextLevelXp - currentLevelXp;
     return xpNeeded > 0 ? Math.max(0, Math.min(100, (xpInLevel / xpNeeded) * 100)) : 100;
+  }
+
+  private skillLevelProgressTargetXp(data: SkillData): number {
+    if (data.level >= MAX_SKILL_LEVEL) return MAX_SKILL_XP;
+    return Math.min(MAX_SKILL_XP, xpForLevel(data.level + 1));
   }
 
   private formatPercent(value: number): string {

@@ -1,5 +1,5 @@
 import { World } from '../World';
-import { ALL_SKILLS, SKILL_NAMES, normalizeSkillId, type QuestDef, type SkillId } from '@projectrs/shared';
+import { ALL_SKILLS, MAX_SKILL_LEVEL, SKILL_NAMES, normalizeSkillId, type QuestDef, type SkillId } from '@projectrs/shared';
 import type { ServerWebSocket } from 'bun';
 import type { GameEventLogInput, SocialEntry, SocialListKind, SocialLists } from '../Database';
 import type { Player } from '../entity/Player';
@@ -593,7 +593,7 @@ function handleCommand(
         return;
       }
       world.maxPlayerStats(player);
-      sendSystem(ws, 'All stats maxed to 99.');
+      sendSystem(ws, `All stats maxed to ${MAX_SKILL_LEVEL}.`);
       break;
     }
 

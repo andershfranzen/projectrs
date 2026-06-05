@@ -23,3 +23,4 @@ export * from './npcSafety';
 export * from './png';
 export * from './projectile';
 export * from './movementPath';
+export * from './targetPathing';

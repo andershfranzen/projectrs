@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { addXp, initSkills, xpForLevel } from './skills';
+import { addXp, initSkills, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, xpForLevel } from './skills';
 
 test('addXp preserves admin-granted levels when saved XP is below the level floor', () => {
   const skills = initSkills();
@@ -25,6 +25,29 @@ test('addXp still levels normally from coherent XP state', () => {
   expect(skills.mining.level).toBe(2);
   expect(skills.mining.currentLevel).toBe(2);
   expect(skills.mining.xp).toBe(xpForLevel(2));
+});
+
+test('XP curve continues past 99 until the int31 cap makes level 150 the ceiling', () => {
+  expect(xpForLevel(99)).toBe(13034431);
+  expect(xpForLevel(100)).toBe(14391160);
+  expect(xpForLevel(MAX_SKILL_LEVEL)).toBe(2033749558);
+  expect(xpForLevel(MAX_SKILL_LEVEL + 1)).toBe(2245441392);
+  expect(xpForLevel(MAX_SKILL_LEVEL + 1)).toBeGreaterThan(MAX_SKILL_XP);
+  expect(levelFromXp(MAX_SKILL_XP)).toBe(MAX_SKILL_LEVEL);
+});
+
+test('addXp caps XP at int31 and level at the highest reachable level', () => {
+  const skills = initSkills();
+  skills.mining.level = MAX_SKILL_LEVEL - 1;
+  skills.mining.currentLevel = MAX_SKILL_LEVEL - 1;
+  skills.mining.xp = xpForLevel(MAX_SKILL_LEVEL) - 1;
+
+  const result = addXp(skills, 'mining', MAX_SKILL_XP);
+
+  expect(result).toEqual({ leveled: true, newLevel: MAX_SKILL_LEVEL });
+  expect(skills.mining.level).toBe(MAX_SKILL_LEVEL);
+  expect(skills.mining.currentLevel).toBe(MAX_SKILL_LEVEL);
+  expect(skills.mining.xp).toBe(MAX_SKILL_XP);
 });
 
 test('hitpoints level-up adds gained max hp without full healing', () => {

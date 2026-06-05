@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ALL_SKILLS, xpForLevel } from '@projectrs/shared';
+import { ALL_SKILLS, MAX_SKILL_LEVEL, MAX_SKILL_XP } from '@projectrs/shared';
 import { World } from './World';
 import { Player } from './entity/Player';
 
@@ -8,7 +8,7 @@ function makePlayer(name: string): Player {
 }
 
 describe('admin stat helpers', () => {
-  test('maxPlayerStats sets every skill to exact level-99 XP and persists', () => {
+  test('maxPlayerStats sets every skill to the highest reachable level and XP cap', () => {
     const player = makePlayer('admin');
     let skillSyncs = 0;
     let saves = 0;
@@ -24,12 +24,11 @@ describe('admin stat helpers', () => {
 
     world.maxPlayerStats(player);
 
-    const maxXp = xpForLevel(99);
     for (const skillId of ALL_SKILLS) {
-      expect(player.skills[skillId]).toEqual({ xp: maxXp, level: 99, currentLevel: 99 });
+      expect(player.skills[skillId]).toEqual({ xp: MAX_SKILL_XP, level: MAX_SKILL_LEVEL, currentLevel: MAX_SKILL_LEVEL });
     }
-    expect(player.health).toBe(99);
-    expect(player.maxHealth).toBe(99);
+    expect(player.health).toBe(MAX_SKILL_LEVEL);
+    expect(player.maxHealth).toBe(MAX_SKILL_LEVEL);
     expect(player.syncDirty).toBe(true);
     expect(skillSyncs).toBe(1);
     expect(saves).toBe(1);

@@ -2,7 +2,7 @@ import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANG
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
-import { addXp, statRandom, spellSchoolSkill, xpForLevel } from '@projectrs/shared';
+import { addXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, statRandom, spellSchoolSkill } from '@projectrs/shared';
 import { GameMap } from './GameMap';
 import { Player, type EquipSlot, type PlayerAmmo } from './entity/Player';
 import { Npc, type NpcOptions } from './entity/Npc';
@@ -17,7 +17,7 @@ import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } f
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
-import { DEFAULT_MAX_SEARCH_TILES, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
+import { DEFAULT_MAX_SEARCH_TILES, buildNaiveInteractionPath, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import type { ServerWebSocket } from 'bun';
@@ -262,6 +262,7 @@ const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
 const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
 const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
+const PLAYER_NPC_NAIVE_PATH_MAX_STEPS = 50;
 const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 const MITHRIL_ROCK_OBJECT_DEF_ID = 16;
 const MITHRIL_PICKAXE_ITEM_ID = 55;
@@ -542,12 +543,10 @@ export class World {
   private doorObjectsByMap: Map<string, Set<WorldObject>> = new Map();
   /** Tiles blocked by non-depleted world objects, keyed by map+floor+tile. */
   private blockedObjectTiles: Set<string> = new Set();
-  // Tile occupancy for entities (players + NPC footprints), rebuilt at the
-  // top of each tick. NPC chase/wander checks this so NPCs do not stack with
-  // entities, but player movement intentionally ignores player occupancy:
-  // players are allowed to walk through and stand on the same tile.
+  // Tile occupancy for entities (players + NPC footprints), rebuilt during
+  // ticks. NPC route planning ignores this, but the actual NPC step check uses
+  // it so temporary occupants stall movement without discarding the route.
   private entityTileOccupants: Set<number> = new Set();
-  private playerTileOccupants: Set<number> = new Set();
   private entityTileOccupantsDirty: boolean = true;
 
   private currentTick: number = 0;
@@ -1142,20 +1141,65 @@ export class World {
     });
   }
 
-  /** Path from the player to the NPC's interaction surface. Targets the
-   *  closest reachable cardinal-adjacent interaction tile directly, avoiding
-   *  post-path trimming that breaks compressed corner paths. */
+  /** Path from the player to the NPC's interaction surface. This intentionally
+   *  mirrors NPC chase: repeatedly take the simple LostCity-style local step
+   *  toward the interaction surface, and stop when the next local step is
+   *  blocked instead of routing around obstacles with full BFS. */
   private findPlayerPathToNpc(player: Player, npc: Npc): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
-    return findPathToRectInteraction({
-      startX: player.position.x,
-      startZ: player.position.y,
-      targetX: npc.position.x,
-      targetZ: npc.position.y,
-      targetSize: npc.size,
-      collision: this.playerPathCollision(player, map),
-      maxSearchTiles: PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
-    });
+    const collision = this.playerPathCollision(player, map);
+    return buildNaiveInteractionPath(
+      collision,
+      player.position.x,
+      player.position.y,
+      1,
+      npc.position.x,
+      npc.position.y,
+      npc.size,
+      {
+        maxSteps: PLAYER_NPC_NAIVE_PATH_MAX_STEPS,
+        reached: (x, z) => isRectInteractionTileReachable(
+          collision,
+          Math.floor(x),
+          Math.floor(z),
+          npc.position.x,
+          npc.position.y,
+          npc.size,
+        ),
+      },
+    );
+  }
+
+  private findPlayerPathToNpcRange(
+    player: Player,
+    npc: Npc,
+    range: number,
+    mode: 'euclidean' | 'chebyshev',
+    requireRangedLineOfSight: boolean,
+  ): { x: number; z: number }[] {
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map);
+    return buildNaiveInteractionPath(
+      collision,
+      player.position.x,
+      player.position.y,
+      1,
+      npc.position.x,
+      npc.position.y,
+      npc.size,
+      {
+        maxSteps: PLAYER_NPC_NAIVE_PATH_MAX_STEPS,
+        reached: (x, z) => this.isPointInNpcAttackRangeFrom(
+          player,
+          npc,
+          x,
+          z,
+          range,
+          mode,
+          requireRangedLineOfSight,
+        ),
+      },
+    );
   }
 
   private isPlayerNpcInteractionReachable(player: Player, npc: Npc): boolean {
@@ -1348,28 +1392,9 @@ export class World {
     mode: 'euclidean' | 'chebyshev' = 'euclidean',
     requireRangedLineOfSight: boolean = false,
   ): boolean {
-    const path = this.findPlayerPathToNpc(player, npc);
+    const path = this.findPlayerPathToNpcRange(player, npc, range, mode, requireRangedLineOfSight);
     if (path.length === 0) return false;
-
-    let cutIdx = path.length;
-    for (let i = 0; i < path.length; i++) {
-      if (this.isPointInNpcAttackRangeFrom(
-        player,
-        npc,
-        path[i].x,
-        path[i].z,
-        range,
-        mode,
-        requireRangedLineOfSight,
-      )) {
-        cutIdx = i + 1;
-        break;
-      }
-    }
-
-    const queue = path.slice(0, cutIdx);
-    if (queue.length === 0) return false;
-    player.setMoveQueue(queue);
+    player.setMoveQueue(path);
     return true;
   }
 
@@ -3287,12 +3312,10 @@ export class World {
     if (this.entityTileOccupantsDirty === false && this.entityTileOccupants) return;
     if (!this.entityTileOccupants) this.entityTileOccupants = new Set();
     this.entityTileOccupants.clear();
-    this.playerTileOccupants.clear();
     for (const [, player] of this.players) {
       if (player.disconnected) continue;
       const key = this.entityTileKeyFor(player.currentMapLevel, player.position.x, player.position.y, player.currentFloor);
       this.entityTileOccupants.add(key);
-      this.playerTileOccupants.add(key);
     }
     for (const [, npc] of this.npcs) {
       if (npc.dead) continue;
@@ -6045,12 +6068,11 @@ export class World {
   }
 
   maxPlayerStats(player: Player): void {
-    const maxXp = xpForLevel(99);
     for (const skillId of ALL_SKILLS) {
       const skill = player.skills[skillId];
-      skill.xp = maxXp;
-      skill.level = 99;
-      skill.currentLevel = 99;
+      skill.xp = MAX_SKILL_XP;
+      skill.level = MAX_SKILL_LEVEL;
+      skill.currentLevel = MAX_SKILL_LEVEL;
     }
     player.syncHealthFromSkills();
     player.syncDirty = true;
@@ -8050,6 +8072,7 @@ export class World {
 
   private tickNpcAI(): void {
     for (const [, npc] of this.npcs) {
+      this.rebuildEntityTileOccupants();
       if (npc.dead) {
         if (npc.tickRespawn()) {
           this.handleNpcRespawn(npc);
@@ -8114,21 +8137,25 @@ export class World {
             }
           }
         }
-        // Raw per-tile collision. The shared pathing validator expands these
-        // facts over the moving NPC's footprint and leading wall edges.
+        // Static per-tile collision. The shared pathing validator expands
+        // these facts over the moving NPC's footprint and leading wall edges.
+        // Entity occupancy is deliberately omitted here: OSRS-style route
+        // finders ignore players/NPCs and let the movement step stall later.
         const rawNpcTileBlocked = (x: number, z: number): boolean => {
           const tileX = Math.floor(x);
           const tileZ = Math.floor(z);
           const objectKey = this.blockedKeyFor(mapId, tileX, tileZ, npcFloor);
-          const entityKey = this.entityTileKeyFor(mapId, tileX, tileZ, npcFloor);
           if (map.isTileBlockedOnFloor(tileX, tileZ, npcFloor)) return true;
           if (this.blockedObjectTiles.has(objectKey)) return true;
-          const combatMotion = npc.combatTarget != null || npc.retreatTarget != null;
-          const selfOccupied = size <= 1 ? entityKey === selfEntityKey : (selfFootprintKeys?.has(entityKey) ?? false);
-          if ((this.entityTileOccupants?.has(entityKey) ?? false) && !selfOccupied) {
-            if (!combatMotion || this.playerTileOccupants.has(entityKey)) return true;
-          }
           return false;
+        };
+        const rawNpcStepBlocked = (x: number, z: number): boolean => {
+          const tileX = Math.floor(x);
+          const tileZ = Math.floor(z);
+          if (rawNpcTileBlocked(tileX, tileZ)) return true;
+          const entityKey = this.entityTileKeyFor(mapId, tileX, tileZ, npcFloor);
+          const selfOccupied = size <= 1 ? entityKey === selfEntityKey : (selfFootprintKeys?.has(entityKey) ?? false);
+          return (this.entityTileOccupants?.has(entityKey) ?? false) && !selfOccupied;
         };
         const rawNpcWallBlocked = (fx: number, fz: number, tx: number, tz: number): boolean =>
           map.isWallBlockedOnFloor(fx, fz, tx, tz, npc.currentFloor);
@@ -8148,7 +8175,7 @@ export class World {
             actorSize: size,
             maxSearchTiles: 512,
           });
-        npc.processAI(rawNpcTileBlocked, rawNpcWallBlocked, npcFindPath);
+        npc.processAI(rawNpcTileBlocked, rawNpcWallBlocked, npcFindPath, rawNpcStepBlocked);
       }
       if (hadCombatTarget && npc.combatTarget == null) {
         if (previousCombatTargetId !== undefined) {

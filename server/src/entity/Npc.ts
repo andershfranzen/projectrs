@@ -412,7 +412,7 @@ export class Npc extends Entity {
            Math.abs(z - this.spawnZ) <= wr + 0.5;
   }
 
-  private followPath(collision: PathingCollision): boolean {
+  private followPath(pathCollision: PathingCollision, movementCollision: PathingCollision = pathCollision): boolean {
     if (this.pathQueue.length === 0) return false;
     const next = this.pathQueue[0];
     const px = Math.floor(this.position.x);
@@ -421,10 +421,11 @@ export class Npc extends Entity {
     const nz = Math.floor(next.z);
     const dx = nx - px;
     const dz = nz - pz;
-    if (Math.abs(dx) > 1 || Math.abs(dz) > 1 || !canTravel(collision, px, pz, dx, dz, this.size)) {
+    if (Math.abs(dx) > 1 || Math.abs(dz) > 1 || !canTravel(pathCollision, px, pz, dx, dz, this.size)) {
       this.pathQueue.length = 0;
       return false;
     }
+    if (!canTravel(movementCollision, px, pz, dx, dz, this.size)) return false;
     this.moveTo(next.x, next.z);
     this.pathQueue.shift();
     return true;
@@ -578,9 +579,11 @@ export class Npc extends Entity {
     isBlocked: (x: number, z: number) => boolean,
     isWallBlocked?: (fx: number, fz: number, tx: number, tz: number) => boolean,
     findPath?: (sx: number, sz: number, gx: number, gz: number) => { x: number; z: number }[],
+    isStepBlocked: (x: number, z: number) => boolean = isBlocked,
   ): void {
     if (this.dead) return;
-    const collision = callbackPathingCollision(isBlocked, isWallBlocked);
+    const pathCollision = callbackPathingCollision(isBlocked, isWallBlocked);
+    const movementCollision = callbackPathingCollision(isStepBlocked, isWallBlocked);
 
     // --- PLAYERESCAPE-style low-HP retreat ---
     if (this.retreatTarget) {
@@ -601,7 +604,7 @@ export class Npc extends Entity {
         return;
       }
 
-      const retreatResult = this.retreatStepAwayFrom(targetX, targetZ, collision);
+      const retreatResult = this.retreatStepAwayFrom(targetX, targetZ, movementCollision);
       if (retreatResult === 'blocked') {
         this.clearRetreatTarget(target.id);
       }
@@ -643,7 +646,7 @@ export class Npc extends Entity {
           return;
         }
       }
-      this.followPath(collision);
+      this.followPath(pathCollision, movementCollision);
       return;
     }
 
@@ -678,19 +681,19 @@ export class Npc extends Entity {
       this.pathQueue.length = 0;
       if (this.isFootprintTile(targetTileX, targetTileZ)) {
         if (this.size > 1 && this.shouldDelayOverlapEscape(this.combatTarget.id)) return;
-        if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, collision)) return;
+        if (this.stepOutFromOverlappingTarget(targetTileX, targetTileZ, movementCollision)) return;
       } else {
         this.resetOverlapEscapeDelay();
       }
       const targetSize = this.combatTarget instanceof Npc ? this.combatTarget.size : 1;
-      this.naiveChaseStep(targetX, targetZ, targetSize, collision);
+      this.naiveChaseStep(targetX, targetZ, targetSize, movementCollision);
       return;
     }
 
     // --- Wander ---
     if (this.wanderRange > 0) {
       if (this.pathQueue.length > 0) {
-        this.followPath(collision);
+        this.followPath(pathCollision, movementCollision);
         if (this.pathQueue.length === 0) {
           this.wanderCooldown = 5 + Math.floor(Math.random() * 15);
         }

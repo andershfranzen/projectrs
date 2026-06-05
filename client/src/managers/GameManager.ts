@@ -60,7 +60,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -74,6 +74,7 @@ const MODERATOR_NAME_COLOR = '#62a8ff';
 const GEAR_DEBUG_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
+const NPC_TARGET_NAIVE_PATH_MAX_STEPS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
@@ -5908,46 +5909,39 @@ export class GameManager {
     rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
     requireRangedLineOfSight: boolean = false,
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
-    const candidates = this.getNpcInteractionTilesWithLineOfWalk(npcEntityId, target)
-      .map(tile => ({
-        x: tile.x,
-        z: tile.z,
-        dist: Math.max(Math.abs((tile.x + 0.5) - this.playerX), Math.abs((tile.z + 0.5) - this.playerZ)),
-      }));
-    candidates.sort((a, b) => a.dist - b.dist);
+    const reached = (x: number, z: number): boolean =>
+      this.isPointInNpcInteractionRange(npcEntityId, target, x, z, requiredRange, rangeMode, requireRangedLineOfSight);
 
-    for (const tile of candidates) {
-      if (Math.floor(this.playerX) === tile.x && Math.floor(this.playerZ) === tile.z) {
-        return { path: [], preserveCurrentStep: false };
-      }
-      const result = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
-      if (result.path.length > 0) {
-        const last = result.path[result.path.length - 1];
-        const reachesInteractionTile = Math.floor(last.x) === tile.x && Math.floor(last.z) === tile.z;
-        if (requiredRange <= NPC_INTERACTION_RANGE && reachesInteractionTile) {
-          return result;
-        }
-        if (requiredRange > NPC_INTERACTION_RANGE) {
-          for (let i = 0; i < result.path.length; i++) {
-            const step = result.path[i];
-            if (this.isPointInNpcInteractionRange(npcEntityId, target, step.x, step.z, requiredRange, rangeMode, requireRangedLineOfSight)) {
-              return {
-                path: result.path.slice(0, i + 1),
-                preserveCurrentStep: result.preserveCurrentStep,
-              };
-            }
-          }
-        }
-        // findPath() falls back to a closest-approach tile when the exact
-        // adjacent tile is unreachable. For large NPCs, accepting that here
-        // can walk the player near the body but still outside attack/talk
-        // range, so keep trying other sides unless the terminal tile works.
-        if (requiredRange > NPC_INTERACTION_RANGE && this.isPointInNpcInteractionRange(npcEntityId, target, last.x, last.z, requiredRange, rangeMode, requireRangedLineOfSight)) {
-          return result;
-        }
-      }
+    const activeStep = this.tileProgress > 0 ? this.getActiveUnitStep() : null;
+    const start = activeStep?.target ?? { x: this.playerX, z: this.playerZ };
+    if (!activeStep && reached(this.playerX, this.playerZ)) {
+      return { path: [], preserveCurrentStep: false };
     }
-    return { path: [], preserveCurrentStep: false };
+
+    const path = buildNaiveInteractionPath(
+      {
+        width: this.chunkManager.getMapWidth(),
+        height: this.chunkManager.getMapHeight(),
+        isTileBlocked: this.isTileBlocked,
+        isWallBlocked: this.isWallBlockedForPath,
+      },
+      start.x,
+      start.z,
+      1,
+      target.x,
+      target.z,
+      this.getNpcTileSize(npcEntityId),
+      {
+        maxSteps: NPC_TARGET_NAIVE_PATH_MAX_STEPS,
+        reached,
+      },
+    );
+
+    if (!activeStep) return { path, preserveCurrentStep: false };
+    if (reached(activeStep.target.x, activeStep.target.z) || path.length === 0) {
+      return { path: [activeStep.target], preserveCurrentStep: true };
+    }
+    return { path: [activeStep.target, ...path], preserveCurrentStep: true };
   }
 
   private getLocalWeaponDef(): ItemDef | undefined {
