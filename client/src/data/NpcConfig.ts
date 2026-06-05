@@ -1,4 +1,6 @@
-import { getCharacterModelPath, type NpcDef, type PlayerAppearance } from '@projectrs/shared';
+import { getCharacterModelPath } from '../../../shared/character';
+import type { PlayerAppearance } from '../../../shared/appearance';
+import type { NpcDef } from '../../../shared/types';
 
 export const NPC_NAMES: Record<number, string> = {
   1: 'Chicken', 2: 'Giant Rat', 3: 'Goblin', 4: 'Wolf',

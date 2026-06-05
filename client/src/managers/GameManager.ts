@@ -60,7 +60,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -748,6 +748,7 @@ export class GameManager {
     // HUD
     this.createHUD();
     this.sidePanel = new SidePanel(this.network, this.token);
+    this.sidePanel.setAdminItemDeletionEnabled(this.isAdmin);
     this.sidePanel.setSpellCastCallback((spellIndex) => this.sidePanel!.setTargetingSpell(spellIndex));
     this.sidePanel.setAutocastChangeCallback((spellIndex) => this.handleAutocastChange(spellIndex));
     // Eager-load the spell catalogue so the spellbook tabs render locked
@@ -781,6 +782,7 @@ export class GameManager {
     });
     this.smithingPanel = new SmithingPanel();
     this.bankPanel = new BankPanel(this.network, { requestQuantity });
+    this.bankPanel.setAdminItemDeletionEnabled(this.isAdmin);
     this.tradePanel = new TradePanel(this.network, {
       onClose: () => this.sidePanel?.setTradeOfferCallback(null),
       requestQuantity,
@@ -1200,6 +1202,7 @@ export class GameManager {
       this.hideContextMenu();
       this.clearPredictedPath();
       this.clearLocalNpcCombatState();
+      this.clearDuelFaceTarget();
       this.duelActive = false;
       this.currentDuelOpponentEntityId = -1;
       this.isSkilling = false;
@@ -2646,8 +2649,10 @@ export class GameManager {
 
       if (entityId === this.localPlayerId) {
         if (hasRoleFlags) {
+          const wasAdmin = this.isAdmin;
           this.isAdmin = syncIsAdmin;
           this.isModerator = syncIsModerator;
+          if (this.isAdmin !== wasAdmin) this.updateAdminSurfaces();
         }
         // While a COMBAT_HIT splat is pending for the local player, defer
         // applying the new HP so the bar/HUD drop in sync with the splat.
@@ -3616,6 +3621,7 @@ export class GameManager {
       if (reason === 1) this.chatPanel?.addSystemMessage(`Duel with ${partnerName} declined.`, '#ff0');
       else this.chatPanel?.addSystemMessage(`Duel with ${partnerName} ended.`, '#ff0');
       this.currentDuelPartnerName = '';
+      this.clearDuelFaceTarget();
       this.currentDuelOpponentEntityId = -1;
       this.duelActive = false;
     });
@@ -3630,12 +3636,14 @@ export class GameManager {
       this.clearPredictedPath(true);
       this.localPlayer?.stopWalking();
       this.faceLocalPlayerTowardTarget(otherEntityId);
+      this.refreshDuelFacing();
       this.minimap?.clearDestination();
       this.chatPanel?.addSystemMessage(`Duel started with ${name}.`, '#ff0');
     });
     this.network.on(ServerOpcode.DUEL_FINISH, (_op, v) => {
       const [winnerId, loserId, reason] = v;
       this.duelActive = false;
+      this.clearDuelFaceTarget();
       const partnerName = this.currentDuelPartnerName || 'player';
       if (winnerId === this.localPlayerId) {
         this.chatPanel?.addSystemMessage(`You defeated ${partnerName}.`, '#ff0');
@@ -4238,6 +4246,8 @@ export class GameManager {
         this.network.sendChat(`/tp ${worldX.toFixed(1)} ${worldZ.toFixed(1)}`);
       });
       this.sidePanel?.setAdminControls(false, () => {});
+      this.sidePanel?.setAdminItemDeletionEnabled(true);
+      this.bankPanel?.setAdminItemDeletionEnabled(true);
       this.chatPanel?.setAdminControls(true, () => this.openAdminPanel());
       this.mobileAdminButton?.remove();
       this.mobileAdminButton = null;
@@ -4246,6 +4256,8 @@ export class GameManager {
 
     this.inputManager.setTeleportClickHandler(null);
     this.sidePanel?.setAdminControls(false, () => {});
+    this.sidePanel?.setAdminItemDeletionEnabled(false);
+    this.bankPanel?.setAdminItemDeletionEnabled(false);
     this.chatPanel?.setAdminControls(false, () => {});
     this.mobileAdminButton?.remove();
     this.mobileAdminButton = null;
@@ -4826,9 +4838,10 @@ export class GameManager {
     if (!this.chunkManager.isPlacedObjectNode(rootNode)) return null;
 
     const rootAssetId = rootNode.metadata?.assetId;
-    if (!rootAssetId || !(rootAssetId in ASSET_TO_OBJECT_DEF)) return null;
+    if (!rootAssetId) return null;
 
-    const expectedDefId = ASSET_TO_OBJECT_DEF[rootAssetId];
+    const expectedDefId = objectDefIdForPlacedAsset(rootAssetId);
+    if (expectedDefId == null) return null;
     const placed = this.chunkManager.getPlacedObjectAuthoredPosition(rootNode);
     const px = placed.x;
     const pz = placed.z;
@@ -4858,8 +4871,9 @@ export class GameManager {
 
     if (def.category === 'ladder') return this.getLadderInteractionOptions(objectEntityId, def, data);
 
+    const displayName = this.worldObjectDisplayName(objectEntityId, def);
     return this.actionsForInstance(def, data.depleted, data, this.worldObjectInteractionActions(objectEntityId)).map((actionName, actionIdx) => ({
-      label: `${actionName} ${def.name}`,
+      label: `${actionName} ${displayName}`,
       primary: actionName === 'Use-quickly' ? false : undefined,
       action: () => this.interactObject(objectEntityId, actionIdx),
     }));
@@ -4871,6 +4885,17 @@ export class GameManager {
     return Array.isArray(actions) && actions.every(action => typeof action === 'string')
       ? actions
       : NO_INTERACTION_ACTIONS;
+  }
+
+  private worldObjectDisplayName(objectEntityId: number, def: WorldObjectDef): string {
+    const model = this.worldObjectModels.get(objectEntityId);
+    const placedName = model?.metadata?.placedName;
+    if (typeof placedName === 'string' && placedName.trim()) return placedName.trim();
+    const assetId = model?.metadata?.assetId;
+    if (def.id === GENERIC_SCENERY_OBJECT_DEF_ID && typeof assetId === 'string') {
+      return sceneryExamineMetaForAsset(assetId)?.name ?? def.name;
+    }
+    return def.name;
   }
 
   private getLadderInteractionOptions(
@@ -5048,6 +5073,30 @@ export class GameManager {
     if (targetId < 0) return;
     if (npcEntityId !== undefined && npcEntityId !== targetId) return;
     this.lockLocalPlayerFaceTowardNpc(targetId, target);
+  }
+
+  private clearDuelFaceTarget(): void {
+    if (this.currentDuelOpponentEntityId >= 0) {
+      this.entities.remoteCombatTargets.delete(this.currentDuelOpponentEntityId);
+    }
+  }
+
+  private refreshDuelFacing(): void {
+    if (!this.duelActive || this.currentDuelOpponentEntityId < 0) return;
+    const local = this.localPlayer;
+    if (!local) return;
+    const opponentId = this.currentDuelOpponentEntityId;
+    const targetState = this.entities.remoteTargets.get(opponentId);
+    if (targetState && targetState.floor !== this.currentFloor) return;
+    const opponent = this.entities.remotePlayers.get(opponentId);
+    if (!opponent) return;
+
+    const opponentAnchor = opponent.getTargetAnchor();
+    local.lockFaceTowardXZ(opponentAnchor.x, opponentAnchor.z);
+
+    const localAnchor = local.getTargetAnchor();
+    opponent.lockFaceTowardXZ(localAnchor.x, localAnchor.z);
+    this.entities.remoteCombatTargets.set(opponentId, this.localPlayerId);
   }
 
   private getNpcVisualCenter(npcEntityId: number, target?: { x: number; z: number }): { x: number; z: number } | null {
@@ -5430,7 +5479,7 @@ export class GameManager {
     this.followPathTimer = 0;
     this.clearPredictedPath(true);
     this.localPlayer?.stopWalking();
-    this.faceLocalPlayerTowardTarget(playerEntityId);
+    this.refreshDuelFacing();
     this.minimap?.clearDestination();
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
   }
@@ -6230,9 +6279,20 @@ export class GameManager {
     if (!data) return;
     const def = this.objectDefsCache.get(data.defId);
     if (!this.isWorldObjectOnCurrentInteractionFloor(data, def)) return;
-    if (!this.isWorldObjectInteractable(def, data.depleted)) return;
+    if (!def || !this.isWorldObjectInteractable(def, data.depleted)) return;
     if (this.tryUseInventoryItemOn('object', objectEntityId)) return;
     this.spawnCursorClickEffect(this.lastClickX, this.lastClickY, '#ff3030');
+
+    const actionName = this.actionsForInstance(def, data.depleted, data, this.worldObjectInteractionActions(objectEntityId))[actionIndex];
+    if (actionName === 'Examine') {
+      const ptx = Math.floor(this.playerX);
+      const ptz = Math.floor(this.playerZ);
+      if (this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
+        this.stopLocalWalkForImmediateObjectInteraction(data);
+      }
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
+      return;
+    }
 
     // Smithing/crafting pickers are opened by the server after adjacency
     // validation. The client only predicts the walk for responsiveness.
@@ -8029,6 +8089,7 @@ export class GameManager {
 
     this.updateCameraKeys(dt);
 
+    this.refreshDuelFacing();
     if (this.localPlayer) this.localPlayer.updateAnimation(dt);
     this.updateEntityRenderVisibility();
     this.entities.updateAnimations(dt);
@@ -8062,8 +8123,13 @@ export class GameManager {
       this.renderLocalPlayerWithSlide();
     }
 
-    this.entities.interpolateRemotePlayers(dt, camPos, (entityId) =>
-      this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill);
+    this.entities.interpolateRemotePlayers(
+      dt,
+      camPos,
+      (entityId) => this.remoteAnimationStates.get(entityId)?.kind === PlayerAnimationKind.Skill,
+      (entityId) => this.resolveTargetableIncludingLocal(entityId),
+    );
+    this.refreshDuelFacing();
     this.maintainNpcMaterialization();
     this.entities.interpolateNpcs(dt, camPos, this.localPlayerId, this.localPlayer?.position ?? null);
     // Remote actors get per-frame combat face locks in EntityManager. The

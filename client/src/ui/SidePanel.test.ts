@@ -62,6 +62,7 @@ function makeInventoryPanel(): any {
   panel.network = { sendRaw: (packet: Uint8Array) => sent.push(packet) };
   panel.tradeOfferCallback = null;
   panel.sellCallback = null;
+  panel.adminItemDeletionEnabled = false;
   panel.using = null;
   panel.sent = sent;
   return panel;
@@ -130,6 +131,33 @@ describe('SidePanel inventory shortcuts', () => {
       opcode: ClientOpcode.PLAYER_DROP_ITEM,
       values: [3, 101],
     });
+  });
+
+  test('admin delete option sends the clicked inventory stack to the server', () => {
+    const panel = makeInventoryPanel();
+    panel.setAdminItemDeletionEnabled(true);
+
+    const options = panel.getInvSlotOptions(3);
+    const deleteOption = options.find((option: { label: string }) => option.label === 'Delete Test Item');
+    expect(deleteOption).toBeDefined();
+    deleteOption!.action();
+
+    expect(panel.sent).toHaveLength(1);
+    expect(decodePacket(panel.sent[0].buffer.slice(
+      panel.sent[0].byteOffset,
+      panel.sent[0].byteOffset + panel.sent[0].byteLength,
+    ))).toEqual({
+      opcode: ClientOpcode.PLAYER_DELETE_ITEM,
+      values: [3, 101],
+    });
+  });
+
+  test('non-admin inventory menu does not expose hard delete', () => {
+    const panel = makeInventoryPanel();
+
+    const options = panel.getInvSlotOptions(3);
+
+    expect(options.some((option: { label: string }) => option.label.startsWith('Delete '))).toBe(false);
   });
 });
 

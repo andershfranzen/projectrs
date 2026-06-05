@@ -415,6 +415,7 @@ export interface WorldObjectDef {
   width: number;
   height: number;
   color: [number, number, number]; // RGB 0-255 for client sprite
+  examineText?: string;
 
   // Harvesting (trees, rocks, fishing)
   skill?: string; // SkillId

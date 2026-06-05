@@ -26,6 +26,8 @@ function recordSparseBrowserTelemetry(stats: BotStats, seq: number, now: number)
 describe('anti-bot guardrails', () => {
   test('opcode rate rules bucket high-risk actions separately', () => {
     expect(getOpcodeRateRule(ClientOpcode.PLAYER_MOVE).bucket).toBe('movement');
+    expect(getOpcodeRateRule(ClientOpcode.PLAYER_DELETE_ITEM).bucket).toBe('inventory-ui');
+    expect(getOpcodeRateRule(ClientOpcode.BANK_DELETE).bucket).toBe('inventory-ui');
     expect(getOpcodeRateRule(ClientOpcode.TRADE_OFFER_ITEM).bucket).toBe('inventory-ui');
     expect(getOpcodeRateRule(ClientOpcode.CLIENT_PING).windowMs).toBe(10_000);
     expect(getOpcodeRateRule(ClientOpcode.CURSOR_POSITION).bucket).toBe('cursor');

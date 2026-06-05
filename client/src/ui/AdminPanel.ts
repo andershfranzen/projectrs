@@ -110,6 +110,7 @@ const GAME_EVENT_TYPES: Array<{ type: string; label: string }> = [
   { type: 'chat', label: 'Chat' },
   { type: 'private_chat', label: 'Private' },
   { type: 'chat_command', label: 'Commands' },
+  { type: 'admin', label: 'Admin' },
   { type: 'harvest', label: 'Harvest' },
   { type: 'item_pickup', label: 'Pickups' },
   { type: 'npc_kill', label: 'Kills' },
@@ -1115,6 +1116,7 @@ export class AdminPanel {
       case 'trade': return '#2f5f8f';
       case 'duel': return '#5f4a7d';
       case 'player_death': return '#8f2f28';
+      case 'admin': return '#7d4c2d';
       case 'chat':
       case 'private_chat':
       case 'chat_command':

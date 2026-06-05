@@ -44,7 +44,8 @@
         176,
         550
       ]
-    }
+    },
+    "examineText": "A tree with plenty of branches to chop."
   },
   {
     "id": 2,
@@ -91,7 +92,8 @@
         88,
         275
       ]
-    }
+    },
+    "examineText": "A sturdy oak tree with thick, useful timber."
   },
   {
     "id": 3,
@@ -146,7 +148,8 @@
         128,
         400
       ]
-    }
+    },
+    "examineText": "A copper-veined rock ready to be mined."
   },
   {
     "id": 4,
@@ -201,7 +204,8 @@
         96,
         350
       ]
-    }
+    },
+    "examineText": "An iron-rich rock. A pickaxe should loosen the ore."
   },
   {
     "id": 5,
@@ -226,7 +230,8 @@
     "harvestQuantity": 1,
     "harvestTime": 5,
     "depletionChance": 0,
-    "respawnTime": 0
+    "respawnTime": 0,
+    "examineText": "A good spot to cast a line."
   },
   {
     "id": 6,
@@ -321,7 +326,8 @@
         "secondInputItemId": 29,
         "secondInputQuantity": 1
       }
-    ]
+    ],
+    "examineText": "A hot furnace for smelting ore into metal bars."
   },
   {
     "id": 7,
@@ -403,7 +409,8 @@
         "levelRequired": 1,
         "xpReward": 25
       }
-    ]
+    ],
+    "examineText": "A cooking range with enough heat for a proper meal."
   },
   {
     "id": 8,
@@ -420,7 +427,8 @@
       200,
       200,
       220
-    ]
+    ],
+    "examineText": "A sacred altar. It hums faintly with old power."
   },
   {
     "id": 9,
@@ -467,7 +475,8 @@
         44,
         137
       ]
-    }
+    },
+    "examineText": "A willow tree with long, flexible branches."
   },
   {
     "id": 10,
@@ -514,7 +523,8 @@
         176,
         550
       ]
-    }
+    },
+    "examineText": "A dead tree. Dry, brittle wood clings to it."
   },
   {
     "id": 11,
@@ -569,7 +579,8 @@
         128,
         400
       ]
-    }
+    },
+    "examineText": "A pale rock with tin ore running through it."
   },
   {
     "id": 12,
@@ -624,7 +635,8 @@
         16,
         100
       ]
-    }
+    },
+    "examineText": "A dark coal rock. Useful fuel, if you can mine it."
   },
   {
     "id": 14,
@@ -671,7 +683,8 @@
         22,
         68
       ]
-    }
+    },
+    "examineText": "A maple tree with firm, clean timber."
   },
   {
     "id": 38,
@@ -718,7 +731,8 @@
         11,
         34
       ]
-    }
+    },
+    "examineText": "A yew tree with dense, valuable wood."
   },
   {
     "id": 13,
@@ -736,7 +750,8 @@
       80,
       40
     ],
-    "respawnTime": 200
+    "respawnTime": 200,
+    "examineText": "A door. It separates here from there."
   },
   {
     "id": 15,
@@ -758,7 +773,8 @@
       "targetMap": "underground",
       "targetX": 130.5,
       "targetZ": 130.5
-    }
+    },
+    "examineText": "A cave entrance leading into the unknown."
   },
   {
     "id": 16,
@@ -813,7 +829,8 @@
         12,
         100
       ]
-    }
+    },
+    "examineText": "A mithril-veined rock. It looks hard to mine."
   },
   {
     "id": 19,
@@ -1727,7 +1744,8 @@
         "hqChance": 0.00390625,
         "hqXpMultiplier": 3.25
       }
-    ]
+    ],
+    "examineText": "A heavy anvil scarred by years of hammer blows."
   },
   {
     "id": 20,
@@ -1770,7 +1788,8 @@
         "quantity": 1,
         "chance": 0.05
       }
-    ]
+    ],
+    "examineText": "A simple wooden chest with a stubborn lock."
   },
   {
     "id": 21,
@@ -1818,7 +1837,8 @@
         "quantity": 1,
         "chance": 0.05
       }
-    ]
+    ],
+    "examineText": "An iron-bound chest. It looks harder to crack."
   },
   {
     "id": 34,
@@ -1866,7 +1886,8 @@
         "quantity": 1,
         "chance": 0.05
       }
-    ]
+    ],
+    "examineText": "A black bronze chest with a serious-looking lock."
   },
   {
     "id": 35,
@@ -1904,7 +1925,8 @@
         "quantity": 1,
         "chance": 0.05
       }
-    ]
+    ],
+    "examineText": "A mithril chest. The lock looks expensive and unfriendly."
   },
   {
     "id": 36,
@@ -1937,7 +1959,8 @@
         "quantity": 1,
         "chance": 0.05
       }
-    ]
+    ],
+    "examineText": "A steel chest built to keep valuables where they are."
   },
   {
     "id": 37,
@@ -1970,7 +1993,8 @@
         "quantity": 1,
         "chance": 0.05
       }
-    ]
+    ],
+    "examineText": "A royal gold chest. Whoever locked it expected trouble."
   },
   {
     "id": 22,
@@ -1992,7 +2016,8 @@
     "harvestQuantity": 1,
     "harvestTime": 2,
     "depletionChance": 0.5,
-    "respawnTime": 35
+    "respawnTime": 35,
+    "examineText": "A rice plant ready for careful harvesting."
   },
   {
     "id": 23,
@@ -2010,7 +2035,8 @@
       150,
       95,
       40
-    ]
+    ],
+    "examineText": "A ladder connecting one level to another."
   },
   {
     "id": 24,
@@ -2038,7 +2064,8 @@
         "levelRequired": 1,
         "xpReward": 5
       }
-    ]
+    ],
+    "examineText": "A dark obelisk waiting for a suitable offering."
   },
   {
     "id": 25,
@@ -2093,7 +2120,8 @@
         5,
         50
       ]
-    }
+    },
+    "examineText": "A silver-veined rock with a pale metallic shine."
   },
   {
     "id": 26,
@@ -2111,7 +2139,8 @@
       235,
       225,
       190
-    ]
+    ],
+    "examineText": "A loose sheet of paper. Someone thought it was worth leaving here."
   },
   {
     "id": 27,
@@ -2128,7 +2157,8 @@
       80,
       80,
       90
-    ]
+    ],
+    "examineText": "A well with water below. The stones are worn smooth."
   },
   {
     "id": 28,
@@ -2150,7 +2180,8 @@
     "harvestQuantity": 1,
     "harvestTime": 2,
     "depletionChance": 0.5,
-    "respawnTime": 35
+    "respawnTime": 35,
+    "examineText": "A potato plant with edible roots beneath the soil."
   },
   {
     "id": 29,
@@ -2172,7 +2203,8 @@
     "harvestQuantity": 1,
     "harvestTime": 2,
     "depletionChance": 0.5,
-    "respawnTime": 35
+    "respawnTime": 35,
+    "examineText": "A cauliflower plant with a pale head tucked in its leaves."
   },
   {
     "id": 30,
@@ -2194,7 +2226,8 @@
     "harvestQuantity": 1,
     "harvestTime": 2,
     "depletionChance": 1,
-    "respawnTime": 0
+    "respawnTime": 0,
+    "examineText": "A patch of wheat, golden and ready to gather."
   },
   {
     "id": 31,
@@ -2212,7 +2245,8 @@
       120,
       80,
       45
-    ]
+    ],
+    "examineText": "A bank booth for speaking with the banker safely across the counter."
   },
   {
     "id": 32,
@@ -2258,7 +2292,8 @@
         "levelRequired": 8,
         "xpReward": 4
       }
-    ]
+    ],
+    "examineText": "A pottery wheel for shaping soft clay."
   },
   {
     "id": 33,
@@ -2313,7 +2348,8 @@
         128,
         400
       ]
-    }
+    },
+    "examineText": "A clay rock. Soft enough to mine, useful enough to keep."
   },
   {
     "id": 39,
@@ -2359,7 +2395,8 @@
         "levelRequired": 8,
         "xpReward": 2
       }
-    ]
+    ],
+    "examineText": "A kiln for firing shaped clay into finished pottery."
   },
   {
     "id": 40,
@@ -2387,7 +2424,8 @@
         "levelRequired": 1,
         "xpReward": 5
       }
-    ]
+    ],
+    "examineText": "A spinning wheel for twisting fibres into useful cord."
   },
   {
     "id": 41,
@@ -2442,7 +2480,8 @@
         5,
         50
       ]
-    }
+    },
+    "examineText": "A crimsonite rock with deep red mineral seams."
   },
   {
     "id": 42,
@@ -2497,7 +2536,8 @@
         5,
         50
       ]
-    }
+    },
+    "examineText": "A malachite rock marked by green mineral veins."
   },
   {
     "id": 43,
@@ -2515,7 +2555,8 @@
       150,
       140,
       125
-    ]
+    ],
+    "examineText": "Stone steps leading between levels."
   },
   {
     "id": 44,
@@ -2570,6 +2611,24 @@
         64,
         250
       ]
-    }
+    },
+    "examineText": "A sulphur-stained rock with a sharp mineral smell."
+  },
+  {
+    "id": 45,
+    "name": "Scenery",
+    "category": "scenery",
+    "actions": [
+      "Examine"
+    ],
+    "blocking": false,
+    "width": 1,
+    "height": 1,
+    "color": [
+      120,
+      110,
+      95
+    ],
+    "examineText": "A piece of scenery placed to make the world feel lived in."
   }
 ]

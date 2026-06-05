@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { COOKING_RANGE_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, WallEdge, type WorldObjectDef } from '@projectrs/shared';
+import { COOKING_RANGE_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, WallEdge, type WorldObjectDef } from '@projectrs/shared';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 
@@ -85,6 +85,25 @@ function canUseFromNorthWithAuthoredWalls(defId: number, name: string, category:
   return world.canUseObjectFromTile(player, obj, 10, 9, map);
 }
 
+function canUseGenericPlacedSceneryFromNorth(assetId: string, sourceMask: number, footprintMask: number): boolean {
+  const world = Object.create(World.prototype) as any;
+  world.npcs = new Map();
+  const player = makePlayer();
+  const obj = makeObject(GENERIC_SCENERY_OBJECT_DEF_ID, 'Scenery', 'scenery');
+  obj.assetId = assetId;
+  obj.def.blocking = false;
+  const map = {
+    isWallBlocked: () => (sourceMask | footprintMask) !== 0,
+    isWallBlockedOnFloor: () => (sourceMask | footprintMask) !== 0,
+    getWallOnFloor: (x: number, z: number) => {
+      if (x === 10 && z === 9) return sourceMask;
+      if (x === 10 && z === 10) return footprintMask;
+      return 0;
+    },
+  };
+  return world.canUseObjectFromTile(player, obj, 10, 9, map);
+}
+
 function makeBankerBehindBooth(): any {
   return {
     id: 777,
@@ -151,6 +170,56 @@ describe('wall-gated station interaction', () => {
   test('blocking objects can be used across their own full-tile footprint blocker', () => {
     expect(canUseFromNorthWithAuthoredWalls(8, 'Altar', 'altar', 0, FULL_TILE_WALL_MASK)).toBe(true);
     expect(canUseFromNorthWithAuthoredWalls(3, 'Copper Rock', 'rock', 0, FULL_TILE_WALL_MASK)).toBe(true);
+  });
+
+  test('generic placed scenery can be examined across its own editor block tile', () => {
+    expect(canUseGenericPlacedSceneryFromNorth('bush1', 0, FULL_TILE_WALL_MASK)).toBe(true);
+    expect(canUseGenericPlacedSceneryFromNorth('table1', 0, FULL_TILE_WALL_MASK)).toBe(true);
+    expect(canUseGenericPlacedSceneryFromNorth('chair', 0, FULL_TILE_WALL_MASK)).toBe(true);
+  });
+
+  test('generic placed scenery still cannot be examined through a source-side wall edge', () => {
+    expect(canUseGenericPlacedSceneryFromNorth('table1', WallEdge.S, FULL_TILE_WALL_MASK)).toBe(false);
+    expect(canUseGenericPlacedSceneryFromNorth('chair', WallEdge.S, FULL_TILE_WALL_MASK)).toBe(false);
+  });
+
+  test('non-adjacent examine does not queue movement around to the object', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = new Player('examine_path_test', 10.5, 7.5, fakeWs, 1);
+    player.currentMapLevel = 'kcmap';
+    player.currentFloor = 0;
+    const obj = makeObject(GENERIC_SCENERY_OBJECT_DEF_ID, 'Table', 'scenery');
+    obj.assetId = 'table1';
+    obj.def.blocking = false;
+    obj.def.actions = ['Examine'];
+    obj.currentActions = ['Examine'];
+    obj.depleted = false;
+    obj.displayName = 'Table';
+    obj.examineText = 'A plain wooden table.';
+    const messages: string[] = [];
+    const map = {
+      isBlocked: () => false,
+      isTileBlockedOnFloor: () => false,
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+      getWallOnFloor: () => 0,
+    };
+    world.currentTick = 0;
+    world.players = new Map([[player.id, player]]);
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.blockedObjectTiles = new Set();
+    world.maps = new Map([['kcmap', map]]);
+    world.getPlayerMap = () => map;
+    world.bumpActionRevision = () => {};
+    world.clearQueuedPlayerActions = () => {};
+    world.cancelItemProduction = () => {};
+    world.closeNpcUiContext = () => {};
+    world.sendChatSystem = (_player: Player, message: string) => { messages.push(message); };
+
+    world.handlePlayerInteractObject(player.id, obj.id, 0);
+
+    expect(player.hasMoveQueue()).toBe(false);
+    expect(messages).toEqual(["I can't reach that."]);
   });
 
   test('blocking objects cannot be used through a source-side wall edge', () => {

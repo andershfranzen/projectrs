@@ -25,6 +25,9 @@ export enum ClientOpcode {
    *  Server validates expectedItemId matches inventory[fromSlot] (stale-click guard) and
    *  refuses if a modal interface is open. Just swaps the two slots — no merge for stackables. */
   PLAYER_MOVE_INV_ITEM = 38,
+  /** Admin-only hard deletion of the clicked inventory stack. Values: [invSlot, expectedItemId].
+   *  Server validates the admin role, stale slot, and interface state; no ground item is created. */
+  PLAYER_DELETE_ITEM = 39,
   /** Choose an option in the currently open dialogue.
    *  Values: [npcEntityId, sessionId, optionIndex].
    *  Server validates the player has dialogue open with this NPC/session at
@@ -96,6 +99,8 @@ export enum ClientOpcode {
   BANK_WITHDRAW = 82,
   /** Close the bank UI. */
   BANK_CLOSE = 83,
+  /** Admin-only hard deletion of a bank stack. Values: [bankSlot, expectedItemId]. */
+  BANK_DELETE = 84,
 
   // --- Trade ---
   /** Send a trade request to another player. Values: [targetEntityId]. */

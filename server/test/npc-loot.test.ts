@@ -39,7 +39,7 @@ describe('NPC loot', () => {
     const originalRandom = Math.random;
     Math.random = () => 1;
     try {
-      expect(rollLoot(npcWithLoot(2))).toEqual([{ itemId: 14, quantity: 1 }]);
+      expect(rollLoot(npcWithLoot(2))).toEqual([{ itemId: 14, quantity: 1, dropChance: 1 }]);
     } finally {
       Math.random = originalRandom;
     }
@@ -76,6 +76,6 @@ describe('NPC loot', () => {
       }],
     ]);
 
-    expect(rollLoot(npc, { rareDropTables, rng: sequenceRng([0, 0.5]) })).toEqual([{ itemId: 14, quantity: 1 }]);
+    expect(rollLoot(npc, { rareDropTables, rng: sequenceRng([0, 0.5]) })).toEqual([{ itemId: 14, quantity: 1, dropChance: 1 }]);
   });
 });

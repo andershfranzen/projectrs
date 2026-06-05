@@ -484,7 +484,7 @@ export function rollLoot(npc: Npc, options: LootRollOptions = {}): RolledLootDro
   const drops: RolledLootDrop[] = [];
   for (const drop of npc.def.lootTable) {
     if (rng() <= drop.chance) {
-      drops.push({ itemId: drop.itemId, quantity: drop.quantity });
+      drops.push({ itemId: drop.itemId, quantity: drop.quantity, dropChance: drop.chance });
     }
   }
 

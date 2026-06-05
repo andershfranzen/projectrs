@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -266,6 +266,8 @@ const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 const MITHRIL_ROCK_OBJECT_DEF_ID = 16;
 const MITHRIL_PICKAXE_ITEM_ID = 55;
 const MITHRIL_PICKAXE_FIND_CHANCE = 1 / 2048;
+const RARE_DROP_LOG_CHANCE_THRESHOLD = 1 / 32;
+const RARE_DROP_TABLE_CHAT_MESSAGE = "All of a sudden you're feeling very lucky...";
 const LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS = new Set([
   1,   // Bones
   20,  // Big Bones
@@ -1527,7 +1529,9 @@ export class World {
     footprintTile: { x: number; z: number },
     map: GameMap,
   ): boolean {
-    if (!obj.def.blocking || obj.def.category === 'bank') return false;
+    const hasOwnFootprintCollision = obj.def.blocking
+      || (obj.assetId !== undefined && objectDefIdForPlacedAsset(obj.assetId) === obj.defId);
+    if (!hasOwnFootprintCollision || obj.def.category === 'bank') return false;
     const edge = this.sourceEdgeToward(tileX, tileZ, footprintTile.x, footprintTile.z);
     if (edge === null) return false;
     const getWallOnFloor = (map as Partial<GameMap>).getWallOnFloor;
@@ -1805,8 +1809,15 @@ export class World {
     const objectSpawns: RuntimeObjectSpawn[] = [];
     for (const placed of gameMap.placedObjects ?? []) {
       if (ASSET_TO_GROUND_ITEM_SPAWN[placed.assetId]) continue;
-      const defId = ASSET_TO_OBJECT_DEF[placed.assetId];
+      const defId = objectDefIdForPlacedAsset(placed.assetId);
       if (defId != null) {
+        const sceneryMeta = sceneryExamineMetaForAsset(placed.assetId);
+        if (BLOCKING_DECOR_ASSETS.has(placed.assetId)) {
+          const tx = Math.floor(placed.position.x);
+          const tz = Math.floor(placed.position.z);
+          const { floor } = this.resolveAuthoredFloor(gameMap, placed.position.x, placed.position.z, placed.position.y);
+          this.blockedObjectTiles.add(this.blockedKeyFor(mapId, tx, tz, floor));
+        }
         objectSpawns.push({
           objectId: defId,
           assetId: placed.assetId,
@@ -1814,8 +1825,8 @@ export class World {
           z: placed.position.z,
           y: placed.position.y,
           rotY: placed.rotation?.y,
-          name: placed.name,
-          examineText: placed.examineText,
+          name: placed.name || sceneryMeta?.name,
+          examineText: placed.examineText || sceneryMeta?.examineText,
           interactions: placed.interactions,
           defaultOpen: placed.defaultOpen === true,
           openDirection: placed.openDirection === 1 ? 1 : -1,
@@ -4263,6 +4274,43 @@ export class World {
     this.sendInventory(player);
   }
 
+  handleAdminDeleteInventoryItem(playerId: number, slotIndex: number, expectedItemId: number): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.isAdmin) return;
+    if (player.isBusyExceptDelayReason(this.currentTick, 'eat')) return;
+    if (player.openInterface !== null && player.openInterface !== 'bank') return;
+    if (slotIndex < 0 || slotIndex >= player.inventory.length) return;
+    const slot = player.inventory[slotIndex];
+    if (!slot || slot.itemId !== expectedItemId) return;
+
+    const removed = player.removeItem(slotIndex, slot.quantity);
+    if (removed.completed === 0) return;
+    const itemName = this.itemEventName(removed.itemId);
+
+    player.setDelay(this.currentTick, 1);
+    this.sendInventory(player);
+    this.recordGameEvent({
+      type: 'admin',
+      severity: 'warning',
+      message: `${player.name} deleted ${removed.completed} x ${itemName} from inventory`,
+      actorAccountId: player.accountId,
+      actorName: player.name,
+      itemId: removed.itemId,
+      itemName,
+      quantity: removed.completed,
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+      x: player.position.x,
+      z: player.position.y,
+      details: {
+        action: 'delete_item',
+        container: 'inventory',
+        slot: slotIndex,
+        expectedItemId,
+      },
+    });
+  }
+
   /** Drag-and-drop reorder of two inventory slots. Pure swap — no merge for
    *  stackables (drag-merge is a separate UX gesture and matches RS2 behavior).
    *  Atomic by construction: a single `[a, b] = [b, a]` mutation, no add/remove
@@ -4304,6 +4352,10 @@ export class World {
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     if (obj.def.category !== 'door') expectedDoorOpen = null;
     if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen)) return;
+    const action = obj.def.category === 'ladder'
+      ? obj.def.actions[actionIndex]
+      : obj.currentActions[actionIndex];
+    if (!action) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') {
       this.sendWorldObjectUpdate(player, obj);
@@ -4334,10 +4386,6 @@ export class World {
     this.closeNpcUiContext(player);
 
     // Check adjacency — player must be on a tile next to the object
-    const action = obj.def.category === 'ladder'
-      ? obj.def.actions[actionIndex]
-      : obj.currentActions[actionIndex];
-    if (!action) return;
     if (obj.def.category === 'ladder' && (action === 'Climb-up' || action === 'Climb-down') && !this.canPlayerUseLadderActionOnCurrentFloor(player, obj, action)) {
       this.sendWorldObjectUpdate(player, obj);
       this.sendChatSystem(player, action === 'Climb-down' ? "I can't climb down there." : "I can't climb up there.");
@@ -4345,6 +4393,10 @@ export class World {
     }
 
     if (!this.isAdjacentToObject(player, obj)) {
+      if (action === 'Examine') {
+        this.sendChatSystem(player, "I can't reach that.");
+        return;
+      }
       if (obj.def.category === 'door') {
         const swingSign = obj.doorOpen ? 0 : this.computeSwingSign(player, obj);
         const map = this.getPlayerMap(player);
@@ -4578,7 +4630,7 @@ export class World {
         ? 'I should sacrifice some relics for good luck!'
         : 'i wish i had something worth sacrificing';
     }
-    return obj.examineText || `It's ${obj.displayName}.`;
+    return obj.examineText || obj.def.examineText || `It's ${obj.displayName}.`;
   }
 
   private depleteObjectFromInteractionEffect(obj: WorldObject, respawnTicks?: number): void {
@@ -6262,6 +6314,41 @@ export class World {
     this.sendBankSlot(player, bankSlot);
   }
 
+  handleAdminDeleteBankItem(playerId: number, bankSlot: number, expectedItemId: number): void {
+    const player = this.players.get(playerId);
+    if (!player || !player.isAdmin) return;
+    if (player.isBusy(this.currentTick)) return;
+    if (player.openInterface !== 'bank') return;
+    if (bankSlot < 0 || bankSlot >= player.bank.length) return;
+    const slot = player.bank[bankSlot];
+    if (!slot || slot.itemId !== expectedItemId) return;
+
+    player.bank[bankSlot] = null;
+    player.setDelay(this.currentTick, 1);
+    this.sendBankSlot(player, bankSlot);
+    const itemName = this.itemEventName(slot.itemId);
+    this.recordGameEvent({
+      type: 'admin',
+      severity: 'warning',
+      message: `${player.name} deleted ${slot.quantity} x ${itemName} from bank`,
+      actorAccountId: player.accountId,
+      actorName: player.name,
+      itemId: slot.itemId,
+      itemName,
+      quantity: slot.quantity,
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+      x: player.position.x,
+      z: player.position.y,
+      details: {
+        action: 'delete_item',
+        container: 'bank',
+        slot: bankSlot,
+        expectedItemId,
+      },
+    });
+  }
+
   // ==========================================================================
   // TRADE
   // ==========================================================================
@@ -7628,7 +7715,14 @@ export class World {
         this.forEachPlayerNearOnFloor(groundItem.mapLevel, groundItem.floor, groundItem.x, groundItem.z, p =>
           this.sendGroundItemUpdate(p, groundItem));
       }
-      const rare = drop.rare === true || drop.source === 'rare_drop_table';
+      if (drop.source === 'rare_drop_table' && effectiveOwnerId != null && owner) {
+        this.sendChatSystem(owner, RARE_DROP_TABLE_CHAT_MESSAGE);
+      }
+      const lootTableChance = typeof drop.dropChance === 'number' && Number.isFinite(drop.dropChance)
+        ? drop.dropChance
+        : null;
+      const rareFromNormalLootTable = lootTableChance !== null && lootTableChance < RARE_DROP_LOG_CHANCE_THRESHOLD;
+      const rare = drop.rare === true || drop.source === 'rare_drop_table' || rareFromNormalLootTable;
       if (!rare && LOW_VALUE_NPC_DROP_LOG_SUPPRESSION_ITEM_IDS.has(drop.itemId)) continue;
       this.recordGameEvent({
         type: rare ? 'rare_drop' : 'npc_drop',
@@ -7650,6 +7744,9 @@ export class World {
         details: {
           groundItemId: id,
           ownerPlayerId: effectiveOwnerId,
+          lootTableChance,
+          rareChanceThreshold: rareFromNormalLootTable ? RARE_DROP_LOG_CHANCE_THRESHOLD : undefined,
+          rareReason: rareFromNormalLootTable ? 'loot_table_chance' : undefined,
           rareTableId: drop.rareTableId,
           rareAccessTableId: drop.rareAccessTableId,
         },
@@ -8749,10 +8846,13 @@ export class World {
               if (got.added > 0) {
                 this.quests.notifyQuestEvent(player, { type: 'itemPickup', itemId: drop.itemId, quantity: got.added, source: isChest ? 'chest' : 'harvest' });
               }
+              const rareFromExtraLootChance = Number.isFinite(drop.chance) && drop.chance < RARE_DROP_LOG_CHANCE_THRESHOLD;
               this.recordGameEvent({
-                type: isChest ? 'chest_loot' : 'bonus_loot',
-                severity: 'notable',
-                message: `${player.name} found ${gotQuantity} x ${name} from ${obj.def.name}`,
+                type: rareFromExtraLootChance ? 'rare_drop' : (isChest ? 'chest_loot' : 'bonus_loot'),
+                severity: rareFromExtraLootChance ? 'rare' : 'notable',
+                message: rareFromExtraLootChance
+                  ? `${player.name} rolled rare drop ${gotQuantity} x ${name} from ${obj.def.name}`
+                  : `${player.name} found ${gotQuantity} x ${name} from ${obj.def.name}`,
                 actorAccountId: player.accountId,
                 actorName: player.name,
                 itemId: drop.itemId,
@@ -8768,6 +8868,8 @@ export class World {
                   objectDefId: obj.defId,
                   objectName: obj.def.name,
                   chance: drop.chance,
+                  rareChanceThreshold: rareFromExtraLootChance ? RARE_DROP_LOG_CHANCE_THRESHOLD : undefined,
+                  rareReason: rareFromExtraLootChance ? 'drop_chance' : undefined,
                   added: got.added,
                   dropped: got.dropped,
                 },

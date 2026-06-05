@@ -166,6 +166,7 @@ export class SidePanel {
   private tradeOfferCallback: ((slot: number, itemId: number, quantity: number) => void) | null = null;
   private requestQuantity: QuantityInputRequester | null = null;
   private privateMessageTargetCallback: ((username: string) => void) | null = null;
+  private adminItemDeletionEnabled: boolean = false;
 
   // Social state
   private friends: SocialClientEntry[] = [];
@@ -672,6 +673,10 @@ export class SidePanel {
 
     this.adminButton.onclick = onOpen;
     this.accountActionsRow.style.width = '';
+  }
+
+  setAdminItemDeletionEnabled(enabled: boolean): void {
+    this.adminItemDeletionEnabled = enabled;
   }
 
   private buildUI(): HTMLDivElement {
@@ -3280,6 +3285,12 @@ export class SidePanel {
       label: `Drop ${name}`,
       action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DROP_ITEM, index, slot.itemId)),
     });
+    if (this.adminItemDeletionEnabled) {
+      options.push({
+        label: `Delete ${name}`,
+        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DELETE_ITEM, index, slot.itemId)),
+      });
+    }
 
     return options;
   }

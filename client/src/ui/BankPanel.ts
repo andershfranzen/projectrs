@@ -8,6 +8,7 @@ import type { QuantityInputRequester } from './QuantityInputPanel';
 interface BankSlotData { itemId: number; quantity: number }
 type BankDragSource = 'bank' | 'inventory';
 type BankDropTarget = 'bank' | 'inventory';
+type QuantityMenuOption = { label: string; n?: number; action?: () => void };
 
 interface BankTouchDragState {
   pointerId: number;
@@ -55,6 +56,7 @@ export class BankPanel {
   private touchDrag: BankTouchDragState | null = null;
   private suppressClickUntil: number = 0;
   private requestQuantity: QuantityInputRequester | null;
+  private adminItemDeletionEnabled: boolean = false;
 
   constructor(network: NetworkManager, hooks: { requestQuantity?: QuantityInputRequester } = {}) {
     this.network = network;
@@ -117,6 +119,10 @@ export class BankPanel {
     if (notifyServer) this.network.sendRaw(encodePacket(ClientOpcode.BANK_CLOSE));
   }
   isVisible(): boolean { return this.visible; }
+
+  setAdminItemDeletionEnabled(enabled: boolean): void {
+    this.adminItemDeletionEnabled = enabled;
+  }
 
   private buildUI(): { root: HTMLDivElement; bankGrid: HTMLDivElement; invGrid: HTMLDivElement } {
     const { root } = createModalPanel({
@@ -523,13 +529,21 @@ export class BankPanel {
   private onBankRightClick(slot: number, ev: MouseEvent): void {
     const s = this.bankSlots[slot];
     if (!s) return;
-    this.showQuantityMenu(ev, [
+    const name = this.itemName(s.itemId);
+    const options: QuantityMenuOption[] = [
       { label: 'Withdraw 1', n: 1 },
       { label: 'Withdraw 5', n: 5 },
       { label: 'Withdraw 10', n: 10 },
       { label: 'Withdraw X', n: 0 },
       { label: 'Withdraw All', n: -1 },
-    ], (n) => {
+    ];
+    if (this.adminItemDeletionEnabled) {
+      options.push({
+        label: `Delete ${name}`,
+        action: () => this.network.sendRaw(encodePacket(ClientOpcode.BANK_DELETE, slot, s.itemId)),
+      });
+    }
+    this.showQuantityMenu(ev, options, (n) => {
       if (n === 0) {
         this.promptWithdrawQuantity(slot, s);
         return;
@@ -545,13 +559,21 @@ export class BankPanel {
   private onInvRightClick(slot: number, ev: MouseEvent): void {
     const s = this.invSlots[slot];
     if (!s) return;
-    this.showQuantityMenu(ev, [
+    const name = this.itemName(s.itemId);
+    const options: QuantityMenuOption[] = [
       { label: 'Deposit 1', n: 1 },
       { label: 'Deposit 5', n: 5 },
       { label: 'Deposit 10', n: 10 },
       { label: 'Deposit X', n: 0 },
       { label: 'Deposit All', n: -1 },
-    ], (n) => {
+    ];
+    if (this.adminItemDeletionEnabled) {
+      options.push({
+        label: `Delete ${name}`,
+        action: () => this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_DELETE_ITEM, slot, s.itemId)),
+      });
+    }
+    this.showQuantityMenu(ev, options, (n) => {
       if (n === 0) {
         this.promptDepositQuantity(slot, s);
         return;
@@ -608,10 +630,10 @@ export class BankPanel {
     return this.itemDefs.get(itemId)?.name ?? 'items';
   }
 
-  private showQuantityMenu(ev: MouseEvent, opts: { label: string; n: number }[], cb: (n: number) => void): void {
+  private showQuantityMenu(ev: MouseEvent, opts: QuantityMenuOption[], cb: (n: number) => void): void {
     createContextMenu(opts.map((opt) => ({
       label: opt.label,
-      action: () => cb(opt.n),
+      action: () => opt.action ? opt.action() : cb(opt.n ?? 1),
     })), {
       x: ev.clientX,
       y: ev.clientY,

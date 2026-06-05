@@ -1,4 +1,4 @@
-import { STAIRS_OBJECT_DEF_ID } from './constants';
+import { GENERIC_SCENERY_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
 
 /**
  * Maps editor-placed asset IDs (GLB model names) to game object definition IDs (objects.json).
@@ -136,12 +136,148 @@ export function isGroundItemSpawnAssetId(assetId: string): boolean {
   return GROUND_ITEM_SPAWN_ASSET_IDS.has(assetId);
 }
 
+export interface SceneryExamineMeta {
+  name: string;
+  examineText: string;
+}
+
+export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta>> = {
+  'Bench_1': {
+    name: 'Bench',
+    examineText: 'A sturdy wooden bench for weary travellers.',
+  },
+  'Bench1': {
+    name: 'Bench',
+    examineText: 'A sturdy wooden bench for weary travellers.',
+  },
+  'bookcase2': {
+    name: 'Bookcase',
+    examineText: 'Shelves packed with dusty old books.',
+  },
+  'Bucket2': {
+    name: 'Bucket',
+    examineText: 'An empty bucket. It has seen plenty of chores.',
+  },
+  'bush1': {
+    name: 'Bush',
+    examineText: 'A thick bush with tangled branches.',
+  },
+  'bush2': {
+    name: 'Bush',
+    examineText: 'A scruffy bush growing stubbornly here.',
+  },
+  'bush3': {
+    name: 'Bush',
+    examineText: 'A leafy bush that helps fill out the scenery.',
+  },
+  'Cage_2': {
+    name: 'Cage',
+    examineText: 'A stout cage made from iron bars.',
+  },
+  'Carpet1x4': {
+    name: 'Carpet',
+    examineText: 'A long worn carpet, faded by many footsteps.',
+  },
+  'Carpet2x3': {
+    name: 'Carpet',
+    examineText: 'A worn carpet that makes the room feel lived in.',
+  },
+  'Chains_1003': {
+    name: 'Chains',
+    examineText: 'Heavy chains, cold and unpleasant to touch.',
+  },
+  'chair': {
+    name: 'Chair',
+    examineText: 'A simple wooden chair.',
+  },
+  'Coffin': {
+    name: 'Coffin',
+    examineText: 'A grim wooden coffin.',
+  },
+  'Coffin_2': {
+    name: 'Coffin',
+    examineText: 'A grim wooden coffin. Best left undisturbed.',
+  },
+  'Coffin_Door': {
+    name: 'Coffin lid',
+    examineText: 'The lid of a coffin. It looks heavy.',
+  },
+  'Coffin-Closed': {
+    name: 'Closed coffin',
+    examineText: 'A closed coffin. Whatever is inside can stay there.',
+  },
+  'Crate1': {
+    name: 'Crate',
+    examineText: 'A wooden crate. It is probably full of supplies.',
+  },
+  'Cross': {
+    name: 'Cross',
+    examineText: 'A weathered cross, placed with solemn purpose.',
+  },
+  'Fountain_2': {
+    name: 'Fountain',
+    examineText: 'A stone fountain. The water looks surprisingly clear.',
+  },
+  'helm shop sign': {
+    name: 'Helmet shop sign',
+    examineText: 'A sign advertising helmets and headgear.',
+  },
+  'Lamp': {
+    name: 'Lamp',
+    examineText: 'A lamp that keeps the gloom at bay.',
+  },
+  'Notice_Board': {
+    name: 'Notice board',
+    examineText: 'A board for notices, warnings, and local news.',
+  },
+  'OnePersonBed1': {
+    name: 'Bed',
+    examineText: 'A narrow bed. It looks more useful than comfortable.',
+  },
+  'ranged shop sign': {
+    name: 'Ranged shop sign',
+    examineText: 'A sign advertising bows, arrows, and ranged supplies.',
+  },
+  'RiceMill': {
+    name: 'Rice mill',
+    examineText: 'A small mill used for processing rice.',
+  },
+  'Sack1': {
+    name: 'Sack',
+    examineText: 'A bulging sack of ordinary supplies.',
+  },
+  'Sack2': {
+    name: 'Sack',
+    examineText: 'A tied sack. Something dry rustles inside.',
+  },
+  'table1': {
+    name: 'Table',
+    examineText: 'A plain wooden table.',
+  },
+  'Walltorch': {
+    name: 'Wall torch',
+    examineText: 'A wall-mounted torch, blackened from use.',
+  },
+  'Waterwheel': {
+    name: 'Waterwheel',
+    examineText: 'A wooden waterwheel built to turn with the current.',
+  },
+};
+
+export const EXAMINABLE_SCENERY_ASSETS: ReadonlySet<string> = new Set(Object.keys(EXAMINABLE_SCENERY_META));
+
+export function sceneryExamineMetaForAsset(assetId: string): SceneryExamineMeta | undefined {
+  return EXAMINABLE_SCENERY_META[assetId];
+}
+
+export function objectDefIdForPlacedAsset(assetId: string): number | undefined {
+  if (isGroundItemSpawnAssetId(assetId)) return undefined;
+  return ASSET_TO_OBJECT_DEF[assetId] ?? (EXAMINABLE_SCENERY_ASSETS.has(assetId) ? GENERIC_SCENERY_OBJECT_DEF_ID : undefined);
+}
+
 /**
- * Decoration assets that should block their tile but aren't interactable —
- * no right-click menu, no harvest, no WorldObject entity. Kept thin-instanced
- * on the client (see `canThinInstance`) so adding many is cheap. Server stamps
- * the tile into `blockedObjectTiles` at map load; client stamps into
- * `ChunkManager.decorBlockedTiles` as chunks stream in.
+ * Decoration assets that still stamp a tile blocker even when they use the
+ * generic scenery object definition for right-click Examine.
  */
 export const BLOCKING_DECOR_ASSETS: Set<string> = new Set([
   'bush1',

@@ -288,6 +288,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.PLAYER_FOLLOW:
     case ClientOpcode.PLAYER_PICKUP_ITEM:
     case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_DELETE_ITEM:
     case ClientOpcode.PLAYER_EQUIP_ITEM:
     case ClientOpcode.PLAYER_UNEQUIP_ITEM:
     case ClientOpcode.PLAYER_EAT_ITEM:
@@ -308,6 +309,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.BANK_REQUEST_OPEN:
     case ClientOpcode.BANK_DEPOSIT:
     case ClientOpcode.BANK_WITHDRAW:
+    case ClientOpcode.BANK_DELETE:
     case ClientOpcode.BANK_CLOSE:
     case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
@@ -346,6 +348,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.PLAYER_TALK_NPC:
       return { bucket: 'world-action', maxMessages: 6, windowMs: 1000 };
     case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_DELETE_ITEM:
     case ClientOpcode.PLAYER_EQUIP_ITEM:
     case ClientOpcode.PLAYER_UNEQUIP_ITEM:
     case ClientOpcode.PLAYER_EAT_ITEM:
@@ -356,6 +359,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.BANK_REQUEST_OPEN:
     case ClientOpcode.BANK_DEPOSIT:
     case ClientOpcode.BANK_WITHDRAW:
+    case ClientOpcode.BANK_DELETE:
     case ClientOpcode.BANK_CLOSE:
     case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
@@ -474,6 +478,17 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       const expectedItemId = values[1];
       if (!isSlot(slot, INVENTORY_SIZE)) return invalid('bad-inventory-slot');
       if (player.inventory[slot]?.itemId !== expectedItemId) return invalid('stale-inventory-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.PLAYER_DELETE_ITEM: {
+      if (!player.isAdmin) return invalid('admin-delete-not-admin');
+      if (!hasValues(values, 2)) return invalid('missing-admin-delete-inventory-values');
+      const slot = values[0];
+      const expectedItemId = values[1];
+      if (!isSlot(slot, INVENTORY_SIZE)) return invalid('bad-admin-delete-inventory-slot');
+      if (player.inventory[slot]?.itemId !== expectedItemId) return invalid('stale-admin-delete-inventory-slot');
+      if (player.openInterface !== null && player.openInterface !== 'bank') return invalid('admin-delete-interface-open');
       return OK_PACKET;
     }
 
@@ -674,6 +689,15 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (player.openInterface !== 'bank') return invalid('bank-not-open');
       if (!isSlot(values[0], BANK_SIZE)) return invalid('bad-bank-withdraw-slot');
       if (player.bank[values[0]]?.itemId !== values[1]) return invalid('stale-bank-withdraw-slot');
+      return OK_PACKET;
+    }
+
+    case ClientOpcode.BANK_DELETE: {
+      if (!player.isAdmin) return invalid('bank-delete-not-admin');
+      if (!hasValues(values, 2)) return invalid('missing-bank-delete-values');
+      if (player.openInterface !== 'bank') return invalid('bank-not-open');
+      if (!isSlot(values[0], BANK_SIZE)) return invalid('bad-bank-delete-slot');
+      if (player.bank[values[0]]?.itemId !== values[1]) return invalid('stale-bank-delete-slot');
       return OK_PACKET;
     }
 
@@ -1166,6 +1190,14 @@ function handleDecryptedGameSocketMessage(
       break;
     }
 
+    case ClientOpcode.PLAYER_DELETE_ITEM: {
+      if (!hasValues(values, 2)) return;
+      const slot = values[0];
+      const expectedItemId = values[1];
+      world.handleAdminDeleteInventoryItem(playerId, slot, expectedItemId);
+      break;
+    }
+
     case ClientOpcode.PLAYER_EQUIP_ITEM: {
       if (!hasValues(values, 2)) return;
       const slot = values[0];
@@ -1360,6 +1392,13 @@ function handleDecryptedGameSocketMessage(
       const expectedItemId = values[1];
       const quantity = decodeQuantityValues(values, 2, 1);
       world.handleBankWithdraw(playerId, bankSlot, expectedItemId, quantity);
+      break;
+    }
+    case ClientOpcode.BANK_DELETE: {
+      if (!hasValues(values, 2)) return;
+      const bankSlot = values[0];
+      const expectedItemId = values[1];
+      world.handleAdminDeleteBankItem(playerId, bankSlot, expectedItemId);
       break;
     }
     case ClientOpcode.BANK_CLOSE: {

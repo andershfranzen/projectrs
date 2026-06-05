@@ -1523,6 +1523,7 @@ export class CharacterEntity {
     const dx = x - this.visualX();
     const dz = z - this.visualZ();
     if (Math.abs(dx) < 0.001 && Math.abs(dz) < 0.001) return;
+    this.attackFaceLockUntilMs = 0;
     this.targetRotationY = Math.atan2(dx, dz);
     this.faceLocked = true;
   }

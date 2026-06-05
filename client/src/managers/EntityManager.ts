@@ -656,14 +656,19 @@ export class EntityManager {
 
   private applyCombatFaceLockToTarget(
     sprite: CharacterEntity | Npc3DEntity | SpriteEntity,
-    target: CharacterEntity | Npc3DEntity | SpriteEntity,
+    target: Targetable,
     camPos: Vector3 | null,
   ): void {
     const anchor = target.getTargetAnchor();
     this.applyCombatFaceLock(sprite, anchor.x, anchor.z, anchor.y, camPos);
   }
 
-  interpolateRemotePlayers(dt: number, camPos: Vector3 | null, isRemoteSkilling: (entityId: number) => boolean = () => false): void {
+  interpolateRemotePlayers(
+    dt: number,
+    camPos: Vector3 | null,
+    isRemoteSkilling: (entityId: number) => boolean = () => false,
+    resolveCombatTarget: (entityId: number) => Targetable | null = (entityId) => this.npcSprites.get(entityId) ?? null,
+  ): void {
     const now = performance.now();
     for (const [entityId, sprite] of this.remotePlayers) {
       const target = this.remoteTargets.get(entityId);
@@ -687,7 +692,7 @@ export class EntityManager {
       // arriving at tile N and receiving the sync for N+1.
       const serverWalking = (this.remoteWalkUntil.get(entityId) ?? 0) > now;
       const combatTarget = this.remoteCombatTargets.get(entityId);
-      const combatTargetSprite = combatTarget !== undefined ? this.npcSprites.get(combatTarget) : undefined;
+      const combatTargetSprite = combatTarget !== undefined ? resolveCombatTarget(combatTarget) : null;
       if (dist > 0.05) {
         if (!sprite.isWalking()) sprite.startWalking();
         if (camPos) sprite.updateMovementDirection(dx, dz, camPos);

@@ -1072,6 +1072,53 @@
       "attackAnim": "attack_1h_slash"
     },
     {
+      "id": 143,
+      "npcId": 101,
+      "x": 311.5,
+      "z": 136.5,
+      "wanderRange": 3,
+      "aggressive": false,
+      "appearance": {
+        "shirtColor": 0,
+        "pantsColor": 10,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 9,
+        "skinColor": 0,
+        "hairStyle": 0
+      },
+      "equipment": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "customColors": {
+        "skinColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shirtColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ],
+        "shoesColor": [
+          0.5333333333333333,
+          0.5333333333333333,
+          0.5333333333333333
+        ]
+      },
+      "attackAnim": "attack_1h_slash"
+    },
+    {
       "id": 138,
       "npcId": 103,
       "x": 316.5,

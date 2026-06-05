@@ -13,7 +13,7 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { ASSET_TO_OBJECT_DEF, isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
+import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB } from '@projectrs/shared';
@@ -125,6 +125,7 @@ interface PlacedObjectNodeMetadata {
   placedX?: number;
   placedY?: number;
   placedZ?: number;
+  placedName?: string;
   interactionActions?: string[];
   isNoRoof?: boolean;
   roofGridKeys?: string[];
@@ -2591,7 +2592,7 @@ export class ChunkManager {
           // Filter by defId if specified
           if (defId !== undefined) {
             const assetId = (node.metadata as PlacedObjectNodeMetadata | null)?.assetId;
-            if (!assetId || ASSET_TO_OBJECT_DEF[assetId] !== defId) continue;
+            if (!assetId || objectDefIdForPlacedAsset(assetId) !== defId) continue;
           }
           const placed = this.placedObjectAuthoredPosition(node);
           const nx = placed.x - x;
@@ -3258,7 +3259,7 @@ export class ChunkManager {
   }
 
   private canThinInstance(obj: PlacedObject): boolean {
-    if (obj.assetId in ASSET_TO_OBJECT_DEF) return false;
+    if (objectDefIdForPlacedAsset(obj.assetId) != null) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
     // Doors must be unique pickable nodes — clicking one looks up its
     // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
@@ -3677,7 +3678,7 @@ export class ChunkManager {
         if (idx >= 0) this.placedObjectNodes.splice(idx, 1);
         this.placedObjectNodeSet.delete(node);
         const assetId = (node.metadata as PlacedObjectNodeMetadata | null)?.assetId;
-        if (assetId && assetId in ASSET_TO_OBJECT_DEF) {
+        if (assetId && objectDefIdForPlacedAsset(assetId) != null) {
           const placed = this.placedObjectAuthoredPosition(node);
           const gridKey = `${Math.floor(placed.x)},${Math.floor(placed.z)}`;
           const nodesAtTile = this.placedObjectGrid.get(gridKey);
@@ -3839,6 +3840,7 @@ export class ChunkManager {
         placedY: obj.position.y,
         placedZ: obj.position.z,
         interactionActions: this.placedObjectInteractionActions(obj),
+        placedName: obj.name,
         isNoRoof: obj.noRoof === true,
       } satisfies PlacedObjectNodeMetadata;
 
@@ -3857,7 +3859,7 @@ export class ChunkManager {
       this.placedObjectNodes.push(root);
       this.placedObjectNodeSet.add(root);
 
-      if (obj.assetId in ASSET_TO_OBJECT_DEF) {
+      if (objectDefIdForPlacedAsset(obj.assetId) != null) {
         const gridKey = `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`;
         let nodesAtTile = this.placedObjectGrid.get(gridKey);
         if (!nodesAtTile) {
@@ -3913,7 +3915,7 @@ export class ChunkManager {
       for (const node of nodes) {
         // Remove from spatial grid
         const assetId = (node.metadata as PlacedObjectNodeMetadata | null)?.assetId;
-        if (assetId && assetId in ASSET_TO_OBJECT_DEF) {
+        if (assetId && objectDefIdForPlacedAsset(assetId) != null) {
           const placed = this.placedObjectAuthoredPosition(node);
           const gridKey = `${Math.floor(placed.x)},${Math.floor(placed.z)}`;
           const nodesAtTile = this.placedObjectGrid.get(gridKey);

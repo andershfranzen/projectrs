@@ -3,6 +3,7 @@ import type { RareDropTableDef, RareDropTableEntry, RareDropItemEntry } from '@p
 export interface RolledLootDrop {
   itemId: number;
   quantity: number;
+  dropChance?: number;
   rare?: true;
   source?: 'rare_drop_table';
   rareTableId?: string;
