@@ -710,7 +710,7 @@ describe('NPC interaction reachability', () => {
     expect(secondNpc.combatTarget).toBeNull();
   });
 
-  test('closest aggressive NPC wins proactive targeting and losers hold position', () => {
+  test('closest aggressive NPC wins proactive targeting while losers keep wandering', () => {
     const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
     const fartherNpc = new Npc(strongAggroNpcDef, 16.5, 10.5);
     const closerNpc = new Npc(strongAggroNpcDef, 10.5, 10.5);
@@ -729,7 +729,7 @@ describe('NPC interaction reachability', () => {
 
     expect(closerNpc.combatTarget).toBe(player);
     expect(fartherNpc.combatTarget).toBeNull();
-    expect(fartherNpc.position.x).toBe(16.5);
+    expect(fartherNpc.position.x).toBe(15.5);
     expect(fartherNpc.pathQueue).toEqual([]);
   });
 
@@ -781,7 +781,7 @@ describe('NPC interaction reachability', () => {
     expect(firstNpc.combatTarget).toBe(player);
     expect(secondNpc.combatTarget).toBeNull();
     expect(secondNpc.returning).toBe(true);
-    expect(secondNpc.position.x).toBe(20.5);
+    expect(secondNpc.position.x).toBeLessThan(20.5);
     expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_HIT && b.values[0] === secondNpc.id && b.values[1] === -1)).toBe(true);
   });
 

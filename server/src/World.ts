@@ -8648,7 +8648,6 @@ export class World {
     const activePlayerTargetNpcIds = new Map<number, number>();
     const activeNpcTargetPlayerIds = new Map<number, number>();
     const proactiveAggroTargets = new Map<number, Player>();
-    const npcAggroMovementSuppressed = new Set<number>();
     type NpcTargetCandidate = { npcId: number; distance: number };
     type ProactiveAggroCandidate = NpcTargetCandidate & { player: Player };
     const canNpcReservePlayerTarget = (npc: Npc, target: Player): boolean =>
@@ -8719,7 +8718,6 @@ export class World {
 
         const reservedNpcId = npcTargetingPlayerIds.get(player.id);
         if (reservedNpcId !== undefined && reservedNpcId !== npc.id) {
-          npcAggroMovementSuppressed.add(npc.id);
           return;
         }
         addProactiveAggroCandidate(npc, player, distance);
@@ -8733,9 +8731,7 @@ export class World {
 
     const proactiveAggroAssignedNpcIds = new Set<number>();
     const proactiveAggroAssignedPlayerIds = new Set<number>();
-    const proactiveAggroCandidateNpcIds = new Set<number>();
     for (const candidate of proactiveAggroCandidates) {
-      proactiveAggroCandidateNpcIds.add(candidate.npcId);
       const playerId = candidate.player.id;
       const reservedNpcId = npcTargetingPlayerIds.get(playerId);
       if (reservedNpcId !== undefined && reservedNpcId !== candidate.npcId) continue;
@@ -8746,9 +8742,6 @@ export class World {
       proactiveAggroAssignedNpcIds.add(candidate.npcId);
       proactiveAggroAssignedPlayerIds.add(playerId);
       npcTargetingPlayerIds.set(playerId, candidate.npcId);
-    }
-    for (const npcId of proactiveAggroCandidateNpcIds) {
-      if (!proactiveAggroTargets.has(npcId)) npcAggroMovementSuppressed.add(npcId);
     }
 
     for (const [, npc] of this.npcs) {
@@ -8767,7 +8760,6 @@ export class World {
       const oldNpcZ = npc.position.y;
       const hadCombatTarget = npc.combatTarget != null;
       const previousCombatTargetId = npc.combatTarget?.id;
-      let suppressNpcMovement = npcAggroMovementSuppressed.has(npc.id) && !npc.combatTarget && !npc.retreatTarget;
 
       if (npc.combatTarget instanceof Player) {
         const target = npc.combatTarget;
@@ -8775,7 +8767,6 @@ export class World {
           const reservedNpcId = npcTargetingPlayerIds.get(target.id);
           if (reservedNpcId !== undefined && reservedNpcId !== npc.id) {
             npc.disengageAndReturnHome();
-            suppressNpcMovement = true;
           } else {
             npcTargetingPlayerIds.set(target.id, npc.id);
           }
@@ -8785,7 +8776,6 @@ export class World {
       const proactiveAggroTarget = proactiveAggroTargets.get(npc.id);
       if (npc.aggressive && !npc.combatTarget && !npc.retreatTarget && proactiveAggroTarget) {
         npc.setCombatTarget(proactiveAggroTarget);
-        suppressNpcMovement = false;
       }
 
       // Freeze AI while a player has a dialogue / shop open against this NPC
@@ -8793,9 +8783,7 @@ export class World {
       // overrides the NPC_FACING rotation. Cheap O(1) gate via the def flags
       // before the O(players) audience scan; combat-only NPCs skip both.
       const canHaveAudience = npc.hasDialogue || npc.hasShop || npc.hasBank;
-      if (suppressNpcMovement) {
-        npc.pathQueue.length = 0;
-      } else if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
+      if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
         npc.pathQueue.length = 0;
       } else {
         const mapId = npc.currentMapLevel;
