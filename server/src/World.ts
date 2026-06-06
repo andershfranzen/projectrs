@@ -8806,10 +8806,9 @@ export class World {
             }
           }
         }
-        // Static per-tile collision. The shared pathing validator expands
-        // these facts over the moving NPC's footprint and leading wall edges.
-        // Entity occupancy is deliberately omitted here: OSRS-style route
-        // finders ignore players/NPCs and let the movement step stall later.
+        // Static per-tile collision. Dynamic entity occupancy is layered into
+        // idle route planning below so wandering NPCs choose around occupied
+        // tiles instead of repeatedly walking into the same blocked step.
         const rawNpcTileBlocked = (x: number, z: number): boolean => {
           const tileX = Math.floor(x);
           const tileZ = Math.floor(z);
@@ -8829,10 +8828,10 @@ export class World {
         };
         const rawNpcWallBlocked = (fx: number, fz: number, tx: number, tz: number): boolean =>
           map.isWallBlockedOnFloor(fx, fz, tx, tz, npc.currentFloor);
-        const npcCollision: PathingCollision = {
+        const npcRouteCollision: PathingCollision = {
           width: map.width,
           height: map.height,
-          isTileBlocked: rawNpcTileBlocked,
+          isTileBlocked: rawNpcStepBlocked,
           isWallBlocked: rawNpcWallBlocked,
         };
         const npcFindPath = (sx: number, sz: number, gx: number, gz: number) =>
@@ -8841,7 +8840,7 @@ export class World {
             startZ: sz,
             goalX: gx,
             goalZ: gz,
-            collision: npcCollision,
+            collision: npcRouteCollision,
             actorSize: size,
             maxSearchTiles: 512,
           });

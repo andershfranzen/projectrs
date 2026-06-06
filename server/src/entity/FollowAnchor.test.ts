@@ -68,7 +68,7 @@ describe('follow anchors', () => {
     expect(npc.followAnchorZ).toBe(10.5);
   });
 
-  test('npc queued paths stall on transient step blockers without clearing', () => {
+  test('npc queued paths clear on transient step blockers instead of jamming forever', () => {
     const npc = makeNpc(10.5, 10.5);
     npc.pathQueue = [{ x: 11.5, z: 10.5 }];
     const occupiedNextTile = (x: number, z: number) => Math.floor(x) === 11 && Math.floor(z) === 10;
@@ -76,12 +76,6 @@ describe('follow anchors', () => {
     npc.processAI(() => false, undefined, undefined, occupiedNextTile);
 
     expect(npc.position.x).toBe(10.5);
-    expect(npc.position.y).toBe(10.5);
-    expect(npc.pathQueue).toEqual([{ x: 11.5, z: 10.5 }]);
-
-    npc.processAI(() => false, undefined, undefined, () => false);
-
-    expect(npc.position.x).toBe(11.5);
     expect(npc.position.y).toBe(10.5);
     expect(npc.pathQueue).toEqual([]);
   });

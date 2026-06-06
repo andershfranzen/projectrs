@@ -425,7 +425,10 @@ export class Npc extends Entity {
       this.pathQueue.length = 0;
       return false;
     }
-    if (!canTravel(movementCollision, px, pz, dx, dz, this.size)) return false;
+    if (!canTravel(movementCollision, px, pz, dx, dz, this.size)) {
+      this.pathQueue.length = 0;
+      return false;
+    }
     this.moveTo(next.x, next.z);
     this.pathQueue.shift();
     return true;
