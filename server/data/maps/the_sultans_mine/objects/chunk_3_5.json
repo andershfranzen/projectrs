@@ -20,9 +20,9 @@
     "trigger": {
       "type": "teleport",
       "destChunk": "kcmap",
-      "entryX": 267.5,
-      "entryY": 0.6224362850189209,
-      "entryZ": 210.5
+      "entryX": 266.5,
+      "entryY": 0.10420007794164121,
+      "entryZ": 211.5
     },
     "interactionTiles": [
       {

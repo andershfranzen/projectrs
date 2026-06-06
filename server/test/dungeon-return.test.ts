@@ -122,55 +122,60 @@ describe('dungeon return teleport routing', () => {
     expect(player.dungeonReturnTargets.has('kcmap')).toBe(false);
   });
 
-  test('dungeon-side cavedoor exits use the remembered entrance return', () => {
+  test('authored dungeon exits use explicit trigger coordinates over remembered return targets', () => {
     const world = makeWorld();
-    const player = new Player('sultans-return-test', 267.5, 210.5, fakeWs, 1);
+    const player = new Player('sultans-return-test', 267.5, 211.5, fakeWs, 1);
     player.currentMapLevel = 'kcmap';
-    player.effectiveY = 0.6224362850189209;
+    player.effectiveY = 0.12262444826774299;
 
-    const entrance = new WorldObject(caveDef, 267.28937706007014, 210.82673029107593, 'kcmap');
+    const entrance = new WorldObject(caveDef, 267, 210.82673029107593, 'kcmap');
     entrance.assetId = 'cavedoor';
     entrance.trigger = {
       type: 'teleport',
       destChunk: 'the_sultans_mine',
-      entryX: 139.5,
-      entryY: 0.6224362850189209,
-      entryZ: 146.5,
+      entryX: 114.5,
+      entryY: 0.6719981878995895,
+      entryZ: 163.5,
     };
 
     world.handleTeleportInteraction(player, entrance);
 
+    expect(world.transitions.at(-1)).toEqual({
+      targetMap: 'the_sultans_mine',
+      targetX: 114.5,
+      targetZ: 163.5,
+      targetY: 0.6719981878995895,
+    });
     expect(player.dungeonReturnTargets.get('the_sultans_mine')).toEqual({
       mapId: 'kcmap',
       x: 267.5,
-      z: 210.5,
-      y: 0.6224362850189209,
+      z: 211.5,
+      y: 0.12262444826774299,
       floor: 0,
     });
 
     player.currentMapLevel = 'the_sultans_mine';
-    player.position.x = 139.5;
-    player.position.y = 146.5;
-    player.effectiveY = 0.6224362850189209;
+    player.position.x = 114.5;
+    player.position.y = 163.5;
+    player.effectiveY = 0.6719981878995895;
 
-    const exit = new WorldObject(caveDef, 139.2893770600701, 146.82673029107593, 'the_sultans_mine');
-    exit.assetId = 'cavedoor';
+    const exit = new WorldObject(caveDef, 115.05611916989199, 165.48676895114792, 'the_sultans_mine');
+    exit.assetId = 'CavernExit1';
     exit.trigger = {
       type: 'teleport',
       destChunk: 'kcmap',
-      entryX: 267.5,
-      entryY: 0.6224362850189209,
-      entryZ: 210.5,
+      entryX: 266.5,
+      entryY: 0.10420007794164121,
+      entryZ: 211.5,
     };
 
     world.handleTeleportInteraction(player, exit);
 
     expect(world.transitions.at(-1)).toEqual({
       targetMap: 'kcmap',
-      targetX: 267.5,
-      targetZ: 210.5,
-      targetY: 0.6224362850189209,
-      targetFloor: 0,
+      targetX: 266.5,
+      targetZ: 211.5,
+      targetY: 0.10420007794164121,
     });
     expect(player.dungeonReturnTargets.has('the_sultans_mine')).toBe(false);
   });

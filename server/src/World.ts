@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -30,9 +30,17 @@ const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
 const DEFAULT_HQ_XP_MULTIPLIER = 3.25;
 const BOW_STRINGING_HQ_CHANCE = 1 / 256;
 const COINS_ITEM_ID = 10;
+const ROYAL_MINE_ORE_ITEM_IDS = new Set([25, 26, 34, 35, 44, 45, 142, 407, 408]);
+const SULTANS_MINE_MAP_LEVEL = 'the_sultans_mine';
+const SULTANS_ROYAL_GUARD_NPC_ID = 108;
+const SULTANS_MINE_EXPORT_DOOR_TILE_X = 116;
+const SULTANS_MINE_EXPORT_DOOR_TILE_Z = 157;
+const SULTANS_MINE_EXPORT_DOOR_FLOOR = 0;
+const SULTANS_MINE_ORE_DOOR_WARNING = "Halt. Pay for your ore's transportation before you leave the mine.";
 type ItemQuantity = { itemId: number; quantity: number };
 type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
+type SultansMineDoorTransit = { doorId: number; finalX: number; finalZ: number; expiresTick: number };
 type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
   consume: readonly ItemQuantity[];
@@ -555,6 +563,8 @@ export class World {
   readonly groundItems: Map<number, GroundItem> = new Map();
   readonly worldObjects: Map<number, WorldObject> = new Map();
   private doorObjectsByMap: Map<string, Set<WorldObject>> = new Map();
+  private closedCenteredDoorTileCounts: Map<string, number> = new Map();
+  private closedCenteredDoorTileKeysByObjectId: Map<number, string> = new Map();
   /** Tiles blocked by non-depleted world objects, keyed by map+floor+tile. */
   private blockedObjectTiles: Set<string> = new Set();
   // Tile occupancy for entities (players + NPC footprints), rebuilt during
@@ -572,6 +582,7 @@ export class World {
   private pendingPositionCheckpoints: Map<number, QueuedPositionCheckpoint> = new Map();
   private pendingObjectRespawnWrites: Map<string, QueuedObjectRespawnWrite> = new Map();
   private playerAggroTolerance: Map<number, PlayerAggroToleranceState> = new Map();
+  private sultansMineDoorTransits: Map<number, SultansMineDoorTransit> = new Map();
 
   // Player combat targets (playerId -> npcId)
   private playerCombatTargets: Map<number, number> = new Map();
@@ -785,6 +796,7 @@ export class World {
     for (const [id, obj] of this.worldObjects) {
       if (obj.mapLevel === mapId) {
         this.setObjectTilesBlocked(mapId, obj.x, obj.z, obj.def, false, obj.floor, obj.interactionTiles, obj.rotationY);
+        this.setCenteredDoorTileBlocked(obj, false);
         this.worldObjects.delete(id);
       }
     }
@@ -1107,7 +1119,8 @@ export class World {
     const tx = Math.floor(endpoint.x);
     const tz = Math.floor(endpoint.z);
     if (map.isTileBlockedOnFloor(tx, tz, endpoint.floor)) return false;
-    return !this.blockedObjectTiles.has(this.blockedKeyFor(endpoint.mapId, tx, tz, endpoint.floor));
+    const tileKey = this.blockedKeyFor(endpoint.mapId, tx, tz, endpoint.floor);
+    return !this.blockedObjectTiles.has(tileKey) && !this.isCenteredDoorTileBlockedKey(tileKey);
   }
 
   private resolveLadderLinkForPlayerAction(player: Player, obj: WorldObject, action: LadderAction): DirectedVerticalLink | null {
@@ -1480,8 +1493,10 @@ export class World {
   }
 
   private isTileBlockedForPlayer(player: Player, map: GameMap, tileX: number, tileZ: number): boolean {
+    const tileKey = this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor);
     return this.mapTileBlockedOnFloor(map, tileX, tileZ, player.currentFloor)
-      || (this.blockedObjectTiles?.has(this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, player.currentFloor)) ?? false);
+      || (this.blockedObjectTiles?.has(tileKey) ?? false)
+      || this.isClosedCenteredDoorTileBlockedForPlayer(player, tileX, tileZ, player.currentFloor);
   }
 
   private isPlayerMovementTileBlocked(
@@ -1493,7 +1508,7 @@ export class World {
   ): boolean {
     const tileKey = this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, floor);
     const staticBlocked = this.mapTileBlockedOnFloor(map, tileX, tileZ, floor) || (this.blockedObjectTiles?.has(tileKey) ?? false);
-    return staticBlocked;
+    return staticBlocked || this.isClosedCenteredDoorTileBlockedForPlayer(player, tileX, tileZ, floor);
   }
 
   private usesCornerObjectInteraction(obj: WorldObject): boolean {
@@ -1937,6 +1952,7 @@ export class World {
       obj.depleted = true;
     }
     this.registerDoorObject(obj);
+    this.setCenteredDoorTileBlocked(obj, !obj.doorOpen);
   }
 
   start(): void {
@@ -2776,6 +2792,53 @@ export class World {
     return doorEdgeFromPlacement(obj.x, obj.z, obj.rotationY).edge;
   }
 
+  private centeredDoorTileKeyForObject(obj: WorldObject): string | null {
+    if (obj.def.category !== 'door') return null;
+    const tile = centeredDoorTileFromPlacement(obj.x, obj.z, obj.rotationY);
+    if (!tile) return null;
+    return this.blockedKeyFor(obj.mapLevel, tile[0], tile[1], obj.floor);
+  }
+
+  private isCenteredDoorTileBlockedKey(key: string): boolean {
+    return (this.closedCenteredDoorTileCounts?.get(key) ?? 0) > 0;
+  }
+
+  private removeCenteredDoorTileBlockForObject(objectId: number): void {
+    const key = this.closedCenteredDoorTileKeysByObjectId?.get(objectId);
+    if (!key) return;
+    const nextCount = (this.closedCenteredDoorTileCounts?.get(key) ?? 0) - 1;
+    if (nextCount > 0) this.closedCenteredDoorTileCounts.set(key, nextCount);
+    else this.closedCenteredDoorTileCounts?.delete(key);
+    this.closedCenteredDoorTileKeysByObjectId?.delete(objectId);
+  }
+
+  private setCenteredDoorTileBlocked(obj: WorldObject, blocked: boolean): void {
+    if (!this.closedCenteredDoorTileCounts) this.closedCenteredDoorTileCounts = new Map();
+    if (!this.closedCenteredDoorTileKeysByObjectId) this.closedCenteredDoorTileKeysByObjectId = new Map();
+    const nextKey = blocked ? this.centeredDoorTileKeyForObject(obj) : null;
+    const currentKey = this.closedCenteredDoorTileKeysByObjectId.get(obj.id);
+    if (currentKey && currentKey !== nextKey) this.removeCenteredDoorTileBlockForObject(obj.id);
+    if (!nextKey || currentKey === nextKey) return;
+    this.closedCenteredDoorTileCounts.set(nextKey, (this.closedCenteredDoorTileCounts.get(nextKey) ?? 0) + 1);
+    this.closedCenteredDoorTileKeysByObjectId.set(obj.id, nextKey);
+  }
+
+  private isTileAllowedBySultansMineDoorTransit(player: Player, tileX: number, tileZ: number, floor: number): boolean {
+    const transit = this.sultansMineDoorTransits?.get(player.id);
+    if (!transit || floor !== SULTANS_MINE_EXPORT_DOOR_FLOOR) return false;
+    const obj = this.worldObjects?.get(transit.doorId);
+    return !!obj
+      && this.isSultansMineExportDoor(obj)
+      && Math.floor(obj.x) === tileX
+      && Math.floor(obj.z) === tileZ;
+  }
+
+  private isClosedCenteredDoorTileBlockedForPlayer(player: Player, tileX: number, tileZ: number, floor: number): boolean {
+    if (this.isTileAllowedBySultansMineDoorTransit(player, tileX, tileZ, floor)) return false;
+    const key = this.blockedKeyFor(player.currentMapLevel, tileX, tileZ, floor);
+    return this.isCenteredDoorTileBlockedKey(key);
+  }
+
   private setDoorWallEdges(obj: WorldObject, map: GameMap): void {
     const [tx, tz] = this.doorTile(obj);
     const edge = this.doorWallEdge(obj);
@@ -2843,6 +2906,252 @@ export class World {
     return false;
   }
 
+  private playerHasRoyalMineOre(player: Player): boolean {
+    for (const slot of player.inventory) {
+      if (slot && ROYAL_MINE_ORE_ITEM_IDS.has(slot.itemId) && slot.quantity > 0) return true;
+    }
+    return false;
+  }
+
+  private isSultansMineExportDoor(obj: WorldObject): boolean {
+    return obj.mapLevel === SULTANS_MINE_MAP_LEVEL
+      && obj.def.category === 'door'
+      && obj.floor === SULTANS_MINE_EXPORT_DOOR_FLOOR
+      && Math.floor(obj.x) === SULTANS_MINE_EXPORT_DOOR_TILE_X
+      && Math.floor(obj.z) === SULTANS_MINE_EXPORT_DOOR_TILE_Z;
+  }
+
+  private findSultansMineExportDoor(): WorldObject | null {
+    const doors = this.doorObjectsByMap?.get(SULTANS_MINE_MAP_LEVEL);
+    if (doors) {
+      for (const obj of doors) {
+        if (this.isSultansMineExportDoor(obj)) return obj;
+      }
+      return null;
+    }
+    for (const [, obj] of this.worldObjects) {
+      if (this.isSultansMineExportDoor(obj)) return obj;
+    }
+    return null;
+  }
+
+  private findSultansRoyalGuard(player: Player): Npc | null {
+    if (!this.npcs) return null;
+    for (const [, npc] of this.npcs) {
+      if (npc.npcId !== SULTANS_ROYAL_GUARD_NPC_ID || npc.dead) continue;
+      if (npc.currentMapLevel !== player.currentMapLevel || npc.currentFloor !== player.currentFloor) continue;
+      return npc;
+    }
+    return null;
+  }
+
+  private sendNpcOverheadMessage(player: Player, npc: Npc, message: string): void {
+    if (player.disconnected) return;
+    const packet = encodeStringPacket(ServerOpcode.NPC_OVERHEAD_MESSAGE, message.slice(0, 300), npc.id);
+    try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
+  }
+
+  private sendSultansMineOreDoorWarning(player: Player): void {
+    const guard = this.findSultansRoyalGuard(player);
+    if (guard) {
+      this.broadcastNpcFacingPlayer(guard, player);
+      this.sendNpcOverheadMessage(player, guard, SULTANS_MINE_ORE_DOOR_WARNING);
+      return;
+    }
+    this.sendChatSystem(player, `Sultan's Royal Guard: ${SULTANS_MINE_ORE_DOOR_WARNING}`);
+  }
+
+  private isSultansMineExportDoorPassAction(action: string): boolean {
+    return action === 'Open' || action === 'Unlock' || action === 'Close';
+  }
+
+  private sultansMineExportDoorTiles(obj: WorldObject): {
+    door: { x: number; z: number };
+    neighbor: { x: number; z: number };
+    opposite: { x: number; z: number };
+  } | null {
+    const [tx, tz] = this.doorTile(obj);
+    const nb = DOOR_EDGE_NEIGHBOR[this.doorWallEdge(obj)];
+    if (!nb) return null;
+    return {
+      door: { x: tx, z: tz },
+      neighbor: { x: tx + nb.dx, z: tz + nb.dz },
+      opposite: { x: tx - nb.dx, z: tz - nb.dz },
+    };
+  }
+
+  private sultansMineExportDoorSourceTileForPlayer(player: Player, obj: WorldObject): { x: number; z: number } | null {
+    const tiles = this.sultansMineExportDoorTiles(obj);
+    if (!tiles) return null;
+    const [tx, tz] = this.doorTile(obj);
+    const edge = this.doorWallEdge(obj);
+    if (isDoorCenteredInTile(obj.x, obj.z, obj.rotationY)) {
+      if (edge === WallEdge.N) return player.position.y < tz + 0.5 ? tiles.neighbor : tiles.opposite;
+      if (edge === WallEdge.S) return player.position.y > tz + 0.5 ? tiles.neighbor : tiles.opposite;
+      if (edge === WallEdge.E) return player.position.x > tx + 0.5 ? tiles.neighbor : tiles.opposite;
+      if (edge === WallEdge.W) return player.position.x < tx + 0.5 ? tiles.neighbor : tiles.opposite;
+      return tiles.opposite;
+    }
+    if (edge === WallEdge.N) return player.position.y < tz + 0.5 ? tiles.neighbor : tiles.door;
+    if (edge === WallEdge.S) return player.position.y > tz + 0.5 ? tiles.neighbor : tiles.door;
+    if (edge === WallEdge.E) return player.position.x > tx + 0.5 ? tiles.neighbor : tiles.door;
+    if (edge === WallEdge.W) return player.position.x < tx + 0.5 ? tiles.neighbor : tiles.door;
+    return tiles.door;
+  }
+
+  private sultansMineExportDoorCrossingPathForPlayer(player: Player, obj: WorldObject): { x: number; z: number }[] | null {
+    const source = this.sultansMineExportDoorSourceTileForPlayer(player, obj);
+    const tiles = this.sultansMineExportDoorTiles(obj);
+    if (!source || !tiles) return null;
+    const px = Math.floor(player.position.x);
+    const pz = Math.floor(player.position.y);
+    if (px !== source.x || pz !== source.z) return null;
+    if (isDoorCenteredInTile(obj.x, obj.z, obj.rotationY)) {
+      const destination = source.x === tiles.neighbor.x && source.z === tiles.neighbor.z ? tiles.opposite : tiles.neighbor;
+      return [
+        { x: tiles.door.x + 0.5, z: tiles.door.z + 0.5 },
+        { x: destination.x + 0.5, z: destination.z + 0.5 },
+      ];
+    }
+    if (source.x === tiles.door.x && source.z === tiles.door.z) {
+      return [{ x: tiles.neighbor.x + 0.5, z: tiles.neighbor.z + 0.5 }];
+    }
+
+    const beyondDoor = {
+      x: tiles.door.x + (tiles.door.x - tiles.neighbor.x),
+      z: tiles.door.z + (tiles.door.z - tiles.neighbor.z),
+    };
+    return [
+      { x: tiles.door.x + 0.5, z: tiles.door.z + 0.5 },
+      { x: beyondDoor.x + 0.5, z: beyondDoor.z + 0.5 },
+    ];
+  }
+
+  private sultansMineDoorTransitStore(): Map<number, SultansMineDoorTransit> {
+    if (!this.sultansMineDoorTransits) this.sultansMineDoorTransits = new Map();
+    return this.sultansMineDoorTransits;
+  }
+
+  private beginSultansMineDoorTransit(player: Player, obj: WorldObject, path: { x: number; z: number }[]): void {
+    const finalStep = path[path.length - 1];
+    if (!finalStep) return;
+    this.sultansMineDoorTransitStore().set(player.id, {
+      doorId: obj.id,
+      finalX: finalStep.x,
+      finalZ: finalStep.z,
+      expiresTick: this.currentTick + Math.max(6, path.length + 4),
+    });
+  }
+
+  private sultansMineDoorTransitFor(player: Player): SultansMineDoorTransit | null {
+    const transit = this.sultansMineDoorTransits?.get(player.id) ?? null;
+    if (!transit) return null;
+    if (
+      player.currentMapLevel !== SULTANS_MINE_MAP_LEVEL
+      || player.currentFloor !== SULTANS_MINE_EXPORT_DOOR_FLOOR
+      || this.currentTick > transit.expiresTick
+    ) {
+      this.sultansMineDoorTransits?.delete(player.id);
+      return null;
+    }
+    return transit;
+  }
+
+  private clearSultansMineDoorTransit(player: Player): void {
+    this.sultansMineDoorTransits?.delete(player.id);
+  }
+
+  private repairOrCompleteSultansMineDoorTransit(player: Player): void {
+    const transit = this.sultansMineDoorTransitFor(player);
+    if (!transit) return;
+    const reachedFinal = Math.floor(player.position.x) === Math.floor(transit.finalX)
+      && Math.floor(player.position.y) === Math.floor(transit.finalZ);
+    if (reachedFinal) {
+      this.clearSultansMineDoorTransit(player);
+      return;
+    }
+    if (!player.hasMoveQueue()) {
+      player.setMoveQueue([{ x: transit.finalX, z: transit.finalZ }]);
+      this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, qPos(transit.finalX), qPos(transit.finalZ));
+    }
+  }
+
+  private findPathToSultansMineExportDoorSource(player: Player, obj: WorldObject): { x: number; z: number }[] {
+    const source = this.sultansMineExportDoorSourceTileForPlayer(player, obj);
+    if (!source) return [];
+    const map = this.getPlayerMap(player);
+    if (this.isTileBlockedForPlayer(player, map, source.x, source.z)) return [];
+    return findPathToTile({
+      startX: player.position.x,
+      startZ: player.position.y,
+      goalX: source.x + 0.5,
+      goalZ: source.z + 0.5,
+      collision: this.playerPathCollision(player, map),
+      maxSearchTiles: DEFAULT_MAX_SEARCH_TILES,
+    });
+  }
+
+  private handleSultansMineExportDoorPassThrough(player: Player, obj: WorldObject, action: string): boolean {
+    if (!this.isSultansMineExportDoor(obj) || !this.isSultansMineExportDoorPassAction(action)) return false;
+    const pathThroughDoor = this.sultansMineExportDoorCrossingPathForPlayer(player, obj);
+    if (!pathThroughDoor) {
+      const path = this.findPathToSultansMineExportDoorSource(player, obj);
+      if (path.length > 0) {
+        player.setMoveQueue(path);
+        player.pendingInteraction = { objectEntityId: obj.id, actionIndex: 0, swingSign: 0, expectedDoorOpen: null };
+        this.markQueuedAction(player);
+      } else {
+        this.sendChatSystem(player, "I can't reach that.");
+      }
+      return true;
+    }
+    if (this.playerHasRoyalMineOre(player)) {
+      if (obj.doorOpen) this.toggleDoor(obj, 0);
+      this.sendSultansMineOreDoorWarning(player);
+      return true;
+    }
+    if (!obj.doorOpen) {
+      if ((action === 'Open' || action === 'Unlock') && !this.canOpenLockedDoor(player, obj)) return true;
+      this.toggleDoor(obj, this.computeSwingSign(player, obj));
+    }
+    player.setMoveQueue(pathThroughDoor);
+    this.beginSultansMineDoorTransit(player, obj, pathThroughDoor);
+    this.sendToPlayer(player, ServerOpcode.PLAYER_CONTROLLED_MOVE, ...pathThroughDoor.flatMap(step => [qPos(step.x), qPos(step.z)]));
+    return true;
+  }
+
+  private sultansMineExportDoorCenteredTileEnteredByStep(player: Player, next: { x: number; z: number }): WorldObject | null {
+    if (player.currentMapLevel !== SULTANS_MINE_MAP_LEVEL || player.currentFloor !== SULTANS_MINE_EXPORT_DOOR_FLOOR) return null;
+    const obj = this.findSultansMineExportDoor();
+    if (!obj || !obj.doorOpen || obj.floor !== player.currentFloor) return null;
+    if (!isDoorCenteredInTile(obj.x, obj.z, obj.rotationY)) return null;
+    const [tx, tz] = this.doorTile(obj);
+    const fromX = Math.floor(player.position.x);
+    const fromZ = Math.floor(player.position.y);
+    const toX = Math.floor(next.x);
+    const toZ = Math.floor(next.z);
+    if (fromX === tx && fromZ === tz) return null;
+    return toX === tx && toZ === tz ? obj : null;
+  }
+
+  private sultansMineExportDoorCrossedByStep(player: Player, next: { x: number; z: number }): WorldObject | null {
+    if (player.currentMapLevel !== SULTANS_MINE_MAP_LEVEL || player.currentFloor !== SULTANS_MINE_EXPORT_DOOR_FLOOR) return null;
+    const obj = this.findSultansMineExportDoor();
+    if (!obj || !obj.doorOpen || obj.floor !== player.currentFloor) return null;
+    const [tx, tz] = this.doorTile(obj);
+    const nb = DOOR_EDGE_NEIGHBOR[this.doorWallEdge(obj)];
+    if (!nb) return null;
+    const fromX = Math.floor(player.position.x);
+    const fromZ = Math.floor(player.position.y);
+    const toX = Math.floor(next.x);
+    const toZ = Math.floor(next.z);
+    const nx = tx + nb.dx;
+    const nz = tz + nb.dz;
+    const forward = fromX === tx && fromZ === tz && toX === nx && toZ === nz;
+    const reverse = fromX === nx && fromZ === nz && toX === tx && toZ === tz;
+    return forward || reverse ? obj : null;
+  }
+
   private canOpenLockedDoor(player: Player, obj: WorldObject): boolean {
     if (!obj.doorLocked) return true;
     if (obj.doorKeyItemId <= 0) {
@@ -2899,6 +3208,7 @@ export class World {
       }
     }
 
+    this.setCenteredDoorTileBlocked(obj, !obj.doorOpen);
     this.broadcastWorldObjectStateChange(obj, swingSign);
   }
 
@@ -3368,6 +3678,10 @@ export class World {
     if (this.activeDuels?.has(playerId)) {
       player.clearMoveQueue();
       player.followTargetPlayerId = -1;
+      return;
+    }
+    if (this.sultansMineDoorTransitFor(player)) {
+      this.repairOrCompleteSultansMineDoorTransit(player);
       return;
     }
     if (path.length === 0) {
@@ -4549,10 +4863,15 @@ export class World {
     const player = this.players.get(playerId);
     const obj = this.worldObjects.get(objectEntityId);
     if (!player || !obj) return;
+    if (this.sultansMineDoorTransitFor(player)) {
+      this.repairOrCompleteSultansMineDoorTransit(player);
+      return;
+    }
     if (!this.canPlayerTargetObject(player, obj)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(objectEntityId)) return;
     if (obj.def.category !== 'door') expectedDoorOpen = null;
-    if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen)) return;
+    const isSultansMineExportDoor = this.isSultansMineExportDoor(obj);
+    if (!isSultansMineExportDoor && this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen)) return;
     const action = obj.def.category === 'ladder'
       ? obj.def.actions[actionIndex]
       : obj.currentActions[actionIndex];
@@ -4599,6 +4918,17 @@ export class World {
         return;
       }
       if (obj.def.category === 'door') {
+        if (isSultansMineExportDoor && this.isSultansMineExportDoorPassAction(action)) {
+          const path = this.findPathToSultansMineExportDoorSource(player, obj);
+          if (!player.hasMoveQueue() && path.length > 0) {
+            player.setMoveQueue(path);
+          }
+          if (player.hasMoveQueue()) {
+            player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen: null, recipeQuantity };
+            this.markQueuedAction(player);
+          }
+          return;
+        }
         const swingSign = obj.doorOpen ? 0 : this.computeSwingSign(player, obj);
         const map = this.getPlayerMap(player);
         const [dtx, dtz] = this.doorTile(obj);
@@ -4735,6 +5065,7 @@ export class World {
     }
 
     if (obj.def.category === 'door' && (action === 'Open' || action === 'Unlock' || action === 'Close')) {
+      if (this.handleSultansMineExportDoorPassThrough(player, obj, action)) return;
       if ((action === 'Open' || action === 'Unlock') && !this.canOpenLockedDoor(player, obj)) return;
       this.toggleDoor(obj, this.computeSwingSign(player, obj));
       return;
@@ -4877,12 +5208,16 @@ export class World {
 
   private handleTeleportInteraction(player: Player, obj: WorldObject): void {
     this.interruptPlayerAction(player.id, player);
-    if (this.isDungeonExitObject(obj)) {
+    const isDungeonExit = this.isDungeonExitObject(obj);
+    const useAuthoredExitTrigger = isDungeonExit && this.hasExplicitTeleportTrigger(obj);
+    if (isDungeonExit && !useAuthoredExitTrigger) {
       const returnTransition = this.consumeDungeonReturnTarget(player);
       if (returnTransition) {
         this.handleMapTransition(player, returnTransition);
         return;
       }
+    } else if (useAuthoredExitTrigger) {
+      player.dungeonReturnTargets.delete(player.currentMapLevel);
     }
     if (obj.trigger?.type === 'teleport' && obj.trigger.destChunk) {
       const targetX = Number.isFinite(obj.trigger.entryX) ? obj.trigger.entryX : 32.5;
@@ -4905,6 +5240,13 @@ export class World {
         targetZ: obj.def.transition.targetZ,
       });
     }
+  }
+
+  private hasExplicitTeleportTrigger(obj: WorldObject): boolean {
+    return obj.trigger?.type === 'teleport'
+      && !!obj.trigger.destChunk
+      && Number.isFinite(obj.trigger.entryX)
+      && Number.isFinite(obj.trigger.entryZ);
   }
 
   private isDungeonExitObject(obj: WorldObject): boolean {
@@ -8097,7 +8439,24 @@ export class World {
         const wallBlocked = pFloor === 0
           ? map.isWallBlocked(player.position.x, player.position.y, next.x, next.z, player.effectiveY)
           : map.isWallBlockedOnFloor(player.position.x, player.position.y, next.x, next.z, pFloor);
-        if (wallBlocked) {
+        const tileBlocked = this.isPlayerMovementTileBlocked(player, map, Math.floor(next.x), Math.floor(next.z), pFloor);
+        const sultansMineExportDoor = this.sultansMineExportDoorCrossedByStep(player, next);
+        const oreBlockedSultansMineDoor = this.playerHasRoyalMineOre(player)
+          ? (sultansMineExportDoor ?? this.sultansMineExportDoorCenteredTileEnteredByStep(player, next))
+          : null;
+        if (oreBlockedSultansMineDoor) {
+          this.sendSultansMineOreDoorWarning(player);
+          this.toggleDoor(oreBlockedSultansMineDoor, 0);
+          this.clearSultansMineDoorTransit(player);
+          player.botStats?.recordPathTruncation();
+          this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
+          player.clearMoveQueue();
+          this.clearQueuedPlayerActions(player);
+          player.movementCredit = 0;
+          break;
+        }
+        if (tileBlocked || wallBlocked) {
+          this.clearSultansMineDoorTransit(player);
           player.botStats?.recordPathTruncation();
           this.sendToPlayer(player, ServerOpcode.PATH_TRUNCATED, qPos(player.position.x), qPos(player.position.y));
           this.sendNearbyDoorUpdates(player);
@@ -8107,6 +8466,9 @@ export class World {
           break;
         }
         if (!player.processMovement(this.currentTick)) break;
+        if (sultansMineExportDoor && sultansMineExportDoor.doorOpen) {
+          this.toggleDoor(sultansMineExportDoor, 0);
+        }
         // Tile changed — re-derive the authoritative walking elevation and
         // floor immediately so the next queued step gates walls/tiles against
         // the layer the player actually reached.
@@ -8120,7 +8482,9 @@ export class World {
             lastFloorChangeTile: player.lastFloorChangeTile,
           },
         ));
+        this.repairOrCompleteSultansMineDoorTransit(player);
       }
+      this.repairOrCompleteSultansMineDoorTransit(player);
       this.updateEntityChunk(player);
 
       // Defer adjacency-triggered actions one tick if the player just consumed
@@ -8173,9 +8537,11 @@ export class World {
             player.clearMoveQueue();
             player.attackTarget = null;
             this.clearCombatTarget(playerId);
-            if (this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen ?? null)) continue;
+            if (!this.isSultansMineExportDoor(obj) && this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen ?? null)) continue;
             const action = obj.def.category === 'ladder' ? obj.def.actions[actionIndex] : obj.currentActions[actionIndex];
-            if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Close')) {
+            if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Unlock' || action === 'Close')) {
+              if (this.handleSultansMineExportDoorPassThrough(player, obj, action)) continue;
+              if ((action === 'Open' || action === 'Unlock') && !this.canOpenLockedDoor(player, obj)) continue;
               this.toggleDoor(obj, swingSign ?? 0);
             } else if (action) {
               // Forward the stashed recipeIndex so a deferred furnace craft
@@ -8462,6 +8828,7 @@ export class World {
           const objectKey = this.blockedKeyFor(mapId, tileX, tileZ, npcFloor);
           if (map.isTileBlockedOnFloor(tileX, tileZ, npcFloor)) return true;
           if (this.blockedObjectTiles.has(objectKey)) return true;
+          if (this.isCenteredDoorTileBlockedKey(objectKey)) return true;
           return false;
         };
         const rawNpcStepBlocked = (x: number, z: number): boolean => {
@@ -9354,6 +9721,7 @@ export class World {
         }
         obj.doorOpen = obj.doorDefaultOpen;
         obj.depleted = obj.doorOpen;
+        this.setCenteredDoorTileBlocked(obj, !obj.doorOpen);
         this.depletedObjectIds.delete(objId);
         this.db.clearDoorState(obj.mapLevel, obj.defId, Math.floor(obj.x), Math.floor(obj.z), obj.floor);
         this.broadcastWorldObjectStateChange(obj);

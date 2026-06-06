@@ -26,6 +26,22 @@ export function doorAxisFromRotY(rotY: number): DoorAxis {
   return deg === 0 || deg === 180 ? 'NS' : 'EW';
 }
 
+export function isDoorCenteredInTile(x: number, z: number, rotY: number): boolean {
+  const tx = Math.floor(x);
+  const tz = Math.floor(z);
+  const fx = x - tx;
+  const fz = z - tz;
+  const axis = doorAxisFromRotY(rotY);
+  return axis === 'NS'
+    ? Math.abs(fz - 0.5) < DOOR_EDGE_EPS
+    : Math.abs(fx - 0.5) < DOOR_EDGE_EPS;
+}
+
+export function centeredDoorTileFromPlacement(x: number, z: number, rotY: number): [number, number] | null {
+  if (!isDoorCenteredInTile(x, z, rotY)) return null;
+  return [Math.floor(x), Math.floor(z)];
+}
+
 /** Edge derived from rotation alone — used as a fallback for swing-sign math
  *  where the door's authored facing matters more than the placement frac. */
 export function doorClosedEdgeFromRotY(rotY: number): number {

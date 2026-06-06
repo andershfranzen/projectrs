@@ -60,7 +60,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -335,6 +335,7 @@ export class GameManager {
   private skillCancelTime: number = 0; // timestamp when skilling was last cancelled
   private tileProgress: number = 0; // 0→1 progress through current tile step
   private tileFrom: { x: number; z: number } = { x: 0, z: 0 }; // where we started this tile step
+  private controlledMoveUntilMs: number = 0;
 
   // --- Smooth catch-up slide ---
   // When the divergence-snap fires for a server position that's on the
@@ -458,6 +459,8 @@ export class GameManager {
   private doorTiles: Map<number, [number, number]> = new Map();
   /** Tiles blocked by non-depleted world objects (key = `${floor},${tileX},${tileZ}`) */
   private blockedObjectTiles: Set<string> = new Set();
+  private closedCenteredDoorTileCounts: Map<string, number> = new Map();
+  private closedCenteredDoorTileKeysByObjectId: Map<number, string> = new Map();
   private objectDefsCache: Map<number, WorldObjectDef> = new Map();
   private itemDefsCache: Map<number, ItemDef> = new Map();
   private npcDefsCache: Map<number, NpcDef> = new Map();
@@ -1641,11 +1644,15 @@ export class GameManager {
    *  blockedObjectTiles policy. */
   private rebuildBlockedObjectTiles(): void {
     this.blockedObjectTiles.clear();
-    for (const [, data] of this.worldObjectDefs) {
+    this.closedCenteredDoorTileCounts.clear();
+    this.closedCenteredDoorTileKeysByObjectId.clear();
+    for (const [objectEntityId, data] of this.worldObjectDefs) {
       const def = this.objectDefsCache.get(data.defId);
       // Depleted ores/stumps stay blocking — they still physically occupy
       // the tile. setObjectTilesBlocked is a no-op for doors.
-      if (def?.blocking) {
+      if (def?.category === 'door') {
+        this.setCenteredDoorTileBlocked(objectEntityId, data, def, !data.depleted);
+      } else if (def?.blocking) {
         this.setObjectTilesBlocked(data.x, data.z, def, true, data.floor, data.interactionTiles);
       }
     }
@@ -1677,6 +1684,43 @@ export class GameManager {
       if (blocked) this.blockedObjectTiles.add(key);
       else this.blockedObjectTiles.delete(key);
     }
+  }
+
+  private centeredDoorTileKeyForObject(
+    data: { x: number; z: number; floor: number; rotY?: number },
+    def: WorldObjectDef,
+  ): string | null {
+    if (def.category !== 'door') return null;
+    const tile = centeredDoorTileFromPlacement(data.x, data.z, data.rotY ?? 0);
+    if (!tile) return null;
+    return this.blockedObjectKey(data.floor ?? 0, tile[0], tile[1]);
+  }
+
+  private isCenteredDoorTileBlockedKey(key: string): boolean {
+    return (this.closedCenteredDoorTileCounts.get(key) ?? 0) > 0;
+  }
+
+  private removeCenteredDoorTileBlockForObject(objectEntityId: number): void {
+    const key = this.closedCenteredDoorTileKeysByObjectId.get(objectEntityId);
+    if (!key) return;
+    const nextCount = (this.closedCenteredDoorTileCounts.get(key) ?? 0) - 1;
+    if (nextCount > 0) this.closedCenteredDoorTileCounts.set(key, nextCount);
+    else this.closedCenteredDoorTileCounts.delete(key);
+    this.closedCenteredDoorTileKeysByObjectId.delete(objectEntityId);
+  }
+
+  private setCenteredDoorTileBlocked(
+    objectEntityId: number,
+    data: { x: number; z: number; floor: number; rotY?: number },
+    def: WorldObjectDef,
+    blocked: boolean,
+  ): void {
+    const nextKey = blocked ? this.centeredDoorTileKeyForObject(data, def) : null;
+    const currentKey = this.closedCenteredDoorTileKeysByObjectId.get(objectEntityId);
+    if (currentKey && currentKey !== nextKey) this.removeCenteredDoorTileBlockForObject(objectEntityId);
+    if (!nextKey || currentKey === nextKey) return;
+    this.closedCenteredDoorTileCounts.set(nextKey, (this.closedCenteredDoorTileCounts.get(nextKey) ?? 0) + 1);
+    this.closedCenteredDoorTileKeysByObjectId.set(objectEntityId, nextKey);
   }
 
   // Fraction (0–1) of the attack animation duration where the hit visually lands.
@@ -3047,6 +3091,7 @@ export class GameManager {
       if (objectData) {
         const def = this.objectDefsCache.get(objectData.defId);
         if (def) this.setObjectTilesBlocked(objectData.x, objectData.z, def, false, objectData.floor, objectData.interactionTiles);
+        if (def?.category === 'door') this.setCenteredDoorTileBlocked(entityId, objectData, def, false);
         const model = this.worldObjectModels.get(entityId);
         if (model) this.setWorldObjectPickTarget(entityId, false, model);
         this.objectModels.deleteStump(entityId);
@@ -3275,7 +3320,12 @@ export class GameManager {
         prev.depleted !== isDepleted &&
         this.objectDefsCache.get(objectDefId)?.category === 'door';
 
-      this.worldObjectDefs.set(objectEntityId, {
+      if (prev) {
+        const prevDef = this.objectDefsCache.get(prev.defId);
+        if (prevDef?.category === 'door') this.setCenteredDoorTileBlocked(objectEntityId, prev, prevDef, false);
+      }
+
+      const objectData = {
         defId: objectDefId,
         x,
         z,
@@ -3288,7 +3338,8 @@ export class GameManager {
         locked,
         interactionTiles: interactionTiles.length ? interactionTiles : undefined,
         ladderActionMask: Number.isFinite(ladderActionMask) ? ladderActionMask : undefined,
-      });
+      };
+      this.worldObjectDefs.set(objectEntityId, objectData);
 
       const def = this.objectDefsCache.get(objectDefId);
 
@@ -3309,6 +3360,7 @@ export class GameManager {
       }
 
       if (def?.category === 'door') {
+        this.setCenteredDoorTileBlocked(objectEntityId, objectData, def, !isDepleted);
         // Edge detection deferred until model is linked — handled in linkPlacedNodeToEntity / onChunkObjectsLoaded
       } else if (def) {
         // Depleted state intentionally ignored — depleted ores/stumps still
@@ -3396,6 +3448,7 @@ export class GameManager {
             this.chunkManager.setOpenDoorEdges(nx, nz, nb.opposite, opened, floor);
           }
 
+          this.setCenteredDoorTileBlocked(objectEntityId, data, def2, !opened);
           this.animateDoor(objectEntityId, opened, swingSign || 0);
           // Depleted ores/stumps keep their blocking tile — see chunk-entry
           // case in WORLD_OBJECT_SYNC above. Doors animate + toggle edges;
@@ -3773,6 +3826,7 @@ export class GameManager {
     });
 
     this.network.on(ServerOpcode.PATH_TRUNCATED, (_op, v) => {
+      this.clearControlledMoveLock();
       // Server validated our requested path short — collision/wall edge
       // somewhere mid-path. Trim our local walk so it ends at the last
       // reachable tile center the server reports. Without this, the visual
@@ -3806,6 +3860,15 @@ export class GameManager {
           this.reconcileLocalPlayerToServer(lastX, lastZ, false);
         }
       }
+    });
+
+    this.network.on(ServerOpcode.PLAYER_CONTROLLED_MOVE, (_op, v) => {
+      const path: { x: number; z: number }[] = [];
+      for (let i = 0; i + 1 < v.length; i += 2) {
+        path.push({ x: v[i] / 10, z: v[i + 1] / 10 });
+      }
+      this.armControlledMoveLock(path);
+      this.startLocalPredictedPath(path);
     });
 
     this.network.on(ServerOpcode.FLOOR_CHANGE, (_op, values) => {
@@ -3858,6 +3921,12 @@ export class GameManager {
       } else if (opcode === ServerOpcode.DIALOGUE_CLOSE) {
         const sessionId = data.byteLength >= 3 ? view.getInt16(1) : 0;
         this.dialoguePanel?.closeSession(sessionId);
+      } else if (opcode === ServerOpcode.NPC_OVERHEAD_MESSAGE) {
+        const { str, values } = decodeStringPacket(data);
+        const entityId = values[0];
+        if (entityId !== undefined && str.length > 0) {
+          this.showNpcDialogueBubble(entityId, str);
+        }
       } else if (opcode === ServerOpcode.NPC_NAME) {
         // [npcEntityId] follows the string payload. Override is cached for
         // the right-click menu, hover tooltip, and shop title — no floating
@@ -3960,6 +4029,8 @@ export class GameManager {
         this.objectModels.disposeStumps();
         this.worldObjectDefs.clear();
         this.blockedObjectTiles.clear();
+        this.closedCenteredDoorTileCounts.clear();
+        this.closedCenteredDoorTileKeysByObjectId.clear();
         for (const [, proxy] of this.doorPickProxies) proxy.dispose();
         this.doorPickProxies.clear();
         for (const [, entry] of this.doorPivots) entry.pivot.dispose();
@@ -5613,6 +5684,21 @@ export class GameManager {
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
   }
 
+  private armControlledMoveLock(path: { x: number; z: number }[]): void {
+    this.controlledMoveUntilMs = performance.now() + Math.max(TICK_RATE, path.length * TICK_RATE + 600);
+  }
+
+  private clearControlledMoveLock(): void {
+    this.controlledMoveUntilMs = 0;
+  }
+
+  private isControlledMoveActive(now: number = performance.now()): boolean {
+    if (this.controlledMoveUntilMs <= 0) return false;
+    if (now <= this.controlledMoveUntilMs && this.pathIndex < this.path.length) return true;
+    this.clearControlledMoveLock();
+    return false;
+  }
+
   private trimPredictedPathToCurrentTileStep(): boolean {
     if (this.pathIndex >= this.path.length) return false;
     const activeStep = this.getActiveUnitStep();
@@ -5970,6 +6056,7 @@ export class GameManager {
 
   private startPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
     if (path.length === 0) return;
+    if (this.isControlledMoveActive()) return;
     this.followTargetPlayerId = -1;
     if (!this.network.sendMove(path)) return;
     this.startLocalPredictedPath(path, preserveCurrentStep);
@@ -6278,6 +6365,7 @@ export class GameManager {
   }
 
   private interactObject(objectEntityId: number, actionIndex: number): void {
+    if (this.isControlledMoveActive()) return;
     this.combatTargetId = -1;
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
@@ -7384,14 +7472,18 @@ export class GameManager {
   /** Tile blocked check that includes world objects (trees, rocks, etc.) */
   private isTileBlocked = (x: number, z: number): boolean => {
     if (this.currentFloor === 0) {
-      return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedObjectKey(0, x, z));
+      const key = this.blockedObjectKey(0, x, z);
+      return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(key) || this.isCenteredDoorTileBlockedKey(key);
     }
+    const key = this.blockedObjectKey(this.currentFloor, x, z);
     return this.chunkManager.isBlockedOnFloor(x, z, this.currentFloor)
-      || this.blockedObjectTiles.has(this.blockedObjectKey(this.currentFloor, x, z));
+      || this.blockedObjectTiles.has(key)
+      || this.isCenteredDoorTileBlockedKey(key);
   };
 
   private isGroundTileBlocked = (x: number, z: number): boolean => {
-    return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(this.blockedObjectKey(0, x, z));
+    const key = this.blockedObjectKey(0, x, z);
+    return this.chunkManager.isBlocked(x, z) || this.blockedObjectTiles.has(key) || this.isCenteredDoorTileBlockedKey(key);
   };
 
   private isWallBlockedForPath = (fx: number, fz: number, tx: number, tz: number): boolean => {
@@ -7436,6 +7528,7 @@ export class GameManager {
   }
 
   private finishPredictedPathArrival(): void {
+    this.clearControlledMoveLock();
     this.tileProgress = 0;
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
@@ -7459,6 +7552,7 @@ export class GameManager {
   ): void {
     if (this.duelActive) return;
     if (this.isSpellMovementLocked()) return;
+    if (this.isControlledMoveActive()) return;
     if ((this.sidePanel?.getTargetingSpell() ?? -1) >= 0) this.sidePanel!.clearTargetingSpell();
     const tx = Math.floor(worldX), tz = Math.floor(worldZ);
     const clickedOwnTile = tx === Math.floor(this.playerX) && tz === Math.floor(this.playerZ);

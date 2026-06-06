@@ -314,6 +314,10 @@ export enum ServerOpcode {
   BANK_UPDATE_SLOT = 81,
   /** Server-driven close (e.g. player walked away, was attacked, traded). */
   BANK_CLOSE = 82,
+  /** One-shot NPC overhead bubble. String packet — message followed by
+   *  [npcEntityId]. Used for server-triggered NPC lines that are not full
+   *  dialogue sessions. */
+  NPC_OVERHEAD_MESSAGE = 83,
 
   // --- Trade ---
   /** Server tells the client another player wants to trade. Values: [requesterEntityId].
@@ -358,6 +362,10 @@ export enum ServerOpcode {
    *  divergence-snap teleports back" failure mode when a stale/edge path
    *  validation drops tiles. */
   PATH_TRUNCATED = 100,
+  /** Server queued a short authoritative movement path and the local client
+   *  should mirror it visually without echoing PLAYER_MOVE back.
+   *  Values: [x10, z10, ...] tile centers. */
+  PLAYER_CONTROLLED_MOVE = 104,
 
   /** Full quest-state snapshot. String packet: JSON-encoded
    *  Record<questId, {stage, triggerProgress}> followed by no int16s.

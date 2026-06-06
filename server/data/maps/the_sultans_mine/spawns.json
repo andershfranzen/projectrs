@@ -367,22 +367,37 @@
       ]
     },
     {
-      "id": 31,
-      "npcId": 7,
-      "x": 114.5,
-      "z": 156.5,
-      "wanderRange": 3,
-      "aggressive": false
-    },
-    {
-      "id": 32,
+      "id": 33,
       "npcId": 108,
-      "x": 128.5,
-      "z": 97.5,
+      "x": 115.5,
+      "z": 156.5,
       "wanderRange": 0,
       "aggressive": false,
       "facing": 3.141592653589793,
-      "name": "Sultan's Royal Guard"
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 3,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 1,
+        "beltColor": 1,
+        "skinColor": 3,
+        "hairStyle": 2,
+        "gearColor": 2
+      },
+      "equipment": [
+        87,
+        83,
+        80,
+        85,
+        84,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     }
   ],
   "objects": [],
