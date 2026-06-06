@@ -1012,7 +1012,7 @@
       {
         "itemId": 32,
         "quantity": 1,
-        "chance": 0.1
+        "chance": 0.02
       },
       {
         "itemId": 52,
@@ -1028,6 +1028,16 @@
         "itemId": 301,
         "quantity": 1,
         "chance": 0.25
+      },
+      {
+        "itemId": 31,
+        "quantity": 1,
+        "chance": 0.2
+      },
+      {
+        "itemId": 33,
+        "quantity": 1,
+        "chance": 0.2
       }
     ]
   },
