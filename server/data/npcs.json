@@ -1266,7 +1266,30 @@
         "chance": 0.002604166667
       }
     ],
-    "modelNpcId": 5
+    "modelNpcId": 5,
+    "defaultAppearance": {
+      "bodyType": 1,
+      "shirtColor": 0,
+      "pantsColor": 0,
+      "shoesColor": 0,
+      "hairColor": 0,
+      "beltColor": 1,
+      "skinColor": 7,
+      "hairStyle": 12
+    },
+    "defaultEquipment": [
+      72,
+      81,
+      79,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
   },
   {
     "id": 106,
@@ -1308,7 +1331,30 @@
         "chance": 0.002604166667
       }
     ],
-    "modelNpcId": 5
+    "modelNpcId": 5,
+    "defaultAppearance": {
+      "bodyType": 1,
+      "shirtColor": 0,
+      "pantsColor": 0,
+      "shoesColor": 0,
+      "hairColor": 0,
+      "beltColor": 1,
+      "skinColor": 7,
+      "hairStyle": 12
+    },
+    "defaultEquipment": [
+      61,
+      67,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
   },
   {
     "id": 107,
@@ -1350,6 +1396,29 @@
         "chance": 0.002604166667
       }
     ],
-    "modelNpcId": 5
+    "modelNpcId": 5,
+    "defaultAppearance": {
+      "bodyType": 1,
+      "shirtColor": 0,
+      "pantsColor": 0,
+      "shoesColor": 0,
+      "hairColor": 0,
+      "beltColor": 1,
+      "skinColor": 7,
+      "hairStyle": 12
+    },
+    "defaultEquipment": [
+      73,
+      81,
+      66,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
   }
 ]

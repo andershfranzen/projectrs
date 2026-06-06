@@ -1,0 +1,247 @@
+[
+  {
+    "assetId": "CavernExit1",
+    "layerId": "default",
+    "position": {
+      "x": 115.05611916989199,
+      "y": 0.9816066033062003,
+      "z": 165.48676895114792
+    },
+    "rotation": {
+      "x": -2.7755575615628914e-17,
+      "y": -1.5707963267948966,
+      "z": 0.26179938779914946
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    },
+    "trigger": {
+      "type": "teleport",
+      "destChunk": "kcmap",
+      "entryX": 267.5,
+      "entryY": 0.6224362850189209,
+      "entryZ": 210.5
+    },
+    "interactionTiles": [
+      {
+        "x": -2,
+        "z": 0
+      },
+      {
+        "x": -2,
+        "z": 1
+      }
+    ]
+  },
+  {
+    "assetId": "Walltorch",
+    "layerId": "default",
+    "position": {
+      "x": 118.27047740363372,
+      "y": 1.9908552845145824,
+      "z": 160.13415582119092
+    },
+    "rotation": {
+      "x": -0.261799387799148,
+      "y": -1.570796326794898,
+      "z": 2.58612176775885e-16
+    },
+    "scale": {
+      "x": 2.499999999999999,
+      "y": 2.499999999999999,
+      "z": 2.499999999999999
+    }
+  },
+  {
+    "assetId": "Crate1",
+    "layerId": "default",
+    "position": {
+      "x": 118.5,
+      "y": 0.6270766509678686,
+      "z": 161.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.85,
+      "y": 0.85,
+      "z": 0.85
+    }
+  },
+  {
+    "assetId": "Crate1",
+    "layerId": "default",
+    "position": {
+      "x": 118.5,
+      "y": 1.4069135171680183,
+      "z": 161.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.85,
+      "y": 0.85,
+      "z": 0.85
+    }
+  },
+  {
+    "assetId": "Crate1",
+    "layerId": "default",
+    "position": {
+      "x": 118.5,
+      "y": 0.628856877866792,
+      "z": 162.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.85,
+      "y": 0.85,
+      "z": 0.85
+    }
+  },
+  {
+    "assetId": "Crate1",
+    "layerId": "default",
+    "position": {
+      "x": 118.5,
+      "y": 0.6656837868880581,
+      "z": 163.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.85,
+      "y": 0.85,
+      "z": 0.85
+    }
+  },
+  {
+    "assetId": "Crate1",
+    "layerId": "default",
+    "position": {
+      "x": 117.5,
+      "y": 0.6314178667656115,
+      "z": 160.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 0.85,
+      "y": 0.85,
+      "z": 0.85
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "default",
+    "position": {
+      "x": 114.5,
+      "y": 0.768015308901234,
+      "z": 163.48676895114792
+    },
+    "rotation": {
+      "x": -0.2617993877991494,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "default",
+    "position": {
+      "x": 114.5,
+      "y": 0.6437155914734389,
+      "z": 162.48676895114792
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "default",
+    "position": {
+      "x": 114.5,
+      "y": 0.6423963089085775,
+      "z": 161.48676895114792
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "default",
+    "position": {
+      "x": 114.5,
+      "y": 0.6416767553865261,
+      "z": 160.48676895114792
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "MinecartTrackStraight",
+    "layerId": "default",
+    "position": {
+      "x": 114.5057174138999,
+      "y": 1.1231872623717454,
+      "z": 164.35714535593416
+    },
+    "rotation": {
+      "x": -0.4188790204786392,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  }
+]

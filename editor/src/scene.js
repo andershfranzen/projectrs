@@ -372,6 +372,31 @@ function tuneModelLighting(model) {
     return npcDefs.find(d => d.id === npcId)
   }
 
+  const NPC_DEF_DEFAULT_SPAWN_FIELDS = {
+    defaultAppearance: 'appearance',
+    defaultEquipment: 'equipment',
+    defaultCustomColors: 'customColors',
+    defaultAttackAnim: 'attackAnim',
+  }
+
+  function cloneNpcSpawnValue(value) {
+    return value && typeof value === 'object' ? structuredClone(value) : value
+  }
+
+  function applyNpcDefSpawnDefaults(spawn, def) {
+    if (!spawn || !def) return
+    for (const [defField, spawnField] of Object.entries(NPC_DEF_DEFAULT_SPAWN_FIELDS)) {
+      if (spawn[spawnField] != null) continue
+      const value = def[defField]
+      const accept = NPC_SPAWN_OVERRIDE_FIELDS[spawnField]
+      if (accept?.(value)) spawn[spawnField] = cloneNpcSpawnValue(value)
+    }
+  }
+
+  function applyNpcDefDefaultsToExistingSpawns() {
+    for (const spawn of npcSpawns) applyNpcDefSpawnDefaults(spawn, npcDefById(spawn.npcId))
+  }
+
   function bankAccessSaveErrors(mapId, spawns = npcSpawns) {
     return validateBankAccessSpawns(mapId, spawns, npcDefById)
   }
@@ -459,6 +484,14 @@ function tuneModelLighting(model) {
     return own ? 'Default model' : `Model #${sourceId}`
   }
 
+  function npcTypeCombatLevel(def) {
+    return def ? npcCombatLevel(effectiveNpcCombatStats(def)) : 0
+  }
+
+  function npcSpawnCombatLevel(spawn, def = npcDefById(spawn?.npcId)) {
+    return def ? npcCombatLevel(effectiveNpcCombatStats(def, spawn?.stats)) : 0
+  }
+
   function npcPreviewVisualConfig(spawn) {
     if (!spawn) return null
     const def = npcDefById(spawn.npcId)
@@ -487,12 +520,13 @@ function tuneModelLighting(model) {
     // `aggressive` is always present on the in-memory spawn (possibly null)
     // because some UI code reads it without a `in spawn` guard.
     const spawn = { id: id || _npcSpawnNextId++, npcId, x, z, wanderRange, aggressive: input.aggressive ?? null }
+    applyNpcDefSpawnDefaults(spawn, npcDefById(npcId))
     // Other override fields: only set if their save predicate accepts the
     // value so a fresh spawn doesn't carry empty values.
     for (const field of Object.keys(NPC_SPAWN_OVERRIDE_FIELDS)) {
       if (field === 'aggressive') continue
       if (NPC_SPAWN_OVERRIDE_FIELDS[field](input[field])) {
-        spawn[field] = field === 'scale' ? normalizeNpcSpawnScale(input[field]) : input[field]
+        spawn[field] = field === 'scale' ? normalizeNpcSpawnScale(input[field]) : cloneNpcSpawnValue(input[field])
       }
     }
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
@@ -1182,7 +1216,8 @@ function tuneModelLighting(model) {
         const def = npcDefById(selectedNpcSpawn.npcId)
         const scale = npcVisualScale(selectedNpcSpawn)
         const scaleText = Math.abs(scale - 1) > 0.0001 ? ` · ${formatNpcScale(scale)}` : ''
-        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
+        const levelText = def ? ` · level-${npcSpawnCombatLevel(selectedNpcSpawn, def)}` : ''
+        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)}${levelText} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
       } else {
         selectedLabel.textContent = 'No spawn selected'
       }
@@ -1226,7 +1261,8 @@ function tuneModelLighting(model) {
         : ''
       const scale = npcVisualScale(spawn)
       const scaleText = Math.abs(scale - 1) > 0.0001 ? ` s=${formatNpcScale(scale)}` : ''
-      label.textContent = `${name} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}${facingText}${scaleText}`
+      const levelText = def ? ` level-${npcSpawnCombatLevel(spawn, def)}` : ''
+      label.textContent = `${name}${levelText} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}${facingText}${scaleText}`
       row.appendChild(label)
       const del = document.createElement('button')
       del.type = 'button'
@@ -1313,6 +1349,10 @@ function tuneModelLighting(model) {
       editorObjectDefs = []
       editorObjectDefById = new Map()
     } finally {
+      try {
+        if (assetSectionFilter === '__resources__') refreshAssetGroupOptions()
+        if (assetSectionFilter === 'Models' || assetSectionFilter === '__resources__') refreshAssetList()
+      } catch {}
       try { updateToolUI() } catch {}
     }
   }
@@ -2318,6 +2358,7 @@ let selectedWaterFlowChunk = null
         <label style="font-size:11px;color:rgba(255,255,255,0.45);">Scale <span id="placeScaleLabel">1.0</span></label>
         <input id="placeScaleSlider" type="range" min="0.1" max="5" step="0.1" value="1.0" style="width:100%;margin-top:3px;" />
         <button id="refreshPreviewBtn" style="width:100%;margin-top:5px;">Refresh Preview</button>
+        <div class="hint" style="margin-top:5px;">Ctrl/Cmd place on visible upper surfaces</div>
       </div>
     </div>
 
@@ -2325,7 +2366,7 @@ let selectedWaterFlowChunk = null
       <div class="hint">
         G move · R rotate · S scale<br>
         X Y Z axis lock · click confirm · Esc cancel<br>
-        Q/E raise/lower while moving · Shift snap<br>
+        Q/E raise/lower while moving · Shift snap · Ctrl/Cmd surface<br>
         Alt free move (bypass snap) · K snap to grid<br>
         D dup in-place · Shift+D right · Ctrl+D left · Alt+D forward · Alt+A back<br>
         Shift+A stack upward<br>
@@ -2709,7 +2750,7 @@ let selectedWaterFlowChunk = null
       <b>Tools:</b> 1 Terrain · 2 Paint · 3 Place · 4 Select · 5 Texture · 6 Texture Plane<br>
       <b>History:</b> Ctrl+Z undo · Ctrl+Shift+Z / Ctrl+Y redo<br>
       <b>Transform:</b> G move · R rotate · S scale · X/Y/Z axis · click confirm · Esc cancel<br>
-      <b>While moving:</b> Q raise · E lower · Shift snap to grid · Alt disable edge snap<br>
+      <b>While moving:</b> Q raise · E lower · Shift snap to grid · Ctrl/Cmd use upper surface · Alt disable edge snap<br>
       <b>Terrain:</b> Q/E raise/lower hovered · L level mode · F flip tile split<br>
       <b>Duplicate:</b> D in-place · Shift+D right · Ctrl+D left · Alt+D forward · Alt+A back · Shift+A stack up<br>
       <b>Other:</b> K snap to grid · V toggle plane vertical/horizontal · Del remove selected
@@ -2870,6 +2911,17 @@ let selectedWaterFlowChunk = null
     return def ? `${def.name} (ID ${def.id})` : ''
   }
 
+  function formatNpcTypeOptionLabel(def) {
+    if (!def) return ''
+    const suffix = def.bankAccess ? ' — BANK' : ''
+    return `${def.name} (ID ${def.id}) — level-${npcTypeCombatLevel(def)} — HP ${def.health} — ${npcTypeModelLabel(def)}${suffix}`
+  }
+
+  function formatNpcTypeSummary(def) {
+    if (!def) return ''
+    return `level-${npcTypeCombatLevel(def)} · HP ${def.health} · Wander ${def.wanderRange ?? 0} · ${npcTypeModelLabel(def)}${def.aggressive ? ' · Aggressive' : ''}${def.bankAccess ? ' · Bank' : ''}`
+  }
+
   function parseNpcTypeDisplay(value) {
     const text = String(value || '').trim()
     if (!text) return 0
@@ -2941,7 +2993,7 @@ let selectedWaterFlowChunk = null
       name.textContent = `${def.name} (${def.id})`
       name.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
       const meta = document.createElement('span')
-      meta.textContent = `HP ${def.health} · ${npcTypeModelLabel(def)}${def.bankAccess ? ' · Bank' : ''}`
+      meta.textContent = `level-${npcTypeCombatLevel(def)} · HP ${def.health} · ${npcTypeModelLabel(def)}${def.bankAccess ? ' · Bank' : ''}`
       meta.style.cssText = 'flex:0 0 auto;color:rgba(255,255,255,0.48);'
       row.appendChild(name)
       row.appendChild(meta)
@@ -2997,6 +3049,7 @@ let selectedWaterFlowChunk = null
       const meta = document.createElement('div')
       meta.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.55);margin-top:3px;display:flex;gap:5px;flex-wrap:wrap;'
       const badges = [
+        `level-${npcTypeCombatLevel(def)}`,
         `HP ${def.health ?? 0}`,
         `W ${def.wanderRange ?? 0}`,
         npcTypeModelLabel(def),
@@ -3026,8 +3079,7 @@ let selectedWaterFlowChunk = null
     if (sel) {
       sel.innerHTML = defs.map(d => {
         const title = d.bankAccess ? ` title="Bank-enabled spawns must be named &quot;${BANK_ACCESS_SPAWN_NAME}&quot;."` : ''
-        const suffix = d.bankAccess ? ' — BANK' : ''
-        return `<option value="${d.id}"${title}>${d.name} (ID ${d.id}) — HP ${d.health} — ${npcTypeModelLabel(d)}${suffix}</option>`
+        return `<option value="${d.id}"${title}>${formatNpcTypeOptionLabel(d)}</option>`
       }).join('')
       if (!sel.value && defs[0]) sel.value = defs[0].id
     }
@@ -3043,9 +3095,7 @@ let selectedWaterFlowChunk = null
     if (input && def && document.activeElement !== input) input.value = formatNpcTypeDisplay(def)
     renderNpcTypeResults(input?.value || '')
     if (summary) {
-      summary.textContent = def
-        ? `HP ${def.health} · Wander ${def.wanderRange ?? 0} · ${npcTypeModelLabel(def)}${def.aggressive ? ' · Aggressive' : ''}${def.bankAccess ? ' · Bank' : ''}`
-        : ''
+      summary.textContent = formatNpcTypeSummary(def)
     }
     renderNpcTypeLibrary(document.activeElement === input ? input?.value || '' : '')
   }
@@ -3073,6 +3123,7 @@ let selectedWaterFlowChunk = null
         selectedNpcSpawn.name = candidate.name
       }
       selectedNpcSpawn.npcId = requestedDef.id
+      applyNpcDefSpawnDefaults(selectedNpcSpawn, requestedDef)
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
     }
@@ -3170,7 +3221,10 @@ let selectedWaterFlowChunk = null
   loadNpcDefsForEditor()
     .then(defs => {
       npcDefs = defs
+      applyNpcDefDefaultsToExistingSpawns()
       populateNpcTypeControls(defs)
+      rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
       renderNpcInspector()
     })
     .catch(e => console.warn('Failed to load NPC defs:', e))
@@ -3729,15 +3783,18 @@ let selectedWaterFlowChunk = null
         }
         refreshCombatLevelReadout()
         markDefsDirty()
-        // Reflect Name updates in the dropdown live.
-        if (key === 'name') {
-          const sel = sidebar.querySelector('#npcTypeSelect')
-          if (sel) {
-            for (const opt of sel.options) {
-              if (parseInt(opt.value) === def.id) opt.textContent = `${def.name} (ID ${def.id}) — HP ${def.health}`
+        const sel = sidebar.querySelector('#npcTypeSelect')
+        if (sel) {
+          for (const opt of sel.options) {
+            if (parseInt(opt.value) === def.id) {
+              opt.textContent = formatNpcTypeOptionLabel(def)
+              break
             }
           }
         }
+        refreshNpcSpawnList()
+        updateNpcPlacementControls()
+        syncNpcTypeInput()
       })
     }
   }
@@ -6097,12 +6154,20 @@ let selectedWaterFlowChunk = null
   ]
 
   const GROUND_TYPES_DUNGEON = [
-    { id: 'void',          label: 'Void',        color: '#050505' },
-    { id: 'dungeon-floor', label: 'Stone Floor', color: '#3a2e20' },
-    { id: 'dungeon-rock',  label: 'Rock',        color: '#4a3828' },
-    { id: 'dirt',          label: 'Dirt',         color: '#7a5030' },
-    { id: 'water',         label: 'Mud',          color: '#5a3d1a' },
-    { id: 'surface-water', label: 'Still Water',  color: '#7ab8c8' },
+    { id: 'void',              label: 'Void',        color: '#050505' },
+    { id: 'dungeon-floor',     label: 'Stone Floor', color: '#3a2e20' },
+    { id: 'dungeon-stone',     label: 'Grey Stone',  color: '#5c5c58' },
+    { id: 'dungeon-slate',     label: 'Slate',       color: '#3e4a51' },
+    { id: 'dungeon-rubble',    label: 'Rubble',      color: '#4d453a' },
+    { id: 'dungeon-basalt',    label: 'Basalt',      color: '#222226' },
+    { id: 'dungeon-moss',      label: 'Mossy Floor', color: '#2e472b' },
+    { id: 'dungeon-torchlight', label: 'Torch Glow', color: '#a36529' },
+    { id: 'dungeon-rock',      label: 'Rock Cliff',  color: '#4a3828' },
+    { id: 'dungeon-grey-rock', label: 'Grey Cliff',  color: '#515452' },
+    { id: 'dungeon-dark-rock', label: 'Dark Cliff',  color: '#201d1b' },
+    { id: 'dirt',              label: 'Dirt',        color: '#7a5030' },
+    { id: 'water',             label: 'Mud',         color: '#5a3d1a' },
+    { id: 'surface-water',     label: 'Still Water', color: '#7ab8c8' },
   ]
 
   let GROUND_TYPES = GROUND_TYPES_OVERWORLD
@@ -7923,6 +7988,23 @@ let selectedWaterFlowChunk = null
     return pickSurfacePointFromRay(ray, excludeObjects)
   }
 
+  function shouldUseStackedPlacementSurface(eventLike) {
+    return !!(eventLike?.ctrlKey || eventLike?.metaKey)
+  }
+
+  function pickPlacementPointFromRay(ray, excludeObjects = [], eventLike = null) {
+    if (shouldUseStackedPlacementSurface(eventLike)) {
+      return pickSurfacePointFromRay(ray, excludeObjects)
+    }
+    return pickTerrainPointFromRay(ray)
+  }
+
+  function pickPlacementPoint(event, excludeObjects = []) {
+    updateMouse(event)
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+    return pickPlacementPointFromRay(ray, excludeObjects, event)
+  }
+
   function tileFromWorldPoint(point) {
     if (!point) return null
     const x = Math.floor(point.x)
@@ -8868,7 +8950,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
     pushUndoState('objects')
 
-    const surfacePoint = event ? pickSurfacePoint(event) : null
+    const surfacePoint = event ? pickPlacementPoint(event) : null
     const placementTile = tileFromWorldPoint(surfacePoint) || tile
     const pos = tileWorldPosition(placementTile.x, placementTile.z)
     if (surfacePoint) pos.y = surfacePoint.y
@@ -9366,24 +9448,35 @@ function applyToolAtTile(tile, eventLike = null) {
     updateToolUI()
   }
 
-  function resourceAssetGroup(asset) {
+  function interactableAssetCategory(asset) {
     const defId = ASSET_TO_OBJECT_DEF[asset.id]
     const def = defId != null ? editorObjectDefById.get(defId) : null
-    if (def?.category === 'rock') return 'Rocks'
-    if (def?.category === 'tree') return 'Trees'
+    if (def?.category) return def.category
 
     // Object defs load asynchronously. Keep the tab useful while they are still
     // loading by falling back to mapped asset names only.
     if (defId != null) {
       const haystack = `${asset.id} ${asset.name} ${asset.path}`.toLowerCase()
-      if (haystack.includes('rock')) return 'Rocks'
-      if (haystack.includes('tree')) return 'Trees'
+      if (haystack.includes('rock')) return 'rock'
+      if (haystack.includes('tree')) return 'tree'
     }
+    return null
+  }
+
+  function isInteractableRockAsset(asset) {
+    return interactableAssetCategory(asset) === 'rock'
+  }
+
+  function resourceAssetGroup(asset) {
+    const category = interactableAssetCategory(asset)
+    if (category === 'rock') return 'Rocks'
+    if (category === 'tree') return 'Trees'
     return null
   }
 
   function assetMatchesSection(asset, section) {
     if (section === '__resources__') return resourceAssetGroup(asset) !== null
+    if (section === 'Models' && isInteractableRockAsset(asset)) return false
     if (section !== 'all' && asset.section !== section) return false
     return true
   }
@@ -11995,14 +12088,16 @@ function applyToolAtTile(tile, eventLike = null) {
     if (isDungeon) {
       scene.clearColor = new Color4(0, 0, 0, 1)
       scene.fogColor = new Color3(0, 0, 0)
-      scene.fogStart = 18
-      scene.fogEnd = 48
-      sun.intensity = 0.1
+      // The editor frames sparse dungeon maps from farther away than gameplay.
+      // Tight in-game fog makes large maps like Sultan's Mine render fully black.
+      scene.fogStart = 80
+      scene.fogEnd = 180
+      sun.intensity = 0.25
       sun.diffuse = new Color3(0.42, 0.29, 0.13)
-      fill.intensity = 0.05
+      fill.intensity = 0.12
       fill.diffuse = new Color3(0.29, 0.19, 0.06)
       ambient.diffuse = new Color3(0.48, 0.38, 0.25)
-      ambient.intensity = 0.55
+      ambient.intensity = 0.75
     } else {
       scene.clearColor = new Color4(0.4, 0.6, 0.9, 1.0)
       scene.fogColor = new Color3(0.4, 0.6, 0.9)
@@ -12652,8 +12747,8 @@ function applyToolAtTile(tile, eventLike = null) {
       } else {
         updateMouse(event)
         const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
-        const surfacePoint = pickSurfacePointFromRay(ray, selectedPlacedObjects)
-        const movePoint = surfacePoint ?? pickHorizontalPlaneFromRay(ray, selectedPlacedObject.position.y)
+        const placementPoint = pickPlacementPointFromRay(ray, selectedPlacedObjects, event)
+        const movePoint = placementPoint ?? pickHorizontalPlaneFromRay(ray, selectedPlacedObject.position.y)
         if (!movePoint) return true
 
         const _movingAsset = assetRegistry.find((a) => a.id === selectedPlacedObject.userData.assetId)
@@ -12675,7 +12770,7 @@ function applyToolAtTile(tile, eventLike = null) {
         if (transformLift !== 0) {
           targetY = selectedPlacedObject.position.y
         } else {
-          targetY = surfacePoint?.y ?? selectedPlacedObject.position.y
+          targetY = placementPoint?.y ?? selectedPlacedObject.position.y
         }
         selectedPlacedObject.position.set(newX, targetY, newZ)
       }
@@ -12720,7 +12815,7 @@ function applyToolAtTile(tile, eventLike = null) {
     hoverText.textContent = `tile (${tile.x}, ${tile.z})  elev ${y.toFixed(2)}`
 
     if (previewObject) {
-      const sp = pickSurfacePoint(event)
+      const sp = pickPlacementPoint(event)
       const placementTile = tileFromWorldPoint(sp) || tile
       if (sp && state.tool === ToolMode.PLACE) {
         state.hovered = placementTile

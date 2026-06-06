@@ -3,7 +3,7 @@ import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { isPointInNpcMagicAttackRange, processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
-import { ServerOpcode, decodePacket, getObjectFootprintBounds, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
+import { ServerOpcode, TICK_RATE, decodePacket, getObjectFootprintBounds, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -34,6 +34,7 @@ const npcDef: NpcDef = {
   wanderRange: 0,
   lootTable: [],
 };
+const AGGRO_TOLERANCE_TEST_TICKS = Math.ceil(10 * 60_000 / TICK_RATE);
 
 const bowItemDef: ItemDef = {
   id: 1000,
@@ -84,6 +85,7 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   world.npcs = new Map([[npc.id, npc]]);
   world.playerCombatTargets = new Map();
   world.npcTargetedBy = new Map();
+  world.playerAggroTolerance = new Map();
   world.activeDuels = new Map();
   world.chunkManagers = new Map();
   world.blockedObjectTiles = new Set();
@@ -541,6 +543,59 @@ describe('NPC interaction reachability', () => {
     expect(npc.maxRange).toBe(7);
     expect(npc.aggroRange).toBe(7);
     expect(npc.combatTarget).toBe(player);
+  });
+
+  test('aggressive NPCs stop first-strike targeting after 10 minutes in the same area', () => {
+    const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, aggressive: true, wanderRange: 5 }, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    world.currentTick = AGGRO_TOLERANCE_TEST_TICKS + 1;
+    world.playerAggroTolerance.set(player.id, {
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+      anchorX: Math.floor(player.position.x),
+      anchorZ: Math.floor(player.position.y),
+      enteredTick: 1,
+    });
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(npc.combatTarget).toBeNull();
+  });
+
+  test('moving away resets aggressive NPC first-strike tolerance', () => {
+    const player = new Player('tester', 45.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, aggressive: true, wanderRange: 5 }, 44.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+    world.currentTick = AGGRO_TOLERANCE_TEST_TICKS + 1;
+    world.playerAggroTolerance.set(player.id, {
+      mapLevel: player.currentMapLevel,
+      floor: player.currentFloor,
+      anchorX: 10,
+      anchorZ: 10,
+      enteredTick: 1,
+    });
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(npc.combatTarget).toBe(player);
+    expect(world.playerAggroTolerance.get(player.id)).toMatchObject({
+      anchorX: 45,
+      anchorZ: 10,
+      enteredTick: world.currentTick,
+    });
   });
 
   test('aggressive NPCs keep returning instead of reacquiring players outside max range', () => {

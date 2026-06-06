@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -256,6 +256,10 @@ const RECONNECT_GRACE_TICKS = 38;
 /** OSRS-inspired x-log safety cap: force-close disconnected combat logouts
  *  after 60s even if NPC combat keeps re-arming the 10s combat timer. */
 const DISCONNECTED_COMBAT_LOGOUT_TICKS = Math.ceil(60_000 / TICK_RATE);
+/** After 10 minutes in the same 32-tile area, aggressive NPCs stop
+ *  first-strike targeting until the player leaves that area. */
+const AGGRO_TOLERANCE_TICKS = Math.ceil(10 * 60_000 / TICK_RATE);
+const AGGRO_TOLERANCE_RESET_DISTANCE_TILES = CHUNK_SIZE;
 const IDLE_WARNING_TICKS = Math.ceil(4 * 60_000 / TICK_RATE);
 const IDLE_LOGOUT_TICKS = Math.ceil(5 * 60_000 / TICK_RATE);
 const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
@@ -372,6 +376,14 @@ type QueuedObjectRespawnWrite =
     };
 
 type LadderAction = 'Climb-up' | 'Climb-down';
+
+interface PlayerAggroToleranceState {
+  mapLevel: string;
+  floor: number;
+  anchorX: number;
+  anchorZ: number;
+  enteredTick: number;
+}
 
 interface ResolvedVerticalEndpoint {
   mapId: string;
@@ -557,6 +569,7 @@ export class World {
   private objectSayScheduledLines: ObjectSayScheduledLine[] = [];
   private pendingPositionCheckpoints: Map<number, QueuedPositionCheckpoint> = new Map();
   private pendingObjectRespawnWrites: Map<string, QueuedObjectRespawnWrite> = new Map();
+  private playerAggroTolerance: Map<number, PlayerAggroToleranceState> = new Map();
 
   // Player combat targets (playerId -> npcId)
   private playerCombatTargets: Map<number, number> = new Map();
@@ -1636,8 +1649,8 @@ export class World {
   private npcOptionsFromSpawn(spawn: SpawnEntry, npcDef: NpcDef): NpcOptions {
     return {
       wanderRange: spawn.wanderRange,
-      appearance: spawn.appearance ?? null,
-      equipment: spawn.equipment ?? null,
+      appearance: spawn.appearance ?? npcDef.defaultAppearance ?? null,
+      equipment: spawn.equipment ?? npcDef.defaultEquipment ?? null,
       aggressive: spawn.aggressive ?? null,
       // Per-spawn shop/dialogue fully replace the def's (no field-merge).
       // Falls through: spawn override -> def -> legacy shops.json (shop only).
@@ -1645,8 +1658,8 @@ export class World {
       effectiveDialogue: spawn.dialogue ?? npcDef.dialogue ?? null,
       nameOverride: spawn.name ?? null,
       statsOverride: spawn.stats ?? null,
-      customColors: spawn.customColors ?? null,
-      attackAnimOverride: spawn.attackAnim ?? null,
+      customColors: spawn.customColors ?? npcDef.defaultCustomColors ?? null,
+      attackAnimOverride: spawn.attackAnim ?? npcDef.defaultAttackAnim ?? null,
       facing: spawn.facing ?? null,
       maxRange: spawn.maxRange ?? null,
       huntRange: spawn.huntRange ?? null,
@@ -2564,6 +2577,7 @@ export class World {
     }
 
     this.pendingPositionCheckpoints?.delete(player.accountId);
+    this.playerAggroTolerance?.delete(playerId);
     this.players.delete(playerId);
     this.markEntityTileOccupantsDirty();
     this.skillingActions.delete(playerId);
@@ -7852,6 +7866,7 @@ export class World {
 
     this.rebuildEntityTileOccupants();
     this.tickPlayerMovement();
+    this.tickPlayerAggroTolerance();
     this.flushPendingPositionCheckpoints();
     this.rebuildEntityTileOccupants();
     this.tickNpcAI();
@@ -8070,6 +8085,51 @@ export class World {
     }
   }
 
+  private aggroToleranceStateMap(): Map<number, PlayerAggroToleranceState> {
+    if (!this.playerAggroTolerance) this.playerAggroTolerance = new Map();
+    return this.playerAggroTolerance;
+  }
+
+  private refreshPlayerAggroTolerance(player: Player): PlayerAggroToleranceState {
+    const states = this.aggroToleranceStateMap();
+    const tileX = Math.floor(player.position.x);
+    const tileZ = Math.floor(player.position.y);
+    const state = states.get(player.id);
+    if (
+      !state
+      || state.mapLevel !== player.currentMapLevel
+      || state.floor !== player.currentFloor
+      || Math.max(Math.abs(tileX - state.anchorX), Math.abs(tileZ - state.anchorZ)) > AGGRO_TOLERANCE_RESET_DISTANCE_TILES
+    ) {
+      const nextState = {
+        mapLevel: player.currentMapLevel,
+        floor: player.currentFloor,
+        anchorX: tileX,
+        anchorZ: tileZ,
+        enteredTick: this.currentTick,
+      };
+      states.set(player.id, nextState);
+      return nextState;
+    }
+    return state;
+  }
+
+  private tickPlayerAggroTolerance(): void {
+    const states = this.aggroToleranceStateMap();
+    for (const [, player] of this.players) {
+      if (player.disconnected || player.requestIdleLogout || !player.alive) {
+        states.delete(player.id);
+        continue;
+      }
+      this.refreshPlayerAggroTolerance(player);
+    }
+  }
+
+  private isPlayerAggroTolerant(player: Player): boolean {
+    const state = this.refreshPlayerAggroTolerance(player);
+    return this.currentTick - state.enteredTick >= AGGRO_TOLERANCE_TICKS;
+  }
+
   private tickNpcAI(): void {
     for (const [, npc] of this.npcs) {
       this.rebuildEntityTileOccupants();
@@ -8097,7 +8157,10 @@ export class World {
             const player = this.players.get(pid);
             if (!player) return;
             if (player.currentMapLevel !== npc.currentMapLevel || player.currentFloor !== npc.currentFloor) return;
+            if (player.disconnected || player.requestIdleLogout || !player.alive) return;
             if (player.openInterface !== null || this.activeDuels?.has(player.id)) return;
+            if (!npcCanAggroPlayerByCombatLevel(npc.combatLevel, player.combatLevel)) return;
+            if (this.isPlayerAggroTolerant(player)) return;
             if (!npc.isTargetWithinAggroRange(player.position.x, player.position.y)) return;
             const fp = npc.distToFootprint(player.position.x, player.position.y);
             if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= huntRange) {

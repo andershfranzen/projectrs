@@ -8,8 +8,8 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import type { Scene } from '@babylonjs/core/scene'
-import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_FALLBACK_TINT, SURFACE_WATER_FALLBACK_TINT, WATER_SURFACE_VERTEX_COLOR, SURFACE_WATER_VERTEX_COLOR, WATER_UV_SCALE } from '@projectrs/shared'
-import type { RGB, GroundType, UVPoint, WaterFlowUvTransform } from '@projectrs/shared'
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_FALLBACK_TINT, SURFACE_WATER_FALLBACK_TINT, WATER_SURFACE_VERTEX_COLOR, SURFACE_WATER_VERTEX_COLOR, WATER_UV_SCALE } from '@projectrs/shared'
+import type { RGB, GroundType, UVPoint, WaterFlowUvTransform, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared'
 import type { MapData, TexturePlane } from './MapData'
 import type { TextureEntry } from '../assets-system/TextureRegistry'
 
@@ -89,6 +89,129 @@ function getVertexAO(map: MapData, vx: number, vz: number): number {
   return sharedGetVertexAO(vx, vz, map.width, map.height, (x, z) => map.getVertexHeight(x, z))
 }
 
+function rawTileHasTorchlightPaint(map: MapData, x: number, z: number): boolean {
+  const tile = map.getTile(x, z)
+  return hasTorchlightPaint(tile?.ground as GroundType | undefined, tile?.groundB as GroundType | null | undefined)
+}
+
+let _torchlightIndexMap: MapData | null = null
+let _torchlightIndexW = 0
+let _torchlightIndexH = 0
+let _torchlightPaint: Int8Array | null = null
+let _torchlightCount = 0
+
+function rebuildTorchlightPaintIndex(map: MapData): void {
+  _torchlightIndexMap = map
+  _torchlightIndexW = map.width
+  _torchlightIndexH = map.height
+  _torchlightPaint = new Int8Array(map.width * map.height)
+  _torchlightCount = 0
+  for (let z = 0; z < map.height; z++) {
+    for (let x = 0; x < map.width; x++) {
+      if (!rawTileHasTorchlightPaint(map, x, z)) continue
+      _torchlightPaint[z * map.width + x] = 1
+      _torchlightCount++
+    }
+  }
+}
+
+function ensureTorchlightPaintIndex(map: MapData): void {
+  if (_torchlightIndexMap !== map || _torchlightIndexW !== map.width || _torchlightIndexH !== map.height || !_torchlightPaint) {
+    rebuildTorchlightPaintIndex(map)
+  }
+}
+
+function updateTorchlightPaintIndexRegion(map: MapData, x1: number, z1: number, x2: number, z2: number): void {
+  ensureTorchlightPaintIndex(map)
+  if (!_torchlightPaint) return
+  const rx1 = Math.max(0, x1)
+  const rz1 = Math.max(0, z1)
+  const rx2 = Math.min(map.width - 1, x2)
+  const rz2 = Math.min(map.height - 1, z2)
+  for (let z = rz1; z <= rz2; z++) {
+    for (let x = rx1; x <= rx2; x++) {
+      const idx = z * map.width + x
+      const prev = _torchlightPaint[idx] === 1
+      const next = rawTileHasTorchlightPaint(map, x, z)
+      if (prev === next) continue
+      _torchlightPaint[idx] = next ? 1 : 0
+      _torchlightCount += next ? 1 : -1
+    }
+  }
+}
+
+function collectTorchlightPaintTilesForRegion(map: MapData, startX: number, startZ: number, endX: number, endZ: number): TorchlightPaintTile[] {
+  ensureTorchlightPaintIndex(map)
+  if (!_torchlightPaint || _torchlightCount <= 0) return []
+  const pad = Math.ceil(TORCHLIGHT_GLOW_RADIUS_TILES)
+  const rx1 = Math.max(0, startX - pad)
+  const rz1 = Math.max(0, startZ - pad)
+  const rx2 = Math.min(map.width - 1, endX + pad - 1)
+  const rz2 = Math.min(map.height - 1, endZ + pad - 1)
+  const out: TorchlightPaintTile[] = []
+  for (let z = rz1; z <= rz2; z++) {
+    for (let x = rx1; x <= rx2; x++) {
+      if (_torchlightPaint[z * map.width + x] !== 1) continue
+      out.push({ x, z })
+    }
+  }
+  return out
+}
+
+function buildTorchlightGridForRegion(map: MapData, startX: number, startZ: number, endX: number, endZ: number): TorchlightInfluenceGrid | null {
+  return buildTorchlightInfluenceGrid(
+    startX,
+    startZ,
+    endX,
+    endZ,
+    collectTorchlightPaintTilesForRegion(map, startX, startZ, endX, endZ),
+  )
+}
+
+function torchlightInfluenceAt(worldX: number, worldZ: number): number {
+  return sampleTorchlightInfluenceGrid(_vcTorchlightGrid, worldX, worldZ)
+}
+
+function pushTorchlightSubdividedTile(
+  vertices: number[],
+  colors: number[],
+  uvs: number[],
+  indices: number[],
+  base: number,
+  h: CornerH,
+  x: number,
+  z: number,
+  cTL: RGB,
+  cTR: RGB,
+  cBL: RGB,
+  cBR: RGB,
+): number {
+  const steps = TORCHLIGHT_GLOW_SUBDIVISIONS
+  const row = steps + 1
+
+  for (let vz = 0; vz <= steps; vz++) {
+    const v = vz / steps
+    for (let ux = 0; ux <= steps; ux++) {
+      const u = ux / steps
+      const color = bilerpRGB(cTL, cTR, cBL, cBR, u, v)
+      applyTorchlightTint(color, torchlightInfluenceAt(x + u, z + v))
+      pushVertex(vertices, colors, uvs, x + u, bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v), z + v, color, u, v)
+    }
+  }
+
+  for (let vz = 0; vz < steps; vz++) {
+    for (let ux = 0; ux < steps; ux++) {
+      const tl = base + vz * row + ux
+      const tr = tl + 1
+      const bl = base + (vz + 1) * row + ux
+      const br = bl + 1
+      indices.push(tl, tr, bl, tr, br, bl)
+    }
+  }
+
+  return row * row
+}
+
 function getCornerBlendedColor(map: MapData, cornerX: number, cornerZ: number, shade: number): RGB {
   const sharingTiles: [number, number][] = [
     [cornerX - 1, cornerZ - 1],
@@ -100,7 +223,11 @@ function getCornerBlendedColor(map: MapData, cornerX: number, cornerZ: number, s
   let r = 0, g = 0, b = 0, noise = 0, totalWeight = 0
   for (const [nx, nz] of sharingTiles) {
     if (!map.getTile(nx, nz)) continue
-    const type = map.getBaseGroundType(nx, nz) as GroundType
+    const tile = map.getTile(nx, nz)
+    const type = visualGroundForTorchlight(
+      (tile?.ground || map.defaultGround) as GroundType,
+      (tile?.groundB || null) as GroundType | null,
+    )
     if (type === 'void') continue
     if (type === 'road') continue
     const w = 1.0
@@ -122,8 +249,18 @@ let _vcCliffStr: Float32Array | null = null
 let _vcAO: Float32Array | null = null
 let _vcSlopeShade: Float32Array | null = null
 let _vcRenderWater: Int8Array | null = null
+let _vcTorchlightGrid: TorchlightInfluenceGrid | null = null
 
-function _initVertexCache(map: MapData): void {
+function _initVertexCache(
+  map: MapData,
+  region: { startX: number; startZ: number; endX: number; endZ: number } = {
+    startX: 0,
+    startZ: 0,
+    endX: map.width,
+    endZ: map.height,
+  },
+  forceTorchlightIndex = false,
+): void {
   const size = (map.width + 1) * (map.height + 1)
   _vcCols       = map.width + 1
   _vcWaterProx  = new Float32Array(size).fill(-1)
@@ -131,6 +268,9 @@ function _initVertexCache(map: MapData): void {
   _vcAO         = new Float32Array(size).fill(-1)
   _vcSlopeShade = new Float32Array(size).fill(-1)
   _vcRenderWater = new Int8Array(map.width * map.height).fill(-1)
+  if (forceTorchlightIndex) rebuildTorchlightPaintIndex(map)
+  else ensureTorchlightPaintIndex(map)
+  _vcTorchlightGrid = buildTorchlightGridForRegion(map, region.startX, region.startZ, region.endX, region.endZ)
 }
 
 function _cvShouldRenderWater(map: MapData, x: number, z: number): boolean {
@@ -187,11 +327,14 @@ function addTileGeometry(
   const slopeShade = (shadeTL + shadeTR + shadeBL + shadeBR) / 4
 
   const tile = map.getTile(x, z)
-  const groundBType = (tile?.groundB || null) as GroundType | null
+  const rawGroundBType = (tile?.groundB || null) as GroundType | null
+  const isTorchlightPaint = hasTorchlightPaint(tileType, rawGroundBType)
+  const renderTileType = visualGroundForTorchlight(tileType, rawGroundBType)
+  const groundBType = rawGroundBType && !isTorchlightPaint ? rawGroundBType : null
   const splitDir = tile?.split || 'forward'
 
   let cTL: RGB, cTR: RGB, cBL: RGB, cBR: RGB
-  if (tileType === 'road') {
+  if (renderTileType === 'road') {
     const noise = getNoiseExtra('road', x + 0.5, z + 0.5)
     cTL = groundColor('road', Math.max(shadeTL + noise, 0.5))
     cTR = groundColor('road', Math.max(shadeTR + noise, 0.5))
@@ -204,7 +347,7 @@ function addTileGeometry(
     cBR = getCornerBlendedColor(map, x + 1, z + 1, shadeBR)
   }
 
-  if (tileType !== 'water') {
+  if (renderTileType !== 'water') {
     const wLevel = map.getTileWaterLevel(x, z)
 
     const proxTL = _cvWaterProx(map, x,     z    )
@@ -230,7 +373,7 @@ function addTileGeometry(
     applyDepth(cBR, h.br)
   }
 
-  if (tileType !== 'water') {
+  if (renderTileType !== 'water') {
     const applyCliffTint = (c: RGB, t: number): void => {
       if (t <= 0) return
       c.r *= 1 + t * 0.04
@@ -243,14 +386,14 @@ function addTileGeometry(
     applyCliffTint(cBR, _cvCliffStr(map, x + 1, z + 1))
   }
 
-  if (tileType !== 'water') {
+  if (renderTileType !== 'water') {
     colorMultiplyScalar(cTL, _cvAO(map, x,     z    ))
     colorMultiplyScalar(cTR, _cvAO(map, x + 1, z    ))
     colorMultiplyScalar(cBL, _cvAO(map, x,     z + 1))
     colorMultiplyScalar(cBR, _cvAO(map, x + 1, z + 1))
   }
 
-  const shadowableType = tileType === 'grass' || tileType === 'dirt' || tileType === 'path'
+  const shadowableType = renderTileType === 'grass' || renderTileType === 'dirt' || renderTileType === 'path'
   if (shadowableType && shadowInf) {
     colorMultiplyScalar(cTL, shadowInf[z    ][x    ])
     colorMultiplyScalar(cTR, shadowInf[z    ][x + 1])
@@ -258,19 +401,22 @@ function addTileGeometry(
     colorMultiplyScalar(cBR, shadowInf[z + 1][x + 1])
   }
 
-  if (groundBType && groundBType !== tileType) {
-    const noiseA = getNoiseExtra(tileType, x + 0.25, z + 0.25)
+  if (groundBType && groundBType !== renderTileType) {
+    const noiseA = getNoiseExtra(renderTileType, x + 0.25, z + 0.25)
     const noiseB = getNoiseExtra(groundBType, x + 0.75, z + 0.75)
-    const cA = groundColor(tileType, Math.max(slopeShade + noiseA, 0.5))
+    const cA = groundColor(renderTileType, Math.max(slopeShade + noiseA, 0.5))
     const cB = groundColor(groundBType, Math.max(slopeShade + noiseB, 0.5))
     const avgAO = (_cvAO(map, x, z) + _cvAO(map, x+1, z) + _cvAO(map, x, z+1) + _cvAO(map, x+1, z+1)) / 4
-    const shadowableA = tileType === 'grass' || tileType === 'dirt' || tileType === 'path'
+    const shadowableA = renderTileType === 'grass' || renderTileType === 'dirt' || renderTileType === 'path'
     const shadowableB = groundBType === 'grass' || groundBType === 'dirt' || groundBType === 'path'
     const avgShadow = shadowInf
       ? (shadowInf[z][x] + shadowInf[z][x+1] + shadowInf[z+1][x] + shadowInf[z+1][x+1]) / 4
       : 1.0
     colorMultiplyScalar(cA, avgAO * (shadowableA && shadowInf ? avgShadow : 1.0))
     colorMultiplyScalar(cB, avgAO * (shadowableB && shadowInf ? avgShadow : 1.0))
+    const splitGlow = torchlightInfluenceAt(x + 0.5, z + 0.5)
+    applyTorchlightTint(cA, splitGlow)
+    applyTorchlightTint(cB, splitGlow)
 
     if (splitDir === 'forward') {
       pushVertex(vertices, colors, uvs, x,     h.tl, z,     cA, 0, 0)
@@ -290,6 +436,15 @@ function addTileGeometry(
 
     indices.push(base + 0, base + 1, base + 2, base + 3, base + 4, base + 5)
     return 6
+  }
+
+  const torchMax = maxTorchlightInfluenceForTile(_vcTorchlightGrid, x, z)
+  if (renderTileType !== 'water' && torchMax > 0.001) {
+    return pushTorchlightSubdividedTile(
+      vertices, colors, uvs, indices,
+      base, h, x, z,
+      cTL, cTR, cBL, cBR,
+    )
   }
 
   pushVertex(vertices, colors, uvs, x,     h.tl, z,     cTL, 0, 0)
@@ -346,7 +501,7 @@ function createLambertMaterial(name: string, scene: Scene, opts: LambertOpts = {
 }
 
 export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, shadowInf: number[][] | null, scene: Scene): TransformNode {
-  _initVertexCache(map)
+  _initVertexCache(map, { startX: 0, startZ: 0, endX: map.width, endZ: map.height }, true)
   const waterFlowTransformCache = new Map<string, WaterFlowUvTransform>()
 
   const landVertices: number[] = []
@@ -692,13 +847,14 @@ export function updateTerrainLandHeights(map: MapData, shadowInf: number[][] | n
   }
   if (!_landMesh || !_landTileOff || _landMapW !== map.width || _landMapH !== map.height) return false
 
-  _initVertexCache(map)
-
-  const margin = 3
+  const margin = Math.ceil(TORCHLIGHT_GLOW_RADIUS_TILES)
   const rx1 = Math.max(0, x1 - margin)
   const rz1 = Math.max(0, z1 - margin)
   const rx2 = Math.min(map.width - 1, x2 + margin)
   const rz2 = Math.min(map.height - 1, z2 + margin)
+
+  updateTorchlightPaintIndexRegion(map, x1, z1, x2, z2)
+  _initVertexCache(map, { startX: rx1, startZ: rz1, endX: rx2 + 1, endZ: rz2 + 1 })
 
   const tmpV: number[] = [], tmpC: number[] = [], tmpU: number[] = [], tmpI: number[] = []
 

@@ -156,6 +156,17 @@ export interface NpcDef {
   /** Optional render/profile alias. Lets authored variants reuse the 3D model
    *  or humanoid profile registered for another NPC id without adding code. */
   modelNpcId?: number;
+  /** Default humanoid appearance copied onto newly authored spawns and used
+   *  server-side when a spawn has no per-spawn appearance override. */
+  defaultAppearance?: PlayerAppearance;
+  /** Default humanoid equipment in PLAYER_REMOTE_EQUIPMENT layout:
+   *  [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo].
+   *  Per-spawn `equipment` still wins when present. */
+  defaultEquipment?: number[];
+  /** Default raw color overrides for CharacterEntity-rendered NPCs. */
+  defaultCustomColors?: CustomColors;
+  /** Default swing animation override for CharacterEntity-rendered NPCs. */
+  defaultAttackAnim?: string;
   health: number;
   attack: number;
   defence: number;
@@ -648,7 +659,12 @@ export interface BiomesFile {
 
 // --- KC Map Editor format types ---
 
-export type GroundType = 'grass' | 'dirt' | 'sand' | 'path' | 'road' | 'water' | 'desert' | 'sandstone' | 'rock' | 'drysand' | 'dungeon-floor' | 'dungeon-rock' | 'void';
+export type GroundType =
+  | 'grass' | 'dirt' | 'sand' | 'path' | 'road' | 'water'
+  | 'desert' | 'sandstone' | 'rock' | 'drysand'
+  | 'dungeon-floor' | 'dungeon-stone' | 'dungeon-slate' | 'dungeon-rubble' | 'dungeon-basalt' | 'dungeon-moss' | 'dungeon-torchlight'
+  | 'dungeon-rock' | 'dungeon-grey-rock' | 'dungeon-dark-rock'
+  | 'void';
 export type SplitDirection = 'forward' | 'back';
 
 /** Apparent world-space direction for animated water. X is east/west, Z is
@@ -736,6 +752,8 @@ export function pushWaterFlowQuadUvs(
 export const GROUND_TYPES_BY_ID: readonly GroundType[] = [
   'grass', 'dirt', 'sand', 'path', 'road', 'water',
   'desert', 'sandstone', 'rock', 'drysand', 'dungeon-floor', 'dungeon-rock', 'void',
+  'dungeon-stone', 'dungeon-slate', 'dungeon-rubble', 'dungeon-basalt', 'dungeon-moss',
+  'dungeon-grey-rock', 'dungeon-dark-rock', 'dungeon-torchlight',
 ];
 export const GROUND_TYPE_ID: Record<GroundType, number> = Object.freeze(
   Object.fromEntries(GROUND_TYPES_BY_ID.map((g, i) => [g, i])) as Record<GroundType, number>,
@@ -955,7 +973,15 @@ export function groundTypeToTileType(ground: GroundType): TileType {
     case 'rock':      return TileType.STONE;
     case 'drysand':   return TileType.SAND;
     case 'dungeon-floor': return TileType.STONE;
+    case 'dungeon-stone': return TileType.STONE;
+    case 'dungeon-slate': return TileType.STONE;
+    case 'dungeon-rubble': return TileType.STONE;
+    case 'dungeon-basalt': return TileType.STONE;
+    case 'dungeon-moss': return TileType.STONE;
+    case 'dungeon-torchlight': return TileType.STONE;
     case 'dungeon-rock':  return TileType.WALL;
+    case 'dungeon-grey-rock': return TileType.WALL;
+    case 'dungeon-dark-rock': return TileType.WALL;
     default:          return TileType.GRASS;
   }
 }

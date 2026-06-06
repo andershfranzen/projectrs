@@ -65,6 +65,17 @@ export function npcCombatLevel(npc: NpcCombatStats): number {
   return Math.floor(base + melee);
 }
 
+export const NPC_AGGRESSION_SUPPRESSION_COMBAT_MULTIPLIER = 2;
+
+/** True when an aggressive NPC should proactively acquire a player target.
+ *  Retaliation is handled separately; this only gates first-strike aggro. */
+export function npcCanAggroPlayerByCombatLevel(npcLevel: number, playerLevel: number): boolean {
+  if (!Number.isFinite(npcLevel) || !Number.isFinite(playerLevel)) return true;
+  const normalizedNpcLevel = Math.max(1, Math.floor(npcLevel));
+  const normalizedPlayerLevel = Math.max(1, Math.floor(playerLevel));
+  return normalizedPlayerLevel < normalizedNpcLevel * NPC_AGGRESSION_SUPPRESSION_COMBAT_MULTIPLIER;
+}
+
 // Melee stance types.
 export type MeleeStance = 'accurate' | 'aggressive' | 'defensive' | 'controlled';
 export type MagicStance = MeleeStance;

@@ -2675,6 +2675,26 @@
         0,
         0
       ]
+    },
+    {
+      "id": 147,
+      "npcId": 16,
+      "x": 239.5,
+      "z": 220.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": -1.5707963267948966,
+      "appearance": {
+        "bodyType": 0,
+        "shirtColor": 7,
+        "pantsColor": 4,
+        "shoesColor": 0,
+        "hairColor": 5,
+        "beltColor": 1,
+        "skinColor": 2,
+        "hairStyle": 1
+      },
+      "name": "Banker"
     }
   ],
   "objects": [],

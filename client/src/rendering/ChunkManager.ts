@@ -14,9 +14,9 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
-import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
-import type { RGB } from '@projectrs/shared';
+import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane, WaterFlow, WaterFlowUvTransform } from '@projectrs/shared';
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
@@ -165,6 +165,7 @@ export class ChunkManager {
   private mapHeight: number = 0;
   private activeChunks: Set<string> | null = null; // editor 64x64 chunks
   private defaultGround: GroundType = 'grass';
+  private torchlightPaintTiles: Set<number> = new Set();
   private chunkCols: number = 0;
   private chunkRows: number = 0;
   private defaultWaterLevel: number = -0.3;
@@ -623,6 +624,7 @@ export class ChunkManager {
           this.tileTypes[z * this.mapWidth + x] = classifyTileType(tile, corners, wl);
         }
       }
+      this.rebuildTorchlightPaintIndex();
     } else {
       // Chunked mode: allocate empty arrays, load per-chunk on demand
       this.chunkedMode = true;
@@ -846,6 +848,64 @@ export class ChunkManager {
     return tile?.ground ?? this.defaultGround;
   }
 
+  private tileHasTorchlightPaint(x: number, z: number): boolean {
+    if (x < 0 || z < 0 || x >= this.mapWidth || z >= this.mapHeight) return false;
+    return this.torchlightPaintTiles.has(z * this.mapWidth + x);
+  }
+
+  private noteTorchlightPaintTile(x: number, z: number, tile: KCTile | null | undefined): void {
+    if (x < 0 || z < 0 || x >= this.mapWidth || z >= this.mapHeight) return;
+    const idx = z * this.mapWidth + x;
+    if (hasTorchlightPaint(tile?.ground, tile?.groundB)) {
+      this.torchlightPaintTiles.add(idx);
+    } else {
+      this.torchlightPaintTiles.delete(idx);
+    }
+  }
+
+  private rebuildTorchlightPaintIndex(): void {
+    this.torchlightPaintTiles.clear();
+    for (let z = 0; z < this.mapHeight; z++) {
+      for (let x = 0; x < this.mapWidth; x++) {
+        this.noteTorchlightPaintTile(x, z, this.getTileRaw(x, z));
+      }
+    }
+  }
+
+  private getVisualBaseGroundType(x: number, z: number): GroundType {
+    const tile = this.getTileRaw(x, z);
+    return visualGroundForTorchlight(tile?.ground ?? this.defaultGround, tile?.groundB ?? null);
+  }
+
+  private collectTorchlightPaintTilesForRegion(startX: number, startZ: number, endX: number, endZ: number): TorchlightPaintTile[] {
+    if (this.torchlightPaintTiles.size === 0) return [];
+    const pad = Math.ceil(TORCHLIGHT_GLOW_RADIUS_TILES);
+    const minX = Math.max(0, startX - pad);
+    const maxX = Math.min(this.mapWidth - 1, endX + pad - 1);
+    const minZ = Math.max(0, startZ - pad);
+    const maxZ = Math.min(this.mapHeight - 1, endZ + pad - 1);
+    const out: TorchlightPaintTile[] = [];
+
+    for (let z = minZ; z <= maxZ; z++) {
+      for (let x = minX; x <= maxX; x++) {
+        if (!this.tileHasTorchlightPaint(x, z)) continue;
+        out.push({ x, z });
+      }
+    }
+
+    return out;
+  }
+
+  private buildTorchlightGridForRegion(startX: number, startZ: number, endX: number, endZ: number): TorchlightInfluenceGrid | null {
+    return buildTorchlightInfluenceGrid(
+      startX,
+      startZ,
+      endX,
+      endZ,
+      this.collectTorchlightPaintTilesForRegion(startX, startZ, endX, endZ),
+    );
+  }
+
   private getChunkWaterLevel(tileX: number, tileZ: number): number {
     const levels = this.chunkWaterLevelCache;
     if (!levels || tileX < 0 || tileZ < 0) return this.defaultWaterLevel;
@@ -944,7 +1004,7 @@ export class ChunkManager {
     let r = 0, g = 0, b = 0, noise = 0, totalWeight = 0;
     for (const [nx, nz] of sharingTiles) {
       if (!this.getTileRaw(nx, nz)) continue;
-      const type = this.getBaseGroundType(nx, nz);
+      const type = this.getVisualBaseGroundType(nx, nz);
       if (type === 'void') continue;
       if (type === 'road') continue;
       const c = groundColor(type, 1.0);
@@ -1435,7 +1495,9 @@ export class ChunkManager {
             const [lz, lx] = k.split(',').map(Number);
             const gx = startX + lx, gz = startZ + lz;
             if (gx < this.mapWidth && gz < this.mapHeight) {
-              this.mapData.tiles[gz][gx] = this.expandTile(partial);
+              const expanded = this.expandTile(partial);
+              this.mapData.tiles[gz][gx] = expanded;
+              this.noteTorchlightPaintTile(gx, gz, expanded);
             }
           }
         }
@@ -1538,10 +1600,52 @@ export class ChunkManager {
 
   // --- Ground mesh with KC editor shading ---
 
+  private pushTorchlightSubdividedTile(
+    positions: number[],
+    colors: number[],
+    indices: number[],
+    grid: TorchlightInfluenceGrid | null,
+    base: number,
+    h: { tl: number; tr: number; bl: number; br: number },
+    x: number,
+    z: number,
+    cTL: RGB,
+    cTR: RGB,
+    cBL: RGB,
+    cBR: RGB,
+  ): number {
+    const steps = TORCHLIGHT_GLOW_SUBDIVISIONS;
+    const row = steps + 1;
+
+    for (let vz = 0; vz <= steps; vz++) {
+      const v = vz / steps;
+      for (let ux = 0; ux <= steps; ux++) {
+        const u = ux / steps;
+        const color = bilerpRGB(cTL, cTR, cBL, cBR, u, v);
+        applyTorchlightTint(color, sampleTorchlightInfluenceGrid(grid, x + u, z + v));
+        positions.push(x + u, bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v), z + v);
+        colors.push(color.r, color.g, color.b, 1);
+      }
+    }
+
+    for (let vz = 0; vz < steps; vz++) {
+      for (let ux = 0; ux < steps; ux++) {
+        const tl = base + vz * row + ux;
+        const tr = tl + 1;
+        const bl = base + (vz + 1) * row + ux;
+        const br = bl + 1;
+        indices.push(tl, tr, bl, tr, br, bl);
+      }
+    }
+
+    return row * row;
+  }
+
   private buildGroundMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh {
     const positions: number[] = [];
     const indices: number[] = [];
     const colors: number[] = [];
+    const torchlightGrid = this.buildTorchlightGridForRegion(startX, startZ, endX, endZ);
     let vertexIndex = 0;
 
     for (let x = startX; x < endX; x++) {
@@ -1553,7 +1657,10 @@ export class ChunkManager {
         if (tileType === 'void') continue;
         const h = this.getTileCornerHeights(x, z);
         const splitDir = tile?.split ?? 'forward';
-        const groundBType = tile?.groundB ?? null;
+        const rawGroundBType = tile?.groundB ?? null;
+        const isTorchlightPaint = hasTorchlightPaint(tileType, rawGroundBType);
+        const renderTileType = visualGroundForTorchlight(tileType, rawGroundBType);
+        const groundBType = rawGroundBType && !isTorchlightPaint ? rawGroundBType : null;
 
         // Compute per-vertex shading
         const shadeTL = this.getVertexSlopeShade(x, z);
@@ -1564,23 +1671,26 @@ export class ChunkManager {
 
         let cTL: RGB, cTR: RGB, cBL: RGB, cBR: RGB;
 
-        if (groundBType && groundBType !== tileType) {
+        if (groundBType && groundBType !== renderTileType) {
           // Split tile: flat solid color per triangle
-          const noiseA = getNoiseExtra(tileType, x + 0.25, z + 0.25);
+          const noiseA = getNoiseExtra(renderTileType, x + 0.25, z + 0.25);
           const noiseB = getNoiseExtra(groundBType, x + 0.75, z + 0.75);
-          const cA = groundColor(tileType, Math.max(slopeShade + noiseA, 0.5));
+          const cA = groundColor(renderTileType, Math.max(slopeShade + noiseA, 0.5));
           const cB = groundColor(groundBType, Math.max(slopeShade + noiseB, 0.5));
           const avgAO = (this.getVertexAO(x, z) + this.getVertexAO(x + 1, z) + this.getVertexAO(x, z + 1) + this.getVertexAO(x + 1, z + 1)) / 4;
           cA.r *= avgAO; cA.g *= avgAO; cA.b *= avgAO;
           cB.r *= avgAO; cB.g *= avgAO; cB.b *= avgAO;
           // Object shadows on split tiles
           if (this.shadowInf) {
-            const shadowableA = tileType === 'grass' || tileType === 'dirt' || tileType === 'path';
+            const shadowableA = renderTileType === 'grass' || renderTileType === 'dirt' || renderTileType === 'path';
             const shadowableB = groundBType === 'grass' || groundBType === 'dirt' || groundBType === 'path';
             const avgShadow = (this.getShadowAt(x, z) + this.getShadowAt(x + 1, z) + this.getShadowAt(x, z + 1) + this.getShadowAt(x + 1, z + 1)) / 4;
             if (shadowableA) { cA.r *= avgShadow; cA.g *= avgShadow; cA.b *= avgShadow; }
             if (shadowableB) { cB.r *= avgShadow; cB.g *= avgShadow; cB.b *= avgShadow; }
           }
+          const splitGlow = sampleTorchlightInfluenceGrid(torchlightGrid, x + 0.5, z + 0.5);
+          applyTorchlightTint(cA, splitGlow);
+          applyTorchlightTint(cB, splitGlow);
 
           if (splitDir === 'forward') {
             // Triangle A (CCW): TL, TR, BL
@@ -1603,7 +1713,7 @@ export class ChunkManager {
         }
 
         // Normal tile: per-vertex blended colors
-        if (tileType === 'road') {
+        if (renderTileType === 'road') {
           const noise = getNoiseExtra('road', x + 0.5, z + 0.5);
           cTL = groundColor('road', Math.max(shadeTL + noise, 0.5));
           cTR = groundColor('road', Math.max(shadeTR + noise, 0.5));
@@ -1618,7 +1728,7 @@ export class ChunkManager {
 
         const wLevel = this.getChunkWaterLevel(x, z);
 
-        if (tileType !== 'water') {
+        if (renderTileType !== 'water') {
           // Water proximity mud tinting
           const proxTL = this.getVertexWaterProximity(x, z);
           const proxTR = this.getVertexWaterProximity(x + 1, z);
@@ -1639,7 +1749,7 @@ export class ChunkManager {
         }
 
         // Vertex AO
-        if (tileType !== 'water') {
+        if (renderTileType !== 'water') {
           const aoTL = this.getVertexAO(x, z);
           const aoTR = this.getVertexAO(x + 1, z);
           const aoBL = this.getVertexAO(x, z + 1);
@@ -1651,7 +1761,7 @@ export class ChunkManager {
         }
 
         // Object shadows (grass, dirt, path only)
-        if (this.shadowInf && (tileType === 'grass' || tileType === 'dirt' || tileType === 'path')) {
+        if (this.shadowInf && (renderTileType === 'grass' || renderTileType === 'dirt' || renderTileType === 'path')) {
           const sTL = this.getShadowAt(x, z);
           const sTR = this.getShadowAt(x + 1, z);
           const sBL = this.getShadowAt(x, z + 1);
@@ -1660,6 +1770,25 @@ export class ChunkManager {
           cTR.r *= sTR; cTR.g *= sTR; cTR.b *= sTR;
           cBL.r *= sBL; cBL.g *= sBL; cBL.b *= sBL;
           cBR.r *= sBR; cBR.g *= sBR; cBR.b *= sBR;
+        }
+
+        const torchMax = maxTorchlightInfluenceForTile(torchlightGrid, x, z);
+        if (renderTileType !== 'water' && torchMax > 0.001) {
+          vertexIndex += this.pushTorchlightSubdividedTile(
+            positions,
+            colors,
+            indices,
+            torchlightGrid,
+            vertexIndex,
+            h,
+            x,
+            z,
+            cTL,
+            cTR,
+            cBL,
+            cBR,
+          );
+          continue;
         }
 
         // Emit quad (4 vertices)
@@ -1697,7 +1826,6 @@ export class ChunkManager {
     VertexData.ComputeNormals(positions, indices, normals);
     vertexData.normals = normals;
     vertexData.applyToMesh(mesh);
-    mesh.convertToFlatShadedMesh();
     mesh.material = this.groundMat;
     mesh.hasVertexAlpha = false;
     mesh.isPickable = true;
@@ -4809,6 +4937,7 @@ export class ChunkManager {
     this.mapData = null;
     this.activeChunks = null;
     this.defaultGround = 'grass';
+    this.torchlightPaintTiles.clear();
     this.chunkCols = 0;
     this.chunkRows = 0;
     this.defaultWaterLevel = -0.3;
