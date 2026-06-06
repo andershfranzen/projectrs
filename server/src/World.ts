@@ -29,7 +29,9 @@ const USE_NO_RECIPE_REPLY = 'Nothing interesting happens.';
 const MAGIC_DEBUG_ENABLED = process.env.EQ_MAGIC_DEBUG === '1';
 const DEFAULT_HQ_XP_MULTIPLIER = 3.25;
 const BOW_STRINGING_HQ_CHANCE = 1 / 256;
+const COINS_ITEM_ID = 10;
 type ItemQuantity = { itemId: number; quantity: number };
+type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
 type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
@@ -4015,6 +4017,10 @@ export class World {
         this.sendDialogueClose(player);
         this.openCharacterCreatorFor(player);
         return;
+      case 'bankInventoryItemsForCoins':
+        this.sendDialogueClose(player);
+        this.bankInventoryItemsForCoins(player, action);
+        return;
       case 'startNpcCombat':
         this.sendDialogueClose(player);
         if (npc.dead || !this.canPlayerTargetNpc(player, npc)) return;
@@ -4076,6 +4082,147 @@ export class World {
       npcEntityId: npc.id,
       sessionId,
     });
+  }
+
+  private bankInventoryItemsForCoins(
+    player: Player,
+    action: BankInventoryItemsForCoinsAction,
+  ): void {
+    const itemIds = new Set(
+      (Array.isArray(action.itemIds) ? action.itemIds : [])
+        .map(id => Math.floor(Number(id)))
+        .filter(id => Number.isInteger(id) && id > 0 && id !== COINS_ITEM_ID),
+    );
+    const label = (typeof action.itemLabel === 'string' && action.itemLabel.trim()) ? action.itemLabel.trim() : 'item';
+    if (itemIds.size === 0) {
+      this.sendChatSystem(player, 'That service is not configured correctly.');
+      return;
+    }
+
+    const toBank = new Map<number, number>();
+    let totalItems = 0;
+    for (const slot of player.inventory) {
+      if (!slot || !itemIds.has(slot.itemId)) continue;
+      const qty = Math.max(0, Math.floor(slot.quantity));
+      if (qty <= 0) continue;
+      toBank.set(slot.itemId, (toBank.get(slot.itemId) ?? 0) + qty);
+      totalItems += qty;
+    }
+
+    if (totalItems <= 0) {
+      this.sendChatSystem(player, `You don't have any ${label} for the royal minecart.`);
+      return;
+    }
+
+    const coinCost = this.bankInventoryItemsCoinCost(action, toBank);
+    if (coinCost === null) {
+      this.sendChatSystem(player, 'That shipment fee is too high.');
+      return;
+    }
+    if (coinCost > 0 && this.countInventoryItem(player, COINS_ITEM_ID) < coinCost) {
+      this.sendChatSystem(player, `You need ${coinCost} coins to export that ${label} through the royal minecart system.`);
+      return;
+    }
+
+    if (!this.canFitBankItems(player, toBank)) {
+      this.sendChatSystem(player, `Your bank does not have room for that ${label}.`);
+      return;
+    }
+
+    const bankSnapshot = player.bank.map(slot => slot ? { ...slot } : null);
+    const removals: ReturnType<Player['removeItemById']>[] = [];
+    let coinRemoval: ReturnType<Player['removeItemById']> | null = null;
+    const rollback = (): void => {
+      for (let i = removals.length - 1; i >= 0; i--) player.revertRemove(removals[i]);
+      if (coinRemoval) player.revertRemove(coinRemoval);
+      player.bank = bankSnapshot;
+      this.sendInventory(player);
+    };
+
+    if (coinCost > 0) {
+      coinRemoval = player.removeItemById(COINS_ITEM_ID, coinCost);
+      if (coinRemoval.completed !== coinCost) {
+        rollback();
+        this.sendChatSystem(player, `You need ${coinCost} coins to export that ${label} through the royal minecart system.`);
+        return;
+      }
+    }
+
+    for (const [itemId, qty] of toBank) {
+      const removed = player.removeItemById(itemId, qty);
+      if (removed.completed !== qty) {
+        rollback();
+        this.sendChatSystem(player, 'The guard cannot complete that shipment right now.');
+        return;
+      }
+      removals.push(removed);
+    }
+
+    for (const [itemId, qty] of toBank) {
+      const bankSlot = this.findBankSlot(player, itemId);
+      if (bankSlot < 0 || (player.bank[bankSlot]?.quantity ?? 0) + qty > MAX_STACK) {
+        rollback();
+        this.sendChatSystem(player, `Your bank does not have room for that ${label}.`);
+        return;
+      }
+      this.bankAdd(player, bankSlot, itemId, qty);
+    }
+
+    player.setDelay(this.currentTick, 1);
+    this.sendInventory(player);
+    const suffix = coinCost > 0 ? ` for ${coinCost} coins` : '';
+    this.sendChatSystem(player, `The royal guard exports ${totalItems} ${label} to your bank through the royal minecart system${suffix}.`);
+  }
+
+  private bankInventoryItemsCoinCost(action: BankInventoryItemsForCoinsAction, items: Map<number, number>): number | null {
+    const fallbackCost = this.normalizedDialogueCoinCost(action.coinCost);
+    const costsByItemId = action.coinCostByItemId;
+    if (!costsByItemId || typeof costsByItemId !== 'object' || Array.isArray(costsByItemId)) return fallbackCost;
+    if (Object.keys(costsByItemId).length === 0) return fallbackCost;
+
+    let totalCost = 0;
+    for (const [itemId, qty] of items) {
+      const rawUnitCost = costsByItemId[String(itemId)];
+      const unitCost = rawUnitCost === undefined ? fallbackCost : this.normalizedDialogueCoinCost(rawUnitCost);
+      totalCost += unitCost * qty;
+      if (!Number.isSafeInteger(totalCost) || totalCost > MAX_STACK) return null;
+    }
+    return totalCost;
+  }
+
+  private normalizedDialogueCoinCost(value: unknown): number {
+    const cost = Number(value);
+    if (!Number.isFinite(cost)) return 0;
+    return Math.max(0, Math.min(MAX_STACK, Math.floor(cost)));
+  }
+
+  private canFitBankItems(player: Player, items: Map<number, number>): boolean {
+    let emptySlots = 0;
+    const projectedExisting = new Map<number, number>();
+
+    for (const slot of player.bank) {
+      if (!slot) {
+        emptySlots++;
+        continue;
+      }
+      if (!projectedExisting.has(slot.itemId)) projectedExisting.set(slot.itemId, slot.quantity);
+    }
+
+    for (const [itemId, qty] of items) {
+      if (qty <= 0) continue;
+      const current = projectedExisting.get(itemId);
+      if (current !== undefined) {
+        const next = current + qty;
+        if (next > MAX_STACK) return false;
+        projectedExisting.set(itemId, next);
+      } else {
+        if (emptySlots <= 0) return false;
+        emptySlots--;
+        projectedExisting.set(itemId, qty);
+      }
+    }
+
+    return true;
   }
 
   handlePlayerBuyItem(playerId: number, itemId: number, quantity: number): void {
@@ -8131,6 +8278,113 @@ export class World {
   }
 
   private tickNpcAI(): void {
+    const npcTargetingPlayerIds = new Map<number, number>();
+    const activePlayerTargetNpcIds = new Map<number, number>();
+    const activeNpcTargetPlayerIds = new Map<number, number>();
+    const proactiveAggroTargets = new Map<number, Player>();
+    const npcAggroMovementSuppressed = new Set<number>();
+    type NpcTargetCandidate = { npcId: number; distance: number };
+    type ProactiveAggroCandidate = NpcTargetCandidate & { player: Player };
+    const canNpcReservePlayerTarget = (npc: Npc, target: Player): boolean =>
+      target.alive
+      && this.players.has(target.id)
+      && target.currentMapLevel === npc.currentMapLevel
+      && target.currentFloor === npc.currentFloor
+      && !npc.shouldDisengageFromTarget(target.position.x, target.position.y);
+    const targetDistance = (npc: Npc, target: Player): number => {
+      const fp = npc.distToFootprint(target.position.x, target.position.y);
+      return Math.max(Math.abs(fp.dx), Math.abs(fp.dz));
+    };
+    const isBetterNpcTargetCandidate = (candidate: NpcTargetCandidate, best: NpcTargetCandidate | undefined): boolean =>
+      best === undefined
+      || candidate.distance < best.distance
+      || (candidate.distance === best.distance && candidate.npcId < best.npcId);
+
+    for (const [playerId, npcId] of this.playerCombatTargets) {
+      const player = this.players.get(playerId);
+      const npc = this.npcs.get(npcId);
+      if (!player || !npc || npc.dead) continue;
+      if (!canNpcReservePlayerTarget(npc, player)) continue;
+      activePlayerTargetNpcIds.set(playerId, npcId);
+      activeNpcTargetPlayerIds.set(npcId, playerId);
+      npcTargetingPlayerIds.set(playerId, npcId);
+    }
+
+    const currentNpcTargetCandidates = new Map<number, NpcTargetCandidate>();
+    for (const [, npc] of this.npcs) {
+      if (npc.dead || !(npc.combatTarget instanceof Player)) continue;
+      const target = npc.combatTarget;
+      if (!canNpcReservePlayerTarget(npc, target)) continue;
+      if (activePlayerTargetNpcIds.has(target.id)) continue;
+      const candidate = { npcId: npc.id, distance: targetDistance(npc, target) };
+      const best = currentNpcTargetCandidates.get(target.id);
+      if (isBetterNpcTargetCandidate(candidate, best)) {
+        currentNpcTargetCandidates.set(target.id, candidate);
+      }
+    }
+    for (const [playerId, candidate] of currentNpcTargetCandidates) {
+      npcTargetingPlayerIds.set(playerId, candidate.npcId);
+    }
+
+    const proactiveAggroCandidates: ProactiveAggroCandidate[] = [];
+    const addProactiveAggroCandidate = (npc: Npc, player: Player, distance: number): void => {
+      proactiveAggroCandidates.push({ npcId: npc.id, player, distance });
+    };
+
+    for (const [, npc] of this.npcs) {
+      if (npc.dead || !npc.aggressive || npc.combatTarget || npc.retreatTarget) continue;
+      const cm = this.chunkManagers.get(npc.currentMapLevel);
+      if (!cm) continue;
+
+      const huntRange = npc.effectiveAggroRange;
+      cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
+        const player = this.players.get(pid);
+        if (!player) return;
+        if (player.currentMapLevel !== npc.currentMapLevel || player.currentFloor !== npc.currentFloor) return;
+        if (player.disconnected || player.requestIdleLogout || !player.alive) return;
+        if (player.openInterface !== null || this.activeDuels?.has(player.id)) return;
+        if (!npcCanAggroPlayerByCombatLevel(npc.combatLevel, player.combatLevel)) return;
+        if (this.isPlayerAggroTolerant(player)) return;
+        const activeTargetPlayerId = activeNpcTargetPlayerIds.get(npc.id);
+        if (activeTargetPlayerId !== undefined && activeTargetPlayerId !== player.id) return;
+        if (!npc.isTargetWithinAggroRange(player.position.x, player.position.y)) return;
+        const distance = targetDistance(npc, player);
+        if (distance > huntRange) return;
+
+        const reservedNpcId = npcTargetingPlayerIds.get(player.id);
+        if (reservedNpcId !== undefined && reservedNpcId !== npc.id) {
+          npcAggroMovementSuppressed.add(npc.id);
+          return;
+        }
+        addProactiveAggroCandidate(npc, player, distance);
+      });
+    }
+
+    proactiveAggroCandidates.sort((a, b) =>
+      a.distance - b.distance
+      || a.npcId - b.npcId
+      || a.player.id - b.player.id);
+
+    const proactiveAggroAssignedNpcIds = new Set<number>();
+    const proactiveAggroAssignedPlayerIds = new Set<number>();
+    const proactiveAggroCandidateNpcIds = new Set<number>();
+    for (const candidate of proactiveAggroCandidates) {
+      proactiveAggroCandidateNpcIds.add(candidate.npcId);
+      const playerId = candidate.player.id;
+      const reservedNpcId = npcTargetingPlayerIds.get(playerId);
+      if (reservedNpcId !== undefined && reservedNpcId !== candidate.npcId) continue;
+      if (proactiveAggroTargets.has(candidate.npcId)) continue;
+      if (proactiveAggroAssignedNpcIds.has(candidate.npcId)) continue;
+      if (proactiveAggroAssignedPlayerIds.has(playerId)) continue;
+      proactiveAggroTargets.set(candidate.npcId, candidate.player);
+      proactiveAggroAssignedNpcIds.add(candidate.npcId);
+      proactiveAggroAssignedPlayerIds.add(playerId);
+      npcTargetingPlayerIds.set(playerId, candidate.npcId);
+    }
+    for (const npcId of proactiveAggroCandidateNpcIds) {
+      if (!proactiveAggroTargets.has(npcId)) npcAggroMovementSuppressed.add(npcId);
+    }
+
     for (const [, npc] of this.npcs) {
       this.rebuildEntityTileOccupants();
       if (npc.dead) {
@@ -8145,29 +8399,27 @@ export class World {
       const oldNpcFloor = npc.currentFloor;
       const oldNpcX = npc.position.x;
       const oldNpcZ = npc.position.y;
+      const hadCombatTarget = npc.combatTarget != null;
+      const previousCombatTargetId = npc.combatTarget?.id;
+      let suppressNpcMovement = npcAggroMovementSuppressed.has(npc.id) && !npc.combatTarget && !npc.retreatTarget;
 
-      if (npc.aggressive && !npc.combatTarget && !npc.retreatTarget) {
-        const cm = this.chunkManagers.get(npc.currentMapLevel);
-        if (cm) {
-          // 2004Scape separates current-position acquisition (`huntRange`)
-          // from the spawn-anchored combat leash (`maxRange`).
-          const huntRange = npc.effectiveAggroRange;
-          cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
-            if (npc.combatTarget) return;
-            const player = this.players.get(pid);
-            if (!player) return;
-            if (player.currentMapLevel !== npc.currentMapLevel || player.currentFloor !== npc.currentFloor) return;
-            if (player.disconnected || player.requestIdleLogout || !player.alive) return;
-            if (player.openInterface !== null || this.activeDuels?.has(player.id)) return;
-            if (!npcCanAggroPlayerByCombatLevel(npc.combatLevel, player.combatLevel)) return;
-            if (this.isPlayerAggroTolerant(player)) return;
-            if (!npc.isTargetWithinAggroRange(player.position.x, player.position.y)) return;
-            const fp = npc.distToFootprint(player.position.x, player.position.y);
-            if (Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= huntRange) {
-              npc.setCombatTarget(player);
-            }
-          });
+      if (npc.combatTarget instanceof Player) {
+        const target = npc.combatTarget;
+        if (canNpcReservePlayerTarget(npc, target)) {
+          const reservedNpcId = npcTargetingPlayerIds.get(target.id);
+          if (reservedNpcId !== undefined && reservedNpcId !== npc.id) {
+            npc.disengageAndReturnHome();
+            suppressNpcMovement = true;
+          } else {
+            npcTargetingPlayerIds.set(target.id, npc.id);
+          }
         }
+      }
+
+      const proactiveAggroTarget = proactiveAggroTargets.get(npc.id);
+      if (npc.aggressive && !npc.combatTarget && !npc.retreatTarget && proactiveAggroTarget) {
+        npc.setCombatTarget(proactiveAggroTarget);
+        suppressNpcMovement = false;
       }
 
       // Freeze AI while a player has a dialogue / shop open against this NPC
@@ -8175,9 +8427,9 @@ export class World {
       // overrides the NPC_FACING rotation. Cheap O(1) gate via the def flags
       // before the O(players) audience scan; combat-only NPCs skip both.
       const canHaveAudience = npc.hasDialogue || npc.hasShop || npc.hasBank;
-      const hadCombatTarget = npc.combatTarget != null;
-      const previousCombatTargetId = npc.combatTarget?.id;
-      if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
+      if (suppressNpcMovement) {
+        npc.pathQueue.length = 0;
+      } else if (canHaveAudience && this.npcHasInteractionAudience(npc)) {
         npc.pathQueue.length = 0;
       } else {
         const mapId = npc.currentMapLevel;

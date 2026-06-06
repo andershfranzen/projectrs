@@ -30,7 +30,30 @@
       "x": 61.5,
       "z": 135.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        72,
+        81,
+        79,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 13,
@@ -38,7 +61,30 @@
       "x": 59.5,
       "z": 140.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        72,
+        81,
+        79,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 14,
@@ -46,7 +92,30 @@
       "x": 64.5,
       "z": 139.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        73,
+        81,
+        66,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 15,
@@ -54,7 +123,30 @@
       "x": 64.5,
       "z": 145.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        61,
+        67,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 16,
@@ -62,7 +154,30 @@
       "x": 83.5,
       "z": 145.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        61,
+        67,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 17,
@@ -102,7 +217,30 @@
       "x": 130.5,
       "z": 104.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        61,
+        67,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 22,
@@ -110,7 +248,30 @@
       "x": 128.5,
       "z": 108.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        72,
+        81,
+        79,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 23,
@@ -118,7 +279,30 @@
       "x": 142.5,
       "z": 99.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        72,
+        81,
+        79,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 24,
@@ -126,15 +310,30 @@
       "x": 136.5,
       "z": 100.5,
       "wanderRange": 3,
-      "aggressive": true
-    },
-    {
-      "id": 26,
-      "npcId": 7,
-      "x": 116.5,
-      "z": 154.5,
-      "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        61,
+        67,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
     },
     {
       "id": 29,
@@ -142,7 +341,48 @@
       "x": 130.5,
       "z": 112.5,
       "wanderRange": 3,
-      "aggressive": true
+      "aggressive": true,
+      "appearance": {
+        "bodyType": 1,
+        "shirtColor": 0,
+        "pantsColor": 0,
+        "shoesColor": 0,
+        "hairColor": 0,
+        "beltColor": 1,
+        "skinColor": 7,
+        "hairStyle": 12
+      },
+      "equipment": [
+        72,
+        81,
+        79,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "id": 31,
+      "npcId": 7,
+      "x": 114.5,
+      "z": 156.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 32,
+      "npcId": 108,
+      "x": 128.5,
+      "z": 97.5,
+      "wanderRange": 0,
+      "aggressive": false,
+      "facing": 3.141592653589793,
+      "name": "Sultan's Royal Guard"
     }
   ],
   "objects": [],

@@ -235,6 +235,7 @@ export type DialogueAction =
   | { type: 'giveItem'; itemId: number; qty: number }
   | { type: 'takeItem'; itemId: number; qty: number }
   | { type: 'grantXp'; skill: SkillId; amount: number }
+  | { type: 'bankInventoryItemsForCoins'; itemIds: number[]; coinCost: number; itemLabel?: string; coinCostByItemId?: Record<string, number> }
   | { type: 'closeDialogue' }
   | { type: 'setQuestStage'; questId: string; stage: number }
   | { type: 'setQuestVar'; questId: string; key: string; value: number }

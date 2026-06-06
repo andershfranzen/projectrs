@@ -1420,5 +1420,142 @@
       0,
       0
     ]
+  },
+  {
+    "id": 108,
+    "name": "Sultan's Royal Guard",
+    "examineText": "A royal guard watching the Sultan's ore tally with more interest than the miners.",
+    "health": 50,
+    "attack": 21,
+    "defence": 32,
+    "strength": 10,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 0,
+    "stationary": true,
+    "lootTable": [],
+    "modelNpcId": 7,
+    "defaultAppearance": {
+      "bodyType": 0,
+      "shirtColor": 3,
+      "pantsColor": 0,
+      "shoesColor": 0,
+      "hairColor": 1,
+      "beltColor": 1,
+      "skinColor": 3,
+      "hairStyle": 2,
+      "gearColor": 2
+    },
+    "defaultEquipment": [
+      87,
+      83,
+      80,
+      85,
+      84,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "Hold there, miner. Every cart that leaves this shaft is counted in the Sultan's ledger.",
+            "You can export your ores to the bank with the royal minecart system. Lower-tier ores ride cheaply; rarer ores pay a heavier tariff."
+          ],
+          "options": [
+            {
+              "label": "Export my ore by royal minecart.",
+              "action": {
+                "type": "bankInventoryItemsForCoins",
+                "itemIds": [
+                  25,
+                  26,
+                  34,
+                  35,
+                  44,
+                  45,
+                  142,
+                  407,
+                  408
+                ],
+                "coinCost": 10,
+                "coinCostByItemId": {
+                  "25": 1,
+                  "34": 1,
+                  "26": 2,
+                  "35": 3,
+                  "44": 4,
+                  "142": 4,
+                  "45": 6,
+                  "407": 8,
+                  "408": 8
+                },
+                "itemLabel": "ore"
+              }
+            },
+            {
+              "label": "Why does the Sultan care so much?",
+              "next": "profit"
+            },
+            {
+              "label": "Not right now."
+            }
+          ]
+        },
+        "profit": {
+          "id": "profit",
+          "lines": [
+            "A mine without accounts is only a hole in the ground.",
+            "The Sultan provides guards, lamps, roads, and order. In return, the mine provides coin, metal, and loyalty."
+          ],
+          "options": [
+            {
+              "label": "Export my ore by royal minecart.",
+              "action": {
+                "type": "bankInventoryItemsForCoins",
+                "itemIds": [
+                  25,
+                  26,
+                  34,
+                  35,
+                  44,
+                  45,
+                  142,
+                  407,
+                  408
+                ],
+                "coinCost": 10,
+                "coinCostByItemId": {
+                  "25": 1,
+                  "34": 1,
+                  "26": 2,
+                  "35": 3,
+                  "44": 4,
+                  "142": 4,
+                  "45": 6,
+                  "407": 8,
+                  "408": 8
+                },
+                "itemLabel": "ore"
+              }
+            },
+            {
+              "label": "Sounds profitable.",
+              "next": "greet"
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
+      }
+    }
   }
 ]

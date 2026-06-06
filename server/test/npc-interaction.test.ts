@@ -3,7 +3,7 @@ import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { isPointInNpcMagicAttackRange, processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
-import { ServerOpcode, TICK_RATE, decodePacket, getObjectFootprintBounds, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
+import { ServerOpcode, TICK_RATE, decodePacket, getObjectFootprintBounds, type DialogueAction, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -35,6 +35,22 @@ const npcDef: NpcDef = {
   lootTable: [],
 };
 const AGGRO_TOLERANCE_TEST_TICKS = Math.ceil(10 * 60_000 / TICK_RATE);
+const strongAggroNpcDef: NpcDef = {
+  ...npcDef,
+  aggressive: true,
+  wanderRange: 5,
+  health: 50,
+  attack: 50,
+  defence: 50,
+  strength: 50,
+};
+const ROYAL_GUARD_ORE_BANK_ACTION: Extract<DialogueAction, { type: 'bankInventoryItemsForCoins' }> = {
+  type: 'bankInventoryItemsForCoins',
+  itemIds: [25, 26, 34, 35, 44, 45, 142, 407, 408],
+  coinCost: 10,
+  coinCostByItemId: { 25: 1, 34: 1, 26: 2, 35: 3, 44: 4, 142: 4, 45: 6, 407: 8, 408: 8 },
+  itemLabel: 'ore',
+};
 
 const bowItemDef: ItemDef = {
   id: 1000,
@@ -83,6 +99,7 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
   const broadcasts: Array<{ opcode: ServerOpcode; values: number[] }> = [];
   world.players = new Map([[player.id, player]]);
   world.npcs = new Map([[npc.id, npc]]);
+  world.dialogueScheduledSteps = [];
   world.playerCombatTargets = new Map();
   world.npcTargetedBy = new Map();
   world.playerAggroTolerance = new Map();
@@ -135,6 +152,133 @@ function makeCombatWorld(player: Player, npc: Npc): { world: any; broadcasts: Ar
 }
 
 describe('NPC interaction reachability', () => {
+  test('royal guard dialogue banks inventory ore after charging coins', () => {
+    const dialogue: DialogueTree = {
+      root: 'greet',
+      nodes: {
+        greet: {
+          id: 'greet',
+          lines: ['The Sultan wants every vein of ore accounted for.'],
+          options: [
+            {
+              label: 'Export my ore by royal minecart.',
+              action: ROYAL_GUARD_ORE_BANK_ACTION,
+            },
+          ],
+        },
+      },
+    };
+    const player = new Player('miner', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, id: 108, name: "Sultan's Royal Guard" }, 10.5, 10.5, {
+      effectiveDialogue: dialogue,
+      nameOverride: "Sultan's Royal Guard",
+    });
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.inventory[0] = { itemId: 10, quantity: 25 };
+    player.inventory[1] = { itemId: 25, quantity: 1 };
+    player.inventory[2] = { itemId: 26, quantity: 2 };
+    player.inventory[3] = { itemId: 35, quantity: 3 };
+    player.inventory[4] = { itemId: 23, quantity: 1 };
+    player.openDialogueState = {
+      sessionId: 123,
+      npcEntityId: npc.id,
+      nodeId: 'greet',
+      visibleOptionIndices: [0],
+    };
+    const { world } = makeCombatWorld(player, npc);
+    const messages: string[] = [];
+    let inventorySends = 0;
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+    world.sendInventory = () => { inventorySends++; };
+
+    world.handleDialogueChoose(player.id, npc.id, 123, 0);
+
+    expect(player.openDialogueState).toBeNull();
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 11 });
+    expect(player.inventory[1]).toBeNull();
+    expect(player.inventory[2]).toBeNull();
+    expect(player.inventory[3]).toBeNull();
+    expect(player.inventory[4]).toEqual({ itemId: 23, quantity: 1 });
+    expect(player.bank.find(slot => slot?.itemId === 25)?.quantity).toBe(1);
+    expect(player.bank.find(slot => slot?.itemId === 26)?.quantity).toBe(2);
+    expect(player.bank.find(slot => slot?.itemId === 35)?.quantity).toBe(3);
+    expect(messages).toEqual(['The royal guard exports 6 ore to your bank through the royal minecart system for 14 coins.']);
+    expect(inventorySends).toBe(1);
+  });
+
+  test('royal guard ore banking uses tiered fees and does not charge when coins are short', () => {
+    const player = new Player('miner_short_coins', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, id: 108, name: "Sultan's Royal Guard" }, 10.5, 10.5);
+    const { world } = makeCombatWorld(player, npc);
+    const messages: string[] = [];
+    let inventorySends = 0;
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+    world.sendInventory = () => { inventorySends++; };
+    player.inventory[0] = { itemId: 10, quantity: 13 };
+    player.inventory[1] = { itemId: 25, quantity: 1 };
+    player.inventory[2] = { itemId: 26, quantity: 2 };
+    player.inventory[3] = { itemId: 35, quantity: 3 };
+
+    world.bankInventoryItemsForCoins(player, ROYAL_GUARD_ORE_BANK_ACTION);
+
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 13 });
+    expect(player.inventory[1]).toEqual({ itemId: 25, quantity: 1 });
+    expect(player.inventory[2]).toEqual({ itemId: 26, quantity: 2 });
+    expect(player.inventory[3]).toEqual({ itemId: 35, quantity: 3 });
+    expect(player.bank.some(slot => [25, 26, 35].includes(slot?.itemId ?? -1))).toBe(false);
+    expect(messages).toEqual(['You need 14 coins to export that ore through the royal minecart system.']);
+    expect(inventorySends).toBe(0);
+  });
+
+  test('ore banking keeps fixed-fee behavior when no tier prices are configured', () => {
+    const player = new Player('miner_fixed_fee', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, id: 108, name: "Sultan's Royal Guard" }, 10.5, 10.5);
+    const { world } = makeCombatWorld(player, npc);
+    const messages: string[] = [];
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+    player.inventory[0] = { itemId: 10, quantity: 25 };
+    player.inventory[1] = { itemId: 25, quantity: 1 };
+    player.inventory[2] = { itemId: 26, quantity: 2 };
+
+    world.bankInventoryItemsForCoins(player, {
+      type: 'bankInventoryItemsForCoins',
+      itemIds: [25, 26],
+      coinCost: 10,
+      itemLabel: 'ore',
+    });
+
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 15 });
+    expect(player.inventory[1]).toBeNull();
+    expect(player.inventory[2]).toBeNull();
+    expect(player.bank.find(slot => slot?.itemId === 25)?.quantity).toBe(1);
+    expect(player.bank.find(slot => slot?.itemId === 26)?.quantity).toBe(2);
+    expect(messages).toEqual(['The royal guard exports 3 ore to your bank through the royal minecart system for 10 coins.']);
+  });
+
+  test('royal guard ore banking does not charge when the bank is full', () => {
+    const player = new Player('miner_full_bank', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc({ ...npcDef, id: 108, name: "Sultan's Royal Guard" }, 10.5, 10.5);
+    const { world } = makeCombatWorld(player, npc);
+    const messages: string[] = [];
+    let inventorySends = 0;
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+    world.sendInventory = () => { inventorySends++; };
+    player.inventory[0] = { itemId: 10, quantity: 25 };
+    player.inventory[1] = { itemId: 25, quantity: 1 };
+    for (let i = 0; i < player.bank.length; i++) {
+      player.bank[i] = { itemId: 10_000 + i, quantity: 1 };
+    }
+
+    world.bankInventoryItemsForCoins(player, ROYAL_GUARD_ORE_BANK_ACTION);
+
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 25 });
+    expect(player.inventory[1]).toEqual({ itemId: 25, quantity: 1 });
+    expect(player.bank.some(slot => slot?.itemId === 25)).toBe(false);
+    expect(messages).toEqual(['Your bank does not have room for that ore.']);
+    expect(inventorySends).toBe(0);
+  });
+
   test('stylist dialogue action opens the character creator for existing players', () => {
     const packets: Array<{ opcode: number; values: number[] }> = [];
     const ws = {
@@ -543,6 +687,176 @@ describe('NPC interaction reachability', () => {
     expect(npc.maxRange).toBe(7);
     expect(npc.aggroRange).toBe(7);
     expect(npc.combatTarget).toBe(player);
+  });
+
+  test('aggressive NPCs do not stack multiple proactive chasers on one player', () => {
+    const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
+    const firstNpc = new Npc(strongAggroNpcDef, 10.5, 10.5);
+    const secondNpc = new Npc(strongAggroNpcDef, 12.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    firstNpc.currentMapLevel = 'kcmap';
+    secondNpc.currentMapLevel = 'kcmap';
+    secondNpc.wanderCooldown = 999;
+    const { world, broadcasts } = makeCombatWorld(player, firstNpc);
+    world.npcs.set(secondNpc.id, secondNpc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(firstNpc.combatTarget).toBe(player);
+    expect(secondNpc.combatTarget).toBeNull();
+  });
+
+  test('closest aggressive NPC wins proactive targeting and losers hold position', () => {
+    const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
+    const fartherNpc = new Npc(strongAggroNpcDef, 16.5, 10.5);
+    const closerNpc = new Npc(strongAggroNpcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    fartherNpc.currentMapLevel = 'kcmap';
+    closerNpc.currentMapLevel = 'kcmap';
+    fartherNpc.pathQueue = [{ x: 15.5, z: 10.5 }];
+    const { world } = makeCombatWorld(player, fartherNpc);
+    world.npcs.set(closerNpc.id, closerNpc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(closerNpc.combatTarget).toBe(player);
+    expect(fartherNpc.combatTarget).toBeNull();
+    expect(fartherNpc.position.x).toBe(16.5);
+    expect(fartherNpc.pathQueue).toEqual([]);
+  });
+
+  test('proactive aggro assigns one NPC to one player when several players are nearby', () => {
+    const firstPlayer = new Player('first', 11.5, 10.5, fakeWs, 1);
+    const secondPlayer = new Player('second', 12.5, 10.5, fakeWs, 1);
+    const closestNpc = new Npc(strongAggroNpcDef, 11.5, 10.5);
+    const fallbackNpc = new Npc(strongAggroNpcDef, 16.5, 10.5);
+    firstPlayer.currentMapLevel = 'kcmap';
+    secondPlayer.currentMapLevel = 'kcmap';
+    closestNpc.currentMapLevel = 'kcmap';
+    fallbackNpc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(firstPlayer, closestNpc);
+    world.players.set(secondPlayer.id, secondPlayer);
+    world.npcs.set(fallbackNpc.id, fallbackNpc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => {
+        fn(firstPlayer.id);
+        fn(secondPlayer.id);
+      },
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(closestNpc.combatTarget).toBe(firstPlayer);
+    expect(fallbackNpc.combatTarget).toBe(secondPlayer);
+  });
+
+  test('duplicate NPC chasers release the same player instead of forming a line', () => {
+    const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
+    const firstNpc = new Npc(strongAggroNpcDef, 10.5, 10.5);
+    const secondNpc = new Npc(strongAggroNpcDef, 13.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    firstNpc.currentMapLevel = 'kcmap';
+    secondNpc.currentMapLevel = 'kcmap';
+    secondNpc.position.x = 20.5;
+    firstNpc.setCombatTarget(player);
+    secondNpc.setCombatTarget(player);
+    const { world, broadcasts } = makeCombatWorld(player, firstNpc);
+    world.npcs.set(secondNpc.id, secondNpc);
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(firstNpc.combatTarget).toBe(player);
+    expect(secondNpc.combatTarget).toBeNull();
+    expect(secondNpc.returning).toBe(true);
+    expect(secondNpc.position.x).toBe(20.5);
+    expect(broadcasts.some(b => b.opcode === ServerOpcode.COMBAT_HIT && b.values[0] === secondNpc.id && b.values[1] === -1)).toBe(true);
+  });
+
+  test('player active combat target wins the NPC chase slot', () => {
+    const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
+    const strayNpc = new Npc(strongAggroNpcDef, 10.5, 10.5);
+    const activeNpc = new Npc(strongAggroNpcDef, 12.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    strayNpc.currentMapLevel = 'kcmap';
+    activeNpc.currentMapLevel = 'kcmap';
+    strayNpc.setCombatTarget(player);
+    activeNpc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, strayNpc);
+    world.npcs.set(activeNpc.id, activeNpc);
+    world.playerCombatTargets.set(player.id, activeNpc.id);
+    world.npcTargetedBy.set(activeNpc.id, new Set([player.id]));
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(strayNpc.combatTarget).toBeNull();
+    expect(activeNpc.combatTarget).toBe(player);
+    expect(world.playerCombatTargets.get(player.id)).toBe(activeNpc.id);
+  });
+
+  test('player active combat target reserves the chase slot before NPC retaliation starts', () => {
+    const player = new Player('tester', 11.5, 10.5, fakeWs, 1);
+    const strayNpc = new Npc(strongAggroNpcDef, 10.5, 10.5);
+    const activeNpc = new Npc(strongAggroNpcDef, 12.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    strayNpc.currentMapLevel = 'kcmap';
+    activeNpc.currentMapLevel = 'kcmap';
+    strayNpc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, strayNpc);
+    world.npcs.set(activeNpc.id, activeNpc);
+    world.playerCombatTargets.set(player.id, activeNpc.id);
+    world.npcTargetedBy.set(activeNpc.id, new Set([player.id]));
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => fn(player.id),
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(strayNpc.combatTarget).toBeNull();
+    expect(activeNpc.combatTarget).toBe(player);
+    expect(world.playerCombatTargets.get(player.id)).toBe(activeNpc.id);
+  });
+
+  test('player active combat target does not switch to a closer bystander before retaliation', () => {
+    const player = new Player('tester', 12.5, 10.5, fakeWs, 1);
+    const bystander = new Player('bystander', 11.5, 10.5, fakeWs, 2);
+    const activeNpc = new Npc(strongAggroNpcDef, 11.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    bystander.currentMapLevel = 'kcmap';
+    activeNpc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, activeNpc);
+    world.players.set(bystander.id, bystander);
+    world.playerCombatTargets.set(player.id, activeNpc.id);
+    world.npcTargetedBy.set(activeNpc.id, new Set([player.id]));
+    world.chunkManagers.set('kcmap', {
+      forEachPlayerNear: (_x: number, _z: number, fn: (playerId: number) => void) => {
+        fn(bystander.id);
+        fn(player.id);
+      },
+      updateEntity() {},
+    });
+
+    world.tickNpcAI();
+
+    expect(activeNpc.combatTarget).toBe(player);
+    expect(world.playerCombatTargets.get(player.id)).toBe(activeNpc.id);
   });
 
   test('aggressive NPCs stop first-strike targeting after 10 minutes in the same area', () => {

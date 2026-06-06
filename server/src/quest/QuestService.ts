@@ -260,6 +260,7 @@ export class QuestService {
         case 'openAppearance':
         case 'openBank':
         case 'openShop':
+        case 'bankInventoryItemsForCoins':
           break;
       }
     }

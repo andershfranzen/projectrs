@@ -4625,7 +4625,7 @@ let selectedWaterFlowChunk = null
     const hint = document.createElement('div')
     hint.className = 'hint'
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:4px;'
-    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: use <code>action</code> for one effect or <code>actions</code> for a list. Supported: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: legacy <code>requires</code>, or generic <code>condition</code>/<code>conditions</code>. Conditions: <code>questStage</code>, <code>questStarted</code>, <code>questNotStarted</code>, <code>questCompleted</code>, <code>hasItem</code>, <code>hasEquippedItem</code>, <code>skillLevel</code>, <code>combatLevel</code>, <code>all</code>, <code>any</code>, <code>not</code>.`
+    hint.innerHTML = `JSON view. Tree must have a <code>root</code> node id and a <code>nodes</code> map.<br>Actions: use <code>action</code> for one effect or <code>actions</code> for a list. Supported: <code>openShop</code>, <code>openBank</code>, <code>openAppearance</code>, <code>giveItem</code>, <code>takeItem</code>, <code>bankInventoryItemsForCoins</code>, <code>closeDialogue</code>, <code>setQuestStage</code>, <code>completeQuest</code>.<br>Option gating: legacy <code>requires</code>, or generic <code>condition</code>/<code>conditions</code>. Conditions: <code>questStage</code>, <code>questStarted</code>, <code>questNotStarted</code>, <code>questCompleted</code>, <code>hasItem</code>, <code>hasEquippedItem</code>, <code>skillLevel</code>, <code>combatLevel</code>, <code>all</code>, <code>any</code>, <code>not</code>.`
     root.appendChild(hint)
 
     const ta = document.createElement('textarea')
@@ -11192,6 +11192,7 @@ function applyToolAtTile(tile, eventLike = null) {
               ['completeQuest', 'Complete quest'],
               ['giveItem', 'Give item'],
               ['takeItem', 'Take item'],
+              ['bankInventoryItemsForCoins', 'Bank items for coins'],
               ['openShop', 'Open shop'],
               ['openBank', 'Open bank'],
               ['openAppearance', 'Open appearance'],
@@ -11235,6 +11236,9 @@ function applyToolAtTile(tile, eventLike = null) {
               form.appendChild(field('Stage', numberInput(values.stage ?? 0, 0, v => { values.stage = v; update() }, { width: '100%' })))
             } else if (typeSel.value === 'completeQuest') addQuest()
             else if (typeSel.value === 'giveItem' || typeSel.value === 'takeItem') addItemQty()
+            else if (typeSel.value === 'bankInventoryItemsForCoins') {
+              form.appendChild(field('Fallback coin cost', numberInput(values.coinCost ?? 10, 0, v => { values.coinCost = v; update() }, { width: '100%' })))
+            }
           } else {
             if (['questStage', 'questStarted', 'questNotStarted', 'questCompleted'].includes(typeSel.value)) addQuest()
             if (typeSel.value === 'questStage') {
@@ -11262,6 +11266,15 @@ function applyToolAtTile(tile, eventLike = null) {
         if (type === 'setQuestStage') return { type, questId: values.questId || selectedQuestId || '', stage: values.stage ?? 0 }
         if (type === 'completeQuest') return { type, questId: values.questId || selectedQuestId || '' }
         if (type === 'giveItem' || type === 'takeItem') return { type, itemId: values.itemId || 0, qty: values.qty || 1 }
+        if (type === 'bankInventoryItemsForCoins') {
+          return {
+            type,
+            itemIds: [25, 26, 34, 35, 44, 45, 142, 407, 408],
+            coinCost: values.coinCost ?? 10,
+            coinCostByItemId: { 25: 1, 34: 1, 26: 2, 35: 3, 44: 4, 142: 4, 45: 6, 407: 8, 408: 8 },
+            itemLabel: 'ore',
+          }
+        }
         return { type }
       }
       if (type === 'questStage') return { type, questId: values.questId || selectedQuestId || '', minStage: values.minStage ?? 0, maxStage: values.maxStage ?? 0 }
@@ -11390,7 +11403,23 @@ function applyToolAtTile(tile, eventLike = null) {
           if (def && (!Number.isInteger(action.stage) || action.stage < 0 || action.stage >= (def.stages?.length || 0))) issue('error', questId, `${path}.stage`, 'Stage is outside the target quest stage range.')
         } else if (action.type === 'completeQuest') validateQuestRef(action.questId, questId, `${path}.questId`, issue)
         else if (action.type === 'giveItem' || action.type === 'takeItem') validateItemRef(action.itemId, questId, `${path}.itemId`, issue)
-        else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
+        else if (action.type === 'bankInventoryItemsForCoins') {
+          if (!Array.isArray(action.itemIds) || action.itemIds.length === 0) issue('error', questId, `${path}.itemIds`, 'Action needs at least one item ID.')
+          else action.itemIds.forEach((itemId, idx) => validateItemRef(itemId, questId, `${path}.itemIds[${idx}]`, issue))
+          if (!Number.isInteger(action.coinCost) || action.coinCost < 0) issue('error', questId, `${path}.coinCost`, 'Coin cost must be a non-negative whole number.')
+          if (action.coinCostByItemId !== undefined) {
+            if (!action.coinCostByItemId || typeof action.coinCostByItemId !== 'object' || Array.isArray(action.coinCostByItemId)) {
+              issue('error', questId, `${path}.coinCostByItemId`, 'Per-item coin costs must be an object keyed by item ID.')
+            } else {
+              Object.entries(action.coinCostByItemId).forEach(([rawItemId, cost]) => {
+                const itemId = Number(rawItemId)
+                if (!Number.isInteger(itemId) || itemId <= 0) issue('error', questId, `${path}.coinCostByItemId.${rawItemId}`, 'Per-item coin cost key must be a valid item ID.')
+                else validateItemRef(itemId, questId, `${path}.coinCostByItemId.${rawItemId}`, issue)
+                if (!Number.isInteger(cost) || cost < 0) issue('error', questId, `${path}.coinCostByItemId.${rawItemId}`, 'Per-item coin cost must be a non-negative whole number.')
+              })
+            }
+          }
+        } else if (!['openShop', 'openBank', 'openAppearance', 'closeDialogue'].includes(action.type)) issue('error', questId, path, `Unknown action type "${action.type}".`)
       }
 
       function questHasCompletionAction(questId) {
