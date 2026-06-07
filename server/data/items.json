@@ -5702,5 +5702,22 @@
     "levelRequired": 60,
     "value": 220,
     "model": "/assets/models/MysticShortbow.glb"
+  },
+  {
+    "id": 460,
+    "name": "Vampire Dagger",
+    "description": "Vampire dagger.",
+    "stackable": false,
+    "equippable": true,
+    "equipSlot": "weapon",
+    "value": 600,
+    "model": "/assets/equipment/weapon/VampireDagger.glb",
+    "weaponStyle": "stab",
+    "attackSpeed": 3,
+    "equipSkill": "weaponry",
+    "levelRequired": 30,
+    "stabAttack": 22,
+    "slashAttack": 12,
+    "meleeStrength": 13
   }
 ]

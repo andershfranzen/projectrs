@@ -1,13 +1,31 @@
 {
   "version": 2,
-  "generatedAt": "2026-06-05T15:07:16.301Z",
+  "generatedAt": "2026-06-07T09:13:35.556Z",
   "ids": [
+    1,
+    8,
+    10,
+    14,
+    19,
+    20,
+    23,
+    24,
+    29,
+    30,
     31,
     32,
     33,
     36,
     37,
     38,
+    39,
+    40,
+    42,
+    43,
+    48,
+    49,
+    50,
+    52,
     53,
     54,
     55,
@@ -55,8 +73,14 @@
     101,
     102,
     103,
+    105,
+    106,
+    107,
+    108,
     109,
+    110,
     111,
+    112,
     113,
     114,
     115,
@@ -71,410 +95,1592 @@
     125,
     126,
     127,
+    143,
+    206,
+    224,
+    225,
+    226,
+    227,
+    228,
+    229,
     232,
     233,
+    235,
     237,
     238,
     239,
     240,
     241,
+    242,
+    243,
+    244,
+    245,
     247,
     248,
+    249,
+    250,
+    251,
+    252,
+    253,
+    254,
+    255,
+    256,
+    257,
+    258,
+    259,
+    260,
+    261,
+    262,
+    263,
+    264,
+    265,
+    266,
+    267,
+    268,
+    269,
+    270,
+    271,
+    272,
+    273,
+    274,
+    275,
+    276,
+    277,
+    278,
+    279,
+    280,
+    281,
+    282,
+    283,
+    284,
+    285,
+    286,
+    287,
+    288,
+    289,
+    290,
+    291,
+    292,
+    293,
+    294,
+    295,
+    296,
+    297,
+    298,
+    299,
+    300,
+    301,
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    345,
+    346,
+    347,
+    348,
+    349,
+    350,
+    351,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375,
+    376,
+    377,
+    378,
+    379,
+    380,
+    381,
+    382,
+    383,
+    384,
+    385,
+    386,
+    387,
+    388,
+    389,
+    390,
+    391,
+    392,
+    393,
+    394,
+    395,
+    396,
+    397,
+    398,
+    399,
+    400,
+    401,
+    402,
+    403,
+    404,
+    405,
+    406,
     409,
     410,
     411,
-    412
+    412,
+    413,
+    414,
+    415,
+    416,
+    417,
+    418,
+    419,
+    420,
+    421,
+    422,
+    423,
+    424,
+    425,
+    426,
+    427,
+    428,
+    429,
+    430,
+    431,
+    432,
+    433,
+    434,
+    435,
+    436,
+    437,
+    438,
+    439,
+    440,
+    441,
+    442,
+    443,
+    444,
+    445,
+    446,
+    447,
+    448,
+    449,
+    450,
+    451,
+    452,
+    453,
+    454,
+    455,
+    456,
+    457,
+    458,
+    459,
+    460
   ],
   "entries": {
+    "1": {
+      "file": "/items/3d/1.png",
+      "poseKey": "thumb:v19|/assets/models/Bones_v2.glb|id:item:1|cam:0.67195,1.20830,0.75000|scale:0.80000",
+      "rendererVersion": 19
+    },
+    "8": {
+      "file": "/items/3d/8.png",
+      "poseKey": "thumb:v19|/assets/equipment/feet/LeatherBoots.glb|id:item:8|cam:-0.78540,1.42800,1.00000",
+      "rendererVersion": 19
+    },
+    "10": {
+      "file": "/items/3d/10.png",
+      "poseKey": "thumb:v19|/assets/models/coins/Coin1.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.90000",
+      "rendererVersion": 19
+    },
+    "14": {
+      "file": "/items/3d/14.png",
+      "poseKey": "thumb:v19|/assets/models/BeefRat.glb|id:item:14|cam:2.32129,1.17810,0.75000",
+      "rendererVersion": 19
+    },
+    "19": {
+      "file": "/items/3d/19.png",
+      "poseKey": "thumb:v19|/assets/models/Feather.glb|id:item:19|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "20": {
+      "file": "/items/3d/20.png",
+      "poseKey": "thumb:v19|/assets/models/Bones_v2.glb|id:item:20|cam:-1.68424,1.20830,0.75000|scale:1.05000",
+      "rendererVersion": 19
+    },
+    "23": {
+      "file": "/items/3d/23.png",
+      "poseKey": "thumb:v19|/assets/models/logs/Log.glb|id:item:23|cam:-1.01229,1.27409,0.85000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "24": {
+      "file": "/items/3d/24.png",
+      "poseKey": "thumb:v19|/assets/models/logs/OakLog.glb|id:item:24|cam:-1.01229,1.27409,0.85000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "29": {
+      "file": "/items/3d/29.png",
+      "poseKey": "thumb:v19|/assets/models/bars/BronzeBar.glb|id:item:29|cam:-2.57436,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "30": {
+      "file": "/items/3d/30.png",
+      "poseKey": "thumb:v19|/assets/models/bars/IronBar.glb|id:item:30|cam:-2.57436,1.20830,0.75000",
+      "rendererVersion": 19
+    },
     "31": {
       "file": "/items/3d/31.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/Bronze axe.glb|id:item:31|tint:0.45000,0.28000,0.12000|m:Material.002|cam:-0.94248,0.29671,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/Bronze axe.glb|id:item:31|tint:0.49700,0.30900,0.13200|m:Material.002|cam:-0.94248,0.29671,0.75000",
+      "rendererVersion": 19
     },
     "32": {
       "file": "/items/3d/32.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/Iron axe.glb|id:item:32|tint:0.48000,0.48000,0.50000|m:Material.002|cam:-0.90757,0.29671,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/Iron axe.glb|id:item:32|tint:0.48000,0.48000,0.50000|m:Material.002|cam:-0.90757,0.29671,0.75000",
+      "rendererVersion": 19
     },
     "33": {
       "file": "/items/3d/33.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/BronzePickaxe.glb|id:item:33|tint:0.45000,0.28000,0.12000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/BronzePickaxe.glb|id:item:33|tint:0.49700,0.30900,0.13200|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
     },
     "36": {
       "file": "/items/3d/36.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/Steel axe.glb|id:item:36|tint:0.75000,0.78000,0.82000|m:Material.002|cam:-0.90757,0.29671,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/Steel axe.glb|id:item:36|tint:0.34000,0.39000,0.46000|m:Material.002|cam:-0.90757,0.29671,0.75000",
+      "rendererVersion": 19
     },
     "37": {
       "file": "/items/3d/37.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/Bronze axe.glb|id:item:37|tint:0.12000,0.22000,0.40000|m:Material.002|cam:-0.90757,0.29671,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/Mithril axe.glb|id:item:37|tint:0.03500,0.07500,0.20500|m:Material.002|cam:-0.90757,0.29671,0.75000",
+      "rendererVersion": 19
     },
     "38": {
       "file": "/items/3d/38.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/BlackBronze axe.glb|id:item:38|tint:0.05000,0.05000,0.07000|m:Material.002|cam:-0.90757,0.29671,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/BlackBronze axe.glb|id:item:38|tint:0.04500,0.01400,0.00500|m:Material.002|cam:-0.90757,0.29671,0.75000",
+      "rendererVersion": 19
+    },
+    "39": {
+      "file": "/items/3d/39.png",
+      "poseKey": "thumb:v19|/assets/models/logs/MapleLog.glb|id:item:39|cam:-1.01229,1.27409,0.85000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "40": {
+      "file": "/items/3d/40.png",
+      "poseKey": "thumb:v19|/assets/models/logs/YewLog.glb|id:item:40|cam:-1.01229,1.27409,0.85000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "42": {
+      "file": "/items/3d/42.png",
+      "poseKey": "thumb:v19|/assets/models/arrows/stacks/BronzeArrowStack1.glb|id:item:42|cam:-1.12574,1.20830,0.75000|scale:0.82000",
+      "rendererVersion": 19
+    },
+    "43": {
+      "file": "/items/3d/43.png",
+      "poseKey": "thumb:v19|/assets/models/arrows/stacks/IronArrowStack1.glb|id:item:43|cam:-1.12574,1.20830,0.75000|scale:0.82000",
+      "rendererVersion": 19
+    },
+    "48": {
+      "file": "/items/3d/48.png",
+      "poseKey": "thumb:v19|/assets/models/bars/SteelBar.glb|id:item:48|cam:-2.57436,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "49": {
+      "file": "/items/3d/49.png",
+      "poseKey": "thumb:v19|/assets/models/bars/MithrilBar.glb|id:item:49|cam:-2.57436,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "50": {
+      "file": "/items/3d/50.png",
+      "poseKey": "thumb:v19|/assets/models/bars/BlackBronzeBar.glb|id:item:50|cam:-2.57436,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "52": {
+      "file": "/items/3d/52.png",
+      "poseKey": "thumb:v19|/assets/equipment/Tools/SmithingHammer_v2.glb|id:item:52|cam:-0.32289,1.30027,0.75000|roty:-0.06981|rotz:0.21817|scale:0.80000",
+      "rendererVersion": 19
     },
     "53": {
       "file": "/items/3d/53.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/IronPickaxe.glb|id:item:53|tint:0.48000,0.48000,0.50000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/IronPickaxe.glb|id:item:53|tint:0.48000,0.48000,0.50000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
     },
     "54": {
       "file": "/items/3d/54.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/SteelPickaxe.glb|id:item:54|tint:0.75000,0.78000,0.82000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/SteelPickaxe.glb|id:item:54|tint:0.34000,0.39000,0.46000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
     },
     "55": {
       "file": "/items/3d/55.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/MithrilPickaxe.glb|id:item:55|tint:0.12000,0.22000,0.40000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/MithrilPickaxe.glb|id:item:55|tint:0.03500,0.07500,0.20500|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
     },
     "56": {
       "file": "/items/3d/56.png",
-      "poseKey": "thumb:v14|/assets/equipment/Tools/BlackBronzePickaxe.glb|id:item:56|tint:0.05000,0.05000,0.07000|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/Tools/BlackBronzePickaxe.glb|id:item:56|tint:0.04500,0.01400,0.00500|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
     },
     "58": {
       "file": "/items/3d/58.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BronzeDagger.glb|id:item:58|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeDagger.glb|id:item:58|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
     },
     "59": {
       "file": "/items/3d/59.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BronzeSword.glb|id:item:59|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeSword.glb|id:item:59|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
     },
     "60": {
       "file": "/items/3d/60.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BronzeMace.glb|id:item:60|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeMace.glb|id:item:60|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
     },
     "61": {
       "file": "/items/3d/61.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BronzeScimitar.glb|id:item:61|cam:-0.63705,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeScimitar.glb|id:item:61|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "63": {
       "file": "/items/3d/63.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BronzeBattleaxe.glb|id:item:63|cam:-0.77667,0.43633,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeBattleaxe.glb|id:item:63|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
     },
     "64": {
       "file": "/items/3d/64.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/bronze_2h.glb|id:item:64|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/bronze_2h.glb|id:item:64|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
     },
     "65": {
       "file": "/items/3d/65.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/BronzeMedHelm.glb|id:item:65|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/BronzeMedHelm.glb|id:item:65|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
     },
     "66": {
       "file": "/items/3d/66.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/BronzeFullHelm.glb|id:item:66|cam:1.90241,1.39864,1.00000|roty:-0.43159",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/BronzeFullHelm.glb|id:item:66|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
     },
     "67": {
       "file": "/items/3d/67.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/BronzeSquareShield.glb|id:item:67|tint:0.45000,0.28000,0.12000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/BronzeSquareShield.glb|id:item:67|tint:0.49700,0.30900,0.13200|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "68": {
       "file": "/items/3d/68.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/BronzeCuirass.glb|id:item:68|cam:-1.46608,1.11701,0.75000|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/BronzeCuirass.glb|id:item:68|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
     },
     "69": {
       "file": "/items/3d/69.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/BronzeKiteshield.glb|id:item:69|tint:0.45000,0.28000,0.12000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/BronzeKiteshield.glb|id:item:69|tint:0.49700,0.30900,0.13200|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "70": {
       "file": "/items/3d/70.png",
-      "poseKey": "thumb:v14|/assets/equipment/legs/BronzePlatelegs.glb|id:item:70|cam:-1.57952,0.54978,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/legs/BronzePlatelegs.glb|id:item:70|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
     },
     "71": {
       "file": "/items/3d/71.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/BronzePlatebody.glb|id:item:71|cam:1.59698,0.88139,0.75000|pose:idle",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/BronzePlatebody.glb|id:item:71|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
     },
     "72": {
       "file": "/items/3d/72.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/IronDagger.glb|id:item:72|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronDagger.glb|id:item:72|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
     },
     "73": {
       "file": "/items/3d/73.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/IronSword.glb|id:item:73|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronSword.glb|id:item:73|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
     },
     "74": {
       "file": "/items/3d/74.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/IronMace.glb|id:item:74|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronMace.glb|id:item:74|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
     },
     "75": {
       "file": "/items/3d/75.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/IronScimitar.glb|id:item:75|cam:-0.63705,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronScimitar.glb|id:item:75|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "77": {
       "file": "/items/3d/77.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/IronBattleaxe.glb|id:item:77|cam:-0.77667,0.43633,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronBattleaxe.glb|id:item:77|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
     },
     "78": {
       "file": "/items/3d/78.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/Iron2hSword.glb|id:item:78|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Iron2hSword.glb|id:item:78|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
     },
     "79": {
       "file": "/items/3d/79.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/IronMedHelm.glb|id:item:79|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/IronMedHelm.glb|id:item:79|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
     },
     "80": {
       "file": "/items/3d/80.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/IronFullHelm.glb|id:item:80|cam:1.90241,1.39864,1.00000|roty:-0.43159",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/IronFullHelm.glb|id:item:80|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
     },
     "81": {
       "file": "/items/3d/81.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/IronSquareShield.glb|id:item:81|tint:0.48000,0.48000,0.50000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/IronSquareShield.glb|id:item:81|tint:0.48000,0.48000,0.50000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "82": {
       "file": "/items/3d/82.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/IronCuirass.glb|id:item:82|cam:-1.46608,1.11701,0.75000|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/IronCuirass.glb|id:item:82|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
     },
     "83": {
       "file": "/items/3d/83.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/IronKiteshield.glb|id:item:83|tint:0.48000,0.48000,0.50000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/IronKiteshield.glb|id:item:83|tint:0.48000,0.48000,0.50000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "84": {
       "file": "/items/3d/84.png",
-      "poseKey": "thumb:v14|/assets/equipment/legs/IronPlatelegs.glb|id:item:84|cam:-1.57952,0.54978,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/legs/IronPlatelegs.glb|id:item:84|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
     },
     "85": {
       "file": "/items/3d/85.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/IronPlatebody.glb|id:item:85|cam:1.59698,0.88139,0.75000|pose:idle",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/IronPlatebody.glb|id:item:85|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
     },
     "86": {
       "file": "/items/3d/86.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/SteelDagger.glb|id:item:86|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelDagger.glb|id:item:86|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
     },
     "87": {
       "file": "/items/3d/87.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/SteelSword.glb|id:item:87|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelSword.glb|id:item:87|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
     },
     "88": {
       "file": "/items/3d/88.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/SteelMace.glb|id:item:88|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelMace.glb|id:item:88|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
     },
     "89": {
       "file": "/items/3d/89.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/SteelScimitar.glb|id:item:89|cam:-0.63705,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelScimitar.glb|id:item:89|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "91": {
       "file": "/items/3d/91.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/SteelBattleaxe.glb|id:item:91|cam:-0.77667,0.43633,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelBattleaxe.glb|id:item:91|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
     },
     "92": {
       "file": "/items/3d/92.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/Steel2hsword.glb|id:item:92|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Steel2hsword.glb|id:item:92|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
     },
     "93": {
       "file": "/items/3d/93.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/SteelMedHelm.glb|id:item:93|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/SteelMedHelm.glb|id:item:93|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
     },
     "94": {
       "file": "/items/3d/94.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/SteelFullHelm.glb|id:item:94|cam:1.90241,1.39864,1.00000|roty:-0.43159",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/SteelFullHelm.glb|id:item:94|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
     },
     "95": {
       "file": "/items/3d/95.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/SteelSquareShield.glb|id:item:95|tint:0.75000,0.78000,0.82000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/SteelSquareShield.glb|id:item:95|tint:0.34000,0.39000,0.46000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "96": {
       "file": "/items/3d/96.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/SteelCuirass.glb|id:item:96|cam:-1.46608,1.11701,0.75000|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/SteelCuirass.glb|id:item:96|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
     },
     "97": {
       "file": "/items/3d/97.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/SteelKiteshield.glb|id:item:97|tint:0.75000,0.78000,0.82000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/SteelKiteshield.glb|id:item:97|tint:0.34000,0.39000,0.46000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "98": {
       "file": "/items/3d/98.png",
-      "poseKey": "thumb:v14|/assets/equipment/legs/SteelPlatelegs.glb|id:item:98|cam:-1.57952,0.54978,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/legs/SteelPlatelegs.glb|id:item:98|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
     },
     "99": {
       "file": "/items/3d/99.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/SteelPlatebody.glb|id:item:99|cam:1.59698,0.88139,0.75000|pose:idle",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/SteelPlatebody.glb|id:item:99|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
     },
     "100": {
       "file": "/items/3d/100.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/MithrilDagger.glb|id:item:100|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilDagger.glb|id:item:100|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
     },
     "101": {
       "file": "/items/3d/101.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/MithrilSword.glb|id:item:101|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilSword.glb|id:item:101|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
     },
     "102": {
       "file": "/items/3d/102.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/MithrilMace.glb|id:item:102|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilMace.glb|id:item:102|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
     },
     "103": {
       "file": "/items/3d/103.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/MithrilScimitar.glb|id:item:103|cam:-0.63705,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilScimitar.glb|id:item:103|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "105": {
+      "file": "/items/3d/105.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilBattleaxe.glb|id:item:105|cam:-0.82030,0.56723,0.75000",
+      "rendererVersion": 19
+    },
+    "106": {
+      "file": "/items/3d/106.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Mithril2hsword.glb|id:item:106|cam:-2.23402,2.05010,0.75000|rotx:2.22529|roty:1.91114|rotz:-1.00356",
+      "rendererVersion": 19
+    },
+    "107": {
+      "file": "/items/3d/107.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MithrilMedHelm.glb|id:item:107|cam:1.79769,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "108": {
+      "file": "/items/3d/108.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MithrilFullHelm.glb|id:item:108|cam:1.83260,1.39626,1.00000|roty:-0.43159",
+      "rendererVersion": 19
     },
     "109": {
       "file": "/items/3d/109.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/MithrilSquareShield.glb|id:item:109|tint:0.12000,0.22000,0.40000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/MithrilSquareShield.glb|id:item:109|tint:0.03500,0.07500,0.20500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "110": {
+      "file": "/items/3d/110.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MithrilCuirass.glb|id:item:110|cam:-1.43117,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
     },
     "111": {
       "file": "/items/3d/111.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/MithrilKiteshield.glb|id:item:111|tint:0.12000,0.22000,0.40000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/MithrilKiteshield.glb|id:item:111|tint:0.03500,0.07500,0.20500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "112": {
+      "file": "/items/3d/112.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/MithrilPlatelegs.glb|id:item:112|cam:-1.59698,0.54978,0.75000",
+      "rendererVersion": 19
     },
     "113": {
       "file": "/items/3d/113.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/MithrilPlatebody.glb|id:item:113|cam:1.59698,0.88139,0.75000|pose:idle",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/MithrilPlatebody.glb|id:item:113|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
     },
     "114": {
       "file": "/items/3d/114.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BlackBronzeDagger.glb|id:item:114|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeDagger.glb|id:item:114|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
     },
     "115": {
       "file": "/items/3d/115.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BlackBronzeSword.glb|id:item:115|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeSword.glb|id:item:115|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
     },
     "116": {
       "file": "/items/3d/116.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BlackBronzeMace.glb|id:item:116|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeMace.glb|id:item:116|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
     },
     "117": {
       "file": "/items/3d/117.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BlackBronzeScimitar.glb|id:item:117|cam:-0.63705,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeScimitar.glb|id:item:117|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "119": {
       "file": "/items/3d/119.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BlackBronzeBattleaxe.glb|id:item:119|cam:-0.77667,0.43633,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeBattleaxe.glb|id:item:119|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
     },
     "120": {
       "file": "/items/3d/120.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/BlackBronze2hsword.glb|id:item:120|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronze2hsword.glb|id:item:120|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
     },
     "121": {
       "file": "/items/3d/121.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/BlackBronzeMedHelm.glb|id:item:121|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/BlackBronzeMedHelm.glb|id:item:121|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
     },
     "122": {
       "file": "/items/3d/122.png",
-      "poseKey": "thumb:v14|/assets/equipment/head/BlackBronzeFullHelm.glb|id:item:122|cam:1.90241,1.39864,1.00000|roty:-0.43159",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/head/BlackBronzeFullHelm.glb|id:item:122|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
     },
     "123": {
       "file": "/items/3d/123.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/BlackBronzeSquareShield.glb|id:item:123|tint:0.05000,0.05000,0.07000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/BlackBronzeSquareShield.glb|id:item:123|tint:0.04500,0.01400,0.00500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "124": {
       "file": "/items/3d/124.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/BlackBronzeCuirass.glb|id:item:124|cam:-1.46608,1.11701,0.75000|scale:0.95000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/BlackBronzeCuirass.glb|id:item:124|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
     },
     "125": {
       "file": "/items/3d/125.png",
-      "poseKey": "thumb:v14|/assets/equipment/shield/BlackBronzeKiteshield.glb|id:item:125|tint:0.05000,0.05000,0.07000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/shield/BlackBronzeKiteshield.glb|id:item:125|tint:0.04500,0.01400,0.00500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "126": {
       "file": "/items/3d/126.png",
-      "poseKey": "thumb:v14|/assets/equipment/legs/BlackBronzePlatelegs.glb|id:item:126|cam:-1.57952,0.54978,0.75000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/legs/BlackBronzePlatelegs.glb|id:item:126|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
     },
     "127": {
       "file": "/items/3d/127.png",
-      "poseKey": "thumb:v14|/assets/equipment/body/BlackBronzePlatebody.glb|id:item:127|cam:1.59698,0.88139,0.75000|pose:idle",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/body/BlackBronzePlatebody.glb|id:item:127|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "143": {
+      "file": "/items/3d/143.png",
+      "poseKey": "thumb:v19|/assets/models/bars/SilverBar.glb|id:item:143|cam:-2.57436,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "206": {
+      "file": "/items/3d/206.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BlueWizardHat.glb|id:item:206|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "224": {
+      "file": "/items/3d/224.png",
+      "poseKey": "thumb:v19|/assets/models/relics/Boat.glb|id:item:224|cam:1.64934,1.20830,0.75000|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "225": {
+      "file": "/items/3d/225.png",
+      "poseKey": "thumb:v19|/assets/models/relics/OldGame.glb|id:item:225|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "226": {
+      "file": "/items/3d/226.png",
+      "poseKey": "thumb:v19|/assets/models/relics/BirdStatue.glb|id:item:226|cam:1.63188,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "227": {
+      "file": "/items/3d/227.png",
+      "poseKey": "thumb:v19|/assets/models/relics/SkyglassShard.glb|id:item:227|cam:1.78024,1.20830,0.75000|scale:0.80000",
+      "rendererVersion": 19
+    },
+    "228": {
+      "file": "/items/3d/228.png",
+      "poseKey": "thumb:v19|/assets/models/relics/MoontearRing.glb|id:item:228|cam:1.54462,0.82903,0.75000",
+      "rendererVersion": 19
+    },
+    "229": {
+      "file": "/items/3d/229.png",
+      "poseKey": "thumb:v19|/assets/models/relics/BrokenDrop.glb|id:item:229|cam:1.10828,1.20830,0.75000",
+      "rendererVersion": 19
     },
     "232": {
       "file": "/items/3d/232.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/Staff.glb|id:item:232|cam:-0.78540,1.30900,1.00000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Staff.glb|id:item:232|cam:-0.78540,1.30900,1.00000",
+      "rendererVersion": 19
     },
     "233": {
       "file": "/items/3d/233.png",
-      "poseKey": "thumb:v14|/assets/equipment/weapon/CrystalStaff.glb|id:item:233|cam:-0.78540,1.30900,1.00000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrystalStaff.glb|id:item:233|cam:-0.78540,1.30900,1.00000",
+      "rendererVersion": 19
+    },
+    "235": {
+      "file": "/items/3d/235.png",
+      "poseKey": "thumb:v19|/assets/models/logs/WillowLog.glb|id:item:235|cam:-1.01229,1.27409,0.85000|scale:0.95000",
+      "rendererVersion": 19
     },
     "237": {
       "file": "/items/3d/237.png",
-      "poseKey": "thumb:v14|/assets/equipment/cape/CamelCape.glb|id:item:237|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/equipment/cape/CamelCape.glb|id:item:237|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
     },
     "238": {
       "file": "/items/3d/238.png",
-      "poseKey": "thumb:v14|/assets/models/Potato.glb|id:item:238|cam:-0.78540,1.20830,0.80000|scale:0.55000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/models/Potato.glb|id:item:238|cam:-0.78540,1.20830,0.80000|scale:0.55000",
+      "rendererVersion": 19
     },
     "239": {
       "file": "/items/3d/239.png",
-      "poseKey": "thumb:v14|/assets/models/CauliflowerPlant.glb|id:item:239|cam:-0.78540,1.20830,0.90000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/models/CauliflowerPlant.glb|id:item:239|cam:-0.78540,1.20830,0.90000",
+      "rendererVersion": 19
     },
     "240": {
       "file": "/items/3d/240.png",
-      "poseKey": "thumb:v14|/assets/models/BakedPotato.glb|id:item:240|cam:-0.78540,1.20830,0.80000|scale:0.55000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/models/BakedPotato.glb|id:item:240|cam:-0.78540,1.20830,0.80000|scale:0.55000",
+      "rendererVersion": 19
     },
     "241": {
       "file": "/items/3d/241.png",
-      "poseKey": "thumb:v14|/assets/models/grain.glb|id:item:241|cam:-0.75922,0.82030,0.80000|scale:0.85000",
-      "rendererVersion": 14
+      "poseKey": "thumb:v19|/assets/models/grain.glb|id:item:241|cam:-0.75922,0.82030,0.80000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "242": {
+      "file": "/items/3d/242.png",
+      "poseKey": "thumb:v19|/assets/models/Clay.glb|id:item:242|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "243": {
+      "file": "/items/3d/243.png",
+      "poseKey": "thumb:v19|/assets/models/SoftClay.glb|id:item:243|cam:1.10828,0.88139,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "244": {
+      "file": "/items/3d/244.png",
+      "poseKey": "thumb:v19|/assets/models/Pot.glb|id:item:244|cam:-0.78540,0.95120,0.75000",
+      "rendererVersion": 19
+    },
+    "245": {
+      "file": "/items/3d/245.png",
+      "poseKey": "thumb:v19|/assets/models/FiredPot.glb|id:item:245|cam:-0.78540,0.95120,0.75000",
+      "rendererVersion": 19
     },
     "247": {
-      "file": "/items/3d/247.png?v=bucket-20260527",
-      "poseKey": "thumb:v14|/assets/models/Bucket2.glb|id:item:247|cam:-0.78540,1.20830,0.75000",
-      "rendererVersion": 14
+      "file": "/items/3d/247.png",
+      "poseKey": "thumb:v19|/assets/models/Bucket2.glb|id:item:247|cam:-0.78540,0.99484,0.75000",
+      "rendererVersion": 19
     },
     "248": {
-      "file": "/items/3d/248.png?v=bucket-20260527-nohighlight",
-      "poseKey": "thumb:v14|/assets/models/BucketWater.glb|id:item:248|cam:-0.78540,1.20830,0.75000",
-      "rendererVersion": 14
+      "file": "/items/3d/248.png",
+      "poseKey": "thumb:v19|/assets/models/BucketWater.glb|id:item:248|cam:-0.78540,0.99484,0.75000",
+      "rendererVersion": 19
+    },
+    "249": {
+      "file": "/items/3d/249.png",
+      "poseKey": "thumb:v19|/assets/models/FiredBowl.glb|id:item:249|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "250": {
+      "file": "/items/3d/250.png",
+      "poseKey": "thumb:v19|/assets/models/FiredPlate.glb|id:item:250|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "251": {
+      "file": "/items/3d/251.png",
+      "poseKey": "thumb:v19|/assets/models/Knife.glb|id:item:251|cam:0.20071,2.53073,0.75000|rotx:0.18326|roty:2.16421|rotz:2.48709",
+      "rendererVersion": 19
+    },
+    "252": {
+      "file": "/items/3d/252.png",
+      "poseKey": "thumb:v19|/assets/models/Bowl.glb|id:item:252|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "253": {
+      "file": "/items/3d/253.png",
+      "poseKey": "thumb:v19|/assets/models/Plate.glb|id:item:253|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "254": {
+      "file": "/items/3d/254.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Sapphire.glb|id:item:254|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "255": {
+      "file": "/items/3d/255.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Emerald.glb|id:item:255|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "256": {
+      "file": "/items/3d/256.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Ruby.glb|id:item:256|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "257": {
+      "file": "/items/3d/257.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Diamond.glb|id:item:257|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "258": {
+      "file": "/items/3d/258.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Amethyst.glb|id:item:258|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "259": {
+      "file": "/items/3d/259.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Topaz.glb|id:item:259|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "260": {
+      "file": "/items/3d/260.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Opal.glb|id:item:260|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "261": {
+      "file": "/items/3d/261.png",
+      "poseKey": "thumb:v19|/assets/models/gems/Onyx.glb|id:item:261|cam:-0.78540,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "262": {
+      "file": "/items/3d/262.png",
+      "poseKey": "thumb:v19|/assets/models/Shortbow.glb|id:item:262:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "263": {
+      "file": "/items/3d/263.png",
+      "poseKey": "thumb:v19|/assets/models/Beef.glb|id:item:263|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "264": {
+      "file": "/items/3d/264.png",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/BronzeArrowheadStack1.glb|id:item:264|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "rendererVersion": 19
+    },
+    "265": {
+      "file": "/items/3d/265.png",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/IronArrowheadStack1.glb|id:item:265|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "rendererVersion": 19
+    },
+    "266": {
+      "file": "/items/3d/266.png",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/SteelArrowheadStack1.glb|id:item:266|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "rendererVersion": 19
+    },
+    "267": {
+      "file": "/items/3d/267.png",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/MithrilArrowheadStack1.glb|id:item:267|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "rendererVersion": 19
+    },
+    "268": {
+      "file": "/items/3d/268.png",
+      "poseKey": "thumb:v19|/assets/models/arrowheads/stacks/BlackBronzeArrowheadStack1.glb|id:item:268|cam:-0.78540,1.20830,0.75000|scale:0.50000",
+      "rendererVersion": 19
+    },
+    "269": {
+      "file": "/items/3d/269.png",
+      "poseKey": "thumb:v19|/assets/models/Sinew.glb|id:item:269|cam:-1.12574,1.20830,0.75000|scale:0.90000",
+      "rendererVersion": 19
+    },
+    "270": {
+      "file": "/items/3d/270.png",
+      "poseKey": "thumb:v19|/assets/models/arrow-shafts/stacks/ArrowShaftStack1.glb|id:item:270|cam:-1.12574,1.20830,0.75000|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "271": {
+      "file": "/items/3d/271.png",
+      "poseKey": "thumb:v19|/assets/models/logs/MysticLog.glb|id:item:271|cam:-1.01229,1.27409,0.85000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "272": {
+      "file": "/items/3d/272.png",
+      "poseKey": "thumb:v19|/assets/models/headless-arrows/stacks/HeadlessArrowStack1.glb|id:item:272|cam:-1.12574,1.20830,0.75000|scale:0.80000",
+      "rendererVersion": 19
+    },
+    "273": {
+      "file": "/items/3d/273.png",
+      "poseKey": "thumb:v19|/assets/models/Bowstring.glb|id:item:273|cam:-0.78540,1.20830,0.75000|roty:0.01745",
+      "rendererVersion": 19
+    },
+    "274": {
+      "file": "/items/3d/274.png",
+      "poseKey": "thumb:v19|/assets/models/Shortbow.glb|id:item:274:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "275": {
+      "file": "/items/3d/275.png",
+      "poseKey": "thumb:v19|/assets/models/OakShortbow.glb|id:item:275:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "276": {
+      "file": "/items/3d/276.png",
+      "poseKey": "thumb:v19|/assets/models/WillowShortbow.glb|id:item:276:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "277": {
+      "file": "/items/3d/277.png",
+      "poseKey": "thumb:v19|/assets/models/MapleShortbow.glb|id:item:277:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "278": {
+      "file": "/items/3d/278.png",
+      "poseKey": "thumb:v19|/assets/models/YewShortbow.glb|id:item:278:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "279": {
+      "file": "/items/3d/279.png",
+      "poseKey": "thumb:v19|/assets/models/MysticShortbow.glb|id:item:279:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "280": {
+      "file": "/items/3d/280.png",
+      "poseKey": "thumb:v19|/assets/models/OakShortbow.glb|id:item:280:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "281": {
+      "file": "/items/3d/281.png",
+      "poseKey": "thumb:v19|/assets/models/WillowShortbow.glb|id:item:281:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "282": {
+      "file": "/items/3d/282.png",
+      "poseKey": "thumb:v19|/assets/models/MapleShortbow.glb|id:item:282:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "283": {
+      "file": "/items/3d/283.png",
+      "poseKey": "thumb:v19|/assets/models/YewShortbow.glb|id:item:283:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "284": {
+      "file": "/items/3d/284.png",
+      "poseKey": "thumb:v19|/assets/models/MysticShortbow.glb|id:item:284:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "285": {
+      "file": "/items/3d/285.png",
+      "poseKey": "thumb:v19|/assets/models/arrows/stacks/SteelArrowStack1.glb|id:item:285|cam:-1.12574,1.20830,0.75000|scale:0.82000",
+      "rendererVersion": 19
+    },
+    "286": {
+      "file": "/items/3d/286.png",
+      "poseKey": "thumb:v19|/assets/models/arrows/stacks/MithrilArrowStack1.glb|id:item:286|cam:-1.12574,1.20830,0.75000|scale:0.82000",
+      "rendererVersion": 19
+    },
+    "287": {
+      "file": "/items/3d/287.png",
+      "poseKey": "thumb:v19|/assets/models/arrows/stacks/BlackBronzeArrowStack1.glb|id:item:287|cam:-1.12574,1.20830,0.75000|scale:0.82000",
+      "rendererVersion": 19
+    },
+    "288": {
+      "file": "/items/3d/288.png",
+      "poseKey": "thumb:v19|/assets/models/relics/OmenKite.glb|id:item:288|cam:1.63188,1.20830,0.75000|scale:0.80000",
+      "rendererVersion": 19
+    },
+    "289": {
+      "file": "/items/3d/289.png",
+      "poseKey": "thumb:v19|/assets/models/relics/CrescentReliquary.glb|id:item:289|cam:1.54462,0.82903,0.75000",
+      "rendererVersion": 19
+    },
+    "290": {
+      "file": "/items/3d/290.png",
+      "poseKey": "thumb:v19|/assets/models/relics/BrokenHaloIdol.glb|id:item:290|cam:1.81514,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "291": {
+      "file": "/items/3d/291.png",
+      "poseKey": "thumb:v19|/assets/models/relics/TriSpireReliquary.glb|id:item:291|cam:1.83260,1.20830,0.75000|scale:0.80000",
+      "rendererVersion": 19
+    },
+    "292": {
+      "file": "/items/3d/292.png",
+      "poseKey": "thumb:v19|/assets/models/relics/BellTowerCasket.glb|id:item:292|cam:1.78024,1.20830,0.75000|scale:0.80000",
+      "rendererVersion": 19
+    },
+    "293": {
+      "file": "/items/3d/293.png",
+      "poseKey": "thumb:v19|/assets/models/relics/TwinSpireSigil.glb|id:item:293|cam:1.96350,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "294": {
+      "file": "/items/3d/294.png",
+      "poseKey": "thumb:v19|/assets/models/relics/CelestialAstrolabe.glb|id:item:294|cam:1.85005,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "295": {
+      "file": "/items/3d/295.png",
+      "poseKey": "thumb:v19|/assets/models/relics/BlackSunReliquary.glb|id:item:295|cam:1.83260,1.20830,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "296": {
+      "file": "/items/3d/296.png",
+      "poseKey": "thumb:v19|/assets/models/hides/CowHide.glb|id:item:296|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "297": {
+      "file": "/items/3d/297.png",
+      "poseKey": "thumb:v19|/assets/models/hides/BearHide.glb|id:item:297|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "298": {
+      "file": "/items/3d/298.png",
+      "poseKey": "thumb:v19|/assets/models/hides/WolfHide.glb|id:item:298|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "299": {
+      "file": "/items/3d/299.png",
+      "poseKey": "thumb:v19|/assets/models/hides/DeerHide.glb|id:item:299|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "300": {
+      "file": "/items/3d/300.png",
+      "poseKey": "thumb:v19|/assets/models/hides/CamelHide.glb|id:item:300|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "301": {
+      "file": "/items/3d/301.png",
+      "poseKey": "thumb:v19|/assets/models/hides/HumanHide.glb|id:item:301|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "302": {
+      "file": "/items/3d/302.png",
+      "poseKey": "thumb:v19|/assets/models/hides/TannedCowHide.glb|id:item:302|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "303": {
+      "file": "/items/3d/303.png",
+      "poseKey": "thumb:v19|/assets/models/hides/TannedBearHide.glb|id:item:303|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "304": {
+      "file": "/items/3d/304.png",
+      "poseKey": "thumb:v19|/assets/models/hides/TannedWolfHide.glb|id:item:304|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "305": {
+      "file": "/items/3d/305.png",
+      "poseKey": "thumb:v19|/assets/models/hides/TannedDeerHide.glb|id:item:305|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "306": {
+      "file": "/items/3d/306.png",
+      "poseKey": "thumb:v19|/assets/models/hides/TannedCamelHide.glb|id:item:306|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "307": {
+      "file": "/items/3d/307.png",
+      "poseKey": "thumb:v19|/assets/models/hides/TannedHumanHide.glb|id:item:307|cam:-0.97738,0.89884,0.75000|rotx:-0.25307|roty:0.10472|rotz:-0.03491",
+      "rendererVersion": 19
+    },
+    "310": {
+      "file": "/items/3d/310.png",
+      "poseKey": "thumb:v19|/assets/models/bars/CrimsonBar.glb|id:item:310|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "311": {
+      "file": "/items/3d/311.png",
+      "poseKey": "thumb:v19|/assets/models/bars/MalachorBar.glb|id:item:311|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "312": {
+      "file": "/items/3d/312.png",
+      "poseKey": "thumb:v19|/assets/equipment/Tools/Crimson axe.glb|id:item:312|tint:0.17500,0.00600,0.01200|m:Material.002|cam:-0.79412,0.29671,0.75000",
+      "rendererVersion": 19
+    },
+    "313": {
+      "file": "/items/3d/313.png",
+      "poseKey": "thumb:v19|/assets/equipment/Tools/CrimsonPickaxe.glb|id:item:313|tint:0.17500,0.00600,0.01200|m:Material.002|cam:-0.90757,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
+    },
+    "314": {
+      "file": "/items/3d/314.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonDagger.glb|id:item:314|cam:-0.77667,2.32129,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "315": {
+      "file": "/items/3d/315.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonSword.glb|id:item:315|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "316": {
+      "file": "/items/3d/316.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonMace.glb|id:item:316|cam:0.41888,1.45736,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "317": {
+      "file": "/items/3d/317.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonScimitar.glb|id:item:317|cam:-0.77667,1.07230,0.75000",
+      "rendererVersion": 19
+    },
+    "318": {
+      "file": "/items/3d/318.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/CrimsonCuirass.glb|id:item:318|cam:-1.43117,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "319": {
+      "file": "/items/3d/319.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonBattleaxe.glb|id:item:319|cam:-0.82030,0.56723,0.75000",
+      "rendererVersion": 19
+    },
+    "320": {
+      "file": "/items/3d/320.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Crimson2hsword.glb|id:item:320|cam:-2.23402,2.05010,0.75000|rotx:2.22529|roty:1.91114|rotz:-1.00356",
+      "rendererVersion": 19
+    },
+    "321": {
+      "file": "/items/3d/321.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/CrimsonMedHelm.glb|id:item:321|cam:1.79769,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "322": {
+      "file": "/items/3d/322.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/CrimsonFullHelm.glb|id:item:322|cam:1.83260,1.39626,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "323": {
+      "file": "/items/3d/323.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/CrimsonSquareShield.glb|id:item:323|cam:1.85005,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "324": {
+      "file": "/items/3d/324.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/CrimsonKiteshield.glb|id:item:324|cam:1.96350,1.41631,0.75000",
+      "rendererVersion": 19
+    },
+    "325": {
+      "file": "/items/3d/325.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/CrimsonPlatelegs.glb|id:item:325|cam:-1.59698,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "326": {
+      "file": "/items/3d/326.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/CrimsonPlatebody.glb|id:item:326|cam:1.54462,1.01739,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "327": {
+      "file": "/items/3d/327.png",
+      "poseKey": "thumb:v19|/assets/equipment/Tools/Malachor axe.glb|id:item:327|tint:0.02700,0.11200,0.05600|m:Material.002|cam:-0.79412,0.29671,0.75000",
+      "rendererVersion": 19
+    },
+    "328": {
+      "file": "/items/3d/328.png",
+      "poseKey": "thumb:v19|/assets/equipment/Tools/MalachorPickaxe.glb|id:item:328|tint:0.02700,0.11200,0.05600|m:Material.002|cam:-0.90757,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
+    },
+    "329": {
+      "file": "/items/3d/329.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorDagger.glb|id:item:329|cam:-0.77667,2.32129,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "330": {
+      "file": "/items/3d/330.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorSword.glb|id:item:330|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "331": {
+      "file": "/items/3d/331.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorMace.glb|id:item:331|cam:0.41888,1.45736,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "332": {
+      "file": "/items/3d/332.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorScimitar.glb|id:item:332|cam:-0.77667,1.07230,0.75000",
+      "rendererVersion": 19
+    },
+    "333": {
+      "file": "/items/3d/333.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MalachorCuirass.glb|id:item:333|cam:-1.43117,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "334": {
+      "file": "/items/3d/334.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorBattleaxe.glb|id:item:334|cam:-0.82030,0.56723,0.75000",
+      "rendererVersion": 19
+    },
+    "335": {
+      "file": "/items/3d/335.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Malachor2hsword.glb|id:item:335|cam:-2.23402,2.05010,0.75000|rotx:2.22529|roty:1.91114|rotz:-1.00356",
+      "rendererVersion": 19
+    },
+    "336": {
+      "file": "/items/3d/336.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MalachorMedHelm.glb|id:item:336|cam:1.79769,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "337": {
+      "file": "/items/3d/337.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MalachorFullHelm.glb|id:item:337|cam:1.83260,1.39626,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "338": {
+      "file": "/items/3d/338.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/MalachorSquareShield.glb|id:item:338|cam:1.85005,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "339": {
+      "file": "/items/3d/339.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/MalachorKiteshield.glb|id:item:339|cam:1.96350,1.41631,0.75000",
+      "rendererVersion": 19
+    },
+    "340": {
+      "file": "/items/3d/340.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/MalachorPlatelegs.glb|id:item:340|cam:-1.59698,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "341": {
+      "file": "/items/3d/341.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MalachorPlatebody.glb|id:item:341|cam:1.54462,1.01739,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "342": {
+      "file": "/items/3d/342.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeDagger.glb|id:item:58|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "343": {
+      "file": "/items/3d/343.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeSword.glb|id:item:59|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "344": {
+      "file": "/items/3d/344.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeMace.glb|id:item:60|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "345": {
+      "file": "/items/3d/345.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeScimitar.glb|id:item:61|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "346": {
+      "file": "/items/3d/346.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BronzeBattleaxe.glb|id:item:63|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
+    },
+    "347": {
+      "file": "/items/3d/347.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/bronze_2h.glb|id:item:64|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
+    },
+    "348": {
+      "file": "/items/3d/348.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BronzeMedHelm.glb|id:item:65|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "349": {
+      "file": "/items/3d/349.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BronzeFullHelm.glb|id:item:66|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "350": {
+      "file": "/items/3d/350.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/BronzeSquareShield.glb|id:item:67|tint:0.49700,0.30900,0.13200|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "351": {
+      "file": "/items/3d/351.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/BronzeCuirass.glb|id:item:68|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "352": {
+      "file": "/items/3d/352.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/BronzeKiteshield.glb|id:item:69|tint:0.49700,0.30900,0.13200|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "353": {
+      "file": "/items/3d/353.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/BronzePlatelegs.glb|id:item:70|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "354": {
+      "file": "/items/3d/354.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/BronzePlatebody.glb|id:item:71|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "355": {
+      "file": "/items/3d/355.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronDagger.glb|id:item:72|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "356": {
+      "file": "/items/3d/356.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronSword.glb|id:item:73|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "357": {
+      "file": "/items/3d/357.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronMace.glb|id:item:74|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "358": {
+      "file": "/items/3d/358.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronScimitar.glb|id:item:75|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "359": {
+      "file": "/items/3d/359.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/IronBattleaxe.glb|id:item:77|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
+    },
+    "360": {
+      "file": "/items/3d/360.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Iron2hSword.glb|id:item:78|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
+    },
+    "361": {
+      "file": "/items/3d/361.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/IronMedHelm.glb|id:item:79|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "362": {
+      "file": "/items/3d/362.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/IronFullHelm.glb|id:item:80|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "363": {
+      "file": "/items/3d/363.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/IronSquareShield.glb|id:item:81|tint:0.48000,0.48000,0.50000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "364": {
+      "file": "/items/3d/364.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/IronCuirass.glb|id:item:82|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "365": {
+      "file": "/items/3d/365.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/IronKiteshield.glb|id:item:83|tint:0.48000,0.48000,0.50000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "366": {
+      "file": "/items/3d/366.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/IronPlatelegs.glb|id:item:84|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "367": {
+      "file": "/items/3d/367.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/IronPlatebody.glb|id:item:85|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "368": {
+      "file": "/items/3d/368.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelDagger.glb|id:item:86|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "369": {
+      "file": "/items/3d/369.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelSword.glb|id:item:87|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "370": {
+      "file": "/items/3d/370.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelMace.glb|id:item:88|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "371": {
+      "file": "/items/3d/371.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelScimitar.glb|id:item:89|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "372": {
+      "file": "/items/3d/372.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/SteelBattleaxe.glb|id:item:91|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
+    },
+    "373": {
+      "file": "/items/3d/373.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Steel2hsword.glb|id:item:92|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
+    },
+    "374": {
+      "file": "/items/3d/374.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/SteelMedHelm.glb|id:item:93|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "375": {
+      "file": "/items/3d/375.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/SteelFullHelm.glb|id:item:94|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "376": {
+      "file": "/items/3d/376.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/SteelSquareShield.glb|id:item:95|tint:0.34000,0.39000,0.46000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "377": {
+      "file": "/items/3d/377.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/SteelCuirass.glb|id:item:96|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "378": {
+      "file": "/items/3d/378.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/SteelKiteshield.glb|id:item:97|tint:0.34000,0.39000,0.46000|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "379": {
+      "file": "/items/3d/379.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/SteelPlatelegs.glb|id:item:98|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "380": {
+      "file": "/items/3d/380.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/SteelPlatebody.glb|id:item:99|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "381": {
+      "file": "/items/3d/381.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilDagger.glb|id:item:100|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "382": {
+      "file": "/items/3d/382.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilSword.glb|id:item:101|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "383": {
+      "file": "/items/3d/383.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilMace.glb|id:item:102|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "384": {
+      "file": "/items/3d/384.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilScimitar.glb|id:item:103|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "385": {
+      "file": "/items/3d/385.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MithrilBattleaxe.glb|id:item:105|cam:-0.82030,0.56723,0.75000",
+      "rendererVersion": 19
+    },
+    "386": {
+      "file": "/items/3d/386.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Mithril2hsword.glb|id:item:106|cam:-2.23402,2.05010,0.75000|rotx:2.22529|roty:1.91114|rotz:-1.00356",
+      "rendererVersion": 19
+    },
+    "387": {
+      "file": "/items/3d/387.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MithrilMedHelm.glb|id:item:107|cam:1.79769,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "388": {
+      "file": "/items/3d/388.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MithrilFullHelm.glb|id:item:108|cam:1.83260,1.39626,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "389": {
+      "file": "/items/3d/389.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/MithrilSquareShield.glb|id:item:109|tint:0.03500,0.07500,0.20500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "390": {
+      "file": "/items/3d/390.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MithrilCuirass.glb|id:item:110|cam:-1.43117,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "391": {
+      "file": "/items/3d/391.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/MithrilKiteshield.glb|id:item:111|tint:0.03500,0.07500,0.20500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "392": {
+      "file": "/items/3d/392.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/MithrilPlatelegs.glb|id:item:112|cam:-1.59698,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "393": {
+      "file": "/items/3d/393.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MithrilPlatebody.glb|id:item:113|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "394": {
+      "file": "/items/3d/394.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeDagger.glb|id:item:114|cam:-0.95993,1.95477,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "395": {
+      "file": "/items/3d/395.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeSword.glb|id:item:115|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "396": {
+      "file": "/items/3d/396.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeMace.glb|id:item:116|cam:-1.63188,1.36136,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "397": {
+      "file": "/items/3d/397.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeScimitar.glb|id:item:117|cam:-0.63705,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "398": {
+      "file": "/items/3d/398.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronzeBattleaxe.glb|id:item:119|cam:-0.77667,0.43633,0.75000",
+      "rendererVersion": 19
+    },
+    "399": {
+      "file": "/items/3d/399.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/BlackBronze2hsword.glb|id:item:120|cam:0.30543,0.01745,0.75000|rotx:2.22529|roty:2.08567|rotz:2.77507",
+      "rendererVersion": 19
+    },
+    "400": {
+      "file": "/items/3d/400.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BlackBronzeMedHelm.glb|id:item:121|cam:1.68424,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "401": {
+      "file": "/items/3d/401.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/BlackBronzeFullHelm.glb|id:item:122|cam:1.90241,1.39864,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "402": {
+      "file": "/items/3d/402.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/BlackBronzeSquareShield.glb|id:item:123|tint:0.04500,0.01400,0.00500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.91986,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "403": {
+      "file": "/items/3d/403.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/BlackBronzeCuirass.glb|id:item:124|cam:-1.46608,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "404": {
+      "file": "/items/3d/404.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/BlackBronzeKiteshield.glb|id:item:125|tint:0.04500,0.01400,0.00500|m:Material.002|base:0.11900,0.04400,0.00700|tol:0.01500|cam:1.76278,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "405": {
+      "file": "/items/3d/405.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/BlackBronzePlatelegs.glb|id:item:126|cam:-1.57952,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "406": {
+      "file": "/items/3d/406.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/BlackBronzePlatebody.glb|id:item:127|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
     },
     "409": {
       "file": "/items/3d/409.png",
@@ -494,6 +1700,246 @@
     "412": {
       "file": "/items/3d/412.png",
       "poseKey": "thumb:v19|/assets/equipment/cape/BlueWhiteCape.glb|id:item:412|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
+    },
+    "413": {
+      "file": "/items/3d/413.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonDagger.glb|id:item:314|cam:-0.77667,2.32129,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "414": {
+      "file": "/items/3d/414.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonSword.glb|id:item:315|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "415": {
+      "file": "/items/3d/415.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonMace.glb|id:item:316|cam:0.41888,1.45736,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "416": {
+      "file": "/items/3d/416.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonScimitar.glb|id:item:317|cam:-0.77667,1.07230,0.75000",
+      "rendererVersion": 19
+    },
+    "417": {
+      "file": "/items/3d/417.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/CrimsonCuirass.glb|id:item:318|cam:-1.43117,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "418": {
+      "file": "/items/3d/418.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/CrimsonBattleaxe.glb|id:item:319|cam:-0.82030,0.56723,0.75000",
+      "rendererVersion": 19
+    },
+    "419": {
+      "file": "/items/3d/419.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Crimson2hsword.glb|id:item:320|cam:-2.23402,2.05010,0.75000|rotx:2.22529|roty:1.91114|rotz:-1.00356",
+      "rendererVersion": 19
+    },
+    "420": {
+      "file": "/items/3d/420.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/CrimsonMedHelm.glb|id:item:321|cam:1.79769,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "421": {
+      "file": "/items/3d/421.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/CrimsonFullHelm.glb|id:item:322|cam:1.83260,1.39626,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "422": {
+      "file": "/items/3d/422.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/CrimsonSquareShield.glb|id:item:323|cam:1.85005,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "423": {
+      "file": "/items/3d/423.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/CrimsonKiteshield.glb|id:item:324|cam:1.96350,1.41631,0.75000",
+      "rendererVersion": 19
+    },
+    "424": {
+      "file": "/items/3d/424.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/CrimsonPlatelegs.glb|id:item:325|cam:-1.59698,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "425": {
+      "file": "/items/3d/425.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/CrimsonPlatebody.glb|id:item:326|cam:1.54462,1.01739,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "426": {
+      "file": "/items/3d/426.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorDagger.glb|id:item:329|cam:-0.77667,2.32129,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "427": {
+      "file": "/items/3d/427.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorSword.glb|id:item:330|cam:-2.33874,2.25147,0.75000|rotx:-2.36492|roty:2.27765|rotz:-1.23918",
+      "rendererVersion": 19
+    },
+    "428": {
+      "file": "/items/3d/428.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorMace.glb|id:item:331|cam:0.41888,1.45736,0.75000|rotx:-0.56723|roty:-0.73304",
+      "rendererVersion": 19
+    },
+    "429": {
+      "file": "/items/3d/429.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorScimitar.glb|id:item:332|cam:-0.77667,1.07230,0.75000",
+      "rendererVersion": 19
+    },
+    "430": {
+      "file": "/items/3d/430.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MalachorCuirass.glb|id:item:333|cam:-1.43117,1.11701,0.75000|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "431": {
+      "file": "/items/3d/431.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/MalachorBattleaxe.glb|id:item:334|cam:-0.82030,0.56723,0.75000",
+      "rendererVersion": 19
+    },
+    "432": {
+      "file": "/items/3d/432.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/Malachor2hsword.glb|id:item:335|cam:-2.23402,2.05010,0.75000|rotx:2.22529|roty:1.91114|rotz:-1.00356",
+      "rendererVersion": 19
+    },
+    "433": {
+      "file": "/items/3d/433.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MalachorMedHelm.glb|id:item:336|cam:1.79769,1.51499,0.75000|rotx:0.17453|roty:0.17453|rotz:-0.02618|scale:0.95000",
+      "rendererVersion": 19
+    },
+    "434": {
+      "file": "/items/3d/434.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/MalachorFullHelm.glb|id:item:337|cam:1.83260,1.39626,1.00000|roty:-0.43159",
+      "rendererVersion": 19
+    },
+    "435": {
+      "file": "/items/3d/435.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/MalachorSquareShield.glb|id:item:338|cam:1.85005,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "436": {
+      "file": "/items/3d/436.png",
+      "poseKey": "thumb:v19|/assets/equipment/shield/MalachorKiteshield.glb|id:item:339|cam:1.96350,1.41631,0.75000",
+      "rendererVersion": 19
+    },
+    "437": {
+      "file": "/items/3d/437.png",
+      "poseKey": "thumb:v19|/assets/equipment/legs/MalachorPlatelegs.glb|id:item:340|cam:-1.59698,0.54978,0.75000",
+      "rendererVersion": 19
+    },
+    "438": {
+      "file": "/items/3d/438.png",
+      "poseKey": "thumb:v19|/assets/equipment/body/MalachorPlatebody.glb|id:item:341|cam:1.54462,1.01739,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "439": {
+      "file": "/items/3d/439.png",
+      "poseKey": "thumb:v19|/assets/equipment/cape/RippedBlackCape.glb|id:item:439|cam:-1.88878,0.67540,0.75000|rotx:-0.73304|roty:-2.26020|rotz:-0.12217|scale:1.10000",
+      "rendererVersion": 19
+    },
+    "440": {
+      "file": "/items/3d/440.png",
+      "poseKey": "thumb:v19|/assets/models/BankNote.glb|id:item:440|cam:1.81514,1.60570,0.75000|scale:0.90000",
+      "rendererVersion": 19
+    },
+    "441": {
+      "file": "/items/3d/441.png",
+      "poseKey": "thumb:v19|/assets/models/Charcoal.glb|id:item:441|cam:-0.97738,1.20830,0.75000|scale:0.75000",
+      "rendererVersion": 19
+    },
+    "442": {
+      "file": "/items/3d/442.png",
+      "poseKey": "thumb:v19|/assets/models/Sulphur.glb|id:item:442|cam:1.14319,1.30900,0.75000|scale:0.85000",
+      "rendererVersion": 19
+    },
+    "443": {
+      "file": "/items/3d/443.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatBlack.glb|id:item:443|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "444": {
+      "file": "/items/3d/444.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatBlue.glb|id:item:444|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "445": {
+      "file": "/items/3d/445.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatGold.glb|id:item:445|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "446": {
+      "file": "/items/3d/446.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatGreen.glb|id:item:446|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "447": {
+      "file": "/items/3d/447.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatOrange.glb|id:item:447|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "448": {
+      "file": "/items/3d/448.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatPink.glb|id:item:448|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "449": {
+      "file": "/items/3d/449.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatRed.glb|id:item:449|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "450": {
+      "file": "/items/3d/450.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatWhite.glb|id:item:450|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "451": {
+      "file": "/items/3d/451.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/PartyHatYellow.glb|id:item:451|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "452": {
+      "file": "/items/3d/452.png",
+      "poseKey": "thumb:v19|/assets/equipment/head/FarmersHat.glb|id:item:452|cam:-1.96350,1.42080,0.85000",
+      "rendererVersion": 19
+    },
+    "453": {
+      "file": "/items/3d/453.png",
+      "poseKey": "thumb:v19|/assets/models/Shortbow.glb|id:item:274:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "454": {
+      "file": "/items/3d/454.png",
+      "poseKey": "thumb:v19|/assets/models/OakShortbow.glb|id:item:280:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "455": {
+      "file": "/items/3d/455.png",
+      "poseKey": "thumb:v19|/assets/models/WillowShortbow.glb|id:item:281:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "456": {
+      "file": "/items/3d/456.png",
+      "poseKey": "thumb:v19|/assets/models/MapleShortbow.glb|id:item:282:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "457": {
+      "file": "/items/3d/457.png",
+      "poseKey": "thumb:v19|/assets/models/YewShortbow.glb|id:item:283:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "458": {
+      "file": "/items/3d/458.png",
+      "poseKey": "thumb:v19|/assets/models/MysticShortbow.glb|id:item:284:bow-colors-v5|cam:-0.78540,2.55691,0.75000|rotx:0.23562|rotz:2.72271",
+      "rendererVersion": 19
+    },
+    "459": {
+      "file": "/items/3d/459.png",
+      "poseKey": "thumb:v19|/assets/equipment/feet/ColourfulBoots.glb|id:item:459|cam:-0.78540,1.42800,1.00000",
+      "rendererVersion": 19
+    },
+    "460": {
+      "file": "/items/3d/460.png",
+      "poseKey": "thumb:v19|/assets/equipment/weapon/VampireDagger.glb|id:item:460|cam:-0.77667,2.32129,0.80000|rotx:-0.80285|roty:-0.48869|rotz:-0.18326|scale:0.85000",
       "rendererVersion": 19
     }
   }
