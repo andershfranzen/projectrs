@@ -11,7 +11,7 @@
     "stages": [
       {
         "id": 0,
-        "description": "While butchering a cow you hear a scream from the village nearby. A woman screaming hysterically about a lunatic that killed the village's beloved cow bob!",
+        "description": "While butchering a cow, you hear a woman screaming in the nearby village. She says a lunatic killed Bob, the village's beloved cow.",
         "trigger": {
           "type": "dialogue",
           "npcDefId": 8,
@@ -22,7 +22,7 @@
       },
       {
         "id": 1,
-        "description": "Robert told me a farmer in the south west saw bob's killing happen. And apparently made a sketch of the killer.",
+        "description": "Robert told me a farmer southwest of the village saw Bob get killed and drew a sketch of the killer.",
         "trigger": {
           "type": "itemPickup",
           "itemId": 236
