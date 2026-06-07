@@ -583,6 +583,33 @@ describe('wall-gated station interaction', () => {
     expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(true);
   });
 
+  test('authored non-blocking scenery tiles can use their object across a blocked footprint edge', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeObject(26, 'Paper');
+    obj.def.blocking = false;
+    obj.interactionTiles = [{ x: 1, z: 0 }];
+    const map = {
+      isWallBlocked: () => true,
+      isWallBlockedOnFloor: () => true,
+    };
+
+    expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(true);
+  });
+
+  test('authored blocking object tiles still cannot use their object across a blocked footprint edge', () => {
+    const world = Object.create(World.prototype) as any;
+    const player = makePlayer();
+    const obj = makeObject(3, 'Copper Rock', 'rock');
+    obj.interactionTiles = [{ x: 1, z: 0 }];
+    const map = {
+      isWallBlocked: () => true,
+      isWallBlockedOnFloor: () => true,
+    };
+
+    expect(world.canUseObjectFromTile(player, obj, 11, 10, map)).toBe(false);
+  });
+
   test('authored interaction tiles can be stood on when terrain is not blocked', () => {
     const world = Object.create(World.prototype) as any;
     world.blockedObjectTiles = new Set();

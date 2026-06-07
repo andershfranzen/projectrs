@@ -1605,7 +1605,7 @@ export class World {
     allowAuthoredNonAdjacentTile: boolean = false,
   ): boolean {
     if (obj.def.category === 'bank' && this.findBankerAcrossBoothFromTile(player, obj, tileX, tileZ)) return true;
-    if (allowAuthoredNonAdjacentTile && usesMapAuthoredObjectCollision(obj.def)) return true;
+    if (allowAuthoredNonAdjacentTile && (usesMapAuthoredObjectCollision(obj.def) || !obj.def.blocking)) return true;
     if (!this.requiresClearObjectInteractionEdge(obj)) return true;
     const gameMap = map ?? this.getPlayerMap(player);
     let hasAdjacentFootprintTile = false;
