@@ -2,6 +2,7 @@ import './debug/ClientConsoleGuard';
 import { LoginScreen } from './ui/LoginScreen';
 import { LoadingScreen } from './ui/LoadingScreen';
 import { BackgroundParticles } from './ui/BackgroundParticles';
+import { dismissLoginMessage, showLoginMessage } from './ui/LoginMessageModal';
 import { installGlobalScrollbars } from './ui/globalScrollbars';
 import { preloadAssets } from './managers/AssetPreloader';
 import { startupTrace } from './debug/StartupTrace';
@@ -126,6 +127,7 @@ let game: GameManagerType | null = null;
 let loginScreen: LoginScreen | null = null;
 let backgroundParticles: BackgroundParticles | null = null;
 let gamePrepPromise: Promise<GameManagerType> | null = null;
+let loginMessageTimer: ReturnType<typeof setTimeout> | null = null;
 
 interface PrepProgress {
   pct: number;
@@ -281,6 +283,7 @@ function prepareGame(): Promise<GameManagerType> {
 }
 
 function handleDisconnect() {
+  clearLoginMessage();
   if (game) {
     game.destroy();
     game = null;
@@ -305,13 +308,31 @@ function revealGame(afterMs: number = 0): void {
   }, afterMs);
 }
 
+function clearLoginMessage(): void {
+  if (loginMessageTimer !== null) {
+    clearTimeout(loginMessageTimer);
+    loginMessageTimer = null;
+  }
+  dismissLoginMessage();
+}
+
+function showLoginMessageAfterReveal(username: string, lastLoginTs: number | null, afterMs: number = 380): void {
+  clearLoginMessage();
+  loginMessageTimer = setTimeout(() => {
+    loginMessageTimer = null;
+    if (gameFrame.style.display === 'none' || gameFrame.style.visibility === 'hidden') return;
+    showLoginMessage({ username, lastLoginTs });
+  }, afterMs);
+}
+
 function showLoginScreen() {
   startupTrace.mark('login_screen_show');
+  clearLoginMessage();
   gameFrame.style.visibility = 'hidden';
   gameFrame.style.display = 'none';
   backgroundParticles?.setVisible(false);
   loginScreen?.destroy();
-  loginScreen = new LoginScreen(async (token, username) => {
+  loginScreen = new LoginScreen(async (token, username, lastLoginTs) => {
     startupTrace.mark('manual_login_ok');
     backgroundParticles?.setVisible(false);
     const loadingScreen = new LoadingScreen();
@@ -343,6 +364,7 @@ function showLoginScreen() {
       }
       loadingScreen.hide();
       revealGame(340);
+      showLoginMessageAfterReveal(username, lastLoginTs);
     } catch (err) {
       console.error('[startGame] connect failed:', err);
       unwatch();
@@ -353,7 +375,7 @@ function showLoginScreen() {
   });
 }
 
-async function validateSavedToken(): Promise<{ token: string; username: string } | null> {
+async function validateSavedToken(): Promise<{ token: string; username: string; lastLoginTs: number | null } | null> {
   startupTrace.mark('token_validate_start');
   migrateSavedAuth();
   const savedToken = localStorage.getItem(AUTH_TOKEN_KEY);
@@ -372,7 +394,9 @@ async function validateSavedToken(): Promise<{ token: string; username: string }
     const data = await res.json();
     if (data.ok) {
       startupTrace.mark('token_valid');
-      return { token: savedToken, username: savedUsername };
+      const username = typeof data.username === 'string' && data.username ? data.username : savedUsername;
+      const lastLoginTs = typeof data.lastLoginTs === 'number' ? data.lastLoginTs : null;
+      return { token: savedToken, username, lastLoginTs };
     }
   } catch {
     // Server unreachable — treat as invalid; bootstrap() will fall through
@@ -430,6 +454,7 @@ async function bootstrap() {
     startupTrace.mark('auto_game_connected');
     loadingScreen.hide();
     revealGame(340);
+    showLoginMessageAfterReveal(tokenResult.username, tokenResult.lastLoginTs);
   } catch (err) {
     console.error('[bootstrap] auto-login failed:', err);
     unwatch();

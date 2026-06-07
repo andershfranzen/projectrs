@@ -2831,7 +2831,7 @@ const server = Bun.serve<SocketData>({
         if (result.ok) {
           signupAttempts.delete(key);
           return jsonResponse(
-            { ok: true, token: result.token, username, isAdmin: result.isAdmin, isModerator: result.isModerator },
+            { ok: true, token: result.token, username, lastLoginTs: null, isAdmin: result.isAdmin, isModerator: result.isModerator },
             200,
             { 'Set-Cookie': wsSessionCookieHeader(result.wsSecret, req) },
           );
@@ -2880,6 +2880,7 @@ const server = Bun.serve<SocketData>({
           ? db.loginFallbackAccount(FALLBACK_LOGIN_USERNAME, deviceId)
           : await db.login(body.username || '', password, deviceId);
         if (result.ok) {
+          const lastLoginTs = db.getLastLoginTs(result.accountId);
           // Account-ban gate runs AFTER successful auth so we don't reveal
           // ban status to someone who can't even produce the password.
           const acctBan = db.isAccountBanned(result.accountId);
@@ -2908,7 +2909,7 @@ const server = Bun.serve<SocketData>({
           // from the same client don't hit the limit.
           loginAttempts.delete(key);
           return jsonResponse(
-            { ok: true, token: result.token, username: result.username, isAdmin: result.isAdmin, isModerator: result.isModerator },
+            { ok: true, token: result.token, username: result.username, lastLoginTs, isAdmin: result.isAdmin, isModerator: result.isModerator },
             200,
             { 'Set-Cookie': wsSessionCookieHeader(result.wsSecret, req) },
           );
@@ -2936,7 +2937,7 @@ const server = Bun.serve<SocketData>({
         }
         const wsSecret = db.ensureSessionWsSecret(body.token);
         return jsonResponse(
-          { ok: true },
+          { ok: true, username: session.username, lastLoginTs: db.getLastLoginTs(session.accountId) },
           200,
           wsSecret ? { 'Set-Cookie': wsSessionCookieHeader(wsSecret, req) } : {},
         );

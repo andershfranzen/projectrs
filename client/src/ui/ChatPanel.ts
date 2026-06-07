@@ -21,6 +21,7 @@ const MAX_CHAT_MESSAGES = 300;
 const CHAT_PLACEHOLDER_STYLE_ID = 'evilquest-chat-placeholder-style';
 const MOBILE_CHAT_HINT_QUERY = '(max-width: 760px), (pointer: coarse) and (max-width: 900px), (max-height: 520px) and (max-width: 900px) and (orientation: landscape)';
 const PRIVATE_CHAT_COLOR = '#4fdfff';
+const CHAT_BOTTOM_STICKY_THRESHOLD = 12;
 
 export class ChatPanel {
   private container: HTMLDivElement;
@@ -587,13 +588,18 @@ export class ChatPanel {
 
   private appendMessage(el: HTMLDivElement, type: 'game' | 'public' | 'private'): void {
     if (this.activeTab !== 'all' && this.activeTab !== type) el.style.display = 'none';
+    const shouldStickToBottom = this.isScrolledToChatBottom();
     this.log.appendChild(el);
     this.messages.push({ el, type });
     while (this.messages.length > MAX_CHAT_MESSAGES) {
       const old = this.messages.shift();
       old?.el.remove();
     }
-    this.log.scrollTop = this.log.scrollHeight;
+    if (shouldStickToBottom) this.log.scrollTop = this.log.scrollHeight;
+  }
+
+  private isScrolledToChatBottom(): boolean {
+    return this.log.scrollHeight - this.log.clientHeight - this.log.scrollTop <= CHAT_BOTTOM_STICKY_THRESHOLD;
   }
 
   setSendHandler(handler: ChatSendCallback): void {

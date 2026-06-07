@@ -2,7 +2,7 @@ import { ensurePreAuthTheme } from './preAuthTheme';
 import { PASSWORD_MAX_LENGTH } from '@projectrs/shared';
 import { getRecaptchaToken, preloadRecaptcha } from '../recaptcha';
 
-export type LoginCallback = (token: string, username: string) => void | Promise<void>;
+export type LoginCallback = (token: string, username: string, lastLoginTs: number | null) => void | Promise<void>;
 type LoginMode = 'login' | 'signup';
 
 export class LoginScreen {
@@ -326,11 +326,13 @@ export class LoginScreen {
       const data = await res.json();
 
       if (data.ok) {
-        this.syncRememberedUsername(data.username || username);
+        const signedInUsername = data.username || username;
+        const lastLoginTs = typeof data.lastLoginTs === 'number' ? data.lastLoginTs : null;
+        this.syncRememberedUsername(signedInUsername);
         localStorage.setItem('evilquest_token', data.token);
-        localStorage.setItem('evilquest_username', data.username || username);
+        localStorage.setItem('evilquest_username', signedInUsername);
         if (btn) btn.textContent = 'Entering world...';
-        await this.onLogin(data.token, data.username || username);
+        await this.onLogin(data.token, signedInUsername, lastLoginTs);
       } else {
         this.showError(data.error || 'Unknown error');
       }

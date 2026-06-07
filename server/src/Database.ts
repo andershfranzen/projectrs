@@ -3098,6 +3098,13 @@ export class GameDatabase {
     return Number(result.lastInsertRowid);
   }
 
+  getLastLoginTs(accountId: number): number | null {
+    const row = this.db.query(
+      `SELECT login_ts FROM login_history WHERE account_id = ? ORDER BY login_ts DESC LIMIT 1`
+    ).get(accountId) as { login_ts: number | null } | null;
+    return row?.login_ts ?? null;
+  }
+
   /** Finalize an in-progress session row. Called on disconnect. */
   recordLogout(loginRowId: number, sessionMinutes: number): void {
     this.db.query(
