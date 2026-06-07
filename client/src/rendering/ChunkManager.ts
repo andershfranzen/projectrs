@@ -47,6 +47,15 @@ export function isInteractiveDoorPlacedAsset(assetId: string): boolean {
   return lower === 'castletruedoor' || lower === 'basictruedoor';
 }
 
+function shouldSmoothPlacedObjectTextures(assetId: string, path: string): boolean {
+  const lowerId = assetId.toLowerCase().trim();
+  const lowerPath = path.toLowerCase();
+  return lowerPath.includes('/modular-assets/byzantine-modular/')
+    || lowerPath.includes('/modular-assets/theodosian-limewall-modular/')
+    || lowerId.startsWith('byzantine ')
+    || lowerId.startsWith('theodosian limewall ');
+}
+
 export function placedObjectThinGroupKey(assetId: string, visibility: 'ground' | 'elevated' | 'roof', originY: number): string {
   const yBucket = visibility === 'elevated' ? Math.floor(originY * 2) / 2 : 0;
   return `${assetId}\u0000${visibility}\u0000${yBucket}`;
@@ -3290,14 +3299,22 @@ export class ChunkManager {
         return null;
       }
 
-      // Apply nearest-neighbor filtering to all GLB textures
+      const samplingMode = shouldSmoothPlacedObjectTextures(assetId, path)
+        ? Texture.TRILINEAR_SAMPLINGMODE
+        : Texture.NEAREST_SAMPLINGMODE;
       for (const mesh of result.meshes) {
         const mat = mesh.material;
         if (mat && 'diffuseTexture' in mat && (mat as any).diffuseTexture) {
-          (mat as any).diffuseTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+          (mat as any).diffuseTexture.updateSamplingMode(samplingMode);
+          if (samplingMode === Texture.TRILINEAR_SAMPLINGMODE) {
+            (mat as any).diffuseTexture.anisotropicFilteringLevel = 4;
+          }
         }
         if (mat && 'albedoTexture' in mat && (mat as any).albedoTexture) {
-          (mat as any).albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+          (mat as any).albedoTexture.updateSamplingMode(samplingMode);
+          if (samplingMode === Texture.TRILINEAR_SAMPLINGMODE) {
+            (mat as any).albedoTexture.anisotropicFilteringLevel = 4;
+          }
         }
       }
 
