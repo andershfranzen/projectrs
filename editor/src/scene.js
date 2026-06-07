@@ -3809,12 +3809,18 @@ let selectedWaterFlowChunk = null
       overrideActive,
       hasSpawn: !!spawn,
       onSelectDef: () => {
-        if (spawn) delete spawn.stats
+        if (spawn?.stats) {
+          pushUndoState('spawns')
+          delete spawn.stats
+        }
         renderStatsTab(root, def)
         refreshNpcSpawnList()
       },
       onSelectOverride: () => {
-        if (spawn && !spawn.stats) spawn.stats = {}
+        if (spawn && !spawn.stats) {
+          pushUndoState('spawns')
+          spawn.stats = {}
+        }
         renderStatsTab(root, def)
         refreshNpcSpawnList()
       },
@@ -3849,6 +3855,7 @@ let selectedWaterFlowChunk = null
       `
       root.appendChild(rec)
       rec.querySelector('#applyNpcStatRecommendationBtn')?.addEventListener('click', () => {
+        if (overrideActive) pushUndoState('spawns')
         const target = overrideActive ? (spawn.stats ||= {}) : def
         applyNpcStatRecommendation(target, recommendation.fields)
         if (!overrideActive) {
@@ -3889,14 +3896,25 @@ let selectedWaterFlowChunk = null
           <button title="Inherit from def" style="font-size:10px;padding:2px 6px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">×</button>
         `
         const input = row.querySelector('input')
+        let capturedUndo = false
+        const captureUndo = () => {
+          if (capturedUndo) return
+          pushUndoState('spawns')
+          capturedUndo = true
+        }
         input.addEventListener('input', () => {
+          captureUndo()
           const v = input.value.trim()
           if (v === '') delete spawn.stats[key]
           else spawn.stats[key] = parseFloat(v) || 0
           refreshCombatLevelReadout()
           refreshNpcSpawnList()
         })
+        input.addEventListener('blur', () => {
+          capturedUndo = false
+        })
         row.querySelector('button').addEventListener('click', () => {
+          pushUndoState('spawns')
           delete spawn.stats[key]
           input.value = ''
           refreshCombatLevelReadout()
@@ -3917,12 +3935,14 @@ let selectedWaterFlowChunk = null
       `
       const select = styleRow.querySelector('select')
       select.addEventListener('change', () => {
+        pushUndoState('spawns')
         if (!select.value) delete spawn.stats.attackStyle
         else spawn.stats.attackStyle = select.value
         refreshCombatLevelReadout()
         refreshNpcSpawnList()
       })
       styleRow.querySelector('button').addEventListener('click', () => {
+        pushUndoState('spawns')
         delete spawn.stats.attackStyle
         select.value = ''
         refreshCombatLevelReadout()

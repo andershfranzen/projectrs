@@ -707,7 +707,7 @@ export async function openDropTableEditor(options = {}) {
       const original = originalNpcState.get(npc.id)
       if (!original) continue
       npc.lootTable = clone(original.lootTable || [])
-      for (const field of [...CORE_STAT_FIELDS, ...BEHAVIOR_STAT_FIELDS, { key: 'aggressive' }]) {
+      for (const field of [...CORE_STAT_FIELDS, ...COMBAT_BONUS_FIELDS, ...BEHAVIOR_STAT_FIELDS, { key: 'attackStyle' }, { key: 'aggressive' }]) {
         if (original.stats[field.key] === undefined) delete npc[field.key]
         else npc[field.key] = clone(original.stats[field.key])
       }
