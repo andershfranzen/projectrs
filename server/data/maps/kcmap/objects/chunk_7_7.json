@@ -1,24 +1,5 @@
 [
   {
-    "assetId": "limestone stairs",
-    "layerId": "layer_0",
-    "position": {
-      "x": 255.26529187145212,
-      "y": 0,
-      "z": 227.53335067346708
-    },
-    "rotation": {
-      "x": 0,
-      "y": 0,
-      "z": 0
-    },
-    "scale": {
-      "x": 1,
-      "y": 1,
-      "z": 1
-    }
-  },
-  {
     "assetId": "basicTruedoor",
     "layerId": "layer_0",
     "position": {
@@ -953,9 +934,9 @@
     "assetId": "desert well",
     "layerId": "layer_0",
     "position": {
-      "x": 246.60260501951404,
-      "y": 0.11647746784788054,
-      "z": 229.0181461875478
+      "x": 246,
+      "y": 0.09407175981999029,
+      "z": 228
     },
     "rotation": {
       "x": 0,

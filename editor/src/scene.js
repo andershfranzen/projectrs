@@ -13523,6 +13523,13 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
   let yaw = 0.78
   let pitch = 1.02
   let distance = 31
+  const MIN_CAMERA_DISTANCE = 2
+  const MAX_CAMERA_DISTANCE = 120
+  const WHEEL_PIXELS_PER_ZOOM_STEP = 100
+  const CLOSE_ZOOM_FACTOR_PER_STEP = 1.08
+  const FAR_ZOOM_FACTOR_PER_STEP = 1.25
+  const CLOSE_ZOOM_DISTANCE = 8
+  const FAR_ZOOM_DISTANCE = 60
   const target = new Vector3(12, 2, 12)
   let heightCullEnabled = false
   let heightCullThreshold = 3.5 // default: hides 2nd floor and above
@@ -13574,6 +13581,30 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
     const panScale = distance * 0.0025
     target.x += -deltaX * panScale * rx + deltaY * panScale * fx
     target.z += -deltaX * panScale * rz + deltaY * panScale * fz
+    updateCamera()
+  }
+
+  function normalizedWheelPixels(event) {
+    if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) return event.deltaY * 40
+    if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) return event.deltaY * 800
+    return event.deltaY
+  }
+
+  function smoothstep(edge0, edge1, value) {
+    const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)))
+    return t * t * (3 - 2 * t)
+  }
+
+  function zoomFactorPerStep() {
+    const t = smoothstep(CLOSE_ZOOM_DISTANCE, FAR_ZOOM_DISTANCE, distance)
+    return CLOSE_ZOOM_FACTOR_PER_STEP + (FAR_ZOOM_FACTOR_PER_STEP - CLOSE_ZOOM_FACTOR_PER_STEP) * t
+  }
+
+  function zoomCameraFromWheel(event) {
+    const rawSteps = normalizedWheelPixels(event) / WHEEL_PIXELS_PER_ZOOM_STEP
+    const steps = Math.max(-4, Math.min(4, rawSteps))
+    const factor = Math.pow(zoomFactorPerStep(), steps)
+    distance = Math.max(MIN_CAMERA_DISTANCE, Math.min(MAX_CAMERA_DISTANCE, distance * factor))
     updateCamera()
   }
 
@@ -13787,10 +13818,9 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
       return
     }
 
-    distance += e.deltaY * 0.01
-    distance = Math.max(2, Math.min(120, distance))
-    updateCamera()
-  })
+    e.preventDefault()
+    zoomCameraFromWheel(e)
+  }, { passive: false })
 
   window.addEventListener('resize', () => {
     engine.resize()

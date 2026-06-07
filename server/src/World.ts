@@ -37,10 +37,11 @@ const SULTANS_MINE_EXPORT_DOOR_TILE_X = 116;
 const SULTANS_MINE_EXPORT_DOOR_TILE_Z = 157;
 const SULTANS_MINE_EXPORT_DOOR_FLOOR = 0;
 const SULTANS_MINE_ORE_DOOR_WARNING = "Halt. Pay for your ore's transportation before you leave the mine.";
+const SULTANS_MINE_DOOR_TRANSIT_COMPLETE_MESSAGE = 'You walk through the door.';
 type ItemQuantity = { itemId: number; quantity: number };
 type BankInventoryItemsForCoinsAction = Extract<import('@projectrs/shared').DialogueAction, { type: 'bankInventoryItemsForCoins' }>;
 type PlayerMovementLayerState = { floor: number; y: number; lastFloorChangeTile: number };
-type SultansMineDoorTransit = { doorId: number; finalX: number; finalZ: number; expiresTick: number };
+type SultansMineDoorTransit = { doorId: number; finalX: number; finalZ: number; expiresTick: number; moved: boolean };
 type ItemOnItemRecipe = {
   inputItemIds: readonly [number, number];
   consume: readonly ItemQuantity[];
@@ -3040,6 +3041,7 @@ export class World {
       finalX: finalStep.x,
       finalZ: finalStep.z,
       expiresTick: this.currentTick + Math.max(6, path.length + 4),
+      moved: false,
     });
   }
 
@@ -3061,6 +3063,11 @@ export class World {
     this.sultansMineDoorTransits?.delete(player.id);
   }
 
+  private markSultansMineDoorTransitMoved(player: Player): void {
+    const transit = this.sultansMineDoorTransits?.get(player.id);
+    if (transit) transit.moved = true;
+  }
+
   private repairOrCompleteSultansMineDoorTransit(player: Player): void {
     const transit = this.sultansMineDoorTransitFor(player);
     if (!transit) return;
@@ -3068,6 +3075,7 @@ export class World {
       && Math.floor(player.position.y) === Math.floor(transit.finalZ);
     if (reachedFinal) {
       this.clearSultansMineDoorTransit(player);
+      if (transit.moved) this.sendChatSystem(player, SULTANS_MINE_DOOR_TRANSIT_COMPLETE_MESSAGE);
       return;
     }
     if (!player.hasMoveQueue()) {
@@ -8466,6 +8474,7 @@ export class World {
           break;
         }
         if (!player.processMovement(this.currentTick)) break;
+        this.markSultansMineDoorTransitMoved(player);
         if (sultansMineExportDoor && sultansMineExportDoor.doorOpen) {
           this.toggleDoor(sultansMineExportDoor, 0);
         }

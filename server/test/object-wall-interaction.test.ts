@@ -375,6 +375,23 @@ describe('wall-gated station interaction', () => {
     expect(overheadMessages).toEqual([]);
   });
 
+  test('sultan mine export door emits one pass-through message after walking into range', () => {
+    const { world, player, door, messages, crossingTarget } = makeSultansMineDoorHarness(false);
+    player.moveTo(116.5, 159.5);
+    player.effectiveY = world.getPlayerMap(player).getEffectiveHeightOnFloor(116.5, 159.5, 0);
+
+    world.handlePlayerInteractObject(player.id, door.id, 0);
+
+    expect(player.hasMoveQueue()).toBe(true);
+    expect(messages).toEqual([]);
+
+    for (let i = 0; i < 6; i++) world.tickPlayerMovement();
+
+    expect(player.position.x).toBe(crossingTarget.x);
+    expect(player.position.y).toBe(crossingTarget.z);
+    expect(messages).toEqual(['You walk through the door.']);
+  });
+
   test('sultan mine export door blocks ore carriers even if another player opened it', () => {
     const { world, player, door, messages, overheadMessages, packets, crossingTarget } = makeSultansMineDoorHarness(true);
     world.toggleDoor(door, 0);
@@ -393,7 +410,7 @@ describe('wall-gated station interaction', () => {
   });
 
   test('sultan mine export door click queues one valid crossing and closes after it', () => {
-    const { world, player, door, packets, crossingTarget } = makeSultansMineDoorHarness(false);
+    const { world, player, door, messages, packets, crossingTarget } = makeSultansMineDoorHarness(false);
 
     world.handlePlayerInteractObject(player.id, door.id, 0);
 
@@ -403,14 +420,16 @@ describe('wall-gated station interaction', () => {
 
     world.tickPlayerMovement();
     world.tickPlayerMovement();
+    world.tickPlayerMovement();
 
     expect(player.position.x).toBe(crossingTarget.x);
     expect(player.position.y).toBe(crossingTarget.z);
     expect(door.doorOpen).toBe(false);
+    expect(messages).toEqual(['You walk through the door.']);
   });
 
   test('sultan mine export door walks north-side players fully onto the south tile', () => {
-    const { world, player, door, packets, southExitTarget } = makeSultansMineDoorHarness(false);
+    const { world, player, door, messages, packets, southExitTarget } = makeSultansMineDoorHarness(false);
     player.moveTo(116.5, 156.5);
     player.effectiveY = world.getPlayerMap(player).getEffectiveHeightOnFloor(116.5, 156.5, 0);
 
@@ -426,10 +445,12 @@ describe('wall-gated station interaction', () => {
     expect(door.doorOpen).toBe(false);
 
     world.tickPlayerMovement();
+    world.tickPlayerMovement();
 
     expect(player.position.x).toBe(southExitTarget.x);
     expect(player.position.y).toBe(southExitTarget.z);
     expect(door.doorOpen).toBe(false);
+    expect(messages).toEqual(['You walk through the door.']);
   });
 
   test('sultan mine export door ignores click-away movement during controlled transit', () => {

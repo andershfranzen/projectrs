@@ -601,6 +601,15 @@
   "floors": {},
   "stairs": {},
   "tiles": {},
-  "floorLayers": {},
+  "floorLayers": {
+    "1": {
+      "walls": {},
+      "wallHeights": {},
+      "floors": {},
+      "stairs": {},
+      "tiles": {},
+      "holes": {}
+    }
+  },
   "holes": {}
 }

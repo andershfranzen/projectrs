@@ -199,44 +199,6 @@
       "wanderRange": 4
     },
     {
-      "id": 22,
-      "npcId": 4,
-      "x": 295.5,
-      "z": 201.5,
-      "wanderRange": 4
-    },
-    {
-      "id": 23,
-      "npcId": 4,
-      "x": 298.5,
-      "z": 200.5,
-      "wanderRange": 4
-    },
-    {
-      "id": 24,
-      "npcId": 4,
-      "x": 297.5,
-      "z": 202.5,
-      "wanderRange": 4,
-      "aggressive": true
-    },
-    {
-      "id": 25,
-      "npcId": 17,
-      "x": 301.5,
-      "z": 201.5,
-      "wanderRange": 4,
-      "aggressive": true
-    },
-    {
-      "id": 26,
-      "npcId": 17,
-      "x": 302.5,
-      "z": 203.5,
-      "wanderRange": 4,
-      "aggressive": true
-    },
-    {
       "id": 27,
       "npcId": 10,
       "x": 181.5,
