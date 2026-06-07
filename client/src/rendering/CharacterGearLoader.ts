@@ -165,6 +165,67 @@ export function buildCharacterGearTemplateFromResult(
   };
 }
 
+export async function loadStaticGearTemplate(
+  scene: Scene,
+  itemId: number,
+  def: GearDef,
+  sourceBoneName?: string,
+  isCurrentApply?: () => boolean,
+): Promise<GearTemplate | null> {
+  try {
+    const lastSlash = def.file.lastIndexOf('/');
+    const dir = def.file.substring(0, lastSlash + 1);
+    const file = devCacheBustGearFile(def.file.substring(lastSlash + 1));
+    const result = await SceneLoader.ImportMeshAsync('', dir, file, scene);
+    if (isCurrentApply && !isCurrentApply()) {
+      disposeImportedGearResult(result);
+      return null;
+    }
+
+    flattenGearMaterials(scene, result.meshes, def.metalColor);
+
+    let bindOffset = Vector3.Zero();
+    const hasSourceSkeleton = result.skeletons.length > 0;
+    if (hasSourceSkeleton) {
+      const sourceBone = result.skeletons
+        .flatMap(skeleton => skeleton.bones)
+        .find(bone => bone.name === sourceBoneName)
+        ?? result.skeletons
+          .flatMap(skeleton => skeleton.bones)
+          .find(bone => bone.name === 'mixamorig:Head' || bone.name === 'Head');
+      const node = sourceBone?.getTransformNode();
+      if (node) {
+        node.computeWorldMatrix(true);
+        bindOffset = node.absolutePosition.clone();
+      }
+
+      for (const skeleton of result.skeletons) skeleton.dispose();
+      for (const mesh of result.meshes) mesh.skeleton = null;
+    }
+
+    for (const group of result.animationGroups ?? []) group.dispose();
+
+    const template = buildCharacterGearTemplateFromResult(scene, result, {
+      ...def,
+      itemId,
+      centerOrigin: def.centerOrigin ?? hasSourceSkeleton,
+    });
+    if (hasSourceSkeleton) {
+      for (const child of template.template.getChildren()) {
+        (child as TransformNode).position.subtractInPlace(bindOffset);
+      }
+    }
+    if (isCurrentApply && !isCurrentApply()) {
+      template.template.dispose();
+      return null;
+    }
+    return template;
+  } catch (error) {
+    console.warn(`[Gear] Failed to load static gear '${def.file}':`, error);
+    return null;
+  }
+}
+
 export async function loadCharacterGearSmart(
   scene: Scene,
   character: CharacterEntity | null | undefined,

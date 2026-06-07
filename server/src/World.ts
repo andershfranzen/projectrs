@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, hasNpcEquipmentFits, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -1677,6 +1677,7 @@ export class World {
       wanderRange: spawn.wanderRange,
       appearance: spawn.appearance ?? npcDef.defaultAppearance ?? null,
       equipment: spawn.equipment ?? npcDef.defaultEquipment ?? null,
+      equipmentFits: spawn.equipmentFits ?? null,
       aggressive: spawn.aggressive ?? null,
       // Per-spawn shop/dialogue fully replace the def's (no field-merge).
       // Falls through: spawn override -> def -> legacy shops.json (shop only).
@@ -10808,8 +10809,7 @@ export class World {
 
   /** Push the NPC's per-spawn appearance + equipment to a viewer who is
    *  about to see this NPC for the first time (map load, chunk entry, or
-   *  respawn). No-op when the NPC has no customization — sprite/built-in
-   *  3D NPCs (rat, cow, chicken, …) skip this entirely. */
+   *  respawn). */
   /** Encode the (static) per-NPC packets ONCE. encodePacket/encodeStringPacket
    *  each return an independent buffer, so the returned array is safe to reuse
    *  across many viewers — a broadcast no longer re-encodes (and re-allocates,
@@ -10830,6 +10830,9 @@ export class World {
       const values = [npc.id];
       for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) values.push(eq[i] ?? 0);
       packets.push(encodePacket(ServerOpcode.NPC_EQUIPMENT, ...values));
+    }
+    if (hasNpcEquipmentFits(npc.equipmentFits)) {
+      packets.push(encodeStringPacket(ServerOpcode.NPC_EQUIPMENT_FIT, JSON.stringify(npc.equipmentFits), npc.id));
     }
     const cc = npc.customColors;
     if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
@@ -10896,6 +10899,9 @@ export class World {
       const values = [npc.id];
       for (let i = 0; i < EQUIPMENT_SLOT_NAMES.length; i++) values.push(eq[i] ?? 0);
       this.queueSyncPacket(out, ServerOpcode.NPC_EQUIPMENT, ...values);
+    }
+    if (hasNpcEquipmentFits(npc.equipmentFits)) {
+      this.queueEncodedSyncPacket(out, encodeStringPacket(ServerOpcode.NPC_EQUIPMENT_FIT, JSON.stringify(npc.equipmentFits), npc.id));
     }
     const cc = npc.customColors;
     if (cc && CUSTOM_COLOR_SLOTS.some(s => cc[s])) {
@@ -11212,18 +11218,8 @@ export class World {
       return { ok: false, message: `Could not match ${nearest.name} at ${nearest.spawnX.toFixed(1)}, ${nearest.spawnZ.toFixed(1)} to a saved spawn.` };
     }
 
-    const playerAppearance = normalizeAppearance(player.appearance ?? DEFAULT_APPEARANCE);
-    const appearance = isValidAppearance(playerAppearance)
-      ? { ...playerAppearance }
-      : { ...DEFAULT_APPEARANCE };
-
-    const spawnAppearance = spawn.appearance ? normalizeAppearance(spawn.appearance) : null;
-    spawn.appearance = spawnAppearance && isValidAppearance(spawnAppearance)
-      ? spawnAppearance
-      : appearance;
     spawn.equipment = equipment;
 
-    nearest.appearance = spawn.appearance;
     nearest.equipment = equipment;
 
     try {

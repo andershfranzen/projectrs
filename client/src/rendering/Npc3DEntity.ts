@@ -16,6 +16,7 @@ import { quantizeAnimationGroup, rs2Rotation } from './AnimationQuantizer';
 import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } from './chatBubble';
 import { mountWorldOverlayElement } from './worldOverlay';
 import { createMobGroundShadow } from './MobGroundShadow';
+import type { GearTemplate } from './CharacterEntity';
 
 export interface Npc3DEntityOptions {
   label?: string;
@@ -341,6 +342,12 @@ interface AnimationFade {
   stopOnDone: boolean;
 }
 
+interface GearAttachment {
+  itemId: number;
+  node: TransformNode;
+  rootNode: TransformNode;
+}
+
 /**
  * 3D NPC entity — loads a GLB with embedded animations.
  * Exposes the same public interface as SpriteEntity so it can be used interchangeably.
@@ -399,6 +406,7 @@ export class Npc3DEntity {
    *  setEntityIdMetadata so picking can resolve the clicked instance even
    *  when multiple NPCs share the same source GLB (e.g. multiple cows). */
   private pendingEntityId: number | null = null;
+  private gearAttachments: Map<string, GearAttachment> = new Map();
 
   constructor(
     scene: Scene,
@@ -977,6 +985,89 @@ export class Npc3DEntity {
   getMesh(): any { return this.meshes[0] ?? null; }
   /** Get all renderable meshes (for editor picking / metadata stamping). */
   getMeshes(): AbstractMesh[] { return this.meshes; }
+  getBoneNames(): string[] { return this.skeletons.flatMap(skeleton => skeleton.bones.map(bone => bone.name)); }
+
+  attachGear(slot: string, itemId: number, gearTemplate: GearTemplate): void {
+    this.detachGear(slot);
+
+    const bone = this.skeletons
+      .flatMap(skeleton => skeleton.bones)
+      .find(candidate => candidate.name === gearTemplate.boneName);
+    if (!bone) {
+      console.warn(`[Npc3DEntity] Bone '${gearTemplate.boneName}' not found for ${slot} gear. Available bones: ${this.getBoneNames().join(', ')}`);
+      return;
+    }
+
+    const clone = gearTemplate.template.instantiateHierarchy(null, undefined, (source, cloned) => {
+      cloned.name = `${source.name}_${slot}_${itemId}`;
+    });
+    if (!clone) {
+      console.warn(`[Npc3DEntity] Failed to clone ${slot} gear template`);
+      return;
+    }
+
+    clone.setEnabled(true);
+    if (this.pendingEntityId !== null) {
+      clone.metadata = { ...(clone.metadata ?? {}), entityId: this.pendingEntityId, kind: 'npc' };
+    }
+    for (const child of clone.getChildMeshes()) {
+      child.setEnabled(true);
+      if (this.pendingEntityId !== null) {
+        child.metadata = { ...(child.metadata ?? {}), entityId: this.pendingEntityId, kind: 'npc' };
+      }
+    }
+
+    const boneTransform = bone.getTransformNode();
+    let attachmentRoot = clone;
+    if (boneTransform) {
+      if (gearTemplate.axisCorrection) {
+        const pivot = new TransformNode(`npcGearPivot_${slot}_${itemId}`, this.scene);
+        pivot.parent = boneTransform;
+        pivot.position.set(0, 0, 0);
+        pivot.scaling.set(1, 1, 1);
+        pivot.rotationQuaternion = gearTemplate.axisCorrection.clone().normalize();
+        if (this.pendingEntityId !== null) {
+          pivot.metadata = { ...(pivot.metadata ?? {}), entityId: this.pendingEntityId, kind: 'npc' };
+        }
+        clone.parent = pivot;
+        attachmentRoot = pivot;
+      } else {
+        clone.parent = boneTransform;
+      }
+    } else if (this.root) {
+      clone.attachToBone(bone, this.root);
+    }
+
+    clone.rotationQuaternion = null;
+    clone.position.set(
+      gearTemplate.localPosition.x,
+      gearTemplate.localPosition.y,
+      gearTemplate.localPosition.z,
+    );
+    clone.rotation.set(
+      gearTemplate.localRotation.x,
+      gearTemplate.localRotation.y,
+      gearTemplate.localRotation.z,
+    );
+    clone.scaling.set(gearTemplate.scale, gearTemplate.scale, gearTemplate.scale);
+
+    this.gearAttachments.set(slot, { itemId, node: clone, rootNode: attachmentRoot });
+  }
+
+  detachGear(slot: string): void {
+    const existing = this.gearAttachments.get(slot);
+    if (!existing) return;
+    existing.rootNode.dispose();
+    this.gearAttachments.delete(slot);
+  }
+
+  getGearItemId(slot: string): number {
+    return this.gearAttachments.get(slot)?.itemId ?? -1;
+  }
+
+  getGearNode(slot: string): TransformNode | null {
+    return this.gearAttachments.get(slot)?.node ?? null;
+  }
 
   /**
    * Stamp the entityId onto every mesh's metadata so picking can identify
@@ -1005,6 +1096,8 @@ export class Npc3DEntity {
     this.hideChatBubble();
     this.hideHealthBar();
     this.stopAnimationFades();
+    for (const attachment of this.gearAttachments.values()) attachment.node.dispose();
+    this.gearAttachments.clear();
     for (const group of uniqueAnimationGroups(this.animGroups.values())) { group.stop(true); group.dispose(); }
     this.animGroups.clear();
     for (const skeleton of this.skeletons) skeleton.dispose();

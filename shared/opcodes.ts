@@ -305,6 +305,10 @@ export enum ServerOpcode {
    *  Values: [objectEntityId]. Used by animated crafting stations whose
    *  mesh animation should fire per successful production tick. */
   WORLD_OBJECT_ANIMATION = 89,
+  /** Per-spawn visual fit overrides for purpose-built 3D NPC equipment.
+   *  String packet — JSON-encoded NpcEquipmentFitOverrides followed by
+   *  [npcEntityId]. Sent on chunk-entry only, alongside NPC_EQUIPMENT. */
+  NPC_EQUIPMENT_FIT = 126,
 
   // --- Bank ---
   /** Open the bank UI. Sparse layout: [count, slot1, itemId1, qtyHigh1, qtyLow1, ...].

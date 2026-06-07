@@ -10,7 +10,7 @@ import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
 import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
-import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors } from '@projectrs/shared';
+import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides } from '@projectrs/shared';
 
 interface GroundItemData {
   id: number;
@@ -87,6 +87,8 @@ export class EntityManager {
   readonly npcAppearances: Map<number, PlayerAppearance> = new Map();
   /** Per-spawn equipment, same layout as PLAYER_REMOTE_EQUIPMENT. */
   readonly npcEquipment: Map<number, number[]> = new Map();
+  /** Per-spawn visual fit overrides for purpose-built 3D NPC gear. */
+  readonly npcEquipmentFits: Map<number, NpcEquipmentFitOverrides> = new Map();
   /** Per-spawn raw RGB color overrides keyed by entityId. Cached on
    *  NPC_CUSTOM_COLORS; applied once the CharacterEntity rig is ready,
    *  alongside the palette-index appearance. */
@@ -544,6 +546,7 @@ export class EntityManager {
     this.npcVisualScales.delete(entityId);
     this.npcAppearances.delete(entityId);
     this.npcEquipment.delete(entityId);
+    this.npcEquipmentFits.delete(entityId);
     this.npcCustomColors.delete(entityId);
     this.npcAttackAnimOverrides.delete(entityId);
     this.npcFacingAngles.delete(entityId);
@@ -592,6 +595,7 @@ export class EntityManager {
     this.npcVisualScales.delete(entityId);
     this.npcAppearances.delete(entityId);
     this.npcEquipment.delete(entityId);
+    this.npcEquipmentFits.delete(entityId);
     this.npcCustomColors.delete(entityId);
     this.npcAttackAnimOverrides.delete(entityId);
     this.npcFacingAngles.delete(entityId);
@@ -884,6 +888,7 @@ export class EntityManager {
     this.npcCombatLevels.clear();
     this.npcAppearances.clear();
     this.npcEquipment.clear();
+    this.npcEquipmentFits.clear();
     this.npcCustomColors.clear();
     this.npcAttackAnimOverrides.clear();
     this.npcFacingAngles.clear();

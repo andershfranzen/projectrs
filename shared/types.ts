@@ -1,4 +1,5 @@
 import type { PlayerAppearance } from './appearance';
+import type { NpcEquipmentFitOverrides } from './npcEquipmentFit';
 import type { SkillId } from './skills';
 
 // Keep this in sync with tileCut.ts DEFAULT_CUT_ANGLE. Avoid importing it here
@@ -165,8 +166,10 @@ export interface NpcDef {
   /** Default humanoid appearance copied onto newly authored spawns and used
    *  server-side when a spawn has no per-spawn appearance override. */
   defaultAppearance?: PlayerAppearance;
-  /** Default humanoid equipment in PLAYER_REMOTE_EQUIPMENT layout:
+  /** Default equipment in PLAYER_REMOTE_EQUIPMENT layout:
    *  [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo].
+   *  Humanoid NPCs use the CharacterEntity gear pipeline. Purpose-built 3D
+   *  NPCs only render slots that have a client-side NPC gear attachment config.
    *  Per-spawn `equipment` still wins when present. */
   defaultEquipment?: number[];
   /** Default raw color overrides for CharacterEntity-rendered NPCs. */
@@ -573,9 +576,14 @@ export interface SpawnEntry {
   appearance?: PlayerAppearance;
   /** Per-spawn equipment. 11-slot array matching PLAYER_REMOTE_EQUIPMENT
    *  layout: [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo].
-   *  0 = empty slot. Only meaningful when `appearance` is also set (the GLB
-   *  gear pipeline only runs on CharacterEntity-rendered NPCs). */
+   *  0 = empty slot. Humanoid NPCs use the CharacterEntity gear pipeline.
+   *  Purpose-built 3D NPCs only render slots that have a client-side NPC gear
+   *  attachment config. */
   equipment?: number[];
+  /** Per-spawn visual fit overrides for purpose-built 3D NPC equipment.
+   *  Keys are equip slot names. These merge over the client-side model gear
+   *  config and only affect rendering, not combat/pathing/equipment state. */
+  equipmentFits?: NpcEquipmentFitOverrides;
   /** Per-spawn shop override. When set, fully replaces NpcDef.shop for
    *  this spawn (no field-merge). Lets two spawns of the same NpcDef sell
    *  different inventory. */

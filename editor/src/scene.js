@@ -78,14 +78,19 @@ import {
   RELIC_ITEM_IDS,
   relicCombatDropForLevel,
   relicCombatDropBandForLevel,
+  hasNpcEquipmentFits,
+  normalizeNpcEquipmentFits,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
 // exactly what we need for the editor's per-spawn preview. Runtime GLBs are
 // served through the editor dev server's client-public proxy.
 import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
+import { loadStaticGearTemplate } from '@client/rendering/CharacterGearLoader'
+import { applyNpcGearFitToNode, createNpcGearTemplateWithFit } from '@client/rendering/NpcGearAttachment'
 import { Npc3DEntity } from '@client/rendering/Npc3DEntity'
 import { resolveNpcModelSourceId, resolveNpcVisualConfig } from '@client/data/NpcConfig'
+import { mergeNpcGearSlotFit, resolveNpcGearSlotConfig } from '@client/data/NpcGearConfig'
 import { EQUIP_SLOT_BONES } from '@client/data/EquipmentConfig'
 import { resolveItemModelPath as resolveRuntimeItemModelPath } from '@client/rendering/ItemIcon'
 import { loadAssetRegistry } from './assets-system/AssetRegistry'
@@ -359,6 +364,7 @@ function tuneModelLighting(model) {
     facing:       v => typeof v === 'number' && Number.isFinite(v),
     appearance:   v => !!v,
     equipment:    v => Array.isArray(v) && (v.length === 10 || v.length === 11),
+    equipmentFits: hasNpcEquipmentFits,
     shop:         v => !!v,
     dialogue:     v => !!v,
     name:         v => !!v,
@@ -531,7 +537,9 @@ function tuneModelLighting(model) {
     for (const field of Object.keys(NPC_SPAWN_OVERRIDE_FIELDS)) {
       if (field === 'aggressive') continue
       if (NPC_SPAWN_OVERRIDE_FIELDS[field](input[field])) {
-        spawn[field] = field === 'scale' ? normalizeNpcSpawnScale(input[field]) : cloneNpcSpawnValue(input[field])
+        if (field === 'scale') spawn[field] = normalizeNpcSpawnScale(input[field])
+        else if (field === 'equipmentFits') spawn[field] = normalizeNpcEquipmentFits(input[field])
+        else spawn[field] = cloneNpcSpawnValue(input[field])
       }
     }
     if (id && id >= _npcSpawnNextId) _npcSpawnNextId = id + 1
@@ -677,17 +685,19 @@ function tuneModelLighting(model) {
   function reloadGearOverrides() {
     editorGearOverrides = null
     editorGearOverridesPromise = null
-    for (const [id, entry] of npcPreviews) {
-      const spawn = npcSpawns.find(s => s.id === id)
-      if (!spawn) continue
+    for (const [, entry] of npcPreviews) {
       // Force detach so applyEquipmentToPreview re-attaches with new offsets
       // (its short-circuit "already wearing this item" check would otherwise
       // skip the reload).
       for (const slot of EDITOR_EQUIP_SLOT_ORDER) {
         entry.entity.detachGear(slot)
-        entry.entity.detachSkinnedArmor(slot)
+        entry.entity.detachSkinnedArmor?.(slot)
       }
-      void applyEquipmentToPreview(spawn, entry)
+    }
+    disposeNpcModelPreviewGearTemplateCache()
+    for (const [id, entry] of npcPreviews) {
+      const spawn = npcSpawns.find(s => s.id === id)
+      if (spawn) void applyEquipmentToPreview(spawn, entry)
     }
   }
   if (import.meta.env.DEV) window.editorReloadGearOverrides = reloadGearOverrides
@@ -745,6 +755,85 @@ function tuneModelLighting(model) {
    *  EQUIP_SLOT_NAMES (client) and the spawn.equipment array stored on disk. */
   const EDITOR_EQUIP_SLOT_ORDER = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape']
   const EDITOR_SKINNED_GEAR_SLOTS = new Set(['body', 'legs', 'hands', 'feet'])
+  const npcModelPreviewGearTemplateCache = new Map()
+
+  function disposeNpcModelPreviewGearTemplateCache() {
+    for (const template of npcModelPreviewGearTemplateCache.values()) {
+      template.template?.dispose?.()
+    }
+    npcModelPreviewGearTemplateCache.clear()
+  }
+
+  function npcModelGearBaseFit(spawn, slot) {
+    if (!spawn) return null
+    return resolveNpcGearSlotConfig(spawn.npcId, npcDefById(spawn.npcId), slot)
+  }
+
+  function npcModelGearFit(spawn, slot) {
+    const base = npcModelGearBaseFit(spawn, slot)
+    return base ? mergeNpcGearSlotFit(base, spawn.equipmentFits?.[slot]) : null
+  }
+
+  function applyNpcModelGearFitToPreview(spawn, slot) {
+    const entry = npcPreviews.get(spawn?.id)
+    if (!entry || entry.kind !== 'npc3d') return false
+    const fit = npcModelGearFit(spawn, slot)
+    return fit ? applyNpcGearFitToNode(entry.entity.getGearNode(slot), fit) : false
+  }
+
+  function npcEquipmentFitOverride(spawn, slot) {
+    return spawn?.equipmentFits?.[slot] ?? null
+  }
+
+  function pruneNpcEquipmentFits(spawn) {
+    if (!spawn?.equipmentFits) return
+    for (const slot of Object.keys(spawn.equipmentFits)) {
+      if (!spawn.equipmentFits[slot] || Object.keys(spawn.equipmentFits[slot]).length === 0) {
+        delete spawn.equipmentFits[slot]
+      }
+    }
+    if (Object.keys(spawn.equipmentFits).length === 0) delete spawn.equipmentFits
+  }
+
+  function writeNpcEquipmentFitOverride(spawn, slot, patch) {
+    const base = npcModelGearBaseFit(spawn, slot)
+    if (!spawn || !base) return
+    const current = { ...(spawn.equipmentFits?.[slot] ?? {}) }
+    const next = { ...current, ...patch }
+    const cleaned = {}
+
+    if (typeof next.scale === 'number' && Number.isFinite(next.scale) && next.scale > 0 && Math.abs(next.scale - base.scale) > 0.0001) {
+      cleaned.scale = next.scale
+    }
+    for (const key of ['localPosition', 'localRotation']) {
+      const value = next[key]
+      const baseValue = base[key]
+      if (!value || !baseValue) continue
+      const x = Number(value.x)
+      const y = Number(value.y)
+      const z = Number(value.z)
+      if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue
+      if (Math.abs(x - baseValue.x) > 0.0001 || Math.abs(y - baseValue.y) > 0.0001 || Math.abs(z - baseValue.z) > 0.0001) {
+        cleaned[key] = { x, y, z }
+      }
+    }
+
+    if (Object.keys(cleaned).length === 0) {
+      if (spawn.equipmentFits) delete spawn.equipmentFits[slot]
+    } else {
+      if (!spawn.equipmentFits) spawn.equipmentFits = {}
+      spawn.equipmentFits[slot] = cleaned
+    }
+    pruneNpcEquipmentFits(spawn)
+    if (!applyNpcModelGearFitToPreview(spawn, slot)) refreshNpcPreviewGear(spawn, slot)
+  }
+
+  function clearNpcEquipmentFitSlot(spawn, slot) {
+    if (!spawn?.equipmentFits) return
+    delete spawn.equipmentFits[slot]
+    pruneNpcEquipmentFits(spawn)
+    if (!applyNpcModelGearFitToPreview(spawn, slot)) refreshNpcPreviewGear(spawn, slot)
+  }
 
   function disposeImportedGearResult(result) {
     for (const group of result.animationGroups ?? []) group.dispose()
@@ -886,10 +975,86 @@ function tuneModelLighting(model) {
     }
   }
 
+  async function loadNpcModelGearTemplateForPreview(spawn, slot, itemId, itemDef, baseFit) {
+    const sourceId = resolveNpcModelSourceId(spawn.npcId, npcDefById(spawn.npcId))
+    const cacheKey = `npc:${sourceId}/${slot}/${itemId}`
+    let template = npcModelPreviewGearTemplateCache.get(cacheKey)
+    if (template) return template
+
+    const gearFile = resolveEquipmentModelPath(itemDef, 0, slot)
+    if (!gearFile) return null
+    const gearDef = {
+      itemId,
+      file: gearFile,
+      boneName: baseFit.boneName,
+      localPosition: baseFit.localPosition,
+      localRotation: baseFit.localRotation,
+      scale: baseFit.scale,
+      centerOrigin: baseFit.centerOrigin,
+      headRenderMode: itemDef?.headRenderMode,
+    }
+    template = await loadStaticGearTemplate(scene, itemId, gearDef, baseFit.sourceBoneName)
+    if (!template) return null
+    if (baseFit.axisCorrection) {
+      template.axisCorrection = new Quaternion(
+        baseFit.axisCorrection.x,
+        baseFit.axisCorrection.y,
+        baseFit.axisCorrection.z,
+        baseFit.axisCorrection.w,
+      )
+    }
+    npcModelPreviewGearTemplateCache.set(cacheKey, template)
+    return template
+  }
+
+  async function applyNpcModelEquipmentToPreview(spawn, entry) {
+    if (!Array.isArray(spawn.equipment)) {
+      for (const slot of EDITOR_EQUIP_SLOT_ORDER) entry.entity.detachGear(slot)
+      return
+    }
+    if (itemDefs.length === 0) await fetchItemDefsOnce()
+    if (npcPreviews.get(spawn.id) !== entry) return
+
+    for (let i = 0; i < EDITOR_EQUIP_SLOT_ORDER.length; i++) {
+      const slot = EDITOR_EQUIP_SLOT_ORDER[i]
+      const baseFit = npcModelGearBaseFit(spawn, slot)
+      if (!baseFit) {
+        entry.entity.detachGear(slot)
+        continue
+      }
+      const itemId = spawn.equipment[i] ?? 0
+      if (itemId <= 0) {
+        entry.entity.detachGear(slot)
+        continue
+      }
+      const itemDef = itemDefs.find(d => d.id === itemId)
+      if (!itemDef || itemDef.equipSlot !== slot) {
+        entry.entity.detachGear(slot)
+        continue
+      }
+
+      const fit = npcModelGearFit(spawn, slot)
+      if (!fit) continue
+      if (entry.entity.getGearItemId(slot) === itemId) {
+        applyNpcModelGearFitToPreview(spawn, slot)
+        continue
+      }
+
+      const template = await loadNpcModelGearTemplateForPreview(spawn, slot, itemId, itemDef, baseFit)
+      if (!template || npcPreviews.get(spawn.id) !== entry) return
+      entry.entity.attachGear(slot, itemId, createNpcGearTemplateWithFit(template, fit))
+      stampNpcPreviewPickMetadata(spawn, entry)
+    }
+  }
+
   /** Apply (or re-apply) the spawn's equipment array to its preview entity.
    *  Matches the game runtime: rigid pieces are bone-parented; body/legs/
    *  hands/feet are skinned to the humanoid skeleton. */
   async function applyEquipmentToPreview(spawn, entry) {
+    if (entry.kind === 'npc3d') {
+      await applyNpcModelEquipmentToPreview(spawn, entry)
+      return
+    }
     if (!Array.isArray(spawn.equipment)) {
       // No equipment array — detach anything currently shown.
       for (const slot of EDITOR_EQUIP_SLOT_ORDER) {
@@ -988,7 +1153,6 @@ function tuneModelLighting(model) {
     entry.entity.setFacingAngle(npcFacingAngle(spawn))
     ensureNpcPreviewPickMetadata(spawn, entry)
     maskPlacedObjectsForPreview(spawn, entry)
-    if (entry.kind !== 'character') return
     // applyAppearance idempotently re-derives material colors + hair mesh
     // visibility from the appearance struct; safe to call on every edit.
     // Per-spawn raw RGB overrides (spawn.customColors) take precedence over
@@ -996,7 +1160,9 @@ function tuneModelLighting(model) {
     entry.entity.whenReady().then(() => {
       if (npcPreviews.get(spawn.id) !== entry) return
       entry.entity.setFacingAngle(npcFacingAngle(spawn))
-      if (spawn.appearance) entry.entity.applyAppearance(spawn.appearance, spawn.customColors ?? null)
+      if (entry.kind === 'character' && spawn.appearance) {
+        entry.entity.applyAppearance(spawn.appearance, spawn.customColors ?? null)
+      }
       // Now load gear. Fire-and-forget — errors handled inside.
       void applyEquipmentToPreview(spawn, entry)
     })
@@ -1018,6 +1184,7 @@ function tuneModelLighting(model) {
       entry.entity.dispose()
     }
     npcPreviews.clear()
+    disposeNpcModelPreviewGearTemplateCache()
   }
 
   /** Re-hide overlapping placed objects after the placedGroup has been
@@ -4245,12 +4412,16 @@ let selectedWaterFlowChunk = null
   }
 
   /** Refresh the editor preview's gear after the user edits a slot. Only
-   *  re-applies gear if the preview entity already exists (i.e. the spawn
-   *  has an appearance override). Without an appearance the spawn renders
-   *  as a cylinder marker, which can't wear anything. */
-  function refreshNpcPreviewGear(spawn) {
+   *  re-applies gear if the preview entity already exists. Humanoid previews
+   *  use CharacterEntity gear; purpose-built NPC models use their configured
+   *  model-bone attachment slots. */
+  function refreshNpcPreviewGear(spawn, reloadSlot = null) {
     const entry = npcPreviews.get(spawn?.id)
     if (!entry) return
+    if (reloadSlot) {
+      entry.entity.detachGear?.(reloadSlot)
+      entry.entity.detachSkinnedArmor?.(reloadSlot)
+    }
     entry.entity.whenReady().then(() => {
       if (npcPreviews.get(spawn.id) !== entry) return
       void applyEquipmentToPreview(spawn, entry)
@@ -4269,6 +4440,7 @@ let selectedWaterFlowChunk = null
     // PLAYER_REMOTE_EQUIPMENT order:
     // [weapon, shield, head, body, legs, neck, ring, hands, feet, cape, ammo]
     spawn.equipment = [87, 97, 94, 99, 98, 0, 0, 0, 0, 0, 0]
+    delete spawn.equipmentFits
     delete spawn.attackAnim
 
     const sel = sidebar.querySelector('#npcTypeSelect')
@@ -4278,6 +4450,127 @@ let selectedWaterFlowChunk = null
     rebuildNpcSpawnMeshes()
     refreshNpcSpawnList()
     renderNpcInspector()
+  }
+
+  function npcModelGearFitRows(spawn) {
+    if (!spawn || !Array.isArray(spawn.equipment)) return []
+    const rows = []
+    for (const { label, slot } of EQUIP_SLOTS) {
+      const slotIdx = EDITOR_EQUIP_SLOT_ORDER.indexOf(slot)
+      if (slotIdx < 0) continue
+      const itemId = spawn.equipment[slotIdx] ?? 0
+      if (itemId <= 0) continue
+      const baseFit = npcModelGearBaseFit(spawn, slot)
+      if (!baseFit) continue
+      const itemDef = itemDefs.find(d => d.id === itemId)
+      if (itemDef?.equipSlot && itemDef.equipSlot !== slot) continue
+      rows.push({ label, slot, itemId, itemDef, baseFit })
+    }
+    return rows
+  }
+
+  function formatEditorNumber(value, decimals = 2) {
+    return Number.isFinite(value) ? Number(value).toFixed(decimals) : '0'
+  }
+
+  function escapeNpcGearHtml(value) {
+    return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  }
+
+  function vectorInputMarkup(slot, key, values, decimals, step) {
+    return ['x', 'y', 'z'].map(axis => `
+      <label style="display:flex;align-items:center;gap:3px;min-width:0;">
+        <span style="width:10px;color:rgba(255,255,255,0.45);font-size:10px;text-transform:uppercase;">${axis}</span>
+        <input data-fit-slot="${slot}" data-fit-vector="${key}" data-fit-axis="${axis}" type="number" step="${step}" value="${formatEditorNumber(values[axis], decimals)}"
+               style="width:100%;min-width:0;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:10px;" />
+      </label>
+    `).join('')
+  }
+
+  function renderNpcModelGearFitControls(root, spawn) {
+    const rows = npcModelGearFitRows(spawn)
+    if (rows.length === 0) return
+
+    const section = document.createElement('div')
+    section.style.cssText = 'margin-top:10px;padding-top:8px;border-top:1px solid #333;'
+    section.innerHTML = `
+      <div style="font-size:10px;color:#88aaff;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Model fit</div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.45);line-height:1.35;margin-bottom:6px;">
+        Saved on this spawn only. Defaults still come from the NPC model gear config.
+      </div>
+    `
+
+    for (const row of rows) {
+      const fit = npcModelGearFit(spawn, row.slot)
+      if (!fit) continue
+      const rotDeg = {
+        x: fit.localRotation.x * 180 / Math.PI,
+        y: fit.localRotation.y * 180 / Math.PI,
+        z: fit.localRotation.z * 180 / Math.PI,
+      }
+      const card = document.createElement('div')
+      card.style.cssText = 'border:1px solid #333;background:#181818;border-radius:4px;padding:6px;margin-bottom:6px;'
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
+          <div style="flex:1;min-width:0;font-size:11px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+            ${escapeNpcGearHtml(row.label)} · ${escapeNpcGearHtml(row.itemDef?.name || `Item ${row.itemId}`)}
+          </div>
+          <button data-fit-reset="${row.slot}" title="Reset fit" style="font-size:10px;padding:2px 6px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">Reset</button>
+        </div>
+        <div style="display:grid;grid-template-columns:42px 1fr 58px;align-items:center;gap:5px;margin-bottom:5px;">
+          <span style="font-size:10px;color:rgba(255,255,255,0.62);">Scale</span>
+          <input data-fit-scale-range="${row.slot}" type="range" min="0.1" max="3" step="0.01" value="${fit.scale}" style="width:100%;" />
+          <input data-fit-scale-input="${row.slot}" type="number" min="0.05" max="10" step="0.05" value="${formatEditorNumber(fit.scale, 2)}"
+                 style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:10px;" />
+        </div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.55);margin:4px 0 3px;">Offset</div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;margin-bottom:5px;">
+          ${vectorInputMarkup(row.slot, 'localPosition', fit.localPosition, 2, '0.01')}
+        </div>
+        <div style="font-size:10px;color:rgba(255,255,255,0.55);margin:4px 0 3px;">Rotation</div>
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;">
+          ${vectorInputMarkup(row.slot, 'localRotation', rotDeg, 1, '1')}
+        </div>
+      `
+      section.appendChild(card)
+    }
+
+    section.querySelectorAll('[data-fit-scale-range], [data-fit-scale-input]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const slot = e.target.dataset.fitScaleRange || e.target.dataset.fitScaleInput
+        const value = Math.max(0.05, Number(e.target.value) || npcModelGearBaseFit(spawn, slot)?.scale || 1)
+        writeNpcEquipmentFitOverride(spawn, slot, { scale: value })
+        const range = section.querySelector(`[data-fit-scale-range="${slot}"]`)
+        const number = section.querySelector(`[data-fit-scale-input="${slot}"]`)
+        if (range && range !== e.target) range.value = String(Math.min(3, Math.max(0.1, value)))
+        if (number && number !== e.target) number.value = formatEditorNumber(value, 2)
+      })
+    })
+
+    section.querySelectorAll('[data-fit-vector]').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const slot = e.target.dataset.fitSlot
+        const key = e.target.dataset.fitVector
+        const axis = e.target.dataset.fitAxis
+        const fit = npcModelGearFit(spawn, slot)
+        if (!fit || !axis) return
+        const value = Number(e.target.value)
+        if (!Number.isFinite(value)) return
+        const current = fit[key]
+        const next = { x: current.x, y: current.y, z: current.z }
+        next[axis] = key === 'localRotation' ? value * Math.PI / 180 : value
+        writeNpcEquipmentFitOverride(spawn, slot, { [key]: next })
+      })
+    })
+
+    section.querySelectorAll('[data-fit-reset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        clearNpcEquipmentFitSlot(spawn, btn.dataset.fitReset)
+        renderEquipmentTab(root)
+      })
+    })
+
+    root.appendChild(section)
   }
 
   function renderEquipmentTab(root) {
@@ -4305,8 +4598,8 @@ let selectedWaterFlowChunk = null
     // confusing override box first" friction. An array of zeros gets stripped
     // by serializeNpcSpawns (override predicate requires a non-empty array
     // with at least one non-zero, see NPC_SPAWN_OVERRIDE_FIELDS).
-    if (!Array.isArray(spawn.equipment) || spawn.equipment.length !== 10) {
-      spawn.equipment = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    if (!Array.isArray(spawn.equipment) || (spawn.equipment.length !== 10 && spawn.equipment.length !== 11)) {
+      spawn.equipment = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }
 
     // Header line — anchors what the user is editing.
@@ -4347,30 +4640,40 @@ let selectedWaterFlowChunk = null
       const commit = () => {
         const id = parseItemIdFromDisplay(input.value)
         spawn.equipment[slotIdx] = id
+        if (id <= 0) clearNpcEquipmentFitSlot(spawn, slot)
         // Snap to canonical "Name (ID)" form on resolve so the user sees the
         // matched item. Blank stays blank.
         input.value = id > 0 ? formatItemDisplay(id) : ''
         const ok = id === 0 || itemDefs.some(d => d.id === id)
         input.style.borderColor = ok ? '#444' : '#a55'
         refreshNpcPreviewGear(spawn)
+        if (npcModelGearBaseFit(spawn, slot) || id <= 0) renderEquipmentTab(root)
       }
       input.addEventListener('change', commit)
       clearBtn.addEventListener('click', () => {
         spawn.equipment[slotIdx] = 0
+        clearNpcEquipmentFitSlot(spawn, slot)
         input.value = ''
         input.style.borderColor = '#444'
         refreshNpcPreviewGear(spawn)
+        if (npcModelGearBaseFit(spawn, slot)) renderEquipmentTab(root)
       })
       root.appendChild(row)
     }
 
+    renderNpcModelGearFitControls(root, spawn)
+
     const hint = document.createElement('div')
     hint.className = 'hint'
     hint.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.4);margin-top:10px;line-height:1.4;padding-top:8px;border-top:1px solid #333;'
-    hint.innerHTML = `
-      <b>Preview:</b> ${spawn.appearance
+    const visual = npcPreviewVisualConfig(spawn)
+    const previewText = visual?.modelCfg
+      ? 'equipped supported slots show on this NPC model using its configured bones.'
+      : spawn.appearance
         ? 'equipped gear shows on the editor character above using the same humanoid rig path as the game.'
-        : 'enable an <i>appearance</i> override (Look tab) to see the gear preview.'}<br>
+        : 'enable an <i>appearance</i> override (Look tab) to see humanoid gear preview.'
+    hint.innerHTML = `
+      <b>Preview:</b> ${previewText}<br>
       If a piece was just re-rigged, refresh the editor to reload gear-overrides.json.
     `
     root.appendChild(hint)

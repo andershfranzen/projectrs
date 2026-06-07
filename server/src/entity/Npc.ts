@@ -1,6 +1,6 @@
 import { Entity } from './Entity';
-import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
-import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition } from '@projectrs/shared';
+import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
+import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition, NpcEquipmentFitOverrides } from '@projectrs/shared';
 import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
 function callbackPathingCollision(
@@ -32,6 +32,7 @@ export interface NpcOptions {
   wanderRange?: number | null;
   appearance?: PlayerAppearance | null;
   equipment?: number[] | null;
+  equipmentFits?: NpcEquipmentFitOverrides | null;
   aggressive?: boolean | null;
   effectiveShop?: ShopDef | null;
   effectiveDialogue?: DialogueTree | null;
@@ -60,9 +61,12 @@ export class Npc extends Entity {
    *  CharacterEntity rendering (subject to mobile LOD on the client). Static
    *  — set at spawn time, mutated only by the admin /npcedit flow. */
   appearance: PlayerAppearance | null = null;
-  /** 11-slot equipment array, PLAYER_REMOTE_EQUIPMENT layout. Only consulted
-   *  when `appearance` is also set (gear pipeline runs on CharacterEntity only). */
+  /** 11-slot equipment array, PLAYER_REMOTE_EQUIPMENT layout. Humanoid clients
+   *  render the full CharacterEntity gear pipeline; purpose-built 3D NPCs render
+   *  only client-configured attachment slots. */
   equipment: number[] | null = null;
+  /** Per-spawn visual fit overrides for purpose-built 3D NPC gear. */
+  equipmentFits: NpcEquipmentFitOverrides | null = null;
   /** Raw per-slot RGB overrides. Sent to the client via NPC_CUSTOM_COLORS so
    *  CharacterEntity.applyAppearance picks the raw value instead of the palette
    *  index. Only meaningful when `appearance` is also set. */
@@ -225,6 +229,7 @@ export class Npc extends Entity {
     this.retreatHealthOverride = normalizeOptionalRange(opts.retreatHealth);
     this.appearance = opts.appearance ? normalizeAppearance(opts.appearance) : null;
     this.equipment = opts.equipment ?? null;
+    this.equipmentFits = normalizeNpcEquipmentFits(opts.equipmentFits);
     this.customColors = opts.customColors ?? null;
     this.aggressiveOverride = opts.aggressive ?? null;
     this.effectiveShop = opts.effectiveShop ?? null;

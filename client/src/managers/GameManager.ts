@@ -25,7 +25,8 @@ import '@babylonjs/loaders/glTF';
 import { ChunkManager } from '../rendering/ChunkManager';
 import { GameCamera } from '../rendering/Camera';
 import { CharacterEntity, loadGearTemplate, type GearDef, type GearTemplate } from '../rendering/CharacterEntity';
-import { PER_TARGET_GEAR_SLOTS, buildCharacterGearDef, disposeImportedGearResult, loadCharacterGearSmart, resolveCharacterGearModelFile } from '../rendering/CharacterGearLoader';
+import { PER_TARGET_GEAR_SLOTS, buildCharacterGearDef, disposeImportedGearResult, loadCharacterGearSmart, loadStaticGearTemplate, resolveCharacterGearModelFile } from '../rendering/CharacterGearLoader';
+import { applyNpcGearFitToNode, createNpcGearTemplateWithFit } from '../rendering/NpcGearAttachment';
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { ArrowProjectileManager, arrowProjectileTravelMs } from '../rendering/ArrowProjectile';
 import { SpellEffectPlayer } from '../rendering/SpellEffectPlayer';
@@ -44,6 +45,7 @@ import { ChatPanel } from '../ui/ChatPanel';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
 import { RotateDebugPanel } from '../ui/RotateDebugPanel';
+import { mergeNpcGearSlotFit, resolveNpcGearSlotConfig, type NpcGearSlotConfig } from '../data/NpcGearConfig';
 import { Minimap } from '../ui/Minimap';
 // StatsPanel removed — HP now shown in side panel
 import { ShopPanel, type ShopItem } from '../ui/ShopPanel';
@@ -58,10 +60,10 @@ import { SmithingPanel } from '../ui/SmithingPanel';
 import { SpellbookPanel } from '../ui/SpellbookPanel';
 import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick } from '../ui/popupStyle';
 import { logSceneBudget } from '../debug/SceneBudget';
-import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
+import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -403,7 +405,7 @@ export class GameManager {
   // Gear — cached templates so the same GLB isn't loaded twice
   private gearTemplateCache: Map<string, GearTemplate> = new Map();
   private gearLoadingPromises: Map<string, Promise<GearTemplate | null>> = new Map();
-  private gearApplySeq: WeakMap<CharacterEntity, Map<string, number>> = new WeakMap();
+  private gearApplySeq: WeakMap<CharacterEntity | Npc3DEntity, Map<string, number>> = new WeakMap();
   private gearOverrides: Map<number, GearOverride> = new Map();
   /** Resolves when /data/gear-overrides.json has finished loading (or
    *  failed). All gear-attach paths await this before reading gearOverrides
@@ -2246,6 +2248,27 @@ export class GameManager {
     }
   }
 
+  private applyNpcModelEquipmentArray(target: Npc3DEntity, slots: number[], entityId: number): void {
+    const npcDefId = this.entities.npcDefs.get(entityId);
+    if (npcDefId == null) return;
+    for (let i = 0; i < EQUIP_SLOT_NAMES.length; i++) {
+      const slotName = EQUIP_SLOT_NAMES[i];
+      if (!resolveNpcGearSlotConfig(npcDefId, this.npcDefsCache.get(npcDefId), slotName)) continue;
+      const itemId = slots[i] ?? 0;
+      void this.applyGearToNpcModel(target, npcDefId, slotName, itemId, entityId);
+    }
+  }
+
+  private resolveNpcModelGearSlotFit(npcDefId: number, slotName: string, entityId: number): NpcGearSlotConfig | null {
+    const base = resolveNpcGearSlotConfig(npcDefId, this.npcDefsCache.get(npcDefId), slotName);
+    if (!base) return null;
+    return mergeNpcGearSlotFit(base, this.entities.npcEquipmentFits.get(entityId)?.[slotName]);
+  }
+
+  private applyNpcModelGearFitTransform(target: Npc3DEntity, slotName: string, attachment: NpcGearSlotConfig): void {
+    applyNpcGearFitToNode(target.getGearNode(slotName), attachment);
+  }
+
   private recreateRemotePlayer(entityId: number, appearance: PlayerAppearance): void {
     const current = this.entities.remotePlayers.get(entityId);
     const target = this.entities.remoteTargets.get(entityId);
@@ -2378,7 +2401,7 @@ export class GameManager {
     }
   }
 
-  private nextGearApplyGuard(target: CharacterEntity, slotName: string, entityId?: number): GearApplyGuard {
+  private nextGearApplyGuard(target: CharacterEntity | Npc3DEntity, slotName: string, entityId?: number): GearApplyGuard {
     let perTarget = this.gearApplySeq.get(target);
     if (!perTarget) {
       perTarget = new Map();
@@ -2493,6 +2516,88 @@ export class GameManager {
     if (template && isCurrentApply()) {
       target.attachGear(slotName, itemId, template);
       target.setHighQualityGearEffect(slotName, isHighQualityItem(this.itemDefsCache.get(itemId)));
+    }
+  }
+
+  private async applyGearToNpcModel(
+    target: Npc3DEntity,
+    npcDefId: number,
+    slotName: string,
+    itemId: number,
+    entityId: number,
+  ): Promise<void> {
+    const isCurrentApply = this.nextGearApplyGuard(target, slotName, entityId);
+    const baseAttachment = resolveNpcGearSlotConfig(npcDefId, this.npcDefsCache.get(npcDefId), slotName);
+    if (!baseAttachment) return;
+    const attachment = this.resolveNpcModelGearSlotFit(npcDefId, slotName, entityId) ?? baseAttachment;
+
+    if (itemId <= 0) {
+      target.detachGear(slotName);
+      return;
+    }
+
+    if (target.getGearItemId(slotName) === itemId) {
+      this.applyNpcModelGearFitTransform(target, slotName, attachment);
+      return;
+    }
+
+    const itemDef = this.itemDefsCache.get(itemId);
+    if (itemDef?.equipSlot !== slotName) {
+      target.detachGear(slotName);
+      return;
+    }
+
+    const gearFile = resolveEquipmentModelPath(itemDef, 0, slotName);
+    if (!gearFile) {
+      target.detachGear(slotName);
+      return;
+    }
+
+    const gearDef: GearDef = {
+      itemId,
+      file: gearFile,
+      boneName: baseAttachment.boneName,
+      localPosition: baseAttachment.localPosition,
+      localRotation: baseAttachment.localRotation,
+      scale: baseAttachment.scale,
+      centerOrigin: baseAttachment.centerOrigin,
+      headRenderMode: itemDef.headRenderMode,
+    };
+
+    const sourceNpcId = resolveNpcModelSourceId(npcDefId, this.npcDefsCache.get(npcDefId));
+    const cacheKey = `npc:${sourceNpcId}/${slotName}/${itemId}`;
+    let template = this.gearTemplateCache.get(cacheKey);
+    if (!template) {
+      let promise = this.gearLoadingPromises.get(cacheKey);
+      if (!promise) {
+        promise = (async () => {
+          const tmpl = await loadStaticGearTemplate(
+            this.scene,
+            itemId,
+            gearDef,
+            baseAttachment.sourceBoneName,
+          );
+          if (tmpl) {
+            if (baseAttachment.axisCorrection) {
+              tmpl.axisCorrection = new Quaternion(
+                baseAttachment.axisCorrection.x,
+                baseAttachment.axisCorrection.y,
+                baseAttachment.axisCorrection.z,
+                baseAttachment.axisCorrection.w,
+              );
+            }
+            this.gearTemplateCache.set(cacheKey, tmpl);
+          }
+          this.gearLoadingPromises.delete(cacheKey);
+          return tmpl;
+        })();
+        this.gearLoadingPromises.set(cacheKey, promise);
+      }
+      template = (await promise) ?? undefined;
+    }
+
+    if (template && isCurrentApply()) {
+      target.attachGear(slotName, itemId, createNpcGearTemplateWithFit(template, attachment));
     }
   }
 
@@ -3021,6 +3126,8 @@ export class GameManager {
       const sprite = this.entities.npcSprites.get(entityId);
       if (sprite instanceof CharacterEntity && sprite.isReady) {
         this.applyRemoteEquipmentArray(sprite, slots, entityId);
+      } else if (sprite instanceof Npc3DEntity && sprite.isReady) {
+        this.applyNpcModelEquipmentArray(sprite, slots, entityId);
       }
     });
 
@@ -3944,6 +4051,21 @@ export class GameManager {
         const entityId = values[0];
         if (str.length > 0) this.entities.npcAttackAnimOverrides.set(entityId, str);
         else this.entities.npcAttackAnimOverrides.delete(entityId);
+      } else if (opcode === ServerOpcode.NPC_EQUIPMENT_FIT) {
+        const { str, values } = decodeStringPacket(data);
+        const entityId = values[0];
+        try {
+          const fits = normalizeNpcEquipmentFits(str.length > 0 ? JSON.parse(str) : null);
+          if (fits) this.entities.npcEquipmentFits.set(entityId, fits);
+          else this.entities.npcEquipmentFits.delete(entityId);
+          const sprite = this.entities.npcSprites.get(entityId);
+          const equipment = this.entities.npcEquipment.get(entityId);
+          if (sprite instanceof Npc3DEntity && sprite.isReady && equipment) {
+            this.applyNpcModelEquipmentArray(sprite, equipment, entityId);
+          }
+        } catch (e) {
+          console.warn('[npc-gear] failed to parse equipment fit payload', e);
+        }
       } else if (opcode === ServerOpcode.QUEST_STATE_SYNC) {
         // Full snapshot on login. JSON record {questId: {stage, triggerProgress}}.
         const { str } = decodeStringPacket(data);
@@ -7874,20 +7996,25 @@ export class GameManager {
     document.querySelectorAll('.npc-tooltip-overlay').forEach(el => el.remove());
   }
 
-  private applyCachedNpcRigState(entityId: number, character: CharacterEntity): void {
+  private applyCachedNpcRigState(entityId: number, sprite: CharacterEntity | Npc3DEntity): void {
     const apply = () => {
-      if (this.entities.npcSprites.get(entityId) !== character) return;
-      const appearance = this.entities.npcAppearances.get(entityId);
-      if (appearance) {
-        const custom = this.entities.npcCustomColors.get(entityId);
-        character.applyAppearance(appearance, custom ?? null);
+      if (this.entities.npcSprites.get(entityId) !== sprite) return;
+      if (sprite instanceof CharacterEntity) {
+        const appearance = this.entities.npcAppearances.get(entityId);
+        if (appearance) {
+          const custom = this.entities.npcCustomColors.get(entityId);
+          sprite.applyAppearance(appearance, custom ?? null);
+        }
       }
       const eq = this.entities.npcEquipment.get(entityId);
-      if (eq) this.applyRemoteEquipmentArray(character, eq, entityId);
+      if (eq) {
+        if (sprite instanceof CharacterEntity) this.applyRemoteEquipmentArray(sprite, eq, entityId);
+        else this.applyNpcModelEquipmentArray(sprite, eq, entityId);
+      }
     };
 
-    if (character.isReady) apply();
-    else void character.whenReady().then(apply);
+    if (sprite.isReady) apply();
+    else void sprite.whenReady().then(apply);
   }
 
   private tryMaterializeNpc(entityId: number, npcDefId: number, x: number, z: number, floor: number = 0, y?: number): void {
@@ -7905,7 +8032,7 @@ export class GameManager {
     if ((created instanceof CharacterEntity || created instanceof Npc3DEntity) && floor !== this.currentFloor) {
       created.setRenderEnabled(false);
     }
-    if (created instanceof CharacterEntity) {
+    if (created instanceof CharacterEntity || created instanceof Npc3DEntity) {
       this.applyCachedNpcRigState(entityId, created);
     }
   }

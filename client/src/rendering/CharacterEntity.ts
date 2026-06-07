@@ -183,6 +183,8 @@ export interface GearTemplate {
   localRotation: Vector3;
   /** Uniform scale */
   scale: number;
+  /** Optional parent-space axis correction used by non-humanoid NPC gear. */
+  axisCorrection?: Quaternion;
   /** Head-slot visibility behavior. Defaults to `helmet`. */
   headRenderMode?: HeadRenderMode;
 }
