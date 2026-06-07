@@ -90,6 +90,7 @@ const XP_PER_HOUR_CEILING: Record<SkillId, number> = {
   smithing: 100000,
   crafting: 100000,
   roguery: 80000,
+  survival: 80000,
 };
 
 export interface SessionSummary {

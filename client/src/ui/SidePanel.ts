@@ -8,6 +8,7 @@ import {
   QUEST_STAGE_COMPLETED,
   isAutocastableSpell, spellReagentSummary, spellSchoolSkill,
   zeroBonuses, STANCE_KEYS, combatLevelFromLevels,
+  isNotedItem,
   type SkillId, type MeleeStance, type MagicStance, type ItemDef, type QuestDef, type QuestState,
   type CombatBonuses,
   type SpellEffectDef, type SpellSchool,
@@ -3272,7 +3273,8 @@ export class SidePanel {
     }
 
     if (this.sellCallback) {
-      const sellPrice = Math.max(1, Math.floor((def?.value || 1) / 2));
+      const priceDef = isNotedItem(def) ? (this.itemDefs.get(def.unnotedId) ?? def) : def;
+      const sellPrice = Math.max(1, Math.floor((priceDef?.value || 1) / 2));
       options.push({
         label: `Sell ${name} (${sellPrice} gp)`,
         action: () => this.sellCallback!(index, slot.itemId),

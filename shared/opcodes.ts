@@ -108,6 +108,8 @@ export enum ClientOpcode {
    *  Server validates the bank is open and source still holds expectedItemId,
    *  then swaps the slots without merging stacks. */
   BANK_MOVE_ITEM = 85,
+  /** Set bank withdraw mode. Values: [0=item, 1=note]. */
+  BANK_SET_WITHDRAW_MODE = 86,
 
   // --- Trade ---
   /** Send a trade request to another player. Values: [targetEntityId]. */

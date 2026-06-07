@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync, existsSync } from 'fs';
 import { resolve } from 'path';
-import type { NpcDef, ItemDef, SpawnsFile, WorldObjectDef, ShopDef, DialogueTree, QuestDef, SpellEffectDef, RareDropTableDef } from '@projectrs/shared';
+import { withGeneratedBankNotes, type NpcDef, type ItemDef, type SpawnsFile, type WorldObjectDef, type ShopDef, type DialogueTree, type QuestDef, type SpellEffectDef, type RareDropTableDef } from '@projectrs/shared';
 
 const DATA_DIR = resolve(import.meta.dir, '../../data');
 const MAPS_DIR = resolve(DATA_DIR, 'maps');
@@ -79,7 +79,17 @@ export class DataLoader {
   }
 
   private loadNpcs(): void { this.loadJsonMap<number, NpcDef>('npcs.json', this.npcs, 'NPC definitions'); }
-  private loadItems(): void { this.loadJsonMap<number, ItemDef>('items.json', this.items, 'item definitions'); }
+  private loadItems(): void {
+    const path = resolve(DATA_DIR, 'items.json');
+    try {
+      const raw = readFileSync(path, 'utf-8');
+      const defs: ItemDef[] = withGeneratedBankNotes(JSON.parse(raw));
+      for (const def of defs) this.items.set(def.id, def);
+      console.log(`Loaded ${this.items.size} item definitions`);
+    } catch (e) {
+      throw new Error(`Failed to load ${path}: ${e instanceof Error ? e.message : e}`);
+    }
+  }
   private loadObjects(): void { this.loadJsonMap<number, WorldObjectDef>('objects.json', this.objects, 'object definitions'); }
   private loadRareDropTables(): void { this.loadJsonMap<string, RareDropTableDef>('rare-drop-tables.json', this.rareDropTables, 'rare drop tables'); }
 

@@ -43,6 +43,7 @@ import { SidePanel } from '../ui/SidePanel';
 import { ChatPanel } from '../ui/ChatPanel';
 import { GearDebugPanel } from '../ui/GearDebugPanel';
 import { BoneDebugPanel } from '../ui/BoneDebugPanel';
+import { RotateDebugPanel } from '../ui/RotateDebugPanel';
 import { Minimap } from '../ui/Minimap';
 // StatsPanel removed — HP now shown in side panel
 import { ShopPanel, type ShopItem } from '../ui/ShopPanel';
@@ -59,8 +60,8 @@ import { closeActiveContextMenu, createContextMenu, suppressNextContextMenuClick
 import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
-import { setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -535,6 +536,7 @@ export class GameManager {
   private gearDebugTargetMode: 'player' | 'npc' = 'player';
   private gearDebugNpcTargetId: number = -1;
   private boneDebugPanel: BoneDebugPanel | null = null;
+  private rotateDebugPanel: RotateDebugPanel | null = null;
   private shopPanel: ShopPanel | null = null;
   private dialoguePanel: DialoguePanel | null = null;
   private quantityInputPanel: QuantityInputPanel | null = null;
@@ -1591,7 +1593,7 @@ export class GameManager {
     }
     if (itemsRes) {
       try {
-        const defs: ItemDef[] = await itemsRes.json();
+        const defs: ItemDef[] = withGeneratedBankNotes(await itemsRes.json());
         for (const def of defs) this.itemDefsCache.set(def.id, def);
         setThumbnailItemCatalog(defs);
         if (this.sidePanel) this.sidePanel.setItemDefs(this.itemDefsCache);
@@ -6483,6 +6485,51 @@ export class GameManager {
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
   }
 
+  private resolveRotateDebugItem(query: string): ItemDef | null {
+    const trimmed = query.trim();
+    if (!trimmed) return this.itemDefsCache.get(BANK_NOTE_TEMPLATE_ITEM_ID) ?? null;
+
+    const numericId = Number(trimmed);
+    if (Number.isInteger(numericId)) return this.itemDefsCache.get(numericId) ?? null;
+
+    const needle = trimmed.toLowerCase();
+    for (const def of this.itemDefsCache.values()) {
+      if (def.name.toLowerCase() === needle) return def;
+    }
+    for (const def of this.itemDefsCache.values()) {
+      if (def.name.toLowerCase().includes(needle)) return def;
+    }
+    return null;
+  }
+
+  private async handleRotateDebugCommand(msg: string): Promise<void> {
+    if (!this.isAdmin) {
+      this.chatPanel?.addSystemMessage('/rotatedebug is admin only.');
+      return;
+    }
+
+    const query = msg.replace(/^\/rotatedebug\b/i, '').trim();
+    const def = this.resolveRotateDebugItem(query);
+    if (!def) {
+      this.chatPanel?.addSystemMessage('Usage: /rotatedebug [item id or name]. Default edits the bank note.');
+      return;
+    }
+
+    const modelPath = resolveItemModelPath(def);
+    if (!modelPath) {
+      this.chatPanel?.addSystemMessage(`${def.name} has no 3D model thumbnail to rotate.`);
+      return;
+    }
+
+    if (!this.rotateDebugPanel) {
+      this.rotateDebugPanel = new RotateDebugPanel();
+      this.rotateDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('evilquest_token') || '');
+      this.rotateDebugPanel.setMessageCallback((message) => this.chatPanel?.addSystemMessage(message));
+    }
+    await this.rotateDebugPanel.show({ def, modelPath });
+    this.chatPanel?.addSystemMessage(`Rotate debug: ${def.name} (${def.id}).`);
+  }
+
   private handleChatCommand(msg: string): boolean {
     if (msg.trim().toLowerCase() === '/fps') {
       this.toggleFpsCounter();
@@ -6491,6 +6538,11 @@ export class GameManager {
 
     if (msg === '/spellbook') {
       this.toggleSpellbook();
+      return true;
+    }
+
+    if (msg.trim().toLowerCase().startsWith('/rotatedebug')) {
+      void this.handleRotateDebugCommand(msg);
       return true;
     }
 
@@ -7653,6 +7705,8 @@ export class GameManager {
     this.mobileAdminButton = null;
     this.adminPanel?.destroy();
     this.adminPanel = null;
+    this.rotateDebugPanel?.destroy();
+    this.rotateDebugPanel = null;
     this.mobilePanelButtons = {};
     this.chatPanel?.destroy();
     this.chatPanel = null;

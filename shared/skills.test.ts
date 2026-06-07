@@ -6,6 +6,14 @@ test('woodcut legacy skill id resolves to Woodcutting', () => {
   expect(SKILL_NAMES.woodcutting).toBe('Woodcutting');
 });
 
+test('survival skill scaffold initializes and resolves by id', () => {
+  const skills = initSkills();
+
+  expect(normalizeSkillId('survival')).toBe('survival');
+  expect(SKILL_NAMES.survival).toBe('Survival');
+  expect(skills.survival).toEqual({ xp: 0, level: 1, currentLevel: 1 });
+});
+
 test('addXp preserves admin-granted levels when saved XP is below the level floor', () => {
   const skills = initSkills();
   skills.evilmagic.level = 15;

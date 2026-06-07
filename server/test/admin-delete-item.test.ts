@@ -15,7 +15,8 @@ function makeWorld(): { world: any; events: GameEventLogInput[]; inventorySends:
   const bankUpdates: number[][] = [];
   const itemDefs = new Map([
     [10, { id: 10, name: 'Coins', stackable: true }],
-    [411, { id: 411, name: 'Green Cape', stackable: false }],
+    [411, { id: 411, name: 'Green Cape', stackable: false, noteable: true, noteId: 20411 }],
+    [20411, { id: 20411, name: 'Green Cape', stackable: true, unnotedId: 411 }],
   ]);
   const world = Object.create(World.prototype) as any;
   world.currentTick = 100;
@@ -127,6 +128,54 @@ describe('admin item deletion', () => {
     expect(player.bank[7]).toEqual({ itemId: 411, quantity: 2 });
     expect(bankUpdates).toEqual([]);
     expect(events).toEqual([]);
+  });
+});
+
+describe('bank notes', () => {
+  test('withdraw-as-note gives a stackable noted variant and keeps bank canonical', () => {
+    const { world, bankUpdates, inventorySends } = makeWorld();
+    const player = new Player('bank_note_withdraw', 12.5, 18.5, fakeWs, 84);
+    player.openInterface = 'bank';
+    player.bankWithdrawMode = 'note';
+    player.bank[2] = { itemId: 411, quantity: 3 };
+    world.players.set(player.id, player);
+
+    world.handleBankWithdraw(player.id, 2, 411, -1);
+
+    expect(player.bank[2]).toBeNull();
+    expect(player.inventory[0]).toEqual({ itemId: 20411, quantity: 3 });
+    expect(inventorySends.count).toBe(1);
+    expect(bankUpdates).toEqual([[2, 0, 0, 0]]);
+  });
+
+  test('depositing notes stores the unnoted item in the bank', () => {
+    const { world, bankUpdates } = makeWorld();
+    const player = new Player('bank_note_deposit', 12.5, 18.5, fakeWs, 85);
+    player.openInterface = 'bank';
+    player.inventory[0] = { itemId: 20411, quantity: 5 };
+    world.players.set(player.id, player);
+
+    world.handleBankDeposit(player.id, 0, 20411, -1);
+
+    expect(player.inventory[0]).toBeNull();
+    expect(player.bank[0]).toEqual({ itemId: 411, quantity: 5 });
+    expect(bankUpdates).toEqual([[0, 411, 0, 5]]);
+  });
+
+  test('using notes at a bank converts as many as inventory space allows', () => {
+    const { world, inventorySends } = makeWorld();
+    const player = new Player('bank_note_unnote', 12.5, 18.5, fakeWs, 86);
+    player.inventory[0] = { itemId: 20411, quantity: 3 };
+    player.inventory[1] = { itemId: 10, quantity: 50 };
+    for (let i = 3; i < player.inventory.length; i++) player.inventory[i] = { itemId: 10, quantity: 1 };
+    world.players.set(player.id, player);
+
+    const handled = world.unnoteInventorySlotAtBank(player, 0, 20411);
+
+    expect(handled).toBe(true);
+    expect(player.inventory[0]).toEqual({ itemId: 20411, quantity: 2 });
+    expect(player.inventory[2]).toEqual({ itemId: 411, quantity: 1 });
+    expect(inventorySends.count).toBe(1);
   });
 });
 

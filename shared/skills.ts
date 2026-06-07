@@ -2,11 +2,13 @@
 
 export type SkillId =
   | 'weaponry' | 'strength' | 'defence' | 'goodmagic' | 'evilmagic' | 'archery' | 'hitpoints'
-  | 'woodcutting' | 'fishing' | 'cooking' | 'mining' | 'smithing' | 'crafting' | 'roguery';
+  | 'woodcutting' | 'fishing' | 'cooking' | 'mining' | 'smithing' | 'crafting' | 'roguery'
+  | 'survival';
 
 export const ALL_SKILLS: SkillId[] = [
   'weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints',
   'woodcutting', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery',
+  'survival',
 ];
 
 export const LEGACY_SKILL_ALIASES: Partial<Record<string, SkillId>> = {
@@ -37,6 +39,7 @@ export const SKILL_NAMES: Record<SkillId, string> = {
   smithing: 'Smithing',
   crafting: 'Crafting',
   roguery: 'Roguery',
+  survival: 'Survival',
 };
 
 export const SKILL_COLORS: Record<SkillId, string> = {
@@ -54,6 +57,7 @@ export const SKILL_COLORS: Record<SkillId, string> = {
   smithing: '#aaa',
   crafting: '#ca4',
   roguery: '#7a2a7a',
+  survival: '#6f8f3a',
 };
 
 export interface SkillState {

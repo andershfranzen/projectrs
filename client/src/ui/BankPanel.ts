@@ -59,6 +59,9 @@ export class BankPanel {
   private suppressClickUntil: number = 0;
   private requestQuantity: QuantityInputRequester | null;
   private adminItemDeletionEnabled: boolean = false;
+  private withdrawMode: 'item' | 'note' = 'item';
+  private withdrawItemButton: HTMLButtonElement | null = null;
+  private withdrawNoteButton: HTMLButtonElement | null = null;
 
   constructor(network: NetworkManager, hooks: { requestQuantity?: QuantityInputRequester } = {}) {
     this.network = network;
@@ -114,6 +117,7 @@ export class BankPanel {
     closeActiveContextMenu();
     this.visible = true;
     this.container.style.display = 'flex';
+    this.sendWithdrawMode();
   }
   hide(notifyServer: boolean): void {
     this.visible = false;
@@ -149,11 +153,17 @@ export class BankPanel {
     const bankCol = document.createElement('div');
     bankCol.className = 'bank-panel-bank-col';
     bankCol.style.cssText = `flex: 1.45 1 0; display: flex; flex-direction: column; min-height: 0; min-width: 0;`;
+    const bankHeader = document.createElement('div');
+    bankHeader.className = 'bank-panel-header';
+    bankHeader.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:5px;';
     const bankLabel = document.createElement('div');
     bankLabel.className = 'bank-panel-label';
     bankLabel.textContent = `Bank (${BANK_SIZE} slots)`;
-    bankLabel.style.cssText = this.labelCss();
-    bankCol.appendChild(bankLabel);
+    bankLabel.style.cssText = `${this.labelCss()}margin-bottom:0;flex:1;min-width:0;`;
+    bankHeader.appendChild(bankLabel);
+    const modeToggle = this.makeWithdrawModeToggle();
+    bankHeader.appendChild(modeToggle);
+    bankCol.appendChild(bankHeader);
 
     const bankGrid = document.createElement('div');
     bankGrid.className = 'bank-panel-bank-grid';
@@ -327,6 +337,57 @@ export class BankPanel {
 
   private labelCss(): string {
     return `color: #f4ded5; font-size: 12px; margin-bottom: 5px; font-weight: bold; text-shadow: ${BANK_TEXT_SHADOW};`;
+  }
+
+  private makeWithdrawModeToggle(): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `
+      display: grid;
+      grid-template-columns: repeat(2, 44px);
+      border: 1px solid ${BANK_BUTTON_BORDER};
+      background: rgba(18, 8, 5, 0.92);
+      box-shadow: inset 0 0 0 1px rgba(255,190,150,0.08);
+    `;
+    this.withdrawItemButton = this.makeModeButton('Item', 'item');
+    this.withdrawNoteButton = this.makeModeButton('Note', 'note');
+    wrap.append(this.withdrawItemButton, this.withdrawNoteButton);
+    this.refreshWithdrawModeButtons();
+    return wrap;
+  }
+
+  private makeModeButton(label: string, mode: 'item' | 'note'): HTMLButtonElement {
+    const button = document.createElement('button');
+    button.textContent = label;
+    button.style.cssText = `
+      border: 0;
+      border-radius: 0;
+      padding: 4px 0;
+      cursor: pointer;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11px;
+      font-weight: bold;
+      color: #f4ded5;
+      text-shadow: ${BANK_TEXT_SHADOW};
+      background: transparent;
+    `;
+    button.onclick = () => this.setWithdrawMode(mode);
+    return button;
+  }
+
+  private setWithdrawMode(mode: 'item' | 'note'): void {
+    if (this.withdrawMode === mode) return;
+    this.withdrawMode = mode;
+    this.refreshWithdrawModeButtons();
+    this.sendWithdrawMode();
+  }
+
+  private refreshWithdrawModeButtons(): void {
+    if (this.withdrawItemButton) this.withdrawItemButton.style.background = this.withdrawMode === 'item' ? BANK_BUTTON_HOVER_BG : 'transparent';
+    if (this.withdrawNoteButton) this.withdrawNoteButton.style.background = this.withdrawMode === 'note' ? BANK_BUTTON_HOVER_BG : 'transparent';
+  }
+
+  private sendWithdrawMode(): void {
+    this.network.sendRaw(encodePacket(ClientOpcode.BANK_SET_WITHDRAW_MODE, this.withdrawMode === 'note' ? 1 : 0));
   }
 
   private actionButtonCss(): string {

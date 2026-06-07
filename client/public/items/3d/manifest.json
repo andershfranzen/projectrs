@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedAt": "2026-06-07T09:13:35.556Z",
+  "generatedAt": "2026-06-07T15:17:10.880Z",
   "ids": [
     1,
     8,
@@ -1839,7 +1839,7 @@
     },
     "440": {
       "file": "/items/3d/440.png",
-      "poseKey": "thumb:v19|/assets/models/BankNote.glb|id:item:440|cam:1.81514,1.60570,0.75000|scale:0.90000",
+      "poseKey": "thumb:v19|/assets/models/BankNote.glb|id:item:440|cam:1.57080,1.65806,0.75000|scale:0.90000",
       "rendererVersion": 19
     },
     "441": {

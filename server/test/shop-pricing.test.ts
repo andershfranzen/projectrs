@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ServerOpcode, type ItemDef, type NpcDef, type ShopDef } from '@projectrs/shared';
+import { generatedBankNoteId, ServerOpcode, type ItemDef, type NpcDef, type ShopDef } from '@projectrs/shared';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { World } from '../src/World';
@@ -102,5 +102,36 @@ describe('shop stock pricing', () => {
     world.tickShopRestocks();
     expect(npc.shopStock.get(1000)).toBe(6);
     expect(npc.shopNextRestockTick.get(1000)).toBe(14);
+  });
+
+  test('selling a noted item pays the unnoted item value', () => {
+    const shop: ShopDef = {
+      name: 'General Store',
+      restockTicks: 2,
+      items: [{ itemId: 1000, price: 100, stock: 10 }],
+    };
+    const def = npcDef(shop);
+    const npc = new Npc(def, 10.5, 10.5, 3, null, null, null, shop);
+    const player = new Player('shop_note_sell_test', 10.5, 11.5, fakeWs, 2);
+    player.openShopNpcId = npc.npcId;
+    player.openShopNpcEntityId = npc.id;
+    const noteId = generatedBankNoteId(1000);
+    player.inventory[0] = { itemId: noteId, quantity: 2 };
+
+    const defs = new Map<number, ItemDef>([
+      [10, item(10, 'Coins', { stackable: true })],
+      [1000, item(1000, 'Knife', { value: 75, noteable: true, noteId })],
+      [noteId, item(noteId, 'Knife Note', {
+        stackable: true,
+        value: 1,
+        unnotedId: 1000,
+      })],
+    ]);
+    const { world } = makeWorld(player, npc, defs);
+
+    world.handlePlayerSellItem(player.id, 0, 2, noteId);
+
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 74 });
+    expect(npc.shopStock.get(1000)).toBe(10);
   });
 });

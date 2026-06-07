@@ -63,6 +63,12 @@ export interface ItemDef {
   name: string;
   description: string;
   stackable: boolean;
+  /** OSRS-style banking: unnoted item can withdraw as a stackable paper note. */
+  noteable?: boolean;
+  /** Item id of the generated/specified noted variant for this unnoted item. */
+  noteId?: number;
+  /** Item id of the canonical item this noted variant represents. */
+  unnotedId?: number;
   equippable: boolean;
   equipSlot?: 'weapon' | 'head' | 'body' | 'legs' | 'shield' | 'neck' | 'ring' | 'hands' | 'feet' | 'cape' | 'ammo';
   /**
@@ -439,6 +445,13 @@ export interface WorldObjectDef {
   harvestTime?: number; // ticks per attempt cycle (default 4)
   depletionChance?: number; // 0-1, chance per success
   respawnTime?: number; // ticks after depletion
+  harvestOptions?: Array<{
+    levelRequired: number;
+    xpReward: number;
+    harvestItemId: number;
+    harvestQuantity?: number;
+    weight?: number;
+  }>;
 
   // Probability-based harvesting (RS-style): keyed by item ID → [low, high]
   // Each attempt rolls statRandom(level, low, high) against 256

@@ -95,6 +95,47 @@ interface BakedManifestEntry {
   rendererVersion: number;
 }
 
+interface BakedManifest {
+  ids: number[];
+  entries: Record<string, BakedManifestEntry>;
+}
+
+async function loadExistingManifest(): Promise<BakedManifest> {
+  try {
+    const res = await fetch('/items/3d/manifest.json', { cache: 'no-store' });
+    if (!res.ok) return { ids: [], entries: {} };
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      return {
+        ids: data.filter((id): id is number => Number.isInteger(id) && id > 0),
+        entries: {},
+      };
+    }
+    if (!data || typeof data !== 'object') return { ids: [], entries: {} };
+    const entries: Record<string, BakedManifestEntry> = {};
+    const rawEntries = (data as { entries?: unknown }).entries;
+    if (rawEntries && typeof rawEntries === 'object') {
+      for (const [key, raw] of Object.entries(rawEntries)) {
+        if (!raw || typeof raw !== 'object') continue;
+        const entry = raw as Partial<BakedManifestEntry>;
+        if (typeof entry.file !== 'string' || typeof entry.poseKey !== 'string') continue;
+        entries[key] = {
+          file: entry.file,
+          poseKey: entry.poseKey,
+          rendererVersion: typeof entry.rendererVersion === 'number' ? entry.rendererVersion : THUMBNAIL_RENDERER_VERSION,
+        };
+      }
+    }
+    const rawIds = (data as { ids?: unknown }).ids;
+    const ids = Array.isArray(rawIds)
+      ? rawIds.filter((id): id is number => typeof id === 'number' && Number.isInteger(id) && id > 0)
+      : Object.keys(entries).map(Number).filter((id) => Number.isInteger(id) && id > 0);
+    return { ids, entries };
+  } catch {
+    return { ids: [], entries: {} };
+  }
+}
+
 async function postManifest(
   ids: number[],
   entries: Record<string, BakedManifestEntry>,
@@ -112,6 +153,8 @@ async function postManifest(
 export async function runBake(): Promise<void> {
   const ui = mountBakeUI();
   ui.appendLog('Loading items.json...');
+  const itemParam = new URLSearchParams(window.location.search).get('item');
+  const targetItemId = itemParam ? Number(itemParam) : null;
 
   let defs: ItemDef[];
   try {
@@ -129,14 +172,26 @@ export async function runBake(): Promise<void> {
   }
 
   setThumbnailItemCatalog(defs);
-  const targets = buildTargets(defs);
+  let targets = buildTargets(defs);
+  if (targetItemId !== null) {
+    if (!Number.isInteger(targetItemId) || targetItemId <= 0) {
+      ui.setStatus('Invalid item id.');
+      ui.appendLog(`Invalid item id: ${itemParam}`, '#f55');
+      return;
+    }
+    targets = targets.filter((target) => target.id === targetItemId);
+  }
   if (targets.length === 0) {
-    ui.setStatus('No items with GLB models. Nothing to bake.');
+    ui.setStatus(targetItemId !== null ? `No GLB thumbnail target for item ${targetItemId}.` : 'No items with GLB models. Nothing to bake.');
     return;
   }
 
-  ui.appendLog(`Found ${targets.length} items with GLB models.`);
-  ui.setStatus(`Rendering ${targets.length} thumbnails (serial)...`);
+  ui.appendLog(targetItemId !== null
+    ? `Baking item ${targetItemId}.`
+    : `Found ${targets.length} items with GLB models.`);
+  ui.setStatus(targetItemId !== null
+    ? `Rendering item ${targetItemId}...`
+    : `Rendering ${targets.length} thumbnails (serial)...`);
   ui.setProgress(0, targets.length);
 
   const baked: number[] = [];
@@ -176,13 +231,22 @@ export async function runBake(): Promise<void> {
   }
 
   ui.setStatus('Writing manifest...');
-  const m = await postManifest(baked, manifestEntries);
+  let manifestIds = baked;
+  let finalManifestEntries = manifestEntries;
+  if (targetItemId !== null) {
+    const existing = await loadExistingManifest();
+    finalManifestEntries = { ...existing.entries, ...manifestEntries };
+    manifestIds = Array.from(new Set([...existing.ids, ...baked])).sort((a, b) => a - b);
+  }
+  const m = await postManifest(manifestIds, finalManifestEntries);
   if (!m.ok) {
     ui.appendLog(`Manifest POST failed: ${m.error}`, '#f55');
     ui.setStatus('Done (manifest failed)');
     return;
   }
-  ui.appendLog(`Manifest written with ${baked.length} ids.`, '#7c7');
+  ui.appendLog(targetItemId !== null
+    ? `Manifest updated for item ${targetItemId}.`
+    : `Manifest written with ${baked.length} ids.`, '#7c7');
   ui.setStatus(
     failed === 0
       ? `Done. Baked ${baked.length}/${targets.length} thumbnails.`

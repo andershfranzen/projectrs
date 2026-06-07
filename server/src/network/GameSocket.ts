@@ -312,6 +312,7 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
     case ClientOpcode.BANK_WITHDRAW:
     case ClientOpcode.BANK_DELETE:
     case ClientOpcode.BANK_MOVE_ITEM:
+    case ClientOpcode.BANK_SET_WITHDRAW_MODE:
     case ClientOpcode.BANK_CLOSE:
     case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
@@ -364,6 +365,7 @@ export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
     case ClientOpcode.BANK_WITHDRAW:
     case ClientOpcode.BANK_DELETE:
     case ClientOpcode.BANK_MOVE_ITEM:
+    case ClientOpcode.BANK_SET_WITHDRAW_MODE:
     case ClientOpcode.BANK_CLOSE:
     case ClientOpcode.APPEARANCE_CLOSE:
     case ClientOpcode.TRADE_REQUEST:
@@ -722,6 +724,12 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (player.bank[values[0]]?.itemId !== values[2]) return invalid('stale-bank-move-slot');
       return OK_PACKET;
     }
+
+    case ClientOpcode.BANK_SET_WITHDRAW_MODE:
+      if (!hasValues(values, 1)) return invalid('missing-bank-withdraw-mode');
+      if (player.openInterface !== 'bank') return invalid('bank-not-open');
+      if (values[0] !== 0 && values[0] !== 1) return invalid('bad-bank-withdraw-mode');
+      return OK_PACKET;
 
     case ClientOpcode.BANK_CLOSE:
       return OK_PACKET;
@@ -1436,6 +1444,11 @@ function handleDecryptedGameSocketMessage(
       const toSlot = values[1];
       const expectedItemId = values[2];
       world.handleBankMoveItem(playerId, fromSlot, toSlot, expectedItemId);
+      break;
+    }
+    case ClientOpcode.BANK_SET_WITHDRAW_MODE: {
+      if (!hasValues(values, 1)) return;
+      world.handleBankSetWithdrawMode(playerId, values[0] === 1);
       break;
     }
     case ClientOpcode.BANK_CLOSE: {

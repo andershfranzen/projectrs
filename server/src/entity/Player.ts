@@ -154,6 +154,8 @@ export class Player extends Entity {
   openShopNpcId: number | null = null;
   /** Spawned NPC entity id for the currently open shop, or null. */
   openShopNpcEntityId: number | null = null;
+  /** OSRS-style bank withdraw mode. Notes are inventory-only; bank stores canonical items. */
+  bankWithdrawMode: 'item' | 'note' = 'item';
   /** Currently open dialogue, or null. Tracks which NPC entity the player is
    *  talking to, which server-issued session is active, which node they're
    *  parked on, AND the indices of the options the client was actually shown

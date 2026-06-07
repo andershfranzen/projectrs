@@ -1,4 +1,4 @@
-import { highQualityBaseItemName, resolveEquipmentModelPath, resolveGearFitSourceItemId, type ItemDef } from '@projectrs/shared';
+import { BANK_NOTE_TEMPLATE_ITEM_ID, highQualityBaseItemName, isNotedItem, resolveEquipmentModelPath, resolveGearFitSourceItemId, type ItemDef } from '@projectrs/shared';
 import { METAL_TIER_THUMBNAIL_COLOR, TOOL_TIER_METAL_COLOR } from '../data/EquipmentConfig';
 import { getThumbnail, getThumbnailPoseKey, type ThumbnailCamera, type ThumbnailOptions } from './ThumbnailRenderer';
 
@@ -533,7 +533,7 @@ export function buildItemIconHtml(def: ItemDef, opts: IconStyleOpts = {}): strin
     ? `<img src="${syncUrl}"${dragAttr} style="${buildImgStyle(opts, isSmoothUrl(syncUrl))}" />`
     : buildPlaceholderHtml(opts.size ?? 28);
   const token = `${def.id}-${++_iconTokenSeq}`;
-  return `<span class="item-icon" data-item-id="${def.id}" data-item-quantity="${quantity}" data-icon-token="${token}">${inner}</span>`;
+  return `<span class="item-icon" data-item-id="${def.id}" data-item-quantity="${quantity}" data-icon-size="${opts.size ?? 28}" data-icon-token="${token}">${inner}</span>`;
 }
 
 /**
@@ -550,6 +550,10 @@ export function upgradeItemIcons(
   for (const wrapper of wrappers) {
     const itemId = Number(wrapper.dataset.itemId);
     const quantity = normalizeStackQuantity(Number(wrapper.dataset.itemQuantity ?? (opts as RenderSlotOpts).quantity ?? 1));
+    const size = Number(wrapper.dataset.iconSize);
+    const localOpts = Number.isFinite(size) && size > 0
+      ? { ...opts, size, extraStyle: size !== opts.size ? '' : opts.extraStyle }
+      : opts;
     const token = wrapper.dataset.iconToken;
     const def = defs.get(itemId);
     if (!def || !token) continue;
@@ -559,8 +563,8 @@ export function upgradeItemIcons(
       if (wrapper.dataset.iconToken !== token) return;
       const existing = wrapper.querySelector('img');
       if (existing && existing.getAttribute('src') === url) return;
-      const dragAttr = opts.draggable === false ? ' draggable="false"' : '';
-      wrapper.innerHTML = `<img src="${url}"${dragAttr} style="${buildImgStyle(opts, isSmoothUrl(url))}" />`;
+      const dragAttr = localOpts.draggable === false ? ' draggable="false"' : '';
+      wrapper.innerHTML = `<img src="${url}"${dragAttr} style="${buildImgStyle(localOpts, isSmoothUrl(url))}" />`;
     });
   }
 }
@@ -597,7 +601,7 @@ export function renderItemSlot(
     el.innerHTML = `<div style="${phStyle}"></div>`;
     return;
   }
-  const iconHtml = buildItemIconHtml(def, opts);
+  const iconHtml = buildSlotIconHtml(def, defs, opts);
   const quantity = opts.quantity ?? 1;
   const showQuantity = quantity > 1 || (def.id === COINS_ITEM_ID && opts.quantity !== undefined);
   const qtyHtml = showQuantity
@@ -605,4 +609,29 @@ export function renderItemSlot(
     : '';
   el.innerHTML = `${iconHtml}${qtyHtml}`;
   upgradeItemIcons(el, defs, opts);
+}
+
+function buildSlotIconHtml(def: ItemDef, defs: Map<number, ItemDef>, opts: RenderSlotOpts): string {
+  if (!isNotedItem(def)) return buildItemIconHtml(def, opts);
+  const unnoted = defs.get(def.unnotedId);
+  if (!unnoted) return buildItemIconHtml(def, opts);
+
+  const size = opts.size ?? 28;
+  const baseDef = defs.get(BANK_NOTE_TEMPLATE_ITEM_ID) ?? def;
+  const baseOpts: RenderSlotOpts = { ...opts, quantity: 1 };
+  const baseHtml = buildItemIconHtml(baseDef, baseOpts);
+  const overlaySize = Math.max(14, Math.round(size * 0.58));
+  const overlayOpts: RenderSlotOpts = {
+    ...opts,
+    size: overlaySize,
+    quantity: 1,
+    extraStyle: `${opts.extraStyle ?? ''}width:${overlaySize}px;height:${overlaySize}px;max-width:${overlaySize}px;max-height:${overlaySize}px;`,
+  };
+  const overlayHtml = buildItemIconHtml(unnoted, overlayOpts);
+  return `
+    <span class="item-note-icon" style="position:relative;display:inline-flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;">
+      <span style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;">${baseHtml}</span>
+      <span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-43%);display:flex;align-items:center;justify-content:center;filter:drop-shadow(1px 1px 0 rgba(0,0,0,0.75));">${overlayHtml}</span>
+    </span>
+  `;
 }

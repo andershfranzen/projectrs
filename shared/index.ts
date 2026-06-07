@@ -24,3 +24,4 @@ export * from './png';
 export * from './projectile';
 export * from './movementPath';
 export * from './targetPathing';
+export * from './bankNotes';

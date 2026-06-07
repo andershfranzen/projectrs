@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, canonicalBankItemId, noteIdForItem, isNotedItem, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -69,6 +69,12 @@ type ItemProductionAction =
   | { kind: 'itemOnObject'; recipe: ItemOnObjectRecipe; objectEntityId: number; remaining: number | null; nextTick: number }
   | { kind: 'waterSource'; objectEntityId: number; nextTick: number }
   | { kind: 'objectRecipe'; objectEntityId: number; recipeIndex: number; remaining: number | null; nextTick: number; intervalTicks: number };
+type HarvestYield = {
+  itemId: number;
+  quantity: number;
+  xpReward: number;
+  levelRequired: number;
+};
 type PendingSpellImpact = {
   impactTick: number;
   attackerId: number;
@@ -4638,9 +4644,11 @@ export class World {
 
     const itemDef = this.data.getItem(invItem.itemId);
     if (!itemDef) return;
+    const priceItemId = isNotedItem(itemDef) ? itemDef.unnotedId : invItem.itemId;
+    const priceItemDef = this.data.getItem(priceItemId) ?? itemDef;
 
     // Sell price = half of value (floor)
-    const sellPrice = Math.max(1, Math.floor((itemDef.value || 1) / 2));
+    const sellPrice = Math.max(1, Math.floor((priceItemDef.value || 1) / 2));
     const actualQty = Math.min(quantity, invItem.quantity);
     const totalGold = sellPrice * actualQty;
 
@@ -4661,12 +4669,12 @@ export class World {
     }
 
     this.interruptPlayerAction(playerId, player, true);
-    const shopItem = shop.items.find(s => s.itemId === invItem.itemId);
+    const shopItem = shop.items.find(s => s.itemId === priceItemId);
     if (shopItem) {
       const currentStock = this.shopItemCurrentStock(npc, shopItem);
       const nextStock = Math.min(shopItem.stock, currentStock + actualQty);
       if (nextStock !== currentStock) {
-        npc.shopStock.set(invItem.itemId, nextStock);
+        npc.shopStock.set(priceItemId, nextStock);
         this.scheduleShopRestock(npc, shopItem);
       }
     }
@@ -4900,7 +4908,7 @@ export class World {
     this.cancelItemProduction(playerId);
 
     if (player.isBusy(this.currentTick)) {
-      const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop'));
+      const isQueuedObjectAction = obj.def.category === 'door' || obj.def.category === 'ladder' || (this.isHarvestableObjectDef(obj.def) && (obj.def.skill || obj.def.category === 'crop'));
       if (isQueuedObjectAction) {
         player.pendingInteraction = { objectEntityId, actionIndex, swingSign: 0, expectedDoorOpen, recipeQuantity };
         this.markQueuedAction(player);
@@ -5079,7 +5087,7 @@ export class World {
       return;
     }
 
-    if (obj.def.harvestItemId && (obj.def.skill || obj.def.category === 'crop')) {
+    if (this.isHarvestableObjectDef(obj.def) && (obj.def.skill || obj.def.category === 'crop')) {
       this.handleHarvestInteraction(playerId, player, obj, action);
       return;
     }
@@ -5320,6 +5328,76 @@ export class World {
     this.savePlayerState(player);
   }
 
+  private isHarvestableObjectDef(def: WorldObjectDef): boolean {
+    return def.harvestItemId !== undefined || (def.harvestOptions?.length ?? 0) > 0;
+  }
+
+  private minimumHarvestLevel(def: WorldObjectDef): number {
+    const options = def.harvestOptions;
+    if (options?.length) {
+      return options.reduce((min, option) => Math.min(min, option.levelRequired), Number.POSITIVE_INFINITY);
+    }
+    return def.levelRequired ?? 1;
+  }
+
+  private hasUnlockedHarvestYield(def: WorldObjectDef, playerLevel: number): boolean {
+    const options = def.harvestOptions;
+    if (options?.length) return options.some(option => playerLevel >= option.levelRequired);
+    return def.harvestItemId !== undefined && playerLevel >= (def.levelRequired ?? 1);
+  }
+
+  private harvestOptionEffectiveWeight(
+    option: NonNullable<WorldObjectDef['harvestOptions']>[number],
+    playerLevel: number,
+  ): number {
+    const baseWeight = Math.max(0, option.weight ?? 1);
+    if (baseWeight <= 0) return 0;
+    const levelsSinceUnlock = Math.max(0, playerLevel - option.levelRequired);
+    const maturity = 0.35 + Math.min(1, levelsSinceUnlock / 15) * 0.65;
+    const overleveled = Math.max(0, levelsSinceUnlock - 15);
+    const outlevelDecay = 1 + overleveled / 10;
+    return baseWeight * maturity / outlevelDecay;
+  }
+
+  private resolveHarvestYield(def: WorldObjectDef, playerLevel: number, rng: () => number = Math.random): HarvestYield | null {
+    const options = def.harvestOptions;
+    if (options?.length) {
+      const unlocked = options.filter(option => playerLevel >= option.levelRequired);
+      if (unlocked.length === 0) return null;
+      let totalWeight = 0;
+      for (const option of unlocked) {
+        totalWeight += this.harvestOptionEffectiveWeight(option, playerLevel);
+      }
+      const useEqualWeights = totalWeight <= 0;
+      if (useEqualWeights) totalWeight = unlocked.length;
+      let roll = rng() * totalWeight;
+      let selected = unlocked[unlocked.length - 1];
+      for (const option of unlocked) {
+        const weight = useEqualWeights ? 1 : this.harvestOptionEffectiveWeight(option, playerLevel);
+        roll -= weight;
+        if (roll < 0) {
+          selected = option;
+          break;
+        }
+      }
+      return {
+        itemId: selected.harvestItemId,
+        quantity: selected.harvestQuantity ?? def.harvestQuantity ?? 1,
+        xpReward: selected.xpReward,
+        levelRequired: selected.levelRequired,
+      };
+    }
+    if (def.harvestItemId === undefined) return null;
+    const levelRequired = def.levelRequired ?? 1;
+    if (playerLevel < levelRequired) return null;
+    return {
+      itemId: def.harvestItemId,
+      quantity: def.harvestQuantity ?? 1,
+      xpReward: def.xpReward ?? 0,
+      levelRequired,
+    };
+  }
+
   private handleHarvestInteraction(playerId: number, player: Player, obj: WorldObject, action: string): void {
     // Crops are one-shot picks: no animation, no skilling tick, single roll
     // with a 1-tick cooldown so each click yields at most one item.
@@ -5344,9 +5422,8 @@ export class World {
 
     const skillId = obj.def.skill as SkillId;
     const playerLevel = player.skills[skillId]?.level ?? 1;
-    const levelRequired = obj.def.levelRequired ?? 1;
-    if (playerLevel < levelRequired) {
-      this.sendChatSystem(player, `You need level ${levelRequired} ${SKILL_NAMES[skillId] ?? 'skill'} to do that.`);
+    if (!this.hasUnlockedHarvestYield(obj.def, playerLevel)) {
+      this.sendChatSystem(player, `You need level ${this.minimumHarvestLevel(obj.def)} ${SKILL_NAMES[skillId] ?? 'skill'} to do that.`);
       return;
     }
 
@@ -6091,6 +6168,42 @@ export class World {
     return player.inventory.reduce((total, slot) => total + (slot?.itemId === itemId ? slot.quantity : 0), 0);
   }
 
+  private unnoteInventorySlotAtBank(player: Player, invSlot: number, itemId: number): boolean {
+    const slot = player.inventory[invSlot];
+    const noteDef = this.data.getItem(itemId);
+    if (!slot || slot.itemId !== itemId || !isNotedItem(noteDef)) return false;
+    const unnotedDef = this.data.getItem(noteDef.unnotedId);
+    if (!unnotedDef) return false;
+
+    let toUnnote = slot.quantity;
+    if (unnotedDef.stackable !== true) {
+      let freeSlots = 0;
+      for (const s of player.inventory) if (s === null) freeSlots++;
+      toUnnote = slot.quantity <= freeSlots + 1 ? slot.quantity : freeSlots;
+    }
+    if (toUnnote <= 0) {
+      this.sendChatSystem(player, 'Not enough inventory space.');
+      return true;
+    }
+
+    const removed = player.removeItem(invSlot, toUnnote);
+    if (removed.completed !== toUnnote) {
+      player.revertRemove(removed);
+      return true;
+    }
+    const added = player.addItem(noteDef.unnotedId, toUnnote, this.data.itemDefs, { assureFullInsertion: true });
+    if (added.completed !== toUnnote) {
+      player.revertAdd(added);
+      player.revertRemove(removed);
+      this.sendChatSystem(player, 'Not enough inventory space.');
+      return true;
+    }
+
+    player.setDelay(this.currentTick, 1);
+    this.sendInventory(player);
+    return true;
+  }
+
   handlePlayerUseItemOnObject(
     playerId: number,
     invSlot: number,
@@ -6118,6 +6231,7 @@ export class World {
       return;
     }
     player.botStats?.recordActionSignature('useItemObject', obj.defId, player.position.x, player.position.y, itemId);
+    if (obj.def.category === 'bank' && this.unnoteInventorySlotAtBank(player, invSlot, itemId)) return;
     if (obj.def.category === 'door' && obj.doorLocked && !obj.doorOpen && itemId === obj.doorKeyItemId) {
       if (!this.canOpenLockedDoor(player, obj)) return;
       this.toggleDoor(obj, this.computeSwingSign(player, obj));
@@ -6186,6 +6300,7 @@ export class World {
       return;
     }
     player.botStats?.recordActionSignature('useItemNpc', npc.npcId, player.position.x, player.position.y, itemId);
+    if (npc.hasBank && this.unnoteInventorySlotAtBank(player, invSlot, itemId)) return;
     this.sendChatSystem(player, USE_NO_RECIPE_REPLY);
   }
 
@@ -6689,6 +6804,13 @@ export class World {
     this.sendToPlayer(player, ServerOpcode.BANK_CLOSE, 0);
   }
 
+  handleBankSetWithdrawMode(playerId: number, noteMode: boolean): void {
+    const player = this.players.get(playerId);
+    if (!player) return;
+    if (player.openInterface !== 'bank') return;
+    player.bankWithdrawMode = noteMode ? 'note' : 'item';
+  }
+
   /** Send the full bank state to the client. Sparse — only filled slots. */
   private sendBankFull(player: Player): void {
     const filled: Array<{ slot: number; itemId: number; quantity: number }> = [];
@@ -6741,6 +6863,7 @@ export class World {
     // Resolve "all": for stackables, the whole slot. For non-stackables,
     // deposit every matching slot into one bank stack.
     const itemId = invSlot.itemId;
+    const bankItemId = canonicalBankItemId(itemId, this.data.itemDefs);
     const itemDef = this.data.getItem(itemId);
     if (!itemDef) return;
     const isStackable = itemDef.stackable === true;
@@ -6758,7 +6881,7 @@ export class World {
     }
     if (toDeposit <= 0) return;
 
-    const bankSlot = this.findBankSlot(player, itemId);
+    const bankSlot = this.findBankSlot(player, bankItemId);
     if (bankSlot < 0) {
       this.sendChatSystem(player, 'Your bank is full.');
       return;
@@ -6776,7 +6899,7 @@ export class World {
     if (isStackable) {
       const removed = player.removeItem(slotIndex, toDeposit);
       if (removed.completed !== toDeposit) { player.revertRemove(removed); return; }
-      this.bankAdd(player, bankSlot, itemId, toDeposit);
+      this.bankAdd(player, bankSlot, bankItemId, toDeposit);
     } else {
       // Non-stackable sweep — remove from each matching slot until quota met.
       let remaining = toDeposit;
@@ -6793,7 +6916,7 @@ export class World {
         reverts.push(r.removed[0]);
         remaining--;
       }
-      this.bankAdd(player, bankSlot, itemId, toDeposit);
+      this.bankAdd(player, bankSlot, bankItemId, toDeposit);
     }
 
     player.setDelay(this.currentTick, 1);
@@ -6823,7 +6946,11 @@ export class World {
     const itemId = slot.itemId;
     const itemDef = this.data.getItem(itemId);
     if (!itemDef) return;
-    const isStackable = itemDef.stackable === true;
+    const notedItemId = player.bankWithdrawMode === 'note' ? noteIdForItem(itemId, this.data.itemDefs) : null;
+    const withdrawItemId = notedItemId ?? itemId;
+    const withdrawDef = this.data.getItem(withdrawItemId);
+    if (!withdrawDef) return;
+    const isStackable = withdrawDef.stackable === true;
 
     const wantAll = quantity === -1;
     let toWithdraw = wantAll ? slot.quantity : Math.min(quantity, slot.quantity);
@@ -6831,7 +6958,7 @@ export class World {
 
     // Inventory capacity: stackable needs 0 or 1 slot; non-stackable needs N.
     if (isStackable) {
-      if (!player.canFit(itemId, toWithdraw, this.data.itemDefs)) {
+      if (!player.canFit(withdrawItemId, toWithdraw, this.data.itemDefs)) {
         this.sendChatSystem(player, 'Not enough inventory space.');
         return;
       }
@@ -6850,7 +6977,7 @@ export class World {
     slot.quantity -= toWithdraw;
     if (slot.quantity <= 0) player.bank[bankSlot] = null;
 
-    const addResult = player.addItem(itemId, toWithdraw, this.data.itemDefs, { assureFullInsertion: !!isStackable });
+    const addResult = player.addItem(withdrawItemId, toWithdraw, this.data.itemDefs, { assureFullInsertion: !!isStackable });
     if (addResult.completed !== toWithdraw) {
       // Add what wasn't placed back in the bank.
       const shortfall = toWithdraw - addResult.completed;
@@ -9473,9 +9600,15 @@ export class World {
           }
         }
 
-        const itemId = obj.def.harvestItemId!;
-        const qty = obj.def.harvestQuantity ?? 1;
-        const xpReward = obj.def.xpReward ?? 0;
+        const harvestYield = this.resolveHarvestYield(obj.def, player.skills[skillId]?.level ?? 1);
+        if (!harvestYield) {
+          this.sendChatSystem(player, `You need level ${this.minimumHarvestLevel(obj.def)} ${SKILL_NAMES[skillId] ?? 'skill'} to do that.`);
+          this.stopPlayerSkilling(playerId, player);
+          continue;
+        }
+        const itemId = harvestYield.itemId;
+        const qty = harvestYield.quantity;
+        const xpReward = harvestYield.xpReward;
 
         const isChest = obj.def.category === 'chest';
         const foundForChest: Array<{ itemId: number; quantity: number }> = [];

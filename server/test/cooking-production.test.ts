@@ -16,6 +16,34 @@ const fakeWs = {
   send() {},
 } as any;
 
+const FISH_TIERS = [
+  { level: 1, rawItemId: 500, name: 'Minnow', xp: 20, healAmount: 3 },
+  { level: 5, rawItemId: 501, name: 'Crayfish', xp: 30, healAmount: 3 },
+  { level: 10, rawItemId: 502, name: 'Bluegill', xp: 45, healAmount: 4 },
+  { level: 15, rawItemId: 503, name: 'Perch', xp: 60, healAmount: 5 },
+  { level: 20, rawItemId: 504, name: 'Roach', xp: 75, healAmount: 6 },
+  { level: 25, rawItemId: 505, name: 'Trout', xp: 90, healAmount: 7 },
+  { level: 30, rawItemId: 506, name: 'Carp', xp: 110, healAmount: 8 },
+  { level: 35, rawItemId: 507, name: 'Salmon', xp: 130, healAmount: 9 },
+  { level: 40, rawItemId: 508, name: 'Bass', xp: 150, healAmount: 10 },
+  { level: 45, rawItemId: 509, name: 'Mackerel', xp: 170, healAmount: 11 },
+  { level: 50, rawItemId: 510, name: 'Tuna', xp: 195, healAmount: 12 },
+  { level: 55, rawItemId: 511, name: 'King Crab', xp: 220, healAmount: 13 },
+  { level: 60, rawItemId: 512, name: 'Catfish', xp: 245, healAmount: 14 },
+  { level: 65, rawItemId: 513, name: 'Snapper', xp: 275, healAmount: 15 },
+  { level: 70, rawItemId: 514, name: 'Sturgeon', xp: 305, healAmount: 16 },
+  { level: 75, rawItemId: 515, name: 'Swordfish', xp: 335, healAmount: 17 },
+  { level: 80, rawItemId: 516, name: 'Reef Shark', xp: 370, healAmount: 18 },
+  { level: 85, rawItemId: 517, name: 'Halibut', xp: 405, healAmount: 19 },
+  { level: 90, rawItemId: 518, name: 'Hammerhead Shark', xp: 440, healAmount: 20 },
+  { level: 95, rawItemId: 519, name: 'Marlin', xp: 480, healAmount: 21 },
+  { level: 100, rawItemId: 520, name: 'Thresher Shark', xp: 520, healAmount: 22 },
+  { level: 105, rawItemId: 521, name: 'Mako Shark', xp: 560, healAmount: 23 },
+  { level: 110, rawItemId: 522, name: 'Tiger Shark', xp: 605, healAmount: 24 },
+  { level: 115, rawItemId: 523, name: 'Oarfish', xp: 650, healAmount: 25 },
+  { level: 120, rawItemId: 524, name: 'Great White Shark', xp: 700, healAmount: 26 },
+] as const;
+
 function makePlayer(): Player {
   return new Player('cook_test', 9.5, 10.5, fakeWs, 1);
 }
@@ -100,6 +128,50 @@ describe('cooking range production', () => {
     expect(sinew?.name).toBe('Low Quality Sinew');
     expect(beefRecipes.map((recipe) => recipe.outputItemId)).toEqual([15, 269]);
     expect(beefRecipes.map((recipe) => recipe.xpReward)).toEqual([30, 5]);
+  });
+
+  test('actual cooking range data can cook every fish tier', () => {
+    const dataDir = join(import.meta.dir, '..', 'data');
+    const items = JSON.parse(readFileSync(join(dataDir, 'items.json'), 'utf8')) as Array<{
+      id: number;
+      name: string;
+      healAmount?: number;
+      value: number;
+    }>;
+    const objects = JSON.parse(readFileSync(join(dataDir, 'objects.json'), 'utf8')) as Array<{
+      id: number;
+      recipes?: Array<{
+        inputItemId: number;
+        outputItemId: number;
+        skill: string;
+        levelRequired: number;
+        xpReward: number;
+      }>;
+    }>;
+
+    const itemsById = new Map(items.map(item => [item.id, item]));
+    const range = objects.find((object) => object.id === COOKING_RANGE_OBJECT_DEF_ID);
+    const recipesByInputId = new Map((range?.recipes ?? []).map(recipe => [recipe.inputItemId, recipe]));
+
+    for (const tier of FISH_TIERS) {
+      const cookedItemId = tier.rawItemId + 25;
+      const raw = itemsById.get(tier.rawItemId);
+      const cooked = itemsById.get(cookedItemId);
+      const recipe = recipesByInputId.get(tier.rawItemId);
+
+      expect(raw?.name).toBe(`Raw ${tier.name}`);
+      expect(cooked).toMatchObject({
+        name: tier.name,
+        healAmount: tier.healAmount,
+      });
+      expect(cooked!.value).toBeGreaterThan(raw!.value);
+      expect(recipe).toMatchObject({
+        outputItemId: cookedItemId,
+        skill: 'cooking',
+        levelRequired: tier.level,
+        xpReward: tier.xp,
+      });
+    }
   });
 
   test('actual spinning wheel data spins sinew into bowstring', () => {
