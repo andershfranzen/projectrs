@@ -599,7 +599,7 @@ async function saveJsonWithBackup(opts: {
 }
 
 const EQUIP_SLOTS = new Set(['weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape', 'ammo']);
-const EQUIP_SKILLS = new Set(['weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
+const EQUIP_SKILLS = new Set(['weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcutting', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']);
 const WEAPON_STYLES = new Set(['stab', 'slash', 'crush', 'bow', 'crossbow']);
 const TOOL_TYPES = new Set(['axe', 'pickaxe', 'hammer']);
 const HEAD_RENDER_MODE_SET: ReadonlySet<string> = new Set(HEAD_RENDER_MODES);

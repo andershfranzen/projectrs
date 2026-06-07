@@ -10275,7 +10275,7 @@ function applyToolAtTile(tile, eventLike = null) {
 
     const ALL_QUEST_SKILLS = [
       'weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints',
-      'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery',
+      'woodcutting', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery',
     ]
 
     let quests = []

@@ -15,7 +15,7 @@
       100,
       30
     ],
-    "skill": "woodcut",
+    "skill": "woodcutting",
     "levelRequired": 1,
     "xpReward": 25,
     "harvestItemId": 23,
@@ -63,7 +63,7 @@
       80,
       20
     ],
-    "skill": "woodcut",
+    "skill": "woodcutting",
     "levelRequired": 15,
     "xpReward": 38,
     "harvestItemId": 24,
@@ -446,7 +446,7 @@
       110,
       40
     ],
-    "skill": "woodcut",
+    "skill": "woodcutting",
     "levelRequired": 30,
     "xpReward": 68,
     "harvestItemId": 235,
@@ -494,7 +494,7 @@
       60,
       40
     ],
-    "skill": "woodcut",
+    "skill": "woodcutting",
     "levelRequired": 1,
     "xpReward": 25,
     "harvestItemId": 23,
@@ -654,7 +654,7 @@
       70,
       20
     ],
-    "skill": "woodcut",
+    "skill": "woodcutting",
     "levelRequired": 40,
     "xpReward": 100,
     "harvestItemId": 39,
@@ -702,7 +702,7 @@
       95,
       35
     ],
-    "skill": "woodcut",
+    "skill": "woodcutting",
     "levelRequired": 60,
     "xpReward": 175,
     "harvestItemId": 40,

@@ -1,5 +1,10 @@
 import { expect, test } from 'bun:test';
-import { addXp, initSkills, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, xpForLevel } from './skills';
+import { addXp, initSkills, levelFromXp, MAX_SKILL_LEVEL, MAX_SKILL_XP, normalizeSkillId, SKILL_NAMES, xpForLevel } from './skills';
+
+test('woodcut legacy skill id resolves to Woodcutting', () => {
+  expect(normalizeSkillId('woodcut')).toBe('woodcutting');
+  expect(SKILL_NAMES.woodcutting).toBe('Woodcutting');
+});
 
 test('addXp preserves admin-granted levels when saved XP is below the level floor', () => {
   const skills = initSkills();

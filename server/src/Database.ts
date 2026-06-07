@@ -1367,6 +1367,16 @@ export class GameDatabase {
       CREATE INDEX IF NOT EXISTS idx_hiscore_snapshots_category_bucket
         ON hiscore_snapshots(category, bucket_start);
     `);
+    this.db.exec(`
+      INSERT INTO hiscore_snapshots (account_id, category, bucket_start, level, xp)
+      SELECT account_id, 'woodcutting', bucket_start, level, xp
+      FROM hiscore_snapshots
+      WHERE category = 'woodcut'
+      ON CONFLICT(account_id, category, bucket_start) DO UPDATE SET
+        level = MAX(hiscore_snapshots.level, excluded.level),
+        xp = MAX(hiscore_snapshots.xp, excluded.xp);
+      DELETE FROM hiscore_snapshots WHERE category = 'woodcut';
+    `);
 
     // Per-player, per-mob kill tally. One row per (account, npc def id),
     // incremented by a single atomic UPSERT on the NPC-death hot path

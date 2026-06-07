@@ -30,7 +30,7 @@ HISCORE_CATEGORY_CHOICES = [
     app_commands.Choice(name="Archery", value="archery"),
     app_commands.Choice(name="Good Magic", value="goodmagic"),
     app_commands.Choice(name="Evil Magic", value="evilmagic"),
-    app_commands.Choice(name="Woodcut", value="woodcut"),
+    app_commands.Choice(name="Woodcutting", value="woodcutting"),
     app_commands.Choice(name="Fishing", value="fishing"),
     app_commands.Choice(name="Cooking", value="cooking"),
     app_commands.Choice(name="Mining", value="mining"),

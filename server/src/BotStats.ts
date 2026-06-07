@@ -83,7 +83,7 @@ const XP_PER_HOUR_CEILING: Record<SkillId, number> = {
   archery: 120000,
   goodmagic: 100000,
   evilmagic: 100000,
-  woodcut: 80000,
+  woodcutting: 80000,
   fishing: 80000,
   cooking: 100000,
   mining: 80000,

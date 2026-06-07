@@ -9,7 +9,7 @@ import {
 } from '@projectrs/shared'
 
 const EQUIP_SLOTS = ['', 'weapon', 'head', 'body', 'legs', 'shield', 'neck', 'ring', 'hands', 'feet', 'cape']
-const EQUIP_SKILLS = ['', 'weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcut', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']
+const EQUIP_SKILLS = ['', 'weaponry', 'strength', 'defence', 'goodmagic', 'evilmagic', 'archery', 'hitpoints', 'woodcutting', 'fishing', 'cooking', 'mining', 'smithing', 'crafting', 'roguery']
 const WEAPON_STYLES = ['', 'stab', 'slash', 'crush', 'bow', 'crossbow']
 const TOOL_TYPES = ['', 'axe', 'pickaxe']
 const STANCES = ['accurate', 'aggressive', 'defensive', 'controlled']
