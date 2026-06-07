@@ -1,4 +1,4 @@
-import { effectiveNpcCombatStats, npcCombatLevel } from '@projectrs/shared'
+import { effectiveNpcCombatStats, npcCombatLevel, npcCombatSummary } from '@projectrs/shared'
 
 function clone(value) {
   if (value === undefined) return undefined
@@ -11,6 +11,19 @@ const CORE_STAT_FIELDS = [
   { key: 'strength', label: 'Strength', min: 0 },
   { key: 'defence', label: 'Defence', min: 0 },
 ]
+
+const COMBAT_BONUS_FIELDS = [
+  { key: 'combatLevel', label: 'Level override', min: 1, optional: true },
+  { key: 'attackBonus', label: 'Attack bonus', min: -999, optional: true },
+  { key: 'strengthBonus', label: 'Strength bonus', min: -999, optional: true },
+  { key: 'stabDefence', label: 'Stab def', min: -999, optional: true },
+  { key: 'slashDefence', label: 'Slash def', min: -999, optional: true },
+  { key: 'crushDefence', label: 'Crush def', min: -999, optional: true },
+  { key: 'rangedDefence', label: 'Ranged def', min: -999, optional: true },
+  { key: 'magicDefence', label: 'Magic def', min: -999, optional: true },
+]
+
+const NPC_ATTACK_STYLES = ['stab', 'slash', 'crush']
 
 const BEHAVIOR_STAT_FIELDS = [
   { key: 'attackSpeed', label: 'Atk speed', min: 1 },
@@ -28,7 +41,7 @@ function snapshotNpcEditorState(npcs) {
     snapshot.set(npc.id, {
       lootTable: clone(Array.isArray(npc.lootTable) ? npc.lootTable : []),
       stats: Object.fromEntries(
-        [...CORE_STAT_FIELDS, ...BEHAVIOR_STAT_FIELDS, { key: 'aggressive' }]
+        [...CORE_STAT_FIELDS, ...COMBAT_BONUS_FIELDS, ...BEHAVIOR_STAT_FIELDS, { key: 'attackStyle' }, { key: 'aggressive' }]
           .map(field => [field.key, clone(npc[field.key])])
       ),
     })
@@ -389,6 +402,16 @@ export async function openDropTableEditor(options = {}) {
     render()
   }
 
+  function setNpcSelectField(key, value) {
+    const npc = selectedNpc()
+    if (!npc) return
+    const text = String(value ?? '').trim()
+    if (key === 'attackStyle' && text === '') delete npc[key]
+    else npc[key] = text
+    markDirty()
+    render()
+  }
+
   function setNpcBooleanField(key, value) {
     const npc = selectedNpc()
     if (!npc) return
@@ -411,14 +434,35 @@ export async function openDropTableEditor(options = {}) {
 
   function renderNpcStatsEditor(npc) {
     const level = combatLevelForNpc(npc)
+    const summary = npcCombatSummary(effectiveNpcCombatStats(npc))
     return `
       <section class="drop-table-combat-card">
         <div class="drop-table-combat-level">
           <span>Combat level</span>
           <b>${level}</b>
         </div>
+        <div class="drop-table-combat-level">
+          <span>Max hit</span>
+          <b>${summary.maxHit}</b>
+        </div>
+        <div class="drop-table-combat-level">
+          <span>Attack roll</span>
+          <b>${summary.attackRoll}</b>
+        </div>
+        <div class="drop-table-combat-level">
+          <span>Def S/L/C/R/M</span>
+          <b>${summary.stabDefenceRoll}/${summary.slashDefenceRoll}/${summary.crushDefenceRoll}/${summary.rangedDefenceRoll}/${summary.magicDefenceRoll}</b>
+        </div>
         <div class="drop-table-combat-fields">
           ${CORE_STAT_FIELDS.map(field => renderStatField(field, npc)).join('')}
+          ${COMBAT_BONUS_FIELDS.map(field => renderStatField(field, npc)).join('')}
+          <label class="drop-table-stat-field">
+            <span>Attack style</span>
+            <select data-npc-select="attackStyle">
+              <option value=""${npc.attackStyle ? '' : ' selected'}>Average</option>
+              ${NPC_ATTACK_STYLES.map(style => `<option value="${style}"${npc.attackStyle === style ? ' selected' : ''}>${style}</option>`).join('')}
+            </select>
+          </label>
           <label class="drop-table-stat-field">
             <span>Aggressive</span>
             <select data-npc-bool="aggressive">
@@ -527,8 +571,11 @@ export async function openDropTableEditor(options = {}) {
     editorEl.querySelector('#dropTableCopyBtn')?.addEventListener('click', () => copyFromNpc(copySelect?.value))
 
     for (const input of editorEl.querySelectorAll('[data-npc-stat]')) {
-      const field = [...CORE_STAT_FIELDS, ...BEHAVIOR_STAT_FIELDS].find(row => row.key === input.dataset.npcStat)
+      const field = [...CORE_STAT_FIELDS, ...COMBAT_BONUS_FIELDS, ...BEHAVIOR_STAT_FIELDS].find(row => row.key === input.dataset.npcStat)
       if (field) input.addEventListener('change', event => setNpcStatField(field.key, event.target.value, field))
+    }
+    for (const select of editorEl.querySelectorAll('[data-npc-select]')) {
+      select.addEventListener('change', event => setNpcSelectField(event.target.dataset.npcSelect, event.target.value))
     }
     for (const select of editorEl.querySelectorAll('[data-npc-bool]')) {
       select.addEventListener('change', event => setNpcBooleanField(event.target.dataset.npcBool, event.target.value))

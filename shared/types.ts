@@ -177,6 +177,21 @@ export interface NpcDef {
   attack: number;
   defence: number;
   strength: number;
+  /** Optional authored combat level for display, relic tiering, and aggro checks.
+   *  When omitted, the level is derived from health/attack/defence/strength. */
+  combatLevel?: number;
+  /** OSRS-style combat bonuses. All default to 0 so legacy flat stat NPCs keep
+   *  their current behavior. Negative values are valid for weak NPCs. */
+  attackBonus?: number;
+  strengthBonus?: number;
+  stabDefence?: number;
+  slashDefence?: number;
+  crushDefence?: number;
+  rangedDefence?: number;
+  magicDefence?: number;
+  /** Melee style this NPC uses when attacking players. Omitted defs keep
+   *  legacy average-defence targeting in server combat. */
+  attackStyle?: 'stab' | 'slash' | 'crush';
   attackSpeed: number; // ticks between attacks
   respawnTime: number; // ticks
   aggressive: boolean;
@@ -596,6 +611,15 @@ export interface NpcStatOverrides {
   attack?: number;
   defence?: number;
   strength?: number;
+  combatLevel?: number;
+  attackBonus?: number;
+  strengthBonus?: number;
+  stabDefence?: number;
+  slashDefence?: number;
+  crushDefence?: number;
+  rangedDefence?: number;
+  magicDefence?: number;
+  attackStyle?: 'stab' | 'slash' | 'crush';
   attackSpeed?: number;
   respawnTime?: number;
 }

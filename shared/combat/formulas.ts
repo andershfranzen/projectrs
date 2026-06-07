@@ -32,26 +32,87 @@ export function combatLevel(skills: SkillBlock): number {
   });
 }
 
-export type NpcCombatStats = { health: number; attack: number; defence: number; strength: number };
+export type MeleeWeaponStyle = 'stab' | 'slash' | 'crush';
+export type NpcAttackStyle = MeleeWeaponStyle;
+
+export type NpcCombatStats = {
+  health: number;
+  attack: number;
+  defence: number;
+  strength: number;
+  /** NPC-side attack bonus. Defaults to 0, so old flat stat blocks behave the same. */
+  attackBonus?: number;
+  /** NPC-side melee strength bonus. Defaults to 0. */
+  strengthBonus?: number;
+  /** Style-specific NPC defence bonuses used when players attack this NPC. */
+  stabDefence?: number;
+  slashDefence?: number;
+  crushDefence?: number;
+  rangedDefence?: number;
+  magicDefence?: number;
+  /** Melee style this NPC uses when attacking players. Omitted defs keep
+   *  legacy average-defence targeting in server combat. */
+  attackStyle?: NpcAttackStyle;
+  /** Optional authored display/drop/aggro level. When omitted it is derived from levels. */
+  combatLevel?: number;
+};
+
+export type NpcEffectiveCombatStats = {
+  health: number;
+  attack: number;
+  defence: number;
+  strength: number;
+  attackBonus: number;
+  strengthBonus: number;
+  stabDefence: number;
+  slashDefence: number;
+  crushDefence: number;
+  rangedDefence: number;
+  magicDefence: number;
+  attackStyle: NpcAttackStyle;
+  combatLevel?: number;
+};
 export type NpcCombatStatOverrides = Partial<NpcCombatStats> | null | undefined;
+
+const NPC_ATTACK_STYLES: readonly NpcAttackStyle[] = ['stab', 'slash', 'crush'];
+
+function numericStat(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : 0;
+}
+
+function positiveInt(value: number | undefined): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+  return Math.floor(value);
+}
+
+function npcAttackStyle(value: NpcAttackStyle | undefined): NpcAttackStyle {
+  return value && NPC_ATTACK_STYLES.includes(value) ? value : 'crush';
+}
 
 /** Resolve the combat stats that feed the NPC combat-level formula.
  *  This mirrors server Npc construction: a positive health override replaces
  *  maxHealth, while attack/defence/strength use nullish override fallback so
  *  authored 0 values remain valid. */
-export function effectiveNpcCombatStats(base: NpcCombatStats, overrides?: NpcCombatStatOverrides): NpcCombatStats {
-  const stat = (value: number | undefined): number => (
-    typeof value === 'number' && Number.isFinite(value) ? value : 0
-  );
+export function effectiveNpcCombatStats(base: NpcCombatStats, overrides?: NpcCombatStatOverrides): NpcEffectiveCombatStats {
   const healthOverride = overrides?.health;
   const health = typeof healthOverride === 'number' && Number.isFinite(healthOverride) && healthOverride > 0
     ? Math.floor(healthOverride)
-    : stat(base.health);
+    : numericStat(base.health);
+  const combatLevel = positiveInt(overrides?.combatLevel ?? base.combatLevel);
   return {
     health,
-    attack: stat(overrides?.attack ?? base.attack),
-    defence: stat(overrides?.defence ?? base.defence),
-    strength: stat(overrides?.strength ?? base.strength),
+    attack: numericStat(overrides?.attack ?? base.attack),
+    defence: numericStat(overrides?.defence ?? base.defence),
+    strength: numericStat(overrides?.strength ?? base.strength),
+    attackBonus: numericStat(overrides?.attackBonus ?? base.attackBonus),
+    strengthBonus: numericStat(overrides?.strengthBonus ?? base.strengthBonus),
+    stabDefence: numericStat(overrides?.stabDefence ?? base.stabDefence),
+    slashDefence: numericStat(overrides?.slashDefence ?? base.slashDefence),
+    crushDefence: numericStat(overrides?.crushDefence ?? base.crushDefence),
+    rangedDefence: numericStat(overrides?.rangedDefence ?? base.rangedDefence),
+    magicDefence: numericStat(overrides?.magicDefence ?? base.magicDefence),
+    attackStyle: npcAttackStyle(overrides?.attackStyle ?? base.attackStyle),
+    ...(combatLevel !== undefined ? { combatLevel } : {}),
   };
 }
 
@@ -60,9 +121,11 @@ export function effectiveNpcCombatStats(base: NpcCombatStats, overrides?: NpcCom
  *  formula, and `health` plays the hitpoints-level role. Ranged/magic terms
  *  are dropped because NPCs currently attack as melee. */
 export function npcCombatLevel(npc: NpcCombatStats): number {
+  const explicitLevel = positiveInt(npc.combatLevel);
+  if (explicitLevel !== undefined) return explicitLevel;
   const base = 0.25 * (npc.defence + npc.health);
   const melee = 0.325 * (npc.attack + npc.strength);
-  return Math.floor(base + melee);
+  return Math.max(1, Math.floor(base + melee));
 }
 
 export const NPC_AGGRESSION_SUPPRESSION_COMBAT_MULTIPLIER = 2;
@@ -127,6 +190,7 @@ export function bowAttackRollMultiplierForStance(stance: MeleeStance): number {
 
 // OSRS combat formulas.
 export const ACC_BASE = 64;
+export const NPC_EFFECTIVE_STAT_BONUS = 8;
 
 /**
  * 2004Scape max hit formula:
@@ -135,6 +199,61 @@ export const ACC_BASE = 64;
 export function osrsMeleeMaxHit(effStr: number, bStr: number, dmgMult: number = 1.0): number {
   const base = Math.floor((effStr * (bStr + 64) + 320) / 640);
   return Math.max(1, Math.floor(base * dmgMult));
+}
+
+export function npcMeleeAttackRoll(npc: NpcCombatStats): number {
+  const stats = effectiveNpcCombatStats(npc);
+  return Math.max(0, (stats.attack + NPC_EFFECTIVE_STAT_BONUS) * (stats.attackBonus + ACC_BASE));
+}
+
+export function npcDefenceBonusForStyle(npc: NpcCombatStats, style: WeaponStyle): number {
+  const stats = effectiveNpcCombatStats(npc);
+  if (style === 'stab') return stats.stabDefence;
+  if (style === 'slash') return stats.slashDefence;
+  if (style === 'bow' || style === 'crossbow') return stats.rangedDefence;
+  return stats.crushDefence;
+}
+
+export function npcMeleeDefenceRoll(npc: NpcCombatStats, style: WeaponStyle): number {
+  const stats = effectiveNpcCombatStats(npc);
+  return Math.max(0, (stats.defence + NPC_EFFECTIVE_STAT_BONUS) * (npcDefenceBonusForStyle(stats, style) + ACC_BASE));
+}
+
+export function npcMagicDefenceRoll(npc: NpcCombatStats): number {
+  const stats = effectiveNpcCombatStats(npc);
+  return Math.max(0, (stats.defence + NPC_EFFECTIVE_STAT_BONUS) * (stats.magicDefence + ACC_BASE));
+}
+
+export function npcMeleeMaxHit(npc: NpcCombatStats, dmgMult: number = 1.0): number {
+  const stats = effectiveNpcCombatStats(npc);
+  return osrsMeleeMaxHit(stats.strength + NPC_EFFECTIVE_STAT_BONUS, stats.strengthBonus, dmgMult);
+}
+
+export interface NpcCombatSummary {
+  combatLevel: number;
+  attackRoll: number;
+  maxHit: number;
+  attackStyle: NpcAttackStyle;
+  stabDefenceRoll: number;
+  slashDefenceRoll: number;
+  crushDefenceRoll: number;
+  rangedDefenceRoll: number;
+  magicDefenceRoll: number;
+}
+
+export function npcCombatSummary(npc: NpcCombatStats): NpcCombatSummary {
+  const stats = effectiveNpcCombatStats(npc);
+  return {
+    combatLevel: npcCombatLevel(stats),
+    attackRoll: npcMeleeAttackRoll(stats),
+    maxHit: npcMeleeMaxHit(stats),
+    attackStyle: stats.attackStyle,
+    stabDefenceRoll: npcMeleeDefenceRoll(stats, 'stab'),
+    slashDefenceRoll: npcMeleeDefenceRoll(stats, 'slash'),
+    crushDefenceRoll: npcMeleeDefenceRoll(stats, 'crush'),
+    rangedDefenceRoll: npcMeleeDefenceRoll(stats, 'bow'),
+    magicDefenceRoll: npcMagicDefenceRoll(stats),
+  };
 }
 
 /**
@@ -204,7 +323,6 @@ export function zeroBonuses(): CombatBonuses {
   };
 }
 
-export type MeleeWeaponStyle = 'stab' | 'slash' | 'crush';
 export type WeaponStyle = MeleeWeaponStyle | 'bow' | 'crossbow';
 export type CombatRangeMode = 'euclidean' | 'chebyshev';
 

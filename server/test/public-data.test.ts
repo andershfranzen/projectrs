@@ -20,6 +20,14 @@ describe('public data hardening', () => {
       attack: 8,
       defence: 6,
       strength: 7,
+      attackBonus: -5,
+      strengthBonus: -3,
+      stabDefence: -2,
+      slashDefence: -1,
+      crushDefence: 0,
+      rangedDefence: 1,
+      magicDefence: 2,
+      attackStyle: 'stab',
       size: 1,
       lootTable: [{ itemId: 10, quantity: 50, chance: 0.1 }],
       rareDropTables: [{ tableId: 'universal', chance: 0.01 }],
@@ -32,6 +40,14 @@ describe('public data hardening', () => {
     expect(sanitized[0].name).toBe('Wolf');
     expect(sanitized[0].modelNpcId).toBe(17);
     expect(sanitized[0].health).toBe(20);
+    expect(sanitized[0].attackBonus).toBe(-5);
+    expect(sanitized[0].strengthBonus).toBe(-3);
+    expect(sanitized[0].stabDefence).toBe(-2);
+    expect(sanitized[0].slashDefence).toBe(-1);
+    expect(sanitized[0].crushDefence).toBe(0);
+    expect(sanitized[0].rangedDefence).toBe(1);
+    expect(sanitized[0].magicDefence).toBe(2);
+    expect(sanitized[0].attackStyle).toBe('stab');
     expect(sanitized[0].lootTable).toBeUndefined();
     expect(sanitized[0].rareDropTables).toBeUndefined();
     expect(sanitized[0].shop).toBeUndefined();

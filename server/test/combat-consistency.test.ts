@@ -8,7 +8,12 @@ import {
   isPointInNpcMagicAttackRange,
   shouldConsumeAmmoOnShot,
 } from '../src/combat/Combat';
-import type { NpcDef } from '@projectrs/shared';
+import {
+  npcCombatSummary,
+  npcMeleeAttackRoll,
+  npcMeleeDefenceRoll,
+  type NpcDef,
+} from '@projectrs/shared';
 
 const fakeWs = { sendBinary() {}, send() {} } as any;
 
@@ -70,5 +75,31 @@ describe('combat style consistency', () => {
     expect(shouldConsumeAmmoOnShot({ itemDef: { ammoType: 'arrow' } }, () => 0.199)).toBe(true);
     expect(shouldConsumeAmmoOnShot({ itemDef: { ammoType: 'arrow' } }, () => 0.2)).toBe(false);
     expect(shouldConsumeAmmoOnShot({ itemDef: { ammoType: 'bolt' } }, () => 0.99)).toBe(true);
+  });
+
+  test('NPC combat bonuses expose weak and strong rolls separately from level stats', () => {
+    const plain = { ...npcDef, health: 3, attack: 1, defence: 1, strength: 1 };
+    const weak = {
+      ...plain,
+      combatLevel: 1,
+      attackBonus: -47,
+      strengthBonus: -42,
+      stabDefence: -42,
+      slashDefence: -42,
+      crushDefence: -42,
+      rangedDefence: -42,
+      magicDefence: -42,
+    };
+
+    expect(npcMeleeAttackRoll(plain)).toBe(576);
+    expect(npcMeleeAttackRoll(weak)).toBe(153);
+    expect(npcMeleeDefenceRoll(plain, 'crush')).toBe(576);
+    expect(npcMeleeDefenceRoll(weak, 'crush')).toBe(198);
+
+    const summary = npcCombatSummary(weak);
+    expect(summary.combatLevel).toBe(1);
+    expect(summary.attackRoll).toBe(153);
+    expect(summary.maxHit).toBe(1);
+    expect(summary.crushDefenceRoll).toBe(198);
   });
 });

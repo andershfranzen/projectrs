@@ -67,6 +67,11 @@ import {
   DEFAULT_WATER_FLOW,
   normalizeWaterFlow,
   npcCombatLevel,
+  npcCombatSummary,
+  npcMeleeDefenceRoll,
+  calculateHitChance,
+  osrsMeleeMaxHit,
+  ACC_BASE,
   effectiveNpcCombatStats,
   normalizeNpcVisualScale,
   shouldPersistNpcVisualScale,
@@ -3564,8 +3569,139 @@ let selectedWaterFlowChunk = null
 
   /** Combat-stat keys eligible for per-spawn override. Matches the
    *  NpcStatOverrides shape in shared/types.ts. wanderRange is intentionally
-   *  out — it already has its own per-spawn field on the Spawn tab. */
-  const SPAWN_STAT_KEYS = ['health', 'attack', 'strength', 'defence', 'attackSpeed', 'respawnTime']
+   *  out because it already has its own per-spawn field on the Spawn tab. */
+  const NPC_ATTACK_STYLES = ['stab', 'slash', 'crush']
+  const NPC_NUMERIC_STAT_FIELDS = [
+    ['health', 'Health'],
+    ['attack', 'Attack level'],
+    ['strength', 'Strength level'],
+    ['defence', 'Defence level'],
+    ['combatLevel', 'Combat level override'],
+    ['attackBonus', 'Attack bonus'],
+    ['strengthBonus', 'Strength bonus'],
+    ['stabDefence', 'Stab defence'],
+    ['slashDefence', 'Slash defence'],
+    ['crushDefence', 'Crush defence'],
+    ['rangedDefence', 'Ranged defence'],
+    ['magicDefence', 'Magic defence'],
+    ['attackSpeed', 'Attack speed (ticks)'],
+    ['respawnTime', 'Respawn time (ticks)'],
+  ]
+  const NPC_OPTIONAL_NUMERIC_STATS = new Set([
+    'combatLevel', 'attackBonus', 'strengthBonus', 'stabDefence', 'slashDefence',
+    'crushDefence', 'rangedDefence', 'magicDefence',
+  ])
+  const SPAWN_NUMERIC_STAT_KEYS = NPC_NUMERIC_STAT_FIELDS.map(([key]) => key)
+  const NPC_STARTER_RECOMMENDATIONS = {
+    1: {
+      source: '2004Scape chicken',
+      fields: { health: 3, attack: 1, strength: 1, defence: 1, combatLevel: 1, attackBonus: -47, strengthBonus: -42, stabDefence: -42, slashDefence: -42, crushDefence: -42, rangedDefence: -42, magicDefence: -42, attackStyle: 'stab', attackSpeed: 4 },
+    },
+    18: {
+      source: '2004Scape rat',
+      fields: { health: 2, attack: 1, strength: 1, defence: 1, combatLevel: 1, attackBonus: -47, strengthBonus: -53, stabDefence: -42, slashDefence: -42, crushDefence: -42, rangedDefence: -42, magicDefence: -42, attackStyle: 'crush', attackSpeed: 4 },
+    },
+    6: {
+      source: '2004Scape spider',
+      fields: { health: 2, attack: 1, strength: 1, defence: 1, combatLevel: 1, attackBonus: -35, strengthBonus: -58, stabDefence: -53, slashDefence: -53, crushDefence: -53, rangedDefence: -53, magicDefence: -53, attackStyle: 'stab', attackSpeed: 4 },
+    },
+    10: {
+      source: '2004Scape cow',
+      fields: { health: 8, attack: 1, strength: 1, defence: 1, combatLevel: 2, attackBonus: -15, strengthBonus: -15, stabDefence: -21, slashDefence: -21, crushDefence: -21, rangedDefence: -21, magicDefence: -21, attackStyle: 'crush', attackSpeed: 4 },
+    },
+    3: {
+      source: '2004Scape basic goblin',
+      fields: { health: 5, attack: 1, strength: 1, defence: 1, combatLevel: 2, attackBonus: -21, strengthBonus: -15, stabDefence: -15, slashDefence: -15, crushDefence: -15, rangedDefence: -15, magicDefence: -15, attackStyle: 'crush', attackSpeed: 4 },
+    },
+    20: {
+      source: '2004Scape farmer',
+      fields: { health: 12, attack: 3, strength: 4, defence: 8, combatLevel: 7, attackBonus: 5, strengthBonus: 6, attackStyle: 'stab', attackSpeed: 6 },
+    },
+    7: {
+      source: '2004Scape guard',
+      fields: { health: 22, attack: 19, strength: 18, defence: 14, combatLevel: 21, attackBonus: 4, strengthBonus: 5, stabDefence: 18, slashDefence: 25, crushDefence: 19, rangedDefence: 20, magicDefence: -4, attackStyle: 'stab', attackSpeed: 4 },
+    },
+    5: {
+      source: '2004Scape skeleton',
+      fields: { health: 24, attack: 17, strength: 17, defence: 17, combatLevel: 18, stabDefence: 5, slashDefence: 5, crushDefence: -5, rangedDefence: 5, attackStyle: 'crush', attackSpeed: 4 },
+    },
+    25: {
+      source: '2004Scape brown bear',
+      fields: { health: 27, attack: 17, strength: 18, defence: 15, combatLevel: 21, attackStyle: 'slash', attackSpeed: 4 },
+    },
+  }
+
+  function effectiveNpcEditorStats(def, overrides = null) {
+    const combat = effectiveNpcCombatStats(def, overrides)
+    const attackSpeed = Number(overrides?.attackSpeed ?? def.attackSpeed)
+    return {
+      ...combat,
+      attackSpeed: Number.isFinite(attackSpeed) && attackSpeed > 0 ? Math.floor(attackSpeed) : 4,
+    }
+  }
+
+  function formatStatNumber(value, digits = 2) {
+    if (!Number.isFinite(value)) return '0'
+    if (Number.isInteger(value)) return String(value)
+    return value.toFixed(digits).replace(/\.?0+$/, '')
+  }
+
+  function roughNpcDpsEstimate(stats) {
+    const summary = npcCombatSummary(stats)
+    const playerDefenceRoll = (1 + 8) * ACC_BASE
+    const hitChance = calculateHitChance(summary.attackRoll, playerDefenceRoll)
+    const avgDamage = summary.maxHit / 2
+    const interval = Math.max(1, stats.attackSpeed) * 0.6
+    return {
+      dps: hitChance * avgDamage / interval,
+      hitChance,
+      maxHit: summary.maxHit,
+    }
+  }
+
+  function roughPlayerDpsEstimate(stats) {
+    const attackRoll = (1 + 3 + 8) * ACC_BASE
+    const defenceRoll = npcMeleeDefenceRoll(stats, 'crush')
+    const hitChance = calculateHitChance(attackRoll, defenceRoll)
+    const maxHit = osrsMeleeMaxHit(1 + 8, 0)
+    const dps = hitChance * (maxHit / 2) / (4 * 0.6)
+    return {
+      dps,
+      hitChance,
+      ttk: dps > 0 ? stats.health / dps : Infinity,
+    }
+  }
+
+  function formatRecommendationFields(fields) {
+    const bonuses = [
+      ['attackBonus', 'AtkB'],
+      ['strengthBonus', 'StrB'],
+      ['stabDefence', 'StabD'],
+      ['slashDefence', 'SlashD'],
+      ['crushDefence', 'CrushD'],
+      ['rangedDefence', 'RangeD'],
+      ['magicDefence', 'MagicD'],
+    ]
+      .filter(([key]) => fields[key] !== undefined)
+      .map(([key, label]) => `${label} ${fields[key]}`)
+      .join(', ')
+    return [
+      `L${fields.combatLevel ?? 'auto'} HP ${fields.health}`,
+      `A/S/D ${fields.attack}/${fields.strength}/${fields.defence}`,
+      `style ${fields.attackStyle ?? 'average'}`,
+      `speed ${fields.attackSpeed ?? 4}`,
+      bonuses,
+    ].filter(Boolean).join(' | ')
+  }
+
+  function applyNpcStatRecommendation(target, fields) {
+    for (const key of SPAWN_NUMERIC_STAT_KEYS) {
+      if (fields[key] !== undefined) target[key] = fields[key]
+      else if (NPC_OPTIONAL_NUMERIC_STATS.has(key)) delete target[key]
+    }
+    if (fields.attackStyle) target.attackStyle = fields.attackStyle
+    else delete target.attackStyle
+  }
 
   function selectedOrCurrentNpcDef() {
     const selectedDef = findSelectedDef()
@@ -3601,10 +3737,12 @@ let selectedWaterFlowChunk = null
 
     if (options.applySpawnOverrides && selectedNpcSpawn?.npcId === srcDef.id) {
       if (selectedNpcSpawn.stats) {
-        for (const key of SPAWN_STAT_KEYS) {
+        for (const key of SPAWN_NUMERIC_STAT_KEYS) {
           const value = selectedNpcSpawn.stats[key]
           if (Number.isFinite(value)) clone[key] = value
         }
+        const attackStyle = selectedNpcSpawn.stats.attackStyle
+        if (NPC_ATTACK_STYLES.includes(attackStyle)) clone.attackStyle = attackStyle
       }
       if (!options.name && selectedNpcSpawn.name) clone.name = selectedNpcSpawn.name
     }
@@ -3666,7 +3804,7 @@ let selectedWaterFlowChunk = null
     }
     // Mode toggle: edit the def (affects every spawn) or this spawn's stats
     // override (one placement only). Mirrors the Shop / Dialogue tabs.
-    const overrideActive = !!(spawn && spawn.stats && Object.keys(spawn.stats).length > 0)
+    const overrideActive = !!(spawn && spawn.stats)
     appendOverrideModeToggle(root, {
       overrideActive,
       hasSpawn: !!spawn,
@@ -3684,11 +3822,53 @@ let selectedWaterFlowChunk = null
 
     const combatLevelReadout = document.createElement('div')
     combatLevelReadout.style.cssText = 'font-size:11px;color:#ffcc66;margin:0 0 8px;padding:5px 6px;background:#241f14;border:1px solid #4a3820;border-radius:3px;'
+    const dpsReadout = document.createElement('div')
+    dpsReadout.style.cssText = 'font-size:11px;color:#d7e6ff;margin:0 0 8px;padding:5px 6px;background:#162033;border:1px solid #2c4569;border-radius:3px;line-height:1.4;'
     const refreshCombatLevelReadout = () => {
-      combatLevelReadout.textContent = `Combat level: ${npcCombatLevel(effectiveNpcCombatStats(def, spawn?.stats))}`
+      const stats = effectiveNpcEditorStats(def, spawn?.stats)
+      const summary = npcCombatSummary(stats)
+      const npcDps = roughNpcDpsEstimate(stats)
+      const playerDps = roughPlayerDpsEstimate(stats)
+      combatLevelReadout.textContent = `Combat ${summary.combatLevel} | Max hit ${summary.maxHit} | Attack roll ${summary.attackRoll} | Def S/L/C/R/M ${summary.stabDefenceRoll}/${summary.slashDefenceRoll}/${summary.crushDefenceRoll}/${summary.rangedDefenceRoll}/${summary.magicDefenceRoll}`
+      dpsReadout.textContent = `Rough DPS: NPC ${formatStatNumber(npcDps.dps, 3)} (${Math.round(npcDps.hitChance * 100)}% hit, max ${npcDps.maxHit}) | L1 unarmed player ${formatStatNumber(playerDps.dps, 3)} (${Math.round(playerDps.hitChance * 100)}% hit, TTK ${Number.isFinite(playerDps.ttk) ? `${formatStatNumber(playerDps.ttk, 1)}s` : 'never'})`
     }
     refreshCombatLevelReadout()
     root.appendChild(combatLevelReadout)
+    root.appendChild(dpsReadout)
+
+    const recommendation = NPC_STARTER_RECOMMENDATIONS[def.id]
+    if (recommendation) {
+      const rec = document.createElement('div')
+      rec.style.cssText = 'font-size:11px;color:#dff7d6;margin:0 0 8px;padding:6px;background:#162816;border:1px solid #365b35;border-radius:3px;line-height:1.35;'
+      rec.innerHTML = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+          <b style="color:#a8e28e;flex:1;">Recommendation: ${recommendation.source}</b>
+          <button id="applyNpcStatRecommendationBtn" style="font-size:10px;padding:3px 6px;background:#29421f;color:#fff;border:1px solid #4f7c3e;border-radius:3px;cursor:pointer;">Apply</button>
+        </div>
+        <div>${formatRecommendationFields(recommendation.fields)}</div>
+      `
+      root.appendChild(rec)
+      rec.querySelector('#applyNpcStatRecommendationBtn')?.addEventListener('click', () => {
+        const target = overrideActive ? (spawn.stats ||= {}) : def
+        applyNpcStatRecommendation(target, recommendation.fields)
+        if (!overrideActive) {
+          markDefsDirty()
+          const sel = sidebar.querySelector('#npcTypeSelect')
+          if (sel) {
+            for (const opt of sel.options) {
+              if (parseInt(opt.value) === def.id) {
+                opt.textContent = formatNpcTypeOptionLabel(def)
+                break
+              }
+            }
+          }
+          updateNpcPlacementControls()
+          syncNpcTypeInput()
+        }
+        refreshNpcSpawnList()
+        renderStatsTab(root, def)
+      })
+    }
 
     if (overrideActive) {
       // Per-spawn override editor. Each row: label, the override input (blank
@@ -3697,14 +3877,14 @@ let selectedWaterFlowChunk = null
       banner.style.cssText = 'font-size:10px;color:#44ccff;margin-bottom:6px;'
       banner.textContent = `Override for this spawn — leave a field blank to inherit "${def.name}".`
       root.appendChild(banner)
-      for (const key of SPAWN_STAT_KEYS) {
+      for (const [key, label] of NPC_NUMERIC_STAT_FIELDS) {
         const row = document.createElement('div')
         row.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;'
         const cur = spawn.stats[key]
-        const placeholder = def[key] ?? 0
+        const placeholder = def[key] ?? (NPC_OPTIONAL_NUMERIC_STATS.has(key) ? 'auto' : 0)
         row.innerHTML = `
-          <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${key}</span>
-          <input type="number" min="0" step="1" value="${cur ?? ''}" placeholder="${placeholder}"
+          <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${label}</span>
+          <input type="number" step="1" value="${cur ?? ''}" placeholder="${placeholder}"
                  style="width:70px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
           <button title="Inherit from def" style="font-size:10px;padding:2px 6px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">×</button>
         `
@@ -3724,17 +3904,45 @@ let selectedWaterFlowChunk = null
         })
         root.appendChild(row)
       }
+      const styleRow = document.createElement('div')
+      styleRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:4px;'
+      const curStyle = spawn.stats.attackStyle ?? ''
+      styleRow.innerHTML = `
+        <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Attack style</span>
+        <select style="width:90px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;">
+          <option value="">inherit (${def.attackStyle || 'average'})</option>
+          ${NPC_ATTACK_STYLES.map(style => `<option value="${style}" ${curStyle === style ? 'selected' : ''}>${style}</option>`).join('')}
+        </select>
+        <button title="Inherit from def" style="font-size:10px;padding:2px 6px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">×</button>
+      `
+      const select = styleRow.querySelector('select')
+      select.addEventListener('change', () => {
+        if (!select.value) delete spawn.stats.attackStyle
+        else spawn.stats.attackStyle = select.value
+        refreshCombatLevelReadout()
+        refreshNpcSpawnList()
+      })
+      styleRow.querySelector('button').addEventListener('click', () => {
+        delete spawn.stats.attackStyle
+        select.value = ''
+        refreshCombatLevelReadout()
+        refreshNpcSpawnList()
+      })
+      root.appendChild(styleRow)
       return
     }
 
     // Shared-def editor (original behavior).
-    const numField = (key, label, step = 1, min = 0) => `
+    const numField = (key, label, step = 1) => `
       <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${label}</span>
-        <input data-def-key="${key}" type="number" step="${step}" min="${min}" value="${def[key] ?? 0}"
+        <input data-def-key="${key}" type="number" step="${step}" value="${def[key] ?? ''}" placeholder="${NPC_OPTIONAL_NUMERIC_STATS.has(key) ? 'auto' : '0'}"
                style="width:70px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
       </div>
     `
+    const attackStyleOptions = [''].concat(NPC_ATTACK_STYLES)
+      .map(style => `<option value="${style}" ${def.attackStyle === style || (!style && !def.attackStyle) ? 'selected' : ''}>${style || 'average melee defence'}</option>`)
+      .join('')
     const shared = document.createElement('div')
     shared.innerHTML = `
       <div style="font-size:10px;color:#ffaa44;margin-bottom:6px;">Editing shared NpcDef #${def.id} — affects every spawn of "${def.name}".</div>
@@ -3743,12 +3951,11 @@ let selectedWaterFlowChunk = null
         <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Name</span>
         <input data-def-key="name" type="text" value="${def.name ?? ''}" style="width:140px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
       </div>
-      ${numField('health', 'Health')}
-      ${numField('attack', 'Attack')}
-      ${numField('strength', 'Strength')}
-      ${numField('defence', 'Defence')}
-      ${numField('attackSpeed', 'Attack speed (ticks)')}
-      ${numField('respawnTime', 'Respawn time (ticks)')}
+      ${NPC_NUMERIC_STAT_FIELDS.map(([key, label]) => numField(key, label)).join('')}
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+        <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">Attack style</span>
+        <select data-def-key="attackStyle" style="width:140px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;">${attackStyleOptions}</select>
+      </div>
       ${numField('wanderRange', 'Default wander range')}
       <label style="font-size:11px;color:rgba(255,255,255,0.65);display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;">
         <input data-def-key="aggressive" type="checkbox" ${def.aggressive ? 'checked' : ''} />
@@ -3771,13 +3978,18 @@ let selectedWaterFlowChunk = null
       // the moment the user starts typing so it's obvious there are unsaved
       // changes. Checkboxes only fire 'change' (no 'input'), so listen to
       // both — 'change' covers checkbox; 'input' covers everything else.
-      const evt = input.type === 'checkbox' ? 'change' : 'input'
+      const evt = input.type === 'checkbox' || input.tagName === 'SELECT' ? 'change' : 'input'
       input.addEventListener(evt, () => {
         const key = input.dataset.defKey
         if (input.type === 'checkbox') {
           def[key] = input.checked
         } else if (input.type === 'number') {
-          def[key] = parseFloat(input.value) || 0
+          const raw = input.value.trim()
+          if (raw === '' && NPC_OPTIONAL_NUMERIC_STATS.has(key)) delete def[key]
+          else def[key] = parseFloat(raw) || 0
+        } else if (input.tagName === 'SELECT' && key === 'attackStyle') {
+          if (input.value) def[key] = input.value
+          else delete def[key]
         } else {
           def[key] = input.value
         }

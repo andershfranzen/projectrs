@@ -246,9 +246,18 @@ export class Npc extends Entity {
   /** Effective combat stats. Spawn override wins over NpcDef. Combat code
    *  reads these instead of `npc.def.<stat>` so per-spawn customization
    *  flows through transparently. */
-  get attack(): number { return this.statsOverride?.attack ?? this.def.attack; }
-  get defence(): number { return this.statsOverride?.defence ?? this.def.defence; }
-  get strength(): number { return this.statsOverride?.strength ?? this.def.strength; }
+  get combatStats() { return effectiveNpcCombatStats(this.def, this.statsOverride); }
+  get attack(): number { return this.combatStats.attack; }
+  get defence(): number { return this.combatStats.defence; }
+  get strength(): number { return this.combatStats.strength; }
+  get attackBonus(): number { return this.combatStats.attackBonus; }
+  get strengthBonus(): number { return this.combatStats.strengthBonus; }
+  get stabDefence(): number { return this.combatStats.stabDefence; }
+  get slashDefence(): number { return this.combatStats.slashDefence; }
+  get crushDefence(): number { return this.combatStats.crushDefence; }
+  get rangedDefence(): number { return this.combatStats.rangedDefence; }
+  get magicDefence(): number { return this.combatStats.magicDefence; }
+  get attackStyle(): 'stab' | 'slash' | 'crush' { return this.combatStats.attackStyle; }
   get attackSpeed(): number { return this.statsOverride?.attackSpeed ?? this.def.attackSpeed; }
   get respawnTime(): number { return this.statsOverride?.respawnTime ?? this.def.respawnTime; }
 

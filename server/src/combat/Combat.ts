@@ -15,6 +15,10 @@ import {
   magicMaxHit,
   meleeAttackBonusForStyle,
   meleeDefenceBonusForStyle,
+  npcMagicDefenceRoll,
+  npcMeleeAttackRoll,
+  npcMeleeDefenceRoll,
+  npcMeleeMaxHit,
   osrsMeleeMaxHit,
   rollHitDamage,
   type CombatRangeMode,
@@ -242,7 +246,7 @@ export function rollPlayerMeleeDamageAgainstNpc(
   const effStr = player.skills.strength.currentLevel + stance.strength + 8;
   const attackBonus = meleeAttackBonusForStyle(bonuses, player.getWeaponStyle(itemDefs));
   const attackRoll = effAcc * (attackBonus + ACC_BASE);
-  const npcDefRoll = (npc.defence + 8) * ACC_BASE;
+  const npcDefRoll = npcMeleeDefenceRoll(npc.combatStats, player.getWeaponStyle(itemDefs));
   const maxHit = osrsMeleeMaxHit(effStr, bonuses.meleeStrength);
   return rollHitDamage(attackRoll, npcDefRoll, maxHit, rng);
 }
@@ -259,7 +263,7 @@ export function rollPlayerRangedDamageAgainstNpc(
     ? bowAttackRollMultiplierForStance(player.stance)
     : 1.0;
   const attackRoll = Math.floor(effRanged * (bonuses.rangedAccuracy + ACC_BASE) * attackRollMultiplier);
-  const npcDefRoll = (npc.defence + 8) * ACC_BASE;
+  const npcDefRoll = npcMeleeDefenceRoll(npc.combatStats, 'bow');
   const maxHit = osrsMeleeMaxHit(effRanged, bonuses.rangedStrength);
   return rollHitDamage(attackRoll, npcDefRoll, maxHit, rng);
 }
@@ -270,12 +274,16 @@ export function rollNpcMeleeDamageAgainstPlayer(
   itemDefs: Map<number, ItemDef>,
   rng: () => number = Math.random,
 ): number {
-  const npcAttackRoll = (npc.attack + 8) * ACC_BASE;
+  const npcAttackRoll = npcMeleeAttackRoll(npc.combatStats);
   const bonuses = target.computeBonuses(itemDefs);
   const stance = STANCE_BONUSES[target.stance];
   const effDef = target.skills.defence.currentLevel + stance.defence + 8;
-  const playerDefRoll = effDef * (averageMeleeDefenceBonus(bonuses) + ACC_BASE);
-  const npcMaxHit = osrsMeleeMaxHit(npc.strength + 8, 0);
+  const authoredAttackStyle = npc.def.attackStyle !== undefined || npc.statsOverride?.attackStyle !== undefined;
+  const defenceBonus = authoredAttackStyle
+    ? meleeDefenceBonusForStyle(bonuses, npc.attackStyle)
+    : averageMeleeDefenceBonus(bonuses);
+  const playerDefRoll = effDef * (defenceBonus + ACC_BASE);
+  const npcMaxHit = npcMeleeMaxHit(npc.combatStats);
   return rollHitDamage(npcAttackRoll, playerDefRoll, npcMaxHit, rng);
 }
 
@@ -331,7 +339,7 @@ export function rollPlayerMagicDamageAgainstNpc(
   const stanceBonus = MAGIC_STANCE_BONUSES[stance];
   const bonuses = player.computeBonuses(itemDefs);
   const attackRoll = (magicLevel + stanceBonus.accuracy + 8) * (bonuses.magicAccuracy + ACC_BASE);
-  const defRoll = (npc.defence + 8) * ACC_BASE;
+  const defRoll = npcMagicDefenceRoll(npc.combatStats);
   const maxHit = Math.max(1, magicMaxHit(magicLevel, spellTier) + stanceBonus.maxHit);
   return rollHitDamage(attackRoll, defRoll, maxHit, rng);
 }
