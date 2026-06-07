@@ -617,5 +617,23 @@
     "id": "tex96",
     "name": "Texture 96",
     "path": "/assets/textures/96.png"
+  },
+  {
+    "id": "tex-byzantine-wall-plane",
+    "name": "Byzantine Wall Plane",
+    "path": "/assets/textures/byzantine_wall_plane.png",
+    "defaultScale": 4
+  },
+  {
+    "id": "tex-theodosian-limewall-plane",
+    "name": "Theodosian Limewall Plane",
+    "path": "/assets/textures/theodosian_limewall_plane.png",
+    "defaultScale": 4
+  },
+  {
+    "id": "tex-limestone-wall-plane",
+    "name": "Limestone Wall Plane",
+    "path": "/assets/textures/limestone_wall_plane.png",
+    "defaultScale": 4
   }
 ]

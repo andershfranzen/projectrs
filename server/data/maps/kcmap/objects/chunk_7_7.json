@@ -935,7 +935,7 @@
     "layerId": "layer_0",
     "position": {
       "x": 246,
-      "y": 0.09407175981999029,
+      "y": 0.11407175981999029,
       "z": 228
     },
     "rotation": {
@@ -1531,6 +1531,747 @@
     "rotation": {
       "x": 0,
       "y": -1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 0,
+      "z": 239
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone window",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 0,
+      "z": 238.9975804204497
+    },
+    "rotation": {
+      "x": 0,
+      "y": -4.44089209850063e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.2500000000000002
+    }
+  },
+  {
+    "assetId": "byzantine new stone door",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 0,
+      "z": 238.98948892346664
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.1500000000000001
+    }
+  },
+  {
+    "assetId": "byzantine stone pillar",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 239
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone pillar nice",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 237
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone pillar nice",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 233
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone pillar",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 231
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 0,
+      "z": 231
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 240
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone door",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 0,
+      "z": 231.0091888196982
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.330669073875473e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.2000000000000002
+    }
+  },
+  {
+    "assetId": "byzantine new stone window",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 0,
+      "z": 231
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.1415926535897927,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.2500000000000002
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 242
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone pillar",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 0,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": 2.2204460492503146e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone window",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 0,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": -4.44089209850063e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.2500000000000002
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 0,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": 2.2204460492503146e-16,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 230
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 228
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone pillar",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 0,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 0,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone wall",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 0,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine new stone window",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 0,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.1415926535897927,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1.2500000000000002
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 242
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 240
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 238
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 236
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 234
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 232
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 230
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 230,
+      "y": 2.7600000000000002,
+      "z": 228
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 2.7600000000000002,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 2.7600000000000002,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 2.7600000000000002,
+      "z": 227
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 2.7600000000000002,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 2.7600000000000002,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 2.7600000000000002,
+      "z": 243
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 229,
+      "y": 2.7600000000000002,
+      "z": 239
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 227,
+      "y": 2.7600000000000002,
+      "z": 239
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "byzantine stone slabs",
+    "layerId": "layer_0",
+    "position": {
+      "x": 225,
+      "y": 2.7600000000000002,
+      "z": 239
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
       "z": 0
     },
     "scale": {

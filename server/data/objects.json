@@ -2392,7 +2392,6 @@
     "name": "Well",
     "category": "scenery",
     "actions": [
-      "Fill",
       "Examine"
     ],
     "blocking": true,

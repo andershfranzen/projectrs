@@ -1,9 +1,28 @@
 import { describe, expect, test } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
-import type { QuestCondition } from '@projectrs/shared';
+import { WorldObject } from '../src/entity/WorldObject';
+import {
+  BUCKET_ITEM_ID,
+  BUCKET_OF_WATER_ITEM_ID,
+  QUEST_STAGE_COMPLETED,
+  type QuestCondition,
+  type WorldObjectDef,
+} from '@projectrs/shared';
 
 const SKETCH_ITEM_ID = 236;
+const BOBS_BURIAL_QUEST_ID = "Bob's Burial";
+
+const wellDef: WorldObjectDef = {
+  id: 27,
+  name: 'Well',
+  category: 'scenery',
+  actions: ['Examine'],
+  blocking: true,
+  width: 1,
+  height: 1,
+  color: [80, 80, 90],
+};
 
 const fakeWs = {
   sendBinary() {},
@@ -15,7 +34,15 @@ function playerHasItem(player: Player, itemId: number): boolean {
 }
 
 function conditionMet(player: Player, condition: QuestCondition): boolean {
+  if (condition.type === 'all') return condition.conditions.every(child => conditionMet(player, child));
   if (condition.type === 'hasItem') return playerHasItem(player, condition.itemId);
+  if (condition.type === 'questStage') {
+    const state = player.quests[condition.questId];
+    if (!state || state.stage === QUEST_STAGE_COMPLETED) return false;
+    if (condition.minStage !== undefined && state.stage < condition.minStage) return false;
+    if (condition.maxStage !== undefined && state.stage > condition.maxStage) return false;
+    return true;
+  }
   if (condition.type === 'not') return !conditionMet(player, condition.condition);
   return false;
 }
@@ -57,5 +84,62 @@ describe('placed object interactions', () => {
 
     expect(messages).toEqual(['You throw the suspect sketch into the well.']);
     expect(playerHasItem(player, SKETCH_ITEM_ID)).toBe(false);
+  });
+
+  test('well sketch action is visible only at Bob quest disposal step with sketch', () => {
+    const player = new Player('quester', 10.5, 10.5, fakeWs, 1);
+    const obj = new WorldObject(wellDef, 10.5, 11.5, 'kcmap');
+    obj.setInteractions([
+      {
+        action: 'Throw sketch',
+        condition: {
+          type: 'all',
+          conditions: [
+            { type: 'questStage', questId: BOBS_BURIAL_QUEST_ID, minStage: 2, maxStage: 2 },
+            { type: 'hasItem', itemId: SKETCH_ITEM_ID, quantity: 1 },
+          ],
+        },
+      },
+    ]);
+
+    const world = Object.create(World.prototype) as any;
+    world.quests = { questConditionMet: conditionMet };
+
+    expect(world.currentObjectActionsForPlayer(player, obj)).toEqual(['Examine']);
+
+    player.quests[BOBS_BURIAL_QUEST_ID] = { stage: 1, triggerProgress: 0 };
+    player.inventory[0] = { itemId: SKETCH_ITEM_ID, quantity: 1 };
+    expect(world.currentObjectActionsForPlayer(player, obj)).toEqual(['Examine']);
+
+    player.quests[BOBS_BURIAL_QUEST_ID] = { stage: 2, triggerProgress: 0 };
+    expect(world.currentObjectActionsForPlayer(player, obj)).toEqual(['Throw sketch', 'Examine']);
+
+    player.inventory[0] = null;
+    expect(world.currentObjectActionsForPlayer(player, obj)).toEqual(['Examine']);
+  });
+
+  test('using a bucket on a well fills it without a well Fill action', () => {
+    const player = new Player('water_carrier', 10.5, 10.5, fakeWs, 1);
+    player.inventory[0] = { itemId: BUCKET_ITEM_ID, quantity: 1 };
+    const obj = new WorldObject(wellDef, 10.5, 11.5, 'kcmap');
+    const messages: string[] = [];
+    let inventorySends = 0;
+
+    const world = Object.create(World.prototype) as any;
+    world.worldObjects = new Map([[obj.id, obj]]);
+    world.validateInvUse = () => player;
+    world.canPlayerTargetObject = () => true;
+    world.isAdjacentToObject = () => true;
+    world.interruptPlayerAction = () => {};
+    world.sendInventory = () => { inventorySends++; };
+    world.sendChatSystem = (_player: Player, message: string) => messages.push(message);
+
+    expect(wellDef.actions).toEqual(['Examine']);
+
+    world.handlePlayerUseItemOnObject(player.id, 0, BUCKET_ITEM_ID, obj.id);
+
+    expect(player.inventory[0]).toEqual({ itemId: BUCKET_OF_WATER_ITEM_ID, quantity: 1 });
+    expect(messages).toEqual(['You fill the bucket with water.']);
+    expect(inventorySends).toBe(1);
   });
 });

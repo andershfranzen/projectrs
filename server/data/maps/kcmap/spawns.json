@@ -143,8 +143,8 @@
           "Bob_s_Burial_stage_0_reply": {
             "id": "Bob_s_Burial_stage_0_reply",
             "lines": [
-              "It's horrible. Some lunatic walked into the cow pen and slew ol' Bob.",
-              "A farmer southwest of here saw it happen. Maybe he can describe the killer."
+              "Oh its horrible, apparently some insane person walked into the cow pen and just slew ol' Bob.",
+              "Heard the farmer down south west saw it all happen, hopefully he can describe the killer so Bob can get justice!"
             ],
             "options": [
               {
@@ -2667,6 +2667,70 @@
         "hairStyle": 1
       },
       "name": "Banker"
+    },
+    {
+      "id": 148,
+      "npcId": 24,
+      "x": 101.5,
+      "z": 62.5,
+      "wanderRange": 3,
+      "aggressive": false
+    },
+    {
+      "id": 149,
+      "npcId": 10,
+      "x": 98.5,
+      "z": 65.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 150,
+      "npcId": 10,
+      "x": 102.5,
+      "z": 67.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 151,
+      "npcId": 10,
+      "x": 106.5,
+      "z": 63.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 152,
+      "npcId": 10,
+      "x": 97.5,
+      "z": 62.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 153,
+      "npcId": 10,
+      "x": 107.5,
+      "z": 68.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 154,
+      "npcId": 10,
+      "x": 104.5,
+      "z": 72.5,
+      "wanderRange": 6,
+      "aggressive": false
+    },
+    {
+      "id": 155,
+      "npcId": 10,
+      "x": 108.5,
+      "z": 72.5,
+      "wanderRange": 6,
+      "aggressive": false
     }
   ],
   "objects": [],

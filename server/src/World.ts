@@ -1,4 +1,4 @@
-import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, canonicalBankItemId, noteIdForItem, isNotedItem, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
+import { TICK_RATE, CHUNK_SIZE, MAX_STACK, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, PROTOCOL_VERSION, WELL_OBJECT_DEF_ID, COOKING_RANGE_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, CLAY_ITEM_ID, SOFT_CLAY_ITEM_ID, POT_ITEM_ID, POT_OF_WATER_ITEM_ID, BUCKET_ITEM_ID, BUCKET_OF_WATER_ITEM_ID, KNIFE_ITEM_ID, FEATHER_ITEM_ID, LOGS_ITEM_ID, LOW_QUALITY_SINEW_ITEM_ID, BOWSTRING_ITEM_ID, ARROW_SHAFTS_ITEM_ID, HEADLESS_ARROWS_ITEM_ID, LOG_CRAFT_ARROW_SHAFT_RECIPES, LOG_CRAFT_SHORTBOW_RECIPES, ARROWHEAD_FLETCHING_RECIPES, ServerOpcode, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, ALL_SKILLS, SKILL_NAMES, ASSET_TO_OBJECT_DEF, BLOCKING_DECOR_ASSETS, RELIC_ITEM_IDS, WallEdge, doorEdgeFromPlacement, doorClosedEdgeFromRotY, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, isDoorCenteredInTile, TRADE_OFFER_SIZE, TRADE_REQUEST_RANGE, TRADE_REQUEST_TTL_MS, DUEL_STAKE_SIZE, getObjectFootprintMinTile, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, CUSTOM_COLOR_SLOTS, DEFAULT_APPEARANCE, normalizeAppearance, relicTierDef, bankAccessSpawnViolation, isAutocastableSpell, rangedProjectileTravelMsForDistance, rangedProjectileArcHeightForDistance, combatRangeIncludesOffset, STANCE_KEYS, encodeNpcVisualScale, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, npcCanAggroPlayerByCombatLevel, mergeObjectActionLabels, canonicalBankItemId, noteIdForItem, isNotedItem, type SkillId, type ItemDef, type NpcDef, type ObjectRecipe, type PlayerAppearance, type WorldObjectDef, type SpawnEntry, type ShopDef, type ShopItem, type SpellEffectDef, type MagicStance, type PlacedObjectVerticalLink, type PlacedObjectVerticalLinkEndpoint, isValidAppearance } from '@projectrs/shared';
 import { audit } from './Audit';
 import { BotStats } from './BotStats';
 import { encodePacket, encodePacketBatch, encodeStringPacket } from '@projectrs/shared';
@@ -622,7 +622,9 @@ export class World {
     1: 1, // Iron: 6 ticks
     2: 2, // Steel: 5 ticks
     3: 2, // Black Bronze: 5 ticks
-    4: 3, // Mithril: 4 ticks; leave 3/2 ticks for future tiers.
+    4: 3, // Mithril: 4 ticks
+    5: 4, // Crimson: 3 ticks
+    6: 5, // Malachor: 2 ticks
   };
 
   private static readonly PVM_COMBAT_LOCK_TICKS = 8;
@@ -4890,7 +4892,7 @@ export class World {
     if (!isSultansMineExportDoor && this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen)) return;
     const action = obj.def.category === 'ladder'
       ? obj.def.actions[actionIndex]
-      : obj.currentActions[actionIndex];
+      : this.currentObjectActionsForPlayer(player, obj)[actionIndex];
     if (!action) return;
     // Doors can be interacted with when open (to close) — other objects can't when depleted
     if (obj.depleted && obj.def.category !== 'door') {
@@ -5140,6 +5142,30 @@ export class World {
     if (obj.defId === SPINNING_WHEEL_OBJECT_DEF_ID) return true;
     if (recipes[0]?.requiresTool) return true;
     return recipes.length > 1;
+  }
+
+  private currentObjectActionsForPlayer(player: Player, obj: WorldObject): readonly string[] {
+    let actions: readonly string[];
+    if (obj.def.category === 'door') {
+      if (!obj.doorOpen && obj.doorLocked) actions = ['Unlock', 'Examine'];
+      else actions = obj.doorOpen ? ['Close', 'Examine'] : ['Open', 'Examine'];
+    } else {
+      actions = Array.isArray(obj.def.actions) ? obj.def.actions : obj.currentActions;
+    }
+    return mergeObjectActionLabels(actions, this.objectInteractionActionLabelsForPlayer(player, obj));
+  }
+
+  private objectInteractionActionLabelsForPlayer(player: Player, obj: WorldObject): readonly string[] {
+    if (!obj.interactions || obj.interactions.length === 0) return [];
+
+    const labels: string[] = [];
+    for (const interaction of obj.interactions) {
+      if (!this.objectInteractionEffectMatches(player, interaction)) continue;
+      const action = interaction.action.trim();
+      if (!action || labels.includes(action)) continue;
+      labels.push(action);
+    }
+    return labels;
   }
 
   private runObjectInteractionEffects(player: Player, obj: WorldObject, action: string): void {
@@ -5445,14 +5471,13 @@ export class World {
       toolBonus = bestTool.toolBonus ?? 0;
     }
 
-    // Better pickaxes shorten the mining cycle. Current tiers intentionally
-    // stop at 4 ticks; 3/2 ticks are reserved for future high-end pickaxes.
-    // Other harvestables still use the raw tool bonus to shorten the cycle.
+    // Better pickaxes shorten the mining cycle. Other harvestables still use
+    // the raw tool bonus to shorten the cycle.
     let cycleTime: number;
     if (obj.def.category === 'rock') {
       const baseTime = obj.def.harvestTime ?? World.DEFAULT_MINING_RATE;
-      const speedReduction = World.MINING_TOOL_SPEED_REDUCTION_BY_BONUS[toolBonus] ?? Math.max(0, Math.min(3, toolBonus - 1));
-      cycleTime = Math.max(4, baseTime - speedReduction);
+      const speedReduction = World.MINING_TOOL_SPEED_REDUCTION_BY_BONUS[toolBonus] ?? Math.max(0, Math.min(5, toolBonus - 1));
+      cycleTime = Math.max(2, baseTime - speedReduction);
     } else {
       const baseTime = obj.def.harvestTime ?? 4;
       cycleTime = Math.max(2, baseTime - toolBonus);
@@ -8674,7 +8699,7 @@ export class World {
             player.attackTarget = null;
             this.clearCombatTarget(playerId);
             if (!this.isSultansMineExportDoor(obj) && this.rejectStaleDoorInteraction(player, obj, expectedDoorOpen ?? null)) continue;
-            const action = obj.def.category === 'ladder' ? obj.def.actions[actionIndex] : obj.currentActions[actionIndex];
+            const action = obj.def.category === 'ladder' ? obj.def.actions[actionIndex] : this.currentObjectActionsForPlayer(player, obj)[actionIndex];
             if (action && obj.def.category === 'door' && (action === 'Open' || action === 'Unlock' || action === 'Close')) {
               if (this.handleSultansMineExportDoorPassThrough(player, obj, action)) continue;
               if ((action === 'Open' || action === 'Unlock') && !this.canOpenLockedDoor(player, obj)) continue;

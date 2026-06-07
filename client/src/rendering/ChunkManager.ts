@@ -17,7 +17,7 @@ import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAs
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
-import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, TexturePlane, WaterFlow, WaterFlowUvTransform } from '@projectrs/shared';
+import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, PlacedObjectInteraction, TexturePlane, WaterFlow, WaterFlowUvTransform } from '@projectrs/shared';
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
@@ -136,6 +136,7 @@ interface PlacedObjectNodeMetadata {
   placedZ?: number;
   placedName?: string;
   interactionActions?: string[];
+  interactions?: PlacedObjectInteraction[];
   isNoRoof?: boolean;
   roofGridKeys?: string[];
 }
@@ -3985,6 +3986,7 @@ export class ChunkManager {
         placedY: obj.position.y,
         placedZ: obj.position.z,
         interactionActions: this.placedObjectInteractionActions(obj),
+        interactions: Array.isArray(obj.interactions) && obj.interactions.length > 0 ? obj.interactions : undefined,
         placedName: obj.name,
         isNoRoof: obj.noRoof === true,
       } satisfies PlacedObjectNodeMetadata;

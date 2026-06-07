@@ -2430,5 +2430,404 @@
       "y": 0.5,
       "z": 0.5
     }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 63.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 62.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 61.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96,
+      "y": 0,
+      "z": 60.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": -1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 96.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 99.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 100.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 101.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 102.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 103.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 104.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 105.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 106.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 107.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 108.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 109.5,
+      "y": 0,
+      "z": 60
+    },
+    "rotation": {
+      "x": 0,
+      "y": -3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 110,
+      "y": 0,
+      "z": 60.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 110,
+      "y": 0,
+      "z": 61.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 110,
+      "y": 0,
+      "z": 62.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "Fence2",
+    "layerId": "layer_0",
+    "position": {
+      "x": 110,
+      "y": 0,
+      "z": 63.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948968,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "sTree4",
+    "layerId": "layer_0",
+    "position": {
+      "x": 108,
+      "y": 0,
+      "z": 62
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

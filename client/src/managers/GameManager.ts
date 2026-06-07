@@ -61,7 +61,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -4961,10 +4961,102 @@ export class GameManager {
 
   private worldObjectInteractionActions(objectEntityId: number): readonly string[] {
     const model = this.worldObjectModels.get(objectEntityId);
+    const interactions = model?.metadata?.interactions;
+    if (Array.isArray(interactions)) return this.availablePlacedInteractionActions(interactions);
+
     const actions = model?.metadata?.interactionActions;
     return Array.isArray(actions) && actions.every(action => typeof action === 'string')
       ? actions
       : NO_INTERACTION_ACTIONS;
+  }
+
+  private availablePlacedInteractionActions(interactions: readonly PlacedObjectInteraction[]): readonly string[] {
+    const actions: string[] = [];
+    for (const interaction of interactions) {
+      if (!this.placedInteractionConditionMet(interaction)) continue;
+      const action = interaction.action?.trim();
+      if (!action || actions.includes(action)) continue;
+      actions.push(action);
+    }
+    return actions.length > 0 ? actions : NO_INTERACTION_ACTIONS;
+  }
+
+  private placedInteractionConditionMet(interaction: PlacedObjectInteraction): boolean {
+    if (interaction.condition && !this.clientQuestConditionMet(interaction.condition)) return false;
+    if (interaction.conditions?.some(condition => !this.clientQuestConditionMet(condition))) return false;
+    return true;
+  }
+
+  private clientQuestConditionMet(condition: QuestCondition): boolean {
+    switch (condition.type) {
+      case 'all':
+        return Array.isArray(condition.conditions)
+          && condition.conditions.every(child => this.clientQuestConditionMet(child));
+      case 'any':
+        return Array.isArray(condition.conditions)
+          && condition.conditions.some(child => this.clientQuestConditionMet(child));
+      case 'not':
+        return this.clientQuestConditionMet(condition.condition) === false;
+      case 'questStage': {
+        const state = this.questState[condition.questId];
+        if (!state || state.stage === QUEST_STAGE_COMPLETED) return false;
+        if (condition.minStage !== undefined && state.stage < condition.minStage) return false;
+        if (condition.maxStage !== undefined && state.stage > condition.maxStage) return false;
+        return true;
+      }
+      case 'questStarted': {
+        const state = this.questState[condition.questId];
+        return !!state && state.stage !== QUEST_STAGE_COMPLETED;
+      }
+      case 'questNotStarted': {
+        const state = this.questState[condition.questId];
+        return !state || state.stage === QUEST_STAGE_COMPLETED;
+      }
+      case 'questCompleted':
+        return this.questState[condition.questId]?.stage === QUEST_STAGE_COMPLETED;
+      case 'questVar': {
+        const value = this.questState[condition.questId]?.vars?.[condition.key];
+        if (typeof value !== 'number') return false;
+        if (condition.value !== undefined && value !== condition.value) return false;
+        if (condition.min !== undefined && value < condition.min) return false;
+        if (condition.max !== undefined && value > condition.max) return false;
+        return true;
+      }
+      case 'hasItem':
+        return this.countLocalInventoryItem(condition.itemId) >= (condition.quantity ?? 1);
+      case 'hasEquippedItem':
+        return this.localHasEquippedItem(condition.itemId);
+      case 'skillLevel':
+        return (this.sidePanel?.getSkillLevel(condition.skill) ?? 1) >= condition.level;
+      case 'combatLevel':
+        return this.localCombatLevel() >= condition.level;
+    }
+  }
+
+  private countLocalInventoryItem(itemId: number): number {
+    return this.sidePanel?.getInventory().reduce((total, slot) =>
+      total + (slot?.itemId === itemId ? slot.quantity : 0), 0) ?? 0;
+  }
+
+  private localHasEquippedItem(itemId: number): boolean {
+    if (!this.sidePanel) return false;
+    for (let slot = 0; slot < EQUIP_SLOT_NAMES.length; slot++) {
+      if (this.sidePanel.getEquipItem(slot) === itemId) return true;
+    }
+    return false;
+  }
+
+  private localCombatLevel(): number {
+    if (!this.sidePanel) return 0;
+    return combatLevelFromLevels({
+      hitpoints: this.sidePanel.getSkillLevel('hitpoints'),
+      defence: this.sidePanel.getSkillLevel('defence'),
+      weaponry: this.sidePanel.getSkillLevel('weaponry'),
+      strength: this.sidePanel.getSkillLevel('strength'),
+      archery: this.sidePanel.getSkillLevel('archery'),
+      goodmagic: this.sidePanel.getSkillLevel('goodmagic'),
+      evilmagic: this.sidePanel.getSkillLevel('evilmagic'),
+    });
   }
 
   private worldObjectDisplayName(objectEntityId: number, def: WorldObjectDef): string {

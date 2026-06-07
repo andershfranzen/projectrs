@@ -840,7 +840,7 @@
     "layerId": "layer_0",
     "position": {
       "x": 166.0768324445013,
-      "y": -0.061824057082722206,
+      "y": -0.1218240570827222,
       "z": 169.01139365411882
     },
     "rotation": {
@@ -849,8 +849,8 @@
       "z": 0
     },
     "scale": {
-      "x": 1.1,
-      "y": 0.85,
+      "x": 1.1500000000000001,
+      "y": 0.9,
       "z": 1
     }
   },
@@ -878,7 +878,7 @@
     "layerId": "layer_0",
     "position": {
       "x": 167.58577657874991,
-      "y": -0.032923053106750366,
+      "y": 0.007076946893249635,
       "z": 173.08897053121362
     },
     "rotation": {
@@ -897,7 +897,7 @@
     "layerId": "layer_0",
     "position": {
       "x": 165.13577776812522,
-      "y": -0.032923053106750366,
+      "y": 0.02707694689324963,
       "z": 173.0889705620155
     },
     "rotation": {
@@ -926,7 +926,7 @@
     },
     "scale": {
       "x": 0.9999999999999999,
-      "y": 0.85,
+      "y": 0.9,
       "z": 1
     }
   },
@@ -944,8 +944,8 @@
       "z": 0
     },
     "scale": {
-      "x": 1.4499999999999997,
-      "y": 0.85,
+      "x": 1.5499999999999998,
+      "y": 0.9,
       "z": 1
     }
   },
@@ -1638,7 +1638,7 @@
     "layerId": "layer_0",
     "position": {
       "x": 164.5,
-      "y": 0.9663710126844194,
+      "y": 0.9263710126844193,
       "z": 171.5
     },
     "rotation": {
@@ -1652,7 +1652,7 @@
       "z": 0.2
     },
     "name": "Suspect sketch",
-    "examineText": "This must be the sketch Robert talked about.",
+    "examineText": "This must be the sketch robert talked about.",
     "interactions": [
       {
         "action": "Pick up",
@@ -1678,11 +1678,11 @@
         "saySequence": [
           {
             "delaySeconds": 0,
-            "text": "Wait... that's me! Is that what the woman was screaming about?"
+            "text": "Wait... thats me!! is that what the lady was screaming about?"
           },
           {
             "delaySeconds": 3,
-            "text": "I need to get rid of this sketch. Maybe I can throw it in a well."
+            "text": "I need to get rid of this sketch, maybe i can throw it in a well or something."
           }
         ],
         "effects": [
