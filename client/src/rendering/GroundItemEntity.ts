@@ -40,7 +40,6 @@ interface GroundItemTemplate {
 const MAX_MODELS_PER_TILE = 3;
 const DEFAULT_TARGET_MODEL_SIZE = 0.34;
 const LOG_GROUND_ITEM_VISUAL_SCALE = 1.6;
-const LOG_TEXTURED_GROUND_EMISSIVE: readonly [number, number, number] = [0.12, 0.09, 0.055];
 const TEMPLATE_CACHE_BY_SCENE = new WeakMap<Scene, Map<string, Promise<GroundItemTemplate | null>>>();
 
 const LOG_GROUND_ITEM_IDS = new Set<number>([
@@ -71,12 +70,7 @@ const STACK_OFFSETS = [
   new Vector3(0, 0, 0),
 ];
 
-function templateCacheKey(
-  path: string,
-  options: ThumbnailOptions,
-  targetSize: number,
-  texturedEmissiveColor: readonly [number, number, number] | null,
-): string {
+function templateCacheKey(path: string, options: ThumbnailOptions, targetSize: number): string {
   const parts = [path, `size:${targetSize.toFixed(3)}`];
   if (options.tint) {
     const [r, g, b] = options.tint;
@@ -90,18 +84,10 @@ function templateCacheKey(
     }
   }
   if (options.rotationY) parts.push(`roty:${options.rotationY.toFixed(3)}`);
-  if (texturedEmissiveColor) {
-    const [r, g, b] = texturedEmissiveColor;
-    parts.push(`em:${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)}`);
-  }
   return parts.join('|');
 }
 
-function convertPbrToFlat(
-  mesh: AbstractMesh,
-  scene: Scene,
-  texturedEmissiveColor: readonly [number, number, number] | null,
-): void {
+function convertPbrToFlat(mesh: AbstractMesh, scene: Scene): void {
   const pbr = mesh.material as any;
   if (!pbr || !pbr.getClassName || pbr.getClassName() !== 'PBRMaterial') return;
 
@@ -115,10 +101,6 @@ function convertPbrToFlat(
     flat.diffuseTexture = pbr.albedoTexture;
     pbr.albedoTexture.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
     if (pbr.albedoColor) flat.diffuseColor = pbr.albedoColor;
-    if (texturedEmissiveColor) {
-      const [r, g, b] = texturedEmissiveColor;
-      flat.emissiveColor = new Color3(r, g, b);
-    }
   }
   if (pbr.albedoColor && !hasTexture) {
     const boost = 1.2;
@@ -179,10 +161,6 @@ function groundItemTypeScaleForItem(def: ItemDef): number {
   return LOG_GROUND_ITEM_IDS.has(def.id) ? LOG_GROUND_ITEM_VISUAL_SCALE : 1;
 }
 
-export function texturedGroundItemEmissiveForItem(def: Pick<ItemDef, 'id'>): readonly [number, number, number] | null {
-  return LOG_GROUND_ITEM_IDS.has(def.id) ? LOG_TEXTURED_GROUND_EMISSIVE : null;
-}
-
 export function groundItemTargetModelSizeForItem(def: ItemDef, quantity: number = 1, visualScale: number = 1): number {
   const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
   return baseSize * stackModelScaleForItem(def, quantity) * clampGroundItemVisualScale(visualScale) * groundItemTypeScaleForItem(def);
@@ -225,8 +203,7 @@ async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promi
 
   const options = await buildThumbnailOptionsForItem(def);
   const targetSize = groundItemTargetModelSizeForItem(def, quantity, groundItemVisualScaleFromOptions(options));
-  const texturedEmissiveColor = texturedGroundItemEmissiveForItem(def);
-  const key = templateCacheKey(path, options, targetSize, texturedEmissiveColor);
+  const key = templateCacheKey(path, options, targetSize);
   let sceneCache = TEMPLATE_CACHE_BY_SCENE.get(scene);
   if (!sceneCache) {
     sceneCache = new Map<string, Promise<GroundItemTemplate | null>>();
@@ -247,7 +224,7 @@ async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promi
         for (const mesh of result.meshes) {
           if (!mesh.parent || mesh.parent.name === '__root__') mesh.parent = root;
           mesh.isPickable = false;
-          convertPbrToFlat(mesh, scene, texturedEmissiveColor);
+          convertPbrToFlat(mesh, scene);
         }
         applyTint(result.meshes, options);
 

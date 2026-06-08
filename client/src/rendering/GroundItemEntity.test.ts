@@ -3,7 +3,6 @@ import type { ItemDef } from '@projectrs/shared';
 import {
   groundItemTargetModelSizeForItem,
   groundItemVisualScaleFromOptions,
-  texturedGroundItemEmissiveForItem,
 } from './GroundItemEntity';
 
 function item(overrides: Partial<ItemDef> = {}): ItemDef {
@@ -52,11 +51,5 @@ describe('ground item sizing', () => {
     expect(groundItemVisualScaleFromOptions({ iconScale: Number.NaN })).toBe(1);
     expect(groundItemVisualScaleFromOptions({ iconScale: 0 })).toBe(0.05);
     expect(groundItemVisualScaleFromOptions({ iconScale: 99 })).toBe(2);
-  });
-
-  test('adds a warm textured emissive lift only for log drops', () => {
-    expect(texturedGroundItemEmissiveForItem(item({ id: 23, name: 'Log' })))
-      .toEqual([0.12, 0.09, 0.055]);
-    expect(texturedGroundItemEmissiveForItem(item({ id: 238, name: 'Potato' }))).toBeNull();
   });
 });
