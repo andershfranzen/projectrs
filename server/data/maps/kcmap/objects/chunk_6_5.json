@@ -3000,5 +3000,138 @@
         "z": 1
       }
     ]
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 218.51762189150435,
+      "y": 2.727412531464789,
+      "z": 165.99965685117178
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 217.51215587519545,
+      "y": 2.727412531464789,
+      "z": 165.99965685117178
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 217,
+      "y": 2.727412531464789,
+      "z": 165.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 217,
+      "y": 2.727412531464789,
+      "z": 164.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 217,
+      "y": 2.727412531464789,
+      "z": 163.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 1.5707963267948966,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 217.5,
+      "y": 2.727412531464789,
+      "z": 163
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
+  },
+  {
+    "assetId": "IronFenceDarker1",
+    "layerId": "layer_0",
+    "position": {
+      "x": 218.5580930217318,
+      "y": 2.727412531464789,
+      "z": 163
+    },
+    "rotation": {
+      "x": 0,
+      "y": 3.141592653589793,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 0.6,
+      "z": 1
+    }
   }
 ]

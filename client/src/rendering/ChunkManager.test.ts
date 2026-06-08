@@ -61,6 +61,32 @@ describe('roof hover reveal indexing', () => {
     roofObjectGridKeysByChunk: Map<string, Set<string>>;
     placedObjectsByChunk: Map<string, Array<{ assetId: string; position: { x: number; y: number; z: number }; noRoof?: boolean }>>;
     chunkPlacedNodes: Map<string, TransformNode[]>;
+    texturePlaneRevealEntriesByChunk: Map<string, Array<{
+      mesh: TransformNode;
+      minY: number;
+      minX: number;
+      maxX: number;
+      minZ: number;
+      maxZ: number;
+    }>>;
+    chunkElevatedThinInstSources: Map<string, Array<{
+      mesh: TransformNode;
+      minX: number;
+      maxX: number;
+      maxOriginY: number;
+      minZ: number;
+      maxZ: number;
+      tileKeys?: Set<string>;
+    }>>;
+    chunkStructuralThinInstSources: Map<string, Array<{
+      mesh: TransformNode;
+      minX: number;
+      maxX: number;
+      maxOriginY: number;
+      minZ: number;
+      maxZ: number;
+      tileKeys?: Set<string>;
+    }>>;
     stampRoofObjectFootprint: (
       chunkKey: string,
       obj: { position: { x: number; y: number; z: number } },
@@ -78,6 +104,9 @@ describe('roof hover reveal indexing', () => {
     internals.roofObjectGridKeysByChunk = new Map();
     internals.placedObjectsByChunk = new Map();
     internals.chunkPlacedNodes = new Map();
+    internals.texturePlaneRevealEntriesByChunk = new Map();
+    internals.chunkElevatedThinInstSources = new Map();
+    internals.chunkStructuralThinInstSources = new Map();
     return { manager: internals as unknown as ChunkManager, internals };
   }
 
@@ -152,6 +181,100 @@ describe('roof hover reveal indexing', () => {
     expect(nodes).toContain(lowerRoof);
     expect(nodes).toContain(flatCap);
     expect(nodes).toContain(flatCapNode);
+  });
+
+  test('reveals castle upper storeys while keeping wall torches visible', () => {
+    const { manager, internals } = makeChunkManagerForRoofGrid();
+    const lowerRoof = {} as TransformNode;
+    const topRoof = {} as TransformNode;
+    const slabCap = {
+      metadata: { assetId: 'stone slab2' },
+      getAbsolutePosition: () => new Vector3(70.5, 5.0, 15.5),
+    } as unknown as TransformNode;
+    const upperWall = {
+      metadata: { assetId: 'stone wall' },
+      getAbsolutePosition: () => new Vector3(70.5, 2.74, 15.5),
+    } as unknown as TransformNode;
+    const angledWall = {
+      metadata: { assetId: 'stone 30' },
+      getAbsolutePosition: () => new Vector3(70.5, 5.49, 15.5),
+    } as unknown as TransformNode;
+    const thinUpperWallBatch = {} as TransformNode;
+    const unrelatedThinWallBatch = {} as TransformNode;
+    const thinUpperFurnitureBatch = {} as TransformNode;
+    const unrelatedThinFurnitureBatch = {} as TransformNode;
+    const topTexturePlane = {
+      metadata: { isTexPlane: true, isFlat: true, isNoRoof: false, minY: 5.49 },
+    } as unknown as TransformNode;
+    const unrelatedTexturePlane = {
+      metadata: { isTexPlane: true, isFlat: true, isNoRoof: false, minY: 5.49 },
+    } as unknown as TransformNode;
+    const noRoofTexturePlane = {
+      metadata: { isTexPlane: true, isFlat: true, isNoRoof: true, minY: 5.49 },
+    } as unknown as TransformNode;
+    const pitchedTexturePlane = {
+      metadata: { isTexPlane: true, isFlat: false, isNoRoof: false, minY: 3.35 },
+    } as unknown as TransformNode;
+    const resizedTexturePlane = {
+      metadata: { isTexPlane: true, isFlat: true, isNoRoof: false, minY: 5.49 },
+    } as unknown as TransformNode;
+    const wallTorch = {
+      metadata: { assetId: 'Walltorch' },
+      getAbsolutePosition: () => new Vector3(70.5, 1.24, 15.5),
+    } as unknown as TransformNode;
+    const chest = {
+      metadata: { assetId: 'tier 1 chest' },
+      getAbsolutePosition: () => new Vector3(70.5, 3.0, 15.5),
+    } as unknown as TransformNode;
+    internals.roofObjectGrid.set('70,15', [
+      { node: lowerRoof, y: 2.72, floor: 0 },
+      { node: topRoof, y: 5.31, floor: 0 },
+    ]);
+    internals.chunkPlacedNodes.set('2,0', [slabCap, upperWall, angledWall, wallTorch, chest]);
+    internals.chunkStructuralThinInstSources.set('2,0', [
+      { mesh: thinUpperWallBatch, minX: 69, maxX: 72, maxOriginY: 5.49, minZ: 14, maxZ: 16, tileKeys: new Set(['70,15']) },
+      { mesh: unrelatedThinWallBatch, minX: 80, maxX: 82, maxOriginY: 5.49, minZ: 20, maxZ: 22, tileKeys: new Set(['81,21']) },
+    ]);
+    internals.chunkElevatedThinInstSources.set('2,0', [
+      { mesh: thinUpperFurnitureBatch, minX: 69, maxX: 72, maxOriginY: 2.68, minZ: 14, maxZ: 16, tileKeys: new Set(['70,15']) },
+      { mesh: unrelatedThinFurnitureBatch, minX: 80, maxX: 82, maxOriginY: 2.68, minZ: 20, maxZ: 22, tileKeys: new Set(['81,21']) },
+    ]);
+    internals.texturePlaneRevealEntriesByChunk.set('2,0', [
+      { mesh: topTexturePlane, minY: 5.49, minX: 70, maxX: 71, minZ: 15, maxZ: 16 },
+      { mesh: unrelatedTexturePlane, minY: 5.49, minX: 90, maxX: 91, minZ: 21, maxZ: 22 },
+      { mesh: noRoofTexturePlane, minY: 5.49, minX: 70, maxX: 71, minZ: 15, maxZ: 16 },
+      { mesh: pitchedTexturePlane, minY: 3.35, minX: 70, maxX: 71, minZ: 15, maxZ: 16 },
+    ]);
+    internals.texturePlaneRevealEntriesByChunk.set('1,0', [
+      { mesh: resizedTexturePlane, minY: 5.49, minX: 59, maxX: 61, minZ: 15, maxZ: 16 },
+    ]);
+
+    const nodes = manager.getConnectedRoofRevealNodesAt(70.5, 15.5, 0.5, 1.2, 3);
+
+    expect(nodes).toContain(lowerRoof);
+    expect(nodes).toContain(topRoof);
+    expect(nodes).toContain(slabCap);
+    expect(nodes).toContain(upperWall);
+    expect(nodes).toContain(angledWall);
+    expect(nodes).toContain(thinUpperWallBatch);
+    expect(nodes).toContain(thinUpperFurnitureBatch);
+    expect(nodes).toContain(topTexturePlane);
+    expect(nodes).toContain(noRoofTexturePlane);
+    expect(nodes).toContain(pitchedTexturePlane);
+    expect(nodes).toContain(resizedTexturePlane);
+    expect(nodes).not.toContain(unrelatedThinWallBatch);
+    expect(nodes).not.toContain(unrelatedThinFurnitureBatch);
+    expect(nodes).not.toContain(unrelatedTexturePlane);
+    expect(nodes).not.toContain(wallTorch);
+    expect(nodes).toContain(chest);
+
+    const floor2Nodes = manager.getConnectedRoofRevealNodesAt(70.5, 15.5, 3.23, 3.93, 3);
+    expect(floor2Nodes).toContain(topRoof);
+    expect(floor2Nodes).toContain(topTexturePlane);
+    expect(floor2Nodes).toContain(noRoofTexturePlane);
+    expect(floor2Nodes).toContain(pitchedTexturePlane);
+    expect(floor2Nodes).toContain(resizedTexturePlane);
+    expect(floor2Nodes).not.toContain(unrelatedTexturePlane);
   });
 
   test('keeps the authored roof tile even when model bounds stamp a shifted tile', () => {

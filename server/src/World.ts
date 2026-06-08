@@ -17,7 +17,7 @@ import { broadcastLocalMessage, broadcastPlayerInfo, sendSystemMessageToUser } f
 import { ServerChunkManager } from './ChunkManager';
 import { QuestService } from './quest/QuestService';
 import { consumeSpellCosts } from './magic/SpellCosts';
-import { DEFAULT_MAX_SEARCH_TILES, buildNaiveInteractionPath, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
+import { DEFAULT_MAX_SEARCH_TILES, canTravel, expandAndValidateWaypointPath, findPathToAnyTile, findPathToReach, findPathToRectInteraction, findPathToTile, isRectInteractionTileReachable, type PathingCollision } from './pathing/Pathing';
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import type { ServerWebSocket } from 'bun';
@@ -287,7 +287,6 @@ const BANKER_ACKNOWLEDGE_LINE = 'Certainly.';
 const BANKER_BANK_OPEN_DELAY_TICKS = 4;
 const DIALOGUE_SESSION_MAX = 0x7fff;
 const PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
-const PLAYER_NPC_NAIVE_PATH_MAX_STEPS = 50;
 const PLAYER_FOLLOW_PATH_SEARCH_STEPS = DEFAULT_MAX_SEARCH_TILES;
 const MITHRIL_ROCK_OBJECT_DEF_ID = 16;
 const MITHRIL_PICKAXE_ITEM_ID = 55;
@@ -1182,33 +1181,20 @@ export class World {
     });
   }
 
-  /** Path from the player to the NPC's interaction surface. This intentionally
-   *  mirrors NPC chase: repeatedly take the simple LostCity-style local step
-   *  toward the interaction surface, and stop when the next local step is
-   *  blocked instead of routing around obstacles with full BFS. */
+  /** Path from the player to the NPC's interaction surface. Players get full
+   *  target routing here; NPC chase remains intentionally naive in Npc.ts. */
   private findPlayerPathToNpc(player: Player, npc: Npc): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
     const collision = this.playerPathCollision(player, map);
-    return buildNaiveInteractionPath(
+    return findPathToRectInteraction({
+      startX: player.position.x,
+      startZ: player.position.y,
+      targetX: npc.position.x,
+      targetZ: npc.position.y,
+      targetSize: npc.size,
       collision,
-      player.position.x,
-      player.position.y,
-      1,
-      npc.position.x,
-      npc.position.y,
-      npc.size,
-      {
-        maxSteps: PLAYER_NPC_NAIVE_PATH_MAX_STEPS,
-        reached: (x, z) => isRectInteractionTileReachable(
-          collision,
-          Math.floor(x),
-          Math.floor(z),
-          npc.position.x,
-          npc.position.y,
-          npc.size,
-        ),
-      },
-    );
+      maxSearchTiles: PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
+    });
   }
 
   private findPlayerPathToNpcRange(
@@ -1219,28 +1205,33 @@ export class World {
     requireRangedLineOfSight: boolean,
   ): { x: number; z: number }[] {
     const map = this.getPlayerMap(player);
-    const collision = this.playerPathCollision(player, map);
-    return buildNaiveInteractionPath(
+    const baseCollision = this.playerPathCollision(player, map);
+    const targetSize = Math.max(1, Math.round(npc.size));
+    const targetMinX = getObjectFootprintMinTile(npc.position.x, targetSize);
+    const targetMinZ = getObjectFootprintMinTile(npc.position.y, targetSize);
+    const isTargetFootprintTile = (tileX: number, tileZ: number): boolean =>
+      tileX >= targetMinX && tileX < targetMinX + targetSize
+      && tileZ >= targetMinZ && tileZ < targetMinZ + targetSize;
+    const collision: PathingCollision = {
+      ...baseCollision,
+      isTileBlocked: (tileX, tileZ) => isTargetFootprintTile(tileX, tileZ) || baseCollision.isTileBlocked(tileX, tileZ),
+    };
+
+    return findPathToReach({
+      startX: player.position.x,
+      startZ: player.position.y,
       collision,
-      player.position.x,
-      player.position.y,
-      1,
-      npc.position.x,
-      npc.position.y,
-      npc.size,
-      {
-        maxSteps: PLAYER_NPC_NAIVE_PATH_MAX_STEPS,
-        reached: (x, z) => this.isPointInNpcAttackRangeFrom(
-          player,
-          npc,
-          x,
-          z,
-          range,
-          mode,
-          requireRangedLineOfSight,
-        ),
-      },
-    );
+      maxSearchTiles: PLAYER_NPC_INTERACTION_PATH_SEARCH_STEPS,
+      reached: (tileX, tileZ) => !isTargetFootprintTile(tileX, tileZ) && this.isPointInNpcAttackRangeFrom(
+        player,
+        npc,
+        tileX + 0.5,
+        tileZ + 0.5,
+        range,
+        mode,
+        requireRangedLineOfSight,
+      ),
+    });
   }
 
   private isPlayerNpcInteractionReachable(player: Player, npc: Npc): boolean {
@@ -1266,6 +1257,7 @@ export class World {
     const path = this.findPlayerPathToNpc(player, npc);
     const last = path.at(-1);
     if (!last) return null;
+    if (path.length > NPC_DIALOGUE_START_RANGE) return null;
     if (!isRectInteractionTileReachable(collision, Math.floor(last.x), Math.floor(last.z), npc.position.x, npc.position.y, npc.size)) {
       return null;
     }

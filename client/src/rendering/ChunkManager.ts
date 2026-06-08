@@ -39,6 +39,8 @@ const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
 const ROOF_REVEAL_CONNECTED_TILE_LIMIT = 2048;
 const ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE = 1.25;
 const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
+const ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE = 0.75;
+const ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING = 10;
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -52,13 +54,16 @@ export function isInteractiveDoorPlacedAsset(assetId: string): boolean {
 
 function isRevealStructuralPlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
+  if (lower.includes('torch')) return false;
   return lower.includes('wall')
     || lower.includes('window')
     || lower.includes('door')
     || lower.includes('doorframe')
+    || lower.includes('arrowslit')
     || lower.includes('slab')
     || lower.includes('pillar')
-    || lower.includes('stair');
+    || lower.includes('stair')
+    || lower === 'stone 30';
 }
 
 function shouldSmoothPlacedObjectTextures(assetId: string, path: string): boolean {
@@ -122,12 +127,22 @@ interface ElevatedThinInstanceSource {
   maxOriginY: number;
   minZ: number;
   maxZ: number;
+  tileKeys?: Set<string>;
 }
 
 interface FlatTexturePickPlane {
   invWorld: Matrix;
   halfWidth: number;
   halfHeight: number;
+}
+
+interface TexturePlaneRevealEntry {
+  mesh: Mesh;
+  minY: number;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
 }
 
 interface FloorLayerClientData {
@@ -330,6 +345,7 @@ export class ChunkManager {
   private texturePlaneMeshes: Mesh[] = [];
   private flatTexturePickPlanes: FlatTexturePickPlane[] = [];
   private texturePlanesByChunk: Map<string, Mesh[]> = new Map();
+  private texturePlaneRevealEntriesByChunk: Map<string, TexturePlaneRevealEntry[]> = new Map();
   private texturePlaneChunksEnabled: Map<string, boolean> = new Map();
   private textureOverlayMeshesByChunk: Map<string, Mesh[]> = new Map();
   private assetRegistry: Map<string, { path: string }> = new Map();
@@ -4009,6 +4025,12 @@ export class ChunkManager {
       if (baseEntries.length === 0) continue;
 
       const scaleBoost = this.getPlacedObjectScaleBoost(assetId);
+      const elevatedTileKeys = visibility === 'elevated'
+        ? new Set(placements.map(obj => `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`))
+        : null;
+      const structuralTileKeys = visibility !== 'roof' && isRevealStructuralPlacedAsset(assetId)
+        ? elevatedTileKeys ?? new Set(placements.map(obj => `${Math.floor(obj.position.x)},${Math.floor(obj.position.z)}`))
+        : null;
 
       for (const { sourceMesh, baseMatrix } of baseEntries) {
         const src = sourceMesh.clone(`thin_${chunkKey}_${assetId}_${sourceMesh.name}`, null)!;
@@ -4062,10 +4084,10 @@ export class ChunkManager {
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
         else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
-          elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ });
+          elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ, tileKeys: elevatedTileKeys ?? undefined });
         }
-        if (visibility !== 'roof' && isRevealStructuralPlacedAsset(assetId) && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
-          structuralThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ });
+        if (structuralTileKeys && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
+          structuralThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ, tileKeys: structuralTileKeys });
         }
         await this.yieldIfFrameBudgetSpent(workSlice);
         if (abortPartialLoadIfStopped()) return;
@@ -4599,7 +4621,6 @@ export class ChunkManager {
   private appendRoofEntriesForTileKeys(
     tileKeys: Set<string>,
     minY: number,
-    seed: RoofRevealSeed,
     result: TransformNode[],
     seen: Set<TransformNode>,
     seenRoofChunkKeys: Set<string>,
@@ -4608,10 +4629,22 @@ export class ChunkManager {
       const arr = this.roofObjectGrid.get(key);
       if (!arr) continue;
       for (const entry of arr) {
-        if (!this.roofEntryMatchesRevealSeed(entry, minY, seed)) continue;
+        if (entry.y <= minY) continue;
         this.appendRoofEntryNodes(entry, minY, result, seen, seenRoofChunkKeys);
       }
     }
+  }
+
+  private firstRoofRevealLayerY(tileKeys: Set<string>, minY: number): number | null {
+    let result = Infinity;
+    for (const key of tileKeys) {
+      const arr = this.roofObjectGrid.get(key);
+      if (!arr) continue;
+      for (const entry of arr) {
+        if (entry.y > minY && entry.y < result) result = entry.y;
+      }
+    }
+    return Number.isFinite(result) ? result : null;
   }
 
   private expandedTileKeys(tileKeys: Set<string>, radius: number): Set<string> {
@@ -4635,7 +4668,8 @@ export class ChunkManager {
   private appendPlacedRevealNodesForTileKeys(
     tileKeys: Set<string>,
     minRevealY: number,
-    seed: RoofRevealSeed,
+    hiddenObjectMinY: number,
+    texturePlaneMinY: number,
     result: TransformNode[],
     seen: Set<TransformNode>,
   ): void {
@@ -4657,23 +4691,97 @@ export class ChunkManager {
     const maxChunkX = Math.floor(maxTileX / CHUNK_SIZE);
     const minChunkZ = Math.floor(minTileZ / CHUNK_SIZE);
     const maxChunkZ = Math.floor(maxTileZ / CHUNK_SIZE);
+    const footprintMinX = minTileX;
+    const footprintMaxX = maxTileX + 1;
+    const footprintMinZ = minTileZ;
+    const footprintMaxZ = maxTileZ + 1;
+    const textureFootprintMinX = footprintMinX - ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING;
+    const textureFootprintMaxX = footprintMaxX + ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING;
+    const textureFootprintMinZ = footprintMinZ - ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING;
+    const textureFootprintMaxZ = footprintMaxZ + ROOF_REVEAL_TEXTURE_PLANE_BBOX_PADDING;
+    const textureMinChunkX = Math.floor(textureFootprintMinX / CHUNK_SIZE);
+    const textureMaxChunkX = Math.floor(textureFootprintMaxX / CHUNK_SIZE);
+    const textureMinChunkZ = Math.floor(textureFootprintMinZ / CHUNK_SIZE);
+    const textureMaxChunkZ = Math.floor(textureFootprintMaxZ / CHUNK_SIZE);
 
     for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
       for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
-        const nodes = this.chunkPlacedNodes.get(`${chunkX},${chunkZ}`);
-        if (!nodes) continue;
-        for (const node of nodes) {
-          if (seen.has(node)) continue;
-          const md = node.metadata as PlacedObjectNodeMetadata | null;
-          const assetId = typeof md?.assetId === 'string' ? md.assetId : '';
-          if (!assetId) continue;
-          if (isInteractiveDoorPlacedAsset(assetId)) continue;
-          if (md?.isNoRoof) continue;
+        const chunkKey = `${chunkX},${chunkZ}`;
+        const nodes = this.chunkPlacedNodes.get(chunkKey);
+        if (nodes) {
+          for (const node of nodes) {
+            if (seen.has(node)) continue;
+            const md = node.metadata as PlacedObjectNodeMetadata | null;
+            const assetId = typeof md?.assetId === 'string' ? md.assetId : '';
+            if (!assetId) continue;
+            if (md?.isNoRoof) continue;
 
-          const ap = node.getAbsolutePosition();
-          if (ap.y <= minRevealY) continue;
-          if (ap.y > seed.y + ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE) continue;
-          if (!tileKeys.has(`${Math.floor(ap.x)},${Math.floor(ap.z)}`)) continue;
+            const ap = node.getAbsolutePosition();
+            const isBuildingPart = this.isRoofLikeAsset(assetId) || isRevealStructuralPlacedAsset(assetId);
+            if (ap.y <= (isBuildingPart ? minRevealY : hiddenObjectMinY)) continue;
+            if (!tileKeys.has(`${Math.floor(ap.x)},${Math.floor(ap.z)}`)) continue;
+            seen.add(node);
+            result.push(node);
+          }
+        }
+
+        const structuralSources = this.chunkStructuralThinInstSources.get(chunkKey);
+        if (structuralSources) {
+          for (const entry of structuralSources) {
+            const node = entry.mesh;
+            if (seen.has(node) || entry.maxOriginY <= minRevealY) continue;
+            if (entry.maxX < footprintMinX || entry.minX > footprintMaxX || entry.maxZ < footprintMinZ || entry.minZ > footprintMaxZ) continue;
+            if (entry.tileKeys) {
+              let hasRevealTile = false;
+              for (const key of entry.tileKeys) {
+                if (tileKeys.has(key)) {
+                  hasRevealTile = true;
+                  break;
+                }
+              }
+              if (!hasRevealTile) continue;
+            }
+            seen.add(node);
+            result.push(node);
+          }
+        }
+
+        const elevatedSources = this.chunkElevatedThinInstSources.get(chunkKey);
+        if (elevatedSources) {
+          for (const entry of elevatedSources) {
+            const node = entry.mesh;
+            if (seen.has(node) || entry.maxOriginY <= hiddenObjectMinY) continue;
+            if (entry.maxX < footprintMinX || entry.minX > footprintMaxX || entry.maxZ < footprintMinZ || entry.minZ > footprintMaxZ) continue;
+            if (entry.tileKeys) {
+              let hasRevealTile = false;
+              for (const key of entry.tileKeys) {
+                if (tileKeys.has(key)) {
+                  hasRevealTile = true;
+                  break;
+                }
+              }
+              if (!hasRevealTile) continue;
+            }
+            seen.add(node);
+            result.push(node);
+          }
+        }
+      }
+    }
+
+    for (let chunkZ = textureMinChunkZ; chunkZ <= textureMaxChunkZ; chunkZ++) {
+      for (let chunkX = textureMinChunkX; chunkX <= textureMaxChunkX; chunkX++) {
+        const texturePlanes = this.texturePlaneRevealEntriesByChunk.get(`${chunkX},${chunkZ}`);
+        if (!texturePlanes) continue;
+        for (const entry of texturePlanes) {
+          const node = entry.mesh;
+          // noRoof and flatness affect indoor detection, but connected hover
+          // reveal still hides any upper-storey texture plane inside the
+          // revealed building. Castle cap/ledge planes are sometimes authored
+          // a few tiles outside the roof grid, so use the padded bbox instead
+          // of exact tile overlap.
+          if (seen.has(node) || entry.minY <= texturePlaneMinY) continue;
+          if (entry.maxX < textureFootprintMinX || entry.minX > textureFootprintMaxX || entry.maxZ < textureFootprintMinZ || entry.minZ > textureFootprintMaxZ) continue;
           seen.add(node);
           result.push(node);
         }
@@ -4701,8 +4809,15 @@ export class ChunkManager {
     const result: TransformNode[] = [];
     const seen = new Set<TransformNode>();
     const seenRoofChunkKeys = new Set<string>();
-    this.appendRoofEntriesForTileKeys(revealTileKeys, minY, seed, result, seen, seenRoofChunkKeys);
-    this.appendPlacedRevealNodesForTileKeys(revealTileKeys, minRevealY, seed, result, seen);
+    // The seed layer only identifies the building footprint. Tall castles can
+    // stack lower roof/floor caps under the real top roof, so reveal every
+    // roof/structural layer above the player over that connected footprint.
+    const firstLayerY = this.firstRoofRevealLayerY(revealTileKeys, minY);
+    const hiddenObjectMinY = firstLayerY === null
+      ? minRevealY
+      : Math.max(minRevealY, firstLayerY - ROOF_REVEAL_OBJECT_LAYER_BELOW_TOLERANCE);
+    this.appendRoofEntriesForTileKeys(revealTileKeys, minY, result, seen, seenRoofChunkKeys);
+    this.appendPlacedRevealNodesForTileKeys(revealTileKeys, minRevealY, hiddenObjectMinY, minY, result, seen);
     return result;
   }
 
@@ -5194,6 +5309,7 @@ export class ChunkManager {
 
   private loadTexturePlanes(planes: TexturePlane[]): void {
     this.rebuildFlatTexturePickPlanes(planes);
+    this.texturePlaneRevealEntriesByChunk.clear();
     if (planes.length === 0) return;
     if (import.meta.env.DEV) console.log(`[ChunkManager] Loading ${planes.length} texture planes...`);
 
@@ -5350,9 +5466,41 @@ export class ChunkManager {
         if (py < minPY) minPY = py;
         if (py > maxPY) maxPY = py;
       }
+      let minPX = Infinity, maxPX = -Infinity, minPZ = Infinity, maxPZ = -Infinity;
+      for (let i = 0; i < allPositions.length; i += 3) {
+        const px = allPositions[i];
+        const pz = allPositions[i + 2];
+        if (px < minPX) minPX = px;
+        if (px > maxPX) maxPX = px;
+        if (pz < minPZ) minPZ = pz;
+        if (pz > maxPZ) maxPZ = pz;
+      }
+      let minTileX = Infinity, maxTileX = -Infinity, minTileZ = Infinity, maxTileZ = -Infinity;
+      const revealChunkKeys = new Set<string>();
+      if (Number.isFinite(minPX) && Number.isFinite(maxPX) && Number.isFinite(minPZ) && Number.isFinite(maxPZ)) {
+        minTileX = Math.max(0, Math.floor(minPX));
+        maxTileX = Math.min(this.mapWidth - 1, Math.floor(maxPX));
+        minTileZ = Math.max(0, Math.floor(minPZ));
+        maxTileZ = Math.min(this.mapHeight - 1, Math.floor(maxPZ));
+        if (minTileX <= maxTileX && minTileZ <= maxTileZ) {
+          for (let tz = minTileZ; tz <= maxTileZ; tz++) {
+            for (let tx = minTileX; tx <= maxTileX; tx++) {
+              revealChunkKeys.add(`${Math.floor(tx / CHUNK_SIZE)},${Math.floor(tz / CHUNK_SIZE)}`);
+            }
+          }
+        }
+      }
       const refChunkX = Math.floor(refPlane.position.x / CHUNK_SIZE);
       const refChunkZ = Math.floor(refPlane.position.z / CHUNK_SIZE);
-      mesh.metadata = { isTexPlane: true, isFlat: group.isFlat, isNoRoof: group.isNoRoof, minY: minPY, maxY: maxPY, chunkX: refChunkX, chunkZ: refChunkZ };
+      mesh.metadata = {
+        isTexPlane: true,
+        isFlat: group.isFlat,
+        isNoRoof: group.isNoRoof,
+        minY: minPY,
+        maxY: maxPY,
+        chunkX: refChunkX,
+        chunkZ: refChunkZ,
+      };
 
       this.texturePlaneMeshes.push(mesh);
 
@@ -5362,6 +5510,25 @@ export class ChunkManager {
       let arr = this.texturePlanesByChunk.get(pkey);
       if (!arr) { arr = []; this.texturePlanesByChunk.set(pkey, arr); }
       arr.push(mesh);
+
+      if (Number.isFinite(minTileX) && Number.isFinite(minTileZ) && revealChunkKeys.size > 0) {
+        const revealEntry: TexturePlaneRevealEntry = {
+          mesh,
+          minY: minPY,
+          minX: minPX,
+          maxX: maxPX,
+          minZ: minPZ,
+          maxZ: maxPZ,
+        };
+        for (const key of revealChunkKeys) {
+          let entries = this.texturePlaneRevealEntriesByChunk.get(key);
+          if (!entries) {
+            entries = [];
+            this.texturePlaneRevealEntriesByChunk.set(key, entries);
+          }
+          entries.push(revealEntry);
+        }
+      }
 
       // Register roof entries for all planes in the group. Only register
       // tiles whose CENTER falls inside the plane's footprint. The previous
@@ -5432,6 +5599,7 @@ export class ChunkManager {
     this.texturePlaneMeshes = [];
     this.flatTexturePickPlanes = [];
     this.texturePlanesByChunk.clear();
+    this.texturePlaneRevealEntriesByChunk.clear();
     this.texturePlaneChunksEnabled.clear();
     this.tilePaintedEntries.clear();
     this.flatPlanesByTexture.clear();

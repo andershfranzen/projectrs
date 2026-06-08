@@ -63,7 +63,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -77,7 +77,8 @@ const MODERATOR_NAME_COLOR = '#62a8ff';
 const GEAR_DEBUG_CACHE_BUST_TOKEN: string = import.meta.env.DEV ? `?v=${Date.now()}` : '';
 const NPC_MATERIALIZATION_RETRY_MS = 500;
 const NPC_LOD_HYSTERESIS_TILES = 4;
-const NPC_TARGET_NAIVE_PATH_MAX_STEPS = 50;
+const NPC_TARGET_PATH_MAX_SEARCH_TILES = 4096;
+const NPC_TARGET_PATH_MAX_WAYPOINTS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
@@ -6394,24 +6395,27 @@ export class GameManager {
       return { path: [], preserveCurrentStep: false };
     }
 
-    const path = buildNaiveInteractionPath(
-      {
+    const targetSize = this.getNpcTileSize(npcEntityId);
+    const targetMinX = getObjectFootprintMinTile(target.x, targetSize);
+    const targetMinZ = getObjectFootprintMinTile(target.z, targetSize);
+    const isTargetFootprintTile = (tileX: number, tileZ: number): boolean =>
+      tileX >= targetMinX && tileX < targetMinX + targetSize
+      && tileZ >= targetMinZ && tileZ < targetMinZ + targetSize;
+
+    const path = findPathToReach({
+      startX: start.x,
+      startZ: start.z,
+      collision: {
         width: this.chunkManager.getMapWidth(),
         height: this.chunkManager.getMapHeight(),
-        isTileBlocked: this.isTileBlocked,
+        isTileBlocked: (tileX, tileZ) => isTargetFootprintTile(tileX, tileZ) || this.isTileBlocked(tileX, tileZ),
         isWallBlocked: this.isWallBlockedForPath,
       },
-      start.x,
-      start.z,
-      1,
-      target.x,
-      target.z,
-      this.getNpcTileSize(npcEntityId),
-      {
-        maxSteps: NPC_TARGET_NAIVE_PATH_MAX_STEPS,
-        reached,
-      },
-    );
+      maxSearchTiles: NPC_TARGET_PATH_MAX_SEARCH_TILES,
+      maxWaypoints: NPC_TARGET_PATH_MAX_WAYPOINTS,
+      compress: true,
+      reached: (tileX, tileZ) => !isTargetFootprintTile(tileX, tileZ) && reached(tileX + 0.5, tileZ + 0.5),
+    });
 
     if (!activeStep) return { path, preserveCurrentStep: false };
     if (reached(activeStep.target.x, activeStep.target.z) || path.length === 0) {

@@ -382,6 +382,30 @@ describe('NPC interaction reachability', () => {
     expect(player.hasMoveQueue()).toBe(true);
   });
 
+  test('dialogue early-start does not use a long route around nearby blockers', () => {
+    const blocked = new Set(['9,10']);
+    const world = makeWorld();
+    world.maps.set('kcmap', {
+      width: 32,
+      height: 32,
+      isBlocked: (x: number, z: number) => blocked.has(`${x},${z}`),
+      isTileBlockedOnFloor: (x: number, z: number) => blocked.has(`${x},${z}`),
+      isWallBlocked: () => false,
+      isWallBlockedOnFloor: () => false,
+      getEffectiveHeightOnFloor: () => 0,
+      hasProjectileLineOfSight: () => true,
+    });
+    world.blockedObjectTiles = new Set();
+
+    const player = new Player('tester', 8.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+
+    expect(world.findPlayerPathToNpc(player, npc).length).toBeGreaterThan(2);
+    expect(world.findPlayerPathToNpcDialogueStart(player, npc)).toBeNull();
+  });
+
   test('attacking from far away does not turn the NPC before combat connects', () => {
     const player = new Player('tester', 1.5, 10.5, fakeWs, 1);
     const npc = new Npc(npcDef, 10.5, 10.5);

@@ -1,8 +1,10 @@
 import {
   canTravel,
+  findPathToReach as findSharedPathToReach,
   getObjectFootprintBounds,
   getObjectInteractionTiles,
   isFootprintBlocked,
+  type FindPathToReachOptions,
   type TargetPathingCollision,
   type TileCoord,
 } from '@projectrs/shared';
@@ -59,13 +61,7 @@ export interface ValidatedWaypointPath<State> {
   truncated: boolean;
 }
 
-const SEARCH_SIZE = 128;
-const SEARCH_HALF = SEARCH_SIZE / 2;
-const QUEUE_SIZE = SEARCH_SIZE * SEARCH_SIZE;
 export const DEFAULT_MAX_SEARCH_TILES = 4096;
-
-const CARDINAL_DIRS: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-const DIAGONAL_DIRS: ReadonlyArray<readonly [number, number]> = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
 
 function center(tile: number): number {
   return tile + 0.5;
@@ -149,85 +145,16 @@ export function expandAndValidateWaypointPath<State>(
   return { path: validPath, state, requestedTileCount, truncated };
 }
 
-function findPathToReach(options: FindPathOptions & { reached(tileX: number, tileZ: number): boolean }): PathPoint[] {
-  const startTileX = Math.floor(options.startX);
-  const startTileZ = Math.floor(options.startZ);
-  if (options.reached(startTileX, startTileZ)) return [];
-
-  const baseX = startTileX - SEARCH_HALF;
-  const baseZ = startTileZ - SEARCH_HALF;
-  const sourceLX = startTileX - baseX;
-  const sourceLZ = startTileZ - baseZ;
-  const maxSearchTiles = options.maxSearchTiles ?? DEFAULT_MAX_SEARCH_TILES;
-
-  const visited = new Uint8Array(QUEUE_SIZE);
-  const parent = new Int32Array(QUEUE_SIZE);
-  const queueX = new Int16Array(QUEUE_SIZE);
-  const queueZ = new Int16Array(QUEUE_SIZE);
-  parent.fill(-1);
-
-  const idx = (lx: number, lz: number): number => lz * SEARCH_SIZE + lx;
-  let read = 0;
-  let write = 0;
-  let visitedTiles = 0;
-  let found = -1;
-
-  const enqueue = (lx: number, lz: number, parentIdx: number): void => {
-    const i = idx(lx, lz);
-    visited[i] = 1;
-    parent[i] = parentIdx;
-    queueX[write] = lx;
-    queueZ[write] = lz;
-    write++;
+export function findPathToReach(options: FindPathOptions & { reached(tileX: number, tileZ: number): boolean }): PathPoint[] {
+  const sharedOptions: FindPathToReachOptions = {
+    startX: options.startX,
+    startZ: options.startZ,
+    collision: options.collision,
+    maxSearchTiles: options.maxSearchTiles ?? DEFAULT_MAX_SEARCH_TILES,
+    reached: options.reached,
   };
-
-  enqueue(sourceLX, sourceLZ, -1);
-
-  while (read < write && visitedTiles < maxSearchTiles) {
-    const lx = queueX[read];
-    const lz = queueZ[read];
-    const currentIdx = idx(lx, lz);
-    read++;
-    visitedTiles++;
-
-    const tileX = baseX + lx;
-    const tileZ = baseZ + lz;
-    if (options.reached(tileX, tileZ)) {
-      found = currentIdx;
-      break;
-    }
-
-    for (const [dx, dz] of CARDINAL_DIRS) {
-      const nx = lx + dx;
-      const nz = lz + dz;
-      if (nx < 0 || nx >= SEARCH_SIZE || nz < 0 || nz >= SEARCH_SIZE) continue;
-      const nextIdx = idx(nx, nz);
-      if (visited[nextIdx]) continue;
-      if (!canTravel(options.collision, tileX, tileZ, dx, dz, options.actorSize ?? 1)) continue;
-      enqueue(nx, nz, currentIdx);
-    }
-    for (const [dx, dz] of DIAGONAL_DIRS) {
-      const nx = lx + dx;
-      const nz = lz + dz;
-      if (nx < 0 || nx >= SEARCH_SIZE || nz < 0 || nz >= SEARCH_SIZE) continue;
-      const nextIdx = idx(nx, nz);
-      if (visited[nextIdx]) continue;
-      if (!canTravel(options.collision, tileX, tileZ, dx, dz, options.actorSize ?? 1)) continue;
-      enqueue(nx, nz, currentIdx);
-    }
-  }
-
-  if (found < 0) return [];
-
-  const tiles: PathPoint[] = [];
-  for (let current = found; current >= 0; current = parent[current]) {
-    const lx = current % SEARCH_SIZE;
-    const lz = (current / SEARCH_SIZE) | 0;
-    if (lx === sourceLX && lz === sourceLZ) break;
-    tiles.push(point(baseX + lx, baseZ + lz));
-  }
-  tiles.reverse();
-  return tiles;
+  if (options.actorSize !== undefined) sharedOptions.actorSize = options.actorSize;
+  return findSharedPathToReach(sharedOptions);
 }
 
 export function findPathToTile(

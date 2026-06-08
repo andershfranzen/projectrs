@@ -22,6 +22,17 @@ export interface BuildNaiveInteractionPathOptions {
   reached?: (x: number, z: number) => boolean;
 }
 
+export interface FindPathToReachOptions {
+  startX: number;
+  startZ: number;
+  collision: TargetPathingCollision;
+  actorSize?: number;
+  maxSearchTiles?: number;
+  maxWaypoints?: number;
+  compress?: boolean;
+  reached(tileX: number, tileZ: number): boolean;
+}
+
 function center(tile: number): number {
   return tile + 0.5;
 }
@@ -29,6 +40,14 @@ function center(tile: number): number {
 function point(tileX: number, tileZ: number): PathPoint {
   return { x: center(tileX), z: center(tileZ) };
 }
+
+const TARGET_SEARCH_SIZE = 128;
+const TARGET_SEARCH_HALF = TARGET_SEARCH_SIZE / 2;
+const TARGET_QUEUE_SIZE = TARGET_SEARCH_SIZE * TARGET_SEARCH_SIZE;
+export const DEFAULT_TARGET_MAX_SEARCH_TILES = 4096;
+export const DEFAULT_COMPRESSED_TARGET_WAYPOINTS = 50;
+const TARGET_CARDINAL_DIRS: ReadonlyArray<readonly [number, number]> = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+const TARGET_DIAGONAL_DIRS: ReadonlyArray<readonly [number, number]> = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
 
 const CARDINAL_ESCAPE_DIRS: ReadonlyArray<readonly [number, number]> = [
   [-1, 0],
@@ -42,6 +61,120 @@ function inBounds(collision: TargetPathingCollision, tileX: number, tileZ: numbe
   if (collision.width !== undefined && tileX >= collision.width) return false;
   if (collision.height !== undefined && tileZ >= collision.height) return false;
   return true;
+}
+
+export function compressTargetPath(
+  path: readonly PathPoint[],
+  maxWaypoints: number = DEFAULT_COMPRESSED_TARGET_WAYPOINTS,
+): PathPoint[] {
+  const waypointLimit = Math.max(1, Math.floor(maxWaypoints));
+  if (path.length <= 1) return [...path];
+
+  const compressed: PathPoint[] = [];
+  let prevDx = 0;
+  let prevDz = 0;
+  for (let i = 0; i < path.length; i++) {
+    const current = path[i]!;
+    if (i === path.length - 1) {
+      compressed.push(current);
+    } else {
+      const next = path[i + 1]!;
+      const dx = Math.sign(Math.floor(next.x) - Math.floor(current.x));
+      const dz = Math.sign(Math.floor(next.z) - Math.floor(current.z));
+      if (dx !== prevDx || dz !== prevDz) {
+        compressed.push(current);
+        prevDx = dx;
+        prevDz = dz;
+      }
+    }
+  }
+
+  if (compressed.length > waypointLimit) compressed.length = waypointLimit;
+  return compressed;
+}
+
+export function findPathToReach(options: FindPathToReachOptions): PathPoint[] {
+  const startTileX = Math.floor(options.startX);
+  const startTileZ = Math.floor(options.startZ);
+  if (options.reached(startTileX, startTileZ)) return [];
+
+  const baseX = startTileX - TARGET_SEARCH_HALF;
+  const baseZ = startTileZ - TARGET_SEARCH_HALF;
+  const sourceLX = startTileX - baseX;
+  const sourceLZ = startTileZ - baseZ;
+  const maxSearchTiles = options.maxSearchTiles ?? DEFAULT_TARGET_MAX_SEARCH_TILES;
+  const actorSize = options.actorSize ?? 1;
+
+  const visited = new Uint8Array(TARGET_QUEUE_SIZE);
+  const parent = new Int32Array(TARGET_QUEUE_SIZE);
+  const queueX = new Int16Array(TARGET_QUEUE_SIZE);
+  const queueZ = new Int16Array(TARGET_QUEUE_SIZE);
+  parent.fill(-1);
+
+  const idx = (lx: number, lz: number): number => lz * TARGET_SEARCH_SIZE + lx;
+  let read = 0;
+  let write = 0;
+  let visitedTiles = 0;
+  let found = -1;
+
+  const enqueue = (lx: number, lz: number, parentIdx: number): void => {
+    const i = idx(lx, lz);
+    visited[i] = 1;
+    parent[i] = parentIdx;
+    queueX[write] = lx;
+    queueZ[write] = lz;
+    write++;
+  };
+
+  enqueue(sourceLX, sourceLZ, -1);
+
+  while (read < write && visitedTiles < maxSearchTiles) {
+    const lx = queueX[read]!;
+    const lz = queueZ[read]!;
+    const currentIdx = idx(lx, lz);
+    read++;
+    visitedTiles++;
+
+    const tileX = baseX + lx;
+    const tileZ = baseZ + lz;
+    if (options.reached(tileX, tileZ)) {
+      found = currentIdx;
+      break;
+    }
+
+    for (const [dx, dz] of TARGET_CARDINAL_DIRS) {
+      const nx = lx + dx;
+      const nz = lz + dz;
+      if (nx < 0 || nx >= TARGET_SEARCH_SIZE || nz < 0 || nz >= TARGET_SEARCH_SIZE) continue;
+      const nextIdx = idx(nx, nz);
+      if (visited[nextIdx]) continue;
+      if (!canTravel(options.collision, tileX, tileZ, dx, dz, actorSize)) continue;
+      enqueue(nx, nz, currentIdx);
+    }
+
+    for (const [dx, dz] of TARGET_DIAGONAL_DIRS) {
+      const nx = lx + dx;
+      const nz = lz + dz;
+      if (nx < 0 || nx >= TARGET_SEARCH_SIZE || nz < 0 || nz >= TARGET_SEARCH_SIZE) continue;
+      const nextIdx = idx(nx, nz);
+      if (visited[nextIdx]) continue;
+      if (!canTravel(options.collision, tileX, tileZ, dx, dz, actorSize)) continue;
+      enqueue(nx, nz, currentIdx);
+    }
+  }
+
+  if (found < 0) return [];
+
+  const tiles: PathPoint[] = [];
+  for (let current = found; current >= 0; current = parent[current]!) {
+    const lx = current % TARGET_SEARCH_SIZE;
+    const lz = (current / TARGET_SEARCH_SIZE) | 0;
+    if (lx === sourceLX && lz === sourceLZ) break;
+    tiles.push(point(baseX + lx, baseZ + lz));
+  }
+  tiles.reverse();
+
+  return options.compress ? compressTargetPath(tiles, options.maxWaypoints) : tiles;
 }
 
 export function isFootprintBlocked(collision: TargetPathingCollision, anchorTileX: number, anchorTileZ: number, size: number): boolean {

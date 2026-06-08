@@ -52,6 +52,24 @@ describe('server pathing', () => {
     expect(isRectInteractionTileReachable(collision, 2, 1, 3.5, 1.5, 1)).toBe(false);
   });
 
+  test('entity interaction pathing routes around a blocked side', () => {
+    const collision = openCollision(new Set(['2,1']));
+    const path = findPathToRectInteraction({
+      startX: 0.5,
+      startZ: 1.5,
+      targetX: 3.5,
+      targetZ: 1.5,
+      targetSize: 1,
+      collision,
+    });
+
+    const last = path.at(-1);
+    expect(last).toBeDefined();
+    expect(Math.floor(last!.x)).not.toBe(2);
+    expect(isRectInteractionTileReachable(collision, Math.floor(last!.x), Math.floor(last!.z), 3.5, 1.5, 1)).toBe(true);
+    expect(path.some(step => Math.floor(step.x) === 2 && Math.floor(step.z) === 1)).toBe(false);
+  });
+
   test('BFS routes exact tile paths around blockers without corner cutting', () => {
     const path = findPathToAnyTile({
       startX: 0.5,
