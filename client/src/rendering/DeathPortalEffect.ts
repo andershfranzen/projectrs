@@ -84,10 +84,21 @@ function getTargetNode(target: DeathEffectTarget): TransformNode | AbstractMesh 
   return target.getRoot?.() ?? target.getMesh?.() ?? null;
 }
 
+export function resolveDeathPortalFoot(target: Targetable, node: TransformNode | AbstractMesh | null = null): Vector3 {
+  const foot = target.position.clone();
+  if (!node || node.isDisposed()) return foot;
+
+  node.computeWorldMatrix(true);
+  const renderOrigin = node.getAbsolutePosition();
+  foot.x = renderOrigin.x;
+  foot.z = renderOrigin.z;
+  return foot;
+}
+
 export class DeathPortalEffect {
   static play(scene: Scene, target: DeathEffectTarget, opts: DeathPortalEffectOpts = {}): void {
-    const foot = target.position.clone();
     const node = getTargetNode(target);
+    const foot = resolveDeathPortalFoot(target, node);
     target.stopWalking?.();
     target.hideChatBubble?.();
     target.setLabel?.('');
