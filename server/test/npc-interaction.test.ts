@@ -543,10 +543,46 @@ describe('NPC interaction reachability', () => {
     withMockedRandom(0, () => world.tickNpcCombat());
 
     expect(world.combatSystem.listRetaliationRequests()).toHaveLength(1);
+    expect(world.combatSystem.listRetaliationRequests()[0].earliestTick).toBe(world.currentTick + 1);
+    world.finishCombatTick();
+
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+    expect(player.attackTarget).toBeNull();
+    expect(world.combatSystem.listRetaliationRequests()).toHaveLength(1);
+
+    world.currentTick += 1;
     world.finishCombatTick();
 
     expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
     expect(player.attackTarget).toBe(npc);
+    expect(world.combatSystem.listRetaliationRequests()).toHaveLength(0);
+  });
+
+  test('NPC melee auto retaliate does not steal the current walking queue before the delayed hit response', () => {
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.autoRetaliate = true;
+    player.setMoveQueue([
+      { x: 9.5, z: 11.5 },
+      { x: 9.5, z: 12.5 },
+    ]);
+    npc.setCombatTarget(player);
+    const { world } = makeCombatWorld(player, npc);
+
+    withMockedRandom(0, () => world.tickNpcCombat());
+
+    world.finishCombatTick();
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+    expect(player.getMoveDestination()).toEqual({ x: 9.5, z: 12.5 });
+
+    world.currentTick += 1;
+    world.finishCombatTick();
+
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+    expect(player.attackTarget).toBeNull();
+    expect(player.getMoveDestination()).toEqual({ x: 9.5, z: 12.5 });
     expect(world.combatSystem.listRetaliationRequests()).toHaveLength(0);
   });
 

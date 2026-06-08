@@ -3449,11 +3449,15 @@ export class World {
     this.syncPlayerCombatIntent(player, npc);
   }
 
+  // 2004Scape queues playerhit_n_retaliate from the NPC hit path; in this
+  // server, one tick also lets the next movement step run before retal engages.
+  private static readonly PLAYER_AUTO_RETALIATION_DELAY_TICKS = 1;
+
   private enqueuePlayerAutoRetaliation(player: Player, npc: Npc): void {
     this.getCombatSystem().enqueueRetaliation({
       actor: this.playerCombatRef(player.id),
       target: this.npcCombatRef(npc.id),
-      earliestTick: this.currentTick,
+      earliestTick: this.currentTick + World.PLAYER_AUTO_RETALIATION_DELAY_TICKS,
       reason: 'auto-retaliate',
     });
   }

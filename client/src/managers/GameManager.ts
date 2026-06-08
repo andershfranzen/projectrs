@@ -1903,8 +1903,18 @@ export class GameManager {
         variant === PlayerSkillAnimationVariant.Chop ? 'chop' :
         variant === PlayerSkillAnimationVariant.Mine ? 'mine' :
         undefined;
-      remote.startSkillAnimation(anim);
-      if (toolItemId > 0) this.applySkillingTool(entityId, remote, toolItemId);
+      void (async () => {
+        if (toolItemId > 0) await this.applySkillingTool(entityId, remote, toolItemId);
+        if (this.entities.remotePlayers.get(entityId) !== remote) return;
+        const latest = this.remoteAnimationStates.get(entityId);
+        if (!latest
+          || latest.kind !== kind
+          || latest.variant !== variant
+          || latest.targetId !== targetId
+          || latest.toolItemId !== toolItemId
+        ) return;
+        remote.startSkillAnimation(anim);
+      })();
       return;
     }
 
@@ -2604,15 +2614,15 @@ export class GameManager {
   /** Swap the weapon slot to the server-picked skilling tool. Passes
    *  isLocal=false so the gear-template cache is reused across repeated
    *  chops instead of reloading the GLB on each swap. */
-  private applySkillingTool(
+  private async applySkillingTool(
     entityId: number,
     character: CharacterEntity,
     toolItemId: number,
-  ): void {
+  ): Promise<void> {
     if (toolItemId <= 0 || this.toolSwappedEntities.has(entityId)) return;
     if (character.getGearItemId('weapon') === toolItemId) return;
     this.toolSwappedEntities.add(entityId);
-    void this.applyGearToCharacter(character, 'weapon', toolItemId, /* isLocal */ false, entityId);
+    await this.applyGearToCharacter(character, 'weapon', toolItemId, /* isLocal */ false, entityId);
   }
 
   /** Restore the entity's real weapon after a skilling swap. Reads from
@@ -3629,15 +3639,20 @@ export class GameManager {
         : undefined;
       const skipAnim = objDef?.category === 'chest';
 
-      if (this.localPlayer && toolItemId > 0) {
-        this.applySkillingTool(this.localPlayerId, this.localPlayer, toolItemId);
-      }
-
-      if (skipAnim) {
-        this.startSkillingStationary(v[0]);
-      } else {
-        this.startSkillingVisual(v[0], variant);
-      }
+      const objectId = v[0];
+      void (async () => {
+        const player = this.localPlayer;
+        if (player && toolItemId > 0) {
+          await this.applySkillingTool(this.localPlayerId, player, toolItemId);
+        }
+        if (!this.isSkilling || this.skillingObjectId !== objectId) return;
+        if (player && this.localPlayer !== player) return;
+        if (skipAnim) {
+          this.startSkillingStationary(objectId);
+        } else {
+          this.startSkillingVisual(objectId, variant);
+        }
+      })();
     });
 
     this.network.on(ServerOpcode.SKILLING_STOP, (_op, _v) => {
