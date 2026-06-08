@@ -93,6 +93,22 @@ describe('server pathing', () => {
     expect(Math.abs(Math.floor(step!.x) - 10) + Math.abs(Math.floor(step!.z) - 10)).toBe(1);
   });
 
+  test('overlapping naive interaction escapes a sized target footprint', () => {
+    const collision = openCollision();
+    const targetX = 10.5;
+    const targetZ = 10.5;
+    const targetSize = 2;
+
+    for (const [startX, startZ] of [[9.5, 9.5], [10.5, 9.5], [9.5, 10.5], [10.5, 10.5]]) {
+      const step = stepTowardNaiveInteraction(collision, startX, startZ, 1, targetX, targetZ, targetSize);
+      expect(step).not.toBeNull();
+      const stepTileX = Math.floor(step!.x);
+      const stepTileZ = Math.floor(step!.z);
+      expect(stepTileX >= 9 && stepTileX <= 10 && stepTileZ >= 9 && stepTileZ <= 10).toBe(false);
+      expect(isRectInteractionTileReachable(collision, stepTileX, stepTileZ, targetX, targetZ, targetSize)).toBe(true);
+    }
+  });
+
   test('naive interaction paths walk direct and do not route around blockers', () => {
     const openPath = buildNaiveInteractionPath(openCollision(), 0.5, 1.5, 1, 3.5, 1.5, 1);
     expect(openPath).toEqual([

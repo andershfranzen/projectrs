@@ -168,9 +168,10 @@ export class Player extends Entity {
    *  transition, death, disconnect). */
   openDialogueState: { sessionId: number; npcEntityId: number; nodeId: string; visibleOptionIndices: number[] } | null = null;
   /** Talk-to-NPC intent held while the player walks into range. Fires from
-   *  the tick loop once the player reaches a valid NPC interaction tile.
-   *  Repolls briefly if the NPC walks away just before arrival. Cleared on
-   *  movement redirect, death, disconnect. */
+   *  the tick loop once the player reaches dialogue start range, while the
+   *  remaining walk still targets a valid adjacent NPC interaction tile.
+   *  Repolls briefly if the NPC walks away before the start range is reached.
+   *  Cleared on movement redirect, death, disconnect. */
   pendingTalkNpcId: number = -1;
   pendingTalkRepathTicks: number = 0;
   /** Player entity id this player is following, or -1 when not following. */

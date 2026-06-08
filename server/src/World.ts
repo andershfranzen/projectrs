@@ -267,6 +267,10 @@ const DEATH_DROP_DESPAWN_TICKS = 300;
  *  than the standard despawn since the item is dropped in the player's
  *  immediate vicinity and they can pick it back up right away. ~1 minute. */
 const REFUND_SPILL_DESPAWN_TICKS = 100;
+/** Talk-to can begin once the player is close enough to hear/respond, but the
+ *  queued walk still targets the NPC's adjacent interaction tile. This keeps
+ *  moving dialogue NPCs from stepping away right before arrival. */
+const NPC_DIALOGUE_START_RANGE = 2;
 /** How long to keep a dropped socket's player in-world for client reconnect.
  *  38 ticks at 600ms is just under 23s, matching the client's retry window. */
 const RECONNECT_GRACE_TICKS = 38;
@@ -1246,6 +1250,26 @@ export class World {
     const ptz = Math.floor(player.position.y);
     if (this.isBankerReachableAcrossBooth(player, npc, ptx, ptz)) return true;
     return isRectInteractionTileReachable(this.playerPathCollision(player, map), ptx, ptz, npc.position.x, npc.position.y, npc.size);
+  }
+
+  private isPlayerWithinNpcDialogueStartRange(player: Player, npc: Npc): boolean {
+    const fp = npc.distToFootprint(player.position.x, player.position.y);
+    return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= NPC_DIALOGUE_START_RANGE;
+  }
+
+  private findPlayerPathToNpcDialogueStart(player: Player, npc: Npc): { path: { x: number; z: number }[]; adjacent: boolean } | null {
+    if (this.isPlayerNpcInteractionReachable(player, npc)) return { path: [], adjacent: true };
+    if (!this.isPlayerWithinNpcDialogueStartRange(player, npc)) return null;
+
+    const map = this.getPlayerMap(player);
+    const collision = this.playerPathCollision(player, map);
+    const path = this.findPlayerPathToNpc(player, npc);
+    const last = path.at(-1);
+    if (!last) return null;
+    if (!isRectInteractionTileReachable(collision, Math.floor(last.x), Math.floor(last.z), npc.position.x, npc.position.y, npc.size)) {
+      return null;
+    }
+    return { path, adjacent: false };
   }
 
   private isNpcMeleeReachableToPlayer(npc: Npc, player: Player): boolean {
@@ -3985,10 +4009,12 @@ export class World {
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
     this.interruptPlayerAction(playerId, player);
 
-    // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
-    // queue pendingTalkNpcId; the player tick loop fires it once the player
-    // reaches a valid interaction tile.
-    if (!this.isPlayerNpcInteractionReachable(player, npc)) {
+    // Talk-to still walks to the adjacent interaction tile, but the dialogue
+    // can begin slightly early once the player is close enough and has a clear
+    // local path to that tile. This prevents moving NPCs from invalidating the
+    // intent right before arrival.
+    const dialogueStart = this.findPlayerPathToNpcDialogueStart(player, npc);
+    if (!dialogueStart) {
       player.pendingTalkNpcId = npcEntityId;
       player.pendingTalkRepathTicks = 8;
       this.markQueuedAction(player);
@@ -3999,6 +4025,9 @@ export class World {
         player.pendingActionRevision = -1;
       }
       return;
+    }
+    if (!dialogueStart.adjacent && !player.hasMoveQueue() && dialogueStart.path.length > 0) {
+      player.setMoveQueue(dialogueStart.path);
     }
     player.pendingTalkNpcId = -1;
     player.pendingTalkRepathTicks = 0;
@@ -4034,6 +4063,21 @@ export class World {
       this.openBankFor(player);
       return;
     }
+  }
+
+  private tryStartPendingTalkNpc(playerId: number, player: Player, npcEntityId: number): boolean {
+    const npc = this.npcs.get(npcEntityId);
+    if (!npc || npc.dead) return false;
+    if (player.isInterfaceOpen()) return false;
+    if (!this.canPlayerTargetNpc(player, npc)) return false;
+    if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return false;
+    if (!this.findPlayerPathToNpcDialogueStart(player, npc)) return false;
+
+    player.pendingTalkNpcId = -1;
+    player.pendingTalkRepathTicks = 0;
+    player.pendingActionRevision = -1;
+    this.handlePlayerTalkNpc(playerId, npcEntityId);
+    return true;
   }
 
   private shopItemCurrentStock(npc: Npc, item: ShopItem): number {
@@ -8675,6 +8719,10 @@ export class World {
         continue;
       }
 
+      if (player.pendingTalkNpcId >= 0 && player.hasMoveQueue()) {
+        if (this.tryStartPendingTalkNpc(playerId, player, player.pendingTalkNpcId)) continue;
+      }
+
       if (player.pendingPickup >= 0 && !player.hasMoveQueue() && !justArrived) {
         const pickupId = player.pendingPickup;
         player.pendingPickup = -1;
@@ -8726,21 +8774,14 @@ export class World {
         player.pendingActionRevision = -1;
         this.handlePlayerUseItemOnNpc(playerId, invSlot, itemId, npcEntityId);
       }
-      // Deferred Talk-to fires once the walk has drained. Mid-walk firing
-      // would open the dialogue while the character is still striding;
-      // waiting matches RS2. If the NPC wandered just before arrival, allow
-      // a small bounded repath before dropping the intent.
+      // Deferred Talk-to can fire before the walk drains once the player is
+      // within conversation range; if the queue is already drained, use the
+      // same check here and then allow a bounded repath if the NPC moved away.
       if (player.pendingTalkNpcId >= 0 && !player.hasMoveQueue()) {
         const id = player.pendingTalkNpcId;
         const targetNpc = this.npcs.get(id);
-        const inRange = targetNpc && !targetNpc.dead
-          && this.canPlayerTargetNpc(player, targetNpc)
-          && this.isPlayerNpcInteractionReachable(player, targetNpc);
-        if (inRange) {
-          player.pendingTalkNpcId = -1;
-          player.pendingTalkRepathTicks = 0;
-          player.pendingActionRevision = -1;
-          this.handlePlayerTalkNpc(playerId, id);
+        if (this.tryStartPendingTalkNpc(playerId, player, id)) {
+          continue;
         } else if (
           targetNpc
           && !targetNpc.dead

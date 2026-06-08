@@ -246,17 +246,39 @@ function anchorTileFromMinTile(minTile: number, size: number): number {
   return minTile + Math.floor(Math.max(1, Math.round(size)) / 2);
 }
 
-function overlapEscapeDestination(srcTileX: number, srcTileZ: number, targetTileX: number, targetTileZ: number): TileCoord {
-  // rsmod uses runtime RNG here. Keep the same cardinal-only behavior, but
-  // derive the choice from stable coords so client prediction matches server
-  // validation in this browser/server-authoritative setup.
+function stableEscapeStart(srcTileX: number, srcTileZ: number, targetTileX: number, targetTileZ: number): number {
   let hash = 0x811c9dc5;
   for (const value of [srcTileX, srcTileZ, targetTileX, targetTileZ]) {
     hash ^= value | 0;
     hash = Math.imul(hash, 0x01000193);
   }
-  const dir = CARDINAL_ESCAPE_DIRS[(hash >>> 0) % CARDINAL_ESCAPE_DIRS.length]!;
-  return { x: srcTileX + dir[0], z: srcTileZ + dir[1] };
+  return (hash >>> 0) % CARDINAL_ESCAPE_DIRS.length;
+}
+
+function overlapEscapeDestination(
+  srcTileX: number,
+  srcTileZ: number,
+  srcSize: number,
+  targetTileX: number,
+  targetTileZ: number,
+  dstBounds: ReturnType<typeof getObjectFootprintBounds>,
+): TileCoord {
+  // rsmod uses runtime RNG here. Keep deterministic cardinal-only tie-breaking
+  // so client prediction matches server validation, but choose a destination
+  // outside the overlapped footprint rather than another tile inside a large NPC.
+  const candidates = [
+    { x: anchorTileFromMinTile(dstBounds.minX - srcSize, srcSize), z: srcTileZ, dir: 0 },
+    { x: anchorTileFromMinTile(dstBounds.maxX + 1, srcSize), z: srcTileZ, dir: 1 },
+    { x: srcTileX, z: anchorTileFromMinTile(dstBounds.maxZ + 1, srcSize), dir: 2 },
+    { x: srcTileX, z: anchorTileFromMinTile(dstBounds.minZ - srcSize, srcSize), dir: 3 },
+  ];
+  const tieStart = stableEscapeStart(srcTileX, srcTileZ, targetTileX, targetTileZ);
+  candidates.sort((a, b) =>
+    Math.abs(a.x - srcTileX) + Math.abs(a.z - srcTileZ)
+    - (Math.abs(b.x - srcTileX) + Math.abs(b.z - srcTileZ))
+    || ((a.dir - tieStart + CARDINAL_ESCAPE_DIRS.length) % CARDINAL_ESCAPE_DIRS.length)
+    - ((b.dir - tieStart + CARDINAL_ESCAPE_DIRS.length) % CARDINAL_ESCAPE_DIRS.length));
+  return { x: candidates[0]!.x, z: candidates[0]!.z };
 }
 
 export function naiveInteractionDestination(
@@ -273,7 +295,7 @@ export function naiveInteractionDestination(
   const dstBounds = getObjectFootprintBounds(targetX, targetZ, dstSize);
 
   if (intersects(srcBounds.minX, srcBounds.minZ, srcSize, srcSize, dstBounds.minX, dstBounds.minZ, dstSize, dstSize)) {
-    return overlapEscapeDestination(Math.floor(sourceX), Math.floor(sourceZ), Math.floor(targetX), Math.floor(targetZ));
+    return overlapEscapeDestination(Math.floor(sourceX), Math.floor(sourceZ), srcSize, Math.floor(targetX), Math.floor(targetZ), dstBounds);
   }
 
   const dest = naiveDestinationMinTile(srcBounds.minX, srcBounds.minZ, srcSize, srcSize, dstBounds.minX, dstBounds.minZ, dstSize, dstSize);
