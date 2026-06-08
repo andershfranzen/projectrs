@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { generatedBankNoteId, ServerOpcode, type ItemDef, type NpcDef, type ShopDef } from '@projectrs/shared';
+import { MAX_STACK, generatedBankNoteId, ServerOpcode, type ItemDef, type NpcDef, type ShopDef } from '@projectrs/shared';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { World } from '../src/World';
@@ -132,6 +132,115 @@ describe('shop stock pricing', () => {
     world.handlePlayerSellItem(player.id, 0, 2, noteId);
 
     expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 74 });
+    expect(npc.shopStock.get(1000)).toBe(10);
+  });
+
+  test('selling rolls back the item when coins cannot be added', () => {
+    const shop: ShopDef = {
+      name: 'General Store',
+      restockTicks: 2,
+      items: [{ itemId: 1000, price: 100, stock: 10 }],
+    };
+    const def = npcDef(shop);
+    const npc = new Npc(def, 10.5, 10.5, 3, null, null, null, shop);
+    const player = new Player('shop_coin_full_sell_test', 10.5, 11.5, fakeWs, 3);
+    player.openShopNpcId = npc.npcId;
+    player.openShopNpcEntityId = npc.id;
+    player.inventory[0] = { itemId: 1000, quantity: 2 };
+    player.inventory[1] = { itemId: 10, quantity: MAX_STACK };
+
+    const defs = new Map<number, ItemDef>([
+      [10, item(10, 'Coins', { stackable: true })],
+      [1000, item(1000, 'Knife', { stackable: true, value: 75 })],
+    ]);
+    const { world } = makeWorld(player, npc, defs);
+
+    world.handlePlayerSellItem(player.id, 0, 1, 1000);
+
+    expect(player.inventory[0]).toEqual({ itemId: 1000, quantity: 2 });
+    expect(player.inventory[1]).toEqual({ itemId: 10, quantity: MAX_STACK });
+  });
+
+  test('buying can pay from split legacy coin stacks', () => {
+    const shop: ShopDef = {
+      name: 'General Store',
+      restockTicks: 2,
+      items: [{ itemId: 1000, price: 60, stock: 10 }],
+    };
+    const def = npcDef(shop);
+    const npc = new Npc(def, 10.5, 10.5, 3, null, null, null, shop);
+    const player = new Player('shop_split_coin_buy_test', 10.5, 11.5, fakeWs, 4);
+    player.openShopNpcId = npc.npcId;
+    player.openShopNpcEntityId = npc.id;
+    player.inventory[0] = { itemId: 10, quantity: 40 };
+    player.inventory[1] = { itemId: 10, quantity: 20 };
+
+    const defs = new Map<number, ItemDef>([
+      [10, item(10, 'Coins', { stackable: true })],
+      [1000, item(1000, 'Knife')],
+    ]);
+    const { world } = makeWorld(player, npc, defs);
+
+    world.handlePlayerBuyItem(player.id, 1000, 1);
+
+    expect(player.inventory[0]).toEqual({ itemId: 1000, quantity: 1 });
+    expect(player.inventory[1]).toBeNull();
+    expect(npc.shopStock.get(1000)).toBe(9);
+  });
+
+  test('stale shop entity closes instead of retargeting another same-def shop', () => {
+    const shop: ShopDef = {
+      name: 'General Store',
+      restockTicks: 2,
+      items: [{ itemId: 1000, price: 10, stock: 10 }],
+    };
+    const def = npcDef(shop);
+    const otherNpc = new Npc(def, 10.5, 10.5, 3, null, null, null, shop);
+    const player = new Player('shop_stale_entity_test', 10.5, 11.5, fakeWs, 5);
+    player.openShopNpcId = otherNpc.npcId;
+    player.openShopNpcEntityId = 9999;
+    player.inventory[0] = { itemId: 10, quantity: 100 };
+
+    const defs = new Map<number, ItemDef>([
+      [10, item(10, 'Coins', { stackable: true })],
+      [1000, item(1000, 'Knife')],
+    ]);
+    const { world, packets } = makeWorld(player, otherNpc, defs);
+
+    world.handlePlayerBuyItem(player.id, 1000, 1);
+
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 100 });
+    expect(otherNpc.shopStock.get(1000)).toBe(10);
+    expect(player.openShopNpcId).toBeNull();
+    expect(player.openShopNpcEntityId).toBeNull();
+    expect(packets[packets.length - 1]).toMatchObject({
+      opcode: ServerOpcode.SHOP_CLOSE,
+      values: [0],
+    });
+  });
+
+  test('unsafe shop prices are rejected without mutating stock or inventory', () => {
+    const shop: ShopDef = {
+      name: 'General Store',
+      restockTicks: 2,
+      items: [{ itemId: 1000, price: 40000, stock: 10 }],
+    };
+    const def = npcDef(shop);
+    const npc = new Npc(def, 10.5, 10.5, 3, null, null, null, shop);
+    const player = new Player('shop_unsafe_price_test', 10.5, 11.5, fakeWs, 6);
+    player.openShopNpcId = npc.npcId;
+    player.openShopNpcEntityId = npc.id;
+    player.inventory[0] = { itemId: 10, quantity: 50000 };
+
+    const defs = new Map<number, ItemDef>([
+      [10, item(10, 'Coins', { stackable: true })],
+      [1000, item(1000, 'Knife')],
+    ]);
+    const { world } = makeWorld(player, npc, defs);
+
+    world.handlePlayerBuyItem(player.id, 1000, 1);
+
+    expect(player.inventory[0]).toEqual({ itemId: 10, quantity: 50000 });
     expect(npc.shopStock.get(1000)).toBe(10);
   });
 });

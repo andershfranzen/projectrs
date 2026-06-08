@@ -2881,8 +2881,27 @@ export class SidePanel {
       this.clearUsingInvItem();
       return;
     }
+    if (this.sellCallback && tradeSlot) {
+      this.runPrimaryInventoryAction(index, tradeSlot);
+      return;
+    }
     const [firstOption] = this.getInvSlotOptions(index);
     firstOption?.action();
+  }
+
+  private runPrimaryInventoryAction(index: number, slot: { itemId: number; quantity: number }): void {
+    const def = this.itemDefs.get(slot.itemId);
+    if (def?.equippable) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EQUIP_ITEM, index, slot.itemId));
+      return;
+    }
+    if (def?.healAmount) {
+      this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_EAT_ITEM, index, slot.itemId));
+      return;
+    }
+    if (!def?.equippable) {
+      this.setUsingInvItem(index, slot.itemId);
+    }
   }
 
   private promptLogCraftingMenu(fromSlot: number, fromItemId: number, toSlot: number, toItemId: number): boolean {
@@ -3293,7 +3312,10 @@ export class SidePanel {
       const sellPrice = Math.max(1, Math.floor((priceDef?.value || 1) / 2));
       options.push({
         label: `Sell ${name} (${sellPrice} gp)`,
-        action: () => this.sellCallback!(index, slot.itemId),
+        action: () => {
+          if (this.using) this.clearUsingInvItem();
+          this.sellCallback!(index, slot.itemId);
+        },
       });
     }
 
@@ -3558,6 +3580,7 @@ export class SidePanel {
   /** Set a sell callback (when shop is open) or null to clear */
   setSellCallback(cb: ((slot: number, itemId: number) => void) | null): void {
     this.sellCallback = cb;
+    if (cb && this.using) this.clearUsingInvItem();
   }
 
   /** Set a trade-offer callback (when trade is open) or null to clear. */

@@ -637,10 +637,10 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
     case ClientOpcode.PLAYER_BUY_ITEM: {
       if (!hasValues(values, 1)) return invalid('missing-buy-item');
       if (player.openShopNpcId === null) return invalid('shop-not-open');
+      if (!Number.isInteger(values[0]) || values[0] <= 0) return invalid('bad-buy-item');
       const shopNpc = player.openShopNpcEntityId !== null ? world.npcs.get(player.openShopNpcEntityId) : undefined;
-      const shop = shopNpc?.effectiveShop ?? world.data.getShop(player.openShopNpcId);
-      if (!shop) return invalid('shop-not-found');
-      if (!shop.items.some((item) => item.itemId === values[0])) return invalid('shop-does-not-sell-item');
+      const shop = shopNpc?.effectiveShop;
+      if (shop && !shop.items.some((item) => item.itemId === values[0])) return invalid('shop-does-not-sell-item');
       const quantity = values[1] ?? 1;
       if (!Number.isInteger(quantity) || quantity <= 0 || quantity > 1000) return invalid('bad-buy-quantity');
       return OK_PACKET;
@@ -650,7 +650,7 @@ function validateClientPacket(player: Player, opcode: number, values: number[], 
       if (!hasValues(values, 3)) return invalid('missing-sell-values');
       if (player.openShopNpcId === null) return invalid('shop-not-open');
       const shopNpc = player.openShopNpcEntityId !== null ? world.npcs.get(player.openShopNpcEntityId) : undefined;
-      if (!(shopNpc?.effectiveShop ?? world.data.getShop(player.openShopNpcId))) return invalid('shop-not-found');
+      if (shopNpc && !shopNpc.effectiveShop) return invalid('shop-not-found');
       if (!isSlot(values[0], INVENTORY_SIZE)) return invalid('bad-sell-slot');
       if (!Number.isInteger(values[1]) || values[1] <= 0 || values[1] > 1000) return invalid('bad-sell-quantity');
       if (player.inventory[values[0]]?.itemId !== values[2]) return invalid('stale-sell-slot');

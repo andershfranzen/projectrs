@@ -211,6 +211,9 @@ export enum ServerOpcode {
   LEVEL_UP_EFFECT = 36,
   CHAT_SYSTEM = 42,
   SHOP_OPEN = 50,
+  /** Server-driven shop close. Sent when movement, logout, NPC loss, or
+   *  distance invalidates the currently open shop context. */
+  SHOP_CLOSE = 51,
   WORLD_OBJECT_SYNC = 55,
   WORLD_OBJECT_DEPLETED = 56,
   SKILLING_START = 57,

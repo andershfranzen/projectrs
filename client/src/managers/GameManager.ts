@@ -3451,6 +3451,10 @@ export class GameManager {
       }
     });
 
+    this.network.on(ServerOpcode.SHOP_CLOSE, () => {
+      this.shopPanel?.hide();
+    });
+
     this.network.on(ServerOpcode.WORLD_OBJECT_SYNC, (_op, v) => {
       const [objectEntityId, objectDefId, x10, z10, depleted, interactionSides = 0, rotY1000 = 0] = v;
       const x = x10 / 10;

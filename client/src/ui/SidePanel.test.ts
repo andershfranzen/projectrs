@@ -64,6 +64,9 @@ function makeInventoryPanel(): any {
   panel.sellCallback = null;
   panel.adminItemDeletionEnabled = false;
   panel.using = null;
+  panel.renderInvSlot = () => {};
+  panel.showUsingBanner = () => {};
+  panel.hideUsingBanner = () => {};
   panel.sent = sent;
   return panel;
 }
@@ -158,6 +161,37 @@ describe('SidePanel inventory shortcuts', () => {
     const options = panel.getInvSlotOptions(3);
 
     expect(options.some((option: { label: string }) => option.label.startsWith('Delete '))).toBe(false);
+  });
+
+  test('shop sell is right-click only and not the left-click inventory action', () => {
+    const panel = makeInventoryPanel();
+    const sold: Array<{ slot: number; itemId: number }> = [];
+    panel.setSellCallback((slot: number, itemId: number) => sold.push({ slot, itemId }));
+
+    panel.onInvSlotClick(3);
+
+    expect(sold).toEqual([]);
+    expect(panel.sent).toHaveLength(0);
+    expect(panel.getUsing()).toEqual({ slot: 3, itemId: 101 });
+
+    const options = panel.getInvSlotOptions(3);
+    const sellOption = options.find((option: { label: string }) => option.label.startsWith('Sell Test Item'));
+    expect(sellOption).toBeDefined();
+    sellOption!.action();
+
+    expect(sold).toEqual([{ slot: 3, itemId: 101 }]);
+    expect(panel.getUsing()).toBeNull();
+  });
+
+  test('opening shop sell mode clears an armed inventory use action', () => {
+    const panel = makeInventoryPanel();
+
+    panel.setUsingInvItem(3, 101);
+    expect(panel.getUsing()).toEqual({ slot: 3, itemId: 101 });
+
+    panel.setSellCallback(() => {});
+
+    expect(panel.getUsing()).toBeNull();
   });
 });
 

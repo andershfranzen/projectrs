@@ -499,6 +499,7 @@ type MagicCastPreparation = {
 const GROUND_ITEM_ENTITY_ID_MIN = 20000;
 const GROUND_ITEM_ENTITY_ID_MAX = 32760;
 const DEFAULT_SHOP_RESTOCK_TICKS = 100;
+const MAX_SHOP_WIRE_VALUE = 0x7FFF;
 let nextGroundItemId = GROUND_ITEM_ENTITY_ID_MIN;
 
 export type WorldOptions = {
@@ -4073,22 +4074,43 @@ export class World {
   }
 
   private shopItemCurrentStock(npc: Npc, item: ShopItem): number {
+    const baseStock = this.shopItemBaseStock(item);
     const stock = npc.shopStock.get(item.itemId);
-    return Math.max(0, Math.min(item.stock, Math.floor(stock ?? item.stock)));
+    const current = stock === undefined ? baseStock : Math.floor(stock);
+    if (!Number.isFinite(current)) return baseStock;
+    return Math.max(0, Math.min(baseStock, current));
   }
 
-  private shopItemPrice(item: ShopItem, currentStock: number): number {
-    const basePrice = Math.max(0, Math.floor(item.price));
-    const baseStock = Math.max(0, Math.floor(item.stock));
+  private shopItemBaseStock(item: ShopItem): number {
+    const stock = Math.floor(item.stock);
+    if (!Number.isFinite(stock)) return 0;
+    return Math.max(0, Math.min(MAX_SHOP_WIRE_VALUE, stock));
+  }
+
+  private shopItemBasePrice(item: ShopItem): number | null {
+    const price = Math.floor(item.price);
+    if (!Number.isFinite(price) || price < 0 || price > MAX_SHOP_WIRE_VALUE) return null;
+    return price;
+  }
+
+  private shopItemPrice(item: ShopItem, currentStock: number): number | null {
+    const basePrice = this.shopItemBasePrice(item);
+    if (basePrice === null) return null;
+    const baseStock = this.shopItemBaseStock(item);
     if (basePrice <= 0 || baseStock <= 0) return basePrice;
     const missingStock = Math.max(0, Math.min(baseStock, baseStock - currentStock));
-    return Math.ceil((basePrice * (baseStock * 2 + missingStock)) / (baseStock * 2));
+    const price = Math.ceil((basePrice * (baseStock * 2 + missingStock)) / (baseStock * 2));
+    if (!Number.isSafeInteger(price) || price < 0 || price > MAX_SHOP_WIRE_VALUE) return null;
+    return price;
   }
 
-  private shopPurchaseCost(item: ShopItem, currentStock: number, quantity: number): number {
+  private shopPurchaseCost(item: ShopItem, currentStock: number, quantity: number): number | null {
     let total = 0;
     for (let i = 0; i < quantity; i++) {
-      total += this.shopItemPrice(item, currentStock - i);
+      const price = this.shopItemPrice(item, currentStock - i);
+      if (price === null) return null;
+      total += price;
+      if (!Number.isSafeInteger(total) || total > MAX_STACK) return null;
     }
     return total;
   }
@@ -4104,7 +4126,8 @@ export class World {
     const values: number[] = [npc.id, shop.items.length];
     for (const si of shop.items) {
       const currentStock = this.shopItemCurrentStock(npc, si);
-      values.push(si.itemId, this.shopItemPrice(si, currentStock), currentStock);
+      const currentPrice = this.shopItemPrice(si, currentStock);
+      values.push(si.itemId, currentPrice ?? 0, currentPrice === null ? 0 : currentStock);
     }
     this.sendToPlayer(player, ServerOpcode.SHOP_OPEN, ...values);
   }
@@ -4123,10 +4146,6 @@ export class World {
       const npc = this.npcs.get(player.openShopNpcEntityId);
       if (npc?.effectiveShop && !npc.dead) return npc;
     }
-    if (player.openShopNpcId === null) return null;
-    for (const [, npc] of this.npcs) {
-      if (npc.npcId === player.openShopNpcId && npc.effectiveShop && !npc.dead) return npc;
-    }
     return null;
   }
 
@@ -4137,9 +4156,11 @@ export class World {
       && this.isPlayerNpcInteractionReachable(player, npc);
   }
 
-  private closeShopForPlayer(player: Player): void {
+  private closeShopForPlayer(player: Player, notifyClient: boolean = true): void {
+    const wasOpen = player.openShopNpcId !== null || player.openShopNpcEntityId !== null;
     player.openShopNpcId = null;
     player.openShopNpcEntityId = null;
+    if (wasOpen && notifyClient) this.sendToPlayer(player, ServerOpcode.SHOP_CLOSE, 0);
   }
 
   private refreshShopViewers(npc: Npc): void {
@@ -4617,11 +4638,11 @@ export class World {
     const currentStock = this.shopItemCurrentStock(npc, shopItem);
     if (currentStock <= 0 || quantity > currentStock) return;
     const totalCost = this.shopPurchaseCost(shopItem, currentStock, quantity);
+    if (totalCost === null) return;
 
-    // Check coin balance against current inventory.
-    const coinSlot = player.inventory.findIndex(s => s?.itemId === 10);
-    const coinCount = coinSlot >= 0 ? player.inventory[coinSlot]!.quantity : 0;
-    if (coinCount < totalCost) return;
+    // Check coin balance against current inventory. Count/remove by item id so
+    // legacy split coin stacks behave the same as recipe consumers.
+    if (totalCost > 0 && this.countInventoryItem(player, COINS_ITEM_ID) < totalCost) return;
 
     // Pre-flight: can the player fit the purchased items? Without this check
     // we'd take coins, fail addItem, and leave the player short. canFit treats
@@ -4629,19 +4650,17 @@ export class World {
     // N empty slots) correctly.
     if (!player.canFit(itemId, quantity, this.data.itemDefs)) return;
 
-    // Atomic: remove coins, add items. addItem clamps to MAX_STACK and
-    // returns completed < quantity if it can't fully fit — defense in depth
-    // beyond canFit, since canFit doesn't know about MAX_STACK overflow on
-    // an existing 2.1B-coin stack. On any partial failure, revert coins.
-    const coinRemoved = player.removeItem(coinSlot, totalCost);
-    if (coinRemoved.completed !== totalCost) {
+    // Atomic: remove coins, add items. addItem still reports partial failures
+    // defensively; on any partial failure, revert the coin removal.
+    const coinRemoved = totalCost > 0 ? player.removeItemById(COINS_ITEM_ID, totalCost) : null;
+    if (coinRemoved && coinRemoved.completed !== totalCost) {
       player.revertRemove(coinRemoved);
       return;
     }
     const added = player.addItem(itemId, quantity, this.data.itemDefs);
     if (added.completed !== quantity) {
       player.revertAdd(added);
-      player.revertRemove(coinRemoved);
+      if (coinRemoved) player.revertRemove(coinRemoved);
       this.sendChatSystem(player, 'You can\'t carry any more of those.');
       return;
     }
@@ -9939,7 +9958,7 @@ export class World {
 
       let changed = false;
       for (const item of shop.items) {
-        const baseStock = Math.max(0, Math.floor(item.stock));
+        const baseStock = this.shopItemBaseStock(item);
         if (baseStock <= 0) continue;
         const currentStock = this.shopItemCurrentStock(npc, item);
         if (currentStock >= baseStock) {
