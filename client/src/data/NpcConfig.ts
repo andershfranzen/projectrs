@@ -52,8 +52,8 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
   6:  { file: '/models/npcs/spider.glb', scale: 0.2, anims: { idle: 'SpiderArmature|SpiderArmature|Spider_Idle', walk: 'SpiderArmature|SpiderArmature|Spider_Walk', attack: 'SpiderArmature|SpiderArmature|Spider_Attack', death: 'SpiderArmature|SpiderArmature|Spider_Death' } },
   // Cow.glb's Walk clip returns to rest halfway through; WalkSlow is the
   // authored full-cycle walk loop. Jump is the closest one-shot combat motion.
-  10: { file: '/models/npcs/cow.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
-  24: { file: '/models/npcs/bull.glb', scale: 0.2, anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
+  10: { file: '/models/npcs/cow.glb', scale: 0.2, originMode: 'boundsCenter', anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
+  24: { file: '/models/npcs/bull.glb', scale: 0.2, originMode: 'boundsCenter', anims: { idle: 'Armature|Armature|Idle', walk: 'Armature|Armature|WalkSlow', attack: 'Armature|Armature|Jump', death: 'Armature|Armature|Death' } },
   25: { file: '/models/npcs/bear.glb', scale: 0.9, originMode: 'boundsCenter', facingOffsetY: BEAR_FACING_OFFSET_Y, anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'BiteAttack4Legs', death: 'Death4Legs' } },
   26: {
     file: '/models/npcs/bear_black.glb',

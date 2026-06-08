@@ -99,6 +99,7 @@
     "respawnTime": 20,
     "aggressive": false,
     "wanderRange": 3,
+    "size": 2,
     "lootTable": [
       {
         "itemId": 1,
@@ -134,6 +135,7 @@
     "respawnTime": 30,
     "aggressive": false,
     "wanderRange": 3,
+    "size": 2,
     "lootTable": [
       {
         "itemId": 1,

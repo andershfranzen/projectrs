@@ -63,7 +63,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -280,6 +280,8 @@ export class GameManager {
   private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly STOPPED_SELF_SYNC_RECONCILE_DIST = 0.35;
+  private static readonly FRESH_PREDICTION_RECONCILE_DIST = 2.25;
+  private static readonly FRESH_PREDICTION_RECONCILE_GRACE_MS = TICK_RATE + 150;
   private static readonly AUTHORITY_REANCHOR_MAX_SEARCH_TILES = 500;
   private static readonly AUTHORITY_REANCHOR_MAX_ATTEMPTS = 3;
   private static readonly HIDDEN_CATCHUP_ARM_MS = 3_000;
@@ -339,6 +341,7 @@ export class GameManager {
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
+  private predictedPathStartedAt: number = 0;
   private predictedPathDestination: { x: number; z: number } | null = null;
   private predictedPathAuthorityReanchorAttempts: number = 0;
   /** NPC entityId to face when the current path completes. 2004scape
@@ -434,6 +437,7 @@ export class GameManager {
   private autoCastSpellIndex: number = -1;
   private pendingSingleCastSpell: number = -1;
   private _combatPathTimer: number = 0;
+  private localCombatWalkUntilMs: number = 0;
 
   // While a COMBAT_HIT splat is delayed to its impact moment, hold off any
   // health-bar updates for the same entity so the bar drops in sync with the
@@ -2991,9 +2995,14 @@ export class GameManager {
       const dz = serverZ - this.playerZ;
       const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
       const serverTileOnActiveStep = this.isTileOnActivePredictedStep(Math.floor(serverX), Math.floor(serverZ));
+      // The first self-sync after a click can still be the old stopped tile.
+      // Give a just-started prediction one tick before reanchoring into a slide.
+      const freshPrediction = this.isFreshPredictedPath(now);
       const reconcileDist = serverMoving || serverTileOnActiveStep
         ? GameManager.SELF_SYNC_RECONCILE_DIST
-        : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
+        : freshPrediction
+          ? GameManager.FRESH_PREDICTION_RECONCILE_DIST
+          : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
       if (maxAxisDelta <= reconcileDist) return;
 
       if (!hiddenCatchup && this.tryReanchorPredictedPathToAuthority(serverX, serverZ)) return;
@@ -5483,6 +5492,7 @@ export class GameManager {
     this.combatTargetId = -1;
     this.magicTargetId = -1;
     this.pendingSingleCastSpell = -1;
+    this.localCombatWalkUntilMs = 0;
   }
 
   /** scene.pick returns the closest hit; that lets placed scenery (anvils,
@@ -6005,9 +6015,17 @@ export class GameManager {
     this.pathIndex = 0;
     this.tileProgress = 0;
     this.pendingPath = null;
+    this.predictedPathStartedAt = 0;
     this.predictedPathDestination = null;
     this.predictedPathAuthorityReanchorAttempts = 0;
+    this.localCombatWalkUntilMs = 0;
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
+  }
+
+  private isFreshPredictedPath(now: number = performance.now()): boolean {
+    return this.predictedPathStartedAt > 0
+      && this.pathIndex < this.path.length
+      && now - this.predictedPathStartedAt <= GameManager.FRESH_PREDICTION_RECONCILE_GRACE_MS;
   }
 
   private refreshPredictedDestinationFromPath(): void {
@@ -6363,8 +6381,8 @@ export class GameManager {
   private findPathToNpcInteraction(
     npcEntityId: number,
     target: { x: number; z: number; floor: number; y: number },
-    requiredRange: number = NPC_INTERACTION_RANGE,
-    rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' = 'euclidean',
+    requiredRange: number = 1,
+    rangeMode: 'euclidean' | 'chebyshev' | 'cardinal' = 'cardinal',
     requireRangedLineOfSight: boolean = false,
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } {
     const reached = (x: number, z: number): boolean =>
@@ -6445,6 +6463,8 @@ export class GameManager {
     if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
     this.path = path;
     this.pathIndex = 0;
+    this.localCombatWalkUntilMs = 0;
+    this.predictedPathStartedAt = performance.now();
     const dest = path[path.length - 1];
     this.predictedPathDestination = allowAuthorityReanchor && dest ? { x: dest.x, z: dest.z } : null;
     this.predictedPathAuthorityReanchorAttempts = 0;
@@ -6489,6 +6509,7 @@ export class GameManager {
     this.tileProgress = 0;
     this.pendingPath = null;
     this.setTileFrom(serverX, serverZ);
+    this.predictedPathStartedAt = 0;
     this.predictedPathAuthorityReanchorAttempts++;
 
     const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
@@ -8004,15 +8025,20 @@ export class GameManager {
   private finishPredictedPathArrival(): void {
     this.clearControlledMoveLock();
     this.tileProgress = 0;
+    this.predictedPathStartedAt = 0;
     this.predictedPathDestination = null;
     this.predictedPathAuthorityReanchorAttempts = 0;
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
-    this.localPlayer?.stopWalking();
-    // Face the NPC we were walking up to talk to / attack. Done after
-    // stopWalking so the rotation isn't immediately overwritten by movement
-    // direction logic. Lookup uses npcTargets, which tracks the latest
-    // server-broadcast position even if the NPC wandered while we walked.
+    if (this.shouldKeepLocalCombatWalkLoopAlive()) {
+      this.localCombatWalkUntilMs = performance.now() + TICK_RATE + 150;
+    } else {
+      this.localCombatWalkUntilMs = 0;
+      this.localPlayer?.stopWalking();
+    }
+    // Face the NPC we were walking up to talk to / attack. Lookup uses
+    // npcTargets, which tracks the latest server-broadcast position even if
+    // the NPC wandered while we walked.
     if (this.pendingFaceTargetEntityId >= 0) {
       const npcTarget = this.entities.npcTargets.get(this.pendingFaceTargetEntityId);
       if (npcTarget) this.faceLocalPlayerTowardNpc(this.pendingFaceTargetEntityId, npcTarget);
@@ -8698,6 +8724,7 @@ export class GameManager {
     if (this.slideStartMs !== 0 && this.pathIndex >= this.path.length) {
       this.renderLocalPlayerWithSlide();
     }
+    this.updateLocalCombatWalkGrace();
 
     this.entities.interpolateRemotePlayers(
       dt,
@@ -8785,6 +8812,26 @@ export class GameManager {
       this.minimap?.clearDestination();
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_ATTACK_NPC, this.combatTargetId));
+  }
+
+  private shouldKeepLocalCombatWalkLoopAlive(now: number = performance.now()): boolean {
+    if (this.combatTargetId < 0) return false;
+    const target = this.entities.npcTargets.get(this.combatTargetId);
+    if (!target || target.floor !== this.currentFloor) return false;
+    const movedRecently = (Math.abs(target.x - target.prevX) > 0.01 || Math.abs(target.z - target.prevZ) > 0.01)
+      && now - target.t < TICK_RATE * 2;
+    return target.continueWalking || movedRecently;
+  }
+
+  private updateLocalCombatWalkGrace(now: number = performance.now()): void {
+    if (this.localCombatWalkUntilMs <= 0) return;
+    if (this.pathIndex < this.path.length) return;
+    if (now < this.localCombatWalkUntilMs) return;
+    this.localCombatWalkUntilMs = 0;
+    if (this.localPlayer?.isWalking()) {
+      this.localPlayer.stopWalking();
+      this.refreshLocalCombatFacing();
+    }
   }
 
   private updatePlayerFollowPrediction(dt: number): void {

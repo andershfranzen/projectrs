@@ -3360,7 +3360,9 @@ export class World {
   }
 
   private broadcastNpcFacingPlayer(npc: Npc, player: Player): void {
-    this.broadcastNpcFacing(npc, player.position.x - npc.position.x, player.position.y - npc.position.y);
+    const npcCenterX = getObjectFootprintMinTile(npc.position.x, npc.size) + npc.size / 2;
+    const npcCenterZ = getObjectFootprintMinTile(npc.position.y, npc.size) + npc.size / 2;
+    this.broadcastNpcFacing(npc, player.position.x - npcCenterX, player.position.y - npcCenterZ);
   }
 
   /** Call fn for each player near a world position on a given map (zero-allocation) */
@@ -3983,14 +3985,6 @@ export class World {
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcEntityId)) return;
     this.interruptPlayerAction(playerId, player);
 
-    // Chebyshev (max-of-axes) matches the rest of the interaction surface —
-    // pickup, combat, harvest are all Chebyshev. Euclidean here would let a
-    // diagonal NPC at (2,2) be talkable (dist 2.83) while the same NPC at
-    // (3,0) cardinal would be rejected (dist 3.001) — subtle inconsistency.
-    // Sized NPCs measure to nearest footprint tile so a player adjacent to
-    // a 2x2 camel's east face still passes the range check.
-    const dx = npc.position.x - player.position.x;
-    const dz = npc.position.y - player.position.y;
     // RS2: dialogue requires the player to be adjacent. Out-of-range clicks
     // queue pendingTalkNpcId; the player tick loop fires it once the player
     // reaches a valid interaction tile.
@@ -4011,9 +4005,9 @@ export class World {
     player.botStats?.recordActionSignature('talkNpc', npc.npcId, player.position.x, player.position.y);
 
     // Turn the NPC to face the player on interaction (2004scape NPC.faceEntity
-    // semantics). Direction goes from NPC → player so atan2 produces the yaw
-    // the NPC needs to look the player's way.
-    this.broadcastNpcFacing(npc, -dx, -dz);
+    // semantics). Use the footprint center so even-sized mobs don't aim from
+    // their logical anchor tile.
+    this.broadcastNpcFacingPlayer(npc, player);
 
     // NPCs introduce themselves in chat instead of carrying a head label.
     // Only for dialogue-less NPCs — when there's a dialogue, the panel
