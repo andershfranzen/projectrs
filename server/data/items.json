@@ -6144,5 +6144,14 @@
     "equippable": false,
     "healAmount": 26,
     "value": 175
+  },
+  {
+    "id": 550,
+    "name": "Tinderbox",
+    "description": "Useful for lighting fires.",
+    "stackable": false,
+    "equippable": false,
+    "value": 1,
+    "icon": "tinderbox_166.png"
   }
 ]

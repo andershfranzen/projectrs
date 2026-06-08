@@ -9,6 +9,7 @@ const expectedStarterInventory = [
   { itemId: 231, quantity: 1 },
   { itemId: 231, quantity: 1 },
   { itemId: 231, quantity: 1 },
+  { itemId: 550, quantity: 1 },
   { itemId: 10, quantity: 30 },
 ];
 
