@@ -272,6 +272,8 @@ export class GameManager {
   private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly STOPPED_SELF_SYNC_RECONCILE_DIST = 0.35;
+  private static readonly FRESH_PREDICTION_RECONCILE_DIST = 2.25;
+  private static readonly FRESH_PREDICTION_RECONCILE_GRACE_MS = TICK_RATE + 150;
   private static readonly HIDDEN_CATCHUP_ARM_MS = 3_000;
   private static readonly HIDDEN_RECONNECT_AFTER_MS = 15_000;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
@@ -329,6 +331,7 @@ export class GameManager {
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
+  private predictedPathStartedAt: number = 0;
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -2957,9 +2960,15 @@ export class GameManager {
       const dz = serverZ - this.playerZ;
       const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
       const serverTileOnActiveStep = this.isTileOnActivePredictedStep(Math.floor(serverX), Math.floor(serverZ));
+      // A rapid click-away → click-object redirect can receive one stale
+      // stopped self-sync from the old route after the new predicted route has
+      // started. Do not yank the visual backward during that single tick.
+      const freshPrediction = this.isFreshPredictedPath(now);
       const reconcileDist = serverMoving || serverTileOnActiveStep
         ? GameManager.SELF_SYNC_RECONCILE_DIST
-        : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
+        : freshPrediction
+          ? GameManager.FRESH_PREDICTION_RECONCILE_DIST
+          : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
       if (maxAxisDelta <= reconcileDist) return;
 
       this.reconcileLocalPlayerToServer(serverX, serverZ, false, serverMoving);
@@ -5912,7 +5921,14 @@ export class GameManager {
     this.pathIndex = 0;
     this.tileProgress = 0;
     this.pendingPath = null;
+    this.predictedPathStartedAt = 0;
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
+  }
+
+  private isFreshPredictedPath(now: number = performance.now()): boolean {
+    return this.predictedPathStartedAt > 0
+      && this.pathIndex < this.path.length
+      && now - this.predictedPathStartedAt <= GameManager.FRESH_PREDICTION_RECONCILE_GRACE_MS;
   }
 
   private armControlledMoveLock(path: { x: number; z: number }[]): void {
@@ -6300,6 +6316,7 @@ export class GameManager {
     if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
     this.path = path;
     this.pathIndex = 0;
+    this.predictedPathStartedAt = performance.now();
     if (preserveCurrentStep && activeStep && this.sameTile(path[0], activeStep.target)) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
