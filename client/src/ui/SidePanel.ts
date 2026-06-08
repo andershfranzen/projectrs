@@ -119,6 +119,7 @@ export class SidePanel {
   private using: { slot: number; itemId: number } | null = null;
   private usingBanner: HTMLDivElement | null = null;
   private invGrid: HTMLDivElement | null = null;
+  private inventoryMenuBoundsEl: HTMLDivElement | null = null;
   private inventoryTooltip: HoverTooltip | null = null;
   private touchInvDrag: TouchInvDragState | null = null;
   private suppressInvClickUntil: number = 0;
@@ -1939,6 +1940,7 @@ export class SidePanel {
     frame.style.flex = '1 1 auto';
     frame.style.minHeight = '0';
     frame.style.height = '100%';
+    this.inventoryMenuBoundsEl = frame;
     const content = frame.children[1] as HTMLDivElement | undefined;
     if (content) {
       content.className = 'inventory-panel-content';
@@ -3212,7 +3214,7 @@ export class SidePanel {
     if (options.length === 0) return;
 
     // Initial placement at click point; the post-mount clamp keeps the menu
-    // inside the side panel for slots near the right or bottom edge.
+    // inside the inventory frame for slots near the right or bottom edge.
     const menu = createContextMenu(options, {
       x: event.clientX,
       y: event.clientY,
@@ -3220,10 +3222,24 @@ export class SidePanel {
       maxWidthPx: 180,
     });
 
-    // Clamp the menu inside the side panel container — without this it spills
-    // off the right edge for slots in the right column, and off the bottom
-    // edge when right-clicking near the bottom row.
-    clampElementToRect(menu, this.container.getBoundingClientRect());
+    this.clampInventoryContextMenu(menu);
+  }
+
+  private clampInventoryContextMenu(menu: HTMLDivElement): void {
+    const rawBounds = this.inventoryMenuBoundsEl?.getBoundingClientRect() ?? this.container.getBoundingClientRect();
+    const inset = 2;
+    const bounds = new DOMRect(
+      rawBounds.left + inset,
+      rawBounds.top + inset,
+      Math.max(0, rawBounds.width - inset * 2),
+      Math.max(0, rawBounds.height - inset * 2),
+    );
+
+    menu.style.maxHeight = `${Math.max(0, bounds.height)}px`;
+    menu.style.overflowX = 'hidden';
+    menu.style.overflowY = 'auto';
+    menu.style.overscrollBehavior = 'contain';
+    clampElementToRect(menu, bounds);
   }
 
   private getInvSlotOptions(index: number): { label: string; action: () => void }[] {

@@ -187,6 +187,20 @@ describe('server-authoritative spell casting', () => {
     expect(player.pendingSpellCast?.actionRevision).toBe(player.actionRevision);
   });
 
+  test('out-of-range valid casts preserve a client-sent move queue', () => {
+    const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 20.5, 1.5);
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    player.setMoveQueue([{ x: 2.5, z: 1.5 }, { x: 3.5, z: 1.5 }]);
+    const world = makeWorld(player, npc, spellDef);
+
+    world.handlePlayerCastSpell(player.id, 0, npc.id);
+
+    expect(player.getMoveDestination()).toEqual({ x: 3.5, z: 1.5 });
+    expect(player.pendingSpellCast).toMatchObject({ spellIndex: 0, targetEntityId: npc.id });
+  });
+
   test('stale queued spell casts are dropped after another action revision', () => {
     const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
     const npc = new Npc(npcDef, 20.5, 1.5);

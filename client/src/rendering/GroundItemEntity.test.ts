@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ItemDef } from '@projectrs/shared';
 import {
+  groundItemHiddenStackPipCount,
   groundItemTargetModelSizeForItem,
   groundItemVisualScaleFromOptions,
 } from './GroundItemEntity';
@@ -51,5 +52,14 @@ describe('ground item sizing', () => {
     expect(groundItemVisualScaleFromOptions({ iconScale: Number.NaN })).toBe(1);
     expect(groundItemVisualScaleFromOptions({ iconScale: 0 })).toBe(0.05);
     expect(groundItemVisualScaleFromOptions({ iconScale: 99 })).toBe(2);
+  });
+
+  test('shows hidden-stack pips only after the visible model budget is exceeded', () => {
+    expect(groundItemHiddenStackPipCount(3)).toBe(0);
+    expect(groundItemHiddenStackPipCount(4)).toBe(1);
+    expect(groundItemHiddenStackPipCount(5)).toBe(2);
+    expect(groundItemHiddenStackPipCount(6)).toBe(3);
+    expect(groundItemHiddenStackPipCount(30)).toBe(3);
+    expect(groundItemHiddenStackPipCount(Number.NaN)).toBe(0);
   });
 });

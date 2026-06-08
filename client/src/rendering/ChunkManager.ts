@@ -36,6 +36,9 @@ const OBJECT_VISIBILITY_BUCKET_TILES = 4;
 const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
+const ROOF_REVEAL_CONNECTED_TILE_LIMIT = 2048;
+const ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE = 1.25;
+const ROOF_REVEAL_NEARBY_TILE_PADDING = 2;
 
 export function isRoofLikePlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
@@ -45,6 +48,17 @@ export function isRoofLikePlacedAsset(assetId: string): boolean {
 export function isInteractiveDoorPlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
   return lower === 'castletruedoor' || lower === 'basictruedoor';
+}
+
+function isRevealStructuralPlacedAsset(assetId: string): boolean {
+  const lower = assetId.toLowerCase().trim();
+  return lower.includes('wall')
+    || lower.includes('window')
+    || lower.includes('door')
+    || lower.includes('doorframe')
+    || lower.includes('slab')
+    || lower.includes('pillar')
+    || lower.includes('stair');
 }
 
 function shouldSmoothPlacedObjectTextures(assetId: string, path: string): boolean {
@@ -131,6 +145,7 @@ interface FloorLayerClientData {
 
 interface PlacedObjectNodeMetadata {
   assetId?: string;
+  chunkKey?: string;
   placedX?: number;
   placedY?: number;
   placedZ?: number;
@@ -140,6 +155,12 @@ interface PlacedObjectNodeMetadata {
   isNoRoof?: boolean;
   roofGridKeys?: string[];
 }
+
+type RoofObjectGridEntry = { node?: TransformNode; chunkKey?: string; floor: number; y: number };
+
+type RoofBuildTile = { x: number; z: number; roof: RoofData };
+
+type RoofRevealSeed = { x: number; z: number; floor: number; y: number };
 
 export interface MinimapTileSnapshot {
   tiles: Uint8Array;
@@ -301,7 +322,7 @@ export class ChunkManager {
    *  same tile would otherwise misfire indoor mode under a balcony/terrace. */
   private noRoofPlaneTiles: Set<number> = new Set();
   /** Spatial index of roof objects: "tileX,tileZ" → roof entries with floor tag + Y height */
-  private roofObjectGrid: Map<string, { node?: TransformNode; chunkKey?: string; floor: number; y: number }[]> = new Map();
+  private roofObjectGrid: Map<string, RoofObjectGridEntry[]> = new Map();
   /** Roof-grid tile keys stamped by each streamed placed-object chunk. */
   private roofObjectGridKeysByChunk: Map<string, Set<string>> = new Map();
   /** Callback fired when a chunk's placed objects finish loading */
@@ -336,6 +357,7 @@ export class ChunkManager {
   private chunkThinInstSources: Map<string, Mesh[]> = new Map();
   private chunkRoofThinInstSources: Map<string, Mesh[]> = new Map();
   private chunkElevatedThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
+  private chunkStructuralThinInstSources: Map<string, ElevatedThinInstanceSource[]> = new Map();
 
   private doorEdgeKey(floor: number, tileIdx: number): string {
     return `${Math.floor(floor)}:${tileIdx}`;
@@ -468,6 +490,19 @@ export class ChunkManager {
       || (anims?.length ?? 0) > 0;
   }
 
+  private setRenderTreeEnabled(node: TransformNode | null | undefined, enabled: boolean): void {
+    if (!node) return;
+    const seen = new Set<TransformNode>();
+    const apply = (target: TransformNode): void => {
+      if (seen.has(target)) return;
+      seen.add(target);
+      target.setEnabled(enabled);
+    };
+    apply(node);
+    for (const child of node.getChildTransformNodes(false)) apply(child);
+    for (const child of node.getChildMeshes(false)) apply(child as unknown as TransformNode);
+  }
+
   private setChunkMeshesEnabled(chunkKey: string, meshes: ChunkMeshes, enabled: boolean): boolean {
     if (this.chunkMeshesEnabled.get(chunkKey) === enabled) return false;
     this.chunkMeshesEnabled.set(chunkKey, enabled);
@@ -478,14 +513,14 @@ export class ChunkManager {
     meshes.cliff?.setEnabled(enabled);
     meshes.ceiling?.setEnabled(enabled);
     meshes.wall?.setEnabled(enabled);
-    meshes.roof?.setEnabled(enabled && this.currentFloor === 0);
+    this.setRenderTreeEnabled(meshes.roof, enabled && this.currentFloor === 0);
     meshes.floor?.setEnabled(enabled);
     meshes.stairs?.setEnabled(enabled);
     for (const [floorIdx, floorSet] of meshes.upperFloors) {
       if (enabled) this.setFloorMeshSetVisibility(floorSet, floorIdx);
       else {
         floorSet.wall?.setEnabled(false);
-        floorSet.roof?.setEnabled(false);
+        this.setRenderTreeEnabled(floorSet.roof, false);
         floorSet.floor?.setEnabled(false);
         floorSet.stairs?.setEnabled(false);
       }
@@ -501,6 +536,7 @@ export class ChunkManager {
   }
 
   private disposeChunkMeshes(key: string, meshes: ChunkMeshes): void {
+    this.clearRoofObjectGridForChunk(this.terrainRoofChunkKey(key));
     meshes.ground.dispose();
     this.disposeChunkTextureOverlays(key);
     meshes.water?.dispose();
@@ -2192,52 +2228,146 @@ export class ChunkManager {
 
   // --- Wall, Roof, Floor, Stair mesh builders (same as before) ---
 
-  private buildRoofMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
-    const positions: number[] = []; const indices: number[] = []; const normals: number[] = []; const colors: number[] = [];
-    let vertexIndex = 0; let hasRoof = false;
+  private appendRoofTileGeometry(
+    roof: RoofData,
+    x: number,
+    z: number,
+    positions: number[],
+    indices: number[],
+    normals: number[],
+    colors: number[],
+    vertexIndex: number,
+  ): number {
     const cr = 0.45, cg = 0.25, cb = 0.15;
-    for (let x = startX; x < endX; x++) {
-      for (let z = startZ; z < endZ; z++) {
-        const tileIdx = z * this.mapWidth + x;
-        const roof = this.roofData.get(tileIdx);
-        if (!roof) continue;
-        hasRoof = true;
-        const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE, z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
-        const baseY = roof.height;
-        if (roof.style === 'flat') {
-          positions.push(x0, baseY, z0, x1, baseY, z0, x1, baseY, z1, x0, baseY, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr, cg, cb, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, baseY, z1, x1, baseY, z1, x1, baseY, z0, x0, baseY, z0);
-          for (let i = 0; i < 4; i++) { normals.push(0, -1, 0); colors.push(cr - 0.1, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        } else {
-          const peak = baseY + (roof.peakHeight ?? 0.6);
-          const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-          if (roof.style === 'peaked_ew') {
-            positions.push(x0, baseY, z0, x1, baseY, z0, x1, peak, mz, x0, peak, mz);
-            for (let i = 0; i < 4; i++) { normals.push(0, 0.7, -0.7); colors.push(cr, cg, cb, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-            positions.push(x0, peak, mz, x1, peak, mz, x1, baseY, z1, x0, baseY, z1);
-            for (let i = 0; i < 4; i++) { normals.push(0, 0.7, 0.7); colors.push(cr - 0.05, cg - 0.03, cb - 0.03, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          } else {
-            positions.push(x0, baseY, z0, x0, baseY, z1, mx, peak, z1, mx, peak, z0);
-            for (let i = 0; i < 4; i++) { normals.push(-0.7, 0.7, 0); colors.push(cr, cg, cb, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-            positions.push(mx, peak, z0, mx, peak, z1, x1, baseY, z1, x1, baseY, z0);
-            for (let i = 0; i < 4; i++) { normals.push(0.7, 0.7, 0); colors.push(cr - 0.05, cg - 0.03, cb - 0.03, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          }
-        }
+    const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE, z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
+    const baseY = roof.height;
+    if (roof.style === 'flat') {
+      positions.push(x0, baseY, z0, x1, baseY, z0, x1, baseY, z1, x0, baseY, z1);
+      for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr, cg, cb, 1); }
+      indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
+      positions.push(x0, baseY, z1, x1, baseY, z1, x1, baseY, z0, x0, baseY, z0);
+      for (let i = 0; i < 4; i++) { normals.push(0, -1, 0); colors.push(cr - 0.1, cg - 0.05, cb - 0.05, 1); }
+      indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
+    } else {
+      const peak = baseY + (roof.peakHeight ?? 0.6);
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      if (roof.style === 'peaked_ew') {
+        positions.push(x0, baseY, z0, x1, baseY, z0, x1, peak, mz, x0, peak, mz);
+        for (let i = 0; i < 4; i++) { normals.push(0, 0.7, -0.7); colors.push(cr, cg, cb, 1); }
+        indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
+        positions.push(x0, peak, mz, x1, peak, mz, x1, baseY, z1, x0, baseY, z1);
+        for (let i = 0; i < 4; i++) { normals.push(0, 0.7, 0.7); colors.push(cr - 0.05, cg - 0.03, cb - 0.03, 1); }
+        indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
+      } else {
+        positions.push(x0, baseY, z0, x0, baseY, z1, mx, peak, z1, mx, peak, z0);
+        for (let i = 0; i < 4; i++) { normals.push(-0.7, 0.7, 0); colors.push(cr, cg, cb, 1); }
+        indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
+        positions.push(mx, peak, z0, mx, peak, z1, x1, baseY, z1, x1, baseY, z0);
+        for (let i = 0; i < 4; i++) { normals.push(0.7, 0.7, 0); colors.push(cr - 0.05, cg - 0.03, cb - 0.03, 1); }
+        indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
       }
     }
-    if (!hasRoof) return null;
-    const mesh = new Mesh(`roof_${chunkX}_${chunkZ}`, this.scene);
+    return vertexIndex;
+  }
+
+  private collectConnectedRoofBuildTileGroups(
+    startX: number,
+    startZ: number,
+    endX: number,
+    endZ: number,
+    roofAt: (tileIdx: number) => RoofData | undefined,
+  ): RoofBuildTile[][] {
+    const roofTiles = new Map<string, RoofBuildTile>();
+    for (let x = startX; x < endX; x++) {
+      for (let z = startZ; z < endZ; z++) {
+        const roof = roofAt(z * this.mapWidth + x);
+        if (roof) roofTiles.set(`${x},${z}`, { x, z, roof });
+      }
+    }
+    if (roofTiles.size === 0) return [];
+
+    const groups: RoofBuildTile[][] = [];
+    const visited = new Set<string>();
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+    for (const [seedKey, seedTile] of roofTiles) {
+      if (visited.has(seedKey)) continue;
+      const group: RoofBuildTile[] = [];
+      const queue: RoofBuildTile[] = [seedTile];
+      visited.add(seedKey);
+      for (let qi = 0; qi < queue.length; qi++) {
+        const tile = queue[qi];
+        group.push(tile);
+        for (const [dx, dz] of dirs) {
+          const nk = `${tile.x + dx},${tile.z + dz}`;
+          if (visited.has(nk)) continue;
+          const next = roofTiles.get(nk);
+          if (!next) continue;
+          visited.add(nk);
+          queue.push(next);
+        }
+      }
+      groups.push(group);
+    }
+    return groups;
+  }
+
+  private createRoofComponentMesh(
+    name: string,
+    chunkKey: string,
+    roofGridChunkKey: string,
+    floor: number,
+    roofTiles: RoofBuildTile[],
+  ): Mesh {
+    const positions: number[] = []; const indices: number[] = []; const normals: number[] = []; const colors: number[] = [];
+    let vertexIndex = 0;
+    for (const tile of roofTiles) {
+      vertexIndex = this.appendRoofTileGeometry(tile.roof, tile.x, tile.z, positions, indices, normals, colors, vertexIndex);
+    }
+
+    const mesh = new Mesh(name, this.scene);
     const vertexData = new VertexData();
     vertexData.positions = positions; vertexData.indices = indices; vertexData.normals = normals; vertexData.colors = colors;
     vertexData.applyToMesh(mesh); mesh.material = this.roofMat; mesh.hasVertexAlpha = false; mesh.isPickable = false;
+    mesh.metadata = { ...(mesh.metadata ?? {}), kind: 'terrainRoof', chunkKey, floor };
+    mesh.freezeWorldMatrix();
+    mesh.doNotSyncBoundingInfo = true;
+    this.stampTerrainRoofMeshTiles(
+      roofGridChunkKey,
+      mesh,
+      roofTiles.map(tile => ({ x: tile.x, z: tile.z, y: tile.roof.height })),
+      floor,
+    );
     return mesh;
+  }
+
+  private createRoofChunkMesh(
+    baseName: string,
+    chunkKey: string,
+    roofGridChunkKey: string,
+    floor: number,
+    groups: RoofBuildTile[][],
+  ): Mesh | null {
+    if (groups.length === 0) return null;
+    const components = groups.map((group, idx) => this.createRoofComponentMesh(
+      groups.length === 1 ? baseName : `${baseName}_${idx}`,
+      chunkKey,
+      roofGridChunkKey,
+      floor,
+      group,
+    ));
+    if (components.length === 1) return components[0];
+
+    const parent = new Mesh(`${baseName}_root`, this.scene);
+    parent.isPickable = false;
+    parent.metadata = { ...(parent.metadata ?? {}), kind: 'terrainRoofGroup', chunkKey, floor };
+    for (const component of components) component.parent = parent;
+    return parent;
+  }
+
+  private buildRoofMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
+    const chunkKey = `${chunkX},${chunkZ}`;
+    const groups = this.collectConnectedRoofBuildTileGroups(startX, startZ, endX, endZ, tileIdx => this.roofData.get(tileIdx));
+    return this.createRoofChunkMesh(`roof_${chunkX}_${chunkZ}`, chunkKey, this.terrainRoofChunkKey(chunkKey), 0, groups);
   }
 
   private buildFloorMesh(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number): Mesh | null {
@@ -2413,57 +2543,15 @@ export class ChunkManager {
   }
 
   private buildRoofMeshForLayer(chunkX: number, chunkZ: number, startX: number, startZ: number, endX: number, endZ: number, floorIdx: number, layer: FloorLayerClientData): Mesh | null {
-    const positions: number[] = []; const indices: number[] = []; const normals: number[] = []; const colors: number[] = [];
-    let vertexIndex = 0; let hasRoof = false;
-    const cr = 0.45, cg = 0.25, cb = 0.15;
-    for (let x = startX; x < endX; x++) {
-      for (let z = startZ; z < endZ; z++) {
-        const tileIdx = z * this.mapWidth + x;
-        const roof = layer.roofs.get(tileIdx);
-        if (!roof) continue;
-        hasRoof = true;
-        const x0 = x * TILE_SIZE, x1 = (x + 1) * TILE_SIZE, z0 = z * TILE_SIZE, z1 = (z + 1) * TILE_SIZE;
-        const baseY = roof.height;
-        if (roof.style === 'flat') {
-          positions.push(x0, baseY, z0, x1, baseY, z0, x1, baseY, z1, x0, baseY, z1);
-          for (let i = 0; i < 4; i++) { normals.push(0, 1, 0); colors.push(cr, cg, cb, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          positions.push(x0, baseY, z1, x1, baseY, z1, x1, baseY, z0, x0, baseY, z0);
-          for (let i = 0; i < 4; i++) { normals.push(0, -1, 0); colors.push(cr - 0.1, cg - 0.05, cb - 0.05, 1); }
-          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-        } else {
-          const peak = baseY + (roof.peakHeight ?? 0.6);
-          const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
-          if (roof.style === 'peaked_ew') {
-            positions.push(x0, baseY, z0, x1, baseY, z0, x1, peak, mz, x0, peak, mz);
-            for (let i = 0; i < 4; i++) { normals.push(0, 0.7, -0.7); colors.push(cr, cg, cb, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-            positions.push(x0, peak, mz, x1, peak, mz, x1, baseY, z1, x0, baseY, z1);
-            for (let i = 0; i < 4; i++) { normals.push(0, 0.7, 0.7); colors.push(cr - 0.05, cg - 0.03, cb - 0.03, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          } else {
-            positions.push(x0, baseY, z0, x0, baseY, z1, mx, peak, z1, mx, peak, z0);
-            for (let i = 0; i < 4; i++) { normals.push(-0.7, 0.7, 0); colors.push(cr, cg, cb, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-            positions.push(mx, peak, z0, mx, peak, z1, x1, baseY, z1, x1, baseY, z0);
-            for (let i = 0; i < 4; i++) { normals.push(0.7, 0.7, 0); colors.push(cr - 0.05, cg - 0.03, cb - 0.03, 1); }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3); vertexIndex += 4;
-          }
-        }
-      }
-    }
-    if (!hasRoof) return null;
-    const mesh = new Mesh(`roof_f${floorIdx}_${chunkX}_${chunkZ}`, this.scene);
-    const vertexData = new VertexData();
-    vertexData.positions = positions; vertexData.indices = indices; vertexData.normals = normals; vertexData.colors = colors;
-    vertexData.applyToMesh(mesh); mesh.material = this.roofMat; mesh.hasVertexAlpha = false; mesh.isPickable = false;
-    return mesh;
+    const chunkKey = `${chunkX},${chunkZ}`;
+    const groups = this.collectConnectedRoofBuildTileGroups(startX, startZ, endX, endZ, tileIdx => layer.roofs.get(tileIdx));
+    return this.createRoofChunkMesh(`roof_f${floorIdx}_${chunkX}_${chunkZ}`, chunkKey, this.terrainRoofChunkKey(chunkKey), floorIdx, groups);
   }
 
   private setFloorMeshSetVisibility(set: FloorMeshSet, floorIdx: number): void {
     const visible = floorIdx <= this.currentFloor;
     if (set.wall) set.wall.setEnabled(visible);
-    if (set.roof) set.roof.setEnabled(floorIdx > this.currentFloor);
+    this.setRenderTreeEnabled(set.roof, floorIdx > this.currentFloor);
     if (set.floor) set.floor.setEnabled(visible);
     if (set.stairs) set.stairs.setEnabled(visible);
   }
@@ -3081,12 +3169,33 @@ export class ChunkManager {
         this.setChunkMeshesEnabled(key, chunk, false);
         continue;
       }
-      if (chunk.roof) chunk.roof.setEnabled(floor === 0);
+      this.setRenderTreeEnabled(chunk.roof, floor === 0);
       for (const [floorIdx, meshSet] of chunk.upperFloors) this.setFloorMeshSetVisibility(meshSet, floorIdx);
     }
   }
 
   getCurrentFloor(): number { return this.currentFloor; }
+
+  roofNodeDefaultEnabled(node: TransformNode): boolean | null {
+    const md = node.metadata as { kind?: string; assetId?: string; chunkKey?: string; floor?: number; isTexPlane?: boolean; chunkX?: number; chunkZ?: number } | null;
+    if (!md) return null;
+
+    if (md.kind === 'terrainRoof' && typeof md.chunkKey === 'string' && typeof md.floor === 'number') {
+      if (this.chunkMeshesEnabled.get(md.chunkKey) !== true) return false;
+      return md.floor === 0 ? this.currentFloor === 0 : md.floor > this.currentFloor;
+    }
+
+    if (md.isTexPlane === true && typeof md.chunkX === 'number' && typeof md.chunkZ === 'number') {
+      return this.texturePlaneChunksEnabled.get(`${md.chunkX},${md.chunkZ}`) !== false;
+    }
+
+    if (typeof md.assetId === 'string' && typeof md.chunkKey === 'string') {
+      const enabled = this.chunkPlacedEnabled.get(md.chunkKey);
+      return enabled === undefined ? null : enabled;
+    }
+
+    return null;
+  }
 
   /** Call each frame to animate water texture */
   updateAnimations(): void {
@@ -3407,6 +3516,7 @@ export class ChunkManager {
   private canThinInstance(obj: PlacedObject): boolean {
     if (objectDefIdForPlacedAsset(obj.assetId) != null) return false;
     if (this.modelAnimationGroups.has(obj.assetId)) return false;
+    if (this.isRoofLikeAsset(obj.assetId)) return false;
     // Doors must be unique pickable nodes — clicking one looks up its
     // metadata.objectEntityId to send PLAYER_INTERACT_OBJECT. Thin-instanced
     // source meshes share one mesh per asset across all instances, so per-
@@ -3493,12 +3603,50 @@ export class ChunkManager {
     };
   }
 
+  private terrainRoofChunkKey(chunkKey: string): string {
+    return `terrain:${chunkKey}`;
+  }
+
+  private addRoofGridEntry(gridKey: string, entry: RoofObjectGridEntry): void {
+    let arr = this.roofObjectGrid.get(gridKey);
+    if (!arr) {
+      arr = [];
+      this.roofObjectGrid.set(gridKey, arr);
+    }
+    arr.push(entry);
+  }
+
+  private registerChunkRoofGridTile(chunkKeys: Set<string>, tx: number, tz: number, entry: RoofObjectGridEntry): void {
+    const rk = `${tx},${tz}`;
+    this.addRoofGridEntry(rk, entry);
+    chunkKeys.add(rk);
+  }
+
+  private stampTerrainRoofMeshTiles(
+    chunkKey: string,
+    node: TransformNode,
+    roofTiles: ReadonlyArray<{ x: number; z: number; y: number }>,
+    floor: number,
+  ): void {
+    if (roofTiles.length === 0) return;
+    let chunkKeys = this.roofObjectGridKeysByChunk.get(chunkKey);
+    if (!chunkKeys) {
+      chunkKeys = new Set();
+      this.roofObjectGridKeysByChunk.set(chunkKey, chunkKeys);
+    }
+
+    for (const tile of roofTiles) {
+      const rk = `${tile.x},${tile.z}`;
+      this.addRoofGridEntry(rk, { node, chunkKey, floor, y: tile.y });
+      chunkKeys.add(rk);
+    }
+  }
+
   private stampRoofObjectFootprint(chunkKey: string, obj: PlacedObject, bMin: Vector3, bMax: Vector3, node?: TransformNode): void {
     const tx0 = Math.max(0, Math.floor(bMin.x));
     const tx1 = Math.min(this.mapWidth - 1, Math.floor(bMax.x));
     const tz0 = Math.max(0, Math.floor(bMin.z));
     const tz1 = Math.min(this.mapHeight - 1, Math.floor(bMax.z));
-    if (tx0 > tx1 || tz0 > tz1) return;
 
     const roofFloor = this.assignRoofFloor(obj.position.x, obj.position.z, obj.position.y);
     let chunkKeys = this.roofObjectGridKeysByChunk.get(chunkKey);
@@ -3507,20 +3655,23 @@ export class ChunkManager {
       this.roofObjectGridKeysByChunk.set(chunkKey, chunkKeys);
     }
 
-    for (let tz = tz0; tz <= tz1; tz++) {
-      for (let tx = tx0; tx <= tx1; tx++) {
-        if (tx + 0.5 < bMin.x || tx + 0.5 > bMax.x) continue;
-        if (tz + 0.5 < bMin.z || tz + 0.5 > bMax.z) continue;
-        const rk = `${tx},${tz}`;
-        let arr = this.roofObjectGrid.get(rk);
-        if (!arr) {
-          arr = [];
-          this.roofObjectGrid.set(rk, arr);
+    const stampedKeys = new Set<string>();
+    if (tx0 <= tx1 && tz0 <= tz1) {
+      for (let tz = tz0; tz <= tz1; tz++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          if (tx + 0.5 < bMin.x || tx + 0.5 > bMax.x) continue;
+          if (tz + 0.5 < bMin.z || tz + 0.5 > bMax.z) continue;
+          this.registerChunkRoofGridTile(chunkKeys, tx, tz, { node, chunkKey, floor: roofFloor, y: obj.position.y });
+          stampedKeys.add(`${tx},${tz}`);
         }
-        arr.push({ node, chunkKey, floor: roofFloor, y: obj.position.y });
-        chunkKeys.add(rk);
       }
     }
+
+    const authoredTx = Math.floor(obj.position.x);
+    const authoredTz = Math.floor(obj.position.z);
+    if (authoredTx < 0 || authoredTx >= this.mapWidth || authoredTz < 0 || authoredTz >= this.mapHeight) return;
+    if (stampedKeys.has(`${authoredTx},${authoredTz}`)) return;
+    this.registerChunkRoofGridTile(chunkKeys, authoredTx, authoredTz, { node, chunkKey, floor: roofFloor, y: obj.position.y });
   }
 
   private clearRoofObjectGridForChunk(chunkKey: string): void {
@@ -3803,6 +3954,7 @@ export class ChunkManager {
     const thinSources: Mesh[] = [];
     const roofThinSources: Mesh[] = [];
     const elevatedThinSources: ElevatedThinInstanceSource[] = [];
+    const structuralThinSources: ElevatedThinInstanceSource[] = [];
     const nodes: TransformNode[] = [];
     const anims: AnimationGroup[] = [];
     const cleanupPartialChunkLoad = () => {
@@ -3813,6 +3965,7 @@ export class ChunkManager {
       thinSources.length = 0;
       roofThinSources.length = 0;
       elevatedThinSources.length = 0;
+      structuralThinSources.length = 0;
       for (const ag of anims) {
         const aidx = this.activeAnimationGroups.indexOf(ag);
         if (aidx >= 0) this.activeAnimationGroups.splice(aidx, 1);
@@ -3840,6 +3993,7 @@ export class ChunkManager {
       this.chunkThinInstSources.delete(chunkKey);
       this.chunkRoofThinInstSources.delete(chunkKey);
       this.chunkElevatedThinInstSources.delete(chunkKey);
+      this.chunkStructuralThinInstSources.delete(chunkKey);
     };
     const abortPartialLoadIfStopped = (): boolean => {
       if (!this.isObjectLoadStale(generation) && this.shouldLoadObjectChunkNow(chunkKey)) return false;
@@ -3904,10 +4058,14 @@ export class ChunkManager {
           ));
         }
         src.doNotSyncBoundingInfo = true;
+        src.metadata = { ...(src.metadata ?? {}), assetId, chunkKey };
         thinSources.push(src);
         if (visibility === 'roof') roofThinSources.push(src);
         else if (visibility === 'elevated' && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
           elevatedThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ });
+        }
+        if (visibility !== 'roof' && isRevealStructuralPlacedAsset(assetId) && Number.isFinite(bMinX) && Number.isFinite(bMaxX) && Number.isFinite(maxOriginY)) {
+          structuralThinSources.push({ mesh: src, minX: bMinX, maxX: bMaxX, maxOriginY, minZ: bMinZ, maxZ: bMaxZ });
         }
         await this.yieldIfFrameBudgetSpent(workSlice);
         if (abortPartialLoadIfStopped()) return;
@@ -3916,6 +4074,7 @@ export class ChunkManager {
     this.chunkThinInstSources.set(chunkKey, thinSources);
     if (roofThinSources.length > 0) this.chunkRoofThinInstSources.set(chunkKey, roofThinSources);
     if (elevatedThinSources.length > 0) this.chunkElevatedThinInstSources.set(chunkKey, elevatedThinSources);
+    if (structuralThinSources.length > 0) this.chunkStructuralThinInstSources.set(chunkKey, structuralThinSources);
 
     // --- Regular instances: interactable, animated, doors, stairs ---
     let idx = 0;
@@ -3982,6 +4141,7 @@ export class ChunkManager {
       root.metadata = {
         ...root.metadata,
         assetId: obj.assetId,
+        chunkKey,
         placedX: obj.position.x,
         placedY: obj.position.y,
         placedZ: obj.position.z,
@@ -3990,6 +4150,11 @@ export class ChunkManager {
         placedName: obj.name,
         isNoRoof: obj.noRoof === true,
       } satisfies PlacedObjectNodeMetadata;
+
+      if (!obj.noRoof && this.isRoofLikeAsset(obj.assetId)) {
+        const bounds = this.getPlacedObjectTemplateBounds(obj.assetId, obj);
+        if (bounds) this.stampRoofObjectFootprint(chunkKey, obj, bounds.min, bounds.max, root);
+      }
 
       const hasAnims = !!templateAnims && templateAnims.length > 0;
       if (!hasAnims && !isInteractiveDoorPlacedAsset(obj.assetId)) {
@@ -4041,6 +4206,7 @@ export class ChunkManager {
         this.chunkPlacedNodes.set(chunkKey, []);
         this.touchObjectChunk(chunkKey);
         this.chunkThinInstSources.set(chunkKey, []);
+        this.chunkStructuralThinInstSources.delete(chunkKey);
       }
     } finally {
       if (!this.isObjectLoadStale(generation)) this.loadingObjectChunks.delete(chunkKey);
@@ -4098,6 +4264,7 @@ export class ChunkManager {
     }
     this.chunkRoofThinInstSources.delete(chunkKey);
     this.chunkElevatedThinInstSources.delete(chunkKey);
+    this.chunkStructuralThinInstSources.delete(chunkKey);
   }
 
   private disposeChunkTextureOverlays(chunkKey: string): void {
@@ -4228,6 +4395,317 @@ export class ChunkManager {
   }
 
 
+  private appendRoofEntryNodes(
+    entry: RoofObjectGridEntry,
+    minY: number,
+    result: TransformNode[],
+    seen: Set<TransformNode>,
+    seenRoofChunkKeys: Set<string>,
+  ): void {
+    if (entry.y <= minY) return;
+    if (entry.node) {
+      if (seen.has(entry.node)) return;
+      seen.add(entry.node);
+      result.push(entry.node);
+      return;
+    }
+    if (!entry.chunkKey || seenRoofChunkKeys.has(entry.chunkKey)) return;
+    seenRoofChunkKeys.add(entry.chunkKey);
+    const roofSources = this.chunkRoofThinInstSources.get(entry.chunkKey);
+    if (!roofSources) return;
+    for (const node of roofSources) {
+      if (seen.has(node)) continue;
+      seen.add(node);
+      result.push(node);
+    }
+  }
+
+  private roofEntryMatchesRevealSeed(entry: RoofObjectGridEntry, minY: number, seed: RoofRevealSeed): boolean {
+    return entry.y > minY
+      && entry.floor === seed.floor
+      && Math.abs(entry.y - seed.y) <= ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE;
+  }
+
+  private roofSeedAtTile(tx: number, tz: number, minY: number): RoofRevealSeed | null {
+    const arr = this.roofObjectGrid.get(`${tx},${tz}`);
+    if (!arr) return null;
+    let best: RoofObjectGridEntry | null = null;
+    for (const entry of arr) {
+      if (entry.y <= minY) continue;
+      if (!best || entry.y < best.y) best = entry;
+    }
+    return best ? { x: tx, z: tz, floor: best.floor, y: best.y } : null;
+  }
+
+  findRoofHoverPointFromRay(
+    rayOrigin: Vector3,
+    rayDirection: Vector3,
+    minY: number,
+    searchX: number,
+    searchZ: number,
+    radius: number,
+  ): { x: number; z: number; y: number } | null {
+    if (Math.abs(rayDirection.y) < 0.0001) return null;
+    const tx = Math.floor(searchX);
+    const tz = Math.floor(searchZ);
+    const r = Math.max(0, Math.ceil(radius));
+    let best: { x: number; z: number; y: number; t: number } | null = null;
+
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const tileX = tx + dx;
+        const tileZ = tz + dz;
+        const arr = this.roofObjectGrid.get(`${tileX},${tileZ}`);
+        if (!arr) continue;
+        for (const entry of arr) {
+          if (entry.y <= minY) continue;
+          if (entry.node?.isDisposed()) continue;
+          const t = (entry.y - rayOrigin.y) / rayDirection.y;
+          if (t <= 0 || !Number.isFinite(t)) continue;
+          if (best && t >= best.t) continue;
+
+          const x = rayOrigin.x + rayDirection.x * t;
+          const z = rayOrigin.z + rayDirection.z * t;
+          if (Math.floor(x) !== tileX || Math.floor(z) !== tileZ) continue;
+          best = { x, z, y: entry.y, t };
+        }
+      }
+    }
+
+    return best ? { x: best.x, z: best.z, y: best.y } : null;
+  }
+
+  findRoofRevealPointFromRay(
+    rayOrigin: Vector3,
+    rayDirection: Vector3,
+    minY: number,
+    searchX: number,
+    searchZ: number,
+    roofRayRadius: number,
+    structuralTriggerRadius: number,
+    structuralSampleYs: readonly number[],
+  ): { x: number; z: number; y: number } | null {
+    const roofHit = this.findRoofHoverPointFromRay(rayOrigin, rayDirection, minY, searchX, searchZ, roofRayRadius);
+    if (roofHit) return roofHit;
+    if (Math.abs(rayDirection.y) < 0.0001) return null;
+
+    const seenTiles = new Set<string>();
+    for (const sampleY of structuralSampleYs) {
+      const t = (sampleY - rayOrigin.y) / rayDirection.y;
+      if (t <= 0 || !Number.isFinite(t)) continue;
+      const x = rayOrigin.x + rayDirection.x * t;
+      const z = rayOrigin.z + rayDirection.z * t;
+      const tx = Math.floor(x);
+      const tz = Math.floor(z);
+      const key = `${tx},${tz}`;
+      if (seenTiles.has(key)) continue;
+      seenTiles.add(key);
+      const seed = this.roofSeedAtTile(tx, tz, minY)
+        ?? this.findRevealStructuralRoofSeedNear(x, z, minY, structuralTriggerRadius);
+      if (seed) return { x, z, y: sampleY };
+    }
+
+    return null;
+  }
+
+  private roofHasRevealSeedAtTile(tx: number, tz: number, minY: number, seed: RoofRevealSeed): boolean {
+    const arr = this.roofObjectGrid.get(`${tx},${tz}`);
+    if (!arr) return false;
+    for (const entry of arr) {
+      if (this.roofEntryMatchesRevealSeed(entry, minY, seed)) return true;
+    }
+    return false;
+  }
+
+  private findRoofSeedTile(tx: number, tz: number, minY: number, radius: number): RoofRevealSeed | null {
+    const r = Math.max(0, Math.ceil(radius));
+    let best: { seed: RoofRevealSeed; distSq: number } | null = null;
+    for (let dz = -r; dz <= r; dz++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const x = tx + dx;
+        const z = tz + dz;
+        const seed = this.roofSeedAtTile(x, z, minY);
+        if (!seed) continue;
+        const distSq = dx * dx + dz * dz;
+        if (!best || distSq < best.distSq || (distSq === best.distSq && seed.y < best.seed.y)) best = { seed, distSq };
+      }
+    }
+    return best?.seed ?? null;
+  }
+
+  private findRevealStructuralRoofSeedNear(x: number, z: number, minY: number, radius: number): RoofRevealSeed | null {
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    const r = Math.ceil(radius);
+    const minChunkX = Math.floor((tx - r) / CHUNK_SIZE);
+    const maxChunkX = Math.floor((tx + r) / CHUNK_SIZE);
+    const minChunkZ = Math.floor((tz - r) / CHUNK_SIZE);
+    const maxChunkZ = Math.floor((tz + r) / CHUNK_SIZE);
+    let best: { seed: RoofRevealSeed; objectDistSq: number; roofDistSq: number } | null = null;
+
+    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+        const objects = this.placedObjectsByChunk.get(`${chunkX},${chunkZ}`);
+        if (!objects) continue;
+        for (const obj of objects) {
+          if (obj.noRoof || !isRevealStructuralPlacedAsset(obj.assetId)) continue;
+          const ox = Math.floor(obj.position.x);
+          const oz = Math.floor(obj.position.z);
+          const dx = ox - tx;
+          const dz = oz - tz;
+          if (Math.abs(dx) > r || Math.abs(dz) > r) continue;
+          const seed = this.findRoofSeedTile(ox, oz, minY, radius);
+          if (!seed) continue;
+
+          const objectDistSq = dx * dx + dz * dz;
+          const roofDx = seed.x - ox;
+          const roofDz = seed.z - oz;
+          const roofDistSq = roofDx * roofDx + roofDz * roofDz;
+          if (!best
+            || objectDistSq < best.objectDistSq
+            || (objectDistSq === best.objectDistSq && roofDistSq < best.roofDistSq)
+            || (objectDistSq === best.objectDistSq && roofDistSq === best.roofDistSq && seed.y < best.seed.y)) {
+            best = { seed, objectDistSq, roofDistSq };
+          }
+        }
+      }
+    }
+
+    return best?.seed ?? null;
+  }
+
+  private collectConnectedRoofTileKeys(seed: RoofRevealSeed, minY: number): Set<string> {
+    const result = new Set<string>();
+    const queue: { x: number; z: number }[] = [{ x: seed.x, z: seed.z }];
+    const seedKey = `${seed.x},${seed.z}`;
+    result.add(seedKey);
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+    for (let qi = 0; qi < queue.length && result.size < ROOF_REVEAL_CONNECTED_TILE_LIMIT; qi++) {
+      const tile = queue[qi];
+      for (const [dx, dz] of dirs) {
+        const nx = tile.x + dx;
+        const nz = tile.z + dz;
+        const nk = `${nx},${nz}`;
+        if (result.has(nk)) continue;
+        if (!this.roofHasRevealSeedAtTile(nx, nz, minY, seed)) continue;
+        result.add(nk);
+        queue.push({ x: nx, z: nz });
+        if (result.size >= ROOF_REVEAL_CONNECTED_TILE_LIMIT) break;
+      }
+    }
+    return result;
+  }
+
+  private appendRoofEntriesForTileKeys(
+    tileKeys: Set<string>,
+    minY: number,
+    seed: RoofRevealSeed,
+    result: TransformNode[],
+    seen: Set<TransformNode>,
+    seenRoofChunkKeys: Set<string>,
+  ): void {
+    for (const key of tileKeys) {
+      const arr = this.roofObjectGrid.get(key);
+      if (!arr) continue;
+      for (const entry of arr) {
+        if (!this.roofEntryMatchesRevealSeed(entry, minY, seed)) continue;
+        this.appendRoofEntryNodes(entry, minY, result, seen, seenRoofChunkKeys);
+      }
+    }
+  }
+
+  private expandedTileKeys(tileKeys: Set<string>, radius: number): Set<string> {
+    if (radius <= 0) return tileKeys;
+    const expanded = new Set<string>(tileKeys);
+    const r = Math.ceil(radius);
+    for (const key of tileKeys) {
+      const [sx, sz] = key.split(',');
+      const tx = Number(sx);
+      const tz = Number(sz);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) continue;
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          expanded.add(`${tx + dx},${tz + dz}`);
+        }
+      }
+    }
+    return expanded;
+  }
+
+  private appendPlacedRevealNodesForTileKeys(
+    tileKeys: Set<string>,
+    minRevealY: number,
+    seed: RoofRevealSeed,
+    result: TransformNode[],
+    seen: Set<TransformNode>,
+  ): void {
+    if (tileKeys.size === 0) return;
+    let minTileX = Infinity, maxTileX = -Infinity, minTileZ = Infinity, maxTileZ = -Infinity;
+    for (const key of tileKeys) {
+      const [sx, sz] = key.split(',');
+      const tx = Number(sx);
+      const tz = Number(sz);
+      if (!Number.isFinite(tx) || !Number.isFinite(tz)) continue;
+      if (tx < minTileX) minTileX = tx;
+      if (tx > maxTileX) maxTileX = tx;
+      if (tz < minTileZ) minTileZ = tz;
+      if (tz > maxTileZ) maxTileZ = tz;
+    }
+    if (!Number.isFinite(minTileX) || !Number.isFinite(minTileZ)) return;
+
+    const minChunkX = Math.floor(minTileX / CHUNK_SIZE);
+    const maxChunkX = Math.floor(maxTileX / CHUNK_SIZE);
+    const minChunkZ = Math.floor(minTileZ / CHUNK_SIZE);
+    const maxChunkZ = Math.floor(maxTileZ / CHUNK_SIZE);
+
+    for (let chunkZ = minChunkZ; chunkZ <= maxChunkZ; chunkZ++) {
+      for (let chunkX = minChunkX; chunkX <= maxChunkX; chunkX++) {
+        const nodes = this.chunkPlacedNodes.get(`${chunkX},${chunkZ}`);
+        if (!nodes) continue;
+        for (const node of nodes) {
+          if (seen.has(node)) continue;
+          const md = node.metadata as PlacedObjectNodeMetadata | null;
+          const assetId = typeof md?.assetId === 'string' ? md.assetId : '';
+          if (!assetId) continue;
+          if (isInteractiveDoorPlacedAsset(assetId)) continue;
+          if (md?.isNoRoof) continue;
+
+          const ap = node.getAbsolutePosition();
+          if (ap.y <= minRevealY) continue;
+          if (ap.y > seed.y + ROOF_REVEAL_LAYER_HEIGHT_TOLERANCE) continue;
+          if (!tileKeys.has(`${Math.floor(ap.x)},${Math.floor(ap.z)}`)) continue;
+          seen.add(node);
+          result.push(node);
+        }
+      }
+    }
+  }
+
+  getConnectedRoofRevealNodesAt(
+    x: number,
+    z: number,
+    minY: number,
+    minRevealY: number,
+    wallTriggerRadius: number,
+  ): TransformNode[] {
+    const tx = Math.floor(x);
+    const tz = Math.floor(z);
+    let seed = this.roofSeedAtTile(tx, tz, minY);
+    if (!seed) {
+      seed = this.findRevealStructuralRoofSeedNear(x, z, minY, wallTriggerRadius);
+      if (!seed) return [];
+    }
+
+    const roofTileKeys = this.collectConnectedRoofTileKeys(seed, minY);
+    const revealTileKeys = this.expandedTileKeys(roofTileKeys, ROOF_REVEAL_NEARBY_TILE_PADDING);
+    const result: TransformNode[] = [];
+    const seen = new Set<TransformNode>();
+    const seenRoofChunkKeys = new Set<string>();
+    this.appendRoofEntriesForTileKeys(revealTileKeys, minY, seed, result, seen, seenRoofChunkKeys);
+    this.appendPlacedRevealNodesForTileKeys(revealTileKeys, minRevealY, seed, result, seen);
+    return result;
+  }
+
   /** Get all roof nodes near a position on the given floor or above (for hiding). */
   getRoofNodesNear(x: number, z: number, radius: number, minY: number, _floor: number): TransformNode[] {
     const result: TransformNode[] = [];
@@ -4244,25 +4722,7 @@ export class ChunkManager {
         const arr = this.roofObjectGrid.get(`${tx + dx},${tz + dz}`);
         if (arr) {
           for (const entry of arr) {
-            if (entry.y <= minY) continue;
-            if (entry.node) {
-              if (!seen.has(entry.node)) {
-                seen.add(entry.node);
-                result.push(entry.node);
-              }
-              continue;
-            }
-            if (entry.chunkKey) {
-              if (seenRoofChunkKeys.has(entry.chunkKey)) continue;
-              seenRoofChunkKeys.add(entry.chunkKey);
-              const roofSources = this.chunkRoofThinInstSources.get(entry.chunkKey);
-              if (!roofSources) continue;
-              for (const node of roofSources) {
-                if (seen.has(node)) continue;
-                seen.add(node);
-                result.push(node);
-              }
-            }
+            this.appendRoofEntryNodes(entry, minY, result, seen, seenRoofChunkKeys);
           }
         }
       }
@@ -4797,8 +5257,61 @@ export class ChunkManager {
       }
     }
 
+    const splitConnectedRoofMergeGroup = (group: MergeGroup): MergeGroup[] => {
+      if (!group.isRoof || group.planes.length <= 1) return [group];
+
+      const tileToPlanes = new Map<string, number[]>();
+      const planeTiles: Set<string>[] = [];
+      for (let i = 0; i < group.planes.length; i++) {
+        const tiles = new Set<string>();
+        forEachTileInPlaneFootprint(group.planes[i], this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
+          const key = `${tx},${tz}`;
+          tiles.add(key);
+          let list = tileToPlanes.get(key);
+          if (!list) {
+            list = [];
+            tileToPlanes.set(key, list);
+          }
+          list.push(i);
+        });
+        planeTiles.push(tiles);
+      }
+
+      const result: MergeGroup[] = [];
+      const visited = new Set<number>();
+      const dirs = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+      for (let seed = 0; seed < group.planes.length; seed++) {
+        if (visited.has(seed)) continue;
+        const indices: number[] = [];
+        const queue = [seed];
+        visited.add(seed);
+        for (let qi = 0; qi < queue.length; qi++) {
+          const planeIdx = queue[qi];
+          indices.push(planeIdx);
+          for (const key of planeTiles[planeIdx]) {
+            const [sx, sz] = key.split(',');
+            const tx = Number(sx);
+            const tz = Number(sz);
+            if (!Number.isFinite(tx) || !Number.isFinite(tz)) continue;
+            for (const [dx, dz] of dirs) {
+              const neighbors = tileToPlanes.get(`${tx + dx},${tz + dz}`);
+              if (!neighbors) continue;
+              for (const nextIdx of neighbors) {
+                if (visited.has(nextIdx)) continue;
+                visited.add(nextIdx);
+                queue.push(nextIdx);
+              }
+            }
+          }
+        }
+        result.push({ ...group, planes: indices.map(idx => group.planes[idx]) });
+      }
+      return result;
+    };
+
     let mergedCount = 0;
-    for (const [, group] of mergeGroups) {
+    for (const [, sourceGroup] of mergeGroups) {
+      for (const group of splitConnectedRoofMergeGroup(sourceGroup)) {
       const allPositions: number[] = [];
       const allNormals: number[] = [];
       const allUvs: number[] = [];
@@ -4829,9 +5342,8 @@ export class ChunkManager {
       mesh.freezeWorldMatrix();
       mesh.doNotSyncBoundingInfo = true;
 
-      // Compute Y range across all planes in this group so the indoor-roof
-      // culler can hide upper-floor surfaces (these merged meshes aren't
-      // tracked by `roofObjectGrid` — that only sees placed objects).
+      // Compute Y range across all planes in this group so roof reveal/culling
+      // can hide upper-floor surfaces even after plane meshes are merged.
       let minPY = Infinity, maxPY = -Infinity;
       for (const plane of group.planes) {
         const py = plane.position.y;
@@ -4861,14 +5373,13 @@ export class ChunkManager {
         for (const plane of group.planes) {
           forEachTileInPlaneFootprint(plane, this.mapWidth, this.mapHeight, (_idx, tx, tz) => {
             const rk = `${tx},${tz}`;
-            let roofArr = this.roofObjectGrid.get(rk);
-            if (!roofArr) { roofArr = []; this.roofObjectGrid.set(rk, roofArr); }
-            roofArr.push({ node: mesh, floor: group.roofFloor, y: plane.position.y });
+            this.addRoofGridEntry(rk, { node: mesh, floor: group.roofFloor, y: plane.position.y });
           });
         }
       }
 
       mergedCount++;
+      }
     }
     if (import.meta.env.DEV) console.log(`[ChunkManager] Merged ${planes.length} texture planes into ${mergedCount} batched meshes (${this.texturePlanesByChunk.size} chunks)`);
   }
@@ -4900,6 +5411,7 @@ export class ChunkManager {
     this.chunkThinInstSources.clear();
     this.chunkRoofThinInstSources.clear();
     this.chunkElevatedThinInstSources.clear();
+    this.chunkStructuralThinInstSources.clear();
     this.objectChunkQueue = [];
     this.queuedObjectChunks.clear();
     this.objectChunkQueueScheduled = false;

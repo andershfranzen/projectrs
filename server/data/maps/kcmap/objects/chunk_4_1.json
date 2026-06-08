@@ -1,24 +1,5 @@
 [
   {
-    "assetId": "tile roofing",
-    "layerId": "layer_0",
-    "position": {
-      "x": 154.4999998381802,
-      "y": 4.239999999999998,
-      "z": 63.99999997485557
-    },
-    "rotation": {
-      "x": 0,
-      "y": 3.141592653589793,
-      "z": 0
-    },
-    "scale": {
-      "x": 1,
-      "y": 1,
-      "z": 1
-    }
-  },
-  {
     "assetId": "Fence2",
     "layerId": "layer_0",
     "position": {

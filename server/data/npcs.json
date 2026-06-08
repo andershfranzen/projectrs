@@ -817,7 +817,18 @@
     "lootTable": [],
     "shop": {
       "name": "Armor Shop — Legs",
-      "items": []
+      "items": [
+        {
+          "itemId": 52,
+          "price": 3,
+          "stock": 8
+        },
+        {
+          "itemId": 29,
+          "price": 15,
+          "stock": 10
+        }
+      ]
     }
   },
   {

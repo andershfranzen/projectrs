@@ -12,7 +12,7 @@ const WORLD_CAMERA_MASK = 0x0FFFFFFF;
 // RS2 also couples radius to pitch (`distance = pitch * 3 + 600`, game.ts:1697):
 // the low, near-ground pitch is closest and the top-down pitch is furthest.
 // At our world scale the original 1.78× range is too aggressive, so we map
-// pitch into the small locked 8-12 radius range and keep wheel zoom as an
+// pitch into the small locked 8-13 radius range and keep wheel zoom as an
 // offset around that pitch-derived base.
 //
 // Mapping to Babylon's ArcRotateCamera (beta = angle from +Y axis):
@@ -29,8 +29,8 @@ const LOCKED_BETA_AT_PITCH_MAX = Math.PI / 2 - (RS_PITCH_MAX / 2048) * 2 * Math.
 const LOCKED_TARGET_Y_OFFSET = RS_TARGET_Y_OFFSET_UNITS / RS_UNITS_PER_TILE;
 const LOCKED_DEFAULT_BETA = LOCKED_BETA_AT_PITCH_MIN;
 const LOCKED_MIN_RADIUS = 8;
-const LOCKED_MAX_RADIUS = 12;
-const LOCKED_DEFAULT_RADIUS = LOCKED_MIN_RADIUS;
+const LOCKED_MAX_RADIUS = 13;
+const LOCKED_DEFAULT_RADIUS = 11;
 const LOCKED_PITCH_RADIUS_LERP = 0.18;
 const LOCKED_RADIUS_EPSILON = 0.001;
 const NORTH_ALPHA = Math.PI / 2;

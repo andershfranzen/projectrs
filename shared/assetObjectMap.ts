@@ -1,4 +1,4 @@
-import { GENERIC_SCENERY_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
+import { GENERIC_SCENERY_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, RICE_PLANT_OBJECT_DEF_ID, STAIRS_OBJECT_DEF_ID } from './constants';
 
 /**
  * Maps editor-placed asset IDs (GLB model names) to game object definition IDs (objects.json).
@@ -94,8 +94,8 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'tier 5 chest': 36, // Steel Chest
   'tier 6 chest': 37, // Royal Gold Chest
   // Crops
-  'rice': 22, // Rice Plant
-  'PotatoPlant': 28, // Potato Plant
+  'rice': RICE_PLANT_OBJECT_DEF_ID, // Rice Plant
+  'PotatoPlant': POTATO_PLANT_OBJECT_DEF_ID, // Potato Plant
   'CauliflowerPlant': 29, // Cauliflower Plant
   'wheat': 30, // Wheat Plant
   'wheat2': 30,

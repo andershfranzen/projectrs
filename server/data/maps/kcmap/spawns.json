@@ -2684,8 +2684,8 @@
     {
       "id": 148,
       "npcId": 24,
-      "x": 101.5,
-      "z": 62.5,
+      "x": 102.5,
+      "z": 63.5,
       "wanderRange": 3,
       "aggressive": false
     },
@@ -2694,7 +2694,7 @@
       "npcId": 10,
       "x": 98.5,
       "z": 65.5,
-      "wanderRange": 6,
+      "wanderRange": 3,
       "aggressive": false
     },
     {
@@ -2702,7 +2702,7 @@
       "npcId": 10,
       "x": 102.5,
       "z": 67.5,
-      "wanderRange": 6,
+      "wanderRange": 4,
       "aggressive": false
     },
     {
@@ -2710,15 +2710,16 @@
       "npcId": 10,
       "x": 106.5,
       "z": 63.5,
-      "wanderRange": 6,
-      "aggressive": false
+      "wanderRange": 3,
+      "aggressive": false,
+      "facing": -1.5707963267948966
     },
     {
       "id": 152,
       "npcId": 10,
-      "x": 97.5,
-      "z": 62.5,
-      "wanderRange": 6,
+      "x": 99.5,
+      "z": 63.5,
+      "wanderRange": 3,
       "aggressive": false
     },
     {
@@ -2726,7 +2727,7 @@
       "npcId": 10,
       "x": 107.5,
       "z": 68.5,
-      "wanderRange": 6,
+      "wanderRange": 4,
       "aggressive": false
     },
     {
@@ -2734,7 +2735,7 @@
       "npcId": 10,
       "x": 104.5,
       "z": 72.5,
-      "wanderRange": 6,
+      "wanderRange": 4,
       "aggressive": false
     },
     {
@@ -2742,7 +2743,7 @@
       "npcId": 10,
       "x": 108.5,
       "z": 72.5,
-      "wanderRange": 6,
+      "wanderRange": 4,
       "aggressive": false
     }
   ],

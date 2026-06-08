@@ -34,6 +34,7 @@ export const EDITOR_CHUNK_SIZE = 64;
 /** Object and item IDs used by inventory/object crafting flows. */
 export const WELL_OBJECT_DEF_ID = 27;
 export const COOKING_RANGE_OBJECT_DEF_ID = 7;
+export const RICE_PLANT_OBJECT_DEF_ID = 22;
 export const POTATO_PLANT_OBJECT_DEF_ID = 28;
 export const POTTERY_WHEEL_OBJECT_DEF_ID = 32;
 export const KILN_OBJECT_DEF_ID = 39;

@@ -6548,7 +6548,6 @@ export class World {
     }
 
     if (!keepCombatTarget) this.interruptPlayerAction(playerId, player);
-    player.clearMoveQueue();
     player.followTargetPlayerId = -1;
     if (player.attackCooldown > 0) {
       this.magicDebug(player, 'castSpell-defer-cooldown', { spellIndex, targetEntityId, keepCombatTarget, cooldown: player.attackCooldown });
@@ -6573,6 +6572,7 @@ export class World {
       return;
     }
 
+    player.clearMoveQueue();
     this.cancelSkilling(playerId);
     this.cancelItemProduction(playerId);
     if (!keepCombatTarget) this.clearCombatTarget(playerId);   // single-cast cancels auto-attack

@@ -63,7 +63,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, NPC_INTERACTION_RANGE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, buildNaiveInteractionPath, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -81,6 +81,13 @@ const NPC_TARGET_NAIVE_PATH_MAX_STEPS = 50;
 const ENTITY_RENDER_PADDING_TILES = 8;
 const ENTITY_RENDER_HYSTERESIS_TILES = 8;
 const LOW_QUALITY_HARDWARE_SCALE = 2.0;
+const GROUND_ITEM_TOOLTIP_MAX_LINES = 8;
+const ROOF_HOVER_REFRESH_MS = 75;
+const ROOF_HOVER_CLEAR_GRACE_MS = 300;
+const ROOF_HOVER_STICKY_RADIUS_TILES = 4;
+const ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES = 3;
+const ROOF_HOVER_RAY_SEARCH_RADIUS_TILES = 10;
+const ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS = [1.1, 1.8, 2.5] as const;
 const NPC_FACING_NONE = -32768;
 const TERMINAL_CLOSE_REASONS = new Set([
   'Idle timeout',
@@ -148,6 +155,7 @@ type CropPickProxyConfig = {
 };
 
 const DEFAULT_CROP_PICK_PROXY: CropPickProxyConfig = { width: 1.2, depth: 1.2, height: 1.2, y: 0.6 };
+const RICE_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.6, depth: 0.6, height: 0.6, y: 0.3 };
 const POTATO_CROP_PICK_PROXY: CropPickProxyConfig = { width: 0.5, depth: 0.5, height: 0.5, y: 0.25 };
 
 type DoorPivotEntry = {
@@ -380,6 +388,7 @@ export class GameManager {
   private _activityHandler: (() => void) | null = null;
   private _cursorTelemetryHandler: ((event: PointerEvent) => void) | null = null;
   private _npcTooltipHandler: ((event: PointerEvent) => void) | null = null;
+  private _roofHoverLeaveHandler: ((event: PointerEvent) => void) | null = null;
   private _tempVec: Vector3 = new Vector3(); // reusable temp vector to avoid per-frame allocations
   private _minimapRemotes: { x: number; z: number }[] = [];
   private _minimapNpcs: { x: number; z: number }[] = [];
@@ -490,6 +499,16 @@ export class GameManager {
   private isIndoors: boolean = false;
   private hiddenRoofNodes: TransformNode[] = [];
   private hiddenRoofNodeSet: Set<TransformNode> = new Set();
+  private hoverHiddenRoofNodes: TransformNode[] = [];
+  private hoverHiddenRoofNodeSet: Set<TransformNode> = new Set();
+  private _lastHoverRoofTileX: number = -9999;
+  private _lastHoverRoofTileZ: number = -9999;
+  private _lastHoverRevealTileX: number = -9999;
+  private _lastHoverRevealTileZ: number = -9999;
+  private _hoverRoofRevealGraceUntil: number = 0;
+  private _lastRoofHoverClientX: number | null = null;
+  private _lastRoofHoverClientY: number | null = null;
+  private _lastRoofHoverRefreshAt: number = 0;
   private _lastIndoorTileX: number = -9999;
   private _lastIndoorTileZ: number = -9999;
   private _outdoorFrameCount: number = 0;
@@ -888,6 +907,7 @@ export class GameManager {
       // never renders even for a frame. Otherwise we'd see a brief flash of
       // the upper-floor surface before updateIndoorDetection runs next tick.
       if (this.isIndoors) this.recomputeHiddenRoofs();
+      this.refreshHoverHiddenRoofs(true);
       // Spawn-Y comes from LOGIN_OK now — no client-side re-snap needed.
       // The previous re-snap loop dropped players: getHeight() returns the
       // elevated value only when `currentY > elevH - 1.5`, but during
@@ -2092,8 +2112,17 @@ export class GameManager {
     return true;
   }
 
+  private isRoofNodeHidden(node: TransformNode): boolean {
+    return this.hiddenRoofNodeSet.has(node) || this.hoverHiddenRoofNodeSet.has(node);
+  }
+
   private setPlacedWorldObjectEnabled(node: TransformNode, enabled: boolean): void {
     if (!enabled) {
+      if (node.isEnabled(false)) node.setEnabled(false);
+      return;
+    }
+    const roofDefaultEnabled = this.chunkManager.roofNodeDefaultEnabled(node);
+    if (roofDefaultEnabled === false) {
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
@@ -2102,7 +2131,7 @@ export class GameManager {
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
-    if (this.hiddenRoofNodeSet.has(node)) {
+    if (this.isRoofNodeHidden(node)) {
       if (node.isEnabled(false)) node.setEnabled(false);
       return;
     }
@@ -2184,6 +2213,7 @@ export class GameManager {
   }
 
   private cropPickProxyConfig(def: WorldObjectDef): CropPickProxyConfig {
+    if (def.id === RICE_PLANT_OBJECT_DEF_ID) return RICE_CROP_PICK_PROXY;
     return def.id === POTATO_PLANT_OBJECT_DEF_ID ? POTATO_CROP_PICK_PROXY : DEFAULT_CROP_PICK_PROXY;
   }
 
@@ -4148,6 +4178,7 @@ export class GameManager {
       this.playerX = newX;
       this.playerZ = newZ;
       this.clearPredictedPath();
+      this.clearHoverHiddenRoofs();
       this.currentFloor = 0;
       this.chunkManager.setCurrentFloor(0);
       if (this.localPlayer) this.localPlayer.stopWalking();
@@ -4265,6 +4296,7 @@ export class GameManager {
       if (this.localPlayer) this.localPlayer.setPositionXYZ(this.playerX, worldY, this.playerZ);
       this.inputManager.setPlayerY(worldY);
     }
+    this.refreshHoverHiddenRoofs(true, !floorChanged);
     if (opts.refreshWorld !== false) this.refreshWorldAfterSameMapTeleport();
   }
 
@@ -4996,6 +5028,17 @@ export class GameManager {
     return this.entities.getGroundItemStackForItem(groundItemId);
   }
 
+  private groundItemTooltipLines(stack: GroundItemData[]): string[] {
+    const visible = stack.slice(0, GROUND_ITEM_TOOLTIP_MAX_LINES);
+    const lines = visible.map((gi) => {
+      const iName = this.itemDefsCache.get(gi.itemId)?.name ?? 'item';
+      return gi.quantity > 1 ? `${iName} (${gi.quantity})` : iName;
+    });
+    const hiddenCount = stack.length - visible.length;
+    if (hiddenCount > 0) lines.push(`+${hiddenCount} more`);
+    return lines;
+  }
+
   private getGroundItemInteractionOptions(
     groundItemId: number,
     addedGroundItemIds: Set<number> = new Set<number>(),
@@ -5518,6 +5561,8 @@ export class GameManager {
 
     let lastPickAt = 0;
     this._npcTooltipHandler = (e) => {
+      this._lastRoofHoverClientX = e.clientX;
+      this._lastRoofHoverClientY = e.clientY;
       // Throttle: scene.pick walks every pickable mesh; running it on every
       // raw pointermove (which can fire 100+ times/sec on a high-Hz mouse)
       // would chew frame budget. 30ms gap = ~33Hz, smooth enough for a
@@ -5532,6 +5577,8 @@ export class GameManager {
       // Same multiPick logic as the click handlers so the tooltip resolves
       // an NPC or a ground item even when scenery occludes it from the
       // closest-hit picker.
+      this.updateHoverRoofReveal(e.clientX, e.clientY);
+      this._lastRoofHoverRefreshAt = now;
       const playerEntityId = this.pickPlayerAtPoint(this.scene.pointerX, this.scene.pointerY);
       const { entityId, groundItemId } = this.pickAtCursor();
       let playerLabel: string | null = null;
@@ -5557,14 +5604,11 @@ export class GameManager {
         }
       }
       // Ground items: only when the cursor isn't already over an NPC — NPC
-      // wins, mirroring the click priority. Show the whole tile pile, not
-      // just the picked sprite, since a kill drops several items per tile.
+      // wins, mirroring the click priority. Show the tile pile in display
+      // order, capped so a large drop stack doesn't rebuild a huge tooltip.
       let itemLines: string[] = [];
       if (playerLabel == null && npcLabel == null && groundItemId != null) {
-        itemLines = this.groundItemStackForTile(groundItemId).filter(gi => gi.floor === this.currentFloor).map((gi) => {
-          const iName = this.itemDefsCache.get(gi.itemId)?.name ?? 'item';
-          return gi.quantity > 1 ? `${iName} (${gi.quantity})` : iName;
-        });
+        itemLines = this.groundItemTooltipLines(this.groundItemStackForTile(groundItemId).filter(gi => gi.floor === this.currentFloor));
       }
       if (playerLabel != null) {
         el.style.color = this.playerNameColor(playerIsAdmin, playerIsModerator);
@@ -5588,7 +5632,9 @@ export class GameManager {
         el.style.display = 'none';
       }
     };
+    this._roofHoverLeaveHandler = () => this.clearHoverRoofPointer();
     canvas.addEventListener('pointermove', this._npcTooltipHandler);
+    canvas.addEventListener('pointerleave', this._roofHoverLeaveHandler);
   }
 
   /** Redirect an NPC/object click to a use-on-target packet if the inventory
@@ -5603,6 +5649,20 @@ export class GameManager {
     if (kind === 'npc') {
       const target = this.entities.npcTargets.get(entityId);
       if (target && target.floor !== this.currentFloor) return true;
+      if (target) {
+        const shouldPredictWalk = this.pathIndex < this.path.length
+          || !this.isPlayerOnNpcInteractionTile(entityId, target);
+        if (shouldPredictWalk) {
+          const pathResult = this.findPathToNpcInteraction(entityId, target);
+          if (pathResult.path.length > 0) {
+            this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+            if (this.destMarker) this.destMarker.isVisible = false;
+            this.minimap?.clearDestination();
+          } else {
+            this.keepCurrentPredictedStepForInteraction();
+          }
+        }
+      }
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_NPC, using.slot, using.itemId, entityId));
       return true;
     }
@@ -5619,7 +5679,7 @@ export class GameManager {
     const ptz = Math.floor(this.playerZ);
     const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, data, def);
     if (alreadyAdj) {
-      this.stopLocalWalkForImmediateObjectInteraction(data);
+      if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return true;
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT, using.slot, using.itemId, entityId));
       return true;
     }
@@ -5674,7 +5734,14 @@ export class GameManager {
       const walkingToTile = this.pathIndex < this.path.length;
       if (this.isPointInNpcInteractionRange(npcEntityId, target, this.playerX, this.playerZ, attackRange, rangeMode, requireRangedLineOfSight)) {
         if (walkingToTile) {
-          this.trimPredictedPathToCurrentTileStep();
+          const pathResult = this.findPathToNpcInteraction(npcEntityId, target, attackRange, rangeMode, requireRangedLineOfSight);
+          if (pathResult.path.length > 0) {
+            this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+            if (this.destMarker) this.destMarker.isVisible = false;
+            this.minimap?.clearDestination();
+          } else {
+            this.keepCurrentPredictedStepForInteraction();
+          }
         } else {
           this.clearPredictedPath(true);
           if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
@@ -5719,15 +5786,21 @@ export class GameManager {
 
   private predictSpellCastMovementToNpc(npcEntityId: number): void {
     const target = this.entities.npcTargets.get(npcEntityId);
-    if (target && !this.isPlayerInNpcInteractionRange(npcEntityId, target, SPELL_CAST_DISTANCE)) {
-      const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE, 'chebyshev');
-      if (pathResult.path.length > 0) {
-        this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
-        if (this.destMarker) this.destMarker.isVisible = false;
-        this.minimap?.clearDestination();
-        return;
+    if (target) {
+      const shouldPredictWalk = this.pathIndex < this.path.length
+        || !this.isPlayerInNpcInteractionRange(npcEntityId, target, SPELL_CAST_DISTANCE);
+      if (shouldPredictWalk) {
+        const pathResult = this.findPathToNpcInteraction(npcEntityId, target, SPELL_CAST_DISTANCE, 'chebyshev');
+        if (pathResult.path.length > 0) {
+          this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+          if (this.destMarker) this.destMarker.isVisible = false;
+          this.minimap?.clearDestination();
+          return;
+        }
+        if (this.keepCurrentPredictedStepForInteraction()) return;
       }
     }
+    if (this.keepCurrentPredictedStepForInteraction()) return;
     this.rootLocalPlayerForSpellCast();
   }
 
@@ -5865,12 +5938,24 @@ export class GameManager {
         this.minimap?.clearDestination();
       }
     } else {
-      // Already adjacent — cancel any in-flight path and face the NPC now;
-      // no path-complete event will fire to do it for us.
-      this.clearPredictedPath();
-      if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
-      this.faceLocalPlayerTowardNpc(npcEntityId, target);
-      this.pendingFaceTargetEntityId = -1;
+      // Already adjacent while idle can face immediately. If we are mid-step,
+      // re-evaluate from the movement anchor so rapid redirects keep walking
+      // instead of cutting the path and waiting for a server correction.
+      if (this.pathIndex < this.path.length) {
+        const pathResult = this.findPathToNpcInteraction(npcEntityId, target);
+        if (pathResult.path.length > 0) {
+          this.startPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+          if (this.destMarker) this.destMarker.isVisible = false;
+          this.minimap?.clearDestination();
+        } else {
+          this.keepCurrentPredictedStepForInteraction();
+        }
+      } else {
+        this.clearPredictedPath();
+        if (this.localPlayer?.isWalking()) this.localPlayer.stopWalking();
+        this.faceLocalPlayerTowardNpc(npcEntityId, target);
+        this.pendingFaceTargetEntityId = -1;
+      }
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_TALK_NPC, npcEntityId));
   }
@@ -5947,7 +6032,10 @@ export class GameManager {
     return false;
   }
 
-  private trimPredictedPathToCurrentTileStep(): boolean {
+  private trimPredictedPathToCurrentTileStep(
+    notifyServer: boolean = true,
+    allowAuthorityReanchor: boolean = notifyServer,
+  ): boolean {
     if (this.pathIndex >= this.path.length) return false;
     const activeStep = this.getActiveUnitStep();
     const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
@@ -5955,12 +6043,21 @@ export class GameManager {
       && this.pathIndex === 0
       && this.pendingPath === null
       && this.sameTile(this.path[0], currentTarget);
-    if (alreadyTrimmed) return false;
+    if (alreadyTrimmed) {
+      if (allowAuthorityReanchor && !this.predictedPathDestination) {
+        this.predictedPathDestination = { x: currentTarget.x, z: currentTarget.z };
+        this.predictedPathAuthorityReanchorAttempts = 0;
+      } else if (!allowAuthorityReanchor) {
+        this.predictedPathDestination = null;
+        this.predictedPathAuthorityReanchorAttempts = 0;
+      }
+      return false;
+    }
 
     this.path = [currentTarget];
     this.pathIndex = 0;
     this.pendingPath = null;
-    this.predictedPathDestination = { x: currentTarget.x, z: currentTarget.z };
+    this.predictedPathDestination = allowAuthorityReanchor ? { x: currentTarget.x, z: currentTarget.z } : null;
     this.predictedPathAuthorityReanchorAttempts = 0;
     if (activeStep) {
       this.tileProgress = activeStep.progress;
@@ -5969,15 +6066,40 @@ export class GameManager {
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
 
-    this.network.sendMove([currentTarget]);
+    if (notifyServer) this.network.sendMove([currentTarget]);
     return true;
   }
 
-  private stopLocalWalkForImmediateObjectInteraction(data: { x: number; z: number }): void {
+  private keepCurrentPredictedStepForInteraction(): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    this.trimPredictedPathToCurrentTileStep();
+    return true;
+  }
+
+  private redirectActiveWalkToObjectInteraction(
+    data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
+    def: WorldObjectDef,
+  ): boolean {
+    if (this.pathIndex >= this.path.length) return false;
+    if (this.walkToAdjacentTileOf(data, def)) {
+      if (this.destMarker) this.destMarker.isVisible = false;
+      this.minimap?.clearDestination();
+      return true;
+    }
+    return false;
+  }
+
+  private stopLocalWalkForImmediateObjectInteraction(
+    data: { x: number; z: number; interactionSides?: number; rotY?: number; interactionTiles?: { x: number; z: number }[] },
+    def?: WorldObjectDef,
+  ): boolean {
+    if (def && this.pathIndex < this.path.length) return this.redirectActiveWalkToObjectInteraction(data, def);
+    if (!def && this.keepCurrentPredictedStepForInteraction()) return true;
     this.clearPredictedPath(true);
     this.minimap?.clearDestination();
     this.localPlayer?.stopWalking();
     this.faceLocalPlayerToward(data.x, data.z);
+    return true;
   }
 
   private rootLocalPlayerForSpellCast(notifyServer: boolean = true): void {
@@ -6197,7 +6319,7 @@ export class GameManager {
     target: { x: number; z: number },
   ): { path: { x: number; z: number }[]; preserveCurrentStep: boolean } | null {
     for (const tile of this.getBankerBoothUseTiles(npcEntityId, target)) {
-      if (Math.floor(this.playerX) === tile.x && Math.floor(this.playerZ) === tile.z) {
+      if (this.pathIndex >= this.path.length && Math.floor(this.playerX) === tile.x && Math.floor(this.playerZ) === tile.z) {
         return { path: [], preserveCurrentStep: false };
       }
       const result = this.findPathFromMovementAnchor(tile.x + 0.5, tile.z + 0.5, 500);
@@ -6590,7 +6712,7 @@ export class GameManager {
             this.walkToAdjacentTileOf(data, def);
             return;
           }
-          this.stopLocalWalkForImmediateObjectInteraction(data);
+          if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return;
         }
         const requested = quantity < 0 ? -1 : Math.max(1, Math.min(quantity, maxQuantity));
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, 0, recipeIndex, 0, requested));
@@ -6679,7 +6801,7 @@ export class GameManager {
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
       if (this.isOnObjectInteractionTile(ptx, ptz, data, def)) {
-        this.stopLocalWalkForImmediateObjectInteraction(data);
+        if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return;
       }
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
       return;
@@ -6695,7 +6817,7 @@ export class GameManager {
         const ptz = Math.floor(this.playerZ);
         const alreadyAdj = this.isOnObjectInteractionTile(ptx, ptz, objData, objDef);
         if (!alreadyAdj) this.walkToAdjacentTileOf(objData, objDef);
-        else this.stopLocalWalkForImmediateObjectInteraction(objData);
+        else if (!this.stopLocalWalkForImmediateObjectInteraction(objData, objDef)) return;
         this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex));
         return;
       }
@@ -6720,8 +6842,9 @@ export class GameManager {
       const ptx = Math.floor(this.playerX);
       const ptz = Math.floor(this.playerZ);
       const alreadyAdj = (ptx === dotx && ptz === dotz) || (Math.abs(ptx - dotx) + Math.abs(ptz - dotz) === 1);
+      let shouldSendInteraction = true;
 
-      if (!alreadyAdj) {
+      if (!alreadyAdj || this.pathIndex < this.path.length) {
         let tx = dotx, tz = dotz;
         if (!data.depleted) {
           if (edge === WallEdge.N && this.playerZ < dotz + 0.5) tz = dotz - 1;
@@ -6732,11 +6855,14 @@ export class GameManager {
         const { path, preserveCurrentStep } = this.findPathFromMovementAnchor(tx + 0.5, tz + 0.5, 500);
         if (path.length > 0) {
           this.startPredictedPath(path, preserveCurrentStep);
+        } else if (alreadyAdj) {
+          shouldSendInteraction = this.pathIndex >= this.path.length;
         }
       } else {
         this.clearPredictedPath();
         this.localPlayer?.stopWalking();
       }
+      if (!shouldSendInteraction) return;
       this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_INTERACT_OBJECT, objectEntityId, actionIndex, -1, data.depleted ? 1 : 0));
       return;
     }
@@ -6748,6 +6874,7 @@ export class GameManager {
       const ptz = Math.floor(this.playerZ);
       const alreadyAtUseTile = this.isOnObjectInteractionTile(ptx, ptz, data, def);
       if (!alreadyAtUseTile) this.walkToAdjacentTileOf(data, def);
+      else if (this.pathIndex < this.path.length && !this.stopLocalWalkForImmediateObjectInteraction(data, def)) return;
       // Multi-recipe furnaces (bronze, iron±coal, steel, black bronze/mithril, ...) used
       // to auto-pick the first matching recipe — which meant steel was
       // unreachable while carrying iron ore + coal because iron+coal matches
@@ -6773,7 +6900,7 @@ export class GameManager {
     } else if (!alreadyAdj) {
       // Let the server reject unreachable stale/malformed object packets.
     } else {
-      this.stopLocalWalkForImmediateObjectInteraction(data);
+      if (!this.stopLocalWalkForImmediateObjectInteraction(data, def)) return;
     }
 
     // Send interaction request — server validates distance
@@ -7937,23 +8064,10 @@ export class GameManager {
       this.pendingPath = null;
       this.minimap?.clearDestination();
       if (this.pathIndex < this.path.length) {
-        // Mid-step: keep the current unit target so the animation completes
-        // the in-progress step and the character lands cleanly on a tile
-        // center rather than freezing between two tiles. The natural
-        // path-finished branch in updateLocalPlayerMovement (~line 3282)
-        // will call stopWalking() when pathIndex catches up.
-        const activeStep = this.getActiveUnitStep();
-        const currentTarget = activeStep?.target ?? this.path[this.pathIndex];
-        this.path = [currentTarget];
-        this.pathIndex = 0;
-        if (activeStep) {
-          this.tileProgress = activeStep.progress;
-          this.setTileFrom(activeStep.from.x, activeStep.from.z);
-        }
         // Keep the current unit progress so interpolation continues seamlessly.
         // Send the same one-tile path to the server so its moveQueue ends
         // on the same tile we're walking to.
-        this.network.sendMove([currentTarget]);
+        this.keepCurrentPredictedStepForInteraction();
       } else {
         // Not walking — just make sure we're idle.
         this.clearPredictedPath(true);
@@ -8046,6 +8160,11 @@ export class GameManager {
       this.engine.getRenderingCanvas()?.removeEventListener('pointermove', this._npcTooltipHandler);
       this._npcTooltipHandler = null;
     }
+    if (this._roofHoverLeaveHandler) {
+      this.engine.getRenderingCanvas()?.removeEventListener('pointerleave', this._roofHoverLeaveHandler);
+      this._roofHoverLeaveHandler = null;
+    }
+    this.clearHoverRoofPointer();
     this.arrowProjectiles.dispose();
     this.skybox.dispose();
     this.engine.stopRenderLoop();
@@ -8563,6 +8682,7 @@ export class GameManager {
       // those events instead of walking the hidden roof list every frame.
       if (objectsChanged || this.chunkManager.didLastUpdateChangeTerrain()) {
         this.reapplyHiddenRoofStates();
+        this.refreshHoverHiddenRoofs(true);
       }
     }
     this.chunkManager.updateAnimations();
@@ -8600,6 +8720,7 @@ export class GameManager {
       this._tempVec.set(this.localPlayer.position.x, this.localPlayer.position.y, this.localPlayer.position.z);
       this.camera.followTarget(this._tempVec);
     }
+    this.refreshHoverRoofForStoredPointer(performance.now());
 
     this._overlayTransformReady = false;
     this.updateTransientHealthBars();
@@ -8695,8 +8816,12 @@ export class GameManager {
     const currentGoal = followCandidates.find(candidate => currentTileX === Math.floor(candidate.x) && currentTileZ === Math.floor(candidate.z));
     if (currentGoal) {
       if (this.pathIndex < this.path.length) {
-        this.clearPredictedPath(true);
-        this.localPlayer.stopWalking();
+        const pathResult = this.findPathFromMovementAnchor(currentGoal.x, currentGoal.z);
+        if (pathResult.path.length > 0) {
+          this.startLocalPredictedPath(pathResult.path, pathResult.preserveCurrentStep);
+        } else {
+          this.trimPredictedPathToCurrentTileStep(false, false);
+        }
       }
       const anchor = target.getTargetAnchor();
       this.localPlayer.lockFaceTowardXZ(anchor.x, anchor.z);
@@ -9115,11 +9240,217 @@ export class GameManager {
     }
   }
 
-  private reapplyHiddenRoofStates(): void {
-    for (let i = 0; i < this.hiddenRoofNodes.length; i++) {
-      const node = this.hiddenRoofNodes[i];
+  private clearHoverRoofPointer(): void {
+    this._lastRoofHoverClientX = null;
+    this._lastRoofHoverClientY = null;
+    this._lastRoofHoverRefreshAt = 0;
+    this.clearHoverHiddenRoofs();
+  }
+
+  private refreshHoverRoofForStoredPointer(now: number): void {
+    if (this._lastRoofHoverClientX === null || this._lastRoofHoverClientY === null) return;
+    if (now - this._lastRoofHoverRefreshAt < ROOF_HOVER_REFRESH_MS) return;
+    this._lastRoofHoverRefreshAt = now;
+    const hasHiddenHoverRoofs = this.hoverHiddenRoofNodes.length > 0 || this.hoverHiddenRoofNodeSet.size > 0;
+    const shouldCheckExpiredReveal = hasHiddenHoverRoofs && now >= this._hoverRoofRevealGraceUntil;
+    this.updateHoverRoofReveal(this._lastRoofHoverClientX, this._lastRoofHoverClientY, shouldCheckExpiredReveal);
+  }
+
+  private hoverRoofTileAt(clientX: number, clientY: number): { x: number; z: number; y: number } | null {
+    if (!this.scene.activeCamera) return null;
+    const point = this.canvasPointFromClient(clientX, clientY);
+    if (!point) return null;
+    const ray = this.scene.createPickingRay(point.x, point.y, null, this.scene.activeCamera);
+    if (Math.abs(ray.direction.y) < 0.0001) return null;
+    const y = this.localPlayer?.position.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const t = (y - ray.origin.y) / ray.direction.y;
+    if (t <= 0) return null;
+    const floorX = ray.origin.x + ray.direction.x * t;
+    const floorZ = ray.origin.z + ray.direction.z * t;
+    const structuralSampleYs = ROOF_HOVER_STRUCTURAL_SAMPLE_HEIGHT_OFFSETS.map(offset => y + offset);
+    const revealHit = this.chunkManager.findRoofRevealPointFromRay(
+      ray.origin,
+      ray.direction,
+      y + 0.5,
+      floorX,
+      floorZ,
+      ROOF_HOVER_RAY_SEARCH_RADIUS_TILES,
+      ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES,
+      structuralSampleYs,
+    );
+    if (revealHit) return { x: revealHit.x, z: revealHit.z, y };
+    return {
+      x: floorX,
+      z: floorZ,
+      y,
+    };
+  }
+
+  private updateHoverRoofReveal(clientX: number, clientY: number, force: boolean = false): void {
+    const now = performance.now();
+    if (this.destroyed || this.connectionFrozen) {
+      this.clearHoverHiddenRoofs();
+      return;
+    }
+
+    const hover = this.hoverRoofTileAt(clientX, clientY);
+    if (!hover) {
+      if (this.retainHoverHiddenRoofs(now)) return;
+      this.clearHoverHiddenRoofs();
+      return;
+    }
+
+    const tileX = Math.floor(hover.x);
+    const tileZ = Math.floor(hover.z);
+    if (!force && tileX === this._lastHoverRoofTileX && tileZ === this._lastHoverRoofTileZ) return;
+    this._lastHoverRoofTileX = tileX;
+    this._lastHoverRoofTileZ = tileZ;
+
+    const minY = hover.y + 0.5;
+    this.applyCollectedHoverRoofSet(tileX, tileZ, minY, hover.y + 1.2, force, true, now);
+  }
+
+  private refreshHoverHiddenRoofs(force: boolean = false, allowStickyRetention: boolean = true): void {
+    if (this._lastHoverRoofTileX === -9999 || this._lastHoverRoofTileZ === -9999) return;
+    const y = this.localPlayer?.position.y ?? this.getHeightAtFloor(this.playerX, this.playerZ, this.currentFloor);
+    const minY = y + 0.5;
+    this.applyCollectedHoverRoofSet(
+      this._lastHoverRoofTileX,
+      this._lastHoverRoofTileZ,
+      minY,
+      y + 1.2,
+      force,
+      allowStickyRetention,
+    );
+  }
+
+  private applyCollectedHoverRoofSet(
+    tileX: number,
+    tileZ: number,
+    minY: number,
+    minRevealY: number,
+    force: boolean,
+    allowStickyRetention: boolean,
+    now: number = performance.now(),
+  ): void {
+    const newSet = this.collectHoverRoofSet(tileX, tileZ, minY, minRevealY);
+    if (newSet.size === 0) {
+      if (allowStickyRetention && this.retainHoverHiddenRoofs(now, tileX, tileZ)) return;
+      this.clearHoverRevealForCurrentTile(force);
+      return;
+    }
+
+    this._lastHoverRevealTileX = tileX;
+    this._lastHoverRevealTileZ = tileZ;
+    this._hoverRoofRevealGraceUntil = now + ROOF_HOVER_CLEAR_GRACE_MS;
+    this.applyHoverHiddenRoofSet(newSet, force);
+  }
+
+  private collectHoverRoofSet(tileX: number, tileZ: number, minY: number, minRevealY: number): Set<TransformNode> {
+    const newSet = new Set<TransformNode>();
+    const x = tileX + 0.5;
+    const z = tileZ + 0.5;
+    for (const node of this.chunkManager.getConnectedRoofRevealNodesAt(x, z, minY, minRevealY, ROOF_HOVER_WALL_TRIGGER_RADIUS_TILES)) {
+      if (!node.isDisposed()) newSet.add(node);
+    }
+    return newSet;
+  }
+
+  private isNearLastHoverRevealTile(tileX: number, tileZ: number): boolean {
+    if (this._lastHoverRevealTileX === -9999 || this._lastHoverRevealTileZ === -9999) return false;
+    return Math.abs(tileX - this._lastHoverRevealTileX) <= ROOF_HOVER_STICKY_RADIUS_TILES
+      && Math.abs(tileZ - this._lastHoverRevealTileZ) <= ROOF_HOVER_STICKY_RADIUS_TILES;
+  }
+
+  private retainHoverHiddenRoofs(now: number, tileX: number | null = null, tileZ: number | null = null): boolean {
+    if (this.hoverHiddenRoofNodes.length === 0 && this.hoverHiddenRoofNodeSet.size === 0) return false;
+    if (tileX !== null && tileZ !== null && !this.isNearLastHoverRevealTile(tileX, tileZ)) return false;
+    if (now >= this._hoverRoofRevealGraceUntil) return false;
+
+    let retainedCount = 0;
+    const next: TransformNode[] = [];
+    const nextSet = new Set<TransformNode>();
+    for (const node of this.hoverHiddenRoofNodes) {
       if (node.isDisposed()) continue;
       if (node.isEnabled(false)) node.setEnabled(false);
+      next.push(node);
+      nextSet.add(node);
+      retainedCount++;
+    }
+    if (retainedCount === 0) {
+      this.hoverHiddenRoofNodes = [];
+      this.hoverHiddenRoofNodeSet.clear();
+      return false;
+    }
+    if (next.length !== this.hoverHiddenRoofNodes.length || nextSet.size !== this.hoverHiddenRoofNodeSet.size) {
+      this.hoverHiddenRoofNodes = next;
+      this.hoverHiddenRoofNodeSet = nextSet;
+    }
+    return true;
+  }
+
+  private hoverRoofSetMatchesCurrent(newSet: Set<TransformNode>): boolean {
+    if (newSet.size !== this.hoverHiddenRoofNodeSet.size) return false;
+    for (const node of newSet) {
+      if (!this.hoverHiddenRoofNodeSet.has(node)) return false;
+    }
+    return true;
+  }
+
+  private applyHoverHiddenRoofSet(newSet: Set<TransformNode>, reapplyExisting: boolean = false): void {
+    if (!reapplyExisting && this.hoverRoofSetMatchesCurrent(newSet)) return;
+
+    const oldSet = this.hoverHiddenRoofNodeSet;
+    this.hoverHiddenRoofNodeSet = newSet;
+
+    for (const node of this.hoverHiddenRoofNodes) {
+      if (!newSet.has(node) && !node.isDisposed()) this.setPlacedWorldObjectEnabled(node, true);
+    }
+
+    const next: TransformNode[] = [];
+    for (const node of newSet) {
+      if (node.isDisposed()) continue;
+      if ((reapplyExisting || !oldSet.has(node)) && node.isEnabled(false)) node.setEnabled(false);
+      next.push(node);
+    }
+    this.hoverHiddenRoofNodes = next;
+  }
+
+  private clearHoverRevealForCurrentTile(reapplyExisting: boolean = false): void {
+    this._lastHoverRevealTileX = -9999;
+    this._lastHoverRevealTileZ = -9999;
+    this._hoverRoofRevealGraceUntil = 0;
+    this.applyHoverHiddenRoofSet(new Set<TransformNode>(), reapplyExisting);
+  }
+
+  private clearHoverHiddenRoofs(): void {
+    this._lastHoverRevealTileX = -9999;
+    this._lastHoverRevealTileZ = -9999;
+    this._hoverRoofRevealGraceUntil = 0;
+    if (this.hoverHiddenRoofNodes.length === 0 && this.hoverHiddenRoofNodeSet.size === 0) {
+      this._lastHoverRoofTileX = -9999;
+      this._lastHoverRoofTileZ = -9999;
+      return;
+    }
+
+    const oldNodes = this.hoverHiddenRoofNodes;
+    this.hoverHiddenRoofNodes = [];
+    this.hoverHiddenRoofNodeSet.clear();
+    this._lastHoverRoofTileX = -9999;
+    this._lastHoverRoofTileZ = -9999;
+    for (const node of oldNodes) {
+      if (!node.isDisposed()) this.setPlacedWorldObjectEnabled(node, true);
+    }
+  }
+
+  private reapplyHiddenRoofStates(): void {
+    const seen = new Set<TransformNode>();
+    for (const list of [this.hiddenRoofNodes, this.hoverHiddenRoofNodes]) {
+      for (const node of list) {
+        if (node.isDisposed() || seen.has(node)) continue;
+        seen.add(node);
+        if (node.isEnabled(false)) node.setEnabled(false);
+      }
     }
   }
 

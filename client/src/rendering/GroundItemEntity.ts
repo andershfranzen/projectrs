@@ -11,6 +11,7 @@ import { Scene } from '@babylonjs/core/scene';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
 import type { AbstractMesh } from '@babylonjs/core/Meshes/abstractMesh';
+import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 import { VertexBuffer } from '@babylonjs/core/Buffers/buffer';
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
@@ -41,6 +42,11 @@ const MAX_MODELS_PER_TILE = 3;
 const DEFAULT_TARGET_MODEL_SIZE = 0.34;
 const LOG_GROUND_ITEM_VISUAL_SCALE = 1.6;
 const TEMPLATE_CACHE_BY_SCENE = new WeakMap<Scene, Map<string, Promise<GroundItemTemplate | null>>>();
+const STACK_MARKER_MATERIAL_BY_SCENE = new WeakMap<Scene, StandardMaterial>();
+const HIDDEN_STACK_MARKER_MAX_PIPS = 3;
+const HIDDEN_STACK_MARKER_DIAMETER = 0.055;
+const HIDDEN_STACK_MARKER_HEIGHT = 0.018;
+const HIDDEN_STACK_MARKER_SPACING = 0.065;
 
 const LOG_GROUND_ITEM_IDS = new Set<number>([
   LOGS_ITEM_ID,
@@ -65,9 +71,9 @@ const SLOT_TARGET_MODEL_SIZE: Partial<Record<NonNullable<ItemDef['equipSlot']>, 
 };
 
 const STACK_OFFSETS = [
-  new Vector3(0.06, 0.045, -0.05),
-  new Vector3(-0.07, 0.025, 0.06),
-  new Vector3(0, 0, 0),
+  new Vector3(0.1, 0.055, -0.08),
+  new Vector3(-0.11, 0.032, -0.01),
+  new Vector3(-0.02, 0.014, 0.13),
 ];
 
 function templateCacheKey(path: string, options: ThumbnailOptions, targetSize: number): string {
@@ -164,6 +170,25 @@ function groundItemTypeScaleForItem(def: ItemDef): number {
 export function groundItemTargetModelSizeForItem(def: ItemDef, quantity: number = 1, visualScale: number = 1): number {
   const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
   return baseSize * stackModelScaleForItem(def, quantity) * clampGroundItemVisualScale(visualScale) * groundItemTypeScaleForItem(def);
+}
+
+export function groundItemHiddenStackPipCount(stackSize: number): number {
+  if (!Number.isFinite(stackSize)) return 0;
+  const hiddenCount = Math.floor(stackSize) - MAX_MODELS_PER_TILE;
+  return hiddenCount > 0 ? Math.min(HIDDEN_STACK_MARKER_MAX_PIPS, hiddenCount) : 0;
+}
+
+function getStackMarkerMaterial(scene: Scene): StandardMaterial {
+  let material = STACK_MARKER_MATERIAL_BY_SCENE.get(scene);
+  if (!material) {
+    material = new StandardMaterial('groundItemHiddenStackMarker', scene);
+    material.diffuseColor = new Color3(0.9, 0.62, 0.22);
+    material.emissiveColor = new Color3(0.16, 0.1, 0.025);
+    material.specularColor = Color3.Black();
+    material.freeze();
+    STACK_MARKER_MATERIAL_BY_SCENE.set(scene, material);
+  }
+  return material;
 }
 
 function normalizeTemplate(root: TransformNode, targetSize: number): number {
@@ -306,8 +331,31 @@ export class GroundItemEntity {
       return null;
     }
 
+    entity.addHiddenStackMarker(scene, tileKey, stack.length, primary.id);
     entity.root.setEnabled(true);
     return entity;
+  }
+
+  private addHiddenStackMarker(scene: Scene, tileKey: string, stackSize: number, groundItemId: number): void {
+    const pipCount = groundItemHiddenStackPipCount(stackSize);
+    if (pipCount === 0) return;
+
+    const material = getStackMarkerMaterial(scene);
+    const startX = 0.18 - ((pipCount - 1) * HIDDEN_STACK_MARKER_SPACING) / 2;
+    const z = 0.18;
+    for (let i = 0; i < pipCount; i++) {
+      const pip = MeshBuilder.CreateCylinder(`groundItemHiddenPip_${tileKey}_${i}`, {
+        height: HIDDEN_STACK_MARKER_HEIGHT,
+        diameter: HIDDEN_STACK_MARKER_DIAMETER,
+        tessellation: 8,
+      }, scene);
+      pip.parent = this.root;
+      pip.position.set(startX + i * HIDDEN_STACK_MARKER_SPACING, HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z);
+      pip.material = material;
+      pip.isPickable = false;
+      pip.metadata = { kind: 'groundItemVisual', groundItemId };
+      this.nodes.push(pip);
+    }
   }
 
   setPosition(x: number, y: number, z: number): void {
