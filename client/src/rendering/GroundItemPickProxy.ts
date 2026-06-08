@@ -21,6 +21,7 @@ export function createGroundItemPickProxy(
   y: number,
   z: number,
   groundItemId: number,
+  groundItemTileKey?: string,
 ): Mesh {
   const proxy = MeshBuilder.CreateBox(name, {
     width: GROUND_ITEM_PICKBOX_WIDTH,
@@ -33,7 +34,9 @@ export function createGroundItemPickProxy(
   proxy.isPickable = true;
   proxy.alwaysSelectAsActiveMesh = true;
   proxy.layerMask = 0;
-  proxy.metadata = { kind: 'groundItem', groundItemId };
+  proxy.metadata = groundItemTileKey
+    ? { kind: 'groundItem', groundItemId, groundItemTileKey }
+    : { kind: 'groundItem', groundItemId };
   positionGroundItemPickProxy(proxy, x, y, z);
   return proxy;
 }

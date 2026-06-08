@@ -167,6 +167,10 @@ function groundItemTypeScaleForItem(def: ItemDef): number {
   return LOG_GROUND_ITEM_IDS.has(def.id) ? LOG_GROUND_ITEM_VISUAL_SCALE : 1;
 }
 
+function groundItemMetadata(kind: 'groundItem' | 'groundItemVisual', groundItemId: number, groundItemTileKey: string) {
+  return { kind, groundItemId, groundItemTileKey };
+}
+
 export function groundItemTargetModelSizeForItem(def: ItemDef, quantity: number = 1, visualScale: number = 1): number {
   const baseSize = def.equipSlot ? (SLOT_TARGET_MODEL_SIZE[def.equipSlot] ?? DEFAULT_TARGET_MODEL_SIZE) : DEFAULT_TARGET_MODEL_SIZE;
   return baseSize * stackModelScaleForItem(def, quantity) * clampGroundItemVisualScale(visualScale) * groundItemTypeScaleForItem(def);
@@ -272,10 +276,10 @@ export class GroundItemEntity {
   private readonly root: TransformNode;
   private readonly nodes: TransformNode[] = [];
 
-  private constructor(scene: Scene, name: string, x: number, y: number, z: number, groundItemId: number) {
+  private constructor(scene: Scene, name: string, x: number, y: number, z: number, groundItemId: number, tileKey: string) {
     this.root = new TransformNode(name, scene);
     this.root.position.set(x, y, z);
-    this.root.metadata = { kind: 'groundItem', groundItemId };
+    this.root.metadata = groundItemMetadata('groundItem', groundItemId, tileKey);
     this.root.setEnabled(false);
   }
 
@@ -289,7 +293,7 @@ export class GroundItemEntity {
     const primary = entries[0];
     if (!primary) return null;
 
-    const entity = new GroundItemEntity(scene, `groundItemStack_${tileKey}`, primary.x, y, primary.z, primary.id);
+    const entity = new GroundItemEntity(scene, `groundItemStack_${tileKey}`, primary.x, y, primary.z, primary.id, tileKey);
     const primaryTemplate = await loadTemplate(scene, primary.def, primary.quantity);
     if (!primaryTemplate) {
       entity.dispose();
@@ -309,10 +313,11 @@ export class GroundItemEntity {
 
       clone.parent = entity.root;
       clone.setEnabled(true);
+      clone.metadata = groundItemMetadata('groundItemVisual', primary.id, tileKey);
       for (const child of clone.getChildMeshes(false)) {
         child.setEnabled(true);
         child.isPickable = false;
-        child.metadata = { kind: 'groundItemVisual', groundItemId: primary.id };
+        child.metadata = groundItemMetadata('groundItemVisual', primary.id, tileKey);
       }
 
       const offset = STACK_OFFSETS[Math.min(i, STACK_OFFSETS.length - 1)];
@@ -353,7 +358,7 @@ export class GroundItemEntity {
       pip.position.set(startX + i * HIDDEN_STACK_MARKER_SPACING, HIDDEN_STACK_MARKER_HEIGHT / 2 + 0.006, z);
       pip.material = material;
       pip.isPickable = false;
-      pip.metadata = { kind: 'groundItemVisual', groundItemId };
+      pip.metadata = groundItemMetadata('groundItemVisual', groundItemId, tileKey);
       this.nodes.push(pip);
     }
   }

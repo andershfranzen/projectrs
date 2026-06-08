@@ -832,6 +832,7 @@ export interface KCTile {
   textureCutOffset: number;
   waterPainted: boolean;
   waterSurface: boolean;
+  waterSurfaceB: boolean;
 }
 
 export interface TexturePlane {
@@ -993,6 +994,7 @@ export function defaultKCTile(ground: GroundType = 'grass'): KCTile {
     textureCutOffset: 0,
     waterPainted: false,
     waterSurface: false,
+    waterSurfaceB: false,
   };
 }
 
@@ -1010,9 +1012,8 @@ export function groundTypeToTileType(ground: GroundType): TileType {
     case 'sand':  return TileType.SAND;
     case 'path':  return TileType.DIRT;
     case 'road':      return TileType.STONE;
-    // The editor exposes 'water' GroundType as the "Mud" swatch — actual water
-    // surfaces use waterPainted / waterSurface / heightmap-below-waterLevel
-    // and get TileType.WATER via shouldTileRenderWater() before this fallback.
+    // The editor exposes 'water' GroundType as the "Mud" swatch. It is walkable
+    // mud unless the tile is explicitly marked as surface water or submerged.
     case 'water':     return TileType.MUD;
     case 'desert':    return TileType.SAND;
     case 'sandstone': return TileType.STONE;
@@ -1037,8 +1038,8 @@ export function groundTypeToTileType(ground: GroundType): TileType {
  *
  * The editor's overworld "Mud" swatch sets `waterPainted = true` while leaving
  * `ground` unchanged, so we must NOT treat every `waterPainted` tile as real
- * water. Only heightmap-submerged tiles (terrain ≤ waterLevel) are real water;
- * everything else painted as water is mud.
+ * water. Blue surface-water paint is explicit pool/pond water. Heightmap-
+ * submerged tiles are also real water.
  */
 export function classifyTileType(
   tile: KCTile,
@@ -1048,6 +1049,7 @@ export function classifyTileType(
   if (tile.ground === 'void') return TileType.WALL;
   const minH = Math.min(cornerHeights.tl, cornerHeights.tr, cornerHeights.bl, cornerHeights.br);
   if (minH <= waterLevel) return TileType.WATER;
+  if (tile.waterSurface || tile.waterSurfaceB) return TileType.WATER;
   if (tile.waterPainted) return TileType.MUD;
   return groundTypeToTileType(tile.ground);
 }

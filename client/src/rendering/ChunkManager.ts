@@ -14,7 +14,7 @@ import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
 import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
-import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, bilerpCorners, transformOverlayUV, fullTileRingForSplit, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
 import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, PlacedObjectInteraction, TexturePlane, WaterFlow, WaterFlowUvTransform } from '@projectrs/shared';
@@ -33,6 +33,8 @@ const OBJECT_CHUNK_CACHE_RADIUS = CHUNK_LOAD_RADIUS + 4;
 const OBJECT_CHUNK_CACHE_MAX_CHUNKS = 96;
 const OBJECT_RENDER_HYSTERESIS_TILES = 8;
 const OBJECT_VISIBILITY_BUCKET_TILES = 4;
+const FLAT_TEXTURE_PICK_CELL_SIZE = 8;
+const FLAT_TEXTURE_PICK_Y_BUCKET_SIZE = SAME_PLANE_PICK_Y_TOLERANCE;
 const HIDDEN_OBJECT_CHUNK_LOAD_INTERVAL_MS = 220;
 const CHUNK_MIN_RENDER_DISTANCE_TILES = CHUNK_SIZE * 1.25;
 const CHUNK_RENDER_DISTANCE_BUCKET_TILES = 8;
@@ -134,6 +136,12 @@ interface FlatTexturePickPlane {
   invWorld: Matrix;
   halfWidth: number;
   halfHeight: number;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
 }
 
 interface TexturePlaneRevealEntry {
@@ -344,6 +352,8 @@ export class ChunkManager {
   private onChunkObjectsLoaded: ((chunkKey: string) => void) | null = null;
   private texturePlaneMeshes: Mesh[] = [];
   private flatTexturePickPlanes: FlatTexturePickPlane[] = [];
+  private flatTexturePickPlanesByYBucket: Map<number, FlatTexturePickPlane[]> = new Map();
+  private flatTexturePickPlanesByCell: Map<string, FlatTexturePickPlane[]> = new Map();
   private texturePlanesByChunk: Map<string, Mesh[]> = new Map();
   private texturePlaneRevealEntriesByChunk: Map<string, TexturePlaneRevealEntry[]> = new Map();
   private texturePlaneChunksEnabled: Map<string, boolean> = new Map();
@@ -1615,6 +1625,7 @@ export class ChunkManager {
       textureCutOffset: partial.textureCutOffset ?? 0,
       waterPainted: partial.waterPainted ?? false,
       waterSurface: partial.waterSurface ?? false,
+      waterSurfaceB: partial.waterSurfaceB ?? partial.waterSurface ?? false,
     };
   }
 
@@ -1954,19 +1965,36 @@ export class ChunkManager {
       for (let z = startZ; z < endZ; z++) {
         const tile = this.getTileRaw(x, z);
         if (tile?.ground === 'void') continue;
-        if (!tile?.waterSurface) continue;
+        const waterA = !!tile?.waterSurface;
+        const waterB = typeof tile?.waterSurfaceB === 'boolean' ? tile.waterSurfaceB : waterA;
+        if (!waterA && !waterB) continue;
         hasWater = true;
 
-        const tl = this.getVertexHeight(x, z) + LIFT;
-        const tr = this.getVertexHeight(x + 1, z) + LIFT;
-        const bl = this.getVertexHeight(x, z + 1) + LIFT;
-        const br = this.getVertexHeight(x + 1, z + 1) + LIFT;
+        const h = this.getTileCornerHeights(x, z);
+        const transform = this.getWaterFlowTransform(x, z, WATER_UV_SCALE, waterFlowTransformCache);
+        const appendRing = (ring: readonly UVPoint[]) => {
+          if (ring.length < 3) return;
+          const base = vertexIndex;
+          for (const p of ring) {
+            const wx = x + p.u;
+            const wz = z + p.v;
+            const wy = bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + LIFT;
+            const [u, v] = waterFlowUvFromTransform(wx, wz, transform);
+            positions.push(wx, wy, wz);
+            uvs.push(u, v);
+            normals.push(0, 1, 0);
+          }
+          for (const i of fanTriangulate(ring.length)) indices.push(base + i);
+          vertexIndex += ring.length;
+        };
 
-        positions.push(x, tl, z, x + 1, tr, z, x + 1, br, z + 1, x, bl, z + 1);
-        pushWaterFlowQuadUvs(uvs, x, z, this.getWaterFlowTransform(x, z, WATER_UV_SCALE, waterFlowTransformCache), 'tl-tr-br-bl');
-        for (let i = 0; i < 4; i++) normals.push(0, 1, 0);
-        indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3);
-        vertexIndex += 4;
+        if (waterA && waterB) {
+          appendRing(fullTileRingForSplit(tile?.split));
+        } else {
+          const { halfA, halfB } = computeCutPolygons(tile?.textureCutAngle ?? DEFAULT_CUT_ANGLE, tile?.textureCutOffset ?? 0);
+          if (waterA) appendRing(halfA);
+          if (waterB) appendRing(halfB);
+        }
       }
     }
 
@@ -3141,14 +3169,77 @@ export class ChunkManager {
     return meshes;
   }
 
-  pickAuthoredFlatTexturePlane(
+  private flatTexturePickCellKey(yBucket: number, cellX: number, cellZ: number): string {
+    return `${yBucket}:${cellX},${cellZ}`;
+  }
+
+  private flatTexturePickYBucket(y: number): number {
+    return Math.floor(y / FLAT_TEXTURE_PICK_Y_BUCKET_SIZE);
+  }
+
+  private flatTexturePickCellCoord(v: number): number {
+    return Math.floor(v / FLAT_TEXTURE_PICK_CELL_SIZE);
+  }
+
+  private collectFlatTexturePickCandidates(
+    rayOrigin: Vector3,
+    rayDirection: Vector3,
+    playerY: number,
+  ): { primary: FlatTexturePickPlane[]; fallback: FlatTexturePickPlane[] } {
+    const yBucket = this.flatTexturePickYBucket(playerY);
+    const fallback = this.flatTexturePickPlanesByYBucket.get(yBucket) ?? [];
+    if (fallback.length === 0 || Math.abs(rayDirection.y) < 1e-6) {
+      return { primary: fallback, fallback };
+    }
+
+    const yMin = playerY - SAME_PLANE_PICK_Y_TOLERANCE;
+    const yMax = playerY + SAME_PLANE_PICK_Y_TOLERANCE;
+    const t0 = (yMin - rayOrigin.y) / rayDirection.y;
+    const t1 = (yMax - rayOrigin.y) / rayDirection.y;
+    const minT = Math.max(0, Math.min(t0, t1));
+    const maxT = Math.max(t0, t1);
+    if (maxT <= 0) return { primary: fallback, fallback };
+
+    const x0 = rayOrigin.x + rayDirection.x * minT;
+    const z0 = rayOrigin.z + rayDirection.z * minT;
+    const x1 = rayOrigin.x + rayDirection.x * maxT;
+    const z1 = rayOrigin.z + rayDirection.z * maxT;
+    const minCellX = this.flatTexturePickCellCoord(Math.min(x0, x1)) - 1;
+    const maxCellX = this.flatTexturePickCellCoord(Math.max(x0, x1)) + 1;
+    const minCellZ = this.flatTexturePickCellCoord(Math.min(z0, z1)) - 1;
+    const maxCellZ = this.flatTexturePickCellCoord(Math.max(z0, z1)) + 1;
+
+    const primary: FlatTexturePickPlane[] = [];
+    const seen = new Set<FlatTexturePickPlane>();
+    for (let cz = minCellZ; cz <= maxCellZ; cz++) {
+      for (let cx = minCellX; cx <= maxCellX; cx++) {
+        const planes = this.flatTexturePickPlanesByCell.get(this.flatTexturePickCellKey(yBucket, cx, cz));
+        if (!planes) continue;
+        for (const plane of planes) {
+          if (seen.has(plane)) continue;
+          seen.add(plane);
+          primary.push(plane);
+        }
+      }
+    }
+
+    return { primary: primary.length > 0 ? primary : fallback, fallback };
+  }
+
+  private pickBestAuthoredFlatTexturePlane(
+    candidates: FlatTexturePickPlane[],
     rayOrigin: Vector3,
     rayDirection: Vector3,
     playerY: number,
   ): { x: number; z: number; y: number; distance: number } | null {
     let best: { x: number; z: number; y: number; distance: number } | null = null;
 
-    for (const plane of this.flatTexturePickPlanes) {
+    for (const plane of candidates) {
+      if (
+        playerY < plane.minY - SAME_PLANE_PICK_Y_TOLERANCE ||
+        playerY > plane.maxY + SAME_PLANE_PICK_Y_TOLERANCE
+      ) continue;
+
       const localOrigin = Vector3.TransformCoordinates(rayOrigin, plane.invWorld);
       const localDir = Vector3.TransformNormal(rayDirection, plane.invWorld);
       if (Math.abs(localDir.z) < 1e-6) continue;
@@ -3175,6 +3266,17 @@ export class ChunkManager {
     }
 
     return best;
+  }
+
+  pickAuthoredFlatTexturePlane(
+    rayOrigin: Vector3,
+    rayDirection: Vector3,
+    playerY: number,
+  ): { x: number; z: number; y: number; distance: number } | null {
+    const { primary, fallback } = this.collectFlatTexturePickCandidates(rayOrigin, rayDirection, playerY);
+    const best = this.pickBestAuthoredFlatTexturePlane(primary, rayOrigin, rayDirection, playerY);
+    if (best || primary === fallback) return best;
+    return this.pickBestAuthoredFlatTexturePlane(fallback, rayOrigin, rayDirection, playerY);
   }
 
   setCurrentFloor(floor: number): void {
@@ -5288,8 +5390,40 @@ export class ChunkManager {
     return { positions, normals, uvs, indices };
   }
 
+  private indexFlatTexturePickPlane(plane: FlatTexturePickPlane): void {
+    const minYBucket = this.flatTexturePickYBucket(plane.minY - SAME_PLANE_PICK_Y_TOLERANCE);
+    const maxYBucket = this.flatTexturePickYBucket(plane.maxY + SAME_PLANE_PICK_Y_TOLERANCE);
+    const minCellX = this.flatTexturePickCellCoord(plane.minX);
+    const maxCellX = this.flatTexturePickCellCoord(plane.maxX);
+    const minCellZ = this.flatTexturePickCellCoord(plane.minZ);
+    const maxCellZ = this.flatTexturePickCellCoord(plane.maxZ);
+
+    for (let yBucket = minYBucket; yBucket <= maxYBucket; yBucket++) {
+      let yPlanes = this.flatTexturePickPlanesByYBucket.get(yBucket);
+      if (!yPlanes) {
+        yPlanes = [];
+        this.flatTexturePickPlanesByYBucket.set(yBucket, yPlanes);
+      }
+      yPlanes.push(plane);
+
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+        for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+          const key = this.flatTexturePickCellKey(yBucket, cellX, cellZ);
+          let cellPlanes = this.flatTexturePickPlanesByCell.get(key);
+          if (!cellPlanes) {
+            cellPlanes = [];
+            this.flatTexturePickPlanesByCell.set(key, cellPlanes);
+          }
+          cellPlanes.push(plane);
+        }
+      }
+    }
+  }
+
   private rebuildFlatTexturePickPlanes(planes: TexturePlane[]): void {
     this.flatTexturePickPlanes = [];
+    this.flatTexturePickPlanesByYBucket.clear();
+    this.flatTexturePickPlanesByCell.clear();
     for (const plane of planes) {
       if (!isFlatPlane(plane)) continue;
 
@@ -5297,13 +5431,42 @@ export class ChunkManager {
       const quat = Quaternion.FromEulerAngles(rx, ry, rz);
       const scale = new Vector3(plane.scale.x, plane.scale.y, plane.scale.z);
       const pos = new Vector3(plane.position.x, plane.position.y, plane.position.z);
-      const invWorld = Matrix.Compose(scale, quat, pos);
+      const halfWidth = plane.width / 2;
+      const halfHeight = plane.height / 2;
+      const world = Matrix.Compose(scale, quat, pos);
+      let minX = Infinity;
+      let maxX = -Infinity;
+      let minY = Infinity;
+      let maxY = -Infinity;
+      let minZ = Infinity;
+      let maxZ = -Infinity;
+      const localCorner = TmpVectors.Vector3[0];
+      const worldCorner = TmpVectors.Vector3[1];
+      for (let i = 0; i < 4; i++) {
+        localCorner.set(i === 0 || i === 3 ? -halfWidth : halfWidth, i < 2 ? -halfHeight : halfHeight, 0);
+        Vector3.TransformCoordinatesToRef(localCorner, world, worldCorner);
+        if (worldCorner.x < minX) minX = worldCorner.x;
+        if (worldCorner.x > maxX) maxX = worldCorner.x;
+        if (worldCorner.y < minY) minY = worldCorner.y;
+        if (worldCorner.y > maxY) maxY = worldCorner.y;
+        if (worldCorner.z < minZ) minZ = worldCorner.z;
+        if (worldCorner.z > maxZ) maxZ = worldCorner.z;
+      }
+      const invWorld = world;
       invWorld.invert();
-      this.flatTexturePickPlanes.push({
+      const pickPlane = {
         invWorld,
-        halfWidth: plane.width / 2,
-        halfHeight: plane.height / 2,
-      });
+        halfWidth,
+        halfHeight,
+        minX,
+        maxX,
+        minY,
+        maxY,
+        minZ,
+        maxZ,
+      };
+      this.flatTexturePickPlanes.push(pickPlane);
+      this.indexFlatTexturePickPlane(pickPlane);
     }
   }
 
@@ -5548,7 +5711,7 @@ export class ChunkManager {
       mergedCount++;
       }
     }
-    if (import.meta.env.DEV) console.log(`[ChunkManager] Merged ${planes.length} texture planes into ${mergedCount} batched meshes (${this.texturePlanesByChunk.size} chunks)`);
+    if (import.meta.env.DEV) console.log(`[ChunkManager] Merged ${planes.length} texture planes into ${mergedCount} batched meshes (${this.texturePlanesByChunk.size} chunks, ${this.flatTexturePickPlanes.length} flat pick planes, ${this.flatTexturePickPlanesByCell.size} pick cells)`);
   }
 
   disposeAll(): void {
@@ -5598,6 +5761,8 @@ export class ChunkManager {
     for (const m of this.texturePlaneMeshes) m.dispose();
     this.texturePlaneMeshes = [];
     this.flatTexturePickPlanes = [];
+    this.flatTexturePickPlanesByYBucket.clear();
+    this.flatTexturePickPlanesByCell.clear();
     this.texturePlanesByChunk.clear();
     this.texturePlaneRevealEntriesByChunk.clear();
     this.texturePlaneChunksEnabled.clear();

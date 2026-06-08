@@ -321,6 +321,10 @@ export class EntityManager {
     return this.collectGroundItemTileStack(this.groundItemTileKey(item.x, item.z, item.floor)).map(({ def: _def, ...data }) => data);
   }
 
+  getGroundItemStackForTileKey(tileKey: string): GroundItemData[] {
+    return this.collectGroundItemTileStack(tileKey).map(({ def: _def, ...data }) => data);
+  }
+
   getGroundItemStackAtTile(x: number, z: number, floor: number): GroundItemData[] {
     return this.collectGroundItemTileStack(this.groundItemTileKey(x, z, floor)).map(({ def: _def, ...data }) => data);
   }
@@ -373,6 +377,7 @@ export class EntityManager {
       y,
       top.z,
       top.id,
+      tileKey,
     );
     this.groundItemPickProxies.set(tileKey, proxy);
   }
@@ -388,7 +393,7 @@ export class EntityManager {
     });
     sprite.position = new Vector3(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
     sprite.getMesh().isPickable = false;
-    sprite.getMesh().metadata = { kind: 'groundItemVisual', groundItemId: top.id };
+    sprite.getMesh().metadata = { kind: 'groundItemVisual', groundItemId: top.id, groundItemTileKey: tileKey };
     this.groundItemSprites.set(top.id, sprite);
 
     getItemIconUrl(top.def, top.quantity).then((url) => {
@@ -842,7 +847,10 @@ export class EntityManager {
     }
     for (const [tileKey, proxy] of this.groundItemPickProxies) {
       const top = this.collectGroundItemTileStack(tileKey)[0];
-      if (top) positionGroundItemPickProxy(proxy, top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
+      if (top) {
+        proxy.metadata = { kind: 'groundItem', groundItemId: top.id, groundItemTileKey: tileKey };
+        positionGroundItemPickProxy(proxy, top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
+      }
     }
     // Local player intentionally NOT repositioned here. Its Y came from
     // LOGIN_OK (server-authoritative) and getHeight() without currentY

@@ -162,6 +162,40 @@ function splitObjectsByChunk(objects: PlacedObject[]): Map<string, PlacedObject[
   return chunks;
 }
 
+function stablePlacementStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stablePlacementStringify).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map(key =>
+      `${JSON.stringify(key)}:${stablePlacementStringify(record[key])}`
+    ).join(',')}}`;
+  }
+  const primitive = JSON.stringify(value);
+  return primitive === undefined ? 'undefined' : primitive;
+}
+
+function dedupePlacedObjects(objects: PlacedObject[], context = 'placed objects'): PlacedObject[] {
+  if (!Array.isArray(objects) || objects.length === 0) return [];
+  const seen = new Set<string>();
+  const unique: PlacedObject[] = [];
+  let removed = 0;
+  for (const obj of objects) {
+    const key = stablePlacementStringify(obj);
+    if (seen.has(key)) {
+      removed++;
+      continue;
+    }
+    seen.add(key);
+    unique.push(obj);
+  }
+  if (removed > 0) {
+    console.warn(`[editor] Removed ${removed} exact duplicate ${context}`);
+  }
+  return unique;
+}
+
 /** Save placed objects as per-chunk JSON files, removing chunks that are now empty.
  *  Async fs so the main thread stays responsive — editor saves no longer freeze
  *  ticks for connected players. */
@@ -170,7 +204,7 @@ async function saveChunkedObjects(mapDir: string, objects: PlacedObject[]): Prom
   await fsp.mkdir(objectsDir, { recursive: true });
 
   const written = new Set<string>();
-  const chunks = splitObjectsByChunk(objects);
+  const chunks = splitObjectsByChunk(dedupePlacedObjects(objects, 'placed object(s) before saving'));
   const writes: Promise<void>[] = [];
   for (const [key, objs] of chunks) {
     writes.push(fsp.writeFile(resolve(objectsDir, `${key}.json`), JSON.stringify(objs, null, 2)));
@@ -201,7 +235,8 @@ function loadChunkedObjects(mapDir: string): PlacedObject[] | null {
       objects.push(...chunk);
     }
   } catch { return null; }
-  return objects.length > 0 ? objects : null;
+  const unique = dedupePlacedObjects(objects, 'placed object(s) while loading chunks');
+  return unique.length > 0 ? unique : null;
 }
 
 function loadEditorMapPlacedObjects(mapDir: string): PlacedObject[] {
@@ -746,7 +781,11 @@ function stripTileDefaults(tile: KCTile, defaultGround: GroundType = 'grass'): P
 
 /** Expand a partial tile back to a full KCTile */
 function expandTile(partial: Partial<KCTile>, defaultGround: GroundType = 'grass'): KCTile {
-  return { ...defaultKCTile(defaultGround), ...partial };
+  return {
+    ...defaultKCTile(defaultGround),
+    ...partial,
+    waterSurfaceB: partial.waterSurfaceB ?? partial.waterSurface ?? false,
+  };
 }
 
 /** Save tiles as per-chunk JSON files */
@@ -3778,10 +3817,22 @@ const server = Bun.serve<SocketData>({
         // (partial-payload protection).
         const { placedObjects: _, ...mapDataWithoutObjects } = mapData;
         let preservedTexturePlanes = mapDataWithoutObjects.map?.texturePlanes;
+        let preservedChunkWaterLevels = mapDataWithoutObjects.map?.chunkWaterLevels;
         let preservedChunkWaterFlows = mapDataWithoutObjects.map?.chunkWaterFlows;
-        if (preservedTexturePlanes === undefined || preservedChunkWaterFlows === undefined) {
-          const existingMap = await loadJsonOrNull<KCMapFile>(mapJsonPath);
+        const shouldPreserveEmptyChunkWaterLevels = preservedChunkWaterLevels !== undefined
+          && Object.keys(preservedChunkWaterLevels).length === 0
+          && Object.keys(existingMapForShape?.map?.chunkWaterLevels ?? {}).length > 0;
+        if (
+          preservedTexturePlanes === undefined
+          || preservedChunkWaterLevels === undefined
+          || shouldPreserveEmptyChunkWaterLevels
+          || preservedChunkWaterFlows === undefined
+        ) {
+          const existingMap = existingMapForShape ?? await loadJsonOrNull<KCMapFile>(mapJsonPath);
           if (preservedTexturePlanes === undefined) preservedTexturePlanes = existingMap?.map?.texturePlanes ?? [];
+          if (preservedChunkWaterLevels === undefined || shouldPreserveEmptyChunkWaterLevels) {
+            preservedChunkWaterLevels = existingMap?.map?.chunkWaterLevels ?? {};
+          }
           if (preservedChunkWaterFlows === undefined) preservedChunkWaterFlows = existingMap?.map?.chunkWaterFlows ?? {};
         }
         const mapFileToSave = {
@@ -3792,6 +3843,7 @@ const server = Bun.serve<SocketData>({
             tiles: [],    // stripped — stored in tiles/ chunks
             heights: [],  // stripped — stored in heights/ chunks
             texturePlanes: preservedTexturePlanes,
+            chunkWaterLevels: preservedChunkWaterLevels,
             chunkWaterFlows: preservedChunkWaterFlows,
           },
         };

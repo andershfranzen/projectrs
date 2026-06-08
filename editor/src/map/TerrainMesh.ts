@@ -8,7 +8,7 @@ import { Color3 } from '@babylonjs/core/Maths/math.color'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { Texture } from '@babylonjs/core/Materials/Textures/texture'
 import type { Scene } from '@babylonjs/core/scene'
-import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, pushWaterFlowQuadUvs, waterFlowUvTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_FALLBACK_TINT, SURFACE_WATER_FALLBACK_TINT, WATER_SURFACE_VERTEX_COLOR, SURFACE_WATER_VERTEX_COLOR, WATER_UV_SCALE } from '@projectrs/shared'
+import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_FALLBACK_TINT, SURFACE_WATER_FALLBACK_TINT, WATER_SURFACE_VERTEX_COLOR, SURFACE_WATER_VERTEX_COLOR, WATER_UV_SCALE } from '@projectrs/shared'
 import type { RGB, GroundType, UVPoint, WaterFlowUvTransform, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared'
 import type { MapData, TexturePlane } from './MapData'
 import type { TextureEntry } from '../assets-system/TextureRegistry'
@@ -48,6 +48,56 @@ function getWaterFlowTransform(map: MapData, x: number, z: number, cache: Map<st
 
 function pushWaterUvs(map: MapData, x: number, z: number, uvs: number[], cache: Map<string, WaterFlowUvTransform>): void {
   pushWaterFlowQuadUvs(uvs, x, z, getWaterFlowTransform(map, x, z, cache), 'tl-tr-bl-br')
+}
+
+function appendSurfaceWaterTile(
+  map: MapData,
+  x: number,
+  z: number,
+  vertices: number[],
+  colors: number[],
+  uvs: number[],
+  indices: number[],
+  base: number,
+  cache: Map<string, WaterFlowUvTransform>,
+): number {
+  const tile = map.getTile(x, z)
+  const waterA = !!tile?.waterSurface
+  const waterB = !!tile?.waterSurfaceB
+  if (!waterA && !waterB) return base
+
+  const h = map.getTileCornerHeights(x, z)
+  const LIFT = 0.05
+  const wc = SURFACE_WATER_VERTEX_COLOR
+  const transform = getWaterFlowTransform(map, x, z, cache)
+
+  const addRing = (ring: readonly UVPoint[]): void => {
+    if (ring.length < 3) return
+    const b = base
+    for (const p of ring) {
+      const wx = x + p.u
+      const wz = z + p.v
+      const wy = bilerpCorners(h.tl, h.tr, h.bl, h.br, p.u, p.v) + LIFT
+      const [u, v] = waterFlowUvFromTransform(wx, wz, transform)
+      vertices.push(wx, wy, wz)
+      colors.push(wc.r, wc.g, wc.b, 1)
+      uvs.push(u, v)
+    }
+    const tris = fanTriangulate(ring.length)
+    for (const i of tris) indices.push(b + i)
+    base += ring.length
+  }
+
+  if (waterA && waterB) {
+    addRing(fullTileRingForSplit(tile?.split))
+    return base
+  }
+
+  const { halfA, halfB } = computeCutPolygons(tile?.textureCutAngle ?? DEFAULT_CUT_ANGLE, tile?.textureCutOffset ?? 0)
+  if (waterA) addRing(halfA)
+  if (waterB) addRing(halfB)
+
+  return base
 }
 
 function getVertexWaterProximity(map: MapData, vx: number, vz: number): number {
@@ -556,16 +606,7 @@ export function buildTerrainMeshes(map: MapData, waterTexture: Texture | null, s
       if (!map.isTileInActiveChunk(x, z)) continue
       const tile = map.getTile(x, z)
       if (tile?.ground === 'void') continue
-      if (!tile?.waterSurface) continue
-
-      const h = map.getTileCornerHeights(x, z)
-      const LIFT = 0.05
-      const wc = SURFACE_WATER_VERTEX_COLOR
-      swVertices.push(x, h.tl+LIFT, z,  x+1, h.tr+LIFT, z,  x, h.bl+LIFT, z+1,  x+1, h.br+LIFT, z+1)
-      swColors.push(wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1)
-      pushWaterUvs(map, x, z, swUVs, waterFlowTransformCache)
-      swIndices.push(swBase, swBase+2, swBase+1, swBase+2, swBase+3, swBase+1)
-      swBase += 4
+      swBase = appendSurfaceWaterTile(map, x, z, swVertices, swColors, swUVs, swIndices, swBase, waterFlowTransformCache)
     }
   }
 
@@ -696,15 +737,8 @@ export function buildWaterMeshes(map: MapData, waterTexture: Texture | null, sce
     for (let x = 0; x < map.width; x++) {
       if (!map.isTileInActiveChunk(x, z)) continue
       const tile = map.getTile(x, z)
-      if (!tile?.waterSurface) continue
-      const h = map.getTileCornerHeights(x, z)
-      const LIFT = 0.05
-      const wc = SURFACE_WATER_VERTEX_COLOR
-      swVertices.push(x, h.tl+LIFT, z,  x+1, h.tr+LIFT, z,  x, h.bl+LIFT, z+1,  x+1, h.br+LIFT, z+1)
-      swColors.push(wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1, wc.r, wc.g, wc.b, 1)
-      pushWaterUvs(map, x, z, swUVs, waterFlowTransformCache)
-      swIndices.push(swBase, swBase+2, swBase+1, swBase+2, swBase+3, swBase+1)
-      swBase += 4
+      if (tile?.ground === 'void') continue
+      swBase = appendSurfaceWaterTile(map, x, z, swVertices, swColors, swUVs, swIndices, swBase, waterFlowTransformCache)
     }
   }
 
@@ -1029,7 +1063,6 @@ function getOrCreateTexturePlaneMaterial(
   repeat: number,
   rotation: number,
   tint: { r: number; g: number; b: number },
-  isSelected: boolean,
   suffix: string,
   textureRegistry: TextureEntry[],
   textureCache: Map<string, Texture>,
@@ -1043,7 +1076,7 @@ function getOrCreateTexturePlaneMaterial(
 
   const scale = repeat || 1
   const rot = rotation || 0
-  const key = `${textureId}|${scale}|${rot}|${texturePlaneTintKey(tint)}|${isSelected ? 1 : 0}|${suffix}`
+  const key = `${textureId}|${scale}|${rot}|${texturePlaneTintKey(tint)}|${suffix}`
   const cached = materialCache?.get(key)
   if (cached) return cached
 
@@ -1060,7 +1093,7 @@ function getOrCreateTexturePlaneMaterial(
   mat.emissiveTexture = tex
   mat.useAlphaFromDiffuseTexture = true
   mat.diffuseColor = new Color3(0, 0, 0)
-  mat.emissiveColor = isSelected ? new Color3(0.2, 0.4, 0.8) : new Color3(tint.r, tint.g, tint.b)
+  mat.emissiveColor = new Color3(tint.r, tint.g, tint.b)
   mat.specularColor = new Color3(0, 0, 0)
   mat.transparencyMode = 1
   mat.alphaCutOff = 0.05
@@ -1075,7 +1108,7 @@ export function buildSingleTexturePlane(
   textureRegistry: TextureEntry[],
   textureCache: Map<string, Texture>,
   scene: Scene,
-  isSelected: boolean,
+  _isSelected: boolean = false,
   materialCache?: Map<string, StandardMaterial>,
 ): Mesh | null {
   const textureInfo = textureRegistry.find((t) => t.id === plane.textureId)
@@ -1087,7 +1120,7 @@ export function buildSingleTexturePlane(
   const tint = plane.tintColor || { r: 1, g: 1, b: 1 }
 
   const makeMaterial = (textureId: string, repeat: number, rotation: number, suffix: string) =>
-    getOrCreateTexturePlaneMaterial(plane.id, textureId, repeat, rotation, tint, isSelected, suffix, textureRegistry, textureCache, scene, materialCache)
+    getOrCreateTexturePlaneMaterial(plane.id, textureId, repeat, rotation, tint, suffix, textureRegistry, textureCache, scene, materialCache)
 
   if (plane.textureHalfMode) {
     const root = new TransformNode(`texplane_${plane.id}`, scene)
@@ -1112,10 +1145,12 @@ export function buildSingleTexturePlane(
       mesh.renderingGroupId = 0
       mesh.metadata = { texturePlane: plane, texturePlaneRoot: root }
       mesh.parent = root
+      mesh.freezeWorldMatrix()
     }
 
     const { halfA } = computeCutPolygons(plane.textureCutAngle ?? Math.PI / 4)
     makeHalfMesh(plane.textureId, plane.uvRepeat || 1, plane.texRotation || 0, halfA, 'a')
+    root.freezeWorldMatrix()
     return root as unknown as Mesh
   }
 
@@ -1127,7 +1162,7 @@ export function buildSingleTexturePlane(
     sideOrientation: Mesh.DOUBLESIDE
   }, scene)
 
-  const mat = getOrCreateTexturePlaneMaterial(plane.id, plane.textureId, scale, plane.texRotation || 0, tint, isSelected, 'full', textureRegistry, textureCache, scene, materialCache)
+  const mat = getOrCreateTexturePlaneMaterial(plane.id, plane.textureId, scale, plane.texRotation || 0, tint, 'full', textureRegistry, textureCache, scene, materialCache)
   if (!mat) {
     mesh.dispose()
     return null
@@ -1139,6 +1174,7 @@ export function buildSingleTexturePlane(
   mesh.scaling.set(plane.scale?.x ?? 1, plane.scale?.y ?? 1, plane.scale?.z ?? 1)
   mesh.renderingGroupId = 0
   mesh.metadata = { texturePlane: plane }
+  mesh.freezeWorldMatrix()
 
   return mesh
 }
@@ -1148,8 +1184,7 @@ export function buildTexturePlanes(map: MapData, textureRegistry: TextureEntry[]
   group.setEnabled(false)
 
   for (const plane of map.texturePlanes) {
-    const isSelected = map.selectedTexturePlaneId === plane.id
-    const mesh = buildSingleTexturePlane(plane, textureRegistry, textureCache, scene, isSelected, materialCache)
+    const mesh = buildSingleTexturePlane(plane, textureRegistry, textureCache, scene, false, materialCache)
     if (mesh) mesh.parent = group
   }
 

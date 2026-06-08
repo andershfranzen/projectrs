@@ -288,6 +288,7 @@ function tuneModelLighting(model) {
   let previewRotation = { x: 0, y: 0, z: 0 }
   let previewScale = 1.0
   let hoverEdgeHelper = null
+  let wallPlacementTargetActive = false
 
   let assetSectionFilter = 'all'
   let assetGroupFilter = 'all'
@@ -335,6 +336,8 @@ function tuneModelLighting(model) {
   let tileGrid = null
   let textureOverlayGroup = null
   let texturePlaneGroup = null
+  const texturePlaneNodesById = new Map()
+  const texturePlaneMaterialCache = new Map()
 
   let texturePlaneVertical = true
   let texturePlaneBridge = false
@@ -2197,6 +2200,8 @@ function tuneModelLighting(model) {
   const undoStack = []
   const redoStack = []
   const MAX_HISTORY = 100
+  let historyRestoreInProgress = false
+  let placedObjectRebuildToken = 0
 
 const state = {
   tool: ToolMode.SELECT,
@@ -2530,7 +2535,7 @@ let selectedWaterFlowChunk = null
         <label style="font-size:11px;color:rgba(255,255,255,0.45);">Scale <span id="placeScaleLabel">1.0</span></label>
         <input id="placeScaleSlider" type="range" min="0.1" max="5" step="0.1" value="1.0" style="width:100%;margin-top:3px;" />
         <button id="refreshPreviewBtn" style="width:100%;margin-top:5px;">Refresh Preview</button>
-        <div class="hint" style="margin-top:5px;">Ctrl/Cmd place on visible upper surfaces</div>
+        <div class="hint" style="margin-top:5px;">Hover wall = exact align<br>Ctrl/Cmd upper snap · Alt bypass snap</div>
       </div>
     </div>
 
@@ -6685,7 +6690,7 @@ let selectedWaterFlowChunk = null
     { id: 'rock',      label: 'Rock',      color: '#6b6860' },
     { id: 'drysand',   label: 'Dry Sand',  color: '#9e6b38' },
     { id: 'water', label: 'Mud', color: '#5a3d1a' },
-    { id: 'surface-water', label: 'Paddy Water', color: '#7ab8c8' },
+    { id: 'surface-water', label: 'Water', color: '#7ab8c8' },
   ]
 
   const GROUND_TYPES_DUNGEON = [
@@ -6702,7 +6707,7 @@ let selectedWaterFlowChunk = null
     { id: 'dungeon-dark-rock', label: 'Dark Cliff',  color: '#201d1b' },
     { id: 'dirt',              label: 'Dirt',        color: '#7a5030' },
     { id: 'water',             label: 'Mud',         color: '#5a3d1a' },
-    { id: 'surface-water',     label: 'Still Water', color: '#7ab8c8' },
+    { id: 'surface-water',     label: 'Water',       color: '#7ab8c8' },
   ]
 
   let GROUND_TYPES = GROUND_TYPES_OVERWORLD
@@ -7340,22 +7345,11 @@ let selectedWaterFlowChunk = null
       for (const m of doorOpenHelpers) helpers.push(m)
     }
 
-    // Update emissive colors on all texture plane meshes to reflect selection state
-    if (texturePlaneGroup) {
-      for (const mesh of texturePlaneGroup.getChildMeshes()) {
-        const plane = mesh.metadata?.texturePlane
-        if (!plane || !mesh.material) continue
-        const isSel = selectedTexturePlanes.includes(plane)
-        const tint = plane.tintColor || { r: 1, g: 1, b: 1 }
-        mesh.material.emissiveColor = isSel ? new Color3(0.2, 0.4, 0.8) : new Color3(tint.r, tint.g, tint.b)
-      }
-    }
-
     if (texturePlaneGroup) {
       for (const plane of selectedTexturePlanes) {
-        const mesh = texturePlaneGroup.getChildMeshes().find((c) => c.metadata?.texturePlane?.id === plane.id)
-        if (!mesh) continue
-        const h = createBoundingBoxHelper(mesh, boxColor)
+        const node = texturePlaneNodeFor(plane)
+        if (!node) continue
+        const h = createBoundingBoxHelper(node, boxColor)
         if (h) helpers.push(h)
       }
     }
@@ -7380,6 +7374,39 @@ let selectedWaterFlowChunk = null
     movePlaneStart = null
     updateSelectionHelper()
     updateToolUI()
+  }
+
+  function stablePlacementStringify(value) {
+    if (Array.isArray(value)) {
+      return `[${value.map(stablePlacementStringify).join(',')}]`
+    }
+    if (value && typeof value === 'object') {
+      return `{${Object.keys(value).sort().map((key) =>
+        `${JSON.stringify(key)}:${stablePlacementStringify(value[key])}`
+      ).join(',')}}`
+    }
+    const primitive = JSON.stringify(value)
+    return primitive === undefined ? 'undefined' : primitive
+  }
+
+  function dedupePlacedObjectData(placedObjects, context = 'placed objects') {
+    if (!Array.isArray(placedObjects) || placedObjects.length === 0) return []
+    const seen = new Set()
+    const unique = []
+    let removed = 0
+    for (const placed of placedObjects) {
+      const key = stablePlacementStringify(placed)
+      if (seen.has(key)) {
+        removed++
+        continue
+      }
+      seen.add(key)
+      unique.push(placed)
+    }
+    if (removed > 0) {
+      console.warn(`[editor] Removed ${removed} exact duplicate ${context}`)
+    }
+    return unique
   }
 
   function serializePlacedObjects() {
@@ -7417,24 +7444,28 @@ let selectedWaterFlowChunk = null
     })
     // Append orphaned placements (assetId not in registry) so they survive save/load.
     for (const o of _orphanPlacements) live.push(JSON.parse(JSON.stringify(o)))
-    return live
+    return dedupePlacedObjectData(live, 'placed object(s) while serializing')
   }
 
   async function rebuildPlacedObjectsFromData(placedObjectsData) {
+    const rebuildToken = ++placedObjectRebuildToken
+    const uniquePlacedObjects = dedupePlacedObjectData(placedObjectsData, 'placed object(s) while loading')
     clearPlacedModels()
     _orphanPlacements = []  // full rebuild — reset and repopulate from data
     const _missing = new Map()
 
     // Pre-load unique models before sequential cloning.
     const uniquePaths = [...new Set(
-      (placedObjectsData || [])
+      uniquePlacedObjects
         .map((p) => assetById.get(p.assetId)?.path)
         .filter(Boolean)
     )]
     await warmAssetCache(uniquePaths)
+    if (rebuildToken !== placedObjectRebuildToken) return
 
     const workState = { startedAt: performance.now() }
-    for (const placed of placedObjectsData || []) {
+    for (const placed of uniquePlacedObjects) {
+      if (rebuildToken !== placedObjectRebuildToken) return
       const asset = assetById.get(placed.assetId)
       if (!asset) {
         _orphanPlacements.push(JSON.parse(JSON.stringify(placed)))
@@ -7445,6 +7476,10 @@ let selectedWaterFlowChunk = null
 
       const model = cloneAssetModelSync(asset.path)
       tuneModelLighting(model, asset.path)
+      if (rebuildToken !== placedObjectRebuildToken) {
+        model.dispose()
+        return
+      }
 
       model.position.set(placed.position.x, placed.position.y, placed.position.z)
       model.rotationQuaternion = null
@@ -7472,6 +7507,7 @@ let selectedWaterFlowChunk = null
       model.setEnabled(layer ? layer.visible : true)
       addPlacedModel(model, { invalidateShadow: false })
       await yieldIfOverBudget(workState)
+      if (rebuildToken !== placedObjectRebuildToken) return
     }
     invalidateShadowCache()
     reportMissingAssets(_missing, 'load')
@@ -7531,7 +7567,7 @@ let selectedWaterFlowChunk = null
         if (tile.groundB && tile.groundB !== defaultGround) count++
         if (tile.split && tile.split !== 'forward') count++
         if (tile.textureId || tile.textureIdB) count++
-        if (tile.waterPainted || tile.waterSurface) count++
+        if (tile.waterPainted || tile.waterSurface || tile.waterSurfaceB) count++
       }
     }
     const heights = Array.isArray(mapData.heights) ? mapData.heights : []
@@ -7684,7 +7720,7 @@ let selectedWaterFlowChunk = null
         if (!tile) continue
         const hasVisibleGround = tile.ground && tile.ground !== 'void'
         const hasSecondGround = tile.groundB && tile.groundB !== 'void'
-        if (hasVisibleGround || hasSecondGround || tile.waterPainted || tile.waterSurface) {
+        if (hasVisibleGround || hasSecondGround || tile.waterPainted || tile.waterSurface || tile.waterSurfaceB) {
           includeMapFocusTile(bounds, x, z)
         }
       }
@@ -7978,19 +8014,29 @@ let selectedWaterFlowChunk = null
   }
 
   async function undo() {
-    if (!undoStack.length) return
-    const prev = undoStack[undoStack.length - 1]
-    redoStack.push(captureSnapshot(prev.scope))
-    const snapshot = undoStack.pop()
-    await applySnapshot(snapshot)
+    if (!undoStack.length || historyRestoreInProgress) return
+    historyRestoreInProgress = true
+    try {
+      const prev = undoStack[undoStack.length - 1]
+      redoStack.push(captureSnapshot(prev.scope))
+      const snapshot = undoStack.pop()
+      await applySnapshot(snapshot)
+    } finally {
+      historyRestoreInProgress = false
+    }
   }
 
   async function redo() {
-    if (!redoStack.length) return
-    const prev = redoStack[redoStack.length - 1]
-    undoStack.push(captureSnapshot(prev.scope))
-    const snapshot = redoStack.pop()
-    await applySnapshot(snapshot)
+    if (!redoStack.length || historyRestoreInProgress) return
+    historyRestoreInProgress = true
+    try {
+      const prev = redoStack[redoStack.length - 1]
+      undoStack.push(captureSnapshot(prev.scope))
+      const snapshot = redoStack.pop()
+      await applySnapshot(snapshot)
+    } finally {
+      historyRestoreInProgress = false
+    }
   }
 
   function buildSplitLines() {
@@ -8139,6 +8185,46 @@ let selectedWaterFlowChunk = null
     group.dispose()
   }
 
+  function texturePlaneIdForNode(node) {
+    const directId = node?.metadata?.texturePlane?.id
+    if (directId) return directId
+    const child = node?.getChildMeshes?.().find((m) => m.metadata?.texturePlane?.id)
+    return child?.metadata?.texturePlane?.id ?? null
+  }
+
+  function indexTexturePlaneNode(node) {
+    const id = texturePlaneIdForNode(node)
+    if (id) texturePlaneNodesById.set(id, node)
+  }
+
+  function reindexTexturePlaneNodes() {
+    texturePlaneNodesById.clear()
+    if (!texturePlaneGroup) return
+    for (const node of texturePlaneGroup.getChildren()) indexTexturePlaneNode(node)
+  }
+
+  function texturePlaneNodeFor(plane) {
+    const node = texturePlaneNodesById.get(plane?.id)
+    if (node) return node
+    if (!texturePlaneGroup) return null
+    const found = texturePlaneGroup.getChildren().find((child) => texturePlaneIdForNode(child) === plane?.id) ?? null
+    if (found) indexTexturePlaneNode(found)
+    return found
+  }
+
+  function setTexturePlaneNodeFrozen(node, frozen) {
+    if (!node) return
+    const nodes = [node, ...(node.getChildMeshes?.() || [])]
+    for (const child of nodes) {
+      if (frozen) {
+        child.computeWorldMatrix?.(true)
+        child.freezeWorldMatrix?.()
+      } else {
+        child.unfreezeWorldMatrix?.()
+      }
+    }
+  }
+
   function replaceTerrainWaterMeshes() {
     if (!terrainGroup) return
     const wg = buildWaterMeshes(map, waterTexture, scene)
@@ -8213,7 +8299,7 @@ let selectedWaterFlowChunk = null
     const newSplitLines = state.showSplitLines ? buildSplitLines() : null
     const newTileGrid = state.showTileGrid ? buildTileGrid() : null
     const newOverlays = !skipTextureOverlays ? buildTextureOverlays(map, textureRegistry, textureCache, scene, overlayMaterialCache, overlayMeshesByTile) : null
-    const newPlanes = !skipTexturePlanes ? buildTexturePlanes(map, textureRegistry, textureCache, scene) : null
+    const newPlanes = !skipTexturePlanes ? buildTexturePlanes(map, textureRegistry, textureCache, scene, texturePlaneMaterialCache) : null
 
     // Dispose old meshes
     disposeGroup(terrainGroup)
@@ -8234,33 +8320,43 @@ let selectedWaterFlowChunk = null
     splitLines = newSplitLines
     tileGrid = newTileGrid
     if (!skipTextureOverlays) textureOverlayGroup = newOverlays
-    if (!skipTexturePlanes) texturePlaneGroup = newPlanes
+    if (!skipTexturePlanes) {
+      texturePlaneGroup = newPlanes
+      reindexTexturePlaneNodes()
+    }
 
     updateSelectionHelper()
     applyLayerVisibility()
   }
 
   function rebuildTexturePlanesOnly() {
-    const newPlanes = buildTexturePlanes(map, textureRegistry, textureCache, scene)
+    const newPlanes = buildTexturePlanes(map, textureRegistry, textureCache, scene, texturePlaneMaterialCache)
     if (texturePlaneGroup) texturePlaneGroup.dispose()
     if (newPlanes) newPlanes.setEnabled(true)
     texturePlaneGroup = newPlanes
+    reindexTexturePlaneNodes()
     updateSelectionHelper()
   }
 
   function appendTexturePlane(plane) {
     if (!texturePlaneGroup) {
       texturePlaneGroup = new TransformNode('texture-planes', scene)
+      texturePlaneGroup.setEnabled(true)
     }
-    const mesh = buildSingleTexturePlane(plane, textureRegistry, textureCache, scene, false)
-    if (mesh) mesh.parent = texturePlaneGroup
+    const mesh = buildSingleTexturePlane(plane, textureRegistry, textureCache, scene, false, texturePlaneMaterialCache)
+    if (mesh) {
+      mesh.parent = texturePlaneGroup
+      indexTexturePlaneNode(mesh)
+    }
     updateSelectionHelper()
   }
 
   function removeTexturePlaneMesh(plane) {
-    if (!texturePlaneGroup) return
-    const mesh = texturePlaneGroup.getChildMeshes().find((m) => m.metadata?.texturePlane === plane)
-    if (mesh) mesh.dispose()
+    const node = texturePlaneNodeFor(plane)
+    if (node) {
+      texturePlaneNodesById.delete(plane?.id)
+      node.dispose()
+    }
   }
 
   function rebuildTextureOverlaysOnly() {
@@ -8364,12 +8460,13 @@ let selectedWaterFlowChunk = null
   }
 
   function updateTexturePlaneMeshTransform(plane) {
-    if (!texturePlaneGroup) return
-    const mesh = texturePlaneGroup.getChildMeshes().find((m) => m.metadata?.texturePlane === plane)
-    if (!mesh) return
-    mesh.position.set(plane.position.x, plane.position.y, plane.position.z)
-    mesh.rotation.set(plane.rotation?.x ?? 0, plane.rotation?.y ?? 0, plane.rotation?.z ?? 0)
-    mesh.scaling.set(plane.scale?.x ?? 1, plane.scale?.y ?? 1, plane.scale?.z ?? 1)
+    const node = texturePlaneNodeFor(plane)
+    if (!node) return
+    setTexturePlaneNodeFrozen(node, false)
+    node.position.set(plane.position.x, plane.position.y, plane.position.z)
+    node.rotation.set(plane.rotation?.x ?? 0, plane.rotation?.y ?? 0, plane.rotation?.z ?? 0)
+    node.scaling.set(plane.scale?.x ?? 1, plane.scale?.y ?? 1, plane.scale?.z ?? 1)
+    setTexturePlaneNodeFrozen(node, true)
   }
 
   let _lastMouseEvent = null
@@ -8391,7 +8488,7 @@ let selectedWaterFlowChunk = null
     const h = map.getTileCornerHeights(tx, tz)
     let y = bilerpCorners(h.tl, h.tr, h.bl, h.br, u, v)
     const tile = map.getTile(tx, tz)
-    if (tile?.waterSurface) y += 0.05
+    if (tile?.waterSurface || tile?.waterSurfaceB) y += 0.05
     if (map.shouldRenderWaterTile?.(tx, tz)) y = Math.max(y, map.getTileWaterLevel(tx, tz) + 0.02)
     return y
   }
@@ -8792,9 +8889,169 @@ let selectedWaterFlowChunk = null
     return p.includes('stone modular') || p.includes('dark stone modular') || p.includes('new-dark-modular') || p.includes('wood modular')
   }
 
+  const WALL_PLACEMENT_KEYWORDS = ['wall', 'fence', 'gate']
+
+  function assetSearchText(asset) {
+    const tags = Array.isArray(asset?.tags) ? asset.tags : []
+    return [
+      asset?.id,
+      asset?.name,
+      asset?.path,
+      asset?.section,
+      asset?.group,
+      ...tags
+    ].filter(Boolean).join(' ').toLowerCase()
+  }
+
+  function isWallPlacementAsset(asset) {
+    const text = assetSearchText(asset)
+    return WALL_PLACEMENT_KEYWORDS.some((keyword) => text.includes(keyword))
+  }
+
   function isModularAsset(assetId) {
     const asset = assetRegistry.find((a) => a.id === assetId)
     return asset?.path?.toLowerCase().includes('modular assets') ?? false
+  }
+
+  function placedRootFromPickedMesh(mesh) {
+    if (!mesh?.isDescendantOf?.(placedGroup)) return null
+    let obj = mesh
+    while (obj.parent && obj.parent !== placedGroup) obj = obj.parent
+    return obj?.parent === placedGroup ? obj : null
+  }
+
+  function isPlacedWallObject(obj) {
+    const asset = assetById.get(obj?.userData?.assetId)
+    return isWallPlacementAsset(asset)
+  }
+
+  function nodeEulerRotation(node) {
+    if (node?.rotationQuaternion) {
+      try { return node.rotationQuaternion.toEulerAngles() } catch {}
+    }
+    return new Vector3(node?.rotation?.x ?? 0, node?.rotation?.y ?? 0, node?.rotation?.z ?? 0)
+  }
+
+  function wallPlacementTargetInfo(target) {
+    if (!target) return null
+
+    let topY = null
+    let bounds = null
+    try {
+      const b = target.getHierarchyBoundingVectors(true)
+      bounds = b
+      topY = b.max.y
+    } catch {}
+
+    return {
+      object: target,
+      x: target.position.x,
+      z: target.position.z,
+      topY,
+      bounds,
+      rotation: nodeEulerRotation(target),
+      scaling: target.scaling?.clone?.() ?? target.scale?.clone?.() ?? null
+    }
+  }
+
+  function xzDistanceToBounds(point, bounds) {
+    if (!point || !bounds) return Infinity
+    const dx = point.x < bounds.min.x
+      ? bounds.min.x - point.x
+      : point.x > bounds.max.x
+        ? point.x - bounds.max.x
+        : 0
+    const dz = point.z < bounds.min.z
+      ? bounds.min.z - point.z
+      : point.z > bounds.max.z
+        ? point.z - bounds.max.z
+        : 0
+    return Math.hypot(dx, dz)
+  }
+
+  function findNearbyWallPlacementTarget(referencePoint) {
+    if (!referencePoint) return null
+
+    const STACK_SNAP_RADIUS = 0.45
+    let best = null
+    let bestScore = Infinity
+
+    for (const obj of placedGroup.getChildren()) {
+      if (obj.isEnabled?.() === false || !isPlacedWallObject(obj)) continue
+
+      const info = wallPlacementTargetInfo(obj)
+      if (!info) continue
+
+      const dxz = info.bounds
+        ? xzDistanceToBounds(referencePoint, info.bounds)
+        : Math.hypot(referencePoint.x - info.x, referencePoint.z - info.z)
+      if (dxz > STACK_SNAP_RADIUS) continue
+
+      const yScore = Number.isFinite(info.topY)
+        ? Math.abs(referencePoint.y - info.topY) * 0.05
+        : 0
+      const score = dxz + yScore
+      if (score < bestScore) {
+        best = info
+        bestScore = score
+      }
+    }
+
+    return best
+  }
+
+  function resetPlacementNodeTransform(node) {
+    if (!node) return
+    node.rotationQuaternion = null
+    node.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
+    node.scaling.set(previewScale, previewScale, previewScale)
+  }
+
+  function findWallPlacementTarget(eventLike, asset, referencePoint = null) {
+    if (!eventLike || eventLike.altKey || !isWallPlacementAsset(asset)) return null
+    updateMouse(eventLike)
+    const ray = scene.createPickingRay(scene.pointerX, scene.pointerY, Matrix.Identity(), camera)
+    const pick = scene.pickWithRay(ray, (mesh) => {
+      if (!mesh.isVisible || !mesh.isEnabled()) return false
+      const root = placedRootFromPickedMesh(mesh)
+      return !!(root && root.isEnabled?.() !== false && isPlacedWallObject(root))
+    })
+
+    if (pick?.hit) {
+      const target = placedRootFromPickedMesh(pick.pickedMesh)
+      if (target && isPlacedWallObject(target)) return wallPlacementTargetInfo(target)
+    }
+
+    return shouldUseStackedPlacementSurface(eventLike)
+      ? findNearbyWallPlacementTarget(referencePoint)
+      : null
+  }
+
+  function applyWallPlacementSnap(node, pos, asset, placementTile, eventLike = null, referencePoint = null) {
+    if (!isWallPlacementAsset(asset)) return false
+
+    resetPlacementNodeTransform(node)
+    wallPlacementTargetActive = false
+
+    const target = findWallPlacementTarget(eventLike, asset, referencePoint ?? pos)
+    if (target) {
+      pos.x = target.x
+      pos.z = target.z
+      if (shouldUseStackedPlacementSurface(eventLike) && Number.isFinite(target.topY)) {
+        pos.y = target.topY
+      }
+      node?.rotation?.copyFrom(target.rotation)
+      if (target.scaling) node?.scaling?.copyFrom(target.scaling)
+      wallPlacementTargetActive = true
+      return true
+    }
+
+    const snap = getWallEdgeSnap(placementTile)
+    if (snap) {
+      pos.x = snap.x
+      pos.z = snap.z
+    }
+    return false
   }
 
   function findModularEdgeSnap(movingObj, targetX, targetZ) {
@@ -9172,10 +9429,17 @@ function halfPaintPresetAngle(mode) {
   return state.halfPaintCutAngle
 }
 
+function hasHalfWaterSurface(tile) {
+  return !!tile && (!!tile.waterSurface) !== (!!tile.waterSurfaceB)
+}
+
 function resolveHalfPaintCut(tile, u, v, eventLike, existing = null) {
-  const hadHalfMode = !!(existing && existing.textureHalfMode && (existing.textureId || existing.textureIdB))
+  const hadHalfMode = !!(existing && (
+    (existing.textureHalfMode && (existing.textureId || existing.textureIdB)) ||
+    hasHalfWaterSurface(existing)
+  ))
   if (state.halfPaintCutMode === 'cursor') {
-    const angle = hadHalfMode ? existing.textureCutAngle : pickTextureCutAngle(u, v, eventLike)
+    const angle = hadHalfMode ? (existing.textureCutAngle ?? DEFAULT_CUT_ANGLE) : pickTextureCutAngle(u, v, eventLike)
     return {
       angle,
       offset: cutSideOf(u, v, angle, 0) === 'A' ? state.halfPaintCutOffset : -state.halfPaintCutOffset,
@@ -9261,10 +9525,25 @@ function applyToolAtTile(tile, eventLike = null) {
     captureStrokeHistoryOnce()
 
     if (state.paintType === 'surface-water') {
-      if (eventLike?.shiftKey) {
-        map.clearWaterSurface(tile.x, tile.z)
+      if (state.halfPaint) {
+        const u = tile.u ?? 0.5
+        const v = tile.v ?? 0.5
+        const existing = map.getTile(tile.x, tile.z)
+        const { angle: cutAngle, offset: cutOffset, shouldWrite } = resolveHalfPaintCut(tile, u, v, eventLike, existing)
+        if (shouldWrite) {
+          map.setTextureCutAngle(tile.x, tile.z, cutAngle)
+          map.setTextureCutOffset(tile.x, tile.z, cutOffset)
+        }
+
+        const half = cutSideOf(u, v, cutAngle, cutOffset)
+        if (eventLike?.shiftKey) map.clearWaterSurfaceHalf(tile.x, tile.z, half)
+        else map.paintWaterSurfaceHalf(tile.x, tile.z, half)
       } else {
-        map.paintWaterSurface(tile.x, tile.z)
+        if (eventLike?.shiftKey) {
+          map.clearWaterSurface(tile.x, tile.z)
+        } else {
+          map.paintWaterSurface(tile.x, tile.z)
+        }
       }
       markTerrainDirty({ skipTexturePlanes: true, skipShadows: true, skipTextureOverlays: true })
       return
@@ -9388,7 +9667,8 @@ function applyToolAtTile(tile, eventLike = null) {
   function updateHoverEdgeHelper() {
     if (state.tool !== ToolMode.PLACE) { clearHoverEdge(); return }
     const asset = assetRegistry.find((a) => a.id === selectedAssetId)
-    if (!asset?.name?.toLowerCase().includes('wall')) { clearHoverEdge(); return }
+    if (!isWallPlacementAsset(asset)) { clearHoverEdge(); return }
+    if (wallPlacementTargetActive && previewObject) { clearHoverEdge(); return }
     const hovered = state.hovered
     if (hovered == null) { clearHoverEdge(); return }
     const { x, z, u = 0.5, v = 0.5 } = hovered
@@ -9434,6 +9714,7 @@ function applyToolAtTile(tile, eventLike = null) {
   }
 
   async function updatePreviewObject() {
+    wallPlacementTargetActive = false
     if (previewObject) {
       previewObject.dispose()
       previewObject = null
@@ -9463,10 +9744,7 @@ function applyToolAtTile(tile, eventLike = null) {
     // previewObject is already in the scene from makeGhostMaterial
 
     const pos = tileWorldPosition(state.hovered.x, state.hovered.z)
-    if (asset.name?.toLowerCase().includes('wall')) {
-      const snap = getWallEdgeSnap(state.hovered)
-      if (snap) { pos.x = snap.x; pos.z = snap.z }
-    }
+    applyWallPlacementSnap(previewObject, pos, asset, state.hovered)
     previewObject.position.copyFrom(pos)
   }
 
@@ -9489,20 +9767,16 @@ function applyToolAtTile(tile, eventLike = null) {
     const placementTile = tileFromWorldPoint(surfacePoint) || tile
     const pos = tileWorldPosition(placementTile.x, placementTile.z)
     if (surfacePoint) pos.y = surfacePoint.y
-    if (asset.name?.toLowerCase().includes('wall')) {
-      const snap = getWallEdgeSnap(placementTile)
-      if (snap) {
-        pos.x = snap.x; pos.z = snap.z
-      }
-    }
+    model.position.copyFrom(pos)
+    model.rotationQuaternion = null // use euler rotation
+    model.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
+    model.scaling.set(previewScale, previewScale, previewScale)
+    applyWallPlacementSnap(model, pos, asset, placementTile, event, surfacePoint)
     if (asset.path?.toLowerCase().includes('tree')) {
       pos.x = surfacePoint ? Math.round(surfacePoint.x) : Math.round(pos.x)
       pos.z = surfacePoint ? Math.round(surfacePoint.z) : Math.round(pos.z)
     }
     model.position.copyFrom(pos)
-    model.rotationQuaternion = null // use euler rotation
-    model.rotation.set(previewRotation.x, previewRotation.y, previewRotation.z)
-    model.scaling.set(previewScale, previewScale, previewScale)
     model.userData.assetId = asset.id
     model.userData.type = 'asset'
     model.userData.layerId = activeLayerId
@@ -13389,10 +13663,8 @@ function applyToolAtTile(tile, eventLike = null) {
       const pos = tileWorldPosition(placementTile.x, placementTile.z)
       if (sp) pos.y = sp.y
       const _prevAsset = assetRegistry.find((a) => a.id === previewObject.userData.assetId)
-      if (_prevAsset?.name?.toLowerCase().includes('wall')) {
-        const snap = getWallEdgeSnap(placementTile)
-        if (snap) { pos.x = snap.x; pos.z = snap.z }
-      }
+      wallPlacementTargetActive = false
+      applyWallPlacementSnap(previewObject, pos, _prevAsset, placementTile, event, sp)
       if (_prevAsset?.path?.toLowerCase().includes('tree')) {
         if (sp) { pos.x = Math.round(sp.x); pos.z = Math.round(sp.z) }
         else { pos.x = Math.round(tile.x + 0.5); pos.z = Math.round(tile.z + 0.5) }
@@ -14386,13 +14658,13 @@ if (state.isPainting && state.tool !== ToolMode.PLACE && state.tool !== ToolMode
 
     if (event.ctrlKey && key === 'z' && !event.shiftKey) {
       event.preventDefault()
-      await undo()
+      if (!event.repeat) await undo()
       return
     }
 
     if ((event.ctrlKey && key === 'y') || (event.ctrlKey && event.shiftKey && key === 'z')) {
       event.preventDefault()
-      await redo()
+      if (!event.repeat) await redo()
       return
     }
 

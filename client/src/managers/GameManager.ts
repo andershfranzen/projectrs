@@ -254,6 +254,10 @@ type PinchZoomState = {
 
 type LoadingProgressCallback = (pct: number, status: string) => void;
 type GearApplyGuard = () => boolean;
+type GroundItemPickRef = {
+  groundItemId: number | null;
+  tileKey: string | null;
+};
 
 export class GameManager {
   private engine: Engine;
@@ -4845,9 +4849,9 @@ export class GameManager {
     }
 
     if (pickResult?.pickedMesh) {
-      const pickedGroundItemId = this.findGroundItemIdFromPick(pickResult.pickedMesh as unknown as TransformNode, meshName);
-      if (pickedGroundItemId != null) {
-        options.push(...this.getGroundItemInteractionOptions(pickedGroundItemId, addedGroundItemIds));
+      const pickedGroundItem = this.findGroundItemFromPick(pickResult.pickedMesh as unknown as TransformNode, meshName);
+      if (pickedGroundItem) {
+        options.push(...this.getGroundItemInteractionOptions(pickedGroundItem, addedGroundItemIds));
       }
     }
 
@@ -5020,26 +5024,31 @@ export class GameManager {
     ];
   }
 
-  private findGroundItemIdFromPick(pickedMesh: TransformNode, meshName: string): number | null {
+  private findGroundItemFromPick(pickedMesh: TransformNode, meshName: string): GroundItemPickRef | null {
     let walk: TransformNode | null = pickedMesh;
     while (walk) {
-      if (walk.metadata?.kind === 'groundItem' && typeof walk.metadata?.groundItemId === 'number') {
-        return walk.metadata.groundItemId;
+      const metadata = walk.metadata;
+      if (metadata?.kind === 'groundItem' || metadata?.kind === 'groundItemVisual') {
+        const groundItemId = typeof metadata.groundItemId === 'number' ? metadata.groundItemId : null;
+        const tileKey = typeof metadata.groundItemTileKey === 'string' ? metadata.groundItemTileKey : null;
+        if (groundItemId != null || tileKey != null) return { groundItemId, tileKey };
       }
       walk = walk.parent as TransformNode | null;
     }
 
     for (const [groundItemId, sprite] of this.entities.groundItemSprites) {
-      if (sprite.getMesh()?.name === meshName) return groundItemId;
+      if (sprite.getMesh()?.name === meshName) return { groundItemId, tileKey: null };
     }
     return null;
   }
 
-  /** All ground items sharing the tile of `groundItemId`, value-prioritized.
+  /** All ground items sharing the picked tile, value-prioritized.
    *  The ground renderer collapses each tile into one 2004scape-style stack and
    *  shows the highest-value item on top, so menus/tooltips use the same order. */
-  private groundItemStackForTile(groundItemId: number): GroundItemData[] {
-    return this.entities.getGroundItemStackForItem(groundItemId);
+  private groundItemStackForPick(pick: GroundItemPickRef): GroundItemData[] {
+    if (pick.tileKey) return this.entities.getGroundItemStackForTileKey(pick.tileKey);
+    if (pick.groundItemId != null) return this.entities.getGroundItemStackForItem(pick.groundItemId);
+    return [];
   }
 
   private groundItemTooltipLines(stack: GroundItemData[]): string[] {
@@ -5054,10 +5063,10 @@ export class GameManager {
   }
 
   private getGroundItemInteractionOptions(
-    groundItemId: number,
+    pick: GroundItemPickRef,
     addedGroundItemIds: Set<number> = new Set<number>(),
   ): InteractionOption[] {
-    return this.getGroundItemInteractionOptionsForStack(this.groundItemStackForTile(groundItemId), addedGroundItemIds);
+    return this.getGroundItemInteractionOptionsForStack(this.groundItemStackForPick(pick), addedGroundItemIds);
   }
 
   private getGroundItemInteractionOptionsAtTile(
@@ -5507,14 +5516,14 @@ export class GameManager {
    *  that resolves to an NPC entity. Falls back to the closest mesh so the
    *  caller can still pick ground / placed objects / ground-items normally
    *  when there's no NPC in the ray. */
-  private pickAtCursor(): { entityId: number | null; groundItemId: number | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+  private pickAtCursor(): { entityId: number | null; groundItem: GroundItemPickRef | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
     return this.pickNpcAtPoint(this.scene.pointerX, this.scene.pointerY);
   }
 
-  private pickNpcAtPoint(x: number, y: number): { entityId: number | null; groundItemId: number | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
-    if (this.destroyed || this.scene.isDisposed) return { entityId: null, groundItemId: null, closestMesh: null };
+  private pickNpcAtPoint(x: number, y: number): { entityId: number | null; groundItem: GroundItemPickRef | null; closestMesh: import('@babylonjs/core/Meshes/abstractMesh').AbstractMesh | null } {
+    if (this.destroyed || this.scene.isDisposed) return { entityId: null, groundItem: null, closestMesh: null };
     const hits = this.scene.multiPick(x, y);
-    if (!hits || hits.length === 0) return { entityId: null, groundItemId: null, closestMesh: null };
+    if (!hits || hits.length === 0) return { entityId: null, groundItem: null, closestMesh: null };
     // multiPick returns hits unsorted; sort by distance ascending.
     hits.sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
     const closest = hits[0].pickedMesh ?? null;
@@ -5522,19 +5531,19 @@ export class GameManager {
     // sprite is often occluded by nearer scenery. Take the first match of
     // each kind so a hover resolves to whatever is actually under the cursor.
     let entityId: number | null = null;
-    let groundItemId: number | null = null;
+    let groundItem: GroundItemPickRef | null = null;
     for (const h of hits) {
       const m = h.pickedMesh;
       if (!m) continue;
       if (entityId == null) {
         entityId = this.findNpcEntityIdFromPick(m as unknown as TransformNode, m.name);
       }
-      if (groundItemId == null) {
-        groundItemId = this.findGroundItemIdFromPick(m as unknown as TransformNode, m.name);
+      if (groundItem == null) {
+        groundItem = this.findGroundItemFromPick(m as unknown as TransformNode, m.name);
       }
-      if (entityId != null && groundItemId != null) break;
+      if (entityId != null && groundItem != null) break;
     }
-    return { entityId, groundItemId, closestMesh: closest };
+    return { entityId, groundItem, closestMesh: closest };
   }
 
   private pickPlayerAtPoint(x: number, y: number): number | null {
@@ -5595,7 +5604,7 @@ export class GameManager {
       this.updateHoverRoofReveal(e.clientX, e.clientY);
       this._lastRoofHoverRefreshAt = now;
       const playerEntityId = this.pickPlayerAtPoint(this.scene.pointerX, this.scene.pointerY);
-      const { entityId, groundItemId } = this.pickAtCursor();
+      const { entityId, groundItem } = this.pickAtCursor();
       let playerLabel: string | null = null;
       let playerIsAdmin = false;
       let playerIsModerator = false;
@@ -5622,8 +5631,8 @@ export class GameManager {
       // wins, mirroring the click priority. Show the tile pile in display
       // order, capped so a large drop stack doesn't rebuild a huge tooltip.
       let itemLines: string[] = [];
-      if (playerLabel == null && npcLabel == null && groundItemId != null) {
-        itemLines = this.groundItemTooltipLines(this.groundItemStackForTile(groundItemId).filter(gi => gi.floor === this.currentFloor));
+      if (playerLabel == null && npcLabel == null && groundItem) {
+        itemLines = this.groundItemTooltipLines(this.groundItemStackForPick(groundItem).filter(gi => gi.floor === this.currentFloor));
       }
       if (playerLabel != null) {
         el.style.color = this.playerNameColor(playerIsAdmin, playerIsModerator);

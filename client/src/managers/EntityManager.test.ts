@@ -66,5 +66,22 @@ describe('EntityManager ground item stacks', () => {
     ]);
 
     expect(manager.getGroundItemStackAtTile(5.5, 7.5, 0).map(item => item.id)).toEqual([2, 1]);
+    expect(manager.getGroundItemStackForTileKey('0,5,7').map(item => item.id)).toEqual([2, 1]);
+  });
+
+  test('can resolve a tile stack after the picked top item was removed', () => {
+    const manager = Object.create(EntityManager.prototype) as EntityManager;
+    (manager as any).groundItems = new Map([
+      [2, { id: 2, itemId: 101, quantity: 4, x: 5.5, z: 7.5, floor: 0 }],
+    ]);
+    (manager as any).groundItemIdsByTile = new Map([
+      ['0,5,7', new Set([2])],
+    ]);
+    (manager as any).itemDefsCache = new Map<number, ItemDef>([
+      [101, { id: 101, name: 'Coins', description: '', value: 5, stackable: true, equippable: false }],
+    ]);
+
+    expect(manager.getGroundItemStackForItem(1)).toEqual([]);
+    expect(manager.getGroundItemStackForTileKey('0,5,7').map(item => item.id)).toEqual([2]);
   });
 });

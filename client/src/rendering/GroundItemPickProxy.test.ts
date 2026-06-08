@@ -20,14 +20,14 @@ describe('ground item pick proxy', () => {
     camera.setTarget(new Vector3(0, GROUND_ITEM_PICKBOX_CENTER_Y, 0));
     scene.activeCamera = camera;
 
-    const proxy = createGroundItemPickProxy(scene, 'ground_item_proxy', 0, 0, 0, 123);
+    const proxy = createGroundItemPickProxy(scene, 'ground_item_proxy', 0, 0, 0, 123, '0,5,7');
     scene.render();
 
     const box = proxy.getBoundingInfo().boundingBox;
     expect(proxy.isVisible).toBe(true);
     expect(proxy.visibility).toBe(0);
     expect(proxy.isPickable).toBe(true);
-    expect(proxy.metadata).toEqual({ kind: 'groundItem', groundItemId: 123 });
+    expect(proxy.metadata).toEqual({ kind: 'groundItem', groundItemId: 123, groundItemTileKey: '0,5,7' });
     expect(proxy.position.asArray()).toEqual([0, GROUND_ITEM_PICKBOX_CENTER_Y, 0]);
     expect(box.extendSize.x).toBeCloseTo(GROUND_ITEM_PICKBOX_WIDTH / 2, 5);
     expect(box.extendSize.y).toBeCloseTo(GROUND_ITEM_PICKBOX_HEIGHT / 2, 5);

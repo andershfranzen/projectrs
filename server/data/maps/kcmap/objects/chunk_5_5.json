@@ -1652,7 +1652,7 @@
       "z": 0.2
     },
     "name": "Suspect sketch",
-    "examineText": "This must be the sketch Robert mentioned.",
+    "examineText": "This must be the sketch robert talked about.",
     "interactions": [
       {
         "action": "Pick up",
@@ -1678,11 +1678,11 @@
         "saySequence": [
           {
             "delaySeconds": 0,
-            "text": "Wait... that's me! Is that what the lady was screaming about?"
+            "text": "Wait... thats me!! is that what the lady was screaming about?"
           },
           {
             "delaySeconds": 3,
-            "text": "I need to get rid of this sketch. Maybe I can throw it in a well or something."
+            "text": "I need to get rid of this sketch, maybe i can throw it in a well or something."
           }
         ],
         "effects": [

@@ -23,6 +23,7 @@ export interface Tile {
   textureCutOffset: number
   waterPainted: boolean
   waterSurface: boolean
+  waterSurfaceB: boolean
 }
 
 export interface CornerHeights {
@@ -88,7 +89,8 @@ function createDefaultTile(defaultGround: GroundType = 'grass'): Tile {
     textureCutAngle: DEFAULT_CUT_ANGLE,
     textureCutOffset: 0,
     waterPainted: false,
-    waterSurface: false
+    waterSurface: false,
+    waterSurfaceB: false
   }
 }
 
@@ -360,6 +362,7 @@ export class MapData {
     const tile = this.getTile(x, z)
     if (!tile) return
     tile.waterSurface = true
+    tile.waterSurfaceB = true
     this.terrainGeneration++
   }
 
@@ -367,6 +370,23 @@ export class MapData {
     const tile = this.getTile(x, z)
     if (!tile) return
     tile.waterSurface = false
+    tile.waterSurfaceB = false
+    this.terrainGeneration++
+  }
+
+  paintWaterSurfaceHalf(x: number, z: number, half: 'A' | 'B'): void {
+    const tile = this.getTile(x, z)
+    if (!tile) return
+    if (half === 'A') tile.waterSurface = true
+    else tile.waterSurfaceB = true
+    this.terrainGeneration++
+  }
+
+  clearWaterSurfaceHalf(x: number, z: number, half: 'A' | 'B'): void {
+    const tile = this.getTile(x, z)
+    if (!tile) return
+    if (half === 'A') tile.waterSurface = false
+    else tile.waterSurfaceB = false
     this.terrainGeneration++
   }
 
@@ -631,7 +651,10 @@ export class MapData {
             textureCutAngle: cutAngle,
             textureCutOffset: typeof (src as any).textureCutOffset === 'number' ? (src as any).textureCutOffset : 0,
             waterPainted: !!src.waterPainted || src.ground === 'water',
-            waterSurface: !!src.waterSurface
+            waterSurface: !!src.waterSurface,
+            waterSurfaceB: typeof (src as any).waterSurfaceB === 'boolean'
+              ? !!(src as any).waterSurfaceB
+              : !!src.waterSurface
           }
         }
       }

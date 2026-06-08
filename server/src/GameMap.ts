@@ -1057,7 +1057,11 @@ export class GameMap {
           const z = startZ + parseInt(localZStr);
           const x = startX + parseInt(localXStr);
           if (z >= 0 && z < height && x >= 0 && x < width) {
-            tiles[z][x] = { ...defaultKCTile(defaultGround), ...partial };
+            tiles[z][x] = {
+              ...defaultKCTile(defaultGround),
+              ...partial,
+              waterSurfaceB: partial.waterSurfaceB ?? partial.waterSurface ?? false,
+            };
           }
         }
       }
