@@ -272,8 +272,8 @@ export class GameManager {
   private static readonly AUTHORITY_STALE_MS = 12_000;
   private static readonly SELF_SYNC_RECONCILE_DIST = 1.25;
   private static readonly STOPPED_SELF_SYNC_RECONCILE_DIST = 0.35;
-  private static readonly FRESH_PREDICTION_RECONCILE_DIST = 2.25;
-  private static readonly FRESH_PREDICTION_RECONCILE_GRACE_MS = TICK_RATE + 150;
+  private static readonly AUTHORITY_REANCHOR_MAX_SEARCH_TILES = 500;
+  private static readonly AUTHORITY_REANCHOR_MAX_ATTEMPTS = 3;
   private static readonly HIDDEN_CATCHUP_ARM_MS = 3_000;
   private static readonly HIDDEN_RECONNECT_AFTER_MS = 15_000;
   private static readonly PRELOAD_STEP_TIMEOUT_MS = 20_000;
@@ -331,7 +331,8 @@ export class GameManager {
   private pathIndex: number = 0;
   private moveSpeed: number = 1.67; // RS2 walk speed: 1 tile per 600ms tick
   private pendingPath: { x: number; z: number }[] | null = null; // queued path from click-while-moving
-  private predictedPathStartedAt: number = 0;
+  private predictedPathDestination: { x: number; z: number } | null = null;
+  private predictedPathAuthorityReanchorAttempts: number = 0;
   /** NPC entityId to face when the current path completes. 2004scape
    *  Player.faceEntity equivalent — set by talkToNpc/attackNpc, cleared
    *  on arrival or any new ground click. */
@@ -2960,16 +2961,12 @@ export class GameManager {
       const dz = serverZ - this.playerZ;
       const maxAxisDelta = Math.max(Math.abs(dx), Math.abs(dz));
       const serverTileOnActiveStep = this.isTileOnActivePredictedStep(Math.floor(serverX), Math.floor(serverZ));
-      // A rapid click-away → click-object redirect can receive one stale
-      // stopped self-sync from the old route after the new predicted route has
-      // started. Do not yank the visual backward during that single tick.
-      const freshPrediction = this.isFreshPredictedPath(now);
       const reconcileDist = serverMoving || serverTileOnActiveStep
         ? GameManager.SELF_SYNC_RECONCILE_DIST
-        : freshPrediction
-          ? GameManager.FRESH_PREDICTION_RECONCILE_DIST
-          : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
+        : GameManager.STOPPED_SELF_SYNC_RECONCILE_DIST;
       if (maxAxisDelta <= reconcileDist) return;
+
+      if (!hiddenCatchup && this.tryReanchorPredictedPathToAuthority(serverX, serverZ)) return;
 
       this.reconcileLocalPlayerToServer(serverX, serverZ, false, serverMoving);
     });
@@ -3982,6 +3979,7 @@ export class GameManager {
       }
       if (cutIdx >= 0 && cutIdx < this.path.length) {
         this.path = this.path.slice(0, cutIdx);
+        this.refreshPredictedDestinationFromPath();
       } else if (cutIdx < 0) {
         const segmentIdx = this.findPathSegmentContainingTile(tx, tz);
         if (segmentIdx >= 0) {
@@ -3989,6 +3987,7 @@ export class GameManager {
             ...this.path.slice(0, segmentIdx),
             { x: lastX, z: lastZ },
           ];
+          this.refreshPredictedDestinationFromPath();
         } else {
           this.reconcileLocalPlayerToServer(lastX, lastZ, false);
         }
@@ -5921,14 +5920,16 @@ export class GameManager {
     this.pathIndex = 0;
     this.tileProgress = 0;
     this.pendingPath = null;
-    this.predictedPathStartedAt = 0;
+    this.predictedPathDestination = null;
+    this.predictedPathAuthorityReanchorAttempts = 0;
     if (resetAnchor) this.setTileFrom(this.playerX, this.playerZ);
   }
 
-  private isFreshPredictedPath(now: number = performance.now()): boolean {
-    return this.predictedPathStartedAt > 0
-      && this.pathIndex < this.path.length
-      && now - this.predictedPathStartedAt <= GameManager.FRESH_PREDICTION_RECONCILE_GRACE_MS;
+  private refreshPredictedDestinationFromPath(): void {
+    if (!this.predictedPathDestination) return;
+    const dest = this.path[this.path.length - 1];
+    this.predictedPathDestination = dest ? { x: dest.x, z: dest.z } : null;
+    this.predictedPathAuthorityReanchorAttempts = 0;
   }
 
   private armControlledMoveLock(path: { x: number; z: number }[]): void {
@@ -5959,6 +5960,8 @@ export class GameManager {
     this.path = [currentTarget];
     this.pathIndex = 0;
     this.pendingPath = null;
+    this.predictedPathDestination = { x: currentTarget.x, z: currentTarget.z };
+    this.predictedPathAuthorityReanchorAttempts = 0;
     if (activeStep) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
@@ -6306,17 +6309,23 @@ export class GameManager {
     if (this.isControlledMoveActive()) return;
     this.followTargetPlayerId = -1;
     if (!this.network.sendMove(path)) return;
-    this.startLocalPredictedPath(path, preserveCurrentStep);
+    this.startLocalPredictedPath(path, preserveCurrentStep, true);
   }
 
-  private startLocalPredictedPath(path: { x: number; z: number }[], preserveCurrentStep: boolean = false): void {
+  private startLocalPredictedPath(
+    path: { x: number; z: number }[],
+    preserveCurrentStep: boolean = false,
+    allowAuthorityReanchor: boolean = false,
+  ): void {
     if (path.length === 0) return;
     const activeStep = this.getActiveUnitStep();
     this.localPlayer?.clearFaceLock(true);
     if (this.localPlayer?.isSkillAnimPlaying()) this.localPlayer.resetTransientAnimation();
     this.path = path;
     this.pathIndex = 0;
-    this.predictedPathStartedAt = performance.now();
+    const dest = path[path.length - 1];
+    this.predictedPathDestination = allowAuthorityReanchor && dest ? { x: dest.x, z: dest.z } : null;
+    this.predictedPathAuthorityReanchorAttempts = 0;
     if (preserveCurrentStep && activeStep && this.sameTile(path[0], activeStep.target)) {
       this.tileProgress = activeStep.progress;
       this.setTileFrom(activeStep.from.x, activeStep.from.z);
@@ -6328,6 +6337,46 @@ export class GameManager {
     }
     this.pendingPath = null;
     if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+  }
+
+  private tryReanchorPredictedPathToAuthority(serverX: number, serverZ: number): boolean {
+    const dest = this.predictedPathDestination;
+    if (!dest) return false;
+    if (this.pathIndex >= this.path.length) return false;
+    if (this.predictedPathAuthorityReanchorAttempts >= GameManager.AUTHORITY_REANCHOR_MAX_ATTEMPTS) return false;
+
+    const path = findPath(
+      serverX,
+      serverZ,
+      dest.x,
+      dest.z,
+      this.isTileBlocked,
+      this.chunkManager.getMapWidth(),
+      this.chunkManager.getMapHeight(),
+      GameManager.AUTHORITY_REANCHOR_MAX_SEARCH_TILES,
+      this.isWallBlockedForPath,
+    );
+    if (!this.pathReachesGoal(path, dest.x, dest.z)) return false;
+
+    const prevLogicalX = this.playerX;
+    const prevLogicalZ = this.playerZ;
+    this.playerX = serverX;
+    this.playerZ = serverZ;
+    this.path = path;
+    this.pathIndex = 0;
+    this.tileProgress = 0;
+    this.pendingPath = null;
+    this.setTileFrom(serverX, serverZ);
+    this.predictedPathAuthorityReanchorAttempts++;
+
+    const dragDist = Math.hypot(prevLogicalX - serverX, prevLogicalZ - serverZ);
+    const slideMs = Math.min(
+      Math.max((dragDist / Math.max(this.moveSpeed, 0.1)) * 1000 * 1.25, TICK_RATE),
+      2400,
+    );
+    this.beginVisualSlide(prevLogicalX, prevLogicalZ, slideMs);
+    if (!this.localPlayer?.isWalking()) this.localPlayer?.startWalking();
+    return true;
   }
 
   private usesCornerObjectInteraction(def: WorldObjectDef, hasInteractionMask: boolean = false): boolean {
@@ -7828,6 +7877,8 @@ export class GameManager {
   private finishPredictedPathArrival(): void {
     this.clearControlledMoveLock();
     this.tileProgress = 0;
+    this.predictedPathDestination = null;
+    this.predictedPathAuthorityReanchorAttempts = 0;
     if (this.destMarker) this.destMarker.isVisible = false;
     this.minimap?.clearDestination();
     this.localPlayer?.stopWalking();
