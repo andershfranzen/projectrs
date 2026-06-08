@@ -23,6 +23,16 @@ const RETIRED_RESOURCE_ITEM_IDS = [46, 47, 57] as const;
 const RETIRED_RESOURCE_OBJECT_IDS = [17, 18] as const;
 const HISCORE_EXCLUDED_USERNAMES = new Set(['blackberry']);
 const VALID_STANCES = new Set<string>(STANCE_KEYS);
+const STARTER_INVENTORY = [
+  { itemId: 31, quantity: 1 },  // Bronze Axe
+  { itemId: 33, quantity: 1 },  // Bronze Pickaxe
+  { itemId: 67, quantity: 1 },  // Bronze Square Shield
+  { itemId: 58, quantity: 1 },  // Bronze Dagger
+  { itemId: 231, quantity: 1 }, // Cooked Rice
+  { itemId: 231, quantity: 1 }, // Cooked Rice
+  { itemId: 231, quantity: 1 }, // Cooked Rice
+  { itemId: 10, quantity: 30 }, // Coins
+] as const;
 const FORUM_DEFAULT_CATEGORIES = [
   { slug: 'announcements', name: 'Announcements', description: 'Official EvilQuest news and notices.', staffOnly: 1 },
   { slug: 'general', name: 'General', description: 'Talk about EvilQuest and the wider community.', staffOnly: 0 },
@@ -38,6 +48,10 @@ function envBoundedInteger(name: string, fallback: number, min: number, max: num
   const value = raw == null || raw.trim() === '' ? fallback : Number(raw);
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, Math.floor(value)));
+}
+
+function starterInventoryJson(): string {
+  return JSON.stringify(STARTER_INVENTORY);
 }
 
 // A post is auto-hidden (pending staff review) once this many distinct accounts
@@ -1882,10 +1896,7 @@ export class GameDatabase {
     // Race-safe: the count+insert pair runs inside a single IMMEDIATE
     // transaction so two concurrent "mogn" signups can't both see zero admins
     // and both get is_admin=1. SQLite serializes IMMEDIATE writes.
-    const starterInventory = JSON.stringify([
-      { itemId: 31, quantity: 1 },
-      { itemId: 33, quantity: 1 }
-    ]);
+    const starterInventory = starterInventoryJson();
     const wantsAdmin = username.toLowerCase() === 'mogn';
     let accountId = 0;
     let isAdmin = 0;
@@ -1918,10 +1929,7 @@ export class GameDatabase {
   }
 
   loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean; isModerator: boolean } {
-    const starterInventory = JSON.stringify([
-      { itemId: 31, quantity: 1 },
-      { itemId: 33, quantity: 1 }
-    ]);
+    const starterInventory = starterInventoryJson();
     let accountId = 0;
     let normalizedUsername = username.toLowerCase();
     let isAdmin = 0;
