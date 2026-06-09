@@ -1459,15 +1459,15 @@ export class AdminPanel {
   }
 
   private accountBanTitle(ban: AdminAccountBan): string {
-    return `Account banned ${this.formatBanExpiry(ban.expiresAt)} by ${ban.bannedBy || 'unknown'}${ban.reason ? `: ${ban.reason}` : ''}`;
+    return `Account ban ${this.formatModerationExpiry(ban.expiresAt)} by ${ban.bannedBy || 'unknown'}${ban.reason ? `: ${ban.reason}` : ''}`;
   }
 
   private ipBanTitle(ban: AdminIpBan): string {
-    return `IP banned ${this.formatBanExpiry(ban.expiresAt)} by ${ban.bannedBy || 'unknown'}${ban.reason ? `: ${ban.reason}` : ''}`;
+    return `IP ban ${this.formatModerationExpiry(ban.expiresAt)} by ${ban.bannedBy || 'unknown'}${ban.reason ? `: ${ban.reason}` : ''}`;
   }
 
   private muteTitle(mute: AdminAccountMute): string {
-    return `Muted ${this.formatBanExpiry(mute.expiresAt)} by ${mute.mutedBy || 'unknown'}${mute.reason ? `: ${mute.reason}` : ''}`;
+    return `Mute ${this.formatModerationExpiry(mute.expiresAt)} by ${mute.mutedBy || 'unknown'}${mute.reason ? `: ${mute.reason}` : ''}`;
   }
 
   private eventTypeLabel(type: string): string {
@@ -1662,6 +1662,11 @@ export class AdminPanel {
   private formatBanExpiry(unixSeconds: number | null): string {
     if (unixSeconds === null) return 'permanent';
     return this.formatTime(unixSeconds);
+  }
+
+  private formatModerationExpiry(unixSeconds: number | null): string {
+    if (unixSeconds === null) return 'permanent';
+    return `until ${this.formatTime(unixSeconds)}`;
   }
 
   private formatMinutes(minutes: number): string {
