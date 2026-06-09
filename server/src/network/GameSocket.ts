@@ -333,6 +333,88 @@ export function opcodeRequiresBrowserInputTelemetry(opcode: number, values: numb
   }
 }
 
+function gameplayCommandTimingSignature(opcode: number, values: number[]): string {
+  const v = (index: number, fallback: string = '?'): string => {
+    const value = values[index];
+    return Number.isFinite(value) ? String(Math.floor(value)) : fallback;
+  };
+
+  switch (opcode) {
+    case ClientOpcode.PLAYER_MOVE: {
+      const pathLength = values[0];
+      if (!Number.isInteger(pathLength) || pathLength <= 0) return 'move:empty';
+      const capped = Math.min(pathLength, 50);
+      const x = values[1 + (capped - 1) * 2];
+      const z = values[1 + (capped - 1) * 2 + 1];
+      if (!Number.isFinite(x) || !Number.isFinite(z)) return 'move:bad-dest';
+      return `move:${Math.floor(x / 10)},${Math.floor(z / 10)}`;
+    }
+    case ClientOpcode.PLAYER_ATTACK_NPC:
+      return `attack-npc:${v(0)}`;
+    case ClientOpcode.PLAYER_EXAMINE_NPC:
+      return `examine-npc:${v(0)}`;
+    case ClientOpcode.PLAYER_TALK_NPC:
+      return `talk-npc:${v(0)}`;
+    case ClientOpcode.PLAYER_FOLLOW:
+      return `follow:${v(0)}`;
+    case ClientOpcode.PLAYER_PICKUP_ITEM:
+      return `pickup:${v(0)}`;
+    case ClientOpcode.PLAYER_INTERACT_OBJECT:
+      return `object:${v(0)}:${v(1, '0')}:${v(2, '-1')}`;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_OBJECT:
+      return `item-object:${v(1)}:${v(2)}`;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_NPC:
+      return `item-npc:${v(1)}:${v(2)}`;
+    case ClientOpcode.PLAYER_USE_ITEM_ON_ITEM:
+      return `item-item:${v(1)}:${v(3)}:${v(5, '0')}`;
+    case ClientOpcode.PLAYER_DROP_ITEM:
+    case ClientOpcode.PLAYER_DELETE_ITEM:
+    case ClientOpcode.PLAYER_EQUIP_ITEM:
+    case ClientOpcode.PLAYER_EAT_ITEM:
+      return `inv:${opcode}:${v(0)}:${v(1)}`;
+    case ClientOpcode.PLAYER_UNEQUIP_ITEM:
+      return `unequip:${v(0)}`;
+    case ClientOpcode.PLAYER_BUY_ITEM:
+      return `buy:${v(0)}:${v(1, '1')}`;
+    case ClientOpcode.PLAYER_SELL_ITEM:
+      return `sell:${v(0)}:${v(2)}:${v(1, '1')}`;
+    case ClientOpcode.PLAYER_MOVE_INV_ITEM:
+      return `move-inv:${v(0)}:${v(1)}:${v(2)}`;
+    case ClientOpcode.DIALOGUE_CHOOSE:
+      return `dialogue-choice:${v(0)}:${v(1)}:${v(2, v(1))}`;
+    case ClientOpcode.DIALOGUE_CLOSE:
+      return `dialogue-close:${v(0)}:${v(1)}`;
+    case ClientOpcode.BANK_DEPOSIT:
+    case ClientOpcode.BANK_WITHDRAW:
+    case ClientOpcode.BANK_DELETE:
+      return `bank:${opcode}:${v(0)}:${v(1)}`;
+    case ClientOpcode.BANK_MOVE_ITEM:
+      return `bank-move:${v(0)}:${v(1)}:${v(2)}`;
+    case ClientOpcode.BANK_SET_WITHDRAW_MODE:
+      return `bank-mode:${v(0)}`;
+    case ClientOpcode.TRADE_REQUEST:
+    case ClientOpcode.TRADE_ACCEPT_REQUEST:
+    case ClientOpcode.DUEL_REQUEST:
+    case ClientOpcode.DUEL_ACCEPT_REQUEST:
+      return `player-target:${opcode}:${v(0)}`;
+    case ClientOpcode.TRADE_OFFER_ITEM:
+    case ClientOpcode.TRADE_REMOVE_OFFERED:
+    case ClientOpcode.DUEL_STAKE_ITEM:
+    case ClientOpcode.DUEL_REMOVE_STAKE:
+      return `offer:${opcode}:${v(0)}:${v(1)}`;
+    case ClientOpcode.PLAYER_CAST_SPELL:
+      return `cast:${v(0)}:${v(1)}`;
+    case ClientOpcode.PLAYER_SET_AUTOCAST:
+      return `autocast:${v(0)}`;
+    case ClientOpcode.PLAYER_SET_STANCE:
+    case ClientOpcode.PLAYER_SET_MAGIC_STANCE:
+    case ClientOpcode.PLAYER_SET_AUTO_RETALIATE:
+      return `combat-ui:${opcode}:${v(0)}`;
+    default:
+      return `${opcode}:${values.slice(0, 3).map(value => Number.isFinite(value) ? Math.floor(value) : '?').join(':')}`;
+  }
+}
+
 export function getOpcodeRateRule(opcode: number): OpcodeRateRule {
   switch (opcode) {
     case ClientOpcode.PLAYER_MOVE:
@@ -1167,6 +1249,7 @@ function handleDecryptedGameSocketMessage(
     const hasRecentInput = player.botStats.hasRecentBrowserInput(now, BROWSER_INPUT_MAX_AGE_MS);
     const hasRecentActivity = player.botStats.hasRecentClientActivity(now, BROWSER_INPUT_MAX_AGE_MS);
     player.botStats.recordGameplayCommandInputCheck(hasRecentInput, hasRecentActivity);
+    player.botStats.recordGameplayCommandTiming(gameplayCommandTimingSignature(opcode, values), now);
     if (!hasRecentInput && BLOCK_INPUTLESS_GAMEPLAY) {
       magicOpcodeDebug(player, opcode, values, 'input-telemetry-failed');
       reportSuspiciousPacket(player, opcode, 'missing-input-telemetry', values, ws, world);

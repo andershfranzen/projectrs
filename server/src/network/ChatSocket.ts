@@ -16,6 +16,13 @@ function recordGameEvent(world: World, input: GameEventLogInput): void {
   if (typeof recorder === 'function') recorder.call(db, input);
 }
 
+function mutedMessage(reason: string, expiresAt: number | null): string {
+  const suffix = reason ? ` Reason: ${reason}` : '';
+  if (expiresAt === null) return `You are muted permanently.${suffix}`;
+  const until = new Date(expiresAt * 1000).toLocaleString();
+  return `You are muted until ${until}.${suffix}`;
+}
+
 /** Reject a command from a non-admin and notify them. Returns true if blocked.
  *  Admin status is bound at WS upgrade time from the DB (accounts.is_admin),
  *  so this is just a flag check — no per-message DB hit. */
@@ -150,6 +157,11 @@ function sendPrivateMessage(
 ): void {
   const msg = rawMessage.trim().slice(0, 200);
   if (!msg) return;
+  const mute = world.db.isAccountMuted(ws.data.accountId);
+  if (mute) {
+    sendSystem(ws, mutedMessage(mute.reason, mute.expiresAt));
+    return;
+  }
   const normalizedTarget = targetName.trim();
   if (!normalizedTarget) {
     sendSystem(ws, 'Choose a player to message.');
@@ -315,6 +327,12 @@ export function handleChatSocketMessage(
           },
         });
         handleCommand(ws, from, msg, world);
+        return;
+      }
+
+      const mute = world.db.isAccountMuted(ws.data.accountId);
+      if (mute) {
+        sendSystem(ws, mutedMessage(mute.reason, mute.expiresAt));
         return;
       }
 

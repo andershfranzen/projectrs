@@ -33,13 +33,19 @@ const MAX_TICK_ALIGN_SAMPLES = 100;
 const MAX_REACTION_SAMPLES = 50;
 const MAX_PING_INTERVAL_SAMPLES = 100;
 const MAX_ACTIVITY_INTERVAL_SAMPLES = 100;
+const MAX_GAMEPLAY_COMMAND_INTERVAL_SAMPLES = 120;
+const MAX_GAMEPLAY_COMMAND_PATTERN_EVENTS = 160;
 const MAX_PATH_DESTINATIONS = 100;
 const MAX_ACTION_SIGNATURES = 100;
+const MAX_COMMAND_TIMING_SIGNATURES = 80;
 const MAX_CURSOR_CELLS = 64;
 const MAX_SUSPICIOUS_REASONS = 80;
 const MAX_SESSION_HISTORY = 12;
 const ACTION_ROUTE_MEMORY_MS = 10_000;
 const HEARTBEAT_ACTIVITY_COUPLING_MS = 350;
+const MIN_COMMAND_TIMING_INTERVAL_MS = 250;
+const MAX_COMMAND_TIMING_INTERVAL_MS = 60_000;
+const COMMAND_INTERVAL_PATTERN_BIN_MS = 100;
 const MIN_MEANINGFUL_SESSION_MINUTES = 5;
 const MIN_ROUTE_ACTION_LOOP_SIGNATURES = 20;
 const MIN_XP_VELOCITY_SESSION_MINUTES = 5;
@@ -133,6 +139,16 @@ export interface SessionSummary {
   pingIntervalMedianMs: number | null;
   activityIntervalStdDevMs: number | null;
   activityIntervalMedianMs: number | null;
+  gameplayCommandIntervalSamples: number;
+  gameplayCommandIntervalStdDevMs: number | null;
+  gameplayCommandIntervalMedianMs: number | null;
+  sameCommandIntervalSamples: number;
+  sameCommandIntervalStdDevMs: number | null;
+  sameCommandIntervalMedianMs: number | null;
+  gameplayCommandPatternEvents: number;
+  gameplayCommandIntervalPatternEvents: number;
+  gameplayCommandSequencePatternRatio: number | null;
+  gameplayCommandIntervalPatternRatio: number | null;
   activitySeqResets: number;
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
@@ -155,6 +171,9 @@ export interface SessionSummary {
   actionsPerChat: number | null;
   longSessionCount: number;
   xpPerHour: Record<string, number>;
+  evidenceFlags: string[];
+  contextFlags: string[];
+  diagnosticFlags: string[];
   flags: string[];
   riskScore: number;
   riskLevel: BotRiskLevel;
@@ -196,6 +215,10 @@ export class BotStats {
   reactionSamples: number[] = [];
   pingIntervalSamples: number[] = [];
   activityIntervalSamples: number[] = [];
+  gameplayCommandIntervalSamples: number[] = [];
+  sameCommandIntervalSamples: number[] = [];
+  gameplayCommandPatternSignatures: string[] = [];
+  gameplayCommandIntervalBins: number[] = [];
   pathDestinations: Map<string, number> = new Map();
   actionSignatures: Map<string, number> = new Map();
   deviceIds: Map<string, number> = new Map();
@@ -249,6 +272,8 @@ export class BotStats {
   private lastActivitySeq: number | null = null;
   private activitySeqResets: number = 0;
   private lastCursorAt: number | null = null;
+  private lastGameplayCommandAt: number | null = null;
+  private commandTimingSignatures: Map<string, number> = new Map();
   private lastCoupledActivityAt: number | null = null;
   private lastActiveGameplayAt: number | null = null;
   private awaitingPostDeathMovement: boolean = false;
@@ -393,6 +418,12 @@ export class BotStats {
     this.lastActivitySeq = null;
     this.activitySeqResets = 0;
     this.lastCursorAt = null;
+    this.lastGameplayCommandAt = null;
+    this.commandTimingSignatures.clear();
+    this.gameplayCommandIntervalSamples = [];
+    this.sameCommandIntervalSamples = [];
+    this.gameplayCommandPatternSignatures = [];
+    this.gameplayCommandIntervalBins = [];
     this.lastCoupledActivityAt = null;
     this.lastActiveGameplayAt = null;
     this.awaitingPostDeathMovement = false;
@@ -642,6 +673,53 @@ export class BotStats {
     }
   }
 
+  /** Record timing for validated gameplay commands. This uses server receive
+   *  time, not client-reported DOM timing, so a modified client cannot simply
+   *  lie about click cadence. Short packet pairs from one click are ignored. */
+  recordGameplayCommandTiming(signature: string, now: number = performance.now()): void {
+    if (!Number.isFinite(now)) return;
+    if (this.lastGameplayCommandAt !== null) {
+      const interval = now - this.lastGameplayCommandAt;
+      if (this.recordCommandInterval(this.gameplayCommandIntervalSamples, interval)) {
+        this.pushCommandIntervalPatternBin(interval);
+      }
+    }
+    this.lastGameplayCommandAt = now;
+
+    const cleanSignature = sanitizeSignaturePart(signature, 96);
+    this.gameplayCommandPatternSignatures.push(cleanSignature);
+    if (this.gameplayCommandPatternSignatures.length > MAX_GAMEPLAY_COMMAND_PATTERN_EVENTS) {
+      this.gameplayCommandPatternSignatures.shift();
+    }
+    const previousForSignature = this.commandTimingSignatures.get(cleanSignature);
+    if (previousForSignature !== undefined) {
+      this.recordCommandInterval(this.sameCommandIntervalSamples, now - previousForSignature);
+    } else if (this.commandTimingSignatures.size >= MAX_COMMAND_TIMING_SIGNATURES) {
+      const oldest = this.commandTimingSignatures.keys().next().value;
+      if (oldest !== undefined) this.commandTimingSignatures.delete(oldest);
+    }
+    this.commandTimingSignatures.set(cleanSignature, now);
+  }
+
+  private recordCommandInterval(samples: number[], interval: number): boolean {
+    if (
+      interval >= MIN_COMMAND_TIMING_INTERVAL_MS
+      && interval <= MAX_COMMAND_TIMING_INTERVAL_MS
+    ) {
+      this.pushSample(samples, interval, MAX_GAMEPLAY_COMMAND_INTERVAL_SAMPLES);
+      return true;
+    }
+    return false;
+  }
+
+  private pushCommandIntervalPatternBin(interval: number): void {
+    const bin = Math.round(interval / COMMAND_INTERVAL_PATTERN_BIN_MS);
+    this.gameplayCommandIntervalBins.push(bin);
+    if (this.gameplayCommandIntervalBins.length > MAX_GAMEPLAY_COMMAND_PATTERN_EVENTS) {
+      this.gameplayCommandIntervalBins.shift();
+    }
+  }
+
   recordSuspiciousPacket(reason: string = 'unknown'): void {
     this.totalSuspiciousPackets++;
     this.sessionSuspiciousPackets++;
@@ -682,6 +760,12 @@ export class BotStats {
     const pingIntervalMedianMs = median(this.pingIntervalSamples);
     const activityIntervalStdDevMs = stdDev(this.activityIntervalSamples);
     const activityIntervalMedianMs = median(this.activityIntervalSamples);
+    const gameplayCommandIntervalStdDevMs = stdDev(this.gameplayCommandIntervalSamples);
+    const gameplayCommandIntervalMedianMs = median(this.gameplayCommandIntervalSamples);
+    const sameCommandIntervalStdDevMs = stdDev(this.sameCommandIntervalSamples);
+    const sameCommandIntervalMedianMs = median(this.sameCommandIntervalSamples);
+    const gameplayCommandSequencePatternRatio = maxLagMatchRatio(this.gameplayCommandPatternSignatures, 2, 8);
+    const gameplayCommandIntervalPatternRatio = maxLagMatchRatio(this.gameplayCommandIntervalBins, 2, 8);
     const topPathRepetition = topRatio(this.sessionPathDestinations);
     const topPostDeathDestinationRepetition = topRatio(this.sessionPostDeathDestinations);
     const topActionLoopRepetition = topRatio(this.sessionActionSignatures);
@@ -763,6 +847,36 @@ export class BotStats {
       && activityIntervalStdDevMs < 75
     ) {
       flags.push('activityRegular');
+    }
+    if (
+      this.gameplayCommandIntervalSamples.length >= 24
+      && gameplayCommandIntervalStdDevMs !== null
+      && gameplayCommandIntervalMedianMs !== null
+      && gameplayCommandIntervalStdDevMs < 65
+    ) {
+      flags.push('gameplayCommandCadenceRegular');
+    }
+    if (
+      this.sameCommandIntervalSamples.length >= 12
+      && sameCommandIntervalStdDevMs !== null
+      && sameCommandIntervalMedianMs !== null
+      && sameCommandIntervalStdDevMs < 75
+    ) {
+      flags.push('sameCommandCadenceRegular');
+    }
+    if (
+      this.gameplayCommandPatternSignatures.length >= 30
+      && gameplayCommandSequencePatternRatio !== null
+      && gameplayCommandSequencePatternRatio >= 0.85
+    ) {
+      flags.push('gameplayCommandSequencePattern');
+    }
+    if (
+      this.gameplayCommandIntervalBins.length >= 24
+      && gameplayCommandIntervalPatternRatio !== null
+      && gameplayCommandIntervalPatternRatio >= 0.85
+    ) {
+      flags.push('gameplayCommandIntervalPattern');
     }
     if (this.activitySeqResets >= 2) {
       flags.push('activitySeqReset');
@@ -932,8 +1046,12 @@ export class BotStats {
       }
     }
 
+    const signalFlags = flags;
+    const { evidenceFlags, contextFlags, diagnosticFlags } = categorizeSignalFlags(signalFlags);
+
     const risk = computeBotRiskProfile({
-      flags,
+      flags: signalFlags,
+      evidenceFlags,
       sessionMinutes,
       sessionChats: this.sessionChats,
       sessionActivityEvents: this.sessionActivityEvents,
@@ -969,6 +1087,14 @@ export class BotStats {
       pingIntervalStdDevMs,
       pingSeqResets: this.pingSeqResets,
       activityIntervalStdDevMs,
+      gameplayCommandIntervalSamples: this.gameplayCommandIntervalSamples.length,
+      gameplayCommandIntervalStdDevMs,
+      sameCommandIntervalSamples: this.sameCommandIntervalSamples.length,
+      sameCommandIntervalStdDevMs,
+      gameplayCommandPatternEvents: this.gameplayCommandPatternSignatures.length,
+      gameplayCommandIntervalPatternEvents: this.gameplayCommandIntervalBins.length,
+      gameplayCommandSequencePatternRatio,
+      gameplayCommandIntervalPatternRatio,
       activitySeqResets: this.activitySeqResets,
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
@@ -1036,6 +1162,16 @@ export class BotStats {
       pingIntervalMedianMs,
       activityIntervalStdDevMs,
       activityIntervalMedianMs,
+      gameplayCommandIntervalSamples: this.gameplayCommandIntervalSamples.length,
+      gameplayCommandIntervalStdDevMs,
+      gameplayCommandIntervalMedianMs,
+      sameCommandIntervalSamples: this.sameCommandIntervalSamples.length,
+      sameCommandIntervalStdDevMs,
+      sameCommandIntervalMedianMs,
+      gameplayCommandPatternEvents: this.gameplayCommandPatternSignatures.length,
+      gameplayCommandIntervalPatternEvents: this.gameplayCommandIntervalBins.length,
+      gameplayCommandSequencePatternRatio,
+      gameplayCommandIntervalPatternRatio,
       activitySeqResets: this.activitySeqResets,
       heartbeatActivityCouplingRatio,
       inputlessCommandRatio,
@@ -1058,7 +1194,10 @@ export class BotStats {
       actionsPerChat,
       longSessionCount,
       xpPerHour,
-      flags,
+      evidenceFlags,
+      contextFlags,
+      diagnosticFlags,
+      flags: evidenceFlags,
       riskScore: risk.score,
       riskLevel: risk.level,
       riskReasons: risk.reasons,
@@ -1086,7 +1225,7 @@ export class BotStats {
   finalize(db: GameDatabase, accountId: number, currentXp: Record<string, number>, tick: number): SessionSummary {
     const summary = this.computeSummary(currentXp);
     this.totalSessionMinutes += summary.sessionMinutes;
-    this.totalFlagEvents += summary.flags.length;
+    this.totalFlagEvents += summary.evidenceFlags.length;
     const entry: SessionHistoryEntry = {
       ...summary,
       finalizedAt: Math.floor(Date.now() / 1000),
@@ -1171,8 +1310,82 @@ function topRatio(destinations: Map<string, number>): number | null {
   return total > 0 ? max / total : null;
 }
 
+function maxLagMatchRatio<T>(values: readonly T[], minLag: number, maxLag: number): number | null {
+  const safeMinLag = Math.max(1, Math.floor(minLag));
+  const safeMaxLag = Math.max(safeMinLag, Math.floor(maxLag));
+  if (values.length < safeMinLag * 4) return null;
+
+  let best: number | null = null;
+  for (let lag = safeMinLag; lag <= safeMaxLag && lag < values.length; lag++) {
+    const comparisons = values.length - lag;
+    if (comparisons < lag * 3) continue;
+    let matches = 0;
+    for (let i = lag; i < values.length; i++) {
+      if (values[i] === values[i - lag]) matches++;
+    }
+    const ratio = comparisons > 0 ? matches / comparisons : 0;
+    best = best === null ? ratio : Math.max(best, ratio);
+  }
+  return best;
+}
+
+const EVIDENCE_SIGNAL_FLAGS = new Set([
+  'protocolPackets',
+  'rateLimitPackets',
+  'automationInvalidPackets',
+  'lifetimeHardInvalidPackets',
+  'deviceRotating',
+  'gameplayCommandCadenceRegular',
+  'sameCommandCadenceRegular',
+  'gameplayCommandIntervalPattern',
+  'mapDataScrape',
+  'browserlessActiveGameplay',
+  'commandsWithoutRecentInput',
+  'commandsWithoutRecentActivity',
+  'fastReaction',
+]);
+
+const DIAGNOSTIC_SIGNAL_FLAGS = new Set([
+  'tickAligned',
+  'pingRegular',
+  'pingSeqReset',
+  'activityHeartbeatCoupled',
+  'activityRegular',
+  'activitySeqReset',
+  'legacyActivityTelemetry',
+  'noClientActivityTelemetry',
+  'noCursorTelemetry',
+  'cursorStatic',
+]);
+
+function normalizeSignalFlag(flag: string): string {
+  return flag.includes(':') ? flag.split(':')[0] : flag;
+}
+
+function isEvidenceSignalFlag(flag: string): boolean {
+  return flag.startsWith('xpVelocity:') || EVIDENCE_SIGNAL_FLAGS.has(flag);
+}
+
+function categorizeSignalFlags(signalFlags: string[]): {
+  evidenceFlags: string[];
+  contextFlags: string[];
+  diagnosticFlags: string[];
+} {
+  const evidenceFlags: string[] = [];
+  const contextFlags: string[] = [];
+  const diagnosticFlags: string[] = [];
+  for (const flag of signalFlags) {
+    const normalized = normalizeSignalFlag(flag);
+    if (isEvidenceSignalFlag(flag)) evidenceFlags.push(flag);
+    else if (DIAGNOSTIC_SIGNAL_FLAGS.has(normalized)) diagnosticFlags.push(flag);
+    else contextFlags.push(flag);
+  }
+  return { evidenceFlags, contextFlags, diagnosticFlags };
+}
+
 interface BotRiskInput {
   flags: string[];
+  evidenceFlags: string[];
   sessionMinutes: number;
   sessionChats: number;
   sessionSkillingActions: number;
@@ -1208,6 +1421,14 @@ interface BotRiskInput {
   pingIntervalStdDevMs: number | null;
   pingSeqResets: number;
   activityIntervalStdDevMs: number | null;
+  gameplayCommandIntervalSamples: number;
+  gameplayCommandIntervalStdDevMs: number | null;
+  sameCommandIntervalSamples: number;
+  sameCommandIntervalStdDevMs: number | null;
+  gameplayCommandPatternEvents: number;
+  gameplayCommandIntervalPatternEvents: number;
+  gameplayCommandSequencePatternRatio: number | null;
+  gameplayCommandIntervalPatternRatio: number | null;
   activitySeqResets: number;
   heartbeatActivityCouplingRatio: number | null;
   inputlessCommandRatio: number | null;
@@ -1243,7 +1464,8 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     score += points;
     reasons.push(`${reason} (+${points})`);
   };
-  const flagSet = new Set(input.flags.map((f) => f.includes(':') ? f.split(':')[0] : f));
+  const flagSet = new Set(input.flags.map(normalizeSignalFlag));
+  const evidenceFlagSet = new Set(input.evidenceFlags.map(normalizeSignalFlag));
 
   if (flagSet.has('tickAligned') && (flagSet.has('routeActionLoop') || flagSet.has('lifetimeRouteActionLoop') || flagSet.has('fastReaction'))) {
     add(6, `server-tick alignment paired with behavioral loop (${input.tickAlignStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
@@ -1252,6 +1474,22 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('pingSeqReset')) add(10, `heartbeat sequence resets (${input.pingSeqResets})`);
   if (flagSet.has('activityHeartbeatCoupled')) add(20, `activity packets coupled to heartbeat (${ratioLabel(input.heartbeatActivityCouplingRatio)})`);
   if (flagSet.has('activityRegular')) add(18, `script-regular activity timing (${input.activityIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
+  if (flagSet.has('gameplayCommandCadenceRegular')) add(
+    16,
+    `script-regular gameplay command cadence (${input.gameplayCommandIntervalSamples} samples, ${input.gameplayCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`,
+  );
+  if (flagSet.has('sameCommandCadenceRegular')) add(
+    32,
+    `script-regular repeated command cadence (${input.sameCommandIntervalSamples} samples, ${input.sameCommandIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`,
+  );
+  if (flagSet.has('gameplayCommandSequencePattern')) add(
+    10,
+    `repeated gameplay command sequence (${input.gameplayCommandPatternEvents} commands, top lag ${ratioLabel(input.gameplayCommandSequencePatternRatio)})`,
+  );
+  if (flagSet.has('gameplayCommandIntervalPattern')) add(
+    30,
+    `repeated gameplay interval pattern (${input.gameplayCommandIntervalPatternEvents} intervals, top lag ${ratioLabel(input.gameplayCommandIntervalPatternRatio)})`,
+  );
   if (flagSet.has('activitySeqReset')) add(8, `activity sequence resets (${input.activitySeqResets})`);
   if (flagSet.has('legacyActivityTelemetry')) add(
     10,
@@ -1261,24 +1499,28 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     46,
     `active gameplay without browser input telemetry (${input.sessionSkillingActions + input.sessionCombatSwings + input.sessionMovements} actions)`,
   );
-  if (flagSet.has('inputlessCommandBurst')) add(28, `gameplay commands before browser input telemetry (${input.sessionInputlessCommands})`);
+  if (flagSet.has('inputlessCommandBurst') && !flagSet.has('commandsWithoutRecentInput')) {
+    add(28, `gameplay commands before browser input telemetry (${input.sessionInputlessCommands})`);
+  }
   if (flagSet.has('commandsWithoutRecentInput')) add(
     34,
     `gameplay commands without recent browser input (${input.sessionCommandsWithoutRecentInput}/${input.sessionGameplayCommands})`,
   );
   if (flagSet.has('commandsWithoutRecentActivity')) add(
-    42,
+    52,
     `gameplay commands without recent browser activity (${input.sessionCommandsWithoutRecentActivity}/${input.sessionGameplayCommands})`,
   );
-  if (flagSet.has('inputlessCommandRatio')) add(
+  if (flagSet.has('inputlessCommandRatio') && !flagSet.has('commandsWithoutRecentInput')) add(
     18,
     `high no-input gameplay command ratio (${ratioLabel(input.inputlessCommandRatio)})`,
   );
-  if (flagSet.has('activitylessCommandRatio')) add(
+  if (flagSet.has('activitylessCommandRatio') && !flagSet.has('commandsWithoutRecentActivity')) add(
     22,
     `high no-activity gameplay command ratio (${ratioLabel(input.activitylessCommandRatio)})`,
   );
-  if (flagSet.has('noClientActivityTelemetry')) add(12, 'active session without client activity telemetry');
+  if (flagSet.has('noClientActivityTelemetry') && !flagSet.has('commandsWithoutRecentActivity')) {
+    add(12, 'active session without client activity telemetry');
+  }
   if (flagSet.has('deviceRotating')) add(24, `rotating browser device IDs (${input.deviceIdsSeen} seen)`);
   if (flagSet.has('noChat')) add(8, 'long active session with no chat');
   if (flagSet.has('pathRepetitive')) add(8, `repetitive movement destination (${ratioLabel(input.topPathRepetition)})`);
@@ -1308,7 +1550,9 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     `lifetime path concentration (${ratioLabel(input.topLifetimePathRepetition)} over ${input.lifetimeActiveActions} actions)`,
   );
   if (flagSet.has('lifetimeRouteActionLoop')) add(10, `lifetime route/action loop (${ratioLabel(input.topLifetimeActionLoopRepetition)})`);
-  if (flagSet.has('noCursorTelemetry')) add(4, 'active session without cursor telemetry');
+  if (flagSet.has('noCursorTelemetry') && !flagSet.has('browserlessActiveGameplay')) {
+    add(4, 'active session without cursor telemetry');
+  }
   if (flagSet.has('cursorStatic')) add(10, `static cursor telemetry (${ratioLabel(input.topCursorCellRepetition)})`);
   if (flagSet.has('marathonSession')) add(10, `marathon session (${input.sessionMinutes} minutes)`);
   if (flagSet.has('marathonNoIdleBreaks')) add(
@@ -1345,6 +1589,10 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
 
   if (flagSet.has('activityHeartbeatCoupled') && flagSet.has('pingRegular')) add(8, 'heartbeat cadence controls activity cadence');
   if (flagSet.has('activityRegular') && flagSet.has('routeActionLoop')) add(8, 'regular activity cadence during repeated route/action loop');
+  if (flagSet.has('sameCommandCadenceRegular') && flagSet.has('routeActionLoop')) add(10, 'regular click cadence during repeated route/action loop');
+  if (flagSet.has('gameplayCommandCadenceRegular') && flagSet.has('activityRegular')) add(6, 'regular gameplay commands match regular activity telemetry');
+  if (flagSet.has('gameplayCommandSequencePattern') && flagSet.has('gameplayCommandIntervalPattern')) add(12, 'repeated command sequence with repeated interval pattern');
+  if (flagSet.has('gameplayCommandIntervalPattern') && flagSet.has('routeActionLoop')) add(8, 'repeated interval pattern during route/action loop');
   if (flagSet.has('noIdleBreaks') && flagSet.has('routeActionLoop')) add(4, 'no idle breaks during repeated route/action loop');
   if (flagSet.has('marathonNoIdleBreaks') && flagSet.has('activityRegular')) add(6, 'script-regular activity over a no-break marathon');
   if (flagSet.has('legacyActivityTelemetry') && flagSet.has('commandsWithoutRecentActivity')) add(6, 'legacy activity telemetry still missing near gameplay commands');
@@ -1356,14 +1604,20 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
   if (flagSet.has('browserlessActiveGameplay') && flagSet.has('routeActionLoop')) add(10, 'browserless repeated route/action loop');
   if (flagSet.has('noCursorTelemetry') && flagSet.has('routeActionLoop')) add(4, 'repeated route/action loop without cursor input');
   if (flagSet.has('commandsWithoutRecentInput') && flagSet.has('browserlessActiveGameplay')) add(8, 'raw socket commands during browserless gameplay');
-  if (flagSet.has('commandsWithoutRecentActivity') && flagSet.has('noClientActivityTelemetry')) add(8, 'gameplay commands without browser activity telemetry');
+  if (
+    flagSet.has('commandsWithoutRecentActivity')
+    && flagSet.has('noClientActivityTelemetry')
+    && !flagSet.has('browserlessActiveGameplay')
+  ) {
+    add(8, 'gameplay commands without browser activity telemetry');
+  }
   if (xpVelocitySkills.length > 0 && flagSet.has('noChat')) add(6, 'high XP velocity with no social activity');
 
   if (input.sessionMinutes >= 240 && input.sessionChats === 0 && input.sessionMovements >= 100) {
     add(6, 'multi-hour silent movement-heavy session');
   }
 
-  if (!hasHardBotEvidence(flagSet)) {
+  if (!hasHardBotEvidence(evidenceFlagSet)) {
     score = Math.min(score, 29);
   }
 
@@ -1376,17 +1630,16 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
 }
 
 function hasHardBotEvidence(flagSet: Set<string>): boolean {
-  return flagSet.has('activityHeartbeatCoupled')
-    || flagSet.has('activityRegular')
+  return flagSet.has('gameplayCommandCadenceRegular')
+    || flagSet.has('sameCommandCadenceRegular')
+    || flagSet.has('gameplayCommandIntervalPattern')
     || flagSet.has('browserlessActiveGameplay')
     || flagSet.has('commandsWithoutRecentInput')
     || flagSet.has('commandsWithoutRecentActivity')
     || flagSet.has('deviceRotating')
-    || flagSet.has('inputlessCommandBurst')
-    || flagSet.has('inputlessCommandRatio')
-    || flagSet.has('activitylessCommandRatio')
     || flagSet.has('protocolPackets')
     || flagSet.has('rateLimitPackets')
+    || flagSet.has('automationInvalidPackets')
     || flagSet.has('lifetimeHardInvalidPackets')
     || flagSet.has('mapDataScrape')
     || flagSet.has('xpVelocity');
@@ -1480,11 +1733,12 @@ function mapTotal(map: Map<string, number>): number {
 
 function isMeaningfulSession(summary: SessionSummary): boolean {
   const activeEvents = summary.sessionSkillingActions + summary.sessionCombatSwings + summary.sessionMovements;
+  const evidenceFlags = summary.evidenceFlags ?? summary.flags;
   return summary.sessionMinutes >= MIN_MEANINGFUL_SESSION_MINUTES
     || activeEvents >= 50
     || summary.sessionSuspiciousPackets >= 5
     || summary.sessionInputlessCommands >= 5
-    || summary.flags.includes('browserlessActiveGameplay');
+    || evidenceFlags.includes('browserlessActiveGameplay');
 }
 
 function parseSessionSummary(raw: string | null | undefined): SessionSummary | null {

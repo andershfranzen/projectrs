@@ -48,6 +48,7 @@ interface AdminBotAccount {
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AdminAccountBan | null;
   ipBan: AdminIpBan | null;
+  accountMute: AdminAccountMute | null;
 }
 
 interface AdminBanBase {
@@ -64,6 +65,15 @@ interface AdminAccountBan extends AdminBanBase {
 
 interface AdminIpBan extends AdminBanBase {
   ip: string;
+}
+
+interface AdminAccountMute {
+  accountId: number;
+  username: string;
+  reason: string;
+  mutedAt: number;
+  expiresAt: number | null;
+  mutedBy: string;
 }
 
 interface BotReviewResponse {
@@ -139,6 +149,7 @@ export class AdminPanel {
   private gridHeaderEl: HTMLDivElement;
   private eventFilterEl: HTMLDivElement;
   private eventTypeChipsEl: HTMLDivElement;
+  private botSearchInput: HTMLInputElement;
   private eventSearchInput: HTMLInputElement;
   private eventUserInput: HTMLInputElement;
   private refreshButton: HTMLButtonElement;
@@ -156,10 +167,23 @@ export class AdminPanel {
   private eventSearchQuery = '';
   private eventUserFilter = '';
   private eventFilterDebounceTimer: number | null = null;
+  private botSearchQuery = '';
+  private botSearchDebounceTimer: number | null = null;
+  private accountContextMenuEl: HTMLDivElement | null = null;
   private visible = false;
   private loading = false;
   private readonly keydownHandler = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && this.accountContextMenuEl) {
+      this.hideAccountContextMenu();
+      event.preventDefault();
+      return;
+    }
     if (event.key === 'Escape' && this.visible) this.hide();
+  };
+  private readonly pointerDownHandler = (event: PointerEvent) => {
+    if (!this.accountContextMenuEl) return;
+    if (event.target instanceof Node && this.accountContextMenuEl.contains(event.target)) return;
+    this.hideAccountContextMenu();
   };
 
   constructor(private readonly token: string) {
@@ -226,6 +250,27 @@ export class AdminPanel {
       color: #d9c6a2;
     `;
     toolbar.appendChild(this.summaryEl);
+
+    this.botSearchInput = document.createElement('input');
+    this.botSearchInput.type = 'search';
+    this.botSearchInput.placeholder = 'Player';
+    this.botSearchInput.spellcheck = false;
+    this.botSearchInput.style.cssText = `
+      ${this.eventFilterInputCss()}
+      flex: 0 1 160px;
+      height: 28px;
+    `;
+    this.botSearchInput.addEventListener('input', () => {
+      this.botSearchQuery = this.botSearchInput.value.trim();
+      this.scheduleBotSearchRefresh();
+    });
+    this.botSearchInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.flushBotSearchRefresh();
+      }
+    });
+    toolbar.appendChild(this.botSearchInput);
 
     this.refreshButton = document.createElement('button');
     this.refreshButton.type = 'button';
@@ -352,6 +397,7 @@ export class AdminPanel {
     root.appendChild(body);
     (document.getElementById('game-frame') ?? document.body).appendChild(root);
     document.addEventListener('keydown', this.keydownHandler);
+    document.addEventListener('pointerdown', this.pointerDownHandler);
     this.renderEmpty('Loading bot review...');
   }
 
@@ -366,12 +412,16 @@ export class AdminPanel {
     this.visible = false;
     this.root.style.display = 'none';
     this.stopEventPolling();
+    this.hideAccountContextMenu();
   }
 
   destroy(): void {
     this.stopEventPolling();
     this.clearEventFilterDebounce();
+    this.clearBotSearchDebounce();
+    this.hideAccountContextMenu();
     document.removeEventListener('keydown', this.keydownHandler);
+    document.removeEventListener('pointerdown', this.pointerDownHandler);
     this.root.remove();
   }
 
@@ -382,11 +432,15 @@ export class AdminPanel {
 
   private async refreshBotReview(): Promise<void> {
     if (this.loading) return;
+    this.hideAccountContextMenu();
     this.loading = true;
     this.refreshButton.disabled = true;
     this.refreshButton.textContent = 'Loading';
     try {
-      const res = await fetch('/api/admin/bot-review?limit=200', {
+      const params = new URLSearchParams();
+      params.set('limit', '200');
+      if (this.botSearchQuery) params.set('q', this.botSearchQuery);
+      const res = await fetch(`/api/admin/bot-review?${params.toString()}`, {
         method: 'GET',
         headers: { Authorization: `Bearer ${this.token}` },
         credentials: 'same-origin',
@@ -419,6 +473,7 @@ export class AdminPanel {
 
   private setActiveTab(tab: AdminTab): void {
     if (this.activeTab === tab) return;
+    this.hideAccountContextMenu();
     this.activeTab = tab;
     this.updateTabButtons();
     if (tab === 'events') {
@@ -506,17 +561,21 @@ export class AdminPanel {
   }
 
   private renderBotReview(): void {
+    this.botSearchInput.style.display = '';
     this.eventFilterEl.style.display = 'none';
     this.setGridHeader(BOT_GRID_COLUMNS, ['Account', 'Score', 'Risk', 'Signals', 'Last login']);
     const total = this.accounts.length;
     const high = this.accounts.filter((a) => a.riskLevel === 'high' || a.riskLevel === 'critical').length;
     const flagged = this.accounts.filter((a) => a.riskScore > 0 || a.totalFlagEvents > 0).length;
     const suspiciousPackets = this.accounts.reduce((sum, a) => sum + a.totalSuspiciousPackets, 0);
+    const banned = this.accounts.filter((a) => a.accountBan || a.ipBan).length;
     this.summaryEl.replaceChildren(
       this.summaryPill(`${total} accounts`, '#6c5c43'),
       this.summaryPill(`${flagged} flagged`, '#8f6d2d'),
       this.summaryPill(`${high} high/critical`, '#8f2f28'),
+      this.summaryPill(`${banned} banned`, banned > 0 ? '#8f2f28' : '#4d5d45'),
       this.summaryPill(`${suspiciousPackets} bad packets`, '#5f4a7d'),
+      this.summaryPill(`${this.botSearchQuery ? 'search on' : 'all names'}`, this.botSearchQuery ? '#7a5a25' : '#4d5d45'),
     );
 
     this.rowsEl.replaceChildren();
@@ -530,6 +589,7 @@ export class AdminPanel {
   }
 
   private renderGameEvents(): void {
+    this.botSearchInput.style.display = 'none';
     this.eventFilterEl.style.display = 'flex';
     this.renderEventFilters();
     this.setGridHeader(EVENT_GRID_COLUMNS, ['Time', 'Type', 'Actor', 'Event', 'Location']);
@@ -618,6 +678,25 @@ export class AdminPanel {
     if (this.eventFilterDebounceTimer === null) return;
     window.clearTimeout(this.eventFilterDebounceTimer);
     this.eventFilterDebounceTimer = null;
+  }
+
+  private scheduleBotSearchRefresh(): void {
+    this.clearBotSearchDebounce();
+    this.botSearchDebounceTimer = window.setTimeout(() => {
+      this.botSearchDebounceTimer = null;
+      if (this.visible && this.activeTab === 'bots') void this.refreshBotReview();
+    }, 250);
+  }
+
+  private flushBotSearchRefresh(): void {
+    this.clearBotSearchDebounce();
+    if (this.visible && this.activeTab === 'bots') void this.refreshBotReview();
+  }
+
+  private clearBotSearchDebounce(): void {
+    if (this.botSearchDebounceTimer === null) return;
+    window.clearTimeout(this.botSearchDebounceTimer);
+    this.botSearchDebounceTimer = null;
   }
 
   private eventRow(event: GameEventLogEntry): HTMLButtonElement {
@@ -711,8 +790,23 @@ export class AdminPanel {
 
   private accountRow(account: AdminBotAccount): HTMLButtonElement {
     const selected = account.accountId === this.selectedAccountId;
+    const banned = Boolean(account.accountBan || account.ipBan);
+    const muted = Boolean(account.accountMute);
+    const rowBackground = selected
+      ? 'rgba(122, 50, 40, 0.48)'
+      : banned
+        ? 'rgba(73, 17, 13, 0.56)'
+        : 'rgba(22, 16, 12, 0.38)';
+    const rowInset = account.accountBan
+      ? '#b52f24'
+      : account.ipBan
+        ? '#b96a2c'
+        : muted
+          ? '#7a5a25'
+          : '';
     const row = document.createElement('button');
     row.type = 'button';
+    row.title = this.accountModerationTitle(account);
     row.style.cssText = `
       appearance: none;
       width: 100%;
@@ -722,19 +816,23 @@ export class AdminPanel {
       padding: 6px 7px;
       border: 0;
       border-bottom: 1px solid rgba(74, 64, 53, 0.55);
-      background: ${selected ? 'rgba(122, 50, 40, 0.48)' : 'rgba(22, 16, 12, 0.38)'};
+      background: ${rowBackground};
       color: #f1d6b6;
       font: 11px Arial, Helvetica, sans-serif;
       text-align: left;
       cursor: pointer;
       text-shadow: ${TEXT_SHADOW};
+      box-shadow: ${rowInset ? `inset 3px 0 0 ${rowInset}` : 'none'};
     `;
     row.addEventListener('click', () => {
       this.selectedAccountId = account.accountId;
       this.renderBotReview();
     });
+    row.addEventListener('contextmenu', event => {
+      this.openAccountContextMenu(account, event);
+    });
     row.append(
-      this.truncateCell(`${account.username}${account.isAdmin ? ' [admin]' : account.isModerator ? ' [mod]' : ''}`),
+      this.accountNameCell(account),
       this.truncateCell(String(account.riskScore)),
       this.riskPill(account.riskLevel),
       this.truncateCell(this.signalSummary(account)),
@@ -743,9 +841,188 @@ export class AdminPanel {
     return row;
   }
 
+  private accountNameCell(account: AdminBotAccount): HTMLDivElement {
+    const cell = document.createElement('div');
+    cell.style.cssText = `
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+      align-self: center;
+    `;
+    const name = document.createElement('div');
+    name.textContent = account.username;
+    name.title = account.username;
+    name.style.cssText = `
+      min-width: 38px;
+      max-width: 118px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: ${account.accountBan || account.ipBan ? '700' : '400'};
+    `;
+    cell.appendChild(name);
+    if (account.accountBan) {
+      cell.appendChild(this.statusPill('BANNED', '#b52f24', this.accountBanTitle(account.accountBan)));
+    }
+    if (account.ipBan) {
+      cell.appendChild(this.statusPill('IP BAN', '#9a4f24', this.ipBanTitle(account.ipBan)));
+    }
+    if (account.accountMute) {
+      cell.appendChild(this.statusPill('MUTED', '#7a5a25', this.muteTitle(account.accountMute)));
+    }
+    if (account.isAdmin) {
+      cell.appendChild(this.statusPill('ADMIN', '#5f4a7d', 'Admin account'));
+    } else if (account.isModerator) {
+      cell.appendChild(this.statusPill('MOD', '#2f5f8f', 'Moderator account'));
+    }
+    return cell;
+  }
+
+  private openAccountContextMenu(account: AdminBotAccount, event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.selectedAccountId = account.accountId;
+    this.renderBotReview();
+    this.hideAccountContextMenu();
+
+    const menu = document.createElement('div');
+    menu.style.cssText = `
+      position: fixed;
+      z-index: 10000;
+      min-width: 164px;
+      padding: 4px;
+      border: 1px solid rgba(154, 51, 43, 0.8);
+      background: rgba(12, 8, 6, 0.97);
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.42);
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-family: Arial, Helvetica, sans-serif;
+      text-shadow: ${TEXT_SHADOW};
+    `;
+
+    menu.append(
+      this.accountMenuItem(account.accountBan ? 'Update ban 24h' : 'Ban 24h', account.isAdmin, () => {
+        void this.runTimedModeration(account, '/api/admin/ban-account', 24 * 3600, 'Ban account');
+      }),
+      this.accountMenuItem('Ban permanent', account.isAdmin, () => {
+        void this.runTimedModeration(account, '/api/admin/ban-account', 0, 'Ban account');
+      }),
+      this.accountMenuItem('Unban account', !account.accountBan, () => {
+        void this.runModerationAction('/api/admin/unban-account', { accountId: account.accountId });
+      }),
+      this.accountMenuSeparator(),
+      this.accountMenuItem(account.accountMute ? 'Update mute 1h' : 'Mute 1h', account.isAdmin, () => {
+        void this.runTimedModeration(account, '/api/admin/mute-account', 3600, 'Mute account');
+      }),
+      this.accountMenuItem('Mute 24h', account.isAdmin, () => {
+        void this.runTimedModeration(account, '/api/admin/mute-account', 24 * 3600, 'Mute account');
+      }),
+      this.accountMenuItem('Unmute', !account.accountMute, () => {
+        void this.runModerationAction('/api/admin/unmute-account', { accountId: account.accountId });
+      }),
+      this.accountMenuSeparator(),
+      this.accountMenuItem(account.isModerator ? 'Remove mod' : 'Grant mod', account.isAdmin && !account.isModerator, () => {
+        void this.runModerationAction('/api/admin/set-moderator', {
+          accountId: account.accountId,
+          enabled: !account.isModerator,
+        });
+      }),
+      this.accountMenuSeparator(),
+      this.accountMenuItem('IP ban 24h', !account.lastIp, () => {
+        void this.runIpBanModeration(account, 24 * 3600);
+      }),
+      this.accountMenuItem('Unban IP', !account.ipBan, () => {
+        void this.runModerationAction('/api/admin/unban-ip', { ip: account.lastIp });
+      }),
+    );
+
+    document.body.appendChild(menu);
+    this.accountContextMenuEl = menu;
+    const rect = menu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(event.clientX, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(event.clientY, window.innerHeight - rect.height - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  }
+
+  private accountMenuItem(label: string, disabled: boolean, action: () => void): HTMLButtonElement {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = label;
+    item.disabled = disabled;
+    item.style.cssText = `
+      appearance: none;
+      width: 100%;
+      min-height: 26px;
+      padding: 5px 8px;
+      border: 0;
+      border-radius: 2px;
+      background: ${disabled ? 'rgba(36, 29, 24, 0.72)' : 'rgba(43, 10, 8, 0.86)'};
+      color: ${disabled ? '#7f715d' : '#f4ded5'};
+      cursor: ${disabled ? 'default' : 'pointer'};
+      font: 700 11px Arial, Helvetica, sans-serif;
+      text-align: left;
+      text-shadow: ${TEXT_SHADOW};
+    `;
+    item.addEventListener('mouseenter', () => {
+      if (!item.disabled) item.style.background = 'rgba(122, 50, 40, 0.8)';
+    });
+    item.addEventListener('mouseleave', () => {
+      if (!item.disabled) item.style.background = 'rgba(43, 10, 8, 0.86)';
+    });
+    item.addEventListener('click', () => {
+      if (item.disabled) return;
+      this.hideAccountContextMenu();
+      action();
+    });
+    return item;
+  }
+
+  private accountMenuSeparator(): HTMLDivElement {
+    const sep = document.createElement('div');
+    sep.style.cssText = `height: 1px; margin: 3px 2px; background: rgba(84, 70, 50, 0.7);`;
+    return sep;
+  }
+
+  private hideAccountContextMenu(): void {
+    this.accountContextMenuEl?.remove();
+    this.accountContextMenuEl = null;
+  }
+
+  private async runTimedModeration(
+    account: AdminBotAccount,
+    path: string,
+    durationSeconds: number,
+    actionLabel: string,
+  ): Promise<void> {
+    const reason = window.prompt(`${actionLabel}: ${account.username}\nReason (optional):`, '');
+    if (reason === null) return;
+    await this.runModerationAction(path, {
+      accountId: account.accountId,
+      durationSeconds,
+      reason: reason.trim().slice(0, 200),
+    });
+  }
+
+  private async runIpBanModeration(account: AdminBotAccount, durationSeconds: number): Promise<void> {
+    if (!account.lastIp) return;
+    const reason = window.prompt(`IP ban: ${account.username} (${account.lastIp})\nReason (optional):`, '');
+    if (reason === null) return;
+    await this.runModerationAction('/api/admin/ban-ip', {
+      ip: account.lastIp,
+      durationSeconds,
+      reason: reason.trim().slice(0, 200),
+    });
+  }
+
   private renderDetail(account: AdminBotAccount): void {
     const summary = account.lastSessionSummary;
-    const flags = this.summaryStringArray(summary, 'flags');
+    const flags = this.summaryEvidenceFlags(summary);
+    const contextFlags = this.summaryStringArray(summary, 'contextFlags');
+    const diagnosticFlags = this.summaryStringArray(summary, 'diagnosticFlags');
     const reasons = account.riskReasons.length > 0
       ? account.riskReasons
       : this.summaryStringArray(summary, 'riskReasons');
@@ -768,13 +1045,25 @@ export class AdminPanel {
 
     const chips = document.createElement('div');
     chips.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
-    const signals = (flags.length > 0 ? flags : reasons).slice(0, 8);
+    const signals = flags.slice(0, 8);
     if (signals.length === 0) {
-      chips.appendChild(this.summaryPill('no current flags', '#4d5d45'));
+      chips.appendChild(this.summaryPill('no current evidence', '#4d5d45'));
     } else {
       for (const signal of signals) chips.appendChild(this.summaryPill(signal, '#6b3b34'));
     }
     root.appendChild(chips);
+
+    if (contextFlags.length > 0 || diagnosticFlags.length > 0) {
+      const weakSignals = document.createElement('div');
+      weakSignals.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
+      for (const signal of contextFlags.slice(0, 6)) {
+        weakSignals.appendChild(this.summaryPill(`ctx ${signal}`, '#564428'));
+      }
+      for (const signal of diagnosticFlags.slice(0, 6)) {
+        weakSignals.appendChild(this.summaryPill(`diag ${signal}`, '#4d535f'));
+      }
+      root.appendChild(weakSignals);
+    }
 
     if (account.accountBan || account.ipBan) {
       const banChips = document.createElement('div');
@@ -787,6 +1076,12 @@ export class AdminPanel {
       }
       root.appendChild(banChips);
     }
+    if (account.accountMute) {
+      const muteChips = document.createElement('div');
+      muteChips.style.cssText = `display: flex; flex-wrap: wrap; gap: 5px; min-height: 20px;`;
+      muteChips.appendChild(this.summaryPill(`mute: ${this.formatBanExpiry(account.accountMute.expiresAt)}`, '#6b3b34'));
+      root.appendChild(muteChips);
+    }
 
     const metrics = document.createElement('div');
     metrics.style.cssText = `
@@ -797,7 +1092,7 @@ export class AdminPanel {
     const metricRows: Array<[string, string]> = [
       ['Score', String(account.riskScore)],
       ['Total time', this.formatMinutes(account.totalSessionMinutes)],
-      ['Flag events', String(account.totalFlagEvents)],
+      ['Evidence events', String(account.totalFlagEvents)],
       ['Bad packets', String(account.totalSuspiciousPackets)],
       ['Actions', this.formatNumber(activeActions)],
       ['Actions/hr', this.formatRate(account.actionsPerHour)],
@@ -827,6 +1122,10 @@ export class AdminPanel {
         ['Ping jitter', this.formatMs(this.summaryNumber(summary, 'pingIntervalStdDevMs'))],
         ['Reaction', this.formatMs(this.summaryNumber(summary, 'reactionMedianMs'))],
         ['Heartbeat link', this.formatPercent(this.summaryNumber(summary, 'heartbeatActivityCouplingRatio'))],
+        ['Cmd jitter', this.formatMs(this.summaryNumber(summary, 'gameplayCommandIntervalStdDevMs'))],
+        ['Same cmd jitter', this.formatMs(this.summaryNumber(summary, 'sameCommandIntervalStdDevMs'))],
+        ['Cmd pattern', this.formatPercent(this.summaryNumber(summary, 'gameplayCommandSequencePatternRatio'))],
+        ['Interval pattern', this.formatPercent(this.summaryNumber(summary, 'gameplayCommandIntervalPatternRatio'))],
         ['Activity', String(this.summaryNumber(summary, 'sessionActivityEvents') ?? '-')],
         ['Cursor', String(this.summaryNumber(summary, 'sessionCursorEvents') ?? '-')],
         ['No-input cmds', String(this.summaryNumber(summary, 'sessionInputlessCommands') ?? '-')],
@@ -891,7 +1190,7 @@ export class AdminPanel {
     const wrap = document.createElement('div');
     wrap.style.cssText = `
       display: grid;
-      grid-template-columns: 120px minmax(120px, 1fr) repeat(5, minmax(74px, auto));
+      grid-template-columns: 120px minmax(120px, 1fr) repeat(7, minmax(74px, auto));
       gap: 6px;
       align-items: stretch;
       padding-top: 2px;
@@ -927,6 +1226,21 @@ export class AdminPanel {
       accountId: account.accountId,
     });
 
+    const accountMute = this.smallButton(account.accountMute ? 'Update mute' : 'Mute', '#6b3b34');
+    accountMute.disabled = account.isAdmin;
+    accountMute.title = account.isAdmin ? 'Admin accounts cannot be muted here' : 'Mute this account';
+    accountMute.onclick = () => void this.runModerationAction('/api/admin/mute-account', {
+      accountId: account.accountId,
+      durationSeconds: Number(duration.value),
+      reason: reason.value,
+    });
+
+    const accountUnmute = this.smallButton('Unmute', '#5d4930');
+    accountUnmute.disabled = !account.accountMute;
+    accountUnmute.onclick = () => void this.runModerationAction('/api/admin/unmute-account', {
+      accountId: account.accountId,
+    });
+
     const ipBan = this.smallButton(account.ipBan ? 'Update IP ban' : 'Ban IP', '#8f2f28');
     ipBan.disabled = !account.lastIp;
     ipBan.title = account.lastIp ? `Ban ${account.lastIp}` : 'No login IP recorded';
@@ -950,7 +1264,7 @@ export class AdminPanel {
       enabled: !account.isModerator,
     });
 
-    wrap.append(duration, reason, accountBan, accountUnban, ipBan, ipUnban, moderatorToggle);
+    wrap.append(duration, reason, accountBan, accountUnban, accountMute, accountUnmute, ipBan, ipUnban, moderatorToggle);
     return wrap;
   }
 
@@ -997,14 +1311,16 @@ export class AdminPanel {
       background: rgba(84, 70, 50, 0.45);
       font-size: 10px;
     `;
-    for (const label of ['Session', 'Minutes', 'Score', 'Flags', 'Packets']) {
+    for (const label of ['Session', 'Minutes', 'Score', 'Evidence', 'Packets']) {
       const cell = this.tableCell(label, true);
       table.appendChild(cell);
     }
     for (const entry of history.slice(-5).reverse()) {
-      const flags = Array.isArray(entry.flags)
-        ? entry.flags.filter((flag): flag is string => typeof flag === 'string').slice(0, 3).join(', ')
-        : '';
+      const evidenceFlags = this.summaryEvidenceFlags(entry);
+      const contextFlags = evidenceFlags.length > 0 ? [] : this.summaryStringArray(entry, 'contextFlags');
+      const flags = evidenceFlags.length > 0
+        ? evidenceFlags.slice(0, 3).join(', ')
+        : contextFlags.slice(0, 3).map((flag) => `ctx ${flag}`).join(', ');
       table.append(
         this.tableCell(this.formatTime(this.recordNumber(entry, 'finalizedAt'))),
         this.tableCell(this.formatMinutes(this.recordNumber(entry, 'sessionMinutes') ?? 0)),
@@ -1060,10 +1376,17 @@ export class AdminPanel {
   }
 
   private signalSummary(account: AdminBotAccount): string {
-    const flags = this.summaryStringArray(account.lastSessionSummary, 'flags');
+    const flags = this.summaryEvidenceFlags(account.lastSessionSummary);
     if (flags.length > 0) return flags.slice(0, 3).join(', ');
+    const contextFlags = this.summaryStringArray(account.lastSessionSummary, 'contextFlags');
+    if (contextFlags.length > 0) return `ctx ${contextFlags.slice(0, 2).join(', ')}`;
     if (account.riskReasons.length > 0) return account.riskReasons.slice(0, 2).join(', ');
     return account.totalFlagEvents > 0 ? `${account.totalFlagEvents} lifetime flags` : 'none';
+  }
+
+  private summaryEvidenceFlags(summary: Record<string, unknown> | null): string[] {
+    const evidenceFlags = this.summaryStringArray(summary, 'evidenceFlags');
+    return evidenceFlags.length > 0 ? evidenceFlags : this.summaryStringArray(summary, 'flags');
   }
 
   private summaryStringArray(summary: Record<string, unknown> | null, key: string): string[] {
@@ -1103,6 +1426,48 @@ export class AdminPanel {
       critical: '#b52f24',
     };
     return this.summaryPill(level, colors[level]);
+  }
+
+  private statusPill(label: string, color: string, title: string): HTMLDivElement {
+    const pill = document.createElement('div');
+    pill.textContent = label;
+    pill.title = title;
+    pill.style.cssText = `
+      max-width: 62px;
+      padding: 2px 4px;
+      border: 1px solid rgba(220, 190, 140, 0.22);
+      border-radius: 2px;
+      background: ${color};
+      color: #f4ded5;
+      font-size: 9px;
+      font-weight: 800;
+      line-height: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    `;
+    return pill;
+  }
+
+  private accountModerationTitle(account: AdminBotAccount): string {
+    const statuses: string[] = [];
+    if (account.accountBan) statuses.push(this.accountBanTitle(account.accountBan));
+    if (account.ipBan) statuses.push(this.ipBanTitle(account.ipBan));
+    if (account.accountMute) statuses.push(this.muteTitle(account.accountMute));
+    return statuses.length > 0 ? statuses.join('\n') : account.username;
+  }
+
+  private accountBanTitle(ban: AdminAccountBan): string {
+    return `Account banned ${this.formatBanExpiry(ban.expiresAt)} by ${ban.bannedBy || 'unknown'}${ban.reason ? `: ${ban.reason}` : ''}`;
+  }
+
+  private ipBanTitle(ban: AdminIpBan): string {
+    return `IP banned ${this.formatBanExpiry(ban.expiresAt)} by ${ban.bannedBy || 'unknown'}${ban.reason ? `: ${ban.reason}` : ''}`;
+  }
+
+  private muteTitle(mute: AdminAccountMute): string {
+    return `Muted ${this.formatBanExpiry(mute.expiresAt)} by ${mute.mutedBy || 'unknown'}${mute.reason ? `: ${mute.reason}` : ''}`;
   }
 
   private eventTypeLabel(type: string): string {

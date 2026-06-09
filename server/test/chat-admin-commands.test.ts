@@ -37,7 +37,35 @@ function makeAdminSocket(username: string): { ws: any; messages: string[] } {
   };
 }
 
+function makeUserSocket(username: string, accountId: number): { ws: any; messages: string[] } {
+  const messages: string[] = [];
+  return {
+    messages,
+    ws: {
+      data: { type: 'chat', accountId, username, isAdmin: false, isModerator: false },
+      send(message: string) {
+        messages.push(JSON.parse(message).message);
+      },
+    },
+  };
+}
+
 describe('admin chat teleport commands', () => {
+  test('muted accounts cannot send local chat', () => {
+    const { ws, messages } = makeUserSocket('Muted', 42);
+    const world: any = {
+      db: {
+        isAccountMuted() {
+          return { reason: 'spam', mutedAt: 1000, expiresAt: null };
+        },
+      },
+    };
+
+    handleChatSocketMessage(ws, JSON.stringify({ type: 'local', message: 'hello' }), world);
+
+    expect(messages).toEqual(['You are muted permanently. Reason: spam']);
+  });
+
   test('/tpto teleports the admin to another player across maps', () => {
     const admin = makePlayer(1, 'Admin', 'kcmap', 5.5, 6.5);
     const target = makePlayer(2, 'Target', 'mine', 12.5, 34.5, 2, 3.25);

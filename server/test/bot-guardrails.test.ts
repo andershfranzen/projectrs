@@ -91,7 +91,8 @@ describe('anti-bot guardrails', () => {
 
     const summary = stats.computeSummary({});
     expect(summary.topActionLoopRepetition).toBe(1);
-    expect(summary.flags).toContain('routeActionLoop');
+    expect(summary.contextFlags).toContain('routeActionLoop');
+    expect(summary.flags).not.toContain('routeActionLoop');
   });
 
   test('single or sparse repeated actions do not create a route loop flag', () => {
@@ -122,8 +123,8 @@ describe('anti-bot guardrails', () => {
 
     const summary = stats.computeSummary({});
     expect(summary.topPathRepetition).toBeLessThan(0.05);
-    expect(summary.flags).not.toContain('pathRepetitive');
-    expect(summary.flags).toContain('lifetimePathConcentration');
+    expect(summary.contextFlags).not.toContain('pathRepetitive');
+    expect(summary.contextFlags).toContain('lifetimePathConcentration');
   });
 
   test('movement command shape adds review context without convicting by itself', () => {
@@ -148,9 +149,10 @@ describe('anti-bot guardrails', () => {
     expect(summary.moveRedirectRatio).toBe(0);
     expect(summary.maxPathCommandRatio).toBe(1);
     expect(summary.pathTruncationRatio).toBeCloseTo(5 / 30);
-    expect(summary.flags).toContain('noMoveRedirects');
-    expect(summary.flags).toContain('maxPathCommandRatio');
-    expect(summary.flags).toContain('pathTruncationPattern');
+    expect(summary.contextFlags).toContain('noMoveRedirects');
+    expect(summary.contextFlags).toContain('maxPathCommandRatio');
+    expect(summary.contextFlags).toContain('pathTruncationPattern');
+    expect(summary.flags).toEqual([]);
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -169,7 +171,8 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionPlayerDeaths).toBe(3);
     expect(summary.sessionPostDeathMoves).toBe(3);
     expect(summary.topPostDeathDestinationRepetition).toBe(1);
-    expect(summary.flags).toContain('postDeathRouteLoop');
+    expect(summary.contextFlags).toContain('postDeathRouteLoop');
+    expect(summary.flags).toEqual([]);
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -188,7 +191,7 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionPlayerDeaths).toBe(4);
     expect(summary.sessionPostDeathMoves).toBe(4);
     expect(summary.topPostDeathDestinationRepetition).toBe(0.25);
-    expect(summary.flags).not.toContain('postDeathRouteLoop');
+    expect(summary.contextFlags).not.toContain('postDeathRouteLoop');
     expect(summary.riskLevel).toBe('low');
   });
 
@@ -240,10 +243,10 @@ describe('anti-bot guardrails', () => {
     for (let i = 0; i < 3; i++) stats.recordSuspiciousPacket('malformed-frame');
 
     const summary = stats.computeSummary({});
-    expect(summary.flags).toContain('tickAligned');
-    expect(summary.flags).toContain('routeActionLoop');
+    expect(summary.diagnosticFlags).toContain('tickAligned');
+    expect(summary.contextFlags).toContain('routeActionLoop');
     expect(summary.flags).toContain('protocolPackets');
-    expect(summary.flags).toContain('noCursorTelemetry');
+    expect(summary.diagnosticFlags).toContain('noCursorTelemetry');
     expect(['high', 'critical']).toContain(summary.riskLevel);
     expect(summary.riskScore).toBeGreaterThanOrEqual(60);
     expect(summary.riskReasons.length).toBeGreaterThan(0);
@@ -258,7 +261,8 @@ describe('anti-bot guardrails', () => {
     }
 
     const summary = stats.computeSummary({});
-    expect(summary.flags).toContain('tickAligned');
+    expect(summary.diagnosticFlags).toContain('tickAligned');
+    expect(summary.flags).not.toContain('tickAligned');
     expect(summary.riskScore).toBe(0);
     expect(summary.riskLevel).toBe('low');
   });
@@ -286,8 +290,9 @@ describe('anti-bot guardrails', () => {
     stats.totalChatMessages = 10;
 
     const summary = stats.computeSummary({});
-    expect(summary.flags).toContain('lifetimeLowSocialHighActivity');
-    expect(summary.flags).toContain('lifetimeExtremeLowSocialHighActivity');
+    expect(summary.contextFlags).toContain('lifetimeLowSocialHighActivity');
+    expect(summary.contextFlags).toContain('lifetimeExtremeLowSocialHighActivity');
+    expect(summary.flags).toEqual([]);
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -328,10 +333,11 @@ describe('anti-bot guardrails', () => {
 
     const summary = stats.computeSummary({});
     expect(summary.heartbeatActivityCouplingRatio).toBe(1);
-    expect(summary.flags).toContain('activityHeartbeatCoupled');
+    expect(summary.diagnosticFlags).toContain('activityHeartbeatCoupled');
+    expect(summary.flags).not.toContain('activityHeartbeatCoupled');
   });
 
-  test('periodic spoofed activity cadence stacks with route loops for review', () => {
+  test('periodic spoofed activity cadence adds context without evidence-only conviction', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     stats.sessionStartedAt = Date.now() - 20 * 60_000;
@@ -347,11 +353,12 @@ describe('anti-bot guardrails', () => {
     const summary = stats.computeSummary({});
     expect(summary.sessionDetailedActivityEvents).toBe(30);
     expect(summary.activityIntervalStdDevMs).toBe(0);
-    expect(summary.flags).toContain('activityRegular');
-    expect(summary.flags).toContain('routeActionLoop');
-    expect(summary.flags).not.toContain('legacyActivityTelemetry');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
-    expect(summary.riskLevel).toBe('medium');
+    expect(summary.diagnosticFlags).toContain('activityRegular');
+    expect(summary.contextFlags).toContain('routeActionLoop');
+    expect(summary.diagnosticFlags).not.toContain('legacyActivityTelemetry');
+    expect(summary.flags).toEqual([]);
+    expect(summary.riskScore).toBeLessThan(30);
+    expect(summary.riskLevel).toBe('low');
   });
 
   test('legacy activity packets are diagnostic but do not convict normal users alone', () => {
@@ -368,7 +375,8 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionActivityEvents).toBe(10);
     expect(summary.sessionDetailedActivityEvents).toBe(0);
     expect(summary.sessionLegacyActivityEvents).toBe(10);
-    expect(summary.flags).toContain('legacyActivityTelemetry');
+    expect(summary.diagnosticFlags).toContain('legacyActivityTelemetry');
+    expect(summary.flags).not.toContain('legacyActivityTelemetry');
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -384,7 +392,8 @@ describe('anti-bot guardrails', () => {
 
     const summary = stats.computeSummary({});
     expect(summary.sessionCursorEvents).toBe(0);
-    expect(summary.flags).toContain('noCursorTelemetry');
+    expect(summary.diagnosticFlags).toContain('noCursorTelemetry');
+    expect(summary.flags).toContain('browserlessActiveGameplay');
   });
 
   test('browserless active gameplay escalates current raw websocket bots', () => {
@@ -405,9 +414,9 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionCommandsWithoutRecentInput).toBe(6);
     expect(summary.sessionCommandsWithoutRecentActivity).toBe(6);
     expect(summary.flags).toContain('browserlessActiveGameplay');
-    expect(summary.flags).toContain('noClientActivityTelemetry');
-    expect(summary.flags).toContain('noCursorTelemetry');
-    expect(summary.flags).toContain('inputlessCommandBurst');
+    expect(summary.diagnosticFlags).toContain('noClientActivityTelemetry');
+    expect(summary.diagnosticFlags).toContain('noCursorTelemetry');
+    expect(summary.contextFlags).toContain('inputlessCommandBurst');
     expect(summary.flags).toContain('commandsWithoutRecentInput');
     expect(summary.flags).toContain('commandsWithoutRecentActivity');
     expect(summary.riskScore).toBeGreaterThanOrEqual(60);
@@ -428,9 +437,9 @@ describe('anti-bot guardrails', () => {
 
     const summary = stats.computeSummary({});
     expect(summary.flags).not.toContain('browserlessActiveGameplay');
-    expect(summary.flags).not.toContain('noClientActivityTelemetry');
-    expect(summary.flags).not.toContain('noCursorTelemetry');
-    expect(summary.flags).not.toContain('inputlessCommandBurst');
+    expect(summary.diagnosticFlags).not.toContain('noClientActivityTelemetry');
+    expect(summary.diagnosticFlags).not.toContain('noCursorTelemetry');
+    expect(summary.contextFlags).not.toContain('inputlessCommandBurst');
     expect(summary.flags).not.toContain('commandsWithoutRecentInput');
     expect(summary.flags).not.toContain('commandsWithoutRecentActivity');
     expect(summary.riskLevel).toBe('low');
@@ -454,10 +463,10 @@ describe('anti-bot guardrails', () => {
     expect(summary.sessionCommandsWithoutRecentInput).toBe(0);
     expect(summary.sessionCommandsWithoutRecentActivity).toBe(25);
     expect(summary.flags).not.toContain('browserlessActiveGameplay');
-    expect(summary.flags).not.toContain('noCursorTelemetry');
-    expect(summary.flags).toContain('noClientActivityTelemetry');
+    expect(summary.diagnosticFlags).not.toContain('noCursorTelemetry');
+    expect(summary.diagnosticFlags).toContain('noClientActivityTelemetry');
     expect(summary.flags).toContain('commandsWithoutRecentActivity');
-    expect(summary.flags).toContain('activitylessCommandRatio');
+    expect(summary.contextFlags).toContain('activitylessCommandRatio');
     expect(summary.riskScore).toBeGreaterThanOrEqual(60);
     expect(['high', 'critical']).toContain(summary.riskLevel);
   });
@@ -475,9 +484,9 @@ describe('anti-bot guardrails', () => {
     }
 
     const summary = stats.computeSummary({});
-    expect(summary.flags).toContain('tickAligned');
-    expect(summary.flags).toContain('routeActionLoop');
-    expect(summary.flags).toContain('noCursorTelemetry');
+    expect(summary.diagnosticFlags).toContain('tickAligned');
+    expect(summary.contextFlags).toContain('routeActionLoop');
+    expect(summary.diagnosticFlags).toContain('noCursorTelemetry');
     expect(summary.flags).not.toContain('browserlessActiveGameplay');
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
@@ -504,16 +513,16 @@ describe('anti-bot guardrails', () => {
     }
 
     const summary = stats.computeSummary({});
-    expect(summary.flags).toContain('tickAligned');
-    expect(summary.flags).toContain('pathRepetitive');
-    expect(summary.flags).toContain('routeActionLoop');
-    expect(summary.flags).toContain('noChat');
+    expect(summary.diagnosticFlags).toContain('tickAligned');
+    expect(summary.contextFlags).toContain('pathRepetitive');
+    expect(summary.contextFlags).toContain('routeActionLoop');
+    expect(summary.contextFlags).toContain('noChat');
     expect(summary.flags).not.toContain('browserlessActiveGameplay');
-    expect(summary.flags).not.toContain('noClientActivityTelemetry');
-    expect(summary.flags).not.toContain('noCursorTelemetry');
+    expect(summary.diagnosticFlags).not.toContain('noClientActivityTelemetry');
+    expect(summary.diagnosticFlags).not.toContain('noCursorTelemetry');
     expect(summary.flags).not.toContain('commandsWithoutRecentActivity');
-    expect(summary.flags).not.toContain('activityRegular');
-    expect(summary.flags).not.toContain('legacyActivityTelemetry');
+    expect(summary.diagnosticFlags).not.toContain('activityRegular');
+    expect(summary.diagnosticFlags).not.toContain('legacyActivityTelemetry');
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -534,9 +543,9 @@ describe('anti-bot guardrails', () => {
     const summary = stats.computeSummary({});
     expect(summary.sessionActiveIdleBreaks).toBe(0);
     expect(summary.longestActiveGapMinutes).toBeLessThan(1);
-    expect(summary.flags).toContain('noIdleBreaks');
-    expect(summary.flags).not.toContain('marathonNoIdleBreaks');
-    expect(summary.flags).not.toContain('activityRegular');
+    expect(summary.contextFlags).toContain('noIdleBreaks');
+    expect(summary.contextFlags).not.toContain('marathonNoIdleBreaks');
+    expect(summary.diagnosticFlags).not.toContain('activityRegular');
     expect(summary.riskScore).toBeLessThan(30);
     expect(summary.riskLevel).toBe('low');
   });
@@ -558,8 +567,8 @@ describe('anti-bot guardrails', () => {
     const summary = stats.computeSummary({});
     expect(summary.sessionActiveIdleBreaks).toBe(1);
     expect(summary.longestActiveGapMinutes).toBeGreaterThanOrEqual(10);
-    expect(summary.flags).not.toContain('noIdleBreaks');
-    expect(summary.flags).not.toContain('marathonNoIdleBreaks');
+    expect(summary.contextFlags).not.toContain('noIdleBreaks');
+    expect(summary.contextFlags).not.toContain('marathonNoIdleBreaks');
     expect(summary.riskLevel).toBe('low');
   });
 
@@ -598,8 +607,8 @@ describe('anti-bot guardrails', () => {
 
     const summary = stats.computeSummary({});
     expect(summary.topCursorCellRepetition).toBe(1);
-    expect(summary.flags).toContain('cursorStatic');
-    expect(summary.flags).not.toContain('noCursorTelemetry');
+    expect(summary.diagnosticFlags).toContain('cursorStatic');
+    expect(summary.diagnosticFlags).not.toContain('noCursorTelemetry');
   });
 
   test('risk profile persists in bot_stats rows', () => {

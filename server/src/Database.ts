@@ -301,6 +301,7 @@ export interface AdminBotReviewAccount {
   lastSessionSummary: Record<string, unknown> | null;
   accountBan: AccountBanRecord | null;
   ipBan: IpBanRecord | null;
+  accountMute: AccountMuteRecord | null;
 }
 
 export type GameEventLogType =
@@ -755,6 +756,16 @@ export interface AccountBanRecord extends BanInfo {
 export interface IpBanRecord extends BanInfo {
   ip: string;
   bannedBy: string;
+}
+export interface MuteInfo {
+  reason: string;
+  mutedAt: number;
+  expiresAt: number | null;
+}
+export interface AccountMuteRecord extends MuteInfo {
+  accountId: number;
+  username: string;
+  mutedBy: string;
 }
 
 function removeQuestFromSavedState(rawJson: string | null, questId: string): { json: string; changed: boolean } {
@@ -1336,6 +1347,13 @@ export class GameDatabase {
         banned_at INTEGER NOT NULL DEFAULT (unixepoch()),
         expires_at INTEGER,
         banned_by TEXT NOT NULL DEFAULT ''
+      );
+      CREATE TABLE IF NOT EXISTS account_mutes (
+        account_id INTEGER PRIMARY KEY REFERENCES accounts(id),
+        reason TEXT NOT NULL DEFAULT '',
+        muted_at INTEGER NOT NULL DEFAULT (unixepoch()),
+        expires_at INTEGER,
+        muted_by TEXT NOT NULL DEFAULT ''
       );
     `);
     try {
@@ -3444,8 +3462,9 @@ export class GameDatabase {
 	    );
   }
 
-  listAdminBotReviewAccounts(limit: number = 200): AdminBotReviewAccount[] {
+  listAdminBotReviewAccounts(limit: number = 200, query: string = ''): AdminBotReviewAccount[] {
     const safeLimit = Math.max(1, Math.min(500, Math.floor(Number.isFinite(limit) ? limit : 200)));
+    const search = query.trim().slice(0, 64);
     const rows = this.db.query(`
       SELECT
         a.id,
@@ -3507,11 +3526,12 @@ export class GameDatabase {
         ) AS latest_session_minutes
       FROM accounts a
       LEFT JOIN bot_stats b ON b.account_id = a.id
+      WHERE (? = '' OR instr(lower(a.username), lower(?)) > 0)
       ORDER BY COALESCE(b.risk_score, 0) DESC,
                COALESCE(latest_login_ts, b.last_login_ts, 0) DESC,
                a.username COLLATE NOCASE ASC
       LIMIT ?
-    `).all(safeLimit) as Array<{
+    `).all(search, search, safeLimit) as Array<{
       id: number;
       username: string;
       is_admin: number;
@@ -3607,6 +3627,7 @@ export class GameDatabase {
         lastSessionSummary: parseJsonObject(row.last_session_summary),
         accountBan: this.getAccountBanRecord(row.id),
         ipBan: lastIp ? this.getIpBanRecord(lastIp) : null,
+        accountMute: this.getAccountMuteRecord(row.id),
       };
     });
     accounts.sort((a, b) =>
@@ -4520,6 +4541,7 @@ export class GameDatabase {
     const now = Math.floor(Date.now() / 1000);
     this.db.query('DELETE FROM account_bans WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
     this.db.query('DELETE FROM ip_bans WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
+    this.db.query('DELETE FROM account_mutes WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
   }
 
   /** Shared upsert for the two ban tables. Table/keyCol come from string
@@ -4554,6 +4576,28 @@ export class GameDatabase {
     return { reason: row.reason, bannedAt: row.banned_at, expiresAt: row.expires_at };
   }
 
+  private upsertMute(accountId: number, reason: string, mutedBy: string, expiresAt: number | null = null): void {
+    this.db.query(`
+      INSERT INTO account_mutes (account_id, reason, muted_by, expires_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(account_id) DO UPDATE SET
+        reason = excluded.reason,
+        muted_by = excluded.muted_by,
+        expires_at = excluded.expires_at,
+        muted_at = unixepoch()
+    `).run(accountId, reason, mutedBy, expiresAt);
+  }
+
+  private readMute(accountId: number): MuteInfo | null {
+    const row = this.db.query('SELECT reason, muted_at, expires_at FROM account_mutes WHERE account_id = ?')
+      .get(accountId) as { reason: string; muted_at: number; expires_at: number | null } | null;
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= Math.floor(Date.now() / 1000)) {
+      this.unmuteAccount(accountId);
+      return null;
+    }
+    return { reason: row.reason, mutedAt: row.muted_at, expiresAt: row.expires_at };
+  }
+
   banAccount(accountId: number, reason: string, bannedBy: string, expiresAt: number | null = null): void {
     this.upsertBan('account_bans', 'account_id', accountId, reason, bannedBy, expiresAt);
   }
@@ -4577,6 +4621,18 @@ export class GameDatabase {
   isIpBanned(ip: string): BanInfo | null {
     if (!ip) return null;
     return this.readBan('ip_bans', 'ip_address', ip);
+  }
+
+  muteAccount(accountId: number, reason: string, mutedBy: string, expiresAt: number | null = null): void {
+    this.upsertMute(accountId, reason, mutedBy, expiresAt);
+  }
+
+  unmuteAccount(accountId: number): boolean {
+    return this.db.query('DELETE FROM account_mutes WHERE account_id = ?').run(accountId).changes > 0;
+  }
+
+  isAccountMuted(accountId: number): MuteInfo | null {
+    return this.readMute(accountId);
   }
 
   /** Most-recent IP recorded for an account in login_history. Used by /ipban
@@ -4625,6 +4681,28 @@ export class GameDatabase {
       bannedAt: row.banned_at,
       expiresAt: row.expires_at,
       bannedBy: row.banned_by,
+    };
+  }
+
+  getAccountMuteRecord(accountId: number): AccountMuteRecord | null {
+    const row = this.db.query(`
+      SELECT am.account_id, a.username, am.reason, am.muted_at, am.expires_at, am.muted_by
+      FROM account_mutes am
+      JOIN accounts a ON a.id = am.account_id
+      WHERE am.account_id = ?
+    `).get(accountId) as { account_id: number; username: string; reason: string; muted_at: number; expires_at: number | null; muted_by: string } | null;
+    if (!row) return null;
+    if (row.expires_at !== null && row.expires_at <= Math.floor(Date.now() / 1000)) {
+      this.unmuteAccount(accountId);
+      return null;
+    }
+    return {
+      accountId: row.account_id,
+      username: row.username,
+      reason: row.reason,
+      mutedAt: row.muted_at,
+      expiresAt: row.expires_at,
+      mutedBy: row.muted_by,
     };
   }
 

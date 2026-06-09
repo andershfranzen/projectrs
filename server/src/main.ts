@@ -3411,10 +3411,11 @@ const server = Bun.serve<SocketData>({
       const session = getBoundBearerSession(req);
       if (!session?.isAdmin) return adminForbidden();
       const limit = Number(url.searchParams.get('limit') ?? '200');
+      const query = url.searchParams.get('q') ?? url.searchParams.get('query') ?? '';
       return jsonResponse({
         ok: true,
         generatedAt: Math.floor(Date.now() / 1000),
-        accounts: db.listAdminBotReviewAccounts(limit),
+        accounts: db.listAdminBotReviewAccounts(limit, query),
       });
     }
 
@@ -3478,6 +3479,46 @@ const server = Bun.serve<SocketData>({
         const accountId = Math.floor(Number(body.accountId));
         if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
         return jsonResponse({ ok: true, removed: db.unbanAccount(accountId) });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/mute-account' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown; reason?: unknown; durationSeconds?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        if (accountId === session.accountId) return jsonResponse({ ok: false, error: 'You cannot mute your own account' }, 400);
+        const target = db.getAccountModerationInfo(accountId);
+        if (!target) return jsonResponse({ ok: false, error: 'Account not found' }, 404);
+        if (target.isAdmin) return jsonResponse({ ok: false, error: 'Admin accounts cannot be muted here' }, 400);
+        const duration = parseBanExpiresAt(body.durationSeconds);
+        if (!duration.ok) return jsonResponse({ ok: false, error: duration.error }, 400);
+        const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : '';
+        db.muteAccount(accountId, reason, session.username, duration.expiresAt);
+        return jsonResponse({
+          ok: true,
+          message: `Muted ${target.username} (${banLabel(duration.expiresAt)})`,
+          mute: db.getAccountMuteRecord(accountId),
+        });
+      } catch {
+        return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
+      }
+    }
+
+    if (url.pathname === '/api/admin/unmute-account' && req.method === 'POST') {
+      const session = getBoundBearerSession(req);
+      if (!session?.isAdmin) return adminForbidden();
+      if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
+      try {
+        const body = await req.json() as { accountId?: unknown };
+        const accountId = Math.floor(Number(body.accountId));
+        if (!Number.isInteger(accountId) || accountId <= 0) return jsonResponse({ ok: false, error: 'Invalid account' }, 400);
+        return jsonResponse({ ok: true, removed: db.unmuteAccount(accountId) });
       } catch {
         return jsonResponse({ ok: false, error: 'Invalid request' }, 400);
       }

@@ -15,6 +15,7 @@ describe('admin bot review data', () => {
       for (let i = 0; i < 5; i++) stats.recordSuspiciousPacket('malformed-frame');
       stats.finalize(db, session.accountId, {}, 77);
       db.banAccount(session.accountId, 'review action', 'test-admin', Math.floor(Date.now() / 1000) + 3600);
+      db.muteAccount(session.accountId, 'chat spam', 'test-admin', Math.floor(Date.now() / 1000) + 1800);
 
       const rows = db.listAdminBotReviewAccounts();
       const row = rows.find((entry) => entry.accountId === session.accountId);
@@ -30,6 +31,8 @@ describe('admin bot review data', () => {
       expect(row?.riskScore).toBeGreaterThan(0);
       expect(row?.accountBan?.reason).toBe('review action');
       expect(row?.accountBan?.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+      expect(row?.accountMute?.reason).toBe('chat spam');
+      expect(row?.accountMute?.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
       expect(flags).toContain('protocolPackets');
     } finally {
       db.close();
@@ -65,6 +68,21 @@ describe('admin bot review data', () => {
       expect(row?.riskReasons.some((reason) => reason.includes('low-social high-activity'))).toBe(true);
       expect(row?.chatRatePerHour).toBeLessThan(1);
       expect(row?.sharedDeviceAlts[0]?.username).toBe('alt-target');
+    } finally {
+      db.close();
+    }
+  });
+
+  test('filters bot review accounts by username', () => {
+    const db = new GameDatabase(':memory:');
+    try {
+      const needle = db.loginFallbackAccount('needle-target', '11111111-1111-4111-8111-111111111111');
+      db.loginFallbackAccount('haystack-target', '22222222-2222-4222-8222-222222222222');
+      db.recordLogin(needle.accountId, '203.0.113.7', '11111111-1111-4111-8111-111111111111');
+
+      const rows = db.listAdminBotReviewAccounts(200, 'needle');
+
+      expect(rows.map(row => row.username)).toEqual(['needle-target']);
     } finally {
       db.close();
     }
