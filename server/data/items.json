@@ -223,6 +223,7 @@
     "equippable": false,
     "value": 5,
     "icon": "copper_ore_150.png",
+    "model": "/assets/models/item-thumbnails/ore/CopperOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/CopperOreRock.glb"
   },
   {
@@ -233,6 +234,7 @@
     "equippable": false,
     "value": 12,
     "icon": "iron_ore_151.png",
+    "model": "/assets/models/item-thumbnails/ore/IronOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/IronOreRock.glb"
   },
   {
@@ -337,6 +339,7 @@
     "equippable": false,
     "value": 2,
     "icon": "tin_ore_202.png",
+    "model": "/assets/models/item-thumbnails/ore/TinOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/TinOreRock.glb"
   },
   {
@@ -346,7 +349,9 @@
     "stackable": true,
     "equippable": false,
     "value": 10,
-    "icon": "coal_155.png"
+    "icon": "coal_155.png",
+    "model": "/assets/models/item-thumbnails/ore/CoalOreRock.glb",
+    "thumbnailModel": "/assets/models/item-thumbnails/ore/CoalOreRock.glb"
   },
   {
     "id": 36,
@@ -632,6 +637,7 @@
     "equippable": false,
     "value": 48,
     "icon": "mithril_ore_153.png",
+    "model": "/assets/models/item-thumbnails/ore/MithrilOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/MithrilOreRock.glb"
   },
   {
@@ -1904,6 +1910,7 @@
     "equippable": false,
     "value": 25,
     "icon": "Silver ore.png",
+    "model": "/assets/models/item-thumbnails/ore/SilverOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/SilverOreRock.glb"
   },
   {
@@ -1955,7 +1962,8 @@
     "crushDefence": 5,
     "rangedDefence": 7,
     "magicDefence": -2,
-    "value": 70
+    "value": 70,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 203,
@@ -1969,7 +1977,8 @@
     "crushDefence": 2,
     "rangedDefence": 4,
     "magicDefence": 0,
-    "value": 25
+    "value": 25,
+    "headRenderMode": "hairTuck"
   },
   {
     "id": 204,
@@ -1983,7 +1992,8 @@
     "crushDefence": 3,
     "rangedDefence": 5,
     "magicDefence": -1,
-    "value": 50
+    "value": 50,
+    "headRenderMode": "hairTuck"
   },
   {
     "id": 205,
@@ -1997,7 +2007,8 @@
     "crushDefence": 1,
     "rangedDefence": 2,
     "magicDefence": 1,
-    "value": 20
+    "value": 20,
+    "headRenderMode": "hairTuck"
   },
   {
     "id": 206,
@@ -2011,7 +2022,7 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 6,
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 90,
     "icon": "A_blue_wizards_hat_1264.png",
     "model": "/assets/equipment/head/BlueWizardHat.glb"
@@ -2028,7 +2039,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 6,
-    "value": 90
+    "value": 90,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 208,
@@ -2042,7 +2054,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 7,
-    "value": 110
+    "value": 110,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 209,
@@ -2056,7 +2069,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 5,
-    "value": 80
+    "value": 80,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 210,
@@ -2070,7 +2084,8 @@
     "crushDefence": 1,
     "rangedDefence": 3,
     "magicDefence": 0,
-    "value": 40
+    "value": 40,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 211,
@@ -2084,7 +2099,8 @@
     "crushDefence": 0,
     "rangedDefence": 1,
     "magicDefence": 0,
-    "value": 15
+    "value": 15,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 212,
@@ -2098,7 +2114,8 @@
     "crushDefence": 0,
     "rangedDefence": 1,
     "magicDefence": 0,
-    "value": 15
+    "value": 15,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 213,
@@ -2112,7 +2129,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 1,
-    "value": 10
+    "value": 10,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 214,
@@ -2126,7 +2144,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 0,
-    "value": 5
+    "value": 5,
+    "headRenderMode": "hat"
   },
   {
     "id": 215,
@@ -2140,7 +2159,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 3,
-    "value": 200
+    "value": 200,
+    "headRenderMode": "hat"
   },
   {
     "id": 216,
@@ -2170,7 +2190,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 0,
-    "value": 8
+    "value": 8,
+    "headRenderMode": "hat"
   },
   {
     "id": 218,
@@ -2184,7 +2205,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 0,
-    "value": 8
+    "value": 8,
+    "headRenderMode": "hat"
   },
   {
     "id": 219,
@@ -2212,7 +2234,8 @@
     "crushDefence": 5,
     "rangedDefence": 7,
     "magicDefence": -2,
-    "value": 70
+    "value": 70,
+    "headRenderMode": "hairFit"
   },
   {
     "id": 221,
@@ -2226,7 +2249,8 @@
     "crushDefence": 2,
     "rangedDefence": 4,
     "magicDefence": 0,
-    "value": 25
+    "value": 25,
+    "headRenderMode": "hairTuck"
   },
   {
     "id": 222,
@@ -2240,7 +2264,8 @@
     "crushDefence": 0,
     "rangedDefence": 0,
     "magicDefence": 3,
-    "value": 200
+    "value": 200,
+    "headRenderMode": "hat"
   },
   {
     "id": 223,
@@ -4956,6 +4981,7 @@
     "stackable": false,
     "equippable": false,
     "value": 192,
+    "model": "/assets/models/item-thumbnails/ore/CrimsoniteOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/CrimsoniteOreRock.glb"
   },
   {
@@ -4965,6 +4991,7 @@
     "stackable": false,
     "equippable": false,
     "value": 384,
+    "model": "/assets/models/item-thumbnails/ore/MalachiteOreRock.glb",
     "thumbnailModel": "/assets/models/item-thumbnails/ore/MalachiteOreRock.glb"
   },
   {
@@ -5497,7 +5524,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatBlack.glb"
   },
@@ -5508,7 +5535,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatBlue.glb"
   },
@@ -5519,7 +5546,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatGold.glb"
   },
@@ -5530,7 +5557,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatGreen.glb"
   },
@@ -5541,7 +5568,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatOrange.glb"
   },
@@ -5552,7 +5579,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatPink.glb"
   },
@@ -5563,7 +5590,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatRed.glb"
   },
@@ -5574,7 +5601,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatWhite.glb"
   },
@@ -5585,7 +5612,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 100,
     "model": "/assets/equipment/head/PartyHatYellow.glb"
   },
@@ -5596,7 +5623,7 @@
     "stackable": false,
     "equippable": true,
     "equipSlot": "head",
-    "headRenderMode": "hat",
+    "headRenderMode": "hairFit",
     "value": 25,
     "model": "/assets/equipment/head/FarmersHat.glb"
   },

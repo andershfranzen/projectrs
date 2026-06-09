@@ -1,11 +1,11 @@
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
-import { EQUIP_SLOT_BONES } from '../data/EquipmentConfig';
-import type { GearOverride } from '../data/EquipmentConfig';
+import { HEAD_RENDER_MODES, type HeadRenderMode } from '../../../shared/types';
+import { EQUIP_SLOT_BONES, HEAD_HAIR_MORPH_KEYS, type GearOverride, type HeadHairFit, type HeadHairMorphKey } from '../data/EquipmentConfig';
 import { getThumbnail } from '../rendering/ThumbnailRenderer';
 
 type SlotGetter = (slot: string) => TransformNode | null;
 type BoneGetter = (slot: string) => string;
-type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: string; modelPath?: string } | null;
+type ItemInfoGetter = (slot: string) => { id: number; name: string; toolType?: string; modelPath?: string; headRenderMode?: HeadRenderMode } | null;
 type SaveCallback = (itemId: number, override: GearOverride) => Promise<void>;
 type BulkSaveCallback = (sourceItemId: number, slot: string, override: GearOverride) => Promise<number>;
 type LoadGlbCallback = (slot: string, path: string, itemId?: number) => Promise<void>;
@@ -15,6 +15,7 @@ type OverrideGetter = (itemId: number) => GearOverride | null;
 type SkinnedChecker = (slot: string) => boolean;
 type AuthTokenGetter = () => string;
 type BodyTypeGetter = () => number;
+type HeadHairPreviewCallback = (fit: HeadHairFit | null) => void;
 
 interface GearFileInfo {
   file: string;
@@ -45,6 +46,21 @@ const PARAMS: ParamDef[] = [
   { key: 'scale', label: 'S', min: 0.05, max: 3, step: 0.01, fineStep: 0.001, value: 1, group: 'scale', color: '#f8c' },
 ];
 
+const HEAD_HAIR_PARAM_DEFS: { key: HeadHairMorphKey; label: string; title: string }[] = [
+  { key: 'topFlatten', label: 'TOP', title: 'Flatten hair above the hat brim' },
+  { key: 'topLower', label: 'LOW', title: 'Lower the upper hair volume' },
+  { key: 'sideSqueeze', label: 'SIDE', title: 'Pull side volume inward' },
+  { key: 'backTuck', label: 'BACK', title: 'Tuck rear hair under the hat' },
+  { key: 'frontTrim', label: 'FRNT', title: 'Pull front hair back from the brim' },
+];
+
+const HEAD_HAIR_MODE_LABELS: Record<HeadRenderMode, string> = {
+  helmet: 'Full helmet',
+  hat: 'Normal hair',
+  hairTuck: 'Generic tuck',
+  hairFit: 'Custom fit',
+};
+
 const SLOTS = ['weapon', 'shield', 'head', 'body', 'legs', 'neck', 'ring', 'hands', 'feet', 'cape'];
 
 const SLOT_COLORS: Record<string, string> = {
@@ -70,6 +86,10 @@ export class GearDebugPanel {
   private glbInput!: HTMLInputElement;
   private thumbGrid!: HTMLDivElement;
   private thumbToggleBtn!: HTMLButtonElement;
+  private headHairSection!: HTMLDivElement;
+  private headHairModeSelect!: HTMLSelectElement;
+  private headHairInputs: Map<HeadHairMorphKey, HTMLInputElement> = new Map();
+  private headHairSliders: Map<HeadHairMorphKey, HTMLInputElement> = new Map();
   private getSlotNode: SlotGetter = () => null;
   private getSlotBone: BoneGetter = () => '';
   private getItemInfo: ItemInfoGetter = () => null;
@@ -82,6 +102,7 @@ export class GearDebugPanel {
   private isSkinnedArmor: SkinnedChecker = () => false;
   private getAuthToken: AuthTokenGetter = () => '';
   private getBodyType: BodyTypeGetter = () => 0;
+  private headHairPreviewCallback: HeadHairPreviewCallback | null = null;
   private activeSlot = 'weapon';
   private thumbGridOpen = true;
   private thumbCache: Map<string, string> = new Map();
@@ -110,6 +131,7 @@ export class GearDebugPanel {
   setSkinnedChecker(checker: SkinnedChecker): void { this.isSkinnedArmor = checker; }
   setAuthTokenGetter(getter: AuthTokenGetter): void { this.getAuthToken = getter; }
   setBodyTypeGetter(getter: BodyTypeGetter): void { this.getBodyType = getter; }
+  setHeadHairPreviewCallback(cb: HeadHairPreviewCallback): void { this.headHairPreviewCallback = cb; }
 
   private buildUI(): HTMLDivElement {
     const div = document.createElement('div');
@@ -275,6 +297,9 @@ export class GearDebugPanel {
       }
     }
 
+    this.headHairSection = this.buildHeadHairSection();
+    body.appendChild(this.headHairSection);
+
     // Animation toggles
     const animLabel = document.createElement('div');
     animLabel.style.cssText = 'color:#aaa;font-size:10px;font-weight:bold;margin:10px 0 4px;';
@@ -413,6 +438,139 @@ export class GearDebugPanel {
     return row;
   }
 
+  private buildHeadHairSection(): HTMLDivElement {
+    const section = document.createElement('div');
+    Object.assign(section.style, {
+      marginTop: '10px',
+      paddingTop: '8px',
+      borderTop: '1px solid #2a2520',
+    });
+
+    const label = document.createElement('div');
+    label.style.cssText = 'color:#ff6;font-size:11px;font-weight:bold;margin-bottom:5px;';
+    label.textContent = 'HEAD HAIR FIT';
+    section.appendChild(label);
+
+    const modeRow = document.createElement('div');
+    modeRow.style.cssText = 'display:flex;align-items:center;gap:5px;margin-bottom:5px;';
+
+    this.headHairModeSelect = document.createElement('select');
+    Object.assign(this.headHairModeSelect.style, {
+      flex: '1',
+      background: '#1a1510',
+      color: '#ddd',
+      border: '1px solid #3a3530',
+      borderRadius: '3px',
+      padding: '3px 5px',
+      fontFamily: 'Arial, Helvetica, sans-serif',
+      fontSize: '10px',
+    });
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Item default';
+    this.headHairModeSelect.appendChild(defaultOption);
+    for (const mode of HEAD_RENDER_MODES) {
+      const option = document.createElement('option');
+      option.value = mode;
+      option.textContent = HEAD_HAIR_MODE_LABELS[mode];
+      this.headHairModeSelect.appendChild(option);
+    }
+    this.headHairModeSelect.addEventListener('change', () => {
+      this.updateHeadHairControlState();
+      this.applyHeadHairPreview();
+      this.updateOverrideStatus();
+    });
+    modeRow.appendChild(this.headHairModeSelect);
+    section.appendChild(modeRow);
+
+    const presetRow = document.createElement('div');
+    presetRow.style.cssText = 'display:flex;gap:3px;margin-bottom:6px;';
+    const autoBtn = this.makeButton('Fit Hat', '#2f2812', '#aa8', () => this.applyHeadHairPreset('auto'));
+    const brimBtn = this.makeButton('Brim', '#1a2f2a', '#4a8', () => this.applyHeadHairPreset('brim'));
+    const capBtn = this.makeButton('Cap', '#2a2238', '#86a', () => this.applyHeadHairPreset('cap'));
+    const clearBtn = this.makeButton('Clear', '#2a1a1a', '#844', () => this.applyHeadHairPreset('clear'));
+    for (const btn of [autoBtn, brimBtn, capBtn, clearBtn]) {
+      btn.style.flex = '1';
+      btn.style.padding = '4px 2px';
+      btn.style.fontSize = '10px';
+    }
+    presetRow.appendChild(autoBtn);
+    presetRow.appendChild(brimBtn);
+    presetRow.appendChild(capBtn);
+    presetRow.appendChild(clearBtn);
+    section.appendChild(presetRow);
+
+    for (const def of HEAD_HAIR_PARAM_DEFS) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;margin-bottom:2px;gap:4px;';
+
+      const rowLabel = document.createElement('span');
+      rowLabel.style.cssText = 'width:30px;flex-shrink:0;color:#aa8;font-weight:bold;font-size:9px;';
+      rowLabel.textContent = def.label;
+      rowLabel.title = def.title;
+
+      const slider = document.createElement('input');
+      slider.type = 'range';
+      slider.min = '0';
+      slider.max = '1';
+      slider.step = '0.01';
+      slider.value = '0';
+      slider.style.cssText = 'flex:1;height:14px;cursor:pointer;accent-color:#cc8;';
+
+      const numInput = document.createElement('input');
+      numInput.type = 'number';
+      numInput.min = '0';
+      numInput.max = '1';
+      numInput.step = '0.01';
+      numInput.value = '0.00';
+      Object.assign(numInput.style, {
+        width: '48px',
+        flexShrink: '0',
+        background: '#1a1510',
+        color: '#ddd',
+        border: '1px solid #3a3530',
+        borderRadius: '2px',
+        padding: '1px 3px',
+        fontFamily: 'Arial, Helvetica, sans-serif',
+        fontSize: '10px',
+        textAlign: 'right',
+      });
+
+      slider.addEventListener('input', () => {
+        numInput.value = parseFloat(slider.value).toFixed(2);
+        if (this.headHairModeSelect.value !== 'hairFit') {
+          this.headHairModeSelect.value = 'hairFit';
+          this.updateHeadHairControlState();
+        }
+        this.applyHeadHairPreview();
+        this.updateOverrideStatus();
+      });
+      numInput.addEventListener('input', () => {
+        const value = parseFloat(numInput.value);
+        if (!Number.isFinite(value)) return;
+        const clamped = Math.max(0, Math.min(1, value));
+        slider.value = String(clamped);
+        numInput.value = clamped.toFixed(2);
+        if (this.headHairModeSelect.value !== 'hairFit') {
+          this.headHairModeSelect.value = 'hairFit';
+          this.updateHeadHairControlState();
+        }
+        this.applyHeadHairPreview();
+        this.updateOverrideStatus();
+      });
+
+      row.appendChild(rowLabel);
+      row.appendChild(slider);
+      row.appendChild(numInput);
+      section.appendChild(row);
+      this.headHairSliders.set(def.key, slider);
+      this.headHairInputs.set(def.key, numInput);
+    }
+
+    return section;
+  }
+
   private makeButton(text: string, bg: string, borderColor: string, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement('button');
     btn.textContent = text;
@@ -484,6 +642,7 @@ export class GearDebugPanel {
       detailEl.style.cssText = 'color:#888;font-size:10px;margin-top:2px;';
       const parts = [`id: ${item.id}`, `slot: ${slot}`];
       if (item.toolType) parts.push(`tool: ${item.toolType}`);
+      if (slot === 'head') parts.push(`hair: ${item.headRenderMode ?? 'helmet'}`);
       detailEl.textContent = parts.join('  |  ');
       this.itemInfoLabel.appendChild(detailEl);
 
@@ -510,6 +669,10 @@ export class GearDebugPanel {
 
     const existingOverride = item ? this.overrideGetter(item.id) : null;
     this.loadedGlbPath = existingOverride?.file || null;
+    if (this.headHairSection) {
+      this.headHairSection.style.display = slot === 'head' && !!item ? 'block' : 'none';
+      this.setHeadHairControls(existingOverride?.headHair ?? null);
+    }
 
     this.updateOverrideStatus();
     this.loadThumbGrid(slot);
@@ -679,9 +842,12 @@ export class GearDebugPanel {
     };
 
     const close = (a: number, b: number) => Math.abs(a - b) < 0.001;
-    const matches = close(cur.px, ref.px) && close(cur.py, ref.py) && close(cur.pz, ref.pz)
+    const transformMatches = close(cur.px, ref.px) && close(cur.py, ref.py) && close(cur.pz, ref.pz)
       && close(cur.rx, ref.rx) && close(cur.ry, ref.ry) && close(cur.rz, ref.rz)
       && close(cur.s, ref.s);
+    const hairMatches = this.activeSlot !== 'head'
+      || this.headHairFitsEqual(this.buildCurrentHeadHairFit(), override?.headHair ?? null);
+    const matches = transformMatches && hairMatches;
 
     if (override && matches) {
       this.overrideStatusEl.innerHTML = '<span style="color:#4a4;">● saved override</span>';
@@ -703,6 +869,112 @@ export class GearDebugPanel {
 
   private getVal(key: string): number {
     return parseFloat(this.numInputs.get(key)?.value ?? '0');
+  }
+
+  private setHeadHairVal(key: HeadHairMorphKey, value: number): void {
+    const clamped = Math.max(0, Math.min(1, value));
+    const slider = this.headHairSliders.get(key);
+    const input = this.headHairInputs.get(key);
+    if (slider) slider.value = String(clamped);
+    if (input) input.value = clamped.toFixed(2);
+  }
+
+  private getHeadHairVal(key: HeadHairMorphKey): number {
+    const value = parseFloat(this.headHairInputs.get(key)?.value ?? '0');
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+  }
+
+  private setHeadHairControls(fit: HeadHairFit | null): void {
+    this.headHairModeSelect.value = fit?.mode ?? '';
+    for (const key of HEAD_HAIR_MORPH_KEYS) {
+      this.setHeadHairVal(key, fit?.morphs?.[key] ?? 0);
+    }
+    this.updateHeadHairControlState();
+  }
+
+  private buildCurrentHeadHairFit(): HeadHairFit | undefined {
+    if (this.activeSlot !== 'head' || !this.headHairModeSelect) return undefined;
+    const modeValue = this.headHairModeSelect.value;
+    const mode = HEAD_RENDER_MODES.includes(modeValue as HeadRenderMode)
+      ? modeValue as HeadRenderMode
+      : undefined;
+    if (!mode) return undefined;
+
+    const fit: HeadHairFit = { mode };
+    if (mode === 'hairFit') {
+      const morphs: NonNullable<HeadHairFit['morphs']> = {};
+      for (const key of HEAD_HAIR_MORPH_KEYS) {
+        const value = this.getHeadHairVal(key);
+        if (value > 0.001) morphs[key] = Number(value.toFixed(3));
+      }
+      if (Object.keys(morphs).length > 0) fit.morphs = morphs;
+    }
+    return fit;
+  }
+
+  private updateHeadHairControlState(): void {
+    const custom = this.headHairModeSelect.value === 'hairFit';
+    for (const key of HEAD_HAIR_MORPH_KEYS) {
+      const slider = this.headHairSliders.get(key);
+      const input = this.headHairInputs.get(key);
+      if (slider) {
+        slider.disabled = !custom;
+        slider.style.opacity = custom ? '1' : '0.38';
+      }
+      if (input) {
+        input.disabled = !custom;
+        input.style.opacity = custom ? '1' : '0.45';
+      }
+    }
+  }
+
+  private applyHeadHairPreview(): void {
+    if (this.activeSlot !== 'head') return;
+    this.headHairPreviewCallback?.(this.buildCurrentHeadHairFit() ?? null);
+  }
+
+  private applyHeadHairPreset(kind: 'auto' | 'brim' | 'cap' | 'clear'): void {
+    let preset = kind;
+    if (kind === 'auto') {
+      const name = this.getItemInfo(this.activeSlot)?.name.toLowerCase() ?? '';
+      if (/(mask|eyepatch|circlet|headband)/.test(name)) preset = 'clear';
+      else if (/(coif|skullcap|hood|beret)/.test(name)) preset = 'cap';
+      else preset = 'brim';
+    }
+
+    if (preset === 'clear') {
+      this.headHairModeSelect.value = '';
+      for (const key of HEAD_HAIR_MORPH_KEYS) this.setHeadHairVal(key, 0);
+    } else {
+      this.headHairModeSelect.value = 'hairFit';
+      const values: Record<HeadHairMorphKey, number> = preset === 'cap'
+        ? { topFlatten: 1, topLower: 0.32, sideSqueeze: 0.72, backTuck: 0.46, frontTrim: 0.28 }
+        : { topFlatten: 0.82, topLower: 0.12, sideSqueeze: 0.42, backTuck: 0.24, frontTrim: 0.12 };
+      for (const key of HEAD_HAIR_MORPH_KEYS) this.setHeadHairVal(key, values[key]);
+    }
+
+    this.updateHeadHairControlState();
+    this.applyHeadHairPreview();
+    this.updateOverrideStatus();
+  }
+
+  private headHairFitsEqual(a?: HeadHairFit | null, b?: HeadHairFit | null): boolean {
+    const norm = (fit?: HeadHairFit | null) => {
+      if (!fit?.mode) return null;
+      const out: HeadHairFit = { mode: fit.mode };
+      if (fit.mode === 'hairFit') {
+        const morphs: NonNullable<HeadHairFit['morphs']> = {};
+        for (const key of HEAD_HAIR_MORPH_KEYS) {
+          const value = fit.morphs?.[key];
+          if (typeof value === 'number' && Number.isFinite(value) && Math.abs(value) > 0.001) {
+            morphs[key] = Number(Math.max(0, Math.min(1, value)).toFixed(3));
+          }
+        }
+        if (Object.keys(morphs).length > 0) out.morphs = morphs;
+      }
+      return out;
+    };
+    return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
   }
 
   private applyToTarget(): void {
@@ -802,6 +1074,11 @@ export class GearDebugPanel {
       }
     }
 
+    if (this.activeSlot === 'head') {
+      const headHair = this.buildCurrentHeadHairFit();
+      if (headHair) override.headHair = headHair;
+    }
+
     return override;
   }
 
@@ -826,7 +1103,7 @@ export class GearDebugPanel {
 
     const ok = window.confirm(
       `Apply ${item.name}'s pose to matching tier-family items in the ${this.activeSlot} slot?\n\n` +
-      'This copies position, rotation, scale, and bone only. It does not copy the GLB file.'
+      `This copies position, rotation, scale, bone${this.activeSlot === 'head' ? ', and head-hair fit' : ''}. It does not copy the GLB file.`
     );
     if (!ok) return;
 
@@ -848,7 +1125,9 @@ export class GearDebugPanel {
 
     let code: string;
     if (item) {
-      code = `// ${item.name} (id: ${item.id}${item.toolType ? `, toolType: ${item.toolType}` : ''})\n"${item.id}": { "localPosition": { "x": ${px}, "y": ${py}, "z": ${pz} }, "localRotation": { "x": ${rx}, "y": ${ry}, "z": ${rz} }, "scale": ${s} }`;
+      const headHair = this.activeSlot === 'head' ? this.buildCurrentHeadHairFit() : undefined;
+      const headHairSnippet = headHair ? `, "headHair": ${JSON.stringify(headHair)}` : '';
+      code = `// ${item.name} (id: ${item.id}${item.toolType ? `, toolType: ${item.toolType}` : ''})\n"${item.id}": { "localPosition": { "x": ${px}, "y": ${py}, "z": ${pz} }, "localRotation": { "x": ${rx}, "y": ${ry}, "z": ${rz} }, "scale": ${s}${headHairSnippet} }`;
     } else {
       const bone = this.getSlotBone(slot);
       code = `// ${slot}\n${slot}: { boneName: '${bone}', localPosition: { x: ${px}, y: ${py}, z: ${pz} }, localRotation: { x: ${rx}, y: ${ry}, z: ${rz} }, scale: ${s} },`;

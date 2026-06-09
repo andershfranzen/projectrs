@@ -33,6 +33,7 @@ const COINS_ITEM_ID = 10;
 const ROYAL_MINE_ORE_ITEM_IDS = new Set([25, 26, 34, 35, 44, 45, 142, 407, 408]);
 const SULTANS_MINE_MAP_LEVEL = 'the_sultans_mine';
 const SULTANS_ROYAL_GUARD_NPC_ID = 108;
+const PALACE_GUARD_NPC_ID = 110;
 const SULTANS_MINE_EXPORT_DOOR_TILE_X = 116;
 const SULTANS_MINE_EXPORT_DOOR_TILE_Z = 157;
 const SULTANS_MINE_EXPORT_DOOR_FLOOR = 0;
@@ -2991,6 +2992,18 @@ export class World {
     try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
   }
 
+  private broadcastNpcOverheadMessage(npc: Npc, message: string, alert: boolean = false): void {
+    const cm = this.chunkManagers?.get(npc.currentMapLevel);
+    if (!cm) return;
+    const packet = encodeStringPacket(ServerOpcode.NPC_OVERHEAD_MESSAGE, message.slice(0, 300), npc.id, alert ? 1 : 0);
+    cm.forEachPlayerNear(npc.position.x, npc.position.y, (pid) => {
+      const p = this.players.get(pid);
+      if (p && !p.disconnected && p.currentMapLevel === npc.currentMapLevel && p.currentFloor === npc.currentFloor) {
+        try { p.ws.sendBinary(packet); } catch { /* connection closed */ }
+      }
+    });
+  }
+
   private sendSultansMineOreDoorWarning(player: Player): void {
     const guard = this.findSultansRoyalGuard(player);
     if (guard) {
@@ -3503,11 +3516,80 @@ export class World {
     });
   }
 
+  private isPalaceGuardNpc(npc: Npc): boolean {
+    return npc.npcId === PALACE_GUARD_NPC_ID || npc.def.name === 'Palace Guard';
+  }
+
+  private isEntityInNpcAggroRange(npc: Npc, target: Player | Npc): boolean {
+    if (target.currentMapLevel !== npc.currentMapLevel || target.currentFloor !== npc.currentFloor) return false;
+    if (!npc.isTargetWithinAggroRange(target.position.x, target.position.y)) return false;
+    const fp = npc.distToFootprint(target.position.x, target.position.y);
+    return Math.max(Math.abs(fp.dx), Math.abs(fp.dz)) <= npc.effectiveAggroRange;
+  }
+
+  private canPalaceGuardShareNpcTarget(npc: Npc, target: Player): boolean {
+    return this.isPalaceGuardNpc(npc)
+      && target.alive
+      && !target.disconnected
+      && !target.requestIdleLogout
+      && target.currentMapLevel === npc.currentMapLevel
+      && target.currentFloor === npc.currentFloor;
+  }
+
+  private isPlayerCombatStartedWithNpc(player: Player, npc: Npc): boolean {
+    return this.playerCombatTargets.get(player.id) === npc.id
+      || npc.combatTarget?.id === player.id;
+  }
+
+  private isNpcInteractionCombatBlocked(player: Player, npc: Npc): boolean {
+    if (npc.hasShop || npc.hasBank) return true;
+    if (!npc.hasDialogue) return false;
+    return !this.isPlayerCombatStartedWithNpc(player, npc);
+  }
+
+  private hasPalaceGuardAssistLineOfSight(attackedGuard: Npc, helperGuard: Npc): boolean {
+    const map = this.maps?.get(helperGuard.currentMapLevel);
+    if (!map) return false;
+    return map.hasWallLineOfSight(
+      helperGuard.position.x,
+      helperGuard.position.y,
+      attackedGuard.position.x,
+      attackedGuard.position.y,
+      helperGuard.currentFloor,
+    );
+  }
+
+  private broadcastNpcAlert(npc: Npc): void {
+    this.broadcastNpcOverheadMessage(npc, '!', true);
+  }
+
+  private shouldPalaceGuardAssist(attackedGuard: Npc, helperGuard: Npc, attacker: Player): boolean {
+    if (helperGuard.id === attackedGuard.id) return false;
+    if (!this.isPalaceGuardNpc(attackedGuard) || !this.isPalaceGuardNpc(helperGuard)) return false;
+    if (helperGuard.dead || helperGuard.combatTarget || helperGuard.retreatTarget) return false;
+    if (!this.canPalaceGuardShareNpcTarget(helperGuard, attacker)) return false;
+    if (attacker.openInterface === 'duel' || this.activeDuels?.has(attacker.id)) return false;
+    if (!this.isEntityInNpcAggroRange(helperGuard, attackedGuard)) return false;
+    if (!this.isEntityInNpcAggroRange(helperGuard, attacker)) return false;
+    if (!this.hasPalaceGuardAssistLineOfSight(attackedGuard, helperGuard)) return false;
+    return this.canPlayerTargetNpc(attacker, helperGuard);
+  }
+
+  private callPalaceGuardAssist(attackedGuard: Npc, attacker: Player): void {
+    if (!this.isPalaceGuardNpc(attackedGuard) || !attacker.alive) return;
+    for (const [, helperGuard] of this.npcs) {
+      if (!this.shouldPalaceGuardAssist(attackedGuard, helperGuard, attacker)) continue;
+      this.broadcastNpcFacingPlayer(helperGuard, attacker);
+      this.broadcastNpcAlert(helperGuard);
+      this.enqueueNpcRetaliation(helperGuard, attacker);
+    }
+  }
+
   private startPlayerAutoRetaliation(player: Player, npc: Npc): void {
     if (!player.autoRetaliate || !player.alive || player.disconnected) return;
     if (player.isInterfaceOpen() || this.activeDuels?.has(player.id)) return;
     if (player.hasMoveQueue() || this.playerCombatTargets.has(player.id)) return;
-    if (npc.dead || npc.hasDialogue || npc.hasShop || npc.hasBank) return;
+    if (npc.dead || this.isNpcInteractionCombatBlocked(player, npc)) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
 
     this.interruptPlayerAction(player.id, player);
@@ -3928,10 +4010,10 @@ export class World {
     const npc = this.npcs.get(npcId);
     if (!player || !npc || npc.dead) return;
     if (player.isInterfaceOpen()) return;
-    // Prevent attacking shopkeepers, dialogue NPCs, and bankers — anything
-    // with a non-combat interaction surface. Mirrors the priority used by
-    // handlePlayerTalkNpc: dialogue > shop > bank.
-    if (npc.hasDialogue || npc.hasShop || npc.hasBank) return;
+    // Dialogue-only NPCs stay protected until a dialogue action explicitly
+    // starts the fight. Once combat is active, repeated attack packets are
+    // allowed for chase/autocast follow-up.
+    if (this.isNpcInteractionCombatBlocked(player, npc)) return;
     if (!this.canPlayerTargetNpc(player, npc)) return;
     if (!this.canPlayerEngageNpcCombat(player, npc)) return;
     if (player.visibleEntityIds.size > 0 && !player.visibleEntityIds.has(npcId)) return;
@@ -4277,7 +4359,10 @@ export class World {
       sessionId,
       speaker: wireNode.speaker ?? npc.displayName,
       lines: wireNode.lines,
-      options: visibleOptions.map(o => ({ label: o.label })),
+      options: visibleOptions.map(o => ({
+        label: o.label,
+        terminal: !o.next,
+      })),
     });
     const packet = encodeStringPacket(ServerOpcode.DIALOGUE_OPEN, payload, npc.id, sessionId);
     try { player.ws.sendBinary(packet); } catch { /* connection closed */ }
@@ -6583,8 +6668,14 @@ export class World {
       this.magicDebug(player, 'castSpell-reject-missing-npc', { spellIndex, targetEntityId, keepCombatTarget, dead: npc?.dead });
       return;
     }
-    if (this.data.getShop(npc.npcId)) {
-      this.magicDebug(player, 'castSpell-reject-shop', { spellIndex, targetEntityId, keepCombatTarget, npcDefId: npc.npcId });
+    if (this.isNpcInteractionCombatBlocked(player, npc)) {
+      this.magicDebug(player, 'castSpell-reject-noncombat-interaction', {
+        spellIndex,
+        targetEntityId,
+        keepCombatTarget,
+        npcDefId: npc.npcId,
+      });
+      if (keepCombatTarget) this.clearCombatTarget(playerId);
       return;
     }
     if (!this.canPlayerTargetNpc(player, npc)) {
@@ -8991,7 +9082,9 @@ export class World {
         if (canNpcReservePlayerTarget(npc, target)) {
           const reservedNpcId = npcTargetingPlayerIds.get(target.id);
           if (reservedNpcId !== undefined && reservedNpcId !== npc.id) {
-            npc.disengageAndReturnHome();
+            if (!this.canPalaceGuardShareNpcTarget(npc, target)) {
+              npc.disengageAndReturnHome();
+            }
           } else {
             npcTargetingPlayerIds.set(target.id, npc.id);
           }
@@ -9385,6 +9478,7 @@ export class World {
           this.broadcastNpcFacingPlayer(npc, player);
           this.enqueueNpcRetaliation(npc, player);
         }
+        this.callPalaceGuardAssist(npc, player);
         // Arm post-combat logout block — player can't safely log off mid-fight.
         player.markInCombat(this.currentTick);
         player.botStats?.recordCombatSwing(this.currentTickStartMs, performance.now());
@@ -9474,6 +9568,7 @@ export class World {
         this.broadcastNpcFacingPlayer(npc, player);
         this.enqueueNpcRetaliation(npc, player, 1);
       }
+      this.callPalaceGuardAssist(npc, player);
       this.broadcastCombatHit(result.hit.attackerId, result.hit.targetId, result.hit.damage, result.hit.targetHealth, result.hit.targetMaxHealth, npc.currentMapLevel, npc.currentFloor, npc.position.x, npc.position.y);
       this.sendCombatXp(player, result);
 

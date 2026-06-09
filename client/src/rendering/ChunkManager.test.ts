@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode';
-import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
+import { ChunkManager, assertOptionalMapResourceResponse, isInteractiveDoorPlacedAsset, isObjectShadowReceiverGround, isRoofLikePlacedAsset, placedObjectThinGroupKey } from './ChunkManager';
+import type { GroundType } from '@projectrs/shared';
 
 const originalFetch = globalThis.fetch;
 const originalConsoleWarn = console.warn;
@@ -72,13 +73,46 @@ describe('placed object roof classification', () => {
 });
 
 describe('placed object door classification', () => {
-  test('only Truedoor assets are treated as interactive door panels', () => {
+  test('only standalone door assets are treated as interactive door panels', () => {
     expect(isInteractiveDoorPlacedAsset('castleTruedoor')).toBe(true);
     expect(isInteractiveDoorPlacedAsset('basicTruedoor')).toBe(true);
+    expect(isInteractiveDoorPlacedAsset('IronDoor1')).toBe(true);
     expect(isInteractiveDoorPlacedAsset('stone door1')).toBe(false);
     expect(isInteractiveDoorPlacedAsset('dark stone door2')).toBe(false);
     expect(isInteractiveDoorPlacedAsset('wood door3')).toBe(false);
     expect(isInteractiveDoorPlacedAsset('white doorway')).toBe(false);
+  });
+});
+
+describe('terrain object shadow receivers', () => {
+  test('dry terrain receives baked object shadows across grass/sand boundaries', () => {
+    expect(isObjectShadowReceiverGround('grass')).toBe(true);
+    expect(isObjectShadowReceiverGround('sand')).toBe(true);
+    expect(isObjectShadowReceiverGround('drysand')).toBe(true);
+    expect(isObjectShadowReceiverGround('water')).toBe(false);
+    expect(isObjectShadowReceiverGround('void')).toBe(false);
+  });
+
+  test('shared grass/sand corners use the same shadow factor', () => {
+    const width = 2;
+    const height = 1;
+    const shadowInf = new Float32Array((width + 1) * (height + 1));
+    shadowInf.fill(1);
+    shadowInf[1] = 0.42;
+    const manager = Object.assign(Object.create(ChunkManager.prototype), {
+      mapWidth: width,
+      mapHeight: height,
+      defaultGround: 'grass' as GroundType,
+      shadowInf,
+      mapData: {
+        tiles: [[
+          { ground: 'grass', groundB: null },
+          { ground: 'sand', groundB: null },
+        ]],
+      },
+    }) as any;
+
+    expect(manager.getCornerObjectShadowFactor(1, 0)).toBeCloseTo(0.42);
   });
 });
 

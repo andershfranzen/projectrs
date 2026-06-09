@@ -169,6 +169,13 @@ export enum ClientActivityKind {
   Touch = 3,
 }
 
+export const NPC_INTERACTION_HAS_DIALOGUE = 1 << 0;
+export const NPC_INTERACTION_HAS_SHOP = 1 << 1;
+export const NPC_INTERACTION_HAS_BANK = 1 << 2;
+/** Dialogue tree contains a server-authored startNpcCombat action. The client
+ *  still uses Talk-to as the default interaction until combat is active. */
+export const NPC_INTERACTION_STARTS_COMBAT = 1 << 3;
+
 // Server → Client opcodes
 export enum ServerOpcode {
   LOGIN_OK = 1,
@@ -269,7 +276,8 @@ export enum ServerOpcode {
    *  away, the dialogue tree ends, or an action like openShop transitions out. */
   DIALOGUE_CLOSE = 77,
   /** Per-NPC interaction flags. Layout: [npcEntityId, flagBits].
-   *  flagBits: bit 0 = hasDialogue, bit 1 = hasShop, bit 2 = hasBank.
+   *  flagBits: bit 0 = hasDialogue, bit 1 = hasShop, bit 2 = hasBank,
+   *  bit 3 = dialogue can start NPC combat.
    *  Broadcast on chunk-entry alongside NPC_APPEARANCE/NPC_EQUIPMENT so the
    *  client can render "Talk-to" / "Trade" / "Bank" right-click options. */
   NPC_INTERACTIONS = 78,

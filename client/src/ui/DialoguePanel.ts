@@ -9,7 +9,7 @@ export interface DialogueNodePayload {
   lines: string[];
   /** Just the labels — the server validates the chosen index against its
    *  own copy of the node, so the client doesn't need actions or next ids. */
-  options: { label: string }[];
+  options: { label: string; terminal?: boolean }[];
   /** Transient server-owned line, e.g. banker acknowledgement before opening UI. */
   autoClose?: boolean;
 }
@@ -193,20 +193,26 @@ export class DialoguePanel {
     if (!this.currentNode) return;
     const option = this.currentNode.options[optionIndex];
     if (!option) {
-      this.hide();
+      this.cancelDialogue();
       return;
     }
+    const npcEntityId = this.npcEntityId;
+    const sessionId = this.sessionId;
 
     if (!/^continue\.?$/i.test(option.label.trim())) this.hooks.showPlayerBubble(option.label);
     this.clearNpcBubble();
     this.setOptionsVisible(false);
-    this.waitingForNpcReply = true;
     this.network.sendRaw(encodePacket(
       ClientOpcode.DIALOGUE_CHOOSE,
-      this.npcEntityId,
-      this.sessionId,
+      npcEntityId,
+      sessionId,
       optionIndex,
     ));
+    if (option.terminal) {
+      this.hide();
+      return;
+    }
+    this.waitingForNpcReply = true;
   }
 
   private render(): void {

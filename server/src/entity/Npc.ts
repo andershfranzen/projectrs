@@ -1,5 +1,5 @@
 import { Entity } from './Entity';
-import { effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
+import { NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_STARTS_COMBAT, effectiveNpcCombatStats, getObjectFootprintBounds, getObjectFootprintMinTile, getObjectInteractionTiles, isTileAdjacentToObject, isTileInsideObjectFootprint, normalizeAppearance, normalizeNpcEquipmentFits, normalizeNpcVisualScale, npcCombatLevel } from '@projectrs/shared';
 import type { NpcDef, PlayerAppearance, ShopDef, DialogueTree, TileCoord, NpcStatOverrides, CustomColors, QuestCondition, NpcEquipmentFitOverrides } from '@projectrs/shared';
 import { canTravel, stepTowardNaiveInteraction, type PathingCollision } from '../pathing/Pathing';
 
@@ -26,6 +26,17 @@ function normalizeFacingAngle(value: number | null | undefined): number | null {
 function normalizeOptionalRange(value: number | null | undefined): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return Math.max(0, Math.floor(value));
+}
+
+function dialogueTreeStartsCombat(tree: DialogueTree | null): boolean {
+  if (!tree) return false;
+  for (const node of Object.values(tree.nodes)) {
+    for (const option of node.options) {
+      if (option.action?.type === 'startNpcCombat') return true;
+      if (option.actions?.some(action => action.type === 'startNpcCombat')) return true;
+    }
+  }
+  return false;
 }
 
 export interface NpcOptions {
@@ -280,9 +291,15 @@ export class Npc extends Entity {
   get hasBank(): boolean {
     return this.def.bankAccess === true;
   }
+  get hasCombatStartDialogue(): boolean {
+    return dialogueTreeStartsCombat(this.effectiveDialogue);
+  }
   /** Bitfield matching NPC_INTERACTIONS opcode encoding. */
   interactionFlags(): number {
-    return (this.hasDialogue ? 1 : 0) | (this.hasShop ? 2 : 0) | (this.hasBank ? 4 : 0);
+    return (this.hasDialogue ? NPC_INTERACTION_HAS_DIALOGUE : 0)
+      | (this.hasShop ? NPC_INTERACTION_HAS_SHOP : 0)
+      | (this.hasBank ? NPC_INTERACTION_HAS_BANK : 0)
+      | (this.hasCombatStartDialogue ? NPC_INTERACTION_STARTS_COMBAT : 0);
   }
 
   /** Effective aggression: spawn-level flag wins if set, otherwise NpcDef. */

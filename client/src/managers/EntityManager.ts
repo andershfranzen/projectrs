@@ -102,7 +102,7 @@ export class EntityManager {
   readonly npcFacingAngles: Map<number, number> = new Map();
   /** Bitfield of non-combat interactions this NPC supports. Set from
    *  NPC_INTERACTIONS opcode on chunk-entry; absent entries → 0 (combat-only).
-   *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank. */
+   *  bit 0 = dialogue, bit 1 = shop, bit 2 = bank, bit 3 = dialogue can start combat. */
   readonly npcInteractions: Map<number, number> = new Map();
   /** Per-spawn display name override (NPC_NAME opcode). When absent, display
    *  names fall back to loaded npc defs, then the legacy NPC_NAMES table. */
@@ -201,6 +201,7 @@ export class EntityManager {
         tileSize,
         visualScale,
         originMode: modelCfg.originMode,
+        originOffset: modelCfg.originOffset,
         groundOffset: modelCfg.groundOffset,
         facingOffsetY: modelCfg.facingOffsetY,
         animSpeedRatio: modelCfg.animSpeedRatio,

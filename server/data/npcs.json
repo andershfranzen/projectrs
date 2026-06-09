@@ -855,10 +855,10 @@
     "id": 15,
     "name": "Camel",
     "examineText": "A camel chewing thoughtfully, as if judging the whole kingdom.",
-    "health": 24,
-    "attack": 10,
-    "defence": 17,
-    "strength": 15,
+    "health": 50,
+    "attack": 30,
+    "defence": 60,
+    "strength": 47,
     "attackSpeed": 5,
     "respawnTime": 25,
     "aggressive": false,
@@ -901,9 +901,9 @@
         "chance": 1
       },
       {
-        "itemId": 224,
+        "itemId": 289,
         "quantity": 1,
-        "chance": 0.03
+        "chance": 0.0048
       }
     ]
   },
@@ -1636,8 +1636,7 @@
               }
             },
             {
-              "label": "Sounds profitable.",
-              "next": "greet"
+              "label": "Sounds profitable."
             },
             {
               "label": "Goodbye."
@@ -1649,60 +1648,93 @@
   },
   {
     "id": 109,
-    "name": "Palace Guard",
-    "examineText": "A camel chewing thoughtfully, as if judging the whole kingdom.",
-    "health": 24,
-    "attack": 10,
-    "defence": 17,
-    "strength": 15,
+    "name": "Ali the Oasis-Born",
+    "examineText": "A dignified camel who looks insulted by the word livestock.",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
     "attackSpeed": 5,
-    "respawnTime": 25,
+    "respawnTime": 100,
     "aggressive": false,
     "wanderRange": 4,
     "size": 2,
-    "lootTable": [
-      {
-        "itemId": 1,
-        "quantity": 1,
-        "chance": 1
-      },
-      {
-        "itemId": 237,
-        "quantity": 1,
-        "chance": 0.001
-      },
-      {
-        "itemId": 409,
-        "quantity": 1,
-        "chance": 0.001
-      },
-      {
-        "itemId": 410,
-        "quantity": 1,
-        "chance": 0.001
-      },
-      {
-        "itemId": 411,
-        "quantity": 1,
-        "chance": 0.001
-      },
-      {
-        "itemId": 412,
-        "quantity": 1,
-        "chance": 0.001
-      },
-      {
-        "itemId": 300,
-        "quantity": 1,
-        "chance": 1
-      },
-      {
-        "itemId": 224,
-        "quantity": 1,
-        "chance": 0.03
+    "lootTable": [],
+    "modelNpcId": 15,
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "Peace, traveler. Mind the knees; they are load-bearing miracles.",
+            "I am Ali the Oasis-Born, scholar of shade, keeper of snacks, undefeated champion of pretending not to spit."
+          ],
+          "options": [
+            {
+              "label": "Any desert wisdom?",
+              "next": "wisdom"
+            },
+            {
+              "label": "Why are you by the oasis?",
+              "next": "oasis"
+            },
+            {
+              "label": "Are you a camel?",
+              "next": "camel"
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        },
+        "wisdom": {
+          "id": "wisdom",
+          "lines": [
+            "Drink before you are thirsty. Sit before you are dramatic. Chew before you judge.",
+            "Also, never trust a man who says his saddle is only temporary."
+          ],
+          "options": [
+            {
+              "label": "Thanks for the wisdom."
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        },
+        "oasis": {
+          "id": "oasis",
+          "lines": [
+            "The oasis and I have an arrangement. It provides water; I provide mystery and high-quality chewing.",
+            "I also know where the dates fall. A sacred responsibility."
+          ],
+          "options": [
+            {
+              "label": "Very important work."
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        },
+        "camel": {
+          "id": "camel",
+          "lines": [
+            "Camel? That is what tax collectors call me when they want free transport.",
+            "Among friends, I prefer Ali, Lord of the Long Eyelash and Emergency Water."
+          ],
+          "options": [
+            {
+              "label": "Apologies, Ali."
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        }
       }
-    ],
-    "modelNpcId": 15
+    }
   },
   {
     "id": 110,
@@ -1730,5 +1762,229 @@
     ],
     "modelNpcId": 102,
     "attackStyle": "slash"
+  },
+  {
+    "id": 111,
+    "name": "Scimitar shop",
+    "examineText": "Smiling with the exact warmth of a refund policy.",
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
+    "lootTable": [],
+    "shop": {
+      "name": "Scimitar shop's Shop",
+      "restockTicks": 200,
+      "items": [
+        {
+          "itemId": 61,
+          "price": 70,
+          "stock": 5
+        },
+        {
+          "itemId": 75,
+          "price": 220,
+          "stock": 4
+        },
+        {
+          "itemId": 89,
+          "price": 520,
+          "stock": 3
+        },
+        {
+          "itemId": 117,
+          "price": 900,
+          "stock": 2
+        },
+        {
+          "itemId": 103,
+          "price": 3200,
+          "stock": 1
+        }
+      ]
+    },
+    "dialogue": {
+      "root": "greet",
+      "nodes": {
+        "greet": {
+          "id": "greet",
+          "lines": [
+            "Welcome to my shop, traveler!",
+            "What can I do for you today?"
+          ],
+          "options": [
+            {
+              "label": "Show me what you've got.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Tell me about this place.",
+              "next": "lore"
+            },
+            {
+              "label": "Goodbye."
+            }
+          ]
+        },
+        "lore": {
+          "id": "lore",
+          "lines": [
+            "This little shop has been in my family for three generations.",
+            "A lot of inexperienced travelers tend to come around these parts. I keep a lot of stuff people would consider basic."
+          ],
+          "options": [
+            {
+              "label": "Show me your wares.",
+              "action": {
+                "type": "openShop"
+              }
+            },
+            {
+              "label": "Back.",
+              "next": "greet"
+            }
+          ]
+        }
+      }
+    },
+    "modelNpcId": 8
+  },
+  {
+    "id": 112,
+    "name": "Bandit",
+    "examineText": "A masked outlaw looking for an easy mark.",
+    "modelNpcId": 102,
+    "defaultAppearance": {
+      "bodyType": 0,
+      "shirtColor": 9,
+      "pantsColor": 5,
+      "shoesColor": 7,
+      "hairColor": 2,
+      "beltColor": 3,
+      "skinColor": 2,
+      "hairStyle": 1
+    },
+    "defaultEquipment": [
+      58,
+      0,
+      216,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "health": 44,
+    "attack": 35,
+    "defence": 50,
+    "strength": 40,
+    "attackBonus": 3,
+    "strengthBonus": 2,
+    "stabDefence": 2,
+    "slashDefence": 1,
+    "crushDefence": 1,
+    "rangedDefence": 1,
+    "magicDefence": 0,
+    "attackStyle": "stab",
+    "attackSpeed": 4,
+    "respawnTime": 30,
+    "aggressive": true,
+    "wanderRange": 4,
+    "lootTable": [
+      {
+        "itemId": 1,
+        "quantity": 1,
+        "chance": 1
+      },
+      {
+        "itemId": 10,
+        "quantity": 12,
+        "chance": 0.8
+      },
+      {
+        "itemId": 114,
+        "quantity": 1,
+        "chance": 0.08
+      },
+      {
+        "itemId": 227,
+        "quantity": 1,
+        "chance": 0.0368
+      },
+      {
+        "itemId": 439,
+        "quantity": 1,
+        "chance": 0.002
+      },
+      {
+        "itemId": 48,
+        "quantity": 1,
+        "chance": 0.015
+      }
+    ]
+  },
+  {
+    "id": 113,
+    "name": "Helmet Smith",
+    "examineText": "A helmet smith with rows of full helms ready for fitting.",
+    "modelNpcId": 11,
+    "health": 50,
+    "attack": 1,
+    "defence": 1,
+    "strength": 1,
+    "attackSpeed": 4,
+    "respawnTime": 100,
+    "aggressive": false,
+    "wanderRange": 1,
+    "lootTable": [],
+    "shop": {
+      "name": "Full Helm Shop",
+      "items": [
+        {
+          "itemId": 66,
+          "price": 150,
+          "stock": 4
+        },
+        {
+          "itemId": 80,
+          "price": 300,
+          "stock": 3
+        },
+        {
+          "itemId": 94,
+          "price": 600,
+          "stock": 2
+        },
+        {
+          "itemId": 122,
+          "price": 1200,
+          "stock": 2
+        },
+        {
+          "itemId": 108,
+          "price": 1850,
+          "stock": 1
+        },
+        {
+          "itemId": 322,
+          "price": 3600,
+          "stock": 1
+        },
+        {
+          "itemId": 337,
+          "price": 7200,
+          "stock": 1
+        }
+      ]
+    }
   }
 ]

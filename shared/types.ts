@@ -57,7 +57,7 @@ export function decodeNpcVisualScale(value: unknown): number {
   return normalizeNpcVisualScale(value / NPC_VISUAL_SCALE_WIRE_MULTIPLIER);
 }
 
-export const HEAD_RENDER_MODES = ['helmet', 'hat', 'hairTuck'] as const;
+export const HEAD_RENDER_MODES = ['helmet', 'hat', 'hairTuck', 'hairFit'] as const;
 export type HeadRenderMode = typeof HEAD_RENDER_MODES[number];
 
 export interface ItemDef {
@@ -89,6 +89,8 @@ export interface ItemDef {
    *   - 'hat': keep the normal head and hair visible; used by open hats that
    *     rest on top of the hairstyle.
    *   - 'hairTuck': keep the face visible but tuck hair into a compact shape.
+   *   - 'hairFit': keep the face and hair visible; per-item gear override data
+   *     controls how the hairstyle is compressed to fit under the headgear.
    */
   headRenderMode?: HeadRenderMode;
   attackSpeed?: number;
@@ -1045,8 +1047,8 @@ export function groundTypeToTileType(ground: GroundType): TileType {
  *
  * The editor's overworld "Mud" swatch sets `waterPainted = true` while leaving
  * `ground` unchanged, so we must NOT treat every `waterPainted` tile as real
- * water. Blue surface-water paint is explicit pool/pond water. Heightmap-
- * submerged tiles are also real water.
+ * water. Blue surface-water paint is a visual terrain-following layer and
+ * should not add collision. Only heightmap-submerged tiles are real water.
  */
 export function classifyTileType(
   tile: KCTile,
@@ -1056,7 +1058,6 @@ export function classifyTileType(
   if (tile.ground === 'void') return TileType.WALL;
   const minH = Math.min(cornerHeights.tl, cornerHeights.tr, cornerHeights.bl, cornerHeights.br);
   if (minH <= waterLevel) return TileType.WATER;
-  if (tile.waterSurface || tile.waterSurfaceB) return TileType.WATER;
   if (tile.waterPainted) return TileType.MUD;
   return groundTypeToTileType(tile.ground);
 }

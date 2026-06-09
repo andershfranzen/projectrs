@@ -89,16 +89,25 @@ function npcAttackStyle(value: NpcAttackStyle | undefined): NpcAttackStyle {
   return value && NPC_ATTACK_STYLES.includes(value) ? value : 'crush';
 }
 
+function hasNpcLevelStatOverride(overrides: NpcCombatStatOverrides): boolean {
+  return overrides != null
+    && (overrides.health !== undefined
+      || overrides.attack !== undefined
+      || overrides.defence !== undefined
+      || overrides.strength !== undefined);
+}
+
 /** Resolve the combat stats that feed the NPC combat-level formula.
  *  This mirrors server Npc construction: a positive health override replaces
  *  maxHealth, while attack/defence/strength use nullish override fallback so
- *  authored 0 values remain valid. */
+ *  authored 0 values remain valid. A spawn that overrides any level-driving
+ *  stat derives its combat level unless the spawn also sets combatLevel. */
 export function effectiveNpcCombatStats(base: NpcCombatStats, overrides?: NpcCombatStatOverrides): NpcEffectiveCombatStats {
   const healthOverride = overrides?.health;
   const health = typeof healthOverride === 'number' && Number.isFinite(healthOverride) && healthOverride > 0
     ? Math.floor(healthOverride)
     : numericStat(base.health);
-  const combatLevel = positiveInt(overrides?.combatLevel ?? base.combatLevel);
+  const combatLevel = positiveInt(overrides?.combatLevel ?? (hasNpcLevelStatOverride(overrides) ? undefined : base.combatLevel));
   return {
     health,
     attack: numericStat(overrides?.attack ?? base.attack),

@@ -41,7 +41,7 @@
     "assetId": "byzantine new stone wall",
     "layerId": "layer_0",
     "position": {
-      "x": 223,
+      "x": 223.05597319709014,
       "y": 0,
       "z": 239
     },
@@ -51,7 +51,7 @@
       "z": 0
     },
     "scale": {
-      "x": 1,
+      "x": 1.1500000000000001,
       "y": 1,
       "z": 1
     }
@@ -60,7 +60,7 @@
     "assetId": "byzantine new stone wall",
     "layerId": "layer_0",
     "position": {
-      "x": 223,
+      "x": 223.13660971173184,
       "y": 0,
       "z": 231
     },
@@ -70,7 +70,7 @@
       "z": 0
     },
     "scale": {
-      "x": 1,
+      "x": 1.1500000000000001,
       "y": 1,
       "z": 1
     }
@@ -1859,7 +1859,8 @@
       "x": 1,
       "y": 1,
       "z": 1
-    }
+    },
+    "locked": true
   },
   {
     "assetId": "IronFence1",
@@ -2139,5 +2140,24 @@
         "fromAction": "Climb-down"
       }
     ]
+  },
+  {
+    "assetId": "Carpet2x4",
+    "layerId": "layer_0",
+    "position": {
+      "x": 215.5,
+      "y": 0.02,
+      "z": 240.5
+    },
+    "rotation": {
+      "x": 0,
+      "y": 0,
+      "z": 0
+    },
+    "scale": {
+      "x": 1,
+      "y": 1,
+      "z": 1
+    }
   }
 ]

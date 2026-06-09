@@ -40,6 +40,10 @@ export interface Npc3DModelEntry {
   groundOffset?: number;
   /** Visual yaw offset for models whose authored forward axis differs from the game forward axis. */
   facingOffsetY?: number;
+  /** Model-local X/Z origin trim in world units at scale=1, applied after
+   *  bounds-centering. Useful for long NPCs whose head extends past the
+   *  interaction footprint even though the body should keep a 2x2 size. */
+  originOffset?: { x?: number; z?: number };
 }
 
 const BEAR_FACING_OFFSET_Y = -Math.PI / 18;
@@ -70,8 +74,10 @@ export const NPC_3D_MODELS: Record<number, Npc3DModelEntry> = {
     anims: { idle: 'Idle4Legs', walk: 'Walk', attack: 'LClawsAttack4Legs', death: 'Death4Legs' },
   },
   // Camel.glb is authored in centimeters and exported with the final flat-color
-  // mesh plus the four gameplay clips.
-  15: { file: '/models/npcs/Camel.glb', scale: 0.01, originMode: 'boundsCenter', facingOffsetY: Math.PI, preserveAnimationRoles: ['idle'], anims: { idle: 'Idle_01', walk: 'Walk', attack: 'Attack', death: 'Die' } },
+  // mesh plus the four gameplay clips. Its neck/nose overhang the 2x2 footprint,
+  // so a small local +Z trim keeps the head out of adjacent players while the
+  // death clip still plays on the same centered root.
+  15: { file: '/models/npcs/Camel.glb', scale: 0.01, originMode: 'boundsCenter', originOffset: { z: 0.38 }, facingOffsetY: Math.PI, preserveAnimationRoles: ['idle'], anims: { idle: 'Idle_01', walk: 'Walk', attack: 'Attack', death: 'Die' } },
   18: { file: '/models/npcs/rat_small.glb', scale: 0.45, originMode: 'boundsCenter', anims: { idle: 'Idle', walk: 'Walk', attack: 'Attack', death: 'Death' } },
   22: { file: '/models/npcs/spider_v2.glb', scale: 0.75, originMode: 'boundsCenter', preserveAnimationRoles: ['walk'], anims: { idle: 'Idle', walk: 'WalkCycle', attack: 'Attack', death: 'Dead(just-pose)' } },
   17: {

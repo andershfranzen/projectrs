@@ -4,7 +4,6 @@ import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera'
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight'
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
-import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { VertexData } from '@babylonjs/core/Meshes/mesh.vertexData'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
@@ -61,6 +60,7 @@ import {
   NPC_COMBAT_ANIMATIONS,
   deriveUpperFloorTilesFromPlanes,
   resolveEquipmentModelPath,
+  resolveGearFitSourceItemId,
   BANK_ACCESS_SPAWN_NAME,
   isAllowedBankAccessSpawn,
   validateBankAccessSpawns,
@@ -94,8 +94,8 @@ import {
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
 // exactly what we need for the editor's per-spawn preview. Runtime GLBs are
 // served through the editor dev server's client-public proxy.
-import { CharacterEntity, loadGearTemplate } from '@client/rendering/CharacterEntity'
-import { loadStaticGearTemplate } from '@client/rendering/CharacterGearLoader'
+import { CharacterEntity } from '@client/rendering/CharacterEntity'
+import { buildCharacterGearDef, loadCharacterGearSmart, loadStaticGearTemplate } from '@client/rendering/CharacterGearLoader'
 import { applyNpcGearFitToNode, createNpcGearTemplateWithFit } from '@client/rendering/NpcGearAttachment'
 import { Npc3DEntity } from '@client/rendering/Npc3DEntity'
 import { resolveNpcModelSourceId, resolveNpcVisualConfig } from '@client/data/NpcConfig'
@@ -423,6 +423,7 @@ function tuneModelLighting(model) {
   // SpawnEntry shape in shared/types.ts.
   const NPC_SPAWN_OVERRIDE_FIELDS = {
     aggressive:   v => v === true || v === false,
+    floor:        shouldPersistNpcSpawnFloor,
     maxRange:     v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
     huntRange:    v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
     attackRange:  v => typeof v === 'number' && Number.isFinite(v) && v >= 0,
@@ -570,6 +571,66 @@ function tuneModelLighting(model) {
     return def ? npcCombatLevel(effectiveNpcCombatStats(def, spawn?.stats)) : 0
   }
 
+  function normalizeNpcSpawnFloor(value) {
+    const floor = Math.floor(Number(value))
+    return Number.isFinite(floor) && floor > 0 ? floor : 0
+  }
+
+  function shouldPersistNpcSpawnFloor(value) {
+    return normalizeNpcSpawnFloor(value) > 0
+  }
+
+  function npcSpawnFloor(spawn) {
+    return normalizeNpcSpawnFloor(spawn?.floor)
+  }
+
+  function setNpcSpawnFloor(spawn, value) {
+    if (!spawn) return 0
+    const floor = normalizeNpcSpawnFloor(value)
+    if (floor > 0) spawn.floor = floor
+    else delete spawn.floor
+    delete spawn.y
+    return floor
+  }
+
+  function npcSpawnTileCoords(spawn) {
+    const x = Math.max(0, Math.min(map.width - 1, Math.floor(spawn?.x ?? 0)))
+    const z = Math.max(0, Math.min(map.height - 1, Math.floor(spawn?.z ?? 0)))
+    return { x, z }
+  }
+
+  function npcSpawnAuthoredFloorHeight(spawn, visualMaps = null) {
+    const floor = npcSpawnFloor(spawn)
+    if (floor <= 0) return null
+    const maps = visualMaps || buildCollisionFloorVisualMaps()
+    const tile = npcSpawnTileCoords(spawn)
+    const idx = tile.z * map.width + tile.x
+    return maps.explicit.get(floor)?.get(idx)
+      ?? maps.derived.get(floor)?.get(idx)
+      ?? maps.ranked.get(idx)?.[floor - 1]
+      ?? null
+  }
+
+  function npcSpawnDisplayHeight(spawn, visualMaps = null) {
+    const tile = npcSpawnTileCoords(spawn)
+    const floorHeight = npcSpawnAuthoredFloorHeight(spawn, visualMaps)
+    return floorHeight ?? map.getAverageTileHeight(tile.x, tile.z)
+  }
+
+  function formatNpcSpawnFloorText(spawn) {
+    const floor = npcSpawnFloor(spawn)
+    return floor > 0 ? `F${floor}` : 'G'
+  }
+
+  function npcSpawnFloorHint(spawn, visualMaps = null) {
+    if (!spawn) return 'No spawn selected.'
+    const floor = npcSpawnFloor(spawn)
+    if (floor <= 0) return 'Ground floor. 2nd floor is F1.'
+    return npcSpawnAuthoredFloorHeight(spawn, visualMaps) == null
+      ? `F${floor}: no upper-floor surface at this tile.`
+      : `F${floor}: upper-floor surface found.`
+  }
+
   function npcPreviewVisualConfig(spawn) {
     if (!spawn) return null
     const def = npcDefById(spawn.npcId)
@@ -605,6 +666,7 @@ function tuneModelLighting(model) {
       if (field === 'aggressive') continue
       if (NPC_SPAWN_OVERRIDE_FIELDS[field](input[field])) {
         if (field === 'scale') spawn[field] = normalizeNpcSpawnScale(input[field])
+        else if (field === 'floor') setNpcSpawnFloor(spawn, input[field])
         else if (field === 'equipmentFits') spawn[field] = normalizeNpcEquipmentFits(input[field])
         else spawn[field] = cloneNpcSpawnValue(input[field])
       }
@@ -730,7 +792,7 @@ function tuneModelLighting(model) {
   function ensureGearOverrides() {
     if (editorGearOverrides) return Promise.resolve(editorGearOverrides)
     if (editorGearOverridesPromise) return editorGearOverridesPromise
-    editorGearOverridesPromise = fetch('/data/gear-overrides.json')
+    editorGearOverridesPromise = fetch('/data/gear-overrides.json', { cache: 'no-store' })
       .then(r => r.ok ? r.json() : {})
       .then(obj => {
         const map = new Map()
@@ -769,53 +831,18 @@ function tuneModelLighting(model) {
   }
   if (import.meta.env.DEV) window.editorReloadGearOverrides = reloadGearOverrides
 
-  /** Build the same GearDef shape GameManager builds, given an item def and
-   *  a slot name. Mirrors applyGearToCharacter.buildDef so the preview rigs
-   *  gear the same way the live game does. */
-  function resolveEditorGearOverride(itemId, bodyType = 0) {
-    const override = editorGearOverrides?.get(itemId)
-    if (!override) return null
-    const base = {
-      boneName: override.boneName,
-      localPosition: override.localPosition,
-      localRotation: override.localRotation,
-      scale: override.scale,
-      centerOrigin: override.centerOrigin,
-      file: override.file,
-    }
-    if (bodyType <= 0) return base
-    const body = override.bodyTypeOverrides?.[String(bodyType)]
-    return body ? { ...base, ...body } : base
-  }
-
-  function resolveEditorGearFile(slotName, itemId, bodyType = 0) {
+  /** Build the same GearDef shape GameManager builds. Keep this thin so the
+   *  editor preview stays aligned with /geardebug and the live client. */
+  function buildEditorCharacterGearDef(slotName, itemId, bodyType = 0) {
     const itemDef = itemDefs.find(d => d.id === itemId)
-    const rawOverride = editorGearOverrides?.get(itemId)
-    const bodyOverrideFile = bodyType > 0
-      ? rawOverride?.bodyTypeOverrides?.[String(bodyType)]?.file
-      : null
-    if (bodyOverrideFile) return bodyOverrideFile
-    if (bodyType > 0 && itemDef?.bodyTypeModels?.[String(bodyType)]) {
-      return resolveEquipmentModelPath(itemDef, bodyType, slotName)
-    }
-    if (rawOverride?.file) return rawOverride.file
-    return resolveEquipmentModelPath(itemDef, bodyType, slotName) ?? `/assets/equipment/${slotName}/${itemId}.glb`
-  }
-
-  function buildGearDef(slotName, itemId, bodyType = 0) {
-    const boneConfig = EQUIP_SLOT_BONES[slotName]
-    if (!boneConfig) return null
-    const override = resolveEditorGearOverride(itemId, bodyType)
-    const gearFile = resolveEditorGearFile(slotName, itemId, bodyType)
-    return {
+    const sourceItemId = resolveGearFitSourceItemId(itemId, itemDefs)
+    return buildCharacterGearDef(
       itemId,
-      file: gearFile,
-      boneName: override?.boneName ?? boneConfig.boneName,
-      localPosition: override?.localPosition ?? boneConfig.localPosition,
-      localRotation: override?.localRotation ?? boneConfig.localRotation,
-      scale: override?.scale ?? boneConfig.scale,
-      centerOrigin: override?.centerOrigin ?? false,
-    }
+      slotName,
+      itemDef,
+      editorGearOverrides?.get(sourceItemId),
+      bodyType,
+    )
   }
 
   /** PLAYER_REMOTE_EQUIPMENT index order — matches both
@@ -900,146 +927,6 @@ function tuneModelLighting(model) {
     delete spawn.equipmentFits[slot]
     pruneNpcEquipmentFits(spawn)
     if (!applyNpcModelGearFitToPreview(spawn, slot)) refreshNpcPreviewGear(spawn, slot)
-  }
-
-  function disposeImportedGearResult(result) {
-    for (const group of result.animationGroups ?? []) group.dispose()
-    for (const skeleton of result.skeletons ?? []) skeleton.dispose()
-    for (const mesh of result.meshes ?? []) mesh.dispose()
-  }
-
-  function flattenPreviewGearMaterials(meshes) {
-    for (const mesh of meshes) {
-      const pbrMat = mesh.material
-      if (!pbrMat || !pbrMat.getClassName || pbrMat.getClassName() !== 'PBRMaterial') continue
-      const flat = new StandardMaterial(`${pbrMat.name}_flat`, scene)
-      if (pbrMat.albedoTexture) flat.diffuseTexture = pbrMat.albedoTexture
-      if (pbrMat.albedoColor) {
-        const b = 1.3
-        flat.diffuseColor = new Color3(
-          Math.min(1, pbrMat.albedoColor.r * b),
-          Math.min(1, pbrMat.albedoColor.g * b),
-          Math.min(1, pbrMat.albedoColor.b * b),
-        )
-      }
-      flat.specularColor = Color3.Black()
-      const dc = flat.diffuseColor
-      flat.emissiveColor = new Color3(dc.r * 0.55, dc.g * 0.55, dc.b * 0.55)
-      flat.backFaceCulling = pbrMat.backFaceCulling ?? true
-      mesh.material = flat
-    }
-  }
-
-  function buildGearTemplateFromImportedResult(result, def) {
-    const root = new TransformNode(`gearTemplate_${def.itemId}`, scene)
-    for (const mesh of result.meshes) {
-      if (!mesh.parent || mesh.parent.name === '__root__') mesh.parent = root
-    }
-
-    if (!def.centerOrigin) {
-      let minY = Infinity
-      for (const mesh of result.meshes) {
-        if (mesh.getTotalVertices && mesh.getTotalVertices() === 0) continue
-        mesh.computeWorldMatrix(true)
-        const bb = mesh.getBoundingInfo().boundingBox
-        minY = Math.min(minY, bb.minimumWorld.y)
-      }
-      if (isFinite(minY)) {
-        for (const mesh of result.meshes) mesh.position.y -= minY
-      }
-    }
-
-    root.setEnabled(false)
-    for (const child of root.getChildMeshes()) child.setEnabled(false)
-    return {
-      template: root,
-      boneName: def.boneName,
-      localPosition: new Vector3(def.localPosition?.x ?? 0, def.localPosition?.y ?? 0, def.localPosition?.z ?? 0),
-      localRotation: new Vector3(def.localRotation?.x ?? 0, def.localRotation?.y ?? 0, def.localRotation?.z ?? 0),
-      scale: def.scale ?? 1,
-    }
-  }
-
-  async function loadGearSmartForPreview(spawn, entry, slot, itemId, def) {
-    const stillCurrent = () => npcPreviews.get(spawn.id) === entry
-      && Array.isArray(spawn.equipment)
-      && spawn.equipment[EDITOR_EQUIP_SLOT_ORDER.indexOf(slot)] === itemId
-
-    try {
-      const lastSlash = def.file.lastIndexOf('/')
-      const dir = def.file.substring(0, lastSlash + 1)
-      const file = def.file.substring(lastSlash + 1)
-      const result = await SceneLoader.ImportMeshAsync('', dir, file, scene)
-      if (!stillCurrent()) {
-        disposeImportedGearResult(result)
-        return null
-      }
-
-      const itemDef = itemDefs.find(d => d.id === itemId)
-      const bodyHideStyle = itemDef?.bodyHideStyle === 'chain' ? 'chain' : 'plate'
-
-      if (result.skeletons.length === 0 && EDITOR_SKINNED_GEAR_SLOTS.has(slot)) {
-        const ok = await entry.entity.attachManualSkinnedArmor(slot, def.file, result.meshes, itemId, bodyHideStyle, stillCurrent)
-        if (!stillCurrent()) {
-          disposeImportedGearResult(result)
-          return null
-        }
-        if (ok) {
-          const loaderRoot = result.meshes.find(m => m.name === '__root__')
-          if (loaderRoot) loaderRoot.dispose()
-          const override = resolveEditorGearOverride(itemId, spawn.appearance?.bodyType ?? 0)
-          if (override) entry.entity.applySkinnedArmorTransform(slot, override)
-          return null
-        }
-      }
-
-      if (result.skeletons.length > 0) {
-        flattenPreviewGearMaterials(result.meshes)
-
-        if (slot === 'head') {
-          const armorSkel = result.skeletons[0]
-          const headBone = armorSkel.bones.find(b => b.name === 'mixamorig:Head')
-          let headBindY = 0
-          if (headBone) {
-            const tn = headBone.getTransformNode()
-            if (tn) {
-              tn.computeWorldMatrix(true)
-              headBindY = tn.absolutePosition.y
-            }
-          }
-          for (const sk of result.skeletons) sk.dispose()
-          for (const mesh of result.meshes) mesh.skeleton = null
-          def.boneName = 'mixamorig:Head'
-          def.centerOrigin = true
-          const tmpl = buildGearTemplateFromImportedResult(result, def)
-          if (!stillCurrent()) {
-            tmpl.template.dispose()
-            return null
-          }
-          for (const child of tmpl.template.getChildren()) child.position.y -= headBindY
-          return tmpl
-        }
-
-        if (EDITOR_SKINNED_GEAR_SLOTS.has(slot)) {
-          entry.entity.detachGear(slot)
-          if (!stillCurrent()) {
-            disposeImportedGearResult(result)
-            return null
-          }
-          entry.entity.attachSkinnedArmor(slot, result.meshes, result.skeletons[0], itemId, bodyHideStyle)
-          const loaderRoot = result.meshes.find(m => m.name === '__root__')
-          if (loaderRoot) loaderRoot.dispose()
-          const override = resolveEditorGearOverride(itemId, spawn.appearance?.bodyType ?? 0)
-          if (override) entry.entity.applySkinnedArmorTransform(slot, override)
-          return null
-        }
-      }
-
-      return buildGearTemplateFromImportedResult(result, def)
-    } catch (e) {
-      console.warn(`[editor-gear] couldn't preview ${slot}/${itemId}: ${e?.message ?? e}`)
-      return null
-    }
   }
 
   async function loadNpcModelGearTemplateForPreview(spawn, slot, itemId, itemDef, baseFit) {
@@ -1144,18 +1031,29 @@ function tuneModelLighting(model) {
         entry.entity.detachSkinnedArmor(slot)
         continue
       }
-      // Already wearing this exact item? Skip re-load (loadGearTemplate
+      // Already wearing this exact item? Skip re-load (gear GLB parsing
       // is ~50ms per GLB).
       const hasExpectedSkinnedAttachment = !EDITOR_SKINNED_GEAR_SLOTS.has(slot) || entry.entity.getSkinnedArmorMeshes(slot)
       if (entry.entity.getGearItemId(slot) === itemId && hasExpectedSkinnedAttachment) continue
-      const def = buildGearDef(slot, itemId, spawn.appearance?.bodyType ?? 0)
-      if (!def) continue
+      const built = buildEditorCharacterGearDef(slot, itemId, spawn.appearance?.bodyType ?? 0)
+      if (!built) continue
       try {
-        const tmpl = EDITOR_SKINNED_GEAR_SLOTS.has(slot) || slot === 'head'
-          ? await loadGearSmartForPreview(spawn, entry, slot, itemId, def)
-          : await loadGearTemplate(scene, def)
+        const stillCurrent = () => npcPreviews.get(spawn.id) === entry
+          && Array.isArray(spawn.equipment)
+          && spawn.equipment[EDITOR_EQUIP_SLOT_ORDER.indexOf(slot)] === itemId
+        const tmpl = await loadCharacterGearSmart(
+          scene,
+          entry.entity,
+          slot,
+          itemId,
+          built.def,
+          itemDefs.find(d => d.id === itemId),
+          built.override,
+          stillCurrent,
+        )
         if (!tmpl) {
           // Skinned armor attaches directly and returns null.
+          if (npcPreviews.get(spawn.id) !== entry) return
           stampNpcPreviewPickMetadata(spawn, entry)
           continue
         }
@@ -1168,7 +1066,7 @@ function tuneModelLighting(model) {
     }
   }
 
-  function ensureNpcPreview(spawn) {
+  function ensureNpcPreview(spawn, visualMaps = null) {
     if (!shouldShowNpcPreview(spawn)) {
       disposeNpcPreview(spawn)
       return
@@ -1215,7 +1113,7 @@ function tuneModelLighting(model) {
     }
     entry.entity.setVisualScale?.(npcVisualScale(spawn))
     ensureNpcPreviewPickMetadata(spawn, entry)
-    const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
+    const y = npcSpawnDisplayHeight(spawn, visualMaps)
     entry.entity.setPositionXYZ(spawn.x, y, spawn.z)
     entry.entity.setFacingAngle(npcFacingAngle(spawn))
     ensureNpcPreviewPickMetadata(spawn, entry)
@@ -1338,8 +1236,9 @@ function tuneModelLighting(model) {
         npcPreviews.delete(id)
       }
     }
+    const visualMaps = buildCollisionFloorVisualMaps()
     for (const spawn of npcSpawns) {
-      if (shouldShowNpcPreview(spawn)) ensureNpcPreview(spawn)
+      if (shouldShowNpcPreview(spawn)) ensureNpcPreview(spawn, visualMaps)
       else disposeNpcPreview(spawn)
     }
 
@@ -1347,7 +1246,7 @@ function tuneModelLighting(model) {
       const def = npcDefs.find(d => d.id === spawn.npcId)
       const isSelected = spawn === selectedNpcSpawn
       const aggressive = def?.aggressive
-      const y = map.getAverageTileHeight(Math.floor(spawn.x), Math.floor(spawn.z))
+      const y = npcSpawnDisplayHeight(spawn, visualMaps)
       const color = isSelected ? new Color3(1, 1, 0.2) : (aggressive ? new Color3(0.9, 0.2, 0.15) : new Color3(0.15, 0.7, 0.9))
       const showFacing = isSelected || npcSpawnIsStationary(spawn, def) || Number.isFinite(spawn.facing)
       const visualScale = npcVisualScale(spawn)
@@ -1425,7 +1324,7 @@ function tuneModelLighting(model) {
       if (focusCamera) {
         camera.target = new Vector3(
           selectedNpcSpawn.x,
-          map.getAverageTileHeight(Math.floor(selectedNpcSpawn.x), Math.floor(selectedNpcSpawn.z)),
+          npcSpawnDisplayHeight(selectedNpcSpawn),
           selectedNpcSpawn.z,
         )
       }
@@ -1456,7 +1355,7 @@ function tuneModelLighting(model) {
         const scale = npcVisualScale(selectedNpcSpawn)
         const scaleText = Math.abs(scale - 1) > 0.0001 ? ` · ${formatNpcScale(scale)}` : ''
         const levelText = def ? ` · level-${npcSpawnCombatLevel(selectedNpcSpawn, def)}` : ''
-        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)}${levelText} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
+        selectedLabel.textContent = `${selectedNpcSpawn.name || def?.name || `NPC ${selectedNpcSpawn.npcId}`} @ ${selectedNpcSpawn.x.toFixed(1)}, ${selectedNpcSpawn.z.toFixed(1)} ${formatNpcSpawnFloorText(selectedNpcSpawn)}${levelText} · ${formatNpcFacing(npcFacingAngle(selectedNpcSpawn))}${scaleText}`
       } else {
         selectedLabel.textContent = 'No spawn selected'
       }
@@ -1501,7 +1400,7 @@ function tuneModelLighting(model) {
       const scale = npcVisualScale(spawn)
       const scaleText = Math.abs(scale - 1) > 0.0001 ? ` s=${formatNpcScale(scale)}` : ''
       const levelText = def ? ` level-${npcSpawnCombatLevel(spawn, def)}` : ''
-      label.textContent = `${name}${levelText} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)}) r=${spawn.wanderRange}${facingText}${scaleText}`
+      label.textContent = `${name}${levelText} (${spawn.x.toFixed(1)}, ${spawn.z.toFixed(1)} ${formatNpcSpawnFloorText(spawn)}) r=${spawn.wanderRange}${facingText}${scaleText}`
       row.appendChild(label)
       const del = document.createElement('button')
       del.type = 'button'
@@ -1567,6 +1466,7 @@ function tuneModelLighting(model) {
       if (sel) {
         sel.innerHTML = itemDefs.map(d => `<option value="${d.id}">${d.name} (${d.id})</option>`).join('')
       }
+      if (typeof syncNpcTypeInput === 'function') syncNpcTypeInput()
     } catch (e) {
       console.warn('Failed to load item definitions:', e)
     }
@@ -2114,9 +2014,13 @@ function tuneModelLighting(model) {
 
   function setWallAt(x, z, bitmask) {
     const layer = getCollisionLayer()
-    if (bitmask === 0) delete layer.walls[`${x},${z}`]
-    else layer.walls[`${x},${z}`] = bitmask
+    const key = `${x},${z}`
+    const current = layer.walls[key] || 0
+    if (current === bitmask) return false
+    if (bitmask === 0) delete layer.walls[key]
+    else layer.walls[key] = bitmask
     if (collisionFloor === 0) invalidateShadowCache()
+    return true
   }
 
   function toggleWallEdge(x, z, edge) {
@@ -2656,6 +2560,8 @@ let selectedWaterFlowChunk = null
   let _terrainDirtyRegion = null  // {x1,z1,x2,z2} when only heights changed; null = full rebuild needed
   let _terrainStrokeRegion = null
   let _collisionDirty = false
+  let _rootWallShadowSignature = ''
+  let _rootWallShadowTerrainPending = false
 
   function unionTileRegion(a, b) {
     if (!b) return a
@@ -2684,9 +2590,34 @@ let selectedWaterFlowChunk = null
     }
   }
 
-  function markRootWallShadowTerrainDirty({ force = false } = {}) {
-    if (!force && collisionFloor !== 0) return
+  function rootWallShadowSignature() {
+    return wallShadowRunsFromWallRecord(collisionData.walls)
+      .map((run) => `${run.x0},${run.z0},${run.x1},${run.z1}`)
+      .sort()
+      .join('|')
+  }
+
+  function queueRootWallShadowTerrainRebuild() {
     markTerrainDirty({ skipTexturePlanes: true, skipTextureOverlays: true })
+  }
+
+  function markRootWallShadowTerrainDirty({ force = false, deferWhileCollision = true } = {}) {
+    if (!force && collisionFloor !== 0) return
+    const nextSignature = rootWallShadowSignature()
+    if (!force && nextSignature === _rootWallShadowSignature) return
+    _rootWallShadowSignature = nextSignature
+    if (!force && deferWhileCollision && state.tool === ToolMode.COLLISION) {
+      _rootWallShadowTerrainPending = true
+      return
+    }
+    _rootWallShadowTerrainPending = false
+    queueRootWallShadowTerrainRebuild()
+  }
+
+  function flushRootWallShadowTerrainDirty() {
+    if (!_rootWallShadowTerrainPending) return
+    _rootWallShadowTerrainPending = false
+    queueRootWallShadowTerrainRebuild()
   }
 
   function markCollisionDirty() {
@@ -2998,8 +2929,16 @@ let selectedWaterFlowChunk = null
         <div id="layerCurrentLabel" style="font-size:10px;color:#888;margin-top:4px;"></div>
       </div>
       <div id="replaceRow" style="display:none;margin-top:8px;border-top:1px solid #444;padding-top:8px;">
-        <button id="replaceBtn" style="width:100%">Replace Selected</button>
+        <button id="replaceBtn" style="width:100%">Replace Objects</button>
         <div id="replacePanel" style="display:none;margin-top:6px;">
+          <label style="font-size:11px;color:rgba(255,255,255,0.45);display:block;margin-bottom:3px;">Scope</label>
+          <select id="replaceScope" style="width:100%;box-sizing:border-box;margin-bottom:5px;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;">
+            <option value="selected">Selected objects</option>
+            <option value="sameAssetSelection">Same asset in selection</option>
+            <option value="selectedRoofs">Roof pieces in selection</option>
+            <option value="sameAssetMap">All same asset on map</option>
+          </select>
+          <div id="replaceSummary" class="hint" style="margin-bottom:5px;"></div>
           <input id="replaceSearch" type="text" placeholder="Search assets..." style="width:100%;box-sizing:border-box;margin-bottom:5px;" />
           <div id="replaceGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px;max-height:180px;overflow-y:auto;"></div>
         </div>
@@ -3210,10 +3149,14 @@ let selectedWaterFlowChunk = null
 
     <div class="ctx-panel" id="ctx-npc-spawn" style="display:none">
       <div style="font-size:11px;color:rgba(255,255,255,0.45);margin-bottom:4px;">NPC Type</div>
-      <input id="npcTypeSearch" autocomplete="off" placeholder="Search NPC name or ID" style="width:100%;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;" />
+      <div style="display:flex;gap:4px;">
+        <input id="npcTypeSearch" autocomplete="off" placeholder="Search name, ID, model, item, shop..." style="flex:1;min-width:0;background:#2a2a2a;color:#fff;border:1px solid #555;border-radius:4px;padding:5px 6px;font-size:12px;" />
+        <button id="npcTypeClearBtn" type="button" title="Clear NPC search" style="flex:0 0 30px;background:#252525;color:#ddd;border:1px solid #555;border-radius:4px;cursor:pointer;font-size:13px;">×</button>
+      </div>
       <div id="npcTypeResults" style="display:none;max-height:168px;overflow-y:auto;margin-top:4px;background:#181818;border:1px solid #444;border-radius:4px;"></div>
       <select id="npcTypeSelect" style="display:none;"></select>
       <div id="npcTypeSummary" style="font-size:10px;color:rgba(255,255,255,0.45);margin-top:4px;min-height:13px;"></div>
+      <div id="npcTypeFilters" style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin-top:6px;"></div>
       <button id="npcCreateVariantBtn" style="width:100%;margin-top:6px;font-size:11px;padding:6px;background:#34465d;color:#fff;cursor:pointer;border:1px solid #617891;border-radius:3px;" title="Creates a new reusable NPC type. Use this before editing name, stats, drops, shop, or dialogue for a new mob.">Create new NPC type</button>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
         <div style="font-size:11px;color:rgba(255,255,255,0.55);">NPC Library</div>
@@ -3456,6 +3399,17 @@ let selectedWaterFlowChunk = null
   const DEFAULT_SHOP_RESTOCK_TICKS = 100
   const SHOP_EDITOR_ITEMS_PER_PAGE = 6
   let shopEditorPageIndex = 0
+  let npcTypeFilter = 'all'
+  const NPC_TYPE_FILTER_LABELS = {
+    all: 'All',
+    custom: 'Custom',
+    placed: 'Placed',
+    shop: 'Shop',
+    combat: 'Combat',
+    aggressive: 'Aggro',
+    unused: 'Unused',
+  }
+  const NPC_TYPE_FILTER_ORDER = ['all', 'custom', 'placed', 'shop', 'combat', 'aggressive', 'unused']
 
   function findSelectedDef() {
     if (!selectedNpcSpawn) return null
@@ -3679,7 +3633,117 @@ let selectedWaterFlowChunk = null
 
   function formatNpcTypeSummary(def) {
     if (!def) return ''
-    return `level-${npcTypeCombatLevel(def)} · HP ${def.health} · Wander ${def.wanderRange ?? 0} · ${npcTypeModelLabel(def)}${def.aggressive ? ' · Aggressive' : ''}${def.bankAccess ? ' · Bank' : ''}`
+    return npcTypeBadges(def, npcTypeSpawnCounts()).join(' · ')
+  }
+
+  function npcTypeIsCustom(def) {
+    return Number.isInteger(def?.id) && def.id > BUILT_IN_NPC_DEF_MAX_ID
+  }
+
+  function npcTypeHasShop(def) {
+    if (def?.shop) return true
+    return npcSpawns.some(spawn => spawn.npcId === def?.id && !!spawn.shop)
+  }
+
+  function npcTypeHasDialogue(def) {
+    if (def?.dialogue) return true
+    return npcSpawns.some(spawn => spawn.npcId === def?.id && !!spawn.dialogue)
+  }
+
+  function npcTypeHasCombatRole(def) {
+    if (!def) return false
+    if (def.bankAccess || npcTypeHasShop(def)) return false
+    return !!def.aggressive
+      || (Array.isArray(def.lootTable) && def.lootTable.length > 0)
+      || npcTypeCombatLevel(def) > 1
+  }
+
+  function npcTypeFilterAccepts(def, filter = npcTypeFilter, counts = npcTypeSpawnCounts()) {
+    if (!def) return false
+    if (filter === 'custom') return npcTypeIsCustom(def)
+    if (filter === 'placed') return (counts.get(def.id) || 0) > 0
+    if (filter === 'shop') return npcTypeHasShop(def)
+    if (filter === 'combat') return npcTypeHasCombatRole(def)
+    if (filter === 'aggressive') return !!def.aggressive
+    if (filter === 'unused') return (counts.get(def.id) || 0) === 0
+    return true
+  }
+
+  function npcTypeFilterCounts() {
+    const counts = npcTypeSpawnCounts()
+    const out = {}
+    for (const filter of NPC_TYPE_FILTER_ORDER) {
+      out[filter] = npcDefs.filter(def => npcTypeFilterAccepts(def, filter, counts)).length
+    }
+    return out
+  }
+
+  function itemDefTextById(itemId) {
+    const item = itemDefs.find(def => def.id === itemId)
+    if (!item) return ''
+    return [item.name, item.model, item.icon, item.sprite].filter(Boolean).join(' ')
+  }
+
+  function npcTypeReferencedItemIds(def) {
+    const ids = new Set()
+    const add = (itemId) => {
+      const id = Number(itemId)
+      if (Number.isInteger(id) && id > 0) ids.add(id)
+    }
+    for (const itemId of def?.defaultEquipment || []) add(itemId)
+    for (const drop of def?.lootTable || []) add(drop?.itemId)
+    for (const item of def?.shop?.items || []) add(item?.itemId)
+    for (const spawn of npcSpawns) {
+      if (spawn.npcId !== def?.id) continue
+      for (const itemId of spawn.equipment || []) add(itemId)
+      for (const item of spawn.shop?.items || []) add(item?.itemId)
+    }
+    return Array.from(ids)
+  }
+
+  function npcTypeItemSearchText(def) {
+    return npcTypeReferencedItemIds(def)
+      .map(itemId => `${itemId} ${itemDefTextById(itemId)}`)
+      .join(' ')
+  }
+
+  function npcTypeSearchText(def, counts = npcTypeSpawnCounts()) {
+    const sourceDef = npcModelSourceDef(def)
+    const bits = [
+      def?.name,
+      def?.examineText,
+      def?.id,
+      `#${def?.id}`,
+      `id ${def?.id}`,
+      npcTypeModelLabel(def),
+      sourceDef?.name,
+      sourceDef?.id ? `model ${sourceDef.id}` : '',
+      def?.shop?.name,
+      npcTypeHasShop(def) ? 'shop trader merchant vendor' : '',
+      npcTypeHasDialogue(def) ? 'dialogue talk npc' : '',
+      def?.bankAccess ? 'bank banker' : '',
+      def?.aggressive ? 'aggressive aggro combat hostile' : '',
+      npcTypeIsCustom(def) ? 'custom variant authored' : 'built in baseline',
+      (counts.get(def?.id) || 0) > 0 ? 'placed used spawned' : 'unused unplaced',
+      npcTypeItemSearchText(def),
+    ]
+    return bits.filter(Boolean).join(' ').toLowerCase()
+  }
+
+  function npcTypeBadges(def, counts = npcTypeSpawnCounts()) {
+    if (!def) return []
+    const used = counts.get(def.id) || 0
+    return [
+      `level-${npcTypeCombatLevel(def)}`,
+      `HP ${def.health ?? 0}`,
+      `W ${def.wanderRange ?? 0}`,
+      npcTypeModelLabel(def),
+      used > 0 ? `Used ${used}` : 'Unused',
+      npcTypeIsCustom(def) ? 'Custom' : '',
+      npcTypeHasShop(def) ? 'Shop' : '',
+      def.aggressive ? 'Aggro' : '',
+      def.bankAccess ? 'Bank' : '',
+    ].filter(Boolean)
   }
 
   function parseNpcTypeDisplay(value) {
@@ -3695,32 +3759,69 @@ let selectedWaterFlowChunk = null
     const exactNameMatches = npcDefs.filter(def => String(def.name || '').toLowerCase() === lower)
     if (exactNameMatches.length === 1) return exactNameMatches[0].id
     if (exactNameMatches.length > 1) return 0
-    const matches = npcTypeMatches(text)
+    const matches = npcTypeMatches(text, { filter: 'all' })
     return matches.length === 1 ? matches[0].id : 0
   }
 
-  function npcTypeMatches(query) {
+  function npcTypeMatches(query, options = {}) {
+    const filter = options.filter ?? npcTypeFilter
+    const limit = Number.isFinite(options.limit) ? options.limit : Infinity
     const q = String(query || '').trim().toLowerCase()
     const terms = q.split(/\s+/).filter(Boolean)
+    const counts = npcTypeSpawnCounts()
     const scored = []
     for (const def of npcDefs) {
+      if (!npcTypeFilterAccepts(def, filter, counts)) continue
       const name = String(def.name || '').toLowerCase()
       const id = String(def.id)
-      const haystack = `${name} ${id}`
+      const searchText = npcTypeSearchText(def, counts)
+      const compactQuery = q.replace(/[\s_-]+/g, '')
+      const compactSearchText = searchText.replace(/[\s_-]+/g, '')
       let score = 0
       if (terms.length > 0) {
         if (id === q) score = -100
+        else if (`#${id}` === q) score = -100
         else if (name === q) score = -90
         else if (name.startsWith(q)) score = -70
-        else if (terms.every(term => haystack.includes(term))) score = -40
+        else if (terms.every(term => name.includes(term))) score = -55
+        else if (terms.every(term => searchText.includes(term))) score = -40
+        else if (compactQuery && compactSearchText.includes(compactQuery)) score = -38
         else continue
+      } else {
+        if (npcTypeIsCustom(def)) score -= 8
+        if ((counts.get(def.id) || 0) > 0) score -= 3
       }
       scored.push({ def, score })
     }
     return scored
       .sort((a, b) => a.score - b.score || (a.def.name || '').localeCompare(b.def.name || '') || a.def.id - b.def.id)
-      .slice(0, terms.length > 0 ? 16 : scored.length)
+      .slice(0, limit)
       .map(row => row.def)
+  }
+
+  function renderNpcTypeFilterControls() {
+    const root = sidebar?.querySelector?.('#npcTypeFilters')
+    if (!root) return
+    const counts = npcTypeFilterCounts()
+    root.innerHTML = ''
+    for (const filter of NPC_TYPE_FILTER_ORDER) {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.dataset.npcTypeFilter = filter
+      const active = filter === npcTypeFilter
+      btn.textContent = `${NPC_TYPE_FILTER_LABELS[filter]} ${counts[filter] ?? 0}`
+      btn.style.cssText = `font-size:10px;padding:4px 3px;background:${active ? '#31527d' : '#222'};color:${active ? '#fff' : '#bbb'};border:1px solid ${active ? '#729bd1' : '#444'};border-radius:3px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;`
+      btn.addEventListener('click', () => {
+        npcTypeFilter = filter
+        npcTypeResultIndex = 0
+        npcTypeResultsOpen = true
+        const input = sidebar.querySelector('#npcTypeSearch')
+        renderNpcTypeFilterControls()
+        renderNpcTypeResults(input?.value || '')
+        renderNpcTypeLibrary(input?.value || '')
+      })
+      root.appendChild(btn)
+    }
   }
 
   function renderNpcTypeResults(query = '') {
@@ -3731,7 +3832,7 @@ let selectedWaterFlowChunk = null
       return
     }
     results.innerHTML = ''
-    const matches = npcTypeMatches(query)
+    const matches = npcTypeMatches(query, { limit: 18 })
     if (matches.length === 0) {
       const empty = document.createElement('div')
       empty.textContent = 'No matches'
@@ -3753,7 +3854,7 @@ let selectedWaterFlowChunk = null
       name.textContent = `${def.name} (${def.id})`
       name.style.cssText = 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'
       const meta = document.createElement('span')
-      meta.textContent = `level-${npcTypeCombatLevel(def)} · HP ${def.health} · ${npcTypeModelLabel(def)}${def.bankAccess ? ' · Bank' : ''}`
+      meta.textContent = npcTypeBadges(def).slice(0, 4).join(' · ')
       meta.style.cssText = 'flex:0 0 auto;color:rgba(255,255,255,0.48);'
       row.appendChild(name)
       row.appendChild(meta)
@@ -3782,7 +3883,12 @@ let selectedWaterFlowChunk = null
     const counts = npcTypeSpawnCounts()
     const selectedId = parseInt(sidebar.querySelector('#npcTypeSelect')?.value || '0')
     library.innerHTML = ''
-    if (countEl) countEl.textContent = query ? `${matches.length}/${npcDefs.length}` : `${npcDefs.length}`
+    if (countEl) {
+      const filterLabel = NPC_TYPE_FILTER_LABELS[npcTypeFilter] || 'All'
+      countEl.textContent = query || npcTypeFilter !== 'all'
+        ? `${filterLabel} ${matches.length}/${npcDefs.length}`
+        : `${npcDefs.length}`
+    }
     if (matches.length === 0) {
       const empty = document.createElement('div')
       empty.textContent = 'No matching NPCs'
@@ -3791,7 +3897,6 @@ let selectedWaterFlowChunk = null
       return
     }
     for (const def of matches) {
-      const used = counts.get(def.id) || 0
       const active = def.id === selectedId
       const card = document.createElement('button')
       card.type = 'button'
@@ -3808,17 +3913,7 @@ let selectedWaterFlowChunk = null
       top.appendChild(id)
       const meta = document.createElement('div')
       meta.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.55);margin-top:3px;display:flex;gap:5px;flex-wrap:wrap;'
-      const badges = [
-        `level-${npcTypeCombatLevel(def)}`,
-        `HP ${def.health ?? 0}`,
-        `W ${def.wanderRange ?? 0}`,
-        npcTypeModelLabel(def),
-        used > 0 ? `Used ${used}` : 'Unused',
-        def.id >= 100 ? 'Custom' : '',
-        def.aggressive ? 'Aggro' : '',
-        def.bankAccess ? 'Bank' : '',
-      ].filter(Boolean)
-      meta.textContent = badges.join(' · ')
+      meta.textContent = npcTypeBadges(def, counts).join(' · ')
       card.appendChild(top)
       card.appendChild(meta)
       card.addEventListener('click', () => setNpcTypeSelection(def.id))
@@ -3853,6 +3948,7 @@ let selectedWaterFlowChunk = null
     const selectedTypeId = selectedNpcSpawn?.npcId ?? parseInt(sel?.value || '0')
     const def = npcDefById(selectedTypeId)
     if (input && def && document.activeElement !== input) input.value = formatNpcTypeDisplay(def)
+    renderNpcTypeFilterControls()
     renderNpcTypeResults(input?.value || '')
     if (summary) {
       summary.textContent = formatNpcTypeSummary(def)
@@ -4022,7 +4118,7 @@ let selectedWaterFlowChunk = null
 
   sidebar.querySelector('#npcTypeSearch')?.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      const matches = npcTypeMatches(e.target.value)
+      const matches = npcTypeMatches(e.target.value, { limit: 18 })
       if (matches.length > 0) {
         e.preventDefault()
         npcTypeResultsOpen = true
@@ -4032,13 +4128,18 @@ let selectedWaterFlowChunk = null
         renderNpcTypeResults(e.target.value)
       }
     } else if (e.key === 'Enter') {
-      const matches = npcTypeMatches(e.target.value)
+      const matches = npcTypeMatches(e.target.value, { limit: 18 })
       const picked = matches[npcTypeResultIndex] || matches[0]
       if (picked) {
         e.preventDefault()
         setNpcTypeSelection(picked.id)
       }
     } else if (e.key === 'Escape') {
+      if (e.target.value || npcTypeFilter !== 'all') {
+        e.preventDefault()
+        e.target.value = ''
+        npcTypeFilter = 'all'
+      }
       npcTypeResultsOpen = false
       renderNpcTypeResults()
       syncNpcTypeInput()
@@ -4048,6 +4149,18 @@ let selectedWaterFlowChunk = null
   sidebar.querySelector('#npcTypeSearch')?.addEventListener('blur', () => {
     syncNpcTypeInput()
     closeNpcTypeResultsSoon()
+  })
+
+  sidebar.querySelector('#npcTypeClearBtn')?.addEventListener('click', () => {
+    const input = sidebar.querySelector('#npcTypeSearch')
+    if (input) {
+      input.value = ''
+      input.focus()
+    }
+    npcTypeFilter = 'all'
+    npcTypeResultIndex = 0
+    npcTypeResultsOpen = true
+    syncNpcTypeInput()
   })
 
   for (const btn of sidebar.querySelectorAll('[data-npc-mode]')) {
@@ -4179,6 +4292,9 @@ let selectedWaterFlowChunk = null
       .join('')
     const posX = spawn?.x ?? 0
     const posZ = spawn?.z ?? 0
+    const floorVisualMaps = spawn ? buildCollisionFloorVisualMaps() : null
+    const spawnFloor = npcSpawnFloor(spawn)
+    const floorHint = npcSpawnFloorHint(spawn, floorVisualMaps)
     const visualScale = npcVisualScale(spawn)
     const facingDeg = spawn ? npcFacingDeg(spawn) : 0
     const facingLabel = formatNpcFacing(spawn ? npcFacingAngle(spawn) : 0)
@@ -4191,16 +4307,25 @@ let selectedWaterFlowChunk = null
       <input id="spawnNameInput" type="text" value="${nameValue.replace(/"/g, '&quot;')}" placeholder="${defName.replace(/"/g, '&quot;') || 'defaults to NPC type name'}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:4px 5px;font-size:11px;margin-top:3px;" ${spawn ? '' : 'disabled'} />
       <div class="hint" style="margin-top:2px;font-size:10px;color:rgba(255,255,255,0.35);">This renames only this placed spawn. Use "Create new NPC type" before editing name, stats, drops, shop, or dialogue for a new mob.</div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Position</label>
-      <div style="display:flex;gap:5px;margin-top:3px;">
-        <div style="flex:1;">
+      <div style="display:grid;grid-template-columns:1fr 1fr 0.8fr;gap:5px;margin-top:3px;">
+        <div>
           <div style="font-size:10px;color:rgba(255,255,255,0.45);">X</div>
           <input id="spawnXInput" type="number" step="0.5" value="${posX.toFixed(1)}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
         </div>
-        <div style="flex:1;">
+        <div>
           <div style="font-size:10px;color:rgba(255,255,255,0.45);">Z</div>
           <input id="spawnZInput" type="number" step="0.5" value="${posZ.toFixed(1)}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
         </div>
+        <div>
+          <div style="font-size:10px;color:rgba(255,255,255,0.45);">Floor</div>
+          <input id="spawnFloorInput" type="number" min="0" step="1" value="${spawnFloor}" style="width:100%;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" ${spawn ? '' : 'disabled'} />
+        </div>
       </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:5px;">
+        <button id="spawnFloorDownBtn" type="button" style="font-size:10px;padding:4px;background:#262626;color:#ddd;border:1px solid #555;border-radius:3px;cursor:pointer;" ${spawn && spawnFloor > 0 ? '' : 'disabled'}>Floor -</button>
+        <button id="spawnFloorUpBtn" type="button" style="font-size:10px;padding:4px;background:#26334a;color:#fff;border:1px solid #536886;border-radius:3px;cursor:pointer;" ${spawn ? '' : 'disabled'}>Floor +</button>
+      </div>
+      <div id="spawnFloorHint" class="hint" style="margin-top:3px;font-size:10px;color:rgba(255,255,255,0.35);">${floorHint}</div>
       <label style="margin-top:10px;font-size:11px;color:rgba(255,255,255,0.45);">Visual Scale <span id="npcScaleLabel">${formatNpcScale(visualScale)}</span></label>
       <input id="npcScaleSlider" type="range" min="0.25" max="4" step="0.05" value="${visualScale}" style="width:100%;margin-top:3px;" ${spawn ? '' : 'disabled'} />
       <div style="display:flex;gap:5px;margin-top:3px;">
@@ -4296,6 +4421,28 @@ let selectedWaterFlowChunk = null
         else delete selectedNpcSpawn.attackAnim
       }
     })
+    const refreshSpawnFloorControls = () => {
+      const floor = npcSpawnFloor(selectedNpcSpawn)
+      const input = root.querySelector('#spawnFloorInput')
+      if (input) input.value = String(floor)
+      const downBtn = root.querySelector('#spawnFloorDownBtn')
+      if (downBtn) downBtn.disabled = !selectedNpcSpawn || floor <= 0
+      const upBtn = root.querySelector('#spawnFloorUpBtn')
+      if (upBtn) upBtn.disabled = !selectedNpcSpawn
+      const hint = root.querySelector('#spawnFloorHint')
+      if (hint) hint.textContent = npcSpawnFloorHint(selectedNpcSpawn)
+    }
+    const writeSpawnFloor = (raw) => {
+      if (!selectedNpcSpawn) return
+      setNpcSpawnFloor(selectedNpcSpawn, raw)
+      refreshSpawnFloorControls()
+      rebuildNpcSpawnMeshes()
+      refreshNpcSpawnList()
+      updateNpcPlacementControls()
+    }
+    root.querySelector('#spawnFloorInput')?.addEventListener('change', (e) => writeSpawnFloor(e.target.value))
+    root.querySelector('#spawnFloorDownBtn')?.addEventListener('click', () => writeSpawnFloor(npcSpawnFloor(selectedNpcSpawn) - 1))
+    root.querySelector('#spawnFloorUpBtn')?.addEventListener('click', () => writeSpawnFloor(npcSpawnFloor(selectedNpcSpawn) + 1))
     // Position inputs — `change` (not `input`) fires on blur/Enter only, so the
     // expensive rebuildNpcSpawnMeshes runs once per edit instead of every keystroke.
     const updatePosition = (axis, raw) => {
@@ -4303,6 +4450,7 @@ let selectedWaterFlowChunk = null
       const v = parseFloat(raw)
       if (!Number.isFinite(v)) return
       selectedNpcSpawn[axis] = v
+      refreshSpawnFloorControls()
       rebuildNpcSpawnMeshes()
       refreshNpcSpawnList()
     }
@@ -4335,6 +4483,7 @@ let selectedWaterFlowChunk = null
     'combatLevel', 'attackBonus', 'strengthBonus', 'stabDefence', 'slashDefence',
     'crushDefence', 'rangedDefence', 'magicDefence',
   ])
+  const NPC_COMBAT_LEVEL_SOURCE_STATS = new Set(['health', 'attack', 'strength', 'defence'])
   const SPAWN_NUMERIC_STAT_KEYS = NPC_NUMERIC_STAT_FIELDS.map(([key]) => key)
   const NPC_STARTER_RECOMMENDATIONS = {
     1: {
@@ -4382,6 +4531,23 @@ let selectedWaterFlowChunk = null
       ...combat,
       attackSpeed: Number.isFinite(attackSpeed) && attackSpeed > 0 ? Math.floor(attackSpeed) : 4,
     }
+  }
+
+  function hasNpcLevelSourceOverride(overrides) {
+    return !!overrides && [...NPC_COMBAT_LEVEL_SOURCE_STATS].some(key => overrides[key] !== undefined)
+  }
+
+  function npcCombatLevelSourceLabel(def, overrides = null) {
+    if (Number.isFinite(Number(overrides?.combatLevel))) return 'spawn override'
+    if (!hasNpcLevelSourceOverride(overrides) && Number.isFinite(Number(def?.combatLevel))) return 'shared override'
+    return 'derived'
+  }
+
+  function clearNpcCombatLevelOverrideForStatChange(target, key, rootEl, inputSelector) {
+    if (!NPC_COMBAT_LEVEL_SOURCE_STATS.has(key) || !target || target.combatLevel === undefined) return
+    delete target.combatLevel
+    const combatInput = rootEl?.querySelector?.(inputSelector)
+    if (combatInput) combatInput.value = ''
   }
 
   function formatStatNumber(value, digits = 2) {
@@ -4580,7 +4746,7 @@ let selectedWaterFlowChunk = null
       const summary = npcCombatSummary(stats)
       const npcDps = roughNpcDpsEstimate(stats)
       const playerDps = roughPlayerDpsEstimate(stats)
-      combatLevelReadout.textContent = `Combat ${summary.combatLevel} | Max hit ${summary.maxHit} | Attack roll ${summary.attackRoll} | Def S/L/C/R/M ${summary.stabDefenceRoll}/${summary.slashDefenceRoll}/${summary.crushDefenceRoll}/${summary.rangedDefenceRoll}/${summary.magicDefenceRoll}`
+      combatLevelReadout.textContent = `Combat ${summary.combatLevel} (${npcCombatLevelSourceLabel(def, spawn?.stats)}) | Max hit ${summary.maxHit} | Attack roll ${summary.attackRoll} | Def S/L/C/R/M ${summary.stabDefenceRoll}/${summary.slashDefenceRoll}/${summary.crushDefenceRoll}/${summary.rangedDefenceRoll}/${summary.magicDefenceRoll}`
       dpsReadout.textContent = `Rough DPS: NPC ${formatStatNumber(npcDps.dps, 3)} (${Math.round(npcDps.hitChance * 100)}% hit, max ${npcDps.maxHit}) | L1 unarmed player ${formatStatNumber(playerDps.dps, 3)} (${Math.round(playerDps.hitChance * 100)}% hit, TTK ${Number.isFinite(playerDps.ttk) ? `${formatStatNumber(playerDps.ttk, 1)}s` : 'never'})`
     }
     refreshCombatLevelReadout()
@@ -4640,7 +4806,7 @@ let selectedWaterFlowChunk = null
         const placeholder = def[key] ?? (NPC_OPTIONAL_NUMERIC_STATS.has(key) ? 'auto' : 0)
         row.innerHTML = `
           <span style="flex:1;font-size:11px;color:rgba(255,255,255,0.65);">${label}</span>
-          <input type="number" step="1" value="${cur ?? ''}" placeholder="${placeholder}"
+          <input data-spawn-stat-key="${key}" type="number" step="1" value="${cur ?? ''}" placeholder="${placeholder}"
                  style="width:70px;background:#1a1a1a;color:#fff;border:1px solid #444;border-radius:3px;padding:3px;font-size:11px;" />
           <button title="Inherit from def" style="font-size:10px;padding:2px 6px;background:#2a2a2a;color:#aaa;border:1px solid #444;border-radius:3px;cursor:pointer;">×</button>
         `
@@ -4656,6 +4822,7 @@ let selectedWaterFlowChunk = null
           const v = input.value.trim()
           if (v === '') delete spawn.stats[key]
           else spawn.stats[key] = parseFloat(v) || 0
+          clearNpcCombatLevelOverrideForStatChange(spawn.stats, key, root, '[data-spawn-stat-key="combatLevel"]')
           refreshCombatLevelReadout()
           refreshNpcSpawnList()
         })
@@ -4665,6 +4832,7 @@ let selectedWaterFlowChunk = null
         row.querySelector('button').addEventListener('click', () => {
           pushUndoState('spawns')
           delete spawn.stats[key]
+          clearNpcCombatLevelOverrideForStatChange(spawn.stats, key, root, '[data-spawn-stat-key="combatLevel"]')
           input.value = ''
           refreshCombatLevelReadout()
           refreshNpcSpawnList()
@@ -4756,6 +4924,7 @@ let selectedWaterFlowChunk = null
           const raw = input.value.trim()
           if (raw === '' && NPC_OPTIONAL_NUMERIC_STATS.has(key)) delete def[key]
           else def[key] = parseFloat(raw) || 0
+          clearNpcCombatLevelOverrideForStatChange(def, key, root, '[data-def-key="combatLevel"]')
         } else if (input.tagName === 'SELECT' && key === 'attackStyle') {
           if (input.value) def[key] = input.value
           else delete def[key]
@@ -6148,11 +6317,147 @@ let selectedWaterFlowChunk = null
     const lower = String(assetId || '').toLowerCase()
     return lower.includes('roof') || lower.includes('slab')
   }
+  function isRoofLikeAsset(asset) {
+    if (!asset) return false
+    const haystack = [
+      asset.id,
+      asset.name,
+      asset.path,
+      asset.section,
+      asset.group,
+      ...(asset.tags || [])
+    ].join(' ').toLowerCase()
+    return asset.section === 'Roofs'
+      || haystack.includes('roof')
+      || haystack.includes('roofing')
+      || haystack.includes('slab')
+  }
   function isRoofLikePlacedObject(obj) {
-    return Boolean(obj && isRoofLikeAssetId(obj.userData?.assetId))
+    const assetId = obj?.userData?.assetId
+    return Boolean(obj && (
+      isRoofLikeAssetId(assetId)
+      || isRoofLikeAsset(assetById.get(assetId))
+    ))
   }
   function selectedRoofLikePlacedObjects() {
     return selectedPlacedObjects.filter(isRoofLikePlacedObject)
+  }
+  function roofAssetTokens(asset) {
+    const raw = String(asset?.id || asset?.name || asset?.path?.split('/').pop() || '')
+      .toLowerCase()
+      .replace(/\.(glb|gltf)$/g, '')
+    return raw.match(/[a-z0-9]+/g) || []
+  }
+  function roofTagValue(asset, prefix) {
+    const tags = Array.isArray(asset?.tags) ? asset.tags : []
+    const found = tags.find((tag) => String(tag).startsWith(prefix))
+    return found ? String(found).slice(prefix.length) : null
+  }
+  function roofPieceRole(asset) {
+    const taggedRole = roofTagValue(asset, 'roof-role:')
+    if (taggedRole) return taggedRole
+    const tokens = new Set(roofAssetTokens(asset))
+    if (tokens.has('corner') && tokens.has('inverse')) return 'corner-inverse'
+    if (tokens.has('half') && tokens.has('triangle')) return 'half-triangle'
+    if (tokens.has('triangle')) return 'triangle'
+    if (tokens.has('corner')) return 'corner'
+    if (tokens.has('inverse')) return 'inverse'
+    if (tokens.has('flat')) return 'flat'
+    if (tokens.has('slab') || tokens.has('slabs')) return 'slab'
+    if (tokens.has('tile') || tokens.has('roofing')) return 'tile'
+    return 'base'
+  }
+  const ROOF_ROLE_TOKENS = new Set(['roof', 'roofs', 'roofing', 'corner', 'inverse', 'triangle', 'half', 'flat', 'slab', 'slabs', 'tile'])
+  function roofStyleKey(asset) {
+    const taggedStyle = roofTagValue(asset, 'roof-style:')
+    if (taggedStyle) return taggedStyle
+    return ''
+  }
+  function roofStyleTokens(asset) {
+    const taggedStyle = roofStyleKey(asset)
+    if (taggedStyle) return [taggedStyle]
+    return roofAssetTokens(asset).filter((token) => !ROOF_ROLE_TOKENS.has(token))
+  }
+  function roofStyleScore(candidate, target) {
+    const candTokens = roofStyleTokens(candidate)
+    const targetTokens = roofStyleTokens(target)
+    if (targetTokens.length === 0) {
+      return candTokens.length === 0 ? 30 : Math.max(0, 12 - candTokens.length * 4)
+    }
+    let overlap = 0
+    for (const token of candTokens) {
+      if (targetTokens.includes(token)) overlap++
+    }
+    if (overlap === 0) return -100
+    const exact = candTokens.length === targetTokens.length && candTokens.every((token) => targetTokens.includes(token))
+    return overlap * 20 + (exact ? 40 : 0) - Math.abs(candTokens.length - targetTokens.length)
+  }
+  function assetFolderKey(asset) {
+    const path = String(asset?.path || '').toLowerCase()
+    const idx = path.lastIndexOf('/')
+    return idx >= 0 ? path.slice(0, idx) : ''
+  }
+  function replacementAssetForRoofPiece(sourceAssetId, targetAssetId) {
+    const sourceAsset = assetById.get(sourceAssetId)
+    const targetAsset = assetById.get(targetAssetId)
+    if (!isRoofLikeAsset(sourceAsset) || !isRoofLikeAsset(targetAsset)) return targetAsset
+    const sourceRole = roofPieceRole(sourceAsset)
+    if (sourceRole === roofPieceRole(targetAsset)) return targetAsset
+
+    const targetFolder = assetFolderKey(targetAsset)
+    const findBestForRole = (role) => {
+      let best = null
+      let bestScore = -Infinity
+      for (const candidate of assetRegistry) {
+        if (!isRoofLikeAsset(candidate)) continue
+        if (roofPieceRole(candidate) !== role) continue
+        let score = roofStyleScore(candidate, targetAsset)
+        if (score < 0) continue
+        if (assetFolderKey(candidate) === targetFolder) score += 5
+        if (candidate.section === targetAsset.section) score += 3
+        if (score > bestScore) {
+          best = candidate
+          bestScore = score
+        }
+      }
+      return best
+    }
+    const fallbackRole = fallbackRoofRole(sourceRole)
+    return findBestForRole(sourceRole) || (fallbackRole ? findBestForRole(fallbackRole) : null) || targetAsset
+  }
+  function fallbackRoofRole(role) {
+    if (role === 'half-triangle') return 'inverse'
+    return null
+  }
+  function roofStyleRepresentativeRank(asset) {
+    const role = roofPieceRole(asset)
+    if (role === 'base') return 100
+    if (role === 'triangle') return 80
+    if (role === 'half-triangle') return 75
+    if (role === 'inverse') return 70
+    if (role === 'corner') return 50
+    if (role === 'corner-inverse') return 40
+    return 10
+  }
+  function roofReplacementCandidateAssets() {
+    const roofAssets = assetRegistry.filter(isRoofLikeAsset)
+    const styleReps = new Map()
+    const unstyled = []
+    for (const asset of roofAssets) {
+      const style = roofStyleKey(asset)
+      if (!style) {
+        unstyled.push(asset)
+        continue
+      }
+      const current = styleReps.get(style)
+      if (!current || roofStyleRepresentativeRank(asset) > roofStyleRepresentativeRank(current)) {
+        styleReps.set(style, asset)
+      }
+    }
+    return [
+      ...Array.from(styleReps.values()).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+      ...unstyled.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+    ]
   }
   function copyNoRoofFlag(src, dest) {
     if (src?.userData?.noRoof) dest.userData.noRoof = true
@@ -7189,17 +7494,110 @@ let selectedWaterFlowChunk = null
   const replacePanel = sidebar.querySelector('#replacePanel')
   const replaceSearchEl = sidebar.querySelector('#replaceSearch')
   const replaceGridEl = sidebar.querySelector('#replaceGrid')
+  const replaceScopeEl = sidebar.querySelector('#replaceScope')
+  const replaceSummaryEl = sidebar.querySelector('#replaceSummary')
   sidebar.querySelector('#clearSelectionBtn')?.addEventListener('click', clearSelection)
+
+  function primaryReplacementAssetId() {
+    return selectedPlacedObject?.userData?.assetId || selectedPlacedObjects[0]?.userData?.assetId || ''
+  }
+
+  function replacementTargetsForScope(scope = replaceScopeEl?.value || 'selected') {
+    const primaryAssetId = primaryReplacementAssetId()
+    if (scope === 'sameAssetSelection') {
+      return selectedPlacedObjects.filter((obj) => obj.userData?.assetId === primaryAssetId)
+    }
+    if (scope === 'selectedRoofs') {
+      return selectedRoofLikePlacedObjects()
+    }
+    if (scope === 'sameAssetMap') {
+      return placedGroup.getChildren().filter((obj) => obj.userData?.assetId === primaryAssetId)
+    }
+    return [...selectedPlacedObjects]
+  }
+
+  function replacementCandidateAssets() {
+    const hasRoofSelection = selectedPlacedObjects.some(isRoofLikePlacedObject)
+    if (hasRoofSelection) {
+      return roofReplacementCandidateAssets()
+    }
+
+    const selectedSections = new Set(
+      selectedPlacedObjects
+        .map((obj) => assetById.get(obj.userData?.assetId)?.section)
+        .filter(Boolean)
+    )
+    if (selectedSections.size > 0) {
+      return assetRegistry.filter((asset) => selectedSections.has(asset.section))
+    }
+    return assetRegistry
+  }
+
+  function syncReplaceScopeOptions() {
+    if (!replaceScopeEl) return
+    const primaryAssetId = primaryReplacementAssetId()
+    const selectedCount = selectedPlacedObjects.length
+    const sameSelectedCount = primaryAssetId
+      ? selectedPlacedObjects.filter((obj) => obj.userData?.assetId === primaryAssetId).length
+      : 0
+    const roofCount = selectedRoofLikePlacedObjects().length
+    const sameMapCount = primaryAssetId
+      ? placedGroup.getChildren().filter((obj) => obj.userData?.assetId === primaryAssetId).length
+      : 0
+
+    for (const option of replaceScopeEl.options) {
+      if (option.value === 'selected') {
+        option.textContent = `Selected objects (${selectedCount})`
+        option.disabled = selectedCount === 0
+      } else if (option.value === 'sameAssetSelection') {
+        option.textContent = `Same asset in selection (${sameSelectedCount})`
+        option.disabled = sameSelectedCount === 0
+      } else if (option.value === 'selectedRoofs') {
+        option.textContent = `Roof pieces in selection (${roofCount})`
+        option.disabled = roofCount === 0
+      } else if (option.value === 'sameAssetMap') {
+        option.textContent = `All same asset on map (${sameMapCount})`
+        option.disabled = sameMapCount === 0
+      }
+    }
+
+    if (replaceScopeEl.selectedOptions[0]?.disabled) {
+      replaceScopeEl.value = roofCount > 0 ? 'selectedRoofs' : 'selected'
+    }
+  }
+
+  function syncReplaceSummary() {
+    if (!replaceSummaryEl) return
+    syncReplaceScopeOptions()
+    const targets = replacementTargetsForScope()
+    const hasRoofTargets = targets.some(isRoofLikePlacedObject)
+    replaceSummaryEl.textContent = hasRoofTargets
+      ? `${targets.length} object${targets.length === 1 ? '' : 's'} · roof swaps preserve corners/triangles when a matching piece exists`
+      : `${targets.length} object${targets.length === 1 ? '' : 's'}`
+  }
 
   function buildReplaceGrid() {
     const q = replaceSearchEl.value.trim().toLowerCase()
-    const assets = assetRegistry.filter((a) => {
-      if (!a.path?.toLowerCase().includes('modular assets')) return false
-      return !q || (a.name || a.id).toLowerCase().includes(q)
+    syncReplaceSummary()
+    const assets = replacementCandidateAssets().filter((a) => {
+      if (!q) return true
+      const haystack = [
+        a.name,
+        a.id,
+        a.section,
+        a.group,
+        a.folderPath,
+        ...(a.tags || [])
+      ].join(' ').toLowerCase()
+      return haystack.includes(q)
     })
     replaceGridEl.innerHTML = ''
     if (replaceGridThumbObserver) replaceGridThumbObserver.disconnect()
     replaceGridThumbObserver = createThumbObserver(replaceGridEl)
+    if (!assets.length) {
+      replaceGridEl.innerHTML = '<div class="asset-grid-empty" style="grid-column:1/-1;">No replacement assets found</div>'
+      return
+    }
     for (const asset of assets) {
       const card = document.createElement('div')
       card.className = 'asset-card'
@@ -7214,9 +7612,11 @@ let selectedWaterFlowChunk = null
       card.appendChild(label)
       replaceGridEl.appendChild(card)
       card.addEventListener('click', async () => {
-        await replaceSelectedWith(asset.id)
+        await replaceSelectedWith(asset.id, {
+          scope: replaceScopeEl?.value || 'selected'
+        })
         replacePanel.style.display = 'none'
-        replaceBtnEl.textContent = 'Replace Selected'
+        replaceBtnEl.textContent = 'Replace Objects'
       })
       generateThumbnail(asset).then((url) => { if (url) img.src = url })
       replaceGridThumbObserver.observe(img)
@@ -7226,13 +7626,19 @@ let selectedWaterFlowChunk = null
   replaceBtnEl?.addEventListener('click', () => {
     const isOpen = replacePanel.style.display !== 'none'
     replacePanel.style.display = isOpen ? 'none' : 'block'
-    replaceBtnEl.textContent = isOpen ? 'Replace Selected' : 'Cancel'
+    replaceBtnEl.textContent = isOpen ? 'Replace Objects' : 'Cancel'
     if (!isOpen) {
+      syncReplaceScopeOptions()
+      if (replaceScopeEl && selectedRoofLikePlacedObjects().length > 1) replaceScopeEl.value = 'selectedRoofs'
       replaceSearchEl.value = ''
       buildReplaceGrid()
     }
   })
   replaceSearchEl?.addEventListener('input', buildReplaceGrid)
+  replaceScopeEl?.addEventListener('change', () => {
+    syncReplaceSummary()
+    buildReplaceGrid()
+  })
 
   const replaceTextureBtnEl = sidebar.querySelector('#replaceTextureBtn')
   const replaceTexturePanel = sidebar.querySelector('#replaceTexturePanel')
@@ -7649,7 +8055,9 @@ let selectedWaterFlowChunk = null
         const rp = sidebar.querySelector('#replacePanel')
         const rb = sidebar.querySelector('#replaceBtn')
         if (rp) rp.style.display = 'none'
-        if (rb) rb.textContent = 'Replace Selected'
+        if (rb) rb.textContent = 'Replace Objects'
+      } else {
+        syncReplaceSummary()
       }
     }
     const replaceTextureRowEl = sidebar.querySelector('#replaceTextureRow')
@@ -7696,7 +8104,10 @@ let selectedWaterFlowChunk = null
     }
     // X-ray mode: make placed objects transparent in collision tool
     if (mode === ToolMode.COLLISION && !wasCollision) setPlacedObjectsXray(true)
-    if (mode !== ToolMode.COLLISION && wasCollision) setPlacedObjectsXray(false)
+    if (mode !== ToolMode.COLLISION && wasCollision) {
+      setPlacedObjectsXray(false)
+      flushRootWallShadowTerrainDirty()
+    }
     updateToolUI()
     updatePreviewObject().catch(console.error)
   }
@@ -10442,13 +10853,18 @@ function applyToolAtTile(tile, eventLike = null) {
     updateToolUI()
   }
 
-  async function replaceSelectedWith(assetId) {
+  async function replaceSelectedWith(assetId, options = {}) {
     if (!selectedPlacedObjects.length) return
-    const newAsset = assetRegistry.find((a) => a.id === assetId)
-    if (!newAsset) return
+    const requestedAsset = assetRegistry.find((a) => a.id === assetId)
+    if (!requestedAsset) return
+    const targets = replacementTargetsForScope(options.scope || 'selected')
+    if (!targets.length) return
     pushUndoState('objects')
     const replacements = []
-    for (const obj of [...selectedPlacedObjects]) {
+    let roofMappedCount = 0
+    for (const obj of [...targets]) {
+      const newAsset = replacementAssetForRoofPiece(obj.userData?.assetId, requestedAsset.id) || requestedAsset
+      if (newAsset.id !== requestedAsset.id) roofMappedCount++
       const model = await loadAssetModel(newAsset.path)
       tuneModelLighting(model, newAsset.path)
       model.position.copyFrom(obj.position)
@@ -10462,7 +10878,7 @@ function applyToolAtTile(tile, eventLike = null) {
       model.userData.assetId = newAsset.id
       model.userData.type = 'asset'
       model.userData.layerId = obj.userData.layerId || activeLayerId
-      if (obj.userData.noRoof && isRoofLikeAssetId(newAsset.id)) model.userData.noRoof = true
+      if (obj.userData.noRoof && isRoofLikeAsset(newAsset)) model.userData.noRoof = true
       const _rLayer = layers.find((l) => l.id === model.userData.layerId)
       model.setEnabled(_rLayer ? _rLayer.visible : true)
       removePlacedModel(obj)
@@ -10474,6 +10890,11 @@ function applyToolAtTile(tile, eventLike = null) {
     invalidateShadowCache()
     updateSelectionHelper()
     updateToolUI()
+    showEditorNotice(
+      `Replaced ${replacements.length} object${replacements.length === 1 ? '' : 's'} with ${requestedAsset.name || requestedAsset.id}${roofMappedCount ? ` (${roofMappedCount} matched roof piece${roofMappedCount === 1 ? '' : 's'})` : ''}.`,
+      'success',
+      3500
+    )
   }
 
   async function duplicateSelected(mode = 'right') {

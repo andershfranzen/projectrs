@@ -24,6 +24,13 @@ import { chatBubbleDuration, createChatBubbleElement, type ChatBubbleVariant } f
 import { mountWorldOverlayElement } from './worldOverlay';
 import { createMobGroundShadow } from './MobGroundShadow';
 import { HighQualityGearEffect } from './HighQualityGearEffect';
+import {
+  cloneHeadHairFit,
+  HEAD_HAIR_MORPH_KEYS,
+  type HeadHairFit,
+  type HeadHairMorphKey,
+  type HeadHairMorphs,
+} from '../data/EquipmentConfig';
 
 const HAIR_MATERIAL_NAMES = new Set(['hair_1']);
 const FACE_DETAIL_MATS = new Set([
@@ -35,6 +42,37 @@ const APPEARANCE_MATERIAL_ENTRIES = Object.entries(APPEARANCE_MATERIAL_MAP).map(
   slotKey: slot as AppearanceColorSlot,
   lcAliases: matNames.map(n => n.toLowerCase()),
 }));
+const HAIR_FIT_MORPH_PREFIX = 'eq_hair_fit_';
+const DEFAULT_HAIR_TUCK_MORPHS: Required<HeadHairMorphs> = {
+  topFlatten: 1,
+  topLower: 0.18,
+  sideSqueeze: 0.62,
+  backTuck: 0.35,
+  frontTrim: 0.22,
+};
+const DEFAULT_HAIR_FIT_MORPHS: Required<HeadHairMorphs> = {
+  topFlatten: 0.82,
+  topLower: 0.12,
+  sideSqueeze: 0.42,
+  backTuck: 0.24,
+  frontTrim: 0.12,
+};
+
+function clampHairMorph(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(0, Math.min(1, value))
+    : 0;
+}
+
+function resolvedHairMorphs(fit: HeadHairFit | null | undefined, fallback: Required<HeadHairMorphs>): Required<HeadHairMorphs> {
+  return {
+    topFlatten: clampHairMorph(fit?.morphs?.topFlatten ?? fallback.topFlatten),
+    topLower: clampHairMorph(fit?.morphs?.topLower ?? fallback.topLower),
+    sideSqueeze: clampHairMorph(fit?.morphs?.sideSqueeze ?? fallback.sideSqueeze),
+    backTuck: clampHairMorph(fit?.morphs?.backTuck ?? fallback.backTuck),
+    frontTrim: clampHairMorph(fit?.morphs?.frontTrim ?? fallback.frontTrim),
+  };
+}
 
 function keepCloseCameraDetailVisible(mesh: AbstractMesh): void {
   // These meshes are tiny and skinned to the head. Their imported bounds can
@@ -166,6 +204,7 @@ interface GearAttachment {
   itemId: number;
   node: TransformNode;
   headRenderMode?: HeadRenderMode;
+  headHairFit?: HeadHairFit;
 }
 
 /** Cached gear template ready to be cloned and attached. */
@@ -183,6 +222,8 @@ export interface GearTemplate {
   axisCorrection?: Quaternion;
   /** Head-slot visibility behavior. Defaults to `helmet`. */
   headRenderMode?: HeadRenderMode;
+  /** Optional head-slot hair compression data. */
+  headHairFit?: HeadHairFit;
 }
 
 /**
@@ -203,6 +244,8 @@ export interface GearDef {
   metalColor?: [number, number, number];
   /** Head-slot visibility behavior. Defaults to `helmet`. */
   headRenderMode?: HeadRenderMode;
+  /** Optional head-slot hair compression data. */
+  headHairFit?: HeadHairFit;
 }
 
 /**
@@ -579,11 +622,10 @@ export class CharacterEntity {
         }
       }
 
-      // Bake a "tucked under brim" morph target on each hair mesh — vertices in
-      // the upper half get pulled down to brim level and squeezed toward the
-      // local centre, so wide-brim hats (kettle hat etc.) sit flush on the head
-      // with the hair compressed underneath instead of poking through.
-      this.buildHelmetHairMorphs();
+      // Bake reusable hair-fit morph targets on each hair mesh. Headgear only
+      // changes morph weights on equip/appearance changes; there is no per-frame
+      // collision or mesh surgery.
+      this.buildHeadHairFitMorphs();
 
       // Compute model bounds for scaling — only use enabled base body meshes
       let minY = Infinity, maxY = -Infinity;
@@ -1797,7 +1839,12 @@ export class CharacterEntity {
     const s = gearTemplate.scale;
     clone.scaling.set(s, s, s);
 
-    this.gearAttachments.set(slot, { itemId, node: clone, headRenderMode: gearTemplate.headRenderMode });
+    this.gearAttachments.set(slot, {
+      itemId,
+      node: clone,
+      headRenderMode: gearTemplate.headRenderMode,
+      headHairFit: cloneHeadHairFit(gearTemplate.headHairFit),
+    });
     if (slot === 'head') this.setHeadVisible(false);
     // Newly attached gear meshes default to isPickable=true — re-route picks
     // through the proxy so a hat/pauldron AABB doesn't re-introduce the
@@ -2291,7 +2338,8 @@ export class CharacterEntity {
   }
 
   private equippedHeadRenderMode(): HeadRenderMode {
-    return this.gearAttachments.get('head')?.headRenderMode ?? 'helmet';
+    const attachment = this.gearAttachments.get('head');
+    return attachment?.headHairFit?.mode ?? attachment?.headRenderMode ?? 'helmet';
   }
 
   private showNormalHeadAndHair(): void {
@@ -2304,6 +2352,16 @@ export class CharacterEntity {
     }
   }
 
+  setHeadHairFitForCurrentHead(fit: HeadHairFit | null): void {
+    const attachment = this.gearAttachments.get('head');
+    if (!attachment) return;
+    const cloned = cloneHeadHairFit(fit);
+    if (cloned) attachment.headHairFit = cloned;
+    else delete attachment.headHairFit;
+    this.refreshHeadRenderState();
+    this.applyLayerMask();
+  }
+
   private refreshHeadRenderState(): void {
     this.setHeadVisible(this.getGearItemId('head') === -1);
   }
@@ -2311,7 +2369,7 @@ export class CharacterEntity {
   setHeadVisible(visible: boolean): void {
     if (visible) {
       this.showNormalHeadAndHair();
-      this.setHelmetHairMorph(false);
+      this.setHeadHairMorphs(null);
       return;
     }
 
@@ -2320,22 +2378,28 @@ export class CharacterEntity {
       for (const mesh of this.headMeshes) {
         mesh.setEnabled(false);
       }
-      this.setHelmetHairMorph(false);
+      this.setHeadHairMorphs(null);
       return;
     }
 
     this.showNormalHeadAndHair();
-    this.setHelmetHairMorph(mode === 'hairTuck');
+    if (mode === 'hairTuck') {
+      this.setHeadHairMorphs(DEFAULT_HAIR_TUCK_MORPHS);
+      return;
+    }
+    if (mode === 'hairFit') {
+      this.setHeadHairMorphs(resolvedHairMorphs(this.gearAttachments.get('head')?.headHairFit, DEFAULT_HAIR_FIT_MORPHS));
+      return;
+    }
+    this.setHeadHairMorphs(null);
   }
 
   /**
-   * Build a "tucked under brim" morph target for each indexed M_hair_N mesh.
-   * Vertices in the upper half of the local-space hair bbox get clamped down
-   * to mid-height and squeezed toward the local centre on X/Z, producing a
-   * skullcap silhouette that fits under a wide-brim hat. Influence stays at 0
-   * until a kettle-hat-style helm is equipped (see setHelmetHairMorph).
+   * Build reusable headgear-fit morph targets for each indexed M_hair_N mesh.
+   * These are intentionally coarse low-poly deformations driven only when
+   * equipment or appearance changes. We avoid per-frame collision/raycast work.
    */
-  private buildHelmetHairMorphs(): void {
+  private buildHeadHairFitMorphs(): void {
     for (const [name, hairMesh] of this.modularMeshes) {
       if (!name.startsWith('M_hair_')) continue;
       const positions = hairMesh.getVerticesData(VertexBuffer.PositionKind);
@@ -2347,46 +2411,82 @@ export class CharacterEntity {
       const bbox = hairMesh.getBoundingInfo().boundingBox;
       const minY = bbox.minimum.y;
       const maxY = bbox.maximum.y;
-      // Cut at 50% up the hair — top half collapses to brim height.
-      const brimY = minY + (maxY - minY) * 0.5;
+      const minZ = bbox.minimum.z;
+      const maxZ = bbox.maximum.z;
+      const height = Math.max(0.001, maxY - minY);
+      const centerZ = (minZ + maxZ) * 0.5;
+      const topGateY = minY + height * 0.5;
+      const upperGateY = minY + height * 0.22;
 
-      const tucked = new Float32Array(positions.length);
+      const targets = new Map<HeadHairMorphKey, Float32Array>();
+      for (const key of HEAD_HAIR_MORPH_KEYS) targets.set(key, new Float32Array(positions.length));
+
       for (let i = 0; i < positions.length; i += 3) {
         const x = positions[i];
         const y = positions[i + 1];
         const z = positions[i + 2];
-        if (y > brimY) {
-          // Clamp Y to brim, squeeze X/Z toward centre so it doesn't widen out.
-          tucked[i] = x * 0.65;
-          tucked[i + 1] = brimY;
-          tucked[i + 2] = z * 0.65;
-        } else {
-          tucked[i] = x;
-          tucked[i + 1] = y;
-          tucked[i + 2] = z;
+        const topFalloff = y > topGateY ? (y - topGateY) / Math.max(0.001, maxY - topGateY) : 0;
+        const isUpper = y > upperGateY;
+        const isFront = z > centerZ;
+        const isBack = z < centerZ;
+
+        for (const key of HEAD_HAIR_MORPH_KEYS) {
+          const target = targets.get(key)!;
+          target[i] = x;
+          target[i + 1] = y;
+          target[i + 2] = z;
+        }
+
+        const topFlatten = targets.get('topFlatten')!;
+        if (topFalloff > 0) topFlatten[i + 1] = topGateY;
+
+        const topLower = targets.get('topLower')!;
+        if (topFalloff > 0) topLower[i + 1] = y - height * 0.18 * topFalloff;
+
+        const sideSqueeze = targets.get('sideSqueeze')!;
+        if (isUpper) {
+          sideSqueeze[i] = x * 0.62;
+          sideSqueeze[i + 2] = centerZ + (z - centerZ) * 0.86;
+        }
+
+        const backTuck = targets.get('backTuck')!;
+        if (isUpper && isBack) {
+          backTuck[i + 1] = y - height * 0.05;
+          backTuck[i + 2] = centerZ + (z - centerZ) * 0.48;
+        }
+
+        const frontTrim = targets.get('frontTrim')!;
+        if (isUpper && isFront) {
+          frontTrim[i + 1] = y - height * 0.04;
+          frontTrim[i + 2] = centerZ + (z - centerZ) * 0.55;
         }
       }
-
-      const morph = new MorphTarget(`${name}_tucked`, 0, this.scene);
-      morph.setPositions(tucked);
 
       let mgr = hairMesh.morphTargetManager;
       if (!mgr) {
         mgr = new MorphTargetManager(this.scene);
         hairMesh.morphTargetManager = mgr;
       }
-      mgr.addTarget(morph);
+      for (const key of HEAD_HAIR_MORPH_KEYS) {
+        const morph = new MorphTarget(`${HAIR_FIT_MORPH_PREFIX}${key}`, 0, this.scene);
+        morph.setPositions(targets.get(key)!);
+        mgr.addTarget(morph);
+      }
     }
   }
 
-  /** Toggle the tucked-under-brim morph target on every hair mesh (influence 0/1). */
-  private setHelmetHairMorph(active: boolean): void {
+  /** Apply headgear hair-fit morph weights. Pass null to restore normal hair. */
+  private setHeadHairMorphs(morphs: HeadHairMorphs | null): void {
     for (const [name, hairMesh] of this.modularMeshes) {
       if (!name.startsWith('M_hair_')) continue;
       const mgr = hairMesh.morphTargetManager;
       if (!mgr || mgr.numTargets === 0) continue;
-      const target = mgr.getTarget(0);
-      if (target) target.influence = active ? 1 : 0;
+      for (let i = 0; i < mgr.numTargets; i++) {
+        const target = mgr.getTarget(i);
+        if (!target?.name.startsWith(HAIR_FIT_MORPH_PREFIX)) continue;
+        const key = target.name.slice(HAIR_FIT_MORPH_PREFIX.length) as HeadHairMorphKey;
+        target.influence = morphs ? clampHairMorph(morphs[key]) : 0;
+      }
     }
   }
 
@@ -2887,6 +2987,7 @@ export async function loadGearTemplate(
         : Vector3.Zero(),
       scale: def.scale ?? 1,
       headRenderMode: def.headRenderMode,
+      headHairFit: cloneHeadHairFit(def.headHairFit),
     };
   } catch (e) {
     console.warn(`[GearTemplate] Failed to load '${def.file}':`, e);

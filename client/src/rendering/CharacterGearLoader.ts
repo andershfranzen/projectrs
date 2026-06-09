@@ -8,7 +8,7 @@ import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import type { ItemDef } from '../../../shared/types';
 import { resolveEquipmentModelPath } from '../../../shared/gear';
-import { EQUIP_SLOT_BONES, TOOL_TIER_METAL_COLOR, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
+import { EQUIP_SLOT_BONES, TOOL_TIER_METAL_COLOR, cloneHeadHairFit, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { CharacterEntity, type GearDef, type GearTemplate } from './CharacterEntity';
 import { applyFlatGearLighting, isAuthoredGearMetalMaterial, tuneGearDiffuseColor } from './GearMaterialTuning';
 import '@babylonjs/loaders/glTF';
@@ -63,6 +63,7 @@ export function buildCharacterGearDef(
       centerOrigin: override?.centerOrigin ?? false,
       metalColor: TOOL_TIER_METAL_COLOR[itemId],
       headRenderMode: itemDef?.headRenderMode,
+      headHairFit: cloneHeadHairFit(override?.headHair),
     },
     override,
   };
@@ -162,6 +163,7 @@ export function buildCharacterGearTemplateFromResult(
       : Vector3.Zero(),
     scale: def.scale ?? 1,
     headRenderMode: def.headRenderMode,
+    headHairFit: cloneHeadHairFit(def.headHairFit),
   };
 }
 

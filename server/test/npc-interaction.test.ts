@@ -3,7 +3,7 @@ import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
 import { isPointInNpcMagicAttackRange, processNpcCombat, processPlayerCombat, processPlayerRangedCombat } from '../src/combat/Combat';
-import { ServerOpcode, TICK_RATE, decodePacket, getObjectFootprintBounds, type DialogueAction, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
+import { NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_STARTS_COMBAT, ServerOpcode, TICK_RATE, decodePacket, getObjectFootprintBounds, type DialogueAction, type DialogueTree, type ItemDef, type NpcDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -404,6 +404,57 @@ describe('NPC interaction reachability', () => {
 
     expect(world.findPlayerPathToNpc(player, npc).length).toBeGreaterThan(2);
     expect(world.findPlayerPathToNpcDialogueStart(player, npc)).toBeNull();
+  });
+
+  test('NPC interaction flags distinguish combat-start dialogue from plain dialogue', () => {
+    const plainDialogue: DialogueTree = {
+      root: 'root',
+      nodes: {
+        root: {
+          id: 'root',
+          lines: ['Hello.'],
+          options: [{ label: 'Goodbye.' }],
+        },
+      },
+    };
+    const combatDialogue: DialogueTree = {
+      root: 'root',
+      nodes: {
+        root: {
+          id: 'root',
+          lines: ['Fight me.'],
+          options: [{ label: 'Fight.', actions: [{ type: 'startNpcCombat' }] }],
+        },
+      },
+    };
+
+    expect(new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: plainDialogue }).interactionFlags()).toBe(NPC_INTERACTION_HAS_DIALOGUE);
+    expect(new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: combatDialogue }).interactionFlags()).toBe(NPC_INTERACTION_HAS_DIALOGUE | NPC_INTERACTION_STARTS_COMBAT);
+  });
+
+  test('combat-start dialogue blocks direct attacks until the dialogue starts combat', () => {
+    const combatDialogue: DialogueTree = {
+      root: 'root',
+      nodes: {
+        root: {
+          id: 'root',
+          lines: ['Fight me.'],
+          options: [{ label: 'Fight.', actions: [{ type: 'startNpcCombat' }] }],
+        },
+      },
+    };
+    const player = new Player('tester', 9.5, 10.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 10.5, 10.5, { effectiveDialogue: combatDialogue });
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const { world } = makeCombatWorld(player, npc);
+
+    world.handlePlayerAttackNpc(player.id, npc.id);
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
+
+    world.runDialogueAction(player, npc, { type: 'startNpcCombat' });
+    world.handlePlayerAttackNpc(player.id, npc.id);
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
   });
 
   test('attacking from far away does not turn the NPC before combat connects', () => {

@@ -10,16 +10,22 @@ describe('water tile classification', () => {
     expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.MUD);
   });
 
-  test('surface-water paint is real blocking water', () => {
+  test('surface-water paint stays walkable on flat terrain', () => {
     const tile = { ...defaultKCTile('grass'), waterSurface: true };
 
-    expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.WATER);
+    expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.GRASS);
   });
 
-  test('second-half surface-water paint is also real blocking water', () => {
+  test('second-half surface-water paint also stays walkable on flat terrain', () => {
     const tile = { ...defaultKCTile('grass'), waterSurfaceB: true };
 
-    expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.WATER);
+    expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.GRASS);
+  });
+
+  test('surface-water over mud paint stays walkable mud', () => {
+    const tile = { ...defaultKCTile('grass'), waterPainted: true, waterSurface: true, waterSurfaceB: true };
+
+    expect(classifyTileType(tile, flatCorners, -1)).toBe(TileType.MUD);
   });
 
   test('submerged terrain remains real water', () => {

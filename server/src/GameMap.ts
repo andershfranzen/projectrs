@@ -576,6 +576,25 @@ export class GameMap {
     return map.projectileWallBlocksAt(x, z, edge, floor, projectileY);
   }
 
+  private static movementWallBlocksAtCallback(
+    map: GameMap,
+    x: number,
+    z: number,
+    edge: number,
+    floor: number,
+    _projectileY: number,
+  ): boolean {
+    return map.movementWallBlocksAt(x, z, edge, floor);
+  }
+
+  private movementWallBlocksAt(x: number, z: number, edge: number, floor: number): boolean {
+    if (x < 0 || x >= this.width || z < 0 || z >= this.height) return false;
+    const floorIdx = Math.floor(floor);
+    return floorIdx === 0
+      ? this.wallBlocksAtHeight(x, z, edge)
+      : this.wallBlocksOnFloorAt(x, z, edge, floorIdx);
+  }
+
   private projectileWallBlocksAt(
     x: number,
     z: number,
@@ -635,6 +654,22 @@ export class GameMap {
       toY,
       this,
       GameMap.projectileWallBlocksAtCallback,
+    );
+  }
+
+  /** Straight LOS against movement-blocking wall edges. Unlike projectile LOS,
+   *  low fences still block this; used for NPC perception/assist checks. */
+  hasWallLineOfSight(fromX: number, fromZ: number, toX: number, toZ: number, floor: number): boolean {
+    return hasProjectileGridLineOfSight(
+      fromX,
+      fromZ,
+      toX,
+      toZ,
+      floor,
+      0,
+      0,
+      this,
+      GameMap.movementWallBlocksAtCallback,
     );
   }
 

@@ -331,6 +331,12 @@ function bowColorRevisionForModel(modelPath: string): string {
     : '';
 }
 
+function modelContentRevisionForModel(modelPath: string): string {
+  return /(?:^|\/)assets\/models\/item-thumbnails\/ore\/[^/]+OreRock\.glb$/i.test(modelPath)
+    ? ':ore-recolors-v2'
+    : '';
+}
+
 function loadOverrides(): Promise<ThumbnailOverrideStore> {
   if (_overridesPromise) return _overridesPromise;
   _overridesPromise = (async () => {
@@ -425,7 +431,8 @@ export function findThumbnailOverrideForItem(
 export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride, visualDef: ItemDef = def): ThumbnailOptions {
   const modelPath = visualDef.thumbnailModel ?? visualDef.model ?? def.thumbnailModel ?? def.model ?? '';
   const bowColorRevision = bowColorRevisionForModel(modelPath);
-  const opts: ThumbnailOptions = { cacheIdentity: `item:${visualDef.id}${bowColorRevision}` };
+  const modelContentRevision = modelContentRevisionForModel(modelPath);
+  const opts: ThumbnailOptions = { cacheIdentity: `item:${visualDef.id}${bowColorRevision}${modelContentRevision}` };
   const tint = TOOL_TIER_METAL_COLOR[visualDef.id];
   if (tint) opts.tint = tint;
   const shieldTint = SHIELD_THUMBNAIL_TINT[visualDef.id];
@@ -449,7 +456,8 @@ export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: T
 export function buildGroundItemOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride): ThumbnailOptions {
   const modelPath = def.model ?? '';
   const bowColorRevision = bowColorRevisionForModel(modelPath);
-  const opts: ThumbnailOptions = { cacheIdentity: `ground-item:${def.id}${bowColorRevision}` };
+  const modelContentRevision = modelContentRevisionForModel(modelPath);
+  const opts: ThumbnailOptions = { cacheIdentity: `ground-item:${def.id}${bowColorRevision}${modelContentRevision}` };
   const tint = TOOL_TIER_METAL_COLOR[def.id];
   if (tint) opts.tint = tint;
   const shieldTint = SHIELD_THUMBNAIL_TINT[def.id];

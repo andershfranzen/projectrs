@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { World } from '../src/World';
 import { Player } from '../src/entity/Player';
 import { Npc } from '../src/entity/Npc';
-import { ServerOpcode, type ItemDef, type NpcDef, type SpellEffectDef } from '@projectrs/shared';
+import { ServerOpcode, type DialogueTree, type ItemDef, type NpcDef, type SpellEffectDef } from '@projectrs/shared';
 
 const fakeWs = {
   sendBinary() {},
@@ -108,6 +108,22 @@ const nonContinuingSpellDef: SpellEffectDef = {
 const nonAutocastableSpellDef: SpellEffectDef = {
   ...spellDef,
   autocastable: false,
+};
+
+const combatDialogue: DialogueTree = {
+  root: 'root',
+  nodes: {
+    root: {
+      id: 'root',
+      lines: ['Fight me.'],
+      options: [
+        {
+          label: 'Fight.',
+          actions: [{ type: 'startNpcCombat' }],
+        },
+      ],
+    },
+  },
 };
 
 function makeWorld(player: Player, npc: Npc, spell: SpellEffectDef | undefined): any {
@@ -367,6 +383,34 @@ describe('server-authoritative spell casting', () => {
     expect(player.autocastSpellIndex).toBe(0);
     expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
     expect(world.pendingSpellImpacts).toHaveLength(2);
+  });
+
+  test('dialogue-started NPC combat can continue with autocast', () => {
+    const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 3.5, 1.5, { effectiveDialogue: combatDialogue });
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const world = makeWorld(player, npc, spellDef);
+
+    world.handlePlayerSetAutocast(player.id, 0);
+    world.runDialogueAction(player, npc, { type: 'startNpcCombat' });
+    world.tickPlayerCombat();
+
+    expect(world.playerCombatTargets.get(player.id)).toBe(npc.id);
+    expect(world.pendingSpellImpacts).toHaveLength(1);
+  });
+
+  test('dialogue NPC magic remains blocked until dialogue starts combat', () => {
+    const player = new Player('caster', 1.5, 1.5, fakeWs, 1);
+    const npc = new Npc(npcDef, 3.5, 1.5, { effectiveDialogue: combatDialogue });
+    player.currentMapLevel = 'kcmap';
+    npc.currentMapLevel = 'kcmap';
+    const world = makeWorld(player, npc, spellDef);
+
+    world.handlePlayerCastSpell(player.id, 0, npc.id);
+
+    expect(world.pendingSpellImpacts).toHaveLength(0);
+    expect(world.playerCombatTargets.has(player.id)).toBe(false);
   });
 
   test('autocast repeats through the live cooldown and pending-impact tick path', () => {

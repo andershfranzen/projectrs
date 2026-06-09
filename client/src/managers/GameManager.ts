@@ -63,7 +63,7 @@ import { logSceneBudget } from '../debug/SceneBudget';
 import { NPC_NAMES, resolveNpcModelSourceId, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { EQUIP_SLOT_BONES, EQUIP_SLOT_NAMES, mergeGearOverrideForBodyType, resolveGearOverrideForBodyType, type GearOverride } from '../data/EquipmentConfig';
 import { resolveItemModelPath, setThumbnailItemCatalog } from '../rendering/ItemIcon';
-import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
+import { ServerOpcode, ClientOpcode, ClientActivityKind, EntityDeathKind, PlayerAnimationKind, PlayerSkillAnimationVariant, NPC_INTERACTION_HAS_DIALOGUE, NPC_INTERACTION_HAS_SHOP, NPC_INTERACTION_HAS_BANK, NPC_INTERACTION_STARTS_COMBAT, encodePacket, decodeQuantityValues, ALL_SKILLS, SKILL_NAMES, WallEdge, doorEdgeFromPlacement, DOOR_EDGE_NEIGHBOR, centeredDoorTileFromPlacement, decodeStringPacket, BIOME_CELL_SIZE, SPELL_CAST_DISTANCE, DEFAULT_RANGED_ATTACK_DISTANCE, normalizeRangedAttackDistance, decodeNpcVisualScale, RANGED_PROJECTILE_SOURCE_HEIGHT, RANGED_PROJECTILE_TARGET_HEIGHT, TICK_RATE, STANCE_KEYS, CHUNK_SIZE, RICE_PLANT_OBJECT_DEF_ID, POTATO_PLANT_OBJECT_DEF_ID, POTTERY_WHEEL_OBJECT_DEF_ID, KILN_OBJECT_DEF_ID, SPINNING_WHEEL_OBJECT_DEF_ID, GENERIC_SCENERY_OBJECT_DEF_ID, BATCH_OBJECT_RECIPE_DEF_IDS, appearanceEquals, isValidAppearance, normalizeAppearance, APPEARANCE_WIRE_FIELD_COUNT, appearanceFromWireValues, appearanceToWireValues, PROTOCOL_VERSION, COMBAT_BONUS_WIRE_KEYS, npcCombatLevel, combatLevelFromLevels, combatRangeIncludesOffset, getCharacterModelPath, CHARACTER_MODEL_PATHS, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_3D_LOD_DISTANCE, getObjectFootprintMinTile, getObjectFootprintCenterCoord, getObjectFootprintTiles, getObjectInteractionTiles, isTileAdjacentToObject, localSidesToWorldSides, usesCornerInteractionTiles, usesMapAuthoredObjectCollision, compressedPathTileSteps, findPathToReach, QUEST_STAGE_COMPLETED, gearFitFamilyForName, resolveEquipmentModelPath, resolveGearFitSourceItemId, mergeObjectActionLabels, isHighQualityItem, objectDefIdForPlacedAsset, sceneryExamineMetaForAsset, withGeneratedBankNotes, BANK_NOTE_TEMPLATE_ITEM_ID, normalizeNpcEquipmentFits, zeroBonuses, type WorldObjectDef, type ItemDef, type NpcDef, type InventorySlot, type PlayerAppearance, type CustomColors, CUSTOM_COLOR_SLOTS, type BiomesFile, type BiomeDef, type QuestDef, type QuestState, type QuestCondition, type PlacedObjectInteraction, type SkyboxConfig, type SpellEffectDef, type SkillId, type CombatBonuses, type MinimapMarker } from '@projectrs/shared';
 
 // Door action labels — mirror server WorldObject.currentActions so right-click
 // menu labels reflect the door's current state. Both ends pass actionIndex 0
@@ -2436,6 +2436,9 @@ export class GameManager {
     if (override.scale != null) {
       node.scaling.set(override.scale, override.scale, override.scale);
     }
+    if (slotName === 'head') {
+      character.setHeadHairFitForCurrentHead(override.headHair ?? null);
+    }
   }
 
   private refreshEquippedGearOverride(itemId: number): void {
@@ -3213,6 +3216,7 @@ export class GameManager {
     this.network.on(ServerOpcode.NPC_INTERACTIONS, (_op, v) => {
       // [entityId, flagBits]. Cached so the right-click menu can offer
       // Talk-to / Trade / Bank without round-tripping every click.
+      // Bit 3 marks dialogue that can transition into NPC combat.
       this.entities.npcInteractions.set(v[0], v[1]);
     });
 
@@ -4133,7 +4137,7 @@ export class GameManager {
         const { str, values } = decodeStringPacket(data);
         const entityId = values[0];
         if (entityId !== undefined && str.length > 0) {
-          this.showNpcDialogueBubble(entityId, str);
+          this.showNpcDialogueBubble(entityId, str, values[1] === 1);
         }
       } else if (opcode === ServerOpcode.NPC_NAME) {
         // [npcEntityId] follows the string payload. Override is cached for
@@ -5056,13 +5060,12 @@ export class GameManager {
     // Prefer the server-sent interaction flags (NPC_INTERACTIONS) over the
     // hardcoded isNonAttackableNpc allow-list — that list pre-dates the
     // server telling us, and would mislabel any new editor-authored NPC.
-    // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank.
+    // Flags: bit 0 = dialogue, bit 1 = shop, bit 2 = bank, bit 3 = dialogue can start combat.
     const flags = this.entities.npcInteractions.get(entityId) ?? 0;
-    const nonCombat = flags !== 0 || this.isNonAttackableNpc(npcDefId);
-    if (nonCombat) {
+    if (this.isNonCombatNpc(entityId, npcDefId)) {
       // Talk-to handles all three (dialogue → priority on server, else
       // falls through to shop, then bank). One label keeps the menu tidy.
-      const verb = (flags & 1) !== 0 ? 'Talk-to' : 'Trade';
+      const verb = (flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0 ? 'Talk-to' : 'Trade';
       return [
         { label: `${verb} ${name}`, action: () => this.talkToNpc(entityId) },
         { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
@@ -5071,8 +5074,27 @@ export class GameManager {
 
     const lvl = this.npcLevelFor(entityId, npcDefId);
     const labelLevel = lvl > 0 ? ` (level-${lvl})` : '';
+    const attackOption: InteractionOption = { label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) };
+    if ((flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0) {
+      const engaged = this.isLocalNpcCombatTarget(entityId);
+      const talkOption: InteractionOption = {
+        label: `Talk-to ${name}`,
+        action: () => this.talkToNpc(entityId),
+        primary: engaged ? false : undefined,
+      };
+      return engaged
+        ? [
+            attackOption,
+            talkOption,
+            { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
+          ]
+        : [
+            talkOption,
+            { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
+          ];
+    }
     return [
-      { label: `Attack ${name}${labelLevel}`, action: () => this.attackNpc(entityId) },
+      attackOption,
       { label: `Examine ${name}`, action: () => this.examineNpc(entityId), primary: false },
     ];
   }
@@ -5408,7 +5430,32 @@ export class GameManager {
    *  smiths, bankers). Server-sent interaction flags are preferred when
    *  available, but this keeps older authored NPCs on the non-combat path. */
   private isNonAttackableNpc(npcDefId: number | undefined): boolean {
-    return npcDefId === 8 || npcDefId === 11 || npcDefId === 12 || npcDefId === 13 || npcDefId === 14 || npcDefId === 16;
+    return npcDefId === 8
+      || npcDefId === 11
+      || npcDefId === 12
+      || npcDefId === 13
+      || npcDefId === 14
+      || npcDefId === 16
+      || npcDefId === 109;
+  }
+
+  private isLocalNpcCombatTarget(entityId: number): boolean {
+    if (entityId === this.combatTargetId || entityId === this.magicTargetId) return true;
+    return this.localPlayerId > 0 && this.entities.npcCombatTargets.get(entityId) === this.localPlayerId;
+  }
+
+  private isNonCombatNpc(entityId: number, npcDefId: number | undefined = this.entities.npcDefs.get(entityId)): boolean {
+    const name = this.entities.npcOverrideNames.get(entityId) || (npcDefId !== undefined ? this.npcDefsCache.get(npcDefId)?.name : undefined);
+    const flags = this.entities.npcInteractions.get(entityId) ?? 0;
+    const hasDialogue = (flags & NPC_INTERACTION_HAS_DIALOGUE) !== 0;
+    const hasProtectedUi = (flags & (NPC_INTERACTION_HAS_SHOP | NPC_INTERACTION_HAS_BANK)) !== 0;
+    const dialogueBlocksCombat = hasDialogue
+      && (flags & NPC_INTERACTION_STARTS_COMBAT) === 0
+      && !this.isLocalNpcCombatTarget(entityId);
+    return hasProtectedUi
+      || dialogueBlocksCombat
+      || this.isNonAttackableNpc(npcDefId)
+      || name === 'Ali the Oasis-Born';
   }
 
   /** Walk picked-mesh parent chain looking for an NPC tag (set by Npc3DEntity
@@ -5672,8 +5719,7 @@ export class GameManager {
       if (playerLabel == null && entityId != null) {
         const npcDefId = this.entities.npcDefs.get(entityId);
         const name = this.npcDisplayName(entityId, npcDefId);
-        const flags = this.entities.npcInteractions.get(entityId) ?? 0;
-        if (flags !== 0 || this.isNonAttackableNpc(npcDefId)) {
+        if (this.isNonCombatNpc(entityId, npcDefId)) {
           npcLabel = name;
         } else {
           const lvl = this.npcLevelFor(entityId, npcDefId);
@@ -5776,6 +5822,10 @@ export class GameManager {
     const floorTarget = this.entities.npcTargets.get(npcEntityId);
     if (floorTarget && floorTarget.floor !== this.currentFloor) return;
     if (this.tryUseInventoryItemOn('npc', npcEntityId)) return;
+    if (this.isNonCombatNpc(npcEntityId)) {
+      this.talkToNpc(npcEntityId);
+      return;
+    }
 
     const targetingSpell = this.sidePanel?.getTargetingSpell() ?? -1;
     if (targetingSpell >= 0) {
@@ -5844,6 +5894,10 @@ export class GameManager {
     const targetId = this.magicTargetId >= 0 ? this.magicTargetId : this.combatTargetId;
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_SET_AUTOCAST, spellIndex));
     if (targetId < 0) return;
+    if (this.isNonCombatNpc(targetId)) {
+      this.clearLocalNpcCombatState();
+      return;
+    }
 
     this._combatPathTimer = 0;
     if (spellIndex >= 0) {
@@ -7094,12 +7148,16 @@ export class GameManager {
               name: def?.name ?? `item ${itemId}`,
               toolType: def?.toolType,
               modelPath: this.getGearModelFileForCharacter(itemId, slot, this.getGearDebugCharacter()) ?? undefined,
+              headRenderMode: def?.headRenderMode,
             };
           });
           this.gearDebugPanel.setOverrideGetter((itemId) => this.getGearOverrideForCharacter(itemId, this.getGearDebugCharacter()));
           this.gearDebugPanel.setSkinnedChecker((slot) => this.getGearDebugCharacter()?.getSkinnedArmorMeshes?.(slot) != null);
           this.gearDebugPanel.setAuthTokenGetter(() => this.token || localStorage.getItem('evilquest_token') || '');
           this.gearDebugPanel.setBodyTypeGetter(() => this.getCharacterBodyType(this.getGearDebugCharacter()));
+          this.gearDebugPanel.setHeadHairPreviewCallback((fit) => {
+            this.getGearDebugCharacter()?.setHeadHairFitForCurrentHead(fit);
+          });
           this.gearDebugPanel.setSaveCallback(async (itemId, override) => {
             const target = this.getGearDebugCharacter();
             const bodyType = this.getCharacterBodyType(target);
@@ -7146,12 +7204,14 @@ export class GameManager {
             }
 
             for (const def of targets) {
-              this.gearOverrides.set(def.id, mergeGearOverrideForBodyType(this.gearOverrides.get(def.id), bodyType, {
+              const patch: GearOverride = {
                 boneName: override.boneName,
                 localPosition: override.localPosition,
                 localRotation: override.localRotation,
                 scale: override.scale,
-              }));
+              };
+              if (slot === 'head' && override.headHair) patch.headHair = override.headHair;
+              this.gearOverrides.set(def.id, mergeGearOverrideForBodyType(this.gearOverrides.get(def.id), bodyType, patch));
               this.deleteGearTemplateCacheForItem(slot, def.id);
             }
 
@@ -7372,6 +7432,10 @@ export class GameManager {
     if (nearest && this.entities.npcTargets.get(nearest.entityId)?.floor !== this.currentFloor) return;
     if (!nearest) {
       this.chatPanel?.addSystemMessage(`${def.name}: no target in sight.`);
+      return;
+    }
+    if (this.isNonCombatNpc(nearest.entityId)) {
+      this.chatPanel?.addSystemMessage(`${def.name}: no attackable target in sight.`);
       return;
     }
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, nearest.entityId));
@@ -7614,6 +7678,10 @@ export class GameManager {
       }
       targetId = nearest.entityId;
     }
+    if (this.isNonCombatNpc(targetId)) {
+      this.chatPanel?.addSystemMessage('That target does not want to fight.');
+      return;
+    }
 
     this.network.sendRaw(encodePacket(ClientOpcode.PLAYER_CAST_SPELL, spellIndex, targetId));
   }
@@ -7697,11 +7765,12 @@ export class GameManager {
     }
   }
 
-  private showNpcDialogueBubble(npcEntityId: number, message: string): void {
+  private showNpcDialogueBubble(npcEntityId: number, message: string, alert: boolean = false): void {
     const npc = this.entities.npcSprites.get(npcEntityId);
     if (npc) {
-      npc.showChatBubble(message, 6000, 'dialogue');
+      npc.showChatBubble(message, alert ? 1800 : 6000, 'dialogue');
     }
+    if (alert) return;
     const npcName = this.npcDisplayName(npcEntityId, this.entities.npcDefs.get(npcEntityId));
     this.chatPanel?.addMessage(npcName, message, '#f4ded5');
   }
@@ -8842,6 +8911,10 @@ export class GameManager {
     this._combatPathTimer -= dt;
     if (!this.localPlayer) return;
     if (this.autoCastSpellIndex >= 0 && this.magicTargetId >= 0) {
+      if (this.isNonCombatNpc(this.magicTargetId)) {
+        this.clearLocalNpcCombatState();
+        return;
+      }
       const npcTarget = this.entities.npcTargets.get(this.magicTargetId);
       if (!npcTarget) return;
       if (this._combatPathTimer > 0 || performance.now() < this.castingUntil) return;
@@ -8859,6 +8932,10 @@ export class GameManager {
     }
 
     if (this.combatTargetId < 0) return;
+    if (this.isNonCombatNpc(this.combatTargetId)) {
+      this.clearLocalNpcCombatState();
+      return;
+    }
     const npcTarget = this.entities.npcTargets.get(this.combatTargetId);
     if (!npcTarget) return;
     const attackRange = this.getLocalNpcAttackRange();

@@ -9,6 +9,7 @@ import {
   shouldConsumeAmmoOnShot,
 } from '../src/combat/Combat';
 import {
+  effectiveNpcCombatStats,
   npcCombatSummary,
   npcMeleeAttackRoll,
   npcMeleeDefenceRoll,
@@ -101,5 +102,14 @@ describe('combat style consistency', () => {
     expect(summary.attackRoll).toBe(153);
     expect(summary.maxHit).toBe(1);
     expect(summary.crushDefenceRoll).toBe(198);
+  });
+
+  test('NPC stat overrides derive combat level unless the override sets combatLevel', () => {
+    const base = { ...npcDef, health: 10, attack: 10, defence: 10, strength: 10, combatLevel: 3 };
+    const raisedStats = { health: 44, attack: 35, defence: 50, strength: 40 };
+
+    expect(npcCombatSummary(effectiveNpcCombatStats(base)).combatLevel).toBe(3);
+    expect(npcCombatSummary(effectiveNpcCombatStats(base, raisedStats)).combatLevel).toBe(47);
+    expect(npcCombatSummary(effectiveNpcCombatStats(base, { ...raisedStats, combatLevel: 12 })).combatLevel).toBe(12);
   });
 });

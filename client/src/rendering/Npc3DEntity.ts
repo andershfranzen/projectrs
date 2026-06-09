@@ -29,6 +29,9 @@ export interface Npc3DEntityOptions {
   groundOffset?: number;
   /** Visual yaw offset for models whose authored forward axis differs from the game forward axis. */
   facingOffsetY?: number;
+  /** Model-local X/Z origin trim in world units at visualScale=1, applied after
+   *  bounds-centering and before the root scale/rotation. */
+  originOffset?: { x?: number; z?: number };
   animSpeedRatio?: Partial<Record<'idle' | 'walk' | 'attack' | 'death', number>>;
   preserveAnimationRoles?: Array<'idle' | 'walk' | 'attack' | 'death'>;
 }
@@ -368,6 +371,8 @@ export class Npc3DEntity {
   private originMode: Npc3DEntityOptions['originMode'] = 'authored';
   private groundOffset: number = 0;
   private facingOffsetY: number = 0;
+  private originOffsetX: number = 0;
+  private originOffsetZ: number = 0;
   private renderEnabled: boolean = true;
   private groundShadow: Mesh | null = null;
   /** Gameplay position is the authoritative footprint anchor. Render and aim
@@ -421,6 +426,12 @@ export class Npc3DEntity {
     this.originMode = options.originMode ?? 'authored';
     this.groundOffset = options.groundOffset ?? 0;
     this.facingOffsetY = options.facingOffsetY ?? 0;
+    this.originOffsetX = typeof options.originOffset?.x === 'number' && Number.isFinite(options.originOffset.x)
+      ? options.originOffset.x
+      : 0;
+    this.originOffsetZ = typeof options.originOffset?.z === 'number' && Number.isFinite(options.originOffset.z)
+      ? options.originOffset.z
+      : 0;
     this.animSpeedRatio = options.animSpeedRatio ?? {};
     this.preserveAnimationRoles = new Set(options.preserveAnimationRoles ?? []);
     this.footprintWidth = Math.max(1, Math.round(options.tileSize ?? 1));
@@ -531,10 +542,14 @@ export class Npc3DEntity {
         if (bb.maximumWorld.y > maxY) maxY = bb.maximumWorld.y;
         if (bb.maximumWorld.z > maxZ) maxZ = bb.maximumWorld.z;
       }
-      if (this.originMode === 'boundsCenter') {
+      const sourceOffsetX = this.originOffsetX / this.baseModelScale;
+      const sourceOffsetZ = this.originOffsetZ / this.baseModelScale;
+      if (this.originMode === 'boundsCenter' || sourceOffsetX !== 0 || sourceOffsetZ !== 0) {
+        const centerX = this.originMode === 'boundsCenter' ? (minX + maxX) / 2 : 0;
+        const centerZ = this.originMode === 'boundsCenter' ? (minZ + maxZ) / 2 : 0;
         for (const node of result.rootNodes) {
-          node.position.x -= (minX + maxX) / 2;
-          node.position.z -= (minZ + maxZ) / 2;
+          node.position.x += sourceOffsetX - centerX;
+          node.position.z += sourceOffsetZ - centerZ;
         }
       }
       for (const node of result.rootNodes) node.position.y -= minY;

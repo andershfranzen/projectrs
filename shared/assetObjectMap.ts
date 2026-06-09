@@ -69,9 +69,10 @@ export const ASSET_TO_OBJECT_DEF: Record<string, number> = {
   'Spinning wheel': 40,
   'SpinningWheel': 40,
   'spinning wheel': 40,
-  // Doors (only Truedoor assets — other "door" assets are decorative door frames)
+  // Doors (standalone panels only — modular "door" assets are decorative door frames)
   'castleTruedoor': 13,
   'basicTruedoor': 13,
+  'IronDoor1': 13,
   // Cave entrances
   'cavedoor': 15,  // Cave Entrance -> map transition
   'CavernEntrance1': 15,
@@ -144,6 +145,14 @@ export interface SceneryExamineMeta {
 }
 
 export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta>> = {
+  '2PersonBed1': {
+    name: 'Bed',
+    examineText: 'A larger bed with room for someone who sleeps like they are guarding territory.',
+  },
+  'Barrel': {
+    name: 'Barrel',
+    examineText: 'A sturdy barrel for storing supplies.',
+  },
   'Bench_1': {
     name: 'Bench',
     examineText: 'A sturdy wooden bench for weary travellers.',
@@ -255,6 +264,10 @@ export const EXAMINABLE_SCENERY_META: Readonly<Record<string, SceneryExamineMeta
   'table1': {
     name: 'Table',
     examineText: 'A plain wooden table.',
+  },
+  'Tent': {
+    name: 'Tent',
+    examineText: 'A canvas tent pitched for a short stay.',
   },
   'Walltorch': {
     name: 'Wall torch',

@@ -1,3 +1,24 @@
+import { HEAD_RENDER_MODES, type HeadRenderMode } from '../../../shared/types';
+
+export const HEAD_HAIR_MORPH_KEYS = [
+  'topFlatten',
+  'topLower',
+  'sideSqueeze',
+  'backTuck',
+  'frontTrim',
+] as const;
+
+export type HeadHairMorphKey = typeof HEAD_HAIR_MORPH_KEYS[number];
+
+export type HeadHairMorphs = Partial<Record<HeadHairMorphKey, number>>;
+
+export interface HeadHairFit {
+  /** Optional override for ItemDef.headRenderMode. Undefined keeps the item default. */
+  mode?: HeadRenderMode;
+  /** Per-headgear compression controls. Values are clamped to 0..1 at render time. */
+  morphs?: HeadHairMorphs;
+}
+
 export interface GearOverridePose {
   boneName?: string;
   localPosition?: { x: number; y: number; z: number };
@@ -5,6 +26,7 @@ export interface GearOverridePose {
   scale?: number;
   centerOrigin?: boolean;
   file?: string;
+  headHair?: HeadHairFit;
 }
 
 export interface GearOverride extends GearOverridePose {
@@ -21,7 +43,23 @@ export function gearOverridePose(override?: GearOverridePose | null): GearOverri
   if (typeof override.scale === 'number') pose.scale = override.scale;
   if (typeof override.centerOrigin === 'boolean') pose.centerOrigin = override.centerOrigin;
   if (typeof override.file === 'string') pose.file = override.file;
+  if (override.headHair) pose.headHair = cloneHeadHairFit(override.headHair);
   return pose;
+}
+
+export function cloneHeadHairFit(fit?: HeadHairFit | null): HeadHairFit | undefined {
+  if (!fit) return undefined;
+  const out: HeadHairFit = {};
+  if (fit.mode && HEAD_RENDER_MODES.includes(fit.mode)) out.mode = fit.mode;
+  if (fit.morphs) {
+    const morphs: HeadHairMorphs = {};
+    for (const key of HEAD_HAIR_MORPH_KEYS) {
+      const value = fit.morphs[key];
+      if (typeof value === 'number' && Number.isFinite(value)) morphs[key] = value;
+    }
+    if (Object.keys(morphs).length > 0) out.morphs = morphs;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function sameVec3(
@@ -39,7 +77,8 @@ export function gearOverridePoseEquals(a?: GearOverridePose | null, b?: GearOver
     && sameVec3(left.localRotation, right.localRotation)
     && left.scale === right.scale
     && left.centerOrigin === right.centerOrigin
-    && left.file === right.file;
+    && left.file === right.file
+    && JSON.stringify(left.headHair ?? null) === JSON.stringify(right.headHair ?? null);
 }
 
 export function resolveGearOverrideForBodyType(

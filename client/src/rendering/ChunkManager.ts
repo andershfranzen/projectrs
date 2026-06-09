@@ -51,7 +51,13 @@ export function isRoofLikePlacedAsset(assetId: string): boolean {
 
 export function isInteractiveDoorPlacedAsset(assetId: string): boolean {
   const lower = assetId.toLowerCase().trim();
-  return lower === 'castletruedoor' || lower === 'basictruedoor';
+  return lower === 'castletruedoor'
+    || lower === 'basictruedoor'
+    || lower === 'irondoor1';
+}
+
+export function isObjectShadowReceiverGround(type: GroundType | null | undefined): boolean {
+  return !!type && type !== 'void' && type !== 'water';
 }
 
 function isRevealStructuralPlacedAsset(assetId: string): boolean {
@@ -1132,6 +1138,22 @@ export class ChunkManager {
     return { r: (r / totalWeight) * s, g: (g / totalWeight) * s, b: (b / totalWeight) * s };
   }
 
+  private getCornerObjectShadowFactor(cornerX: number, cornerZ: number): number {
+    if (!this.shadowInf) return 1.0;
+    const sharingTiles: [number, number][] = [[cornerX - 1, cornerZ - 1], [cornerX, cornerZ - 1], [cornerX - 1, cornerZ], [cornerX, cornerZ]];
+    let hasTile = false;
+    for (const [tx, tz] of sharingTiles) {
+      if (!this.getTileRaw(tx, tz)) continue;
+      hasTile = true;
+      if (isObjectShadowReceiverGround(this.getVisualBaseGroundType(tx, tz))) {
+        return this.getShadowAt(cornerX, cornerZ);
+      }
+    }
+    return !hasTile && isObjectShadowReceiverGround(this.defaultGround)
+      ? this.getShadowAt(cornerX, cornerZ)
+      : 1.0;
+  }
+
   // --- Chunk update ---
 
   private updateObjectChunkVisibility(
@@ -1798,8 +1820,8 @@ export class ChunkManager {
           cB.r *= avgAO; cB.g *= avgAO; cB.b *= avgAO;
           // Object shadows on split tiles
           if (this.shadowInf) {
-            const shadowableA = renderTileType === 'grass' || renderTileType === 'dirt' || renderTileType === 'path';
-            const shadowableB = groundBType === 'grass' || groundBType === 'dirt' || groundBType === 'path';
+            const shadowableA = isObjectShadowReceiverGround(renderTileType);
+            const shadowableB = isObjectShadowReceiverGround(groundBType);
             const avgShadow = (this.getShadowAt(x, z) + this.getShadowAt(x + 1, z) + this.getShadowAt(x, z + 1) + this.getShadowAt(x + 1, z + 1)) / 4;
             if (shadowableA) { cA.r *= avgShadow; cA.g *= avgShadow; cA.b *= avgShadow; }
             if (shadowableB) { cB.r *= avgShadow; cB.g *= avgShadow; cB.b *= avgShadow; }
@@ -1876,12 +1898,13 @@ export class ChunkManager {
           cBR.r *= aoBR; cBR.g *= aoBR; cBR.b *= aoBR;
         }
 
-        // Object shadows (grass, dirt, path only)
-        if (this.shadowInf && (renderTileType === 'grass' || renderTileType === 'dirt' || renderTileType === 'path')) {
-          const sTL = this.getShadowAt(x, z);
-          const sTR = this.getShadowAt(x + 1, z);
-          const sBL = this.getShadowAt(x, z + 1);
-          const sBR = this.getShadowAt(x + 1, z + 1);
+        // Object shadows on solid terrain. Sample per shared corner so
+        // blended grass/sand vertices agree across adjacent tile meshes.
+        if (this.shadowInf && isObjectShadowReceiverGround(renderTileType)) {
+          const sTL = this.getCornerObjectShadowFactor(x, z);
+          const sTR = this.getCornerObjectShadowFactor(x + 1, z);
+          const sBL = this.getCornerObjectShadowFactor(x, z + 1);
+          const sBR = this.getCornerObjectShadowFactor(x + 1, z + 1);
           cTL.r *= sTL; cTL.g *= sTL; cTL.b *= sTL;
           cTR.r *= sTR; cTR.g *= sTR; cTR.b *= sTR;
           cBL.r *= sBL; cBL.g *= sBL; cBL.b *= sBL;

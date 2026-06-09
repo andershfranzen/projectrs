@@ -78,6 +78,7 @@ const STACK_OFFSETS = [
 
 function templateCacheKey(path: string, options: ThumbnailOptions, targetSize: number): string {
   const parts = [path, `size:${targetSize.toFixed(3)}`];
+  if (options.cacheIdentity) parts.push(`id:${options.cacheIdentity}`);
   if (options.tint) {
     const [r, g, b] = options.tint;
     parts.push(`t:${r.toFixed(3)},${g.toFixed(3)},${b.toFixed(3)}`);

@@ -290,20 +290,47 @@ describe('item thumbnail families', () => {
     }
   });
 
-  test('ore thumbnail models do not replace ground-item world visuals', () => {
+  test('chicken items stay on legacy 2D PNG icons', () => {
     const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
-    for (const id of [25, 26, 34, 45, 142, 407, 408]) {
+    for (const id of [11, 12]) {
+      const def = defs.get(id);
+      if (!def) throw new Error(`missing chicken item ${id}`);
+
+      expect(def.model).toBeUndefined();
+      expect(def.thumbnailModel).toBeUndefined();
+      expect(resolveItemModelPath(def, 1)).toBeNull();
+      expect(resolveGroundItemModelPath(def, 1)).toBeNull();
+      expect(getItemIconSyncUrl(def, 1)).toBe('/items/raw_chicken_133.png');
+    }
+  });
+
+  test('ore models render as 3D thumbnails and ground drops', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    const thumbnailOverrides = thumbnailOverridesJson as Record<string, ThumbnailOverride>;
+    for (const id of [25, 26, 34, 35, 45, 142, 407, 408]) {
       const def = defs.get(id);
       if (!def) throw new Error(`missing ore item ${id}`);
 
       const thumbnailPath = resolveItemModelPath(def, 1);
-      expect(thumbnailPath).toBeTruthy();
-      expect(thumbnailPath?.startsWith('/assets/models/item-thumbnails/ore/')).toBe(true);
-      expect(thumbnailPath?.endsWith('Rock.glb')).toBe(true);
+      if (!thumbnailPath) throw new Error(`missing ore thumbnail model path for item ${id}`);
+      expect(thumbnailPath.startsWith('/assets/models/item-thumbnails/ore/')).toBe(true);
+      expect(thumbnailPath.endsWith('Rock.glb')).toBe(true);
       expect(existsSync(`client/public${thumbnailPath}`)).toBe(true);
-      expect(resolveGroundItemModelPath(def, 1)).toBeNull();
+      expect(def.model).toBe(thumbnailPath);
+      expect(resolveGroundItemModelPath(def, 1)).toBe(thumbnailPath);
+      expect(buildThumbnailOptionsFromOverride(def).cacheIdentity).toContain(':ore-recolors-v2');
+      expect(buildGroundItemOptionsFromOverride(def).cacheIdentity).toContain(':ore-recolors-v2');
     }
 
+    expect(thumbnailOverrides['35']).toEqual({
+      alpha: -Math.PI / 4,
+      beta: Math.PI / 2.6,
+      distanceMult: 0.75,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 0,
+      iconScale: 1,
+    });
     expect(getItemLegacyIconUrl(defs.get(25)!)).toBe('/items/copper_ore_150.png');
   });
 
