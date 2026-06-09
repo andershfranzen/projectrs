@@ -12,6 +12,7 @@ import { extractWsToken, hasMatchingCookie, isAllowedWsOrigin, isProductionLike,
 import { requestClientIp } from './network/clientIp';
 import { audit } from './Audit';
 import { sanitizeForumUpload } from './forumUploadSecurity';
+import { parseOAuthClients, validateOAuthAuthorizeParams, verifyPkceS256, type OAuthAuthorizeParams, type OAuthAuthorizeRequest } from './oauth';
 
 // Mob-kill leaderboard display tweaks — scoped to the hiscores only; these do
 // NOT rename or remove the NPC in-world. Override placeholder/dev names and
@@ -1654,6 +1655,19 @@ function jsonResponse(data: any, status: number = 200, headers: Record<string, s
   });
 }
 
+function jsonResponseWithSetCookies(data: any, status: number, cookies: string[]): Response {
+  const headers = new Headers({ 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  for (const cookie of cookies) headers.append('Set-Cookie', cookie);
+  return new Response(JSON.stringify(data), { status, headers });
+}
+
+function htmlResponse(html: string, status: number = 200, headers: Record<string, string> = {}): Response {
+  return new Response(html, {
+    status,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', ...headers },
+  });
+}
+
 function forumAvatarFilePath(urlOrPath: string): string | null {
   let pathname = urlOrPath;
   if (/^https?:\/\//.test(pathname)) {
@@ -1701,6 +1715,7 @@ interface RateBucket { count: number; resetAt: number; }
 const loginAttempts = new Map<string, RateBucket>();
 const signupAttempts = new Map<string, RateBucket>();
 const deviceIdAttempts = new Map<string, RateBucket>();
+const oauthTokenAttempts = new Map<string, RateBucket>();
 const preauthBootstraps = new Map<string, number>();
 const LOGIN_LIMIT = 5;
 const LOGIN_WINDOW_MS = 60_000;
@@ -1708,6 +1723,9 @@ const SIGNUP_LIMIT = 20;
 const SIGNUP_WINDOW_MS = 10 * 60_000;
 const DEVICE_ID_LIMIT = 20;
 const DEVICE_ID_WINDOW_MS = 10 * 60_000;
+const OAUTH_TOKEN_LIMIT = 30;
+const OAUTH_TOKEN_WINDOW_MS = 60_000;
+const OAUTH_CLIENTS = parseOAuthClients(Bun.env.OAUTH_CLIENTS_JSON);
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const DEVICE_COOKIE = 'eq_device_id';
@@ -1742,6 +1760,7 @@ const RECAPTCHA_MIN_SCORE = (() => {
 })();
 const RECAPTCHA_VERIFY_URL = 'https://www.google.com/recaptcha/api/siteverify';
 const RECAPTCHA_TIMEOUT_MS = 5000;
+const OAUTH_RECAPTCHA_SITE_KEY = Bun.env.OAUTH_RECAPTCHA_SITE_KEY || Bun.env.VITE_RECAPTCHA_SITE_KEY || Bun.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY || '';
 if (!RECAPTCHA_SECRET && isProductionLike()) {
   throw new Error('[auth] RECAPTCHA_SECRET is required in production');
 }
@@ -1912,11 +1931,170 @@ function preauthFailureResponse(req: Request, ip: string, route: string): Respon
   return jsonResponse({ ok: false, error: 'Please refresh the page and try again.' }, 400);
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function oauthParamsFromSearch(params: URLSearchParams): OAuthAuthorizeParams {
+  return {
+    responseType: params.get('response_type') ?? '',
+    clientId: params.get('client_id') ?? '',
+    redirectUri: params.get('redirect_uri') ?? '',
+    codeChallenge: params.get('code_challenge') ?? '',
+    codeChallengeMethod: params.get('code_challenge_method') ?? '',
+    state: params.get('state') ?? '',
+    scope: params.get('scope') ?? '',
+  };
+}
+
+function renderOAuthAuthorizePage(request: OAuthAuthorizeRequest, error: string = ''): string {
+  const hidden = [
+    ['response_type', 'code'],
+    ['client_id', request.client.id],
+    ['redirect_uri', request.redirectUri],
+    ['code_challenge', request.codeChallenge],
+    ['code_challenge_method', 'S256'],
+    ['state', request.state],
+    ['scope', request.scopeText],
+  ].map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`).join('\n');
+  const recaptchaScript = OAUTH_RECAPTCHA_SITE_KEY
+    ? `<script src="https://www.google.com/recaptcha/api.js?render=${encodeURIComponent(OAUTH_RECAPTCHA_SITE_KEY)}"></script>`
+    : '';
+  const recaptchaNotice = OAUTH_RECAPTCHA_SITE_KEY
+    ? '<p class="notice">Protected by reCAPTCHA. Google Privacy Policy and Terms apply.</p>'
+    : '';
+  const recaptchaSubmit = OAUTH_RECAPTCHA_SITE_KEY
+    ? `
+      const siteKey = ${JSON.stringify(OAUTH_RECAPTCHA_SITE_KEY)};
+      form.addEventListener('submit', async (event) => {
+        if (token.value) return;
+        event.preventDefault();
+        button.disabled = true;
+        button.textContent = 'Checking...';
+        try {
+          await new Promise((resolve) => grecaptcha.ready(resolve));
+          token.value = await grecaptcha.execute(siteKey, { action: 'login' });
+          form.submit();
+        } catch {
+          error.textContent = 'Captcha unavailable. Refresh and try again.';
+          button.disabled = false;
+          button.textContent = 'Authorize';
+        }
+      });
+    `
+    : '';
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize ${escapeHtml(request.client.name)} - EvilQuest</title>
+  ${recaptchaScript}
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #15120e; color: #f3ead8; font: 16px system-ui, sans-serif; }
+    main { width: min(420px, calc(100vw - 32px)); border: 1px solid #5d4a31; background: #211a13; padding: 28px; box-sizing: border-box; }
+    h1 { margin: 0 0 10px; font-size: 24px; line-height: 1.2; }
+    p { margin: 0 0 18px; color: #cdbd9f; line-height: 1.45; }
+    label { display: grid; gap: 6px; margin: 14px 0; color: #f3ead8; }
+    input { min-height: 42px; box-sizing: border-box; border: 1px solid #6b5638; background: #100d0a; color: #fff7e6; padding: 8px 10px; font: inherit; }
+    button { width: 100%; min-height: 44px; margin-top: 10px; border: 0; background: #d7a84a; color: #171009; font: inherit; font-weight: 700; cursor: pointer; }
+    button:disabled { opacity: .7; cursor: wait; }
+    .error { min-height: 20px; color: #ff9b8b; }
+    .notice { margin-top: 14px; font-size: 12px; color: #9f927d; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Authorize ${escapeHtml(request.client.name)}</h1>
+    <p>${escapeHtml(request.client.name)} wants access to your EvilQuest account for: ${escapeHtml(request.scopeText)}.</p>
+    <form method="post" action="/oauth/authorize" autocomplete="on">
+      ${hidden}
+      <input type="hidden" id="recaptchaToken" name="recaptchaToken" value="">
+      <label>Username <input name="username" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <div id="error" class="error">${escapeHtml(error)}</div>
+      <button id="authorizeButton" type="submit">Authorize</button>
+      ${recaptchaNotice}
+    </form>
+  </main>
+  <script>
+    const form = document.querySelector('form');
+    const button = document.getElementById('authorizeButton');
+    const token = document.getElementById('recaptchaToken');
+    const error = document.getElementById('error');
+    ${recaptchaSubmit}
+  </script>
+</body>
+</html>`;
+}
+
+function renderOAuthErrorPage(title: string, description: string): Response {
+  return htmlResponse(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></body></html>`, 400);
+}
+
+function redirectOAuthError(redirectUri: string, state: string, error: string, description: string): Response {
+  const target = new URL(redirectUri);
+  target.searchParams.set('error', error);
+  target.searchParams.set('error_description', description);
+  if (state) target.searchParams.set('state', state);
+  return new Response(null, { status: 302, headers: { Location: target.toString(), 'Cache-Control': 'no-store' } });
+}
+
+function redirectOAuthCode(redirectUri: string, state: string, code: string): Response {
+  const target = new URL(redirectUri);
+  target.searchParams.set('code', code);
+  target.searchParams.set('state', state);
+  return new Response(null, { status: 302, headers: { Location: target.toString(), 'Cache-Control': 'no-store' } });
+}
+
+function isAllowedOAuthClientOrigin(req: Request): boolean {
+  const origin = req.headers.get('origin');
+  return !origin || parseAllowedOrigins(process.env.CLIENT_ORIGINS).has(origin);
+}
+
+async function readOAuthParams(req: Request): Promise<URLSearchParams> {
+  const contentType = req.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    const body = await req.json() as Record<string, unknown>;
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      if (typeof value === 'string') params.set(key, value);
+    }
+    return params;
+  }
+  return new URLSearchParams(await req.text());
+}
+
+function oauthJsonError(error: string, description: string, status: number = 400): Response {
+  return jsonResponse({ error, error_description: description }, status, { 'Cache-Control': 'no-store' });
+}
+
+function oauthDeviceIdFromParams(params: URLSearchParams, scopes: string[]): { ok: true; deviceId: string; setCookie?: boolean } | { ok: false; response: Response } {
+  const rawDeviceId = params.get('device_id') || params.get('deviceId') || '';
+  if (!rawDeviceId && scopes.includes('game')) {
+    return { ok: false, response: oauthJsonError('invalid_request', 'device_id is required for the game scope.') };
+  }
+  if (!rawDeviceId) return { ok: true, deviceId: '' };
+  const deviceId = rawDeviceId.trim();
+  const deviceError = validateDeviceId(deviceId);
+  if (deviceError) {
+    return { ok: false, response: oauthJsonError('invalid_request', deviceError) };
+  }
+  return { ok: true, deviceId, setCookie: true };
+}
+
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of loginAttempts) if (now > v.resetAt) loginAttempts.delete(k);
   for (const [k, v] of signupAttempts) if (now > v.resetAt) signupAttempts.delete(k);
   for (const [k, v] of deviceIdAttempts) if (now > v.resetAt) deviceIdAttempts.delete(k);
+  for (const [k, v] of oauthTokenAttempts) if (now > v.resetAt) oauthTokenAttempts.delete(k);
   for (const map of FORUM_RATE_MAPS) for (const [k, v] of map) if (now > v.resetAt) map.delete(k);
   cleanupPreauthBootstraps(now);
 }, 5 * 60_000);
@@ -2089,6 +2267,7 @@ function bodyWithinLimit(req: Request, maxBytes: number): boolean {
 }
 
 const BODY_LIMIT_AUTH = 4 * 1024;          // 4 KB — username + password JSON
+const BODY_LIMIT_OAUTH = 16 * 1024;        // 16 KB — OAuth form/token params
 const BODY_LIMIT_DEV = 1 * 1024 * 1024;     // 1 MB — gear-overrides config
 const BODY_LIMIT_EDITOR = 200 * 1024 * 1024; // 200 MB — full map import / save
 const BODY_LIMIT_SPELL_ICON = 512 * 1024;   // 512 KB — one PNG icon
@@ -2181,9 +2360,20 @@ function getBoundBearerSession(req: Request) {
   return session;
 }
 
+function boundSessionHasAnyScope(session: NonNullable<ReturnType<typeof getBoundBearerSession>>, scopes: string[]): boolean {
+  return !session.oauthClientId || scopes.some(scope => session.oauthScopes.includes(scope));
+}
+
+function getBoundBearerSessionForScope(req: Request, scope: string) {
+  const session = getBoundBearerSession(req);
+  if (!session || !boundSessionHasAnyScope(session, [scope])) return null;
+  return session;
+}
+
 function getForumSession(req: Request, srv: { requestIP(req: Request): { address: string } | null }) {
   const session = getBoundBearerSession(req);
   if (!session) return null;
+  if (!boundSessionHasAnyScope(session, ['forum', 'website'])) return null;
   const ip = requestClientIp(req, srv);
   if (db.isAccountBanned(session.accountId) || db.isIpBanned(ip)) return null;
   return session;
@@ -2840,6 +3030,185 @@ const server = Bun.serve<SocketData>({
       return jsonResponse({ ok: false, error: 'The public World Map does not expose live player tracking.' }, 410, { 'Cache-Control': 'no-store' });
     }
 
+    // --- OAuth Endpoints (Authorization Code + PKCE for approved native clients) ---
+
+    if (url.pathname === '/oauth/authorize' && req.method === 'GET') {
+      const validation = validateOAuthAuthorizeParams(oauthParamsFromSearch(url.searchParams), OAUTH_CLIENTS);
+      if (!validation.ok) {
+        return renderOAuthErrorPage(validation.error, validation.description);
+      }
+      const preauthCookie = maybeIssuePreauthBootstrap(req);
+      return htmlResponse(
+        renderOAuthAuthorizePage(validation.request),
+        200,
+        preauthCookie ? { 'Set-Cookie': preauthCookie } : {},
+      );
+    }
+
+    if (url.pathname === '/oauth/authorize' && req.method === 'POST') {
+      if (!isAllowedOAuthClientOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_OAUTH)) return tooLarge();
+      const ip = requestClientIp(req, server);
+      try {
+        const params = await readOAuthParams(req);
+        const validation = validateOAuthAuthorizeParams(oauthParamsFromSearch(params), OAUTH_CLIENTS);
+        if (!validation.ok) {
+          const redirectUri = params.get('redirect_uri') ?? '';
+          const state = params.get('state') ?? '';
+          const clientId = params.get('client_id') ?? '';
+          const client = OAUTH_CLIENTS.get(clientId);
+          if (client && redirectUri) {
+            const redirectValidation = validateOAuthAuthorizeParams({
+              ...oauthParamsFromSearch(params),
+              responseType: 'code',
+              codeChallengeMethod: 'S256',
+            }, OAUTH_CLIENTS);
+            if (redirectValidation.ok) return redirectOAuthError(redirectUri, state, validation.error, validation.description);
+          }
+          return renderOAuthErrorPage(validation.error, validation.description);
+        }
+        const request = validation.request;
+        const preauthReason = validatePreauthBootstrap(req);
+        if (preauthReason) {
+          console.warn(`[auth] rejected oauth authorize: preauth=${preauthReason} ip=${ip} ua=${(req.headers.get('user-agent') || 'unknown').slice(0, 120)}`);
+          return htmlResponse(renderOAuthAuthorizePage(request, 'Please refresh the page and try again.'), 400);
+        }
+        const username = (params.get('username') || '').toLowerCase();
+        const password = params.get('password') || '';
+        if (!username || !password) {
+          return htmlResponse(renderOAuthAuthorizePage(request, 'Enter your username and password.'), 400);
+        }
+        const key = `${username}:${ip}`;
+        if (!checkRate(loginAttempts, key, LOGIN_LIMIT, LOGIN_WINDOW_MS)) {
+          return htmlResponse(renderOAuthAuthorizePage(request, 'Too many login attempts. Try again in a minute.'), 429);
+        }
+        const captcha = await verifyRecaptchaToken(params.get('recaptchaToken') || undefined, 'login', ip);
+        if (!captcha.ok) {
+          return htmlResponse(renderOAuthAuthorizePage(request, captcha.error || 'Captcha failed.'), 400);
+        }
+        const ipBan = db.isIpBanned(ip);
+        if (ipBan) {
+          return htmlResponse(renderOAuthAuthorizePage(request, `Banned${ipBan.reason ? `: ${ipBan.reason}` : ''}`), 403);
+        }
+        const account = await db.verifyAccountPassword(username, password);
+        if (!account) {
+          return htmlResponse(renderOAuthAuthorizePage(request, 'Invalid username or password.'), 400);
+        }
+        const acctBan = db.isAccountBanned(account.accountId);
+        if (acctBan) {
+          return htmlResponse(renderOAuthAuthorizePage(request, `Banned${acctBan.reason ? `: ${acctBan.reason}` : ''}`), 403);
+        }
+        loginAttempts.delete(key);
+        const { code } = db.createOAuthAuthorizationCode({
+          accountId: account.accountId,
+          clientId: request.client.id,
+          redirectUri: request.redirectUri,
+          scopes: request.scopes,
+          codeChallenge: request.codeChallenge,
+        });
+        return redirectOAuthCode(request.redirectUri, request.state, code);
+      } catch {
+        return renderOAuthErrorPage('invalid_request', 'Invalid OAuth authorization request.');
+      }
+    }
+
+    if (url.pathname === '/oauth/token' && req.method === 'POST') {
+      if (!isAllowedOAuthClientOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_OAUTH)) return tooLarge();
+      const ip = requestClientIp(req, server);
+      try {
+        const params = await readOAuthParams(req);
+        const grantType = params.get('grant_type') || '';
+        const clientId = params.get('client_id') || '';
+        const client = OAUTH_CLIENTS.get(clientId);
+        const rateKey = `${clientId || 'missing'}:${ip}`;
+        if (!checkRate(oauthTokenAttempts, rateKey, OAUTH_TOKEN_LIMIT, OAUTH_TOKEN_WINDOW_MS)) {
+          return oauthJsonError('slow_down', 'Too many token requests. Try again later.', 429);
+        }
+        if (!client) return oauthJsonError('invalid_client', 'Unknown OAuth client.', 400);
+
+        let tokenResult: ReturnType<typeof db.createOAuthSession> = null;
+        let deviceId = '';
+        let setDeviceCookie = false;
+
+        if (grantType === 'authorization_code') {
+          const code = params.get('code') || '';
+          const redirectUri = params.get('redirect_uri') || '';
+          const codeVerifier = params.get('code_verifier') || '';
+          if (!code || !redirectUri || !codeVerifier) {
+            return oauthJsonError('invalid_request', 'code, redirect_uri, and code_verifier are required.');
+          }
+          const codeRecord = db.consumeOAuthAuthorizationCode(code, client.id, redirectUri);
+          if (!codeRecord || !verifyPkceS256(codeVerifier, codeRecord.codeChallenge)) {
+            return oauthJsonError('invalid_grant', 'Authorization code is invalid or expired.');
+          }
+          const device = oauthDeviceIdFromParams(params, codeRecord.scopes);
+          if (!device.ok) return device.response;
+          deviceId = device.deviceId;
+          setDeviceCookie = device.setCookie === true;
+          const account = db.getAccountAuthInfo(codeRecord.accountId);
+          if (!account) return oauthJsonError('invalid_grant', 'Account no longer exists.');
+          if (db.isAccountBanned(account.accountId) || db.isIpBanned(ip)) {
+            return oauthJsonError('access_denied', 'This account cannot log in.', 403);
+          }
+          if (!account.isAdmin && deviceId && world.hasOtherActiveAccountFromDevice(deviceId, account.accountId)) {
+            return oauthJsonError('access_denied', 'Another account is already logged in on this device.', 403);
+          }
+          tokenResult = db.createOAuthSession(account.accountId, client.id, codeRecord.scopes, deviceId);
+        } else if (grantType === 'refresh_token') {
+          const refreshToken = params.get('refresh_token') || '';
+          if (!refreshToken) return oauthJsonError('invalid_request', 'refresh_token is required.');
+          const refreshInfo = db.getOAuthRefreshTokenInfo(refreshToken, client.id);
+          if (!refreshInfo) return oauthJsonError('invalid_grant', 'Refresh token is invalid or expired.');
+          const device = oauthDeviceIdFromParams(params, refreshInfo.scopes);
+          if (!device.ok) return device.response;
+          deviceId = device.deviceId;
+          setDeviceCookie = device.setCookie === true;
+          const account = db.getAccountAuthInfo(refreshInfo.accountId);
+          if (!account) return oauthJsonError('invalid_grant', 'Account no longer exists.');
+          if (db.isAccountBanned(account.accountId) || db.isIpBanned(ip)) {
+            return oauthJsonError('access_denied', 'This account cannot log in.', 403);
+          }
+          if (!account.isAdmin && deviceId && world.hasOtherActiveAccountFromDevice(deviceId, account.accountId)) {
+            return oauthJsonError('access_denied', 'Another account is already logged in on this device.', 403);
+          }
+          tokenResult = db.refreshOAuthSession(refreshToken, client.id, deviceId);
+        } else {
+          return oauthJsonError('unsupported_grant_type', 'Only authorization_code and refresh_token are supported.');
+        }
+
+        if (!tokenResult) return oauthJsonError('invalid_grant', 'Token grant could not be completed.');
+        const cookies = [wsSessionCookieHeader(tokenResult.wsSecret, req)];
+        if (setDeviceCookie) cookies.push(deviceCookieHeader(deviceId, req));
+        return jsonResponseWithSetCookies({
+          access_token: tokenResult.token,
+          token_type: 'Bearer',
+          expires_in: tokenResult.expiresIn,
+          refresh_token: tokenResult.refreshToken,
+          scope: tokenResult.scopes.join(' '),
+          client_id: tokenResult.clientId,
+          username: tokenResult.username,
+        }, 200, cookies);
+      } catch {
+        return oauthJsonError('invalid_request', 'Invalid token request.');
+      }
+    }
+
+    if (url.pathname === '/oauth/revoke' && req.method === 'POST') {
+      if (!isAllowedOAuthClientOrigin(req)) return new Response('Forbidden', { status: 403 });
+      if (!bodyWithinLimit(req, BODY_LIMIT_OAUTH)) return tooLarge();
+      try {
+        const params = await readOAuthParams(req);
+        const clientId = params.get('client_id') || '';
+        if (clientId && !OAUTH_CLIENTS.has(clientId)) return oauthJsonError('invalid_client', 'Unknown OAuth client.', 400);
+        const token = params.get('token') || '';
+        if (token) db.revokeOAuthToken(token);
+        return jsonResponse({ ok: true }, 200, { 'Cache-Control': 'no-store' });
+      } catch {
+        return oauthJsonError('invalid_request', 'Invalid revoke request.');
+      }
+    }
+
     // --- REST Auth Endpoints ---
 
     if (url.pathname === '/api/signup' && req.method === 'POST') {
@@ -3004,7 +3373,7 @@ const server = Bun.serve<SocketData>({
       if (!isAllowedAuthOrigin(req)) return new Response('Forbidden', { status: 403 });
       if (!bodyWithinLimit(req, BODY_LIMIT_AUTH)) return tooLarge();
       try {
-        const session = getBoundBearerSession(req);
+        const session = getBoundBearerSessionForScope(req, 'game');
         if (!session) return new Response('Unauthorized', { status: 401 });
         if (!session.deviceId) return jsonResponse({ ok: false, error: 'Missing device identifier' }, 400);
         const body = await req.json() as { publicKey?: unknown };
@@ -3198,6 +3567,9 @@ const server = Bun.serve<SocketData>({
       if (!session) {
         return new Response('Unauthorized', { status: 401 });
       }
+      if (!boundSessionHasAnyScope(session, ['game'])) {
+        return new Response('Forbidden', { status: 403 });
+      }
       if (!hasMatchingCookie(req, WS_SESSION_COOKIE, session.wsSecret)) {
         return new Response('Unauthorized', { status: 401 });
       }
@@ -3225,6 +3597,9 @@ const server = Bun.serve<SocketData>({
       if (!session) {
         return new Response('Unauthorized', { status: 401 });
       }
+      if (!boundSessionHasAnyScope(session, ['game'])) {
+        return new Response('Forbidden', { status: 403 });
+      }
       if (!hasMatchingCookie(req, WS_SESSION_COOKIE, session.wsSecret)) {
         return new Response('Unauthorized', { status: 401 });
       }
@@ -3250,7 +3625,7 @@ const server = Bun.serve<SocketData>({
         return new Response('Forbidden', { status: 403 });
       }
       const hasBakeSecret = (req.headers.get('x-forum-avatar-bake-secret') || '') === FORUM_AVATAR_BAKE_SECRET;
-      if (isProductionLike() && !hasBakeSecret && !getBoundBearerSession(req)) {
+      if (isProductionLike() && !hasBakeSecret && !getBoundBearerSessionForScope(req, 'game')) {
         return new Response('Unauthorized', { status: 401 });
       }
       if (isProductionLike() && !isPublicDataFile(filename)) {
@@ -3619,7 +3994,7 @@ const server = Bun.serve<SocketData>({
     }
 
     if (url.pathname === '/api/spells' && req.method === 'GET') {
-      if (isProductionLike() && !getBoundBearerSession(req)) {
+      if (isProductionLike() && !getBoundBearerSessionForScope(req, 'game')) {
         return new Response('Unauthorized', { status: 401 });
       }
       return jsonResponse({ spells: world.data.getAllSpells() });
@@ -4349,7 +4724,7 @@ const server = Bun.serve<SocketData>({
         return new Response('Not Found', { status: 404 });
       }
       if (gameplayMapDataPath || isLegacyMapTexturePath(mapPath)) {
-        boundMapSession = getBoundBearerSession(req);
+        boundMapSession = getBoundBearerSessionForScope(req, 'game');
         if (isProductionLike() && !boundMapSession) return new Response('Unauthorized', { status: 401 });
         if (boundMapSession && gameplayMapDataPath) recordGameplayMapDataFetch(boundMapSession, mapPath, req, server);
       }
@@ -4410,7 +4785,7 @@ const server = Bun.serve<SocketData>({
       if (hasForbiddenStaticSourceExtension(decodedPath)) {
         return new Response('Not Found', { status: 404 });
       }
-      if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBoundBearerSession(req)) {
+      if (isProductionLike() && requiresAuthenticatedJsonAsset(decodedPath) && !getBoundBearerSessionForScope(req, 'game')) {
         return new Response('Unauthorized', { status: 401 });
       }
       const publicAssetsDir = resolve(import.meta.dir, '../../client/public');

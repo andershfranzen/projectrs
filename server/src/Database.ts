@@ -6,6 +6,9 @@ import { ALL_SKILLS, SKILL_NAMES, BANK_SIZE, INVENTORY_SIZE, RELIC_ITEM_IDS, STA
 import type { EquipSlot } from './entity/Player';
 
 const SESSION_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours
+const OAUTH_ACCESS_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // 1 hour
+const OAUTH_AUTH_CODE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
+const OAUTH_REFRESH_TOKEN_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const ACCOUNT_CREATION_CLOSED_MESSAGE = 'We have decided to close for new accounts until the Alpha launch. Join our Discord for more info.';
 const PUBLIC_SIGNUPS_ENABLED = Bun.env.PUBLIC_SIGNUPS_ENABLED !== '0';
 const RESET_BOBS_BURIAL_MIGRATION_ID = 'reset_bobs_burial_2026_05_18';
@@ -53,6 +56,20 @@ function envBoundedInteger(name: string, fallback: number, min: number, max: num
 
 function starterInventoryJson(): string {
   return JSON.stringify(STARTER_INVENTORY);
+}
+
+function parseStoredStringArray(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function hashOAuthToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
 }
 
 // A post is auto-hidden (pending staff review) once this many distinct accounts
@@ -145,11 +162,46 @@ export interface SessionInfo {
    *  present this alongside the JS-visible token, so a copied token alone
    *  cannot open raw game/chat sockets. */
   wsSecret: string;
+  oauthClientId: string | null;
+  oauthScopes: string[];
 }
 
 export interface CreatedSession {
   token: string;
   wsSecret: string;
+}
+
+export interface AccountAuthInfo {
+  accountId: number;
+  username: string;
+  isAdmin: boolean;
+  isModerator: boolean;
+}
+
+export interface OAuthAuthorizationCodeRecord {
+  code: string;
+  accountId: number;
+  clientId: string;
+  redirectUri: string;
+  scopes: string[];
+  codeChallenge: string;
+  expiresAt: number;
+}
+
+export interface OAuthSessionResult extends AccountAuthInfo {
+  token: string;
+  wsSecret: string;
+  refreshToken: string;
+  expiresIn: number;
+  clientId: string;
+  scopes: string[];
+}
+
+export interface OAuthRefreshTokenInfo {
+  accountId: number;
+  clientId: string;
+  scopes: string[];
+  expiresAt: number;
 }
 
 /** Persisted row in the bot_stats table. Strings are JSON-encoded blobs
@@ -1028,7 +1080,32 @@ export class GameDatabase {
         token TEXT PRIMARY KEY,
         account_id INTEGER NOT NULL REFERENCES accounts(id),
         created_at INTEGER DEFAULT (unixepoch()),
+        expires_at INTEGER NOT NULL,
+        device_id TEXT NOT NULL DEFAULT '',
+        ws_secret TEXT NOT NULL DEFAULT '',
+        oauth_client_id TEXT,
+        oauth_scopes TEXT NOT NULL DEFAULT '[]'
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+        code TEXT PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        client_id TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        scopes TEXT NOT NULL DEFAULT '[]',
+        code_challenge TEXT NOT NULL,
+        created_at INTEGER DEFAULT (unixepoch()),
         expires_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+        token TEXT PRIMARY KEY,
+        account_id INTEGER NOT NULL REFERENCES accounts(id),
+        client_id TEXT NOT NULL,
+        scopes TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER DEFAULT (unixepoch()),
+        expires_at INTEGER NOT NULL,
+        revoked_at INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS player_state (
@@ -1213,6 +1290,15 @@ export class GameDatabase {
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN ws_secret TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN oauth_client_id TEXT`);
+    } catch { /* column already exists */ }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN oauth_scopes TEXT NOT NULL DEFAULT '[]'`);
+    } catch { /* column already exists */ }
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_codes_account ON oauth_authorization_codes(account_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_refresh_account ON oauth_refresh_tokens(account_id)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_oauth_refresh_client ON oauth_refresh_tokens(client_id)`);
     try {
       this.db.exec(`ALTER TABLE login_history ADD COLUMN device_id TEXT NOT NULL DEFAULT ''`);
     } catch { /* column already exists */ }
@@ -1929,6 +2015,32 @@ export class GameDatabase {
     return { ok: true, token: session.token, wsSecret: session.wsSecret, username: row.username, accountId: row.id, isAdmin: row.is_admin === 1, isModerator: row.is_moderator === 1 };
   }
 
+  async verifyAccountPassword(username: string, password: string): Promise<AccountAuthInfo | null> {
+    const row = this.db.query('SELECT id, username, password_hash, is_admin, is_moderator FROM accounts WHERE username = ?')
+      .get(username) as { id: number; username: string; password_hash: string; is_admin: number; is_moderator: number } | null;
+    if (!row) return null;
+    const valid = await Bun.password.verify(password, row.password_hash);
+    if (!valid) return null;
+    return {
+      accountId: row.id,
+      username: row.username,
+      isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
+    };
+  }
+
+  getAccountAuthInfo(accountId: number): AccountAuthInfo | null {
+    const row = this.db.query('SELECT id, username, is_admin, is_moderator FROM accounts WHERE id = ?')
+      .get(accountId) as { id: number; username: string; is_admin: number; is_moderator: number } | null;
+    if (!row) return null;
+    return {
+      accountId: row.id,
+      username: row.username,
+      isAdmin: row.is_admin === 1,
+      isModerator: row.is_moderator === 1,
+    };
+  }
+
   loginFallbackAccount(username: string, deviceId: string = ''): { ok: true; token: string; wsSecret: string; username: string; accountId: number; isAdmin: boolean; isModerator: boolean } {
     const starterInventory = starterInventoryJson();
     let accountId = 0;
@@ -1955,17 +2067,23 @@ export class GameDatabase {
     return { ok: true, token: session.token, wsSecret: session.wsSecret, username: normalizedUsername, accountId, isAdmin: isAdmin === 1, isModerator: isModerator === 1 };
   }
 
-  createSession(accountId: number, deviceId: string = ''): CreatedSession {
+  createSession(
+    accountId: number,
+    deviceId: string = '',
+    options: { expiresInMs?: number; oauthClientId?: string | null; oauthScopes?: string[] } = {},
+  ): CreatedSession {
     const token = randomBytes(32).toString('hex');
     const wsSecret = randomBytes(32).toString('hex');
-    const expiresAt = Math.floor((Date.now() + SESSION_EXPIRY_MS) / 1000);
+    const expiresAt = Math.floor((Date.now() + (options.expiresInMs ?? SESSION_EXPIRY_MS)) / 1000);
+    const oauthClientId = options.oauthClientId ?? null;
+    const oauthScopes = JSON.stringify(options.oauthScopes ?? []);
     // Drop any prior sessions for this account before inserting the new one.
     // Matches the "single active session" model already enforced in-game by
     // World.kickAccountIfOnline and prevents the sessions table from growing
     // unbounded per device-login.
     this.db.query('DELETE FROM sessions WHERE account_id = ?').run(accountId);
-    this.db.query('INSERT INTO sessions (token, account_id, expires_at, device_id, ws_secret) VALUES (?, ?, ?, ?, ?)')
-      .run(token, accountId, expiresAt, deviceId, wsSecret);
+    this.db.query('INSERT INTO sessions (token, account_id, expires_at, device_id, ws_secret, oauth_client_id, oauth_scopes) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(token, accountId, expiresAt, deviceId, wsSecret, oauthClientId, oauthScopes);
     return { token, wsSecret };
   }
 
@@ -1973,20 +2091,24 @@ export class GameDatabase {
     if (!token) return null;
     const now = Math.floor(Date.now() / 1000);
     const row = this.db.query(`
-      SELECT s.account_id, a.username, a.is_admin, a.is_moderator, s.device_id, s.ws_secret
+      SELECT s.account_id, a.username, a.is_admin, a.is_moderator, s.device_id, s.ws_secret, s.oauth_client_id, s.oauth_scopes
       FROM sessions s
       JOIN accounts a ON a.id = s.account_id
       WHERE s.token = ? AND s.expires_at > ?
-    `).get(token, now) as { account_id: number; username: string; is_admin: number; is_moderator: number; device_id: string | null; ws_secret: string | null } | null;
+    `).get(token, now) as { account_id: number; username: string; is_admin: number; is_moderator: number; device_id: string | null; ws_secret: string | null; oauth_client_id: string | null; oauth_scopes: string | null } | null;
 
     if (!row) return null;
+    const oauthScopes = parseStoredStringArray(row.oauth_scopes);
+    const isOAuthSession = !!row.oauth_client_id;
     return {
       accountId: row.account_id,
       username: row.username,
-      isAdmin: row.is_admin === 1,
-      isModerator: row.is_moderator === 1,
+      isAdmin: row.is_admin === 1 && (!isOAuthSession || oauthScopes.includes('admin')),
+      isModerator: row.is_moderator === 1 && (!isOAuthSession || oauthScopes.includes('moderator') || oauthScopes.includes('admin')),
       deviceId: row.device_id ?? '',
       wsSecret: row.ws_secret ?? '',
+      oauthClientId: row.oauth_client_id ?? null,
+      oauthScopes,
     };
   }
 
@@ -2000,6 +2122,124 @@ export class GameDatabase {
     const wsSecret = randomBytes(32).toString('hex');
     this.db.query('UPDATE sessions SET ws_secret = ? WHERE token = ?').run(wsSecret, token);
     return wsSecret;
+  }
+
+  createOAuthAuthorizationCode(input: {
+    accountId: number;
+    clientId: string;
+    redirectUri: string;
+    scopes: string[];
+    codeChallenge: string;
+  }): { code: string; expiresAt: number } {
+    const code = randomBytes(32).toString('hex');
+    const expiresAt = Math.floor((Date.now() + OAUTH_AUTH_CODE_EXPIRY_MS) / 1000);
+    this.db.query(`
+      INSERT INTO oauth_authorization_codes (code, account_id, client_id, redirect_uri, scopes, code_challenge, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(code, input.accountId, input.clientId, input.redirectUri, JSON.stringify(input.scopes), input.codeChallenge, expiresAt);
+    return { code, expiresAt };
+  }
+
+  consumeOAuthAuthorizationCode(code: string, clientId: string, redirectUri: string): OAuthAuthorizationCodeRecord | null {
+    const now = Math.floor(Date.now() / 1000);
+    let record: OAuthAuthorizationCodeRecord | null = null;
+    this.db.transaction(() => {
+      const row = this.db.query(`
+        SELECT code, account_id, client_id, redirect_uri, scopes, code_challenge, expires_at
+        FROM oauth_authorization_codes
+        WHERE code = ?
+      `).get(code) as {
+        code: string;
+        account_id: number;
+        client_id: string;
+        redirect_uri: string;
+        scopes: string;
+        code_challenge: string;
+        expires_at: number;
+      } | null;
+      if (!row) return;
+      this.db.query('DELETE FROM oauth_authorization_codes WHERE code = ?').run(code);
+      if (row.expires_at <= now || row.client_id !== clientId || row.redirect_uri !== redirectUri) return;
+      record = {
+        code: row.code,
+        accountId: row.account_id,
+        clientId: row.client_id,
+        redirectUri: row.redirect_uri,
+        scopes: parseStoredStringArray(row.scopes),
+        codeChallenge: row.code_challenge,
+        expiresAt: row.expires_at,
+      };
+    }).immediate();
+    return record;
+  }
+
+  createOAuthSession(accountId: number, clientId: string, scopes: string[], deviceId: string = ''): OAuthSessionResult | null {
+    const account = this.getAccountAuthInfo(accountId);
+    if (!account) return null;
+    const session = this.createSession(accountId, deviceId, {
+      expiresInMs: OAUTH_ACCESS_TOKEN_EXPIRY_MS,
+      oauthClientId: clientId,
+      oauthScopes: scopes,
+    });
+    const refreshToken = randomBytes(32).toString('hex');
+    const refreshTokenHash = hashOAuthToken(refreshToken);
+    const now = Math.floor(Date.now() / 1000);
+    const refreshExpiresAt = now + Math.floor(OAUTH_REFRESH_TOKEN_EXPIRY_MS / 1000);
+    this.db.query('UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE account_id = ? AND client_id = ? AND revoked_at IS NULL')
+      .run(now, accountId, clientId);
+    this.db.query(`
+      INSERT INTO oauth_refresh_tokens (token, account_id, client_id, scopes, expires_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(refreshTokenHash, accountId, clientId, JSON.stringify(scopes), refreshExpiresAt);
+    return {
+      ...account,
+      token: session.token,
+      wsSecret: session.wsSecret,
+      refreshToken,
+      expiresIn: Math.floor(OAUTH_ACCESS_TOKEN_EXPIRY_MS / 1000),
+      clientId,
+      scopes,
+    };
+  }
+
+  getOAuthRefreshTokenInfo(refreshToken: string, clientId: string): OAuthRefreshTokenInfo | null {
+    const now = Math.floor(Date.now() / 1000);
+    const refreshTokenHash = hashOAuthToken(refreshToken);
+    const row = this.db.query(`
+      SELECT account_id, client_id, scopes, expires_at
+      FROM oauth_refresh_tokens
+      WHERE token = ? AND client_id = ? AND revoked_at IS NULL AND expires_at > ?
+    `).get(refreshTokenHash, clientId, now) as { account_id: number; client_id: string; scopes: string; expires_at: number } | null;
+    if (!row) return null;
+    return {
+      accountId: row.account_id,
+      clientId: row.client_id,
+      scopes: parseStoredStringArray(row.scopes),
+      expiresAt: row.expires_at,
+    };
+  }
+
+  refreshOAuthSession(refreshToken: string, clientId: string, deviceId: string = ''): OAuthSessionResult | null {
+    const now = Math.floor(Date.now() / 1000);
+    const refreshTokenHash = hashOAuthToken(refreshToken);
+    let result: OAuthSessionResult | null = null;
+    this.db.transaction(() => {
+      const row = this.db.query(`
+        SELECT account_id, client_id, scopes, expires_at
+        FROM oauth_refresh_tokens
+        WHERE token = ? AND client_id = ? AND revoked_at IS NULL
+      `).get(refreshTokenHash, clientId) as { account_id: number; client_id: string; scopes: string; expires_at: number } | null;
+      if (!row || row.expires_at <= now) return;
+      this.db.query('UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE token = ?').run(now, refreshTokenHash);
+      result = this.createOAuthSession(row.account_id, row.client_id, parseStoredStringArray(row.scopes), deviceId);
+    }).immediate();
+    return result;
+  }
+
+  revokeOAuthToken(token: string): void {
+    const now = Math.floor(Date.now() / 1000);
+    this.db.query('UPDATE oauth_refresh_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE token = ?').run(now, hashOAuthToken(token));
+    this.db.query('DELETE FROM sessions WHERE token = ?').run(token);
   }
 
   saveDeviceKey(accountId: number, deviceId: string, publicJwk: JsonWebKey): void {
@@ -4169,6 +4409,8 @@ export class GameDatabase {
   cleanExpiredSessions(): void {
     const now = Math.floor(Date.now() / 1000);
     this.db.query('DELETE FROM sessions WHERE expires_at <= ?').run(now);
+    this.db.query('DELETE FROM oauth_authorization_codes WHERE expires_at <= ?').run(now);
+    this.db.query('DELETE FROM oauth_refresh_tokens WHERE expires_at <= ?').run(now);
   }
 
   // -- Bans -----------------------------------------------------------------

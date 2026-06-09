@@ -23,6 +23,7 @@ services:
       # Server-side reCAPTCHA secret. Sourced from host .env by compose.
       # When unset the production server fails startup.
       RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
+      VITE_RECAPTCHA_SITE_KEY: ${VITE_RECAPTCHA_SITE_KEY:-}
       # reCAPTCHA v3's default threshold is 0.5. Keep this configurable so
       # production can tune from observed traffic without rebuilding images.
       RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-0.4}
