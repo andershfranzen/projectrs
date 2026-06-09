@@ -7,7 +7,7 @@ import { createGroundItemPickProxy, positionGroundItemPickProxy } from '../rende
 import { Npc3DEntity } from '../rendering/Npc3DEntity';
 import { CharacterEntity } from '../rendering/CharacterEntity';
 import { DeathPortalEffect } from '../rendering/DeathPortalEffect';
-import { getItemIconUrl, getItemIconSyncUrl } from '../rendering/ItemIcon';
+import { getItemLegacyIconUrl } from '../rendering/ItemIcon';
 import type { Targetable } from '../rendering/Targetable';
 import { NPC_NAMES, resolveNpcVisualConfig } from '../data/NpcConfig';
 import { NPC_3D_LOD_DISTANCE, CHARACTER_TARGET_HEIGHT, CHARACTER_ANIM_DIR, PLAYER_ANIMATIONS, NPC_COMBAT_ANIMATIONS, BOW_ATTACK_ANIMATION, getCharacterModelPath, normalizeNpcVisualScale, type CharacterAnimationDef, type ItemDef, type NpcDef, type PlayerAppearance, type CustomColors, type NpcEquipmentFitOverrides } from '@projectrs/shared';
@@ -383,26 +383,18 @@ export class EntityManager {
   }
 
   private createGroundItemFallbackSprite(top: GroundItemStackEntry, tileKey: string): void {
-    const syncIcon = getItemIconSyncUrl(top.def, top.quantity);
+    const iconUrl = getItemLegacyIconUrl(top.def);
     const sprite = new SpriteEntity(this.scene, {
       name: `gitem_${top.id}`,
       color: new Color3(0.8, 0.7, 0.2),
       width: 0.85,
       height: 0.85,
-      iconUrl: syncIcon ?? undefined,
+      iconUrl: iconUrl ?? undefined,
     });
     sprite.position = new Vector3(top.x, top.y ?? this.getHeight(top.x, top.z, top.floor, 0), top.z);
     sprite.getMesh().isPickable = false;
     sprite.getMesh().metadata = { kind: 'groundItemVisual', groundItemId: top.id, groundItemTileKey: tileKey };
     this.groundItemSprites.set(top.id, sprite);
-
-    getItemIconUrl(top.def, top.quantity).then((url) => {
-      if (!url) return;
-      if (this.groundItemTileKey(top.x, top.z, top.floor) !== tileKey) return;
-      if (this.groundItemSprites.get(top.id) !== sprite) return;
-      if (url === syncIcon) return;
-      sprite.setIconUrl(url);
-    });
   }
 
   private refreshGroundItemTile(tileKey: string): void {

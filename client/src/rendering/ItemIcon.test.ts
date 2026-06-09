@@ -7,6 +7,7 @@ import thumbnailOverridesJson from '../../../server/data/thumbnail-overrides.jso
 import {
   buildThumbnailOptionsFromOverride,
   findThumbnailOverrideForItem,
+  getItemLegacyIconUrl,
   getItemIconSyncUrl,
   itemThumbnailTierIndex,
   itemThumbnailFamily,
@@ -14,6 +15,7 @@ import {
   itemThumbnailVisualSource,
   parseBakedThumbnailManifest,
   resolveBakedThumbnailUrl,
+  resolveGroundItemModelPath,
   resolveItemModelPath,
   type ThumbnailOverride,
 } from './ItemIcon';
@@ -229,6 +231,27 @@ describe('item thumbnail families', () => {
     expect(resolveBakedThumbnailUrl(manifest, 59, poseKey)).toBeNull();
   });
 
+  test('baked thumbnail manifest resolves stack model variants by pose', () => {
+    const coin1Pose = 'thumb:v19|/assets/models/coins/Coin1.glb|id:item:10|scale:0.55800';
+    const coin1000Pose = 'thumb:v19|/assets/models/coins/Coin1000.glb|id:item:10';
+    const manifest = parseBakedThumbnailManifest({
+      version: 2,
+      ids: [10],
+      entries: {
+        10: {
+          variants: [
+            { file: '/items/3d/10.png', poseKey: coin1Pose, rendererVersion: 19 },
+            { file: '/items/3d/10-1000.png', poseKey: coin1000Pose, rendererVersion: 19 },
+          ],
+        },
+      },
+    });
+
+    expect(resolveBakedThumbnailUrl(manifest, 10, coin1Pose)).toBe('/items/3d/10.png');
+    expect(resolveBakedThumbnailUrl(manifest, 10, coin1000Pose)).toBe('/items/3d/10-1000.png');
+    expect(resolveBakedThumbnailUrl(manifest, 10, 'thumb:v19|stale')).toBeNull();
+  });
+
   test('legacy baked manifest ids do not override runtime item poses', () => {
     const manifest = parseBakedThumbnailManifest([58]);
 
@@ -264,5 +287,22 @@ describe('item thumbnail families', () => {
       expect(modelPath?.startsWith('/assets/models/logs/')).toBe(true);
       expect(existsSync(`client/public${modelPath}`)).toBe(true);
     }
+  });
+
+  test('ore thumbnail models do not replace ground-item world visuals', () => {
+    const defs = new Map((itemsJson as ItemDef[]).map((def) => [def.id, def]));
+    for (const id of [25, 26, 34, 45, 142, 407, 408]) {
+      const def = defs.get(id);
+      if (!def) throw new Error(`missing ore item ${id}`);
+
+      const thumbnailPath = resolveItemModelPath(def, 1);
+      expect(thumbnailPath).toBeTruthy();
+      expect(thumbnailPath?.startsWith('/assets/models/item-thumbnails/ore/')).toBe(true);
+      expect(thumbnailPath?.endsWith('Rock.glb')).toBe(true);
+      expect(existsSync(`client/public${thumbnailPath}`)).toBe(true);
+      expect(resolveGroundItemModelPath(def, 1)).toBeNull();
+    }
+
+    expect(getItemLegacyIconUrl(defs.get(25)!)).toBe('/items/copper_ore_150.png');
   });
 });

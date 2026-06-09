@@ -125,14 +125,19 @@ export interface ItemDef {
   // Visual
   sprite?: string;
   icon?: string;
- /**
- * Equipment GLB filename or path. Resolved by the gear loader as:
- *   - starts with '/' → used as-is (absolute path under client/public)
- *   - otherwise → resolved relative to /assets/equipment/{equipSlot}/
- * If unset, the item is rendered with its 2D icon/sprite only.
- * gear-overrides.json `file` still wins if present (legacy/per-instance).
- */
+  /**
+   * Equipment/ground-item GLB filename or path. Resolved by the gear loader as:
+   *   - starts with '/' → used as-is (absolute path under client/public)
+   *   - otherwise → resolved relative to /assets/equipment/{equipSlot}/
+   * If unset, the item is rendered in world space with its 2D icon/sprite only.
+   * gear-overrides.json `file` still wins if present (legacy/per-instance).
+   */
   model?: string;
+  /**
+   * Inventory-thumbnail-only GLB path. Use this when the icon needs a 3D
+   * render but the item should not use that model as a ground/world object.
+   */
+  thumbnailModel?: string;
   /**
    * Optional visual-only model variants for stackable items. The highest
    * minQuantity not greater than the stack quantity is used for inventory

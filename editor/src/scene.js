@@ -80,6 +80,13 @@ import {
   relicCombatDropBandForLevel,
   hasNpcEquipmentFits,
   normalizeNpcEquipmentFits,
+  createObjectShadowCaster,
+  createWallEdgeShadowCaster,
+  isLinearCasterCoveredByWallRuns,
+  isLinearShadowAsset,
+  objectShadowBounds,
+  objectShadowFactorAt,
+  wallShadowRunsFromWallRecord,
 } from '@projectrs/shared'
 // Reused from the client package via vite alias (editor/vite.config.js).
 // CharacterEntity loads the rigged character GLB and exposes applyAppearance —
@@ -1765,6 +1772,7 @@ function tuneModelLighting(model) {
     const layer = getCollisionLayer()
     if (bitmask === 0) delete layer.walls[`${x},${z}`]
     else layer.walls[`${x},${z}`] = bitmask
+    if (collisionFloor === 0) invalidateShadowCache()
   }
 
   function toggleWallEdge(x, z, edge) {
@@ -8321,52 +8329,56 @@ let selectedWaterFlowChunk = null
     const inf = []
     for (let i = 0; i < rows; i++) inf.push(new Float32Array(cols).fill(1.0))
 
+    const applyShadowCaster = (caster) => {
+      const { x0, x1, z0, z1 } = objectShadowBounds(caster, cols - 1, rows - 1)
+
+      for (let vz = z0; vz <= z1; vz++) {
+        for (let vx = x0; vx <= x1; vx++) {
+          const factor = objectShadowFactorAt(caster, vx, vz)
+          if (factor < inf[vz][vx]) inf[vz][vx] = factor
+        }
+      }
+    }
+
+    const wallRuns = wallShadowRunsFromWallRecord(collisionData.walls)
+    for (const run of wallRuns) {
+      const caster = createWallEdgeShadowCaster(run.x0, run.z0, run.x1, run.z1)
+      if (caster) applyShadowCaster(caster)
+    }
+
     for (const obj of placedGroup.getChildren()) {
-      let _size
+      const isLinearAsset = isLinearShadowAsset(obj.userData?.assetId)
+
+      let size
       const cachedBounds = obj.userData?.bounds
       if (cachedBounds) {
         const sx = Math.abs(obj.scale?.x ?? obj.scaling?.x ?? 1)
         const sy = Math.abs(obj.scale?.y ?? obj.scaling?.y ?? 1)
         const sz = Math.abs(obj.scale?.z ?? obj.scaling?.z ?? 1)
-        _size = { x: cachedBounds.width * sx, y: cachedBounds.height * sy, z: cachedBounds.depth * sz }
+        size = { x: cachedBounds.width * sx, y: cachedBounds.height * sy, z: cachedBounds.depth * sz }
       } else {
         try {
           const bounds = obj.getHierarchyBoundingVectors(true)
-          _size = { x: bounds.max.x - bounds.min.x, y: bounds.max.y - bounds.min.y, z: bounds.max.z - bounds.min.z }
+          size = { x: bounds.max.x - bounds.min.x, y: bounds.max.y - bounds.min.y, z: bounds.max.z - bounds.min.z }
         } catch { continue }
       }
-      if (_size.x === 0 && _size.y === 0 && _size.z === 0) continue
+      if (size.x === 0 && size.y === 0 && size.z === 0) continue
 
-      const isModular = obj.userData?._isModularAsset ?? false
-      const isTree = obj.userData?._isTreeAsset ?? false
-
-      const footprint = Math.max(_size.x, _size.z) * 0.5
-      const shadowR   = footprint + (isTree || isModular ? 2.8 : 1.0)
-      const shadowRSq = shadowR * shadowR
-      const invShadowR = 1 / shadowR
-      const maxDark   = isTree || isModular ? 0.82 : 0.42
-
-      const cx = obj.position.x
-      const cz = obj.position.z
-
-      const x0 = Math.max(0,        Math.floor(cx - shadowR))
-      const x1 = Math.min(cols - 1, Math.ceil (cx + shadowR))
-      const z0 = Math.max(0,        Math.floor(cz - shadowR))
-      const z1 = Math.min(rows - 1, Math.ceil (cz + shadowR))
-
-      for (let vz = z0; vz <= z1; vz++) {
-        for (let vx = x0; vx <= x1; vx++) {
-          const dx   = vx - cx
-          const dz   = vz - cz
-          const distSq = dx * dx + dz * dz
-          if (distSq >= shadowRSq) continue
-
-          const t      = 1.0 - Math.sqrt(distSq) * invShadowR
-          const dark   = t * t * maxDark
-          const factor = 1.0 - dark
-          if (factor < inf[vz][vx]) inf[vz][vx] = factor
-        }
+      let rotationY = obj.rotation?.y ?? 0
+      if (obj.rotationQuaternion) {
+        try { rotationY = obj.rotationQuaternion.toEulerAngles().y } catch {}
       }
+      const caster = createObjectShadowCaster({
+        assetId: obj.userData?.assetId,
+        x: obj.position.x,
+        z: obj.position.z,
+        rotationY,
+        width: size.x,
+        depth: size.z,
+      })
+      if (!caster) continue
+      if (isLinearAsset && isLinearCasterCoveredByWallRuns(caster, wallRuns)) continue
+      applyShadowCaster(caster)
     }
 
     return inf

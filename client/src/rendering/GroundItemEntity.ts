@@ -17,7 +17,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial';
 import { Color3 } from '@babylonjs/core/Maths/math.color';
 import { Vector3 } from '@babylonjs/core/Maths/math.vector';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
-import { buildThumbnailOptionsForItem, resolveItemModelPath, stackModelScaleForItem } from './ItemIcon';
+import { buildThumbnailOptionsForItem, resolveGroundItemModelPath, stackModelScaleForItem } from './ItemIcon';
 import type { ThumbnailOptions } from './ThumbnailRenderer';
 import '@babylonjs/loaders/glTF';
 
@@ -227,7 +227,7 @@ function normalizeTemplate(root: TransformNode, targetSize: number): number {
 }
 
 async function loadTemplate(scene: Scene, def: ItemDef, quantity: number): Promise<GroundItemTemplate | null> {
-  const path = resolveItemModelPath(def, quantity);
+  const path = resolveGroundItemModelPath(def, quantity);
   if (!path) return null;
 
   const options = await buildThumbnailOptionsForItem(def);

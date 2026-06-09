@@ -13,11 +13,11 @@ import { BoundingInfo } from '@babylonjs/core/Culling/boundingInfo';
 import '@babylonjs/loaders/glTF';
 import { worldAABB } from './MeshBounds';
 import { CHUNK_SIZE, CHUNK_LOAD_RADIUS, TILE_SIZE, TileType, BLOCKING_TILES, WallEdge, DOOR_EDGE_NEIGHBOR, DEFAULT_WALL_HEIGHT, PROJECTILE_BLOCKING_WALL_HEIGHT, shouldTileRenderWater, classifyTileType } from '@projectrs/shared';
-import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId } from '@projectrs/shared';
+import { isGroundItemSpawnAssetId, BLOCKING_DECOR_ASSETS, objectDefIdForPlacedAsset, deriveUpperFloorTilesFromPlanes, deriveElevatedFloorTiles, isFlatPlane, isRoofCoverPlane, isWalkableElevatedPlane, forEachTileInPlaneFootprint, GROUND_TYPE_ID, GROUND_TYPE_NONE, defaultGroundForMap, hasProjectileGridLineOfSight, isShootOverProjectileFenceAssetId, createObjectShadowCaster, createWallEdgeShadowCaster, isLinearCasterCoveredByWallRuns, isLinearShadowAsset, objectShadowBounds, objectShadowFactorAt, wallShadowRunsFromEntries } from '@projectrs/shared';
 import { clamp, groundColor, getNoiseExtra, getSlopeShade, getVertexAO as sharedGetVertexAO, getVertexWaterProximity as sharedGetVertexWaterProximity, computeCutPolygons, fanTriangulate, bilerpCorners, transformOverlayUV, fullTileRingForSplit, DEFAULT_CUT_ANGLE, legacyCutAngleFromSplit, normalizeWaterFlow, pushWaterFlowQuadUvs, waterFlowUvTransform, waterFlowUvFromTransform, applyWaterEdgeMudTint, applyTorchlightTint, hasTorchlightPaint, visualGroundForTorchlight, bilerpRGB, buildTorchlightInfluenceGrid, sampleTorchlightInfluenceGrid, maxTorchlightInfluenceForTile, TORCHLIGHT_GLOW_RADIUS_TILES, TORCHLIGHT_GLOW_SUBDIVISIONS, WATER_TEXTURE_ALPHA, SURFACE_WATER_ALPHA, WATER_TEXTURE_TINT, SURFACE_WATER_TEXTURE_TINT, WATER_UV_SCALE } from '@projectrs/shared';
 import type { UVPoint } from '@projectrs/shared';
 import type { RGB, TorchlightInfluenceGrid, TorchlightPaintTile } from '@projectrs/shared';
-import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, PlacedObjectInteraction, TexturePlane, WaterFlow, WaterFlowUvTransform } from '@projectrs/shared';
+import type { MapMeta, WallsFile, StairData, RoofData, FloorLayerData, KCMapFile, KCMapData, KCTile, GroundType, PlacedObject, PlacedObjectInteraction, TexturePlane, WaterFlow, WaterFlowUvTransform, WallShadowRun } from '@projectrs/shared';
 import { SAME_PLANE_PICK_Y_TOLERANCE } from './pickingConstants';
 
 const EDITOR_CHUNK_SIZE = 64;
@@ -328,6 +328,7 @@ export class ChunkManager {
 
   // Object shadow influences (vertex grid, 1.0 = full brightness, 0.0 = full shadow)
   private shadowInf: Float32Array | null = null;
+  private rootWallShadowRunsCache: WallShadowRun[] | null = null;
 
   // Placed objects and texture planes from KC editor
   private placedObjectNodes: TransformNode[] = [];
@@ -748,6 +749,7 @@ export class ChunkManager {
 
     // Fetch walls data
     this.walls = new Uint8Array(this.mapWidth * this.mapHeight);
+    this.rootWallShadowRunsCache = null;
     this.shootOverProjectileWallEdges = new Uint8Array(this.mapWidth * this.mapHeight);
     this.wallHeights.clear();
     this.floorHeights.clear();
@@ -909,6 +911,7 @@ export class ChunkManager {
       const sw = this.mapWidth + 1, sh = this.mapHeight + 1;
       this.shadowInf = new Float32Array(sw * sh);
       this.shadowInf.fill(1.0);
+      this.applyCollisionWallShadows(this.shadowInf, sw, sw - 1, sh - 1);
     }
     this.loadTexturePlanes(this.mapData!.texturePlanes || []);
 
@@ -2786,6 +2789,7 @@ export class ChunkManager {
     if (!this.walls) return;
     if (x < 0 || x >= this.mapWidth || z < 0 || z >= this.mapHeight) return;
     this.walls[z * this.mapWidth + x] = mask;
+    this.rootWallShadowRunsCache = null;
   }
 
   getWallOnFloorPublic(x: number, z: number, floor: number): number {
@@ -2832,6 +2836,7 @@ export class ChunkManager {
     if (tx > 0) this.walls[tz * this.mapWidth + (tx - 1)] &= ~WallEdge.E;
     // East neighbor's West edge
     if (tx < this.mapWidth - 1) this.walls[tz * this.mapWidth + (tx + 1)] &= ~WallEdge.W;
+    this.rootWallShadowRunsCache = null;
   }
 
   isBlockedOnFloor(x: number, z: number, floor: number): boolean {
@@ -5099,6 +5104,73 @@ export class ChunkManager {
     return this.chunkPlacedNodes.has(key) && !this.loadingObjectChunks.has(key);
   }
 
+  private createPlacedObjectShadowCaster(
+    obj: PlacedObject,
+    bounds?: { min: Vector3; max: Vector3 } | null,
+  ): ReturnType<typeof createObjectShadowCaster> {
+    if (isGroundItemSpawnAssetId(obj.assetId)) return null;
+    const width = bounds
+      ? Math.max(0.1, bounds.max.x - bounds.min.x)
+      : Math.max(0.1, Math.abs(obj.scale?.x ?? 1));
+    const depth = bounds
+      ? Math.max(0.1, bounds.max.z - bounds.min.z)
+      : Math.max(0.1, Math.abs(obj.scale?.z ?? 1));
+    return createObjectShadowCaster({
+      assetId: obj.assetId,
+      x: obj.position.x,
+      z: obj.position.z,
+      rotationY: obj.rotation?.y ?? 0,
+      width,
+      depth,
+    });
+  }
+
+  private applyObjectShadowCaster(caster: NonNullable<ReturnType<typeof createObjectShadowCaster>>, inf: Float32Array, w: number, maxX: number, maxZ: number): void {
+    const { x0, x1, z0, z1 } = objectShadowBounds(caster, maxX, maxZ);
+    for (let vz = z0; vz <= z1; vz++) {
+      for (let vx = x0; vx <= x1; vx++) {
+        const factor = objectShadowFactorAt(caster, vx, vz);
+        const idx = vz * w + vx;
+        if (factor < inf[idx]) inf[idx] = factor;
+      }
+    }
+  }
+
+  private *rootWallShadowEntries(): IterableIterator<readonly [number, number, number]> {
+    if (!this.walls) return;
+
+    for (let z = 0; z < this.mapHeight; z++) {
+      const row = z * this.mapWidth;
+      for (let x = 0; x < this.mapWidth; x++) {
+        const mask = this.walls[row + x];
+        if (mask !== 0) yield [x, z, mask] as const;
+      }
+    }
+  }
+
+  private getRootWallShadowRuns(): WallShadowRun[] {
+    if (!this.rootWallShadowRunsCache) {
+      this.rootWallShadowRunsCache = wallShadowRunsFromEntries(this.rootWallShadowEntries());
+    }
+    return this.rootWallShadowRunsCache;
+  }
+
+  private shouldUsePlacedObjectShadowFallback(obj: PlacedObject, caster: NonNullable<ReturnType<typeof createObjectShadowCaster>>): boolean {
+    if (!isLinearShadowAsset(obj.assetId)) return true;
+    return !isLinearCasterCoveredByWallRuns(caster, this.getRootWallShadowRuns());
+  }
+
+  private applyCollisionWallShadows(inf: Float32Array, w: number, maxX: number, maxZ: number): number {
+    let runCount = 0;
+    for (const run of this.getRootWallShadowRuns()) {
+      const caster = createWallEdgeShadowCaster(run.x0, run.z0, run.x1, run.z1);
+      if (!caster) continue;
+      this.applyObjectShadowCaster(caster, inf, w, maxX, maxZ);
+      runCount++;
+    }
+    return runCount;
+  }
+
   /** Build shadow influences from raw placed object data (no mesh required) */
   private buildShadowInfluences(): void {
     if (!this.mapWidth || !this.mapHeight) return;
@@ -5107,41 +5179,24 @@ export class ChunkManager {
     const inf = new Float32Array(w * h);
     inf.fill(1.0);
 
+    const wallRunCount = this.applyCollisionWallShadows(inf, w, w - 1, h - 1);
+
     let count = 0;
     for (const [, objects] of this.placedObjectsByChunk) {
       for (const obj of objects) {
-        if (isGroundItemSpawnAssetId(obj.assetId)) continue;
-        const cx = obj.position.x;
-        const cz = obj.position.z;
-        const name = obj.assetId.toLowerCase();
-        const isLarge = name.includes('tree') || name.includes('modular') || name.includes('wall') || name.includes('house') || name.includes('bush');
-        const isRock = name.includes('rock');
-        const shadowR = isLarge ? 3.8 : isRock ? 1.8 : 2.0;
-        const maxDark = isLarge ? 0.82 : isRock ? 0.5 : 0.42;
-
-        const vx0 = Math.max(0, Math.floor(cx - shadowR));
-        const vx1 = Math.min(w - 1, Math.ceil(cx + shadowR));
-        const vz0 = Math.max(0, Math.floor(cz - shadowR));
-        const vz1 = Math.min(h - 1, Math.ceil(cz + shadowR));
-
-        for (let vz = vz0; vz <= vz1; vz++) {
-          for (let vx = vx0; vx <= vx1; vx++) {
-            const dx = vx - cx;
-            const dz = vz - cz;
-            const dist = Math.sqrt(dx * dx + dz * dz);
-            if (dist >= shadowR) continue;
-            const t = 1.0 - dist / shadowR;
-            const factor = 1.0 - t * t * maxDark;
-            const idx = vz * w + vx;
-            if (factor < inf[idx]) inf[idx] = factor;
-          }
-        }
+        const bounds = isLinearShadowAsset(obj.assetId)
+          ? this.getPlacedObjectTemplateBounds(obj.assetId, obj)
+          : null;
+        const caster = this.createPlacedObjectShadowCaster(obj, bounds);
+        if (!caster) continue;
+        if (!this.shouldUsePlacedObjectShadowFallback(obj, caster)) continue;
+        this.applyObjectShadowCaster(caster, inf, w, w - 1, h - 1);
         count++;
       }
     }
 
     this.shadowInf = inf;
-    if (import.meta.env.DEV) console.log(`[ChunkManager] Built shadow influences for ${count} objects`);
+    if (import.meta.env.DEV) console.log(`[ChunkManager] Built shadow influences for ${count} objects and ${wallRunCount} wall runs`);
   }
 
   /** Add shadow contribution from a set of placed objects (used in chunked mode) */
@@ -5152,34 +5207,15 @@ export class ChunkManager {
     }
     const w = this.mapWidth + 1;
     for (const obj of objects) {
-      if (isGroundItemSpawnAssetId(obj.assetId)) continue;
-      const cx = obj.position.x;
-      const cz = obj.position.z;
-      const name = obj.assetId.toLowerCase();
-      // Order matters — check 'bush' before 'large' so it gets its own profile.
-      const isBush = name.includes('bush');
-      const isLarge = !isBush && (name.includes('tree') || name.includes('modular') || name.includes('wall') || name.includes('house'));
-      const isRock = name.includes('rock');
-      // Rocks: sharp + dark (small radius, high contrast).
-      // Bushes: wide + soft (gentle ambient occlusion under foliage).
-      // Trees/structures: original strong cast.
-      const shadowR = isRock ? 2.5 : isBush ? 3.5 : isLarge ? 3.8 : 2.0;
-      const maxDark = isRock ? 0.85 : isBush ? 0.45 : isLarge ? 0.82 : 0.42;
-      const vx0 = Math.max(0, Math.floor(cx - shadowR));
-      const vx1 = Math.min(w - 1, Math.ceil(cx + shadowR));
-      const vz0 = Math.max(0, Math.floor(cz - shadowR));
-      const vz1 = Math.min(this.mapHeight, Math.ceil(cz + shadowR));
-      for (let vz = vz0; vz <= vz1; vz++) {
-        for (let vx = vx0; vx <= vx1; vx++) {
-          const dx = vx - cx, dz = vz - cz;
-          const dist = Math.sqrt(dx * dx + dz * dz);
-          if (dist >= shadowR) continue;
-          const t = 1.0 - dist / shadowR;
-          const factor = 1.0 - t * t * maxDark;
-          const idx = vz * w + vx;
-          if (factor < this.shadowInf[idx]) this.shadowInf[idx] = factor;
-        }
+      const bounds = isLinearShadowAsset(obj.assetId)
+        ? this.getPlacedObjectTemplateBounds(obj.assetId, obj)
+        : null;
+      const caster = this.createPlacedObjectShadowCaster(obj, bounds);
+      if (caster && !this.shouldUsePlacedObjectShadowFallback(obj, caster)) {
+        await this.yieldIfFrameBudgetSpent(workSlice);
+        continue;
       }
+      if (caster) this.applyObjectShadowCaster(caster, this.shadowInf, w, w - 1, this.mapHeight);
       await this.yieldIfFrameBudgetSpent(workSlice);
     }
   }
@@ -5188,14 +5224,17 @@ export class ChunkManager {
   private queueGroundShadowRebuildsForObjects(objects: PlacedObject[]): void {
     for (const obj of objects) {
       if (isGroundItemSpawnAssetId(obj.assetId)) continue;
-      const name = obj.assetId.toLowerCase();
-      const isShadowCaster = name.includes('tree') || name.includes('bush') || name.includes('modular') || name.includes('wall') || name.includes('house') || name.includes('rock');
-      if (!isShadowCaster) continue;
-      const shadowR = 3.8;
-      const cx0 = Math.floor((obj.position.x - shadowR) / CHUNK_SIZE);
-      const cx1 = Math.floor((obj.position.x + shadowR) / CHUNK_SIZE);
-      const cz0 = Math.floor((obj.position.z - shadowR) / CHUNK_SIZE);
-      const cz1 = Math.floor((obj.position.z + shadowR) / CHUNK_SIZE);
+      const bounds = isLinearShadowAsset(obj.assetId)
+        ? this.getPlacedObjectTemplateBounds(obj.assetId, obj)
+        : null;
+      const caster = this.createPlacedObjectShadowCaster(obj, bounds);
+      if (!caster) continue;
+      if (!this.shouldUsePlacedObjectShadowFallback(obj, caster)) continue;
+      const { x0, x1, z0, z1 } = objectShadowBounds(caster, this.mapWidth, this.mapHeight);
+      const cx0 = Math.floor(x0 / CHUNK_SIZE);
+      const cx1 = Math.floor(x1 / CHUNK_SIZE);
+      const cz0 = Math.floor(z0 / CHUNK_SIZE);
+      const cz1 = Math.floor(z1 / CHUNK_SIZE);
       for (let cx = cx0; cx <= cx1; cx++) {
         for (let cz = cz0; cz <= cz1; cz++) {
           const key = `${cx},${cz}`;
@@ -5859,6 +5898,7 @@ export class ChunkManager {
     this.defaultWaterLevel = -0.3;
     this.chunkWaterLevelCache = null;
     this.walls = null;
+    this.rootWallShadowRunsCache = null;
     this.shootOverProjectileWallEdges = null;
     this.wallHeights.clear();
     this.floorHeights.clear();

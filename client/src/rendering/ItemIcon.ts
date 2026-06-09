@@ -20,7 +20,7 @@ export interface BakedThumbnailManifestEntry {
 }
 
 export interface ParsedBakedThumbnailManifest {
-  entries: Map<number, BakedThumbnailManifestEntry>;
+  entries: Map<number, BakedThumbnailManifestEntry[]>;
   legacyIds: Set<number>;
 }
 
@@ -172,6 +172,40 @@ function readManifestEntry(id: number, value: unknown): BakedThumbnailManifestEn
   return out.poseKey ? out : null;
 }
 
+function readManifestEntries(id: number, value: unknown): BakedThumbnailManifestEntry[] {
+  const entries: BakedThumbnailManifestEntry[] = [];
+  const direct = readManifestEntry(id, value);
+  if (direct) entries.push(direct);
+
+  if (value && typeof value === 'object') {
+    const variants = (value as { variants?: unknown }).variants;
+    if (Array.isArray(variants)) {
+      for (const variant of variants) {
+        const entry = readManifestEntry(id, variant);
+        if (entry) entries.push(entry);
+      }
+    }
+  }
+
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    if (!entry.poseKey || seen.has(entry.poseKey)) return false;
+    seen.add(entry.poseKey);
+    return true;
+  });
+}
+
+function appendManifestEntries(
+  entries: Map<number, BakedThumbnailManifestEntry[]>,
+  id: number,
+  values: BakedThumbnailManifestEntry[],
+): void {
+  if (!values.length) return;
+  const existing = entries.get(id);
+  if (existing) existing.push(...values);
+  else entries.set(id, values.slice());
+}
+
 export function parseBakedThumbnailManifest(data: unknown): ParsedBakedThumbnailManifest {
   const parsed = emptyBakedThumbnailManifest();
   if (Array.isArray(data)) {
@@ -199,15 +233,13 @@ export function parseBakedThumbnailManifest(data: unknown): ParsedBakedThumbnail
       const obj = raw as Record<string, unknown>;
       const id = readManifestItemId(obj.id);
       if (id === null) continue;
-      const entry = readManifestEntry(id, obj);
-      if (entry) parsed.entries.set(id, entry);
+      appendManifestEntries(parsed.entries, id, readManifestEntries(id, obj));
     }
   } else if (rawEntries && typeof rawEntries === 'object') {
     for (const [key, value] of Object.entries(rawEntries)) {
       const id = readManifestItemId(key);
       if (id === null) continue;
-      const entry = readManifestEntry(id, value);
-      if (entry) parsed.entries.set(id, entry);
+      appendManifestEntries(parsed.entries, id, readManifestEntries(id, value));
     }
   }
 
@@ -219,8 +251,8 @@ export function resolveBakedThumbnailUrl(
   itemId: number,
   poseKey: string,
 ): string | null {
-  const entry = manifest.entries.get(itemId);
-  if (!entry || entry.poseKey !== poseKey) return null;
+  const entry = manifest.entries.get(itemId)?.find((candidate) => candidate.poseKey === poseKey);
+  if (!entry) return null;
   return entry.file ?? `/items/3d/${itemId}.png`;
 }
 
@@ -385,7 +417,7 @@ export function findThumbnailOverrideForItem(
 /** Build thumbnail options for a specific item and override. Used by both the
  *  game client and editor previews so saved editor poses match runtime icons. */
 export function buildThumbnailOptionsFromOverride(def: ItemDef, itemOverride?: ThumbnailOverride, visualDef: ItemDef = def): ThumbnailOptions {
-  const modelPath = visualDef.model ?? def.model ?? '';
+  const modelPath = visualDef.thumbnailModel ?? visualDef.model ?? def.thumbnailModel ?? def.model ?? '';
   const bowColorRevision = /(?:^|\/)(?:Shortbow|OakShortbow|WillowShortbow|MapleShortbow|YewShortbow|MysticShortbow|MagicShortbow)\.glb$/i.test(modelPath)
     ? ':bow-colors-v5'
     : '';
@@ -437,6 +469,10 @@ function resolveStackModelVariant(def: ItemDef, quantity: number | undefined): S
   return best;
 }
 
+function resolveModelPath(def: ItemDef, model: string | undefined): string | null {
+  return resolveEquipmentModelPath({ ...def, model }, 0);
+}
+
 export function stackModelScaleForItem(def: ItemDef, quantity: number = 1): number {
   const scale = resolveStackModelVariant(def, quantity)?.scale;
   return typeof scale === 'number' && Number.isFinite(scale) && scale > 0 ? scale : 1;
@@ -448,12 +484,24 @@ export function stackModelScaleForItem(def: ItemDef, quantity: number = 1): numb
  *  legacy 2D art. */
 export function resolveItemModelPath(def: ItemDef, quantity: number = 1): string | null {
   const stackModel = resolveStackModelVariant(def, quantity)?.model;
-  if (stackModel) return resolveEquipmentModelPath({ ...def, model: stackModel }, 0);
-  return resolveEquipmentModelPath(def, 0);
+  if (stackModel) return resolveModelPath(def, stackModel);
+  return resolveModelPath(def, def.thumbnailModel ?? def.model);
+}
+
+export function resolveGroundItemModelPath(def: ItemDef, quantity: number = 1): string | null {
+  const stackModel = resolveStackModelVariant(def, quantity)?.model;
+  if (stackModel) return resolveModelPath(def, stackModel);
+  return resolveModelPath(def, def.model);
 }
 
 function uses3DIcon(def: ItemDef, quantity: number = 1): boolean {
   return resolveItemModelPath(def, quantity) !== null;
+}
+
+export function getItemLegacyIconUrl(def: ItemDef): string | null {
+  if (def.sprite) return `/sprites/items/${def.sprite}`;
+  if (def.icon) return `/items/${def.icon}`;
+  return null;
 }
 
 /** Best-effort async lookup. Returns the highest-quality icon URL available. */
@@ -474,8 +522,8 @@ export async function getItemIconUrl(def: ItemDef, quantity: number = 1): Promis
     return null;
   }
 
-  if (def.sprite) return `/sprites/items/${def.sprite}`;
-  if (def.icon) return `/items/${def.icon}`;
+  const legacyUrl = getItemLegacyIconUrl(def);
+  if (legacyUrl) return legacyUrl;
   return null;
 }
 
@@ -484,9 +532,7 @@ export async function getItemIconUrl(def: ItemDef, quantity: number = 1): Promis
  *  2D art never flashes before the 3D thumbnail lands. */
 export function getItemIconSyncUrl(def: ItemDef, quantity: number = 1): string | null {
   if (uses3DIcon(def, quantity)) return null;
-  if (def.sprite) return `/sprites/items/${def.sprite}`;
-  if (def.icon) return `/items/${def.icon}`;
-  return null;
+  return getItemLegacyIconUrl(def);
 }
 
 export interface IconStyleOpts {

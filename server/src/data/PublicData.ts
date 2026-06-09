@@ -87,6 +87,7 @@ function sanitizeItemDef(item: Record<string, unknown>): Record<string, unknown>
     sprite,
     icon,
     model,
+    thumbnailModel,
     stackModels,
     bodyTypeModels,
   } = item;
@@ -111,6 +112,7 @@ function sanitizeItemDef(item: Record<string, unknown>): Record<string, unknown>
   if (sprite !== undefined) out.sprite = sprite;
   if (icon !== undefined) out.icon = icon;
   if (model !== undefined) out.model = model;
+  if (thumbnailModel !== undefined) out.thumbnailModel = thumbnailModel;
   if (Array.isArray(stackModels)) out.stackModels = stackModels.map(sanitizeStackModel);
   const sanitizedBodyModels = sanitizeBodyTypeModels(bodyTypeModels);
   if (sanitizedBodyModels !== undefined) out.bodyTypeModels = sanitizedBodyModels;

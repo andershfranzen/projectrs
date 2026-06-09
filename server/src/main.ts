@@ -665,6 +665,9 @@ function validateItemDefs(items: unknown): { ok: true; items: ItemDef[] } | { ok
     if (item.weaponStyle !== undefined && !WEAPON_STYLES.has(String(item.weaponStyle))) return { ok: false, error: `Item ${item.id} has invalid weaponStyle` };
     if (item.toolType !== undefined && !TOOL_TYPES.has(String(item.toolType))) return { ok: false, error: `Item ${item.id} has invalid toolType` };
     if (item.headRenderMode !== undefined && !HEAD_RENDER_MODE_SET.has(String(item.headRenderMode))) return { ok: false, error: `Item ${item.id} has invalid headRenderMode` };
+    if (item.thumbnailModel !== undefined && (typeof item.thumbnailModel !== 'string' || item.thumbnailModel.trim().length === 0)) {
+      return { ok: false, error: `Item ${item.id} has invalid thumbnailModel` };
+    }
     if (item.bodyTypeModels !== undefined) {
       if (!item.bodyTypeModels || typeof item.bodyTypeModels !== 'object' || Array.isArray(item.bodyTypeModels)) {
         return { ok: false, error: `Item ${item.id} has invalid bodyTypeModels` };
@@ -3781,11 +3784,16 @@ const server = Bun.serve<SocketData>({
       if (!isAdminRequest(req, server)) return adminForbidden();
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
-        const body = await req.json() as { id?: unknown; dataUrl?: unknown };
+        const body = await req.json() as { id?: unknown; file?: unknown; dataUrl?: unknown };
         const id = Number(body.id);
+        const requestedFile = typeof body.file === 'string' ? body.file : `/items/3d/${id}.png`;
         const dataUrl = typeof body.dataUrl === 'string' ? body.dataUrl : '';
         if (!Number.isInteger(id) || id <= 0 || id > 1_000_000) {
           return jsonResponse({ ok: false, error: 'Invalid item id' }, 400);
+        }
+        const fileName = requestedFile.startsWith('/items/3d/') ? requestedFile.slice('/items/3d/'.length) : '';
+        if (!new RegExp(`^${id}(?:-[0-9]+)?\\.png$`).test(fileName)) {
+          return jsonResponse({ ok: false, error: 'Invalid item thumbnail file' }, 400);
         }
         const m = /^data:image\/png;base64,(.+)$/.exec(dataUrl);
         if (!m) return jsonResponse({ ok: false, error: 'Expected PNG dataURL' }, 400);
@@ -3795,7 +3803,7 @@ const server = Bun.serve<SocketData>({
         }
         const outDir = resolve(import.meta.dir, '../../client/public/items/3d');
         if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
-        const outPath = resolve(outDir, `${id}.png`);
+        const outPath = resolve(outDir, fileName);
         // Reject path traversal — id is an integer so this is paranoia.
         if (!outPath.startsWith(outDir + sep)) {
           return jsonResponse({ ok: false, error: 'Path outside output dir' }, 400);
@@ -4023,25 +4031,46 @@ const server = Bun.serve<SocketData>({
       if (!bodyWithinLimit(req, BODY_LIMIT_DEV)) return tooLarge();
       try {
         const body = await req.json() as { ids?: unknown; entries?: unknown };
-        const manifestEntries: Record<string, { file: string; poseKey: string; rendererVersion?: number }> = {};
+        type ManifestLeaf = { file: string; poseKey: string; rendererVersion?: number };
+        type ManifestEntry = ManifestLeaf | { variants: ManifestLeaf[] };
+        const manifestEntries: Record<string, ManifestEntry> = {};
+        const sanitizeLeaf = (id: number, raw: unknown): ManifestLeaf | null => {
+          if (!raw || typeof raw !== 'object') return null;
+          const entry = raw as Record<string, unknown>;
+          const file = typeof entry.file === 'string' ? entry.file : `/items/3d/${id}.png`;
+          const poseKey = typeof entry.poseKey === 'string' ? entry.poseKey : '';
+          const rendererVersion = entry.rendererVersion;
+          const fileName = file.startsWith('/items/3d/') ? file.slice('/items/3d/'.length) : '';
+          if (!new RegExp(`^${id}(?:-[0-9]+)?\\.png$`).test(fileName)) return null;
+          if (!poseKey || poseKey.length > 2048) return null;
+          return {
+            file,
+            poseKey,
+            ...(typeof rendererVersion === 'number' && Number.isFinite(rendererVersion)
+              ? { rendererVersion }
+              : {}),
+          };
+        };
+        const sanitizeEntry = (id: number, raw: unknown): ManifestEntry | null => {
+          const direct = sanitizeLeaf(id, raw);
+          if (raw && typeof raw === 'object') {
+            const variants = (raw as { variants?: unknown }).variants;
+            if (Array.isArray(variants)) {
+              const sanitized = variants
+                .map(variant => sanitizeLeaf(id, variant))
+                .filter((variant): variant is ManifestLeaf => !!variant);
+              if (direct) sanitized.unshift(direct);
+              if (sanitized.length) return { variants: sanitized };
+            }
+          }
+          return direct;
+        };
         if (body.entries && typeof body.entries === 'object') {
           for (const [key, raw] of Object.entries(body.entries as Record<string, unknown>)) {
             const id = Number(key);
             if (!Number.isInteger(id) || id <= 0 || id > 1_000_000) continue;
-            if (!raw || typeof raw !== 'object') continue;
-            const entry = raw as Record<string, unknown>;
-            const file = typeof entry.file === 'string' ? entry.file : `/items/3d/${id}.png`;
-            const poseKey = typeof entry.poseKey === 'string' ? entry.poseKey : '';
-            const rendererVersion = entry.rendererVersion;
-            if (!file.startsWith('/items/3d/') || file.includes('..') || file.length > 128) continue;
-            if (!poseKey || poseKey.length > 2048) continue;
-            manifestEntries[String(id)] = {
-              file,
-              poseKey,
-              ...(typeof rendererVersion === 'number' && Number.isFinite(rendererVersion)
-                ? { rendererVersion }
-                : {}),
-            };
+            const entry = sanitizeEntry(id, raw);
+            if (entry) manifestEntries[String(id)] = entry;
           }
         }
         if (!Array.isArray(body.ids) && Object.keys(manifestEntries).length === 0) {
@@ -4911,17 +4940,26 @@ const server = Bun.serve<SocketData>({
       return new Response('Not Found', { status: 404 });
     }
 
-    if (url.pathname === '/items/3d/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
-      const manifestPath = resolve(import.meta.dir, '../../client/public/items/3d/manifest.json');
-      const distManifestPath = resolve(CLIENT_DIST, 'items/3d/manifest.json');
-      for (const filePath of [manifestPath, distManifestPath]) {
+    if (url.pathname.startsWith('/items/3d/') && (req.method === 'GET' || req.method === 'HEAD')) {
+      const decodedPath = decodeURIComponent(url.pathname);
+      const isManifest = decodedPath === '/items/3d/manifest.json';
+      const isPng = /^\/items\/3d\/[0-9]+(?:-[0-9]+)?\.png$/.test(decodedPath);
+      if (!isManifest && !isPng) return new Response('Not Found', { status: 404 });
+
+      const publicItemsDir = resolve(import.meta.dir, '../../client/public/items/3d');
+      const distItemsDir = resolve(CLIENT_DIST, 'items/3d');
+      const relativePath = decodedPath.slice('/items/3d/'.length);
+      for (const baseDir of [publicItemsDir, distItemsDir]) {
+        const filePath = resolvePossiblyMissingWithinBase(baseDir, relativePath);
+        if (!filePath) continue;
         try {
           const content = readCachedStaticFile(filePath);
           return new Response(content, {
-            headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, must-revalidate' },
+            headers: { 'Content-Type': getMimeType(filePath), 'Cache-Control': 'no-cache, must-revalidate' },
           });
         } catch { /* try next */ }
       }
+      if (!isManifest) return new Response('Not Found', { status: 404 });
       return new Response('[]', {
         headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache, must-revalidate' },
       });

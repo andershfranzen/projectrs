@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "generatedAt": "2026-06-07T15:17:10.880Z",
+  "generatedAt": "2026-06-09T13:35:10.614Z",
   "ids": [
     1,
     8,
@@ -10,11 +10,14 @@
     20,
     23,
     24,
+    25,
+    26,
     29,
     30,
     31,
     32,
     33,
+    34,
     36,
     37,
     38,
@@ -22,6 +25,7 @@
     40,
     42,
     43,
+    45,
     48,
     49,
     50,
@@ -95,6 +99,7 @@
     125,
     126,
     127,
+    142,
     143,
     206,
     224,
@@ -273,6 +278,8 @@
     404,
     405,
     406,
+    407,
+    408,
     409,
     410,
     411,
@@ -338,9 +345,48 @@
       "rendererVersion": 19
     },
     "10": {
-      "file": "/items/3d/10.png",
-      "poseKey": "thumb:v19|/assets/models/coins/Coin1.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.90000",
-      "rendererVersion": 19
+      "variants": [
+        {
+          "file": "/items/3d/10.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin1.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.55800",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-2.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin2.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.61200",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-3.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin3.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.66600",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-4.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin4.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.72000",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-5.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin5.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.77400",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-10.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin10.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.90000",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-100.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin100.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.90000",
+          "rendererVersion": 19
+        },
+        {
+          "file": "/items/3d/10-1000.png",
+          "poseKey": "thumb:v19|/assets/models/coins/Coin1000.glb|id:item:10|cam:-0.45379,1.16937,0.75000|roty:0.13090|scale:0.90000",
+          "rendererVersion": 19
+        }
+      ]
     },
     "14": {
       "file": "/items/3d/14.png",
@@ -367,6 +413,16 @@
       "poseKey": "thumb:v19|/assets/models/logs/OakLog.glb|id:item:24|cam:-1.01229,1.27409,0.85000|scale:0.95000",
       "rendererVersion": 19
     },
+    "25": {
+      "file": "/items/3d/25.png",
+      "poseKey": "thumb:v19|/assets/models/CopperRock.glb|id:item:25|cam:1.50971,1.48353,0.75000|roty:0.32289|scale:1.05000",
+      "rendererVersion": 19
+    },
+    "26": {
+      "file": "/items/3d/26.png",
+      "poseKey": "thumb:v19|/assets/models/IronRock.glb|id:item:26|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
     "29": {
       "file": "/items/3d/29.png",
       "poseKey": "thumb:v19|/assets/models/bars/BronzeBar.glb|id:item:29|cam:-2.57436,1.20830,0.75000",
@@ -390,6 +446,11 @@
     "33": {
       "file": "/items/3d/33.png",
       "poseKey": "thumb:v19|/assets/equipment/Tools/BronzePickaxe.glb|id:item:33|tint:0.49700,0.30900,0.13200|m:Material.002|cam:-0.87266,1.20830,0.75000|rotx:0.54105|roty:-0.39270|rotz:-0.51487",
+      "rendererVersion": 19
+    },
+    "34": {
+      "file": "/items/3d/34.png",
+      "poseKey": "thumb:v19|/assets/models/TinRock.glb|id:item:34|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 19
     },
     "36": {
@@ -425,6 +486,11 @@
     "43": {
       "file": "/items/3d/43.png",
       "poseKey": "thumb:v19|/assets/models/arrows/stacks/IronArrowStack1.glb|id:item:43|cam:-1.12574,1.20830,0.75000|scale:0.82000",
+      "rendererVersion": 19
+    },
+    "45": {
+      "file": "/items/3d/45.png",
+      "poseKey": "thumb:v19|/assets/models/MithrilRock.glb|id:item:45|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 19
     },
     "48": {
@@ -790,6 +856,11 @@
     "127": {
       "file": "/items/3d/127.png",
       "poseKey": "thumb:v19|/assets/equipment/body/BlackBronzePlatebody.glb|id:item:127|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "142": {
+      "file": "/items/3d/142.png",
+      "poseKey": "thumb:v19|/assets/models/SilverRock.glb|id:item:142|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 19
     },
     "143": {
@@ -1680,6 +1751,16 @@
     "406": {
       "file": "/items/3d/406.png",
       "poseKey": "thumb:v19|/assets/equipment/body/BlackBronzePlatebody.glb|id:item:127|cam:1.59698,0.88139,0.75000|pose:idle",
+      "rendererVersion": 19
+    },
+    "407": {
+      "file": "/items/3d/407.png",
+      "poseKey": "thumb:v19|/assets/models/CrimsoniteRock.glb|id:item:407|cam:-0.78540,1.20830,0.75000",
+      "rendererVersion": 19
+    },
+    "408": {
+      "file": "/items/3d/408.png",
+      "poseKey": "thumb:v19|/assets/models/MalachiteRock.glb|id:item:408|cam:-0.78540,1.20830,0.75000",
       "rendererVersion": 19
     },
     "409": {

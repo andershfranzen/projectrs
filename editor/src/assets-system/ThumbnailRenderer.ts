@@ -80,7 +80,7 @@ export function computeFitTarget(
 
 const THUMB_SIZE = 128
 // Bump to invalidate every cached thumbnail across clients.
-const THUMB_VERSION = 4
+const THUMB_VERSION = 5
 const RENDER_TIMEOUT_MS = 10000
 
 export interface AssetThumbnailOverride {

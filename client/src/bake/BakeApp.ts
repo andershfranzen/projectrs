@@ -13,23 +13,47 @@
 
 import type { ItemDef } from '@projectrs/shared';
 import { getThumbnail, getThumbnailPoseKey, THUMBNAIL_RENDERER_VERSION } from '../rendering/ThumbnailRenderer';
-import { resolveItemModelPath, buildThumbnailOptionsForItem, setThumbnailItemCatalog } from '../rendering/ItemIcon';
+import { resolveItemModelPath, buildThumbnailOptionsForItem, setThumbnailItemCatalog, stackModelScaleForItem } from '../rendering/ItemIcon';
 
 interface BakeTarget {
   id: number;
   name: string;
   def: ItemDef;
   modelPath: string;
+  quantity: number;
+  file: string;
+  hasStackVariants: boolean;
+}
+
+function stackBakeQuantities(def: ItemDef): number[] {
+  const quantities = new Set<number>([1]);
+  for (const variant of def.stackModels ?? []) {
+    const quantity = Number(variant?.minQuantity);
+    if (Number.isInteger(quantity) && quantity > 0) quantities.add(quantity);
+  }
+  return [...quantities].sort((a, b) => a - b);
 }
 
 function buildTargets(defs: ItemDef[]): BakeTarget[] {
   const targets: BakeTarget[] = [];
   for (const def of defs) {
-    const modelPath = resolveItemModelPath(def);
-    if (!modelPath) continue;
-    targets.push({ id: def.id, name: def.name, def, modelPath });
+    const quantities = stackBakeQuantities(def);
+    const hasStackVariants = !!def.stackModels?.length;
+    for (const quantity of quantities) {
+      const modelPath = resolveItemModelPath(def, quantity);
+      if (!modelPath) continue;
+      targets.push({
+        id: def.id,
+        name: quantity === 1 ? def.name : `${def.name} x${quantity}`,
+        def,
+        modelPath,
+        quantity,
+        file: quantity === 1 ? `/items/3d/${def.id}.png` : `/items/3d/${def.id}-${quantity}.png`,
+        hasStackVariants,
+      });
+    }
   }
-  targets.sort((a, b) => a.id - b.id);
+  targets.sort((a, b) => a.id - b.id || a.quantity - b.quantity);
   return targets;
 }
 
@@ -78,26 +102,52 @@ function mountBakeUI(): BakeUI {
   };
 }
 
-async function postPng(id: number, dataUrl: string): Promise<{ ok: boolean; error?: string }> {
+async function postPng(id: number, file: string, dataUrl: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch('/api/dev/item-thumb', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, dataUrl }),
+    body: JSON.stringify({ id, file, dataUrl }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.ok) return { ok: false, error: body.error || `HTTP ${res.status}` };
   return { ok: true };
 }
 
-interface BakedManifestEntry {
+interface BakedManifestLeaf {
   file: string;
   poseKey: string;
   rendererVersion: number;
 }
 
+type BakedManifestEntry = BakedManifestLeaf | { variants: BakedManifestLeaf[] };
+
 interface BakedManifest {
   ids: number[];
   entries: Record<string, BakedManifestEntry>;
+}
+
+function normalizeManifestLeaf(raw: unknown): BakedManifestLeaf | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const entry = raw as Partial<BakedManifestLeaf>;
+  if (typeof entry.file !== 'string' || typeof entry.poseKey !== 'string') return null;
+  return {
+    file: entry.file,
+    poseKey: entry.poseKey,
+    rendererVersion: typeof entry.rendererVersion === 'number' ? entry.rendererVersion : THUMBNAIL_RENDERER_VERSION,
+  };
+}
+
+function normalizeManifestEntry(raw: unknown): BakedManifestEntry | null {
+  const direct = normalizeManifestLeaf(raw);
+  if (raw && typeof raw === 'object') {
+    const variants = (raw as { variants?: unknown }).variants;
+    if (Array.isArray(variants)) {
+      const normalized = variants.map(normalizeManifestLeaf).filter((entry): entry is BakedManifestLeaf => !!entry);
+      if (direct) normalized.unshift(direct);
+      if (normalized.length) return { variants: normalized };
+    }
+  }
+  return direct;
 }
 
 async function loadExistingManifest(): Promise<BakedManifest> {
@@ -116,14 +166,8 @@ async function loadExistingManifest(): Promise<BakedManifest> {
     const rawEntries = (data as { entries?: unknown }).entries;
     if (rawEntries && typeof rawEntries === 'object') {
       for (const [key, raw] of Object.entries(rawEntries)) {
-        if (!raw || typeof raw !== 'object') continue;
-        const entry = raw as Partial<BakedManifestEntry>;
-        if (typeof entry.file !== 'string' || typeof entry.poseKey !== 'string') continue;
-        entries[key] = {
-          file: entry.file,
-          poseKey: entry.poseKey,
-          rendererVersion: typeof entry.rendererVersion === 'number' ? entry.rendererVersion : THUMBNAIL_RENDERER_VERSION,
-        };
+        const entry = normalizeManifestEntry(raw);
+        if (entry) entries[key] = entry;
       }
     }
     const rawIds = (data as { ids?: unknown }).ids;
@@ -203,19 +247,28 @@ export async function runBake(): Promise<void> {
     const label = `#${target.id} ${target.name}`;
     try {
       const opts = await buildThumbnailOptionsForItem(target.def);
+      const stackScale = stackModelScaleForItem(target.def, target.quantity);
+      if (stackScale !== 1) opts.iconScale = (opts.iconScale ?? 1) * stackScale;
       const dataUrl = await getThumbnail(target.modelPath, opts);
       if (!dataUrl) {
         ui.appendLog(`  ${label}: renderer returned null`, '#f55');
         failed++;
       } else {
-        const post = await postPng(target.id, dataUrl);
+        const post = await postPng(target.id, target.file, dataUrl);
         if (post.ok) {
           baked.push(target.id);
-          manifestEntries[String(target.id)] = {
-            file: `/items/3d/${target.id}.png`,
+          const entry: BakedManifestLeaf = {
+            file: target.file,
             poseKey: getThumbnailPoseKey(target.modelPath, opts),
             rendererVersion: THUMBNAIL_RENDERER_VERSION,
           };
+          if (target.hasStackVariants) {
+            const existing = manifestEntries[String(target.id)];
+            const variants = existing && 'variants' in existing ? existing.variants : [];
+            manifestEntries[String(target.id)] = { variants: [...variants, entry] };
+          } else {
+            manifestEntries[String(target.id)] = entry;
+          }
           ui.appendLog(`  ${label}: OK`, '#7c7');
         } else {
           ui.appendLog(`  ${label}: POST failed — ${post.error}`, '#f55');
@@ -231,7 +284,7 @@ export async function runBake(): Promise<void> {
   }
 
   ui.setStatus('Writing manifest...');
-  let manifestIds = baked;
+  let manifestIds = Array.from(new Set(baked)).sort((a, b) => a - b);
   let finalManifestEntries = manifestEntries;
   if (targetItemId !== null) {
     const existing = await loadExistingManifest();

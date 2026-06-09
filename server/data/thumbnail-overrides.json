@@ -62,6 +62,15 @@
     "rotationZ": 0,
     "iconScale": 0.95
   },
+  "25": {
+    "alpha": 1.509709802975095,
+    "beta": 1.4835298641951802,
+    "distanceMult": 0.75,
+    "rotationX": 0,
+    "rotationY": 0.32288591161895097,
+    "rotationZ": 0,
+    "iconScale": 1.05
+  },
   "29": {
     "alpha": -2.5743606466916362,
     "beta": 1.208304866765305,
