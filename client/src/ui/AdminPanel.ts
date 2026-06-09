@@ -234,6 +234,12 @@ export class AdminPanel {
       this.tabButtons.set(tab, button);
       tabBar.appendChild(button);
     }
+    this.clearRiskButton = this.smallButton('Clear risk', 'rgba(74, 24, 18, 0.92)');
+    this.clearRiskButton.style.minWidth = '82px';
+    this.clearRiskButton.style.minHeight = '22px';
+    this.clearRiskButton.style.borderColor = '#9a332b';
+    this.clearRiskButton.addEventListener('click', () => void this.clearBotRiskLevels());
+    tabBar.appendChild(this.clearRiskButton);
     header.insertBefore(tabBar, closeButton ?? null);
 
     const toolbar = document.createElement('div');
@@ -272,11 +278,6 @@ export class AdminPanel {
       }
     });
     toolbar.appendChild(this.botSearchInput);
-
-    this.clearRiskButton = this.smallButton('Clear risk', 'rgba(74, 24, 18, 0.92)');
-    this.clearRiskButton.style.minWidth = '82px';
-    this.clearRiskButton.addEventListener('click', () => void this.clearBotRiskLevels());
-    toolbar.appendChild(this.clearRiskButton);
 
     this.refreshButton = document.createElement('button');
     this.refreshButton.type = 'button';
