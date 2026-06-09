@@ -58,8 +58,8 @@ const MIN_MARATHON_NO_IDLE_ACTIVE_EVENTS = 800;
 const MIN_POST_DEATH_ROUTE_MOVES = 3;
 const MAX_MAP_DATA_FILES = 256;
 const MAP_DATA_SCAN_WINDOW_MS = 60_000;
-const MAP_DATA_SCAN_UNIQUE_THRESHOLD = 110;
-const MAP_DATA_SCAN_REQUEST_THRESHOLD = 160;
+const MAP_DATA_SCAN_UNIQUE_THRESHOLD = 180;
+const MAP_DATA_SCAN_REQUEST_THRESHOLD = 260;
 
 export interface MapDataScanBurst {
   requests: number;
@@ -998,7 +998,7 @@ export class BotStats {
     if (this.sessionInputlessCommands >= 5) {
       flags.push('inputlessCommandBurst');
     }
-    if (this.sessionCommandsWithoutRecentInput >= 3) {
+    if (this.sessionCommandsWithoutRecentInput >= 5) {
       flags.push('commandsWithoutRecentInput');
     }
     if (this.sessionCommandsWithoutRecentActivity >= 5) {
@@ -1471,7 +1471,8 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     add(6, `server-tick alignment paired with behavioral loop (${input.tickAlignStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
   }
   if (flagSet.has('pingRegular')) add(12, `script-regular heartbeat timing (${input.pingIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
-  if (flagSet.has('pingSeqReset')) add(10, `heartbeat sequence resets (${input.pingSeqResets})`);
+  // Sequence resets are noisy around reconnects/page reloads. Keep them in
+  // diagnostic flags, but do not score them directly.
   if (flagSet.has('activityHeartbeatCoupled')) add(20, `activity packets coupled to heartbeat (${ratioLabel(input.heartbeatActivityCouplingRatio)})`);
   if (flagSet.has('activityRegular')) add(18, `script-regular activity timing (${input.activityIntervalStdDevMs?.toFixed(0) ?? '?'}ms stddev)`);
   if (flagSet.has('gameplayCommandCadenceRegular')) add(
@@ -1490,7 +1491,6 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     30,
     `repeated gameplay interval pattern (${input.gameplayCommandIntervalPatternEvents} intervals, top lag ${ratioLabel(input.gameplayCommandIntervalPatternRatio)})`,
   );
-  if (flagSet.has('activitySeqReset')) add(8, `activity sequence resets (${input.activitySeqResets})`);
   if (flagSet.has('legacyActivityTelemetry')) add(
     10,
     `legacy/no-detail activity telemetry (${input.sessionDetailedActivityEvents}/${input.sessionActivityEvents} detailed)`,
@@ -1503,11 +1503,11 @@ export function computeBotRiskProfile(input: BotRiskInput): BotRiskProfile {
     add(28, `gameplay commands before browser input telemetry (${input.sessionInputlessCommands})`);
   }
   if (flagSet.has('commandsWithoutRecentInput')) add(
-    34,
+    28,
     `gameplay commands without recent browser input (${input.sessionCommandsWithoutRecentInput}/${input.sessionGameplayCommands})`,
   );
   if (flagSet.has('commandsWithoutRecentActivity')) add(
-    52,
+    42,
     `gameplay commands without recent browser activity (${input.sessionCommandsWithoutRecentActivity}/${input.sessionGameplayCommands})`,
   );
   if (flagSet.has('inputlessCommandRatio') && !flagSet.has('commandsWithoutRecentInput')) add(

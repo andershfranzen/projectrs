@@ -199,13 +199,14 @@ describe('anti-bot guardrails', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
 
-    for (let i = 0; i < 75; i++) {
-      expect(stats.recordMapDataFetch(`kcmap/objects/chunk_${i % 15}_${Math.floor(i / 15)}.json`, 10_000 + i)).toBeNull();
+    for (let i = 0; i < 150; i++) {
+      const mapId = i < 75 ? 'kcmap' : 'the_sultans_mine';
+      expect(stats.recordMapDataFetch(`${mapId}/objects/chunk_${i % 15}_${Math.floor(i / 15)}.json`, 10_000 + i)).toBeNull();
     }
 
     const summary = stats.computeSummary({});
-    expect(summary.sessionMapDataRequests).toBe(75);
-    expect(summary.sessionUniqueMapDataFiles).toBe(75);
+    expect(summary.sessionMapDataRequests).toBe(150);
+    expect(summary.sessionUniqueMapDataFiles).toBe(150);
     expect(summary.sessionMapDataScanBursts).toBe(0);
     expect(summary.flags).not.toContain('mapDataScrape');
     expect(summary.riskLevel).toBe('low');
@@ -216,14 +217,14 @@ describe('anti-bot guardrails', () => {
     stats.onLogin({});
     let burst: ReturnType<BotStats['recordMapDataFetch']> = null;
 
-    for (let i = 0; i < 110; i++) {
+    for (let i = 0; i < 180; i++) {
       burst = stats.recordMapDataFetch(`kcmap/tiles/chunk_${i % 22}_${Math.floor(i / 22)}.json`, 10_000 + i);
     }
 
     const summary = stats.computeSummary({});
     expect(burst).not.toBeNull();
-    expect(summary.sessionMapDataRequests).toBe(110);
-    expect(summary.sessionUniqueMapDataFiles).toBe(110);
+    expect(summary.sessionMapDataRequests).toBe(180);
+    expect(summary.sessionUniqueMapDataFiles).toBe(180);
     expect(summary.sessionMapDataScanBursts).toBe(1);
     expect(summary.flags).toContain('mapDataScrape');
     expect(summary.riskScore).toBeGreaterThanOrEqual(30);
@@ -337,6 +338,28 @@ describe('anti-bot guardrails', () => {
     expect(summary.flags).not.toContain('activityHeartbeatCoupled');
   });
 
+  test('sequence resets are diagnostic only because reconnects can reset server expectations', () => {
+    const stats = BotStats.empty();
+    stats.onLogin({});
+
+    stats.recordHeartbeat(1, 1_000);
+    stats.recordHeartbeat(4, 6_000);
+    stats.recordHeartbeat(5, 11_000);
+    stats.recordHeartbeat(9, 16_000);
+
+    stats.recordClientActivity(ClientActivityKind.Pointer, 1, 450, 520, 1_000);
+    stats.recordClientActivity(ClientActivityKind.Pointer, 4, 455, 525, 6_000);
+    stats.recordClientActivity(ClientActivityKind.Pointer, 5, 460, 530, 11_000);
+    stats.recordClientActivity(ClientActivityKind.Pointer, 9, 465, 535, 16_000);
+
+    const summary = stats.computeSummary({});
+    expect(summary.diagnosticFlags).toContain('pingSeqReset');
+    expect(summary.diagnosticFlags).toContain('activitySeqReset');
+    expect(summary.flags).toEqual([]);
+    expect(summary.riskScore).toBe(0);
+    expect(summary.riskLevel).toBe('low');
+  });
+
   test('periodic spoofed activity cadence adds context without evidence-only conviction', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
@@ -445,7 +468,7 @@ describe('anti-bot guardrails', () => {
     expect(summary.riskLevel).toBe('low');
   });
 
-  test('cursor spoofing without client activity still escalates raw websocket bots', () => {
+  test('cursor spoofing without client activity still requires review', () => {
     const stats = BotStats.empty();
     stats.onLogin({});
     stats.sessionStartedAt = Date.now() - 6 * 60_000;
@@ -467,8 +490,8 @@ describe('anti-bot guardrails', () => {
     expect(summary.diagnosticFlags).toContain('noClientActivityTelemetry');
     expect(summary.flags).toContain('commandsWithoutRecentActivity');
     expect(summary.contextFlags).toContain('activitylessCommandRatio');
-    expect(summary.riskScore).toBeGreaterThanOrEqual(60);
-    expect(['high', 'critical']).toContain(summary.riskLevel);
+    expect(summary.riskScore).toBeGreaterThanOrEqual(30);
+    expect(summary.riskLevel).toBe('medium');
   });
 
   test('cursorless but active repetitive skilling remains low risk by itself', () => {
@@ -584,14 +607,21 @@ describe('anti-bot guardrails', () => {
     expect(stats.hasRecentBrowserInput(30_500, 15_000)).toBe(false);
     expect(stats.hasRecentClientActivity(30_500, 15_000)).toBe(false);
 
-    stats.recordGameplayCommandInputCheck(false);
-    stats.recordGameplayCommandInputCheck(false);
+    for (let i = 0; i < 4; i++) stats.recordGameplayCommandInputCheck(false);
+
+    const transient = stats.computeSummary({});
+    expect(transient.sessionGameplayCommands).toBe(4);
+    expect(transient.sessionCommandsWithoutRecentInput).toBe(4);
+    expect(transient.sessionCommandsWithoutRecentActivity).toBe(4);
+    expect(transient.flags).not.toContain('commandsWithoutRecentInput');
+    expect(transient.riskLevel).toBe('low');
+
     stats.recordGameplayCommandInputCheck(false);
 
     const summary = stats.computeSummary({});
-    expect(summary.sessionGameplayCommands).toBe(3);
-    expect(summary.sessionCommandsWithoutRecentInput).toBe(3);
-    expect(summary.sessionCommandsWithoutRecentActivity).toBe(3);
+    expect(summary.sessionGameplayCommands).toBe(5);
+    expect(summary.sessionCommandsWithoutRecentInput).toBe(5);
+    expect(summary.sessionCommandsWithoutRecentActivity).toBe(5);
     expect(summary.inputlessCommandRatio).toBe(1);
     expect(summary.flags).toContain('commandsWithoutRecentInput');
     expect(summary.riskScore).toBeGreaterThanOrEqual(30);
@@ -638,14 +668,14 @@ describe('anti-bot guardrails', () => {
       const stats = BotStats.empty();
       stats.onLogin({});
       stats.sessionStartedAt = Date.now() - 6 * 60_000;
-      for (let i = 0; i < 3; i++) stats.recordGameplayCommandInputCheck(false);
+      for (let i = 0; i < 5; i++) stats.recordGameplayCommandInputCheck(false);
 
       stats.checkpoint(db, session.accountId, {});
       const row = db.loadBotStats(session.accountId);
       const summary = JSON.parse(row?.last_session_summary ?? '{}') as { flags?: string[] };
 
-      expect(row?.risk_score).toBeGreaterThanOrEqual(30);
-      expect(row?.risk_level).toBe('medium');
+      expect(row?.risk_score).toBeGreaterThanOrEqual(60);
+      expect(row?.risk_level).toBe('high');
       expect(summary.flags).toContain('commandsWithoutRecentInput');
     } finally {
       db.close();
